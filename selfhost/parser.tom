@@ -31,7 +31,7 @@ def new_nodes() -> list[Node]:
 def new_vals() -> list[Val]:
     return []
 
-def new_strs() -> list[str]:
+export def new_strs() -> list[str]:
     return []
 
 def vs(text: str) -> Val:

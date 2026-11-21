@@ -8,7 +8,7 @@
 # uses it, and a slot releases what it held. Everything else stops with a CompileError that says what is not
 # supported yet. Numbers are 64-bit and wrap on overflow, a zero `%` divisor is not checked, and `and` and `or`
 # evaluate both sides (P53).
-from parser import Node, Val, parse
+from parser import Node, Val, parse, new_strs
 
 export class CompileError(Error):
     @init
@@ -174,7 +174,7 @@ class Mod:
             return '@' + name
         return ''
 
-def escape_char(c: str, line: int) -> str:
+def escape_ir_char(c: str, line: int) -> str:
     plain = ' !#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~'
     if plain.find(c) >= 0:
         return c
@@ -196,7 +196,7 @@ def escape_text(s: str) -> str:
     body = ''
     i = 0
     while i < len(s):
-        body = body + escape_char(s[i], 0)
+        body = body + escape_ir_char(s[i], 0)
         i = i + 1
     return body
 
@@ -604,8 +604,33 @@ class Gen:
         self.release(b)
         return self.bool_of(r)
 
+    def logic(self, n: Node, op: str) -> Ex:
+        # and / or: the right side only runs when the left side does not decide the answer
+        a = self.expr(val_node(n.fields[1]))
+        self.want(a, 'bool', n.line, 'the left side of ' + op)
+        res = self.hidden_slot('logic')
+        self.emit('store i64 ' + a.reg + ', ptr ' + res)
+        c = self.truth(a, n.line)
+        rhs = self.label('rhs')
+        end = self.label('endlogic')
+        if op == 'and':
+            self.cond_br(c, rhs, end)
+        else:
+            self.cond_br(c, end, rhs)
+        self.place(rhs)
+        b = self.expr(val_node(n.fields[2]))
+        self.want(b, 'bool', n.line, 'the right side of ' + op)
+        self.emit('store i64 ' + b.reg + ', ptr ' + res)
+        self.br(end)
+        self.place(end)
+        r = self.tmp('logic')
+        self.emit(r + ' = load i64, ptr ' + res)
+        return ex(r, 'bool')
+
     def binop(self, n: Node) -> Ex:
         op = n.fields[0].text
+        if op == 'and' or op == 'or':
+            return self.logic(n, op)
         a = self.expr(val_node(n.fields[1]))
         b = self.expr(val_node(n.fields[2]))
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
@@ -625,7 +650,7 @@ class Gen:
             raise CompileError('the Tomato compiler does not support ' + op + ' on text yet', n.line)
         if op == 'in':
             return self.membership(a, b, n.line)
-        if op == 'and' or op == 'or' or op == 'xor':
+        if op == 'xor':
             self.want(a, 'bool', n.line, 'the left side of ' + op)
             self.want(b, 'bool', n.line, 'the right side of ' + op)
             return ex(self.arith(op, a.reg, b.reg), 'bool')
@@ -1370,9 +1395,6 @@ def runtime_tables(mod: Mod) -> str:
     t = t + '@tomato_offsets = constant [' + count + ' x ptr] [' + ', '.join(offsets) + ']\n'
     return t
 
-def new_strs() -> list[str]:
-    return []
-
 def declarations() -> str:
     d = 'declare i32 @printf(ptr, ...)\n'
     d = d + 'declare i32 @putchar(i32)\n'
@@ -1381,6 +1403,7 @@ def declarations() -> str:
     d = d + 'declare void @tomato_retain(ptr)\n'
     d = d + 'declare void @tomato_release(ptr)\n'
     d = d + 'declare ptr @tomato_str_concat(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_from_cstr(ptr)\n'
     d = d + 'declare i64 @tomato_str_len(ptr)\n'
     d = d + 'declare i32 @tomato_str_cmp(ptr, ptr)\n'
     d = d + 'declare ptr @tomato_str_index(ptr, i64)\n'
@@ -1389,6 +1412,9 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
     d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
+    d = d + 'declare void @tomato_usage(i32, i32)\n'
+    d = d + 'declare i64 @tomato_parse_i64(ptr, i32)\n'
+    d = d + 'declare i32 @tomato_parse_bool(ptr, i32)\n'
     d = d + 'declare void @tomato_report_uncaught(ptr, i32, i32, i32)\n'
     d = d + 'declare i64 @tomato_str_find(ptr, ptr)\n'
     d = d + 'declare i32 @tomato_str_startswith(ptr, ptr)\n'
@@ -1405,6 +1431,42 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_list_push(ptr, i64)\n'
     d = d + '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
     return d
+
+def entry_wrapper(info: FuncInfo) -> str:
+    # main(): read the command-line inputs, run the entry point, report an error nobody caught (D28a, D22a)
+    k = len(info.ptypes)
+    out = 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
+    out = out + '  %ok = icmp eq i32 %n, ' + str(k) + '\n  br i1 %ok, label %go, label %bad\n'
+    out = out + 'bad:\n  call void @tomato_usage(i32 ' + str(k) + ', i32 %n)\n  unreachable\ngo:\n'
+    args = new_strs()
+    owned = new_strs()
+    i = 0
+    for t in info.ptypes:
+        out = out + '  %a' + str(i) + '.ptr = getelementptr ptr, ptr %argv, i64 ' + str(i + 1) + '\n'
+        out = out + '  %a' + str(i) + '.s = load ptr, ptr %a' + str(i) + '.ptr\n'
+        if t == 'str':
+            out = out + '  %a' + str(i) + ' = call ptr @tomato_str_from_cstr(ptr %a' + str(i) + '.s)\n'
+            args.append('ptr %a' + str(i))
+            owned.append('%a' + str(i))
+        elif t == 'int':
+            out = out + '  %a' + str(i) + ' = call i64 @tomato_parse_i64(ptr %a' + str(i) + '.s, i32 ' + str(i + 1) + ')\n'
+            args.append('i64 %a' + str(i))
+        elif t == 'bool':
+            out = out + '  %a' + str(i) + '.w = call i32 @tomato_parse_bool(ptr %a' + str(i) + '.s, i32 ' + str(i + 1) + ')\n'
+            out = out + '  %a' + str(i) + ' = zext i32 %a' + str(i) + '.w to i64\n'
+            args.append('i64 %a' + str(i))
+        else:
+            raise CompileError('the Tomato compiler reads entry point inputs of type int, bool and str only', 0)
+        i = i + 1
+    out = out + '  call void @tomato.' + info.name + '(' + ', '.join(args) + ')\n'
+    out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
+    out = out + 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
+    out = out + '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 1)\n  unreachable\n'
+    out = out + 'fine:\n'
+    for reg in owned:
+        out = out + '  call void @tomato_release(ptr ' + reg + ')\n'
+    out = out + '  call void @tomato_leak_check()\n  ret i32 0\n}\n'
+    return out
 
 def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info = FuncInfo()
@@ -1468,11 +1530,42 @@ def resolve_class(mod: Mod, items: list[Node], name: str):
         if fd.fields[4].tag == 'n':
             c.defaults.append(val_node(fd.fields[4]))
 
-export def compile_module(src: str) -> str:
+def read_module(dir: str, name: str, line: int) -> str:
+    f = open(dir + name + '.tom')
+    text = f.read()
+    f.close()
+    return text
+
+def load_items(dir: str, src: str, items: list[Node], loaded: list[str], names: list[str]) -> list[Node]:
+    # the declarations of src with the declarations of the modules it imports placed before them (each once)
+    mine = val_nodes(parse(src).fields[0])
+    for item in mine:
+        if item.kind == 'Import':
+            module = item.fields[0].text
+            if not (module in loaded):
+                loaded.append(module)
+                load_items(dir, read_module(dir, module, item.line), items, loaded, names)
+    own: list[Node] = []
+    for item in mine:
+        if item.kind != 'Import':
+            own.append(item)
+            if item.kind == 'FuncDef' or item.kind == 'ClassDef':
+                name = item.fields[0].text
+                if name in names:
+                    raise CompileError(name + ' is declared in more than one module (the Tomato compiler has no module namespaces yet)', item.line)
+                names.append(name)
+    for item in own:
+        items.append(item)
+    return own
+
+export def compile_module(src: str, dir: str, entry_name: str) -> str:
     mod = Mod()
     items = val_nodes(parse(builtin_source()).fields[0])
-    for user in val_nodes(parse(src).fields[0]):
-        items.append(user)
+    names = new_strs()
+    loaded = new_strs()
+    for b in items:
+        names.append(b.fields[0].text)
+    user = load_items(dir, src, items, loaded, names)
     for item in items:
         if item.kind == 'ClassDef':
             if len(item.fields[2].items) > 0:
@@ -1492,10 +1585,6 @@ export def compile_module(src: str) -> str:
             info = function_info(item, mod, '')
             mod.infos.append(info)
             funcs.append(item)
-            if item.fields[6].tag == 's' and item.fields[6].text == 'entry:main':
-                entry = info.name
-                if len(info.ptypes) != 0 or info.ret != '':
-                    raise CompileError('the Tomato compiler runs an @main without inputs or a result yet', item.line)
         elif item.kind == 'ClassDef':
             c = mod.find_class(item.fields[0].text, item.line)
             for m in val_nodes(item.fields[4]):
@@ -1508,8 +1597,13 @@ export def compile_module(src: str) -> str:
                     c.init = info.name
         else:
             raise CompileError('the Tomato compiler does not support ' + item.kind + ' declarations yet', item.line)
+    for item in user:
+        if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text == 'entry:' + entry_name:
+            entry = item.fields[0].text
+            if item.fields[2].tag != 'z':
+                raise CompileError('the Tomato compiler runs an entry point without a result yet', item.line)
     if entry == '':
-        raise CompileError('no function marked @main', 1)
+        raise CompileError('no function marked @' + entry_name, 1)
     bodies = ''
     k = 0
     for f in funcs:
@@ -1525,9 +1619,5 @@ export def compile_module(src: str) -> str:
         out = out + string_c(j, s) + '\n'
         j = j + 1
     out = out + '\n' + bodies
-    out = out + 'define i32 @main() {\n  call void @tomato.' + entry + '()\n'
-    out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
-    out = out + 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
-    out = out + '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 1)\n  unreachable\n'
-    out = out + 'fine:\n  call void @tomato_leak_check()\n  ret i32 0\n}\n'
+    out = out + entry_wrapper(mod.find(entry, 1))
     return out

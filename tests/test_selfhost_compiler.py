@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))
 from tomato.errors import TomatoError  # noqa: E402
 from tomato.interp import run_source  # noqa: E402
 
@@ -240,14 +241,14 @@ class SelfhostCompiler(unittest.TestCase):
             f.write(src)
         return path
 
-    def ir_by_interpreter(self, path):
+    def ir_by_interpreter(self, path, entry="main"):
         src = open(os.path.join(SELF, "ctool.tom")).read()
         out = io.StringIO()
-        run_source(src, out, entry="compile", inputs=[path], search=[SELF])
+        run_source(src, out, entry="compile", inputs=[path, entry], search=[SELF])
         return out.getvalue()
 
-    def ir_by_native(self, path):
-        return subprocess.run([self.native, path], check=True, capture_output=True, text=True).stdout
+    def ir_by_native(self, path, entry="main"):
+        return subprocess.run([self.native, path, entry], check=True, capture_output=True, text=True).stdout
 
     def run_ir(self, name, ir):
         ll = os.path.join(self.dir, name + ".ll")
@@ -328,6 +329,27 @@ def main():
         self.assertEqual(run.stdout, out.getvalue())
         self.assertIn("uncaught error NegativeError: negative", run.stderr)
         self.assertIn("uncaught error NegativeError: negative", str(cm.exception))
+
+    def test_the_lexer_built_by_the_tomato_compiler(self):
+        """Milestone: the Tomato compiler compiles the Tomato lexer (with its imports), and the result lexes like Python's."""
+        if self.native is None:
+            self.skipTest("clang is not installed")
+        from test_selfhost import python_tokens
+        path = os.path.join(SELF, "lextool.tom")
+        ir = self.ir_by_interpreter(path, "show")
+        self.assertEqual(self.ir_by_native(path, "show"), ir)
+        ll = os.path.join(self.dir, "lextool.ll")
+        with open(ll, "w") as f:
+            f.write(ir)
+        exe = os.path.join(self.dir, "lextool")
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+                       check=True, capture_output=True)
+        import glob
+        for f in sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(SELF, "*.tom"))):
+            with self.subTest(file=os.path.basename(f)):
+                run = subprocess.run([exe, f], check=True, capture_output=True, text=True)
+                self.assertEqual(run.stderr, "")
+                self.assertEqual(run.stdout.split("\n")[:-1], python_tokens(open(f).read()))
 
     def test_unsupported_programs_say_so(self):
         for src, text in (("interface I:\n    def f(self)\n@main\ndef main():\n    print(1)\n", "does not support InterfaceDef"),
