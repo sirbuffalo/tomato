@@ -1,0 +1,18 @@
+from tqdm import tqdm
+
+@main
+def main():
+    bar = tqdm(10, 'work', 10)
+    print(bar.render())
+    bar.count = 3
+    print(bar.render())
+    bar.count = 10
+    print(bar.render())
+    bar.count = 14
+    print(bar.render())
+    plain = tqdm(4)
+    plain.count = 1
+    print(plain.render())
+    unknown = tqdm(0, 'seen')
+    unknown.count = 7
+    print(unknown.render())

@@ -25,3 +25,4 @@ utf8_text
 at_add
 rational_library
 is_prime
+tqdm_library

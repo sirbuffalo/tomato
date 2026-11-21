@@ -1,0 +1,9 @@
+from tqdm import tqdm
+
+@main
+def main():
+    bar = tqdm(2, 'live', 4)
+    bar.update()
+    bar.update()
+    bar.close()
+    print(bar.count)
