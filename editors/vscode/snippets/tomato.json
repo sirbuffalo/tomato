@@ -1,0 +1,12 @@
+{
+  "Function": { "prefix": "def", "body": ["def ${1:name}(${2:x: int}) -> ${3:int}:", "\t${0:return x}"], "description": "A typed function" },
+  "Entry point": { "prefix": "main", "body": ["@main", "def main():", "\t${0:print('hello')}"], "description": "The @main entry point" },
+  "Class": { "prefix": "class", "body": ["class ${1:Name}:", "\t${2:field}: ${3:int}", "\t@init", "\tdef ${4:make}(self, ${2:field}: ${3:int}):", "\t\tself.${2:field} = ${2:field}"], "description": "A class with @init" },
+  "Interface": { "prefix": "interface", "body": ["interface ${1:Name}:", "\tdef ${2:method}(self) -> ${3:int}"], "description": "An interface" },
+  "If": { "prefix": "if", "body": ["if ${1:condition}:", "\t${0:pass}"] },
+  "For range": { "prefix": "for", "body": ["for ${1:i} in range(${2:n}):", "\t${0:pass}"] },
+  "While": { "prefix": "while", "body": ["while ${1:condition}:", "\t${0:pass}"] },
+  "Try": { "prefix": "try", "body": ["try:", "\t${1:pass}", "catch ${2:RuntimeError} as ${3:e}:", "\t${0:print(e.message)}"] },
+  "LLVM function": { "prefix": "llvm", "body": ["!${1:name}(${2:a: int}) -> ${3:int}"], "description": "Declare an LLVM function" },
+  "Fixed int": { "prefix": "fixed", "body": ["${1:x}: ${2|int,uint|}[length=${3:8}] = ${0:0}"] }
+}

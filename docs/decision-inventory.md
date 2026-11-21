@@ -188,7 +188,8 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 161. D41a is accepted (reading to confirm): float literals (`1.5`, `2e3`), `float(x)`, mixed whole-number/float arithmetic, `//` and `**`; `float` is binary64 and `/` still gives a float; `rational` is unchanged.
 162. D42a is accepted (reading to confirm): top-level code is the program unless there is an `@main`; the compiler written in Tomato is v0.x and the Python implementation v-1.x; `tomato repl` exists.
 163. D43a is accepted (reading to confirm): a static website in `site/`, GitHub releases, `tomato update`, and the new project layout.
-164. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+164. D44a is accepted (reading to confirm): a VS Code extension with a TextMate grammar, snippets and language configuration; website highlighting; clearer errors from `tomato`.
+165. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass
 

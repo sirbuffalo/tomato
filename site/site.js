@@ -38,3 +38,42 @@ function markdown(src) {
   flush(); closeList();
   return out.join("\n");
 }
+
+// ---- syntax highlighting for <pre><code> blocks (same token classes as editors/vscode/syntaxes/tomato.tmLanguage.json)
+(function () {
+  var KW = /^(def|class|interface|implements|private|const|override|return|if|elif|else|while|for|in|pass|break|continue|try|catch|finally|raise|import|from|export|as|is|and|or|xor|not)$/;
+  var TY = /^(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IOError)$/;
+  var BI = /^(print|len|str|int|float|rational|range|open)$/;
+  var TOKEN = /(#[^\n]*)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(!?[A-Za-z_]\w*)|(->|\*\*|\/\/|==|!=|<=|>=|[-+*\/%<>=&|^])|(@\w+)/g;
+  function highlight(src) {
+    var out = "", last = 0, m;
+    TOKEN.lastIndex = 0;
+    while ((m = TOKEN.exec(src))) {
+      out += esc(src.slice(last, m.index));
+      var t = m[0], cls = "";
+      if (m[1]) cls = "tk-c";
+      else if (m[2]) cls = "tk-s";
+      else if (m[3]) cls = "tk-n";
+      else if (m[4]) {
+        var after = src.charAt(m.index + t.length), word = t.replace(/^!/, "");
+        if (t.charAt(0) === "!") cls = "tk-l";
+        else if (/^(True|False|None)$/.test(t)) cls = "tk-k2";
+        else if (KW.test(t)) cls = "tk-k";
+        else if (BI.test(t) && after === "(") cls = "tk-b";
+        else if (TY.test(t)) cls = "tk-t";
+        else if (/\s*\(/.test(src.slice(m.index + t.length, m.index + t.length + 2)) || after === "(") cls = "tk-f";
+        else if (/^[A-Z]/.test(word)) cls = "tk-t";
+      } else if (m[5]) cls = "tk-o";
+      else if (m[6]) cls = "tk-d";
+      out += cls ? '<span class="' + cls + '">' + esc(t) + "</span>" : esc(t);
+      last = m.index + t.length;
+    }
+    return out + esc(src.slice(last));
+  }
+  window.tomatoHighlight = highlight;
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("pre > code").forEach(function (el) {
+      if (el.className.indexOf("no-hl") < 0 && el.parentNode.id !== "out") el.innerHTML = highlight(el.textContent);
+    });
+  });
+})();

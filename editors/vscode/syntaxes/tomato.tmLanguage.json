@@ -1,0 +1,102 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Tomato",
+  "scopeName": "source.tomato",
+  "fileTypes": ["tom"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#decorator" },
+    { "include": "#llvm-declaration" },
+    { "include": "#definition" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#fixed-type" },
+    { "include": "#keyword" },
+    { "include": "#constant" },
+    { "include": "#type" },
+    { "include": "#builtin" },
+    { "include": "#llvm-call" },
+    { "include": "#call" },
+    { "include": "#operator" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comment": { "name": "comment.line.number-sign.tomato", "match": "#.*$" },
+    "decorator": {
+      "match": "^\\s*(@)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": { "1": { "name": "punctuation.definition.decorator.tomato" }, "2": { "name": "entity.name.function.decorator.tomato" } }
+    },
+    "llvm-declaration": {
+      "match": "^\\s*(!)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": { "1": { "name": "keyword.operator.llvm.tomato" }, "2": { "name": "entity.name.function.llvm.tomato" } }
+    },
+    "llvm-call": {
+      "match": "(!)([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+      "captures": { "1": { "name": "keyword.operator.llvm.tomato" }, "2": { "name": "support.function.llvm.tomato" } }
+    },
+    "definition": {
+      "patterns": [
+        {
+          "match": "\\b(def)\\s+(?:(private|override)\\s+)*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "storage.type.function.tomato" }, "2": { "name": "storage.modifier.tomato" }, "3": { "name": "entity.name.function.tomato" } }
+        },
+        {
+          "match": "\\b(class)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s+(implements)\\s+([A-Za-z_][A-Za-z0-9_, ]*))?",
+          "captures": { "1": { "name": "storage.type.class.tomato" }, "2": { "name": "entity.name.type.class.tomato" }, "3": { "name": "keyword.other.implements.tomato" }, "4": { "name": "entity.other.inherited-class.tomato" } }
+        },
+        {
+          "match": "\\b(interface)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "storage.type.interface.tomato" }, "2": { "name": "entity.name.type.interface.tomato" } }
+        }
+      ]
+    },
+    "string": {
+      "patterns": [
+        { "name": "string.quoted.double.tomato", "begin": "\"", "end": "\"", "patterns": [{ "include": "#escape" }] },
+        { "name": "string.quoted.single.tomato", "begin": "'", "end": "'", "patterns": [{ "include": "#escape" }] }
+      ]
+    },
+    "escape": { "name": "constant.character.escape.tomato", "match": "\\\\(?:[ntr0\\\\'\"]|u\\{[0-9A-Fa-f]+\\})" },
+    "number": {
+      "patterns": [
+        { "name": "constant.numeric.float.tomato", "match": "\\b[0-9]+(?:\\.[0-9]+(?:[eE][+-]?[0-9]+)?|[eE][+-]?[0-9]+)\\b" },
+        { "name": "constant.numeric.integer.tomato", "match": "\\b[0-9]+\\b" }
+      ]
+    },
+    "fixed-type": {
+      "match": "\\b(u?int)(\\[)(length)(=)([0-9A-Za-z_ *+-]+)(\\])",
+      "captures": {
+        "1": { "name": "support.type.primitive.tomato" }, "2": { "name": "punctuation.definition.bracket.tomato" },
+        "3": { "name": "variable.parameter.tomato" }, "4": { "name": "keyword.operator.assignment.tomato" },
+        "5": { "name": "constant.numeric.integer.tomato" }, "6": { "name": "punctuation.definition.bracket.tomato" }
+      }
+    },
+    "keyword": {
+      "patterns": [
+        { "name": "keyword.control.flow.tomato", "match": "\\b(if|elif|else|while|for|return|break|continue|pass)\\b" },
+        { "name": "keyword.control.exception.tomato", "match": "\\b(try|catch|finally|raise)\\b" },
+        { "name": "keyword.control.import.tomato", "match": "\\b(import|from|export|as)\\b" },
+        { "name": "keyword.operator.logical.tomato", "match": "\\b(and|or|xor|not|in|is)\\b" },
+        { "name": "storage.modifier.tomato", "match": "\\b(private|const|override)\\b" },
+        { "name": "storage.type.tomato", "match": "\\b(def|class|interface|implements)\\b" }
+      ]
+    },
+    "constant": { "name": "constant.language.tomato", "match": "\\b(True|False|None)\\b" },
+    "type": {
+      "name": "support.type.primitive.tomato",
+      "match": "\\b(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IOError)\\b(?!\\s*\\()"
+    },
+    "builtin": { "name": "support.function.builtin.tomato", "match": "\\b(print|len|str|int|float|rational|range|open)(?=\\s*\\()" },
+    "call": { "name": "entity.name.function.call.tomato", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" },
+    "operator": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.tomato", "match": "->" },
+        { "name": "keyword.operator.arithmetic.tomato", "match": "\\*\\*|//|[-+*/%]" },
+        { "name": "keyword.operator.comparison.tomato", "match": "==|!=|<=|>=|<|>" },
+        { "name": "keyword.operator.bitwise.tomato", "match": "[&|^]" },
+        { "name": "keyword.operator.assignment.tomato", "match": "=" }
+      ]
+    },
+    "punctuation": { "name": "punctuation.separator.tomato", "match": "[,:.]" }
+  }
+}

@@ -1189,6 +1189,13 @@ Source: Davis's Dashboard message:
 - Layout: `python/` (the Python implementation), `compiler/` (`src/` and `bootstrap/`), `server/`, `site/`, `release/`, `native/`, `docs/`, `examples/`, `tests/`. The old chat and decision site, its `static/` page and the Pyodide playground were deleted; they remain in git history.
 - Open: the public location of the releases (the repository is private today) and the public URL of the compile server.
 
+### D44a — editor support and syntax highlighting: accepted (reading to confirm)
+
+- Evidence: Davis noted that GitHub does not recognise Tomato as a language and wrote “write full text make grammar make syntax highlighting and everything”.
+- `editors/vscode/` is a VS Code extension: a TextMate grammar (`source.tomato`, works in other TextMate-based editors too), bracket and indent rules, and snippets. The website highlights its code blocks with the same token classes.
+- `tomato` with an unknown command prints `error: unknown command` and exits with 2; `tomato help` lists the commands.
+- Open: submitting the grammar to GitHub Linguist (it expects wide public use first), a language server, and publishing the extension to the marketplace.
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.

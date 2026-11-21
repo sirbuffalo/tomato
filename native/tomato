@@ -16,11 +16,13 @@ home="$(cd "$(dirname "$src")/.." && pwd)"
 tomatoc="$home/bin/tomatoc"
 runtime="$home/runtime/tomato_rt.c"
 std="$home/std/"
-usage() { sed -n '2,8p' "$src" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+commands() { sed -n '3,8p' "$src" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2p' "$src" | sed 's/^# \{0,1\}//' >&2; commands >&2; exit 2; }
 die() { echo "error: $*" >&2; exit 1; }
 
 cmd="$1"; [ -n "$cmd" ] || usage; shift
 case "$cmd" in
+  help|--help|-h) sed -n '2p' "$src" | sed 's/^# \{0,1\}//'; commands; exit 0 ;;
   version) echo "Tomato v$(cat "$home/VERSION" 2>/dev/null || echo 0) (compiler written in Tomato)"; exit 0 ;;
   update)
     # tomato update: read the manifest, and if a newer release exists download it and run its installer
@@ -48,7 +50,7 @@ case "$cmd" in
     py="$(command -v tomato-py)" || die "tomato repl needs the Python command tomato-py (the shell is not written in Tomato yet)"
     exec "$py" repl "$@" ;;
   run|build|compile) ;;
-  *) usage ;;
+  *) echo "error: unknown command '$cmd'" >&2; echo "run 'tomato help' for the commands" >&2; exit 2 ;;
 esac
 
 set -f      # words are split on newlines below; never expand * or ? in them

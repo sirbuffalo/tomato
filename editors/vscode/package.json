@@ -1,0 +1,16 @@
+{
+  "name": "tomato-language",
+  "displayName": "Tomato",
+  "description": "Syntax highlighting, snippets and editing support for the Tomato language (.tom).",
+  "version": "0.1.0",
+  "publisher": "tomato-lang",
+  "license": "MIT",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Programming Languages", "Snippets"],
+  "repository": { "type": "git", "url": "https://github.com/sirbuffalo/tomato" },
+  "contributes": {
+    "languages": [{ "id": "tomato", "aliases": ["Tomato", "tomato"], "extensions": [".tom"], "configuration": "./language-configuration.json" }],
+    "grammars": [{ "language": "tomato", "scopeName": "source.tomato", "path": "./syntaxes/tomato.tmLanguage.json" }],
+    "snippets": [{ "language": "tomato", "path": "./snippets/tomato.json" }]
+  }
+}

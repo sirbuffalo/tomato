@@ -14,6 +14,7 @@ Tomato is a statically typed, reference-counted, Python-like language compiled t
 | `compiler/bootstrap/` | `tomatoc.ll`, the compiler's own IR, so a machine with only clang can build it; `refresh.sh` regenerates it |
 | `python/` | the Python implementation: the interpreter, the static check pass, the LLVM compiler, the repl (`python/bin/tomato`); its placeholders are in [PROVISIONAL.md](python/tomato/PROVISIONAL.md) |
 | `native/` | the `tomato` command script |
+| `editors/` | the VS Code extension: TextMate grammar, snippets, language configuration |
 | `server/` | the compile server behind the website's Run and Repl page |
 | `site/` | the website for tomato.davismcd.com (`site/build.sh` assembles it) |
 | `release/` | `build.sh` builds the release archive and `latest.json` that `tomato update` reads |

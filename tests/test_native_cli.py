@@ -76,11 +76,20 @@ class NativeCli(unittest.TestCase):
         link = os.path.join(self.home, "linked-tomato")
         os.symlink(self.tomato, link)
         r = subprocess.run([link, "version"], capture_output=True, text=True)
-        self.assertEqual(r.stdout, "Tomato v0.1 (compiler written in Tomato)\n")
+        self.assertEqual(r.stdout, "Tomato v%s (compiler written in Tomato)\n" % open(os.path.join(ROOT, "VERSION")).read().strip())
+
+    def test_unknown_command_is_an_error(self):
+        r = self.run_cli("wghwrltghs")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("error: unknown command 'wghwrltghs'", r.stderr)
+        r = self.run_cli("help")
+        self.assertEqual(r.returncode, 0)
+        for word in ("run", "build", "compile", "repl", "update", "version"):
+            self.assertIn("tomato " + word, r.stdout)
 
     def test_usage(self):
         self.assertEqual(self.run_cli().returncode, 2)
-        self.assertEqual(self.run_cli("version").stdout, "Tomato v0.1 (compiler written in Tomato)\n")
+        self.assertEqual(self.run_cli("version").stdout, "Tomato v%s (compiler written in Tomato)\n" % open(os.path.join(ROOT, "VERSION")).read().strip())
 
 
 if __name__ == "__main__":
