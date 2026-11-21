@@ -1945,7 +1945,7 @@ class Codegen:
         return "tomato.new.%d" % self.type_code(ClassT(cls.name))
 
     def compiled(self, c):
-        return c.module in ("main", "builtin")
+        return True
 
     def has_subclasses(self, info):
         return any(c is not info and self.interp.is_subclass(c, info.name) for c in self.interp.classes.values()
@@ -1967,10 +1967,9 @@ class Codegen:
     def method_slots(self):
         names = []
         for i in self.interp.ifaces.values():
-            if i.module == "main":
-                for n in self.interp.iface_requirements(i.name):
-                    if n not in names:
-                        names.append(n)
+            for n in self.interp.iface_requirements(i.name):
+                if n not in names:
+                    names.append(n)
         for c in self.interp.classes.values():
             if self.compiled(c):
                 for k in c.chain():
@@ -2121,33 +2120,37 @@ def compile_to_ir(src, entry="main", search=None, mode="debug"):
     if mode not in ("debug", "normal", "release"):
         raise TomatoError("mode must be debug, normal or release, found %r" % mode)
     cg = Codegen(interp, mode)
-    for name, f in interp.funcs.items():
-        if f.module != "main":
-            raise NotCompiled("imported modules (function %s)" % name)
     units = {}                  # symbol -> (compiled text or NotCompiled error, callees)
     main_classes = [c for c in interp.classes.values() if cg.compiled(c)]
 
-    def add_unit(unit, compiler_cls=FuncCompiler):
+    def add_unit(unit, module, compiler_cls=FuncCompiler):
         fc = compiler_cls(cg, unit)
         if any(p.star for p in unit.node.params):
             units[unit.symbol] = (NotCompiled("*args and **kwargs parameters", unit.node.line), fc.callees)
             return
+        prev, interp.cur_mod = interp.cur_mod, module      # names resolve in the module the code was written in (D24c)
         try:
             units[unit.symbol] = (fc.compile(), fc.callees)
         except NotCompiled as err:
             units[unit.symbol] = (err, fc.callees)
+        finally:
+            interp.cur_mod = prev
 
     for f in interp.funcs.values():
         u = Unit(cg.func_symbol(f), f.node, f.ptypes, f.ret, None, f.name)
         u.ptypes_all = list(f.ptypes)
-        add_unit(u)
+        add_unit(u, f.module)
     for c in main_classes:
         for m in c.methods.values():
             ptypes = ([ClassT(c.name)] if m.has_self else []) + list(m.ptypes)
             u = Unit(cg.func_symbol(m), m.node, m.ptypes, m.ret, c, m.name)
             u.ptypes_all = ptypes
-            add_unit(u)
-        units[cg.ctor_symbol(c)] = compile_ctor(cg, c)
+            add_unit(u, c.module)
+        prev, interp.cur_mod = interp.cur_mod, c.module
+        try:
+            units[cg.ctor_symbol(c)] = compile_ctor(cg, c)
+        finally:
+            interp.cur_mod = prev
     fn = interp.entries[entry]
     root = cg.func_symbol(fn)
     reachable, todo = set(), [root]

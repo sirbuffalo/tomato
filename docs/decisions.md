@@ -1135,6 +1135,7 @@ Source: Davis's Dashboard message:
 - First step: `selfhost/lexer.tom`, a lexer in Tomato that produces exactly the tokens of the Python lexer on every example, standard-library and self-hosting file (checked by `tests/test_selfhost.py`). It runs under the interpreter; the Python compiler cannot build it yet (`in` on lists and text, text methods and slicing, reading files in compiled code).
 - Git: I commit as I go and push once a feature fully works, not every time. The first push was a single clean commit on top of `origin/main`.
 - Stage 1 works for the lexer: the Python compiler builds `selfhost/lexer.tom` into a native program that prints the same tokens as the Python lexer on every example and self-hosting file (`tests/test_selfhost.py`). Compiled code gained `x in list`, file reading and writing, and the text methods `find`, `replace`, `split`, `startswith` and `endswith` for it (P49, P50).
+- Imported modules compile (P51): the compiler can now build programs made of several files, which the compiler in Tomato needs. `examples/features.tom`, which was “not compiled yet” because it imports `math`, builds with the same output as the interpreter.
 - Confirmed by Davis (asked whether Python may still change): language features go in the Python bootstrap until Tomato can build itself; new tools and the compiler passes are written in Tomato.
 - Open: the order of the remaining compiler passes (parser, checker, code generator), how the runtime moves from C to LLVM IR, and the compiled-code features the lexer needs.
 

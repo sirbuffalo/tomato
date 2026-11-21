@@ -359,7 +359,7 @@ class CompileErrors(unittest.TestCase):
         self.fails("def f():\n    print(1 + 'a')\n@main\ndef main():\n    print(1)\n", "type error")
 
     def test_classes_and_imports_not_compiled_yet(self):
-        self.fails("from math import abs\n@main\ndef main():\n    print(abs(1))\n", "does not support imported modules")
+        self.assertIn("tomato.math.abs", compile_to_ir("from math import abs\n@main\ndef main():\n    print(abs(1))\n"))
 
     def test_type_errors_are_caught_at_compile_time(self):
         self.fails(prog("print(1 + 'a')"), "type error")
@@ -450,7 +450,11 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(self.tomato("explain", "E01:1", "examples/missing.tom")[0], 1)
 
     def test_compile_reports_unsupported_code(self):
-        code, so, se = self.tomato("compile", "examples/features.tom", "-o", "/dev/null")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "p.tom")
+            with open(path, "w") as f:
+                f.write("@main\ndef main():\n    print([1])\n")
+            code, so, se = self.tomato("compile", path, "-o", "/dev/null")
         self.assertEqual(code, 1)
         self.assertIn("the compiler does not support", se)
 

@@ -633,6 +633,26 @@ class OptionalsAndDefaults(unittest.TestCase):
         self.same(prog("f = open('%s', 'w')\nf.write('one\\ntwo\\n')\nf.close()\ng = open('%s')\ns = g.read()\ng.close()\n"
                        "print(len(s.split('\\n')), s.split('\\n')[1])" % (path, path)))
 
+    def test_imported_modules(self):
+        d = tempfile.mkdtemp()
+        files = {
+            "a.tom": "export class Item:\n    v: int = 1\n\nexport def helper() -> int:\n    return 1\n\nexport def make_a() -> Item:\n    return Item()\n",
+            "b.tom": "export class Item:\n    v: int = 2\n    w: int = 5\n\nexport def helper() -> int:\n    return 2\n\nexport def make_b() -> Item:\n    return Item()\n",
+            "two.tom": "from a import make_a\n" +
+                       "from b import make_b, helper\nfrom math import gcd, pow\n\n"
+                       "@main\ndef main():\n    x = make_a()\n    y = make_b()\n    print(x.v, y.v, y.w, helper(), gcd(12, 18), pow(2, 10))\n",
+        }
+        for name, text in files.items():
+            with open(os.path.join(d, name), "w") as f:
+                f.write(text)
+        run_py = subprocess.run([sys.executable, "-m", "tomato", "run", "two.tom"], cwd=d, capture_output=True, text=True,
+                                env=dict(os.environ, PYTHONPATH=os.path.abspath(ROOT)))
+        self.assertEqual(run_py.stdout, "1 2 5 2 6 1024\n", run_py.stderr)
+        subprocess.run([sys.executable, "-m", "tomato", "build", "two.tom", "-o", "two.out"], cwd=d, check=True,
+                       capture_output=True, env=dict(os.environ, PYTHONPATH=os.path.abspath(ROOT)))
+        out = subprocess.run([os.path.join(d, "two.out")], capture_output=True, text=True)
+        self.assertEqual(out.stdout, "1 2 5 2 6 1024\n", out.stderr)
+
     def test_xor(self):
         self.same(prog("a = True\nb = False\nprint(a xor b, a xor a, b xor b, a or b xor a, not a xor a)"))
 
