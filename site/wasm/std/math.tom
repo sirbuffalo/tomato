@@ -45,11 +45,14 @@ def powmod(base: int, exponent: int, modulus: int) -> int:
 
 # Miller-Rabin primality test. The witnesses 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31 and 37 are a proven
 # deterministic set for every n below 3.3 * 10^24, so the answer is exact for all 64-bit integers.
+# From 2^64 up it uses the first 20 primes (2 to 71) instead, which is a strong probabilistic test, not a proof.
 # Negative numbers, 0 and 1 are not prime.
 export def is_prime(n: int) -> bool:
     if n < 2:
         return False
     witnesses = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+    if n >= 18446744073709551616:
+        witnesses = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
     for p in witnesses:
         if n == p:
             return True

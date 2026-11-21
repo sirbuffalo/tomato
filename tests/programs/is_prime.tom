@@ -11,3 +11,4 @@ def main():
     print(is_prime(2147483647), is_prime(2305843009213693951), is_prime(9223372036854775807))
     print(is_prime(9223372036854775783), is_prime(18446744073709551557), is_prime(18446744073709551615))
     print(is_prime(3825123056546413051), is_prime(4759123141), is_prime(1000000007 * 998244353))
+    print(is_prime(2 ** 89 - 1), is_prime(2 ** 89 + 1), is_prime(2 ** 127 - 1), is_prime((2 ** 61 - 1) * (2 ** 31 - 1)))
