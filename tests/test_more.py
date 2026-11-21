@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import unittest
@@ -7,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from test_tomato import fails, run, run_raw  # noqa: E402
 import os  # noqa: E402
 from tomato.errors import NotDecided, TomatoError  # noqa: E402
+from tomato.interp import run_source  # noqa: E402
 
 
 class Division(unittest.TestCase):
@@ -1033,12 +1035,32 @@ class Optionals(unittest.TestCase):
                          "3\nTrue False True True False\n")
         fails(self, pre + "def f(x: Named & Sized) -> int:\n    return 1\nprint(f(Tag()))", "does not fit")
         fails(self, "x: int & str = 1", "only interfaces and classes")
+        fails(self, pre + "def f(x: Box & Tag) -> int:\n    return 1\n", "at least one interface")
+        fails(self, pre + "print(Box() in Box & Tag)", "at least one interface")
+        self.assertEqual(run(pre + "def g(x: Box & Named) -> int:\n    return x.size()\nprint(g(Box()), Box() in Box & Named)"), "3 True\n")
         self.assertEqual(run("print(12 & 10, 12 | 10, 12 ^ 10, 1 | 2 ^ 3 & 4, 1 + 2 & 3, 6 & 3 == 2)"), "8 14 6 3 3 True\n")
         self.assertEqual(run("a: uint[length=8] = uint[length=8](200)\nprint(a & uint[length=8](15), a ^ uint[length=8](255))"), "8 55\n")
         self.assertEqual(run("print(True xor False, True xor True, False xor False, True or False xor True, not True xor True)"),
                          "True False False True True\n")
         fails(self, "print(1 xor 2)", "must be a bool")
         fails(self, "print(True & False)", "not yet decided", NotDecided)
+
+    def test_union_inputs_take_the_most_restrictive_type(self):
+        src = "@show\ndef show(x: int | float | bool | str):\n    print(x in int, x in float, x in bool, x in str)\n"
+        def go(text):
+            out = io.StringIO()
+            run_source(src, out, entry="show", inputs=[text])
+            return out.getvalue()
+        self.assertEqual(go("6"), "True False False False\n")
+        self.assertEqual(go("-2"), "True False False False\n")
+        self.assertEqual(go("1.5"), "False True False False\n")
+        self.assertEqual(go("true"), "False False True False\n")
+        self.assertEqual(go("hello"), "False False False True\n")
+        out = io.StringIO()
+        run_source("@f\ndef f(x: int | float):\n    print(x)\n", out, entry="f", inputs=["2.5"])
+        self.assertEqual(out.getvalue(), "2.5\n")
+        with self.assertRaises(TomatoError):
+            run_source("@f\ndef f(x: int | bool):\n    print(x)\n", io.StringIO(), entry="f", inputs=["zzz"])
 
     def test_str_of_none(self):
         self.assertEqual(run("print(None)"), "None\n")

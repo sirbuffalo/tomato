@@ -152,6 +152,8 @@ class Interpreter:
                 if t in members:
                     raise TomatoError("%r & %r repeats a type (D23h)" % (t, t), ref.line)
                 members.append(t)
+            if all(isinstance(t, ClassT) for t in members):
+                raise TomatoError("& needs at least one interface among its types, found only classes (D23h)", ref.line)
             if sum(isinstance(t, ClassT) for t in members) > 1:
                 raise TomatoError("an intersection can hold at most one class (D23h)", ref.line)
             return InterT(members)
@@ -203,7 +205,10 @@ class Interpreter:
                 return UnionT(ms)
             if not (isinstance(a, (ClassT, IfaceT, InterT)) and isinstance(b, (ClassT, IfaceT, InterT))):
                 raise TomatoError("only interfaces and classes can be joined with & (D23h)", e.line)
-            return InterT((a.members if isinstance(a, InterT) else (a,)) + (b.members if isinstance(b, InterT) else (b,)))
+            ms = (a.members if isinstance(a, InterT) else (a,)) + (b.members if isinstance(b, InterT) else (b,))
+            if all(isinstance(t, ClassT) for t in ms):
+                raise TomatoError("& needs at least one interface among its types, found only classes (D23h)", e.line)
+            return InterT(ms)
         return None
 
     def type_match(self, v, t):
@@ -386,6 +391,8 @@ class Interpreter:
                     if f.ret != NoneT:
                         raise NotDecided("an entry point that returns a value (exit status)", f.node.line)
                     for t in f.ptypes:
+                        if isinstance(t, UnionT) and all(m in (INT, FloatT, BoolT, StrT) for m in t.members):
+                            continue
                         if not (is_int_type(t) or t in (FloatT, BoolT, StrT)):
                             raise NotDecided("an entry point parameter of type %r (inputs are int, float, bool and str)"
                                              % (t,), f.node.line)
@@ -744,6 +751,14 @@ class Interpreter:
         """Turn one command-line input into a value of the entry point's parameter type (D28a, P34)."""
         def bad(what):
             raise TomatoError("input %d (%s) must be %s, found %r" % (position, name, what, text), line)
+        if isinstance(t, UnionT):                        # the most restrictive member that fits (D28b)
+            for m in (INT, FloatT, BoolT, StrT):
+                if m in t.members:
+                    try:
+                        return self.parse_input(text, m, position, name, line)
+                    except TomatoError:
+                        continue
+            bad("one of " + repr(t))
         if t == StrT:
             return text
         if t == BoolT:

@@ -181,7 +181,9 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 154. D23f is accepted: `x in Type` is the type check (`x in None`, `x in int`, `x in Dog`); subclass, interface, `int` and optional details are logged as P44.
 155. D23g is accepted (reading to confirm): `|` is a general type union (`int | str`, `Dog | Cat | None`); `T | None` is the union with `None`; interpreter only, compiler keeps `T | None` for heap types; logged as P45.
 156. D23h is accepted (reading to confirm): `&` is type intersection and bitwise and, `|` also bitwise or and `^` bitwise xor on whole numbers, and `xor` is the logical word operator; logged as P46.
-157. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+157. D38a is accepted (reading to confirm): new code is Tomato and LLVM only; the Python version bootstraps the Tomato compiler and each version compiles the next; first step selfhost/lexer.tom; commit freely, push when a feature fully works.
+158. D28b is accepted (reading to confirm): an entry parameter typed as a union of int, float, bool and str takes the first member that accepts the input text, in that order.
+159. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass
 

@@ -1124,8 +1124,23 @@ Source: Davis's Dashboard message:
 - `&` between types is an intersection (`Named & Printable`): a value that is every member. Members are interfaces and at most one class. `x in A & B` tests all members.
 - `&`, `|` and `^` between whole numbers are bitwise and, or and xor, with Python's precedence (`|` lowest, then `^`, then `&`, all below `+` and above comparisons). The result takes the wider operand's type. `|` between types remains the union (D23g); position decides which.
 - The word operators are Python's `not`, `and`, `or` plus a new `xor`: both operands `bool`, true when exactly one is true, no short-circuit, precedence between `or` and `and`. My reading of his short messages.
+- `&` between types needs at least one interface among its members (Davis: “& only works if at least 1 is a inteface for types”), so `Dog & Cat` is an error while `Animal & Named` and `Named & Sized` are valid.
 - The compiler supports `xor`. It stops with "does not support … yet" for the bitwise operators and for intersection types.
 - Open: a bitwise-not symbol (`~`), shifts, and bitwise operators on `bool`.
+
+### D38a — new code is Tomato and LLVM; each compiler builds the next: accepted (reading to confirm)
+
+- Evidence: Davis wrote “ok no more python for now on only in tomato”, “and llvm” and “use the previos version to compile the next”, and then “commit changes don't push each time”, “you have control of commiting” and “once a feature fully works push”.
+- Reading: from now on new compiler and tooling code is written in Tomato (with LLVM IR for low-level runtime pieces), not Python. The Python implementation stays as the bootstrap: it builds compiler v1 written in Tomato, v1 builds v2, and so on. The Python interpreter is not extended unless a Tomato program needs a feature it lacks.
+- First step: `selfhost/lexer.tom`, a lexer in Tomato that produces exactly the tokens of the Python lexer on every example, standard-library and self-hosting file (checked by `tests/test_selfhost.py`). It runs under the interpreter; the Python compiler cannot build it yet (`in` on lists and text, text methods and slicing, reading files in compiled code).
+- Git: I commit as I go and push once a feature fully works, not every time. The first push was a single clean commit on top of `origin/main`.
+- Open: the order of the remaining compiler passes (parser, checker, code generator), how the runtime moves from C to LLVM IR, and the compiled-code features the lexer needs.
+
+### D28b — command-line inputs take the most restrictive type: accepted (reading to confirm)
+
+- Evidence: Davis wrote “tomato run file main 6 should use the most restrictive type so int float bool str”, then “that is listed” when I asked whether he meant the declared parameter types.
+- A parameter declared `int`, `float`, `bool` or `str` reads its input as that type (as before, D28a). A parameter whose type is a union of those (D23g) takes the first member that accepts the text, trying `int`, then `float`, then `bool`, then `str`; text that fits none is an error.
+- Open: unions with other members, and the compiled programs (the compiler does not build unions yet).
 
 ## Pending discussion
 
