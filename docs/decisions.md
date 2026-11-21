@@ -1142,6 +1142,16 @@ Source: Davis's Dashboard message:
 - A parameter declared `int`, `float`, `bool` or `str` reads its input as that type (as before, D28a). A parameter whose type is a union of those (D23g) takes the first member that accepts the text, trying `int`, then `float`, then `bool`, then `str`; text that fits none is an error.
 - Open: unions with other members, and the compiled programs (the compiler does not build unions yet).
 
+### D39a — `*args` and `**kwargs`, typed with `tuple` and `dict`: accepted (reading to confirm)
+
+- Evidence: Davis wrote “*args and **kwargs should exist and should work with entries but must be typedqithn tuple or froendcit”. I read “froendcit” as `dict`.
+- Parameters: `*name: tuple[T]` collects extra positional arguments and `**name: dict[str, V]` collects extra keyword arguments. Both need an explicit type, take no default, and come last (`*args` before `**kwargs`). A wrong type is an error.
+- `tuple[T]` is new (my placeholder, P48): an immutable sequence of `T`, created by `*args` binding. It supports indexing, `len`, `for` and `in` like a list, and cannot be appended to or assigned into.
+- Keyword arguments `f(a, b=1)` exist at call sites of functions, methods and classes you define; a positional argument cannot follow a keyword one. A keyword names a parameter, or goes into `**kwargs` when there is one.
+- Entry points (D28a, D28b): inputs beyond the fixed parameters fill `*args`, each read as the most restrictive type of `T` (D28b); `name=value` inputs fill the parameter of that name or `**kwargs` (values read the same way).
+- The compiler stops with “does not support … yet” on all of this.
+- Open: a tuple literal, tuples as ordinary values and types beyond `tuple[T]` (mixed item types), `*` and `**` at call sites to spread a tuple or dict, and the compiled form.
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.

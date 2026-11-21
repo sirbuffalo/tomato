@@ -145,7 +145,7 @@ class Parser:
         if t is None:
             self.err("expected a type")
         length = None
-        if t.value in ("list", "set"):
+        if t.value in ("list", "set", "tuple"):
             self.expect_op("[")
             arg = self.type()
             self.expect_op("]")
@@ -172,14 +172,26 @@ class Parser:
         self.expect_op("(")
         out = []
         while not self.is_op(")"):
+            star = None
+            if self.is_op("*"):                     # *args and **kwargs (D39a)
+                self.next()
+                star = "**" if self.accept_op("*") else "*"
             nm = self.expect("NAME")
             ty = None
             if self.accept_op(":"):
                 ty = self.type()
             default = self.expr() if self.accept_op("=") else None
-            if default is None and any(q.default is not None for q in out):
+            if star:
+                if ty is None or default is not None:
+                    raise TomatoError("%s%s needs a type (%s) and takes no default (D39a)"
+                                      % (star, nm.value, "tuple[T]" if star == "*" else "dict[str, V]"), nm.line)
+                if any(q.star == "**" for q in out) or (star == "*" and any(q.star for q in out)):
+                    raise TomatoError("*args comes before **kwargs, and both come last (D39a)", nm.line)
+            elif any(q.star for q in out):
+                raise TomatoError("parameter %r follows *args or **kwargs; they come last (D39a)" % nm.value, nm.line)
+            elif default is None and any(q.default is not None for q in out if not q.star):
                 raise TomatoError("parameter %r needs a default value: it follows one that has a default (D19c)" % nm.value, nm.line)
-            out.append(N.Param(nm.value, ty, default, line=nm.line))
+            out.append(N.Param(nm.value, ty, default, star, line=nm.line))
             if not self.accept_op(","):
                 break
         self.expect_op(")")
@@ -484,13 +496,22 @@ class Parser:
         while True:
             if self.is_op("("):
                 ln = self.next().line
-                args = []
+                args, kwargs = [], []
                 while not self.is_op(")"):
-                    args.append(self.expr())
+                    if self.t.kind == "NAME" and self.peek().kind == "OP" and self.peek().value == "=":
+                        kw = self.next()                  # name=value keyword argument (D39a)
+                        self.next()
+                        if any(k == kw.value for k, _ in kwargs):
+                            raise TomatoError("keyword argument %s is given twice" % kw.value, kw.line)
+                        kwargs.append((kw.value, self.expr()))
+                    else:
+                        if kwargs:
+                            raise TomatoError("a positional argument cannot follow a keyword argument (D39a)", self.t.line)
+                        args.append(self.expr())
                     if not self.accept_op(","):
                         break
                 self.expect_op(")")
-                e = N.Call(e, args, line=ln)
+                e = N.Call(e, args, kwargs, line=ln)
             elif self.is_op("["):
                 ln = self.next().line
                 lo = None if self.is_op(":") else self.expr()

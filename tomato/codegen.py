@@ -621,6 +621,8 @@ class FuncCompiler:
         return out
 
     def arity_ok(self, fn, ptypes, n):
+        if getattr(fn, "star", None) is not None or getattr(fn, "kwstar", None) is not None:
+            raise NotCompiled("*args and **kwargs parameters")
         return getattr(fn, "min_args", len(ptypes)) <= n <= len(ptypes)
 
     def finish_call(self, text, ret, args, hint="call", can_raise=True):
@@ -653,6 +655,8 @@ class FuncCompiler:
 
     def call(self, e, expected=None):
         f = e.func
+        if e.kwargs:
+            raise NotCompiled("keyword arguments", e.line)
         if isinstance(f, N.Name) and f.name == "print":
             self.print_call(e)
             return None, NoneT
@@ -1966,6 +1970,9 @@ def compile_to_ir(src, entry="main", search=None, mode="debug"):
 
     def add_unit(unit, compiler_cls=FuncCompiler):
         fc = compiler_cls(cg, unit)
+        if any(p.star for p in unit.node.params):
+            units[unit.symbol] = (NotCompiled("*args and **kwargs parameters", unit.node.line), fc.callees)
+            return
         try:
             units[unit.symbol] = (fc.compile(), fc.callees)
         except NotCompiled as err:
@@ -2023,7 +2030,7 @@ def compile_ctor(cg, cls):
 
     node = Node()
     from .nodes import Param
-    node.params = [Param("a%d" % i, None, None) for i in range(len(ptypes))]
+    node.params = [Param("a%d" % i, None, None, None) for i in range(len(ptypes))]
     unit = Unit(cg.ctor_symbol(cls), node, ptypes, ClassT(cls.name), None, cls.node.name)
     unit.ptypes_all = ptypes
     fc = FuncCompiler(cg, unit)

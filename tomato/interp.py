@@ -5,7 +5,7 @@ import sys
 from . import nodes as N
 from .errors import NotDecided, RunFailure, TomatoError, TomatoRaise
 from .parser import parse
-from .values import (BoolT, ClassT, FixedInt, FixedT, FloatT, IfaceT, INT, Instance, IntT, ListT, NoneT, OptT, UnionT, InterT,
+from .values import (BoolT, ClassT, FixedInt, FixedT, FloatT, IfaceT, INT, Instance, IntT, ListT, NoneT, OptT, UnionT, InterT, TupleT, TTuple,
                      Rational, RationalT, RangeObj, RangeT, SimpleT, StrT, contains, int_value, is_int_type,
                      is_int_value, show, value_type, TList, MapT, SetT, TMap, TSet, TFile, FileT, key_of)
 
@@ -164,6 +164,8 @@ class Interpreter:
             return OptT(inner)
         if n == "list":
             return ListT(self.resolve(ref.arg))
+        if n == "tuple":
+            return TupleT(self.resolve(ref.arg))
         if n in ("dict", "set"):
             kt = self.resolve(ref.arg)
             if not (is_int_type(kt) or kt in (StrT, BoolT)):
@@ -390,7 +392,11 @@ class Interpreter:
                         raise NotDecided("more than one function marked @%s" % name, f.node.line)
                     if f.ret != NoneT:
                         raise NotDecided("an entry point that returns a value (exit status)", f.node.line)
-                    for t in f.ptypes:
+                    for k, t in enumerate(f.ptypes):
+                        if k == f.star:
+                            t = t.elem
+                        elif k == f.kwstar:
+                            t = t.value
                         if isinstance(t, UnionT) and all(m in (INT, FloatT, BoolT, StrT) for m in t.members):
                             continue
                         if not (is_int_type(t) or t in (FloatT, BoolT, StrT)):
@@ -412,7 +418,18 @@ class Interpreter:
         fi = FuncInfo(node, owner, ptypes, self.resolve(node.ret) if node.ret else NoneT,
                       owner.module if owner is not None else self.cur_mod)
         fi.defaults = [p.default for p in params]         # default argument values, or None (D19c)
-        fi.min_args = sum(1 for d in fi.defaults if d is None)
+        fi.nfixed = sum(1 for p in params if not p.star)
+        fi.min_args = sum(1 for p in params if not p.star and p.default is None)
+        fi.star = fi.kwstar = None                        # indexes of the *args and **kwargs parameters (D39a)
+        for k, p in enumerate(params):
+            if p.star == "*":
+                if not isinstance(ptypes[k], TupleT):
+                    raise TomatoError("*%s must be typed tuple[T], found %r (D39a)" % (p.name, ptypes[k]), node.line)
+                fi.star = k
+            elif p.star == "**":
+                if not (isinstance(ptypes[k], MapT) and ptypes[k].key == StrT):
+                    raise TomatoError("**%s must be typed dict[str, V], found %r (D39a)" % (p.name, ptypes[k]), node.line)
+                fi.kwstar = k
         return fi
 
     def add_iface_method(self, i, m):
@@ -794,13 +811,48 @@ class Interpreter:
             raise TomatoError("no function marked @%s: a program starts at its entry point, "
                               "@main unless another is chosen (D16a)" % entry)
         inputs = inputs or []
-        names = [p.name for p in fn.node.params if p.name != "self"]
-        lo = getattr(fn, "min_args", len(fn.ptypes))
-        if not lo <= len(inputs) <= len(fn.ptypes):
+        names = [p.name for p in fn.node.params if p.name != "self" and not p.star]
+        nfix = fn.nfixed
+        # `name=value` inputs go to the parameter of that name, or into **kwargs (D39a)
+        positional, keyed = [], []
+        for x in inputs:
+            key, eq, val = x.partition("=")
+            if eq and key.isidentifier() and (key in names or fn.kwstar is not None):
+                keyed.append((key, val))
+            else:
+                positional.append(x)
+        lo = fn.min_args
+        if len(positional) > nfix and fn.star is None:
             raise TomatoError("entry point @%s takes %d input(s)%s, got %d"
-                              % (entry, len(fn.ptypes), " (" + ", ".join(names) + ")" if names else "", len(inputs)))
+                              % (entry, nfix, " (" + ", ".join(names) + ")" if names else "", len(positional)))
         args = [self.parse_input(x, t, k + 1, n, fn.node.line)
-                for k, (x, t, n) in enumerate(zip(inputs, fn.ptypes, names))]
+                for k, (x, t, n) in enumerate(zip(positional[:nfix], fn.ptypes, names))]
+        for key, val in keyed:
+            if key in names:
+                k = names.index(key)
+                if k < len(args):
+                    raise TomatoError("input %s is given twice" % key, fn.node.line)
+                while len(args) < k:
+                    if fn.defaults[len(args)] is None:
+                        raise TomatoError("entry point @%s is missing the input %s" % (entry, names[len(args)]), fn.node.line)
+                    args.append(self.eval(fn.defaults[len(args)], Frame(), fn.ptypes[len(args)]))
+                args.append(self.parse_input(val, fn.ptypes[k], k + 1, key, fn.node.line))
+        if len(args) < lo:
+            raise TomatoError("entry point @%s takes %d input(s)%s, got %d"
+                              % (entry, nfix, " (" + ", ".join(names) + ")" if names else "", len(args)))
+        while len(args) < nfix:
+            self.fill_default_values_one(fn, args)
+        if fn.star is not None:
+            et = fn.ptypes[fn.star].elem
+            args.append(TTuple(et, [self.parse_input(x, et, nfix + 1 + k, fn.node.params[fn.star].name, fn.node.line)
+                                    for k, x in enumerate(positional[nfix:])]))
+        if fn.kwstar is not None:
+            vt = fn.ptypes[fn.kwstar].value
+            m = TMap(StrT, vt)
+            for key, val in keyed:
+                if key not in names:
+                    m.items[key_of(key)] = [key, self.parse_input(val, vt, 0, key, fn.node.line)]
+            args.append(m)
         self.fill_default_values(fn, args)
         try:
             self.invoke(fn, args, fn.node.line)
@@ -976,6 +1028,8 @@ class Interpreter:
                 val = self.convert(self.eval(s.value, fr, lst.vtype), lst.vtype, s.line, "dict value")
                 lst.items[key_of(key)] = [key, val]
                 return
+            if isinstance(lst, TTuple):
+                raise TomatoError("a tuple cannot be changed (D39a)", s.line)
             if not isinstance(lst, TList):
                 raise TomatoError("only list items can be assigned by index (strings cannot be changed in place)", s.line)
             i = self.list_index(lst, tgt, fr)
@@ -1424,6 +1478,8 @@ class Interpreter:
         return i
 
     def list_method(self, lst, name, args, line):
+        if isinstance(lst, TTuple):
+            raise TomatoError("a tuple cannot be changed, so it has no method %s (D39a)" % name, line)
         if name == "append":
             if len(args) != 1:
                 raise TomatoError("append takes 1 argument, got %d" % len(args), line)
@@ -1610,6 +1666,8 @@ class Interpreter:
                 return self.call_class_qualified(self.vis_class(f.obj.name), f.name, e, fr)
             self.declared_member_check(f.obj, f.name, True, fr, e.line)
             obj = self.eval(f.obj, fr)
+            if e.kwargs and not isinstance(obj, Instance):
+                raise TomatoError("keyword arguments work only with functions, methods and classes you define (D39a)", e.line)
             if isinstance(obj, TMap):
                 kt = obj.ktype if f.name == "remove" else None
                 return self.map_method(obj, f.name, [self.eval(a, fr, kt) for a in e.args], e.line)
@@ -1629,7 +1687,7 @@ class Interpreter:
             if m.node.marker == "init":
                 raise NotDecided("calling @init on an existing instance", e.line)
             self.check_access(m.node.private, m.owner, fr, "method " + f.name, e.line)
-            return self.invoke(m, self.eval_args(m, e.args, fr, e.line), e.line, self_obj=obj)
+            return self.invoke(m, self.eval_args(m, e.args, fr, e.line, kwargs=e.kwargs), e.line, self_obj=obj)
         if isinstance(f, N.LlvmRef):
             return self.llvm_call(f, e.args, fr, e.line)
         if not isinstance(f, N.Name):
@@ -1637,6 +1695,8 @@ class Interpreter:
         n = f.name
         if n in fr.vars or (n in self.globals.vars and fr is not self.globals):
             raise NotDecided("calling a variable", e.line)
+        if e.kwargs and n not in fr.vars and not (self.scope_get(n) in self.funcs or self.vis_class(n)):
+            raise TomatoError("keyword arguments work only with functions, methods and classes you define (D39a)", e.line)
         if n == "print":
             self.out.write(" ".join(show(self.eval(a, fr)) for a in e.args) + "\n")
             return None
@@ -1689,26 +1749,74 @@ class Interpreter:
         fkey = self.scope_get(n)
         if fkey in self.funcs:
             fn = self.funcs[fkey]
-            return self.invoke(fn, self.eval_args(fn, e.args, fr, e.line), e.line)
+            return self.invoke(fn, self.eval_args(fn, e.args, fr, e.line, kwargs=e.kwargs), e.line)
         if self.vis_class(n):
             return self.construct(self.vis_class(n), e, fr)
         raise TomatoError("unknown function %r" % n, e.line)
 
-    def eval_args(self, fn, args, fr, line, pre=_UNSET):
-        n = len(fn.ptypes)
-        lo = getattr(fn, "min_args", n)
-        if not lo <= len(args) <= n:
+    def eval_args(self, fn, args, fr, line, pre=_UNSET, kwargs=None):
+        nfix = getattr(fn, "nfixed", len(fn.ptypes))
+        star, kwstar = getattr(fn, "star", None), getattr(fn, "kwstar", None)
+        lo = getattr(fn, "min_args", nfix)
+        kwargs = kwargs or []
+        if (len(args) > nfix and star is None) or (not kwargs and len(args) < lo):
             raise TomatoError("%s takes %s argument(s), got %d"
-                              % (fn.name, "%d to %d" % (lo, n) if lo != n else str(n), len(args)), line)
+                              % (fn.name, "%d to %d" % (lo, nfix) if lo != nfix else str(nfix), len(args)), line)
         if pre is not _UNSET:  # the one argument was already evaluated (see construct)
             vals = [pre]
         else:
-            vals = [self.eval(a, fr, t) for a, t in zip(args, fn.ptypes)]
-        return self.fill_default_values(fn, vals)
+            vals = [self.eval(a, fr, t) for a, t in zip(args[:nfix], fn.ptypes)]
+        extra = [self.eval(a, fr, fn.ptypes[star].elem) for a in args[nfix:]] if pre is _UNSET else []
+        names = [p.name for p in fn.node.params if p.name != "self" and not p.star]
+        named, extra_kw = {}, {}
+        for name, ex in kwargs:
+            if name in names:
+                k = names.index(name)
+                if k < len(vals):
+                    raise TomatoError("%s got more than one value for %s" % (fn.name, name), line)
+                named[k] = self.eval(ex, fr, fn.ptypes[k])
+            elif kwstar is not None:
+                extra_kw[name] = self.eval(ex, fr, fn.ptypes[kwstar].value)
+            else:
+                raise TomatoError("%s has no parameter %s" % (fn.name, name), line)
+        for k in range(len(vals), nfix):
+            if k in named:
+                vals.append(named[k])
+            elif fn.defaults[k] is not None:
+                prev, self.cur_mod = self.cur_mod, fn.module
+                try:
+                    vals.append(self.eval(fn.defaults[k], Frame(), fn.ptypes[k]))
+                finally:
+                    self.cur_mod = prev
+            else:
+                raise TomatoError("%s is missing the argument %s" % (fn.name, names[k]), line)
+        if star is not None:
+            vals.append(TTuple(fn.ptypes[star].elem, [self.convert(v, fn.ptypes[star].elem, line, "argument") for v in extra]))
+        if kwstar is not None:
+            m = TMap(StrT, fn.ptypes[kwstar].value)
+            for name, v in extra_kw.items():
+                m.items[key_of(name)] = [name, self.convert(v, m.vtype, line, "argument " + name)]
+            vals.append(m)
+        return vals
+
+    def fill_default_values_one(self, fn, vals):
+        k = len(vals)
+        prev, self.cur_mod = self.cur_mod, fn.module
+        try:
+            vals.append(self.eval(fn.defaults[k], Frame(), fn.ptypes[k]))
+        finally:
+            self.cur_mod = prev
 
     def fill_default_values(self, fn, vals):
-        """Give the parameters the caller left out their defaults, evaluated now, in the callee's module (D19c)."""
+        """Give the parameters the caller left out their defaults, evaluated now, in the callee's module (D19c);
+        `*args` and `**kwargs` start empty (D39a)."""
         for k in range(len(vals), len(fn.ptypes)):
+            if k == getattr(fn, "star", None):
+                vals.append(TTuple(fn.ptypes[k].elem, []))
+                continue
+            if k == getattr(fn, "kwstar", None):
+                vals.append(TMap(StrT, fn.ptypes[k].value))
+                continue
             prev, self.cur_mod = self.cur_mod, fn.module
             try:
                 vals.append(self.eval(fn.defaults[k], Frame(), fn.ptypes[k]))
@@ -1757,7 +1865,7 @@ class Interpreter:
             raise TomatoError("%s has no method %s" % (cls.name, name), e.line)
         self.check_access(m.node.private, m.owner, fr, "method " + name, e.line)
         if not m.has_self:
-            return self.invoke(m, self.eval_args(m, e.args, fr, e.line), e.line)
+            return self.invoke(m, self.eval_args(m, e.args, fr, e.line, kwargs=e.kwargs), e.line)
         if not e.args:
             raise TomatoError("%s.%s needs self as its first argument (D12ao)" % (cls.name, name), e.line)
         obj = self.eval(e.args[0], fr)
@@ -1765,7 +1873,7 @@ class Interpreter:
             raise TomatoError("first argument must be an instance of %s" % cls.name, e.line)
         if m.node.marker != "init" and not (fr.owner and fr.owner is not cls and self.is_subclass(fr.owner, cls.name)):
             raise NotDecided("class-qualified calls other than a subclass calling its parent", e.line)
-        return self.invoke(m, self.eval_args(m, e.args[1:], fr, e.line), e.line, self_obj=obj)
+        return self.invoke(m, self.eval_args(m, e.args[1:], fr, e.line, kwargs=e.kwargs), e.line, self_obj=obj)
 
     def construct(self, cls, e, fr):
         # The single argument is evaluated once: here when it may be a conversion (D12az), and the value is then
@@ -1794,7 +1902,7 @@ class Interpreter:
                     finally:
                         self.cur_mod = prev_mod
         if init is not None:
-            self.invoke(init, self.eval_args(init, e.args, fr, e.line, pre), e.line, self_obj=inst)
+            self.invoke(init, self.eval_args(init, e.args, fr, e.line, pre, kwargs=e.kwargs), e.line, self_obj=inst)
         for k in cls.chain():
             for fname in k.fields:
                 if fname not in inst.fields:

@@ -183,7 +183,8 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 156. D23h is accepted (reading to confirm): `&` is type intersection and bitwise and, `|` also bitwise or and `^` bitwise xor on whole numbers, and `xor` is the logical word operator; logged as P46.
 157. D38a is accepted (reading to confirm): new code is Tomato and LLVM only; the Python version bootstraps the Tomato compiler and each version compiles the next; first step selfhost/lexer.tom; commit freely, push when a feature fully works.
 158. D28b is accepted (reading to confirm): an entry parameter typed as a union of int, float, bool and str takes the first member that accepts the input text, in that order.
-159. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+159. D39a is accepted (reading to confirm): `*args: tuple[T]` and `**kwargs: dict[str, V]` exist, with keyword arguments at call sites and command-line inputs for entry points; `tuple[T]` is an immutable sequence (P48).
+160. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass
 

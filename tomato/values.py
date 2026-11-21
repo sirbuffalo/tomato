@@ -127,11 +127,31 @@ class ListT(Type):
         return "list[%r]" % (self.elem,)
 
 
+class TupleT(Type):
+    """`tuple[T]` (D39a): an immutable sequence whose items all have type T."""
+
+    def __init__(self, elem):
+        self.elem = elem
+
+    def __eq__(self, o):
+        return isinstance(o, TupleT) and o.elem == self.elem
+
+    def __hash__(self):
+        return hash(("tuple", self.elem))
+
+    def __repr__(self):
+        return "tuple[%r]" % (self.elem,)
+
+
 class TList:
     """A growable list (D20a): items all have type `elem`; assignment shares the list."""
 
     def __init__(self, elem, items):
         self.elem, self.items = elem, items
+
+
+class TTuple(TList):
+    """A tuple value (D39a): a list that cannot be changed."""
 
 
 class MapT(Type):
@@ -287,6 +307,8 @@ def value_type(v):
         return NoneT
     if isinstance(v, Instance):
         return ClassT(v.cls.name)
+    if isinstance(v, TTuple):
+        return TupleT(v.elem)
     if isinstance(v, TList):
         return ListT(v.elem)
     if isinstance(v, TMap):

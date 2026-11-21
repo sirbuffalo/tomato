@@ -1062,6 +1062,45 @@ class Optionals(unittest.TestCase):
         with self.assertRaises(TomatoError):
             run_source("@f\ndef f(x: int | bool):\n    print(x)\n", io.StringIO(), entry="f", inputs=["zzz"])
 
+    def test_star_args_and_kwargs(self):
+        pre = ("def f(a: int, *rest: tuple[int], **opts: dict[str, str]) -> str:\n    t = a\n    for x in rest:\n        t = t + x\n"
+               "    s = ''\n    for k in opts:\n        s = s + k + '=' + opts[k] + ';'\n    return str(t) + ' ' + str(len(rest)) + ' ' + s\n")
+        self.assertEqual(run(pre + "print(f(1))\nprint(f(1, 2, 3))\nprint(f(1, 2, x='a', y='b'))\nprint(f(a=5, z='q'))"),
+                         "1 0 \n6 2 \n3 1 x=a;y=b;\n5 0 z=q;\n")
+        fails(self, "def f(*xs: tuple[int]) -> int:\n    xs[0] = 1\n    return 0\nf(1)", "tuple cannot be changed")
+        fails(self, "def f(*xs: tuple[int]) -> int:\n    xs.append(1)\n    return 0\nf(1)", "tuple cannot be changed")
+        fails(self, "def f(*xs: int):\n    pass\n", "must be typed tuple")
+        fails(self, "def f(**xs: dict[int, int]):\n    pass\n", "must be typed dict[str, V]")
+        fails(self, "def f(*xs):\n    pass\n", "needs a type")
+        fails(self, "def f(**k: dict[str, int], *a: tuple[int]):\n    pass\n", "comes before")
+        fails(self, "def f(*a: tuple[int], b: int):\n    pass\n", "come last")
+        fails(self, "def f(a: int):\n    pass\nf(1, 2)", "takes 1 argument")
+        fails(self, "def f(a: int):\n    pass\nf(1, b=2)", "no parameter b")
+        fails(self, "def f(a: int):\n    pass\nf(1, a=2)", "more than one value")
+        fails(self, "def f(a: int, b: int):\n    pass\nf(1)", "takes 2 argument")
+        fails(self, "def f(a: int, b: int):\n    pass\nf(b=1)", "missing the argument a")
+        fails(self, "print(len(x=[1]))", "keyword arguments work only")
+        fails(self, "def f(a: int):\n    pass\nf(a=1, 2)", "positional argument cannot follow")
+        self.assertEqual(run("class P:\n    n: int = 0\n    @init\n    def make(self, n: int, *more: tuple[int]):\n        self.n = n + len(more)\n"
+                             "p = P(1, 2, 3)\nprint(p.n)"), "3\n")
+
+    def test_star_args_with_entry_points(self):
+        src = ("@show\ndef show(a: int, *rest: tuple[int | str], **opts: dict[str, float | bool | str]):\n    print(a, len(rest))\n"
+               "    for x in rest:\n        print(x in int, x in str)\n    for k in opts:\n        print(k, opts[k] in float, opts[k] in bool, opts[k] in str)\n")
+        def go(*inputs):
+            out = io.StringIO()
+            run_source(src, out, entry="show", inputs=list(inputs))
+            return out.getvalue()
+        self.assertEqual(go("1"), "1 0\n")
+        self.assertEqual(go("1", "2", "hi"), "1 2\nTrue False\nFalse True\n")
+        self.assertEqual(go("1", "x=1.5", "flag=true", "who=me"),
+                         "1 0\nx True False False\nflag False True False\nwho False False True\n")
+        self.assertEqual(go("a=7", "k=z"), "7 0\nk False False True\n")
+        with self.assertRaises(TomatoError):
+            run_source("@f\ndef f(*xs: tuple[int]):\n    pass\n", io.StringIO(), entry="f", inputs=["x"])
+        with self.assertRaises(TomatoError):
+            run_source("@f\ndef f(a: int):\n    pass\n", io.StringIO(), entry="f", inputs=["1", "2"])
+
     def test_str_of_none(self):
         self.assertEqual(run("print(None)"), "None\n")
 
