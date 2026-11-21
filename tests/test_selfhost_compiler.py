@@ -501,13 +501,48 @@ class SelfhostCompiler(unittest.TestCase):
         run_source(open(path).read(), out, llvm_ir=[(os.path.join(ROOT, "examples", "mathlib.ll"), open(os.path.join(ROOT, "examples", "mathlib.ll")).read())])
         self.assertEqual(run.stdout, out.getvalue())
 
+    def test_module_namespaces(self):
+        """Two modules may define the same names: each sees its own, and `from m import` brings in only what m exports."""
+        if self.native is None:
+            self.skipTest("clang is not installed")
+        d = os.path.join(self.dir, "ns_modules")
+        os.makedirs(d, exist_ok=True)
+        files = {
+            "a.tom": "export class Item:\n    v: int = 1\n\n    def show(self) -> str:\n        return 'a' + str(self.v) + tag()\n\n"
+                     "def tag() -> str:\n    return '-a'\n\nexport def helper() -> int:\n    return 1\n\n"
+                     "export def make() -> Item:\n    return Item()\n",
+            "b.tom": "export class Item:\n    v: int = 2\n    w: int = 5\n\n    def show(self) -> str:\n        return 'b' + str(self.v + self.w) + tag()\n\n"
+                     "def tag() -> str:\n    return '-b'\n\nexport def helper() -> int:\n    return 2\n\n"
+                     "export def make() -> Item:\n    return Item()\n",
+            "prog.tom": "from a import make\nfrom b import make as unused\n",
+        }
+        files["prog.tom"] = ("from a import make, helper\nclass Item:\n    v: int = 99\n\n    def show(self) -> str:\n        return 'main' + str(self.v)\n\n"
+                             "def tag() -> str:\n    return '-main'\n\n@main\ndef main():\n    x = make()\n    y = Item()\n"
+                             "    print(x.show(), y.show(), helper(), tag())\n")
+        for name, text in files.items():
+            with open(os.path.join(d, name), "w") as f:
+                f.write(text)
+        ir = subprocess.run([self.native, os.path.join(d, "prog.tom"), "main"], check=True, capture_output=True, text=True, cwd=ROOT).stdout
+        run = subprocess.run([self.build("ns", ir)], check=True, capture_output=True, text=True)
+        out = io.StringIO()
+        run_source(files["prog.tom"], out, search=[d])
+        self.assertEqual(run.stdout, out.getvalue())
+        self.assertEqual(run.stdout, "a1-a main99 1 -main\n")
+        # a name a module does not export cannot be imported
+        with open(os.path.join(d, "bad.tom"), "w") as f:
+            f.write("from a import tag\n@main\ndef main():\n    print(tag())\n")
+        bad = subprocess.run([self.native, os.path.join(d, "bad.tom"), "main"], capture_output=True, text=True, cwd=ROOT)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("does not export tag", bad.stderr)
+
     def build(self, name, ir):
         ll = os.path.join(self.dir, name + ".ll")
         with open(ll, "w") as f:
             f.write(ir)
         exe = os.path.join(self.dir, name)
-        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
-                       check=True, capture_output=True)
+        r = subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr[:2000])
         return exe
 
     def run_ir(self, name, ir):

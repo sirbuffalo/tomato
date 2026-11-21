@@ -193,15 +193,27 @@ class FuncInfo:
     defaults: list[Node] = []     # the default values of the last parameters, in order
     is_init: bool = False
     is_override: bool = False
+    key: str = ''            # the program-wide name of a function (module.name outside the main program)
+    module: str = 'main'
+
+class ImportInfo:
+    importer: str = ''
+    module: str = ''
+    names: list[str] = []
+    line: int = 0
 
 class IfaceInfo:
     name: str = ''
+    module: str = 'main'
     parents: list[str] = []
     reqs: list[FuncInfo] = []     # the methods the interface itself requires (without self)
     line: int = 0
 
 class ClassInfo:
-    name: str = ''
+    name: str = ''                # the program-wide key (module.Name outside the main program)
+    display: str = ''             # the name as written
+    module: str = 'main'
+    node: Node | None = None
     fnames: list[str] = []
     ftypes: list[str] = []
     has_default: list[bool] = []
@@ -222,6 +234,11 @@ class Mod:
     classes: list[ClassInfo] = []
     ifaces: list[IfaceInfo] = []
     slots: list[str] = []         # method names, one vtable slot each
+    cur: str = 'main'             # the module whose names are being resolved
+    scope_mod: list[str] = []     # the names each module can see: module, name, program-wide key, exported
+    scope_name: list[str] = []
+    scope_key: list[str] = []
+    scope_exported: list[bool] = []
 
     def code_of(self, t: str) -> int:
         k = 0
@@ -245,11 +262,11 @@ class Mod:
         self.strings.append(s)
         return '@.str.' + str(k)
 
-    def find(self, name: str, line: int) -> FuncInfo:
+    def find(self, key: str, line: int) -> FuncInfo:
         for f in self.infos:
-            if f.name == name and f.owner == '':
+            if f.key == key and f.owner == '':
                 return f
-        raise CompileError('unknown function ' + name, line)
+        raise CompileError('unknown function ' + key, line)
 
     def lookup_method(self, cls: str, name: str) -> list[FuncInfo]:
         # the method as the class or its nearest parent defines it: a list of one, or none
@@ -268,6 +285,53 @@ class Mod:
         if len(found) == 0:
             raise CompileError(cls + ' has no method ' + name, line)
         return found[0]
+
+    def resolve(self, name: str) -> str:
+        # the program-wide key a name written in the current module stands for, or '' (D24c)
+        k = 0
+        for m in self.scope_mod:
+            if m == self.cur and self.scope_name[k] == name:
+                return self.scope_key[k]
+            k = k + 1
+        k = 0
+        for m in self.scope_mod:
+            if m == 'builtin' and self.scope_name[k] == name:
+                return self.scope_key[k]
+            k = k + 1
+        return ''
+
+    def class_key(self, name: str, line: int) -> str:
+        key = self.resolve(name)
+        if key == '' or not self.has_class(key):
+            raise CompileError('unknown class ' + name, line)
+        return key
+
+    def iface_key(self, name: str, line: int) -> str:
+        key = self.resolve(name)
+        if key == '' or not self.has_iface(key):
+            raise CompileError('unknown interface ' + name, line)
+        return key
+
+    def declare_name(self, module: str, name: str, key: str, exported: bool, line: int):
+        k = 0
+        for m in self.scope_mod:
+            if m == module and self.scope_name[k] == name:
+                raise CompileError(name + ' is declared twice in module ' + module, line)
+            k = k + 1
+        self.scope_mod.append(module)
+        self.scope_name.append(name)
+        self.scope_key.append(key)
+        self.scope_exported.append(exported)
+
+    def exported_key(self, module: str, name: str, line: int) -> str:
+        k = 0
+        for m in self.scope_mod:
+            if m == module and self.scope_name[k] == name:
+                if not self.scope_exported[k]:
+                    raise CompileError('module ' + module + ' does not export ' + name, line)
+                return self.scope_key[k]
+            k = k + 1
+        raise CompileError('module ' + module + ' has no ' + name, line)
 
     def has_iface(self, name: str) -> bool:
         for i in self.ifaces:
@@ -413,10 +477,11 @@ class Mod:
             return ''
         if basic_type(name):
             return name
-        if self.has_class(name):
-            return '@' + name
-        if self.has_iface(name):
-            return '%' + name
+        key = self.resolve(name)
+        if key != '' and self.has_class(key):
+            return '@' + key
+        if key != '' and self.has_iface(key):
+            return '%' + key
         return ''
 
 def escape_ir_char(c: str, line: int) -> str:
@@ -1299,8 +1364,8 @@ class Gen:
             return self.llvm_call(n, f.fields[0].text)
         if f.kind == 'Attr':
             target = val_node(f.fields[0])
-            if target.kind == 'Name' and not (target.fields[0].text in self.slots) and self.mod.has_class(target.fields[0].text):
-                return self.qualified_call(n, f, target.fields[0].text)
+            if target.kind == 'Name' and not (target.fields[0].text in self.slots) and self.mod.resolve(target.fields[0].text) != '' and self.mod.has_class(self.mod.resolve(target.fields[0].text)):
+                return self.qualified_call(n, f, self.mod.resolve(target.fields[0].text))
             return self.method_call(n, f)
         if f.kind != 'Name':
             raise CompileError('the Tomato compiler only calls plain functions yet', n.line)
@@ -1321,9 +1386,12 @@ class Gen:
             return self.str_call(args, n.line)
         if name == 'int' and len(args) == 1:
             return self.convert_explicit(self.expr(args[0]), 'int', n.line)
-        if self.mod.has_class(name):
-            return self.construct(self.mod.find_class(name, n.line), args, n.line)
-        return self.call_function(self.mod.find(name, n.line), '@tomato.' + name, ex('', ''), args, n.line)
+        key = self.mod.resolve(name)
+        if key == '':
+            raise CompileError('unknown function ' + name, n.line)
+        if self.mod.has_class(key):
+            return self.construct(self.mod.find_class(key, n.line), args, n.line)
+        return self.call_function(self.mod.find(key, n.line), '@tomato.' + key, ex('', ''), args, n.line)
 
     def llvm_type_of(self, t: str) -> str:
         # how an LLVM function sees a Tomato type: a bool is one bit there
@@ -1843,9 +1911,10 @@ class Gen:
     def try_stmt(self, s: Node):
         handlers = s.fields[1].items
         for h in handlers:
-            cname = h.items[0].text
-            if not self.mod.has_class(cname) or not self.mod.subclass('@' + cname, '@Error'):
-                raise CompileError('catch needs an error class (a subclass of Error), found ' + cname, s.line)
+            written = h.items[0].text
+            ckey = self.mod.resolve(written)
+            if ckey == '' or not self.mod.has_class(ckey) or not self.mod.subclass('@' + ckey, '@Error'):
+                raise CompileError('catch needs an error class (a subclass of Error), found ' + written, s.line)
         info = TryInfo()
         info.catch_l = self.label('catch')
         info.prop_l = self.label('prop')
@@ -1872,7 +1941,7 @@ class Gen:
         code = self.tmp('code')
         self.emit(code + ' = and i64 ' + raw + ', 4294967295')
         for h in handlers:
-            cname = h.items[0].text
+            cname = self.mod.resolve(h.items[0].text)
             isa = self.tmp('isa')
             self.emit(isa + ' = call i32 @tomato_is_subclass(i64 ' + code + ', i64 ' + str(self.mod.code_of('@' + cname)) + ')')
             hit = self.tmp('hit')
@@ -2104,7 +2173,7 @@ class Gen:
 
 def function_symbol(mod: Mod, info: FuncInfo) -> str:
     if info.owner == '':
-        return '@tomato.' + info.name
+        return '@tomato.' + info.key
     return '@tomato.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
 
 def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
@@ -2131,6 +2200,7 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
     return text
 
 def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
+    mod.cur = info.module
     g = Gen()
     g.mod = mod
     g.ret = info.ret
@@ -2169,6 +2239,7 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
 
 def compile_constructor(c: ClassInfo, mod: Mod) -> str:
     # allocate, store the declared field defaults, then run @init
+    mod.cur = c.module
     g = Gen()
     g.mod = mod
     code = str(mod.code_of('@' + c.name))
@@ -2287,7 +2358,7 @@ def runtime_tables(mod: Mod) -> str:
             offs.append('i32 -1')
             extra = extra + '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = 'ptr @tomato.offs.' + str(slot)
-            extra = extra + '@tomato.name.' + str(slot) + ' = private constant [' + str(len(c.name) + 1) + ' x i8] c"' + c.name + '\\00"\n'
+            extra = extra + '@tomato.name.' + str(slot) + ' = private constant [' + str(len(c.display) + 1) + ' x i8] c"' + c.display + '\\00"\n'
             names[slot] = 'ptr @tomato.name.' + str(slot)
         elif is_set(code):
             kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))
@@ -2439,7 +2510,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
         else:
             args.append(llvm_type(t) + ' ' + reg)
         i = i + 1
-    out = out + '  call void @tomato.' + info.name + '(' + ', '.join(args) + ')\n'
+    out = out + '  call void @tomato.' + info.key + '(' + ', '.join(args) + ')\n'
     out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
     out = out + 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
     out = out + '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 1)\n  unreachable\n'
@@ -2449,10 +2520,18 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     out = out + '  call void @tomato_leak_check()\n  ret i32 0\n}\n'
     return out
 
+def key_of(module: str, name: str) -> str:
+    # the program-wide name of a declaration: plain in the main program and the built-ins, module.name elsewhere
+    if module == 'main' or module == 'builtin':
+        return name
+    return module + '.' + name
+
 def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info = FuncInfo()
     info.name = item.fields[0].text
     info.owner = owner
+    info.module = mod.cur
+    info.key = key_of(mod.cur, info.name)
     if len(item.fields) > 6:
         info.is_override = item.fields[5].flag
         info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
@@ -2474,6 +2553,9 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     return info
 
 def new_infos() -> list[FuncInfo]:
+    return []
+
+def new_nodes() -> list[Node]:
     return []
 
 def same_signature(a: FuncInfo, b: FuncInfo) -> bool:
@@ -2525,24 +2607,23 @@ def builtin_source() -> str:
     t = t + 'class IOError(RuntimeError):\n    @init\n    def make_io(self, message: str):\n        RuntimeError.make(self, message)\n'
     return t
 
-def class_node(items: list[Node], name: str) -> Node:
-    for item in items:
-        if item.kind == 'ClassDef' and item.fields[0].text == name:
-            return item
-    raise CompileError('unknown class ' + name, 0)
+def class_def(c: ClassInfo) -> Node:
+    n = c.node
+    if n is None:
+        raise CompileError('internal error: class ' + c.name + ' has no declaration', c.line)
+    return n
 
-def resolve_class(mod: Mod, items: list[Node], name: str):
+def resolve_class(mod: Mod, c: ClassInfo):
     # fill a class's fields and defaults, its parent's first (a field may name a class declared later)
-    c = mod.find_class(name, 0)
     if c.done:
         return
     c.done = True
-    node = class_node(items, name)
+    node = class_def(c)
+    mod.cur = c.module
     if c.parent != '':
-        if not mod.has_class(c.parent):
-            raise CompileError('unknown parent class ' + c.parent, node.line)
-        resolve_class(mod, items, c.parent)
         p = mod.find_class(c.parent, node.line)
+        resolve_class(mod, p)
+        mod.cur = c.module
         for fname in p.fnames:
             c.fnames.append(fname)
         for ftype in p.ftypes:
@@ -2574,79 +2655,108 @@ def read_module(dir: str, std: str, name: str, line: int) -> str:
         g.close()
     return text
 
-def load_items(dir: str, std: str, src: str, items: list[Node], loaded: list[str], names: list[str]) -> list[Node]:
-    # the declarations of src with the declarations of the modules it imports placed before them (each once)
+def load_items(dir: str, std: str, src: str, module: str, items: list[Node], mods: list[str], imports: list[ImportInfo], loaded: list[str]) -> list[Node]:
+    # the declarations of src, placed after those of the modules it imports (each module once)
     mine = val_nodes(parse(src).fields[0])
     for item in mine:
         if item.kind == 'Import':
-            module = item.fields[0].text
-            if not (module in loaded):
-                loaded.append(module)
-                load_items(dir, std, read_module(dir, std, module, item.line), items, loaded, names)
-    own: list[Node] = []
+            wanted = item.fields[0].text
+            ii = ImportInfo()
+            ii.importer = module
+            ii.module = wanted
+            ii.line = item.line
+            for nm in item.fields[1].items:
+                ii.names.append(nm.text)
+            imports.append(ii)
+            if not (wanted in loaded):
+                loaded.append(wanted)
+                load_items(dir, std, read_module(dir, std, wanted, item.line), wanted, items, mods, imports, loaded)
+    own = new_nodes()
     for item in mine:
         if item.kind != 'Import':
             own.append(item)
-            if item.kind == 'FuncDef' or item.kind == 'ClassDef':
-                name = item.fields[0].text
-                if name in names:
-                    raise CompileError(name + ' is declared in more than one module (the Tomato compiler has no module namespaces yet)', item.line)
-                names.append(name)
-    for item in own:
-        items.append(item)
+            items.append(item)
+            mods.append(module)
     return own
+
+def build_scopes(mod: Mod, items: list[Node], mods: list[str], imports: list[ImportInfo]):
+    # every module sees its own declarations, the built-ins, and what it imports (D24c)
+    k = 0
+    for item in items:
+        if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef':
+            name = item.fields[0].text
+            mod.declare_name(mods[k], name, key_of(mods[k], name), item.exported, item.line)
+        k = k + 1
+    for ii in imports:
+        for nm in ii.names:
+            mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
 
 export def compile_module(src: str, dir: str, std: str, entry_name: str) -> str:
     mod = Mod()
     items = val_nodes(parse(builtin_source()).fields[0])
-    names = new_strs()
-    loaded = new_strs()
+    mods = new_strs()
     for b in items:
-        names.append(b.fields[0].text)
-    user = load_items(dir, std, src, items, loaded, names)
+        mods.append('builtin')
+    imports: list[ImportInfo] = []
+    loaded = new_strs()
+    user = load_items(dir, std, src, 'main', items, mods, imports, loaded)
+    build_scopes(mod, items, mods, imports)
+    k = 0
     for item in items:
+        mod.cur = mods[k]
         if item.kind == 'InterfaceDef':
             ifc = IfaceInfo()
-            ifc.name = item.fields[0].text
+            ifc.name = key_of(mods[k], item.fields[0].text)
+            ifc.module = mods[k]
             ifc.line = item.line
-            for pv in item.fields[1].items:
-                ifc.parents.append(pv.text)
             mod.ifaces.append(ifc)
-    for item in items:
-        if item.kind == 'ClassDef':
+        elif item.kind == 'ClassDef':
             c = ClassInfo()
-            c.name = item.fields[0].text
+            c.name = key_of(mods[k], item.fields[0].text)
+            c.display = item.fields[0].text
+            c.module = mods[k]
+            c.node = item
             c.line = item.line
-            if item.fields[1].tag == 's':
-                c.parent = item.fields[1].text
-            for iv in item.fields[2].items:
-                if not mod.has_iface(iv.text):
-                    raise CompileError('unknown interface ' + iv.text, item.line)
-                c.ifaces.append(iv.text)
             mod.classes.append(c)
+        k = k + 1
+    # parents, interfaces and `implements` lines, resolved in the module that wrote them
+    k = 0
     for item in items:
-        if item.kind == 'Implements':
-            if not mod.has_class(item.fields[0].text):
-                raise CompileError('unknown class ' + item.fields[0].text, item.line)
-            if not mod.has_iface(item.fields[1].text):
-                raise CompileError('unknown interface ' + item.fields[1].text, item.line)
-            mod.find_class(item.fields[0].text, item.line).ifaces.append(item.fields[1].text)
-    for c in mod.classes:
-        resolve_class(mod, items, c.name)
-    for item in items:
+        mod.cur = mods[k]
         if item.kind == 'InterfaceDef':
-            target = mod.find_iface(item.fields[0].text, item.line)
+            target = mod.find_iface(key_of(mods[k], item.fields[0].text), item.line)
+            for pv in item.fields[1].items:
+                target.parents.append(mod.iface_key(pv.text, item.line))
+        elif item.kind == 'ClassDef':
+            c = mod.find_class(key_of(mods[k], item.fields[0].text), item.line)
+            if item.fields[1].tag == 's':
+                c.parent = mod.class_key(item.fields[1].text, item.line)
+            for iv in item.fields[2].items:
+                c.ifaces.append(mod.iface_key(iv.text, item.line))
+        elif item.kind == 'Implements':
+            mod.find_class(mod.class_key(item.fields[0].text, item.line), item.line).ifaces.append(mod.iface_key(item.fields[1].text, item.line))
+        k = k + 1
+    for c in mod.classes:
+        resolve_class(mod, c)
+    k = 0
+    for item in items:
+        mod.cur = mods[k]
+        if item.kind == 'InterfaceDef':
+            target = mod.find_iface(key_of(mods[k], item.fields[0].text), item.line)
             for m in val_nodes(item.fields[2]):
                 target.reqs.append(function_info(m, mod, 'self'))
+        k = k + 1
     funcs: list[Node] = []
     entry = ''
+    k = 0
     for item in items:
+        mod.cur = mods[k]
         if item.kind == 'FuncDef':
             info = function_info(item, mod, '')
             mod.infos.append(info)
             funcs.append(item)
         elif item.kind == 'ClassDef':
-            c = mod.find_class(item.fields[0].text, item.line)
+            c = mod.find_class(key_of(mods[k], item.fields[0].text), item.line)
             for m in val_nodes(item.fields[4]):
                 info = function_info(m, mod, c.name)
                 mod.infos.append(info)
@@ -2663,6 +2773,7 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str) -> str:
             mod.llvm_decls.append(decl)
         else:
             raise CompileError('the Tomato compiler does not support ' + item.kind + ' declarations yet', item.line)
+        k = k + 1
     check_classes(mod)
     for item in user:
         if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text == 'entry:' + entry_name:
@@ -2678,6 +2789,7 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str) -> str:
         k = k + 1
     for c in mod.classes:
         bodies = bodies + compile_constructor(c, mod) + '\n'
+    mod.cur = 'main'
     wrapper = entry_wrapper(mod.find(entry, 1), mod)
     out = '; written by the Tomato compiler in Tomato (selfhost/compiler.tom)\n'
     out = out + declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod)
