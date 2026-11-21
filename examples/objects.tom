@@ -1,0 +1,34 @@
+# Heap values the compiler allocates and frees by reference counting (D36a).
+# tomato build examples/objects.tom -o objects && ./objects 5
+class Item:
+    name: str = ''
+    qty: int = 0
+
+class Inventory:
+    items: list[Item] = []
+
+    def add(self, name: str, qty: int):
+        item = Item()
+        item.name = name
+        item.qty = qty
+        self.items.append(item)
+
+    def total(self) -> int:
+        t = 0
+        for item in self.items:
+            t = t + item.qty
+        return t
+
+    def describe(self) -> str:
+        s = ''
+        for item in self.items:
+            s = s + item.name + 'x' + str(item.qty) + ' '
+        return s
+
+@main
+def main(n: int):
+    inv = Inventory()
+    for i in range(n):
+        inv.add('item' + str(i), i * 2)
+    print(inv.describe())
+    print('total', inv.total(), 'chars', len(inv.describe()))

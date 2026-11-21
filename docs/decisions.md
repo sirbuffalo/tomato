@@ -113,7 +113,7 @@ Source: Davis's answer to “What kind of math do you most want to write in Toma
 - Evidence: Davis selected **“Explicit declaration”** when asked whether matching an interface's requirements is enough.
 - A class must explicitly declare the interfaces it implements, and the compiler checks that it satisfies their requirements. Matching members alone do not establish conformance.
 - Chosen over automatic conformance based on matching members. The presented benefit was visible intent; the cost was an additional declaration and potentially editing a class or writing an adapter for a new interface.
-- D12d permits several implemented interfaces, D12e excludes default bodies, and D12f–i settle later implementation declarations, existing-method checking, imported types, and explicit sharing. Exact declaration syntax, member compatibility, inherited conformance, and remaining interface capabilities remain open.
+- D12d permits several implemented interfaces, D12e excludes default bodies, and D12f–i settle later implementation declarations, existing-method checking, imported types, and explicit sharing. Exact declaration syntax, and remaining interface capabilities remain open.
 
 ### D12d — Multiple implemented interfaces: accepted
 
@@ -793,7 +793,7 @@ Source: Davis's Dashboard message:
 - A dot-form call on an object runs the replacing method of the object's actual class, chosen at run time. Class-qualified calls (D12ao, D12av) name their class and skip this lookup.
 - The question assumed a parent-typed variable can refer to a subclass instance. D12ay later accepts that assumption.
 - Chosen over compile-time choice from the declared type, which is faster but makes replacement work only when called through the subclass type. Cost: a small lookup per call.
-- Interface-typed dispatch and error wording remain open.
+- Interface-typed values are settled by D12bb; error wording remains open.
 
 ### D12ay — a subclass instance can be used wherever its parent type is expected: accepted
 
@@ -817,19 +817,329 @@ Source: Davis's Dashboard message:
 - Chosen over letting creation win when `@init` accepts the argument, which allows copy-style `@init` but lets an `@init` parameter change silently change what existing calls mean.
 - The exact set of rejected parameter types (for example, types between the class and its ancestors, or interface types) and error wording remain open.
 
+### D12bb — an instance can be used where an interface it implements is expected: accepted
+
+- Evidence: Davis selected **“Yes, any instance of an implementing class fits the interface type”** when asked whether an instance can be used where an interface it implements is expected. The question had been withdrawn when he moved the task; he answered it afterward, and that answer replaces the earlier cancellation. He added that no further questions should be asked.
+- An interface can be a variable, parameter or return type, and any instance of a class that explicitly implements it fits. Dot-form calls dispatch to the actual class's method at run time (D12ax), as for parent classes (D12ay).
+- Chosen over declaration-only interfaces, which are simplest but would not let different classes be used the same way.
+- Interface-to-class conversion, interface inheritance, generic or container interface types, and error wording remain open.
+
+### D12bc — an interface can extend one or more interfaces: accepted
+
+- Evidence: Davis selected **“Yes, an interface can extend one or more interfaces”** when asked whether an interface can extend another interface.
+- An interface may name one or more parent interfaces. A class implementing the child must provide every parent's methods, and its instances fit the child type and each parent type (D12bb).
+- Chosen over a single parent only and over no interface inheritance; the latter would force classes to list every interface by hand.
+- Overlapping requirements between parents, cycles, and error wording remain open.
+
+### D12bd — one method can satisfy overlapping interface requirements: accepted
+
+- Evidence: Davis selected **“Yes, one method satisfies both”** when asked whether one class can implement, or one interface extend, two interfaces that require a method with the same name and signature.
+- A single method in the class satisfies both requirements. The same name with a different signature is an error.
+- Chosen over rejecting all overlap and over requiring the method to be restated.
+- Cycles and error wording remain open.
+
+### D12be — interface inheritance cannot form a cycle: accepted
+
+- Evidence: Davis selected **“No, a cycle is an error”** when asked whether an interface can extend itself through a cycle (A extends B, B extends A).
+- An interface may not extend itself, directly or through other interfaces.
+- Chosen over allowing cycles whose members require the union of methods.
+- Error wording remains open.
+
+### D12bf — subclasses inherit implemented interfaces: accepted
+
+- Evidence: Davis selected **“Yes, subclasses inherit the interface”** when asked whether each subclass of a class that implements an interface also counts as implementing it.
+- No further declaration is needed, and subclass instances fit the interface type (D12bb). A replacing method must still fit the interface.
+- Chosen over requiring each subclass to redeclare the interface.
+- Error wording remains open.
+
+### D12bg — a method fits an interface requirement by exact types: accepted
+
+- Evidence: Davis selected **“Same parameter types and same return type”** when asked how closely a class's method must match an interface's method requirement.
+- Parameter types and return type must be exactly those of the requirement. Parameter names need not match.
+- Chosen over also requiring matching names, and over accepting broader parameters and narrower return types, which would need a defined relation between types.
+- Error wording remains open.
+
+### D16a — no top-level code; `@main` is the default entry point: accepted
+
+- Evidence: Davis wrote “remember no top level code only@main as entry points”, then “@x as entry point”, then “but @main is default if not specified”. These were chat messages, not a choice from options.
+- Files hold only declarations. A top-level function marked `@name` is an entry point; with none chosen, `@main` runs. The prototype runs a chosen one with `--entry name`.
+- This is one reading of three short messages. The alternative, that only `@main` exists, is covered by the same rule with a single entry point.
+- Open: entry-point arguments, return value or exit status, several functions with one marker, a program with no `@main`, how an entry is chosen outside the prototype, module-level constants or variables, and error wording.
+
+### D17a — string literals use `'` or `"`, with `'` recommended: accepted
+
+- Evidence: Davis wrote “strings can use ' or \" but ' is recommended” in chat, in the middle of the string discussion. It was not a choice from options.
+- Both quote kinds produce the same value. A literal may contain the other quote kind unescaped. "Recommended" is style guidance; the prototype neither warns nor rewrites.
+- What a string is made of (question still open), escapes, a literal containing its own quote kind, multi-line literals, and string operations remain open.
+
+### D05au — integer `%` is the mathematical remainder: accepted
+
+- Evidence: Davis wrote “like mathematical remainder like Python” in answer to which sign `%` takes with negative operands. It was a chat answer, not a choice from options.
+- The remainder takes the divisor's sign: `-7 % 3` is 2 and `7 % -3` is -2. A zero divisor is an error.
+- Chosen over a remainder that takes the dividend's sign (as in Go), which Davis did not select.
+- Open: `%` on floats and rationals, whether an integer-quotient operator exists, compile-time rejection of constant zero divisors (as D05ac does for `/`), and error wording.
+
+### D17b — strings are UTF-8: accepted
+
+- Evidence: Davis wrote “strings are utf8” in chat. The question that prompted it offered three options (characters, bytes, or raw bytes); his answer chose the encoding but did not say what length and indexing count.
+- Text is stored as UTF-8 and is always valid Unicode. I read "always valid" from "Unicode text"; he did not state it, so it is flagged for confirmation.
+- Open: whether length, indexing and slicing count characters or bytes (asked next), invalid input, escapes, and string operations.
+
+### D17c — string positions count characters; long strings may be chunked: accepted
+
+- Evidence: asked whether length, indexing and slicing count characters or bytes, Davis wrote “but it does not need to always walk through a string especially for long strings it will be in chunks”. That answers the cost objection to the character option; he then confirmed by choosing “Characters (Unicode code points)”.
+- Length, indexing and slicing count Unicode code points; slices never split a character. Implementations may index long strings in chunks, so positions need not be found by scanning from the start.
+- Chosen over counting bytes, which the question described as fast but able to cut a character.
+- Open: the chunk structure, whether "character" means code point or grapheme, indexing and slicing syntax, cost guarantees, and error wording.
+
+### D18a — `for name in x:` loops; `range` is an ordinary class: accepted
+
+- Evidence: asked what a `for` loop should look like (options: Python-style `for ... in range(n):` plus `while`, a Go-style counter loop, or both), Davis wrote “yes for i in x: range is just another class”. He chose the Python-style option and added that `range` is not special syntax.
+- `x` can be anything iterable. `range` is a class like any other, so no language feature is reserved for it.
+- Chosen over a Go-style counter loop and over offering both styles.
+- Open: the iteration protocol (what makes a class iterable), the exact `range` forms and bounds, the loop variable's scope and type, `break` and `continue`, loops over other collections, and error wording.
+
+### D19a — function form `def name(a: T, b: U) -> R:`: accepted
+
+- Evidence: asked how a function is written (options: `def name(a: T, b: U) -> R:` with an indented body, return type after a colon, or return type before the name), Davis answered “yes what next”. I read “yes” as choosing the first option, which was the one the question proposed.
+- Parameters are `name: Type`, the return type follows `->`, and the body is indented. A function without `->` returns nothing.
+- Chosen over a trailing-colon return type and a return type before the name, which would break the Python look.
+- Open: default and keyword arguments, how a no-value return is spelled in types, and error wording.
+
+### D19b — class header `class Name(Parent) implements A, B:`: accepted
+
+- Evidence: asked how a class is declared, Davis chose **“Parent in parentheses, then `implements` with a comma list”**. His answer arrived while the task was being moved and I recorded it late.
+- The parent is in parentheses and omitted when absent. `implements` and a comma list name interfaces and may be omitted.
+- Chosen over everything-in-parentheses and over `extends` plus `implements` keywords.
+- Open: error wording for duplicate and unknown names, and repeated interfaces.
+
+### D20a — a list is a growable `list[T]` with literal `[a, b, c]`: accepted
+
+- Evidence: asked what a list should look like, Davis chose **“A growable list written `list[T]` with literal `[a, b, c]`”**. His answer arrived late and I recorded it late.
+- 0-based indexing `names[i]`, `append`, and `len(names)`; every item has type `T`; assigning a list shares it (D05a).
+- Chosen over an immutable list and over a fixed-size array `T[n]`.
+- Open: empty literal typing, negative indexes, slicing, removal and insertion, equality, printing, error wording. Generics beyond `list[T]` are a separate question (open question 58).
+
+### D20b — maps and sets exist: accepted (one chat message also settled D21a–D26a)
+
+- Evidence: in one chat message Davis wrote “yes implent list maps sets use clases errors need to exist try catch fianally else none exist impory export exist a standar libray ezisst if and whil and beak and contue and else esxist open exust”. It answered the question of what a compiler written in Tomato needs, and was a list of features, not a choice among options or exact syntax.
+- Each decision records only that the feature exists: maps and sets (D20b); classes model data such as syntax trees, with no enums for now (D21a); errors with try, catch, finally and else (D22a); a `None` value (D23a); import, export and a standard library (D24a); if, else, while, break and continue (D25a); opening files (D26a).
+- The prototype implements each with Python-like placeholders, recorded as P28-P32 and in `tomato/PROVISIONAL.md`, so it can run real programs. Davis decides the exact forms.
+- Open: every detail named in the matching entry in the specification.
+
+### D21a — data structures use classes: accepted
+
+- Evidence: the same chat message as D20b (“use clases”). Syntax trees and similar data are modeled with classes; enums and variants are not added now. Details: specification D21a.
+
+### D22a — errors exist with try, catch, finally and else: accepted
+
+- Evidence: the same chat message as D20b. Details and open items: specification D22a, placeholders P29.
+
+### D23a — a None value exists: accepted
+
+- Evidence: the same chat message as D20b (“none exist”). Details and open items: specification D23a, placeholders P30.
+
+### D24a — import, export and a standard library exist: accepted
+
+- Evidence: the same chat message as D20b. Details and open items: specification D24a, placeholders P31.
+
+### D25a — if, else, while, break and continue exist: accepted
+
+- Evidence: the same chat message as D20b. Details and open items: specification D25a, placeholders P5.
+
+### D26a — opening files exists: accepted
+
+- Evidence: the same chat message as D20b (“open exust”). Details and open items: specification D26a, placeholders P32.
+
+### D27a — `!x` refers to an LLVM function: accepted
+
+- Evidence: Davis wrote “!x to referece a llvm function” in chat. It is a feature statement, not a choice among options.
+- `!name` names the LLVM function `name`. It is the foreign-call mechanism that a compiler written in Tomato needs (R08; open question 71).
+- Davis then asked for a way to let Python run LLVM. The prototype runs `!name(args)` through llvmlite when given LLVM IR with `--llvm file.ll` (P33). The browser playground cannot, because llvmlite is not available there.
+- Open: how types are declared in Tomato, dotted LLVM names, pointer and aggregate types, where the IR comes from, and the final compiler's use of `!x`.
+
+### D28a — command line `tomato run FILE ENTRY INPUTS...`: accepted
+
+- Evidence: Davis wrote “ok implent in llbm command linesyntax tomato run file entry inputs”, then “code the tomato run file works” and “but cannot have any inputs and assumes main”. I read the last as: with no entry and no inputs, `tomato run FILE` runs `@main`.
+- `ENTRY` names the entry point (without the `@`) and `INPUTS` are its arguments, in order. This settles part of D16a's open question about arguments.
+- Open: exit status and return values, other subcommands, flags (the prototype has `--llvm`), collection-valued inputs, standard input, and error wording.
+
+### D29a — memory is managed by reference counting: accepted
+
+- Evidence: Davis wrote “make awebsite that will compile and run it use rference countinjg” in chat. It was not a choice among options. I read it as the language's memory strategy rather than a property of the website only; he did not say which.
+- An object is freed when its last reference goes away. This meets R03 (garbage collected) without a tracing collector.
+- Open: reference cycles (leak them, weak references, or a cycle collector), atomic counts for threads (R09), when counts change, cleanup actions on release, and memory layout. The Python prototype does not implement it.
+
+### D30a — the compiler emits LLVM IR: accepted
+
+- Evidence: asked what the first real compile target should be (native first, WebAssembly first, or design first), Davis wrote “compile to llvm ir it can compil to whatver”. He chose none of the three: the compiler's output is LLVM IR, and other LLVM tools make the target.
+- Chosen over native-only and WebAssembly-only output, since one IR serves every target (R05, R08, R10).
+- Open: LLVM version, how each target is linked and run, and the runtime.
+
+### D31a — async and threads both exist; threading is a library: accepted
+
+- Evidence: asked about concurrency for web servers (R09), Davis wrote “both async and threads threading as a library”. This answered my list of big decisions, which named concurrency; he did not choose between options.
+- Async is part of the language; threading is a library. Both are required.
+- Open: how async is written, the threading library's contents, interaction with reference counting (atomic counts), and the web-server model.
+
+### D32a — plain int chooses its own size: accepted (reading to confirm)
+
+- Evidence: asked about the big-number cost of unlimited `int` in compiled code, Davis wrote “int auto fetects some size and edcides”. I read it as the implementation picking the size a value needs, keeping D05c's unlimited range.
+- Chosen reading over "the compiler picks one fixed size", which would break D05c; he can say which he meant.
+- Open: the analysis, spilling to big numbers, and performance guarantees.
+
+### D33a — types are checked at compile time: accepted
+
+- Evidence: asked about the static type checker, Davis wrote “yes check types at compile”. This confirms D04a.
+- Open: inference rules, optional types, generics, and error forms.
+
+### D24b — a plain `import module` form exists: accepted
+
+- Evidence: asked whether a plain `import module` form should exist besides `from module import a`, Davis wrote “import module uses the”. The sentence is incomplete, so only the existence of the form is recorded.
+- Open: how names are used afterwards, aliases, and the rest of his sentence.
+
+### D34a — error output has debug, normal and release modes: accepted
+
+- Evidence: Davis wrote “I want readable errors in debug and somewhat in normal bt not needed in release debug full error normal outputs codes thta cna be decoded back tom debug that chatgpt”, then “with the source code normal can be decoded to debug style with a second prohrsm” and “the chatgpt does not matter”, withdrawing the unreadable phrase.
+- Debug mode prints full readable errors; normal mode prints a short code that a second program decodes against the source into the debug text; release mode needs no readable errors.
+- Open: the code format, how a mode is selected, location details, and what release prints, if anything.
+
+### D29b — best-effort compile-time cycle detection: accepted
+
+- Evidence: asked how reference counting should handle cycles (weak references, an automatic collector, or leaking them), Davis wrote “do sonme cycle detection at compile but not impirtant”. He chose none of the three: some detection at compile time, with low priority.
+- No cycle collector and no guarantee of catching every cycle. Weak references are not added by this decision.
+- Open: whether weak references exist, whether a detected cycle is a warning or an error, and how accurate detection must be.
+
+### D35a — a value is a 64-bit type code plus 64-bit data: accepted (reading to confirm)
+
+- Evidence: Davis wrote “you decied memory model my idea is type code 64bit the data 64bit”. I read it as the runtime representation of every value.
+- It fits D32a: a small `int` sits in the data word, a larger one points to a big number. Heap values hold a pointer and a reference count (D29a).
+- Open: the type-code assignments, which types are inline, where reference counts live, and fixed-width integers wider than 64 bits.
+
+### D20c — the key-value collection is `dict`: accepted
+
+- Evidence: Davis wrote “dict not map”. The type is `dict[K, V]`; the literal and other D20b placeholders do not change.
+
+### D24c — each module has its own namespace: accepted
+
+- Evidence: Davis wrote “seperate namespaces”, answering whether modules keep sharing one namespace.
+- Open: qualified names and aliases (with D24b), and re-exports.
+
+### D31b — concurrency is async only for now: accepted (tentative)
+
+- Evidence: Davis wrote “just async i hink” after choosing both async and threads (D31a). I record the hedge: the threading library is deferred, not removed.
+- Open: how async is written and what it awaits.
+
+### D27b — how `!` declarations work: accepted (delegated)
+
+- Evidence: Davis wrote “you decide how !declemraions worj”. This is my design, not his choice.
+- A top-level `!name(a: T, b: U) -> R` declares the types of LLVM function `name`; calls are type-checked. `int` maps to `i64`, `int[length=N]`/`uint[length=N]` to `iN`, `float` to `double`, `bool` to `i1`, no arrow to `void`.
+- Chosen over inferring types from the call, which would make the LLVM call unchecked, and over a separate header file.
+- Open: pointers, aggregates, where the IR comes from, and calling conventions.
+
+### D12bh — an interface-typed value converts to a class with a conversion that can fail: accepted
+
+- Evidence: asked whether a value of an interface type can be converted back to a specific class, Davis chose **“Yes, with an explicit conversion that can fail”**. His answer reached me late.
+- Same style as D12az. The prototype already did this by the object's real class (P15).
+- Open: the failure's form, the spelling beyond calling the class name, and error wording.
+
+### D29c — weak references exist and debug mode reports leaks: accepted
+
+- Evidence: asked how reference counting should handle cycles, Davis chose **“Weak references written by the programmer, plus a debug check that reports leaks”**. In chat he had also said “do sonme cycle detection at compile but not impirtant” (D29b). I read the two as compatible: all three mechanisms hold. He can say if only one was meant.
+- Open: weak-reference syntax, what the leak check reports and when, and how it works with the error modes (D34a).
+
+### D36a — the compiler does real allocation: accepted
+
+- Evidence: Davis wrote “make the compiler do real allcoation”, after the compiler could only use stack values.
+- Compiled programs allocate heap objects with a header {reference count, type code} (D35a) and free them by reference counting (D29a). The prototype does this for strings, lists and class instances. Debug mode reports objects never freed, which catches reference cycles (D29c).
+- This is a first slice, not the full memory model: values are plain pointers rather than the 128-bit type-code-plus-data pair, and plain `int` is still a 64-bit integer.
+- Open: weak references, dicts and sets, interfaces, errors, big-number `int`, small values stored inline in the data word, atomic counts for threads, and a chunked string index.
+
+### D37a — class instances always use pointers: accepted
+
+- Evidence: Davis wrote “classes always use pointeres” in chat.
+- An instance is a heap object reached through a pointer, so assignment and argument passing share it (D05a). The compiler already works this way.
+- Open: packing of small fields, and whether a value type could ever exist.
+
+### D29d — no manual memory control; cycles are freed automatically: accepted (reading to confirm)
+
+- Evidence: asked how a weak reference should be written and read (a `weak[T]` type, a `weak` modifier, or wait for optional types), Davis wrote “no manaualy control”. I read it as rejecting programmer-written weak references in favour of the runtime handling cycles itself; he did not name that option.
+- This reverses the weak-reference part of D29c. The debug leak check and best-effort compile-time cycle notices (D29b) remain.
+- Open: when the collector runs, its cost, and its use with threads (D31a).
+
+### D29e — weak references may live in the standard library: accepted
+
+- Evidence: Davis wrote “week can exist in a standar lib” right after “no manaualy control” (D29d).
+- Weak references are a library facility, not language syntax, so the language itself stays free of manual memory control.
+- Open: the type's name and reading, what it gives once its target is gone (no optional types yet), runtime support to clear it, and its dependence on generics. Not built.
+
+### D23b — optional values are the type `T | None`: accepted
+
+- Evidence: Davis wrote “None should exist opyional stuff is just Type | None”, answering how a type says "this or None" (D23a left it open).
+- `x: int | None` holds an int or `None`; the same form works for parameters, returns, fields and collection elements.
+- Chosen over a separate `Optional[T]` or `T?` spelling, which were not offered.
+- Open: unions other than with `None`, narrowing, operators on optionals, and `None | T`.
+
+### D19c — a parameter can have a default value: accepted
+
+- Evidence: Davis wrote “input:Type | None = None” right after deciding optionals. I read the example as a parameter with a default value.
+- Davis confirmed this reading with “yes”.
+- Open: allowed expressions, evaluation time (the prototype evaluates at each call), keyword arguments, and ordering rules.
+
+### D23c — `is None` and `is not None` work: accepted
+
+- Evidence: Davis wrote “is None work == None works in None works”. I implemented `is None` and `is not None` alongside `== None`; the last phrase (“in None works”) was unreadable and is left out.
+- Open: `is` with operands other than `None` and objects.
+
+### D23d — the type of None is None: accepted
+
+- Evidence: asked what “in None works” meant, Davis wrote “X in None None's type is None”. I first read the earlier phrase as `X | None` typed with the wrong key; D23e corrects that.
+- `None` is both a value and a type, so `X | None` is a union of two types. This matches the prototype, where `x: None` and `x: X | None` already work.
+- Open: unions of other types, and `None | X`.
+
+### D23e — `x in None` tests for None: accepted (reading to confirm)
+
+- Evidence: Davis wrote “no you can do if x in None:”, correcting my reading that "in None" was a typo for `| None`.
+- `x in None` is a membership test against the type `None` (D23d): it is true exactly when `x` is `None`, the same as `x is None`. He did not say what it returns, so this is my reading.
+- Open: `in` against other type names, and whether `x in int` should work.
+
+### D23f — `x in Type` is the type check: accepted
+
+- Evidence: asked whether `x in None` meant "x is None" and what `in` does against other types, Davis answered “X IN TYPE WORKS THr is how you check if something is x type”.
+- `x in Type` is true when the value's type is `Type`. This generalises D23e: `x in None`, `x in int`, `x in str`, `x in Circle`.
+- My reading of the details, logged as P44: a class name also matches subclasses; an interface name matches any class that implements it; `int` matches plain unlimited ints only (not fixed-width ints or `bool`); an optional's value is tested by its current contents, so `y in int` is false when `y` is `None`.
+- Open: generic types (`x in list[int]`), fixed-width types (`x in int[length=8]`), and unions on the right.
+
+### D23g — `|` is a general type union: accepted (reading to confirm)
+
+- Evidence: asked whether to build compiled optional `int`/`float`/`bool`, Davis wrote “you don;t need expkicith optional int float ool | is just a operator”.
+- My reading: `|` is an ordinary operator on types, so `A | B | C` is a union of any types; `T | None` is just the union with `None` and needs no special optional feature (so no optional-specific compiler work). A value of a union type holds one member's value, and `x in Type` (D23f) tells which. `None | X` and `X | None` are the same type; a repeated member (`int | int`, `None | None`) is an error.
+- Interpreter: values are checked against the first member that accepts them. Members are not narrowed: operations and member access on a union value are checked when the code runs (as for optionals, D23b).
+- The compiler still supports only `T | None` with heap types; other unions stop with "does not support … yet".
+- Open: narrowing after `in`/`is`, whether a union may include generic or fixed-width types in tests, and the compiled representation of unions.
+
+### D23h — `&` intersection, bitwise `& | ^`, and `xor`: accepted (reading to confirm)
+
+- Evidence: Davis wrote “add &”, chose “Both” when I offered type intersection, bitwise and, or both, then “^ xor”, “not x”, “and”, “or”, “xor space” and “like python biut with xor”. He also confirmed `==`, `!=`, `>` and `<=` exist.
+- `&` between types is an intersection (`Named & Printable`): a value that is every member. Members are interfaces and at most one class. `x in A & B` tests all members.
+- `&`, `|` and `^` between whole numbers are bitwise and, or and xor, with Python's precedence (`|` lowest, then `^`, then `&`, all below `+` and above comparisons). The result takes the wider operand's type. `|` between types remains the union (D23g); position decides which.
+- The word operators are Python's `not`, `and`, `or` plus a new `xor`: both operands `bool`, true when exactly one is true, no short-circuit, precedence between `or` and `and`. My reading of his short messages.
+- The compiler supports `xor`. It stops with "does not support … yet" for the bitwise operators and for intersection types.
+- Open: a bitwise-not symbol (`~`), shifts, and bitwise operators on `bool`.
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.
 
 Numeric details remain open: detailed width-expression rules, representation, overflow error handling, analysis outside D05x, contextual typing beyond D05s–w’s literal-only arithmetic rules, remaining arithmetic rules beyond D05s–w, D05y–aj, and D05at, remaining division/modulo rules under D05y, and resource-exhaustion behavior. Compiler implementation and merging this task remain outside the authorized scope.
 
-Remaining interface details are queued: passing interface-typed values, duplicate declarations, exact import/export syntax, re-exports, processing phase, inherited conformance, member compatibility, and interface inheritance. The basic declaration choices are settled, but the interface model is not complete.
+Remaining interface details are queued: duplicate declarations, exact import/export syntax, re-exports, processing phase, and interface inheritance. The basic declaration choices are settled, but the interface model is not complete.
 
 Current queue: class details (initialization/defaults, other modifier placement and init writes, @init allocation/receiver model, @add operand/result rules, construction, overriding and member compatibility), remaining interface details, detailed inference, web-app host integration, integer quotient/modulo and remaining numeric rules, and priority/release scope. The classes and integers are not complete.
 
 ## Public page status
 
-The public page is served from the Mac mini at https://tomato-design.tailcecab.ts.net by `site/node/server.mjs`, which runs the Worker code with a file-backed SQLite stand-in for D1 and includes the private chat. Its rule rows match the hand-maintained static page `static/index.html` (also kept as a chat-free copy). The Cloudflare/Sites deployment is retired and must not be redeployed. The reply endpoint now returns the stored reply id when two replies race. Known accepted limit: the global password budget lets unauthenticated callers lock out chat start for up to ten minutes; it is kept so rotating-IP guessing stays bounded. `site/README.md` states that web-chat input is not verified as Davis’s decision. Decisions arriving through the shared-password chat have no per-person identity and stay Proposed until Davis confirms them in the authenticated byre task; D12j, D12m, D12n–q and the D02b slowdown reading were confirmed that way on 2026-11-08.
+The earlier public decision page, its password-protected chat and the chat bridge are retired and their code (`site/`, `static/`) has been removed from the repository. They are not to be restarted or redeployed. Decisions are read from these Markdown files; the local Python playground in `web/` is separate and holds no chat.
 
 ## Template for subsequent decisions
 

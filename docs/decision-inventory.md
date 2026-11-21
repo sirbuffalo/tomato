@@ -35,11 +35,11 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 8. D12a and D12b are accepted: include classes and interfaces, with at most one parent class. D12m selects @init as the initialization-function marker. Overriding details, remaining construction/initialization semantics, and dispatch remain open; class assignment is settled in D05a.
 9. D12c is accepted: interface conformance requires an explicit declaration checked by the compiler; matching members alone are insufficient.
 10. D12d is accepted: a class may explicitly implement multiple interfaces, alongside at most one parent class. Overlapping requirements remain open.
-11. D12e is accepted: no default method bodies in interfaces. Other interface member kinds and interface inheritance remain open.
+11. D12e is accepted: no default method bodies in interfaces. Other interface member kinds remain open; D12bc settles interface inheritance.
 12. D12f is accepted: allow an explicit implementation declaration after a class definition. Exact syntax, duplicate declarations, and processing phase remain open.
 13. D12g is accepted: the declaration checks existing methods only; it cannot add methods, and missing required methods fail compilation.
 14. D12h is accepted: a module may make the declaration when both the class and interface are imported.
-15. D12i is accepted: declarations apply locally and can be shared through explicit export/import. Duplicate handling, import details, re-exports, and passing interface-typed values remain open.
+15. D12i is accepted: declarations apply locally and can be shared through explicit export/import. Duplicate handling, import details, re-exports, remain open; D12bb settles passing interface-typed values.
 16. D05a is accepted: class assignment copies a reference to the same object, without copying fields. Explicit cloning, field mutability defaults, and value types remain open.
 17. D05b is accepted: class arguments share the object through a local parameter; parameter reassignment does not replace the caller's variable. Other parameter modes and non-class arguments remain open.
 18. D05c is accepted: ordinary integers are signed, arbitrary-precision, and automatically growing within resource limits. Representation strategy and resource-exhaustion behavior remain open.
@@ -126,11 +126,62 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 99. D12au is accepted: a replacing method must have the parent method's name and exactly the same parameter and return types; no variance. Parameter names and errors remain open.
 100. D12av is accepted: a replacing method calls the parent's version as `ParentClass.name(self, args)`, same as the `@init` call; no `super`, no required position. Longer chains, other class-qualified calls, and errors remain open.
 101. D12aw is accepted: only instance methods with `self` can be replaced with `override`; `@init` and class functions cannot. Name resolution of a same-named subclass class function and errors remain open.
-102. D12ax is accepted: a dot-form call on an object runs the replacing method of the object's actual class, chosen at run time; class-qualified calls name their class. D12ay allows parent-typed expressions to hold subclass instances. Interface-typed dispatch remains open.
+102. D12ax is accepted: a dot-form call on an object runs the replacing method of the object's actual class, chosen at run time; class-qualified calls name their class. D12ay allows parent-typed expressions to hold subclass instances. Interface-typed values are settled by D12bb.
 103. D12ay is accepted: a subclass instance can be used wherever its parent type is expected (assignment, arguments, returns). The reverse is an error without D12az's explicit conversion. Interface types, containers, and errors remain open.
 104. D12az is accepted: a parent-typed value can be converted to a subclass with an explicit type-call such as `Circle(s)`, failing if the object is not that class. The error form, and interface/unrelated-class conversions remain open.
 105. D12ba is accepted: a class whose `@init` takes a single parameter accepting its parent type or its own type is a compile error, so `Circle(x)` is never both creation and conversion. Exact rejected types and errors remain open.
-106. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+106. D12bb is accepted: an instance of a class that explicitly implements an interface fits that interface as a variable, parameter or return type; dot calls dispatch to the actual class at run time. Interface-to-class conversion, interface inheritance, containers, and errors remain open.
+107. D12bc is accepted: an interface can extend one or more interfaces; a class implementing the child provides all parents' methods and its instances fit each parent type. Overlap between parents, cycles, and errors remain open.
+108. D12bd is accepted: when interfaces implemented together or extended together require the same method name and signature, one method satisfies both; same name with a different signature is an error. Cycles and errors remain open.
+109. D12be is accepted: interface inheritance cannot form a cycle, directly or indirectly. Error wording remains open.
+110. D12bf is accepted: subclasses inherit the interfaces their parent class implements, and their replacing methods must still fit. Error wording remains open.
+111. D12bg is accepted: a method satisfies an interface requirement when its parameter types and return type exactly match; parameter names need not match. Error wording remains open.
+112. D16a is accepted: no top-level code; execution starts at a top-level function marked `@name`, with `@main` the default entry point. Arguments, exit status, duplicates, no `@main`, entry selection, and module-level variables remain open.
+113. D17a is accepted: string literals use single or double quotes interchangeably; single quotes are the recommended style. Escapes, string contents, multi-line literals, and operations remain open.
+114. D05au is accepted: integer % is the mathematical remainder with the divisor's sign, as in Python; a zero divisor is an error. Floats, rationals, an integer-quotient operator, and compile-time zero divisors remain open.
+115. D17b is accepted: strings are UTF-8 text. Length and indexing units, invalid input, escapes, and operations remain open.
+116. D17c is accepted (confirmed by Davis): string length, indexing and slicing count characters (code points); long strings may use a chunked index. Structure, grapheme question, syntax, and cost guarantees remain open.
+117. D18a is accepted: `for name in x:` iterates Python style alongside `while`; `range` is an ordinary standard-library class. Iteration protocol, range details, loop variable rules, break/continue, and collections remain open.
+118. D19a is accepted: `def name(a: T, b: U) -> R:` with an indented body; no `->` means no return value. Defaults, keyword arguments, and the spelling of a no-value return remain open.
+119. D19b is accepted: `class Name(Parent) implements A, B:`. Duplicate names and error wording remain open.
+120. D20a is accepted: growable `list[T]` with literal `[a, b, c]`, 0-based indexing, `append`, `len`; items share one type; lists are shared objects. Empty literal typing, slicing, removal, equality, and printing remain open.
+121. D20b is accepted: maps and sets exist. Syntax, key rules, ordering, and operations remain open.
+122. D21a is accepted: data structures such as syntax trees use classes; no enums or variants for now.
+123. D22a is accepted: errors exist, handled with try, catch, finally and else. Raising, what an error is, catchable failures, and forms remain open.
+124. D23a is accepted: a missing value None exists. Optional types and comparisons remain open.
+125. D24a is accepted: import and export exist, and a standard library exists. Syntax, defaults, naming, search, and contents remain open.
+126. D25a is accepted: if, else, while, break and continue exist. Exact forms remain open.
+127. D26a is accepted: opening files exists. Name, return value, modes, errors, and location remain open.
+128. D27a is accepted: `!x` refers to an LLVM function named x. Type declarations, call form, dotted names, and interpreter behavior remain open.
+129. D28a is accepted: the command line is `tomato run FILE ENTRY INPUTS...`; no entry or inputs runs @main; inputs are the entry point's arguments. Exit status, other subcommands, flags, collection inputs, and stdin remain open.
+130. D29a is accepted: memory is managed by reference counting. Cycles, atomic counts, cleanup actions, and layout remain open.
+131. D30a is accepted: the compiler emits LLVM IR; LLVM tools produce the final target. Version, linking, runtime remain open.
+132. D31a is accepted: both async and threads exist; threading is a library. Async syntax, library contents, and interaction with reference counting remain open.
+133. D32a is accepted (reading to confirm): plain int chooses its own size and stays unlimited in range. Analysis and performance guarantees remain open.
+134. D33a is accepted: types are checked at compile time (confirms D04a).
+135. D24b is accepted: a plain `import module` form exists. Its details remain open.
+136. D34a is accepted: debug mode gives full errors; normal mode gives short codes a second program decodes using the source; release mode needs none. Code format and selection remain open.
+137. D29b is accepted: best-effort compile-time cycle detection, not a priority; no collector. Weak references, warning versus error, and accuracy remain open.
+138. D35a is accepted (reading to confirm): a value is a 64-bit type code plus 64-bit data; small values inline, others a pointer with a reference count. Codes, inline types, and count placement remain open.
+139. D20c is accepted: the key-value collection is `dict[K, V]`, not `map`.
+140. D24c is accepted: each module has its own namespace. Qualified names and aliases remain open with D24b.
+141. D31b is accepted (tentative): concurrency is async only for now; the threading library is deferred. How async is written remains open.
+142. D27b is accepted (delegated, decided by the agent): `!name(a: T) -> R` declares the types of an LLVM function; calls are type-checked. Pointers and aggregates remain open.
+143. D12bh is accepted: an interface-typed value can be converted to a specific class with an explicit conversion that can fail. Failure form and spelling remain open.
+144. D29c is accepted: weak references exist and debug mode reports leaks, alongside best-effort compile-time cycle detection (D29b). Syntax and leak-check details remain open.
+145. D36a is accepted: the compiler does real allocation: reference-counted heap objects with a header of count and type code; debug mode reports leaks. Weak references, dicts, sets, interfaces, errors, big-number int, and inline small values remain open.
+146. D37a is accepted: class instances always use pointers (heap objects, never inline); assignment shares the object.
+147. D29d is accepted (reading to confirm): no manual memory control and no programmer-written weak references; the runtime frees reference cycles automatically. Collector timing and cost remain open.
+148. D29e is accepted: weak references may exist in the standard library, not as language syntax. Name, reading, runtime support, and generics dependency remain open; not built.
+149. D23b is accepted: an optional is the type `T | None`. General unions, narrowing, and operators on optionals remain open.
+150. D19c is accepted (confirmed by Davis): a parameter can have a default value `name: T = value`. Evaluation time, allowed expressions, and keyword arguments remain open.
+151. D23c is accepted: `is None` and `is not None` work alongside `== None` and `!= None`; `is` with other operands remains open.
+152. D23d is accepted: the type of None is None; X | None is the union of X's type and None's type. Other unions and None | X remain open.
+153. D23e is accepted (reading to confirm): `x in None` is valid and true when x is None. Other `in` type tests remain open.
+154. D23f is accepted: `x in Type` is the type check (`x in None`, `x in int`, `x in Dog`); subclass, interface, `int` and optional details are logged as P44.
+155. D23g is accepted (reading to confirm): `|` is a general type union (`int | str`, `Dog | Cat | None`); `T | None` is the union with `None`; interpreter only, compiler keeps `T | None` for heap types; logged as P45.
+156. D23h is accepted (reading to confirm): `&` is type intersection and bitwise and, `|` also bitwise or and `^` bitwise xor on whole numbers, and `xor` is the logical word operator; logged as P46.
+157. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass
 

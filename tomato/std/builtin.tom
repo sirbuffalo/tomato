@@ -1,0 +1,19 @@
+# Names every Tomato file can use without importing them (D22a).
+
+class Error:
+    message: str
+
+    @init
+    def start(self, message: str):
+        self.message = message
+
+# Failures the language itself raises: division by zero, an index out of range, a missing key, bad text for int().
+class RuntimeError(Error):
+    @init
+    def make(self, message: str):
+        Error.start(self, message)
+
+class IOError(RuntimeError):
+    @init
+    def make_io(self, message: str):
+        RuntimeError.make(self, message)

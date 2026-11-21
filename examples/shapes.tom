@@ -1,0 +1,37 @@
+interface Named:
+    def name(self) -> str
+
+interface Shape(Named):
+    def area(self) -> int
+
+class Rect implements Shape:
+    private w: int
+    private h: int
+
+    @init
+    def start(self, w: int, h: int):
+        self.w = w
+        self.h = h
+
+    def name(self) -> str:
+        return "rect"
+
+    def area(self) -> int:
+        return self.w * self.h
+
+class Square(Rect):
+    @init
+    def make(self, s: int):
+        Rect.start(self, s, s)
+
+    override def name(self) -> str:
+        return "square"
+
+def describe(s: Shape) -> int:
+    print(s.name())
+    return s.area()
+
+@main
+def main():
+    print(describe(Rect(2, 3)))
+    print(describe(Square(4)))

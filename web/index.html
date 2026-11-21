@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tomato Playground</title>
+<style>
+:root { --bg:#fbf9f6; --fg:#241f1c; --muted:#6d625b; --card:#fff; --line:#dcd3cb; --accent:#c8321e; --accent-fg:#fff; --err:#b3261e; }
+@media (prefers-color-scheme: dark) { :root { --bg:#181513; --fg:#f0e9e3; --muted:#a39890; --card:#221e1b; --line:#3a332e; --accent:#ee6a55; --accent-fg:#1a0f0c; --err:#ff8a80; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
+main { max-width:960px; margin:0 auto; padding:24px 16px 48px; }
+h1 { margin:0 0 4px; font-size:1.6rem; }
+p.lead { margin:0 0 16px; color:var(--muted); }
+.bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
+select, button { font:inherit; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+button.run { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+button:disabled { opacity:.5; }
+textarea { width:100%; min-height:320px; resize:vertical; padding:12px; font:14px/1.5 ui-monospace, Menlo, monospace; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:8px; tab-size:4; }
+h2 { font-size:1rem; margin:16px 0 6px; }
+pre { margin:0; padding:12px; min-height:3em; white-space:pre-wrap; background:var(--card); border:1px solid var(--line); border-radius:8px; font:14px/1.5 ui-monospace, Menlo, monospace; }
+pre.err { color:var(--err); }
+.status { color:var(--muted); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tomato Playground</h1>
+  <p class="lead">A prototype of the Tomato language, written in Python and running in your browser through Pyodide (WebAssembly). Run interprets the program; Compile shows the LLVM IR the compiler writes for the small subset it supports so far. Undecided syntax uses placeholders listed in PROVISIONAL.md.</p>
+  <div class="bar">
+    <select id="examples" aria-label="Example program"></select>
+    <button id="run" class="run" disabled>Run</button>
+    <button id="compile" disabled>Compile to LLVM IR</button>
+    <button id="stop" disabled>Stop</button>
+    <span id="status" class="status">Loading Python…</span>
+  </div>
+  <textarea id="src" spellcheck="false" aria-label="Tomato source"></textarea>
+  <h2>Output</h2>
+  <pre id="out"></pre>
+  <h2>Error</h2>
+  <pre id="err" class="err"></pre>
+  <h2>LLVM IR</h2>
+  <pre id="ir"></pre>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let worker, examples = {};
+
+function start() {
+  worker = new Worker("worker.js");
+  $("run").disabled = true; $("stop").disabled = true;
+  $("status").textContent = "Loading Python…";
+  worker.onmessage = (ev) => {
+    const m = ev.data;
+    if (m.type === "ready") {
+      examples = m.examples;
+      if (!$("examples").options.length) {
+        for (const name of Object.keys(examples)) $("examples").add(new Option(name, name));
+        $("src").value = examples[$("examples").value] || "";
+      }
+      $("run").disabled = false; $("compile").disabled = false;
+      $("status").textContent = "Ready";
+    } else if (m.type === "result") {
+      $("out").textContent = m.out; $("err").textContent = m.err;
+      $("run").disabled = false; $("compile").disabled = false; $("stop").disabled = true;
+      $("status").textContent = m.err ? "Finished with an error" : "Finished";
+    } else if (m.type === "compiled") {
+      $("ir").textContent = m.out; $("err").textContent = m.err;
+      $("run").disabled = false; $("compile").disabled = false; $("stop").disabled = true;
+      $("status").textContent = m.err ? "Compile failed" : "Compiled to LLVM IR";
+    } else if (m.type === "fatal") {
+      $("status").textContent = "Could not load Python: " + m.message;
+    }
+  };
+}
+$("examples").onchange = () => { $("src").value = examples[$("examples").value]; };
+$("run").onclick = () => {
+  $("out").textContent = ""; $("err").textContent = ""; $("ir").textContent = "";
+  $("run").disabled = true; $("compile").disabled = true; $("stop").disabled = false;
+  $("status").textContent = "Running…";
+  worker.postMessage({ type: "run", source: $("src").value });
+};
+$("compile").onclick = () => {
+  $("out").textContent = ""; $("err").textContent = ""; $("ir").textContent = "";
+  $("run").disabled = true; $("compile").disabled = true; $("stop").disabled = false;
+  $("status").textContent = "Compiling…";
+  worker.postMessage({ type: "compile", source: $("src").value });
+};
+$("stop").onclick = () => {
+  worker.terminate();
+  $("err").textContent = "Stopped.";
+  start();
+};
+start();
+</script>
+</body>
+</html>

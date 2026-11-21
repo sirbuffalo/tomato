@@ -1,0 +1,25 @@
+def is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    d = 2
+    while d * d <= n:
+        if n % d == 0:
+            return False
+        d = d + 1
+    return True
+
+@main
+def main():
+    print('no inputs')
+
+@prime
+def prime(n: int):
+    print(n, is_prime(n))
+
+@greet
+def greet(name: str, times: uint[length=8], loud: bool):
+    for i in range(times):
+        if loud:
+            print(name.upper())
+        else:
+            print(name)

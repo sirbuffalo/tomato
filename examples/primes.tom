@@ -1,0 +1,26 @@
+def is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    d = 2
+    while d * d <= n:
+        if n % d == 0:
+            return False
+        d = d + 1
+    return True
+
+def fib_mod(n: int, m: int) -> int:
+    a = 0
+    b = 1
+    for i in range(n):
+        t = (a + b) % m
+        a = b
+        b = t
+    return a
+
+@main
+def main():
+    print(is_prime(97))
+    print(is_prime(100))
+    print(fib_mod(90, 1000000007))
+    print(5 / 2)
+    print(rational(1, 3) + rational(1, 6))
