@@ -42,6 +42,12 @@ def is_list(t: str) -> bool:
 def is_dict(t: str) -> bool:
     return t.startswith('dict[')
 
+def is_set(t: str) -> bool:
+    return t.startswith('set[')
+
+def set_elem(t: str) -> str:
+    return t[4:len(t) - 1]
+
 def dict_value(t: str) -> str:
     # the value type of dict[V], a dict with text keys
     return t[5:len(t) - 1]
@@ -62,7 +68,7 @@ def strip_optional(t: str) -> str:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_list(t) or is_dict(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t)
+    return t == 'str' or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t)
 
 def elem_of(t: str) -> str:
     return t[5:len(t) - 1]
@@ -77,6 +83,8 @@ def shown(t: str) -> str:
         return 'list[' + shown(elem_of(t)) + ']'
     if is_dict(t):
         return 'dict[str, ' + shown(dict_value(t)) + ']'
+    if is_set(t):
+        return 'set[' + shown(set_elem(t)) + ']'
     return t
 
 def llvm_type(t: str) -> str:
@@ -296,9 +304,14 @@ class Mod:
             elif members[1].fields[0].text != 'None':
                 return ''
             wrapped = self.type_name(node_val(other))
-            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_class(wrapped) or is_iface(wrapped)):
+            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped)):
                 return ''
             return wrapped + '?'
+        if name == 'set' and t.fields[2].tag == 'n':
+            member = self.type_name(t.fields[2])
+            if member == 'str' or member == 'int' or member == 'bool':
+                return 'set[' + member + ']'
+            return ''
         if name == 'dict' and t.fields[2].tag == 'n' and t.fields[3].tag == 'n':
             if self.type_name(t.fields[2]) != 'str':
                 return ''
@@ -566,6 +579,8 @@ class Gen:
             return self.list_lit(n, expected)
         if k == 'MapLit':
             return self.map_lit(n, expected)
+        if k == 'SetLit':
+            return self.set_lit(n, expected)
         if k == 'Attr':
             return self.field_get(n)
         if k == 'Index':
@@ -656,12 +671,49 @@ class Gen:
         return ex(lst, t)
 
     def key_word(self, k: Ex) -> str:
+        # a key as the 64-bit word the runtime hashes: the number itself, or the text's address
+        if k.ty != 'str':
+            return k.reg
         r = self.tmp('kw')
         self.emit(r + ' = ptrtoint ptr ' + k.reg + ' to i64')
         return r
 
+    def new_set(self, t: str) -> Ex:
+        kind = '0'
+        if set_elem(t) == 'str':
+            kind = '1'
+        r = self.tmp('set')
+        self.emit(r + ' = call ptr @tomato_dict_new(i64 ' + str(self.mod.code_of(t)) + ', i64 0, i32 ' + kind + ')')
+        return ex(r, t)
+
+    def set_lit(self, n: Node, expected: str) -> Ex:
+        items = val_nodes(n.fields[0])
+        t = expected
+        first = ex('', '')
+        if not is_set(expected):
+            first = self.expr(items[0])
+            t = 'set[' + first.ty + ']'
+            if not is_set(t) or not (first.ty == 'str' or first.ty == 'int' or first.ty == 'bool'):
+                raise CompileError('a set holds int, bool or str values', n.line)
+        st = self.new_set(t)
+        k = 0
+        for item in items:
+            v = ex('', '')
+            if k == 0 and first.ty != '':
+                v = first
+            else:
+                v = self.expr(item, set_elem(t))
+            self.want(v, set_elem(t), n.line, 'a set element')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + st.reg + ', i64 ' + self.key_word(v) + ', i32 0)')
+            self.release(v)
+            k = k + 1
+        return st
+
     def map_lit(self, n: Node, expected: str) -> Ex:
         pairs = n.fields[0].items
+        if is_set(expected) and len(pairs) == 0:
+            return self.new_set(expected)
         if not is_dict(expected):
             raise CompileError('the type of a {} needs a declaration: m: dict[str, int] = {}', n.line)
         value_t = dict_value(expected)
@@ -751,6 +803,15 @@ class Gen:
             self.emit(c + ' = call i32 @tomato_str_contains(ptr ' + b.reg + ', ptr ' + a.reg + ')')
             i1 = self.tmp('flag')
             self.emit(i1 + ' = icmp ne i32 ' + c + ', 0')
+            self.release(a)
+            self.release(b)
+            return self.bool_of(i1)
+        if is_set(b.ty):
+            self.want(a, set_elem(b.ty), line, 'the left side of in')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + b.reg + ', i64 ' + self.key_word(a) + ')')
+            i1 = self.tmp('flag')
+            self.emit(i1 + ' = icmp ne ptr ' + slot + ', null')
             self.release(a)
             self.release(b)
             return self.bool_of(i1)
@@ -1106,6 +1167,8 @@ class Gen:
             self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
             self.release(obj)
             return ex('', '')
+        if is_set(obj.ty):
+            return self.set_method(obj, name, args, n.line)
         if obj.ty == 'str':
             return self.text_method(obj, name, args, n.line)
         if obj.ty == 'File':
@@ -1119,6 +1182,25 @@ class Gen:
             info = self.mod.find_method(obj.ty[1:], name, n.line)
             return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
         raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + shown(obj.ty) + ' yet', n.line)
+
+    def set_method(self, st: Ex, name: str, args: list[Node], line: int) -> Ex:
+        if (name == 'add' or name == 'remove') and len(args) == 1:
+            v = self.expr(args[0], set_elem(st.ty))
+            self.want(v, set_elem(st.ty), line, 'the set element')
+            kw = self.key_word(v)
+            if name == 'add':
+                self.emit('call ptr @tomato_dict_insert(ptr ' + st.reg + ', i64 ' + kw + ', i32 0)')
+            else:
+                slot = self.tmp('slot')
+                self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + st.reg + ', i64 ' + kw + ')')
+                missing = self.tmp('missing')
+                self.emit(missing + ' = icmp eq ptr ' + slot + ', null')
+                self.fail_if(missing, 'the element is not there')
+                self.emit('call i32 @tomato_dict_delete(ptr ' + st.reg + ', i64 ' + kw + ')')
+            self.release(v)
+            self.release(st)
+            return ex('', '')
+        raise CompileError('the Tomato compiler does not support the set method ' + name + ' yet', line)
 
     def text_args(self, obj: Ex, name: str, args: list[Node], count: int, line: int) -> list[Ex]:
         if len(args) != count:
@@ -1226,7 +1308,7 @@ class Gen:
             raise CompileError('len(x) takes one argument', line)
         v = self.expr(args[0])
         r = self.tmp('len')
-        if is_list(v.ty) or is_dict(v.ty):
+        if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty):
             lenp = self.tmp('lenp')
             self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + v.reg + ', i32 0, i32 2')
             self.emit(r + ' = load i64, ptr ' + lenp)
@@ -1557,8 +1639,17 @@ class Gen:
 
     def for_each(self, s: Node, it: Node):
         lst = self.expr(it)
+        if is_set(lst.ty) or is_dict(lst.ty):
+            # a loop over a set or dict walks a snapshot of its keys (P28)
+            keys = 'list[' + set_elem(lst.ty) + ']'
+            if is_dict(lst.ty):
+                keys = 'list[str]'
+            snap = self.tmp('keys')
+            self.emit(snap + ' = call ptr @tomato_dict_keys(ptr ' + lst.reg + ', i64 ' + str(self.mod.code_of(keys)) + ', i64 8)')
+            self.release(lst)
+            lst = ex(snap, keys)
         if not is_list(lst.ty):
-            raise CompileError('the Tomato compiler only loops over range() and lists yet', s.line)
+            raise CompileError('the Tomato compiler only loops over range(), lists, sets and dicts yet', s.line)
         elem = elem_of(lst.ty)
         holder = self.hidden_rc_slot('for.list')
         self.store_owned(holder, lst)
@@ -1847,6 +1938,8 @@ def runtime_tables(mod: Mod) -> str:
             offsets[slot] = 'ptr @tomato.offs.' + str(slot)
             extra = extra + '@tomato.name.' + str(slot) + ' = private constant [' + str(len(c.name) + 1) + ' x i8] c"' + c.name + '\\00"\n'
             names[slot] = 'ptr @tomato.name.' + str(slot)
+        elif is_set(code):
+            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))
         elif is_dict(code):
             kinds[slot] = 'i32 ' + str(3 + 256 + 512 * int_of_bool(is_rc(dict_value(code))))    # a table with text keys
         elif elem_of(code) == 'str' or is_rc(elem_of(code)):
@@ -1889,6 +1982,8 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_dict_new(i64, i64, i32)\n'
     d = d + 'declare ptr @tomato_dict_find(ptr, i64)\n'
     d = d + 'declare ptr @tomato_dict_insert(ptr, i64, i32)\n'
+    d = d + 'declare i32 @tomato_dict_delete(ptr, i64)\n'
+    d = d + 'declare ptr @tomato_dict_keys(ptr, i64, i64)\n'
     d = d + 'declare void @tomato_usage(i32, i32)\n'
     d = d + 'declare i64 @tomato_parse_i64(ptr, i32)\n'
     d = d + 'declare i32 @tomato_parse_bool(ptr, i32)\n'

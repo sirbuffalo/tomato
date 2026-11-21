@@ -16,6 +16,32 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "sets": """def distinct(words: list[str]) -> int:
+    seen: set[str] = {}
+    for w in words:
+        seen.add(w)
+    return len(seen)
+
+@main
+def main():
+    ws = ['a', 'b', 'a', 'c', 'b']
+    print(distinct(ws))
+    nums: set[int] = {3, 1, 2}
+    nums.add(5)
+    nums.add(3)
+    nums.remove(1)
+    total = 0
+    for n in nums:
+        total = total + n
+    print(len(nums), 5 in nums, 1 in nums, total)
+    t = {'x', 'y'}
+    print('x' in t, 'z' in t, len(t))
+    ages: dict[str, int] = {'ann': 3, 'bob': 5}
+    for name in ages:
+        print(name, ages[name])
+    flags: set[bool] = {True}
+    print(True in flags, False in flags)
+""",
     "interfaces_and_override": """interface Shape:
     def area(self) -> int
     def name(self) -> str
@@ -625,7 +651,7 @@ def main():
         self.assertIn("uncaught error RuntimeError: zero", run.stderr)
 
     def test_unsupported_programs_say_so(self):
-        for src, text in (("@main\ndef main():\n    x = {1, 2}\n", "does not support SetLit"),
+        for src, text in (("@main\ndef main():\n    x: tuple[int] = [1]\n", "only declares"),
                           ("@main\ndef main():\n    print([1])\n", "does not print lists"),
                           ("@main\ndef main():\n    xs: list[int] = []\n    xs.append('a')\n", "type error"),
                           ("@main\ndef main():\n    xs = []\n", "empty list needs a declaration"),
