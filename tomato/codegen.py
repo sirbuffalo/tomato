@@ -131,7 +131,7 @@ class FuncCompiler:
         """Registers a block that reports a failure of this kind (see errcodes) and stops; returns its label."""
         lab = self.label(hint)
         self.fail_blocks.append((lab, kind, self.line, self.unwind_target()))
-        rt = self.cg.runtime_error_class()
+        rt = self.cg.runtime_error_class(kind)
         self.callees.add(self.cg.ctor_symbol(rt))
         return lab
 
@@ -1861,8 +1861,9 @@ class Codegen:
     def mode_code(self):
         return {"debug": 1, "normal": 2, "release": 3}[self.mode]
 
-    def runtime_error_class(self):
-        return self.interp.classes["RuntimeError"]
+    def runtime_error_class(self, kind=None):
+        """The error class a language failure raises: IOError for a file that cannot be opened, else RuntimeError."""
+        return self.interp.classes["IOError" if kind == "file" else "RuntimeError"]
 
     def error_message(self, kind, line):
         if self.mode == "debug":
@@ -1873,7 +1874,7 @@ class Codegen:
 
     def raise_runtime(self, kind, line):
         """IR lines that raise a RuntimeError for a failure the language itself reports (D22a, D34a)."""
-        rt = self.runtime_error_class()
+        rt = self.runtime_error_class(kind)
         self.rt_counter = getattr(self, "rt_counter", 0) + 1
         o = "%%rterr.%d" % self.rt_counter
         return ["%s = call ptr @%s(ptr %s)" % (o, self.ctor_symbol(rt), self.strobj(self.error_message(kind, line))),
@@ -2013,28 +2014,46 @@ class Codegen:
         fc.emit("%s = getelementptr { i64, i64 }, ptr %s, i32 0, i32 1" % (p, obj))
         return p
 
+    def entry_default(self, node, t):
+        """The IR constant of an entry point input's default value, which must be written as a plain literal."""
+        from . import nodes as N
+        neg = False
+        if isinstance(node, N.UnOp) and node.op == "-":
+            neg, node = True, node.operand
+        if isinstance(node, N.IntLit) and is_int_type(t):
+            return signed_repr(-node.value if neg else node.value, t)
+        if isinstance(node, N.BoolLit) and t == BoolT and not neg:
+            return "1" if node.value else "0"
+        if isinstance(node, N.StrLit) and t == StrT and not neg:
+            return self.strobj(node.value)
+        raise NotCompiled("an entry point default other than a whole number, bool or text literal", node.line)
+
     def entry_wrapper(self, fn):
         k = len(fn.ptypes)
+        low = getattr(fn, "min_args", k)
         out = ["define i32 @main(i32 %argc, ptr %argv) {", "entry:", "  %n = sub i32 %argc, 1",
-               "  %ok = icmp eq i32 %n, " + str(k), "  br i1 %ok, label %go, label %bad", "bad:",
+               "  %%lo = icmp sge i32 %%n, %d" % low, "  %%hi = icmp sle i32 %%n, %d" % k, "  %ok = and i1 %lo, %hi",
+               "  br i1 %ok, label %go, label %bad", "bad:",
                "  call void @tomato_usage(i32 %d, i32 %%n)" % k, "  unreachable", "go:"]
         args, owned = [], []
         for i, (p, t) in enumerate(zip(fn.node.params, fn.ptypes)):
             pos = i + 1
+            optional = i >= low
+            if optional:
+                out += ["  %%has%d = icmp sgt i32 %%n, %d" % (i, i), "  br i1 %%has%d, label %%p%d, label %%d%d" % (i, i, i), "p%d:" % i]
             out.append("  %%a%d.ptr = getelementptr ptr, ptr %%argv, i64 %d" % (i, pos))
             out.append("  %%a%d.s = load ptr, ptr %%a%d.ptr" % (i, i))
             s = "%%a%d.s" % i
             if t == StrT:
                 out.append("  %%a%d = call ptr @tomato_str_from_cstr(ptr %s)" % (i, s))
-                args.append("ptr %%a%d" % i)
-                owned.append("%%a%d" % i)
+                lt, val = "ptr", "%%a%d" % i
             elif t == FloatT:
                 out.append("  %%a%d = call double @tomato_parse_f64(ptr %s, i32 %d)" % (i, s, pos))
-                args.append("double %%a%d" % i)
+                lt, val = "double", "%%a%d" % i
             elif t == BoolT:
                 out.append("  %%a%d.w = call i32 @tomato_parse_bool(ptr %s, i32 %d)" % (i, s, pos))
                 out.append("  %%a%d = trunc i32 %%a%d.w to i1" % (i, i))
-                args.append("i1 %%a%d" % i)
+                lt, val = "i1", "%%a%d" % i
             elif is_int_type(t):
                 b = bits_of(t)
                 if is_signed(t):
@@ -2047,11 +2066,21 @@ class Codegen:
                         out.append("  call void @tomato_fit_unsigned(i64 %%a%d.v, i32 %d, i32 %d)" % (i, b, pos))
                 if b < 64:
                     out.append("  %%a%d = trunc i64 %%a%d.v to i%d" % (i, i, b))
-                    args.append("i%d %%a%d" % (b, i))
+                    lt, val = "i%d" % b, "%%a%d" % i
                 else:
-                    args.append("i64 %%a%d.v" % i)
+                    lt, val = "i64", "%%a%d.v" % i
             else:
                 raise NotCompiled("an entry point input of type %r" % (t,), fn.node.line)
+            if optional:
+                dflt = self.entry_default(fn.defaults[i], t)
+                out += ["  br label %%m%d" % i, "d%d:" % i, "  br label %%m%d" % i, "m%d:" % i,
+                        "  %%a%d.f = phi %s [ %s, %%p%d ], [ %s, %%d%d ]" % (i, lt, val, i, dflt, i)]
+                val = "%%a%d.f" % i
+            args.append("%s %s" % (lt, val))
+            if t == StrT and not optional:
+                owned.append(val)
+            elif t == StrT:
+                owned.append(val)       # a literal default is an immortal object, which releasing leaves alone
         out.append("  call void @%s(%s)" % (self.func_symbol(fn), ", ".join(args)))
         out += ["  %ex = load ptr, ptr @tomato_exc", "  %has = icmp ne ptr %ex, null",
                 "  br i1 %has, label %uncaught, label %fine", "uncaught:",

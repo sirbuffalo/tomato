@@ -348,6 +348,35 @@ void *tomato_str_split(void *src, void *sep, int64_t list_type, int64_t elem_siz
     return l;
 }
 
+/* ASCII-only case changes and trimming (bootstrap, D38a); bytes of other characters are kept as they are. */
+void *tomato_str_upper(void *src) {
+    Str *s = src;
+    char *t = malloc((size_t)s->bytes + 1);
+    if (!t) tomato_fail("out of memory");
+    for (int64_t i = 0; i < s->bytes; i++) t[i] = (s->data[i] >= 'a' && s->data[i] <= 'z') ? s->data[i] - 32 : s->data[i];
+    void *r = str_new(t, s->bytes);
+    free(t);
+    return r;
+}
+
+void *tomato_str_lower(void *src) {
+    Str *s = src;
+    char *t = malloc((size_t)s->bytes + 1);
+    if (!t) tomato_fail("out of memory");
+    for (int64_t i = 0; i < s->bytes; i++) t[i] = (s->data[i] >= 'A' && s->data[i] <= 'Z') ? s->data[i] + 32 : s->data[i];
+    void *r = str_new(t, s->bytes);
+    free(t);
+    return r;
+}
+
+void *tomato_str_strip(void *src) {
+    Str *s = src;
+    int64_t a = 0, b = s->bytes;
+    while (a < b && isspace((unsigned char)s->data[a])) a++;
+    while (b > a && isspace((unsigned char)s->data[b - 1])) b--;
+    return str_new(s->data + a, b - a);
+}
+
 /* ---- files (bootstrap, D38a): a FILE* the program opens and closes itself ---- */
 void *tomato_file_open(void *path, void *mode) {
     return fopen(((Str *)path)->data, ((Str *)mode)->data);

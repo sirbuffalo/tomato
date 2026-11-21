@@ -216,6 +216,7 @@ class Mod:
     # what every function of the program shares
     strings: list[str] = []
     infos: list[FuncInfo] = []
+    llvm_decls: list[FuncInfo] = []    # the `!name(...)` functions the program declares (D27a)
     decls: list[str] = []         # extra declarations (the overflow intrinsics the program uses)
     codes: list[str] = []         # the heap types the program uses; a type's code is 2 plus its place here
     classes: list[ClassInfo] = []
@@ -478,6 +479,7 @@ class Gen:
     tries: list[TryInfo] = []
     try_depth: int = 0
     slot_count: int = 0
+    line: int = 0
     ret: str = ''
 
     def tmp(self, hint: str) -> str:
@@ -763,14 +765,21 @@ class Gen:
         return self.arith('add', r, amount)
 
     def fail_if(self, bad: str, message: str):
-        # bad is an i1; when true, report the error and stop
+        # bad is an i1; when true, a RuntimeError is raised, which a catch can handle (D22a)
+        self.fail_with(bad, 'RuntimeError', message)
+
+    def fail_with(self, bad: str, cls: str, message: str):
         stop = self.label('stop')
         ok = self.label('ok')
         self.cond_br(bad, stop, ok)
         self.place(stop)
-        self.emit('call void @tomato_fail(ptr ' + self.mod.intern(message) + '.c)')
-        self.emit('unreachable')
-        self.terminated = True
+        err = self.tmp('err')
+        self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(ptr ' + self.mod.intern(message) + ')')
+        self.emit('store ptr ' + err + ', ptr @tomato_exc')
+        self.emit('store i32 ' + str(self.line) + ', ptr @tomato_exc_line')
+        self.emit('store i32 1, ptr @tomato_exc_rt')
+        self.emit('store i32 1, ptr @tomato_exc_seen')
+        self.br(self.unwind_target())
         self.place(ok)
 
     # ---- expressions
@@ -1286,6 +1295,8 @@ class Gen:
 
     def call(self, n: Node, statement: bool) -> Ex:
         f = val_node(n.fields[0])
+        if f.kind == 'LlvmRef':
+            return self.llvm_call(n, f.fields[0].text)
         if f.kind == 'Attr':
             target = val_node(f.fields[0])
             if target.kind == 'Name' and not (target.fields[0].text in self.slots) and self.mod.has_class(target.fields[0].text):
@@ -1313,6 +1324,54 @@ class Gen:
         if self.mod.has_class(name):
             return self.construct(self.mod.find_class(name, n.line), args, n.line)
         return self.call_function(self.mod.find(name, n.line), '@tomato.' + name, ex('', ''), args, n.line)
+
+    def llvm_type_of(self, t: str) -> str:
+        # how an LLVM function sees a Tomato type: a bool is one bit there
+        if t == 'bool':
+            return 'i1'
+        return llvm_type(t)
+
+    def llvm_call(self, n: Node, name: str) -> Ex:
+        # a call to a declared LLVM function (D27b): the declaration gives the types, the linker the body
+        decl = ex('', '')
+        found: list[FuncInfo] = []
+        for d in self.mod.llvm_decls:
+            if d.name == name:
+                found.append(d)
+        if len(found) == 0:
+            raise CompileError('!' + name + ' is not declared: add `!' + name + '(a: T) -> R` at the top level (D27b)', n.line)
+        info = found[0]
+        args = val_nodes(n.fields[1])
+        if len(args) != len(info.ptypes):
+            raise CompileError('!' + name + ' takes ' + str(len(info.ptypes)) + ' argument(s), got ' + str(len(args)), n.line)
+        parts = new_strs()
+        types = new_strs()
+        k = 0
+        for a in args:
+            v = self.expr(a, info.ptypes[k])
+            v = self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of !' + name)
+            reg = v.reg
+            if v.ty == 'bool':
+                reg = self.tmp('bit')
+                self.emit(reg + ' = trunc i64 ' + v.reg + ' to i1')
+            parts.append(self.llvm_type_of(v.ty) + ' ' + reg)
+            types.append(self.llvm_type_of(v.ty))
+            k = k + 1
+        ret = 'void'
+        if info.ret != '':
+            ret = self.llvm_type_of(info.ret)
+        self.mod.declare('declare ' + ret + ' @' + name + '(' + ', '.join(types) + ')')
+        text = 'call ' + ret + ' @' + name + '(' + ', '.join(parts) + ')'
+        if info.ret == '':
+            self.emit(text)
+            return ex('', '')
+        r = self.tmp('llvm')
+        self.emit(r + ' = ' + text)
+        if info.ret == 'bool':
+            w = self.tmp('flag')
+            self.emit(w + ' = zext i1 ' + r + ' to i64')
+            return ex(w, 'bool')
+        return ex(r, info.ret)
 
     def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
         # a function, or a method when `receiver` holds the object; the callee only borrows its arguments
@@ -1541,6 +1600,11 @@ class Gen:
             self.release(lst)
             self.release(obj)
             return ex(r, 'str')
+        if (name == 'upper' or name == 'lower' or name == 'strip') and len(args) == 0:
+            r = self.tmp('changed')
+            self.emit(r + ' = call ptr @tomato_str_' + name + '(ptr ' + obj.reg + ')')
+            self.release(obj)
+            return ex(r, 'str')
         raise CompileError('the Tomato compiler does not support the text method ' + name + ' yet', line)
 
     def file_method(self, f: Ex, name: str, args: list[Node], line: int) -> Ex:
@@ -1574,7 +1638,7 @@ class Gen:
         self.emit(bad + ' = icmp eq ptr ' + r + ', null')
         self.release(path)
         self.release(mode)
-        self.fail_if(bad, 'a file could not be opened')
+        self.fail_with(bad, 'IOError', 'a file could not be opened')
         return ex(r, 'File')
 
     def ret_llvm(self, info: FuncInfo) -> str:
@@ -1667,6 +1731,7 @@ class Gen:
         self.loop_depth = self.loop_depth + 1
 
     def stmt(self, s: Node):
+        self.line = s.line
         k = s.kind
         if k == 'ExprStmt':
             e = val_node(s.fields[0])
@@ -2272,6 +2337,9 @@ def declarations(mod: Mod) -> str:
     d = d + 'declare ptr @tomato_dict_keys(ptr, i64, i64)\n'
     d = d + 'declare void @tomato_usage(i32, i32)\n'
     d = d + 'declare i64 @tomato_parse_i64(ptr, i32)\n'
+    d = d + 'declare i64 @tomato_parse_u64(ptr, i32)\n'
+    d = d + 'declare void @tomato_fit_signed(i64, i32, i32)\n'
+    d = d + 'declare void @tomato_fit_unsigned(i64, i32, i32)\n'
     d = d + 'declare i32 @tomato_parse_bool(ptr, i32)\n'
     d = d + 'declare void @tomato_report_uncaught(ptr, i32, i32, i32)\n'
     d = d + 'declare i64 @tomato_str_find(ptr, ptr)\n'
@@ -2281,6 +2349,9 @@ def declarations(mod: Mod) -> str:
     d = d + 'declare ptr @tomato_str_replace(ptr, ptr, ptr)\n'
     d = d + 'declare ptr @tomato_str_split(ptr, ptr, i64, i64)\n'
     d = d + 'declare ptr @tomato_str_join(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_upper(ptr)\n'
+    d = d + 'declare ptr @tomato_str_lower(ptr)\n'
+    d = d + 'declare ptr @tomato_str_strip(ptr)\n'
     d = d + 'declare ptr @tomato_file_open(ptr, ptr)\n'
     d = d + 'declare ptr @tomato_file_read(ptr)\n'
     d = d + 'declare void @tomato_file_write(ptr, ptr)\n'
@@ -2296,7 +2367,7 @@ def declarations(mod: Mod) -> str:
 
 def literal_text(n: Node, ty: str) -> str:
     # the IR constant for a default written as a plain literal (entry point inputs)
-    if ty == 'int' and n.kind == 'IntLit':
+    if is_numeric(ty) and n.kind == 'IntLit':
         return str(n.fields[0].num)
     if ty == 'bool' and n.kind == 'BoolLit':
         if n.fields[0].flag:
@@ -2327,6 +2398,19 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             out = out + '  %a' + si + '.v = call ptr @tomato_str_from_cstr(ptr %a' + si + '.s)\n'
         elif t == 'int':
             out = out + '  %a' + si + '.v = call i64 @tomato_parse_i64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+        elif is_fixed(t):
+            bits = bits_of(t)
+            parse = 'tomato_parse_u64'
+            fit = 'tomato_fit_unsigned'
+            if is_signed(t):
+                parse = 'tomato_parse_i64'
+                fit = 'tomato_fit_signed'
+            out = out + '  %a' + si + '.w = call i64 @' + parse + '(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            if bits < 64:
+                out = out + '  call void @' + fit + '(i64 %a' + si + '.w, i32 ' + str(bits) + ', i32 ' + str(i + 1) + ')\n'
+                out = out + '  %a' + si + '.v = trunc i64 %a' + si + '.w to i' + str(bits) + '\n'
+            else:
+                out = out + '  %a' + si + '.v = add i64 %a' + si + '.w, 0\n'
         elif t == 'float':
             out = out + '  %a' + si + '.v = call double @tomato_parse_f64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
         elif t == 'bool':
@@ -2344,7 +2428,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             elif t == 'float':
                 raise CompileError('the Tomato compiler does not read a float entry point default yet', dflt.line)
             else:
-                out = out + '  %a' + si + ' = phi i64 [ %a' + si + '.v, %p' + si + ' ], [ ' + literal_text(dflt, t) + ', %d' + si + ' ]\n'
+                out = out + '  %a' + si + ' = phi ' + llvm_type(t) + ' [ %a' + si + '.v, %p' + si + ' ], [ ' + literal_text(dflt, t) + ', %d' + si + ' ]\n'
         else:
             reg = '%a' + si + '.v'
         if t == 'str':
@@ -2353,7 +2437,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
         elif t == 'float':
             args.append('double ' + reg)
         else:
-            args.append('i64 ' + reg)
+            args.append(llvm_type(t) + ' ' + reg)
         i = i + 1
     out = out + '  call void @tomato.' + info.name + '(' + ', '.join(args) + ')\n'
     out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
@@ -2369,8 +2453,9 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info = FuncInfo()
     info.name = item.fields[0].text
     info.owner = owner
-    info.is_override = item.fields[5].flag
-    info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
+    if len(item.fields) > 6:
+        info.is_override = item.fields[5].flag
+        info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
     if item.fields[2].tag != 'z':
         info.ret = mod.type_name(item.fields[2])
         if info.ret == '':
@@ -2476,13 +2561,20 @@ def resolve_class(mod: Mod, items: list[Node], name: str):
         if fd.fields[4].tag == 'n':
             c.defaults.append(val_node(fd.fields[4]))
 
-def read_module(dir: str, name: str, line: int) -> str:
-    f = open(dir + name + '.tom')
-    text = f.read()
-    f.close()
+def read_module(dir: str, std: str, name: str, line: int) -> str:
+    # a module next to the program, else one from the standard library
+    text = ''
+    try:
+        f = open(dir + name + '.tom')
+        text = f.read()
+        f.close()
+    catch IOError:
+        g = open(std + name + '.tom')
+        text = g.read()
+        g.close()
     return text
 
-def load_items(dir: str, src: str, items: list[Node], loaded: list[str], names: list[str]) -> list[Node]:
+def load_items(dir: str, std: str, src: str, items: list[Node], loaded: list[str], names: list[str]) -> list[Node]:
     # the declarations of src with the declarations of the modules it imports placed before them (each once)
     mine = val_nodes(parse(src).fields[0])
     for item in mine:
@@ -2490,7 +2582,7 @@ def load_items(dir: str, src: str, items: list[Node], loaded: list[str], names: 
             module = item.fields[0].text
             if not (module in loaded):
                 loaded.append(module)
-                load_items(dir, read_module(dir, module, item.line), items, loaded, names)
+                load_items(dir, std, read_module(dir, std, module, item.line), items, loaded, names)
     own: list[Node] = []
     for item in mine:
         if item.kind != 'Import':
@@ -2504,14 +2596,14 @@ def load_items(dir: str, src: str, items: list[Node], loaded: list[str], names: 
         items.append(item)
     return own
 
-export def compile_module(src: str, dir: str, entry_name: str) -> str:
+export def compile_module(src: str, dir: str, std: str, entry_name: str) -> str:
     mod = Mod()
     items = val_nodes(parse(builtin_source()).fields[0])
     names = new_strs()
     loaded = new_strs()
     for b in items:
         names.append(b.fields[0].text)
-    user = load_items(dir, src, items, loaded, names)
+    user = load_items(dir, std, src, items, loaded, names)
     for item in items:
         if item.kind == 'InterfaceDef':
             ifc = IfaceInfo()
@@ -2563,6 +2655,12 @@ export def compile_module(src: str, dir: str, entry_name: str) -> str:
                     c.init = info.name
         elif item.kind == 'InterfaceDef' or item.kind == 'Implements':
             pass
+        elif item.kind == 'LlvmDecl':
+            decl = function_info(item, mod, '')
+            for pt in decl.ptypes:
+                if pt == 'File' or is_rc(pt):
+                    raise CompileError('an LLVM function takes and returns int, bool and float values only yet', item.line)
+            mod.llvm_decls.append(decl)
         else:
             raise CompileError('the Tomato compiler does not support ' + item.kind + ' declarations yet', item.line)
     check_classes(mod)

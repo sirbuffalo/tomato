@@ -462,6 +462,54 @@ class SelfhostCompiler(unittest.TestCase):
     def ir_by_native(self, path, entry="main"):
         return subprocess.run([self.native, path, entry], check=True, capture_output=True, text=True).stdout
 
+    def test_the_examples_behave_like_the_interpreter(self):
+        """The examples the Python compiler builds also build with the Tomato compiler, with the same output."""
+        if self.native is None:
+            self.skipTest("clang is not installed")
+        cases = [("features", "main", []), ("shapes", "main", []), ("objects", "main", ["5"]), ("compiled", "main", ["12"]),
+                 ("args", "prime", ["17"]), ("args", "greet", ["bob", "2", "true"])]
+        for name, entry, inputs in cases:
+            with self.subTest(example=name, entry=entry):
+                path = os.path.join(ROOT, "examples", name + ".tom")
+                ir = subprocess.run([self.native, path, entry], check=True, capture_output=True, text=True, cwd=ROOT).stdout
+                exe = self.build(name + "_" + entry, ir)
+                run = subprocess.run([exe] + inputs, capture_output=True, text=True)
+                out = io.StringIO()
+                run_source(open(path).read(), out, entry=entry, inputs=inputs, search=[os.path.join(ROOT, "examples")])
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual(run.stderr, "")
+                self.assertEqual(run.stdout, out.getvalue())
+
+    def test_llvm_functions(self):
+        """`!name(...)` calls: the Tomato compiler declares them and clang links the hand-written IR."""
+        if self.native is None:
+            self.skipTest("clang is not installed")
+        try:
+            import llvmlite  # noqa: F401
+        except ImportError:
+            self.skipTest("llvmlite is not installed")
+        path = os.path.join(ROOT, "examples", "mathlib.tom")
+        ir = subprocess.run([self.native, path, "main"], check=True, capture_output=True, text=True, cwd=ROOT).stdout
+        ll = os.path.join(self.dir, "mathlib_main.ll")
+        with open(ll, "w") as f:
+            f.write(ir)
+        exe = os.path.join(self.dir, "mathlib_main")
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "examples", "mathlib.ll"),
+                        os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"], check=True, capture_output=True)
+        run = subprocess.run([exe], check=True, capture_output=True, text=True)
+        out = io.StringIO()
+        run_source(open(path).read(), out, llvm_ir=[(os.path.join(ROOT, "examples", "mathlib.ll"), open(os.path.join(ROOT, "examples", "mathlib.ll")).read())])
+        self.assertEqual(run.stdout, out.getvalue())
+
+    def build(self, name, ir):
+        ll = os.path.join(self.dir, name + ".ll")
+        with open(ll, "w") as f:
+            f.write(ir)
+        exe = os.path.join(self.dir, name)
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+                       check=True, capture_output=True)
+        return exe
+
     def run_ir(self, name, ir):
         ll = os.path.join(self.dir, name + ".ll")
         with open(ll, "w") as f:
