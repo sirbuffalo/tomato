@@ -20,6 +20,10 @@ std="$home/std/"
 commands() { sed -n '3,8p' "$src" | sed 's/^# \{0,1\}//'; }
 usage() { sed -n '2p' "$src" | sed 's/^# \{0,1\}//' >&2; commands >&2; exit 2; }
 die() { echo "error: $*" >&2; exit 1; }
+# update downloads use https only, including after redirects (file:// only for tests, with the override)
+curl_safe() {
+  if [ -n "$TOMATO_UPDATE_ALLOW_ANY_URL" ] || [ -n "$TOMATO_UPDATE_ALLOW_FILE" ]; then curl -fsSL "$@"; else curl -fsSL --proto '=https' --proto-redir '=https' "$@"; fi
+}
 
 cmd="$1"; [ -n "$cmd" ] || usage; shift
 case "$cmd" in
@@ -32,7 +36,7 @@ case "$cmd" in
     command -v curl >/dev/null || die "tomato update needs curl"
     # the site's own HTTPS may not be ready (GitHub issues its certificate after DNS is set up), so fall back to the
     # same manifest attached to the latest GitHub release (not the main branch); plain HTTP is never used because the manifest carries the checksum
-    manifest="$(curl -fsSL "$url" 2>/dev/null)" || manifest="$(curl -fsSL "${TOMATO_UPDATE_FALLBACK:-https://github.com/sirbuffalo/tomato/releases/latest/download/latest.json}" 2>/dev/null)" || die "cannot read $url"
+    manifest="$(curl_safe "$url" 2>/dev/null)" || manifest="$(curl_safe "${TOMATO_UPDATE_FALLBACK:-https://github.com/sirbuffalo/tomato/releases/latest/download/latest.json}" 2>/dev/null)" || die "cannot read $url"
     latest="$(printf '%s' "$manifest" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -1)"
     archive="$(printf '%s' "$manifest" | sed -n 's/.*"url" *: *"\([^"]*\)".*/\1/p' | head -1)"
     [ -n "$latest" ] && [ -n "$archive" ] || die "the manifest at $url is not understood"
@@ -47,7 +51,7 @@ case "$cmd" in
     if [ -z "$TOMATO_UPDATE_ALLOW_ANY_URL" ]; then
       case "$archive" in https://github.com/sirbuffalo/tomato/releases/download/*) ;; *) die "the download is not an official release URL: not updating" ;; esac
     fi
-    curl -fsSL "$archive" -o "$work/tomato.tar.gz" || die "cannot download $archive"
+    curl_safe "$archive" -o "$work/tomato.tar.gz" || die "cannot download $archive"
     got="$(shasum -a 256 "$work/tomato.tar.gz" | cut -d' ' -f1)"
     [ "$got" = "$want" ] || die "the download does not match its checksum"
     tar -xzf "$work/tomato.tar.gz" -C "$work" || die "the download is not a valid archive"

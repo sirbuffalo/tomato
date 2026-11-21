@@ -9,7 +9,7 @@
   ["version", "version2"].forEach(function (id) { var v = document.getElementById(id); if (v) v.textContent = window.TOMATO_VERSION; });
 })();
 
-function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function inline(s) {
   s = esc(s);
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");

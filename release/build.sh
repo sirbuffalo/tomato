@@ -8,6 +8,8 @@ version="$(cat "$root/VERSION")"
 repo="${TOMATO_REPO:-sirbuffalo/tomato}"
 url="${1:-https://github.com/$repo/releases/download/v$version/tomato-$version.tar.gz}"
 out="${TOMATO_RELEASE_OUT:-$root/release/out}"; stage="$out/tomato-$version"
+# refuse to wipe a folder that is not (or does not look like) release output
+if [ -e "$out" ] && [ -n "$(ls -A "$out" 2>/dev/null)" ] && [ ! -f "$out/latest.json" ]; then echo "error: $out is not empty and not release output; refusing to delete it" >&2; exit 1; fi
 rm -rf "$out"; mkdir -p "$stage/native" "$stage/runtime" "$stage/std" "$stage/compiler/bootstrap"
 cp "$root/VERSION" "$root/install-native.sh" "$stage/"
 cp "$root/native/tomato" "$root/native/tomato-repl" "$root/native/tomato-jsc.js" "$stage/native/"
