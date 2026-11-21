@@ -47,13 +47,25 @@ tw.std = [bin(dir + "/std/builtin.tom"), bin(dir + "/std/math.tom")].map(functio
 tw.ready = Promise.resolve(tw);
 
 var source = new TextDecoder().decode(bin(file));
+// modules the program imports (`from NAME import ...`) are read from the program's folder, and theirs in turn
+var folder = file.indexOf("/") >= 0 ? file.slice(0, file.lastIndexOf("/")) : ".";
+var extra = {};
+(function gather(text) {
+  var re = /^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)/gm, m;
+  while ((m = re.exec(text))) {
+    var key = "/" + m[1] + ".tom";
+    if (key in extra) continue;
+    try { var b = bin(folder + "/" + m[1] + ".tom"); } catch (e) { continue; }   // a standard-library module is not a file here
+    extra[key] = b; gather(new TextDecoder().decode(b));
+  }
+})(source);
 function emit(text, stream) {   // jsc's print adds a newline, so one trailing newline is dropped first
   if (text === "") return;
   var t = text.charAt(text.length - 1) === "\n" ? text.slice(0, -1) : text;
   if (stream === "err") printErr(t); else print(t);
 }
 function finish(code) { printErr("~rc " + code); }
-tw.compile(source, "main").then(function (c) {
+tw.compile(source, "main", extra).then(function (c) {
   if (mode === "compile") { emit(c.ok ? c.ir : c.error, c.ok ? "out" : "err"); finish(c.ok ? 0 : 1); return; }
   if (!c.ok) { emit(c.error, "err"); finish(1); return; }
   return tw.run(c.ir, { inputs: [], timeoutMs: 5000 }).then(function (r) {

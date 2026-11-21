@@ -51,8 +51,10 @@ case "$cmd" in
     got="$(shasum -a 256 "$work/tomato.tar.gz" | cut -d' ' -f1)"
     [ "$got" = "$want" ] || die "the download does not match its checksum"
     tar -xzf "$work/tomato.tar.gz" -C "$work" || die "the download is not a valid archive"
+    # the link directory: where this command was reached through a symlink, else the default (never the real bin folder)
+    if [ -L "$invoked" ]; then bindir_for_update="$(cd "$(dirname "$invoked")" && pwd)"; else bindir_for_update="${TOMATO_BIN:-$HOME/.local/bin}"; fi
     # reinstall where this copy lives, not into the default folders
-    TOMATO_HOME="${home%/native}" TOMATO_BIN="$(dirname "$invoked")" "$work"/tomato-*/install-native.sh || die "the installer failed"
+    TOMATO_HOME="${home%/native}" TOMATO_BIN="$bindir_for_update" "$work"/tomato-*/install-native.sh || die "the installer failed"
     exit 0 ;;
   repl|shell) TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;
   run|build|compile) ;;

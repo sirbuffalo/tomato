@@ -55,12 +55,12 @@ done
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
 jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
 if [ -x "$jsc" ]; then
-  for name in containers finally inheritance fixed_width text_and_maps; do
+  for name in containers finally inheritance fixed_width text_and_maps modules numbers_rules; do
     "$jsc" native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
   done
-else echo "skip: jsc is not available on this system"; fi
+else [ -n "$CI" ] && bad "wasm path" "jsc is required in CI (macOS runner)" || echo "skip: jsc is not available on this system"; fi
 
 echo "== command line =="
 home="$work/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"
@@ -152,7 +152,12 @@ for d in specification decisions decision-inventory open-questions; do cmp -s "d
 cmp -s docs/provisional.md site/docs/PROVISIONAL.md && ok "site/docs/PROVISIONAL.md is in sync" || bad "site/docs/PROVISIONAL.md is in sync" "run site/build.sh"
 check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
 check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
-check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | shasum -a 256 | cut -d' ' -f1)" "$(cat site/wasm/SOURCE.sha256 2>/dev/null)"
+check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | shasum -a 256 | cut -d' ' -f1)" "$(sed -n 1p site/wasm/SOURCE.sha256 2>/dev/null)"
+check "the checked-in wasm files are the ones that were built" "$(sed -n 2,3p site/wasm/SOURCE.sha256)" "$(shasum -a 256 site/wasm/tomatoc.wasm site/wasm/runtime.wasm | cut -d' ' -f1)"
+if [ -n "$WASI_SDK" ]; then   # with the toolchain, rebuild and compare byte for byte
+  cp -R site/wasm "$work/wasm_orig"; WASI_SDK="$WASI_SDK" sh site/wasm/build.sh > /dev/null 2>&1
+  cmp -s site/wasm/tomatoc.wasm "$work/wasm_orig/tomatoc.wasm" && cmp -s site/wasm/runtime.wasm "$work/wasm_orig/runtime.wasm" && ok "wasm files rebuild identically" || bad "wasm files rebuild identically" "run site/wasm/build.sh and commit"
+fi
 
 echo; echo "$passes passed, $fails failed"
 [ "$fails" -eq 0 ]

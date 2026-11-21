@@ -16,12 +16,19 @@
   };
   var enc = function (s) { return new TextEncoder().encode(s); };
 
-  TomatoWasm.prototype.compile = function (source, entry) {
+  // extra: optional { "/name.tom": Uint8Array } for the modules the program imports (the command-line repl supplies them;
+  // the website has only the program and the standard library)
+  TomatoWasm.prototype.compile = function (source, entry, extra) {
     var self = this;
     return this.load().then(function () {
-      var files = { "/program.tom": enc(source), "/std/builtin.tom": new Uint8Array(self.std[0]), "/std/math.tom": new Uint8Array(self.std[1]) };
+      var files = Object.assign({}, extra || {}, { "/program.tom": enc(source), "/std/builtin.tom": new Uint8Array(self.std[0]), "/std/math.tom": new Uint8Array(self.std[1]) });
       var host = new WasiHost({ args: ["tomatoc", "/program.tom", entry || "main", "/std/"], files: files });
-      return host.run(self.compiler).then(function (r) { return { ok: r.code === 0, ir: r.stdout, error: r.stderr.trim() }; });
+      return host.run(self.compiler).then(function (r) {
+        var err = r.stderr.trim();
+        if (r.code !== 0 && /could not be opened/.test(err) && /^\s*(from|import)\s/m.test(source))
+          err += "\n(imports of your own modules are not supported on this page; the installed tomato command supports them)";
+        return { ok: r.code === 0, ir: r.stdout, error: err };
+      });
     });
   };
 
@@ -78,10 +85,10 @@
   }
   TomatoWasm.wrapMain = wrapMain;
 
-  TomatoWasm.prototype.build = function (source, options) {
+  TomatoWasm.prototype.build = function (source, options) {   // options.extra: imported modules
     var self = this, t0 = Date.now();
     var wrapped = wrapMain(source);
-    return this.compile(wrapped.text, "main").then(function (c) {
+    return this.compile(wrapped.text, "main", options && options.extra).then(function (c) {
       if (!c.ok) return { ok: false, stage: "compile", error: remap(tidy(c.error), wrapped.map), ms: Date.now() - t0 };
       return self.run(c.ir, options).then(function (r) {
         return { ok: true, stage: "run", stdout: r.stdout, stderr: remap(r.stderr, wrapped.map), exit: r.code, timed_out: r.timedOut, ir: c.ir, ms: Date.now() - t0 };

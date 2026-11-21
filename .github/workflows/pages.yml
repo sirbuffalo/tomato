@@ -1,8 +1,8 @@
-name: Website
+name: Test and publish the website
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", "docs/provisional.md", "VERSION"]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,7 +12,16 @@ concurrency:
   group: pages
   cancel-in-progress: true
 jobs:
+  test:
+    # macOS has jsc (JavaScriptCore), which tests/run.sh uses to check the WebAssembly path the website and repl run
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: tests/run.sh (needs only clang)
+        run: tests/run.sh
   deploy:
+    if: github.event_name != 'pull_request'
+    needs: test
     runs-on: ubuntu-latest
     environment:
       name: github-pages

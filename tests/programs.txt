@@ -9,3 +9,4 @@ cycle
 numbers_rules
 optionals_defaults
 try_paths
+xor
