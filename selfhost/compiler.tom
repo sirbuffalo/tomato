@@ -39,6 +39,13 @@ def basic_type(name: str) -> bool:
 def is_list(t: str) -> bool:
     return t.startswith('list[')
 
+def is_dict(t: str) -> bool:
+    return t.startswith('dict[')
+
+def dict_value(t: str) -> str:
+    # the value type of dict[V], a dict with text keys
+    return t[5:len(t) - 1]
+
 def is_class(t: str) -> bool:
     return t.startswith('@')
 
@@ -52,7 +59,7 @@ def strip_optional(t: str) -> str:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_list(t) or is_class(t) or t == 'None' or is_optional(t)
+    return t == 'str' or is_list(t) or is_dict(t) or is_class(t) or t == 'None' or is_optional(t)
 
 def elem_of(t: str) -> str:
     return t[5:len(t) - 1]
@@ -65,6 +72,8 @@ def shown(t: str) -> str:
         return t[1:]
     if is_list(t):
         return 'list[' + shown(elem_of(t)) + ']'
+    if is_dict(t):
+        return 'dict[str, ' + shown(dict_value(t)) + ']'
     return t
 
 def llvm_type(t: str) -> str:
@@ -88,6 +97,7 @@ class FuncInfo:
     owner: str = ''          # the class a method belongs to, or ''
     ret: str = ''
     ptypes: list[str] = []   # without self
+    defaults: list[Node] = []     # the default values of the last parameters, in order
 
 class ClassInfo:
     name: str = ''
@@ -196,9 +206,16 @@ class Mod:
             elif members[1].fields[0].text != 'None':
                 return ''
             wrapped = self.type_name(node_val(other))
-            if not (wrapped == 'str' or is_list(wrapped) or is_class(wrapped)):
+            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_class(wrapped)):
                 return ''
             return wrapped + '?'
+        if name == 'dict' and t.fields[2].tag == 'n' and t.fields[3].tag == 'n':
+            if self.type_name(t.fields[2]) != 'str':
+                return ''
+            inner = self.type_name(t.fields[3])
+            if inner == '':
+                return ''
+            return 'dict[' + inner + ']'
         if name == 'list' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
             inner = self.type_name(t.fields[2])
             if inner == '':
@@ -429,6 +446,8 @@ class Gen:
             return self.call(n, False)
         if k == 'ListLit':
             return self.list_lit(n, expected)
+        if k == 'MapLit':
+            return self.map_lit(n, expected)
         if k == 'Attr':
             return self.field_get(n)
         if k == 'Index':
@@ -518,8 +537,50 @@ class Gen:
             k = k + 1
         return ex(lst, t)
 
+    def key_word(self, k: Ex) -> str:
+        r = self.tmp('kw')
+        self.emit(r + ' = ptrtoint ptr ' + k.reg + ' to i64')
+        return r
+
+    def map_lit(self, n: Node, expected: str) -> Ex:
+        pairs = n.fields[0].items
+        if not is_dict(expected):
+            raise CompileError('the type of a {} needs a declaration: m: dict[str, int] = {}', n.line)
+        value_t = dict_value(expected)
+        d = self.tmp('dict')
+        self.emit(d + ' = call ptr @tomato_dict_new(i64 ' + str(self.mod.code_of(expected)) + ', i64 8, i32 1)')
+        for pair in pairs:
+            k = self.expr(val_node(pair.items[0]))
+            self.want(k, 'str', n.line, 'a dict key')
+            v = self.expr(val_node(pair.items[1]), value_t)
+            self.want(v, value_t, n.line, 'a dict value')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + d + ', i64 ' + self.key_word(k) + ', i32 1)')
+            dup = self.tmp('dup')
+            self.emit(dup + ' = icmp eq ptr ' + slot + ', null')
+            self.fail_if(dup, 'duplicate key in a dict literal')
+            self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
+            self.release(k)
+        return ex(d, expected)
+
     def index(self, n: Node) -> Ex:
         s = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
+        if is_dict(s.ty):
+            k = self.expr(val_node(n.fields[1]))
+            self.want(k, 'str', n.line, 'a dict key')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + s.reg + ', i64 ' + self.key_word(k) + ')')
+            missing = self.tmp('missing')
+            self.emit(missing + ' = icmp eq ptr ' + slot + ', null')
+            self.fail_if(missing, 'the key is not there')
+            vt = dict_value(s.ty)
+            r = self.tmp('val')
+            self.emit(r + ' = load ' + llvm_type(vt) + ', ptr ' + slot)
+            e = ex(r, vt)
+            self.retain(e)
+            self.release(k)
+            self.release(s)
+            return e
         if is_list(s.ty):
             li = self.expr(val_node(n.fields[1]))
             self.want(li, 'int', n.line, 'an index')
@@ -572,6 +633,15 @@ class Gen:
             self.emit(c + ' = call i32 @tomato_str_contains(ptr ' + b.reg + ', ptr ' + a.reg + ')')
             i1 = self.tmp('flag')
             self.emit(i1 + ' = icmp ne i32 ' + c + ', 0')
+            self.release(a)
+            self.release(b)
+            return self.bool_of(i1)
+        if is_dict(b.ty):
+            self.want(a, 'str', line, 'the left side of in')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + b.reg + ', i64 ' + self.key_word(a) + ')')
+            i1 = self.tmp('flag')
+            self.emit(i1 + ' = icmp ne ptr ' + slot + ', null')
             self.release(a)
             self.release(b)
             return self.bool_of(i1)
@@ -777,7 +847,8 @@ class Gen:
 
     def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
         # a function, or a method when `receiver` holds the object; the callee only borrows its arguments
-        if len(args) != len(info.ptypes):
+        required = len(info.ptypes) - len(info.defaults)
+        if len(args) < required or len(args) > len(info.ptypes):
             raise CompileError(info.name + ' takes ' + str(len(info.ptypes)) + ' argument(s), got ' + str(len(args)), line)
         values: list[Ex] = []
         if receiver.ty != '':
@@ -786,6 +857,11 @@ class Gen:
         for a in args:
             v = self.expr(a, info.ptypes[k])
             self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + info.name)
+            values.append(v)
+            k = k + 1
+        while k < len(info.ptypes):             # the caller supplies the defaults it left out (D19c)
+            v = self.expr(info.defaults[k - required], info.ptypes[k])
+            self.want(v, info.ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + info.name)
             values.append(v)
             k = k + 1
         parts: list[str] = []
@@ -824,13 +900,22 @@ class Gen:
         ptypes: list[str] = []
         if c.init != '':
             ptypes = self.mod.find_method(c.name, c.init, line).ptypes
-        if len(args) != len(ptypes):
+        defaults: list[Node] = []
+        if c.init != '':
+            defaults = self.mod.find_method(c.name, c.init, line).defaults
+        required = len(ptypes) - len(defaults)
+        if len(args) < required or len(args) > len(ptypes):
             raise CompileError(c.name + ' takes ' + str(len(ptypes)) + ' argument(s), got ' + str(len(args)), line)
         values: list[Ex] = []
         k = 0
         for a in args:
             v = self.expr(a, ptypes[k])
             self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + c.name)
+            values.append(v)
+            k = k + 1
+        while k < len(ptypes):
+            v = self.expr(defaults[k - required], ptypes[k])
+            self.want(v, ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + c.name)
             values.append(v)
             k = k + 1
         parts: list[str] = []
@@ -989,7 +1074,7 @@ class Gen:
             raise CompileError('len(x) takes one argument', line)
         v = self.expr(args[0])
         r = self.tmp('len')
-        if is_list(v.ty):
+        if is_list(v.ty) or is_dict(v.ty):
             lenp = self.tmp('lenp')
             self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + v.reg + ', i32 0, i32 2')
             self.emit(r + ' = load i64, ptr ' + lenp)
@@ -1131,9 +1216,20 @@ class Gen:
             raise CompileError('the Tomato compiler does not support ' + k + ' statements yet', s.line)
 
     def assign_item(self, s: Node, target: Node):
-        lst = self.expr(val_node(target.fields[0]))
+        lst = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
+        if is_dict(lst.ty):
+            k = self.expr(val_node(target.fields[1]))
+            self.want(k, 'str', s.line, 'a dict key')
+            dv = self.expr(val_node(s.fields[1]), dict_value(lst.ty))
+            self.want(dv, dict_value(lst.ty), s.line, 'the assigned value')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + lst.reg + ', i64 ' + self.key_word(k) + ', i32 0)')
+            self.store_owned(slot, dv)
+            self.release(k)
+            self.release(lst)
+            return
         if not is_list(lst.ty):
-            raise CompileError('only list items can be assigned by index', s.line)
+            raise CompileError('only list and dict items can be assigned by index', s.line)
         i = self.expr(val_node(target.fields[1]))
         self.want(i, 'int', s.line, 'an index')
         v = self.expr(val_node(s.fields[1]), elem_of(lst.ty))
@@ -1417,6 +1513,11 @@ def class_types(mod: Mod) -> str:
         t = t + '%class.' + str(mod.code_of('@' + c.name)) + ' = type { ' + ', '.join(parts) + ' }\n'
     return t
 
+def int_of_bool(b: bool) -> int:
+    if b:
+        return 1
+    return 0
+
 def runtime_tables(mod: Mod) -> str:
     n = len(mod.codes) + 2
     names = new_strs()
@@ -1448,6 +1549,8 @@ def runtime_tables(mod: Mod) -> str:
             offsets[slot] = 'ptr @tomato.offs.' + str(slot)
             extra = extra + '@tomato.name.' + str(slot) + ' = private constant [' + str(len(c.name) + 1) + ' x i8] c"' + c.name + '\\00"\n'
             names[slot] = 'ptr @tomato.name.' + str(slot)
+        elif is_dict(code):
+            kinds[slot] = 'i32 ' + str(3 + 256 + 512 * int_of_bool(is_rc(dict_value(code))))    # a table with text keys
         elif elem_of(code) == 'str' or is_rc(elem_of(code)):
             kinds[slot] = 'i32 258'          # a list: 2, plus 256 when its items are reference counted
         else:
@@ -1482,6 +1585,9 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
     d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
+    d = d + 'declare ptr @tomato_dict_new(i64, i64, i32)\n'
+    d = d + 'declare ptr @tomato_dict_find(ptr, i64)\n'
+    d = d + 'declare ptr @tomato_dict_insert(ptr, i64, i32)\n'
     d = d + 'declare void @tomato_usage(i32, i32)\n'
     d = d + 'declare i64 @tomato_parse_i64(ptr, i32)\n'
     d = d + 'declare i32 @tomato_parse_bool(ptr, i32)\n'
@@ -1502,31 +1608,60 @@ def declarations() -> str:
     d = d + '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
     return d
 
-def entry_wrapper(info: FuncInfo) -> str:
+def literal_text(n: Node, ty: str) -> str:
+    # the IR constant for a default written as a plain literal (entry point inputs)
+    if ty == 'int' and n.kind == 'IntLit':
+        return str(n.fields[0].num)
+    if ty == 'bool' and n.kind == 'BoolLit':
+        if n.fields[0].flag:
+            return '1'
+        return '0'
+    raise CompileError('the Tomato compiler reads an entry point default only as an int or bool literal yet', n.line)
+
+def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     # main(): read the command-line inputs, run the entry point, report an error nobody caught (D28a, D22a)
     k = len(info.ptypes)
+    low = k - len(info.defaults)
     out = 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
-    out = out + '  %ok = icmp eq i32 %n, ' + str(k) + '\n  br i1 %ok, label %go, label %bad\n'
+    out = out + '  %lo = icmp sge i32 %n, ' + str(low) + '\n  %hi = icmp sle i32 %n, ' + str(k) + '\n  %ok = and i1 %lo, %hi\n'
+    out = out + '  br i1 %ok, label %go, label %bad\n'
     out = out + 'bad:\n  call void @tomato_usage(i32 ' + str(k) + ', i32 %n)\n  unreachable\ngo:\n'
     args = new_strs()
     owned = new_strs()
     i = 0
     for t in info.ptypes:
-        out = out + '  %a' + str(i) + '.ptr = getelementptr ptr, ptr %argv, i64 ' + str(i + 1) + '\n'
-        out = out + '  %a' + str(i) + '.s = load ptr, ptr %a' + str(i) + '.ptr\n'
+        si = str(i)
+        optional = i >= low
+        if optional:
+            out = out + '  %has' + si + ' = icmp sgt i32 %n, ' + si + '\n  br i1 %has' + si + ', label %p' + si + ', label %d' + si + '\np' + si + ':\n'
+        out = out + '  %a' + si + '.ptr = getelementptr ptr, ptr %argv, i64 ' + str(i + 1) + '\n'
+        out = out + '  %a' + si + '.s = load ptr, ptr %a' + si + '.ptr\n'
+        reg = '%a' + si
         if t == 'str':
-            out = out + '  %a' + str(i) + ' = call ptr @tomato_str_from_cstr(ptr %a' + str(i) + '.s)\n'
-            args.append('ptr %a' + str(i))
-            owned.append('%a' + str(i))
+            out = out + '  %a' + si + '.v = call ptr @tomato_str_from_cstr(ptr %a' + si + '.s)\n'
         elif t == 'int':
-            out = out + '  %a' + str(i) + ' = call i64 @tomato_parse_i64(ptr %a' + str(i) + '.s, i32 ' + str(i + 1) + ')\n'
-            args.append('i64 %a' + str(i))
+            out = out + '  %a' + si + '.v = call i64 @tomato_parse_i64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
         elif t == 'bool':
-            out = out + '  %a' + str(i) + '.w = call i32 @tomato_parse_bool(ptr %a' + str(i) + '.s, i32 ' + str(i + 1) + ')\n'
-            out = out + '  %a' + str(i) + ' = zext i32 %a' + str(i) + '.w to i64\n'
-            args.append('i64 %a' + str(i))
+            out = out + '  %a' + si + '.w = call i32 @tomato_parse_bool(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            out = out + '  %a' + si + '.v = zext i32 %a' + si + '.w to i64\n'
         else:
             raise CompileError('the Tomato compiler reads entry point inputs of type int, bool and str only', 0)
+        if optional:
+            dflt = info.defaults[i - low]
+            out = out + '  br label %m' + si + '\nd' + si + ':\n  br label %m' + si + '\nm' + si + ':\n'
+            if t == 'str':
+                if dflt.kind != 'StrLit':
+                    raise CompileError('the Tomato compiler reads a text entry point default only as a text literal yet', dflt.line)
+                out = out + '  %a' + si + ' = phi ptr [ %a' + si + '.v, %p' + si + ' ], [ ' + mod.intern(dflt.fields[0].text) + ', %d' + si + ' ]\n'
+            else:
+                out = out + '  %a' + si + ' = phi i64 [ %a' + si + '.v, %p' + si + ' ], [ ' + literal_text(dflt, t) + ', %d' + si + ' ]\n'
+        else:
+            reg = '%a' + si + '.v'
+        if t == 'str':
+            args.append('ptr ' + reg)
+            owned.append(reg)
+        else:
+            args.append('i64 ' + reg)
         i = i + 1
     out = out + '  call void @tomato.' + info.name + '(' + ', '.join(args) + ')\n'
     out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
@@ -1549,8 +1684,10 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     for p in val_nodes(item.fields[1]):
         if p.fields[0].text == 'self' and owner != '':
             continue
-        if p.fields[3].tag != 'z' or p.fields[2].tag != 'z':
-            raise CompileError('the Tomato compiler does not support defaults or *args yet', p.line)
+        if p.fields[3].tag != 'z':
+            raise CompileError('the Tomato compiler does not support *args or **kwargs yet', p.line)
+        if p.fields[2].tag == 'n':
+            info.defaults.append(val_node(p.fields[2]))
         pt = mod.type_name(p.fields[1])
         if pt == '':
             raise CompileError('the Tomato compiler only takes int, bool, str, list and class parameters yet', p.line)
@@ -1681,6 +1818,7 @@ export def compile_module(src: str, dir: str, entry_name: str) -> str:
         k = k + 1
     for c in mod.classes:
         bodies = bodies + compile_constructor(c, mod) + '\n'
+    wrapper = entry_wrapper(mod.find(entry, 1), mod)
     out = '; written by the Tomato compiler in Tomato (selfhost/compiler.tom)\n'
     out = out + declarations() + class_types(mod) + runtime_tables(mod)
     j = 0
@@ -1689,5 +1827,5 @@ export def compile_module(src: str, dir: str, entry_name: str) -> str:
         out = out + string_c(j, s) + '\n'
         j = j + 1
     out = out + '\n' + bodies
-    out = out + entry_wrapper(mod.find(entry, 1))
+    out = out + wrapper
     return out

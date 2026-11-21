@@ -16,6 +16,50 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "dicts": """class Table:
+    names: dict[str, int] = {}
+    labels: dict[str, str] = {}
+
+    def add(self, k: str, v: int):
+        self.names[k] = v
+        self.labels[k] = 'L' + str(v)
+
+def lookup(t: Table, k: str) -> int:
+    if k in t.names:
+        return t.names[k]
+    return 0 - 1
+
+@main
+def main():
+    t = Table()
+    t.add('a', 1)
+    t.add('bb', 22)
+    t.add('a', 3)
+    print(len(t.names), lookup(t, 'a'), lookup(t, 'bb'), lookup(t, 'z'), t.labels['a'], 'bb' in t.labels, 'q' in t.labels)
+    m: dict[str, str] = {'x': 'y', 'z': 'w'}
+    print(m['x'] + m['z'], len(m))
+""",
+    "defaults": """def greet(name: str, times: int = 2, loud: bool = False) -> str:
+    out = ''
+    for i in range(times):
+        out = out + name + ' '
+    if loud:
+        return out + '!'
+    return out
+
+class Box:
+    v: str = ''
+
+    @init
+    def make(self, v: str, w: str = 'w'):
+        self.v = v + w
+
+@main
+def main():
+    who = 'bob'
+    n = 3
+    print(greet(who), greet(who, n), greet(who, 1, True), Box('a').v, Box('a', 'b').v)
+""",
     "optionals": """class Node:
     value: int = 0
     next: Node | None = None
