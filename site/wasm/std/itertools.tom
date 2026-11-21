@@ -1,0 +1,199 @@
+# Loop helpers, written in Tomato: `from itertools import tqdm`, a small progress bar.
+# There is no clock in the language yet, so the bar shows a count and a percentage but no speed or time left.
+#
+#     bar = tqdm(200, 'copying')
+#     for i in range(200):
+#         bar.update()
+#     bar.close()
+#
+# update() redraws the bar on standard error (so it does not mix with what the program prints); render() returns the
+# same line as text, which is what the tests check. A total of 0 means unknown: the bar shows only the count.
+
+export class tqdm:
+    total: int = 0
+    count: int = 0
+    label: str = ''
+    width: int = 30
+
+    @init
+    def make(self, total: int, label: str = '', width: int = 30):
+        if total < 0:
+            raise RuntimeError('a progress bar total cannot be negative')
+        if width < 1:
+            raise RuntimeError('a progress bar width must be at least 1')
+        self.total = total
+        self.label = label
+        self.width = width
+
+    def render(self) -> str:
+        prefix = ''
+        if len(self.label) > 0:
+            prefix = self.label + ': '
+        if self.total == 0:
+            return prefix + str(self.count) + 'it'
+        shown = self.count
+        if shown > self.total:
+            shown = self.total
+        filled = shown * self.width // self.total
+        pct = shown * 100 // self.total
+        line = prefix
+        if pct < 100:
+            line = line + ' '
+        if pct < 10:
+            line = line + ' '
+        line = line + str(pct) + '%|'
+        for i in range(self.width):
+            if i < filled:
+                line = line + '#'
+            else:
+                line = line + '-'
+        return line + '| ' + str(self.count) + '/' + str(self.total)
+
+    def show(self, end: str):
+        f = open('/dev/stderr', 'w')
+        f.write('\r' + self.render() + end)
+        f.close()
+
+    def update(self, n: int = 1):
+        self.count = self.count + n
+        self.show('')
+
+    def close(self):
+        self.show('\n')
+
+# The helpers below work on `list[int]` and return whole lists (there are no generics or iterators yet).
+# Results come in the same order as Python's itertools.
+
+def extend_with(base: list[int], item: int) -> list[int]:
+    out: list[int] = []
+    for x in base:
+        out.append(x)
+    out.append(item)
+    return out
+
+# Every ordering of r items from `items` (all of them when r is -1), by position, so repeated values repeat.
+export def permutations(items: list[int], r: int = -1) -> list[list[int]]:
+    size = r
+    if size < 0:
+        size = len(items)
+    result: list[list[int]] = []
+    if size > len(items):
+        return result
+    start: list[int] = []
+    used: list[bool] = []
+    for i in range(len(items)):
+        used.append(False)
+    permute_into(items, size, start, used, result)
+    return result
+
+def permute_into(items: list[int], size: int, prefix: list[int], used: list[bool], result: list[list[int]]):
+    if len(prefix) == size:
+        result.append(prefix)
+        return
+    for i in range(len(items)):
+        if not used[i]:
+            used[i] = True
+            permute_into(items, size, extend_with(prefix, items[i]), used, result)
+            used[i] = False
+
+# Every r-item selection in input order, with no repeats of a position.
+export def combinations(items: list[int], r: int) -> list[list[int]]:
+    result: list[list[int]] = []
+    if r < 0 or r > len(items):
+        return result
+    start: list[int] = []
+    combine_into(items, r, 0, start, False, result)
+    return result
+
+# Like combinations, but an item may be picked again.
+export def combinations_with_replacement(items: list[int], r: int) -> list[list[int]]:
+    result: list[list[int]] = []
+    if r < 0:
+        return result
+    start: list[int] = []
+    combine_into(items, r, 0, start, True, result)
+    return result
+
+def combine_into(items: list[int], r: int, first: int, prefix: list[int], again: bool, result: list[list[int]]):
+    if len(prefix) == r:
+        result.append(prefix)
+        return
+    for i in range(first, len(items)):
+        next_first = i + 1
+        if again:
+            next_first = i
+        combine_into(items, r, next_first, extend_with(prefix, items[i]), again, result)
+
+# Every pair (a, b) as a two-item list, first list varying slowest.
+export def product(a: list[int], b: list[int]) -> list[list[int]]:
+    result: list[list[int]] = []
+    for x in a:
+        for y in b:
+            pair: list[int] = []
+            pair.append(x)
+            pair.append(y)
+            result.append(pair)
+    return result
+
+# Every list of `repeat` items from `items` (the product of items with itself repeat times).
+export def product_repeat(items: list[int], repeat: int) -> list[list[int]]:
+    result: list[list[int]] = []
+    if repeat < 0:
+        return result
+    start: list[int] = []
+    result.append(start)
+    for step in range(repeat):
+        grown: list[list[int]] = []
+        for prefix in result:
+            for x in items:
+                grown.append(extend_with(prefix, x))
+        result = grown
+    return result
+
+# Running totals: accumulate([1, 2, 3]) is [1, 3, 6].
+export def accumulate(items: list[int]) -> list[int]:
+    out: list[int] = []
+    total = 0
+    for x in items:
+        total = total + x
+        out.append(total)
+    return out
+
+export def chain(a: list[int], b: list[int]) -> list[int]:
+    out: list[int] = []
+    for x in a:
+        out.append(x)
+    for x in b:
+        out.append(x)
+    return out
+
+# Neighbouring pairs: pairwise([1, 2, 3]) is [[1, 2], [2, 3]].
+export def pairwise(items: list[int]) -> list[list[int]]:
+    out: list[list[int]] = []
+    for i in range(1, len(items)):
+        pair: list[int] = []
+        pair.append(items[i - 1])
+        pair.append(items[i])
+        out.append(pair)
+    return out
+
+# Chunks of n items; the last may be shorter.
+export def batched(items: list[int], n: int) -> list[list[int]]:
+    if n < 1:
+        raise RuntimeError('batched needs a batch size of at least 1')
+    out: list[list[int]] = []
+    current: list[int] = []
+    for x in items:
+        current.append(x)
+        if len(current) == n:
+            out.append(current)
+            current = []
+    if len(current) > 0:
+        out.append(current)
+    return out
+
+export def repeat(item: int, times: int) -> list[int]:
+    out: list[int] = []
+    for i in range(times):
+        out.append(item)
+    return out
