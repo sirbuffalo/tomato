@@ -65,6 +65,9 @@ class StageTwo(unittest.TestCase):
         ir3 = subprocess.run([stage2, ctool, "compile"], check=True, capture_output=True, text=True)
         self.assertEqual(ir3.stderr, "")
         self.assertEqual(ir3.stdout, ir2.stdout, "stage 2 does not compile itself to the same IR (no fixed point)")
+        # the IR checked in under bootstrap/ is exactly what the compiler writes for itself
+        with open(os.path.join(ROOT, "bootstrap", "tomatoc.ll")) as f:
+            self.assertEqual(f.read(), ir3.stdout, "bootstrap/tomatoc.ll is out of date: run bootstrap/refresh.sh")
         # the compiler built by itself compiles a sample program that behaves like the interpreter
         sample = os.path.join(d, "sample.tom")
         with open(sample, "w") as f:

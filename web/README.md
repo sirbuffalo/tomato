@@ -1,3 +1,7 @@
+# Tomato Compiler website
+
+`python3 web/compile_server.py [--port 49212]` serves `web/compile.html`: type a Tomato program, press "Compile and run", and the server compiles it with the compiler written in Tomato (built by itself on first start into `build/`), links it with clang and runs it with a 5 second limit. It runs code on the machine, so it binds to 127.0.0.1 only.
+
 # Tomato Playground
 
 A local web page that runs the Python interpreter in the browser through Pyodide (Python compiled to WebAssembly). It is a prototype, not the compiler, and it does not use any account or server-side code.

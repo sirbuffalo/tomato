@@ -16,8 +16,8 @@ if [ "$1" != "--no-llvm" ]; then
   [ -x "$home/.venv/bin/python" ] || python3 -m venv "$home/.venv"
   "$home/.venv/bin/pip" install --quiet llvmlite || echo "llvmlite did not install: programs that call !x will not run" >&2
 fi
-ln -sf "$home/bin/tomato" "$bindir/tomato"
+ln -sf "$home/bin/tomato" "$bindir/tomato-py"
 echo "installed Tomato to $home"
-echo "linked $bindir/tomato"
+echo "linked $bindir/tomato-py (the Python version; ./install-native.sh installs the native tomato command)"
 case ":$PATH:" in *":$bindir:"*) ;; *) echo "add $bindir to your PATH to run 'tomato'" ;; esac
-echo "try: tomato run $home/examples/primes.tom"
+echo "try: tomato-py run $home/examples/primes.tom"

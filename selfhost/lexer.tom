@@ -3,10 +3,16 @@
 #
 # Used by selfhost/parser.tom; the command-line tool is selfhost/lextool.tom.
 
+def with_line(message: str, line: int) -> str:
+    # errors say which line of the program they are about
+    if line > 0:
+        return 'line ' + str(line) + ': ' + message
+    return message
+
 export class LexError(Error):
     @init
     def make(self, message: str, line: int):
-        Error.start(self, message)
+        Error.start(self, with_line(message, line))
 
 export class Token:
     kind: str = ''       # INT, NAME, KW, STR, OP, NEWLINE, INDENT, DEDENT or EOF

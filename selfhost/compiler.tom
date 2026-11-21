@@ -10,10 +10,16 @@
 # evaluate both sides (P53).
 from parser import Node, Val, parse, new_strs
 
+def with_line(message: str, line: int) -> str:
+    # errors say which line of the program they are about
+    if line > 0:
+        return 'line ' + str(line) + ': ' + message
+    return message
+
 export class CompileError(Error):
     @init
     def make(self, message: str, line: int):
-        Error.start(self, message)
+        Error.start(self, with_line(message, line))
 
 def val_node(v: Val) -> Node:
     n = v.node
