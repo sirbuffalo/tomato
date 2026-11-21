@@ -15,6 +15,26 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "text_methods_in_and_files": """def words(s: str) -> list[str]:
+    return s.replace(',', ' ').split(' ')
+
+def count_in(xs: list[str], w: str) -> int:
+    n = 0
+    for x in xs:
+        if x == w:
+            n = n + 1
+    return n
+
+@main
+def main():
+    ws = words('a,b c,a')
+    print(len(ws), count_in(ws, 'a'), 'b' in ws, 'z' in ws, 3 in [1, 2, 3], 'bc' in 'abcd')
+    print(' | '.join(ws), 'hello'.find('ll'), 'hello'.startswith('he'), 'hello'.endswith('x'))
+    f = open('/etc/hosts')
+    txt = f.read()
+    f.close()
+    print(len(txt.split('\\n')) > 1)
+""",
     "classes": """class Item:
     name: str = 'none'
     qty: int = 0

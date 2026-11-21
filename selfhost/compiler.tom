@@ -28,7 +28,7 @@ def val_nodes(v: Val) -> list[Node]:
     return out
 
 def basic_type(name: str) -> bool:
-    return name == 'int' or name == 'bool' or name == 'str'
+    return name == 'int' or name == 'bool' or name == 'str' or name == 'File'
 
 def is_list(t: str) -> bool:
     return t.startswith('list[')
@@ -51,7 +51,7 @@ def shown(t: str) -> str:
     return t
 
 def llvm_type(t: str) -> str:
-    if is_rc(t):
+    if is_rc(t) or t == 'File':
         return 'ptr'
     return 'i64'
 
@@ -276,7 +276,7 @@ class Gen:
             self.emit('store ptr ' + e.reg + ', ptr ' + slot)
             self.emit('call void @tomato_release(ptr ' + old + ')')
         else:
-            self.emit('store i64 ' + e.reg + ', ptr ' + slot)
+            self.emit('store ' + llvm_type(e.ty) + ' ' + e.reg + ', ptr ' + slot)
 
     def want(self, e: Ex, ty: str, line: int, what: str):
         if e.ty != ty:
@@ -496,6 +496,77 @@ class Gen:
         self.release(s)
         return ex(r, 'str')
 
+    def membership(self, a: Ex, b: Ex, line: int) -> Ex:
+        if b.ty == 'str':
+            self.want(a, 'str', line, 'the left side of in')
+            c = self.tmp('c')
+            self.emit(c + ' = call i32 @tomato_str_contains(ptr ' + b.reg + ', ptr ' + a.reg + ')')
+            i1 = self.tmp('flag')
+            self.emit(i1 + ' = icmp ne i32 ' + c + ', 0')
+            self.release(a)
+            self.release(b)
+            return self.bool_of(i1)
+        if is_list(b.ty):
+            return self.list_contains(a, b, line)
+        raise CompileError('the Tomato compiler does not support in on ' + shown(b.ty) + ' yet', line)
+
+    def list_contains(self, a: Ex, lst: Ex, line: int) -> Ex:
+        # walk the items and compare each with ==, stopping at the first match (basic item types only)
+        elem = elem_of(lst.ty)
+        if not (elem == 'int' or elem == 'bool' or elem == 'str'):
+            raise CompileError('the Tomato compiler only searches lists of int, bool and str yet', line)
+        self.want(a, elem, line, 'the left side of in')
+        found = self.hidden_slot('in.found')
+        counter = self.hidden_slot('in.i')
+        self.emit('store i64 0, ptr ' + found)
+        self.emit('store i64 0, ptr ' + counter)
+        head = self.label('inhead')
+        body = self.label('inbody')
+        step = self.label('instep')
+        end = self.label('inend')
+        self.br(head)
+        self.place(head)
+        i = self.tmp('i')
+        self.emit(i + ' = load i64, ptr ' + counter)
+        lenp = self.tmp('lenp')
+        self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + lst.reg + ', i32 0, i32 2')
+        ln = self.tmp('n')
+        self.emit(ln + ' = load i64, ptr ' + lenp)
+        go = self.tmp('go')
+        self.emit(go + ' = icmp slt i64 ' + i + ', ' + ln)
+        self.cond_br(go, body, end)
+        self.place(body)
+        addr = self.list_slot(lst, ex(i, 'int'))
+        item = self.tmp('item')
+        self.emit(item + ' = load ' + llvm_type(elem) + ', ptr ' + addr)
+        hit = self.tmp('hit')
+        if elem == 'str':
+            c = self.tmp('c')
+            self.emit(c + ' = call i32 @tomato_str_cmp(ptr ' + item + ', ptr ' + a.reg + ')')
+            self.emit(hit + ' = icmp eq i32 ' + c + ', 0')
+        else:
+            self.emit(hit + ' = icmp eq i64 ' + item + ', ' + a.reg)
+        yes = self.label('inhit')
+        self.cond_br(hit, yes, step)
+        self.place(yes)
+        self.emit('store i64 1, ptr ' + found)
+        self.br(end)
+        self.place(step)
+        cur = self.tmp('cur')
+        self.emit(cur + ' = load i64, ptr ' + counter)
+        nxt = self.tmp('next')
+        self.emit(nxt + ' = add i64 ' + cur + ', 1')
+        self.emit('store i64 ' + nxt + ', ptr ' + counter)
+        self.br(head)
+        self.place(end)
+        f = self.tmp('found')
+        self.emit(f + ' = load i64, ptr ' + found)
+        i1 = self.tmp('flag')
+        self.emit(i1 + ' = icmp ne i64 ' + f + ', 0')
+        self.release(a)
+        self.release(lst)
+        return self.bool_of(i1)
+
     def compare_text(self, op: str, a: Ex, b: Ex) -> Ex:
         c = self.tmp('cmp32')
         self.emit(c + ' = call i32 @tomato_str_cmp(ptr ' + a.reg + ', ptr ' + b.reg + ')')
@@ -521,6 +592,8 @@ class Gen:
         a = self.expr(val_node(n.fields[1]))
         b = self.expr(val_node(n.fields[2]))
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
+        if op == 'in':
+            return self.membership(a, b, n.line)
         if a.ty == 'str' or b.ty == 'str':
             if a.ty != b.ty:
                 raise CompileError('type error: cannot use ' + op + ' with ' + a.ty + ' and ' + b.ty, n.line)
@@ -533,6 +606,8 @@ class Gen:
             if is_compare:
                 return self.compare_text(op, a, b)
             raise CompileError('the Tomato compiler does not support ' + op + ' on text yet', n.line)
+        if op == 'in':
+            return self.membership(a, b, n.line)
         if op == 'and' or op == 'or' or op == 'xor':
             self.want(a, 'bool', n.line, 'the left side of ' + op)
             self.want(b, 'bool', n.line, 'the right side of ' + op)
@@ -579,6 +654,8 @@ class Gen:
                 raise CompileError('print has no value', n.line)
             self.print_call(args)
             return ex('', '')
+        if name == 'open':
+            return self.open_call(args, n.line)
         if name == 'len':
             return self.len_call(args, n.line)
         if name == 'str':
@@ -652,10 +729,110 @@ class Gen:
             self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
             self.release(obj)
             return ex('', '')
+        if obj.ty == 'str':
+            return self.text_method(obj, name, args, n.line)
+        if obj.ty == 'File':
+            return self.file_method(obj, name, args, n.line)
         if is_class(obj.ty):
             info = self.mod.find_method(obj.ty[1:], name, n.line)
             return self.call_function(info, '@tomato.m.' + str(self.mod.code_of(obj.ty)) + '.' + name, obj, args, n.line)
         raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + shown(obj.ty) + ' yet', n.line)
+
+    def text_args(self, obj: Ex, name: str, args: list[Node], count: int, line: int) -> list[Ex]:
+        if len(args) != count:
+            raise CompileError(name + ' takes ' + str(count) + ' argument(s), got ' + str(len(args)), line)
+        out: list[Ex] = []
+        for a in args:
+            v = self.expr(a)
+            self.want(v, 'str', line, 'the argument of ' + name)
+            out.append(v)
+        return out
+
+    def not_empty(self, v: Ex, name: str):
+        n = self.tmp('alen')
+        self.emit(n + ' = call i64 @tomato_str_len(ptr ' + v.reg + ')')
+        bad = self.tmp('empty')
+        self.emit(bad + ' = icmp eq i64 ' + n + ', 0')
+        self.fail_if(bad, 'an empty text to ' + name + ' on is not decided')
+
+    def text_method(self, obj: Ex, name: str, args: list[Node], line: int) -> Ex:
+        if name == 'find' or name == 'startswith' or name == 'endswith':
+            a = self.text_args(obj, name, args, 1, line)
+            if name == 'find':
+                r = self.tmp('found')
+                self.emit(r + ' = call i64 @tomato_str_find(ptr ' + obj.reg + ', ptr ' + a[0].reg + ')')
+                self.release(a[0])
+                self.release(obj)
+                return ex(r, 'int')
+            c = self.tmp('c')
+            self.emit(c + ' = call i32 @tomato_str_' + name + '(ptr ' + obj.reg + ', ptr ' + a[0].reg + ')')
+            i1 = self.tmp('flag')
+            self.emit(i1 + ' = icmp ne i32 ' + c + ', 0')
+            self.release(a[0])
+            self.release(obj)
+            return self.bool_of(i1)
+        if name == 'replace':
+            a = self.text_args(obj, name, args, 2, line)
+            self.not_empty(a[0], 'replace')
+            r = self.tmp('replaced')
+            self.emit(r + ' = call ptr @tomato_str_replace(ptr ' + obj.reg + ', ptr ' + a[0].reg + ', ptr ' + a[1].reg + ')')
+            self.release(a[0])
+            self.release(a[1])
+            self.release(obj)
+            return ex(r, 'str')
+        if name == 'split':
+            a = self.text_args(obj, name, args, 1, line)
+            self.not_empty(a[0], 'split')
+            r = self.tmp('pieces')
+            self.emit(r + ' = call ptr @tomato_str_split(ptr ' + obj.reg + ', ptr ' + a[0].reg + ', i64 ' + str(self.mod.code_of('list[str]')) + ', i64 8)')
+            self.release(a[0])
+            self.release(obj)
+            return ex(r, 'list[str]')
+        if name == 'join':
+            if len(args) != 1:
+                raise CompileError('join takes a list[str]', line)
+            lst = self.expr(args[0])
+            self.want(lst, 'list[str]', line, 'the argument of join')
+            r = self.tmp('joined')
+            self.emit(r + ' = call ptr @tomato_str_join(ptr ' + obj.reg + ', ptr ' + lst.reg + ')')
+            self.release(lst)
+            self.release(obj)
+            return ex(r, 'str')
+        raise CompileError('the Tomato compiler does not support the text method ' + name + ' yet', line)
+
+    def file_method(self, f: Ex, name: str, args: list[Node], line: int) -> Ex:
+        if name == 'read' and len(args) == 0:
+            r = self.tmp('text')
+            self.emit(r + ' = call ptr @tomato_file_read(ptr ' + f.reg + ')')
+            return ex(r, 'str')
+        if name == 'write' and len(args) == 1:
+            v = self.expr(args[0])
+            self.want(v, 'str', line, 'the argument of write')
+            self.emit('call void @tomato_file_write(ptr ' + f.reg + ', ptr ' + v.reg + ')')
+            self.release(v)
+            return ex('', '')
+        if name == 'close' and len(args) == 0:
+            self.emit('call void @tomato_file_close(ptr ' + f.reg + ')')
+            return ex('', '')
+        raise CompileError('the Tomato compiler does not support the file method ' + name + ' yet', line)
+
+    def open_call(self, args: list[Node], line: int) -> Ex:
+        if len(args) < 1 or len(args) > 2:
+            raise CompileError('open(path) or open(path, mode) takes text', line)
+        path = self.expr(args[0])
+        self.want(path, 'str', line, 'the path')
+        mode = ex(self.mod.intern('r'), 'str')
+        if len(args) == 2:
+            mode = self.expr(args[1])
+            self.want(mode, 'str', line, 'the mode')
+        r = self.tmp('file')
+        self.emit(r + ' = call ptr @tomato_file_open(ptr ' + path.reg + ', ptr ' + mode.reg + ')')
+        bad = self.tmp('nofile')
+        self.emit(bad + ' = icmp eq ptr ' + r + ', null')
+        self.release(path)
+        self.release(mode)
+        self.fail_if(bad, 'a file could not be opened')
+        return ex(r, 'File')
 
     def ret_llvm(self, info: FuncInfo) -> str:
         if info.ret == '':
@@ -1136,6 +1313,17 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
     d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
+    d = d + 'declare i64 @tomato_str_find(ptr, ptr)\n'
+    d = d + 'declare i32 @tomato_str_startswith(ptr, ptr)\n'
+    d = d + 'declare i32 @tomato_str_endswith(ptr, ptr)\n'
+    d = d + 'declare i32 @tomato_str_contains(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_replace(ptr, ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_split(ptr, ptr, i64, i64)\n'
+    d = d + 'declare ptr @tomato_str_join(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_file_open(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_file_read(ptr)\n'
+    d = d + 'declare void @tomato_file_write(ptr, ptr)\n'
+    d = d + 'declare void @tomato_file_close(ptr)\n'
     d = d + 'declare ptr @tomato_list_new(i64)\n'
     d = d + 'declare ptr @tomato_list_push(ptr, i64)\n'
     d = d + '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
