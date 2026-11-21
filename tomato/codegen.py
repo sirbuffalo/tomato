@@ -16,7 +16,7 @@ from . import nodes as N
 from . import errcodes
 from .errors import NotDecided, TomatoError
 from .interp import Interpreter
-from .values import BoolT, ClassT, FixedT, FloatT, INT, IntT, IfaceT, ListT, MapT, NoneT, OptT, SetT, StrT, contains, is_int_type
+from .values import BoolT, ClassT, FileT, FixedT, FloatT, INT, IntT, IfaceT, ListT, MapT, NoneT, OptT, SetT, StrT, contains, is_int_type
 
 
 class NotCompiled(TomatoError):
@@ -51,6 +51,8 @@ def llvm_type(t):
         return "ptr"
     if t == NoneT:
         return "void"
+    if t == FileT:
+        return "ptr"                       # a FILE* the program closes itself (D38a)
     raise NotCompiled("values of type %r" % (t,))
 
 
@@ -669,6 +671,8 @@ class FuncCompiler:
             return self.convert_explicit(v, t, INT, e.line)
         if isinstance(f, N.Name) and f.name == "len":
             return self.len_call(e)
+        if isinstance(f, N.Name) and f.name == "open" and "open" not in self.vars:
+            return self.open_call(e)
         if isinstance(f, N.Name) and f.name == "str":
             return self.str_call(e)
         if isinstance(f, N.Name) and f.name not in self.vars:
@@ -721,6 +725,108 @@ class FuncCompiler:
             raise NotDecided("len of %r (only text, lists, dicts and sets compile so far)" % (t,), e.line)
         self.release(v, t)
         return r, INT
+
+    def open_call(self, e):
+        """open(path) or open(path, mode): a file the program closes itself; failing to open raises (D38a)."""
+        if not 1 <= len(e.args) <= 2:
+            raise TomatoError("open(path) or open(path, mode) takes text", e.line)
+        p, pt = self.expr(e.args[0])
+        if pt != StrT:
+            self.release(p, pt)
+            raise TomatoError("open(path) or open(path, mode) takes text", e.line)
+        if len(e.args) == 2:
+            m, mt = self.expr(e.args[1])
+            if mt != StrT:
+                self.release(p, pt)
+                self.release(m, mt)
+                raise TomatoError("open(path) or open(path, mode) takes text", e.line)
+        else:
+            m, mt = self.cg.strobj("r"), None
+        r = self.tmp("file")
+        self.emit("%s = call ptr @tomato_file_open(ptr %s, ptr %s)" % (r, p, m))
+        bad = self.tmp("nofile")
+        self.emit("%s = icmp eq ptr %s, null" % (bad, r))
+        self.release(p, pt)
+        if mt is not None:
+            self.release(m, mt)
+        self.trap_if(bad, "file")
+        return r, FileT
+
+    def file_method(self, o, name, e):
+        if name == "read" and not e.args:
+            r = self.tmp("text")
+            self.emit("%s = call ptr @tomato_file_read(ptr %s)" % (r, o))
+            return r, StrT
+        if name == "write" and len(e.args) == 1:
+            s, st = self.expr(e.args[0])
+            if st != StrT:
+                self.release(s, st)
+                raise TomatoError("write takes text", e.line)
+            self.emit("call void @tomato_file_write(ptr %s, ptr %s)" % (o, s))
+            self.release(s, st)
+            return None, NoneT
+        if name == "close" and not e.args:
+            self.emit("call void @tomato_file_close(ptr %s)" % o)
+            return None, NoneT
+        raise NotCompiled("file method %s" % name, e.line)
+
+    def str_method(self, o, name, e):
+        """Text methods find, replace, split, startswith and endswith (D38a); the receiver is an owned temporary."""
+        def text_args(n):
+            if len(e.args) != n:
+                self.release(o, StrT)
+                raise TomatoError("%s takes %d argument(s), got %d" % (name, n, len(e.args)), e.line)
+            out = []
+            for a in e.args:
+                v, t = self.expr(a)
+                if t != StrT:
+                    self.release(v, t)
+                    self.release(o, StrT)
+                    raise TomatoError("%s takes text, found %r" % (name, t), e.line)
+                out.append(("ptr %s" % v, v, StrT))
+            return out
+        if name in ("find", "startswith", "endswith"):
+            args = text_args(1)
+            if name == "find":
+                r = self.tmp("found")
+                self.emit("%s = call i64 @tomato_str_find(ptr %s, ptr %s)" % (r, o, args[0][1]))
+                self.release(args[0][1], StrT)
+                self.release(o, StrT)
+                return r, INT
+            c, r = self.tmp("c"), self.tmp("starts")
+            self.emit("%s = call i32 @tomato_str_%s(ptr %s, ptr %s)" % (c, name, o, args[0][1]))
+            self.emit("%s = icmp ne i32 %s, 0" % (r, c))
+            self.release(args[0][1], StrT)
+            self.release(o, StrT)
+            return r, BoolT
+        if name == "replace":
+            args = text_args(2)
+            empty = self.tmp("empty")
+            lenv = self.tmp("alen")
+            self.emit("%s = call i64 @tomato_str_len(ptr %s)" % (lenv, args[0][1]))
+            self.emit("%s = icmp eq i64 %s, 0" % (empty, lenv))
+            self.trap_if(empty, "empty separator")
+            r = self.tmp("replaced")
+            self.emit("%s = call ptr @tomato_str_replace(ptr %s, ptr %s, ptr %s)" % (r, o, args[0][1], args[1][1]))
+            for _, v, t in args:
+                self.release(v, t)
+            self.release(o, StrT)
+            return r, StrT
+        if name == "split":
+            args = text_args(1)
+            empty, lenv = self.tmp("empty"), self.tmp("alen")
+            self.emit("%s = call i64 @tomato_str_len(ptr %s)" % (lenv, args[0][1]))
+            self.emit("%s = icmp eq i64 %s, 0" % (empty, lenv))
+            self.trap_if(empty, "empty separator")
+            lt = ListT(StrT)
+            r = self.tmp("pieces")
+            self.emit("%s = call ptr @tomato_str_split(ptr %s, ptr %s, i64 %d, i64 %s)"
+                      % (r, o, args[0][1], self.cg.type_code(lt), self.cg.size_of("ptr")))
+            self.release(args[0][1], StrT)
+            self.release(o, StrT)
+            return r, lt
+        self.release(o, StrT)
+        raise NotCompiled("text method %s" % name, e.line)
 
     def str_call(self, e):
         if len(e.args) != 1:
@@ -1292,8 +1398,9 @@ class FuncCompiler:
         if isinstance(ot, SetT):
             return self.set_method(o, ot, f.name, e)
         if ot == StrT:
-            self.release(o, ot)
-            raise NotCompiled("string methods", e.line)
+            return self.str_method(o, f.name, e)
+        if ot == FileT:
+            return self.file_method(o, f.name, e)
         if isinstance(ot, IfaceT):
             return self.iface_call(o, ot, f, e)
         if not isinstance(ot, ClassT):
@@ -1992,6 +2099,15 @@ declare ptr @tomato_dict_keys(ptr, i64, i64)
 declare ptr @tomato_dict_values(ptr, i64, i64, i32)
 declare void @tomato_dict_destroy(ptr, i32, i32)
 declare i32 @tomato_str_contains(ptr, ptr)
+declare i64 @tomato_str_find(ptr, ptr)
+declare i32 @tomato_str_startswith(ptr, ptr)
+declare i32 @tomato_str_endswith(ptr, ptr)
+declare ptr @tomato_str_replace(ptr, ptr, ptr)
+declare ptr @tomato_str_split(ptr, ptr, i64, i64)
+declare ptr @tomato_file_open(ptr, ptr)
+declare ptr @tomato_file_read(ptr)
+declare void @tomato_file_write(ptr, ptr)
+declare void @tomato_file_close(ptr)
 """
 
 

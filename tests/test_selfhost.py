@@ -18,7 +18,7 @@ def python_tokens(src):
         if t.kind == "INT":
             out.append("INT %d %d" % (t.value, t.line))
         else:
-            out.append("%s %s %d" % (t.kind, (t.value or "").replace("\n", "\\n"), t.line))
+            out.append("%s %s %d" % (t.kind, (t.value or "").replace("\n", "\\n").replace("\r", "\\r"), t.line))
     return out
 
 
@@ -36,6 +36,21 @@ class SelfhostLexer(unittest.TestCase):
             with self.subTest(path=os.path.basename(path)):
                 expected = python_tokens(open(path).read())
                 self.assertEqual(self.tomato_tokens(path), expected)
+
+    def test_compiled_lexer_matches_too(self):
+        """Stage 1 (D38a): the Python compiler builds the Tomato lexer, and the native program gives the same tokens."""
+        import shutil
+        import subprocess
+        import tempfile
+        if not shutil.which("clang"):
+            self.skipTest("clang is not installed")
+        exe = os.path.join(tempfile.mkdtemp(), "lexer")
+        subprocess.run([sys.executable, "-m", "tomato", "build", os.path.join(ROOT, "selfhost", "lexer.tom"),
+                        "--entry", "show", "-o", exe], cwd=ROOT, check=True, capture_output=True)
+        for path in sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(ROOT, "selfhost", "*.tom"))):
+            with self.subTest(path=os.path.basename(path)):
+                out = subprocess.run([exe, path], check=True, capture_output=True, text=True).stdout.split("\n")[:-1]
+                self.assertEqual(out, python_tokens(open(path).read()))
 
 
 if __name__ == "__main__":

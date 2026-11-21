@@ -275,6 +275,103 @@ void *tomato_str_slice(void *a, int64_t lo, int64_t hi) {
     return str_new(s->data + from, to - from);
 }
 
+/* ---- text searching and splitting (bootstrap, D38a) ---- */
+void *tomato_list_new(int64_t type);
+void *tomato_list_push(void *l, int64_t elem_size);
+static int64_t byte_to_char(Str *s, int64_t byte) {
+    int64_t seen = 0;
+    for (int64_t k = 0; k < byte; k++)
+        if (((unsigned char)s->data[k] & 0xC0) != 0x80) seen++;
+    return seen;
+}
+
+static int64_t find_bytes(Str *h, Str *n, int64_t from) {
+    if (n->bytes == 0) return from <= h->bytes ? from : -1;
+    for (int64_t i = from; i + n->bytes <= h->bytes; i++)
+        if (memcmp(h->data + i, n->data, (size_t)n->bytes) == 0) return i;
+    return -1;
+}
+
+/* The character index of the first match, or -1. */
+int64_t tomato_str_find(void *hay, void *needle) {
+    int64_t at = find_bytes(hay, needle, 0);
+    return at < 0 ? -1 : byte_to_char(hay, at);
+}
+
+int tomato_str_startswith(void *hay, void *p) {
+    Str *h = hay, *x = p;
+    return x->bytes <= h->bytes && memcmp(h->data, x->data, (size_t)x->bytes) == 0;
+}
+
+int tomato_str_endswith(void *hay, void *p) {
+    Str *h = hay, *x = p;
+    return x->bytes <= h->bytes && memcmp(h->data + h->bytes - x->bytes, x->data, (size_t)x->bytes) == 0;
+}
+
+/* Every non-overlapping `a` replaced by `b`; the compiler rejects an empty `a`. */
+void *tomato_str_replace(void *src, void *a, void *b) {
+    Str *s = src, *x = a, *y = b;
+    int64_t cap = s->bytes + 1, len = 0, at = 0;
+    char *out = malloc((size_t)cap);
+    if (!out) tomato_fail("out of memory");
+    while (at <= s->bytes) {
+        int64_t hit = find_bytes(s, x, at);
+        int64_t upto = hit < 0 ? s->bytes : hit;
+        int64_t need = len + (upto - at) + (hit < 0 ? 0 : y->bytes) + 1;
+        if (need > cap) { cap = need * 2; out = realloc(out, (size_t)cap); if (!out) tomato_fail("out of memory"); }
+        memcpy(out + len, s->data + at, (size_t)(upto - at));
+        len += upto - at;
+        if (hit < 0) break;
+        memcpy(out + len, y->data, (size_t)y->bytes);
+        len += y->bytes;
+        at = hit + x->bytes;
+    }
+    void *r = str_new(out, len);
+    free(out);
+    return r;
+}
+
+/* A new list of the pieces between each `sep`; the compiler rejects an empty `sep`. */
+void *tomato_str_split(void *src, void *sep, int64_t list_type, int64_t elem_size) {
+    Str *s = src, *x = sep;
+    void *l = tomato_list_new(list_type);
+    int64_t at = 0;
+    for (;;) {
+        int64_t hit = find_bytes(s, x, at);
+        int64_t upto = hit < 0 ? s->bytes : hit;
+        void *piece = str_new(s->data + at, upto - at);
+        void **slot = tomato_list_push(l, elem_size);
+        *slot = piece;
+        if (hit < 0) break;
+        at = hit + x->bytes;
+    }
+    return l;
+}
+
+/* ---- files (bootstrap, D38a): a FILE* the program opens and closes itself ---- */
+void *tomato_file_open(void *path, void *mode) {
+    return fopen(((Str *)path)->data, ((Str *)mode)->data);
+}
+
+void *tomato_file_read(void *f) {
+    char buf[4096];
+    int64_t cap = 4096, len = 0;
+    char *out = malloc((size_t)cap);
+    size_t got;
+    if (!out) tomato_fail("out of memory");
+    while ((got = fread(buf, 1, sizeof buf, f)) > 0) {
+        if (len + (int64_t)got > cap) { cap = (len + (int64_t)got) * 2; out = realloc(out, (size_t)cap); if (!out) tomato_fail("out of memory"); }
+        memcpy(out + len, buf, got);
+        len += (int64_t)got;
+    }
+    void *r = str_new(out, len);
+    free(out);
+    return r;
+}
+
+void tomato_file_write(void *f, void *s) { fwrite(((Str *)s)->data, 1, (size_t)((Str *)s)->bytes, f); }
+void tomato_file_close(void *f) { fclose(f); }
+
 void tomato_print_strobj(void *s) { fwrite(((Str *)s)->data, 1, (size_t)((Str *)s)->bytes, stdout); }
 
 void *tomato_str_from_i64(int64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%lld", (long long)v); return str_new(b, n); }

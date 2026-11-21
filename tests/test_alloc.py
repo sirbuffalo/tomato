@@ -622,6 +622,17 @@ class OptionalsAndDefaults(unittest.TestCase):
                        "print(2 in xs, 5 in xs, 'a' in ss, w in ss, 'z' in ss, 1 in [4, 1], 'x' in ['x'])\n"
                        "if 3 in xs:\n    print('yes')"))
 
+    def test_text_methods(self):
+        self.same(prog("s = 'a,b,,c'\nparts = s.split(',')\nprint(len(parts), parts[0], parts[2] == '', parts[3])\n"
+                       "print('a-b-c'.replace('-', '+'), 'abc'.replace('x', 'y'), 'héllo'.find('l'), 'hello'.find('z'))\n"
+                       "print('hello'.startswith('he'), 'hello'.endswith('lo'), 'hello'.endswith('x'), ''.split(',')[0] == '')\n"
+                       "t = 'x' + 'y'\nprint(t.replace('y', 'zz'), (t + t).split('y')[1])"))
+
+    def test_files(self):
+        path = os.path.join(tempfile.mkdtemp(), "f.txt")
+        self.same(prog("f = open('%s', 'w')\nf.write('one\\ntwo\\n')\nf.close()\ng = open('%s')\ns = g.read()\ng.close()\n"
+                       "print(len(s.split('\\n')), s.split('\\n')[1])" % (path, path)))
+
     def test_xor(self):
         self.same(prog("a = True\nb = False\nprint(a xor b, a xor a, b xor b, a or b xor a, not a xor a)"))
 

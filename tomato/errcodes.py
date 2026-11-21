@@ -19,6 +19,8 @@ KINDS = {
     10: ("key not found", "the key or element is not there (D20b)"),
     11: ("uncaught", "an error was raised and never caught (D22a)"),
     12: ("none", "None where a value is needed (D23b)"),
+    13: ("file", "a file could not be opened (IOError)"),
+    14: ("empty separator", "an empty text to search for or split on is not decided"),
 }
 BY_NAME = {name: code for code, (name, _) in KINDS.items()}
 CODE = re.compile(r"^E(\d{2}):(\d+)$")

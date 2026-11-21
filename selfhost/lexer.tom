@@ -151,7 +151,7 @@ def lex(src: str) -> list[Token]:
 def describe(t: Token) -> str:
     if t.kind == 'INT':
         return 'INT ' + str(t.num) + ' ' + str(t.line)
-    return t.kind + ' ' + t.text.replace('\n', '\\n') + ' ' + str(t.line)
+    return t.kind + ' ' + t.text.replace('\n', '\\n').replace('\r', '\\r') + ' ' + str(t.line)
 
 @main
 def main():
