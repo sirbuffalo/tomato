@@ -30,31 +30,25 @@ def val_nodes(v: Val) -> list[Node]:
 def basic_type(name: str) -> bool:
     return name == 'int' or name == 'bool' or name == 'str'
 
-def type_name(v: Val) -> str:
-    # the name of a type the compiler knows: int, bool, str, or list[...] of one of those; '' for anything else
-    if v.tag != 'n':
-        return ''
-    t = val_node(v)
-    name = t.fields[0].text
-    if name == 'list' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
-        inner = type_name(t.fields[2])
-        if basic_type(inner):
-            return 'list[' + inner + ']'
-        return ''
-    if t.fields[2].tag != 'z' or t.fields[1].tag != 'z':
-        return ''
-    if basic_type(name):
-        return name
-    return ''
-
 def is_list(t: str) -> bool:
     return t.startswith('list[')
 
+def is_class(t: str) -> bool:
+    return t.startswith('@')
+
 def is_rc(t: str) -> bool:
-    return t == 'str' or is_list(t)
+    return t == 'str' or is_list(t) or is_class(t)
 
 def elem_of(t: str) -> str:
     return t[5:len(t) - 1]
+
+def shown(t: str) -> str:
+    # a type as the user writes it
+    if is_class(t):
+        return t[1:]
+    if is_list(t):
+        return 'list[' + shown(elem_of(t)) + ']'
+    return t
 
 def llvm_type(t: str) -> str:
     if is_rc(t):
@@ -74,14 +68,25 @@ def ex(reg: str, ty: str) -> Ex:
 
 class FuncInfo:
     name: str = ''
+    owner: str = ''          # the class a method belongs to, or ''
     ret: str = ''
-    ptypes: list[str] = []
+    ptypes: list[str] = []   # without self
+
+class ClassInfo:
+    name: str = ''
+    fnames: list[str] = []
+    ftypes: list[str] = []
+    has_default: list[bool] = []
+    defaults: list[Node] = []     # only the fields that have a default, in order
+    init: str = ''                # the name of the @init method, or ''
+    line: int = 0
 
 class Mod:
     # what every function of the program shares
     strings: list[str] = []
     infos: list[FuncInfo] = []
-    codes: list[str] = []         # the list types the program uses; a type's code is 2 plus its place here
+    codes: list[str] = []         # the heap types the program uses; a type's code is 2 plus its place here
+    classes: list[ClassInfo] = []
 
     def code_of(self, t: str) -> int:
         k = 0
@@ -103,9 +108,54 @@ class Mod:
 
     def find(self, name: str, line: int) -> FuncInfo:
         for f in self.infos:
-            if f.name == name:
+            if f.name == name and f.owner == '':
                 return f
         raise CompileError('unknown function ' + name, line)
+
+    def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
+        for f in self.infos:
+            if f.name == name and f.owner == cls:
+                return f
+        raise CompileError(cls + ' has no method ' + name, line)
+
+    def has_class(self, name: str) -> bool:
+        for c in self.classes:
+            if c.name == name:
+                return True
+        return False
+
+    def find_class(self, name: str, line: int) -> ClassInfo:
+        for c in self.classes:
+            if c.name == name:
+                return c
+        raise CompileError('unknown class ' + name, line)
+
+    def field_index(self, c: ClassInfo, name: str, line: int) -> int:
+        k = 0
+        for f in c.fnames:
+            if f == name:
+                return k
+            k = k + 1
+        raise CompileError(c.name + ' has no field ' + name, line)
+
+    def type_name(self, v: Val) -> str:
+        # the name of a type the compiler knows: int, bool, str, a declared class ('@Name') or a list of those; '' otherwise
+        if v.tag != 'n':
+            return ''
+        t = val_node(v)
+        name = t.fields[0].text
+        if name == 'list' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
+            inner = self.type_name(t.fields[2])
+            if inner == '':
+                return ''
+            return 'list[' + inner + ']'
+        if t.fields[2].tag != 'z' or t.fields[1].tag != 'z':
+            return ''
+        if basic_type(name):
+            return name
+        if self.has_class(name):
+            return '@' + name
+        return ''
 
 def escape_char(c: str, line: int) -> str:
     plain = ' !#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~'
@@ -310,6 +360,8 @@ class Gen:
             return self.call(n, False)
         if k == 'ListLit':
             return self.list_lit(n, expected)
+        if k == 'Attr':
+            return self.field_get(n)
         if k == 'Index':
             return self.index(n)
         if k == 'Slice':
@@ -333,6 +385,41 @@ class Gen:
         self.emit(addr + ' = getelementptr i64, ptr ' + data + ', i64 ' + i.reg)
         return addr
 
+    def field_addr(self, obj: Ex, name: str, line: int) -> str:
+        if not is_class(obj.ty):
+            raise CompileError('type error: ' + shown(obj.ty) + ' has no fields', line)
+        c = self.mod.find_class(obj.ty[1:], line)
+        idx = self.mod.field_index(c, name, line)
+        addr = self.tmp('fld')
+        self.emit(addr + ' = getelementptr %class.' + str(self.mod.code_of(obj.ty)) + ', ptr ' + obj.reg + ', i32 0, i32 ' + str(idx + 2))
+        return addr
+
+    def field_type(self, obj: Ex, name: str, line: int) -> str:
+        c = self.mod.find_class(obj.ty[1:], line)
+        return c.ftypes[self.mod.field_index(c, name, line)]
+
+    def field_get(self, n: Node) -> Ex:
+        obj = self.expr(val_node(n.fields[0]))
+        name = n.fields[1].text
+        addr = self.field_addr(obj, name, n.line)
+        ft = self.field_type(obj, name, n.line)
+        v = self.tmp('f')
+        self.emit(v + ' = load ' + llvm_type(ft) + ', ptr ' + addr)
+        e = ex(v, ft)
+        self.retain(e)
+        self.release(obj)
+        return e
+
+    def assign_field(self, s: Node, target: Node):
+        obj = self.expr(val_node(target.fields[0]))
+        name = target.fields[1].text
+        ft = self.field_type(obj, name, s.line)
+        v = self.expr(val_node(s.fields[1]), ft)
+        self.want(v, ft, s.line, 'the assigned value')
+        addr = self.field_addr(obj, name, s.line)
+        self.store_owned(addr, v)
+        self.release(obj)
+
     def list_lit(self, n: Node, expected: str) -> Ex:
         items = val_nodes(n.fields[0])
         t = ''
@@ -343,9 +430,9 @@ class Gen:
             if len(items) == 0:
                 raise CompileError('the type of an empty list needs a declaration: xs: list[int] = []', n.line)
             first = self.expr(items[0])
+            if first.ty == '':
+                raise CompileError('a list item needs a value', n.line)
             t = 'list[' + first.ty + ']'
-            if not is_list(t) or not basic_type(first.ty):
-                raise CompileError('the Tomato compiler only builds lists of int, bool and str yet', n.line)
         lst = self.tmp('list')
         self.emit(lst + ' = call ptr @tomato_list_new(i64 ' + str(self.mod.code_of(t)) + ')')
         k = 0
@@ -496,20 +583,27 @@ class Gen:
             return self.len_call(args, n.line)
         if name == 'str':
             return self.str_call(args, n.line)
-        info = self.mod.find(name, n.line)
+        if self.mod.has_class(name):
+            return self.construct(self.mod.find_class(name, n.line), args, n.line)
+        return self.call_function(self.mod.find(name, n.line), '@tomato.' + name, ex('', ''), args, n.line)
+
+    def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
+        # a function, or a method when `receiver` holds the object; the callee only borrows its arguments
         if len(args) != len(info.ptypes):
-            raise CompileError(name + ' takes ' + str(len(info.ptypes)) + ' argument(s), got ' + str(len(args)), n.line)
+            raise CompileError(info.name + ' takes ' + str(len(info.ptypes)) + ' argument(s), got ' + str(len(args)), line)
         values: list[Ex] = []
+        if receiver.ty != '':
+            values.append(receiver)
         k = 0
         for a in args:
             v = self.expr(a, info.ptypes[k])
-            self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of ' + name)
+            self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + info.name)
             values.append(v)
             k = k + 1
         parts: list[str] = []
         for v in values:
             parts.append(llvm_type(v.ty) + ' ' + v.reg)
-        text = 'call ' + self.ret_llvm(info) + ' @tomato.' + name + '(' + ', '.join(parts) + ')'
+        text = 'call ' + self.ret_llvm(info) + ' ' + symbol + '(' + ', '.join(parts) + ')'
         result = ex('', '')
         if info.ret == '':
             self.emit(text)
@@ -518,8 +612,31 @@ class Gen:
             self.emit(r + ' = ' + text)
             result = ex(r, info.ret)
         for v in values:
-            self.release(v)       # the callee only borrowed its arguments
+            self.release(v)
         return result
+
+    def construct(self, c: ClassInfo, args: list[Node], line: int) -> Ex:
+        # Name(args): allocate, set the declared defaults, run @init (the constructor function does all three)
+        ptypes: list[str] = []
+        if c.init != '':
+            ptypes = self.mod.find_method(c.name, c.init, line).ptypes
+        if len(args) != len(ptypes):
+            raise CompileError(c.name + ' takes ' + str(len(ptypes)) + ' argument(s), got ' + str(len(args)), line)
+        values: list[Ex] = []
+        k = 0
+        for a in args:
+            v = self.expr(a, ptypes[k])
+            self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + c.name)
+            values.append(v)
+            k = k + 1
+        parts: list[str] = []
+        for v in values:
+            parts.append(llvm_type(v.ty) + ' ' + v.reg)
+        r = self.tmp('obj')
+        self.emit(r + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + c.name)) + '(' + ', '.join(parts) + ')')
+        for v in values:
+            self.release(v)
+        return ex(r, '@' + c.name)
 
     def method_call(self, n: Node, f: Node) -> Ex:
         name = f.fields[1].text
@@ -535,7 +652,10 @@ class Gen:
             self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
             self.release(obj)
             return ex('', '')
-        raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + obj.ty + ' yet', n.line)
+        if is_class(obj.ty):
+            info = self.mod.find_method(obj.ty[1:], name, n.line)
+            return self.call_function(info, '@tomato.m.' + str(self.mod.code_of(obj.ty)) + '.' + name, obj, args, n.line)
+        raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + shown(obj.ty) + ' yet', n.line)
 
     def ret_llvm(self, info: FuncInfo) -> str:
         if info.ret == '':
@@ -625,6 +745,9 @@ class Gen:
             if target.kind == 'Index':
                 self.assign_item(s, target)
                 return
+            if target.kind == 'Attr':
+                self.assign_field(s, target)
+                return
             if target.kind != 'Name':
                 raise CompileError('the Tomato compiler can only assign to a variable or a list item yet', s.line)
             name = target.fields[0].text
@@ -636,7 +759,7 @@ class Gen:
                 self.want(v, self.types[name], s.line, 'the assigned value')
             self.store_owned(self.slot(name, v.ty, s.line), v)
         elif k == 'Declare':
-            ty = type_name(s.fields[1])
+            ty = self.mod.type_name(s.fields[1])
             if ty == '':
                 raise CompileError('the Tomato compiler only declares int, bool, str and list variables yet', s.line)
             v = self.expr(val_node(s.fields[2]), ty)
@@ -829,20 +952,63 @@ class Gen:
         self.br(head)
         self.place(end)
 
+def function_symbol(mod: Mod, info: FuncInfo) -> str:
+    if info.owner == '':
+        return '@tomato.' + info.name
+    return '@tomato.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
+
+def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
+    # the epilogue releases every slot that owns a heap value, then returns the stored result
+    g.lines.append('epilogue:')
+    for reg in g.rc_slots:
+        o = g.tmp('rel')
+        g.lines.append('  ' + o + ' = load ptr, ptr ' + reg)
+        g.lines.append('  call void @tomato_release(ptr ' + o + ')')
+    llvm_ret = 'void'
+    if ret != '':
+        llvm_ret = llvm_type(ret)
+        r = g.tmp('ret')
+        g.lines.append('  ' + r + ' = load ' + llvm_ret + ', ptr %retval')
+        g.lines.append('  ret ' + llvm_ret + ' ' + r)
+    else:
+        g.lines.append('  ret void')
+    text = 'define ' + llvm_ret + ' ' + symbol + '(' + ', '.join(sig) + ') {\nentry:\n'
+    if ret != '':
+        zero = '0'
+        if is_rc(ret):
+            zero = 'null'
+        text = text + '  %retval = alloca ' + llvm_ret + '\n  store ' + llvm_ret + ' ' + zero + ', ptr %retval\n'
+    if len(g.allocas) > 0:
+        text = text + '\n'.join(g.allocas) + '\n'
+    text = text + '\n'.join(g.lines) + '\n}\n'
+    return text
+
 def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     g = Gen()
     g.mod = mod
     g.ret = info.ret
-    name = f.fields[0].text
     params = val_nodes(f.fields[1])
-    sig: list[str] = []
+    names: list[str] = []
+    types: list[str] = []
     k = 0
     for p in params:
-        reg = g.slot(p.fields[0].text, info.ptypes[k], p.line)
-        sig.append(llvm_type(info.ptypes[k]) + ' %arg.' + p.fields[0].text)
-        g.emit('store ' + llvm_type(info.ptypes[k]) + ' %arg.' + p.fields[0].text + ', ptr ' + reg)
-        if is_rc(info.ptypes[k]):
-            g.emit('call void @tomato_retain(ptr %arg.' + p.fields[0].text + ')')    # the caller only lent it
+        if p.fields[0].text == 'self':
+            if info.owner == '':
+                raise CompileError('self is only for methods', p.line)
+            names.append('self')
+            types.append('@' + info.owner)
+        else:
+            names.append(p.fields[0].text)
+            types.append(info.ptypes[k])
+            k = k + 1
+    sig: list[str] = []
+    k = 0
+    for name in names:
+        reg = g.slot(name, types[k], f.line)
+        sig.append(llvm_type(types[k]) + ' %arg.' + name)
+        g.emit('store ' + llvm_type(types[k]) + ' %arg.' + name + ', ptr ' + reg)
+        if is_rc(types[k]):
+            g.emit('call void @tomato_retain(ptr %arg.' + name + ')')    # the caller only lent it
         k = k + 1
     g.block(val_nodes(f.fields[3]))
     if not g.terminated:
@@ -852,53 +1018,103 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
             g.emit('call void @tomato_fail(ptr ' + mod.intern('the function ended without returning a value') + '.c)')
             g.emit('unreachable')
             g.terminated = True
-    g.lines.append('epilogue:')
-    for reg in g.rc_slots:
-        o = g.tmp('rel')
-        g.lines.append('  ' + o + ' = load ptr, ptr ' + reg)
-        g.lines.append('  call void @tomato_release(ptr ' + o + ')')
-    ret = 'void'
-    if info.ret != '':
-        ret = llvm_type(info.ret)
-        r = g.tmp('ret')
-        g.lines.append('  ' + r + ' = load ' + ret + ', ptr %retval')
-        g.lines.append('  ret ' + ret + ' ' + r)
-    else:
-        g.lines.append('  ret void')
-    text = 'define ' + ret + ' @tomato.' + name + '(' + ', '.join(sig) + ') {\nentry:\n'
-    if info.ret != '':
-        zero = '0'
-        if is_rc(info.ret):
-            zero = 'null'
-        text = text + '  %retval = alloca ' + ret + '\n  store ' + ret + ' ' + zero + ', ptr %retval\n'
-    if len(g.allocas) > 0:
-        text = text + '\n'.join(g.allocas) + '\n'
-    text = text + '\n'.join(g.lines) + '\n}\n'
-    return text
+    return finish_function(g, function_symbol(mod, info), sig, info.ret)
+
+def compile_constructor(c: ClassInfo, mod: Mod) -> str:
+    # allocate, store the declared field defaults, then run @init
+    g = Gen()
+    g.mod = mod
+    code = str(mod.code_of('@' + c.name))
+    ptypes: list[str] = []
+    if c.init != '':
+        ptypes = mod.find_method(c.name, c.init, c.line).ptypes
+    sig: list[str] = []
+    k = 0
+    for t in ptypes:
+        sig.append(llvm_type(t) + ' %arg.' + str(k))
+        k = k + 1
+    size = g.tmp('size')
+    g.emit(size + ' = ptrtoint ptr getelementptr (%class.' + code + ', ptr null, i32 1) to i64')
+    obj = g.tmp('obj')
+    g.emit(obj + ' = call ptr @tomato_alloc(i64 ' + size + ', i64 ' + code + ')')
+    d = 0
+    k = 0
+    for name in c.fnames:
+        if c.has_default[k]:
+            v = g.expr(c.defaults[d], c.ftypes[k])
+            g.want(v, c.ftypes[k], c.line, 'the default of field ' + name)
+            addr = g.tmp('fld')
+            g.emit(addr + ' = getelementptr %class.' + code + ', ptr ' + obj + ', i32 0, i32 ' + str(k + 2))
+            g.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + addr)
+            d = d + 1
+        k = k + 1
+    if c.init != '':
+        parts: list[str] = ['ptr ' + obj]
+        k = 0
+        for t in ptypes:
+            parts.append(llvm_type(t) + ' %arg.' + str(k))
+            k = k + 1
+        g.emit('call void @tomato.m.' + code + '.' + c.init + '(' + ', '.join(parts) + ')')
+    g.emit('store ptr ' + obj + ', ptr %retval')
+    g.br('epilogue')
+    return finish_function(g, '@tomato.new.' + code, sig, '@' + c.name)
+
+def class_types(mod: Mod) -> str:
+    # one struct type per class: the reference count and type code, then the fields
+    t = ''
+    for c in mod.classes:
+        parts = new_strs()
+        parts.append('i64')
+        parts.append('i64')
+        for ft in c.ftypes:
+            parts.append(llvm_type(ft))
+        t = t + '%class.' + str(mod.code_of('@' + c.name)) + ' = type { ' + ', '.join(parts) + ' }\n'
+    return t
 
 def runtime_tables(mod: Mod) -> str:
     n = len(mod.codes) + 2
     names = new_strs()
     zeros = new_strs()
     kinds = new_strs()
+    offsets = new_strs()
+    extra = ''
     for k in range(n):
         names.append('ptr null')
         zeros.append('i64 0')
-        if k >= 2 and elem_of(mod.codes[k - 2]) == 'str':
-            kinds.append('i32 258')          # a list that holds text: 2, plus 256 for reference counted items
-        elif k >= 2:
-            kinds.append('i32 2')
+        offsets.append('ptr null')
+        kinds.append('i32 0')
+    k = 0
+    for code in mod.codes:
+        slot = k + 2
+        if is_class(code):
+            c = mod.find_class(code[1:], 0)
+            kinds[slot] = 'i32 1'
+            offs = new_strs()
+            j = 0
+            for ft in c.ftypes:
+                if is_rc(ft):
+                    offs.append('i32 trunc (i64 ptrtoint (ptr getelementptr (%class.' + str(slot) + ', ptr null, i32 0, i32 ' + str(j + 2) + ') to i64) to i32)')
+                j = j + 1
+            offs.append('i32 -1')
+            extra = extra + '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
+            offsets[slot] = 'ptr @tomato.offs.' + str(slot)
+            extra = extra + '@tomato.name.' + str(slot) + ' = private constant [' + str(len(c.name) + 1) + ' x i8] c"' + c.name + '\\00"\n'
+            names[slot] = 'ptr @tomato.name.' + str(slot)
+        elif elem_of(code) == 'str' or is_rc(elem_of(code)):
+            kinds[slot] = 'i32 258'          # a list: 2, plus 256 when its items are reference counted
         else:
-            kinds.append('i32 0')
+            kinds[slot] = 'i32 2'
+        k = k + 1
     count = str(n)
     t = '@tomato_exc = global ptr null\n'
     t = t + '@tomato_exc_line = global i32 0\n'
     t = t + '@tomato_exc_rt = global i32 0\n'
     t = t + '@tomato_exc_seen = global i32 0\n'
+    t = t + extra
     t = t + '@tomato_class_names = constant [' + count + ' x ptr] [' + ', '.join(names) + ']\n'
     t = t + '@tomato_parents = global [' + count + ' x i64] [' + ', '.join(zeros) + ']\n'
     t = t + '@tomato_kinds = constant [' + count + ' x i32] [' + ', '.join(kinds) + ']\n'
-    t = t + '@tomato_offsets = constant [' + count + ' x ptr] [' + ', '.join(names) + ']\n'
+    t = t + '@tomato_offsets = constant [' + count + ' x ptr] [' + ', '.join(offsets) + ']\n'
     return t
 
 def new_strs() -> list[str]:
@@ -919,38 +1135,77 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_str_from_i64(i64)\n'
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
+    d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
     d = d + 'declare ptr @tomato_list_new(i64)\n'
     d = d + 'declare ptr @tomato_list_push(ptr, i64)\n'
     d = d + '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
     return d
 
+def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
+    info = FuncInfo()
+    info.name = item.fields[0].text
+    info.owner = owner
+    if item.fields[2].tag != 'z':
+        info.ret = mod.type_name(item.fields[2])
+        if info.ret == '':
+            raise CompileError('the Tomato compiler only returns int, bool, str, list and class values yet', item.line)
+    for p in val_nodes(item.fields[1]):
+        if p.fields[0].text == 'self' and owner != '':
+            continue
+        if p.fields[3].tag != 'z' or p.fields[2].tag != 'z':
+            raise CompileError('the Tomato compiler does not support defaults or *args yet', p.line)
+        pt = mod.type_name(p.fields[1])
+        if pt == '':
+            raise CompileError('the Tomato compiler only takes int, bool, str, list and class parameters yet', p.line)
+        info.ptypes.append(pt)
+    return info
+
 export def compile_module(src: str) -> str:
     tree = parse(src)
     mod = Mod()
+    items = val_nodes(tree.fields[0])
+    # classes first: their names, then their fields (a field may name a class declared later)
+    for item in items:
+        if item.kind == 'ClassDef':
+            if item.fields[1].tag != 'z' or len(item.fields[2].items) > 0:
+                raise CompileError('the Tomato compiler does not support inheritance or interfaces yet', item.line)
+            c = ClassInfo()
+            c.name = item.fields[0].text
+            c.line = item.line
+            mod.classes.append(c)
+    for item in items:
+        if item.kind == 'ClassDef':
+            c = mod.find_class(item.fields[0].text, item.line)
+            for fd in val_nodes(item.fields[3]):
+                ft = mod.type_name(fd.fields[1])
+                if ft == '':
+                    raise CompileError('the Tomato compiler only supports int, bool, str, list and class fields yet', fd.line)
+                c.fnames.append(fd.fields[0].text)
+                c.ftypes.append(ft)
+                c.has_default.append(fd.fields[4].tag == 'n')
+                if fd.fields[4].tag == 'n':
+                    c.defaults.append(val_node(fd.fields[4]))
     funcs: list[Node] = []
     entry = ''
-    for item in val_nodes(tree.fields[0]):
-        if item.kind != 'FuncDef':
+    for item in items:
+        if item.kind == 'FuncDef':
+            info = function_info(item, mod, '')
+            mod.infos.append(info)
+            funcs.append(item)
+            if item.fields[6].tag == 's' and item.fields[6].text == 'entry:main':
+                entry = info.name
+                if len(info.ptypes) != 0 or info.ret != '':
+                    raise CompileError('the Tomato compiler runs an @main without inputs or a result yet', item.line)
+        elif item.kind == 'ClassDef':
+            c = mod.find_class(item.fields[0].text, item.line)
+            for m in val_nodes(item.fields[4]):
+                info = function_info(m, mod, c.name)
+                mod.infos.append(info)
+                funcs.append(m)
+                if m.fields[6].tag == 's' and m.fields[6].text == 'init':
+                    c.init = info.name
+        else:
             raise CompileError('the Tomato compiler does not support ' + item.kind + ' declarations yet', item.line)
-        info = FuncInfo()
-        info.name = item.fields[0].text
-        if item.fields[2].tag != 'z':
-            info.ret = type_name(item.fields[2])
-            if info.ret == '':
-                raise CompileError('the Tomato compiler only returns int, bool, str and list values yet', item.line)
-        for p in val_nodes(item.fields[1]):
-            if p.fields[3].tag != 'z' or p.fields[2].tag != 'z':
-                raise CompileError('the Tomato compiler does not support defaults or *args yet', p.line)
-            pt = type_name(p.fields[1])
-            if pt == '':
-                raise CompileError('the Tomato compiler only takes int, bool, str and list parameters yet', p.line)
-            info.ptypes.append(pt)
-        mod.infos.append(info)
-        funcs.append(item)
-        if item.fields[6].tag == 's' and item.fields[6].text == 'entry:main':
-            entry = info.name
-            if len(info.ptypes) != 0 or info.ret != '':
-                raise CompileError('the Tomato compiler runs an @main without inputs or a result yet', item.line)
     if entry == '':
         raise CompileError('no function marked @main', 1)
     bodies = ''
@@ -958,8 +1213,10 @@ export def compile_module(src: str) -> str:
     for f in funcs:
         bodies = bodies + compile_function(f, mod, mod.infos[k]) + '\n'
         k = k + 1
+    for c in mod.classes:
+        bodies = bodies + compile_constructor(c, mod) + '\n'
     out = '; written by the Tomato compiler in Tomato (selfhost/compiler.tom)\n'
-    out = out + declarations() + runtime_tables(mod)
+    out = out + declarations() + class_types(mod) + runtime_tables(mod)
     j = 0
     for s in mod.strings:
         out = out + string_global(j, s) + '\n'

@@ -15,6 +15,56 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "classes": """class Item:
+    name: str = 'none'
+    qty: int = 0
+    tags: list[str] = []
+
+class Inventory:
+    items: list[Item] = []
+    owner: str = ''
+
+    @init
+    def make(self, owner: str):
+        self.owner = owner
+
+    def add(self, name: str, qty: int):
+        item = Item()
+        item.name = name
+        item.qty = qty
+        item.tags.append(name + '!')
+        self.items.append(item)
+
+    def total(self) -> int:
+        t = 0
+        for item in self.items:
+            t = t + item.qty
+        return t
+
+    def describe(self) -> str:
+        s = self.owner + ':'
+        for item in self.items:
+            s = s + ' ' + item.name + 'x' + str(item.qty) + item.tags[0]
+        return s
+
+def best(inv: Inventory) -> Item:
+    top = inv.items[0]
+    for item in inv.items:
+        if item.qty > top.qty:
+            top = item
+    return top
+
+@main
+def main():
+    inv = Inventory('shop')
+    inv.add('nut', 3)
+    inv.add('bolt', 9)
+    inv.add('gear', 5)
+    print(inv.total(), len(inv.items), inv.describe())
+    print(best(inv).name, best(inv).qty, inv.items[0].name)
+    inv.items[0].qty = 100
+    print(inv.total())
+""",
     "lists": """def total(xs: list[int]) -> int:
     t = 0
     for x in xs:
@@ -203,11 +253,13 @@ class SelfhostCompiler(unittest.TestCase):
                 self.assertEqual(self.ir_by_native(path), ir)
 
     def test_unsupported_programs_say_so(self):
-        for src, text in (("class A:\n    pass\n@main\ndef main():\n    print(1)\n", "does not support ClassDef"),
+        for src, text in (("interface I:\n    def f(self)\n@main\ndef main():\n    print(1)\n", "does not support InterfaceDef"),
                           ("@main\ndef main():\n    print([1])\n", "does not print lists"),
                           ("@main\ndef main():\n    xs: list[int] = []\n    xs.append('a')\n", "type error"),
                           ("@main\ndef main():\n    xs = []\n", "empty list needs a declaration"),
                           ("@main\ndef main():\n    x: str = 1\n", "type error"),
+                          ("class A:\n    x: int = 0\n@main\ndef main():\n    a = A()\n    a.y = 1\n", "has no field y"),
+                          ("class A:\n    pass\nclass B(A):\n    pass\n@main\ndef main():\n    pass\n", "does not support inheritance"),
                           ("@main\ndef main():\n    print('a' + 1)\n", "type error"),
                           ("def f():\n    pass\n", "no function marked @main"),
                           ("@main\ndef main():\n    x = 1 / 2\n", "operator /")):
