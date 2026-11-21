@@ -93,6 +93,11 @@ class NativeCli(unittest.TestCase):
         r = subprocess.run([self.tomato, "repl"], input=piece, capture_output=True, text=True, env=env)
         self.assertEqual((r.returncode, r.stdout), (0, "7\n9\nhi\n"), r.stderr)
 
+    def test_repl_leave_and_exit(self):
+        for word in ("leave()", "exit()", "quit()"):
+            r = subprocess.run([self.tomato, "repl"], input="print('a')\n%s\nprint('b')\n" % word, capture_output=True, text=True)
+            self.assertEqual((r.returncode, r.stdout), (0, "a\n"), word)
+
     def test_usage(self):
         self.assertEqual(self.run_cli().returncode, 2)
         self.assertEqual(self.run_cli("version").stdout, "Tomato v%s (compiler written in Tomato)\n" % open(os.path.join(ROOT, "VERSION")).read().strip())

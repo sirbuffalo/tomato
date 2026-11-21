@@ -49,7 +49,7 @@ case "$cmd" in
     # reinstall where this copy lives, not into the default folders
     TOMATO_HOME="${home%/native}" TOMATO_BIN="$(dirname "$invoked")" "$work"/tomato-*/install-native.sh || die "the installer failed"
     exit 0 ;;
-  repl|shell) TOMATO_CMD="$home/bin/tomato" exec sh "$home/bin/tomato-repl" "$@" ;;
+  repl|shell) TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" exec sh "$home/bin/tomato-repl" "$@" ;;
   run|build|compile) ;;
   *) echo "error: unknown command '$cmd'" >&2; echo "run 'tomato help' for the commands" >&2; exit 2 ;;
 esac

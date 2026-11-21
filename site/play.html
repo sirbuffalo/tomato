@@ -2,7 +2,7 @@
 <title>Run Tomato</title><link rel="stylesheet" href="style.css"></head>
 <body><header id="site-header"></header><main>
 <h1>Run &amp; Repl</h1>
-<p class="lead">Programs run on a compile server with a 5 second limit. <span id="where" class="status"></span></p>
+<p class="lead">Your program is compiled by the Tomato compiler (written in Tomato, running as WebAssembly) and run in this page, with a 5 second limit. <span id="where" class="status"></span></p>
 <div class="bar"><button id="tab-run" class="primary">Run a program</button><button id="tab-repl">Repl</button></div>
 
 <section id="run-pane">
@@ -18,18 +18,33 @@
 </section>
 </main><script src="config.js"></script><script src="site.js"></script>
 <script>
-var API = (window.TOMATO_API || "").replace(/\/$/, "");
-document.getElementById("where").textContent = API ? "Server: " + API : "Server: this site";
 function $(id) { return document.getElementById(id); }
-function runOnServer(source) {
-  return fetch(API + "/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: source, entry: "main", inputs: [] }) })
-    .then(function (r) { return r.json(); });
+$("where").textContent = "Nothing is sent to a server. The compiler written in Tomato does not have float literals, // or ** yet, so those fail here (the installed tomato-py has them).";
+
+// The toolchain runs in a Web Worker; if a program runs past the limit the worker is stopped and replaced.
+var worker = null, pending = {}, nextId = 1;
+function startWorker() {
+  worker = new Worker("wasm/worker.js");
+  worker.onmessage = function (e) { var p = pending[e.data.id]; if (p) { delete pending[e.data.id]; clearTimeout(p.timer); p.resolve(e.data.result); } };
+  worker.onerror = function (e) { Object.keys(pending).forEach(function (k) { pending[k].resolve({ ok: false, stage: "run", error: "the toolchain failed to load: " + e.message }); delete pending[k]; }); };
+}
+function runOnServer(source) {   // name kept from the server version: it now means "run it here"
+  if (!worker) startWorker();
+  return new Promise(function (resolve) {
+    var id = nextId++;
+    var timer = setTimeout(function () {
+      delete pending[id]; worker.terminate(); worker = null;
+      resolve({ ok: true, stage: "run", stdout: "", stderr: "", exit: 124, timed_out: true, ms: 8000 });
+    }, 15000);
+    pending[id] = { resolve: resolve, timer: timer };
+    worker.postMessage({ id: id, source: source, inputs: [], timeoutMs: 5000 });
+  });
 }
 $("tab-run").onclick = function () { $("run-pane").hidden = false; $("repl-pane").hidden = true; };
 $("tab-repl").onclick = function () { $("run-pane").hidden = true; $("repl-pane").hidden = false; $("repl-in").focus(); };
 
 // ---- run a program
-fetch(API + "/examples").then(function (r) { return r.json(); }).then(function (ex) {
+fetch("examples.json").then(function (r) { return r.json(); }).then(function (ex) {
   var sel = $("examples"); sel.innerHTML = "<option value=''>Examples…</option>";
   Object.keys(ex).forEach(function (k) { var o = document.createElement("option"); o.value = k; o.textContent = k; sel.appendChild(o); });
   sel.onchange = function () { if (ex[sel.value]) $("src").value = ex[sel.value]; };
@@ -71,7 +86,7 @@ function submit(text) {
       if (fresh) log("out", fresh.replace(/\n$/, ""));
     });
   }
-  return tryOne(0);
+  return tryOne(0).catch(function (e) { log("e", "Could not run: " + e.message); });
 }
 var buffer = [];
 $("repl-form").onsubmit = function (ev) {

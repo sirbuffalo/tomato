@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>wasm test</title><body><pre id="o">running…</pre>
+<script src="wasi.js"></script><script src="llvm.js"></script><script src="tomato.js"></script>
+<script>
+const progs = {
+  hello: "print(6 * 7)\n",
+  fib: "def fib(n: int) -> int:\n    if n < 2:\n        return n\n    return fib(n - 1) + fib(n - 2)\n\nprint(fib(20))\n",
+  classes: "interface Shape:\n    def area(self) -> int\n\nclass Rect implements Shape:\n    w: int\n    h: int\n    @init\n    def make(self, w: int, h: int):\n        self.w = w\n        self.h = h\n    def area(self) -> int:\n        return self.w * self.h\n\nshapes: list[Shape] = [Rect(2, 3), Rect(4, 5)]\ntotal = 0\nfor s in shapes:\n    total = total + s.area()\nprint(total)\n",
+  text: "s = 'hello world'\nprint(s.upper(), len(s), s.find('wor'))\nparts = s.split(' ')\nprint(parts[1])\n",
+  error: "z: int = 0\nprint(5 / z)\n"
+};
+function wrap(src) { // the compiler written in Tomato has no top-level code yet: move it into @main
+  const lines = src.split("\n"), decl = [], body = []; let cur = null;
+  for (const l of lines) {
+    if (!l.trim() || l.startsWith(" ") ) { (cur || decl).push(l); continue; }
+    const first = l.split(/[ (]/)[0];
+    cur = /^(def|class|interface|from|import|export)$/.test(first) || l[0] === "@" || / implements /.test(l) ? decl : body; cur.push(l);
+  }
+  return decl.join("\n") + "\n@main\ndef main():\n" + body.map(l => l.trim() ? "    " + l : l).join("\n") + "\n";
+}
+(async () => {
+  const t = new TomatoWasm(""), out = [];
+  for (const [k, src] of Object.entries(progs)) {
+    const t0 = performance.now();
+    const r = await t.build(wrap(src));
+    out.push(k + ": " + JSON.stringify(r.ok ? { stdout: r.stdout, stderr: r.stderr, exit: r.exit, ms: Math.round(performance.now() - t0) } : r));
+  }
+  document.getElementById("o").textContent = out.join("\n");
+})().catch(e => document.getElementById("o").textContent = "failed: " + e + "\n" + (e.stack || ""));
+</script>

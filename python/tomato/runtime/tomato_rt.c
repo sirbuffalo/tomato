@@ -18,9 +18,22 @@ typedef struct { int64_t rc; int64_t type; } Hdr;
  * trace it without per-type code. kind: 0 leaf (a string), 1 class, 2 list, 3 dict or set; bit 8 says list
  * elements or dict keys are heap values, bit 9 that dict values are. For a class, tomato_offsets[type] lists the
  * byte offsets of its heap-valued fields, ended by -1. */
+#ifdef TOMATO_WASM
+/* In the browser the program is run by an IR interpreter that lays out the generated tables itself, so the runtime
+ * holds pointers to them (set once by tomato_set_tables) instead of linking against arrays. */
+const int32_t *tomato_kinds;
+const int32_t *const *tomato_offsets;
+int64_t *tomato_parents;
+const char **tomato_class_names;
+int32_t tomato_exc_seen;
+void tomato_set_tables(const int32_t *kinds, const int32_t *const *offsets, int64_t *parents, const char **names) {
+    tomato_kinds = kinds; tomato_offsets = offsets; tomato_parents = parents; tomato_class_names = names;
+}
+#else
 extern const int32_t tomato_kinds[];
 extern const int32_t *const tomato_offsets[];
 extern int64_t tomato_parents[];  /* generated: the type code of each class's parent, or 0 */
+#endif
 static int64_t live_objects = 0;
 
 /* The type word also carries the cycle collector's state in its upper bits (the type code is the low 32 bits). */
@@ -208,8 +221,10 @@ void tomato_release(void *p) {
 }
 
 /* Debug mode: objects still alive at exit were never released, usually a reference cycle (D29c). */
+#ifndef TOMATO_WASM
 extern int32_t tomato_exc_seen;   /* set when any error was raised during the run */
 extern const char *tomato_class_names[];
+#endif
 
 void tomato_collect_cycles(void);
 
@@ -426,6 +441,10 @@ void *tomato_str_from_bool(int v) { return tomato_str_from_cstr(v ? "True" : "Fa
 /* ---- lists: {header, length, capacity, data}; the element type is known to the compiler ---- */
 typedef struct { Hdr h; int64_t len; int64_t cap; char *data; } List;
 
+/* A list slot is 8 bytes whatever the pointer size is (the generated code asks for 8-byte slots), so a pointer in a
+ * slot is read at a byte offset, not by indexing a pointer array: on WebAssembly (32-bit pointers) the two differ. */
+#define LIST_SLOT(l, i, T) (*(T *)((l)->data + (int64_t)(i) * 8))
+
 void *tomato_list_new(int64_t type) { return tomato_alloc((int64_t)sizeof(List), type); }
 
 /* Makes room for one more element and returns the address of its slot; the caller stores the element. */
@@ -444,13 +463,13 @@ void *tomato_str_join(void *sep, void *list) {
     Str *x = sep;
     List *l = list;
     int64_t total = 0;
-    for (int64_t i = 0; i < l->len; i++) total += ((Str **)l->data)[i]->bytes + (i ? x->bytes : 0);
+    for (int64_t i = 0; i < l->len; i++) total += LIST_SLOT(l, i, Str *)->bytes + (i ? x->bytes : 0);
     char *out = malloc((size_t)total + 1);
     if (!out) tomato_fail("out of memory");
     int64_t at = 0;
     for (int64_t i = 0; i < l->len; i++) {
         if (i) { memcpy(out + at, x->data, (size_t)x->bytes); at += x->bytes; }
-        Str *piece = ((Str **)l->data)[i];
+        Str *piece = LIST_SLOT(l, i, Str *);
         memcpy(out + at, piece->data, (size_t)piece->bytes);
         at += piece->bytes;
     }
@@ -708,7 +727,7 @@ static void each_child(Hdr *h, Visit f) {
         if (kind & 256) {
             List *l = (List *)h;
             for (int64_t i = 0; i < l->len; i++) {
-                Hdr *c = ((Hdr **)l->data)[i];
+                Hdr *c = LIST_SLOT(l, i, Hdr *);
                 if (c) f(c);
             }
         }

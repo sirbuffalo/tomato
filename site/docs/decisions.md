@@ -1196,6 +1196,14 @@ Source: Davis's Dashboard message:
 - `tomato` with an unknown command prints `error: unknown command` and exits with 2; `tomato help` lists the commands.
 - Open: submitting the grammar to GitHub Linguist (it expects wide public use first), a language server, and publishing the extension to the marketplace.
 
+### D45a — the website compiles and runs Tomato in the browser: accepted (reading to confirm)
+
+- Evidence: Davis asked for the Run & Repl page to work, rejected a Python interpreter in the browser (“no more python interpreter”, “no compile in visitor's browser though tomato no python”) and said “run it with the tomato compiler in wasm”.
+- The compiler written in Tomato is built with the C runtime into `site/wasm/tomatoc.wasm` (WASI, 32-bit pointers) and runs in a Web Worker. The IR it writes is run by a small LLVM IR interpreter in JavaScript (`site/wasm/llvm.js`) on top of `runtime.wasm`, the same C runtime built as a WebAssembly library; the generated tables are handed to it by `tomato_set_tables`. Nothing is sent to a server and no Python is involved. A program that runs past 5 seconds is stopped.
+- The runtime's list code now reads pointer slots by byte offset (slots are 8 bytes on every target), so it also works with 32-bit pointers. Native behaviour is unchanged.
+- The wasm files are committed (built with `site/wasm/build.sh` and the WASI SDK) so GitHub Pages needs no toolchain. Interpreted IR is slower than native code; it is meant for demos.
+- Open: the compiler written in Tomato still has no top-level code, `//`, `**` or float literals (the page moves top-level code into `@main`); an IR-to-WebAssembly backend would be faster than interpreting; `tomato repl` on the command line still re-runs the session.
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.

@@ -9,10 +9,15 @@
 #   :load FILE     add a file's definitions and statements      :program   show the session as one program
 #   :save FILE     write the session program to FILE            :compile   print the session's LLVM IR
 #   :reset         forget everything                            :help      this text
-#   :quit          leave (also Ctrl-D)
+#   :quit          leave (also leave(), exit(), quit() and Ctrl-D)
 tomato="${TOMATO_CMD:-tomato}"
 S="$(mktemp -d)"; trap 'rm -rf "$S"' EXIT
 mkdir -p "$S/d"
+# Speed: the runtime is compiled to an object once, and each line then costs one tomatoc run plus a quick unoptimized
+# link, instead of compiling the whole runtime with optimization on every line.
+tomatoc="${TOMATO_TOMATOC:-}"; runtime="${TOMATO_RUNTIME:-}"; std="${TOMATO_STD:-}"
+fast=0
+if [ -x "$tomatoc" ] && [ -f "$runtime" ] && clang -O0 -w -c -o "$S/rt.o" "$runtime" 2>/dev/null; then fast=1; fi
 : > "$S/stmts"; : > "$S/shown"; seq=0
 
 say() { printf '%s\n' "$*"; }
@@ -49,7 +54,16 @@ try_run() {
     echo "@main"; echo "def main():"
     if [ -s "$S/stmts.try" ]; then sed 's/^/    /' "$S/stmts.try"; else echo "    pass"; fi
   } > "$S/try.tom"
-  "$tomato" run "$S/try.tom" > "$S/out" 2> "$S/err"
+  if [ $fast = 1 ]; then
+    if ! "$tomatoc" "$S/try.tom" main "$std" > "$S/try.ll" 2> "$S/err"; then
+      sed -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): line \([0-9]*\): /\1 on line \2: /' -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): /\1: /' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
+      : > "$S/out"; return 1
+    fi
+    clang -O0 -w -o "$S/try" "$S/try.ll" "$S/rt.o" -lm 2> "$S/err" || return 1
+    "$S/try" > "$S/out" 2> "$S/err"
+  else
+    "$tomato" run "$S/try.tom" > "$S/out" 2> "$S/err"
+  fi
 }
 
 new_output() {  # print the part of $S/out that is not in the previous output
@@ -108,7 +122,7 @@ while :; do
   IFS= read -r line || { [ $interactive = 1 ] && echo; break; }
   case "$line" in
     "") continue ;;
-    :quit|:q|:exit) break ;;
+    :quit|:q|:exit|"leave()"|"exit()"|"quit()"|leave|exit|quit) break ;;
     :help) help; continue ;;
     :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; say "session cleared"; continue ;;
     :program) program; continue ;;

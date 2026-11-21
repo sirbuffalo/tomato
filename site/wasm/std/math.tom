@@ -1,0 +1,33 @@
+# A small standard-library module of integer helpers (D24a). Import with: from math import abs, gcd
+
+export def abs(n: int) -> int:
+    if n < 0:
+        return 0 - n
+    return n
+
+export def min(a: int, b: int) -> int:
+    if a < b:
+        return a
+    return b
+
+export def max(a: int, b: int) -> int:
+    if a > b:
+        return a
+    return b
+
+export def gcd(a: int, b: int) -> int:
+    x = abs(a)
+    y = abs(b)
+    while y != 0:
+        t = x % y
+        x = y
+        y = t
+    return x
+
+export def pow(base: int, exponent: int) -> int:
+    if exponent < 0:
+        raise RuntimeError('pow needs a non-negative exponent')
+    result = 1
+    for i in range(exponent):
+        result = result * base
+    return result
