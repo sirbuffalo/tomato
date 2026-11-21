@@ -148,7 +148,7 @@ readline() {   # readline PROMPT -> sets $REPLY_LINE
     [ -n "$REPLY_LINE" ] && history -s -- "$REPLY_LINE"
   else IFS= read -r REPLY_LINE || return 1; fi
 }
-[ $interactive = 1 ] && say "Tomato repl. :help for commands, :quit or Ctrl-D to leave."
+[ $interactive = 1 ] && say "Tomato repl (each line re-runs the whole session, so file writes repeat). :help for commands, :quit or Ctrl-D to leave."
 
 while :; do
   readline '>>> ' || { [ $interactive = 1 ] && echo; break; }
