@@ -34,6 +34,24 @@ done < "$work/list"
 [ -f "$work/passed" ] && passes=$((passes + $(wc -l < "$work/passed")))
 [ -f "$work/failed" ] && fails=$((fails + $(wc -l < "$work/failed")))
 
+echo "== decided rules (programs) =="
+grep -v '^#' tests/programs.txt | while read -r name; do
+  "$work/c1" "tests/programs/$name.tom" main std/ > "$work/p.ll" 2> "$work/e" && clang -O1 -w -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm && "$work/p" > "$work/out" 2>&1
+  if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$work/passed2"; else echo "FAIL program $name"; diff "$work/out" "tests/expected/$name.main.out" | head -5 | sed 's/^/     /'; echo x >> "$work/failed2"; fi
+done
+[ -f "$work/passed2" ] && passes=$((passes + $(wc -l < "$work/passed2")))
+[ -f "$work/failed2" ] && fails=$((fails + $(wc -l < "$work/failed2")))
+
+echo "== memory (AddressSanitizer and the runtime's leak check) =="
+for spec in "shapes:" "objects:4"; do
+  name="${spec%%:*}"; arg="${spec#*:}"
+  "$work/c1" "examples/$name.tom" main std/ > "$work/p.ll" 2>/dev/null
+  if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+    out="$("$work/asan" $arg 2>&1 >/dev/null | head -3)"
+    [ -z "$out" ] && ok "asan $name" || bad "asan $name" "$out"
+  else echo "skip asan $name (this clang cannot build with the sanitizer)"; fi
+done
+
 echo "== command line =="
 home="$work/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"
 ./install-native.sh > /dev/null 2>&1 && ok "install-native.sh" || bad "install-native.sh"
@@ -49,6 +67,21 @@ check "repl: variables, functions, new output only" "7
 hi" "$(printf 'x = 3\nx + 4\ndef sq(n: int) -> int:\n    return n * n\n\nsq(x)\nprint("hi")\n:quit\n' | $t repl)"
 check "repl: += works" "8" "$(printf 'x = 5\nx += 3\nx\n:quit\n' | $t repl)"
 check "repl: leave() leaves" "a" "$(printf "print('a')\nleave()\nprint('b')\n" | $t repl)"
+# tomato update: a fake release, checksum failures and non-official URLs
+fake="$work/fake"; mkdir -p "$fake"; cp VERSION "$fake/VERSION.old"
+TOMATO_RELEASE_OUT="$fake/out" sh release/build.sh "file://$fake/t.tar.gz" > /dev/null && cp "$fake"/out/tomato-*.tar.gz "$fake/t.tar.gz"
+want="$(shasum -a 256 "$fake/t.tar.gz" | cut -d' ' -f1)"
+echo 0.0 > "$home/native/VERSION"
+printf '{"version":"%s","url":"file://%s/t.tar.gz","sha256":"%s"}' "$(cat VERSION)" "$fake" "$want" > "$fake/ok.json"
+printf '{"version":"%s","url":"file://%s/t.tar.gz"}' "$(cat VERSION)" "$fake" > "$fake/nosum.json"
+printf '{"version":"%s","url":"file://%s/t.tar.gz","sha256":"%s"}' "$(cat VERSION)" "$fake" "0000000000000000000000000000000000000000000000000000000000000000" > "$fake/badsum.json"
+r="$(TOMATO_UPDATE_URL=file://$fake/nosum.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update 2>&1)"; case "$r" in *"no valid sha256"*) ok "update refuses a manifest without a checksum";; *) bad "update refuses a manifest without a checksum" "$r";; esac
+r="$(TOMATO_UPDATE_URL=file://$fake/badsum.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update 2>&1)"; case "$r" in *"does not match its checksum"*) ok "update refuses a wrong checksum";; *) bad "update refuses a wrong checksum" "$r";; esac
+r="$(TOMATO_UPDATE_URL=file://$fake/ok.json $t update 2>&1)"; case "$r" in *"not an official release URL"*) ok "update refuses a non-official URL";; *) bad "update refuses a non-official URL" "$r";; esac
+TOMATO_UPDATE_URL=file://$fake/ok.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update > /dev/null 2>&1
+check "update installs a verified release" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
+manifest_sum="$(sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' "$fake/out/latest.json")"
+check "release manifest names its own archive's checksum" "$(shasum -a 256 "$fake/out/tomato-$(cat VERSION).tar.gz" | cut -d' ' -f1)" "$manifest_sum"
 check "compile writes IR" "yes" "$($t compile examples/shapes.tom | grep -q 'define i32 @main' && echo yes)"
 
 echo "== rejected programs =="
@@ -60,6 +93,10 @@ got:    $msg";; esac
 neg type_mismatch "cannot use + with int and str"
 neg fixed_range "does not fit uint[length=8]"
 neg unknown_name "unknown name nothing"
+neg private_field "is private to class C"
+neg const_field "cannot change after initialization"
+neg bad_argument "argument 1 of f is str where int is needed"
+neg bad_return "the returned value is str where int is needed"
 neg bad_assign "the assigned value is str where int is needed"
 neg non_bool_condition "a condition is int where bool is needed"
 
@@ -76,6 +113,8 @@ rt caught "caught boom" 0
 
 
 echo "== release files =="
+for d in specification decisions decision-inventory open-questions; do cmp -s "docs/$d.md" "site/docs/$d.md" && ok "site/docs/$d.md is in sync" || bad "site/docs/$d.md is in sync" "run site/build.sh"; done
+cmp -s docs/provisional.md site/docs/PROVISIONAL.md && ok "site/docs/PROVISIONAL.md is in sync" || bad "site/docs/PROVISIONAL.md is in sync" "run site/build.sh"
 check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
 check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
 check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | shasum -a 256 | cut -d' ' -f1)" "$(cat site/wasm/SOURCE.sha256 2>/dev/null)"

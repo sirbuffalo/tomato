@@ -1128,7 +1128,7 @@ Source: Davis's Dashboard message:
 - The compiler supports `xor`. It stops with "does not support … yet" for the bitwise operators and for intersection types.
 - Open: a bitwise-not symbol (`~`), shifts, and bitwise operators on `bool`.
 
-### D38a — new code is Tomato and LLVM; each compiler builds the next: accepted (reading to confirm)
+### D38a — new code is Tomato and LLVM; each compiler builds the next: accepted (reading to confirm; the Python-bootstrap part is superseded by D46a)
 
 - Evidence: Davis wrote “ok no more python for now on only in tomato”, “and llvm” and “use the previos version to compile the next”, and then “commit changes don't push each time”, “you have control of commiting” and “once a feature fully works push”.
 - Reading: from now on new compiler and tooling code is written in Tomato (with LLVM IR for low-level runtime pieces), not Python. The Python implementation stays as the bootstrap: it builds compiler v1 written in Tomato, v1 builds v2, and so on. The Python interpreter is not extended unless a Tomato program needs a feature it lacks.
@@ -1139,7 +1139,7 @@ Source: Davis's Dashboard message:
 - The parser is written in Tomato too (`compiler/src/parser.tom`, P52). Interpreted and compiled by the Python compiler, it builds exactly the same syntax tree as `python/tomato/parser.py` for every example, standard-library and self-hosting file, including its own source (`tests/test_selfhost_parser.py`). The lexer was split into `lexer.tom` (library) and `lextool.tom` (command) so a library can be imported without clashing entry points.
 - Imported modules compile (P51): the compiler can now build programs made of several files, which the compiler in Tomato needs. `examples/features.tom`, which was “not compiled yet” because it imports `math`, builds with the same output as the interpreter.
 - Tools built on it: `server/compile_server.py` serves a page (`web/compile.html`) that compiles and runs a Tomato program with the Tomato-built compiler (it builds stage 2 on first start and runs programs with a 5 second limit; plain Python standard library, since Tomato has no networking yet; it binds to 127.0.0.1 only). `install-native.sh` installs a `tomato` command (`run`, `build`, `compile`) that needs only clang: it builds `tomatoc` from the checked-in `compiler/bootstrap/tomatoc.ll`, the compiler's own IR (`compiler/bootstrap/refresh.sh` refreshes it, and `tests/test_stage2.py` fails when it is out of date). The Python command stays as `tomato-py`.
-- Confirmed by Davis (asked whether Python may still change): language features go in the Python bootstrap until Tomato can build itself; new tools and the compiler passes are written in Tomato.
+- (Superseded by D46a.) Confirmed by Davis (asked whether Python may still change): language features go in the Python bootstrap until Tomato can build itself; new tools and the compiler passes are written in Tomato.
 - Open: the order of the remaining compiler passes (parser, checker, code generator), how the runtime moves from C to LLVM IR, and the compiled-code features the lexer needs.
 
 ### D28b — command-line inputs take the most restrictive type: accepted (reading to confirm)
@@ -1174,7 +1174,7 @@ Source: Davis's Dashboard message:
 - `a ** b`: whole ** whole is a whole number and a negative exponent is an error, because the result type may not depend on a value (write `2.0 ** -2`); a float on either side gives a float. `**` binds tighter than a minus on its left (`-2 ** 2` is -4) and nests to the right (P57).
 - Open: mixing `rational` with `float`, how a fixed-width result of `//` or `**` is typed from literals (it needs an explicit conversion like other non-literal results), `float` as an entry-point parameter in compiled programs beyond what D28b gives, and the compiler written in Tomato, which does not have these yet.
 
-### D42a — top-level code, version numbers and the repl: accepted (reading to confirm)
+### D42a — top-level code, version numbers and the repl: accepted (reading to confirm; top-level code not implemented in v0.x, the “v-1.x” Python version is retired by D46a)
 
 - Evidence: Davis wrote “no @main needed toplevel code works”, then “though if there is a @main run it instead”, then “you can just do @main()”; “add version number this is v0” and “python is v-1” with “v0.x” and “v-1.x”; and asked for a repl (“tomato shell … open a shell … with compiling and variables already set”), then chose the name `repl`.
 - A main program may have statements at the top level; they are the program, run top to bottom. If the file has an `@main`, only `@main` runs and the top-level code is checked but not run; code can also call `main()` itself. This replaces the “no top-level code” rule of D16a for the main program. Imported modules still may not have top-level code (P60).
@@ -1182,7 +1182,7 @@ Source: Davis's Dashboard message:
 - `tomato repl [FILE ...]` (alias `shell`) reads one piece at a time and needs no Python: each piece joins the session, the whole session is compiled by the compiler written in Tomato and run, and only the new output is shown (Davis: “no more python”). It offers `:load`, `:program`, `:save`, `:compile`, `:reset`. The Python implementation keeps its own interpreter-based repl, which holds live values (P59).
 - Open: whether top-level code should run after `@main` finishes; top-level code in the compiler written in Tomato (the compile server wraps it for now); a repl written in Tomato, which needs standard input, and a repl that keeps live values instead of re-running the session.
 
-### D43a — the website, releases and `tomato update`: accepted (reading to confirm)
+### D43a — the website, releases and `tomato update`: accepted (reading to confirm; the Python-era layout it lists was replaced by D46a)
 
 - Evidence: Davis asked for tomato.davismcd.com to be a page about Tomato with a repl, a place to run programs and full documentation, “a pkg download” and a `tomato update` command, chose GitHub Pages with GitHub Releases, and asked to move the website into `site/`, delete the old `site/`, reorganize the project and remove code that is not needed.
 - `site/` is a static site (overview, guide, reference rendered from the repository's Markdown, download, and a Run and Repl page that calls a compile server). `release/build.sh` builds `tomato-VERSION.tar.gz` and `latest.json` (version, URL, SHA-256); `tomato update` reads `latest.json`, verifies the checksum and reinstalls.

@@ -1,6 +1,7 @@
 #!/bin/bash
 # tomato repl [FILE ...]: type Tomato one piece at a time. It needs only the Tomato compiler and clang.
 #
+# Errors do not carry line numbers, because the program the compiler sees is generated from your pieces.
 # Every piece you enter is added to the session. The session is a program (your definitions, then your statements), and
 # each time it is compiled with tomato and run from the top; only the output that is new is shown, so earlier lines do
 # not print twice. A bare expression shows its value. Because the whole session re-runs, a line with a side effect
@@ -16,8 +17,11 @@ mkdir -p "$S/d"
 # Speed: the runtime is compiled to an object once, and each line then costs one tomatoc run plus a quick unoptimized
 # link, instead of compiling the whole runtime with optimization on every line.
 tomatoc="${TOMATO_TOMATOC:-}"; runtime="${TOMATO_RUNTIME:-}"; std="${TOMATO_STD:-}"
+jsc="${TOMATO_JSC:-/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc}"
+wasmdir="${TOMATO_WASM:-}"
 fast=0
-if [ -x "$tomatoc" ] && [ -f "$runtime" ] && clang -O0 -w -c -o "$S/rt.o" "$runtime" 2>/dev/null; then fast=1; fi
+if [ -x "$jsc" ] && [ -f "$wasmdir/tomatoc.wasm" ] && [ -f "${TOMATO_JSC_JS:-}" ]; then fast=2   # no new native program per line (see tomato-jsc.js)
+elif [ -x "$tomatoc" ] && [ -f "$runtime" ] && clang -O0 -w -c -o "$S/rt.o" "$runtime" 2>/dev/null; then fast=1; fi
 : > "$S/stmts"; : > "$S/shown"; seq=0
 
 say() { printf '%s\n' "$*"; }
@@ -54,13 +58,20 @@ try_run() {
     echo "@main"; echo "def main():"
     if [ -s "$S/stmts.try" ]; then sed 's/^/    /' "$S/stmts.try"; else echo "    pass"; fi
   } > "$S/try.tom"
-  if [ $fast = 1 ]; then
+  if [ $fast = 2 ]; then
+    "$jsc" "$TOMATO_JSC_JS" -- "$wasmdir" run "$S/try.tom" > "$S/out" 2> "$S/err"
+    rc=$(sed -n 's/^~rc //p' "$S/err" | tail -1); grep -v '^~rc ' "$S/err" | sed -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): line \([0-9]*\): /\1 on line \2: /' -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): /\1: /' -e 's/ on line [0-9]*//' -e 's/line [0-9]*: //' > "$S/err2"; mv "$S/err2" "$S/err"
+    [ -n "$rc" ] && [ "$rc" = 0 ]; return
+  elif [ $fast = 1 ]; then
     if ! "$tomatoc" "$S/try.tom" main "$std" > "$S/try.ll" 2> "$S/err"; then
       sed -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): line \([0-9]*\): /\1 on line \2: /' -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): /\1: /' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
+      sed -e 's/ on line [0-9]*//' -e 's/line [0-9]*: //' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
       : > "$S/out"; return 1
     fi
     clang -O0 -w -o "$S/try" "$S/try.ll" "$S/rt.o" -lm 2> "$S/err" || return 1
-    "$S/try" > "$S/out" 2> "$S/err"
+    "$S/try" > "$S/out" 2> "$S/err"; rc=$?
+    sed -e 's/line [0-9]*: //' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
+    return $rc
   else
     "$tomato" run "$S/try.tom" > "$S/out" 2> "$S/err"
   fi
@@ -102,6 +113,7 @@ submit() {   # one piece of source text in $1
     fi
   fi
   if try_run "$S/cd" "$S/cb"; then new_output; commit "$S/cd"; else
+    new_output          # what the line printed before it failed
     cat "$S/err" >&2
   fi
 }

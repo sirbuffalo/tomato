@@ -1,0 +1,17 @@
+@main
+def main():
+    xs: list[int] = [3, 1, 2]
+    xs.append(5)
+    total = 0
+    for x in xs:
+        total += x
+    print(len(xs), total)
+    d: dict[str, int] = {'a': 1, 'b': 2}
+    d['c'] = 3
+    print(len(d), d['b'], 'c' in d)
+    s: set[int] = {1, 2}
+    s.add(2)
+    s.add(7)
+    print(len(s), 7 in s)
+    words = 'a,b,c'.split(',')
+    print(len(words), words[2], ','.join(words))

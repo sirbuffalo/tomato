@@ -1,0 +1,4 @@
+# tests/programs/NAME.tom, entry main; expected output is tests/expected/NAME.main.out
+containers
+finally
+inheritance

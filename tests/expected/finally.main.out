@@ -1,0 +1,10 @@
+finally 4
+8
+caught zero
+finally 0
+-1
+body 0
+done 0
+done 1
+body 2
+done 2

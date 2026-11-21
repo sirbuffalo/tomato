@@ -1,0 +1,10 @@
+class C:
+    private x: int
+    @init
+    def make(self, x: int):
+        self.x = x
+
+@main
+def main():
+    c = C(1)
+    print(c.x)

@@ -1,0 +1,22 @@
+class Animal:
+    name: str
+    @init
+    def make(self, name: str):
+        self.name = name
+    def sound(self) -> str:
+        return '...'
+    def describe(self) -> str:
+        return self.name + ' says ' + self.sound()
+
+class Dog(Animal):
+    @init
+    def make_dog(self, name: str):
+        Animal.make(self, name)
+    override def sound(self) -> str:
+        return 'woof'
+
+@main
+def main():
+    a: Animal = Dog('rex')
+    print(a.describe())
+    print(Animal('thing').describe())

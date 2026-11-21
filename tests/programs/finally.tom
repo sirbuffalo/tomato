@@ -1,0 +1,22 @@
+def work(n: int) -> int:
+    try:
+        if n == 0:
+            raise Error('zero')
+        return n * 2
+    catch Error as e:
+        print('caught', e.message)
+        return -1
+    finally:
+        print('finally', n)
+
+@main
+def main():
+    print(work(4))
+    print(work(0))
+    for i in range(3):
+        try:
+            if i == 1:
+                continue
+            print('body', i)
+        finally:
+            print('done', i)

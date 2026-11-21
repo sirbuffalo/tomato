@@ -67,7 +67,7 @@ Last updated after D12bg. The question currently asked is marked **asking**.
 
 45. Error wording for every rule above. Decide once whether wording is specified in the language definition or left to implementations.
 
-## Syntax the Python prototype needed (see `python/tomato/PROVISIONAL.md`)
+## Syntax the (retired) Python prototype needed (see `docs/provisional.md`)
 
 46. Function and class header syntax, `if` and `while` forms, scoping, and local declaration. (`for name in x:` is settled by D18a.)
 46a. The iteration protocol: what makes a class iterable, and how `range` is defined as a class.
@@ -117,8 +117,8 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 78. Modules have separate namespaces (D24c). Open: qualified names and aliases, the plain `import module` form (D24b) and the end of Davis's sentence, re-exports, and a build layout.
 79. Concurrency: async only for now, tentatively (D31b); the threading library (D31a) is deferred. Open: how async is written, interaction with reference counting, web-server model.
 80. ~~Types of `!x` LLVM functions~~: declared with `!name(a: T) -> R` (D27b, my design). Open: pointers, aggregates, where the IR comes from.
-81. The self-hosting plan: the Python prototype runs a first Tomato compiler, which then compiles itself.
-82. Whether `tomato compile` should keep the Python-bundle mode once a native compiler exists.
+81. ~~The self-hosting plan~~: done. The compiler written in Tomato compiles itself; the Python prototype that ran it first was retired in v0.6 (D46a).
+82. ~~Whether `tomato compile` should keep the Python-bundle mode~~: moot, the Python implementation and `bundle` are gone (D46a).
 
 83. Error modes (D34a, settled in outline): the code format, how a mode is selected, location details, and what release mode prints, if anything.
 
@@ -130,4 +130,4 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 
 ## Out of scope
 
-Merging or pushing this task, until Davis says so. The LLVM compiler is out of scope; the Python interpreter prototype is authorized (Davis, 2026-11-19).
+Merging or pushing this task, until Davis says so. Superseded: the LLVM compiler, self-hosting, the website and releases were all later authorized by Davis; the Python prototype was retired (D46a).

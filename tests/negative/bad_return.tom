@@ -1,0 +1,6 @@
+def f() -> int:
+    return "s"
+
+@main
+def main():
+    print(f())

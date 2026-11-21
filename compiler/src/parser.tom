@@ -1,8 +1,8 @@
 # The Tomato parser, written in Tomato (D38a). It mirrors tomato/parser.py and builds the same syntax tree.
 #
 # Every node is one class: a kind, a line and an ordered list of field values (a Val holds a name, number, bool,
-# None, node, list or tuple), in the same order as the Python tomato/nodes.py. `dump` writes the tree as text so
-# the two parsers can be compared (tests/test_selfhost.py).
+# None, node, list or tuple), in the order the language grammar lists them. `dump` writes the tree as text so
+# the tree can be inspected.
 from lexer import Token, lex
 
 def with_line(message: str, line: int) -> str:
@@ -103,7 +103,7 @@ def mk(kind: str, line: int, fields: list[Val]) -> Node:
     n.fields = fields
     return n
 
-# ---- the text form used to compare with the Python parser
+# ---- the text form of a tree
 
 def escape(s: str) -> str:
     return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
