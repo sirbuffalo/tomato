@@ -14,7 +14,7 @@ cp "$root/python/tomato/runtime/tomato_rt.c" "$home/runtime/"
 rm -rf "$home/std"; mkdir -p "$home/std"; cp "$root/python/tomato/std/"*.tom "$home/std/"
 rm -rf "$home/examples"; cp -R "$root/examples" "$home/examples"
 cp "$root/VERSION" "$home/VERSION"
-cp "$root/native/tomato" "$home/bin/tomato"
+cp "$root/native/tomato" "$root/native/tomato-repl" "$home/bin/"
 chmod +x "$home/bin/tomato"
 # keep an existing Python command reachable as tomato-py
 old="$bindir/tomato"

@@ -1,0 +1,132 @@
+#!/bin/sh
+# tomato repl [FILE ...]: type Tomato one piece at a time. It needs only the Tomato compiler and clang (no Python).
+#
+# Every piece you enter is added to the session. The session is a program (your definitions, then your statements), and
+# each time it is compiled with tomato and run from the top; only the output that is new is shown, so earlier lines do
+# not print twice. A bare expression shows its value. Because the whole session re-runs, a line with a side effect
+# outside the program (writing a file, say) happens again with every later line.
+#
+#   :load FILE     add a file's definitions and statements      :program   show the session as one program
+#   :save FILE     write the session program to FILE            :compile   print the session's LLVM IR
+#   :reset         forget everything                            :help      this text
+#   :quit          leave (also Ctrl-D)
+tomato="${TOMATO_CMD:-tomato}"
+S="$(mktemp -d)"; trap 'rm -rf "$S"' EXIT
+mkdir -p "$S/d"
+: > "$S/stmts"; : > "$S/shown"; seq=0
+
+say() { printf '%s\n' "$*"; }
+err() { printf '%s\n' "$*" >&2; }
+
+# Split text on stdin into declarations (to $1) and statements (to $2): a top-level line starting with def, class,
+# interface, from, import, export, @ or ! (or "X implements Y") starts a declaration, and the lines indented under it
+# belong to it; anything else is a statement.
+split() {
+  awk -v D="$1" -v B="$2" '
+    function isdecl(l) { return l ~ /^(def|class|interface|from|import|export)[ (]/ || l ~ /^[@!]/ || l ~ /^[A-Za-z_][A-Za-z_0-9]* implements / }
+    { l = $0 }
+    l ~ /^[ \t]/ || l ~ /^[ \t]*$/ || l ~ /^#/ { if (cur == "d") print l >> D; else if (cur == "b") print l >> B; next }
+    { if (afterat) { print l >> D; afterat = 0; next }
+      if (isdecl(l)) { cur = "d"; print l >> D; if (l ~ /^@/) afterat = 1 }
+      else { cur = "b"; print l >> B } }
+  '
+}
+
+program() {   # the session as one program on stdout
+  for f in "$S"/d/*; do [ -f "$f" ] && { cat "$f"; echo; }; done
+  if [ -s "$S/stmts" ]; then
+    echo "@main"; echo "def main():"; sed 's/^/    /' "$S/stmts"
+  else
+    echo "@main"; echo "def main():"; echo "    pass"
+  fi
+}
+
+# Run a candidate (declaration text in $1 file, statement text in $2 file) on top of the session.
+try_run() {
+  cp "$S/stmts" "$S/stmts.try"; cat "$2" >> "$S/stmts.try"
+  { for f in "$S"/d/*; do [ -f "$f" ] && { cat "$f"; echo; }; done
+    [ -s "$1" ] && { cat "$1"; echo; }
+    echo "@main"; echo "def main():"
+    if [ -s "$S/stmts.try" ]; then sed 's/^/    /' "$S/stmts.try"; else echo "    pass"; fi
+  } > "$S/try.tom"
+  "$tomato" run "$S/try.tom" > "$S/out" 2> "$S/err"
+}
+
+new_output() {  # print the part of $S/out that is not in the previous output
+  have=$(wc -c < "$S/shown" | tr -d ' ')
+  if [ "$have" -gt 0 ] && head -c "$have" "$S/out" | cmp -s - "$S/shown"; then tail -c +$((have + 1)) "$S/out"; else cat "$S/out"; fi
+}
+
+commit() {   # the candidate worked: keep it
+  cat "$S/stmts.try" > "$S/stmts"
+  if [ -s "$1" ]; then
+    key=$(head -1 "$1" | sed -E 's/^(def|class|interface)[ ]+([A-Za-z_0-9]+).*/\2/')
+    case "$(head -1 "$1")" in def\ *|class\ *|interface\ *)
+      rm -f "$S"/d/*_"$key" 2>/dev/null ;; *) key="x$seq" ;;
+    esac
+    seq=$((seq + 1)); cp "$1" "$S/d/$(printf '%04d' $seq)_$key"
+  fi
+  cp "$S/out" "$S/shown"
+}
+
+submit() {   # one piece of source text in $1
+  : > "$S/cd"; : > "$S/cb"
+  printf '%s\n' "$1" | split "$S/cd" "$S/cb"
+  # a redeclared variable replaces its earlier declaration
+  if [ -s "$S/cb" ]; then
+    name=$(head -1 "$S/cb" | sed -nE 's/^([A-Za-z_][A-Za-z_0-9]*) *:[^=]*=.*/\1/p')
+    if [ -n "$name" ]; then grep -vE "^$name *:" "$S/stmts" > "$S/stmts.n"; cp "$S/stmts.n" "$S/stmts"; fi
+  fi
+  if [ ! -s "$S/cd" ] && [ -s "$S/cb" ]; then
+    first=$(head -1 "$S/cb")
+    # a bare expression shows its value
+    if printf '%s' "$first" | grep -qvE '^(print|for|while|if|elif|else|try|catch|finally|raise|return|pass|break|continue)([ (:]|$)' \
+       && ! printf '%s' "$first" | grep -qE '^[A-Za-z_][A-Za-z_0-9]*( *:[^=]+)? *([-+*/%&|^]|//|\*\*)?= *[^=]' \
+       && [ "$(wc -l < "$S/cb" | tr -d ' ')" = 1 ] && ! printf '%s' "$first" | grep -q ':$'; then
+      printf 'print(%s)\n' "$first" > "$S/ce"
+      if try_run "$S/cd" "$S/ce"; then new_output; commit "$S/cd"; return; fi
+    fi
+  fi
+  if try_run "$S/cd" "$S/cb"; then new_output; commit "$S/cd"; else
+    cat "$S/err" >&2
+  fi
+}
+
+load_file() {
+  [ -f "$1" ] || { err "error: cannot read $1"; return; }
+  submit "$(cat "$1")"
+}
+
+help() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
+
+for f in "$@"; do load_file "$f"; done
+interactive=0; [ -t 0 ] && interactive=1
+[ $interactive = 1 ] && say "Tomato repl (no Python needed). :help for commands, :quit or Ctrl-D to leave."
+
+while :; do
+  [ $interactive = 1 ] && printf '>>> ' >&2
+  IFS= read -r line || { [ $interactive = 1 ] && echo; break; }
+  case "$line" in
+    "") continue ;;
+    :quit|:q|:exit) break ;;
+    :help) help; continue ;;
+    :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; say "session cleared"; continue ;;
+    :program) program; continue ;;
+    :compile) program > "$S/p.tom"; "$tomato" compile "$S/p.tom"; continue ;;
+    :save\ *) program > "${line#:save }" && say "wrote ${line#:save }"; continue ;;
+    :load\ *) load_file "${line#:load }"; continue ;;
+    :*) err "error: unknown command ${line%% *} (try :help)"; continue ;;
+  esac
+  text="$line"
+  case "$line" in
+    *:|@*)   # a block: read lines until an empty one
+      while :; do
+        [ $interactive = 1 ] && printf '... ' >&2
+        IFS= read -r more || break
+        [ -z "$more" ] && break
+        text="$text
+$more"
+      done ;;
+  esac
+  submit "$text"
+done

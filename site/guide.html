@@ -56,7 +56,7 @@ print(n + 5)</code></pre>
 <tr><td><code>tomato run FILE [ENTRY [INPUTS…]]</code></td><td>compile, link and run</td></tr>
 <tr><td><code>tomato build FILE [-o OUT]</code></td><td>write a native program</td></tr>
 <tr><td><code>tomato compile FILE</code></td><td>print the LLVM IR</td></tr>
-<tr><td><code>tomato repl [FILE…]</code></td><td>interactive prompt (uses <code>tomato-py</code>); variables and definitions stay set; <code>:compile</code> and <code>:run</code> compile the session</td></tr>
+<tr><td><code>tomato repl [FILE…]</code></td><td>interactive prompt that needs only the compiler and clang; each line joins the session, which is compiled and run, and only new output is shown; <code>:program</code>, <code>:save</code>, <code>:compile</code></td></tr>
 <tr><td><code>tomato update</code></td><td>install the newest release</td></tr>
 <tr><td><code>tomato version</code></td><td>print the version</td></tr>
 </table>

@@ -3,7 +3,7 @@
 #   tomato run FILE [ENTRY [INPUTS...]] [--llvm FILE.ll ...]   compile, link and run (-- ends flags, so inputs may look like flags)
 #   tomato build FILE [-o OUT] [--entry NAME] [--llvm FILE.ll ...]   write a native program
 #   tomato compile FILE [--entry NAME]                         print the LLVM IR
-#   tomato repl [FILE ...]                                     type Tomato one piece at a time (needs tomato-py)
+#   tomato repl [FILE ...]                                     type Tomato one piece at a time 
 #   tomato update                                              install the newest release
 #   tomato version
 src="$0"
@@ -45,10 +45,7 @@ case "$cmd" in
     tar -xzf "$work/tomato.tar.gz" -C "$work" || die "the download is not a valid archive"
     "$work"/tomato-*/install-native.sh || die "the installer failed"
     exit 0 ;;
-  repl|shell)
-    # the shell runs on the interpreter, which keeps values alive between lines; Tomato has no eval or stdin yet
-    py="$(command -v tomato-py)" || die "tomato repl needs the Python command tomato-py (the shell is not written in Tomato yet)"
-    exec "$py" repl "$@" ;;
+  repl|shell) TOMATO_CMD="$home/bin/tomato" exec sh "$home/bin/tomato-repl" "$@" ;;
   run|build|compile) ;;
   *) echo "error: unknown command '$cmd'" >&2; echo "run 'tomato help' for the commands" >&2; exit 2 ;;
 esac

@@ -1179,8 +1179,8 @@ Source: Davis's Dashboard message:
 - Evidence: Davis wrote “no @main needed toplevel code works”, then “though if there is a @main run it instead”, then “you can just do @main()”; “add version number this is v0” and “python is v-1” with “v0.x” and “v-1.x”; and asked for a repl (“tomato shell … open a shell … with compiling and variables already set”), then chose the name `repl`.
 - A main program may have statements at the top level; they are the program, run top to bottom. If the file has an `@main`, only `@main` runs and the top-level code is checked but not run; code can also call `main()` itself. This replaces the “no top-level code” rule of D16a for the main program. Imported modules still may not have top-level code (P60).
 - The compiler written in Tomato is v0.x and the Python implementation is v-1.x. The number lives in `VERSION` (v0.1 now); `tomato version` prints it.
-- `tomato repl [FILE ...]` (alias `shell`) reads one piece at a time, keeps variables and definitions between lines, loads files first, and offers `:compile` and `:run` for compiling the session (P59).
-- Open: whether top-level code should run after `@main` finishes; top-level code in the compiler written in Tomato (the compile server wraps it for now); a repl written in Tomato, which needs `eval` and standard input.
+- `tomato repl [FILE ...]` (alias `shell`) reads one piece at a time and needs no Python: each piece joins the session, the whole session is compiled by the compiler written in Tomato and run, and only the new output is shown (Davis: “no more python”). It offers `:load`, `:program`, `:save`, `:compile`, `:reset`. The Python implementation keeps its own interpreter-based repl, which holds live values (P59).
+- Open: whether top-level code should run after `@main` finishes; top-level code in the compiler written in Tomato (the compile server wraps it for now); a repl written in Tomato, which needs standard input, and a repl that keeps live values instead of re-running the session.
 
 ### D43a — the website, releases and `tomato update`: accepted (reading to confirm)
 

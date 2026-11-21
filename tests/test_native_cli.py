@@ -87,6 +87,12 @@ class NativeCli(unittest.TestCase):
         for word in ("run", "build", "compile", "repl", "update", "version"):
             self.assertIn("tomato " + word, r.stdout)
 
+    def test_repl_needs_no_python(self):
+        piece = "x = 3\nx + 4\ndef sq(n: int) -> int:\n    return n * n\n\nsq(x)\nprint('hi')\n:quit\n"
+        env = dict(os.environ, PATH=os.path.dirname(shutil.which("clang")) + ":/usr/bin:/bin")   # no tomato-py on the PATH
+        r = subprocess.run([self.tomato, "repl"], input=piece, capture_output=True, text=True, env=env)
+        self.assertEqual((r.returncode, r.stdout), (0, "7\n9\nhi\n"), r.stderr)
+
     def test_usage(self):
         self.assertEqual(self.run_cli().returncode, 2)
         self.assertEqual(self.run_cli("version").stdout, "Tomato v%s (compiler written in Tomato)\n" % open(os.path.join(ROOT, "VERSION")).read().strip())

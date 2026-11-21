@@ -10,7 +10,7 @@ url="${1:-https://github.com/$repo/releases/download/v$version/tomato-$version.t
 out="$root/release/out"; stage="$out/tomato-$version"
 rm -rf "$out"; mkdir -p "$stage/native" "$stage/python/tomato/runtime" "$stage/python/tomato/std" "$stage/compiler/bootstrap"
 cp "$root/VERSION" "$root/install-native.sh" "$stage/"
-cp "$root/native/tomato" "$stage/native/"
+cp "$root/native/tomato" "$root/native/tomato-repl" "$stage/native/"
 cp "$root/python/tomato/runtime/tomato_rt.c" "$stage/python/tomato/runtime/"
 cp "$root/python/tomato/std/"*.tom "$stage/python/tomato/std/"
 cp "$root/compiler/bootstrap/tomatoc.ll" "$stage/compiler/bootstrap/"
