@@ -1,8 +1,8 @@
-from itertools import tqdm
+from itertools import progressbar, repeat
 
 @main
 def main():
-    bar = tqdm(10, 'work', 10)
+    bar = progressbar(repeat(0, 10), 'work', 10)
     print(bar.render())
     bar.count = 3
     print(bar.render())
@@ -10,9 +10,9 @@ def main():
     print(bar.render())
     bar.count = 14
     print(bar.render())
-    plain = tqdm(4)
+    plain = progressbar(repeat(0, 4))
     plain.count = 1
     print(plain.render())
-    unknown = tqdm(0, 'seen')
+    unknown = progressbar(repeat(0, 0), 'seen')
     unknown.count = 7
     print(unknown.render())

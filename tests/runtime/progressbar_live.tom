@@ -1,8 +1,8 @@
-from itertools import tqdm
+from itertools import progressbar, repeat
 
 @main
 def main():
-    bar = tqdm(2, 'live', 4)
+    bar = progressbar(repeat(0, 2), 'live', 4)
     bar.update()
     bar.update()
     bar.close()

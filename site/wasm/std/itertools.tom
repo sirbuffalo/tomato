@@ -1,27 +1,28 @@
-# Loop helpers, written in Tomato: `from itertools import tqdm`, a small progress bar.
+# Loop helpers, written in Tomato: `from itertools import progressbar`, a small progress bar.
 # There is no clock in the language yet, so the bar shows a count and a percentage but no speed or time left.
 #
-#     bar = tqdm(200, 'copying')
-#     for i in range(200):
+#     bar = progressbar(items, 'copying')
+#     for x in bar.items:
+#         ...
 #         bar.update()
 #     bar.close()
 #
 # update() redraws the bar on standard error (so it does not mix with what the program prints); render() returns the
-# same line as text, which is what the tests check. A total of 0 means unknown: the bar shows only the count.
+# same line as text, which is what the tests check. An empty list gives a total of 0, which shows only the count.
 
-export class tqdm:
+export class progressbar:
+    items: list[int] = []
     total: int = 0
     count: int = 0
     label: str = ''
     width: int = 30
 
     @init
-    def make(self, total: int, label: str = '', width: int = 30):
-        if total < 0:
-            raise RuntimeError('a progress bar total cannot be negative')
+    def make(self, items: list[int], label: str = '', width: int = 30):
         if width < 1:
             raise RuntimeError('a progress bar width must be at least 1')
-        self.total = total
+        self.items = items
+        self.total = len(items)
         self.label = label
         self.width = width
 
