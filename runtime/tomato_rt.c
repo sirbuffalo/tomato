@@ -1297,3 +1297,14 @@ int64_t tomato_int_bitop(int64_t x, int64_t y, int32_t op) {
     int64_t a = int_small_val(x), b = int_small_val(y);
     return int_mk_small(op == 0 ? (a & b) : (op == 1 ? (a | b) : (a ^ b)));
 }
+
+/* int(x) on a float: the whole part towards zero, as an int of any size (the caller checked the float is finite) */
+int64_t tomato_f64_to_int(double d) {
+    d = trunc(d);
+    if (fabs(d) < 4611686018427387904.0) return int_mk_small((int64_t)d);
+    int e;
+    double m = frexp(fabs(d), &e);
+    int64_t mant = (int64_t)ldexp(m, 53);
+    int64_t big = tomato_int_mul(tomato_int_from_i64(mant), tomato_int_pow(int_mk_small(2), int_mk_small(e - 53)));
+    return d < 0 ? tomato_int_neg(big) : big;
+}

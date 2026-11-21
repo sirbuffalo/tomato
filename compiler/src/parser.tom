@@ -750,7 +750,7 @@ export class Parser:
             return mk('IntLit', t.line, [vi(t.num)])
         if t.kind == 'FLOAT':
             self.adv()
-            return mk('FloatLit', t.line, [vi(t.num), vi(len(t.text) - t.text.find('.') - 1)])
+            return mk('FloatLit', t.line, [vi(t.num), vi(t.scale)])
         if t.kind == 'STR':
             self.adv()
             return mk('StrLit', t.line, [vs(t.text)])

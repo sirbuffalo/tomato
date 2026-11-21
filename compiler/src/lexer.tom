@@ -18,6 +18,7 @@ export class Token:
     kind: str = ''       # INT, NAME, KW, STR, OP, NEWLINE, INDENT, DEDENT or EOF
     text: str = ''       # the source text, or the decoded text of a STR
     num: int = 0         # the value of an INT
+    scale: int = 0       # for a FLOAT: the digits after the point, less the exponent
     line: int = 0
 
 export def make_token(kind: str, text: str, num: int, line: int) -> Token:
@@ -53,6 +54,56 @@ def escape_char(e: str, line: int) -> str:
         return e
     raise LexError('unknown escape \\' + e, line)
 
+def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
+    # a whole number or a decimal literal, with an optional exponent (1.5e3, 2E-2); returns the index after it
+    n = len(raw)
+    j = i
+    value = 0
+    frac = 0
+    exp = 0
+    is_float = False
+    while j < n and is_digit(raw[j]):
+        value = value * 10 + '0123456789'.find(raw[j])
+        j = j + 1
+    if j + 1 < n and raw[j] == '.' and is_digit(raw[j + 1]):
+        is_float = True
+        j = j + 1
+        while j < n and is_digit(raw[j]):
+            if j - i > 17:
+                raise LexError('this decimal literal has too many digits for a 64-bit float yet', ln)
+            value = value * 10 + '0123456789'.find(raw[j])
+            frac = frac + 1
+            j = j + 1
+    if j < n and (raw[j] == 'e' or raw[j] == 'E'):
+        k = j + 1
+        negative = False
+        if k < n and (raw[k] == '+' or raw[k] == '-'):
+            negative = raw[k] == '-'
+            k = k + 1
+        if k < n and is_digit(raw[k]):
+            is_float = True
+            while k < n and is_digit(raw[k]):
+                if k - j > 4:
+                    raise LexError('this exponent is too large for a 64-bit float yet', ln)
+                exp = exp * 10 + '0123456789'.find(raw[k])
+                k = k + 1
+            if negative:
+                exp = 0 - exp
+            j = k
+    if is_float:
+        if j < n and (is_alpha(raw[j]) or raw[j] == '_'):
+            raise LexError('a decimal literal cannot be followed by letters', ln)
+        if value > 9007199254740992 or frac - exp > 330 or frac - exp < 0 - 330:
+            raise LexError('this decimal literal needs more digits or range than a 64-bit float literal holds yet', ln)
+        tok = make_token('FLOAT', raw[i:j], value, ln)
+        tok.scale = frac - exp
+        toks.append(tok)
+    else:
+        if j < n and (is_alpha(raw[j]) or raw[j] in '._'):
+            raise LexError('only whole-number and decimal literals exist so far', ln)
+        toks.append(make_token('INT', raw[i:j], value, ln))
+    return j
+
 def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
     # Lexes one line's tokens after its indentation; returns the bracket depth at the end of the line.
     i = 0
@@ -64,29 +115,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
         elif c == '#':
             break
         elif is_digit(c):
-            j = i
-            value = 0
-            while j < n and is_digit(raw[j]):
-                value = value * 10 + '0123456789'.find(raw[j])
-                j = j + 1
-            if j + 1 < n and raw[j] == '.' and is_digit(raw[j + 1]):
-                # a decimal literal: the digits without the point are the mantissa, the digits after it the scale
-                j = j + 1
-                while j < n and is_digit(raw[j]):
-                    if j - i > 17:
-                        raise LexError('this decimal literal has too many digits for a 64-bit float yet', ln)
-                    value = value * 10 + '0123456789'.find(raw[j])
-                    j = j + 1
-                if j < n and (is_alpha(raw[j]) or raw[j] == '_'):
-                    raise LexError('exponent notation is not built yet', ln)
-                if value > 9007199254740992:
-                    raise LexError('this decimal literal has too many digits for a 64-bit float yet', ln)
-                toks.append(make_token('FLOAT', raw[i:j], value, ln))
-            else:
-                if j < n and (is_alpha(raw[j]) or raw[j] in '._'):
-                    raise LexError('only whole-number and decimal literals exist so far', ln)
-                toks.append(make_token('INT', raw[i:j], value, ln))
-            i = j
+            i = lex_number(raw, i, ln, toks)
         elif is_alpha(c) or c == '_':
             j = i
             while j < n and (is_alpha(raw[j]) or is_digit(raw[j]) or raw[j] == '_'):

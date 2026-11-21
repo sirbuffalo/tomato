@@ -1,0 +1,7 @@
+@main
+def main():
+    print(1.5e3, 2E-2, 1e3, 12.5e-1, 0.1e1)
+    print(float(3), float(2.5), float(10 ** 20))
+    print(int(2.9), int(-2.9), int(1e19), int(-1e30))
+    x = 1e200
+    print(x * 1e100 > 0)

@@ -1092,6 +1092,7 @@ class Gen:
                 ins = 'fmul'
             r = self.tmp('f')
             self.emit(r + ' = ' + ins + ' double ' + x + ', ' + y)
+            self.check_finite(r)
             return ex(r, 'float')
         if op == '/' or op == '//' or op == '%':
             zero = self.tmp('fzero')
@@ -1107,10 +1108,12 @@ class Gen:
                 self.emit(r + ' = call double @tomato_floor_div_f64(double ' + x + ', double ' + y + ')')
             else:
                 self.emit(r + ' = call double @tomato_mod_f64(double ' + x + ', double ' + y + ')')
+            self.check_finite(r)
             return ex(r, 'float')
         if op == '**':
             r = self.tmp('f')
             self.emit(r + ' = call double @tomato_pow_f64(double ' + x + ', double ' + y + ')')
+            self.check_finite(r)
             return ex(r, 'float')
         cc = ''
         if op == '==':
@@ -1131,13 +1134,45 @@ class Gen:
         self.emit(c + ' = fcmp ' + cc + ' double ' + x + ', ' + y)
         return self.bool_of(c)
 
+    def check_finite(self, r: str):
+        # a float result that is infinite or not a number stops the program (P58)
+        d = self.tmp('diff')
+        self.emit(d + ' = fsub double ' + r + ', ' + r)
+        ok = self.tmp('finite')
+        self.emit(ok + ' = fcmp oeq double ' + d + ', 0.0')
+        bad = self.tmp('notfinite')
+        self.emit(bad + ' = xor i1 ' + ok + ', true')
+        self.fail_if(bad, 'the float result is infinite or not a number')
+
+    def float_call(self, v: Ex, line: int) -> Ex:
+        # float(x): a whole number or a float as a float
+        if v.ty == 'float':
+            return v
+        if is_numeric(v.ty):
+            return ex(self.to_double(v), 'float')
+        raise CompileError('float(x) takes a whole number or a float, found ' + shown(v.ty), line)
+
+    def float_to_int(self, v: Ex, line: int) -> Ex:
+        # int(x) on a float: the whole part, towards zero (P58); infinity and NaN stop
+        d = self.tmp('diff')
+        self.emit(d + ' = fsub double ' + v.reg + ', ' + v.reg)
+        ok = self.tmp('finite')
+        self.emit(ok + ' = fcmp oeq double ' + d + ', 0.0')
+        bad = self.tmp('notfinite')
+        self.emit(bad + ' = xor i1 ' + ok + ', true')
+        self.fail_if(bad, 'a float that is infinite or not a number cannot become an int')
+        r = self.tmp('whole')
+        self.emit(r + ' = call i64 @tomato_f64_to_int(double ' + v.reg + ')')
+        return ex(r, 'int')
+
     def float_literal(self, mantissa: int, scale: int) -> Ex:
-        # the decimal digits as an integer over a power of ten: one correctly rounded division, so the nearest float
-        whole = self.tmp('fl')
-        self.emit(whole + ' = sitofp i64 ' + str(mantissa) + ' to double')
-        r = self.tmp('fl')
-        self.emit(r + ' = fdiv double ' + whole + ', 1.0e+' + str(scale))
-        return ex(r, 'float')
+        # the digits as a decimal constant, which LLVM rounds to the nearest float
+        text = str(mantissa) + '.0e'
+        if scale > 0:
+            text = text + '-' + str(scale)
+        else:
+            text = text + '+' + str(0 - scale)
+        return ex(text, 'float')
 
     def to_double(self, e: Ex) -> str:
         if e.ty == 'int':
@@ -1160,6 +1195,7 @@ class Gen:
             self.fail_if(zero, 'division by zero')
         q = self.tmp('div')
         self.emit(q + ' = fdiv double ' + self.to_double(a) + ', ' + self.to_double(b))
+        self.check_finite(q)
         return ex(q, 'float')
 
     def convert_explicit(self, v: Ex, target: str, line: int) -> Ex:
@@ -1880,8 +1916,13 @@ class Gen:
             return self.len_call(args, n.line)
         if name == 'str':
             return self.str_call(args, n.line)
+        if name == 'float' and len(args) == 1:
+            return self.float_call(self.expr(args[0]), n.line)
         if name == 'int' and len(args) == 1:
-            return self.convert_explicit(self.expr(args[0]), 'int', n.line)
+            conv = self.expr(args[0])
+            if conv.ty == 'float':
+                return self.float_to_int(conv, n.line)
+            return self.convert_explicit(conv, 'int', n.line)
         key = self.mod.resolve(name)
         if key == '':
             raise CompileError('unknown function ' + name, n.line)
@@ -3061,6 +3102,7 @@ def declarations(mod: Mod) -> str:
     d = d + 'declare i64 @tomato_int_parse(ptr)\n'
     d = d + 'declare i64 @tomato_int_parse_cstr(ptr, i32)\n'
     d = d + 'declare i64 @tomato_int_bitop(i64, i64, i32)\n'
+    d = d + 'declare i64 @tomato_f64_to_int(double)\n'
     d = d + 'declare double @tomato_parse_f64(ptr, i32)\n'
     d = d + 'declare i32 @tomato_ipow_check(i64, i64)\n'
     d = d + 'declare i64 @tomato_ipow(i64, i64)\n'
