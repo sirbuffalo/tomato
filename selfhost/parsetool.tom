@@ -1,0 +1,13 @@
+# The Tomato parser as a command: tomato run selfhost/parsetool.tom show FILE
+from parser import parse, dump
+
+@main
+def main():
+    print('usage: tomato run selfhost/parsetool.tom show FILE')
+
+@show
+def show(path: str):
+    f = open(path)
+    src = f.read()
+    f.close()
+    print(dump(parse(src)))

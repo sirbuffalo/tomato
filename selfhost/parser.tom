@@ -1,0 +1,786 @@
+# The Tomato parser, written in Tomato (D38a). It mirrors tomato/parser.py and builds the same syntax tree.
+#
+# Every node is one class: a kind, a line and an ordered list of field values (a Val holds a name, number, bool,
+# None, node, list or tuple), in the same order as the Python tomato/nodes.py. `dump` writes the tree as text so
+# the two parsers can be compared (tests/test_selfhost.py).
+from lexer import Token, lex
+
+export class ParseError(Error):
+    @init
+    def make(self, message: str, line: int):
+        Error.start(self, message)
+
+export class Val:
+    tag: str = 'z'       # n node, s text, i number, b bool, z None, l list, t tuple
+    text: str = ''
+    num: int = 0
+    flag: bool = False
+    node: Node | None = None
+    items: list[Val] = []
+
+export class Node:
+    kind: str = ''
+    line: int = 0
+    exported: bool = False
+    fields: list[Val] = []
+
+# a declaration inside a loop would be a second declaration on the next pass (not decided), so loops call these
+def new_nodes() -> list[Node]:
+    return []
+
+def new_vals() -> list[Val]:
+    return []
+
+def new_strs() -> list[str]:
+    return []
+
+def vs(text: str) -> Val:
+    v = Val()
+    v.tag = 's'
+    v.text = text
+    return v
+
+def vi(n: int) -> Val:
+    v = Val()
+    v.tag = 'i'
+    v.num = n
+    return v
+
+def vb(b: bool) -> Val:
+    v = Val()
+    v.tag = 'b'
+    v.flag = b
+    return v
+
+def vz() -> Val:
+    return Val()
+
+def vn(n: Node) -> Val:
+    v = Val()
+    v.tag = 'n'
+    v.node = n
+    return v
+
+def vlist(items: list[Val]) -> Val:
+    v = Val()
+    v.tag = 'l'
+    v.items = items
+    return v
+
+def vtuple(items: list[Val]) -> Val:
+    v = Val()
+    v.tag = 't'
+    v.items = items
+    return v
+
+def vnodes(nodes: list[Node]) -> Val:
+    items: list[Val] = []
+    for n in nodes:
+        items.append(vn(n))
+    return vlist(items)
+
+def vopt(n: Node | None) -> Val:
+    if n is None:
+        return vz()
+    return vn(n)
+
+def vopt_text(s: str) -> Val:
+    # `None` is written as the empty text, which is never a real name
+    if s == '':
+        return vz()
+    return vs(s)
+
+def mk(kind: str, line: int, fields: list[Val]) -> Node:
+    n = Node()
+    n.kind = kind
+    n.line = line
+    n.fields = fields
+    return n
+
+# ---- the text form used to compare with the Python parser
+
+def escape(s: str) -> str:
+    return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+
+def dump_vals(items: list[Val]) -> str:
+    parts: list[str] = []
+    for v in items:
+        parts.append(dump_val(v))
+    return ' '.join(parts)
+
+def dump_val(v: Val) -> str:
+    if v.tag == 'n':
+        return dump(v.node)
+    if v.tag == 's':
+        return '"' + escape(v.text) + '"'
+    if v.tag == 'i':
+        return str(v.num)
+    if v.tag == 'b':
+        if v.flag:
+            return 'True'
+        return 'False'
+    if v.tag == 'l':
+        return '[' + dump_vals(v.items) + ']'
+    if v.tag == 't':
+        return '<' + dump_vals(v.items) + '>'
+    return 'None'
+
+export def dump(n: Node) -> str:
+    s = '(' + n.kind + ' ' + str(n.line)
+    if n.exported:
+        s = s + ' exported'
+    for v in n.fields:
+        s = s + ' ' + dump_val(v)
+    return s + ')'
+
+def is_type_with_length(name: str) -> bool:
+    return name == 'int' or name == 'uint'
+
+export class Parser:
+    toks: list[Token] = []
+    p: int = 0
+
+    def cur(self) -> Token:
+        return self.toks[self.p]
+
+    def peek(self, k: int) -> Token:
+        i = self.p + k
+        if i > len(self.toks) - 1:
+            i = len(self.toks) - 1
+        return self.toks[i]
+
+    def adv(self) -> Token:
+        t = self.toks[self.p]
+        self.p = self.p + 1
+        return t
+
+    def is_op(self, v: str) -> bool:
+        t = self.cur()
+        return t.kind == 'OP' and t.text == v
+
+    def is_kw(self, v: str) -> bool:
+        t = self.cur()
+        return t.kind == 'KW' and t.text == v
+
+    def accept_op(self, v: str) -> bool:
+        if self.is_op(v):
+            self.p = self.p + 1
+            return True
+        return False
+
+    def accept_kw(self, v: str) -> bool:
+        if self.is_kw(v):
+            self.p = self.p + 1
+            return True
+        return False
+
+    def err(self, msg: str):
+        t = self.cur()
+        shown = t.kind
+        if t.text != '':
+            shown = t.text
+        raise ParseError(msg + ", found '" + shown + "'", t.line)
+
+    def expect_op(self, v: str) -> Token:
+        if not self.is_op(v):
+            self.err("expected '" + v + "'")
+        return self.adv()
+
+    def expect_kw(self, v: str) -> Token:
+        if not self.is_kw(v):
+            self.err("expected '" + v + "'")
+        return self.adv()
+
+    def expect(self, kind: str) -> Token:
+        if self.cur().kind != kind:
+            self.err('expected a ' + kind + ' token')
+        return self.adv()
+
+    # module
+    def module(self) -> Node:
+        body: list[Node] = []
+        while self.cur().kind != 'EOF':
+            body.append(self.top_item())
+        return mk('Module', 1, [vnodes(body)])
+
+    def top_item(self) -> Node:
+        t = self.cur()
+        if self.is_op('!'):
+            self.adv()
+            nm = self.expect('NAME')
+            params = self.params()
+            ret = vz()
+            if self.accept_op('->'):
+                ret = vn(self.type())
+            self.expect('NEWLINE')
+            return mk('LlvmDecl', t.line, [vs(nm.text), vnodes(params), ret])
+        if self.is_kw('export'):
+            self.adv()
+            if not (self.is_kw('def') or self.is_kw('class') or self.is_kw('interface') or self.is_op('@')):
+                self.err('expected a function, class or interface after export')
+            d = self.top_item()
+            d.exported = True
+            return d
+        if self.is_kw('from'):
+            self.adv()
+            mod = self.expect('NAME').text
+            self.expect_kw('import')
+            names: list[Val] = [vs(self.expect('NAME').text)]
+            while self.accept_op(','):
+                names.append(vs(self.expect('NAME').text))
+            self.expect('NEWLINE')
+            return mk('Import', t.line, [vs(mod), vlist(names)])
+        if self.is_kw('import'):
+            raise ParseError('`import module` is not decided (only `from module import name, ...`)', t.line)
+        if self.is_op('@'):
+            self.adv()
+            m = self.expect('NAME')
+            if m.text == 'init' or m.text == 'add':
+                raise ParseError('@' + m.text + ' belongs to a method inside a class', m.line)
+            self.expect('NEWLINE')
+            if not self.is_kw('def'):
+                self.err('expected a function after @' + m.text)
+            return self.funcdef(False, 'entry:' + m.text, False, True)
+        if self.is_kw('def'):
+            return self.funcdef(False, '', False, True)
+        if self.is_kw('class'):
+            return self.classdef()
+        if self.is_kw('interface'):
+            return self.interfacedef()
+        if t.kind == 'NAME' and self.peek(1).kind == 'KW' and self.peek(1).text == 'implements':
+            cls = self.adv()
+            self.adv()
+            out: list[Node] = []
+            while True:
+                out.append(mk('Implements', cls.line, [vs(cls.text), vs(self.expect('NAME').text)]))
+                if not self.accept_op(','):
+                    break
+            self.expect('NEWLINE')
+            if len(out) == 1:
+                return out[0]
+            return mk('Module', cls.line, [vnodes(out)])
+        return self.statement()
+
+    # types
+    def type(self) -> Node:
+        base = self.inter_type()
+        if self.is_op('|'):
+            members: list[Node] = [base]
+            line = self.cur().line
+            while self.is_op('|'):
+                self.adv()
+                members.append(self.inter_type())
+            return mk('TypeRef', line, [vs('union'), vz(), vnodes(members), vz()])
+        return base
+
+    def inter_type(self) -> Node:
+        base = self.base_type()
+        if self.is_op('&'):
+            members: list[Node] = [base]
+            line = self.cur().line
+            while self.is_op('&'):
+                self.adv()
+                members.append(self.base_type())
+            return mk('TypeRef', line, [vs('intersection'), vz(), vnodes(members), vz()])
+        return base
+
+    def base_type(self) -> Node:
+        if self.cur().kind != 'NAME':
+            self.err('expected a type')
+        t = self.expect('NAME')
+        if t.text == 'list' or t.text == 'set' or t.text == 'tuple':
+            self.expect_op('[')
+            arg = self.type()
+            self.expect_op(']')
+            return mk('TypeRef', t.line, [vs(t.text), vz(), vn(arg), vz()])
+        if t.text == 'dict':
+            self.expect_op('[')
+            arg = self.type()
+            self.expect_op(',')
+            arg2 = self.type()
+            self.expect_op(']')
+            return mk('TypeRef', t.line, [vs('dict'), vz(), vn(arg), vn(arg2)])
+        length = vz()
+        if is_type_with_length(t.text) and self.is_op('['):
+            self.adv()
+            key = self.expect('NAME')
+            if key.text != 'length':
+                raise ParseError('only the length= argument exists for integer types', key.line)
+            self.expect_op('=')
+            length = vn(self.expr())
+            self.expect_op(']')
+        return mk('TypeRef', t.line, [vs(t.text), length, vz(), vz()])
+
+    # declarations
+    def params(self) -> list[Node]:
+        self.expect_op('(')
+        out: list[Node] = []
+        while not self.is_op(')'):
+            star = ''
+            if self.is_op('*'):
+                self.adv()
+                if self.accept_op('*'):
+                    star = '**'
+                else:
+                    star = '*'
+            nm = self.expect('NAME')
+            ty = vz()
+            if self.accept_op(':'):
+                ty = vn(self.type())
+            default = vz()
+            if self.accept_op('='):
+                default = vn(self.expr())
+            if star != '':
+                if ty.tag == 'z' or default.tag != 'z':
+                    raise ParseError(star + nm.text + ' needs a type and takes no default (D39a)', nm.line)
+                if self.any_star(out, '**') or (star == '*' and self.any_star(out, '')):
+                    raise ParseError('*args comes before **kwargs, and both come last (D39a)', nm.line)
+            elif self.any_star(out, ''):
+                raise ParseError('parameter ' + nm.text + ' follows *args or **kwargs; they come last (D39a)', nm.line)
+            elif default.tag == 'z' and self.any_default(out):
+                raise ParseError('parameter ' + nm.text + ' needs a default value: it follows one that has a default (D19c)', nm.line)
+            out.append(mk('Param', nm.line, [vs(nm.text), ty, default, vopt_text(star)]))
+            if not self.accept_op(','):
+                break
+        self.expect_op(')')
+        return out
+
+    def any_star(self, params: list[Node], which: str) -> bool:
+        # which '' means any star parameter
+        for q in params:
+            s = q.fields[3]
+            if s.tag == 's' and (which == '' or s.text == which):
+                return True
+        return False
+
+    def any_default(self, params: list[Node]) -> bool:
+        for q in params:
+            if q.fields[3].tag == 'z' and q.fields[2].tag != 'z':
+                return True
+        return False
+
+    def funcdef(self, in_class: bool, marker: str, is_override: bool, body_required: bool) -> Node:
+        line = self.expect_kw('def').line
+        is_private = self.accept_kw('private')
+        name = self.expect('NAME').text
+        params = self.params()
+        ret = vz()
+        if self.accept_op('->'):
+            ret = vn(self.type())
+        if not body_required:
+            if self.is_op(':'):
+                raise ParseError('interface methods cannot have bodies (D12e)', line)
+            self.expect('NEWLINE')
+            return mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker)])
+        self.expect_op(':')
+        body = self.block()
+        return mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker)])
+
+    def block(self) -> list[Node]:
+        self.expect('NEWLINE')
+        self.expect('INDENT')
+        out: list[Node] = []
+        while self.cur().kind != 'DEDENT':
+            out.append(self.statement())
+        self.adv()
+        return out
+
+    def classdef(self) -> Node:
+        line = self.expect_kw('class').line
+        name = self.expect('NAME').text
+        parent = vz()
+        if self.accept_op('('):
+            parent = vs(self.expect('NAME').text)
+            if self.is_op(','):
+                raise ParseError('a class may inherit from at most one parent class (D12b)', self.cur().line)
+            self.expect_op(')')
+        ifaces: list[Val] = []
+        if self.accept_kw('implements'):
+            ifaces.append(vs(self.expect('NAME').text))
+            while self.accept_op(','):
+                ifaces.append(vs(self.expect('NAME').text))
+        self.expect_op(':')
+        self.expect('NEWLINE')
+        self.expect('INDENT')
+        fields: list[Node] = []
+        methods: list[Node] = []
+        while self.cur().kind != 'DEDENT':
+            if self.accept_kw('pass'):
+                self.expect('NEWLINE')
+                continue
+            self.member(fields, methods)
+        self.adv()
+        return mk('ClassDef', line, [vs(name), parent, vlist(ifaces), vnodes(fields), vnodes(methods)])
+
+    def member(self, fields: list[Node], methods: list[Node]):
+        marker = ''
+        if self.is_op('@'):
+            self.adv()
+            m = self.expect('NAME')
+            if m.text != 'init' and m.text != 'add':
+                raise ParseError('unknown marker @' + m.text + ' (only @init and @add exist)', m.line)
+            marker = m.text
+            self.expect('NEWLINE')
+        is_override = self.accept_kw('override')
+        if self.is_kw('def'):
+            methods.append(self.funcdef(True, marker, is_override, True))
+            return
+        if marker != '' or is_override:
+            self.err('expected a method after the marker')
+        line = self.cur().line
+        is_private = False
+        is_const = False
+        while self.is_kw('private') or self.is_kw('const'):
+            if self.adv().text == 'private':
+                if is_const:
+                    raise ParseError('write `private const`, not `const private` (D12y)', line)
+                is_private = True
+            else:
+                is_const = True
+        nm = self.expect('NAME')
+        self.expect_op(':')
+        ty = self.type()
+        value = vz()
+        if self.accept_op('='):
+            value = vn(self.expr())
+        self.expect('NEWLINE')
+        fields.append(mk('FieldDef', line, [vs(nm.text), vn(ty), vb(is_private), vb(is_const), value]))
+
+    def interfacedef(self) -> Node:
+        line = self.expect_kw('interface').line
+        name = self.expect('NAME').text
+        parents: list[Val] = []
+        if self.accept_op('('):
+            parents.append(vs(self.expect('NAME').text))
+            while self.accept_op(','):
+                parents.append(vs(self.expect('NAME').text))
+            self.expect_op(')')
+        self.expect_op(':')
+        self.expect('NEWLINE')
+        self.expect('INDENT')
+        methods: list[Node] = []
+        while self.cur().kind != 'DEDENT':
+            if self.accept_kw('pass'):
+                self.expect('NEWLINE')
+                continue
+            methods.append(self.funcdef(True, '', False, False))
+        self.adv()
+        return mk('InterfaceDef', line, [vs(name), vlist(parents), vnodes(methods)])
+
+    # statements
+    def statement(self) -> Node:
+        t = self.cur()
+        if self.is_kw('def') or self.is_kw('class') or self.is_kw('interface'):
+            raise ParseError('declarations nested inside blocks are not decided', t.line)
+        if self.is_kw('return'):
+            self.adv()
+            rv = vz()
+            if self.cur().kind != 'NEWLINE':
+                rv = vn(self.expr())
+            self.expect('NEWLINE')
+            return mk('Return', t.line, [rv])
+        if self.is_kw('pass'):
+            self.adv()
+            self.expect('NEWLINE')
+            return mk('Pass', t.line, [])
+        if self.is_kw('break') or self.is_kw('continue'):
+            kw = self.adv().text
+            self.expect('NEWLINE')
+            if kw == 'break':
+                return mk('Break', t.line, [])
+            return mk('Continue', t.line, [])
+        if self.is_kw('raise'):
+            self.adv()
+            v = self.expr()
+            self.expect('NEWLINE')
+            return mk('Raise', t.line, [vn(v)])
+        if self.is_kw('try'):
+            return self.trystmt()
+        if self.is_kw('if'):
+            return self.ifstmt()
+        if self.is_kw('for'):
+            self.adv()
+            var = self.expect('NAME').text
+            self.expect_kw('in')
+            it = self.expr()
+            self.expect_op(':')
+            return mk('For', t.line, [vs(var), vn(it), vnodes(self.block())])
+        if self.is_kw('while'):
+            self.adv()
+            cond = self.expr()
+            self.expect_op(':')
+            return mk('While', t.line, [vn(cond), vnodes(self.block())])
+        e = self.expr()
+        if self.is_op(':') and e.kind == 'Name':
+            self.adv()
+            ty = self.type()
+            self.expect_op('=')
+            v = self.expr()
+            self.expect('NEWLINE')
+            return mk('Declare', t.line, [e.fields[0], vn(ty), vn(v)])
+        if self.is_op('='):
+            self.adv()
+            if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
+                raise ParseError('cannot assign to this expression', t.line)
+            v = self.expr()
+            self.expect('NEWLINE')
+            return mk('Assign', t.line, [vn(e), vn(v)])
+        self.expect('NEWLINE')
+        return mk('ExprStmt', t.line, [vn(e)])
+
+    def trystmt(self) -> Node:
+        line = self.adv().line
+        self.expect_op(':')
+        body = self.block()
+        handlers: list[Val] = []
+        orelse = vz()
+        final = vz()
+        while self.is_kw('catch'):
+            self.adv()
+            cls = self.expect('NAME').text
+            var = vz()
+            if self.accept_kw('as'):
+                var = vs(self.expect('NAME').text)
+            self.expect_op(':')
+            handlers.append(vtuple([vs(cls), var, vnodes(self.block())]))
+        if self.is_kw('else'):
+            if len(handlers) == 0:
+                raise ParseError('else after try needs a catch', self.cur().line)
+            self.adv()
+            self.expect_op(':')
+            orelse = vnodes(self.block())
+        if self.is_kw('finally'):
+            self.adv()
+            self.expect_op(':')
+            final = vnodes(self.block())
+        if len(handlers) == 0 and final.tag == 'z':
+            raise ParseError('try needs a catch or a finally', line)
+        return mk('Try', line, [vnodes(body), vlist(handlers), orelse, final])
+
+    def ifstmt(self) -> Node:
+        line = self.adv().line
+        branches: list[Val] = []
+        cond = self.expr()
+        self.expect_op(':')
+        branches.append(vtuple([vn(cond), vnodes(self.block())]))
+        orelse = vz()
+        while True:
+            if self.accept_kw('elif'):
+                cond = self.expr()
+                self.expect_op(':')
+                branches.append(vtuple([vn(cond), vnodes(self.block())]))
+            elif self.accept_kw('else'):
+                self.expect_op(':')
+                orelse = vnodes(self.block())
+                break
+            else:
+                break
+        return mk('If', line, [vlist(branches), orelse])
+
+    # expressions
+    def expr(self) -> Node:
+        return self.or_()
+
+    def binop(self, op: str, line: int, left: Node, right: Node) -> Node:
+        return mk('BinOp', line, [vs(op), vn(left), vn(right)])
+
+    def or_(self) -> Node:
+        e = self.xor_()
+        while self.is_kw('or'):
+            ln = self.adv().line
+            e = self.binop('or', ln, e, self.xor_())
+        return e
+
+    def xor_(self) -> Node:
+        e = self.and_()
+        while self.is_kw('xor'):
+            ln = self.adv().line
+            e = self.binop('xor', ln, e, self.and_())
+        return e
+
+    def and_(self) -> Node:
+        e = self.not_()
+        while self.is_kw('and'):
+            ln = self.adv().line
+            e = self.binop('and', ln, e, self.not_())
+        return e
+
+    def not_(self) -> Node:
+        if self.is_kw('not'):
+            ln = self.adv().line
+            return mk('UnOp', ln, [vs('not'), vn(self.not_())])
+        return self.cmp()
+
+    def is_cmp_op(self) -> bool:
+        t = self.cur()
+        return t.kind == 'OP' and t.text in ['==', '!=', '<', '<=', '>', '>=']
+
+    def cmp(self) -> Node:
+        e = self.bit_or()
+        if self.is_kw('is'):
+            t = self.adv()
+            op = 'is'
+            if self.accept_kw('not'):
+                op = 'is not'
+            return self.binop(op, t.line, e, self.bit_or())
+        if self.is_kw('in'):
+            t = self.adv()
+            return self.binop('in', t.line, e, self.bit_or())
+        if self.is_cmp_op():
+            t = self.adv()
+            e = self.binop(t.text, t.line, e, self.bit_or())
+            if self.is_cmp_op():
+                raise ParseError('chained comparisons are not decided', self.cur().line)
+        return e
+
+    def bit_or(self) -> Node:
+        e = self.bit_xor()
+        while self.is_op('|'):
+            t = self.adv()
+            e = self.binop('|', t.line, e, self.bit_xor())
+        return e
+
+    def bit_xor(self) -> Node:
+        e = self.bit_and()
+        while self.is_op('^'):
+            t = self.adv()
+            e = self.binop('^', t.line, e, self.bit_and())
+        return e
+
+    def bit_and(self) -> Node:
+        e = self.add()
+        while self.is_op('&'):
+            t = self.adv()
+            e = self.binop('&', t.line, e, self.add())
+        return e
+
+    def add(self) -> Node:
+        e = self.mul()
+        while self.is_op('+') or self.is_op('-'):
+            t = self.adv()
+            e = self.binop(t.text, t.line, e, self.mul())
+        return e
+
+    def mul(self) -> Node:
+        e = self.unary()
+        while self.is_op('*') or self.is_op('/') or self.is_op('%'):
+            t = self.adv()
+            e = self.binop(t.text, t.line, e, self.unary())
+        return e
+
+    def unary(self) -> Node:
+        if self.is_op('-'):
+            ln = self.adv().line
+            return mk('UnOp', ln, [vs('-'), vn(self.unary())])
+        return self.postfix()
+
+    def postfix(self) -> Node:
+        e = self.atom()
+        while True:
+            if self.is_op('('):
+                ln = self.adv().line
+                args = new_nodes()
+                kwargs = new_vals()
+                names = new_strs()
+                while not self.is_op(')'):
+                    if self.cur().kind == 'NAME' and self.peek(1).kind == 'OP' and self.peek(1).text == '=':
+                        kw = self.adv()
+                        self.adv()
+                        if kw.text in names:
+                            raise ParseError('keyword argument ' + kw.text + ' is given twice', kw.line)
+                        names.append(kw.text)
+                        kwargs.append(vtuple([vs(kw.text), vn(self.expr())]))
+                    else:
+                        if len(kwargs) > 0:
+                            raise ParseError('a positional argument cannot follow a keyword argument (D39a)', self.cur().line)
+                        args.append(self.expr())
+                    if not self.accept_op(','):
+                        break
+                self.expect_op(')')
+                e = mk('Call', ln, [vn(e), vnodes(args), vlist(kwargs)])
+            elif self.is_op('['):
+                ln = self.adv().line
+                lo = vz()
+                if not self.is_op(':'):
+                    lo = vn(self.expr())
+                if self.accept_op(':'):
+                    hi = vz()
+                    if not self.is_op(']'):
+                        hi = vn(self.expr())
+                    self.expect_op(']')
+                    e = mk('Slice', ln, [vn(e), lo, hi])
+                else:
+                    self.expect_op(']')
+                    e = mk('Index', ln, [vn(e), lo])
+            elif self.is_op('.'):
+                self.adv()
+                e = mk('Attr', e.line, [vn(e), vs(self.expect('NAME').text)])
+            else:
+                return e
+
+    def atom(self) -> Node:
+        t = self.cur()
+        if t.kind == 'INT':
+            self.adv()
+            return mk('IntLit', t.line, [vi(t.num)])
+        if t.kind == 'STR':
+            self.adv()
+            return mk('StrLit', t.line, [vs(t.text)])
+        if t.kind == 'KW' and (t.text == 'True' or t.text == 'False'):
+            self.adv()
+            return mk('BoolLit', t.line, [vb(t.text == 'True')])
+        if t.kind == 'NAME':
+            if is_type_with_length(t.text) and self.peek(1).kind == 'OP' and self.peek(1).text == '[':
+                ty = self.type()
+                self.expect_op('(')
+                args: list[Node] = [self.expr()]
+                self.expect_op(')')
+                return mk('TypeCall', t.line, [vn(ty), vnodes(args)])
+            self.adv()
+            return mk('Name', t.line, [vs(t.text)])
+        if self.is_op('('):
+            self.adv()
+            e = self.expr()
+            self.expect_op(')')
+            return e
+        if self.is_op('!'):
+            self.adv()
+            nm = self.expect('NAME')
+            return mk('LlvmRef', t.line, [vs(nm.text)])
+        if self.is_op('{'):
+            self.adv()
+            if self.accept_op('}'):
+                return mk('MapLit', t.line, [vlist([])])
+            first = self.expr()
+            if self.accept_op(':'):
+                pairs: list[Val] = [vtuple([vn(first), vn(self.expr())])]
+                while self.accept_op(','):
+                    if self.is_op('}'):
+                        break
+                    k = self.expr()
+                    self.expect_op(':')
+                    pairs.append(vtuple([vn(k), vn(self.expr())]))
+                self.expect_op('}')
+                return mk('MapLit', t.line, [vlist(pairs)])
+            items: list[Node] = [first]
+            while self.accept_op(','):
+                if self.is_op('}'):
+                    break
+                items.append(self.expr())
+            self.expect_op('}')
+            return mk('SetLit', t.line, [vnodes(items)])
+        if self.is_op('['):
+            self.adv()
+            elems: list[Node] = []
+            while not self.is_op(']'):
+                elems.append(self.expr())
+                if not self.accept_op(','):
+                    break
+            self.expect_op(']')
+            return mk('ListLit', t.line, [vnodes(elems)])
+        self.err('expected an expression')
+
+export def parse(src: str) -> Node:
+    p = Parser()
+    p.toks = lex(src)
+    return p.module()

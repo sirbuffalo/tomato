@@ -395,6 +395,27 @@ void *tomato_list_push(void *l, int64_t elem_size) {
     return x->data + (x->len++) * elem_size;
 }
 
+/* The items of a list[str] joined with `sep` between them. */
+void *tomato_str_join(void *sep, void *list) {
+    Str *x = sep;
+    List *l = list;
+    int64_t total = 0;
+    for (int64_t i = 0; i < l->len; i++) total += ((Str **)l->data)[i]->bytes + (i ? x->bytes : 0);
+    char *out = malloc((size_t)total + 1);
+    if (!out) tomato_fail("out of memory");
+    int64_t at = 0;
+    for (int64_t i = 0; i < l->len; i++) {
+        if (i) { memcpy(out + at, x->data, (size_t)x->bytes); at += x->bytes; }
+        Str *piece = ((Str **)l->data)[i];
+        memcpy(out + at, piece->data, (size_t)piece->bytes);
+        at += piece->bytes;
+    }
+    void *r = str_new(out, total);
+    free(out);
+    return r;
+}
+
+
 void tomato_list_free_data(void *l) { free(((List *)l)->data); }
 
 /* Is an object of class `code` an instance of the class `target` (the class itself or a descendant)? (D12az) */

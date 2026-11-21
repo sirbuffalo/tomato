@@ -1,4 +1,4 @@
-"""The Tomato lexer in selfhost/lexer.tom must produce the same tokens as the Python lexer (D38a)."""
+"""The Tomato lexer in selfhost/lexer.tom (used through selfhost/lextool.tom) must produce the same tokens as the Python lexer (D38a)."""
 import glob
 import io
 import os
@@ -25,7 +25,8 @@ def python_tokens(src):
 class SelfhostLexer(unittest.TestCase):
     def tomato_tokens(self, path):
         out = io.StringIO()
-        run_source(open(os.path.join(ROOT, "selfhost", "lexer.tom")).read(), out, entry="show", inputs=[path])
+        run_source(open(os.path.join(ROOT, "selfhost", "lextool.tom")).read(), out, entry="show", inputs=[path],
+                   search=[os.path.join(ROOT, "selfhost")])
         return out.getvalue().split("\n")[:-1]
 
     def test_same_tokens_as_the_python_lexer(self):
@@ -45,7 +46,7 @@ class SelfhostLexer(unittest.TestCase):
         if not shutil.which("clang"):
             self.skipTest("clang is not installed")
         exe = os.path.join(tempfile.mkdtemp(), "lexer")
-        subprocess.run([sys.executable, "-m", "tomato", "build", os.path.join(ROOT, "selfhost", "lexer.tom"),
+        subprocess.run([sys.executable, "-m", "tomato", "build", os.path.join(ROOT, "selfhost", "lextool.tom"),
                         "--entry", "show", "-o", exe], cwd=ROOT, check=True, capture_output=True)
         for path in sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(ROOT, "selfhost", "*.tom"))):
             with self.subTest(path=os.path.basename(path)):

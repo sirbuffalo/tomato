@@ -1,0 +1,14 @@
+# The Tomato lexer as a command: tomato run selfhost/lextool.tom show FILE
+from lexer import lex, describe
+
+@main
+def main():
+    print('usage: tomato run selfhost/lextool.tom show FILE')
+
+@show
+def show(path: str):
+    f = open(path)
+    src = f.read()
+    f.close()
+    for t in lex(src):
+        print(describe(t))

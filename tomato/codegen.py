@@ -825,6 +825,20 @@ class FuncCompiler:
             self.release(args[0][1], StrT)
             self.release(o, StrT)
             return r, lt
+        if name == "join":
+            if len(e.args) != 1:
+                self.release(o, StrT)
+                raise TomatoError("join takes a list[str]", e.line)
+            lst, lt = self.expr(e.args[0])
+            if lt != ListT(StrT):
+                self.release(o, StrT)
+                self.release(lst, lt)
+                raise TomatoError("join takes a list[str]", e.line)
+            r = self.tmp("joined")
+            self.emit("%s = call ptr @tomato_str_join(ptr %s, ptr %s)" % (r, o, lst))
+            self.release(lst, lt)
+            self.release(o, StrT)
+            return r, StrT
         self.release(o, StrT)
         raise NotCompiled("text method %s" % name, e.line)
 
@@ -2103,6 +2117,7 @@ declare i32 @tomato_str_startswith(ptr, ptr)
 declare i32 @tomato_str_endswith(ptr, ptr)
 declare ptr @tomato_str_replace(ptr, ptr, ptr)
 declare ptr @tomato_str_split(ptr, ptr, i64, i64)
+declare ptr @tomato_str_join(ptr, ptr)
 declare ptr @tomato_file_open(ptr, ptr)
 declare ptr @tomato_file_read(ptr)
 declare void @tomato_file_write(ptr, ptr)

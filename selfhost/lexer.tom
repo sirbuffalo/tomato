@@ -1,20 +1,20 @@
 # The Tomato lexer, written in Tomato (D38a). It mirrors tomato/lexer.py so the compiler can later be built from
 # this source by the Python version, and then by itself.
 #
-# tomato run selfhost/lexer.tom show FILE
+# Used by selfhost/parser.tom; the command-line tool is selfhost/lextool.tom.
 
-class LexError(Error):
+export class LexError(Error):
     @init
     def make(self, message: str, line: int):
         Error.start(self, message)
 
-class Token:
+export class Token:
     kind: str = ''       # INT, NAME, KW, STR, OP, NEWLINE, INDENT, DEDENT or EOF
     text: str = ''       # the source text, or the decoded text of a STR
     num: int = 0         # the value of an INT
     line: int = 0
 
-def make_token(kind: str, text: str, num: int, line: int) -> Token:
+export def make_token(kind: str, text: str, num: int, line: int) -> Token:
     t = Token()
     t.kind = kind
     t.text = text
@@ -107,7 +107,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             raise LexError('unexpected character ' + c, ln)
     return depth
 
-def lex(src: str) -> list[Token]:
+export def lex(src: str) -> list[Token]:
     toks: list[Token] = []
     indents: list[int] = [0]       # a stack: list methods beyond append are undecided, so `level` is its size
     level = 1
@@ -148,19 +148,7 @@ def lex(src: str) -> list[Token]:
     toks.append(make_token('EOF', '', 0, len(lines)))
     return toks
 
-def describe(t: Token) -> str:
+export def describe(t: Token) -> str:
     if t.kind == 'INT':
         return 'INT ' + str(t.num) + ' ' + str(t.line)
     return t.kind + ' ' + t.text.replace('\n', '\\n').replace('\r', '\\r') + ' ' + str(t.line)
-
-@main
-def main():
-    print('usage: tomato run selfhost/lexer.tom show FILE')
-
-@show
-def show(path: str):
-    f = open(path)
-    src = f.read()
-    f.close()
-    for t in lex(src):
-        print(describe(t))
