@@ -15,6 +15,37 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "text": """
+def greet(name: str, times: int) -> str:
+    out = ''
+    for i in range(times):
+        out = out + name + str(i) + ' '
+    return out
+
+def shout(s: str) -> str:
+    return s + '!'
+
+def first_word(s: str) -> str:
+    i = 0
+    while i < len(s):
+        if s[i] == ' ':
+            return s[0:i]
+        i = i + 1
+    return s
+
+@main
+def main():
+    g = greet('ab', 3)
+    print(g, len(g))
+    print(shout(g[0:4]), g[1], 'abc' < 'abd', 'x' == 'x', 5 > 3, 'b' != 'b')
+    words = shout('hi') + shout('yo')
+    print(words)
+    t: str = 'q'
+    t = t + t
+    print(t, str(42) + str(True))
+    print(first_word('alpha beta'), first_word('single'), 'tab\\there', "say \\"hi\\"")
+    print(first_word(greet('z', 2))[0:1] + '-' + g[2:])
+""",
     "fib_and_primes": """
 def fib(n: int) -> int:
     a = 0
@@ -123,8 +154,11 @@ class SelfhostCompiler(unittest.TestCase):
         with open(ll, "w") as f:
             f.write(ir)
         exe = os.path.join(self.dir, name)
-        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll], check=True, capture_output=True)
-        return subprocess.run([exe], check=True, capture_output=True, text=True).stdout
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+                       check=True, capture_output=True)
+        run = subprocess.run([exe], check=True, capture_output=True, text=True)
+        self.assertEqual(run.stderr, "", "the program reported a leak or an error")      # debug mode warns about leaks
+        return run.stdout
 
     def test_programs_behave_like_the_interpreter(self):
         if self.native is None:
@@ -134,13 +168,15 @@ class SelfhostCompiler(unittest.TestCase):
                 path = self.write(name, src)
                 expected = interpreted(src)
                 ir = self.ir_by_interpreter(path)
-                self.assertEqual(self.run_ir(name + "_i", ir), expected.replace("True", "1").replace("False", "0"))
+                self.assertEqual(self.run_ir(name + "_i", ir), expected)
                 # stage 1: the same compiler, built natively by the Python compiler, writes the same IR
                 self.assertEqual(self.ir_by_native(path), ir)
 
     def test_unsupported_programs_say_so(self):
         for src, text in (("class A:\n    pass\n@main\ndef main():\n    print(1)\n", "does not support ClassDef"),
-                          ("@main\ndef main():\n    print('a')\n", "does not support StrLit"),
+                          ("@main\ndef main():\n    print([1])\n", "does not support ListLit"),
+                          ("@main\ndef main():\n    x: str = 1\n", "type error"),
+                          ("@main\ndef main():\n    print('a' + 1)\n", "type error"),
                           ("def f():\n    pass\n", "no function marked @main"),
                           ("@main\ndef main():\n    x = 1 / 2\n", "operator /")):
             with self.subTest(src=src):
