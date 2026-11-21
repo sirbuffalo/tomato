@@ -1,0 +1,13 @@
+from math import is_prime
+
+@main
+def main():
+    small = ''
+    for n in range(-5, 60):
+        if is_prime(n):
+            small = small + str(n) + ' '
+    print(small)
+    print(is_prime(0), is_prime(1), is_prime(2), is_prime(-7), is_prime(561), is_prime(1105), is_prime(3215031751))
+    print(is_prime(2147483647), is_prime(2305843009213693951), is_prime(9223372036854775807))
+    print(is_prime(9223372036854775783), is_prime(18446744073709551557), is_prime(18446744073709551615))
+    print(is_prime(3825123056546413051), is_prime(4759123141), is_prime(1000000007 * 998244353))
