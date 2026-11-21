@@ -49,6 +49,9 @@ def dict_value(t: str) -> str:
 def is_class(t: str) -> bool:
     return t.startswith('@')
 
+def is_iface(t: str) -> bool:
+    return t.startswith('%')
+
 def is_optional(t: str) -> bool:
     return t.endswith('?')
 
@@ -59,7 +62,7 @@ def strip_optional(t: str) -> str:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_list(t) or is_dict(t) or is_class(t) or t == 'None' or is_optional(t)
+    return t == 'str' or is_list(t) or is_dict(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t)
 
 def elem_of(t: str) -> str:
     return t[5:len(t) - 1]
@@ -68,7 +71,7 @@ def shown(t: str) -> str:
     # a type as the user writes it
     if is_optional(t):
         return shown(strip_optional(t)) + ' | None'
-    if is_class(t):
+    if is_class(t) or is_iface(t):
         return t[1:]
     if is_list(t):
         return 'list[' + shown(elem_of(t)) + ']'
@@ -108,6 +111,14 @@ class FuncInfo:
     ret: str = ''
     ptypes: list[str] = []   # without self
     defaults: list[Node] = []     # the default values of the last parameters, in order
+    is_init: bool = False
+    is_override: bool = False
+
+class IfaceInfo:
+    name: str = ''
+    parents: list[str] = []
+    reqs: list[FuncInfo] = []     # the methods the interface itself requires (without self)
+    line: int = 0
 
 class ClassInfo:
     name: str = ''
@@ -117,6 +128,7 @@ class ClassInfo:
     defaults: list[Node] = []     # only the fields that have a default, in order
     init: str = ''                # the name of the @init method, or ''
     parent: str = ''              # the parent class, or ''
+    ifaces: list[str] = []        # the interfaces the class declares it implements
     done: bool = False            # fields and defaults are complete (inherited ones come first)
     line: int = 0
 
@@ -126,6 +138,8 @@ class Mod:
     infos: list[FuncInfo] = []
     codes: list[str] = []         # the heap types the program uses; a type's code is 2 plus its place here
     classes: list[ClassInfo] = []
+    ifaces: list[IfaceInfo] = []
+    slots: list[str] = []         # method names, one vtable slot each
 
     def code_of(self, t: str) -> int:
         k = 0
@@ -151,20 +165,86 @@ class Mod:
                 return f
         raise CompileError('unknown function ' + name, line)
 
-    def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
-        # the method as the class or its nearest parent defines it
+    def lookup_method(self, cls: str, name: str) -> list[FuncInfo]:
+        # the method as the class or its nearest parent defines it: a list of one, or none
+        found: list[FuncInfo] = []
         for f in self.infos:
             if f.name == name and f.owner == cls:
-                return f
-        c = self.find_class(cls, line)
+                found.append(f)
+                return found
+        c = self.find_class(cls, 0)
         if c.parent != '':
-            return self.find_method(c.parent, name, line)
-        raise CompileError(cls + ' has no method ' + name, line)
+            return self.lookup_method(c.parent, name)
+        return found
+
+    def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
+        found = self.lookup_method(cls, name)
+        if len(found) == 0:
+            raise CompileError(cls + ' has no method ' + name, line)
+        return found[0]
+
+    def has_iface(self, name: str) -> bool:
+        for i in self.ifaces:
+            if i.name == name:
+                return True
+        return False
+
+    def find_iface(self, name: str, line: int) -> IfaceInfo:
+        for i in self.ifaces:
+            if i.name == name:
+                return i
+        raise CompileError('unknown interface ' + name, line)
+
+    def iface_closure(self, name: str, out: list[str]):
+        # the interface and every interface it extends
+        if name in out:
+            return
+        out.append(name)
+        for p in self.find_iface(name, 0).parents:
+            self.iface_closure(p, out)
+
+    def class_ifaces(self, cls: str) -> list[str]:
+        # every interface a class satisfies: its own, its parents', and what those extend
+        out = new_strs()
+        c = self.find_class(cls, 0)
+        for i in c.ifaces:
+            self.iface_closure(i, out)
+        if c.parent != '':
+            for i in self.class_ifaces(c.parent):
+                self.iface_closure(i, out)
+        return out
+
+    def requirement(self, iface: str, name: str) -> list[FuncInfo]:
+        # the method an interface (or one it extends) requires: a list of one, or none
+        found: list[FuncInfo] = []
+        closure = new_strs()
+        self.iface_closure(iface, closure)
+        for i in closure:
+            for r in self.find_iface(i, 0).reqs:
+                if r.name == name and len(found) == 0:
+                    found.append(r)
+        return found
+
+    def slot_of(self, name: str) -> int:
+        k = 0
+        for n in self.slots:
+            if n == name:
+                return k
+            k = k + 1
+        raise CompileError('internal error: no method table slot for ' + name, 0)
 
     def assignable(self, a: str, b: str) -> bool:
         # may a value of type a be used where b is wanted (no conversion needed)?
         if a == b or self.subclass(a, b):
             return True
+        if is_iface(b):
+            if is_class(a) and self.has_class(a[1:]):
+                return b[1:] in self.class_ifaces(a[1:])
+            if is_iface(a):
+                closure = new_strs()
+                self.iface_closure(a[1:], closure)
+                return b[1:] in closure
+            return False
         if is_optional(b):
             return a == 'None' or self.assignable(a, strip_optional(b))
         return False
@@ -216,7 +296,7 @@ class Mod:
             elif members[1].fields[0].text != 'None':
                 return ''
             wrapped = self.type_name(node_val(other))
-            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_class(wrapped)):
+            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_class(wrapped) or is_iface(wrapped)):
                 return ''
             return wrapped + '?'
         if name == 'dict' and t.fields[2].tag == 'n' and t.fields[3].tag == 'n':
@@ -237,6 +317,8 @@ class Mod:
             return name
         if self.has_class(name):
             return '@' + name
+        if self.has_iface(name):
+            return '%' + name
         return ''
 
 def escape_ir_char(c: str, line: int) -> str:
@@ -975,6 +1057,24 @@ class Gen:
             self.release(v)
         return ex(r, '@' + c.name)
 
+    def dispatch(self, obj: Ex, name: str) -> str:
+        # a virtual lookup: the object's type code picks a method table, the method name picks the slot
+        tp = self.tmp('tp')
+        self.emit(tp + ' = getelementptr { i64, i64 }, ptr ' + obj.reg + ', i32 0, i32 1')
+        raw = self.tmp('rawcode')
+        self.emit(raw + ' = load i64, ptr ' + tp)
+        code = self.tmp('code')
+        self.emit(code + ' = and i64 ' + raw + ', 4294967295')
+        vts = self.tmp('vts')
+        self.emit(vts + ' = getelementptr ptr, ptr @tomato_vtables, i64 ' + code)
+        vt = self.tmp('vt')
+        self.emit(vt + ' = load ptr, ptr ' + vts)
+        fp = self.tmp('fp')
+        self.emit(fp + ' = getelementptr ptr, ptr ' + vt + ', i64 ' + str(self.mod.slot_of(name)))
+        f = self.tmp('f')
+        self.emit(f + ' = load ptr, ptr ' + fp)
+        return f
+
     def qualified_call(self, n: Node, f: Node, cls: str) -> Ex:
         # Class.method(self, args): the parent's version of a method, called on an object we already have (D12ao)
         info = self.mod.find_method(cls, f.fields[1].text, n.line)
@@ -1010,9 +1110,14 @@ class Gen:
             return self.text_method(obj, name, args, n.line)
         if obj.ty == 'File':
             return self.file_method(obj, name, args, n.line)
+        if is_iface(obj.ty):
+            req = self.mod.requirement(obj.ty[1:], name)
+            if len(req) == 0:
+                raise CompileError('interface ' + obj.ty[1:] + ' has no method ' + name, n.line)
+            return self.call_function(req[0], self.dispatch(obj, name), obj, args, n.line)
         if is_class(obj.ty):
             info = self.mod.find_method(obj.ty[1:], name, n.line)
-            return self.call_function(info, '@tomato.m.' + str(self.mod.code_of('@' + info.owner)) + '.' + name, obj, args, n.line)
+            return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
         raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + shown(obj.ty) + ' yet', n.line)
 
     def text_args(self, obj: Ex, name: str, args: list[Node], count: int, line: int) -> list[Ex]:
@@ -1682,6 +1787,30 @@ def class_types(mod: Mod) -> str:
         t = t + '%class.' + str(mod.code_of('@' + c.name)) + ' = type { ' + ', '.join(parts) + ' }\n'
     return t
 
+def vtables(mod: Mod) -> str:
+    # one method table per class (a slot per method name), and the table of tables indexed by type code
+    n = len(mod.codes) + 2
+    heads = new_strs()
+    for k in range(n):
+        heads.append('ptr null')
+    text = ''
+    k = 0
+    for code in mod.codes:
+        slot = k + 2
+        if is_class(code) and len(mod.slots) > 0:
+            entries = new_strs()
+            for name in mod.slots:
+                found = mod.lookup_method(code[1:], name)
+                if len(found) > 0:
+                    entries.append('ptr ' + function_symbol(mod, found[0]))
+                else:
+                    entries.append('ptr null')
+            text = text + '@tomato.vt.' + str(slot) + ' = constant [' + str(len(entries)) + ' x ptr] [' + ', '.join(entries) + ']\n'
+            heads[slot] = 'ptr @tomato.vt.' + str(slot)
+        k = k + 1
+    text = text + '@tomato_vtables = constant [' + str(n) + ' x ptr] [' + ', '.join(heads) + ']\n'
+    return text
+
 def int_of_bool(b: bool) -> int:
     if b:
         return 1
@@ -1855,6 +1984,8 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info = FuncInfo()
     info.name = item.fields[0].text
     info.owner = owner
+    info.is_override = item.fields[5].flag
+    info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
     if item.fields[2].tag != 'z':
         info.ret = mod.type_name(item.fields[2])
         if info.ret == '':
@@ -1871,6 +2002,51 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
             raise CompileError('the Tomato compiler only takes int, bool, str, list and class parameters yet', p.line)
         info.ptypes.append(pt)
     return info
+
+def new_infos() -> list[FuncInfo]:
+    return []
+
+def same_signature(a: FuncInfo, b: FuncInfo) -> bool:
+    if a.ret != b.ret or len(a.ptypes) != len(b.ptypes):
+        return False
+    k = 0
+    for t in a.ptypes:
+        if t != b.ptypes[k]:
+            return False
+        k = k + 1
+    return True
+
+def check_classes(mod: Mod):
+    # overrides name a parent method of the same types, and a class has every method its interfaces require (D12g, D12bg)
+    for f in mod.infos:
+        if f.owner != '' and not f.is_init:
+            c = mod.find_class(f.owner, 0)
+            inherited = new_infos()
+            if c.parent != '':
+                inherited = mod.lookup_method(c.parent, f.name)
+            if len(inherited) > 0 and not f.is_override:
+                raise CompileError(f.owner + '.' + f.name + ' replaces a parent method: write `override def` (D12)', c.line)
+            if len(inherited) == 0 and f.is_override:
+                raise CompileError(f.owner + '.' + f.name + ' is marked override but the parent has no such method', c.line)
+            if len(inherited) > 0 and not same_signature(f, inherited[0]):
+                raise CompileError(f.owner + '.' + f.name + ' does not match the types of the method it overrides', c.line)
+            if not (f.name in mod.slots):
+                mod.slots.append(f.name)
+    for ifc in mod.ifaces:
+        for r in ifc.reqs:
+            if not (r.name in mod.slots):
+                mod.slots.append(r.name)
+    for c in mod.classes:
+        for iname in mod.class_ifaces(c.name):
+            closure = new_strs()
+            mod.iface_closure(iname, closure)
+            for j in closure:
+                for r in mod.find_iface(j, 0).reqs:
+                    found = mod.lookup_method(c.name, r.name)
+                    if len(found) == 0:
+                        raise CompileError('class ' + c.name + ' lacks method ' + r.name + ' required by ' + j, c.line)
+                    if not same_signature(found[0], r):
+                        raise CompileError(c.name + '.' + r.name + ' does not match ' + j + "'s types exactly", c.line)
 
 def builtin_source() -> str:
     # the names every program can use without importing them (D22a): the same text as tomato/std/builtin.tom
@@ -1952,17 +2128,39 @@ export def compile_module(src: str, dir: str, entry_name: str) -> str:
         names.append(b.fields[0].text)
     user = load_items(dir, src, items, loaded, names)
     for item in items:
+        if item.kind == 'InterfaceDef':
+            ifc = IfaceInfo()
+            ifc.name = item.fields[0].text
+            ifc.line = item.line
+            for pv in item.fields[1].items:
+                ifc.parents.append(pv.text)
+            mod.ifaces.append(ifc)
+    for item in items:
         if item.kind == 'ClassDef':
-            if len(item.fields[2].items) > 0:
-                raise CompileError('the Tomato compiler does not support interfaces yet', item.line)
             c = ClassInfo()
             c.name = item.fields[0].text
             c.line = item.line
             if item.fields[1].tag == 's':
                 c.parent = item.fields[1].text
+            for iv in item.fields[2].items:
+                if not mod.has_iface(iv.text):
+                    raise CompileError('unknown interface ' + iv.text, item.line)
+                c.ifaces.append(iv.text)
             mod.classes.append(c)
+    for item in items:
+        if item.kind == 'Implements':
+            if not mod.has_class(item.fields[0].text):
+                raise CompileError('unknown class ' + item.fields[0].text, item.line)
+            if not mod.has_iface(item.fields[1].text):
+                raise CompileError('unknown interface ' + item.fields[1].text, item.line)
+            mod.find_class(item.fields[0].text, item.line).ifaces.append(item.fields[1].text)
     for c in mod.classes:
         resolve_class(mod, items, c.name)
+    for item in items:
+        if item.kind == 'InterfaceDef':
+            target = mod.find_iface(item.fields[0].text, item.line)
+            for m in val_nodes(item.fields[2]):
+                target.reqs.append(function_info(m, mod, 'self'))
     funcs: list[Node] = []
     entry = ''
     for item in items:
@@ -1973,15 +2171,16 @@ export def compile_module(src: str, dir: str, entry_name: str) -> str:
         elif item.kind == 'ClassDef':
             c = mod.find_class(item.fields[0].text, item.line)
             for m in val_nodes(item.fields[4]):
-                if m.fields[5].flag:
-                    raise CompileError('the Tomato compiler does not support override yet', m.line)
                 info = function_info(m, mod, c.name)
                 mod.infos.append(info)
                 funcs.append(m)
                 if m.fields[6].tag == 's' and m.fields[6].text == 'init':
                     c.init = info.name
+        elif item.kind == 'InterfaceDef' or item.kind == 'Implements':
+            pass
         else:
             raise CompileError('the Tomato compiler does not support ' + item.kind + ' declarations yet', item.line)
+    check_classes(mod)
     for item in user:
         if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text == 'entry:' + entry_name:
             entry = item.fields[0].text
@@ -1998,7 +2197,7 @@ export def compile_module(src: str, dir: str, entry_name: str) -> str:
         bodies = bodies + compile_constructor(c, mod) + '\n'
     wrapper = entry_wrapper(mod.find(entry, 1), mod)
     out = '; written by the Tomato compiler in Tomato (selfhost/compiler.tom)\n'
-    out = out + declarations() + class_types(mod) + runtime_tables(mod)
+    out = out + declarations() + class_types(mod) + runtime_tables(mod) + vtables(mod)
     j = 0
     for s in mod.strings:
         out = out + string_global(j, s) + '\n'

@@ -16,6 +16,63 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "interfaces_and_override": """interface Shape:
+    def area(self) -> int
+    def name(self) -> str
+
+interface Solid(Shape):
+    def volume(self) -> int
+
+class Square:
+    side: int = 2
+
+    def area(self) -> int:
+        return self.side * self.side
+
+    def name(self) -> str:
+        return 'square'
+
+class Cube(Square):
+    def volume(self) -> int:
+        return self.side * self.area()
+
+    override def name(self) -> str:
+        return 'cube'
+
+class Rect implements Shape:
+    w: int = 2
+    h: int = 3
+
+    def area(self) -> int:
+        return self.w * self.h
+
+    def name(self) -> str:
+        return 'rect'
+
+Square implements Shape
+Cube implements Solid
+
+def describe(s: Shape) -> str:
+    return s.name() + str(s.area())
+
+def volumes(xs: list[Solid]) -> int:
+    t = 0
+    for x in xs:
+        t = t + x.volume()
+    return t
+
+def show(sq: Square) -> str:
+    return sq.name()
+
+@main
+def main():
+    shapes: list[Shape] = [Square(), Rect(), Cube()]
+    for s in shapes:
+        print(describe(s))
+    c = Cube()
+    c.side = 3
+    print(c.volume(), show(c), show(Square()), volumes([c, Cube()]))
+""",
     "floats": """def half(n: int) -> float:
     return n / 2
 
@@ -568,13 +625,15 @@ def main():
         self.assertIn("uncaught error RuntimeError: zero", run.stderr)
 
     def test_unsupported_programs_say_so(self):
-        for src, text in (("interface I:\n    def f(self)\n@main\ndef main():\n    print(1)\n", "does not support InterfaceDef"),
+        for src, text in (("@main\ndef main():\n    x = {1, 2}\n", "does not support SetLit"),
                           ("@main\ndef main():\n    print([1])\n", "does not print lists"),
                           ("@main\ndef main():\n    xs: list[int] = []\n    xs.append('a')\n", "type error"),
                           ("@main\ndef main():\n    xs = []\n", "empty list needs a declaration"),
                           ("@main\ndef main():\n    x: str = 1\n", "type error"),
                           ("class A:\n    x: int = 0\n@main\ndef main():\n    a = A()\n    a.y = 1\n", "has no field y"),
-                          ("class A:\n    def f(self):\n        pass\nclass B(A):\n    override def f(self):\n        pass\n@main\ndef main():\n    pass\n", "does not support override"),
+                          ("class A:\n    def f(self):\n        pass\nclass B(A):\n    def f(self):\n        pass\n@main\ndef main():\n    pass\n", "write `override def`"),
+                          ("class A:\n    def f(self):\n        pass\nclass B(A):\n    override def g(self):\n        pass\n@main\ndef main():\n    pass\n", "the parent has no such method"),
+                          ("interface I:\n    def f(self) -> int\nclass A implements I:\n    pass\n@main\ndef main():\n    pass\n", "lacks method f required by I"),
                           ("@main\ndef main():\n    print('a' + 1)\n", "type error"),
                           ("def f():\n    pass\n", "no function marked @main"),
                           ("@main\ndef main():\n    x = 1 / 2\n    print(x + x)\n", "type error")):
