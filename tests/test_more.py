@@ -4,7 +4,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
 from test_tomato import fails, run, run_raw  # noqa: E402
 import os  # noqa: E402
 from tomato.errors import NotDecided, TomatoError  # noqa: E402
@@ -35,8 +36,8 @@ class Division(unittest.TestCase):
     def test_division_of_fixed(self):
         self.assertEqual(run("a: int[length=8] = 7\nb: int[length=8] = 2\nprint(a / b)"), "3.5\n")
 
-    def test_float_arithmetic_not_decided(self):
-        fails(self, "x = 1 / 2\nprint(x + x)", "not yet decided", NotDecided)
+    def test_float_arithmetic(self):
+        self.assertEqual(run("x = 1 / 2\nprint(x + x)"), "1.0\n")
 
     def test_modulo_signs(self):
         src = "print(7 % 3)\nprint(-7 % 3)\nprint(7 % -3)\nprint(-7 % -3)\nprint(0 % 5)"
@@ -46,8 +47,8 @@ class Division(unittest.TestCase):
         self.assertEqual(run("a: int[length=8] = -7\nb: int[length=8] = 3\nc: int[length=8] = a % b\nprint(c)"), "2\n")
         self.assertEqual(run("a: int[length=8] = 100\nb: int[length=16] = 7\nc: int[length=16] = a % b\nprint(c)"), "2\n")
 
-    def test_modulo_float_not_decided(self):
-        fails(self, "x = 5 / 2\nprint(x % 2)", "not yet decided", NotDecided)
+    def test_modulo_float(self):
+        self.assertEqual(run("x = 5 / 2\nprint(x % 2)"), "0.5\n")
 
     def test_modulo(self):
         self.assertEqual(run("print(17 % 5)"), "2\n")
@@ -399,7 +400,7 @@ class Syntax(unittest.TestCase):
         self.assertEqual(run("print(True and not False)\nprint(False or False)"), "True\nFalse\n")
 
     def test_short_circuit(self):
-        self.assertEqual(run("def boom() -> bool:\n    return 1 / 0 > 1\nprint(False and boom())\nprint(True or boom())"), "False\nTrue\n")
+        self.assertEqual(run("def boom() -> bool:\n    z: int = 0\n    return 1 / z > 1\nprint(False and boom())\nprint(True or boom())"), "False\nTrue\n")
 
     def test_condition_must_be_bool(self):
         fails(self, "if 1:\n    pass\n", "must be a bool")
@@ -563,10 +564,9 @@ class TypeErrors(unittest.TestCase):
 
     def test_same_type_undecided_stays_undecided(self):
         fails(self, "print('a' - 'b')", "not yet decided", NotDecided)
-        fails(self, "x = 1 / 2\nprint(x + x)", "not yet decided", NotDecided)
 
-    def test_mixed_numeric_stays_undecided(self):
-        fails(self, "x = 1 / 2\nprint(x + 1)", "not yet decided", NotDecided)
+    def test_mixed_numeric(self):
+        self.assertEqual(run("x = 1 / 2\nprint(x + 1)"), "1.5\n")
         fails(self, "print(rational(1, 2) + 1)", "not yet decided", NotDecided)
 
     def test_different_classes_compare_by_identity(self):
@@ -1181,10 +1181,10 @@ class Errors(unittest.TestCase):
         self.assertEqual(run(src), "fin\n0\n")
 
     def test_runtime_failures_are_catchable(self):
-        for expr, text in (("1 / 0", "division by zero"), ("1 % 0", "modulo by zero"), ("[1][5]", "out of range"),
+        for expr, text in (("1 / z", "division by zero"), ("1 % z", "modulo by zero"), ("[1][5]", "out of range"),
                            ("{1: 2}[3]", "not found"), ("int('x')", "cannot convert"),
-                           ("'abc'[9]", "out of range"), ("rational(1, 0)", "denominator zero")):
-            src = "try:\n    print(%s)\ncatch RuntimeError as e:\n    print('caught', e.message)" % expr
+                           ("'abc'[9]", "out of range"), ("rational(1, z)", "denominator zero")):
+            src = "z: int = 0\ntry:\n    print(%s)\ncatch RuntimeError as e:\n    print('caught', e.message)" % expr
             out = run(src)
             self.assertTrue(out.startswith("caught") and text in out, (expr, out))
 
@@ -1636,9 +1636,11 @@ class EntryPoints(unittest.TestCase):
         run_source("@main\ndef a():\n    print(1)\n@other\ndef b():\n    print(2)\n", out, entry="other")
         self.assertEqual(out.getvalue(), "2\n")
 
-    def test_top_level_code_rejected(self):
-        self.raw_fails("print(1)\n@main\ndef m():\n    pass\n", "top-level code is not allowed")
-        self.raw_fails("x = 1\n@main\ndef m():\n    pass\n", "top-level code is not allowed")
+    def test_top_level_code_is_the_program(self):
+        self.assertEqual(run_raw("x = 2\nprint(x * 3)\n"), "6\n")
+
+    def test_main_wins_over_top_level_code(self):
+        self.assertEqual(run_raw("print('top')\n@main\ndef m():\n    print('main')\n"), "main\n")
 
     def test_no_entry_point(self):
         self.raw_fails("def f():\n    pass\n", "no function marked @main")

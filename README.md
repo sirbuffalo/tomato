@@ -1,17 +1,21 @@
 # Tomato
 
-Tomato is a language design in progress, directed by Davis McDowell.
+Tomato is a statically typed, reference-counted, Python-like language compiled through LLVM, designed by Davis McDowell. Its compiler is written in Tomato and compiles itself.
 
-The confirmed brief is an easy-to-use, typed, garbage-collected, compiled language with Python-like syntax, with earlier direction placing it somewhere between Python and Go. Those reference languages do not supply unstated rules.
+- **Versions:** the compiler written in Tomato is v0.x (the `tomato` command); the Python implementation is v-1.x (`tomato-py`). The number is in `VERSION`.
+- **Install:** `./install-native.sh` builds the compiler from the checked-in IR with clang alone and installs `tomato` (`run`, `build`, `compile`, `repl`, `update`, `version`). `./install.sh` installs the Python command as `tomato-py` (which also has `bundle`, `explain` and the repl).
 
-Davis has selected LLVM for compilation and identified web servers, math, and web apps partly written in Tomato and compiled to WebAssembly as intended uses. Detailed target and runtime choices remain open.
+## Layout
 
-Start with the [living specification](docs/specification.md), consult the [decision inventory](docs/decision-inventory.md), and follow the [decision log](docs/decisions.md).
-
-Every accepted language decision is written in Markdown:
-
-- [Living specification](docs/specification.md): all confirmed requirements and accepted rules, with examples and unresolved details.
-- [Decision log](docs/decisions.md): acceptance evidence, alternatives, scope, and tradeoffs for every decision.
-- [Decision inventory](docs/decision-inventory.md): accepted choices and the remaining coverage map.
-
-The design remains incomplete. `tomato/` holds a prototype parser and interpreter in Python (`bin/tomato run examples/primes.tom`; `bin/tomato run FILE ENTRY INPUTS...` runs another entry point), which implements only decided rules; its placeholders are listed in [PROVISIONAL.md](tomato/PROVISIONAL.md). With llvmlite installed, `bin/tomato run FILE --llvm file.ll` lets `!name(args)` call LLVM functions. `web/` is a local browser playground that runs it through Pyodide (see [web/README.md](web/README.md)). `bin/tomato compile FILE -o OUT.ll` compiles a core subset to LLVM IR, `bin/tomato build FILE -o OUT` links it into a native program with clang, `bin/tomato bundle` writes an executable holding the interpreter, `bin/tomato explain CODE FILE` decodes an error code, and `./install.sh` installs the `tomato` command. The compiler is a prototype in Python; the real one is to be written in Tomato.
+| Folder | What it holds |
+| --- | --- |
+| `docs/` | the [specification](docs/specification.md), [decision log](docs/decisions.md), [decision inventory](docs/decision-inventory.md) and [open questions](docs/open-questions.md) |
+| `compiler/src/` | the lexer, parser and compiler, written in Tomato |
+| `compiler/bootstrap/` | `tomatoc.ll`, the compiler's own IR, so a machine with only clang can build it; `refresh.sh` regenerates it |
+| `python/` | the Python implementation: the interpreter, the static check pass, the LLVM compiler, the repl (`python/bin/tomato`); its placeholders are in [PROVISIONAL.md](python/tomato/PROVISIONAL.md) |
+| `native/` | the `tomato` command script |
+| `server/` | the compile server behind the website's Run and Repl page |
+| `site/` | the website for tomato.davismcd.com (`site/build.sh` assembles it) |
+| `release/` | `build.sh` builds the release archive and `latest.json` that `tomato update` reads |
+| `examples/` | sample programs |
+| `tests/` | the test suite: `python3 -m unittest discover -s tests` (needs llvmlite for `!x` tests and clang) |

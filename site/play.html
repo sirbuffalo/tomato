@@ -1,0 +1,86 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run Tomato</title><link rel="stylesheet" href="style.css"></head>
+<body><header id="site-header"></header><main>
+<h1>Run &amp; Repl</h1>
+<p class="lead">Programs run on a compile server with a 5 second limit. <span id="where" class="status"></span></p>
+<div class="bar"><button id="tab-run" class="primary">Run a program</button><button id="tab-repl">Repl</button></div>
+
+<section id="run-pane">
+  <div class="bar"><select id="examples" aria-label="Example"></select><button id="run" class="primary">Compile and run</button><span id="status" class="status"></span></div>
+  <textarea id="src" spellcheck="false" aria-label="Program">print("hello", 6 * 7)</textarea>
+  <h3>Output</h3><pre id="out"></pre><pre id="err" class="err"></pre>
+</section>
+
+<section id="repl-pane" hidden>
+  <p class="status">Each line you enter is added to your session and the whole session is re-run on the server; only the new output is shown, so a line that prints is not shown twice. A bare expression shows its value. Type <code>:reset</code> to start over, <code>:program</code> to see the session.</p>
+  <div id="repl-log" aria-live="polite"></div>
+  <form class="repl-line" id="repl-form"><input id="repl-in" autocomplete="off" spellcheck="false" aria-label="Tomato input" placeholder="x = 3"><button class="primary">Enter</button></form>
+</section>
+</main><script src="config.js"></script><script src="site.js"></script>
+<script>
+var API = (window.TOMATO_API || "").replace(/\/$/, "");
+document.getElementById("where").textContent = API ? "Server: " + API : "Server: this site";
+function $(id) { return document.getElementById(id); }
+function runOnServer(source) {
+  return fetch(API + "/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: source, entry: "main", inputs: [] }) })
+    .then(function (r) { return r.json(); });
+}
+$("tab-run").onclick = function () { $("run-pane").hidden = false; $("repl-pane").hidden = true; };
+$("tab-repl").onclick = function () { $("run-pane").hidden = true; $("repl-pane").hidden = false; $("repl-in").focus(); };
+
+// ---- run a program
+fetch(API + "/examples").then(function (r) { return r.json(); }).then(function (ex) {
+  var sel = $("examples"); sel.innerHTML = "<option value=''>Examples…</option>";
+  Object.keys(ex).forEach(function (k) { var o = document.createElement("option"); o.value = k; o.textContent = k; sel.appendChild(o); });
+  sel.onchange = function () { if (ex[sel.value]) $("src").value = ex[sel.value]; };
+}).catch(function () { $("examples").hidden = true; });
+$("run").onclick = function () {
+  $("run").disabled = true; $("status").textContent = "Running…"; $("out").textContent = ""; $("err").textContent = "";
+  runOnServer($("src").value).then(function (d) {
+    if (!d.ok) { $("err").textContent = d.error || "failed"; $("status").textContent = "Failed"; return; }
+    $("out").textContent = d.stdout; var e = d.stderr || "";
+    if (d.timed_out) e += "\nStopped: ran longer than 5 seconds.";
+    if (d.stopped === "memory") e += "\nStopped: too much memory.";
+    if (d.stopped === "output") e += "\nStopped: too much output.";
+    $("err").textContent = e.trim(); $("status").textContent = "Done in " + d.ms + " ms";
+  }).catch(function (e) { $("err").textContent = "Could not reach the server: " + e; $("status").textContent = ""; })
+    .then(function () { $("run").disabled = false; });
+};
+
+// ---- repl: definitions and statements accumulate; the session is re-run and only new output is shown
+var defs = [], stmts = [], shown = "";
+function log(cls, text) { var d = document.createElement("div"); d.className = cls; d.textContent = text; $("repl-log").appendChild(d); $("repl-log").scrollTop = 1e9; }
+function program(extra) { return defs.concat(stmts, extra || []).join("\n") + "\n"; }
+function isDef(t) { return /^(def|class|interface|from|import|@|export)\b|^!/.test(t) || /^\w+ implements /.test(t); }
+function isBlock(t) { return /:\s*$/.test(t.split("\n")[0]); }
+function submit(text) {
+  log("in", ">>> " + text.split("\n").join("\n... "));
+  if (text === ":reset") { defs = []; stmts = []; shown = ""; log("out", "session cleared"); return Promise.resolve(); }
+  if (text === ":program") { log("out", program()); return Promise.resolve(); }
+  if (text[0] === ":") { log("e", "commands here: :reset, :program"); return Promise.resolve(); }
+  var asExpr = !isDef(text) && !isBlock(text) && !/^\w+(\s*:\s*[\w\[\], |]+)?\s*[-+*\/]?=[^=]/.test(text) && !/^(print|for|while|if|try|raise|return|pass|break|continue)\b/.test(text);
+  var attempt = asExpr ? ["print(" + text + ")", text] : [text];
+  function tryOne(k) {
+    var t = attempt[k], isD = isDef(t);
+    var src = isD ? program().replace(/\n$/, "") + "\n" + t + "\n" : program(t);
+    return runOnServer(src).then(function (d) {
+      if (!d.ok) { if (k + 1 < attempt.length) return tryOne(k + 1); log("e", d.error || "failed"); return; }
+      var out = d.stdout, fresh = out.indexOf(shown) === 0 ? out.slice(shown.length) : out;
+      if (d.exit !== 0) { log("e", (d.stderr || "error").trim()); return; }
+      (isD ? defs : stmts).push(t); shown = out;
+      if (fresh) log("out", fresh.replace(/\n$/, ""));
+    });
+  }
+  return tryOne(0);
+}
+var buffer = [];
+$("repl-form").onsubmit = function (ev) {
+  ev.preventDefault();
+  var line = $("repl-in").value; $("repl-in").value = "";
+  if (buffer.length) { if (line.trim() === "") { var text = buffer.join("\n"); buffer = []; $("repl-in").placeholder = "x = 3"; submit(text); } else { buffer.push(line); log("in", "... " + line); } return; }
+  if (!line.trim()) return;
+  if (isBlock(line) || line[0] === "@") { buffer = [line]; log("in", ">>> " + line); $("repl-in").placeholder = "… (empty line to finish)"; return; }
+  submit(line);
+};
+log("out", "Tomato repl. Enter a statement, expression, or a def/class (finish blocks with an empty line).");
+</script></body></html>

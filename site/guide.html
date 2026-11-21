@@ -1,0 +1,65 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tomato guide</title><link rel="stylesheet" href="style.css"></head>
+<body><header id="site-header"></header><main class="doc">
+<h1>Guide</h1>
+<p class="lead">A tour of the language as it runs today. Every example runs on this site's Run page. The <a href="docs.html">reference</a> lists every decision behind these rules.</p>
+<h2>Programs</h2>
+<p>A file's top-level statements are the program, like a script. If the file has a function marked <code>@main</code>, only that function runs. Functions also take other entry names, such as <code>@prime</code>; <code>tomato run FILE prime 17</code> runs it with the input <code>17</code>, read as the most restrictive type its parameter allows.</p>
+<pre><code>def greet(name: str, times: int = 2) -> str:
+    out = ""
+    for i in range(times):
+        out = out + "hi " + name + "; "
+    return out
+
+x = 5
+y: float = 2.5
+print(greet("tom"), x * y, 7 // 2, 2 ** 10, 10 / 4, float(x) / 2)</code></pre>
+<h2>Types</h2>
+<ul>
+<li><code>int</code> grows without limit. <code>int[length=8]</code> and <code>uint[length=8]</code> have a fixed width, stop on overflow, and need an explicit conversion from <code>int</code>: <code>uint[length=8](x)</code>.</li>
+<li><code>float</code> is a 64-bit IEEE double. <code>/</code> always gives a float; <code>//</code> rounds down; <code>**</code> on whole numbers gives a whole number (a negative exponent is an error, write <code>2.0 ** -2</code>). Literals: <code>1.5</code>, <code>2e3</code>.</li>
+<li><code>rational</code> is exact: <code>rational(1, 3)</code>. <code>bool</code>, <code>str</code>, <code>list[T]</code>, <code>dict[str, V]</code>, <code>set[T]</code>, and <code>T | None</code> for optional values.</li>
+<li>Types are checked before the program runs, including in code that never executes. Constant errors such as <code>5 / 0</code> or <code>uint[length=8] = 300</code> are compile errors wherever they are written.</li>
+</ul>
+<h2>Classes and interfaces</h2>
+<pre><code>interface Shape:
+    def area(self) -> int
+
+class Rect implements Shape:
+    w: int
+    h: int
+    @init
+    def make(self, w: int, h: int):
+        self.w = w
+        self.h = h
+    def area(self) -> int:
+        return self.w * self.h
+
+shapes: list[Shape] = [Rect(2, 3), Rect(4, 5)]
+total = 0
+for s in shapes:
+    total = total + s.area()
+print(total)</code></pre>
+<p>Single inheritance with <code>override</code>, <code>private</code> and <code>const</code> fields, and interfaces with dynamic dispatch. Memory is reference counted and the runtime frees cycles.</p>
+<h2>Errors</h2>
+<pre><code>try:
+    v = int("x")
+catch RuntimeError as e:
+    print("caught", e.message)
+n: uint[length=8] = 250
+print(n + 5)</code></pre>
+<p>Runtime failures (overflow, division by zero, a bad index) raise a catchable <code>RuntimeError</code>; a missing file raises <code>IOError</code>. Type errors are never catchable.</p>
+<h2>Modules and LLVM</h2>
+<p><code>from util import f</code> imports a module's <code>export</code>ed names. <code>!name(a: T) -> R</code> declares a function from LLVM IR you supply with <code>--llvm</code>, and <code>!name(x)</code> calls it.</p>
+<h2>Commands</h2>
+<table>
+<tr><td><code>tomato run FILE [ENTRY [INPUTS…]]</code></td><td>compile, link and run</td></tr>
+<tr><td><code>tomato build FILE [-o OUT]</code></td><td>write a native program</td></tr>
+<tr><td><code>tomato compile FILE</code></td><td>print the LLVM IR</td></tr>
+<tr><td><code>tomato repl [FILE…]</code></td><td>interactive prompt (uses <code>tomato-py</code>); variables and definitions stay set; <code>:compile</code> and <code>:run</code> compile the session</td></tr>
+<tr><td><code>tomato update</code></td><td>install the newest release</td></tr>
+<tr><td><code>tomato version</code></td><td>print the version</td></tr>
+</table>
+<h2>Not yet</h2>
+<p>Tuples as values, <code>*args</code>/<code>**kwargs</code>, keyword arguments, unions and printing collections work only in the interpreter. The compiler written in Tomato does not yet have float literals, <code>//</code>, <code>**</code> or top-level code. See <a href="docs.html#open">open questions</a>.</p>
+</main><script src="config.js"></script><script src="site.js"></script></body></html>

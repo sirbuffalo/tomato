@@ -1,0 +1,16 @@
+# The Tomato compiler (slice) as a command: tomato run compiler/src/ctool.tom compile FILE   (prints LLVM IR)
+from compiler import compile_module
+
+@main
+def main():
+    print('usage: tomato run compiler/src/ctool.tom compile FILE')
+
+@compile
+def compile(path: str, entry: str = 'main', std: str = 'python/tomato/std/'):
+    f = open(path)
+    src = f.read()
+    f.close()
+    i = len(path)
+    while i > 0 and path[i - 1] != '/':
+        i = i - 1
+    print(compile_module(src, path[0:i], std, entry))

@@ -53,9 +53,34 @@ class NativeCli(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("CompileError on line 3: type error", r.stderr)
 
+    def test_inputs_keep_globs_and_empty_words(self):
+        prog = os.path.join(self.home, "echo.tom")
+        with open(prog, "w") as f:
+            f.write("@main\ndef main(a: str, b: str):\n    print('[' + a + '][' + b + ']')\n")
+        cwd = tempfile.mkdtemp()
+        for n in ("zz1", "zz2"):
+            open(os.path.join(cwd, n), "w").close()
+        r = subprocess.run([self.tomato, "run", prog, "main", "*", ""], capture_output=True, text=True, cwd=cwd)
+        self.assertEqual((r.returncode, r.stdout), (0, "[*][]\n"), r.stderr)
+        r = subprocess.run([self.tomato, "run", prog, "main", "a b", "z?"], capture_output=True, text=True, cwd=cwd)
+        self.assertEqual(r.stdout, "[a b][z?]\n")
+
+    def test_double_dash_passes_flag_like_inputs(self):
+        prog = os.path.join(self.home, "echo2.tom")
+        with open(prog, "w") as f:
+            f.write("@main\ndef main(a: str, b: str):\n    print('[' + a + '][' + b + ']')\n")
+        r = self.run_cli("run", prog, "--", "main", "-o", "--entry")
+        self.assertEqual((r.returncode, r.stdout), (0, "[-o][--entry]\n"), r.stderr)
+
+    def test_symlinked_install(self):
+        link = os.path.join(self.home, "linked-tomato")
+        os.symlink(self.tomato, link)
+        r = subprocess.run([link, "version"], capture_output=True, text=True)
+        self.assertEqual(r.stdout, "Tomato v0.1 (compiler written in Tomato)\n")
+
     def test_usage(self):
         self.assertEqual(self.run_cli().returncode, 2)
-        self.assertEqual(self.run_cli("version").stdout, "Tomato (compiler written in Tomato)\n")
+        self.assertEqual(self.run_cli("version").stdout, "Tomato v0.1 (compiler written in Tomato)\n")
 
 
 if __name__ == "__main__":

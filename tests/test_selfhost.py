@@ -1,11 +1,12 @@
-"""The Tomato lexer in selfhost/lexer.tom (used through selfhost/lextool.tom) must produce the same tokens as the Python lexer (D38a)."""
+"""The Tomato lexer in compiler/src/lexer.tom (used through compiler/src/lextool.tom) must produce the same tokens as the Python lexer (D38a)."""
 import glob
 import io
 import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
 from tomato.interp import run_source  # noqa: E402
 from tomato.lexer import lex  # noqa: E402
 
@@ -25,13 +26,13 @@ def python_tokens(src):
 class SelfhostLexer(unittest.TestCase):
     def tomato_tokens(self, path):
         out = io.StringIO()
-        run_source(open(os.path.join(ROOT, "selfhost", "lextool.tom")).read(), out, entry="show", inputs=[path],
-                   search=[os.path.join(ROOT, "selfhost")])
+        run_source(open(os.path.join(ROOT, "compiler", "src", "lextool.tom")).read(), out, entry="show", inputs=[path],
+                   search=[os.path.join(ROOT, "compiler", "src")])
         return out.getvalue().split("\n")[:-1]
 
     def test_same_tokens_as_the_python_lexer(self):
-        files = sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(ROOT, "tomato", "std", "*.tom"))
-                       + glob.glob(os.path.join(ROOT, "selfhost", "*.tom")))
+        files = sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(ROOT, "python", "tomato", "std", "*.tom"))
+                       + glob.glob(os.path.join(ROOT, "compiler", "src", "*.tom")))
         self.assertTrue(files)
         for path in files:
             with self.subTest(path=os.path.basename(path)):
@@ -46,9 +47,9 @@ class SelfhostLexer(unittest.TestCase):
         if not shutil.which("clang"):
             self.skipTest("clang is not installed")
         exe = os.path.join(tempfile.mkdtemp(), "lexer")
-        subprocess.run([sys.executable, "-m", "tomato", "build", os.path.join(ROOT, "selfhost", "lextool.tom"),
+        subprocess.run([sys.executable, "-m", "tomato", "build", os.path.join(ROOT, "compiler", "src", "lextool.tom"),
                         "--entry", "show", "-o", exe], cwd=ROOT, check=True, capture_output=True)
-        for path in sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(ROOT, "selfhost", "*.tom"))):
+        for path in sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(ROOT, "compiler", "src", "*.tom"))):
             with self.subTest(path=os.path.basename(path)):
                 out = subprocess.run([exe, path], check=True, capture_output=True, text=True).stdout.split("\n")[:-1]
                 self.assertEqual(out, python_tokens(open(path).read()))

@@ -67,7 +67,7 @@ Last updated after D12bg. The question currently asked is marked **asking**.
 
 45. Error wording for every rule above. Decide once whether wording is specified in the language definition or left to implementations.
 
-## Syntax the Python prototype needed (see `tomato/PROVISIONAL.md`)
+## Syntax the Python prototype needed (see `python/tomato/PROVISIONAL.md`)
 
 46. Function and class header syntax, `if` and `while` forms, scoping, and local declaration. (`for name in x:` is settled by D18a.)
 46a. The iteration protocol: what makes a class iterable, and how `range` is defined as a class.
@@ -123,6 +123,10 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 83. Error modes (D34a, settled in outline): the code format, how a mode is selected, location details, and what release mode prints, if anything.
 
 84. Weak references: not language syntax; the runtime frees cycles automatically (D29d, reading to confirm), and a weak reference may exist in the standard library (D29e). Open: that library type's design and runtime support, when the collector runs, its cost, and its use with threads.
+
+85. Checking before running (D40a, reading to confirm): the prototype's check pass is partial (P54). Open: narrowing after `x in Type` or a `None` check, types of collection literals and methods in the pass, and whether the interpreter should also stop on code it cannot type.
+
+86. Floats and the new operators (D41a, reading to confirm): float literal grammar (`1.` and `.5` are not literals), mixing `rational` with `float`, typing fixed-width results of `//` and `**` from literals, and the compiler written in Tomato, which does not yet have float literals, `//`, `**` or mixed arithmetic.
 
 ## Out of scope
 

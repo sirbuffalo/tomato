@@ -1,4 +1,4 @@
-"""The Tomato parser in selfhost/parser.tom must build the same tree as tomato/parser.py (D38a)."""
+"""The Tomato parser in compiler/src/parser.tom must build the same tree as tomato/parser.py (D38a)."""
 import glob
 import io
 import os
@@ -8,13 +8,14 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
 from tomato.interp import run_source  # noqa: E402
 from tomato.nodes import Node  # noqa: E402
 from tomato.parser import parse  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-SELF = os.path.join(ROOT, "selfhost")
+SELF = os.path.join(ROOT, "compiler", "src")
 
 
 def esc(s):
@@ -45,7 +46,7 @@ def dump(v):
 
 
 def files():
-    return sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(ROOT, "tomato", "std", "*.tom"))
+    return sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(ROOT, "python", "tomato", "std", "*.tom"))
                   + glob.glob(os.path.join(SELF, "*.tom")))
 
 

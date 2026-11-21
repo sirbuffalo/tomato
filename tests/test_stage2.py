@@ -1,6 +1,6 @@
 """Self-hosting (D38a): the Tomato compiler compiles itself, and the result reaches a fixed point.
 
-stage 1: the Python compiler builds selfhost/ctool.tom (the Tomato compiler) into a native program;
+stage 1: the Python compiler builds compiler/src/ctool.tom (the Tomato compiler) into a native program;
 stage 2: stage 1 compiles the Tomato compiler's own source to IR, clang builds that into a program;
 stage 3: stage 2 compiles the same source again. The IR from stages 1 and 2 must be identical, and stage 2
 must compile a sample program that behaves like the interpreter.
@@ -13,12 +13,13 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
 from tomato.interp import run_source  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-SELF = os.path.join(ROOT, "selfhost")
-RUNTIME = os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c")
+SELF = os.path.join(ROOT, "compiler", "src")
+RUNTIME = os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c")
 
 SAMPLE = """
 class Counter:
@@ -65,9 +66,9 @@ class StageTwo(unittest.TestCase):
         ir3 = subprocess.run([stage2, ctool, "compile"], check=True, capture_output=True, text=True)
         self.assertEqual(ir3.stderr, "")
         self.assertEqual(ir3.stdout, ir2.stdout, "stage 2 does not compile itself to the same IR (no fixed point)")
-        # the IR checked in under bootstrap/ is exactly what the compiler writes for itself
-        with open(os.path.join(ROOT, "bootstrap", "tomatoc.ll")) as f:
-            self.assertEqual(f.read(), ir3.stdout, "bootstrap/tomatoc.ll is out of date: run bootstrap/refresh.sh")
+        # the IR checked in under compiler/bootstrap/ is exactly what the compiler writes for itself
+        with open(os.path.join(ROOT, "compiler", "bootstrap", "tomatoc.ll")) as f:
+            self.assertEqual(f.read(), ir3.stdout, "compiler/bootstrap/tomatoc.ll is out of date: run compiler/bootstrap/refresh.sh")
         # the compiler built by itself compiles a sample program that behaves like the interpreter
         sample = os.path.join(d, "sample.tom")
         with open(sample, "w") as f:

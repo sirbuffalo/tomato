@@ -1,0 +1,160 @@
+# The Tomato lexer, written in Tomato (D38a). It mirrors tomato/lexer.py so the compiler can later be built from
+# this source by the Python version, and then by itself.
+#
+# Used by compiler/src/parser.tom; the command-line tool is compiler/src/lextool.tom.
+
+def with_line(message: str, line: int) -> str:
+    # errors say which line of the program they are about
+    if line > 0:
+        return 'line ' + str(line) + ': ' + message
+    return message
+
+export class LexError(Error):
+    @init
+    def make(self, message: str, line: int):
+        Error.start(self, with_line(message, line))
+
+export class Token:
+    kind: str = ''       # INT, NAME, KW, STR, OP, NEWLINE, INDENT, DEDENT or EOF
+    text: str = ''       # the source text, or the decoded text of a STR
+    num: int = 0         # the value of an INT
+    line: int = 0
+
+export def make_token(kind: str, text: str, num: int, line: int) -> Token:
+    t = Token()
+    t.kind = kind
+    t.text = text
+    t.num = num
+    t.line = line
+    return t
+
+def is_digit(c: str) -> bool:
+    return c in '0123456789'
+
+def is_alpha(c: str) -> bool:
+    return c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+def is_keyword(w: str) -> bool:
+    words = ['def', 'class', 'interface', 'implements', 'private', 'const', 'override', 'return', 'if', 'elif',
+             'else', 'while', 'for', 'in', 'pass', 'break', 'continue', 'try', 'catch', 'finally', 'raise',
+             'import', 'from', 'export', 'as', 'is', 'and', 'or', 'xor', 'not', 'True', 'False']
+    return w in words
+
+def escape_char(e: str, line: int) -> str:
+    if e == 'n':
+        return '\n'
+    if e == 't':
+        return '\t'
+    if e == 'r':
+        return '\r'
+    if e == '0':
+        return '\0'
+    if e == '\\' or e == "'" or e == '"':
+        return e
+    raise LexError('unknown escape \\' + e, line)
+
+def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
+    # Lexes one line's tokens after its indentation; returns the bracket depth at the end of the line.
+    i = 0
+    n = len(raw)
+    while i < n:
+        c = raw[i]
+        if c == ' ':
+            i = i + 1
+        elif c == '#':
+            break
+        elif is_digit(c):
+            j = i
+            value = 0
+            while j < n and is_digit(raw[j]):
+                value = value * 10 + '0123456789'.find(raw[j])
+                j = j + 1
+            if j < n and (is_alpha(raw[j]) or raw[j] in '._'):
+                raise LexError('only whole-number literals exist so far', ln)
+            toks.append(make_token('INT', raw[i:j], value, ln))
+            i = j
+        elif is_alpha(c) or c == '_':
+            j = i
+            while j < n and (is_alpha(raw[j]) or is_digit(raw[j]) or raw[j] == '_'):
+                j = j + 1
+            w = raw[i:j]
+            if is_keyword(w):
+                toks.append(make_token('KW', w, 0, ln))
+            else:
+                toks.append(make_token('NAME', w, 0, ln))
+            i = j
+        elif c == '"' or c == "'":
+            j = i + 1
+            buf = ''
+            while j < n and raw[j] != c:
+                if raw[j] == '\\':
+                    j = j + 1
+                    if j >= n:
+                        break
+                    buf = buf + escape_char(raw[j], ln)
+                else:
+                    buf = buf + raw[j]
+                j = j + 1
+            if j >= n:
+                raise LexError('unterminated string', ln)
+            toks.append(make_token('STR', buf, 0, ln))
+            i = j + 1
+        elif i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->']:
+            toks.append(make_token('OP', raw[i:i + 2], 0, ln))
+            i = i + 2
+        elif c in '+-*/%<>=()[]{}:,.@!|&^':
+            if c in '([{':
+                depth = depth + 1
+            elif c in ')]}':
+                depth = depth - 1
+            toks.append(make_token('OP', c, 0, ln))
+            i = i + 1
+        else:
+            raise LexError('unexpected character ' + c, ln)
+    return depth
+
+export def lex(src: str) -> list[Token]:
+    toks: list[Token] = []
+    indents: list[int] = [0]       # a stack: list methods beyond append are undecided, so `level` is its size
+    level = 1
+    depth = 0
+    lines = src.split('\n')
+    ln = 0
+    for raw in lines:
+        ln = ln + 1
+        n = len(raw)
+        if depth == 0:
+            width = 0
+            while width < n and raw[width] == ' ':
+                width = width + 1
+            if width < n and raw[width] == '\t':
+                raise LexError('tabs are not allowed for indentation (not yet decided)', ln)
+            if width >= n or raw[width] == '#':
+                continue
+            if width > indents[level - 1]:
+                if level < len(indents):
+                    indents[level] = width
+                else:
+                    indents.append(width)
+                level = level + 1
+                toks.append(make_token('INDENT', '', 0, ln))
+            while width < indents[level - 1]:
+                level = level - 1
+                toks.append(make_token('DEDENT', '', 0, ln))
+                if width > indents[level - 1]:
+                    raise LexError('inconsistent indentation', ln)
+        depth = lex_line(raw, ln, toks, depth)
+        if depth == 0:
+            toks.append(make_token('NEWLINE', '', 0, ln))
+    if depth != 0:
+        raise LexError('unclosed bracket', len(lines))
+    while level > 1:
+        level = level - 1
+        toks.append(make_token('DEDENT', '', 0, len(lines)))
+    toks.append(make_token('EOF', '', 0, len(lines)))
+    return toks
+
+export def describe(t: Token) -> str:
+    if t.kind == 'INT':
+        return 'INT ' + str(t.num) + ' ' + str(t.line)
+    return t.kind + ' ' + t.text.replace('\n', '\\n').replace('\r', '\\r') + ' ' + str(t.line)

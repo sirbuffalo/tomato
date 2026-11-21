@@ -10,7 +10,7 @@ root="$(cd "$(dirname "$0")" && pwd)"
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 mkdir -p "$home" "$bindir"
 rm -rf "$home/tomato" "$home/bin" "$home/examples"
-cp -R "$root/tomato" "$root/bin" "$root/examples" "$home/"
+cp -R "$root/python/tomato" "$root/python/bin" "$root/examples" "$home/"
 find "$home" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 if [ "$1" != "--no-llvm" ]; then
   [ -x "$home/.venv/bin/python" ] || python3 -m venv "$home/.venv"

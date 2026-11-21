@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tomato reference</title><link rel="stylesheet" href="style.css"></head>
+<body><header id="site-header"></header><main class="doc">
+<h1>Reference</h1>
+<p class="lead">Generated from the repository's documents, so it matches the code.</p>
+<p><a href="#spec" data-doc="specification">Specification</a> · <a href="#decisions" data-doc="decisions">Decision log</a> · <a href="#inventory" data-doc="decision-inventory">Decision inventory</a> · <a href="#open" data-doc="open-questions">Open questions</a> · <a href="#provisional" data-doc="PROVISIONAL">Placeholders (P1…)</a></p>
+<div id="content" class="doc">Loading…</div>
+</main><script src="config.js"></script><script src="site.js"></script>
+<script>
+var DOCS = { "specification": "docs/specification.md", "decisions": "docs/decisions.md", "decision-inventory": "docs/decision-inventory.md", "open-questions": "docs/open-questions.md", "PROVISIONAL": "docs/PROVISIONAL.md" };
+function show(name) {
+  name = DOCS[name] ? name : "specification";
+  document.getElementById("content").textContent = "Loading…";
+  fetch(DOCS[name]).then(function (r) { if (!r.ok) throw 0; return r.text(); }).then(function (t) {
+    document.getElementById("content").innerHTML = markdown(t);
+    if (location.hash.length > 1 && !/^#(spec|decisions|inventory|open|provisional)$/.test(location.hash)) {
+      var e = document.getElementById(location.hash.slice(1)); if (e) e.scrollIntoView();
+    }
+  }).catch(function () { document.getElementById("content").textContent = "This document is not published yet."; });
+}
+var KEYS = { "#spec": "specification", "#decisions": "decisions", "#inventory": "decision-inventory", "#open": "open-questions", "#provisional": "PROVISIONAL" };
+document.querySelectorAll("a[data-doc]").forEach(function (a) { a.onclick = function () { show(a.dataset.doc); }; });
+show(KEYS[location.hash] || "specification");
+</script></body></html>

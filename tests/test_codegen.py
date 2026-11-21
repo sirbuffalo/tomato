@@ -7,14 +7,15 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
 from tomato import errcodes  # noqa: E402
 from tomato.codegen import compile_to_ir  # noqa: E402
 from tomato.errors import NotDecided, TomatoError  # noqa: E402
 from tomato.interp import run_source  # noqa: E402
 
 CLANG = shutil.which("clang")
-RUNTIME = os.path.join(os.path.dirname(__file__), "..", "tomato", "runtime", "tomato_rt.c")
+RUNTIME = os.path.join(os.path.dirname(__file__), "..", "python", "tomato", "runtime", "tomato_rt.c")
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
 
@@ -375,7 +376,7 @@ class CompileErrors(unittest.TestCase):
         self.fails(prog("if False:\n    print(1 + 'a')"), "type error")
 
     def test_undecided_rules_stay_undecided(self):
-        self.fails(prog("x = 1 / 2\nprint(x + x)"), "not yet decided", NotDecided)
+        self.fails(prog("print(True < False)"), "not yet decided", NotDecided)
         self.fails(prog("print(1 < True)"), "type error")
 
     def test_break_outside_a_loop(self):

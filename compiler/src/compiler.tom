@@ -1,0 +1,2894 @@
+# A slice of the Tomato compiler, written in Tomato (D38a): int, bool and str programs.
+#
+# It takes the syntax tree from compiler/src/parser.tom and writes LLVM IR text that links with the C runtime
+# (python/tomato/runtime/tomato_rt.c). Supported: functions with int/bool/str parameters and results, locals, + - * % and
+# comparisons, string + == != < <= > >=, indexing and slicing, len, str(), and/or/xor/not, if/elif/else, while,
+# for over range(), break, continue, calls, print, and an @main entry point without inputs. Text values are
+# reference counted exactly like the Python compiler: every text value an expression produces is owned by whoever
+# uses it, and a slot releases what it held. Everything else stops with a CompileError that says what is not
+# supported yet. Numbers are 64-bit and wrap on overflow, a zero `%` divisor is not checked, and `and` and `or`
+# evaluate both sides (P53).
+from parser import Node, Val, parse, new_strs
+
+def with_line(message: str, line: int) -> str:
+    # errors say which line of the program they are about
+    if line > 0:
+        return 'line ' + str(line) + ': ' + message
+    return message
+
+export class CompileError(Error):
+    @init
+    def make(self, message: str, line: int):
+        Error.start(self, with_line(message, line))
+
+def val_node(v: Val) -> Node:
+    n = v.node
+    if n is None:
+        raise CompileError('internal error: a missing syntax node', 0)
+    return n
+
+def node_val(n: Node) -> Val:
+    v = Val()
+    v.tag = 'n'
+    v.node = n
+    return v
+
+def val_nodes(v: Val) -> list[Node]:
+    out: list[Node] = []
+    for item in v.items:
+        out.append(val_node(item))
+    return out
+
+def basic_type(name: str) -> bool:
+    return name == 'int' or name == 'bool' or name == 'str' or name == 'File' or name == 'float'
+
+def is_list(t: str) -> bool:
+    return t.startswith('list[')
+
+def is_dict(t: str) -> bool:
+    return t.startswith('dict[')
+
+def is_set(t: str) -> bool:
+    return t.startswith('set[')
+
+def set_elem(t: str) -> str:
+    return t[4:len(t) - 1]
+
+def dict_value(t: str) -> str:
+    # the value type of dict[V], a dict with text keys
+    return t[5:len(t) - 1]
+
+def is_class(t: str) -> bool:
+    return t.startswith('@')
+
+def is_iface(t: str) -> bool:
+    return t.startswith('%')
+
+def digits_value(s: str) -> int:
+    # the number a text of digits writes, or -1 when it is not all digits
+    if len(s) == 0:
+        return -1
+    v = 0
+    i = 0
+    while i < len(s):
+        d = '0123456789'.find(s[i])
+        if d < 0:
+            return -1
+        v = v * 10 + d
+        i = i + 1
+    return v
+
+def is_fixed(t: str) -> bool:
+    # int[length=N] is written iN and uint[length=N] uN
+    if len(t) < 2:
+        return False
+    if not (t[0:1] == 'i' or t[0:1] == 'u'):
+        return False
+    return digits_value(t[1:]) > 0
+
+def is_numeric(t: str) -> bool:
+    return t == 'int' or is_fixed(t)
+
+def bits_of(t: str) -> int:
+    if t == 'int':
+        return 64
+    return digits_value(t[1:])
+
+def is_signed(t: str) -> bool:
+    return t == 'int' or t[0:1] == 'i'
+
+def contains(outer: str, inner: str) -> bool:
+    # every value of integer type inner is a value of outer
+    if is_signed(outer):
+        if is_signed(inner):
+            return bits_of(outer) >= bits_of(inner)
+        return bits_of(outer) > bits_of(inner)
+    if is_signed(inner):
+        return False
+    return bits_of(outer) >= bits_of(inner)
+
+def pow2(k: int) -> int:
+    v = 1
+    i = 0
+    while i < k:
+        v = v * 2
+        i = i + 1
+    return v
+
+def fits_literal(n: int, t: str, negative: bool) -> bool:
+    # does the literal n (written with a minus sign when negative) fit the integer type t?
+    bits = bits_of(t)
+    if is_signed(t):
+        if bits >= 64:
+            return True
+        if negative:
+            return n <= pow2(bits - 1)
+        return n <= pow2(bits - 1) - 1
+    if negative:
+        return n == 0
+    if bits >= 63:
+        return True
+    return n <= pow2(bits) - 1
+
+def is_optional(t: str) -> bool:
+    return t.endswith('?')
+
+def strip_optional(t: str) -> str:
+    if is_optional(t):
+        return t[0:len(t) - 1]
+    return t
+
+def is_rc(t: str) -> bool:
+    # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
+    return t == 'str' or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t)
+
+def elem_of(t: str) -> str:
+    return t[5:len(t) - 1]
+
+def shown(t: str) -> str:
+    # a type as the user writes it
+    if is_optional(t):
+        return shown(strip_optional(t)) + ' | None'
+    if is_class(t) or is_iface(t):
+        return t[1:]
+    if is_list(t):
+        return 'list[' + shown(elem_of(t)) + ']'
+    if is_dict(t):
+        return 'dict[str, ' + shown(dict_value(t)) + ']'
+    if is_set(t):
+        return 'set[' + shown(set_elem(t)) + ']'
+    if is_fixed(t):
+        if t[0:1] == 'i':
+            return 'int[length=' + t[1:] + ']'
+        return 'uint[length=' + t[1:] + ']'
+    return t
+
+def llvm_type(t: str) -> str:
+    if is_rc(t) or t == 'File':
+        return 'ptr'
+    if t == 'float':
+        return 'double'
+    if is_fixed(t):
+        return 'i' + t[1:]
+    return 'i64'
+
+def zero_of(t: str) -> str:
+    # the value a function returns when it never stored one
+    if is_rc(t):
+        return 'null'
+    if t == 'float':
+        return '0.0'
+    return '0'
+
+class Ex:
+    # a compiled expression: the register or constant that holds it, and its Tomato type
+    reg: str = ''
+    ty: str = ''
+
+def ex(reg: str, ty: str) -> Ex:
+    e = Ex()
+    e.reg = reg
+    e.ty = ty
+    return e
+
+class FuncInfo:
+    name: str = ''
+    owner: str = ''          # the class a method belongs to, or ''
+    ret: str = ''
+    ptypes: list[str] = []   # without self
+    defaults: list[Node] = []     # the default values of the last parameters, in order
+    is_init: bool = False
+    is_override: bool = False
+    is_private: bool = False
+    key: str = ''            # the program-wide name of a function (module.name outside the main program)
+    module: str = 'main'
+
+class ImportInfo:
+    importer: str = ''
+    module: str = ''
+    names: list[str] = []
+    line: int = 0
+
+class IfaceInfo:
+    name: str = ''
+    module: str = 'main'
+    parents: list[str] = []
+    reqs: list[FuncInfo] = []     # the methods the interface itself requires (without self)
+    line: int = 0
+
+class ClassInfo:
+    name: str = ''                # the program-wide key (module.Name outside the main program)
+    display: str = ''             # the name as written
+    module: str = 'main'
+    node: Node | None = None
+    fnames: list[str] = []
+    ftypes: list[str] = []
+    fprivate: list[bool] = []     # per field, parent fields first
+    fconst: list[bool] = []
+    fowner: list[str] = []        # the class that declares the field
+    has_default: list[bool] = []
+    defaults: list[Node] = []     # only the fields that have a default, in order
+    init: str = ''                # the name of the @init method, or ''
+    parent: str = ''              # the parent class, or ''
+    ifaces: list[str] = []        # the interfaces the class declares it implements
+    done: bool = False            # fields and defaults are complete (inherited ones come first)
+    line: int = 0
+
+class Mod:
+    # what every function of the program shares
+    strings: list[str] = []
+    infos: list[FuncInfo] = []
+    llvm_decls: list[FuncInfo] = []    # the `!name(...)` functions the program declares (D27a)
+    decls: list[str] = []         # extra declarations (the overflow intrinsics the program uses)
+    codes: list[str] = []         # the heap types the program uses; a type's code is 2 plus its place here
+    classes: list[ClassInfo] = []
+    ifaces: list[IfaceInfo] = []
+    slots: list[str] = []         # method names, one vtable slot each
+    cur: str = 'main'             # the module whose names are being resolved
+    scope_mod: list[str] = []     # the names each module can see: module, name, program-wide key, exported
+    scope_name: list[str] = []
+    scope_key: list[str] = []
+    scope_exported: list[bool] = []
+
+    def code_of(self, t: str) -> int:
+        k = 0
+        for x in self.codes:
+            if x == t:
+                return k + 2
+            k = k + 1
+        self.codes.append(t)
+        return len(self.codes) + 1
+
+    def declare(self, text: str):
+        if not (text in self.decls):
+            self.decls.append(text)
+
+    def intern(self, s: str) -> str:
+        k = 0
+        for x in self.strings:
+            if x == s:
+                return '@.str.' + str(k)
+            k = k + 1
+        self.strings.append(s)
+        return '@.str.' + str(k)
+
+    def find(self, key: str, line: int) -> FuncInfo:
+        for f in self.infos:
+            if f.key == key and f.owner == '':
+                return f
+        raise CompileError('unknown function ' + key, line)
+
+    def lookup_method(self, cls: str, name: str) -> list[FuncInfo]:
+        # the method as the class or its nearest parent defines it: a list of one, or none
+        found: list[FuncInfo] = []
+        for f in self.infos:
+            if f.name == name and f.owner == cls:
+                found.append(f)
+                return found
+        c = self.find_class(cls, 0)
+        if c.parent != '':
+            return self.lookup_method(c.parent, name)
+        return found
+
+    def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
+        found = self.lookup_method(cls, name)
+        if len(found) == 0:
+            raise CompileError(cls + ' has no method ' + name, line)
+        return found[0]
+
+    def resolve(self, name: str) -> str:
+        # the program-wide key a name written in the current module stands for, or '' (D24c)
+        k = 0
+        for m in self.scope_mod:
+            if m == self.cur and self.scope_name[k] == name:
+                return self.scope_key[k]
+            k = k + 1
+        k = 0
+        for m in self.scope_mod:
+            if m == 'builtin' and self.scope_name[k] == name:
+                return self.scope_key[k]
+            k = k + 1
+        return ''
+
+    def class_key(self, name: str, line: int) -> str:
+        key = self.resolve(name)
+        if key == '' or not self.has_class(key):
+            raise CompileError('unknown class ' + name, line)
+        return key
+
+    def iface_key(self, name: str, line: int) -> str:
+        key = self.resolve(name)
+        if key == '' or not self.has_iface(key):
+            raise CompileError('unknown interface ' + name, line)
+        return key
+
+    def declare_name(self, module: str, name: str, key: str, exported: bool, line: int):
+        k = 0
+        for m in self.scope_mod:
+            if m == module and self.scope_name[k] == name:
+                raise CompileError(name + ' is declared twice in module ' + module, line)
+            k = k + 1
+        self.scope_mod.append(module)
+        self.scope_name.append(name)
+        self.scope_key.append(key)
+        self.scope_exported.append(exported)
+
+    def exported_key(self, module: str, name: str, line: int) -> str:
+        k = 0
+        for m in self.scope_mod:
+            if m == module and self.scope_name[k] == name:
+                if not self.scope_exported[k]:
+                    raise CompileError('module ' + module + ' does not export ' + name, line)
+                return self.scope_key[k]
+            k = k + 1
+        raise CompileError('module ' + module + ' has no ' + name, line)
+
+    def has_iface(self, name: str) -> bool:
+        for i in self.ifaces:
+            if i.name == name:
+                return True
+        return False
+
+    def find_iface(self, name: str, line: int) -> IfaceInfo:
+        for i in self.ifaces:
+            if i.name == name:
+                return i
+        raise CompileError('unknown interface ' + name, line)
+
+    def iface_closure(self, name: str, out: list[str]):
+        # the interface and every interface it extends
+        if name in out:
+            return
+        out.append(name)
+        for p in self.find_iface(name, 0).parents:
+            self.iface_closure(p, out)
+
+    def class_ifaces(self, cls: str) -> list[str]:
+        # every interface a class satisfies: its own, its parents', and what those extend
+        out = new_strs()
+        c = self.find_class(cls, 0)
+        for i in c.ifaces:
+            self.iface_closure(i, out)
+        if c.parent != '':
+            for i in self.class_ifaces(c.parent):
+                self.iface_closure(i, out)
+        return out
+
+    def requirement(self, iface: str, name: str) -> list[FuncInfo]:
+        # the method an interface (or one it extends) requires: a list of one, or none
+        found: list[FuncInfo] = []
+        closure = new_strs()
+        self.iface_closure(iface, closure)
+        for i in closure:
+            for r in self.find_iface(i, 0).reqs:
+                if r.name == name and len(found) == 0:
+                    found.append(r)
+        return found
+
+    def slot_of(self, name: str) -> int:
+        k = 0
+        for n in self.slots:
+            if n == name:
+                return k
+            k = k + 1
+        raise CompileError('internal error: no method table slot for ' + name, 0)
+
+    def assignable(self, a: str, b: str) -> bool:
+        # may a value of type a be used where b is wanted (no conversion needed)?
+        if a == b or self.subclass(a, b):
+            return True
+        if is_iface(b):
+            if is_class(a) and self.has_class(a[1:]):
+                return b[1:] in self.class_ifaces(a[1:])
+            if is_iface(a):
+                closure = new_strs()
+                self.iface_closure(a[1:], closure)
+                return b[1:] in closure
+            return False
+        if is_optional(b):
+            return a == 'None' or self.assignable(a, strip_optional(b))
+        return False
+
+    def subclass(self, a: str, b: str) -> bool:
+        # is class a (written '@A') the same as b or a descendant of it?
+        if a == b:
+            return True
+        if not (is_class(a) and is_class(b)) or not self.has_class(a[1:]):
+            return False
+        c = self.find_class(a[1:], 0)
+        if c.parent == '':
+            return False
+        return self.subclass('@' + c.parent, b)
+
+    def has_class(self, name: str) -> bool:
+        for c in self.classes:
+            if c.name == name:
+                return True
+        return False
+
+    def find_class(self, name: str, line: int) -> ClassInfo:
+        for c in self.classes:
+            if c.name == name:
+                return c
+        raise CompileError('unknown class ' + name, line)
+
+    def field_index(self, c: ClassInfo, name: str, line: int) -> int:
+        k = 0
+        for f in c.fnames:
+            if f == name:
+                return k
+            k = k + 1
+        raise CompileError(c.name + ' has no field ' + name, line)
+
+    def type_name(self, v: Val) -> str:
+        # the name of a type the compiler knows: int, bool, str, a declared class ('@Name') or a list of those; '' otherwise
+        if v.tag != 'n':
+            return ''
+        t = val_node(v)
+        name = t.fields[0].text
+        if (name == 'int' or name == 'uint') and t.fields[1].tag == 'n':
+            length = val_node(t.fields[1])
+            if length.kind != 'IntLit' or length.fields[0].num < 1 or length.fields[0].num > 64:
+                return ''
+            if name == 'int':
+                return 'i' + str(length.fields[0].num)
+            return 'u' + str(length.fields[0].num)
+        if name == 'union':
+            members = val_nodes(t.fields[2])
+            if len(members) != 2:
+                return ''
+            other = members[0]
+            if other.fields[0].text == 'None':
+                other = members[1]
+            elif members[1].fields[0].text != 'None':
+                return ''
+            wrapped = self.type_name(node_val(other))
+            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped)):
+                return ''
+            return wrapped + '?'
+        if name == 'set' and t.fields[2].tag == 'n':
+            member = self.type_name(t.fields[2])
+            if member == 'str' or member == 'int' or member == 'bool':
+                return 'set[' + member + ']'
+            return ''
+        if name == 'dict' and t.fields[2].tag == 'n' and t.fields[3].tag == 'n':
+            if self.type_name(t.fields[2]) != 'str':
+                return ''
+            inner = self.type_name(t.fields[3])
+            if inner == '' or is_fixed(inner):
+                return ''
+            return 'dict[' + inner + ']'
+        if name == 'list' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
+            inner = self.type_name(t.fields[2])
+            if inner == '' or is_fixed(inner):
+                return ''
+            return 'list[' + inner + ']'
+        if t.fields[2].tag != 'z' or t.fields[1].tag != 'z':
+            return ''
+        if basic_type(name):
+            return name
+        key = self.resolve(name)
+        if key != '' and self.has_class(key):
+            return '@' + key
+        if key != '' and self.has_iface(key):
+            return '%' + key
+        return ''
+
+def escape_ir_char(c: str, line: int) -> str:
+    plain = ' !#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~'
+    if plain.find(c) >= 0:
+        return c
+    if c == '\n':
+        return '\\0A'
+    if c == '\t':
+        return '\\09'
+    if c == '\r':
+        return '\\0D'
+    if c == '"':
+        return '\\22'
+    if c == '\\':
+        return '\\5C'
+    if c == '\0':
+        return '\\00'
+    raise CompileError('the Tomato compiler only supports ASCII text literals yet', line)
+
+def escape_text(s: str) -> str:
+    body = ''
+    i = 0
+    while i < len(s):
+        body = body + escape_ir_char(s[i], 0)
+        i = i + 1
+    return body
+
+def string_global(index: int, s: str) -> str:
+    size = str(len(s) + 1)
+    body = escape_text(s)
+    return '@.str.' + str(index) + ' = private constant { i64, i64, i64, i64, [' + size + ' x i8] } { i64 -1, i64 1, i64 ' + str(len(s)) + ', i64 ' + str(len(s)) + ', [' + size + ' x i8] c"' + body + '\\00" }'
+
+def string_c(index: int, s: str) -> str:
+    # a plain C copy, which is what tomato_fail prints
+    return '@.str.' + str(index) + '.c = private constant [' + str(len(s) + 1) + ' x i8] c"' + escape_text(s) + '\\00"'
+
+class TryInfo:
+    # a try statement being compiled (D22a)
+    catch_l: str = ''         # where an error raised in the body goes
+    prop_l: str = ''          # where an error leaving the statement goes (after the finally block runs)
+    final: list[Node] = []
+    has_final: bool = False
+    loop_depth: int = 0
+    state: str = 'body'       # 'body' while compiling the try body, then 'post'
+
+class Gen:
+    # one function being compiled
+    mod: Mod = Mod()
+    lines: list[str] = []
+    allocas: list[str] = []
+    rc_slots: list[str] = []
+    slots: dict[str, str] = {}
+    types: dict[str, str] = {}
+    n: int = 0
+    terminated: bool = False
+    breaks: list[str] = []
+    conts: list[str] = []
+    loop_depth: int = 0
+    tries: list[TryInfo] = []
+    try_depth: int = 0
+    slot_count: int = 0
+    line: int = 0
+    owner: str = ''           # the class whose method is being compiled, or ''
+    in_init: bool = False
+    ret: str = ''
+
+    def tmp(self, hint: str) -> str:
+        self.n = self.n + 1
+        return '%' + hint + '.' + str(self.n)
+
+    def label(self, hint: str) -> str:
+        self.n = self.n + 1
+        return hint + '.' + str(self.n)
+
+    def emit(self, text: str):
+        if self.terminated:
+            self.lines.append(self.label('dead') + ':')
+            self.terminated = False
+        self.lines.append('  ' + text)
+
+    def place(self, label: str):
+        self.lines.append(label + ':')
+        self.terminated = False
+
+    def br(self, label: str):
+        self.emit('br label %' + label)
+        self.terminated = True
+
+    def cond_br(self, c: str, yes: str, no: str):
+        self.emit('br i1 ' + c + ', label %' + yes + ', label %' + no)
+        self.terminated = True
+
+    def unwind_target(self) -> str:
+        # where an error raised here goes: the innermost try's catch (or its finally once past the body), else out of
+        # the function, which returns early so that its caller can check (D22a)
+        if self.try_depth > 0:
+            t = self.tries[self.try_depth - 1]
+            if t.state == 'body':
+                return t.catch_l
+            return t.prop_l
+        return 'epilogue'
+
+    def slot(self, name: str, ty: str, line: int) -> str:
+        if name in self.slots:
+            if self.types[name] != ty:
+                raise CompileError('variable ' + name + ' has type ' + self.types[name] + ', not ' + ty, line)
+            return self.slots[name]
+        return self.new_slot(name, ty)
+
+    def new_slot(self, name: str, ty: str) -> str:
+        self.slot_count = self.slot_count + 1
+        reg = '%v.' + name + '.' + str(self.slot_count)
+        self.allocas.append('  ' + reg + ' = alloca ' + llvm_type(ty))
+        if is_rc(ty):
+            self.allocas.append('  store ptr null, ptr ' + reg)
+            self.rc_slots.append(reg)
+        self.slots[name] = reg
+        self.types[name] = ty
+        return reg
+
+    def hidden_slot(self, hint: str) -> str:
+        reg = self.tmp(hint)
+        self.allocas.append('  ' + reg + ' = alloca i64')
+        return reg
+
+    def hidden_rc_slot(self, hint: str) -> str:
+        reg = self.tmp(hint)
+        self.allocas.append('  ' + reg + ' = alloca ptr')
+        self.allocas.append('  store ptr null, ptr ' + reg)
+        self.rc_slots.append(reg)
+        return reg
+
+    # ---- reference counting
+    def retain(self, e: Ex):
+        if is_rc(e.ty):
+            self.emit('call void @tomato_retain(ptr ' + e.reg + ')')
+
+    def release(self, e: Ex):
+        if is_rc(e.ty):
+            self.emit('call void @tomato_release(ptr ' + e.reg + ')')
+
+    def store_owned(self, slot: str, e: Ex):
+        # the slot takes over the reference and releases what it held
+        if is_rc(e.ty):
+            old = self.tmp('old')
+            self.emit(old + ' = load ptr, ptr ' + slot)
+            self.emit('store ptr ' + e.reg + ', ptr ' + slot)
+            self.emit('call void @tomato_release(ptr ' + old + ')')
+        else:
+            self.emit('store ' + llvm_type(e.ty) + ' ' + e.reg + ', ptr ' + slot)
+
+    def unwrap(self, e: Ex, line: int) -> Ex:
+        # an optional used where a value is needed: stop when it is None (D23b)
+        if not is_optional(e.ty):
+            return e
+        bad = self.tmp('isnone')
+        self.emit(bad + ' = icmp eq ptr ' + e.reg + ', null')
+        self.fail_if(bad, 'None where a value is needed')
+        return ex(e.reg, strip_optional(e.ty))
+
+    def resize(self, e: Ex, to: str) -> Ex:
+        # the same number in another integer type that holds all of its values
+        fb = bits_of(e.ty)
+        tb = bits_of(to)
+        if fb == tb:
+            return ex(e.reg, to)
+        r = self.tmp('ext')
+        op = 'zext'
+        if is_signed(e.ty):
+            op = 'sext'
+        self.emit(r + ' = ' + op + ' ' + llvm_type(e.ty) + ' ' + e.reg + ' to ' + llvm_type(to))
+        return ex(r, to)
+
+    def want(self, e: Ex, ty: str, line: int, what: str) -> Ex:
+        # check that e fits the type ty and return it as that type (a number is widened, an optional unwrapped)
+        if is_optional(e.ty) and not is_optional(ty) and ty != 'None' and self.mod.assignable(strip_optional(e.ty), ty):
+            self.unwrap(e, line)
+            return ex(e.reg, strip_optional(e.ty))
+        if e.ty == ty:
+            return e
+        if is_numeric(e.ty) and is_numeric(ty):
+            if not contains(ty, e.ty):
+                raise CompileError('type error: ' + what + ' of type ' + shown(e.ty) + ' cannot be used as ' + shown(ty) + ' without an explicit conversion (D05o)', line)
+            return self.resize(e, ty)
+        if not self.mod.assignable(e.ty, ty):
+            raise CompileError('type error: ' + what + ' is ' + shown(e.ty) + ' where ' + shown(ty) + ' is needed', line)
+        return e
+
+    # ---- small instructions
+    def truth(self, e: Ex, line: int) -> str:
+        e = self.want(e, 'bool', line, 'a condition')
+        r = self.tmp('cond')
+        self.emit(r + ' = icmp ne i64 ' + e.reg + ', 0')
+        return r
+
+    def bool_of(self, i1: str) -> Ex:
+        r = self.tmp('b')
+        self.emit(r + ' = zext i1 ' + i1 + ' to i64')
+        return ex(r, 'bool')
+
+    def arith(self, op: str, a: str, b: str) -> str:
+        r = self.tmp('t')
+        self.emit(r + ' = ' + op + ' i64 ' + a + ', ' + b)
+        return r
+
+    def icmp(self, cc: str, a: str, b: str) -> Ex:
+        c = self.tmp('cmp')
+        self.emit(c + ' = icmp ' + cc + ' i64 ' + a + ', ' + b)
+        return self.bool_of(c)
+
+    def common_type(self, a: str, b: str, line: int) -> str:
+        if contains(a, b):
+            return a
+        if contains(b, a):
+            return b
+        raise CompileError('no common integer type for ' + shown(a) + ' and ' + shown(b) + ' (D05s)', line)
+
+    def num_arith(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # + - * with an overflow stop, in the type both operands fit
+        t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, t)
+        y = self.resize(b, t)
+        llt = llvm_type(t)
+        sg = 'u'
+        if is_signed(t):
+            sg = 's'
+        intr = 'llvm.' + sg + op + '.with.overflow.' + llt
+        self.mod.declare('declare {' + llt + ', i1} @' + intr + '(' + llt + ', ' + llt + ')')
+        pair = self.tmp('pair')
+        self.emit(pair + ' = call {' + llt + ', i1} @' + intr + '(' + llt + ' ' + x.reg + ', ' + llt + ' ' + y.reg + ')')
+        r = self.tmp('r')
+        self.emit(r + ' = extractvalue {' + llt + ', i1} ' + pair + ', 0')
+        ov = self.tmp('ov')
+        self.emit(ov + ' = extractvalue {' + llt + ', i1} ' + pair + ', 1')
+        self.fail_if(ov, 'integer overflow')
+        return ex(r, t)
+
+    def num_compare(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, t)
+        y = self.resize(b, t)
+        cc = 'eq'
+        if op == '!=':
+            cc = 'ne'
+        elif op != '==':
+            sg = 'u'
+            if is_signed(t):
+                sg = 's'
+            if op == '<':
+                cc = sg + 'lt'
+            elif op == '<=':
+                cc = sg + 'le'
+            elif op == '>':
+                cc = sg + 'gt'
+            else:
+                cc = sg + 'ge'
+        c = self.tmp('cmp')
+        self.emit(c + ' = icmp ' + cc + ' ' + llvm_type(t) + ' ' + x.reg + ', ' + y.reg)
+        return self.bool_of(c)
+
+    def num_modulo(self, a: Ex, b: Ex, line: int) -> Ex:
+        # Python-style: the result has the sign of the divisor (D05au); a zero divisor stops the program
+        t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, t)
+        y = self.resize(b, t)
+        llt = llvm_type(t)
+        zero = self.tmp('zero')
+        self.emit(zero + ' = icmp eq ' + llt + ' ' + y.reg + ', 0')
+        self.fail_if(zero, 'modulo by zero')
+        if not is_signed(t):
+            r = self.tmp('urem')
+            self.emit(r + ' = urem ' + llt + ' ' + x.reg + ', ' + y.reg)
+            return ex(r, t)
+        r = self.tmp('srem')
+        self.emit(r + ' = srem ' + llt + ' ' + x.reg + ', ' + y.reg)
+        mix = self.tmp('mix')
+        self.emit(mix + ' = xor ' + llt + ' ' + r + ', ' + y.reg)
+        differ = self.tmp('differ')
+        self.emit(differ + ' = icmp slt ' + llt + ' ' + mix + ', 0')
+        nonzero = self.tmp('nonzero')
+        self.emit(nonzero + ' = icmp ne ' + llt + ' ' + r + ', 0')
+        fix = self.tmp('fix')
+        self.emit(fix + ' = and i1 ' + differ + ', ' + nonzero)
+        amount = self.tmp('amount')
+        self.emit(amount + ' = select i1 ' + fix + ', ' + llt + ' ' + y.reg + ', ' + llt + ' 0')
+        out = self.tmp('mod')
+        self.emit(out + ' = add ' + llt + ' ' + r + ', ' + amount)
+        return ex(out, t)
+
+    def to_double(self, e: Ex) -> str:
+        r = self.tmp('fp')
+        op = 'uitofp'
+        if is_signed(e.ty):
+            op = 'sitofp'
+        self.emit(r + ' = ' + op + ' ' + llvm_type(e.ty) + ' ' + e.reg + ' to double')
+        return r
+
+    def num_divide(self, a: Ex, b: Ex, line: int) -> Ex:
+        zero = self.tmp('zero')
+        self.emit(zero + ' = icmp eq ' + llvm_type(b.ty) + ' ' + b.reg + ', 0')
+        self.fail_if(zero, 'division by zero')
+        q = self.tmp('div')
+        self.emit(q + ' = fdiv double ' + self.to_double(a) + ', ' + self.to_double(b))
+        return ex(q, 'float')
+
+    def convert_explicit(self, v: Ex, target: str, line: int) -> Ex:
+        # int[length=N](x): the same number in another integer type, or a stop when it does not fit (D05p)
+        if not is_numeric(v.ty):
+            raise CompileError('only integers convert this way, found ' + shown(v.ty), line)
+        if contains(target, v.ty):
+            return self.resize(v, target)
+        width = bits_of(v.ty)
+        if bits_of(target) > width:
+            width = bits_of(target)
+        width = width + 1
+        wide = ex(self.widen(v, width), 'int')
+        cut = self.tmp('cut')
+        self.emit(cut + ' = trunc i' + str(width) + ' ' + wide.reg + ' to ' + llvm_type(target))
+        back = self.tmp('back')
+        op = 'zext'
+        if is_signed(target):
+            op = 'sext'
+        self.emit(back + ' = ' + op + ' ' + llvm_type(target) + ' ' + cut + ' to i' + str(width))
+        bad = self.tmp('bad')
+        self.emit(bad + ' = icmp ne i' + str(width) + ' ' + wide.reg + ', ' + back)
+        self.fail_if(bad, 'the number does not fit the integer type')
+        return ex(cut, target)
+
+    def widen(self, v: Ex, width: int) -> str:
+        if bits_of(v.ty) == width:
+            return v.reg
+        r = self.tmp('wide')
+        op = 'zext'
+        if is_signed(v.ty):
+            op = 'sext'
+        self.emit(r + ' = ' + op + ' ' + llvm_type(v.ty) + ' ' + v.reg + ' to i' + str(width))
+        return r
+
+    def modulo(self, a: str, b: str) -> str:
+        # Python-style: the result has the sign of the divisor (D05au); a zero divisor is not checked yet (P53)
+        r = self.arith('srem', a, b)
+        x = self.arith('xor', r, b)
+        differ = self.icmp('slt', x, '0')
+        nonzero = self.icmp('ne', r, '0')
+        fix = self.arith('and', differ.reg, nonzero.reg)
+        amount = self.arith('mul', fix, b)
+        return self.arith('add', r, amount)
+
+    def fail_if(self, bad: str, message: str):
+        # bad is an i1; when true, a RuntimeError is raised, which a catch can handle (D22a)
+        self.fail_with(bad, 'RuntimeError', message)
+
+    def fail_with(self, bad: str, cls: str, message: str):
+        stop = self.label('stop')
+        ok = self.label('ok')
+        self.cond_br(bad, stop, ok)
+        self.place(stop)
+        err = self.tmp('err')
+        self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(ptr ' + self.mod.intern(message) + ')')
+        self.emit('store ptr ' + err + ', ptr @tomato_exc')
+        self.emit('store i32 ' + str(self.line) + ', ptr @tomato_exc_line')
+        self.emit('store i32 1, ptr @tomato_exc_rt')
+        self.emit('store i32 1, ptr @tomato_exc_seen')
+        self.br(self.unwind_target())
+        self.place(ok)
+
+    # ---- expressions
+    def expr(self, n: Node, expected: str = '') -> Ex:
+        k = n.kind
+        if k == 'IntLit':
+            return self.int_literal(n.fields[0].num, expected, False, n.line)
+        if k == 'BoolLit':
+            if n.fields[0].flag:
+                return ex('1', 'bool')
+            return ex('0', 'bool')
+        if k == 'StrLit':
+            return ex(self.mod.intern(n.fields[0].text), 'str')
+        if k == 'Name':
+            name = n.fields[0].text
+            if name == 'None' and not (name in self.slots):
+                return ex('null', 'None')
+            if not (name in self.slots):
+                raise CompileError('unknown name ' + name, n.line)
+            ty = self.types[name]
+            r = self.tmp('l')
+            self.emit(r + ' = load ' + llvm_type(ty) + ', ptr ' + self.slots[name])
+            e = ex(r, ty)
+            self.retain(e)
+            return e
+        if k == 'UnOp':
+            op = n.fields[0].text
+            if op == '-' and val_node(n.fields[1]).kind == 'IntLit':
+                return self.int_literal(val_node(n.fields[1]).fields[0].num, expected, True, n.line)
+            v = self.expr(val_node(n.fields[1]), expected)
+            if op == '-':
+                if not is_numeric(v.ty):
+                    raise CompileError('type error: the operand of - is ' + shown(v.ty), n.line)
+                if not is_signed(v.ty):
+                    raise CompileError('type error: an unsigned number cannot be negated', n.line)
+                return self.num_arith('sub', ex('0', v.ty), v, n.line)
+            v = self.want(v, 'bool', n.line, 'the operand of not')
+            return ex(self.arith('xor', v.reg, '1'), 'bool')
+        if k == 'BinOp':
+            return self.binop(n, expected)
+        if k == 'TypeCall':
+            return self.type_call(n)
+        if k == 'Call':
+            return self.call(n, False)
+        if k == 'ListLit':
+            return self.list_lit(n, expected)
+        if k == 'MapLit':
+            return self.map_lit(n, expected)
+        if k == 'SetLit':
+            return self.set_lit(n, expected)
+        if k == 'Attr':
+            return self.field_get(n)
+        if k == 'Index':
+            return self.index(n)
+        if k == 'Slice':
+            return self.slice(n)
+        raise CompileError('the Tomato compiler does not support ' + k + ' yet', n.line)
+
+    def list_slot(self, lst: Ex, i: Ex) -> str:
+        # the address of item i, after a bounds check
+        lenp = self.tmp('lenp')
+        self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + lst.reg + ', i32 0, i32 2')
+        ln = self.tmp('len')
+        self.emit(ln + ' = load i64, ptr ' + lenp)
+        bad = self.tmp('oob')
+        self.emit(bad + ' = icmp uge i64 ' + i.reg + ', ' + ln)
+        self.fail_if(bad, 'index out of range')
+        datap = self.tmp('datap')
+        self.emit(datap + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + lst.reg + ', i32 0, i32 4')
+        data = self.tmp('data')
+        self.emit(data + ' = load ptr, ptr ' + datap)
+        addr = self.tmp('addr')
+        self.emit(addr + ' = getelementptr i64, ptr ' + data + ', i64 ' + i.reg)
+        return addr
+
+    def field_addr(self, obj: Ex, name: str, line: int) -> str:
+        if not is_class(obj.ty):
+            raise CompileError('type error: ' + shown(obj.ty) + ' has no fields', line)
+        c = self.mod.find_class(obj.ty[1:], line)
+        idx = self.mod.field_index(c, name, line)
+        addr = self.tmp('fld')
+        self.emit(addr + ' = getelementptr %class.' + str(self.mod.code_of(obj.ty)) + ', ptr ' + obj.reg + ', i32 0, i32 ' + str(idx + 2))
+        return addr
+
+    def field_type(self, obj: Ex, name: str, line: int) -> str:
+        c = self.mod.find_class(obj.ty[1:], line)
+        return c.ftypes[self.mod.field_index(c, name, line)]
+
+    def check_field_access(self, obj: Ex, name: str, writing: bool, line: int):
+        # private fields belong to their class (D12ac, D12r); a const field is set only by its own class's @init (D12o)
+        c = self.mod.find_class(obj.ty[1:], line)
+        k = self.mod.field_index(c, name, line)
+        if c.fprivate[k] and self.owner != c.fowner[k]:
+            raise CompileError('field ' + name + ' is private to class ' + c.fowner[k] + ' (D12ac, D12r)', line)
+        if writing and c.fconst[k] and not (self.in_init and self.owner == c.fowner[k]):
+            raise CompileError('const field ' + name + ' cannot change after initialization (D12o)', line)
+
+    def field_get(self, n: Node) -> Ex:
+        obj = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
+        name = n.fields[1].text
+        if is_class(obj.ty):
+            self.check_field_access(obj, name, False, n.line)
+        addr = self.field_addr(obj, name, n.line)
+        ft = self.field_type(obj, name, n.line)
+        v = self.tmp('f')
+        self.emit(v + ' = load ' + llvm_type(ft) + ', ptr ' + addr)
+        e = ex(v, ft)
+        self.retain(e)
+        self.release(obj)
+        return e
+
+    def assign_field(self, s: Node, target: Node):
+        obj = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
+        name = target.fields[1].text
+        if is_class(obj.ty):
+            self.check_field_access(obj, name, True, s.line)
+        ft = self.field_type(obj, name, s.line)
+        v = self.expr(val_node(s.fields[1]), ft)
+        v = self.want(v, ft, s.line, 'the assigned value')
+        addr = self.field_addr(obj, name, s.line)
+        self.store_owned(addr, v)
+        self.release(obj)
+
+    def list_lit(self, n: Node, expected: str) -> Ex:
+        items = val_nodes(n.fields[0])
+        t = ''
+        first = ex('', '')
+        if is_list(expected):
+            t = expected
+        else:
+            if len(items) == 0:
+                raise CompileError('the type of an empty list needs a declaration: xs: list[int] = []', n.line)
+            first = self.expr(items[0])
+            if first.ty == '':
+                raise CompileError('a list item needs a value', n.line)
+            t = 'list[' + first.ty + ']'
+        lst = self.tmp('list')
+        self.emit(lst + ' = call ptr @tomato_list_new(i64 ' + str(self.mod.code_of(t)) + ')')
+        k = 0
+        for item in items:
+            v = ex('', '')
+            if k == 0 and first.ty != '':
+                v = first
+            else:
+                v = self.expr(item, elem_of(t))
+            v = self.want(v, elem_of(t), n.line, 'a list item')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + lst + ', i64 8)')
+            self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
+            k = k + 1
+        return ex(lst, t)
+
+    def key_word(self, k: Ex) -> str:
+        # a key as the 64-bit word the runtime hashes: the number itself, or the text's address
+        if k.ty != 'str':
+            return k.reg
+        r = self.tmp('kw')
+        self.emit(r + ' = ptrtoint ptr ' + k.reg + ' to i64')
+        return r
+
+    def new_set(self, t: str) -> Ex:
+        kind = '0'
+        if set_elem(t) == 'str':
+            kind = '1'
+        r = self.tmp('set')
+        self.emit(r + ' = call ptr @tomato_dict_new(i64 ' + str(self.mod.code_of(t)) + ', i64 0, i32 ' + kind + ')')
+        return ex(r, t)
+
+    def set_lit(self, n: Node, expected: str) -> Ex:
+        items = val_nodes(n.fields[0])
+        t = expected
+        first = ex('', '')
+        if not is_set(expected):
+            first = self.expr(items[0])
+            t = 'set[' + first.ty + ']'
+            if not is_set(t) or not (first.ty == 'str' or first.ty == 'int' or first.ty == 'bool'):
+                raise CompileError('a set holds int, bool or str values', n.line)
+        st = self.new_set(t)
+        k = 0
+        for item in items:
+            v = ex('', '')
+            if k == 0 and first.ty != '':
+                v = first
+            else:
+                v = self.expr(item, set_elem(t))
+            v = self.want(v, set_elem(t), n.line, 'a set element')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + st.reg + ', i64 ' + self.key_word(v) + ', i32 0)')
+            self.release(v)
+            k = k + 1
+        return st
+
+    def map_lit(self, n: Node, expected: str) -> Ex:
+        pairs = n.fields[0].items
+        if is_set(expected) and len(pairs) == 0:
+            return self.new_set(expected)
+        if not is_dict(expected):
+            raise CompileError('the type of a {} needs a declaration: m: dict[str, int] = {}', n.line)
+        value_t = dict_value(expected)
+        d = self.tmp('dict')
+        self.emit(d + ' = call ptr @tomato_dict_new(i64 ' + str(self.mod.code_of(expected)) + ', i64 8, i32 1)')
+        for pair in pairs:
+            k = self.expr(val_node(pair.items[0]))
+            k = self.want(k, 'str', n.line, 'a dict key')
+            v = self.expr(val_node(pair.items[1]), value_t)
+            v = self.want(v, value_t, n.line, 'a dict value')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + d + ', i64 ' + self.key_word(k) + ', i32 1)')
+            dup = self.tmp('dup')
+            self.emit(dup + ' = icmp eq ptr ' + slot + ', null')
+            self.fail_if(dup, 'duplicate key in a dict literal')
+            self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
+            self.release(k)
+        return ex(d, expected)
+
+    def int_literal(self, v: int, expected: str, negative: bool, line: int) -> Ex:
+        # a whole-number literal takes the integer type its context wants (D05s-w), else int
+        t = 'int'
+        if is_fixed(expected):
+            t = expected
+        if not fits_literal(v, t, negative):
+            raise CompileError(str(v) + ' does not fit ' + shown(t) + ' (D05r, D05x)', line)
+        if negative:
+            return ex(str(0 - v), t)
+        return ex(str(v), t)
+
+    def literal_only(self, n: Node) -> bool:
+        if n.kind == 'IntLit':
+            return True
+        if n.kind == 'UnOp' and n.fields[0].text == '-':
+            return self.literal_only(val_node(n.fields[1]))
+        if n.kind == 'BinOp':
+            op = n.fields[0].text
+            return (op == '+' or op == '-' or op == '*') and self.literal_only(val_node(n.fields[1])) and self.literal_only(val_node(n.fields[2]))
+        return False
+
+    def type_call(self, n: Node) -> Ex:
+        # int[length=8](x) and uint[length=8](x): an explicit conversion that stops when the number does not fit
+        t = val_node(n.fields[0])
+        target = self.mod.type_name(node_val(t))
+        if not is_fixed(target):
+            raise CompileError('the Tomato compiler converts only to int[length=N] and uint[length=N] yet', n.line)
+        args = val_nodes(n.fields[1])
+        v = self.expr(args[0])
+        return self.convert_explicit(v, target, n.line)
+
+    def index(self, n: Node) -> Ex:
+        s = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
+        if is_dict(s.ty):
+            k = self.expr(val_node(n.fields[1]))
+            k = self.want(k, 'str', n.line, 'a dict key')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + s.reg + ', i64 ' + self.key_word(k) + ')')
+            missing = self.tmp('missing')
+            self.emit(missing + ' = icmp eq ptr ' + slot + ', null')
+            self.fail_if(missing, 'the key is not there')
+            vt = dict_value(s.ty)
+            r = self.tmp('val')
+            self.emit(r + ' = load ' + llvm_type(vt) + ', ptr ' + slot)
+            e = ex(r, vt)
+            self.retain(e)
+            self.release(k)
+            self.release(s)
+            return e
+        if is_list(s.ty):
+            li = self.expr(val_node(n.fields[1]))
+            li = self.want(li, 'int', n.line, 'an index')
+            addr = self.list_slot(s, li)
+            item = self.tmp('item')
+            self.emit(item + ' = load ' + llvm_type(elem_of(s.ty)) + ', ptr ' + addr)
+            e = ex(item, elem_of(s.ty))
+            self.retain(e)
+            self.release(s)
+            return e
+        s = self.want(s, 'str', n.line, 'the value being indexed')
+        i = self.expr(val_node(n.fields[1]))
+        i = self.want(i, 'int', n.line, 'an index')
+        r = self.tmp('ch')
+        self.emit(r + ' = call ptr @tomato_str_index(ptr ' + s.reg + ', i64 ' + i.reg + ')')
+        bad = self.tmp('oob')
+        self.emit(bad + ' = icmp eq ptr ' + r + ', null')
+        self.fail_if(bad, 'index out of range')
+        self.release(s)
+        return ex(r, 'str')
+
+    def slice(self, n: Node) -> Ex:
+        s = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
+        s = self.want(s, 'str', n.line, 'the value being sliced')
+        lo = '0'
+        if n.fields[1].tag == 'n':
+            e = self.expr(val_node(n.fields[1]))
+            e = self.want(e, 'int', n.line, 'a slice bound')
+            lo = e.reg
+        hi = ''
+        if n.fields[2].tag == 'n':
+            e2 = self.expr(val_node(n.fields[2]))
+            e2 = self.want(e2, 'int', n.line, 'a slice bound')
+            hi = e2.reg
+        else:
+            hi = self.tmp('len')
+            self.emit(hi + ' = call i64 @tomato_str_len(ptr ' + s.reg + ')')
+        r = self.tmp('part')
+        self.emit(r + ' = call ptr @tomato_str_slice(ptr ' + s.reg + ', i64 ' + lo + ', i64 ' + hi + ')')
+        bad = self.tmp('oob')
+        self.emit(bad + ' = icmp eq ptr ' + r + ', null')
+        self.fail_if(bad, 'slice out of range')
+        self.release(s)
+        return ex(r, 'str')
+
+    def membership(self, a: Ex, b: Ex, line: int) -> Ex:
+        if b.ty == 'str':
+            a = self.want(a, 'str', line, 'the left side of in')
+            c = self.tmp('c')
+            self.emit(c + ' = call i32 @tomato_str_contains(ptr ' + b.reg + ', ptr ' + a.reg + ')')
+            i1 = self.tmp('flag')
+            self.emit(i1 + ' = icmp ne i32 ' + c + ', 0')
+            self.release(a)
+            self.release(b)
+            return self.bool_of(i1)
+        if is_set(b.ty):
+            a = self.want(a, set_elem(b.ty), line, 'the left side of in')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + b.reg + ', i64 ' + self.key_word(a) + ')')
+            i1 = self.tmp('flag')
+            self.emit(i1 + ' = icmp ne ptr ' + slot + ', null')
+            self.release(a)
+            self.release(b)
+            return self.bool_of(i1)
+        if is_dict(b.ty):
+            a = self.want(a, 'str', line, 'the left side of in')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + b.reg + ', i64 ' + self.key_word(a) + ')')
+            i1 = self.tmp('flag')
+            self.emit(i1 + ' = icmp ne ptr ' + slot + ', null')
+            self.release(a)
+            self.release(b)
+            return self.bool_of(i1)
+        if is_list(b.ty):
+            return self.list_contains(a, b, line)
+        raise CompileError('the Tomato compiler does not support in on ' + shown(b.ty) + ' yet', line)
+
+    def list_contains(self, a: Ex, lst: Ex, line: int) -> Ex:
+        # walk the items and compare each with ==, stopping at the first match (basic item types only)
+        elem = elem_of(lst.ty)
+        if not (elem == 'int' or elem == 'bool' or elem == 'str'):
+            raise CompileError('the Tomato compiler only searches lists of int, bool and str yet', line)
+        a = self.want(a, elem, line, 'the left side of in')
+        found = self.hidden_slot('in.found')
+        counter = self.hidden_slot('in.i')
+        self.emit('store i64 0, ptr ' + found)
+        self.emit('store i64 0, ptr ' + counter)
+        head = self.label('inhead')
+        body = self.label('inbody')
+        step = self.label('instep')
+        end = self.label('inend')
+        self.br(head)
+        self.place(head)
+        i = self.tmp('i')
+        self.emit(i + ' = load i64, ptr ' + counter)
+        lenp = self.tmp('lenp')
+        self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + lst.reg + ', i32 0, i32 2')
+        ln = self.tmp('n')
+        self.emit(ln + ' = load i64, ptr ' + lenp)
+        go = self.tmp('go')
+        self.emit(go + ' = icmp slt i64 ' + i + ', ' + ln)
+        self.cond_br(go, body, end)
+        self.place(body)
+        addr = self.list_slot(lst, ex(i, 'int'))
+        item = self.tmp('item')
+        self.emit(item + ' = load ' + llvm_type(elem) + ', ptr ' + addr)
+        hit = self.tmp('hit')
+        if elem == 'str':
+            c = self.tmp('c')
+            self.emit(c + ' = call i32 @tomato_str_cmp(ptr ' + item + ', ptr ' + a.reg + ')')
+            self.emit(hit + ' = icmp eq i32 ' + c + ', 0')
+        else:
+            self.emit(hit + ' = icmp eq i64 ' + item + ', ' + a.reg)
+        yes = self.label('inhit')
+        self.cond_br(hit, yes, step)
+        self.place(yes)
+        self.emit('store i64 1, ptr ' + found)
+        self.br(end)
+        self.place(step)
+        cur = self.tmp('cur')
+        self.emit(cur + ' = load i64, ptr ' + counter)
+        nxt = self.tmp('next')
+        self.emit(nxt + ' = add i64 ' + cur + ', 1')
+        self.emit('store i64 ' + nxt + ', ptr ' + counter)
+        self.br(head)
+        self.place(end)
+        f = self.tmp('found')
+        self.emit(f + ' = load i64, ptr ' + found)
+        i1 = self.tmp('flag')
+        self.emit(i1 + ' = icmp ne i64 ' + f + ', 0')
+        self.release(a)
+        self.release(lst)
+        return self.bool_of(i1)
+
+    def compare_text(self, op: str, a: Ex, b: Ex) -> Ex:
+        c = self.tmp('cmp32')
+        self.emit(c + ' = call i32 @tomato_str_cmp(ptr ' + a.reg + ', ptr ' + b.reg + ')')
+        cc = 'eq'
+        if op == '!=':
+            cc = 'ne'
+        elif op == '<':
+            cc = 'slt'
+        elif op == '<=':
+            cc = 'sle'
+        elif op == '>':
+            cc = 'sgt'
+        elif op == '>=':
+            cc = 'sge'
+        r = self.tmp('c')
+        self.emit(r + ' = icmp ' + cc + ' i32 ' + c + ', 0')
+        self.release(a)
+        self.release(b)
+        return self.bool_of(r)
+
+    def logic(self, n: Node, op: str) -> Ex:
+        # and / or: the right side only runs when the left side does not decide the answer
+        a = self.expr(val_node(n.fields[1]))
+        a = self.want(a, 'bool', n.line, 'the left side of ' + op)
+        res = self.hidden_slot('logic')
+        self.emit('store i64 ' + a.reg + ', ptr ' + res)
+        c = self.truth(a, n.line)
+        rhs = self.label('rhs')
+        end = self.label('endlogic')
+        if op == 'and':
+            self.cond_br(c, rhs, end)
+        else:
+            self.cond_br(c, end, rhs)
+        self.place(rhs)
+        b = self.expr(val_node(n.fields[2]))
+        b = self.want(b, 'bool', n.line, 'the right side of ' + op)
+        self.emit('store i64 ' + b.reg + ', ptr ' + res)
+        self.br(end)
+        self.place(end)
+        r = self.tmp('logic')
+        self.emit(r + ' = load i64, ptr ' + res)
+        return ex(r, 'bool')
+
+    def binop(self, n: Node, expected: str) -> Ex:
+        op = n.fields[0].text
+        if op == 'and' or op == 'or':
+            return self.logic(n, op)
+        left = val_node(n.fields[1])
+        right = val_node(n.fields[2])
+        a = ex('', '')
+        b = ex('', '')
+        if (op == '+' or op == '-' or op == '*') and self.literal_only(n) and is_fixed(expected):
+            a = self.expr(left, expected)
+            b = self.expr(right, expected)
+        elif (op == '+' or op == '-' or op == '*') and self.literal_only(left) and not self.literal_only(right):
+            b = self.expr(right)
+            hint = ''
+            if is_fixed(b.ty):
+                hint = b.ty
+            a = self.expr(left, hint)
+        elif (op == '+' or op == '-' or op == '*') and self.literal_only(right) and not self.literal_only(left):
+            a = self.expr(left)
+            hint = ''
+            if is_fixed(a.ty):
+                hint = a.ty
+            b = self.expr(right, hint)
+        else:
+            a = self.expr(left)
+            b = self.expr(right)
+        is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
+        if op == 'in':
+            return self.membership(a, b, n.line)
+        if not ((op == 'is' or op == 'is not' or op == '==' or op == '!=') and (a.ty == 'None' or b.ty == 'None')):
+            a = self.unwrap(a, n.line)
+            b = self.unwrap(b, n.line)
+        if (op == 'is' or op == 'is not' or op == '==' or op == '!=') and (a.ty == 'None' or b.ty == 'None'):
+            if not is_rc(a.ty) or not is_rc(b.ty):
+                raise CompileError('type error: ' + shown(a.ty) + ' and ' + shown(b.ty) + ' cannot be compared with None', n.line)
+            cc = 'eq'
+            if op == 'is not' or op == '!=':
+                cc = 'ne'
+            c = self.tmp('isnone')
+            self.emit(c + ' = icmp ' + cc + ' ptr ' + a.reg + ', ' + b.reg)
+            self.release(a)
+            self.release(b)
+            return self.bool_of(c)
+        if a.ty == 'str' or b.ty == 'str':
+            if a.ty != b.ty:
+                raise CompileError('type error: cannot use ' + op + ' with ' + a.ty + ' and ' + b.ty, n.line)
+            if op == '+':
+                r = self.tmp('cat')
+                self.emit(r + ' = call ptr @tomato_str_concat(ptr ' + a.reg + ', ptr ' + b.reg + ')')
+                self.release(a)
+                self.release(b)
+                return ex(r, 'str')
+            if is_compare:
+                return self.compare_text(op, a, b)
+            raise CompileError('the Tomato compiler does not support ' + op + ' on text yet', n.line)
+        if op == 'in':
+            return self.membership(a, b, n.line)
+        if op == 'xor':
+            a = self.want(a, 'bool', n.line, 'the left side of ' + op)
+            b = self.want(b, 'bool', n.line, 'the right side of ' + op)
+            return ex(self.arith(op, a.reg, b.reg), 'bool')
+        if is_compare and a.ty == 'bool' and b.ty == 'bool':
+            if op != '==' and op != '!=':
+                raise CompileError('type error: cannot order bools', n.line)
+        elif not (is_numeric(a.ty) and is_numeric(b.ty)):
+            raise CompileError('type error: cannot use ' + op + ' with ' + shown(a.ty) + ' and ' + shown(b.ty), n.line)
+        if is_numeric(a.ty):
+            if op == '+':
+                return self.num_arith('add', a, b, n.line)
+            if op == '-':
+                return self.num_arith('sub', a, b, n.line)
+            if op == '*':
+                return self.num_arith('mul', a, b, n.line)
+            if op == '%':
+                return self.num_modulo(a, b, n.line)
+            if op == '/':
+                return self.num_divide(a, b, n.line)
+            if is_compare:
+                return self.num_compare(op, a, b, n.line)
+        elif is_compare:
+            if op == '==':
+                return self.icmp('eq', a.reg, b.reg)
+            return self.icmp('ne', a.reg, b.reg)
+        raise CompileError('the Tomato compiler does not support the operator ' + op + ' yet', n.line)
+
+    def call(self, n: Node, statement: bool) -> Ex:
+        f = val_node(n.fields[0])
+        if f.kind == 'LlvmRef':
+            return self.llvm_call(n, f.fields[0].text)
+        if f.kind == 'Attr':
+            target = val_node(f.fields[0])
+            if target.kind == 'Name' and not (target.fields[0].text in self.slots) and self.mod.resolve(target.fields[0].text) != '' and self.mod.has_class(self.mod.resolve(target.fields[0].text)):
+                return self.qualified_call(n, f, self.mod.resolve(target.fields[0].text))
+            return self.method_call(n, f)
+        if f.kind != 'Name':
+            raise CompileError('the Tomato compiler only calls plain functions yet', n.line)
+        if len(n.fields[2].items) > 0:
+            raise CompileError('the Tomato compiler does not support keyword arguments yet', n.line)
+        name = f.fields[0].text
+        args = val_nodes(n.fields[1])
+        if name == 'print':
+            if not statement:
+                raise CompileError('print has no value', n.line)
+            self.print_call(args)
+            return ex('', '')
+        if name == 'open':
+            return self.open_call(args, n.line)
+        if name == 'len':
+            return self.len_call(args, n.line)
+        if name == 'str':
+            return self.str_call(args, n.line)
+        if name == 'int' and len(args) == 1:
+            return self.convert_explicit(self.expr(args[0]), 'int', n.line)
+        key = self.mod.resolve(name)
+        if key == '':
+            raise CompileError('unknown function ' + name, n.line)
+        if self.mod.has_class(key):
+            return self.construct(self.mod.find_class(key, n.line), args, n.line)
+        return self.call_function(self.mod.find(key, n.line), '@tomato.' + key, ex('', ''), args, n.line)
+
+    def llvm_type_of(self, t: str) -> str:
+        # how an LLVM function sees a Tomato type: a bool is one bit there
+        if t == 'bool':
+            return 'i1'
+        return llvm_type(t)
+
+    def llvm_call(self, n: Node, name: str) -> Ex:
+        # a call to a declared LLVM function (D27b): the declaration gives the types, the linker the body
+        decl = ex('', '')
+        found: list[FuncInfo] = []
+        for d in self.mod.llvm_decls:
+            if d.name == name:
+                found.append(d)
+        if len(found) == 0:
+            raise CompileError('!' + name + ' is not declared: add `!' + name + '(a: T) -> R` at the top level (D27b)', n.line)
+        info = found[0]
+        args = val_nodes(n.fields[1])
+        if len(args) != len(info.ptypes):
+            raise CompileError('!' + name + ' takes ' + str(len(info.ptypes)) + ' argument(s), got ' + str(len(args)), n.line)
+        parts = new_strs()
+        types = new_strs()
+        k = 0
+        for a in args:
+            v = self.expr(a, info.ptypes[k])
+            v = self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of !' + name)
+            reg = v.reg
+            if v.ty == 'bool':
+                reg = self.tmp('bit')
+                self.emit(reg + ' = trunc i64 ' + v.reg + ' to i1')
+            parts.append(self.llvm_type_of(v.ty) + ' ' + reg)
+            types.append(self.llvm_type_of(v.ty))
+            k = k + 1
+        ret = 'void'
+        if info.ret != '':
+            ret = self.llvm_type_of(info.ret)
+        self.mod.declare('declare ' + ret + ' @' + name + '(' + ', '.join(types) + ')')
+        text = 'call ' + ret + ' @' + name + '(' + ', '.join(parts) + ')'
+        if info.ret == '':
+            self.emit(text)
+            return ex('', '')
+        r = self.tmp('llvm')
+        self.emit(r + ' = ' + text)
+        if info.ret == 'bool':
+            w = self.tmp('flag')
+            self.emit(w + ' = zext i1 ' + r + ' to i64')
+            return ex(w, 'bool')
+        return ex(r, info.ret)
+
+    def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
+        # a function, or a method when `receiver` holds the object; the callee only borrows its arguments
+        required = len(info.ptypes) - len(info.defaults)
+        if len(args) < required or len(args) > len(info.ptypes):
+            raise CompileError(info.name + ' takes ' + str(len(info.ptypes)) + ' argument(s), got ' + str(len(args)), line)
+        values: list[Ex] = []
+        if receiver.ty != '':
+            values.append(receiver)
+        k = 0
+        for a in args:
+            v = self.expr(a, info.ptypes[k])
+            v = self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + info.name)
+            values.append(v)
+            k = k + 1
+        while k < len(info.ptypes):             # the caller supplies the defaults it left out (D19c)
+            v = self.expr(info.defaults[k - required], info.ptypes[k])
+            v = self.want(v, info.ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + info.name)
+            values.append(v)
+            k = k + 1
+        parts: list[str] = []
+        for v in values:
+            parts.append(llvm_type(v.ty) + ' ' + v.reg)
+        text = 'call ' + self.ret_llvm(info) + ' ' + symbol + '(' + ', '.join(parts) + ')'
+        result = ex('', '')
+        if info.ret == '':
+            self.emit(text)
+        else:
+            r = self.tmp('call')
+            self.emit(r + ' = ' + text)
+            result = ex(r, info.ret)
+        self.check_error(values)
+        for v in values:
+            self.release(v)
+        return result
+
+    def check_error(self, values: list[Ex]):
+        # an error raised by the callee is pending: drop the borrowed arguments and leave this function (D22a)
+        ex1 = self.tmp('ex')
+        self.emit(ex1 + ' = load ptr, ptr @tomato_exc')
+        has = self.tmp('has')
+        self.emit(has + ' = icmp ne ptr ' + ex1 + ', null')
+        bad = self.label('raised')
+        fine = self.label('fine')
+        self.cond_br(has, bad, fine)
+        self.place(bad)
+        for v in values:
+            self.release(v)
+        self.br(self.unwind_target())
+        self.place(fine)
+
+    def construct(self, c: ClassInfo, args: list[Node], line: int) -> Ex:
+        # Name(args): allocate, set the declared defaults, run @init (the constructor function does all three)
+        ptypes: list[str] = []
+        if c.init != '':
+            ptypes = self.mod.find_method(c.name, c.init, line).ptypes
+        defaults: list[Node] = []
+        if c.init != '':
+            defaults = self.mod.find_method(c.name, c.init, line).defaults
+        required = len(ptypes) - len(defaults)
+        if len(args) < required or len(args) > len(ptypes):
+            raise CompileError(c.name + ' takes ' + str(len(ptypes)) + ' argument(s), got ' + str(len(args)), line)
+        values: list[Ex] = []
+        k = 0
+        for a in args:
+            v = self.expr(a, ptypes[k])
+            v = self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + c.name)
+            values.append(v)
+            k = k + 1
+        while k < len(ptypes):
+            v = self.expr(defaults[k - required], ptypes[k])
+            v = self.want(v, ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + c.name)
+            values.append(v)
+            k = k + 1
+        parts: list[str] = []
+        for v in values:
+            parts.append(llvm_type(v.ty) + ' ' + v.reg)
+        r = self.tmp('obj')
+        self.emit(r + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + c.name)) + '(' + ', '.join(parts) + ')')
+        self.check_error(values)
+        for v in values:
+            self.release(v)
+        return ex(r, '@' + c.name)
+
+    def dispatch(self, obj: Ex, name: str) -> str:
+        # a virtual lookup: the object's type code picks a method table, the method name picks the slot
+        tp = self.tmp('tp')
+        self.emit(tp + ' = getelementptr { i64, i64 }, ptr ' + obj.reg + ', i32 0, i32 1')
+        raw = self.tmp('rawcode')
+        self.emit(raw + ' = load i64, ptr ' + tp)
+        code = self.tmp('code')
+        self.emit(code + ' = and i64 ' + raw + ', 4294967295')
+        vts = self.tmp('vts')
+        self.emit(vts + ' = getelementptr ptr, ptr @tomato_vtables, i64 ' + code)
+        vt = self.tmp('vt')
+        self.emit(vt + ' = load ptr, ptr ' + vts)
+        fp = self.tmp('fp')
+        self.emit(fp + ' = getelementptr ptr, ptr ' + vt + ', i64 ' + str(self.mod.slot_of(name)))
+        f = self.tmp('f')
+        self.emit(f + ' = load ptr, ptr ' + fp)
+        return f
+
+    def qualified_call(self, n: Node, f: Node, cls: str) -> Ex:
+        # Class.method(self, args): the parent's version of a method, called on an object we already have (D12ao)
+        info = self.mod.find_method(cls, f.fields[1].text, n.line)
+        if info.is_private and self.owner != info.owner:
+            raise CompileError('method ' + info.name + ' is private to class ' + info.owner + ' (D12ac, D12r)', n.line)
+        args = val_nodes(n.fields[1])
+        if len(args) == 0:
+            raise CompileError(cls + '.' + info.name + ' needs self as its first argument', n.line)
+        obj = self.expr(args[0])
+        if not self.mod.subclass(obj.ty, '@' + cls):
+            raise CompileError('the first argument must be an instance of ' + cls, n.line)
+        rest: list[Node] = []
+        k = 0
+        for a in args:
+            if k > 0:
+                rest.append(a)
+            k = k + 1
+        return self.call_function(info, '@tomato.m.' + str(self.mod.code_of('@' + info.owner)) + '.' + info.name, obj, rest, n.line)
+
+    def method_call(self, n: Node, f: Node) -> Ex:
+        name = f.fields[1].text
+        obj = self.unwrap(self.expr(val_node(f.fields[0])), n.line)
+        args = val_nodes(n.fields[1])
+        if is_list(obj.ty) and name == 'append':
+            if len(args) != 1:
+                raise CompileError('append takes 1 argument, got ' + str(len(args)), n.line)
+            v = self.expr(args[0], elem_of(obj.ty))
+            v = self.want(v, elem_of(obj.ty), n.line, 'the appended item')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + obj.reg + ', i64 8)')
+            self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
+            self.release(obj)
+            return ex('', '')
+        if is_set(obj.ty):
+            return self.set_method(obj, name, args, n.line)
+        if obj.ty == 'str':
+            return self.text_method(obj, name, args, n.line)
+        if obj.ty == 'File':
+            return self.file_method(obj, name, args, n.line)
+        if is_iface(obj.ty):
+            req = self.mod.requirement(obj.ty[1:], name)
+            if len(req) == 0:
+                raise CompileError('interface ' + obj.ty[1:] + ' has no method ' + name, n.line)
+            return self.call_function(req[0], self.dispatch(obj, name), obj, args, n.line)
+        if is_class(obj.ty):
+            info = self.mod.find_method(obj.ty[1:], name, n.line)
+            if info.is_private and self.owner != info.owner:
+                raise CompileError('method ' + name + ' is private to class ' + info.owner + ' (D12ac, D12r)', n.line)
+            return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
+        raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + shown(obj.ty) + ' yet', n.line)
+
+    def set_method(self, st: Ex, name: str, args: list[Node], line: int) -> Ex:
+        if (name == 'add' or name == 'remove') and len(args) == 1:
+            v = self.expr(args[0], set_elem(st.ty))
+            v = self.want(v, set_elem(st.ty), line, 'the set element')
+            kw = self.key_word(v)
+            if name == 'add':
+                self.emit('call ptr @tomato_dict_insert(ptr ' + st.reg + ', i64 ' + kw + ', i32 0)')
+            else:
+                slot = self.tmp('slot')
+                self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + st.reg + ', i64 ' + kw + ')')
+                missing = self.tmp('missing')
+                self.emit(missing + ' = icmp eq ptr ' + slot + ', null')
+                self.fail_if(missing, 'the element is not there')
+                self.emit('call i32 @tomato_dict_delete(ptr ' + st.reg + ', i64 ' + kw + ')')
+            self.release(v)
+            self.release(st)
+            return ex('', '')
+        raise CompileError('the Tomato compiler does not support the set method ' + name + ' yet', line)
+
+    def text_args(self, obj: Ex, name: str, args: list[Node], count: int, line: int) -> list[Ex]:
+        if len(args) != count:
+            raise CompileError(name + ' takes ' + str(count) + ' argument(s), got ' + str(len(args)), line)
+        out: list[Ex] = []
+        for a in args:
+            v = self.expr(a)
+            v = self.want(v, 'str', line, 'the argument of ' + name)
+            out.append(v)
+        return out
+
+    def not_empty(self, v: Ex, name: str):
+        n = self.tmp('alen')
+        self.emit(n + ' = call i64 @tomato_str_len(ptr ' + v.reg + ')')
+        bad = self.tmp('empty')
+        self.emit(bad + ' = icmp eq i64 ' + n + ', 0')
+        self.fail_if(bad, 'an empty text to ' + name + ' on is not decided')
+
+    def text_method(self, obj: Ex, name: str, args: list[Node], line: int) -> Ex:
+        if name == 'find' or name == 'startswith' or name == 'endswith':
+            a = self.text_args(obj, name, args, 1, line)
+            if name == 'find':
+                r = self.tmp('found')
+                self.emit(r + ' = call i64 @tomato_str_find(ptr ' + obj.reg + ', ptr ' + a[0].reg + ')')
+                self.release(a[0])
+                self.release(obj)
+                return ex(r, 'int')
+            c = self.tmp('c')
+            self.emit(c + ' = call i32 @tomato_str_' + name + '(ptr ' + obj.reg + ', ptr ' + a[0].reg + ')')
+            i1 = self.tmp('flag')
+            self.emit(i1 + ' = icmp ne i32 ' + c + ', 0')
+            self.release(a[0])
+            self.release(obj)
+            return self.bool_of(i1)
+        if name == 'replace':
+            a = self.text_args(obj, name, args, 2, line)
+            self.not_empty(a[0], 'replace')
+            r = self.tmp('replaced')
+            self.emit(r + ' = call ptr @tomato_str_replace(ptr ' + obj.reg + ', ptr ' + a[0].reg + ', ptr ' + a[1].reg + ')')
+            self.release(a[0])
+            self.release(a[1])
+            self.release(obj)
+            return ex(r, 'str')
+        if name == 'split':
+            a = self.text_args(obj, name, args, 1, line)
+            self.not_empty(a[0], 'split')
+            r = self.tmp('pieces')
+            self.emit(r + ' = call ptr @tomato_str_split(ptr ' + obj.reg + ', ptr ' + a[0].reg + ', i64 ' + str(self.mod.code_of('list[str]')) + ', i64 8)')
+            self.release(a[0])
+            self.release(obj)
+            return ex(r, 'list[str]')
+        if name == 'join':
+            if len(args) != 1:
+                raise CompileError('join takes a list[str]', line)
+            lst = self.expr(args[0])
+            lst = self.want(lst, 'list[str]', line, 'the argument of join')
+            r = self.tmp('joined')
+            self.emit(r + ' = call ptr @tomato_str_join(ptr ' + obj.reg + ', ptr ' + lst.reg + ')')
+            self.release(lst)
+            self.release(obj)
+            return ex(r, 'str')
+        if (name == 'upper' or name == 'lower' or name == 'strip') and len(args) == 0:
+            r = self.tmp('changed')
+            self.emit(r + ' = call ptr @tomato_str_' + name + '(ptr ' + obj.reg + ')')
+            self.release(obj)
+            return ex(r, 'str')
+        raise CompileError('the Tomato compiler does not support the text method ' + name + ' yet', line)
+
+    def file_method(self, f: Ex, name: str, args: list[Node], line: int) -> Ex:
+        if name == 'read' and len(args) == 0:
+            r = self.tmp('text')
+            self.emit(r + ' = call ptr @tomato_file_read(ptr ' + f.reg + ')')
+            return ex(r, 'str')
+        if name == 'write' and len(args) == 1:
+            v = self.expr(args[0])
+            v = self.want(v, 'str', line, 'the argument of write')
+            self.emit('call void @tomato_file_write(ptr ' + f.reg + ', ptr ' + v.reg + ')')
+            self.release(v)
+            return ex('', '')
+        if name == 'close' and len(args) == 0:
+            self.emit('call void @tomato_file_close(ptr ' + f.reg + ')')
+            return ex('', '')
+        raise CompileError('the Tomato compiler does not support the file method ' + name + ' yet', line)
+
+    def open_call(self, args: list[Node], line: int) -> Ex:
+        if len(args) < 1 or len(args) > 2:
+            raise CompileError('open(path) or open(path, mode) takes text', line)
+        path = self.expr(args[0])
+        path = self.want(path, 'str', line, 'the path')
+        mode = ex(self.mod.intern('r'), 'str')
+        if len(args) == 2:
+            mode = self.expr(args[1])
+            mode = self.want(mode, 'str', line, 'the mode')
+        r = self.tmp('file')
+        self.emit(r + ' = call ptr @tomato_file_open(ptr ' + path.reg + ', ptr ' + mode.reg + ')')
+        bad = self.tmp('nofile')
+        self.emit(bad + ' = icmp eq ptr ' + r + ', null')
+        self.release(path)
+        self.release(mode)
+        self.fail_with(bad, 'IOError', 'a file could not be opened')
+        return ex(r, 'File')
+
+    def ret_llvm(self, info: FuncInfo) -> str:
+        if info.ret == '':
+            return 'void'
+        return llvm_type(info.ret)
+
+    def len_call(self, args: list[Node], line: int) -> Ex:
+        if len(args) != 1:
+            raise CompileError('len(x) takes one argument', line)
+        v = self.expr(args[0])
+        r = self.tmp('len')
+        if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty):
+            lenp = self.tmp('lenp')
+            self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + v.reg + ', i32 0, i32 2')
+            self.emit(r + ' = load i64, ptr ' + lenp)
+        else:
+            v = self.want(v, 'str', line, 'the argument of len')
+            self.emit(r + ' = call i64 @tomato_str_len(ptr ' + v.reg + ')')
+        self.release(v)
+        return ex(r, 'int')
+
+    def str_call(self, args: list[Node], line: int) -> Ex:
+        if len(args) != 1:
+            raise CompileError('str(x) takes one argument', line)
+        v = self.expr(args[0])
+        if v.ty == 'str':
+            return v
+        r = self.tmp('text')
+        if is_numeric(v.ty):
+            if is_signed(v.ty):
+                self.emit(r + ' = call ptr @tomato_str_from_i64(i64 ' + self.widen(v, 64) + ')')
+            else:
+                self.emit(r + ' = call ptr @tomato_str_from_u64(i64 ' + self.widen(v, 64) + ')')
+        elif v.ty == 'float':
+            self.emit(r + ' = call ptr @tomato_str_from_f64(double ' + v.reg + ')')
+        else:
+            w = self.tmp('w')
+            self.emit(w + ' = trunc i64 ' + v.reg + ' to i32')
+            self.emit(r + ' = call ptr @tomato_str_from_bool(i32 ' + w + ')')
+        return ex(r, 'str')
+
+    def print_call(self, args: list[Node]):
+        values: list[Ex] = []
+        for a in args:
+            v = self.expr(a)                   # every argument is evaluated before anything is printed
+            if is_list(v.ty):
+                raise CompileError('the Tomato compiler does not print lists yet', a.line)
+            values.append(v)
+        k = 0
+        for v in values:
+            if is_numeric(v.ty):
+                wide = self.widen(v, 64)
+                fmt = '@.fmt.int'
+                if not is_signed(v.ty):
+                    fmt = '@.fmt.uint'
+                self.emit('call i32 (ptr, ...) @printf(ptr ' + fmt + ', i64 ' + wide + ')')
+            elif v.ty == 'bool':
+                w = self.tmp('w')
+                self.emit(w + ' = trunc i64 ' + v.reg + ' to i32')
+                t = self.tmp('text')
+                self.emit(t + ' = call ptr @tomato_str_from_bool(i32 ' + w + ')')
+                self.emit('call void @tomato_print_strobj(ptr ' + t + ')')
+                self.emit('call void @tomato_release(ptr ' + t + ')')
+            elif v.ty == 'float':
+                t = self.tmp('text')
+                self.emit(t + ' = call ptr @tomato_str_from_f64(double ' + v.reg + ')')
+                self.emit('call void @tomato_print_strobj(ptr ' + t + ')')
+                self.emit('call void @tomato_release(ptr ' + t + ')')
+            else:
+                self.emit('call void @tomato_print_strobj(ptr ' + v.reg + ')')
+                self.release(v)
+            if k < len(values) - 1:
+                self.emit('call i32 @putchar(i32 32)')
+            k = k + 1
+        self.emit('call i32 @putchar(i32 10)')
+
+    # ---- statements
+    def block(self, body: list[Node]):
+        for s in body:
+            self.stmt(s)
+
+    def push_loop(self, brk: str, cont: str):
+        if self.loop_depth < len(self.breaks):
+            self.breaks[self.loop_depth] = brk
+            self.conts[self.loop_depth] = cont
+        else:
+            self.breaks.append(brk)
+            self.conts.append(cont)
+        self.loop_depth = self.loop_depth + 1
+
+    def stmt(self, s: Node):
+        self.line = s.line
+        k = s.kind
+        if k == 'ExprStmt':
+            e = val_node(s.fields[0])
+            if e.kind != 'Call':
+                raise CompileError('the Tomato compiler only runs calls as statements yet', s.line)
+            result = self.call(e, True)
+            self.release(result)               # a value nobody keeps is released at once
+        elif k == 'Assign':
+            target = val_node(s.fields[0])
+            if target.kind == 'Index':
+                self.assign_item(s, target)
+                return
+            if target.kind == 'Attr':
+                self.assign_field(s, target)
+                return
+            if target.kind != 'Name':
+                raise CompileError('the Tomato compiler can only assign to a variable or a list item yet', s.line)
+            name = target.fields[0].text
+            expected = ''
+            if name in self.slots:
+                expected = self.types[name]
+            v = self.expr(val_node(s.fields[1]), expected)
+            slot_type = v.ty
+            if name in self.slots:
+                v = self.want(v, self.types[name], s.line, 'the assigned value')
+                slot_type = self.types[name]
+            if slot_type == 'None' or slot_type == '':
+                raise CompileError('the type of ' + name + ' needs a declaration: ' + name + ': Item | None = None', s.line)
+            self.store_owned(self.slot(name, slot_type, s.line), v)
+        elif k == 'Declare':
+            ty = self.mod.type_name(s.fields[1])
+            if ty == '':
+                raise CompileError('the Tomato compiler only declares int, bool, str and list variables yet', s.line)
+            v = self.expr(val_node(s.fields[2]), ty)
+            v = self.want(v, ty, s.line, 'the value')
+            self.store_owned(self.slot(s.fields[0].text, ty, s.line), v)
+        elif k == 'Return':
+            if s.fields[0].tag == 'z':
+                if self.ret != '':
+                    raise CompileError('this function must return a ' + self.ret, s.line)
+            else:
+                if self.ret == '':
+                    raise CompileError('this function returns no value', s.line)
+                v = self.expr(val_node(s.fields[0]), self.ret)
+                v = self.want(v, self.ret, s.line, 'the returned value')
+                self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr %retval')
+            self.run_finallies(self.try_depth)
+            self.br('epilogue')
+        elif k == 'Raise':
+            v = self.expr(val_node(s.fields[0]))
+            if not self.mod.subclass(v.ty, '@Error'):
+                raise CompileError('raise needs an Error object, found ' + shown(v.ty), s.line)
+            self.emit('store ptr ' + v.reg + ', ptr @tomato_exc')            # the pending error owns the reference
+            self.emit('store i32 ' + str(s.line) + ', ptr @tomato_exc_line')
+            self.emit('store i32 0, ptr @tomato_exc_rt')
+            self.emit('store i32 1, ptr @tomato_exc_seen')
+            self.br(self.unwind_target())
+        elif k == 'Try':
+            self.try_stmt(s)
+        elif k == 'If':
+            self.if_stmt(s)
+        elif k == 'While':
+            self.while_stmt(s)
+        elif k == 'For':
+            self.for_stmt(s)
+        elif k == 'Break':
+            if self.loop_depth == 0:
+                raise CompileError('break outside a loop', s.line)
+            self.run_finallies(self.tries_in_loop())
+            self.br(self.breaks[self.loop_depth - 1])
+        elif k == 'Continue':
+            if self.loop_depth == 0:
+                raise CompileError('continue outside a loop', s.line)
+            self.run_finallies(self.tries_in_loop())
+            self.br(self.conts[self.loop_depth - 1])
+        elif k == 'Pass':
+            pass
+        else:
+            raise CompileError('the Tomato compiler does not support ' + k + ' statements yet', s.line)
+
+    def tries_in_loop(self) -> int:
+        # how many of the innermost try statements sit inside the current loop
+        n = 0
+        k = self.try_depth
+        while k > 0 and self.tries[k - 1].loop_depth == self.loop_depth:
+            n = n + 1
+            k = k - 1
+        return n
+
+    def run_finallies(self, n: int):
+        # run the finally blocks of the n innermost try statements, innermost first: a return, break or continue is
+        # leaving them. A raise inside one of these blocks goes to the handlers outside its try (D22a).
+        saved = self.try_depth
+        k = saved - 1
+        while k >= saved - n:
+            if self.tries[k].has_final:
+                self.try_depth = k
+                self.block(self.tries[k].final)
+            k = k - 1
+        self.try_depth = saved
+
+    def push_try(self, info: TryInfo):
+        if self.try_depth < len(self.tries):
+            self.tries[self.try_depth] = info
+        else:
+            self.tries.append(info)
+        self.try_depth = self.try_depth + 1
+
+    def try_stmt(self, s: Node):
+        handlers = s.fields[1].items
+        for h in handlers:
+            written = h.items[0].text
+            ckey = self.mod.resolve(written)
+            if ckey == '' or not self.mod.has_class(ckey) or not self.mod.subclass('@' + ckey, '@Error'):
+                raise CompileError('catch needs an error class (a subclass of Error), found ' + written, s.line)
+        info = TryInfo()
+        info.catch_l = self.label('catch')
+        info.prop_l = self.label('prop')
+        info.has_final = s.fields[3].tag == 'l'
+        if info.has_final:
+            info.final = val_nodes(s.fields[3])
+        info.loop_depth = self.loop_depth
+        else_l = self.label('tryelse')
+        handled_l = self.label('tryhandled')
+        end_l = self.label('tryend')
+        self.push_try(info)
+        self.block(val_nodes(s.fields[0]))
+        if not self.terminated:
+            self.br(else_l)
+        # an error raised in the body arrives here with the pending error set
+        self.place(info.catch_l)
+        info.state = 'post'
+        pending = self.tmp('ex')
+        self.emit(pending + ' = load ptr, ptr @tomato_exc')
+        tp = self.tmp('tp')
+        self.emit(tp + ' = getelementptr { i64, i64 }, ptr ' + pending + ', i32 0, i32 1')
+        raw = self.tmp('rawcode')
+        self.emit(raw + ' = load i64, ptr ' + tp)
+        code = self.tmp('code')
+        self.emit(code + ' = and i64 ' + raw + ', 4294967295')
+        for h in handlers:
+            cname = self.mod.resolve(h.items[0].text)
+            isa = self.tmp('isa')
+            self.emit(isa + ' = call i32 @tomato_is_subclass(i64 ' + code + ', i64 ' + str(self.mod.code_of('@' + cname)) + ')')
+            hit = self.tmp('hit')
+            self.emit(hit + ' = icmp ne i32 ' + isa + ', 0')
+            match = self.label('match')
+            nxt = self.label('nomatch')
+            self.cond_br(hit, match, nxt)
+            self.place(match)
+            self.emit('store ptr null, ptr @tomato_exc')             # handled: the catch variable takes the reference
+            if h.items[1].tag == 's':
+                var = h.items[1].text
+                reg = ''
+                if var in self.slots and self.types[var] != '@' + cname:
+                    reg = self.new_slot(var, '@' + cname)     # the name is bound again, to a new slot of the new type
+                else:
+                    reg = self.slot(var, '@' + cname, s.line)
+                self.store_owned(reg, ex(pending, '@' + cname))
+            else:
+                self.emit('call void @tomato_release(ptr ' + pending + ')')
+            self.block(val_nodes(h.items[2]))
+            if not self.terminated:
+                self.br(handled_l)
+            self.place(nxt)
+        self.br(info.prop_l)                                          # no clause matched: keep propagating
+        self.place(else_l)
+        if s.fields[2].tag == 'l':
+            self.block(val_nodes(s.fields[2]))
+        if not self.terminated:
+            self.br(handled_l)
+        # every normal way out of the statement runs the finally block once
+        self.place(handled_l)
+        self.try_depth = self.try_depth - 1
+        if info.has_final:
+            self.block(info.final)
+        if not self.terminated:
+            self.br(end_l)
+        # an error is leaving the statement: park it while the finally block runs, then keep propagating
+        self.place(info.prop_l)
+        if info.has_final:
+            hold = self.tmp('hold')
+            self.allocas.append('  ' + hold + ' = alloca ptr')
+            held = self.tmp('pending')
+            self.emit(held + ' = load ptr, ptr @tomato_exc')
+            self.emit('store ptr ' + held + ', ptr ' + hold)
+            self.emit('store ptr null, ptr @tomato_exc')
+            self.block(info.final)
+            back = self.tmp('back')
+            self.emit(back + ' = load ptr, ptr ' + hold)
+            self.emit('store ptr ' + back + ', ptr @tomato_exc')
+        self.br(self.unwind_target())
+        self.place(end_l)
+
+    def assign_item(self, s: Node, target: Node):
+        lst = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
+        if is_dict(lst.ty):
+            k = self.expr(val_node(target.fields[1]))
+            k = self.want(k, 'str', s.line, 'a dict key')
+            dv = self.expr(val_node(s.fields[1]), dict_value(lst.ty))
+            dv = self.want(dv, dict_value(lst.ty), s.line, 'the assigned value')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + lst.reg + ', i64 ' + self.key_word(k) + ', i32 0)')
+            self.store_owned(slot, dv)
+            self.release(k)
+            self.release(lst)
+            return
+        if not is_list(lst.ty):
+            raise CompileError('only list and dict items can be assigned by index', s.line)
+        i = self.expr(val_node(target.fields[1]))
+        i = self.want(i, 'int', s.line, 'an index')
+        v = self.expr(val_node(s.fields[1]), elem_of(lst.ty))
+        v = self.want(v, elem_of(lst.ty), s.line, 'the assigned item')
+        addr = self.list_slot(lst, i)
+        if is_rc(v.ty):
+            old = self.tmp('old')
+            self.emit(old + ' = load ptr, ptr ' + addr)
+            self.emit('store ptr ' + v.reg + ', ptr ' + addr)
+            self.emit('call void @tomato_release(ptr ' + old + ')')
+        else:
+            self.emit('store i64 ' + v.reg + ', ptr ' + addr)
+        self.release(lst)
+
+    def if_stmt(self, s: Node):
+        end = self.label('endif')
+        for branch in s.fields[0].items:
+            cond = self.truth(self.expr(val_node(branch.items[0])), s.line)
+            then = self.label('then')
+            nxt = self.label('next')
+            self.cond_br(cond, then, nxt)
+            self.place(then)
+            self.block(val_nodes(branch.items[1]))
+            if not self.terminated:
+                self.br(end)
+            self.place(nxt)
+        if s.fields[1].tag == 'l':
+            self.block(val_nodes(s.fields[1]))
+        if not self.terminated:
+            self.br(end)
+        self.place(end)
+
+    def while_stmt(self, s: Node):
+        head = self.label('while')
+        body = self.label('body')
+        end = self.label('endwhile')
+        self.br(head)
+        self.place(head)
+        cond = self.truth(self.expr(val_node(s.fields[0])), s.line)
+        self.cond_br(cond, body, end)
+        self.place(body)
+        self.push_loop(end, head)
+        self.block(val_nodes(s.fields[1]))
+        self.loop_depth = self.loop_depth - 1
+        if not self.terminated:
+            self.br(head)
+        self.place(end)
+
+    def for_each(self, s: Node, it: Node):
+        lst = self.expr(it)
+        if is_set(lst.ty) or is_dict(lst.ty):
+            # a loop over a set or dict walks a snapshot of its keys (P28)
+            keys = 'list[' + set_elem(lst.ty) + ']'
+            if is_dict(lst.ty):
+                keys = 'list[str]'
+            snap = self.tmp('keys')
+            self.emit(snap + ' = call ptr @tomato_dict_keys(ptr ' + lst.reg + ', i64 ' + str(self.mod.code_of(keys)) + ', i64 8)')
+            self.release(lst)
+            lst = ex(snap, keys)
+        if not is_list(lst.ty):
+            raise CompileError('the Tomato compiler only loops over range(), lists, sets and dicts yet', s.line)
+        elem = elem_of(lst.ty)
+        holder = self.hidden_rc_slot('for.list')
+        self.store_owned(holder, lst)
+        counter = self.hidden_slot('for.i')
+        self.emit('store i64 0, ptr ' + counter)
+        var = self.slot(s.fields[0].text, elem, s.line)
+        head = self.label('each')
+        body = self.label('eachbody')
+        step = self.label('eachstep')
+        end = self.label('endeach')
+        self.br(head)
+        self.place(head)
+        l = self.tmp('lst')
+        self.emit(l + ' = load ptr, ptr ' + holder)
+        i = self.tmp('i')
+        self.emit(i + ' = load i64, ptr ' + counter)
+        lenp = self.tmp('lenp')
+        self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + l + ', i32 0, i32 2')
+        ln = self.tmp('n')
+        self.emit(ln + ' = load i64, ptr ' + lenp)
+        go = self.tmp('go')
+        self.emit(go + ' = icmp slt i64 ' + i + ', ' + ln)
+        self.cond_br(go, body, end)
+        self.place(body)
+        addr = self.list_slot(ex(l, lst.ty), ex(i, 'int'))
+        item = self.tmp('item')
+        self.emit(item + ' = load ' + llvm_type(elem) + ', ptr ' + addr)
+        e = ex(item, elem)
+        self.retain(e)
+        self.store_owned(var, e)
+        self.push_loop(end, step)
+        self.block(val_nodes(s.fields[2]))
+        self.loop_depth = self.loop_depth - 1
+        if not self.terminated:
+            self.br(step)
+        self.place(step)
+        cur = self.tmp('cur')
+        self.emit(cur + ' = load i64, ptr ' + counter)
+        nxt = self.tmp('next')
+        self.emit(nxt + ' = add i64 ' + cur + ', 1')
+        self.emit('store i64 ' + nxt + ', ptr ' + counter)
+        self.br(head)
+        self.place(end)
+
+    def for_stmt(self, s: Node):
+        it = val_node(s.fields[1])
+        if not (it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'range'):
+            self.for_each(s, it)
+            return
+        if it.kind != 'Call' or val_node(it.fields[0]).kind != 'Name' or val_node(it.fields[0]).fields[0].text != 'range':
+            raise CompileError('the Tomato compiler only loops over range() yet', s.line)
+        bounds = val_nodes(it.fields[1])
+        if len(bounds) != 1 and len(bounds) != 2:
+            raise CompileError('the Tomato compiler supports range(stop) and range(start, stop) yet', s.line)
+        start = '0'
+        stop = ''
+        if len(bounds) == 1:
+            e = self.expr(bounds[0])
+            e = self.want(e, 'int', s.line, 'a range bound')
+            stop = e.reg
+        else:
+            a = self.expr(bounds[0])
+            b = self.expr(bounds[1])
+            a = self.want(a, 'int', s.line, 'a range bound')
+            b = self.want(b, 'int', s.line, 'a range bound')
+            start = a.reg
+            stop = b.reg
+        var = self.slot(s.fields[0].text, 'int', s.line)
+        counter = self.hidden_slot('for.i')
+        limit = self.hidden_slot('for.n')
+        self.emit('store i64 ' + start + ', ptr ' + counter)
+        self.emit('store i64 ' + stop + ', ptr ' + limit)
+        head = self.label('for')
+        body = self.label('forbody')
+        step = self.label('forstep')
+        end = self.label('endfor')
+        self.br(head)
+        self.place(head)
+        i = self.tmp('i')
+        self.emit(i + ' = load i64, ptr ' + counter)
+        lim = self.tmp('lim')
+        self.emit(lim + ' = load i64, ptr ' + limit)
+        c = self.tmp('go')
+        self.emit(c + ' = icmp slt i64 ' + i + ', ' + lim)
+        self.cond_br(c, body, end)
+        self.place(body)
+        self.emit('store i64 ' + i + ', ptr ' + var)
+        self.push_loop(end, step)
+        self.block(val_nodes(s.fields[2]))
+        self.loop_depth = self.loop_depth - 1
+        if not self.terminated:
+            self.br(step)
+        self.place(step)
+        cur = self.tmp('cur')
+        self.emit(cur + ' = load i64, ptr ' + counter)
+        nxt = self.tmp('next')
+        self.emit(nxt + ' = add i64 ' + cur + ', 1')
+        self.emit('store i64 ' + nxt + ', ptr ' + counter)
+        self.br(head)
+        self.place(end)
+
+def function_symbol(mod: Mod, info: FuncInfo) -> str:
+    if info.owner == '':
+        return '@tomato.' + info.key
+    return '@tomato.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
+
+def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
+    # the epilogue releases every slot that owns a heap value, then returns the stored result
+    g.lines.append('epilogue:')
+    for reg in g.rc_slots:
+        o = g.tmp('rel')
+        g.lines.append('  ' + o + ' = load ptr, ptr ' + reg)
+        g.lines.append('  call void @tomato_release(ptr ' + o + ')')
+    llvm_ret = 'void'
+    if ret != '':
+        llvm_ret = llvm_type(ret)
+        r = g.tmp('ret')
+        g.lines.append('  ' + r + ' = load ' + llvm_ret + ', ptr %retval')
+        g.lines.append('  ret ' + llvm_ret + ' ' + r)
+    else:
+        g.lines.append('  ret void')
+    text = 'define ' + llvm_ret + ' ' + symbol + '(' + ', '.join(sig) + ') {\nentry:\n'
+    if ret != '':
+        text = text + '  %retval = alloca ' + llvm_ret + '\n  store ' + llvm_ret + ' ' + zero_of(ret) + ', ptr %retval\n'
+    if len(g.allocas) > 0:
+        text = text + '\n'.join(g.allocas) + '\n'
+    text = text + '\n'.join(g.lines) + '\n}\n'
+    return text
+
+def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
+    mod.cur = info.module
+    g = Gen()
+    g.mod = mod
+    g.owner = info.owner
+    g.in_init = info.is_init
+    g.ret = info.ret
+    params = val_nodes(f.fields[1])
+    names: list[str] = []
+    types: list[str] = []
+    k = 0
+    for p in params:
+        if p.fields[0].text == 'self':
+            if info.owner == '':
+                raise CompileError('self is only for methods', p.line)
+            names.append('self')
+            types.append('@' + info.owner)
+        else:
+            names.append(p.fields[0].text)
+            types.append(info.ptypes[k])
+            k = k + 1
+    sig: list[str] = []
+    k = 0
+    for name in names:
+        reg = g.slot(name, types[k], f.line)
+        sig.append(llvm_type(types[k]) + ' %arg.' + name)
+        g.emit('store ' + llvm_type(types[k]) + ' %arg.' + name + ', ptr ' + reg)
+        if is_rc(types[k]):
+            g.emit('call void @tomato_retain(ptr %arg.' + name + ')')    # the caller only lent it
+        k = k + 1
+    g.block(val_nodes(f.fields[3]))
+    if not g.terminated:
+        if info.ret == '':
+            g.br('epilogue')
+        else:
+            g.emit('call void @tomato_fail(ptr ' + mod.intern('the function ended without returning a value') + '.c)')
+            g.emit('unreachable')
+            g.terminated = True
+    return finish_function(g, function_symbol(mod, info), sig, info.ret)
+
+def compile_constructor(c: ClassInfo, mod: Mod) -> str:
+    # allocate, store the declared field defaults, then run @init
+    mod.cur = c.module
+    g = Gen()
+    g.mod = mod
+    code = str(mod.code_of('@' + c.name))
+    ptypes: list[str] = []
+    if c.init != '':
+        ptypes = mod.find_method(c.name, c.init, c.line).ptypes
+    sig: list[str] = []
+    k = 0
+    for t in ptypes:
+        sig.append(llvm_type(t) + ' %arg.' + str(k))
+        k = k + 1
+    size = g.tmp('size')
+    g.emit(size + ' = ptrtoint ptr getelementptr (%class.' + code + ', ptr null, i32 1) to i64')
+    obj = g.tmp('obj')
+    g.emit(obj + ' = call ptr @tomato_alloc(i64 ' + size + ', i64 ' + code + ')')
+    d = 0
+    k = 0
+    for name in c.fnames:
+        if c.has_default[k]:
+            v = g.expr(c.defaults[d], c.ftypes[k])
+            v = g.want(v, c.ftypes[k], c.line, 'the default of field ' + name)
+            addr = g.tmp('fld')
+            g.emit(addr + ' = getelementptr %class.' + code + ', ptr ' + obj + ', i32 0, i32 ' + str(k + 2))
+            g.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + addr)
+            d = d + 1
+        k = k + 1
+    if c.init != '':
+        parts: list[str] = ['ptr ' + obj]
+        k = 0
+        for t in ptypes:
+            parts.append(llvm_type(t) + ' %arg.' + str(k))
+            k = k + 1
+        g.emit('call void @' + 'tomato.m.' + str(mod.code_of('@' + mod.find_method(c.name, c.init, c.line).owner)) + '.' + c.init + '(' + ', '.join(parts) + ')')
+        pending = g.tmp('ex')
+        g.emit(pending + ' = load ptr, ptr @tomato_exc')
+        has = g.tmp('has')
+        g.emit(has + ' = icmp ne ptr ' + pending + ', null')
+        bad = g.label('initfailed')
+        ok = g.label('initok')
+        g.cond_br(has, bad, ok)
+        g.place(bad)
+        g.emit('call void @tomato_release(ptr ' + obj + ')')          # an @init that raised leaves no object behind
+        g.br('epilogue')
+        g.place(ok)
+    g.emit('store ptr ' + obj + ', ptr %retval')
+    g.br('epilogue')
+    return finish_function(g, '@tomato.new.' + code, sig, '@' + c.name)
+
+def class_types(mod: Mod) -> str:
+    # one struct type per class: the reference count and type code, then the fields
+    t = ''
+    for c in mod.classes:
+        parts = new_strs()
+        parts.append('i64')
+        parts.append('i64')
+        for ft in c.ftypes:
+            parts.append(llvm_type(ft))
+        t = t + '%class.' + str(mod.code_of('@' + c.name)) + ' = type { ' + ', '.join(parts) + ' }\n'
+    return t
+
+def vtables(mod: Mod) -> str:
+    # one method table per class (a slot per method name), and the table of tables indexed by type code
+    n = len(mod.codes) + 2
+    heads = new_strs()
+    for k in range(n):
+        heads.append('ptr null')
+    text = ''
+    k = 0
+    for code in mod.codes:
+        slot = k + 2
+        if is_class(code) and len(mod.slots) > 0:
+            entries = new_strs()
+            for name in mod.slots:
+                found = mod.lookup_method(code[1:], name)
+                if len(found) > 0:
+                    entries.append('ptr ' + function_symbol(mod, found[0]))
+                else:
+                    entries.append('ptr null')
+            text = text + '@tomato.vt.' + str(slot) + ' = constant [' + str(len(entries)) + ' x ptr] [' + ', '.join(entries) + ']\n'
+            heads[slot] = 'ptr @tomato.vt.' + str(slot)
+        k = k + 1
+    text = text + '@tomato_vtables = constant [' + str(n) + ' x ptr] [' + ', '.join(heads) + ']\n'
+    return text
+
+def int_of_bool(b: bool) -> int:
+    if b:
+        return 1
+    return 0
+
+def runtime_tables(mod: Mod) -> str:
+    n = len(mod.codes) + 2
+    names = new_strs()
+    zeros = new_strs()
+    kinds = new_strs()
+    offsets = new_strs()
+    extra = ''
+    for k in range(n):
+        names.append('ptr null')
+        zeros.append('i64 0')
+        offsets.append('ptr null')
+        kinds.append('i32 0')
+    k = 0
+    for code in mod.codes:
+        slot = k + 2
+        if is_class(code):
+            c = mod.find_class(code[1:], 0)
+            kinds[slot] = 'i32 1'
+            if c.parent != '':
+                zeros[slot] = 'i64 ' + str(mod.code_of('@' + c.parent))
+            offs = new_strs()
+            j = 0
+            for ft in c.ftypes:
+                if is_rc(ft):
+                    offs.append('i32 trunc (i64 ptrtoint (ptr getelementptr (%class.' + str(slot) + ', ptr null, i32 0, i32 ' + str(j + 2) + ') to i64) to i32)')
+                j = j + 1
+            offs.append('i32 -1')
+            extra = extra + '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
+            offsets[slot] = 'ptr @tomato.offs.' + str(slot)
+            extra = extra + '@tomato.name.' + str(slot) + ' = private constant [' + str(len(c.display) + 1) + ' x i8] c"' + c.display + '\\00"\n'
+            names[slot] = 'ptr @tomato.name.' + str(slot)
+        elif is_set(code):
+            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))
+        elif is_dict(code):
+            kinds[slot] = 'i32 ' + str(3 + 256 + 512 * int_of_bool(is_rc(dict_value(code))))    # a table with text keys
+        elif elem_of(code) == 'str' or is_rc(elem_of(code)):
+            kinds[slot] = 'i32 258'          # a list: 2, plus 256 when its items are reference counted
+        else:
+            kinds[slot] = 'i32 2'
+        k = k + 1
+    count = str(n)
+    t = '@tomato_exc = global ptr null\n'
+    t = t + '@tomato_exc_line = global i32 0\n'
+    t = t + '@tomato_exc_rt = global i32 0\n'
+    t = t + '@tomato_exc_seen = global i32 0\n'
+    t = t + extra
+    t = t + '@tomato_class_names = constant [' + count + ' x ptr] [' + ', '.join(names) + ']\n'
+    t = t + '@tomato_parents = global [' + count + ' x i64] [' + ', '.join(zeros) + ']\n'
+    t = t + '@tomato_kinds = constant [' + count + ' x i32] [' + ', '.join(kinds) + ']\n'
+    t = t + '@tomato_offsets = constant [' + count + ' x ptr] [' + ', '.join(offsets) + ']\n'
+    return t
+
+def declarations(mod: Mod) -> str:
+    d = 'declare i32 @printf(ptr, ...)\n'
+    d = d + 'declare i32 @putchar(i32)\n'
+    d = d + 'declare void @tomato_fail(ptr)\n'
+    d = d + 'declare void @tomato_leak_check()\n'
+    d = d + 'declare void @tomato_retain(ptr)\n'
+    d = d + 'declare void @tomato_release(ptr)\n'
+    d = d + 'declare ptr @tomato_str_concat(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_from_cstr(ptr)\n'
+    d = d + 'declare i64 @tomato_str_len(ptr)\n'
+    d = d + 'declare i32 @tomato_str_cmp(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_index(ptr, i64)\n'
+    d = d + 'declare ptr @tomato_str_slice(ptr, i64, i64)\n'
+    d = d + 'declare ptr @tomato_str_from_i64(i64)\n'
+    d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
+    d = d + 'declare ptr @tomato_str_from_f64(double)\n'
+    d = d + 'declare double @tomato_parse_f64(ptr, i32)\n'
+    d = d + 'declare void @tomato_print_strobj(ptr)\n'
+    d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
+    d = d + 'declare i32 @tomato_is_subclass(i64, i64)\n'
+    d = d + 'declare ptr @tomato_dict_new(i64, i64, i32)\n'
+    d = d + 'declare ptr @tomato_dict_find(ptr, i64)\n'
+    d = d + 'declare ptr @tomato_dict_insert(ptr, i64, i32)\n'
+    d = d + 'declare i32 @tomato_dict_delete(ptr, i64)\n'
+    d = d + 'declare ptr @tomato_dict_keys(ptr, i64, i64)\n'
+    d = d + 'declare void @tomato_usage(i32, i32)\n'
+    d = d + 'declare i64 @tomato_parse_i64(ptr, i32)\n'
+    d = d + 'declare i64 @tomato_parse_u64(ptr, i32)\n'
+    d = d + 'declare void @tomato_fit_signed(i64, i32, i32)\n'
+    d = d + 'declare void @tomato_fit_unsigned(i64, i32, i32)\n'
+    d = d + 'declare i32 @tomato_parse_bool(ptr, i32)\n'
+    d = d + 'declare void @tomato_report_uncaught(ptr, i32, i32, i32)\n'
+    d = d + 'declare i64 @tomato_str_find(ptr, ptr)\n'
+    d = d + 'declare i32 @tomato_str_startswith(ptr, ptr)\n'
+    d = d + 'declare i32 @tomato_str_endswith(ptr, ptr)\n'
+    d = d + 'declare i32 @tomato_str_contains(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_replace(ptr, ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_split(ptr, ptr, i64, i64)\n'
+    d = d + 'declare ptr @tomato_str_join(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_str_upper(ptr)\n'
+    d = d + 'declare ptr @tomato_str_lower(ptr)\n'
+    d = d + 'declare ptr @tomato_str_strip(ptr)\n'
+    d = d + 'declare ptr @tomato_file_open(ptr, ptr)\n'
+    d = d + 'declare ptr @tomato_file_read(ptr)\n'
+    d = d + 'declare void @tomato_file_write(ptr, ptr)\n'
+    d = d + 'declare void @tomato_file_close(ptr)\n'
+    d = d + 'declare ptr @tomato_list_new(i64)\n'
+    d = d + 'declare ptr @tomato_list_push(ptr, i64)\n'
+    d = d + '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
+    d = d + '@.fmt.uint = private constant [5 x i8] c"%llu\\00"\n'
+    for extra in mod.decls:
+        d = d + extra + '\n'
+    d = d + 'declare ptr @tomato_str_from_u64(i64)\n'
+    return d
+
+def literal_text(n: Node, ty: str) -> str:
+    # the IR constant for a default written as a plain literal (entry point inputs)
+    if is_numeric(ty) and n.kind == 'IntLit':
+        return str(n.fields[0].num)
+    if ty == 'bool' and n.kind == 'BoolLit':
+        if n.fields[0].flag:
+            return '1'
+        return '0'
+    raise CompileError('the Tomato compiler reads an entry point default only as an int or bool literal yet', n.line)
+
+def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
+    # main(): read the command-line inputs, run the entry point, report an error nobody caught (D28a, D22a)
+    k = len(info.ptypes)
+    low = k - len(info.defaults)
+    out = 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
+    out = out + '  %lo = icmp sge i32 %n, ' + str(low) + '\n  %hi = icmp sle i32 %n, ' + str(k) + '\n  %ok = and i1 %lo, %hi\n'
+    out = out + '  br i1 %ok, label %go, label %bad\n'
+    out = out + 'bad:\n  call void @tomato_usage(i32 ' + str(k) + ', i32 %n)\n  unreachable\ngo:\n'
+    args = new_strs()
+    owned = new_strs()
+    i = 0
+    for t in info.ptypes:
+        si = str(i)
+        optional = i >= low
+        if optional:
+            out = out + '  %has' + si + ' = icmp sgt i32 %n, ' + si + '\n  br i1 %has' + si + ', label %p' + si + ', label %d' + si + '\np' + si + ':\n'
+        out = out + '  %a' + si + '.ptr = getelementptr ptr, ptr %argv, i64 ' + str(i + 1) + '\n'
+        out = out + '  %a' + si + '.s = load ptr, ptr %a' + si + '.ptr\n'
+        reg = '%a' + si
+        if t == 'str':
+            out = out + '  %a' + si + '.v = call ptr @tomato_str_from_cstr(ptr %a' + si + '.s)\n'
+        elif t == 'int':
+            out = out + '  %a' + si + '.v = call i64 @tomato_parse_i64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+        elif is_fixed(t):
+            bits = bits_of(t)
+            parse = 'tomato_parse_u64'
+            fit = 'tomato_fit_unsigned'
+            if is_signed(t):
+                parse = 'tomato_parse_i64'
+                fit = 'tomato_fit_signed'
+            out = out + '  %a' + si + '.w = call i64 @' + parse + '(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            if bits < 64:
+                out = out + '  call void @' + fit + '(i64 %a' + si + '.w, i32 ' + str(bits) + ', i32 ' + str(i + 1) + ')\n'
+                out = out + '  %a' + si + '.v = trunc i64 %a' + si + '.w to i' + str(bits) + '\n'
+            else:
+                out = out + '  %a' + si + '.v = add i64 %a' + si + '.w, 0\n'
+        elif t == 'float':
+            out = out + '  %a' + si + '.v = call double @tomato_parse_f64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+        elif t == 'bool':
+            out = out + '  %a' + si + '.w = call i32 @tomato_parse_bool(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            out = out + '  %a' + si + '.v = zext i32 %a' + si + '.w to i64\n'
+        else:
+            raise CompileError('the Tomato compiler reads entry point inputs of type int, bool and str only', 0)
+        if optional:
+            dflt = info.defaults[i - low]
+            out = out + '  br label %m' + si + '\nd' + si + ':\n  br label %m' + si + '\nm' + si + ':\n'
+            if t == 'str':
+                if dflt.kind != 'StrLit':
+                    raise CompileError('the Tomato compiler reads a text entry point default only as a text literal yet', dflt.line)
+                out = out + '  %a' + si + ' = phi ptr [ %a' + si + '.v, %p' + si + ' ], [ ' + mod.intern(dflt.fields[0].text) + ', %d' + si + ' ]\n'
+            elif t == 'float':
+                raise CompileError('the Tomato compiler does not read a float entry point default yet', dflt.line)
+            else:
+                out = out + '  %a' + si + ' = phi ' + llvm_type(t) + ' [ %a' + si + '.v, %p' + si + ' ], [ ' + literal_text(dflt, t) + ', %d' + si + ' ]\n'
+        else:
+            reg = '%a' + si + '.v'
+        if t == 'str':
+            args.append('ptr ' + reg)
+            owned.append(reg)
+        elif t == 'float':
+            args.append('double ' + reg)
+        else:
+            args.append(llvm_type(t) + ' ' + reg)
+        i = i + 1
+    out = out + '  call void @tomato.' + info.key + '(' + ', '.join(args) + ')\n'
+    out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
+    out = out + 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
+    out = out + '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 1)\n  unreachable\n'
+    out = out + 'fine:\n'
+    for reg in owned:
+        out = out + '  call void @tomato_release(ptr ' + reg + ')\n'
+    out = out + '  call void @tomato_leak_check()\n  ret i32 0\n}\n'
+    return out
+
+def key_of(module: str, name: str) -> str:
+    # the program-wide name of a declaration: plain in the main program and the built-ins, module.name elsewhere
+    if module == 'main' or module == 'builtin':
+        return name
+    return module + '.' + name
+
+def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
+    info = FuncInfo()
+    info.name = item.fields[0].text
+    info.owner = owner
+    info.module = mod.cur
+    info.key = key_of(mod.cur, info.name)
+    if len(item.fields) > 6:
+        info.is_private = item.fields[4].flag
+        info.is_override = item.fields[5].flag
+        info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
+    if item.fields[2].tag != 'z':
+        info.ret = mod.type_name(item.fields[2])
+        if info.ret == '':
+            raise CompileError('the Tomato compiler only returns int, bool, str, list and class values yet', item.line)
+    for p in val_nodes(item.fields[1]):
+        if p.fields[0].text == 'self' and owner != '':
+            continue
+        if p.fields[3].tag != 'z':
+            raise CompileError('the Tomato compiler does not support *args or **kwargs yet', p.line)
+        if p.fields[2].tag == 'n':
+            info.defaults.append(val_node(p.fields[2]))
+        pt = mod.type_name(p.fields[1])
+        if pt == '':
+            raise CompileError('the Tomato compiler only takes int, bool, str, list and class parameters yet', p.line)
+        info.ptypes.append(pt)
+    return info
+
+def new_infos() -> list[FuncInfo]:
+    return []
+
+def new_nodes() -> list[Node]:
+    return []
+
+def same_signature(a: FuncInfo, b: FuncInfo) -> bool:
+    if a.ret != b.ret or len(a.ptypes) != len(b.ptypes):
+        return False
+    k = 0
+    for t in a.ptypes:
+        if t != b.ptypes[k]:
+            return False
+        k = k + 1
+    return True
+
+def check_classes(mod: Mod):
+    # overrides name a parent method of the same types, and a class has every method its interfaces require (D12g, D12bg)
+    for f in mod.infos:
+        if f.owner != '' and not f.is_init:
+            c = mod.find_class(f.owner, 0)
+            inherited = new_infos()
+            if c.parent != '':
+                inherited = mod.lookup_method(c.parent, f.name)
+            if len(inherited) > 0 and not f.is_override:
+                raise CompileError(f.owner + '.' + f.name + ' replaces a parent method: write `override def` (D12)', c.line)
+            if len(inherited) == 0 and f.is_override:
+                raise CompileError(f.owner + '.' + f.name + ' is marked override but the parent has no such method', c.line)
+            if len(inherited) > 0 and not same_signature(f, inherited[0]):
+                raise CompileError(f.owner + '.' + f.name + ' does not match the types of the method it overrides', c.line)
+            if not (f.name in mod.slots):
+                mod.slots.append(f.name)
+    for ifc in mod.ifaces:
+        for r in ifc.reqs:
+            if not (r.name in mod.slots):
+                mod.slots.append(r.name)
+    for c in mod.classes:
+        for iname in mod.class_ifaces(c.name):
+            closure = new_strs()
+            mod.iface_closure(iname, closure)
+            for j in closure:
+                for r in mod.find_iface(j, 0).reqs:
+                    found = mod.lookup_method(c.name, r.name)
+                    if len(found) == 0:
+                        raise CompileError('class ' + c.name + ' lacks method ' + r.name + ' required by ' + j, c.line)
+                    if not same_signature(found[0], r):
+                        raise CompileError(c.name + '.' + r.name + ' does not match ' + j + "'s types exactly", c.line)
+
+def check_class_shapes(mod: Mod):
+    # one @init per class (D12aj); a class with no @init anywhere needs every field to have a value (D12af);
+    # a method name is declared once; no class inherits from itself
+    for c in mod.classes:
+        inits = 0
+        names = new_strs()
+        for f in mod.infos:
+            if f.owner == c.name:
+                if f.name in names or f.name in c.fnames:
+                    raise CompileError(f.name + ' is declared twice in ' + c.display, c.line)
+                names.append(f.name)
+                if f.is_init:
+                    inits = inits + 1
+        if inits > 1:
+            raise CompileError('class ' + c.display + ' has more than one @init (D12aj)', c.line)
+        seen = new_strs()
+        walk = c
+        while walk.parent != '':
+            if walk.parent in seen or walk.parent == c.name:
+                raise CompileError('class ' + c.display + ' inherits from itself', c.line)
+            seen.append(walk.parent)
+            walk = mod.find_class(walk.parent, c.line)
+        if not has_init(mod, c):
+            k = 0
+            for fname in c.fnames:
+                if c.fowner[k] == c.name and not c.has_default[k]:
+                    raise CompileError('class ' + c.display + ' has no @init but field ' + fname + ' has no value (D12af)', c.line)
+                k = k + 1
+
+def has_init(mod: Mod, c: ClassInfo) -> bool:
+    if c.init != '':
+        return True
+    if c.parent != '':
+        return has_init(mod, mod.find_class(c.parent, c.line))
+    return False
+
+def builtin_source() -> str:
+    # the names every program can use without importing them (D22a): the same text as python/tomato/std/builtin.tom
+    t = 'class Error:\n    message: str\n\n    @init\n    def start(self, message: str):\n        self.message = message\n\n'
+    t = t + 'class RuntimeError(Error):\n    @init\n    def make(self, message: str):\n        Error.start(self, message)\n\n'
+    t = t + 'class IOError(RuntimeError):\n    @init\n    def make_io(self, message: str):\n        RuntimeError.make(self, message)\n'
+    return t
+
+def class_def(c: ClassInfo) -> Node:
+    n = c.node
+    if n is None:
+        raise CompileError('internal error: class ' + c.name + ' has no declaration', c.line)
+    return n
+
+def field_position(c: ClassInfo, name: str) -> int:
+    k = 0
+    for f in c.fnames:
+        if f == name:
+            return k
+        k = k + 1
+    return -1
+
+def resolve_class(mod: Mod, c: ClassInfo):
+    # fill a class's fields and defaults, its parent's first (a field may name a class declared later)
+    if c.done:
+        return
+    c.done = True
+    node = class_def(c)
+    mod.cur = c.module
+    if c.parent != '':
+        p = mod.find_class(c.parent, node.line)
+        resolve_class(mod, p)
+        mod.cur = c.module
+        for fname in p.fnames:
+            c.fnames.append(fname)
+        for fp in p.fprivate:
+            c.fprivate.append(fp)
+        for fc in p.fconst:
+            c.fconst.append(fc)
+        for fo in p.fowner:
+            c.fowner.append(fo)
+        for ftype in p.ftypes:
+            c.ftypes.append(ftype)
+        for flag in p.has_default:
+            c.has_default.append(flag)
+        for dnode in p.defaults:
+            c.defaults.append(dnode)
+    for fd in val_nodes(node.fields[3]):
+        ft = mod.type_name(fd.fields[1])
+        if ft == '':
+            raise CompileError('the Tomato compiler only supports int, bool, str, list and class fields yet', fd.line)
+        before = field_position(c, fd.fields[0].text)
+        if before >= 0:
+            if c.fowner[before] == c.name:
+                raise CompileError('field ' + fd.fields[0].text + ' declared twice', fd.line)
+            raise CompileError("redeclaring a parent's field in a subclass is not decided (" + fd.fields[0].text + ')', node.line)
+        c.fnames.append(fd.fields[0].text)
+        c.fprivate.append(fd.fields[2].flag)
+        c.fconst.append(fd.fields[3].flag)
+        c.fowner.append(c.name)
+        c.ftypes.append(ft)
+        c.has_default.append(fd.fields[4].tag == 'n')
+        if fd.fields[4].tag == 'n':
+            c.defaults.append(val_node(fd.fields[4]))
+
+def read_module(dir: str, std: str, name: str, line: int) -> str:
+    # a module next to the program, else one from the standard library
+    text = ''
+    try:
+        f = open(dir + name + '.tom')
+        text = f.read()
+        f.close()
+    catch IOError:
+        g = open(std + name + '.tom')
+        text = g.read()
+        g.close()
+    return text
+
+def load_items(dir: str, std: str, src: str, module: str, items: list[Node], mods: list[str], imports: list[ImportInfo], loaded: list[str]) -> list[Node]:
+    # the declarations of src, placed after those of the modules it imports (each module once)
+    mine = val_nodes(parse(src).fields[0])
+    for item in mine:
+        if item.kind == 'Import':
+            wanted = item.fields[0].text
+            ii = ImportInfo()
+            ii.importer = module
+            ii.module = wanted
+            ii.line = item.line
+            for nm in item.fields[1].items:
+                ii.names.append(nm.text)
+            imports.append(ii)
+            if not (wanted in loaded):
+                loaded.append(wanted)
+                load_items(dir, std, read_module(dir, std, wanted, item.line), wanted, items, mods, imports, loaded)
+    own = new_nodes()
+    for item in mine:
+        if item.kind != 'Import':
+            own.append(item)
+            items.append(item)
+            mods.append(module)
+    return own
+
+def build_scopes(mod: Mod, items: list[Node], mods: list[str], imports: list[ImportInfo]):
+    # every module sees its own declarations, the built-ins, and what it imports (D24c)
+    k = 0
+    for item in items:
+        if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef':
+            name = item.fields[0].text
+            mod.declare_name(mods[k], name, key_of(mods[k], name), item.exported, item.line)
+        k = k + 1
+    for ii in imports:
+        for nm in ii.names:
+            mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
+
+export def compile_module(src: str, dir: str, std: str, entry_name: str) -> str:
+    mod = Mod()
+    items = val_nodes(parse(builtin_source()).fields[0])
+    mods = new_strs()
+    for b in items:
+        mods.append('builtin')
+    imports: list[ImportInfo] = []
+    loaded = new_strs()
+    user = load_items(dir, std, src, 'main', items, mods, imports, loaded)
+    build_scopes(mod, items, mods, imports)
+    k = 0
+    for item in items:
+        mod.cur = mods[k]
+        if item.kind == 'InterfaceDef':
+            ifc = IfaceInfo()
+            ifc.name = key_of(mods[k], item.fields[0].text)
+            ifc.module = mods[k]
+            ifc.line = item.line
+            mod.ifaces.append(ifc)
+        elif item.kind == 'ClassDef':
+            c = ClassInfo()
+            c.name = key_of(mods[k], item.fields[0].text)
+            c.display = item.fields[0].text
+            c.module = mods[k]
+            c.node = item
+            c.line = item.line
+            mod.classes.append(c)
+        k = k + 1
+    # parents, interfaces and `implements` lines, resolved in the module that wrote them
+    k = 0
+    for item in items:
+        mod.cur = mods[k]
+        if item.kind == 'InterfaceDef':
+            target = mod.find_iface(key_of(mods[k], item.fields[0].text), item.line)
+            for pv in item.fields[1].items:
+                target.parents.append(mod.iface_key(pv.text, item.line))
+        elif item.kind == 'ClassDef':
+            c = mod.find_class(key_of(mods[k], item.fields[0].text), item.line)
+            if item.fields[1].tag == 's':
+                c.parent = mod.class_key(item.fields[1].text, item.line)
+            for iv in item.fields[2].items:
+                c.ifaces.append(mod.iface_key(iv.text, item.line))
+        elif item.kind == 'Implements':
+            mod.find_class(mod.class_key(item.fields[0].text, item.line), item.line).ifaces.append(mod.iface_key(item.fields[1].text, item.line))
+        k = k + 1
+    for c in mod.classes:
+        resolve_class(mod, c)
+    k = 0
+    for item in items:
+        mod.cur = mods[k]
+        if item.kind == 'InterfaceDef':
+            target = mod.find_iface(key_of(mods[k], item.fields[0].text), item.line)
+            for m in val_nodes(item.fields[2]):
+                target.reqs.append(function_info(m, mod, 'self'))
+        k = k + 1
+    funcs: list[Node] = []
+    entry = ''
+    k = 0
+    for item in items:
+        mod.cur = mods[k]
+        if item.kind == 'FuncDef':
+            info = function_info(item, mod, '')
+            mod.infos.append(info)
+            funcs.append(item)
+        elif item.kind == 'ClassDef':
+            c = mod.find_class(key_of(mods[k], item.fields[0].text), item.line)
+            for m in val_nodes(item.fields[4]):
+                info = function_info(m, mod, c.name)
+                mod.infos.append(info)
+                funcs.append(m)
+                if m.fields[6].tag == 's' and m.fields[6].text == 'init':
+                    c.init = info.name
+        elif item.kind == 'InterfaceDef' or item.kind == 'Implements':
+            pass
+        elif item.kind == 'LlvmDecl':
+            decl = function_info(item, mod, '')
+            for pt in decl.ptypes:
+                if pt == 'File' or is_rc(pt):
+                    raise CompileError('an LLVM function takes and returns int, bool and float values only yet', item.line)
+            mod.llvm_decls.append(decl)
+        else:
+            raise CompileError('the Tomato compiler does not support ' + item.kind + ' declarations yet', item.line)
+        k = k + 1
+    check_classes(mod)
+    check_class_shapes(mod)
+    for item in user:
+        if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text == 'entry:' + entry_name:
+            entry = item.fields[0].text
+            if item.fields[2].tag != 'z':
+                raise CompileError('the Tomato compiler runs an entry point without a result yet', item.line)
+    if entry == '':
+        raise CompileError('no function marked @' + entry_name, 1)
+    bodies = ''
+    k = 0
+    for f in funcs:
+        bodies = bodies + compile_function(f, mod, mod.infos[k]) + '\n'
+        k = k + 1
+    for c in mod.classes:
+        bodies = bodies + compile_constructor(c, mod) + '\n'
+    mod.cur = 'main'
+    wrapper = entry_wrapper(mod.find(entry, 1), mod)
+    out = '; written by the Tomato compiler in Tomato (compiler/src/compiler.tom)\n'
+    out = out + declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod)
+    j = 0
+    for s in mod.strings:
+        out = out + string_global(j, s) + '\n'
+        out = out + string_c(j, s) + '\n'
+        j = j + 1
+    out = out + '\n' + bodies
+    out = out + wrapper
+    return out

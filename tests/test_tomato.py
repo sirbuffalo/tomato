@@ -4,7 +4,8 @@ import re
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
 sys.setrecursionlimit(20000)  # each Tomato call uses several Python frames
 from tomato.errors import NotDecided, TomatoError  # noqa: E402
 from tomato.interp import run_source  # noqa: E402
@@ -222,7 +223,7 @@ class Classes(unittest.TestCase):
         fails(self, "def f(a) -> int:\n    return 1\n", "needs a type")
 
     def test_undecided_stops(self):
-        fails(self, "print(1.5)", "whole-number", TomatoError)
+        fails(self, "print(1.5x)", "a number is", TomatoError)
         fails(self, "x = True\nprint(x < False)", "not yet decided", NotDecided)
 
 

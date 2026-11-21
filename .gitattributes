@@ -1,0 +1,3 @@
+# Generated output: keep it out of the language statistics and diffs.
+compiler/bootstrap/tomatoc.ll linguist-generated=true linguist-vendored=true -diff
+site/docs/*.md linguist-generated=true

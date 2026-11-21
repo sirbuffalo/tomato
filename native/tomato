@@ -1,8 +1,10 @@
 #!/bin/sh
 # The `tomato` command, built on the Tomato compiler written in Tomato (tomatoc). Needs only clang.
-#   tomato run FILE [ENTRY [INPUTS...]] [--llvm FILE.ll ...]   compile, link and run a program
+#   tomato run FILE [ENTRY [INPUTS...]] [--llvm FILE.ll ...]   compile, link and run (-- ends flags, so inputs may look like flags)
 #   tomato build FILE [-o OUT] [--entry NAME] [--llvm FILE.ll ...]   write a native program
 #   tomato compile FILE [--entry NAME]                         print the LLVM IR
+#   tomato repl [FILE ...]                                     type Tomato one piece at a time (needs tomato-py)
+#   tomato update                                              install the newest release
 #   tomato version
 src="$0"
 while [ -L "$src" ]; do
@@ -14,47 +16,69 @@ home="$(cd "$(dirname "$src")/.." && pwd)"
 tomatoc="$home/bin/tomatoc"
 runtime="$home/runtime/tomato_rt.c"
 std="$home/std/"
-usage() { sed -n '2,6p' "$src" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,8p' "$src" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "error: $*" >&2; exit 1; }
 
 cmd="$1"; [ -n "$cmd" ] || usage; shift
 case "$cmd" in
-  version) echo "Tomato (compiler written in Tomato)"; exit 0 ;;
+  version) echo "Tomato v$(cat "$home/VERSION" 2>/dev/null || echo 0) (compiler written in Tomato)"; exit 0 ;;
+  update)
+    # tomato update: read the manifest, and if a newer release exists download it and run its installer
+    url="${TOMATO_UPDATE_URL:-https://tomato.davismcd.com/latest.json}"
+    have="$(cat "$home/VERSION" 2>/dev/null || echo 0)"
+    command -v curl >/dev/null || die "tomato update needs curl"
+    manifest="$(curl -fsSL "$url")" || die "cannot read $url"
+    latest="$(printf '%s' "$manifest" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p')"
+    archive="$(printf '%s' "$manifest" | sed -n 's/.*"url" *: *"\([^"]*\)".*/\1/p')"
+    [ -n "$latest" ] && [ -n "$archive" ] || die "the manifest at $url is not understood"
+    if [ "$latest" = "$have" ]; then echo "tomato v$have is the latest"; exit 0; fi
+    echo "updating v$have -> v$latest"
+    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+    curl -fsSL "$archive" -o "$work/tomato.tar.gz" || die "cannot download $archive"
+    want="$(printf '%s' "$manifest" | sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p')"
+    if [ -n "$want" ]; then
+      got="$(shasum -a 256 "$work/tomato.tar.gz" | cut -d' ' -f1)"
+      [ "$got" = "$want" ] || die "the download does not match its checksum"
+    fi
+    tar -xzf "$work/tomato.tar.gz" -C "$work" || die "the download is not a valid archive"
+    "$work"/tomato-*/install-native.sh || die "the installer failed"
+    exit 0 ;;
+  repl|shell)
+    # the shell runs on the interpreter, which keeps values alive between lines; Tomato has no eval or stdin yet
+    py="$(command -v tomato-py)" || die "tomato repl needs the Python command tomato-py (the shell is not written in Tomato yet)"
+    exec "$py" repl "$@" ;;
   run|build|compile) ;;
   *) usage ;;
 esac
 
+set -f      # words are split on newlines below; never expand * or ? in them
 nl="
 "
-file=""; entry=""; out=""; llvm=""; inputs=""
-# the words after FILE: for run, ENTRY then inputs; for build/compile, flags
+file=""; entry=""; out=""; llvm=""
+# the words after FILE: for run, ENTRY then inputs; for build/compile, flags. Positional words are kept in "$@" (not
+# a string) so empty and glob-like inputs survive untouched.
 [ $# -ge 1 ] || usage
 file="$1"; shift
 [ -f "$file" ] || die "cannot read $file"
-positional=""
-while [ $# -gt 0 ]; do
+n=$#
+stop=0     # after `--` every word is a positional input, even one that looks like a flag
+while [ $n -gt 0 ]; do
+  n=$((n - 1))
+  if [ $stop = 1 ]; then set -- "$@" "$1"; shift; continue; fi
   case "$1" in
-    -o) [ $# -ge 2 ] || usage; out="$2"; shift 2 ;;
-    --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2 ;;
-    --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2 ;;
-    *) positional="$positional
-$1"; shift ;;
+    --) stop=1; shift ;;
+    -o) [ "$cmd" = run ] && usage; [ $# -ge 2 ] || usage; out="$2"; shift 2; n=$((n - 1)) ;;
+    --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; n=$((n - 1)) ;;
+    --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; n=$((n - 1)) ;;
+    *) set -- "$@" "$1"; shift ;;
   esac
 done
-
-nl='
-'
+# "$@" now holds only the positional words
 if [ "$cmd" = run ]; then
-  # the first positional word is the entry point, the rest are inputs
+  if [ $# -ge 1 ]; then entry="$1"; shift; fi
   entry="${entry:-main}"
-  first=1
-  OLDIFS="$IFS"; IFS="$nl"
-  for w in $positional; do
-    if [ $first = 1 ]; then entry="$w"; first=0; else inputs="$inputs$w$nl"; fi
-  done
-  IFS="$OLDIFS"
 else
-  [ -z "$positional" ] || usage
+  [ $# -eq 0 ] || usage
   entry="${entry:-main}"
 fi
 
@@ -66,15 +90,13 @@ fi
 [ "$cmd" = compile ] && { cat "$tmp/program.ll"; exit 0; }
 exe="$tmp/program"
 [ "$cmd" = build ] && exe="${out:-$(basename "${file%.tom}")}"
-set -- clang -O1 -Wno-override-module -o "$exe" "$tmp/program.ll"
-OLDIFS="$IFS"; IFS="$nl"
-for f in $llvm; do set -- "$@" "$f"; done
-IFS="$OLDIFS"
-set -- "$@" "$runtime" -lm
-"$@" || exit 1
+link() {   # a function has its own "$@", so the run inputs survive
+  set -- clang -O1 -Wno-override-module -o "$exe" "$tmp/program.ll"
+  OLDIFS="$IFS"; IFS="$nl"
+  for f in $llvm; do set -- "$@" "$f"; done
+  IFS="$OLDIFS"
+  "$@" "$runtime" -lm
+}
+link || exit 1
 [ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }
-OLDIFS="$IFS"; IFS="$nl"
-set --
-for w in $inputs; do set -- "$@" "$w"; done
-IFS="$OLDIFS"
 "$exe" "$@"

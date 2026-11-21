@@ -161,7 +161,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 134. D33a is accepted: types are checked at compile time (confirms D04a).
 135. D24b is accepted: a plain `import module` form exists. Its details remain open.
 136. D34a is accepted: debug mode gives full errors; normal mode gives short codes a second program decodes using the source; release mode needs none. Code format and selection remain open.
-137. D29b is accepted: best-effort compile-time cycle detection, not a priority; no collector. Weak references, warning versus error, and accuracy remain open.
+137. D29b is accepted: best-effort compile-time cycle detection, not a priority. D29d and D36a later added the runtime cycle collector, and the compile-time notice is a warning (P38). Accuracy remains open.
 138. D35a is accepted (reading to confirm): a value is a 64-bit type code plus 64-bit data; small values inline, others a pointer with a reference count. Codes, inline types, and count placement remain open.
 139. D20c is accepted: the key-value collection is `dict[K, V]`, not `map`.
 140. D24c is accepted: each module has its own namespace. Qualified names and aliases remain open with D24b.
@@ -181,10 +181,14 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 154. D23f is accepted: `x in Type` is the type check (`x in None`, `x in int`, `x in Dog`); subclass, interface, `int` and optional details are logged as P44.
 155. D23g is accepted (reading to confirm): `|` is a general type union (`int | str`, `Dog | Cat | None`); `T | None` is the union with `None`; interpreter only, compiler keeps `T | None` for heap types; logged as P45.
 156. D23h is accepted (reading to confirm): `&` is type intersection and bitwise and, `|` also bitwise or and `^` bitwise xor on whole numbers, and `xor` is the logical word operator; logged as P46.
-157. D38a is accepted (reading to confirm): new code is Tomato and LLVM only; the Python version bootstraps the Tomato compiler and each version compiles the next; first step selfhost/lexer.tom; commit freely, push when a feature fully works.
+157. D38a is accepted (reading to confirm): new code is Tomato and LLVM only; the Python version bootstraps the Tomato compiler and each version compiles the next; first step compiler/src/lexer.tom; commit freely, push when a feature fully works.
 158. D28b is accepted (reading to confirm): an entry parameter typed as a union of int, float, bool and str takes the first member that accepts the input text, in that order.
 159. D39a is accepted (reading to confirm): `*args: tuple[T]` and `**kwargs: dict[str, V]` exist, with keyword arguments at call sites and command-line inputs for entry points; `tuple[T]` is an immutable sequence (P48).
-160. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+160. D40a is accepted (reading to confirm): a check pass runs before the program does and rejects constant failures and type errors in every function, including code that never runs; it is deliberately partial (P54).
+161. D41a is accepted (reading to confirm): float literals (`1.5`, `2e3`), `float(x)`, mixed whole-number/float arithmetic, `//` and `**`; `float` is binary64 and `/` still gives a float; `rational` is unchanged.
+162. D42a is accepted (reading to confirm): top-level code is the program unless there is an `@main`; the compiler written in Tomato is v0.x and the Python implementation v-1.x; `tomato repl` exists.
+163. D43a is accepted (reading to confirm): a static website in `site/`, GitHub releases, `tomato update`, and the new project layout.
+164. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass
 

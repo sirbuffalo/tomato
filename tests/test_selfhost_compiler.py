@@ -1,4 +1,4 @@
-"""The compiler slice in selfhost/compiler.tom (D38a): its LLVM IR, built with clang, must behave like the interpreter."""
+"""The compiler slice in compiler/src/compiler.tom (D38a): its LLVM IR, built with clang, must behave like the interpreter."""
 import io
 import os
 import shutil
@@ -7,13 +7,14 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
 sys.path.insert(0, os.path.dirname(__file__))
 from tomato.errors import TomatoError  # noqa: E402
 from tomato.interp import run_source  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-SELF = os.path.join(ROOT, "selfhost")
+SELF = os.path.join(ROOT, "compiler", "src")
 
 PROGRAMS = {
     "fixed_width_ints": """class Pixel:
@@ -495,7 +496,7 @@ class SelfhostCompiler(unittest.TestCase):
             f.write(ir)
         exe = os.path.join(self.dir, "mathlib_main")
         subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "examples", "mathlib.ll"),
-                        os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"], check=True, capture_output=True)
+                        os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c"), "-lm"], check=True, capture_output=True)
         run = subprocess.run([exe], check=True, capture_output=True, text=True)
         out = io.StringIO()
         run_source(open(path).read(), out, llvm_ir=[(os.path.join(ROOT, "examples", "mathlib.ll"), open(os.path.join(ROOT, "examples", "mathlib.ll")).read())])
@@ -540,7 +541,7 @@ class SelfhostCompiler(unittest.TestCase):
         with open(ll, "w") as f:
             f.write(ir)
         exe = os.path.join(self.dir, name)
-        r = subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+        r = subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c"), "-lm"],
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr[:2000])
         return exe
@@ -550,7 +551,7 @@ class SelfhostCompiler(unittest.TestCase):
         with open(ll, "w") as f:
             f.write(ir)
         exe = os.path.join(self.dir, name)
-        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c"), "-lm"],
                        check=True, capture_output=True)
         run = subprocess.run([exe], check=True, capture_output=True, text=True)
         self.assertEqual(run.stderr, "", "the program reported a leak or an error")      # debug mode warns about leaks
@@ -617,7 +618,7 @@ def main():
         with open(ll, "w") as f:
             f.write(ir)
         exe = os.path.join(self.dir, "errors")
-        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c"), "-lm"],
                        check=True, capture_output=True)
         run = subprocess.run([exe], capture_output=True, text=True)
         self.assertEqual(run.returncode, 1)
@@ -637,7 +638,7 @@ def main():
         with open(ll, "w") as f:
             f.write(ir)
         exe = os.path.join(self.dir, "lextool")
-        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c"), "-lm"],
                        check=True, capture_output=True)
         import glob
         for f in sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(SELF, "*.tom"))):
@@ -659,7 +660,7 @@ def main():
         with open(ll, "w") as f:
             f.write(ir)
         exe = os.path.join(self.dir, "parsetool")
-        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c"), "-lm"],
                        check=True, capture_output=True)
         import glob
         for f in sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(SELF, "*.tom"))):
@@ -758,7 +759,7 @@ def main():
         with open(ll, "w") as f:
             f.write(ir)
         exe = os.path.join(self.dir, "trycatch")
-        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c"), "-lm"],
                        check=True, capture_output=True)
         run = subprocess.run([exe], capture_output=True, text=True)
         self.assertEqual(run.returncode, 1)

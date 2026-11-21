@@ -7,14 +7,15 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
 from tomato.codegen import compile_to_ir  # noqa: E402
 from tomato.errors import NotDecided, TomatoError  # noqa: E402
 from tomato.interp import run_source  # noqa: E402
 
 CLANG = shutil.which("clang")
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-RUNTIME = os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c")
+RUNTIME = os.path.join(ROOT, "python", "tomato", "runtime", "tomato_rt.c")
 needs_clang = unittest.skipUnless(CLANG, "clang is not installed")
 
 
@@ -646,10 +647,10 @@ class OptionalsAndDefaults(unittest.TestCase):
             with open(os.path.join(d, name), "w") as f:
                 f.write(text)
         run_py = subprocess.run([sys.executable, "-m", "tomato", "run", "two.tom"], cwd=d, capture_output=True, text=True,
-                                env=dict(os.environ, PYTHONPATH=os.path.abspath(ROOT)))
+                                env=dict(os.environ, PYTHONPATH=os.path.abspath(os.path.join(ROOT, "python"))))
         self.assertEqual(run_py.stdout, "1 2 5 2 6 1024\n", run_py.stderr)
         subprocess.run([sys.executable, "-m", "tomato", "build", "two.tom", "-o", "two.out"], cwd=d, check=True,
-                       capture_output=True, env=dict(os.environ, PYTHONPATH=os.path.abspath(ROOT)))
+                       capture_output=True, env=dict(os.environ, PYTHONPATH=os.path.abspath(os.path.join(ROOT, "python"))))
         out = subprocess.run([os.path.join(d, "two.out")], capture_output=True, text=True)
         self.assertEqual(out.stdout, "1 2 5 2 6 1024\n", out.stderr)
 
