@@ -1,7 +1,7 @@
-# Loop helpers, written in Tomato: `from itertools import progressbar`, a small progress bar.
+# Loop helpers, written in Tomato: `from itertools import progress_bar`, a small progress bar.
 # There is no clock in the language yet, so the bar shows a count and a percentage but no speed or time left.
 #
-#     bar = progressbar(items, 'copying')
+#     bar = progress_bar(items, 'copying')
 #     for x in bar.items:
 #         ...
 #         bar.update()
@@ -10,7 +10,7 @@
 # update() redraws the bar on standard error (so it does not mix with what the program prints); render() returns the
 # same line as text, which is what the tests check. An empty list gives a total of 0, which shows only the count.
 
-export class progressbar:
+export class progress_bar:
     items: list[int] = []
     total: int = 0
     count: int = 0

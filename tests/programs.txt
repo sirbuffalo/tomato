@@ -25,5 +25,5 @@ utf8_text
 at_add
 rational_library
 is_prime
-progressbar
+progress_bar
 itertools_lists
