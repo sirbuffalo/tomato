@@ -141,11 +141,12 @@ for f in "$@"; do load_file "$f"; done
 interactive=0; [ -t 0 ] && interactive=1
 # line editing: read -e gives the arrow keys, and the history (up and down) is kept between sessions
 HISTFILE="${TOMATO_HISTORY:-$HOME/.tomato/repl_history}"; HISTSIZE=1000; HISTFILESIZE=1000
-if [ $interactive = 1 ]; then set -o history; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
-readline() {   # readline PROMPT -> sets $REPLY_LINE
+if [ $interactive = 1 ]; then bind '"\t": "    "' 2>/dev/null; set -o history; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
+readline() {   # readline PROMPT [INITIAL TEXT] -> sets $REPLY_LINE
   if [ $interactive = 1 ]; then
-    IFS= read -r -e -p "$1" REPLY_LINE || return 1
-    [ -n "$REPLY_LINE" ] && history -s -- "$REPLY_LINE"
+    if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then IFS= read -r -e -p "$1" -i "$2" REPLY_LINE || return 1   # macOS ships bash 3.2, which has no -i: there Tab inserts the indent
+    else IFS= read -r -e -p "$1" REPLY_LINE || return 1; fi
+    [ -n "$(printf '%s' "$REPLY_LINE" | tr -d ' ')" ] && history -s -- "$REPLY_LINE"
   else IFS= read -r REPLY_LINE || return 1; fi
 }
 [ $interactive = 1 ] && say "Tomato repl (each line re-runs the whole session, so file writes repeat). :help for commands, :quit or Ctrl-D to leave."
@@ -166,11 +167,15 @@ while :; do
   esac
   text="$line"
   case "$line" in
-    *:|@*)   # a block: read lines until an empty one
+    *:|@*)   # a block: read lines until an empty one; each line starts with the previous line's indent (four more after a colon)
+      prev="$line"
       while :; do
-        readline '... ' || break
+        indent="$(printf '%s' "$prev" | sed 's/^\([ ]*\).*/\1/')"
+        case "$prev" in *:) indent="$indent    " ;; esac
+        readline '... ' "$indent" || break
         more="$REPLY_LINE"
-        [ -z "$more" ] && break
+        [ -z "$(printf '%s' "$more" | tr -d ' ')" ] && break
+        prev="$more"
         text="$text
 $more"
       done ;;
