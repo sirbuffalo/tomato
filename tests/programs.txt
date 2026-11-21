@@ -2,3 +2,7 @@
 containers
 finally
 inheritance
+modules
+fixed_width
+text_and_maps
+cycle

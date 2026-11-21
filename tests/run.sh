@@ -43,19 +43,31 @@ done
 [ -f "$work/failed2" ] && fails=$((fails + $(wc -l < "$work/failed2")))
 
 echo "== memory (AddressSanitizer and the runtime's leak check) =="
-for spec in "shapes:" "objects:4"; do
-  name="${spec%%:*}"; arg="${spec#*:}"
-  "$work/c1" "examples/$name.tom" main std/ > "$work/p.ll" 2>/dev/null
+for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/containers:" "tests/programs/modules:"; do
+  path="${spec%%:*}"; name="$(basename "$path")"; arg="${spec#*:}"
+  "$work/c1" "$path.tom" main std/ > "$work/p.ll" 2>/dev/null
   if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
     out="$("$work/asan" $arg 2>&1 >/dev/null | head -3)"
     [ -z "$out" ] && ok "asan $name" || bad "asan $name" "$out"
   else echo "skip asan $name (this clang cannot build with the sanitizer)"; fi
 done
 
+echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
+jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
+if [ -x "$jsc" ]; then
+  for name in containers finally inheritance fixed_width text_and_maps; do
+    "$jsc" native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
+    # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
+    if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
+  done
+else echo "skip: jsc is not available on this system"; fi
+
 echo "== command line =="
 home="$work/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"
 ./install-native.sh > /dev/null 2>&1 && ok "install-native.sh" || bad "install-native.sh"
 t="$home/bin/tomato"
+printf 'print(1)\n' > "$work/top.tom"
+r="$($t run "$work/top.tom" 2>&1)"; case "$r" in *"put them in a function marked @main"*) ok "top-level code gives a clear hint";; *) bad "top-level code gives a clear hint" "$r";; esac
 check "version" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
 check "run with inputs" "17 True" "$($t run examples/args.tom prime 17)"
 check "unknown command exits 2" "2" "$($t wghwrltghs >/dev/null 2>&1; echo $?)"
@@ -80,6 +92,8 @@ r="$(TOMATO_UPDATE_URL=file://$fake/badsum.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t
 r="$(TOMATO_UPDATE_URL=file://$fake/ok.json $t update 2>&1)"; case "$r" in *"not an official release URL"*) ok "update refuses a non-official URL";; *) bad "update refuses a non-official URL" "$r";; esac
 TOMATO_UPDATE_URL=file://$fake/ok.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update > /dev/null 2>&1
 check "update installs a verified release" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
+printf '{"version":"0.0.1","url":"file://%s/t.tar.gz","sha256":"%s"}' "$fake" "$want" > "$fake/old.json"
+r="$(TOMATO_UPDATE_URL=file://$fake/old.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update 2>&1)"; case "$r" in *"is the latest"*) ok "update never downgrades";; *) bad "update never downgrades" "$r";; esac
 manifest_sum="$(sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' "$fake/out/latest.json")"
 check "release manifest names its own archive's checksum" "$(shasum -a 256 "$fake/out/tomato-$(cat VERSION).tar.gz" | cut -d' ' -f1)" "$manifest_sum"
 check "compile writes IR" "yes" "$($t compile examples/shapes.tom | grep -q 'define i32 @main' && echo yes)"

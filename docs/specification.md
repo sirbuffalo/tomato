@@ -8,7 +8,7 @@ The compiler written in Tomato is the only implementation. The Python prototype 
 
 | Area | Implemented in v0.x | Not yet (follow-up) |
 | --- | --- | --- |
-| Numbers | int, fixed-width `int[length=N]`/`uint[length=N]` with overflow errors, `/` giving a 64-bit `float`, `+ - * %`, compound assignment `+= -= *= /= %=` | float literals, mixed int/float arithmetic, `//`, `**`, `rational`, bitwise `& \| ^`, `xor` (D41a) |
+| Numbers | `int` (64-bit for now, stops on overflow: P36, not yet the unlimited size of D05c/D32a), fixed-width `int[length=N]`/`uint[length=N]` with overflow errors, `/` giving a 64-bit `float`, `+ - * %`, compound assignment `+= -= *= /= %=` | float literals, mixed int/float arithmetic, `//`, `**`, `rational`, bitwise `& \| ^`, `xor` (D41a) |
 | Types | `bool`, `str`, `list`, `dict[str, V]`, `set`, `T \| None` for class, text and list values, classes with single inheritance, `override`, interfaces | unions in general and `x in Type` (D23f–h), tuples, `*args`/`**kwargs` and keyword arguments (D39a) |
 | Checks | declaration and access checks, duplicate names, one `@init` per class, fixed-width literal range | constant errors in unreachable code (D05ac, D05ag, D05ap, D40a), the full pre-run type-check pass (D40a), `@init` flow analysis, reference-cycle notice |
 | Programs | `@main` and other `@entry` points with typed inputs | top-level code as the program (D42a); the site and repl wrap it in `@main` |

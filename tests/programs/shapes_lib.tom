@@ -1,0 +1,13 @@
+export class Box:
+    w: int
+    h: int
+    @init
+    def make(self, w: int, h: int):
+        self.w = w
+        self.h = h
+
+export def area(b: Box) -> int:
+    return b.w * b.h
+
+def hidden() -> int:
+    return 1

@@ -1,6 +1,8 @@
 #!/bin/bash
 # tomato repl [FILE ...]: type Tomato one piece at a time. It needs only the Tomato compiler and clang.
 #
+# A function or class defined in the repl cannot read your variables: statements run inside main() as locals, while
+# definitions are module level. Pass what a function needs as arguments.
 # Errors do not carry line numbers, because the program the compiler sees is generated from your pieces.
 # Every piece you enter is added to the session. The session is a program (your definitions, then your statements), and
 # each time it is compiled with tomato and run from the top; only the output that is new is shown, so earlier lines do
@@ -115,6 +117,7 @@ submit() {   # one piece of source text in $1
   if try_run "$S/cd" "$S/cb"; then new_output; commit "$S/cd"; else
     new_output          # what the line printed before it failed
     cat "$S/err" >&2
+    grep -q "unknown name" "$S/err" 2>/dev/null && err "hint: functions and classes defined here cannot read repl variables; pass them as arguments"
   fi
 }
 

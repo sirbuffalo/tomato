@@ -1,0 +1,13 @@
+class Node:
+    other: Node | None
+    @init
+    def make(self):
+        self.other = None
+
+@main
+def main():
+    a = Node()
+    b = Node()
+    a.other = b
+    b.other = a
+    print('built a cycle')

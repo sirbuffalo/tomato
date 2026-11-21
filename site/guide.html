@@ -14,7 +14,7 @@
 print(greet("tom"), 10 / 4, 7 % 3)</code></pre>
 <h2>Types</h2>
 <ul>
-<li><code>int</code> grows without limit. <code>int[length=8]</code> and <code>uint[length=8]</code> have a fixed width, stop on overflow, and need an explicit conversion from <code>int</code>: <code>uint[length=8](x)</code>.</li>
+<li><code>int</code> is 64-bit for now and stops on overflow (the design is unlimited growth, not built yet). <code>int[length=8]</code> and <code>uint[length=8]</code> have a fixed width, stop on overflow, and need an explicit conversion from <code>int</code>: <code>uint[length=8](x)</code>.</li>
 <li><code>float</code> is a 64-bit IEEE double; <code>/</code> between whole numbers gives a float (<code>10 / 4</code> is <code>2.5</code>). Float literals, <code>//</code> and <code>**</code> are coming back to this compiler.</li>
 <li><code>rational</code> is exact: <code>rational(1, 3)</code>. <code>bool</code>, <code>str</code>, <code>list[T]</code>, <code>dict[str, V]</code>, <code>set[T]</code>, and <code>T | None</code> for optional values.</li>
 <li>Types are checked at compile time. A constant out of range for a fixed-width type, like <code>uint[length=8] = 300</code>, is a compile error.</li>
@@ -54,7 +54,7 @@ print(n + 5)</code></pre>
 <tr><td><code>tomato run FILE [ENTRY [INPUTS…]]</code></td><td>compile, link and run</td></tr>
 <tr><td><code>tomato build FILE [-o OUT]</code></td><td>write a native program</td></tr>
 <tr><td><code>tomato compile FILE</code></td><td>print the LLVM IR</td></tr>
-<tr><td><code>tomato repl [FILE…]</code></td><td>interactive prompt with history (arrow keys) and <code>+=</code>; needs only the compiler and clang; each line joins the session, which is compiled and run, and only new output is shown; <code>:program</code>, <code>:save</code>, <code>:compile</code>. Because the whole session re-runs on each line, a side effect outside the program (writing a file) repeats</td></tr>
+<tr><td><code>tomato repl [FILE…]</code></td><td>interactive prompt with history (arrow keys) and <code>+=</code>; needs only the compiler and clang; each line joins the session, which is compiled and run, and only new output is shown; <code>:program</code>, <code>:save</code>, <code>:compile</code>. Because the whole session re-runs on each line, a side effect outside the program (writing a file) repeats, and a function or class you define cannot read your variables (pass them as arguments)</td></tr>
 <tr><td><code>tomato update</code></td><td>install the newest release</td></tr>
 <tr><td><code>tomato version</code></td><td>print the version</td></tr>
 </table>

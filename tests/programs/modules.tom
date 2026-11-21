@@ -1,0 +1,8 @@
+from shapes_lib import area, Box
+
+@main
+def main():
+    b = Box(3, 4)
+    print(area(b), b.w)
+    c = Box(2, 5)
+    print(area(c))

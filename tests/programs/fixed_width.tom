@@ -1,0 +1,15 @@
+@main
+def main():
+    a: int[length=8] = 100
+    b: int[length=8] = 27
+    c: int[length=8] = a + b
+    print(c)
+    d: uint[length=8] = 250
+    e: uint[length=8] = 5
+    print(d + e, d - e)
+    big: int = 300
+    print(uint[length=16](big) + 1)
+    n: int[length=16] = int[length=16](a) * 100
+    print(n)
+    print(-7 % 3, 7 % -3, 7 % 3)
+    print(7 / 2)

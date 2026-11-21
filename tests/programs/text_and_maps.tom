@@ -1,0 +1,19 @@
+@main
+def main():
+    s = '  Hello, World  '
+    t = s.strip()
+    print(t, t.upper(), t.lower(), len(t))
+    print(t.startswith('Hello'), t.endswith('x'), t.find('World'), t.replace('l', 'L'))
+    d: dict[str, int] = {}
+    d['one'] = 1
+    d['two'] = 2
+    d['one'] = 11
+    print(len(d), d['one'], 'two' in d, 'three' in d)
+    keys = 0
+    for k in d:
+        keys += len(k)
+    print(keys)
+    s2: set[str] = {'a'}
+    s2.add('b')
+    s2.add('a')
+    print(len(s2), 'b' in s2)
