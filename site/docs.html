@@ -1,24 +1,65 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tomato reference</title><link rel="stylesheet" href="style.css"></head>
+<title>Tomato reference</title><link rel="stylesheet" href="style.css">
+<style>
+.docs-layout { display:flex; gap:2rem; align-items:flex-start; }
+.docs-nav { flex:0 0 15rem; font-size:.95rem; position:sticky; top:1rem; max-height:90vh; overflow:auto; }
+.docs-nav h3 { margin:.9rem 0 .3rem; font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; opacity:.7; }
+.docs-nav a { display:block; padding:.15rem 0; }
+.docs-nav a.on { font-weight:bold; }
+.docs-nav .sub { padding-left:.9rem; }
+.docs-body { flex:1; min-width:0; }
+@media (max-width:720px) { .docs-layout { flex-direction:column; } .docs-nav { position:static; flex:none; max-height:none; } }
+</style></head>
 <body><header id="site-header"></header><main class="doc">
 <h1>Reference</h1>
-<p class="lead">Generated from the repository's documents, so it matches the code.</p>
-<p><a href="#spec" data-doc="specification">Specification</a> · <a href="#decisions" data-doc="decisions">Decision log</a> · <a href="#inventory" data-doc="decision-inventory">Decision inventory</a> · <a href="#open" data-doc="open-questions">Open questions</a> · <a href="#provisional" data-doc="PROVISIONAL">Placeholders (P1…)</a></p>
-<div id="content" class="doc">Loading…</div>
+<p class="lead">Generated from the repository's documents, so it matches the code. Each document is split into sections; pick one on the left.</p>
+<div class="docs-layout"><nav class="docs-nav" id="nav"></nav><div id="content" class="doc docs-body">Loading…</div></div>
 </main><script src="config.js"></script><script src="site.js"></script>
 <script>
-var DOCS = { "specification": "docs/specification.md", "decisions": "docs/decisions.md", "decision-inventory": "docs/decision-inventory.md", "open-questions": "docs/open-questions.md", "PROVISIONAL": "docs/PROVISIONAL.md" };
-function show(name) {
-  name = DOCS[name] ? name : "specification";
-  document.getElementById("content").textContent = "Loading…";
-  fetch(DOCS[name]).then(function (r) { if (!r.ok) throw 0; return r.text(); }).then(function (t) {
-    document.getElementById("content").innerHTML = markdown(t);
-    if (location.hash.length > 1 && !/^#(spec|decisions|inventory|open|provisional)$/.test(location.hash)) {
-      var e = document.getElementById(location.hash.slice(1)); if (e) e.scrollIntoView();
-    }
+var DOCS = [
+  ["specification", "Specification", "docs/specification.md"],
+  ["decisions", "Decision log", "docs/decisions.md"],
+  ["decision-inventory", "Decision inventory", "docs/decision-inventory.md"],
+  ["open-questions", "Open questions", "docs/open-questions.md"],
+  ["provisional", "Placeholders (P1…)", "docs/PROVISIONAL.md"]
+];
+var cache = {};
+function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+function load(key) {
+  if (cache[key]) return Promise.resolve(cache[key]);
+  var d = DOCS.filter(function (x) { return x[0] === key; })[0];
+  return fetch(d[2]).then(function (r) { if (!r.ok) throw 0; return r.text(); }).then(function (t) {
+    var secs = [{ id: "overview", title: "Overview", lines: [] }];
+    var code = false;
+    t.split("\n").forEach(function (l) {
+      if (l.indexOf("```") === 0) code = !code;
+      var m = !code && /^## (.*)$/.exec(l);
+      if (m) secs.push({ id: slug(m[1]), title: m[1], lines: [l] }); else secs[secs.length - 1].lines.push(l);
+    });
+    secs = secs.filter(function (s) { return s.lines.join("").trim() !== ""; });
+    return (cache[key] = secs);
+  });
+}
+function route() {
+  var parts = location.hash.replace(/^#/, "").split("/");
+  var key = DOCS.some(function (d) { return d[0] === parts[0]; }) ? parts[0] : "specification";
+  load(key).then(function (secs) {
+    var sec = secs.filter(function (s) { return s.id === parts[1]; })[0] || secs[0];
+    var nav = "";
+    DOCS.forEach(function (d) {
+      nav += '<h3><a href="#' + d[0] + '"' + (d[0] === key ? ' class="on"' : "") + ">" + d[1] + "</a></h3>";
+      if (d[0] === key) secs.forEach(function (s) {
+        nav += '<a class="sub' + (s === sec ? " on" : "") + '" href="#' + key + "/" + s.id + '">' + esc(s.title) + "</a>";
+      });
+    });
+    document.getElementById("nav").innerHTML = nav;
+    document.getElementById("content").innerHTML = markdown(sec.lines.join("\n"));
+    var i = secs.indexOf(sec), foot = "<p>";
+    if (i > 0) foot += '<a href="#' + key + "/" + secs[i - 1].id + '">← ' + esc(secs[i - 1].title) + "</a>  ";
+    if (i < secs.length - 1) foot += '<a href="#' + key + "/" + secs[i + 1].id + '">' + esc(secs[i + 1].title) + " →</a>";
+    document.getElementById("content").insertAdjacentHTML("beforeend", foot + "</p>");
+    window.scrollTo(0, 0);
   }).catch(function () { document.getElementById("content").textContent = "This document is not published yet."; });
 }
-var KEYS = { "#spec": "specification", "#decisions": "decisions", "#inventory": "decision-inventory", "#open": "open-questions", "#provisional": "PROVISIONAL" };
-document.querySelectorAll("a[data-doc]").forEach(function (a) { a.onclick = function () { show(a.dataset.doc); }; });
-show(KEYS[location.hash] || "specification");
+window.onhashchange = route; route();
 </script></body></html>
