@@ -69,9 +69,23 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             while j < n and is_digit(raw[j]):
                 value = value * 10 + '0123456789'.find(raw[j])
                 j = j + 1
-            if j < n and (is_alpha(raw[j]) or raw[j] in '._'):
-                raise LexError('only whole-number literals exist so far', ln)
-            toks.append(make_token('INT', raw[i:j], value, ln))
+            if j + 1 < n and raw[j] == '.' and is_digit(raw[j + 1]):
+                # a decimal literal: the digits without the point are the mantissa, the digits after it the scale
+                j = j + 1
+                while j < n and is_digit(raw[j]):
+                    if j - i > 17:
+                        raise LexError('this decimal literal has too many digits for a 64-bit float yet', ln)
+                    value = value * 10 + '0123456789'.find(raw[j])
+                    j = j + 1
+                if j < n and (is_alpha(raw[j]) or raw[j] == '_'):
+                    raise LexError('exponent notation is not built yet', ln)
+                if value > 9007199254740992:
+                    raise LexError('this decimal literal has too many digits for a 64-bit float yet', ln)
+                toks.append(make_token('FLOAT', raw[i:j], value, ln))
+            else:
+                if j < n and (is_alpha(raw[j]) or raw[j] in '._'):
+                    raise LexError('only whole-number and decimal literals exist so far', ln)
+                toks.append(make_token('INT', raw[i:j], value, ln))
             i = j
         elif is_alpha(c) or c == '_':
             j = i
@@ -99,7 +113,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
                 raise LexError('unterminated string', ln)
             toks.append(make_token('STR', buf, 0, ln))
             i = j + 1
-        elif i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->', '+=', '-=', '*=', '/=', '%=']:
+        elif i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->', '+=', '-=', '*=', '/=', '%=', '//', '**']:
             toks.append(make_token('OP', raw[i:i + 2], 0, ln))
             i = i + 2
         elif c in '+-*/%<>=()[]{}:,.@!|&^':

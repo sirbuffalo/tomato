@@ -677,7 +677,7 @@ export class Parser:
 
     def mul(self) -> Node:
         e = self.unary()
-        while self.is_op('*') or self.is_op('/') or self.is_op('%'):
+        while self.is_op('*') or self.is_op('/') or self.is_op('//') or self.is_op('%'):
             t = self.adv()
             e = self.binop(t.text, t.line, e, self.unary())
         return e
@@ -686,7 +686,15 @@ export class Parser:
         if self.is_op('-'):
             ln = self.adv().line
             return mk('UnOp', ln, [vs('-'), vn(self.unary())])
-        return self.postfix()
+        return self.power()
+
+    def power(self) -> Node:
+        # ** binds tighter than a minus sign on its left (-2 ** 2 is -4) and groups to the right
+        e = self.postfix()
+        if self.is_op('**'):
+            t = self.adv()
+            return self.binop('**', t.line, e, self.unary())
+        return e
 
     def postfix(self) -> Node:
         e = self.atom()
@@ -737,6 +745,9 @@ export class Parser:
         if t.kind == 'INT':
             self.adv()
             return mk('IntLit', t.line, [vi(t.num)])
+        if t.kind == 'FLOAT':
+            self.adv()
+            return mk('FloatLit', t.line, [vi(t.num), vi(len(t.text) - t.text.find('.') - 1)])
         if t.kind == 'STR':
             self.adv()
             return mk('StrLit', t.line, [vs(t.text)])

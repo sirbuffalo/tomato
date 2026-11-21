@@ -2,7 +2,7 @@
 
 Tomato is a statically typed, reference-counted language with indentation syntax, compiled through LLVM, designed by Davis McDowell. Its compiler is written in Tomato and compiles itself. There is no other implementation: an earlier Python prototype was retired and lives only in git history.
 
-- **Status: an implemented subset.** The compiler runs the core language only. Not built yet: unlimited-size `int` (it is 64-bit and stops on overflow), float literals and mixed int/float arithmetic, `//`, `**`, `rational`, bitwise operators, UTF-8 text literals, top-level code, unions, tuples, `*args`/`**kwargs`, keyword arguments and `@add`. See the status table in `docs/specification.md`, `tests/known_gaps/`, and port the ~670 Python tests at git tag `v0.5` as each feature returns.
+- **Status: an implemented subset.** The compiler runs the core language only. Not built yet: unlimited-size `int` (it is 64-bit and stops on overflow), UTF-8 text literals, top-level code, unions, tuples, `*args`/`**kwargs`, keyword arguments and `@add`. See the status table in `docs/specification.md`, `tests/known_gaps/`, and port the ~670 Python tests at git tag `v0.5` as each feature returns.
 - **Version:** in `VERSION` (v0.x).
 - **Install:** `./install-native.sh` builds the compiler from the checked-in IR with clang alone and installs `tomato` (`run`, `build`, `compile`, `repl`, `update`, `version`, `help`).
 - **Numbers:** `int` is 64-bit and stops on overflow for now (see the status table in `docs/specification.md`).

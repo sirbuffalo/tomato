@@ -913,3 +913,13 @@ int tomato_str_eq_opt(void *a, void *b) {
     if (!a || !b) return a == b;
     return tomato_str_cmp(a, b) == 0;
 }
+
+/* ---- ** and // helpers (the compiler declares these; see compiler.tom num_power and float_op) */
+int32_t tomato_ipow_check(int64_t base, int64_t exp) { tomato_ipow(base, exp); return tomato_pow_overflow; }
+double tomato_floor_div_f64(double x, double y) { return floor(x / y); }
+double tomato_mod_f64(double x, double y) {
+    double r = fmod(x, y);
+    if (r != 0 && ((r < 0) != (y < 0))) r += y;
+    return r;
+}
+double tomato_pow_f64(double x, double y) { return pow(x, y); }

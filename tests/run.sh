@@ -152,6 +152,7 @@ rt int_overflow_at_64_bits "integer overflow" 1
 rt caught "caught boom" 0
 rt dict_missing_key "the key is not there" 1
 rt set_missing "the element is not there" 1
+rt negative_exponent "a negative exponent needs a float" 1
 
 
 echo "== known gaps (decided behavior the compiler does not have yet) =="

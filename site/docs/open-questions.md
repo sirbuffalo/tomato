@@ -126,7 +126,7 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 
 85. Checking before running (D40a, reading to confirm): the prototype's check pass is partial (P54). Open: narrowing after `x in Type` or a `None` check, types of collection literals and methods in the pass, and whether the interpreter should also stop on code it cannot type.
 
-86. Floats and the new operators (D41a, reading to confirm): float literal grammar (`1.` and `.5` are not literals), mixing `rational` with `float`, typing fixed-width results of `//` and `**` from literals, and the compiler written in Tomato, which does not yet have float literals, `//`, `**` or mixed arithmetic.
+86. Floats and the new operators (D41a, reading to confirm): float literal grammar (`1.` and `.5` are not literals), mixing `rational` with `float`, typing fixed-width results of `//` and `**` from literals, and the compiler written in Tomato, which has decimal float literals, `//`, `**` and mixed arithmetic since v0.17 but not exponent notation, `float(x)` or the infinite/NaN stop.
 
 ## Out of scope
 

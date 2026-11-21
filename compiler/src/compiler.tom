@@ -788,6 +788,150 @@ class Gen:
         self.emit(out + ' = add ' + llt + ' ' + r + ', ' + amount)
         return ex(out, t)
 
+    def num_floor_divide(self, a: Ex, b: Ex, line: int) -> Ex:
+        # //: the quotient rounded toward minus infinity, like Python; a zero divisor stops the program
+        t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, t)
+        y = self.resize(b, t)
+        llt = llvm_type(t)
+        zero = self.tmp('zero')
+        self.emit(zero + ' = icmp eq ' + llt + ' ' + y.reg + ', 0')
+        self.fail_if(zero, 'division by zero')
+        if not is_signed(t):
+            r = self.tmp('udiv')
+            self.emit(r + ' = udiv ' + llt + ' ' + x.reg + ', ' + y.reg)
+            return ex(r, t)
+        least = self.tmp('least')
+        self.emit(least + ' = shl ' + llt + ' 1, ' + str(bits_of(t) - 1))
+        is_least = self.tmp('isleast')
+        self.emit(is_least + ' = icmp eq ' + llt + ' ' + x.reg + ', ' + least)
+        is_minus = self.tmp('isminus')
+        self.emit(is_minus + ' = icmp eq ' + llt + ' ' + y.reg + ', -1')
+        both = self.tmp('both')
+        self.emit(both + ' = and i1 ' + is_least + ', ' + is_minus)
+        self.fail_if(both, 'integer overflow')
+        q = self.tmp('sdiv')
+        self.emit(q + ' = sdiv ' + llt + ' ' + x.reg + ', ' + y.reg)
+        r = self.tmp('srem')
+        self.emit(r + ' = srem ' + llt + ' ' + x.reg + ', ' + y.reg)
+        mix = self.tmp('mix')
+        self.emit(mix + ' = xor ' + llt + ' ' + r + ', ' + y.reg)
+        differ = self.tmp('differ')
+        self.emit(differ + ' = icmp slt ' + llt + ' ' + mix + ', 0')
+        nonzero = self.tmp('nonzero')
+        self.emit(nonzero + ' = icmp ne ' + llt + ' ' + r + ', 0')
+        fix = self.tmp('fix')
+        self.emit(fix + ' = and i1 ' + differ + ', ' + nonzero)
+        amount = self.tmp('amount')
+        self.emit(amount + ' = select i1 ' + fix + ', ' + llt + ' 1, ' + llt + ' 0')
+        out = self.tmp('floor')
+        self.emit(out + ' = sub ' + llt + ' ' + q + ', ' + amount)
+        return ex(out, t)
+
+    def num_bitwise(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # & | ^ on two's-complement integers of the common type
+        t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, t)
+        y = self.resize(b, t)
+        ins = 'and'
+        if op == '|':
+            ins = 'or'
+        elif op == '^':
+            ins = 'xor'
+        r = self.tmp('bit')
+        self.emit(r + ' = ' + ins + ' ' + llvm_type(t) + ' ' + x.reg + ', ' + y.reg)
+        return ex(r, t)
+
+    def num_power(self, a: Ex, b: Ex, line: int) -> Ex:
+        # ** on integers: whole-number powers that stop on overflow or a negative exponent; the result type is the
+        # common type, converted back with a range check when it is a fixed width
+        if not contains('int', a.ty) or not contains('int', b.ty):
+            raise CompileError('the Tomato compiler does not take a 64-bit unsigned number to a power yet', line)
+        t = 'int'
+        if a.ty != 'int' and b.ty != 'int':
+            t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, 'int')
+        y = self.resize(b, 'int')
+        status = self.tmp('powstatus')
+        self.emit(status + ' = call i32 @tomato_ipow_check(i64 ' + x.reg + ', i64 ' + y.reg + ')')
+        negative = self.tmp('negexp')
+        self.emit(negative + ' = icmp eq i32 ' + status + ', 2')
+        self.fail_if(negative, 'a negative exponent needs a float')
+        big = self.tmp('powbig')
+        self.emit(big + ' = icmp eq i32 ' + status + ', 1')
+        self.fail_if(big, 'integer overflow')
+        r = self.tmp('pow')
+        self.emit(r + ' = call i64 @tomato_ipow(i64 ' + x.reg + ', i64 ' + y.reg + ')')
+        if t != 'int':
+            return self.convert_explicit(ex(r, 'int'), t, line)
+        return ex(r, 'int')
+
+    def as_double(self, e: Ex) -> str:
+        if e.ty == 'float':
+            return e.reg
+        return self.to_double(e)
+
+    def float_op(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # arithmetic and comparison when either side is a float: the other side is converted to a float
+        if not (a.ty == 'float' or is_numeric(a.ty)) or not (b.ty == 'float' or is_numeric(b.ty)):
+            raise CompileError('type error: cannot use ' + op + ' with ' + shown(a.ty) + ' and ' + shown(b.ty), line)
+        x = self.as_double(a)
+        y = self.as_double(b)
+        if op == '+' or op == '-' or op == '*':
+            ins = 'fadd'
+            if op == '-':
+                ins = 'fsub'
+            elif op == '*':
+                ins = 'fmul'
+            r = self.tmp('f')
+            self.emit(r + ' = ' + ins + ' double ' + x + ', ' + y)
+            return ex(r, 'float')
+        if op == '/' or op == '//' or op == '%':
+            zero = self.tmp('fzero')
+            self.emit(zero + ' = fcmp oeq double ' + y + ', 0.0')
+            if op == '%':
+                self.fail_if(zero, 'modulo by zero')
+            else:
+                self.fail_if(zero, 'division by zero')
+            r = self.tmp('f')
+            if op == '/':
+                self.emit(r + ' = fdiv double ' + x + ', ' + y)
+            elif op == '//':
+                self.emit(r + ' = call double @tomato_floor_div_f64(double ' + x + ', double ' + y + ')')
+            else:
+                self.emit(r + ' = call double @tomato_mod_f64(double ' + x + ', double ' + y + ')')
+            return ex(r, 'float')
+        if op == '**':
+            r = self.tmp('f')
+            self.emit(r + ' = call double @tomato_pow_f64(double ' + x + ', double ' + y + ')')
+            return ex(r, 'float')
+        cc = ''
+        if op == '==':
+            cc = 'oeq'
+        elif op == '!=':
+            cc = 'une'
+        elif op == '<':
+            cc = 'olt'
+        elif op == '<=':
+            cc = 'ole'
+        elif op == '>':
+            cc = 'ogt'
+        elif op == '>=':
+            cc = 'oge'
+        else:
+            raise CompileError('the Tomato compiler does not support ' + op + ' on floats yet', line)
+        c = self.tmp('fcmp')
+        self.emit(c + ' = fcmp ' + cc + ' double ' + x + ', ' + y)
+        return self.bool_of(c)
+
+    def float_literal(self, mantissa: int, scale: int) -> Ex:
+        # the decimal digits as an integer over a power of ten: one correctly rounded division, so the nearest float
+        whole = self.tmp('fl')
+        self.emit(whole + ' = sitofp i64 ' + str(mantissa) + ' to double')
+        r = self.tmp('fl')
+        self.emit(r + ' = fdiv double ' + whole + ', 1.0e+' + str(scale))
+        return ex(r, 'float')
+
     def to_double(self, e: Ex) -> str:
         r = self.tmp('fp')
         op = 'uitofp'
@@ -870,6 +1014,8 @@ class Gen:
         k = n.kind
         if k == 'IntLit':
             return self.int_literal(n.fields[0].num, expected, False, n.line)
+        if k == 'FloatLit':
+            return self.float_literal(n.fields[0].num, n.fields[1].num)
         if k == 'BoolLit':
             if n.fields[0].flag:
                 return ex('1', 'bool')
@@ -894,6 +1040,10 @@ class Gen:
             if op == '-' and val_node(n.fields[1]).kind == 'IntLit':
                 return self.int_literal(val_node(n.fields[1]).fields[0].num, expected, True, n.line)
             v = self.expr(val_node(n.fields[1]), expected)
+            if op == '-' and v.ty == 'float':
+                negated = self.tmp('fneg')
+                self.emit(negated + ' = fneg double ' + v.reg)
+                return ex(negated, 'float')
             if op == '-':
                 if not is_numeric(v.ty):
                     raise CompileError('type error: the operand of - is ' + shown(v.ty), n.line)
@@ -1366,6 +1516,8 @@ class Gen:
             a = self.want(a, 'bool', n.line, 'the left side of ' + op)
             b = self.want(b, 'bool', n.line, 'the right side of ' + op)
             return ex(self.arith(op, a.reg, b.reg), 'bool')
+        if a.ty == 'float' or b.ty == 'float':
+            return self.float_op(op, a, b, n.line)
         if is_compare and a.ty == 'bool' and b.ty == 'bool':
             if op != '==' and op != '!=':
                 raise CompileError('type error: cannot order bools', n.line)
@@ -1382,6 +1534,12 @@ class Gen:
                 return self.num_modulo(a, b, n.line)
             if op == '/':
                 return self.num_divide(a, b, n.line)
+            if op == '//':
+                return self.num_floor_divide(a, b, n.line)
+            if op == '**':
+                return self.num_power(a, b, n.line)
+            if op == '&' or op == '|' or op == '^':
+                return self.num_bitwise(op, a, b, n.line)
             if is_compare:
                 return self.num_compare(op, a, b, n.line)
         elif is_compare:
@@ -2436,6 +2594,11 @@ def declarations(mod: Mod) -> str:
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare ptr @tomato_str_from_f64(double)\n'
     d = d + 'declare double @tomato_parse_f64(ptr, i32)\n'
+    d = d + 'declare i32 @tomato_ipow_check(i64, i64)\n'
+    d = d + 'declare i64 @tomato_ipow(i64, i64)\n'
+    d = d + 'declare double @tomato_floor_div_f64(double, double)\n'
+    d = d + 'declare double @tomato_mod_f64(double, double)\n'
+    d = d + 'declare double @tomato_pow_f64(double, double)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
     d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
     d = d + 'declare i32 @tomato_is_subclass(i64, i64)\n'

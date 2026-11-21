@@ -10,3 +10,8 @@ numbers_rules
 optionals_defaults
 try_paths
 xor
+float_literal
+mixed_arithmetic
+floor_divide_power
+bitwise
+float_ops
