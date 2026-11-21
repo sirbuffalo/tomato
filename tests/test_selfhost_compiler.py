@@ -15,6 +15,36 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "lists": """def total(xs: list[int]) -> int:
+    t = 0
+    for x in xs:
+        t = t + x
+    return t
+
+def join_all(ws: list[str]) -> str:
+    out = ''
+    for w in ws:
+        out = out + w + ','
+    return out
+
+def squares(n: int) -> list[int]:
+    out: list[int] = []
+    for i in range(n):
+        out.append(i * i)
+    return out
+
+@main
+def main():
+    xs = [3, 1, 4, 1, 5]
+    xs[1] = 9
+    print(total(xs), len(xs), xs[2], total(squares(5)))
+    ws = ['a', 'bc']
+    ws.append('d' + 'e')
+    ws[0] = 'z'
+    print(join_all(ws), len(ws), ws[2])
+    bs: list[bool] = [True, False]
+    print(bs[0], bs[1], len(bs))
+""",
     "text": """
 def greet(name: str, times: int) -> str:
     out = ''
@@ -174,7 +204,9 @@ class SelfhostCompiler(unittest.TestCase):
 
     def test_unsupported_programs_say_so(self):
         for src, text in (("class A:\n    pass\n@main\ndef main():\n    print(1)\n", "does not support ClassDef"),
-                          ("@main\ndef main():\n    print([1])\n", "does not support ListLit"),
+                          ("@main\ndef main():\n    print([1])\n", "does not print lists"),
+                          ("@main\ndef main():\n    xs: list[int] = []\n    xs.append('a')\n", "type error"),
+                          ("@main\ndef main():\n    xs = []\n", "empty list needs a declaration"),
                           ("@main\ndef main():\n    x: str = 1\n", "type error"),
                           ("@main\ndef main():\n    print('a' + 1)\n", "type error"),
                           ("def f():\n    pass\n", "no function marked @main"),

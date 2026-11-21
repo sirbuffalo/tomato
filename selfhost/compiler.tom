@@ -27,20 +27,37 @@ def val_nodes(v: Val) -> list[Node]:
         out.append(val_node(item))
     return out
 
+def basic_type(name: str) -> bool:
+    return name == 'int' or name == 'bool' or name == 'str'
+
 def type_name(v: Val) -> str:
-    # the name of a plain type such as int, bool or str, or '' for anything else (None, lists, unions, ...)
+    # the name of a type the compiler knows: int, bool, str, or list[...] of one of those; '' for anything else
     if v.tag != 'n':
         return ''
     t = val_node(v)
+    name = t.fields[0].text
+    if name == 'list' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
+        inner = type_name(t.fields[2])
+        if basic_type(inner):
+            return 'list[' + inner + ']'
+        return ''
     if t.fields[2].tag != 'z' or t.fields[1].tag != 'z':
         return ''
-    name = t.fields[0].text
-    if name == 'int' or name == 'bool' or name == 'str':
+    if basic_type(name):
         return name
     return ''
 
+def is_list(t: str) -> bool:
+    return t.startswith('list[')
+
+def is_rc(t: str) -> bool:
+    return t == 'str' or is_list(t)
+
+def elem_of(t: str) -> str:
+    return t[5:len(t) - 1]
+
 def llvm_type(t: str) -> str:
-    if t == 'str':
+    if is_rc(t):
         return 'ptr'
     return 'i64'
 
@@ -64,6 +81,16 @@ class Mod:
     # what every function of the program shares
     strings: list[str] = []
     infos: list[FuncInfo] = []
+    codes: list[str] = []         # the list types the program uses; a type's code is 2 plus its place here
+
+    def code_of(self, t: str) -> int:
+        k = 0
+        for x in self.codes:
+            if x == t:
+                return k + 2
+            k = k + 1
+        self.codes.append(t)
+        return len(self.codes) + 1
 
     def intern(self, s: str) -> str:
         k = 0
@@ -163,7 +190,7 @@ class Gen:
             return self.slots[name]
         reg = '%v.' + name + '.' + str(len(self.slots))
         self.allocas.append('  ' + reg + ' = alloca ' + llvm_type(ty))
-        if ty == 'str':
+        if is_rc(ty):
             self.allocas.append('  store ptr null, ptr ' + reg)
             self.rc_slots.append(reg)
         self.slots[name] = reg
@@ -175,18 +202,25 @@ class Gen:
         self.allocas.append('  ' + reg + ' = alloca i64')
         return reg
 
+    def hidden_rc_slot(self, hint: str) -> str:
+        reg = self.tmp(hint)
+        self.allocas.append('  ' + reg + ' = alloca ptr')
+        self.allocas.append('  store ptr null, ptr ' + reg)
+        self.rc_slots.append(reg)
+        return reg
+
     # ---- reference counting
     def retain(self, e: Ex):
-        if e.ty == 'str':
+        if is_rc(e.ty):
             self.emit('call void @tomato_retain(ptr ' + e.reg + ')')
 
     def release(self, e: Ex):
-        if e.ty == 'str':
+        if is_rc(e.ty):
             self.emit('call void @tomato_release(ptr ' + e.reg + ')')
 
     def store_owned(self, slot: str, e: Ex):
         # the slot takes over the reference and releases what it held
-        if e.ty == 'str':
+        if is_rc(e.ty):
             old = self.tmp('old')
             self.emit(old + ' = load ptr, ptr ' + slot)
             self.emit('store ptr ' + e.reg + ', ptr ' + slot)
@@ -242,7 +276,7 @@ class Gen:
         self.place(ok)
 
     # ---- expressions
-    def expr(self, n: Node) -> Ex:
+    def expr(self, n: Node, expected: str = '') -> Ex:
         k = n.kind
         if k == 'IntLit':
             return ex(str(n.fields[0].num), 'int')
@@ -274,14 +308,72 @@ class Gen:
             return self.binop(n)
         if k == 'Call':
             return self.call(n, False)
+        if k == 'ListLit':
+            return self.list_lit(n, expected)
         if k == 'Index':
             return self.index(n)
         if k == 'Slice':
             return self.slice(n)
         raise CompileError('the Tomato compiler does not support ' + k + ' yet', n.line)
 
+    def list_slot(self, lst: Ex, i: Ex) -> str:
+        # the address of item i, after a bounds check
+        lenp = self.tmp('lenp')
+        self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + lst.reg + ', i32 0, i32 2')
+        ln = self.tmp('len')
+        self.emit(ln + ' = load i64, ptr ' + lenp)
+        bad = self.tmp('oob')
+        self.emit(bad + ' = icmp uge i64 ' + i.reg + ', ' + ln)
+        self.fail_if(bad, 'index out of range')
+        datap = self.tmp('datap')
+        self.emit(datap + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + lst.reg + ', i32 0, i32 4')
+        data = self.tmp('data')
+        self.emit(data + ' = load ptr, ptr ' + datap)
+        addr = self.tmp('addr')
+        self.emit(addr + ' = getelementptr i64, ptr ' + data + ', i64 ' + i.reg)
+        return addr
+
+    def list_lit(self, n: Node, expected: str) -> Ex:
+        items = val_nodes(n.fields[0])
+        t = ''
+        first = ex('', '')
+        if is_list(expected):
+            t = expected
+        else:
+            if len(items) == 0:
+                raise CompileError('the type of an empty list needs a declaration: xs: list[int] = []', n.line)
+            first = self.expr(items[0])
+            t = 'list[' + first.ty + ']'
+            if not is_list(t) or not basic_type(first.ty):
+                raise CompileError('the Tomato compiler only builds lists of int, bool and str yet', n.line)
+        lst = self.tmp('list')
+        self.emit(lst + ' = call ptr @tomato_list_new(i64 ' + str(self.mod.code_of(t)) + ')')
+        k = 0
+        for item in items:
+            v = ex('', '')
+            if k == 0 and first.ty != '':
+                v = first
+            else:
+                v = self.expr(item, elem_of(t))
+            self.want(v, elem_of(t), n.line, 'a list item')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + lst + ', i64 8)')
+            self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
+            k = k + 1
+        return ex(lst, t)
+
     def index(self, n: Node) -> Ex:
         s = self.expr(val_node(n.fields[0]))
+        if is_list(s.ty):
+            li = self.expr(val_node(n.fields[1]))
+            self.want(li, 'int', n.line, 'an index')
+            addr = self.list_slot(s, li)
+            item = self.tmp('item')
+            self.emit(item + ' = load ' + llvm_type(elem_of(s.ty)) + ', ptr ' + addr)
+            e = ex(item, elem_of(s.ty))
+            self.retain(e)
+            self.release(s)
+            return e
         self.want(s, 'str', n.line, 'the value being indexed')
         i = self.expr(val_node(n.fields[1]))
         self.want(i, 'int', n.line, 'an index')
@@ -387,6 +479,8 @@ class Gen:
 
     def call(self, n: Node, statement: bool) -> Ex:
         f = val_node(n.fields[0])
+        if f.kind == 'Attr':
+            return self.method_call(n, f)
         if f.kind != 'Name':
             raise CompileError('the Tomato compiler only calls plain functions yet', n.line)
         if len(n.fields[2].items) > 0:
@@ -408,7 +502,7 @@ class Gen:
         values: list[Ex] = []
         k = 0
         for a in args:
-            v = self.expr(a)
+            v = self.expr(a, info.ptypes[k])
             self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of ' + name)
             values.append(v)
             k = k + 1
@@ -427,6 +521,22 @@ class Gen:
             self.release(v)       # the callee only borrowed its arguments
         return result
 
+    def method_call(self, n: Node, f: Node) -> Ex:
+        name = f.fields[1].text
+        obj = self.expr(val_node(f.fields[0]))
+        args = val_nodes(n.fields[1])
+        if is_list(obj.ty) and name == 'append':
+            if len(args) != 1:
+                raise CompileError('append takes 1 argument, got ' + str(len(args)), n.line)
+            v = self.expr(args[0], elem_of(obj.ty))
+            self.want(v, elem_of(obj.ty), n.line, 'the appended item')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + obj.reg + ', i64 8)')
+            self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
+            self.release(obj)
+            return ex('', '')
+        raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + obj.ty + ' yet', n.line)
+
     def ret_llvm(self, info: FuncInfo) -> str:
         if info.ret == '':
             return 'void'
@@ -436,9 +546,14 @@ class Gen:
         if len(args) != 1:
             raise CompileError('len(x) takes one argument', line)
         v = self.expr(args[0])
-        self.want(v, 'str', line, 'the argument of len')
         r = self.tmp('len')
-        self.emit(r + ' = call i64 @tomato_str_len(ptr ' + v.reg + ')')
+        if is_list(v.ty):
+            lenp = self.tmp('lenp')
+            self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + v.reg + ', i32 0, i32 2')
+            self.emit(r + ' = load i64, ptr ' + lenp)
+        else:
+            self.want(v, 'str', line, 'the argument of len')
+            self.emit(r + ' = call i64 @tomato_str_len(ptr ' + v.reg + ')')
         self.release(v)
         return ex(r, 'int')
 
@@ -460,7 +575,10 @@ class Gen:
     def print_call(self, args: list[Node]):
         values: list[Ex] = []
         for a in args:
-            values.append(self.expr(a))        # every argument is evaluated before anything is printed
+            v = self.expr(a)                   # every argument is evaluated before anything is printed
+            if is_list(v.ty):
+                raise CompileError('the Tomato compiler does not print lists yet', a.line)
+            values.append(v)
         k = 0
         for v in values:
             if v.ty == 'int':
@@ -504,18 +622,24 @@ class Gen:
             self.release(result)               # a value nobody keeps is released at once
         elif k == 'Assign':
             target = val_node(s.fields[0])
+            if target.kind == 'Index':
+                self.assign_item(s, target)
+                return
             if target.kind != 'Name':
-                raise CompileError('the Tomato compiler can only assign to a variable yet', s.line)
-            v = self.expr(val_node(s.fields[1]))
+                raise CompileError('the Tomato compiler can only assign to a variable or a list item yet', s.line)
             name = target.fields[0].text
+            expected = ''
+            if name in self.slots:
+                expected = self.types[name]
+            v = self.expr(val_node(s.fields[1]), expected)
             if name in self.slots:
                 self.want(v, self.types[name], s.line, 'the assigned value')
             self.store_owned(self.slot(name, v.ty, s.line), v)
         elif k == 'Declare':
             ty = type_name(s.fields[1])
             if ty == '':
-                raise CompileError('the Tomato compiler only declares int, bool and str variables yet', s.line)
-            v = self.expr(val_node(s.fields[2]))
+                raise CompileError('the Tomato compiler only declares int, bool, str and list variables yet', s.line)
+            v = self.expr(val_node(s.fields[2]), ty)
             self.want(v, ty, s.line, 'the value')
             self.store_owned(self.slot(s.fields[0].text, ty, s.line), v)
         elif k == 'Return':
@@ -525,7 +649,7 @@ class Gen:
             else:
                 if self.ret == '':
                     raise CompileError('this function returns no value', s.line)
-                v = self.expr(val_node(s.fields[0]))
+                v = self.expr(val_node(s.fields[0]), self.ret)
                 self.want(v, self.ret, s.line, 'the returned value')
                 self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr %retval')
             self.br('epilogue')
@@ -547,6 +671,24 @@ class Gen:
             pass
         else:
             raise CompileError('the Tomato compiler does not support ' + k + ' statements yet', s.line)
+
+    def assign_item(self, s: Node, target: Node):
+        lst = self.expr(val_node(target.fields[0]))
+        if not is_list(lst.ty):
+            raise CompileError('only list items can be assigned by index', s.line)
+        i = self.expr(val_node(target.fields[1]))
+        self.want(i, 'int', s.line, 'an index')
+        v = self.expr(val_node(s.fields[1]), elem_of(lst.ty))
+        self.want(v, elem_of(lst.ty), s.line, 'the assigned item')
+        addr = self.list_slot(lst, i)
+        if is_rc(v.ty):
+            old = self.tmp('old')
+            self.emit(old + ' = load ptr, ptr ' + addr)
+            self.emit('store ptr ' + v.reg + ', ptr ' + addr)
+            self.emit('call void @tomato_release(ptr ' + old + ')')
+        else:
+            self.emit('store i64 ' + v.reg + ', ptr ' + addr)
+        self.release(lst)
 
     def if_stmt(self, s: Node):
         end = self.label('endif')
@@ -582,8 +724,59 @@ class Gen:
             self.br(head)
         self.place(end)
 
+    def for_each(self, s: Node, it: Node):
+        lst = self.expr(it)
+        if not is_list(lst.ty):
+            raise CompileError('the Tomato compiler only loops over range() and lists yet', s.line)
+        elem = elem_of(lst.ty)
+        holder = self.hidden_rc_slot('for.list')
+        self.store_owned(holder, lst)
+        counter = self.hidden_slot('for.i')
+        self.emit('store i64 0, ptr ' + counter)
+        var = self.slot(s.fields[0].text, elem, s.line)
+        head = self.label('each')
+        body = self.label('eachbody')
+        step = self.label('eachstep')
+        end = self.label('endeach')
+        self.br(head)
+        self.place(head)
+        l = self.tmp('lst')
+        self.emit(l + ' = load ptr, ptr ' + holder)
+        i = self.tmp('i')
+        self.emit(i + ' = load i64, ptr ' + counter)
+        lenp = self.tmp('lenp')
+        self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + l + ', i32 0, i32 2')
+        ln = self.tmp('n')
+        self.emit(ln + ' = load i64, ptr ' + lenp)
+        go = self.tmp('go')
+        self.emit(go + ' = icmp slt i64 ' + i + ', ' + ln)
+        self.cond_br(go, body, end)
+        self.place(body)
+        addr = self.list_slot(ex(l, lst.ty), ex(i, 'int'))
+        item = self.tmp('item')
+        self.emit(item + ' = load ' + llvm_type(elem) + ', ptr ' + addr)
+        e = ex(item, elem)
+        self.retain(e)
+        self.store_owned(var, e)
+        self.push_loop(end, step)
+        self.block(val_nodes(s.fields[2]))
+        self.loop_depth = self.loop_depth - 1
+        if not self.terminated:
+            self.br(step)
+        self.place(step)
+        cur = self.tmp('cur')
+        self.emit(cur + ' = load i64, ptr ' + counter)
+        nxt = self.tmp('next')
+        self.emit(nxt + ' = add i64 ' + cur + ', 1')
+        self.emit('store i64 ' + nxt + ', ptr ' + counter)
+        self.br(head)
+        self.place(end)
+
     def for_stmt(self, s: Node):
         it = val_node(s.fields[1])
+        if not (it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'range'):
+            self.for_each(s, it)
+            return
         if it.kind != 'Call' or val_node(it.fields[0]).kind != 'Name' or val_node(it.fields[0]).fields[0].text != 'range':
             raise CompileError('the Tomato compiler only loops over range() yet', s.line)
         bounds = val_nodes(it.fields[1])
@@ -648,7 +841,7 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         reg = g.slot(p.fields[0].text, info.ptypes[k], p.line)
         sig.append(llvm_type(info.ptypes[k]) + ' %arg.' + p.fields[0].text)
         g.emit('store ' + llvm_type(info.ptypes[k]) + ' %arg.' + p.fields[0].text + ', ptr ' + reg)
-        if info.ptypes[k] == 'str':
+        if is_rc(info.ptypes[k]):
             g.emit('call void @tomato_retain(ptr %arg.' + p.fields[0].text + ')')    # the caller only lent it
         k = k + 1
     g.block(val_nodes(f.fields[3]))
@@ -675,7 +868,7 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     text = 'define ' + ret + ' @tomato.' + name + '(' + ', '.join(sig) + ') {\nentry:\n'
     if info.ret != '':
         zero = '0'
-        if info.ret == 'str':
+        if is_rc(info.ret):
             zero = 'null'
         text = text + '  %retval = alloca ' + ret + '\n  store ' + ret + ' ' + zero + ', ptr %retval\n'
     if len(g.allocas) > 0:
@@ -683,16 +876,33 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     text = text + '\n'.join(g.lines) + '\n}\n'
     return text
 
-def runtime_tables() -> str:
+def runtime_tables(mod: Mod) -> str:
+    n = len(mod.codes) + 2
+    names = new_strs()
+    zeros = new_strs()
+    kinds = new_strs()
+    for k in range(n):
+        names.append('ptr null')
+        zeros.append('i64 0')
+        if k >= 2 and elem_of(mod.codes[k - 2]) == 'str':
+            kinds.append('i32 258')          # a list that holds text: 2, plus 256 for reference counted items
+        elif k >= 2:
+            kinds.append('i32 2')
+        else:
+            kinds.append('i32 0')
+    count = str(n)
     t = '@tomato_exc = global ptr null\n'
     t = t + '@tomato_exc_line = global i32 0\n'
     t = t + '@tomato_exc_rt = global i32 0\n'
     t = t + '@tomato_exc_seen = global i32 0\n'
-    t = t + '@tomato_class_names = constant [2 x ptr] [ptr null, ptr null]\n'
-    t = t + '@tomato_parents = global [2 x i64] [i64 0, i64 0]\n'
-    t = t + '@tomato_kinds = constant [2 x i32] [i32 0, i32 0]\n'
-    t = t + '@tomato_offsets = constant [2 x ptr] [ptr null, ptr null]\n'
+    t = t + '@tomato_class_names = constant [' + count + ' x ptr] [' + ', '.join(names) + ']\n'
+    t = t + '@tomato_parents = global [' + count + ' x i64] [' + ', '.join(zeros) + ']\n'
+    t = t + '@tomato_kinds = constant [' + count + ' x i32] [' + ', '.join(kinds) + ']\n'
+    t = t + '@tomato_offsets = constant [' + count + ' x ptr] [' + ', '.join(names) + ']\n'
     return t
+
+def new_strs() -> list[str]:
+    return []
 
 def declarations() -> str:
     d = 'declare i32 @printf(ptr, ...)\n'
@@ -709,6 +919,8 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_str_from_i64(i64)\n'
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
+    d = d + 'declare ptr @tomato_list_new(i64)\n'
+    d = d + 'declare ptr @tomato_list_push(ptr, i64)\n'
     d = d + '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
     return d
 
@@ -725,13 +937,13 @@ export def compile_module(src: str) -> str:
         if item.fields[2].tag != 'z':
             info.ret = type_name(item.fields[2])
             if info.ret == '':
-                raise CompileError('the Tomato compiler only returns int, bool and str values yet', item.line)
+                raise CompileError('the Tomato compiler only returns int, bool, str and list values yet', item.line)
         for p in val_nodes(item.fields[1]):
             if p.fields[3].tag != 'z' or p.fields[2].tag != 'z':
                 raise CompileError('the Tomato compiler does not support defaults or *args yet', p.line)
             pt = type_name(p.fields[1])
             if pt == '':
-                raise CompileError('the Tomato compiler only takes int, bool and str parameters yet', p.line)
+                raise CompileError('the Tomato compiler only takes int, bool, str and list parameters yet', p.line)
             info.ptypes.append(pt)
         mod.infos.append(info)
         funcs.append(item)
@@ -747,7 +959,7 @@ export def compile_module(src: str) -> str:
         bodies = bodies + compile_function(f, mod, mod.infos[k]) + '\n'
         k = k + 1
     out = '; written by the Tomato compiler in Tomato (selfhost/compiler.tom)\n'
-    out = out + declarations() + runtime_tables()
+    out = out + declarations() + runtime_tables(mod)
     j = 0
     for s in mod.strings:
         out = out + string_global(j, s) + '\n'
