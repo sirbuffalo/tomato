@@ -1,8 +1,6 @@
-# Provisional choices in the Python prototype
+# Provisional choices
 
-The interpreter in this folder implements only decided rules (D-numbers in `docs/specification.md`). Where the language has no decision yet, it uses a Python-like placeholder listed here. **None of these are decisions.** Davis decides each; the prototype changes to match. Constructs that would need a real rule stop with `not yet decided: ...` instead.
-
-Run a program: `bin/tomato run examples/primes.tom` (runs `@main`; `bin/tomato run FILE ENTRY INPUTS...` runs `@ENTRY` with those inputs, D28a; add `--llvm file.ll` to let `!x` run LLVM, which needs `pip install llvmlite`). Compile to LLVM IR: `bin/tomato compile FILE -o OUT.ll`; build a native program: `bin/tomato build FILE -o OUT` (P36); write an interpreter bundle: `bin/tomato bundle FILE -o OUT` (P35); decode an error code: `bin/tomato explain CODE FILE` (P37). Install for the current user: `./install.sh`. Run the tests: `python3 -m unittest tests.test_tomato`.
+Where the language has no decision yet, a placeholder is used. This list was written while a Python prototype existed; **that prototype was retired in v0.6 and survives only in git history**, so entries that say "the interpreter" or "the Python compiler" describe what that prototype did. The compiler written in Tomato (`compiler/src`, the only implementation now) implements a subset; see "Implemented in v0.x" in `docs/specification.md` for what runs today. **None of these are decisions.**
 
 ## Placeholders in use
 

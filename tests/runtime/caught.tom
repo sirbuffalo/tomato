@@ -1,0 +1,6 @@
+@main
+def main():
+    try:
+        raise Error("boom")
+    catch Error as e:
+        print("caught", e.message)

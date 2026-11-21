@@ -17,4 +17,5 @@ $cc -O1 -Wno-override-module -x ir "$tmp/tomatoc.ll" -x c "$rt" -lm \
 $cc -O1 -DTOMATO_WASM -mexec-model=reactor "$rt" -lm \
   -Wl,--export-all -Wl,--no-entry -Wl,--initial-memory=33554432 -Wl,--max-memory=1073741824 -o "$out/runtime.wasm"
 mkdir -p "$out/std"; cp "$root/std/"*.tom "$out/std/"
+cat "$root/compiler/bootstrap/tomatoc.ll" "$rt" | shasum -a 256 | cut -d" " -f1 > "$out/SOURCE.sha256"   # tests/run.sh checks the wasm files are not stale
 echo "built $out/tomatoc.wasm and $out/runtime.wasm"

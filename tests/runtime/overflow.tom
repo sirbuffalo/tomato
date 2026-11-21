@@ -1,0 +1,5 @@
+@main
+def main():
+    a: int[length=8] = 127
+    b: int[length=8] = a + a
+    print(b)

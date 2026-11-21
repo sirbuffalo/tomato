@@ -51,5 +51,34 @@ check "repl: += works" "8" "$(printf 'x = 5\nx += 3\nx\n:quit\n' | $t repl)"
 check "repl: leave() leaves" "a" "$(printf "print('a')\nleave()\nprint('b')\n" | $t repl)"
 check "compile writes IR" "yes" "$($t compile examples/shapes.tom | grep -q 'define i32 @main' && echo yes)"
 
+echo "== rejected programs =="
+neg() { # file, message that the compiler must report
+  msg="$("$work/c1" "tests/negative/$1.tom" main std/ 2>&1 >/dev/null)"; code=$?
+  case "$msg" in *"$2"*) [ $code -ne 0 ] && ok "rejects $1" || bad "rejects $1" "exit status was 0";; *) bad "rejects $1" "wanted: $2
+got:    $msg";; esac
+}
+neg type_mismatch "cannot use + with int and str"
+neg fixed_range "does not fit uint[length=8]"
+neg unknown_name "unknown name nothing"
+neg bad_assign "the assigned value is str where int is needed"
+neg non_bool_condition "a condition is int where bool is needed"
+
+echo "== runtime errors and modes =="
+rt() { # file, expected stderr text, expected exit status
+  "$work/c1" "tests/runtime/$1.tom" main std/ > "$work/r.ll" 2>/dev/null && clang -O1 -w -o "$work/r" "$work/r.ll" runtime/tomato_rt.c -lm || { bad "runtime $1" "did not build"; return; }
+  "$work/r" > "$work/o" 2> "$work/e2"; code=$?
+  case "$(cat "$work/o" "$work/e2")" in *"$2"*) [ "$code" = "$3" ] && ok "runtime $1" || bad "runtime $1" "exit status $code, wanted $3";; *) bad "runtime $1" "wanted '$2', got: $(cat "$work/o" "$work/e2")";; esac
+}
+rt divide_by_zero "division by zero" 1
+rt index "index out of range" 1
+rt overflow "integer overflow" 1
+rt caught "caught boom" 0
+
+
+echo "== release files =="
+check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
+check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
+check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | shasum -a 256 | cut -d' ' -f1)" "$(cat site/wasm/SOURCE.sha256 2>/dev/null)"
+
 echo; echo "$passes passed, $fails failed"
 [ "$fails" -eq 0 ]

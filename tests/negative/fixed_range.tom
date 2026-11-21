@@ -1,0 +1,4 @@
+@main
+def main():
+    x: uint[length=8] = 300
+    print(x)

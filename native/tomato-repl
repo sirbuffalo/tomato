@@ -131,7 +131,7 @@ while :; do
   line="$REPLY_LINE"
   case "$line" in
     "") continue ;;
-    :quit|:q|:exit|"leave()"|"exit()"|"quit()"|leave|exit|quit) break ;;
+    :quit|:q|:exit|"leave()"|"exit()"|"quit()") break ;;
     :help) help; continue ;;
     :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; say "session cleared"; continue ;;
     :program) program; continue ;;

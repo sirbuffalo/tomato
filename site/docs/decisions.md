@@ -1204,6 +1204,12 @@ Source: Davis's Dashboard message:
 - The wasm files are committed (built with `site/wasm/build.sh` and the WASI SDK) so GitHub Pages needs no toolchain. Interpreted IR is slower than native code; it is meant for demos.
 - Open: the compiler written in Tomato still has no top-level code, `//`, `**` or float literals (the page moves top-level code into `@main`); an IR-to-WebAssembly backend would be faster than interpreting; `tomato repl` on the command line still re-runs the session.
 
+### D46a — the Python implementation is retired: accepted (reading to confirm)
+
+- Evidence: Davis wrote “stop updating python version it should never be used … remove it from the github, delete it, it will still be backed up in past commit” and “no more python”.
+- v0.6 removed `python/`, the Python compile server, the Python tests and `install.sh`. The runtime moved to `runtime/` and the standard library to `std/`. Tests are `tests/run.sh` (shell, clang only).
+- D38a's “language features go in the Python bootstrap” no longer applies: features are added to the compiler written in Tomato. Features that existed only in the Python prototype (see the status table in the specification) are not implemented until rebuilt there. D40a, D41a and D42a describe intended behavior; the status table says what runs today.
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.

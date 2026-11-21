@@ -2,6 +2,20 @@
 
 Status: the complete current record of confirmed requirements and accepted language decisions, including typing, classes/interfaces, integers, and fractional division. Unresolved details are identified alongside each rule. This is not yet a complete or implementable language specification.
 
+## Status of the implementation (v0.x)
+
+The compiler written in Tomato is the only implementation. The Python prototype that held the features marked "not yet" was retired in v0.6 (it is in git history); each "not yet" item is a follow-up to rebuild in the Tomato compiler. Several decisions below describe behavior of that prototype; where a decision says "interpreter" or "Python compiler", read it as historical.
+
+| Area | Implemented in v0.x | Not yet (follow-up) |
+| --- | --- | --- |
+| Numbers | int, fixed-width `int[length=N]`/`uint[length=N]` with overflow errors, `/` giving a 64-bit `float`, `+ - * %`, compound assignment `+= -= *= /= %=` | float literals, mixed int/float arithmetic, `//`, `**`, `rational`, bitwise `& \| ^`, `xor` (D41a) |
+| Types | `bool`, `str`, `list`, `dict[str, V]`, `set`, `T \| None` for class, text and list values, classes with single inheritance, `override`, interfaces | unions in general and `x in Type` (D23f–h), tuples, `*args`/`**kwargs` and keyword arguments (D39a) |
+| Checks | declaration and access checks, duplicate names, one `@init` per class, fixed-width literal range | constant errors in unreachable code (D05ac, D05ag, D05ap, D40a), the full pre-run type-check pass (D40a), `@init` flow analysis, reference-cycle notice |
+| Programs | `@main` and other `@entry` points with typed inputs | top-level code as the program (D42a); the site and repl wrap it in `@main` |
+| Tools | `tomato run/build/compile/repl/update/version/help`, the website with in-browser compile and run, the VS Code grammar | `bundle`, `explain` and the `--mode` error codes decoder |
+| Memory | reference counting with a cycle collector in the runtime | (compile-time cycle notice) |
+
+
 ## Confirmed requirements
 
 These requirements come from Davis's initial brief and subsequent answers. Their unresolved details are listed explicitly.
@@ -47,7 +61,7 @@ These requirements come from Davis's initial brief and subsequent answers. Their
 - **D45a:** The website compiles and runs Tomato in the visitor's browser: the compiler written in Tomato and the C runtime are WebAssembly, and a JavaScript interpreter runs the IR the compiler writes. No server, no Python. Reading to confirm.
 - **D44a:** Editor support lives in `editors/vscode/` (a TextMate grammar, snippets and language configuration) and the website highlights code with the same classes. Reading to confirm.
 - **D42a:** A main program may have top-level statements, which are the program; if there is an `@main`, only it runs. The compiler written in Tomato is v0.x and the Python implementation v-1.x (`VERSION`). `tomato repl` is an interactive prompt that keeps variables and definitions and can compile the session. Reading to confirm.
-- **D43a:** The website lives in `site/` (GitHub Pages), releases are GitHub releases described by `latest.json`, `tomato update` installs the newest one, and the project is laid out as `python/`, `compiler/`, `server/`, `site/`, `release/`. Reading to confirm.
+- **D43a:** The website lives in `site/` (GitHub Pages), releases are GitHub releases described by `latest.json`, `tomato update` installs the newest one, and the project is laid out as `compiler/`, `runtime/`, `std/`, `native/`, `site/`, `editors/`, `release/` (the earlier `python/` and `server/` folders were removed in v0.6). Reading to confirm.
 - **D40a:** Type errors and constant failures are found before the program runs, in every function and method, wherever they are written, including code that never executes (D04a, D05x, D05ac, D05ag, D05ap). The prototype's check pass is partial: it rejects only what it can prove and lets the rest through (P54). Reading to confirm.
 - **D41a:** `float` is a 64-bit IEEE binary64 (D05z, D05aj) with literals `1.5`, `2e3` and `1.5e-3`; a whole number mixed with a float becomes a float; `//` rounds down; `**` on whole numbers gives a whole number (a negative exponent is an error) and on floats gives a float; `float(x)` and `int(x)` convert; float results must be finite and float division by zero is an error (P55–P58). `rational` is unchanged. Reading to confirm.
 - **D39a:** Functions may take `*args: tuple[T]` and `**kwargs: dict[str, V]`, always typed, last, and in that order, and calls may pass `name=value` keyword arguments. Entry points fill them from the command line: extra inputs become the tuple, `name=value` inputs the dict, each value read as the most restrictive type (D28b). Davis wrote “*args and **kwargs should exist and should work with entries but must be typedqithn tuple or froendcit” (reading to confirm; “froendcit” read as `dict`). `tuple[T]` is an immutable sequence (P48). Interpreter only.

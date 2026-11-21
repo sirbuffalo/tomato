@@ -1,0 +1,4 @@
+@main
+def main():
+    xs: list[int] = [1]
+    print(xs[5])
