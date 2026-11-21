@@ -1308,3 +1308,7 @@ int64_t tomato_f64_to_int(double d) {
     int64_t big = tomato_int_mul(tomato_int_from_i64(mant), tomato_int_pow(int_mk_small(2), int_mk_small(e - 53)));
     return d < 0 ? tomato_int_neg(big) : big;
 }
+
+/* the compiler writes text constants byte by byte (D17a-b: text is UTF-8) */
+int64_t tomato_str_nbytes(void *s) { return ((Str *)s)->bytes; }
+int64_t tomato_str_byte(void *s, int64_t i) { return (unsigned char)((Str *)s)->data[i]; }

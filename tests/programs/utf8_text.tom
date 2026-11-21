@@ -1,0 +1,7 @@
+@main
+def main():
+    s = "héllo wörld ✓"
+    print(s, len(s))
+    print(s[1], s[12], s[0:5])
+    t = 'ñ' + 'é'
+    print(t, len(t), 'é' in s)

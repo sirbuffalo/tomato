@@ -1,5 +1,0 @@
-@main
-def main():
-    print(1)
-    s = "héllo"
-    print(s)

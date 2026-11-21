@@ -576,46 +576,34 @@ class Mod:
             return '%' + key
         return ''
 
-def escape_ir_char(c: str, line: int) -> str:
-    plain = ' !#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~'
-    if plain.find(c) >= 0:
-        return c
-    if c == '\n':
-        return '\\0A'
-    if c == '\t':
-        return '\\09'
-    if c == '\r':
-        return '\\0D'
-    if c == '"':
-        return '\\22'
-    if c == '\\':
-        return '\\5C'
-    if c == '\0':
-        return '\\00'
-    raise CompileError('the Tomato compiler only supports ASCII text literals yet (D17a-c say text is UTF-8)', line)
+!tomato_str_nbytes(s: str) -> int
+!tomato_str_byte(s: str, i: int) -> int
 
-def check_ascii_literal(s: str, line: int):
-    i = 0
-    while i < len(s):
-        escape_ir_char(s[i], line)       # stops with the literal's line on a character that is not ASCII
-        i = i + 1
+def escape_byte(b: int) -> str:
+    # one byte of a text constant as LLVM writes it: printable ASCII as itself, anything else as \XX (D17a-b: text is UTF-8)
+    ascii = ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
+    if b >= 32 and b < 127 and b != 34 and b != 92:
+        return ascii[b - 32:b - 31]
+    digits = '0123456789ABCDEF'
+    return '\\' + digits[b // 16:b // 16 + 1] + digits[b % 16:b % 16 + 1]
 
 def escape_text(s: str) -> str:
     body = ''
     i = 0
-    while i < len(s):
-        body = body + escape_ir_char(s[i], 0)
+    n = !tomato_str_nbytes(s)
+    while i < n:
+        body = body + escape_byte(!tomato_str_byte(s, i))
         i = i + 1
     return body
 
 def string_global(index: int, s: str) -> str:
-    size = str(len(s) + 1)
+    size = str(!tomato_str_nbytes(s) + 1)
     body = escape_text(s)
-    return '@.str.' + str(index) + ' = private constant { i64, i64, i64, i64, [' + size + ' x i8] } { i64 -1, i64 1, i64 ' + str(len(s)) + ', i64 ' + str(len(s)) + ', [' + size + ' x i8] c"' + body + '\\00" }'
+    return '@.str.' + str(index) + ' = private constant { i64, i64, i64, i64, [' + size + ' x i8] } { i64 -1, i64 1, i64 ' + str(!tomato_str_nbytes(s)) + ', i64 ' + str(len(s)) + ', [' + size + ' x i8] c"' + body + '\\00" }'
 
 def string_c(index: int, s: str) -> str:
     # a plain C copy, which is what tomato_fail prints
-    return '@.str.' + str(index) + '.c = private constant [' + str(len(s) + 1) + ' x i8] c"' + escape_text(s) + '\\00"'
+    return '@.str.' + str(index) + '.c = private constant [' + str(!tomato_str_nbytes(s) + 1) + ' x i8] c"' + escape_text(s) + '\\00"'
 
 class TryInfo:
     # a try statement being compiled (D22a)
@@ -1287,7 +1275,6 @@ class Gen:
                 return ex('1', 'bool')
             return ex('0', 'bool')
         if k == 'StrLit':
-            check_ascii_literal(n.fields[0].text, n.line)    # reported against the literal's own line
             return ex(self.mod.intern(n.fields[0].text), 'str')
         if k == 'Name':
             name = n.fields[0].text
@@ -1519,6 +1506,30 @@ class Gen:
         if negative:
             return ex(str(0 - v), t)
         return ex(str(v), t)
+
+    def const_eval(self, n: Node) -> int:
+        # the value of a tree of whole-number literals joined by + - * (and a minus sign)
+        if n.kind == 'IntLit':
+            return n.fields[0].num
+        if n.kind == 'UnOp':
+            return 0 - self.const_eval(val_node(n.fields[1]))
+        a = self.const_eval(val_node(n.fields[1]))
+        b = self.const_eval(val_node(n.fields[2]))
+        op = n.fields[0].text
+        if op == '+':
+            return a + b
+        if op == '-':
+            return a - b
+        return a * b
+
+    def is_zero_literal(self, n: Node) -> bool:
+        if n.kind == 'IntLit':
+            return n.fields[0].num == 0
+        if n.kind == 'FloatLit':
+            return n.fields[0].num == 0
+        if n.kind == 'UnOp' and n.fields[0].text == '-':
+            return self.is_zero_literal(val_node(n.fields[1]))
+        return False
 
     def literal_only(self, n: Node) -> bool:
         if n.kind == 'IntLit':
@@ -1798,6 +1809,15 @@ class Gen:
             return self.logic(n, op)
         left = val_node(n.fields[1])
         right = val_node(n.fields[2])
+        if (op == '/' or op == '//' or op == '%') and self.is_zero_literal(right):
+            raise CompileError('division by zero: the divisor is the constant 0 (D05ab)', n.line)
+        if (op == '+' or op == '-' or op == '*') and is_fixed(expected) and self.literal_only(n):
+            total = self.const_eval(n)
+            negative_total = total < 0
+            if negative_total:
+                total = 0 - total
+            if not fits_literal(total, expected, negative_total):
+                raise CompileError('the constant ' + str(self.const_eval(n)) + ' does not fit ' + shown(expected) + ' (D05v-x)', n.line)
         if op == 'in' and self.type_operand(right) != '':
             return self.type_test(left, self.type_operand(right), n.line)
         a = ex('', '')
@@ -1954,10 +1974,12 @@ class Gen:
             raise CompileError('!' + name + ' takes ' + str(len(info.ptypes)) + ' argument(s), got ' + str(len(args)), n.line)
         parts = new_strs()
         types = new_strs()
+        held: list[Ex] = []
         k = 0
         for a in args:
             v = self.expr(a, info.ptypes[k])
             v = self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of !' + name)
+            held.append(v)
             reg = v.reg
             if v.ty == 'bool':
                 reg = self.tmp('bit')
@@ -1972,11 +1994,16 @@ class Gen:
             ret = self.llvm_type_of(info.ret)
         self.mod.declare('declare ' + ret + ' @' + name + '(' + ', '.join(types) + ')')
         text = 'call ' + ret + ' @' + name + '(' + ', '.join(parts) + ')'
+        r = ''
         if info.ret == '':
             self.emit(text)
+        else:
+            r = self.tmp('llvm')
+            self.emit(r + ' = ' + text)
+        for h in held:
+            self.release(h)
+        if info.ret == '':
             return ex('', '')
-        r = self.tmp('llvm')
-        self.emit(r + ' = ' + text)
         if info.ret == 'bool':
             w = self.tmp('flag')
             self.emit(w + ' = zext i1 ' + r + ' to i64')
@@ -3551,7 +3578,7 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str) -> str:
         elif item.kind == 'LlvmDecl':
             decl = function_info(item, mod, '')
             for pt in decl.ptypes:
-                if pt == 'File' or is_rc(pt):
+                if pt == 'File' or (is_rc(pt) and pt != 'str'):
                     raise CompileError('an LLVM function takes and returns int, bool and float values only yet', item.line)
             mod.llvm_decls.append(decl)
         else:
