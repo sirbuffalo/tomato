@@ -46,9 +46,9 @@ split() {
 program() {   # the session as one program on stdout
   for f in "$S"/d/*; do [ -f "$f" ] && { cat "$f"; echo; }; done
   if [ -s "$S/stmts" ]; then
-    echo "@main"; echo "def main():"; sed 's/^/    /' "$S/stmts"
+    echo "@main"; echo "def tomato_repl_main():"; sed 's/^/    /' "$S/stmts"
   else
-    echo "@main"; echo "def main():"; echo "    pass"
+    echo "@main"; echo "def tomato_repl_main():"; echo "    pass"
   fi
 }
 
@@ -57,7 +57,7 @@ try_run() {
   cp "$S/stmts" "$S/stmts.try"; cat "$2" >> "$S/stmts.try"
   { for f in "$S"/d/*; do [ -f "$f" ] && { cat "$f"; echo; }; done
     [ -s "$1" ] && { cat "$1"; echo; }
-    echo "@main"; echo "def main():"
+    echo "@main"; echo "def tomato_repl_main():"
     if [ -s "$S/stmts.try" ]; then sed 's/^/    /' "$S/stmts.try"; else echo "    pass"; fi
   } > "$S/try.tom"
   if [ $fast = 2 ]; then
@@ -123,7 +123,16 @@ submit() {   # one piece of source text in $1
 
 load_file() {
   [ -f "$1" ] || { err "error: cannot read $1"; return; }
-  submit "$(cat "$1")"
+  text="$(cat "$1")"
+  # A file with its own @main would clash with the @main the repl generates (the website's wrapMain also leaves such a
+  # program alone): drop the marker and call that function, so loading a program runs it.
+  entry="$(printf '%s\n' "$text" | awk '/^@main[ \t]*$/ { getline; sub(/^def /, ""); sub(/\(.*/, ""); print; exit }')"
+  if [ -n "$entry" ]; then
+    text="$(printf '%s\n' "$text" | grep -v '^@main[[:space:]]*$')"
+    submit "$text" && submit "$entry()"
+  else
+    submit "$text"
+  fi
 }
 
 help() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }

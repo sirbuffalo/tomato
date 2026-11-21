@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds the release files in release/out/: tomato-VERSION.tar.gz (everything `install-native.sh` needs, with no Python)
-# and latest.json (what `tomato update` reads). Upload the archive to a GitHub release tagged vVERSION and publish
-# latest.json with the site (www/latest.json). Usage: release/build.sh [ARCHIVE_URL]
+# and latest.json (what `tomato update` reads). Upload the archive to a GitHub release tagged vVERSION and attach
+# latest.json to the release too (tomato update falls back to it); site/build.sh copies it into site/. Usage: release/build.sh [ARCHIVE_URL]
 set -e
 root="$(cd "$(dirname "$0")/.." && pwd)"
 version="$(cat "$root/VERSION")"

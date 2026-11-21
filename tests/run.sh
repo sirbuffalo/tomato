@@ -60,6 +60,20 @@ if [ -x "$jsc" ]; then
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
   done
+  # rejected programs and runtime errors through the same path (the messages and failures must agree with native)
+  wasm_neg() { m="$("$jsc" native/tomato-jsc.js -- site/wasm run "tests/negative/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc 1"*) ok "wasm rejects $1";; *) bad "wasm rejects $1" "wanted: $2
+got: $m";; esac; }
+  wasm_rt() { m="$("$jsc" native/tomato-jsc.js -- site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
+got: $m";; esac; }
+  wasm_neg type_mismatch "cannot use + with int and str"
+  wasm_neg fixed_range "does not fit uint[length=8]"
+  wasm_neg private_field "is private to class C"
+  wasm_neg bad_return "the returned value is str where int is needed"
+  wasm_rt divide_by_zero "division by zero" 1
+  wasm_rt index "index out of range" 1
+  wasm_rt overflow "integer overflow" 1
+  wasm_rt dict_missing_key "the key is not there" 1
+  wasm_rt caught "caught boom" 0
 else [ -n "$CI" ] && bad "wasm path" "jsc is required in CI (macOS runner)" || echo "skip: jsc is not available on this system"; fi
 
 echo "== command line =="
@@ -77,6 +91,12 @@ check "-- passes flag-like inputs" "[-o][--entry]" "$($t run "$work/echo.tom" --
 check "repl: variables, functions, new output only" "7
 9
 hi" "$(printf 'x = 3\nx + 4\ndef sq(n: int) -> int:\n    return n * n\n\nsq(x)\nprint("hi")\n:quit\n' | $t repl)"
+check "repl: :load runs a program that has its own @main" "$(cat tests/expected/shapes.main.out)" "$(printf ':load examples/shapes.tom\n:quit\n' | $t repl)"
+check "repl: a block, then a failing line, then a good one" "9
+error: x
+5" "$(printf 'def sq(n: int) -> int:\n    return n * n\n\nsq(3)\nprint(1 + "a")\nsq(2) + 1\n:quit\n' | $t repl 2>&1 | sed -e 's/^CompileError.*/error: x/' | head -3)"
+check "repl: == is a comparison, = is an assignment" "False
+3" "$(printf 'x = 3\nx == 4\nx\n:quit\n' | $t repl)"
 check "repl: += works" "8" "$(printf 'x = 5\nx += 3\nx\n:quit\n' | $t repl)"
 check "repl: leave() leaves" "a" "$(printf "print('a')\nleave()\nprint('b')\n" | $t repl)"
 # tomato update: a fake release, checksum failures and non-official URLs
@@ -91,6 +111,7 @@ r="$(TOMATO_UPDATE_URL=file://$fake/nosum.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t 
 r="$(TOMATO_UPDATE_URL=file://$fake/badsum.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update 2>&1)"; case "$r" in *"does not match its checksum"*) ok "update refuses a wrong checksum";; *) bad "update refuses a wrong checksum" "$r";; esac
 r="$(TOMATO_UPDATE_URL=file://$fake/ok.json $t update 2>&1)"; case "$r" in *"not an official release URL"*) ok "update refuses a non-official URL";; *) bad "update refuses a non-official URL" "$r";; esac
 TOMATO_UPDATE_URL=file://$fake/ok.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update > /dev/null 2>&1
+r="$(TOMATO_UPDATE_URL=file:///nonexistent.json TOMATO_UPDATE_FALLBACK=file://$fake/ok.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update 2>&1)"; case "$r" in *"is the latest"*|*"installed"*|*"updating"*) ok "update falls back to the release manifest";; *) bad "update falls back to the release manifest" "$r";; esac
 check "update installs a verified release" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
 printf '{"version":"0.0.1","url":"file://%s/t.tar.gz","sha256":"%s"}' "$fake" "$want" > "$fake/old.json"
 r="$(TOMATO_UPDATE_URL=file://$fake/old.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update 2>&1)"; case "$r" in *"is the latest"*) ok "update never downgrades";; *) bad "update never downgrades" "$r";; esac

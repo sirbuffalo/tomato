@@ -14,7 +14,9 @@ cp "$root/runtime/tomato_rt.c" "$home/runtime/"
 rm -rf "$home/std"; mkdir -p "$home/std"; cp "$root/std/"*.tom "$home/std/"
 rm -rf "$home/examples"; cp -R "$root/examples" "$home/examples"
 cp "$root/VERSION" "$home/VERSION"
-cp "$root/native/tomato" "$root/native/tomato-repl" "$home/bin/"
+# copy over a temporary name and rename, so a running `tomato update` (a shell script reading this very file) is never
+# rewritten in place
+for f in tomato tomato-repl; do cp "$root/native/$f" "$home/bin/.$f.new" && chmod +x "$home/bin/.$f.new" && mv -f "$home/bin/.$f.new" "$home/bin/$f"; done
 mkdir -p "$home/wasm/std"
 cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/wasm/wasi.js" "$root/site/wasm/llvm.js" "$root/site/wasm/tomato.js" "$root/native/tomato-jsc.js" "$home/wasm/"
 cp "$root/std/"*.tom "$home/wasm/std/"
