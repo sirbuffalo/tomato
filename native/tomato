@@ -99,9 +99,6 @@ fi
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 if ! "$tomatoc" "$file" "$entry" "$std" > "$tmp/program.ll" 2> "$tmp/errors"; then
   sed -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): line \([0-9]*\): /\1 on line \2: /' -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): /\1: /' "$tmp/errors" >&2
-  if grep -q "declarations yet" "$tmp/errors"; then
-    echo "hint: top-level statements are not supported yet; put them in a function marked @main (the repl and the website wrap them for you)" >&2
-  fi
   exit 1
 fi
 [ "$cmd" = compile ] && { cat "$tmp/program.ll"; exit 0; }

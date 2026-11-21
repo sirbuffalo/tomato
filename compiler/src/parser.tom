@@ -205,8 +205,19 @@ export class Parser:
     # module
     def module(self) -> Node:
         body: list[Node] = []
+        statements: list[Node] = []
         while self.cur().kind != 'EOF':
-            body.append(self.top_item())
+            item = self.top_item()
+            if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'Implements' or item.kind == 'Import' or item.kind == 'LlvmDecl' or item.kind == 'Module':
+                body.append(item)
+            else:
+                statements.append(item)
+        if len(statements) > 0:
+            # top-level code is the program (D42a): the statements become the body of the default entry point, `@main`
+            for d in body:
+                if d.kind == 'FuncDef' and d.fields[6].tag == 's' and d.fields[6].text == 'entry:main':
+                    raise ParseError('a file with top-level code cannot also declare @main', statements[0].line)
+            body.append(mk('FuncDef', statements[0].line, [vs('main'), vnodes(new_nodes()), vz(), vnodes(statements), vb(False), vb(False), vs('entry:main')]))
         return mk('Module', 1, [vnodes(body)])
 
     def top_item(self) -> Node:

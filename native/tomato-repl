@@ -124,7 +124,7 @@ submit() {   # one piece of source text in $1
 load_file() {
   [ -f "$1" ] || { err "error: cannot read $1"; return; }
   text="$(cat "$1")"
-  # A file with its own @main would clash with the @main the repl generates (the website's wrapMain also leaves such a
+  # A file with its own @main would clash with the @main the repl generates (the compiler leaves such a
   # program alone): drop the marker and call that function, so loading a program runs it.
   entry="$(printf '%s\n' "$text" | awk '/^@main[ \t]*$/ { getline; sub(/^def /, ""); sub(/\(.*/, ""); print; exit }')"
   if [ -n "$entry" ]; then
