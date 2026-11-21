@@ -7,7 +7,7 @@
 
 <section id="run-pane">
   <div class="bar"><select id="examples" aria-label="Example"></select><button id="run" class="primary">Compile and run</button><span id="status" class="status"></span></div>
-  <textarea id="src" spellcheck="false" aria-label="Program">print("hello", 6 * 7)</textarea>
+  <div class="editor"><pre class="hl" id="hl" aria-hidden="true"></pre><textarea id="src" spellcheck="false" aria-label="Program">print("hello", 6 * 7)</textarea></div>
   <h3>Output</h3><pre id="out"></pre><pre id="err" class="err"></pre>
 </section>
 
@@ -19,7 +19,7 @@
 </main><script src="config.js"></script><script src="site.js"></script>
 <script>
 function $(id) { return document.getElementById(id); }
-$("where").textContent = "Nothing is sent to a server. The compiler written in Tomato does not have float literals, // or ** yet, so those fail here (the installed tomato-py has them).";
+$("where").textContent = "Nothing is sent to a server. Float literals, // and ** are not in the compiler yet, so they fail here.";
 
 // The toolchain runs in a Web Worker; if a program runs past the limit the worker is stopped and replaced.
 var worker = null, pending = {}, nextId = 1;
@@ -40,6 +40,12 @@ function runOnServer(source) {   // name kept from the server version: it now me
     worker.postMessage({ id: id, source: source, inputs: [], timeoutMs: 5000 });
   });
 }
+// syntax highlighting: a coloured copy of the text sits behind the transparent textarea
+function paint() { $("hl").innerHTML = tomatoHighlight($("src").value) + "\n"; $("hl").scrollTop = $("src").scrollTop; }
+$("src").addEventListener("input", paint);
+$("src").addEventListener("scroll", function () { $("hl").scrollTop = $("src").scrollTop; });
+new MutationObserver(paint);   // (value changes made by code call paint() directly)
+paint();
 $("tab-run").onclick = function () { $("run-pane").hidden = false; $("repl-pane").hidden = true; };
 $("tab-repl").onclick = function () { $("run-pane").hidden = true; $("repl-pane").hidden = false; $("repl-in").focus(); };
 
@@ -47,7 +53,7 @@ $("tab-repl").onclick = function () { $("run-pane").hidden = true; $("repl-pane"
 fetch("examples.json").then(function (r) { return r.json(); }).then(function (ex) {
   var sel = $("examples"); sel.innerHTML = "<option value=''>Examples…</option>";
   Object.keys(ex).forEach(function (k) { var o = document.createElement("option"); o.value = k; o.textContent = k; sel.appendChild(o); });
-  sel.onchange = function () { if (ex[sel.value]) $("src").value = ex[sel.value]; };
+  sel.onchange = function () { if (ex[sel.value]) { $("src").value = ex[sel.value]; paint(); } };
 }).catch(function () { $("examples").hidden = true; });
 $("run").onclick = function () {
   $("run").disabled = true; $("status").textContent = "Running…"; $("out").textContent = ""; $("err").textContent = "";
@@ -64,12 +70,12 @@ $("run").onclick = function () {
 
 // ---- repl: definitions and statements accumulate; the session is re-run and only new output is shown
 var defs = [], stmts = [], shown = "";
-function log(cls, text) { var d = document.createElement("div"); d.className = cls; d.textContent = text; $("repl-log").appendChild(d); $("repl-log").scrollTop = 1e9; }
+function log(cls, text) { var d = document.createElement("div"); d.className = cls; if (cls === "in") d.innerHTML = '<span class="tk-p">&gt;&gt;&gt; </span>' + tomatoHighlight(text.replace(/^(>>> |\.\.\. )/gm, "")); else d.textContent = text; $("repl-log").appendChild(d); $("repl-log").scrollTop = 1e9; }
 function program(extra) { return defs.concat(stmts, extra || []).join("\n") + "\n"; }
 function isDef(t) { return /^(def|class|interface|from|import|@|export)\b|^!/.test(t) || /^\w+ implements /.test(t); }
 function isBlock(t) { return /:\s*$/.test(t.split("\n")[0]); }
 function submit(text) {
-  log("in", ">>> " + text.split("\n").join("\n... "));
+  log("in", text);
   if (text === ":reset") { defs = []; stmts = []; shown = ""; log("out", "session cleared"); return Promise.resolve(); }
   if (text === ":program") { log("out", program()); return Promise.resolve(); }
   if (text[0] === ":") { log("e", "commands here: :reset, :program"); return Promise.resolve(); }
@@ -92,9 +98,9 @@ var buffer = [];
 $("repl-form").onsubmit = function (ev) {
   ev.preventDefault();
   var line = $("repl-in").value; $("repl-in").value = "";
-  if (buffer.length) { if (line.trim() === "") { var text = buffer.join("\n"); buffer = []; $("repl-in").placeholder = "x = 3"; submit(text); } else { buffer.push(line); log("in", "... " + line); } return; }
+  if (buffer.length) { if (line.trim() === "") { var text = buffer.join("\n"); buffer = []; $("repl-in").placeholder = "x = 3"; submit(text); } else { buffer.push(line); log("in", line); } return; }
   if (!line.trim()) return;
-  if (isBlock(line) || line[0] === "@") { buffer = [line]; log("in", ">>> " + line); $("repl-in").placeholder = "… (empty line to finish)"; return; }
+  if (isBlock(line) || line[0] === "@") { buffer = [line]; log("in", line); $("repl-in").placeholder = "… (empty line to finish)"; return; }
   submit(line);
 };
 log("out", "Tomato repl. Enter a statement, expression, or a def/class (finish blocks with an empty line).");

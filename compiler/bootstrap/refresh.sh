@@ -5,7 +5,7 @@ set -e
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 cd "$root"
-cc() { clang -O1 -Wno-override-module -o "$1" "$2" python/tomato/runtime/tomato_rt.c -lm; }
+cc() { clang -O1 -Wno-override-module -o "$1" "$2" runtime/tomato_rt.c -lm; }
 # Each pass builds a compiler from the previous pass's IR and uses it to compile the sources. The first pass may still
 # print text from the old sources (such as a renamed path in a comment), so repeat until two passes agree.
 cc "$tmp/c0" compiler/bootstrap/tomatoc.ll

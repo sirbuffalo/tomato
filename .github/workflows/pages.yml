@@ -2,7 +2,7 @@ name: Website
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", "python/tomato/PROVISIONAL.md", "VERSION"]
+    paths: ["site/**", "docs/**", "docs/provisional.md", "VERSION"]
   workflow_dispatch:
 permissions:
   contents: read

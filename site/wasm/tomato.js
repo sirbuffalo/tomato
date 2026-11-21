@@ -1,4 +1,4 @@
-// The Tomato toolchain in the browser, with no server and no Python:
+// The Tomato toolchain in the browser, with no server:
 //   compile(source)  runs tomatoc.wasm (the compiler written in Tomato) to get LLVM IR
 //   run(ir, inputs)  runs that IR on runtime.wasm (the C runtime) with the IR interpreter in llvm.js
 (function () {
@@ -49,7 +49,7 @@
   };
 
   // The compiler written in Tomato does not read top-level code yet (D42a), so a program without @main has its
-  // top-level statements moved into an @main function first, as the Python compiler does natively.
+  // top-level statements moved into an @main function first, until the compiler reads top-level code itself.
   function wrapMain(src) {
     if (/^@main\b/m.test(src)) return src;
     var lines = src.split("\n"), decl = [], body = [], cur = null;

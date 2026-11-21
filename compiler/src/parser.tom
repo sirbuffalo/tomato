@@ -531,6 +531,14 @@ export class Parser:
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Assign', t.line, [vn(e), vn(v)])
+        if self.cur().kind == 'OP' and self.cur().text in ['+=', '-=', '*=', '/=', '%=']:
+            # x += v is x = x + v (compound assignment, like Python)
+            op = self.adv().text[0:1]
+            if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
+                raise ParseError('cannot assign to this expression', t.line)
+            v = self.expr()
+            self.expect('NEWLINE')
+            return mk('Assign', t.line, [vn(e), vn(mk('BinOp', t.line, [vs(op), vn(e), vn(v)]))])
         self.expect('NEWLINE')
         return mk('ExprStmt', t.line, [vn(e)])
 

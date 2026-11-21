@@ -99,7 +99,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
                 raise LexError('unterminated string', ln)
             toks.append(make_token('STR', buf, 0, ln))
             i = j + 1
-        elif i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->']:
+        elif i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->', '+=', '-=', '*=', '/=', '%=']:
             toks.append(make_token('OP', raw[i:i + 2], 0, ln))
             i = i + 2
         elif c in '+-*/%<>=()[]{}:,.@!|&^':

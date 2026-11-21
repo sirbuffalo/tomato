@@ -1,6 +1,6 @@
 // A small WASI (preview 1) host for the Tomato compiler and runtime: command-line arguments, standard output and error,
 // and an in-memory file system (a map of path -> bytes) so the compiler can read the program and the standard library.
-// No Python and no server: this is all the browser needs to run tomatoc.wasm.
+// No server: this is all the browser needs to run tomatoc.wasm.
 (function () {
   var ERRNO = { SUCCESS: 0, BADF: 8, EXIST: 20, INVAL: 28, NOENT: 44, NOSYS: 52 };
 

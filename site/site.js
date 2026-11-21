@@ -6,8 +6,7 @@
   pages.forEach(function (p) { h += '<a href="' + p[0] + '"' + (p[0] === here ? ' aria-current="page"' : "") + ">" + p[1] + "</a>"; });
   var el = document.getElementById("site-header");
   if (el) el.innerHTML = h + "</nav>";
-  var v = document.getElementById("version");
-  if (v) v.textContent = window.TOMATO_VERSION;
+  ["version", "version2"].forEach(function (id) { var v = document.getElementById(id); if (v) v.textContent = window.TOMATO_VERSION; });
 })();
 
 function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }

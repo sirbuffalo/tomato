@@ -1,5 +1,5 @@
-#!/bin/sh
-# tomato repl [FILE ...]: type Tomato one piece at a time. It needs only the Tomato compiler and clang (no Python).
+#!/bin/bash
+# tomato repl [FILE ...]: type Tomato one piece at a time. It needs only the Tomato compiler and clang.
 #
 # Every piece you enter is added to the session. The session is a program (your definitions, then your statements), and
 # each time it is compiled with tomato and run from the top; only the output that is new is shown, so earlier lines do
@@ -115,11 +115,20 @@ help() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
 
 for f in "$@"; do load_file "$f"; done
 interactive=0; [ -t 0 ] && interactive=1
-[ $interactive = 1 ] && say "Tomato repl (no Python needed). :help for commands, :quit or Ctrl-D to leave."
+# line editing: read -e gives the arrow keys, and the history (up and down) is kept between sessions
+HISTFILE="${TOMATO_HISTORY:-$HOME/.tomato/repl_history}"; HISTSIZE=1000; HISTFILESIZE=1000
+if [ $interactive = 1 ]; then set -o history; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
+readline() {   # readline PROMPT -> sets $REPLY_LINE
+  if [ $interactive = 1 ]; then
+    IFS= read -r -e -p "$1" REPLY_LINE || return 1
+    [ -n "$REPLY_LINE" ] && history -s -- "$REPLY_LINE"
+  else IFS= read -r REPLY_LINE || return 1; fi
+}
+[ $interactive = 1 ] && say "Tomato repl. :help for commands, :quit or Ctrl-D to leave."
 
 while :; do
-  [ $interactive = 1 ] && printf '>>> ' >&2
-  IFS= read -r line || { [ $interactive = 1 ] && echo; break; }
+  readline '>>> ' || { [ $interactive = 1 ] && echo; break; }
+  line="$REPLY_LINE"
   case "$line" in
     "") continue ;;
     :quit|:q|:exit|"leave()"|"exit()"|"quit()"|leave|exit|quit) break ;;
@@ -135,8 +144,8 @@ while :; do
   case "$line" in
     *:|@*)   # a block: read lines until an empty one
       while :; do
-        [ $interactive = 1 ] && printf '... ' >&2
-        IFS= read -r more || break
+        readline '... ' || break
+        more="$REPLY_LINE"
         [ -z "$more" ] && break
         text="$text
 $more"
@@ -144,3 +153,6 @@ $more"
   esac
   submit "$text"
 done
+
+[ $interactive = 1 ] && history -w "$HISTFILE" 2>/dev/null
+exit 0

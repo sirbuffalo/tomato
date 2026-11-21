@@ -6,7 +6,7 @@ def main():
     print('usage: tomato run compiler/src/ctool.tom compile FILE')
 
 @compile
-def compile(path: str, entry: str = 'main', std: str = 'python/tomato/std/'):
+def compile(path: str, entry: str = 'main', std: str = 'std/'):
     f = open(path)
     src = f.read()
     f.close()

@@ -2,7 +2,7 @@
 <title>Download Tomato</title><link rel="stylesheet" href="style.css"></head>
 <body><header id="site-header"></header><main class="doc">
 <h1>Download</h1>
-<p>Tomato needs only <code>clang</code> (on a Mac: <code>xcode-select --install</code>). Python is not needed.</p>
+<p>Tomato needs only <code>clang</code> (on a Mac: <code>xcode-select --install</code>).</p>
 <h2>Latest release</h2>
 <p id="release" class="status">Looking up the latest release…</p>
 <h2>Install</h2>
@@ -10,7 +10,7 @@
 cd tomato-VERSION
 ./install-native.sh
 tomato version</code></pre>
-<p>This builds the compiler from the checked-in IR into <code>~/.tomato/native</code> and links <code>~/.local/bin/tomato</code>. Put <code>~/.local/bin</code> on your PATH. An existing Python <code>tomato</code> command is kept as <code>tomato-py</code>.</p>
+<p>This builds the compiler from the checked-in IR into <code>~/.tomato/native</code> and links <code>~/.local/bin/tomato</code>. Put <code>~/.local/bin</code> on your PATH. An existing <code>tomato</code> that is not ours is kept as <code>tomato.old</code>.</p>
 <h2>Update</h2>
 <pre><code>tomato update</code></pre>
 <p>Reads <a href="latest.json">latest.json</a>, checks the download against its SHA-256, and reinstalls when a newer version exists.</p>

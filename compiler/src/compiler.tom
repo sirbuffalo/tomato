@@ -1,7 +1,7 @@
 # A slice of the Tomato compiler, written in Tomato (D38a): int, bool and str programs.
 #
 # It takes the syntax tree from compiler/src/parser.tom and writes LLVM IR text that links with the C runtime
-# (python/tomato/runtime/tomato_rt.c). Supported: functions with int/bool/str parameters and results, locals, + - * % and
+# (runtime/tomato_rt.c). Supported: functions with int/bool/str parameters and results, locals, + - * % and
 # comparisons, string + == != < <= > >=, indexing and slicing, len, str(), and/or/xor/not, if/elif/else, while,
 # for over range(), break, continue, calls, print, and an @main entry point without inputs. Text values are
 # reference counted exactly like the Python compiler: every text value an expression produces is owned by whoever
@@ -2669,7 +2669,7 @@ def has_init(mod: Mod, c: ClassInfo) -> bool:
     return False
 
 def builtin_source() -> str:
-    # the names every program can use without importing them (D22a): the same text as python/tomato/std/builtin.tom
+    # the names every program can use without importing them (D22a): the same text as std/builtin.tom
     t = 'class Error:\n    message: str\n\n    @init\n    def start(self, message: str):\n        self.message = message\n\n'
     t = t + 'class RuntimeError(Error):\n    @init\n    def make(self, message: str):\n        Error.start(self, message)\n\n'
     t = t + 'class IOError(RuntimeError):\n    @init\n    def make_io(self, message: str):\n        RuntimeError.make(self, message)\n'

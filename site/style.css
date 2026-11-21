@@ -39,3 +39,11 @@ table { border-collapse:collapse; width:100%; } td, th { border:1px solid var(--
   .tk-c { color:#9a8f87; } .tk-s { color:#8fd3a0; } .tk-n { color:#f0a868; } .tk-k { color:#ee6a55; } .tk-k2 { color:#f0a868; }
   .tk-t { color:#7ec1ee; } .tk-f { color:#c9a0ea; } .tk-b { color:#c9a0ea; } .tk-l { color:#f0b46a; } .tk-o { color:#a39890; } .tk-d { color:#f0b46a; }
 }
+
+.editor { position:relative; }
+.editor pre.hl, .editor textarea { font:14px/1.5 ui-monospace, Menlo, monospace; tab-size:4; padding:12px; margin:0; border-radius:8px; white-space:pre-wrap; overflow-wrap:anywhere; letter-spacing:0; }
+.editor pre.hl { position:absolute; inset:0; overflow:hidden; pointer-events:none; background:var(--card); border:1px solid var(--line); color:var(--fg); }
+.editor textarea { position:relative; background:transparent; color:transparent; caret-color:var(--fg); border:1px solid transparent; z-index:1; min-height:300px; display:block; }
+.editor textarea::selection { background:rgba(200,50,30,.25); color:transparent; }
+#repl-log .in code, #repl-log .in span { font:inherit; }
+.tk-p { color:#8a7f77; } #repl-log .in { color:var(--fg); }

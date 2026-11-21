@@ -1,0 +1,10 @@
+3 9
+9 True
+12 1048576
+16 4
+checked 16
+17 4
+checked 17
+-4 error: no square root of a negative number
+checked -4
+30

@@ -2,7 +2,7 @@
 <title>Tomato — a statically typed language that builds itself</title><link rel="stylesheet" href="style.css"></head>
 <body><header id="site-header"></header><main>
 <h1>Tomato <small class="status">v<span id="version"></span></small></h1>
-<p class="lead">A statically typed, reference-counted, Python-like language compiled through LLVM. Its compiler is written in Tomato and compiles itself.</p>
+<p class="lead">A statically typed, reference-counted language with indentation syntax, compiled through LLVM. Its compiler is written in Tomato and compiles itself.</p>
 <p><a class="btn primary" href="play.html">Try it in your browser</a> <a class="btn" href="download.html">Download</a> <a class="btn" href="guide.html">Read the guide</a></p>
 <pre><code>def fib(n: int) -> int:
     if n &lt; 2:
@@ -10,13 +10,13 @@
     return fib(n - 1) + fib(n - 2)
 
 print(fib(20))
-print(7 // 2, 2 ** 10, 10 / 4)   # 3 1024 2.5</code></pre>
+print(10 / 4)   # 2.5</code></pre>
 <div class="cards">
-<div class="card"><h3>Python-shaped, typed</h3><p>Indentation blocks and familiar syntax, with types checked before the program runs, even in code that never executes.</p></div>
+<div class="card"><h3>Familiar and typed</h3><p>Indentation blocks and familiar syntax, with types checked at compile time.</p></div>
 <div class="card"><h3>Native through LLVM</h3><p>Programs compile to LLVM IR and link with a small C runtime. Only <code>clang</code> is needed to build the compiler and your programs.</p></div>
 <div class="card"><h3>Self-hosted</h3><p>The compiler is written in Tomato. It builds itself to a byte-for-byte fixed point, and the checked-in IR bootstraps a machine that has only clang.</p></div>
 <div class="card"><h3>Exact where it matters</h3><p>Whole numbers grow without limit or use a fixed width with overflow errors. <code>float</code> is 64-bit; <code>rational</code> is exact.</p></div>
 </div>
-<h2>Versions</h2>
-<p>Tomato has two implementations. <strong>v0.x</strong> is the compiler written in Tomato (the <code>tomato</code> command). <strong>v-1.x</strong> is the Python bootstrap and interpreter (<code>tomato-py</code>), which also provides the repl.</p>
+<h2>Version</h2>
+<p>The current version is <strong>v<span id="version2"></span></strong>: the compiler written in Tomato, the only implementation. The command is <code>tomato</code>.</p>
 </main><script src="config.js"></script><script src="site.js"></script></body></html>
