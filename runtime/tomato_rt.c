@@ -925,13 +925,375 @@ double tomato_mod_f64(double x, double y) {
 double tomato_pow_f64(double x, double y) { return pow(x, y); }
 
 /* A union's box: {header, payload at byte 16, kind at byte 24}. This is the text print and str() show for it. */
+void *tomato_int_str(int64_t x);
 void *tomato_box_str(void *b) {
     int64_t *w = b;
     switch (w[3]) {
-    case 1: return tomato_str_from_i64(w[2]);
+    case 1: return tomato_int_str(w[2]);
     case 3: { double d; memcpy(&d, &w[2], 8); return tomato_str_from_f64(d); }
     case 4: tomato_retain((void *)w[2]); return (void *)w[2];
     case 5: return tomato_str_from_bool((int)w[2]);
     default: return tomato_str_from_cstr("<object>");
     }
+}
+
+/* ---- unlimited-size integers (D05c) ----
+ * An int is one 64-bit word. An odd word (or zero) holds a small number, value = word >> 1, in -2^62 .. 2^62 - 1;
+ * an even non-zero word is the address of a Big. Results are always the small form when they fit, so two equal
+ * numbers that are both small have equal words. Big numbers are allocated and not freed while the program runs
+ * (they are not reference counted: P63). */
+typedef struct { int sign; int64_t n; uint32_t d[]; } Big;    /* magnitude, least significant limb first, no leading zero limbs */
+typedef struct { int sign; int64_t n; const uint32_t *d; uint32_t buf[2]; } IntView;
+
+#define INT_SMALL_MIN (-((int64_t)1 << 62))
+#define INT_SMALL_MAX (((int64_t)1 << 62) - 1)
+
+static int int_is_small(int64_t w) { return (w & 1) || w == 0; }
+static int64_t int_small_val(int64_t w) { return w >> 1; }
+static int64_t int_mk_small(int64_t v) { return (int64_t)(((uint64_t)v << 1) | 1); }
+
+static void int_view(int64_t w, IntView *v) {
+    if (int_is_small(w)) {
+        int64_t x = int_small_val(w);
+        uint64_t m = x < 0 ? (uint64_t)0 - (uint64_t)x : (uint64_t)x;
+        v->sign = x < 0 ? -1 : 1;
+        v->buf[0] = (uint32_t)m;
+        v->buf[1] = (uint32_t)(m >> 32);
+        v->n = v->buf[1] ? 2 : (v->buf[0] ? 1 : 0);
+        v->d = v->buf;
+    } else {
+        Big *b = (Big *)(uintptr_t)w;
+        v->sign = b->sign; v->n = b->n; v->d = b->d;
+    }
+}
+
+/* the number with this sign and magnitude (limbs are copied; leading zeros dropped), small when it fits */
+static int64_t int_make(int sign, const uint32_t *d, int64_t n) {
+    while (n > 0 && d[n - 1] == 0) n--;
+    if (n <= 2) {
+        uint64_t m = 0;
+        if (n > 0) m = d[0];
+        if (n > 1) m |= (uint64_t)d[1] << 32;
+        if (sign > 0 && m <= (uint64_t)INT_SMALL_MAX) return int_mk_small((int64_t)m);
+        if (sign < 0 && m <= ((uint64_t)1 << 62)) return int_mk_small((int64_t)0 - (int64_t)m);
+    }
+    Big *b = malloc(sizeof(Big) + (size_t)(n ? n : 1) * 4);
+    if (!b) tomato_fail("out of memory");
+    b->sign = sign; b->n = n;
+    memcpy(b->d, d, (size_t)n * 4);
+    return (int64_t)(uintptr_t)b;
+}
+
+static int mag_cmp(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn) {
+    if (an != bn) return an < bn ? -1 : 1;
+    for (int64_t i = an - 1; i >= 0; i--) if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+}
+
+static int64_t mag_add(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
+    if (an < bn) { const uint32_t *t = a; a = b; b = t; int64_t tn = an; an = bn; bn = tn; }
+    uint64_t carry = 0;
+    for (int64_t i = 0; i < an; i++) {
+        uint64_t s = (uint64_t)a[i] + (i < bn ? b[i] : 0) + carry;
+        out[i] = (uint32_t)s; carry = s >> 32;
+    }
+    out[an] = (uint32_t)carry;
+    return an + 1;
+}
+
+/* a - b where |a| >= |b| */
+static int64_t mag_sub(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
+    int64_t borrow = 0;
+    for (int64_t i = 0; i < an; i++) {
+        int64_t s = (int64_t)a[i] - (i < bn ? (int64_t)b[i] : 0) - borrow;
+        if (s < 0) { s += ((int64_t)1 << 32); borrow = 1; } else borrow = 0;
+        out[i] = (uint32_t)s;
+    }
+    return an;
+}
+
+static int64_t int_add_signed(int sa, const uint32_t *a, int64_t an, int sb, const uint32_t *b, int64_t bn) {
+    uint32_t *out = malloc(((size_t)(an > bn ? an : bn) + 2) * 4);
+    if (!out) tomato_fail("out of memory");
+    int64_t r; int sign;
+    if (sa == sb) { r = mag_add(a, an, b, bn, out); sign = sa; }
+    else {
+        int c = mag_cmp(a, an, b, bn);
+        if (c == 0) { free(out); return int_mk_small(0); }
+        if (c > 0) { r = mag_sub(a, an, b, bn, out); sign = sa; }
+        else { r = mag_sub(b, bn, a, an, out); sign = sb; }
+    }
+    int64_t w = int_make(sign, out, r);
+    free(out);
+    return w;
+}
+
+int64_t tomato_int_add(int64_t x, int64_t y) {
+    if (x & y & 1) {
+        int64_t s = int_small_val(x) + int_small_val(y);
+        if (s >= INT_SMALL_MIN && s <= INT_SMALL_MAX) return int_mk_small(s);
+    }
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    return int_add_signed(a.sign, a.d, a.n, b.sign, b.d, b.n);
+}
+
+int64_t tomato_int_neg(int64_t x) {
+    IntView a; int_view(x, &a);
+    if (a.n == 0) return int_mk_small(0);
+    return int_make(-a.sign, a.d, a.n);
+}
+
+int64_t tomato_int_sub(int64_t x, int64_t y) {
+    if ((x & y & 1)) {
+        int64_t s = int_small_val(x) - int_small_val(y);
+        if (s >= INT_SMALL_MIN && s <= INT_SMALL_MAX) return int_mk_small(s);
+    }
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    if (b.n == 0) return int_make(a.sign, a.d, a.n);
+    return int_add_signed(a.sign, a.d, a.n, -b.sign, b.d, b.n);
+}
+
+int64_t tomato_int_mul(int64_t x, int64_t y) {
+    if (x & y & 1) {
+        int64_t p;
+        if (!__builtin_mul_overflow(int_small_val(x), int_small_val(y), &p) && p >= INT_SMALL_MIN && p <= INT_SMALL_MAX)
+            return int_mk_small(p);
+    }
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    if (a.n == 0 || b.n == 0) return int_mk_small(0);
+    int64_t rn = a.n + b.n;
+    uint32_t *out = calloc((size_t)rn, 4);
+    if (!out) tomato_fail("out of memory");
+    for (int64_t i = 0; i < a.n; i++) {
+        uint64_t carry = 0;
+        for (int64_t j = 0; j < b.n; j++) {
+            uint64_t t = (uint64_t)a.d[i] * b.d[j] + out[i + j] + carry;
+            out[i + j] = (uint32_t)t; carry = t >> 32;
+        }
+        out[i + b.n] += (uint32_t)carry;
+    }
+    int64_t w = int_make(a.sign * b.sign, out, rn);
+    free(out);
+    return w;
+}
+
+/* magnitude division (Knuth algorithm D): q = u / v, r = u % v; q has un limbs, r has vn limbs; v is not zero */
+static void mag_divmod(const uint32_t *u, int64_t un, const uint32_t *v, int64_t vn, uint32_t *q, uint32_t *r) {
+    memset(q, 0, (size_t)un * 4); memset(r, 0, (size_t)vn * 4);
+    if (mag_cmp(u, un, v, vn) < 0) { memcpy(r, u, (size_t)un * 4); return; }
+    if (vn == 1) {
+        uint64_t rem = 0;
+        for (int64_t i = un - 1; i >= 0; i--) { uint64_t cur = (rem << 32) | u[i]; q[i] = (uint32_t)(cur / v[0]); rem = cur % v[0]; }
+        r[0] = (uint32_t)rem; return;
+    }
+    int s = __builtin_clz(v[vn - 1]);
+    uint32_t *vn_ = malloc((size_t)vn * 4), *un_ = malloc((size_t)(un + 1) * 4);
+    if (!vn_ || !un_) tomato_fail("out of memory");
+    for (int64_t i = vn - 1; i > 0; i--) vn_[i] = s ? (v[i] << s) | (v[i - 1] >> (32 - s)) : v[i];
+    vn_[0] = v[0] << s;
+    un_[un] = s ? u[un - 1] >> (32 - s) : 0;
+    for (int64_t i = un - 1; i > 0; i--) un_[i] = s ? (u[i] << s) | (u[i - 1] >> (32 - s)) : u[i];
+    un_[0] = u[0] << s;
+    for (int64_t j = un - vn; j >= 0; j--) {
+        uint64_t num = ((uint64_t)un_[j + vn] << 32) | un_[j + vn - 1];
+        uint64_t qhat = num / vn_[vn - 1], rhat = num % vn_[vn - 1];
+        while (qhat >= ((uint64_t)1 << 32) || qhat * vn_[vn - 2] > ((rhat << 32) | un_[j + vn - 2])) {
+            qhat--; rhat += vn_[vn - 1];
+            if (rhat >= ((uint64_t)1 << 32)) break;
+        }
+        int64_t borrow = 0; uint64_t carry = 0;
+        for (int64_t i = 0; i < vn; i++) {
+            uint64_t p = qhat * vn_[i] + carry; carry = p >> 32;
+            int64_t t = (int64_t)un_[i + j] - borrow - (int64_t)(p & 0xFFFFFFFFu);
+            un_[i + j] = (uint32_t)t; borrow = t < 0 ? 1 : 0;
+        }
+        int64_t t = (int64_t)un_[j + vn] - borrow - (int64_t)carry;
+        un_[j + vn] = (uint32_t)t;
+        if (t < 0) {
+            qhat--; uint64_t c = 0;
+            for (int64_t i = 0; i < vn; i++) { uint64_t s2 = (uint64_t)un_[i + j] + vn_[i] + c; un_[i + j] = (uint32_t)s2; c = s2 >> 32; }
+            un_[j + vn] += (uint32_t)c;
+        }
+        q[j] = (uint32_t)qhat;
+    }
+    for (int64_t i = 0; i < vn; i++) r[i] = s ? (un_[i] >> s) | ((uint64_t)un_[i + 1] << (32 - s)) : un_[i];
+    free(vn_); free(un_);
+}
+
+int32_t tomato_int_sign(int64_t x) {
+    IntView a; int_view(x, &a);
+    return a.n == 0 ? 0 : a.sign;
+}
+
+/* floor division and modulo, like Python: the remainder takes the sign of the divisor (the caller checked for zero) */
+static void int_floordivmod(int64_t x, int64_t y, int64_t *quot, int64_t *rem) {
+    if ((x & y & 1) && !(int_small_val(x) == INT_SMALL_MIN && int_small_val(y) == -1)) {
+        int64_t a = int_small_val(x), b = int_small_val(y), q = a / b, r = a % b;
+        if (r != 0 && ((r < 0) != (b < 0))) { q--; r += b; }
+        *quot = int_mk_small(q); *rem = int_mk_small(r); return;
+    }
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    uint32_t *q = malloc((size_t)(a.n + 1) * 4), *r = malloc((size_t)(b.n + 1) * 4);
+    if (!q || !r) tomato_fail("out of memory");
+    mag_divmod(a.d, a.n, b.d, b.n, q, r);
+    int64_t qn = a.n, rn = b.n;
+    int differ = a.sign != b.sign;
+    int64_t qw, rw;
+    while (rn > 0 && r[rn - 1] == 0) rn--;
+    if (differ && rn > 0) {
+        uint32_t *q1 = malloc((size_t)(qn + 2) * 4), one[1] = {1};
+        uint32_t *r1 = malloc((size_t)(b.n + 1) * 4);
+        if (!q1 || !r1) tomato_fail("out of memory");
+        int64_t q1n = mag_add(q, qn, one, 1, q1);
+        int64_t r1n = mag_sub(b.d, b.n, r, rn, r1);
+        qw = int_make(-1, q1, q1n); rw = int_make(b.sign, r1, r1n);
+        free(q1); free(r1);
+    } else {
+        qw = int_make(differ ? -1 : 1, q, qn); rw = int_make(a.sign, r, rn);
+    }
+    free(q); free(r);
+    *quot = qw; *rem = rw;
+}
+
+int64_t tomato_int_floordiv(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); return q; }
+int64_t tomato_int_mod(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); return r; }
+
+int32_t tomato_int_cmp(int64_t x, int64_t y) {
+    if (int_is_small(x) && int_is_small(y)) {
+        int64_t a = int_small_val(x), b = int_small_val(y);
+        return a < b ? -1 : (a > b ? 1 : 0);
+    }
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    int sa = a.n == 0 ? 0 : a.sign, sb = b.n == 0 ? 0 : b.sign;
+    if (sa != sb) return sa < sb ? -1 : 1;
+    int c = mag_cmp(a.d, a.n, b.d, b.n);
+    return sa < 0 ? -c : c;
+}
+
+int64_t tomato_int_pow(int64_t base, int64_t exp) {
+    /* the exponent is not negative (the caller checked) and small enough to count */
+    if (!int_is_small(exp)) tomato_fail("the exponent is too big");
+    int64_t e = int_small_val(exp), result = int_mk_small(1), b = base;
+    while (e > 0) {
+        if (e & 1) result = tomato_int_mul(result, b);
+        e >>= 1;
+        if (e > 0) b = tomato_int_mul(b, b);
+    }
+    return result;
+}
+
+int64_t tomato_int_from_i64(int64_t v) {
+    if (v >= INT_SMALL_MIN && v <= INT_SMALL_MAX) return int_mk_small(v);
+    uint64_t m = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
+    uint32_t d[2] = { (uint32_t)m, (uint32_t)(m >> 32) };
+    return int_make(v < 0 ? -1 : 1, d, 2);
+}
+
+int64_t tomato_int_from_u64(int64_t v) {
+    uint64_t m = (uint64_t)v;
+    uint32_t d[2] = { (uint32_t)m, (uint32_t)(m >> 32) };
+    return int_make(1, d, 2);
+}
+
+/* the low 64 bits (two's complement) of the number, and whether it lies in the range of an integer type */
+int64_t tomato_int_low64(int64_t x) {
+    IntView a; int_view(x, &a);
+    uint64_t m = 0;
+    if (a.n > 0) m = a.d[0];
+    if (a.n > 1) m |= (uint64_t)a.d[1] << 32;
+    return a.sign < 0 ? (int64_t)((uint64_t)0 - m) : (int64_t)m;
+}
+
+int32_t tomato_int_in_range(int64_t x, int32_t bits, int32_t is_signed) {
+    IntView a; int_view(x, &a);
+    if (a.n > 2) return 0;
+    uint64_t m = 0;
+    if (a.n > 0) m = a.d[0];
+    if (a.n > 1) m |= (uint64_t)a.d[1] << 32;
+    int neg = a.n > 0 && a.sign < 0;
+    if (is_signed) {
+        uint64_t limit = (uint64_t)1 << (bits - 1);
+        return neg ? m <= limit : m < limit;
+    }
+    if (neg) return 0;
+    return bits == 64 ? 1 : m < ((uint64_t)1 << bits);
+}
+
+/* a number as a machine integer, for places that need one (an index, a range, a count): stops when it does not fit */
+int64_t tomato_int_raw(int64_t x) {
+    if (int_is_small(x)) return int_small_val(x);
+    IntView a; int_view(x, &a);
+    if (a.n <= 2 && tomato_int_in_range(x, 64, 1)) return tomato_int_low64(x);
+    tomato_fail("the number is too big here");
+    return 0;
+}
+
+double tomato_int_to_f64(int64_t x) {
+    if (int_is_small(x)) return (double)int_small_val(x);
+    IntView a; int_view(x, &a);
+    double r = 0;
+    for (int64_t i = a.n - 1; i >= 0; i--) r = r * 4294967296.0 + (double)a.d[i];
+    return a.sign < 0 ? -r : r;
+}
+
+void *tomato_int_str(int64_t x) {
+    if (int_is_small(x)) return tomato_str_from_i64(int_small_val(x));
+    IntView a; int_view(x, &a);
+    uint32_t *t = malloc((size_t)a.n * 4);
+    char *buf = malloc((size_t)a.n * 10 + 3);
+    if (!t || !buf) tomato_fail("out of memory");
+    memcpy(t, a.d, (size_t)a.n * 4);
+    int64_t n = a.n, len = 0;
+    while (n > 0) {
+        uint64_t rem = 0;
+        for (int64_t i = n - 1; i >= 0; i--) { uint64_t cur = (rem << 32) | t[i]; t[i] = (uint32_t)(cur / 1000000000u); rem = cur % 1000000000u; }
+        while (n > 0 && t[n - 1] == 0) n--;
+        for (int k = 0; k < 9; k++) { buf[len++] = (char)('0' + rem % 10); rem /= 10; if (n == 0 && rem == 0) break; }
+    }
+    if (a.sign < 0) buf[len++] = '-';
+    for (int64_t i = 0, j = len - 1; i < j; i++, j--) { char c = buf[i]; buf[i] = buf[j]; buf[j] = c; }
+    void *s = str_new(buf, len);
+    free(t); free(buf);
+    return s;
+}
+
+/* decimal text, optionally with a leading minus (the compiler writes big literals this way; entry inputs use the checked form) */
+static int64_t int_from_digits(const char *s, int64_t len, int *ok) {
+    int neg = 0; int64_t i = 0;
+    if (len > 0 && s[0] == '-') { neg = 1; i = 1; }
+    if (i >= len) { *ok = 0; return 0; }
+    int64_t cap = len / 9 + 2;
+    uint32_t *d = calloc((size_t)cap, 4);
+    if (!d) tomato_fail("out of memory");
+    int64_t n = 0;
+    for (; i < len; i++) {
+        if (s[i] < '0' || s[i] > '9') { free(d); *ok = 0; return 0; }
+        uint64_t carry = (uint64_t)(s[i] - '0');
+        for (int64_t k = 0; k < n; k++) { uint64_t t = (uint64_t)d[k] * 10 + carry; d[k] = (uint32_t)t; carry = t >> 32; }
+        if (carry) d[n++] = (uint32_t)carry;
+    }
+    int64_t w = int_make(neg ? -1 : 1, d, n);
+    free(d);
+    *ok = 1;
+    return w;
+}
+
+int64_t tomato_int_parse(void *text) {
+    int ok;
+    Str *s = text;
+    return int_from_digits(s->data, s->bytes, &ok);
+}
+
+int64_t tomato_int_parse_cstr(const char *text, int position) {
+    int ok;
+    int64_t w = int_from_digits(text, (int64_t)strlen(text), &ok);
+    if (!ok) bad_input(position, "a whole number", text);
+    return w;
+}
+
+/* & | ^ on small numbers (two's complement); very large numbers are not built yet */
+int64_t tomato_int_bitop(int64_t x, int64_t y, int32_t op) {
+    if (!(int_is_small(x) && int_is_small(y))) tomato_fail("bitwise operators on very large integers are not built yet");
+    int64_t a = int_small_val(x), b = int_small_val(y);
+    return int_mk_small(op == 0 ? (a & b) : (op == 1 ? (a | b) : (a ^ b)));
 }

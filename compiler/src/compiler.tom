@@ -223,6 +223,8 @@ def llvm_type(t: str) -> str:
 
 def zero_of(t: str) -> str:
     # the value a function returns when it never stored one
+    if t == 'int':
+        return '1'
     if is_rc(t):
         return 'null'
     if t == 'float':
@@ -738,6 +740,10 @@ class Gen:
 
     def resize(self, e: Ex, to: str) -> Ex:
         # the same number in another integer type that holds all of its values
+        if to == 'int' and e.ty != 'int':
+            if bits_of(e.ty) < 62:
+                return self.tag_small(self.widen(e, 64))
+            return self.int_from_machine(self.widen(e, 64), is_signed(e.ty))
         fb = bits_of(e.ty)
         tb = bits_of(to)
         if fb == tb:
@@ -844,11 +850,49 @@ class Gen:
             return b
         raise CompileError('no common integer type for ' + shown(a) + ' and ' + shown(b) + ' (D05s)', line)
 
+    # ---- unlimited-size integers (D05c): an int is a tagged word, and the runtime does the arithmetic
+    def int_call(self, name: str, a: str, b: str) -> Ex:
+        r = self.tmp('int')
+        self.emit(r + ' = call i64 @tomato_int_' + name + '(i64 ' + a + ', i64 ' + b + ')')
+        return ex(r, 'int')
+
+    def tag_small(self, raw: str) -> Ex:
+        # a machine number known to be small (a length, a loop counter, a position) as an int
+        s = self.tmp('shl')
+        self.emit(s + ' = shl i64 ' + raw + ', 1')
+        t = self.tmp('tag')
+        self.emit(t + ' = or i64 ' + s + ', 1')
+        return ex(t, 'int')
+
+    def int_from_machine(self, raw: str, signed: bool) -> Ex:
+        # any 64-bit machine number (or an unsigned one) as an int
+        r = self.tmp('int')
+        if signed:
+            self.emit(r + ' = call i64 @tomato_int_from_i64(i64 ' + raw + ')')
+        else:
+            self.emit(r + ' = call i64 @tomato_int_from_u64(i64 ' + raw + ')')
+        return ex(r, 'int')
+
+    def int_raw(self, e: Ex) -> str:
+        # the machine number for places that need one (an index, a range bound); stops when the int is too big
+        r = self.tmp('raw')
+        self.emit(r + ' = call i64 @tomato_int_raw(i64 ' + e.reg + ')')
+        return r
+
+    def int_zero_check(self, b: Ex, message: str):
+        sign = self.tmp('sign')
+        self.emit(sign + ' = call i32 @tomato_int_sign(i64 ' + b.reg + ')')
+        zero = self.tmp('zero')
+        self.emit(zero + ' = icmp eq i32 ' + sign + ', 0')
+        self.fail_if(zero, message)
+
     def num_arith(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
         # + - * with an overflow stop, in the type both operands fit
         t = self.common_type(a.ty, b.ty, line)
         x = self.resize(a, t)
         y = self.resize(b, t)
+        if t == 'int':
+            return self.int_call(op, x.reg, y.reg)
         llt = llvm_type(t)
         sg = 'u'
         if is_signed(t):
@@ -864,10 +908,30 @@ class Gen:
         self.fail_if(ov, 'integer overflow')
         return ex(r, t)
 
+    def int_compare(self, op: str, x: Ex, y: Ex) -> Ex:
+        c = self.tmp('icmp')
+        self.emit(c + ' = call i32 @tomato_int_cmp(i64 ' + x.reg + ', i64 ' + y.reg + ')')
+        cc = 'eq'
+        if op == '!=':
+            cc = 'ne'
+        elif op == '<':
+            cc = 'slt'
+        elif op == '<=':
+            cc = 'sle'
+        elif op == '>':
+            cc = 'sgt'
+        elif op == '>=':
+            cc = 'sge'
+        r = self.tmp('cmp')
+        self.emit(r + ' = icmp ' + cc + ' i32 ' + c + ', 0')
+        return self.bool_of(r)
+
     def num_compare(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
         t = self.common_type(a.ty, b.ty, line)
         x = self.resize(a, t)
         y = self.resize(b, t)
+        if t == 'int':
+            return self.int_compare(op, x, y)
         cc = 'eq'
         if op == '!=':
             cc = 'ne'
@@ -892,6 +956,9 @@ class Gen:
         t = self.common_type(a.ty, b.ty, line)
         x = self.resize(a, t)
         y = self.resize(b, t)
+        if t == 'int':
+            self.int_zero_check(y, 'modulo by zero')
+            return self.int_call('mod', x.reg, y.reg)
         llt = llvm_type(t)
         zero = self.tmp('zero')
         self.emit(zero + ' = icmp eq ' + llt + ' ' + y.reg + ', 0')
@@ -921,6 +988,9 @@ class Gen:
         t = self.common_type(a.ty, b.ty, line)
         x = self.resize(a, t)
         y = self.resize(b, t)
+        if t == 'int':
+            self.int_zero_check(y, 'division by zero')
+            return self.int_call('floordiv', x.reg, y.reg)
         llt = llvm_type(t)
         zero = self.tmp('zero')
         self.emit(zero + ' = icmp eq ' + llt + ' ' + y.reg + ', 0')
@@ -961,6 +1031,15 @@ class Gen:
         t = self.common_type(a.ty, b.ty, line)
         x = self.resize(a, t)
         y = self.resize(b, t)
+        if t == 'int':
+            code = '0'
+            if op == '|':
+                code = '1'
+            elif op == '^':
+                code = '2'
+            r = self.tmp('bit')
+            self.emit(r + ' = call i64 @tomato_int_bitop(i64 ' + x.reg + ', i64 ' + y.reg + ', i32 ' + code + ')')
+            return ex(r, 'int')
         ins = 'and'
         if op == '|':
             ins = 'or'
@@ -973,23 +1052,18 @@ class Gen:
     def num_power(self, a: Ex, b: Ex, line: int) -> Ex:
         # ** on integers: whole-number powers that stop on overflow or a negative exponent; the result type is the
         # common type, converted back with a range check when it is a fixed width
-        if not contains('int', a.ty) or not contains('int', b.ty):
-            raise CompileError('the Tomato compiler does not take a 64-bit unsigned number to a power yet', line)
         t = 'int'
         if a.ty != 'int' and b.ty != 'int':
             t = self.common_type(a.ty, b.ty, line)
         x = self.resize(a, 'int')
         y = self.resize(b, 'int')
-        status = self.tmp('powstatus')
-        self.emit(status + ' = call i32 @tomato_ipow_check(i64 ' + x.reg + ', i64 ' + y.reg + ')')
+        sign = self.tmp('expsign')
+        self.emit(sign + ' = call i32 @tomato_int_sign(i64 ' + y.reg + ')')
         negative = self.tmp('negexp')
-        self.emit(negative + ' = icmp eq i32 ' + status + ', 2')
+        self.emit(negative + ' = icmp slt i32 ' + sign + ', 0')
         self.fail_if(negative, 'a negative exponent needs a float')
-        big = self.tmp('powbig')
-        self.emit(big + ' = icmp eq i32 ' + status + ', 1')
-        self.fail_if(big, 'integer overflow')
         r = self.tmp('pow')
-        self.emit(r + ' = call i64 @tomato_ipow(i64 ' + x.reg + ', i64 ' + y.reg + ')')
+        self.emit(r + ' = call i64 @tomato_int_pow(i64 ' + x.reg + ', i64 ' + y.reg + ')')
         if t != 'int':
             return self.convert_explicit(ex(r, 'int'), t, line)
         return ex(r, 'int')
@@ -1061,6 +1135,10 @@ class Gen:
         return ex(r, 'float')
 
     def to_double(self, e: Ex) -> str:
+        if e.ty == 'int':
+            d = self.tmp('fp')
+            self.emit(d + ' = call double @tomato_int_to_f64(i64 ' + e.reg + ')')
+            return d
         r = self.tmp('fp')
         op = 'uitofp'
         if is_signed(e.ty):
@@ -1069,9 +1147,12 @@ class Gen:
         return r
 
     def num_divide(self, a: Ex, b: Ex, line: int) -> Ex:
-        zero = self.tmp('zero')
-        self.emit(zero + ' = icmp eq ' + llvm_type(b.ty) + ' ' + b.reg + ', 0')
-        self.fail_if(zero, 'division by zero')
+        if b.ty == 'int':
+            self.int_zero_check(b, 'division by zero')
+        else:
+            zero = self.tmp('zero')
+            self.emit(zero + ' = icmp eq ' + llvm_type(b.ty) + ' ' + b.reg + ', 0')
+            self.fail_if(zero, 'division by zero')
         q = self.tmp('div')
         self.emit(q + ' = fdiv double ' + self.to_double(a) + ', ' + self.to_double(b))
         return ex(q, 'float')
@@ -1080,8 +1161,24 @@ class Gen:
         # int[length=N](x): the same number in another integer type, or a stop when it does not fit (D05p)
         if not is_numeric(v.ty):
             raise CompileError('only integers convert this way, found ' + shown(v.ty), line)
-        if contains(target, v.ty):
+        if target == 'int' or contains(target, v.ty):
             return self.resize(v, target)
+        if v.ty == 'int':
+            ok = self.tmp('inrange')
+            sg = '0'
+            if is_signed(target):
+                sg = '1'
+            self.emit(ok + ' = call i32 @tomato_int_in_range(i64 ' + v.reg + ', i32 ' + str(bits_of(target)) + ', i32 ' + sg + ')')
+            bad = self.tmp('bad')
+            self.emit(bad + ' = icmp eq i32 ' + ok + ', 0')
+            self.fail_if(bad, 'the number does not fit the integer type')
+            low = self.tmp('low')
+            self.emit(low + ' = call i64 @tomato_int_low64(i64 ' + v.reg + ')')
+            if bits_of(target) == 64:
+                return ex(low, target)
+            cut = self.tmp('cut')
+            self.emit(cut + ' = trunc i64 ' + low + ' to ' + llvm_type(target))
+            return ex(cut, target)
         width = bits_of(v.ty)
         if bits_of(target) > width:
             width = bits_of(target)
@@ -1367,6 +1464,17 @@ class Gen:
             t = expected
         if not fits_literal(v, t, negative):
             raise CompileError(str(v) + ' does not fit ' + shown(t) + ' (D05r, D05x)', line)
+        if t == 'int':
+            if v >= pow2(61):
+                text = str(v)
+                if negative:
+                    text = '-' + text
+                r = self.tmp('big')
+                self.emit(r + ' = call i64 @tomato_int_parse(ptr ' + self.mod.intern(text) + ')')
+                return ex(r, 'int')
+            if negative:
+                return ex(str(0 - v * 2 + 1), t)
+            return ex(str(v * 2 + 1), t)
         if negative:
             return ex(str(0 - v), t)
         return ex(str(v), t)
@@ -1412,7 +1520,7 @@ class Gen:
         if is_list(s.ty):
             li = self.expr(val_node(n.fields[1]))
             li = self.want(li, 'int', n.line, 'an index')
-            addr = self.list_slot(s, li)
+            addr = self.list_slot(s, ex(self.int_raw(li), 'int'))
             item = self.tmp('item')
             self.emit(item + ' = load ' + llvm_type(elem_of(s.ty)) + ', ptr ' + addr)
             e = ex(item, elem_of(s.ty))
@@ -1423,7 +1531,7 @@ class Gen:
         i = self.expr(val_node(n.fields[1]))
         i = self.want(i, 'int', n.line, 'an index')
         r = self.tmp('ch')
-        self.emit(r + ' = call ptr @tomato_str_index(ptr ' + s.reg + ', i64 ' + i.reg + ')')
+        self.emit(r + ' = call ptr @tomato_str_index(ptr ' + s.reg + ', i64 ' + self.int_raw(i) + ')')
         bad = self.tmp('oob')
         self.emit(bad + ' = icmp eq ptr ' + r + ', null')
         self.fail_if(bad, 'index out of range')
@@ -1437,12 +1545,12 @@ class Gen:
         if n.fields[1].tag == 'n':
             e = self.expr(val_node(n.fields[1]))
             e = self.want(e, 'int', n.line, 'a slice bound')
-            lo = e.reg
+            lo = self.int_raw(e)
         hi = ''
         if n.fields[2].tag == 'n':
             e2 = self.expr(val_node(n.fields[2]))
             e2 = self.want(e2, 'int', n.line, 'a slice bound')
-            hi = e2.reg
+            hi = self.int_raw(e2)
         else:
             hi = self.tmp('len')
             self.emit(hi + ' = call i64 @tomato_str_len(ptr ' + s.reg + ')')
@@ -1519,6 +1627,10 @@ class Gen:
         if elem == 'str':
             c = self.tmp('c')
             self.emit(c + ' = call i32 @tomato_str_cmp(ptr ' + item + ', ptr ' + a.reg + ')')
+            self.emit(hit + ' = icmp eq i32 ' + c + ', 0')
+        elif elem == 'int':
+            c = self.tmp('c')
+            self.emit(c + ' = call i32 @tomato_int_cmp(i64 ' + item + ', i64 ' + a.reg + ')')
             self.emit(hit + ' = icmp eq i32 ' + c + ', 0')
         else:
             self.emit(hit + ' = icmp eq i64 ' + item + ', ' + a.reg)
@@ -1798,6 +1910,8 @@ class Gen:
             if v.ty == 'bool':
                 reg = self.tmp('bit')
                 self.emit(reg + ' = trunc i64 ' + v.reg + ' to i1')
+            elif v.ty == 'int':
+                reg = self.int_raw(v)
             parts.append(self.llvm_type_of(v.ty) + ' ' + reg)
             types.append(self.llvm_type_of(v.ty))
             k = k + 1
@@ -1815,6 +1929,8 @@ class Gen:
             w = self.tmp('flag')
             self.emit(w + ' = zext i1 ' + r + ' to i64')
             return ex(w, 'bool')
+        if info.ret == 'int':
+            return self.int_from_machine(r, True)
         return ex(r, info.ret)
 
     def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
@@ -2015,7 +2131,7 @@ class Gen:
                 self.emit(r + ' = call i64 @tomato_str_find(ptr ' + obj.reg + ', ptr ' + a[0].reg + ')')
                 self.release(a[0])
                 self.release(obj)
-                return ex(r, 'int')
+                return self.tag_small(r)
             c = self.tmp('c')
             self.emit(c + ' = call i32 @tomato_str_' + name + '(ptr ' + obj.reg + ', ptr ' + a[0].reg + ')')
             i1 = self.tmp('flag')
@@ -2109,7 +2225,7 @@ class Gen:
             v = self.want(v, 'str', line, 'the argument of len')
             self.emit(r + ' = call i64 @tomato_str_len(ptr ' + v.reg + ')')
         self.release(v)
-        return ex(r, 'int')
+        return self.tag_small(r)
 
     def str_call(self, args: list[Node], line: int) -> Ex:
         if len(args) != 1:
@@ -2118,7 +2234,9 @@ class Gen:
         if v.ty == 'str':
             return v
         r = self.tmp('text')
-        if is_numeric(v.ty):
+        if v.ty == 'int':
+            self.emit(r + ' = call ptr @tomato_int_str(i64 ' + v.reg + ')')
+        elif is_numeric(v.ty):
             if is_signed(v.ty):
                 self.emit(r + ' = call ptr @tomato_str_from_i64(i64 ' + self.widen(v, 64) + ')')
             else:
@@ -2143,7 +2261,12 @@ class Gen:
             values.append(v)
         k = 0
         for v in values:
-            if is_numeric(v.ty):
+            if v.ty == 'int':
+                t = self.tmp('text')
+                self.emit(t + ' = call ptr @tomato_int_str(i64 ' + v.reg + ')')
+                self.emit('call void @tomato_print_strobj(ptr ' + t + ')')
+                self.emit('call void @tomato_release(ptr ' + t + ')')
+            elif is_numeric(v.ty):
                 wide = self.widen(v, 64)
                 fmt = '@.fmt.int'
                 if not is_signed(v.ty):
@@ -2406,6 +2529,7 @@ class Gen:
             raise CompileError('only list and dict items can be assigned by index', s.line)
         i = self.expr(val_node(target.fields[1]))
         i = self.want(i, 'int', s.line, 'an index')
+        i = ex(self.int_raw(i), 'int')
         v = self.expr(val_node(s.fields[1]), elem_of(lst.ty))
         v = self.want(v, elem_of(lst.ty), s.line, 'the assigned item')
         addr = self.list_slot(lst, i)
@@ -2562,14 +2686,14 @@ class Gen:
         if len(bounds) == 1:
             e = self.expr(bounds[0])
             e = self.want(e, 'int', s.line, 'a range bound')
-            stop = e.reg
+            stop = self.int_raw(e)
         else:
             a = self.expr(bounds[0])
             b = self.expr(bounds[1])
             a = self.want(a, 'int', s.line, 'a range bound')
             b = self.want(b, 'int', s.line, 'a range bound')
-            start = a.reg
-            stop = b.reg
+            start = self.int_raw(a)
+            stop = self.int_raw(b)
         var = self.slot(s.fields[0].text, 'int', s.line)
         counter = self.hidden_slot('for.i')
         limit = self.hidden_slot('for.n')
@@ -2589,7 +2713,7 @@ class Gen:
         self.emit(c + ' = icmp slt i64 ' + i + ', ' + lim)
         self.cond_br(c, body, end)
         self.place(body)
-        self.emit('store i64 ' + i + ', ptr ' + var)
+        self.emit('store i64 ' + self.tag_small(i).reg + ', ptr ' + var)
         self.push_loop(end, step)
         self.block(val_nodes(s.fields[2]))
         self.loop_depth = self.loop_depth - 1
@@ -2842,6 +2966,24 @@ def declarations(mod: Mod) -> str:
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare ptr @tomato_str_from_f64(double)\n'
     d = d + 'declare ptr @tomato_box_str(ptr)\n'
+    d = d + 'declare i64 @tomato_int_add(i64, i64)\n'
+    d = d + 'declare i64 @tomato_int_sub(i64, i64)\n'
+    d = d + 'declare i64 @tomato_int_mul(i64, i64)\n'
+    d = d + 'declare i64 @tomato_int_floordiv(i64, i64)\n'
+    d = d + 'declare i64 @tomato_int_mod(i64, i64)\n'
+    d = d + 'declare i64 @tomato_int_pow(i64, i64)\n'
+    d = d + 'declare i32 @tomato_int_cmp(i64, i64)\n'
+    d = d + 'declare i32 @tomato_int_sign(i64)\n'
+    d = d + 'declare i64 @tomato_int_from_i64(i64)\n'
+    d = d + 'declare i64 @tomato_int_from_u64(i64)\n'
+    d = d + 'declare i64 @tomato_int_raw(i64)\n'
+    d = d + 'declare i64 @tomato_int_low64(i64)\n'
+    d = d + 'declare i32 @tomato_int_in_range(i64, i32, i32)\n'
+    d = d + 'declare double @tomato_int_to_f64(i64)\n'
+    d = d + 'declare ptr @tomato_int_str(i64)\n'
+    d = d + 'declare i64 @tomato_int_parse(ptr)\n'
+    d = d + 'declare i64 @tomato_int_parse_cstr(ptr, i32)\n'
+    d = d + 'declare i64 @tomato_int_bitop(i64, i64, i32)\n'
     d = d + 'declare double @tomato_parse_f64(ptr, i32)\n'
     d = d + 'declare i32 @tomato_ipow_check(i64, i64)\n'
     d = d + 'declare i64 @tomato_ipow(i64, i64)\n'
@@ -2888,6 +3030,10 @@ def declarations(mod: Mod) -> str:
 
 def literal_text(n: Node, ty: str) -> str:
     # the IR constant for a default written as a plain literal (entry point inputs)
+    if ty == 'int' and n.kind == 'IntLit':
+        if n.fields[0].num >= pow2(61):
+            raise CompileError('the Tomato compiler reads an int entry point default below 2 ** 61 only yet', n.line)
+        return str(n.fields[0].num * 2 + 1)
     if is_numeric(ty) and n.kind == 'IntLit':
         return str(n.fields[0].num)
     if ty == 'bool' and n.kind == 'BoolLit':
@@ -2918,7 +3064,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
         if t == 'str':
             out = out + '  %a' + si + '.v = call ptr @tomato_str_from_cstr(ptr %a' + si + '.s)\n'
         elif t == 'int':
-            out = out + '  %a' + si + '.v = call i64 @tomato_parse_i64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            out = out + '  %a' + si + '.v = call i64 @tomato_int_parse_cstr(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
         elif is_fixed(t):
             bits = bits_of(t)
             parse = 'tomato_parse_u64'

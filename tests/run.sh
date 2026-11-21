@@ -151,8 +151,6 @@ rt() { # file, expected stderr text, expected exit status
 rt divide_by_zero "division by zero" 1
 rt index "index out of range" 1
 rt overflow "integer overflow" 1
-# plain int stops at 64 bits for now (P36); D05c wants unlimited size, see tests/known_gaps/should_work_unlimited_int.tom
-rt int_overflow_at_64_bits "integer overflow" 1
 rt caught "caught boom" 0
 rt dict_missing_key "the key is not there" 1
 rt set_missing "the element is not there" 1

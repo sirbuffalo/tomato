@@ -17,3 +17,5 @@ bitwise
 float_ops
 tuples
 unions
+big_numbers
+unlimited_int
