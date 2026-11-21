@@ -16,6 +16,41 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "optionals": """class Node:
+    value: int = 0
+    next: Node | None = None
+
+def push(head: Node | None, v: int) -> Node:
+    n = Node()
+    n.value = v
+    n.next = head
+    return n
+
+def length(head: Node | None) -> int:
+    k = 0
+    cur = head
+    while cur is not None:
+        k = k + 1
+        cur = cur.next
+    return k
+
+def first(head: Node | None) -> int:
+    return head.value
+
+def name_of(s: str | None) -> str:
+    if s is None:
+        return 'none'
+    return s + '!'
+
+@main
+def main():
+    h = push(push(push(None, 1), 2), 3)
+    print(length(h), length(None), h.value, h.next.value, name_of('a'), name_of(None))
+    x: Node | None = None
+    print(x is None, x == None, h.next is not None)
+    x = h
+    print(x is None, first(x))
+""",
     "text_methods_in_and_files": """def words(s: str) -> list[str]:
     return s.replace(',', ' ').split(' ')
 
@@ -350,6 +385,28 @@ def main():
                 run = subprocess.run([exe, f], check=True, capture_output=True, text=True)
                 self.assertEqual(run.stderr, "")
                 self.assertEqual(run.stdout.split("\n")[:-1], python_tokens(open(f).read()))
+
+    def test_the_parser_built_by_the_tomato_compiler(self):
+        """Milestone: the Tomato compiler compiles the Tomato parser; the result builds the Python parser's trees."""
+        if self.native is None:
+            self.skipTest("clang is not installed")
+        from test_selfhost_parser import dump
+        from tomato.parser import parse
+        path = os.path.join(SELF, "parsetool.tom")
+        ir = self.ir_by_interpreter(path, "show")
+        self.assertEqual(self.ir_by_native(path, "show"), ir)
+        ll = os.path.join(self.dir, "parsetool.ll")
+        with open(ll, "w") as f:
+            f.write(ir)
+        exe = os.path.join(self.dir, "parsetool")
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+                       check=True, capture_output=True)
+        import glob
+        for f in sorted(glob.glob(os.path.join(ROOT, "examples", "*.tom")) + glob.glob(os.path.join(SELF, "*.tom"))):
+            with self.subTest(file=os.path.basename(f)):
+                run = subprocess.run([exe, f], check=True, capture_output=True, text=True)
+                self.assertEqual(run.stderr, "")
+                self.assertEqual(run.stdout.rstrip("\n"), dump(parse(open(f).read())))
 
     def test_unsupported_programs_say_so(self):
         for src, text in (("interface I:\n    def f(self)\n@main\ndef main():\n    print(1)\n", "does not support InterfaceDef"),
