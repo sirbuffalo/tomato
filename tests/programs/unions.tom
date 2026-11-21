@@ -1,0 +1,31 @@
+class Dog:
+    name: str = 'rex'
+
+def describe(x: int | str) -> str:
+    if x in int:
+        return 'number ' + str(x + 1)
+    elif x in str:
+        return 'text ' + x
+    return 'other'
+
+def pick(flag: bool) -> int | str:
+    if flag:
+        return 1
+    return 'a'
+
+@main
+def main():
+    print(describe(3), describe('hi'))
+    v: int | str | float = 2.5
+    print(v, v in float, v in int)
+    v = 'now text'
+    print(v)
+    p = pick(True)
+    q = pick(False)
+    print(p, q, p in str, q in str)
+    n = 3
+    print(n in int, n in str)
+    for i in range(3):
+        w: int | str = i
+        if w in int:
+            print(w * 2)

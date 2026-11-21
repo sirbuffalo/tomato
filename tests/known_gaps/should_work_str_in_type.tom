@@ -1,4 +1,0 @@
-@main
-def main():
-    s = 'a'
-    print(s in str)

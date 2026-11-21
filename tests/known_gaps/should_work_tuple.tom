@@ -1,4 +1,0 @@
-@main
-def main():
-    t: tuple[int] = (1, 2)
-    print(len(t))

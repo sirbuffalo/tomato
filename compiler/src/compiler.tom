@@ -43,7 +43,7 @@ def basic_type(name: str) -> bool:
     return name == 'int' or name == 'bool' or name == 'str' or name == 'File' or name == 'float'
 
 def is_list(t: str) -> bool:
-    return t.startswith('list[')
+    return t.startswith('list[') or t.startswith('tuple[')
 
 def is_dict(t: str) -> bool:
     return t.startswith('dict[')
@@ -56,13 +56,55 @@ def set_elem(t: str) -> str:
 
 def dict_value(t: str) -> str:
     # the value type of dict[V], a dict with text keys
-    return t[5:len(t) - 1]
+    return t[t.find('[') + 1:len(t) - 1]
 
 def is_class(t: str) -> bool:
     return t.startswith('@')
 
 def is_iface(t: str) -> bool:
     return t.startswith('%')
+
+def is_union(t: str) -> bool:
+    # a union of several types is written 'U:' and its members (sorted, so the same members always give the same type) joined by ';'
+    return t.startswith('U:')
+
+def union_members(t: str) -> list[str]:
+    return t[2:].split(';')
+
+def without_index(xs: list[str], skip: int) -> list[str]:
+    out: list[str] = []
+    k = 0
+    while k < len(xs):
+        if k != skip:
+            out.append(xs[k])
+        k = k + 1
+    return out
+
+def union_type(members: list[str]) -> str:
+    left = members
+    sorted_members: list[str] = []
+    while len(left) > 0:
+        best = 0
+        k = 1
+        while k < len(left):
+            if left[k] < left[best]:
+                best = k
+            k = k + 1
+        sorted_members.append(left[best])
+        left = without_index(left, best)
+    return 'U:' + ';'.join(sorted_members)
+
+def box_kind(member: str) -> int:
+    # how the runtime prints a boxed value: 1 whole number, 3 float, 4 text, 5 bool, 6 anything else
+    if member == 'int':
+        return 1
+    if member == 'float':
+        return 3
+    if member == 'str':
+        return 4
+    if member == 'bool':
+        return 5
+    return 6
 
 def digits_value(s: str) -> int:
     # the number a text of digits writes, or -1 when it is not all digits
@@ -140,10 +182,10 @@ def strip_optional(t: str) -> str:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t)
+    return t == 'str' or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t)
 
 def elem_of(t: str) -> str:
-    return t[5:len(t) - 1]
+    return t[t.find('[') + 1:len(t) - 1]
 
 def shown(t: str) -> str:
     # a type as the user writes it
@@ -151,6 +193,13 @@ def shown(t: str) -> str:
         return shown(strip_optional(t)) + ' | None'
     if is_class(t) or is_iface(t):
         return t[1:]
+    if is_union(t):
+        parts: list[str] = []
+        for m in union_members(t):
+            parts.append(shown(m))
+        return ' | '.join(parts)
+    if t.startswith('tuple['):
+        return 'tuple[' + shown(elem_of(t)) + ']'
     if is_list(t):
         return 'list[' + shown(elem_of(t)) + ']'
     if is_dict(t):
@@ -440,6 +489,31 @@ class Mod:
             k = k + 1
         raise CompileError(c.name + ' has no field ' + name, line)
 
+    def has_none_member(self, members: list[Node]) -> bool:
+        found = False
+        for m in members:
+            if m.fields[0].text == 'None':
+                found = True
+        return found
+
+    def union_of(self, members: list[Node]) -> str:
+        # a union of several types (D23g): each member is a type the compiler knows, none repeated
+        names: list[str] = []
+        inner = ''
+        parts: list[str] = []
+        for m in members:
+            inner = self.type_name(node_val(m))
+            if inner == '' or is_fixed(inner) or is_optional(inner):
+                return ''
+            parts = [inner]
+            if is_union(inner):
+                parts = union_members(inner)
+            for x in parts:
+                if x in names:
+                    return ''
+                names.append(x)
+        return union_type(names)
+
     def type_name(self, v: Val) -> str:
         # the name of a type the compiler knows: int, bool, str, a declared class ('@Name') or a list of those; '' otherwise
         if v.tag != 'n':
@@ -455,8 +529,10 @@ class Mod:
             return 'u' + str(length.fields[0].num)
         if name == 'union':
             members = val_nodes(t.fields[2])
-            if len(members) != 2:
-                return ''
+            if len(members) != 2 or not self.has_none_member(members):
+                if self.has_none_member(members):
+                    return ''
+                return self.union_of(members)
             other = members[0]
             if other.fields[0].text == 'None':
                 other = members[1]
@@ -478,11 +554,11 @@ class Mod:
             if inner == '' or is_fixed(inner):
                 return ''
             return 'dict[' + inner + ']'
-        if name == 'list' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
+        if (name == 'list' or name == 'tuple') and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
             inner = self.type_name(t.fields[2])
             if inner == '' or is_fixed(inner):
                 return ''
-            return 'list[' + inner + ']'
+            return name + '[' + inner + ']'
         if t.fields[2].tag != 'z' or t.fields[1].tag != 'z':
             return ''
         if basic_type(name):
@@ -550,6 +626,7 @@ class Gen:
     lines: list[str] = []
     allocas: list[str] = []
     rc_slots: list[str] = []
+    narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
     slots: dict[str, str] = {}
     types: dict[str, str] = {}
     n: int = 0
@@ -683,9 +760,60 @@ class Gen:
             if not contains(ty, e.ty):
                 raise CompileError('type error: ' + what + ' of type ' + shown(e.ty) + ' cannot be used as ' + shown(ty) + ' without an explicit conversion (D05o)', line)
             return self.resize(e, ty)
+        if is_union(ty) and not is_union(e.ty):
+            return self.box_value(e, ty, line, what)
         if not self.mod.assignable(e.ty, ty):
             raise CompileError('type error: ' + what + ' is ' + shown(e.ty) + ' where ' + shown(ty) + ' is needed', line)
         return e
+
+    def union_member_for(self, vt: str, ty: str) -> str:
+        # the member of union ty that a value of type vt belongs to: the same type first, else one it can be used as; '' when none
+        members = union_members(ty)
+        if vt in members:
+            return vt
+        for m in members:
+            if self.mod.assignable(vt, m):
+                return m
+        return ''
+
+    def box_value(self, e: Ex, ty: str, line: int, what: str) -> Ex:
+        # a value stored where a union is wanted: a small heap object holding the value and which member it is
+        member = self.union_member_for(e.ty, ty)
+        if member == '':
+            raise CompileError('type error: ' + what + ' is ' + shown(e.ty) + ' where ' + shown(ty) + ' is needed', line)
+        if is_numeric(e.ty) and e.ty != member:
+            raise CompileError('type error: ' + what + ' is ' + shown(e.ty) + ' where ' + shown(ty) + ' is needed', line)
+        b = self.tmp('box')
+        self.emit(b + ' = call ptr @tomato_alloc(i64 32, i64 ' + str(self.mod.code_of('box:' + member)) + ')')
+        p = self.tmp('payload')
+        self.emit(p + ' = getelementptr i8, ptr ' + b + ', i64 16')
+        self.emit('store ' + llvm_type(member) + ' ' + e.reg + ', ptr ' + p)
+        k = self.tmp('kind')
+        self.emit(k + ' = getelementptr i8, ptr ' + b + ', i64 24')
+        self.emit('store i64 ' + str(box_kind(member)) + ', ptr ' + k)
+        return ex(b, ty)
+
+    def unbox_value(self, box: Ex, member: str) -> Ex:
+        # the value inside a union, as a new reference when it is a heap value
+        p = self.tmp('payload')
+        self.emit(p + ' = getelementptr i8, ptr ' + box.reg + ', i64 16')
+        v = self.tmp('inner')
+        self.emit(v + ' = load ' + llvm_type(member) + ', ptr ' + p)
+        e = ex(v, member)
+        self.retain(e)
+        return e
+
+    def box_is(self, box: Ex, member: str) -> str:
+        # an i1: is this union holding that member?
+        tp = self.tmp('tp')
+        self.emit(tp + ' = getelementptr { i64, i64 }, ptr ' + box.reg + ', i32 0, i32 1')
+        raw = self.tmp('rawcode')
+        self.emit(raw + ' = load i64, ptr ' + tp)
+        code = self.tmp('code')
+        self.emit(code + ' = and i64 ' + raw + ', 4294967295')
+        c = self.tmp('isbox')
+        self.emit(c + ' = icmp eq i64 ' + code + ', ' + str(self.mod.code_of('box:' + member)))
+        return c
 
     # ---- small instructions
     def truth(self, e: Ex, line: int) -> str:
@@ -1058,7 +1186,7 @@ class Gen:
             return self.type_call(n)
         if k == 'Call':
             return self.call(n, False)
-        if k == 'ListLit':
+        if k == 'ListLit' or k == 'TupleLit':
             return self.list_lit(n, expected)
         if k == 'MapLit':
             return self.map_lit(n, expected)
@@ -1141,15 +1269,18 @@ class Gen:
         items = val_nodes(n.fields[0])
         t = ''
         first = ex('', '')
-        if is_list(expected):
+        kind = 'list'
+        if n.kind == 'TupleLit':
+            kind = 'tuple'
+        if is_list(expected) and expected.startswith(kind + '['):
             t = expected
         else:
             if len(items) == 0:
-                raise CompileError('the type of an empty list needs a declaration: xs: list[int] = []', n.line)
+                raise CompileError('the type of an empty ' + kind + ' needs a declaration: xs: ' + kind + '[int]', n.line)
             first = self.expr(items[0])
             if first.ty == '':
-                raise CompileError('a list item needs a value', n.line)
-            t = 'list[' + first.ty + ']'
+                raise CompileError('a ' + kind + ' item needs a value', n.line)
+            t = kind + '[' + first.ty + ']'
         lst = self.tmp('list')
         self.emit(lst + ' = call ptr @tomato_list_new(i64 ' + str(self.mod.code_of(t)) + ')')
         k = 0
@@ -1455,12 +1586,67 @@ class Gen:
         self.emit(r + ' = load i64, ptr ' + res)
         return ex(r, 'bool')
 
+    def type_operand(self, n: Node) -> str:
+        # the right side of `x in Type` (D23f): a type name that is not a variable; '' when it is something else
+        if n.kind != 'Name':
+            return ''
+        name = n.fields[0].text
+        if name in self.slots:
+            return ''
+        if name == 'None':
+            return 'None'
+        if basic_type(name) and name != 'File':
+            return name
+        key = self.mod.resolve(name)
+        if key != '' and self.mod.has_class(key):
+            return '@' + key
+        if key != '' and self.mod.has_iface(key):
+            return '%' + key
+        return ''
+
+    def type_test(self, left: Node, tt: str, line: int) -> Ex:
+        # x in Type: true when the value's type is Type (a class name also matches its subclasses)
+        a = self.expr(left)
+        acc = ''
+        c = ''
+        if is_union(a.ty):
+            for m in union_members(a.ty):
+                if self.mod.assignable(m, tt):
+                    c = self.box_is(a, m)
+                    if acc == '':
+                        acc = c
+                    else:
+                        merged = self.tmp('either')
+                        self.emit(merged + ' = or i1 ' + acc + ', ' + c)
+                        acc = merged
+            if acc == '':
+                acc = self.tmp('no')
+                self.emit(acc + ' = icmp ne i64 0, 0')
+        elif is_optional(a.ty):
+            acc = self.tmp('opt')
+            if tt == 'None':
+                self.emit(acc + ' = icmp eq ptr ' + a.reg + ', null')
+            elif self.mod.assignable(strip_optional(a.ty), tt):
+                self.emit(acc + ' = icmp ne ptr ' + a.reg + ', null')
+            else:
+                self.emit(acc + ' = icmp ne i64 0, 0')
+        else:
+            acc = self.tmp('static')
+            if self.mod.assignable(a.ty, tt):
+                self.emit(acc + ' = icmp eq i64 0, 0')
+            else:
+                self.emit(acc + ' = icmp ne i64 0, 0')
+        self.release(a)
+        return self.bool_of(acc)
+
     def binop(self, n: Node, expected: str) -> Ex:
         op = n.fields[0].text
         if op == 'and' or op == 'or':
             return self.logic(n, op)
         left = val_node(n.fields[1])
         right = val_node(n.fields[2])
+        if op == 'in' and self.type_operand(right) != '':
+            return self.type_test(left, self.type_operand(right), n.line)
         a = ex('', '')
         b = ex('', '')
         if (op == '+' or op == '-' or op == '*') and self.literal_only(n) and is_fixed(expected):
@@ -1755,6 +1941,8 @@ class Gen:
         name = f.fields[1].text
         obj = self.unwrap(self.expr(val_node(f.fields[0])), n.line)
         args = val_nodes(n.fields[1])
+        if obj.ty.startswith('tuple[') and name == 'append':
+            raise CompileError('a tuple cannot change: ' + name + ' is for lists', n.line)
         if is_list(obj.ty) and name == 'append':
             if len(args) != 1:
                 raise CompileError('append takes 1 argument, got ' + str(len(args)), n.line)
@@ -1935,6 +2123,9 @@ class Gen:
                 self.emit(r + ' = call ptr @tomato_str_from_i64(i64 ' + self.widen(v, 64) + ')')
             else:
                 self.emit(r + ' = call ptr @tomato_str_from_u64(i64 ' + self.widen(v, 64) + ')')
+        elif is_union(v.ty):
+            self.emit(r + ' = call ptr @tomato_box_str(ptr ' + v.reg + ')')
+            self.release(v)
         elif v.ty == 'float':
             self.emit(r + ' = call ptr @tomato_str_from_f64(double ' + v.reg + ')')
         else:
@@ -1970,6 +2161,12 @@ class Gen:
                 self.emit(t + ' = call ptr @tomato_str_from_f64(double ' + v.reg + ')')
                 self.emit('call void @tomato_print_strobj(ptr ' + t + ')')
                 self.emit('call void @tomato_release(ptr ' + t + ')')
+            elif is_union(v.ty):
+                t = self.tmp('text')
+                self.emit(t + ' = call ptr @tomato_box_str(ptr ' + v.reg + ')')
+                self.emit('call void @tomato_print_strobj(ptr ' + t + ')')
+                self.emit('call void @tomato_release(ptr ' + t + ')')
+                self.release(v)
             else:
                 self.emit('call void @tomato_print_strobj(ptr ' + v.reg + ')')
                 self.release(v)
@@ -2012,6 +2209,8 @@ class Gen:
             if target.kind != 'Name':
                 raise CompileError('the Tomato compiler can only assign to a variable or a list item yet', s.line)
             name = target.fields[0].text
+            if name in self.narrowed:
+                raise CompileError(name + ' is narrowed to ' + shown(self.types[name]) + ' here: assign to it outside the `in` check', s.line)
             expected = ''
             if name in self.slots:
                 expected = self.types[name]
@@ -2190,6 +2389,8 @@ class Gen:
 
     def assign_item(self, s: Node, target: Node):
         lst = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
+        if lst.ty.startswith('tuple['):
+            raise CompileError('a tuple cannot change: its items are fixed', s.line)
         if is_dict(lst.ty):
             k = self.expr(val_node(target.fields[1]))
             k = self.want(k, 'str', s.line, 'a dict key')
@@ -2217,15 +2418,53 @@ class Gen:
             self.emit('store i64 ' + v.reg + ', ptr ' + addr)
         self.release(lst)
 
+    def narrow_target(self, cond: Node) -> list[str]:
+        # `x in Type` where x is a union variable and Type is one of its members: [x, Type]; else []
+        if cond.kind != 'BinOp' or cond.fields[0].text != 'in':
+            return []
+        l = val_node(cond.fields[1])
+        if l.kind != 'Name':
+            return []
+        name = l.fields[0].text
+        tt = self.type_operand(val_node(cond.fields[2]))
+        if tt == '' or not (name in self.slots):
+            return []
+        if not is_union(self.types[name]) or not (tt in union_members(self.types[name])):
+            return []
+        return [name, tt]
+
+    def enter_narrow(self, name: str, member: str) -> list[str]:
+        # inside the branch the variable is the member's own type: a copy of the value taken out of the box
+        saved = [self.slots[name], self.types[name]]
+        holder = self.tmp('whole')
+        self.emit(holder + ' = load ptr, ptr ' + saved[0])
+        inner = self.unbox_value(ex(holder, saved[1]), member)
+        shadow = self.new_slot(name, member)
+        self.store_owned(shadow, inner)
+        self.narrowed.append(name)
+        return saved
+
+    def leave_narrow(self, name: str, saved: list[str]):
+        self.slots[name] = saved[0]
+        self.types[name] = saved[1]
+        self.narrowed = without_index(self.narrowed, len(self.narrowed) - 1)
+
     def if_stmt(self, s: Node):
         end = self.label('endif')
+        target: list[str] = []
+        saved: list[str] = []
         for branch in s.fields[0].items:
+            target = self.narrow_target(val_node(branch.items[0]))
             cond = self.truth(self.expr(val_node(branch.items[0])), s.line)
             then = self.label('then')
             nxt = self.label('next')
             self.cond_br(cond, then, nxt)
             self.place(then)
+            if len(target) > 0:
+                saved = self.enter_narrow(target[0], target[1])
             self.block(val_nodes(branch.items[1]))
+            if len(target) > 0:
+                self.leave_narrow(target[0], saved)
             if not self.terminated:
                 self.br(end)
             self.place(nxt)
@@ -2540,7 +2779,16 @@ def runtime_tables(mod: Mod) -> str:
     k = 0
     for code in mod.codes:
         slot = k + 2
-        if is_class(code):
+        if code.startswith('box:'):
+            # a union's box: a class-like object with one field, at byte 16, that the runtime releases when it is a heap value
+            kinds[slot] = 'i32 1'
+            offs = new_strs()
+            if is_rc(code[4:]):
+                offs.append('i32 16')
+            offs.append('i32 -1')
+            extra = extra + '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
+            offsets[slot] = 'ptr @tomato.offs.' + str(slot)
+        elif is_class(code):
             c = mod.find_class(code[1:], 0)
             kinds[slot] = 'i32 1'
             if c.parent != '':
@@ -2593,6 +2841,7 @@ def declarations(mod: Mod) -> str:
     d = d + 'declare ptr @tomato_str_from_i64(i64)\n'
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare ptr @tomato_str_from_f64(double)\n'
+    d = d + 'declare ptr @tomato_box_str(ptr)\n'
     d = d + 'declare double @tomato_parse_f64(ptr, i32)\n'
     d = d + 'declare i32 @tomato_ipow_check(i64, i64)\n'
     d = d + 'declare i64 @tomato_ipow(i64, i64)\n'

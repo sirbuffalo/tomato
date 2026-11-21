@@ -923,3 +923,15 @@ double tomato_mod_f64(double x, double y) {
     return r;
 }
 double tomato_pow_f64(double x, double y) { return pow(x, y); }
+
+/* A union's box: {header, payload at byte 16, kind at byte 24}. This is the text print and str() show for it. */
+void *tomato_box_str(void *b) {
+    int64_t *w = b;
+    switch (w[3]) {
+    case 1: return tomato_str_from_i64(w[2]);
+    case 3: { double d; memcpy(&d, &w[2], 8); return tomato_str_from_f64(d); }
+    case 4: tomato_retain((void *)w[2]); return (void *)w[2];
+    case 5: return tomato_str_from_bool((int)w[2]);
+    default: return tomato_str_from_cstr("<object>");
+    }
+}

@@ -1,4 +1,0 @@
-@main
-def main():
-    x = 3
-    print(x in int)

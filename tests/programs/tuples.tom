@@ -1,0 +1,16 @@
+def total(t: tuple[int]) -> int:
+    s = 0
+    for x in t:
+        s += x
+    return s
+
+@main
+def main():
+    t: tuple[int] = (1, 2)
+    print(len(t), t[0], t[1], total(t))
+    names = ('a', 'b', 'c')
+    print(len(names), names[2], 'b' in names)
+    one = (7,)
+    print(total(one), total((4, 5, 6)))
+    e: tuple[str] = ()
+    print(len(e))

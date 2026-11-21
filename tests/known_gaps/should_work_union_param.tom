@@ -1,6 +1,0 @@
-def f(x: int | str) -> str:
-    return 'ok'
-
-@main
-def main():
-    print(f(3))

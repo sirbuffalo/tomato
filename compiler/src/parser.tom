@@ -765,7 +765,18 @@ export class Parser:
             return mk('Name', t.line, [vs(t.text)])
         if self.is_op('('):
             self.adv()
+            if self.accept_op(')'):
+                return mk('TupleLit', t.line, [vnodes(new_nodes())])
             e = self.expr()
+            if self.is_op(','):
+                # a tuple: (a, b), or (a,) for one item
+                parts: list[Node] = [e]
+                while self.accept_op(','):
+                    if self.is_op(')'):
+                        break
+                    parts.append(self.expr())
+                self.expect_op(')')
+                return mk('TupleLit', t.line, [vnodes(parts)])
             self.expect_op(')')
             return e
         if self.is_op('!'):
