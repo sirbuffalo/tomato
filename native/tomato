@@ -6,6 +6,7 @@
 #   tomato repl [FILE ...]                                     type Tomato one piece at a time 
 #   tomato update                                              install the newest release
 #   tomato version
+invoked="$0"
 src="$0"
 while [ -L "$src" ]; do
   dir=$(cd "$(dirname "$src")" && pwd)
@@ -29,7 +30,9 @@ case "$cmd" in
     url="${TOMATO_UPDATE_URL:-https://tomato.davismcd.com/latest.json}"
     have="$(cat "$home/VERSION" 2>/dev/null || echo 0)"
     command -v curl >/dev/null || die "tomato update needs curl"
-    manifest="$(curl -fsSL "$url")" || die "cannot read $url"
+    # the site's own HTTPS may not be ready (GitHub issues its certificate after DNS is set up), so fall back to the
+    # same manifest on GitHub's HTTPS host; plain HTTP is never used because the manifest carries the checksum
+    manifest="$(curl -fsSL "$url" 2>/dev/null)" || manifest="$(curl -fsSL "${TOMATO_UPDATE_FALLBACK:-https://raw.githubusercontent.com/sirbuffalo/tomato/main/site/latest.json}" 2>/dev/null)" || die "cannot read $url"
     latest="$(printf '%s' "$manifest" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p')"
     archive="$(printf '%s' "$manifest" | sed -n 's/.*"url" *: *"\([^"]*\)".*/\1/p')"
     [ -n "$latest" ] && [ -n "$archive" ] || die "the manifest at $url is not understood"
@@ -43,7 +46,8 @@ case "$cmd" in
       [ "$got" = "$want" ] || die "the download does not match its checksum"
     fi
     tar -xzf "$work/tomato.tar.gz" -C "$work" || die "the download is not a valid archive"
-    "$work"/tomato-*/install-native.sh || die "the installer failed"
+    # reinstall where this copy lives, not into the default folders
+    TOMATO_HOME="${home%/native}" TOMATO_BIN="$(dirname "$invoked")" "$work"/tomato-*/install-native.sh || die "the installer failed"
     exit 0 ;;
   repl|shell) TOMATO_CMD="$home/bin/tomato" exec sh "$home/bin/tomato-repl" "$@" ;;
   run|build|compile) ;;
