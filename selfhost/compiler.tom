@@ -58,6 +58,72 @@ def is_class(t: str) -> bool:
 def is_iface(t: str) -> bool:
     return t.startswith('%')
 
+def digits_value(s: str) -> int:
+    # the number a text of digits writes, or -1 when it is not all digits
+    if len(s) == 0:
+        return -1
+    v = 0
+    i = 0
+    while i < len(s):
+        d = '0123456789'.find(s[i])
+        if d < 0:
+            return -1
+        v = v * 10 + d
+        i = i + 1
+    return v
+
+def is_fixed(t: str) -> bool:
+    # int[length=N] is written iN and uint[length=N] uN
+    if len(t) < 2:
+        return False
+    if not (t[0:1] == 'i' or t[0:1] == 'u'):
+        return False
+    return digits_value(t[1:]) > 0
+
+def is_numeric(t: str) -> bool:
+    return t == 'int' or is_fixed(t)
+
+def bits_of(t: str) -> int:
+    if t == 'int':
+        return 64
+    return digits_value(t[1:])
+
+def is_signed(t: str) -> bool:
+    return t == 'int' or t[0:1] == 'i'
+
+def contains(outer: str, inner: str) -> bool:
+    # every value of integer type inner is a value of outer
+    if is_signed(outer):
+        if is_signed(inner):
+            return bits_of(outer) >= bits_of(inner)
+        return bits_of(outer) > bits_of(inner)
+    if is_signed(inner):
+        return False
+    return bits_of(outer) >= bits_of(inner)
+
+def pow2(k: int) -> int:
+    v = 1
+    i = 0
+    while i < k:
+        v = v * 2
+        i = i + 1
+    return v
+
+def fits_literal(n: int, t: str, negative: bool) -> bool:
+    # does the literal n (written with a minus sign when negative) fit the integer type t?
+    bits = bits_of(t)
+    if is_signed(t):
+        if bits >= 64:
+            return True
+        if negative:
+            return n <= pow2(bits - 1)
+        return n <= pow2(bits - 1) - 1
+    if negative:
+        return n == 0
+    if bits >= 63:
+        return True
+    return n <= pow2(bits) - 1
+
 def is_optional(t: str) -> bool:
     return t.endswith('?')
 
@@ -85,6 +151,10 @@ def shown(t: str) -> str:
         return 'dict[str, ' + shown(dict_value(t)) + ']'
     if is_set(t):
         return 'set[' + shown(set_elem(t)) + ']'
+    if is_fixed(t):
+        if t[0:1] == 'i':
+            return 'int[length=' + t[1:] + ']'
+        return 'uint[length=' + t[1:] + ']'
     return t
 
 def llvm_type(t: str) -> str:
@@ -92,6 +162,8 @@ def llvm_type(t: str) -> str:
         return 'ptr'
     if t == 'float':
         return 'double'
+    if is_fixed(t):
+        return 'i' + t[1:]
     return 'i64'
 
 def zero_of(t: str) -> str:
@@ -144,6 +216,7 @@ class Mod:
     # what every function of the program shares
     strings: list[str] = []
     infos: list[FuncInfo] = []
+    decls: list[str] = []         # extra declarations (the overflow intrinsics the program uses)
     codes: list[str] = []         # the heap types the program uses; a type's code is 2 plus its place here
     classes: list[ClassInfo] = []
     ifaces: list[IfaceInfo] = []
@@ -157,6 +230,10 @@ class Mod:
             k = k + 1
         self.codes.append(t)
         return len(self.codes) + 1
+
+    def declare(self, text: str):
+        if not (text in self.decls):
+            self.decls.append(text)
 
     def intern(self, s: str) -> str:
         k = 0
@@ -294,6 +371,13 @@ class Mod:
             return ''
         t = val_node(v)
         name = t.fields[0].text
+        if (name == 'int' or name == 'uint') and t.fields[1].tag == 'n':
+            length = val_node(t.fields[1])
+            if length.kind != 'IntLit' or length.fields[0].num < 1 or length.fields[0].num > 64:
+                return ''
+            if name == 'int':
+                return 'i' + str(length.fields[0].num)
+            return 'u' + str(length.fields[0].num)
         if name == 'union':
             members = val_nodes(t.fields[2])
             if len(members) != 2:
@@ -316,12 +400,12 @@ class Mod:
             if self.type_name(t.fields[2]) != 'str':
                 return ''
             inner = self.type_name(t.fields[3])
-            if inner == '':
+            if inner == '' or is_fixed(inner):
                 return ''
             return 'dict[' + inner + ']'
         if name == 'list' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
             inner = self.type_name(t.fields[2])
-            if inner == '':
+            if inner == '' or is_fixed(inner):
                 return ''
             return 'list[' + inner + ']'
         if t.fields[2].tag != 'z' or t.fields[1].tag != 'z':
@@ -490,16 +574,37 @@ class Gen:
         self.fail_if(bad, 'None where a value is needed')
         return ex(e.reg, strip_optional(e.ty))
 
-    def want(self, e: Ex, ty: str, line: int, what: str):
+    def resize(self, e: Ex, to: str) -> Ex:
+        # the same number in another integer type that holds all of its values
+        fb = bits_of(e.ty)
+        tb = bits_of(to)
+        if fb == tb:
+            return ex(e.reg, to)
+        r = self.tmp('ext')
+        op = 'zext'
+        if is_signed(e.ty):
+            op = 'sext'
+        self.emit(r + ' = ' + op + ' ' + llvm_type(e.ty) + ' ' + e.reg + ' to ' + llvm_type(to))
+        return ex(r, to)
+
+    def want(self, e: Ex, ty: str, line: int, what: str) -> Ex:
+        # check that e fits the type ty and return it as that type (a number is widened, an optional unwrapped)
         if is_optional(e.ty) and not is_optional(ty) and ty != 'None' and self.mod.assignable(strip_optional(e.ty), ty):
             self.unwrap(e, line)
-            return
+            return ex(e.reg, strip_optional(e.ty))
+        if e.ty == ty:
+            return e
+        if is_numeric(e.ty) and is_numeric(ty):
+            if not contains(ty, e.ty):
+                raise CompileError('type error: ' + what + ' of type ' + shown(e.ty) + ' cannot be used as ' + shown(ty) + ' without an explicit conversion (D05o)', line)
+            return self.resize(e, ty)
         if not self.mod.assignable(e.ty, ty):
-            raise CompileError('type error: ' + what + ' is ' + e.ty + ' where ' + ty + ' is needed', line)
+            raise CompileError('type error: ' + what + ' is ' + shown(e.ty) + ' where ' + shown(ty) + ' is needed', line)
+        return e
 
     # ---- small instructions
     def truth(self, e: Ex, line: int) -> str:
-        self.want(e, 'bool', line, 'a condition')
+        e = self.want(e, 'bool', line, 'a condition')
         r = self.tmp('cond')
         self.emit(r + ' = icmp ne i64 ' + e.reg + ', 0')
         return r
@@ -518,6 +623,134 @@ class Gen:
         c = self.tmp('cmp')
         self.emit(c + ' = icmp ' + cc + ' i64 ' + a + ', ' + b)
         return self.bool_of(c)
+
+    def common_type(self, a: str, b: str, line: int) -> str:
+        if contains(a, b):
+            return a
+        if contains(b, a):
+            return b
+        raise CompileError('no common integer type for ' + shown(a) + ' and ' + shown(b) + ' (D05s)', line)
+
+    def num_arith(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # + - * with an overflow stop, in the type both operands fit
+        t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, t)
+        y = self.resize(b, t)
+        llt = llvm_type(t)
+        sg = 'u'
+        if is_signed(t):
+            sg = 's'
+        intr = 'llvm.' + sg + op + '.with.overflow.' + llt
+        self.mod.declare('declare {' + llt + ', i1} @' + intr + '(' + llt + ', ' + llt + ')')
+        pair = self.tmp('pair')
+        self.emit(pair + ' = call {' + llt + ', i1} @' + intr + '(' + llt + ' ' + x.reg + ', ' + llt + ' ' + y.reg + ')')
+        r = self.tmp('r')
+        self.emit(r + ' = extractvalue {' + llt + ', i1} ' + pair + ', 0')
+        ov = self.tmp('ov')
+        self.emit(ov + ' = extractvalue {' + llt + ', i1} ' + pair + ', 1')
+        self.fail_if(ov, 'integer overflow')
+        return ex(r, t)
+
+    def num_compare(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, t)
+        y = self.resize(b, t)
+        cc = 'eq'
+        if op == '!=':
+            cc = 'ne'
+        elif op != '==':
+            sg = 'u'
+            if is_signed(t):
+                sg = 's'
+            if op == '<':
+                cc = sg + 'lt'
+            elif op == '<=':
+                cc = sg + 'le'
+            elif op == '>':
+                cc = sg + 'gt'
+            else:
+                cc = sg + 'ge'
+        c = self.tmp('cmp')
+        self.emit(c + ' = icmp ' + cc + ' ' + llvm_type(t) + ' ' + x.reg + ', ' + y.reg)
+        return self.bool_of(c)
+
+    def num_modulo(self, a: Ex, b: Ex, line: int) -> Ex:
+        # Python-style: the result has the sign of the divisor (D05au); a zero divisor stops the program
+        t = self.common_type(a.ty, b.ty, line)
+        x = self.resize(a, t)
+        y = self.resize(b, t)
+        llt = llvm_type(t)
+        zero = self.tmp('zero')
+        self.emit(zero + ' = icmp eq ' + llt + ' ' + y.reg + ', 0')
+        self.fail_if(zero, 'modulo by zero')
+        if not is_signed(t):
+            r = self.tmp('urem')
+            self.emit(r + ' = urem ' + llt + ' ' + x.reg + ', ' + y.reg)
+            return ex(r, t)
+        r = self.tmp('srem')
+        self.emit(r + ' = srem ' + llt + ' ' + x.reg + ', ' + y.reg)
+        mix = self.tmp('mix')
+        self.emit(mix + ' = xor ' + llt + ' ' + r + ', ' + y.reg)
+        differ = self.tmp('differ')
+        self.emit(differ + ' = icmp slt ' + llt + ' ' + mix + ', 0')
+        nonzero = self.tmp('nonzero')
+        self.emit(nonzero + ' = icmp ne ' + llt + ' ' + r + ', 0')
+        fix = self.tmp('fix')
+        self.emit(fix + ' = and i1 ' + differ + ', ' + nonzero)
+        amount = self.tmp('amount')
+        self.emit(amount + ' = select i1 ' + fix + ', ' + llt + ' ' + y.reg + ', ' + llt + ' 0')
+        out = self.tmp('mod')
+        self.emit(out + ' = add ' + llt + ' ' + r + ', ' + amount)
+        return ex(out, t)
+
+    def to_double(self, e: Ex) -> str:
+        r = self.tmp('fp')
+        op = 'uitofp'
+        if is_signed(e.ty):
+            op = 'sitofp'
+        self.emit(r + ' = ' + op + ' ' + llvm_type(e.ty) + ' ' + e.reg + ' to double')
+        return r
+
+    def num_divide(self, a: Ex, b: Ex, line: int) -> Ex:
+        zero = self.tmp('zero')
+        self.emit(zero + ' = icmp eq ' + llvm_type(b.ty) + ' ' + b.reg + ', 0')
+        self.fail_if(zero, 'division by zero')
+        q = self.tmp('div')
+        self.emit(q + ' = fdiv double ' + self.to_double(a) + ', ' + self.to_double(b))
+        return ex(q, 'float')
+
+    def convert_explicit(self, v: Ex, target: str, line: int) -> Ex:
+        # int[length=N](x): the same number in another integer type, or a stop when it does not fit (D05p)
+        if not is_numeric(v.ty):
+            raise CompileError('only integers convert this way, found ' + shown(v.ty), line)
+        if contains(target, v.ty):
+            return self.resize(v, target)
+        width = bits_of(v.ty)
+        if bits_of(target) > width:
+            width = bits_of(target)
+        width = width + 1
+        wide = ex(self.widen(v, width), 'int')
+        cut = self.tmp('cut')
+        self.emit(cut + ' = trunc i' + str(width) + ' ' + wide.reg + ' to ' + llvm_type(target))
+        back = self.tmp('back')
+        op = 'zext'
+        if is_signed(target):
+            op = 'sext'
+        self.emit(back + ' = ' + op + ' ' + llvm_type(target) + ' ' + cut + ' to i' + str(width))
+        bad = self.tmp('bad')
+        self.emit(bad + ' = icmp ne i' + str(width) + ' ' + wide.reg + ', ' + back)
+        self.fail_if(bad, 'the number does not fit the integer type')
+        return ex(cut, target)
+
+    def widen(self, v: Ex, width: int) -> str:
+        if bits_of(v.ty) == width:
+            return v.reg
+        r = self.tmp('wide')
+        op = 'zext'
+        if is_signed(v.ty):
+            op = 'sext'
+        self.emit(r + ' = ' + op + ' ' + llvm_type(v.ty) + ' ' + v.reg + ' to i' + str(width))
+        return r
 
     def modulo(self, a: str, b: str) -> str:
         # Python-style: the result has the sign of the divisor (D05au); a zero divisor is not checked yet (P53)
@@ -544,7 +777,7 @@ class Gen:
     def expr(self, n: Node, expected: str = '') -> Ex:
         k = n.kind
         if k == 'IntLit':
-            return ex(str(n.fields[0].num), 'int')
+            return self.int_literal(n.fields[0].num, expected, False, n.line)
         if k == 'BoolLit':
             if n.fields[0].flag:
                 return ex('1', 'bool')
@@ -565,14 +798,21 @@ class Gen:
             return e
         if k == 'UnOp':
             op = n.fields[0].text
-            v = self.expr(val_node(n.fields[1]))
+            if op == '-' and val_node(n.fields[1]).kind == 'IntLit':
+                return self.int_literal(val_node(n.fields[1]).fields[0].num, expected, True, n.line)
+            v = self.expr(val_node(n.fields[1]), expected)
             if op == '-':
-                self.want(v, 'int', n.line, 'the operand of -')
-                return ex(self.arith('sub', '0', v.reg), 'int')
-            self.want(v, 'bool', n.line, 'the operand of not')
+                if not is_numeric(v.ty):
+                    raise CompileError('type error: the operand of - is ' + shown(v.ty), n.line)
+                if not is_signed(v.ty):
+                    raise CompileError('type error: an unsigned number cannot be negated', n.line)
+                return self.num_arith('sub', ex('0', v.ty), v, n.line)
+            v = self.want(v, 'bool', n.line, 'the operand of not')
             return ex(self.arith('xor', v.reg, '1'), 'bool')
         if k == 'BinOp':
-            return self.binop(n)
+            return self.binop(n, expected)
+        if k == 'TypeCall':
+            return self.type_call(n)
         if k == 'Call':
             return self.call(n, False)
         if k == 'ListLit':
@@ -636,7 +876,7 @@ class Gen:
         name = target.fields[1].text
         ft = self.field_type(obj, name, s.line)
         v = self.expr(val_node(s.fields[1]), ft)
-        self.want(v, ft, s.line, 'the assigned value')
+        v = self.want(v, ft, s.line, 'the assigned value')
         addr = self.field_addr(obj, name, s.line)
         self.store_owned(addr, v)
         self.release(obj)
@@ -663,7 +903,7 @@ class Gen:
                 v = first
             else:
                 v = self.expr(item, elem_of(t))
-            self.want(v, elem_of(t), n.line, 'a list item')
+            v = self.want(v, elem_of(t), n.line, 'a list item')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + lst + ', i64 8)')
             self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
@@ -703,7 +943,7 @@ class Gen:
                 v = first
             else:
                 v = self.expr(item, set_elem(t))
-            self.want(v, set_elem(t), n.line, 'a set element')
+            v = self.want(v, set_elem(t), n.line, 'a set element')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + st.reg + ', i64 ' + self.key_word(v) + ', i32 0)')
             self.release(v)
@@ -721,9 +961,9 @@ class Gen:
         self.emit(d + ' = call ptr @tomato_dict_new(i64 ' + str(self.mod.code_of(expected)) + ', i64 8, i32 1)')
         for pair in pairs:
             k = self.expr(val_node(pair.items[0]))
-            self.want(k, 'str', n.line, 'a dict key')
+            k = self.want(k, 'str', n.line, 'a dict key')
             v = self.expr(val_node(pair.items[1]), value_t)
-            self.want(v, value_t, n.line, 'a dict value')
+            v = self.want(v, value_t, n.line, 'a dict value')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + d + ', i64 ' + self.key_word(k) + ', i32 1)')
             dup = self.tmp('dup')
@@ -733,11 +973,42 @@ class Gen:
             self.release(k)
         return ex(d, expected)
 
+    def int_literal(self, v: int, expected: str, negative: bool, line: int) -> Ex:
+        # a whole-number literal takes the integer type its context wants (D05s-w), else int
+        t = 'int'
+        if is_fixed(expected):
+            t = expected
+        if not fits_literal(v, t, negative):
+            raise CompileError(str(v) + ' does not fit ' + shown(t) + ' (D05r, D05x)', line)
+        if negative:
+            return ex(str(0 - v), t)
+        return ex(str(v), t)
+
+    def literal_only(self, n: Node) -> bool:
+        if n.kind == 'IntLit':
+            return True
+        if n.kind == 'UnOp' and n.fields[0].text == '-':
+            return self.literal_only(val_node(n.fields[1]))
+        if n.kind == 'BinOp':
+            op = n.fields[0].text
+            return (op == '+' or op == '-' or op == '*') and self.literal_only(val_node(n.fields[1])) and self.literal_only(val_node(n.fields[2]))
+        return False
+
+    def type_call(self, n: Node) -> Ex:
+        # int[length=8](x) and uint[length=8](x): an explicit conversion that stops when the number does not fit
+        t = val_node(n.fields[0])
+        target = self.mod.type_name(node_val(t))
+        if not is_fixed(target):
+            raise CompileError('the Tomato compiler converts only to int[length=N] and uint[length=N] yet', n.line)
+        args = val_nodes(n.fields[1])
+        v = self.expr(args[0])
+        return self.convert_explicit(v, target, n.line)
+
     def index(self, n: Node) -> Ex:
         s = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
         if is_dict(s.ty):
             k = self.expr(val_node(n.fields[1]))
-            self.want(k, 'str', n.line, 'a dict key')
+            k = self.want(k, 'str', n.line, 'a dict key')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + s.reg + ', i64 ' + self.key_word(k) + ')')
             missing = self.tmp('missing')
@@ -753,7 +1024,7 @@ class Gen:
             return e
         if is_list(s.ty):
             li = self.expr(val_node(n.fields[1]))
-            self.want(li, 'int', n.line, 'an index')
+            li = self.want(li, 'int', n.line, 'an index')
             addr = self.list_slot(s, li)
             item = self.tmp('item')
             self.emit(item + ' = load ' + llvm_type(elem_of(s.ty)) + ', ptr ' + addr)
@@ -761,9 +1032,9 @@ class Gen:
             self.retain(e)
             self.release(s)
             return e
-        self.want(s, 'str', n.line, 'the value being indexed')
+        s = self.want(s, 'str', n.line, 'the value being indexed')
         i = self.expr(val_node(n.fields[1]))
-        self.want(i, 'int', n.line, 'an index')
+        i = self.want(i, 'int', n.line, 'an index')
         r = self.tmp('ch')
         self.emit(r + ' = call ptr @tomato_str_index(ptr ' + s.reg + ', i64 ' + i.reg + ')')
         bad = self.tmp('oob')
@@ -774,16 +1045,16 @@ class Gen:
 
     def slice(self, n: Node) -> Ex:
         s = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
-        self.want(s, 'str', n.line, 'the value being sliced')
+        s = self.want(s, 'str', n.line, 'the value being sliced')
         lo = '0'
         if n.fields[1].tag == 'n':
             e = self.expr(val_node(n.fields[1]))
-            self.want(e, 'int', n.line, 'a slice bound')
+            e = self.want(e, 'int', n.line, 'a slice bound')
             lo = e.reg
         hi = ''
         if n.fields[2].tag == 'n':
             e2 = self.expr(val_node(n.fields[2]))
-            self.want(e2, 'int', n.line, 'a slice bound')
+            e2 = self.want(e2, 'int', n.line, 'a slice bound')
             hi = e2.reg
         else:
             hi = self.tmp('len')
@@ -798,7 +1069,7 @@ class Gen:
 
     def membership(self, a: Ex, b: Ex, line: int) -> Ex:
         if b.ty == 'str':
-            self.want(a, 'str', line, 'the left side of in')
+            a = self.want(a, 'str', line, 'the left side of in')
             c = self.tmp('c')
             self.emit(c + ' = call i32 @tomato_str_contains(ptr ' + b.reg + ', ptr ' + a.reg + ')')
             i1 = self.tmp('flag')
@@ -807,7 +1078,7 @@ class Gen:
             self.release(b)
             return self.bool_of(i1)
         if is_set(b.ty):
-            self.want(a, set_elem(b.ty), line, 'the left side of in')
+            a = self.want(a, set_elem(b.ty), line, 'the left side of in')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + b.reg + ', i64 ' + self.key_word(a) + ')')
             i1 = self.tmp('flag')
@@ -816,7 +1087,7 @@ class Gen:
             self.release(b)
             return self.bool_of(i1)
         if is_dict(b.ty):
-            self.want(a, 'str', line, 'the left side of in')
+            a = self.want(a, 'str', line, 'the left side of in')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + b.reg + ', i64 ' + self.key_word(a) + ')')
             i1 = self.tmp('flag')
@@ -833,7 +1104,7 @@ class Gen:
         elem = elem_of(lst.ty)
         if not (elem == 'int' or elem == 'bool' or elem == 'str'):
             raise CompileError('the Tomato compiler only searches lists of int, bool and str yet', line)
-        self.want(a, elem, line, 'the left side of in')
+        a = self.want(a, elem, line, 'the left side of in')
         found = self.hidden_slot('in.found')
         counter = self.hidden_slot('in.i')
         self.emit('store i64 0, ptr ' + found)
@@ -908,7 +1179,7 @@ class Gen:
     def logic(self, n: Node, op: str) -> Ex:
         # and / or: the right side only runs when the left side does not decide the answer
         a = self.expr(val_node(n.fields[1]))
-        self.want(a, 'bool', n.line, 'the left side of ' + op)
+        a = self.want(a, 'bool', n.line, 'the left side of ' + op)
         res = self.hidden_slot('logic')
         self.emit('store i64 ' + a.reg + ', ptr ' + res)
         c = self.truth(a, n.line)
@@ -920,7 +1191,7 @@ class Gen:
             self.cond_br(c, end, rhs)
         self.place(rhs)
         b = self.expr(val_node(n.fields[2]))
-        self.want(b, 'bool', n.line, 'the right side of ' + op)
+        b = self.want(b, 'bool', n.line, 'the right side of ' + op)
         self.emit('store i64 ' + b.reg + ', ptr ' + res)
         self.br(end)
         self.place(end)
@@ -928,12 +1199,32 @@ class Gen:
         self.emit(r + ' = load i64, ptr ' + res)
         return ex(r, 'bool')
 
-    def binop(self, n: Node) -> Ex:
+    def binop(self, n: Node, expected: str) -> Ex:
         op = n.fields[0].text
         if op == 'and' or op == 'or':
             return self.logic(n, op)
-        a = self.expr(val_node(n.fields[1]))
-        b = self.expr(val_node(n.fields[2]))
+        left = val_node(n.fields[1])
+        right = val_node(n.fields[2])
+        a = ex('', '')
+        b = ex('', '')
+        if (op == '+' or op == '-' or op == '*') and self.literal_only(n) and is_fixed(expected):
+            a = self.expr(left, expected)
+            b = self.expr(right, expected)
+        elif (op == '+' or op == '-' or op == '*') and self.literal_only(left) and not self.literal_only(right):
+            b = self.expr(right)
+            hint = ''
+            if is_fixed(b.ty):
+                hint = b.ty
+            a = self.expr(left, hint)
+        elif (op == '+' or op == '-' or op == '*') and self.literal_only(right) and not self.literal_only(left):
+            a = self.expr(left)
+            hint = ''
+            if is_fixed(a.ty):
+                hint = a.ty
+            b = self.expr(right, hint)
+        else:
+            a = self.expr(left)
+            b = self.expr(right)
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
         if op == 'in':
             return self.membership(a, b, n.line)
@@ -966,45 +1257,31 @@ class Gen:
         if op == 'in':
             return self.membership(a, b, n.line)
         if op == 'xor':
-            self.want(a, 'bool', n.line, 'the left side of ' + op)
-            self.want(b, 'bool', n.line, 'the right side of ' + op)
+            a = self.want(a, 'bool', n.line, 'the left side of ' + op)
+            b = self.want(b, 'bool', n.line, 'the right side of ' + op)
             return ex(self.arith(op, a.reg, b.reg), 'bool')
         if is_compare and a.ty == 'bool' and b.ty == 'bool':
             if op != '==' and op != '!=':
                 raise CompileError('type error: cannot order bools', n.line)
-        elif a.ty != 'int' or b.ty != 'int':
-            raise CompileError('type error: cannot use ' + op + ' with ' + a.ty + ' and ' + b.ty, n.line)
-        if op == '+':
-            return ex(self.arith('add', a.reg, b.reg), 'int')
-        if op == '-':
-            return ex(self.arith('sub', a.reg, b.reg), 'int')
-        if op == '*':
-            return ex(self.arith('mul', a.reg, b.reg), 'int')
-        if op == '%':
-            return ex(self.modulo(a.reg, b.reg), 'int')
-        if op == '/':
-            bad = self.tmp('zero')
-            self.emit(bad + ' = icmp eq i64 ' + b.reg + ', 0')
-            self.fail_if(bad, 'division by zero')
-            x = self.tmp('x')
-            self.emit(x + ' = sitofp i64 ' + a.reg + ' to double')
-            y = self.tmp('y')
-            self.emit(y + ' = sitofp i64 ' + b.reg + ' to double')
-            q = self.tmp('div')
-            self.emit(q + ' = fdiv double ' + x + ', ' + y)
-            return ex(q, 'float')
-        if op == '==':
-            return self.icmp('eq', a.reg, b.reg)
-        if op == '!=':
+        elif not (is_numeric(a.ty) and is_numeric(b.ty)):
+            raise CompileError('type error: cannot use ' + op + ' with ' + shown(a.ty) + ' and ' + shown(b.ty), n.line)
+        if is_numeric(a.ty):
+            if op == '+':
+                return self.num_arith('add', a, b, n.line)
+            if op == '-':
+                return self.num_arith('sub', a, b, n.line)
+            if op == '*':
+                return self.num_arith('mul', a, b, n.line)
+            if op == '%':
+                return self.num_modulo(a, b, n.line)
+            if op == '/':
+                return self.num_divide(a, b, n.line)
+            if is_compare:
+                return self.num_compare(op, a, b, n.line)
+        elif is_compare:
+            if op == '==':
+                return self.icmp('eq', a.reg, b.reg)
             return self.icmp('ne', a.reg, b.reg)
-        if op == '<':
-            return self.icmp('slt', a.reg, b.reg)
-        if op == '<=':
-            return self.icmp('sle', a.reg, b.reg)
-        if op == '>':
-            return self.icmp('sgt', a.reg, b.reg)
-        if op == '>=':
-            return self.icmp('sge', a.reg, b.reg)
         raise CompileError('the Tomato compiler does not support the operator ' + op + ' yet', n.line)
 
     def call(self, n: Node, statement: bool) -> Ex:
@@ -1031,6 +1308,8 @@ class Gen:
             return self.len_call(args, n.line)
         if name == 'str':
             return self.str_call(args, n.line)
+        if name == 'int' and len(args) == 1:
+            return self.convert_explicit(self.expr(args[0]), 'int', n.line)
         if self.mod.has_class(name):
             return self.construct(self.mod.find_class(name, n.line), args, n.line)
         return self.call_function(self.mod.find(name, n.line), '@tomato.' + name, ex('', ''), args, n.line)
@@ -1046,12 +1325,12 @@ class Gen:
         k = 0
         for a in args:
             v = self.expr(a, info.ptypes[k])
-            self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + info.name)
+            v = self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + info.name)
             values.append(v)
             k = k + 1
         while k < len(info.ptypes):             # the caller supplies the defaults it left out (D19c)
             v = self.expr(info.defaults[k - required], info.ptypes[k])
-            self.want(v, info.ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + info.name)
+            v = self.want(v, info.ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + info.name)
             values.append(v)
             k = k + 1
         parts: list[str] = []
@@ -1100,12 +1379,12 @@ class Gen:
         k = 0
         for a in args:
             v = self.expr(a, ptypes[k])
-            self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + c.name)
+            v = self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + c.name)
             values.append(v)
             k = k + 1
         while k < len(ptypes):
             v = self.expr(defaults[k - required], ptypes[k])
-            self.want(v, ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + c.name)
+            v = self.want(v, ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + c.name)
             values.append(v)
             k = k + 1
         parts: list[str] = []
@@ -1161,7 +1440,7 @@ class Gen:
             if len(args) != 1:
                 raise CompileError('append takes 1 argument, got ' + str(len(args)), n.line)
             v = self.expr(args[0], elem_of(obj.ty))
-            self.want(v, elem_of(obj.ty), n.line, 'the appended item')
+            v = self.want(v, elem_of(obj.ty), n.line, 'the appended item')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + obj.reg + ', i64 8)')
             self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
@@ -1186,7 +1465,7 @@ class Gen:
     def set_method(self, st: Ex, name: str, args: list[Node], line: int) -> Ex:
         if (name == 'add' or name == 'remove') and len(args) == 1:
             v = self.expr(args[0], set_elem(st.ty))
-            self.want(v, set_elem(st.ty), line, 'the set element')
+            v = self.want(v, set_elem(st.ty), line, 'the set element')
             kw = self.key_word(v)
             if name == 'add':
                 self.emit('call ptr @tomato_dict_insert(ptr ' + st.reg + ', i64 ' + kw + ', i32 0)')
@@ -1208,7 +1487,7 @@ class Gen:
         out: list[Ex] = []
         for a in args:
             v = self.expr(a)
-            self.want(v, 'str', line, 'the argument of ' + name)
+            v = self.want(v, 'str', line, 'the argument of ' + name)
             out.append(v)
         return out
 
@@ -1256,7 +1535,7 @@ class Gen:
             if len(args) != 1:
                 raise CompileError('join takes a list[str]', line)
             lst = self.expr(args[0])
-            self.want(lst, 'list[str]', line, 'the argument of join')
+            lst = self.want(lst, 'list[str]', line, 'the argument of join')
             r = self.tmp('joined')
             self.emit(r + ' = call ptr @tomato_str_join(ptr ' + obj.reg + ', ptr ' + lst.reg + ')')
             self.release(lst)
@@ -1271,7 +1550,7 @@ class Gen:
             return ex(r, 'str')
         if name == 'write' and len(args) == 1:
             v = self.expr(args[0])
-            self.want(v, 'str', line, 'the argument of write')
+            v = self.want(v, 'str', line, 'the argument of write')
             self.emit('call void @tomato_file_write(ptr ' + f.reg + ', ptr ' + v.reg + ')')
             self.release(v)
             return ex('', '')
@@ -1284,11 +1563,11 @@ class Gen:
         if len(args) < 1 or len(args) > 2:
             raise CompileError('open(path) or open(path, mode) takes text', line)
         path = self.expr(args[0])
-        self.want(path, 'str', line, 'the path')
+        path = self.want(path, 'str', line, 'the path')
         mode = ex(self.mod.intern('r'), 'str')
         if len(args) == 2:
             mode = self.expr(args[1])
-            self.want(mode, 'str', line, 'the mode')
+            mode = self.want(mode, 'str', line, 'the mode')
         r = self.tmp('file')
         self.emit(r + ' = call ptr @tomato_file_open(ptr ' + path.reg + ', ptr ' + mode.reg + ')')
         bad = self.tmp('nofile')
@@ -1313,7 +1592,7 @@ class Gen:
             self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + v.reg + ', i32 0, i32 2')
             self.emit(r + ' = load i64, ptr ' + lenp)
         else:
-            self.want(v, 'str', line, 'the argument of len')
+            v = self.want(v, 'str', line, 'the argument of len')
             self.emit(r + ' = call i64 @tomato_str_len(ptr ' + v.reg + ')')
         self.release(v)
         return ex(r, 'int')
@@ -1325,8 +1604,11 @@ class Gen:
         if v.ty == 'str':
             return v
         r = self.tmp('text')
-        if v.ty == 'int':
-            self.emit(r + ' = call ptr @tomato_str_from_i64(i64 ' + v.reg + ')')
+        if is_numeric(v.ty):
+            if is_signed(v.ty):
+                self.emit(r + ' = call ptr @tomato_str_from_i64(i64 ' + self.widen(v, 64) + ')')
+            else:
+                self.emit(r + ' = call ptr @tomato_str_from_u64(i64 ' + self.widen(v, 64) + ')')
         elif v.ty == 'float':
             self.emit(r + ' = call ptr @tomato_str_from_f64(double ' + v.reg + ')')
         else:
@@ -1344,8 +1626,12 @@ class Gen:
             values.append(v)
         k = 0
         for v in values:
-            if v.ty == 'int':
-                self.emit('call i32 (ptr, ...) @printf(ptr @.fmt.int, i64 ' + v.reg + ')')
+            if is_numeric(v.ty):
+                wide = self.widen(v, 64)
+                fmt = '@.fmt.int'
+                if not is_signed(v.ty):
+                    fmt = '@.fmt.uint'
+                self.emit('call i32 (ptr, ...) @printf(ptr ' + fmt + ', i64 ' + wide + ')')
             elif v.ty == 'bool':
                 w = self.tmp('w')
                 self.emit(w + ' = trunc i64 ' + v.reg + ' to i32')
@@ -1405,7 +1691,7 @@ class Gen:
             v = self.expr(val_node(s.fields[1]), expected)
             slot_type = v.ty
             if name in self.slots:
-                self.want(v, self.types[name], s.line, 'the assigned value')
+                v = self.want(v, self.types[name], s.line, 'the assigned value')
                 slot_type = self.types[name]
             if slot_type == 'None' or slot_type == '':
                 raise CompileError('the type of ' + name + ' needs a declaration: ' + name + ': Item | None = None', s.line)
@@ -1415,7 +1701,7 @@ class Gen:
             if ty == '':
                 raise CompileError('the Tomato compiler only declares int, bool, str and list variables yet', s.line)
             v = self.expr(val_node(s.fields[2]), ty)
-            self.want(v, ty, s.line, 'the value')
+            v = self.want(v, ty, s.line, 'the value')
             self.store_owned(self.slot(s.fields[0].text, ty, s.line), v)
         elif k == 'Return':
             if s.fields[0].tag == 'z':
@@ -1425,7 +1711,7 @@ class Gen:
                 if self.ret == '':
                     raise CompileError('this function returns no value', s.line)
                 v = self.expr(val_node(s.fields[0]), self.ret)
-                self.want(v, self.ret, s.line, 'the returned value')
+                v = self.want(v, self.ret, s.line, 'the returned value')
                 self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr %retval')
             self.run_finallies(self.try_depth)
             self.br('epilogue')
@@ -1578,9 +1864,9 @@ class Gen:
         lst = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
         if is_dict(lst.ty):
             k = self.expr(val_node(target.fields[1]))
-            self.want(k, 'str', s.line, 'a dict key')
+            k = self.want(k, 'str', s.line, 'a dict key')
             dv = self.expr(val_node(s.fields[1]), dict_value(lst.ty))
-            self.want(dv, dict_value(lst.ty), s.line, 'the assigned value')
+            dv = self.want(dv, dict_value(lst.ty), s.line, 'the assigned value')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + lst.reg + ', i64 ' + self.key_word(k) + ', i32 0)')
             self.store_owned(slot, dv)
@@ -1590,9 +1876,9 @@ class Gen:
         if not is_list(lst.ty):
             raise CompileError('only list and dict items can be assigned by index', s.line)
         i = self.expr(val_node(target.fields[1]))
-        self.want(i, 'int', s.line, 'an index')
+        i = self.want(i, 'int', s.line, 'an index')
         v = self.expr(val_node(s.fields[1]), elem_of(lst.ty))
-        self.want(v, elem_of(lst.ty), s.line, 'the assigned item')
+        v = self.want(v, elem_of(lst.ty), s.line, 'the assigned item')
         addr = self.list_slot(lst, i)
         if is_rc(v.ty):
             old = self.tmp('old')
@@ -1708,13 +1994,13 @@ class Gen:
         stop = ''
         if len(bounds) == 1:
             e = self.expr(bounds[0])
-            self.want(e, 'int', s.line, 'a range bound')
+            e = self.want(e, 'int', s.line, 'a range bound')
             stop = e.reg
         else:
             a = self.expr(bounds[0])
             b = self.expr(bounds[1])
-            self.want(a, 'int', s.line, 'a range bound')
-            self.want(b, 'int', s.line, 'a range bound')
+            a = self.want(a, 'int', s.line, 'a range bound')
+            b = self.want(b, 'int', s.line, 'a range bound')
             start = a.reg
             stop = b.reg
         var = self.slot(s.fields[0].text, 'int', s.line)
@@ -1838,7 +2124,7 @@ def compile_constructor(c: ClassInfo, mod: Mod) -> str:
     for name in c.fnames:
         if c.has_default[k]:
             v = g.expr(c.defaults[d], c.ftypes[k])
-            g.want(v, c.ftypes[k], c.line, 'the default of field ' + name)
+            v = g.want(v, c.ftypes[k], c.line, 'the default of field ' + name)
             addr = g.tmp('fld')
             g.emit(addr + ' = getelementptr %class.' + code + ', ptr ' + obj + ', i32 0, i32 ' + str(k + 2))
             g.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + addr)
@@ -1959,7 +2245,7 @@ def runtime_tables(mod: Mod) -> str:
     t = t + '@tomato_offsets = constant [' + count + ' x ptr] [' + ', '.join(offsets) + ']\n'
     return t
 
-def declarations() -> str:
+def declarations(mod: Mod) -> str:
     d = 'declare i32 @printf(ptr, ...)\n'
     d = d + 'declare i32 @putchar(i32)\n'
     d = d + 'declare void @tomato_fail(ptr)\n'
@@ -2002,6 +2288,10 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_list_new(i64)\n'
     d = d + 'declare ptr @tomato_list_push(ptr, i64)\n'
     d = d + '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
+    d = d + '@.fmt.uint = private constant [5 x i8] c"%llu\\00"\n'
+    for extra in mod.decls:
+        d = d + extra + '\n'
+    d = d + 'declare ptr @tomato_str_from_u64(i64)\n'
     return d
 
 def literal_text(n: Node, ty: str) -> str:
@@ -2292,7 +2582,7 @@ export def compile_module(src: str, dir: str, entry_name: str) -> str:
         bodies = bodies + compile_constructor(c, mod) + '\n'
     wrapper = entry_wrapper(mod.find(entry, 1), mod)
     out = '; written by the Tomato compiler in Tomato (selfhost/compiler.tom)\n'
-    out = out + declarations() + class_types(mod) + runtime_tables(mod) + vtables(mod)
+    out = out + declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod)
     j = 0
     for s in mod.strings:
         out = out + string_global(j, s) + '\n'

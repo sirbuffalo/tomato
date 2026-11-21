@@ -16,6 +16,38 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "fixed_width_ints": """class Pixel:
+    r: uint[length=8] = 0
+    g: uint[length=8] = 255
+
+def add8(a: int[length=8], b: int[length=8]) -> int[length=8]:
+    return a + b
+
+def widen(a: uint[length=8]) -> int:
+    return a
+
+def mix(p: Pixel) -> uint[length=16]:
+    return p.r + p.g
+
+@main
+def main():
+    x: int[length=8] = 100
+    y: int[length=8] = 27
+    z = add8(x, y)
+    print(z, x * 1, -128 + 0)
+    a: uint[length=8] = 200
+    big: uint[length=16] = 1000
+    print(a + 5, big + a, widen(a), a % 7, -7 % 3, (a / 3))
+    p = Pixel()
+    p.r = 10
+    p.g = 100
+    print(mix(p), int[length=8](100), uint[length=8](a), int(a) + 1, a < 201, x == 100)
+    n = 5
+    k: int[length=16] = int[length=16](n * 1000)
+    print(k, str(k) + str(a))
+    m: int[length=8] = -128
+    print(m, add8(x, 27))
+""",
     "sets": """def distinct(words: list[str]) -> int:
     seen: set[str] = {}
     for w in words:
@@ -652,6 +684,9 @@ def main():
 
     def test_unsupported_programs_say_so(self):
         for src, text in (("@main\ndef main():\n    x: tuple[int] = [1]\n", "only declares"),
+                          ("@main\ndef main():\n    x: int[length=8] = 300\n", "does not fit int[length=8]"),
+                          ("@main\ndef main():\n    n = 5\n    x: int[length=8] = n\n", "explicit conversion"),
+                          ("@main\ndef main():\n    a: uint[length=8] = 1\n    print(-a)\n", "cannot be negated"),
                           ("@main\ndef main():\n    print([1])\n", "does not print lists"),
                           ("@main\ndef main():\n    xs: list[int] = []\n    xs.append('a')\n", "type error"),
                           ("@main\ndef main():\n    xs = []\n", "empty list needs a declaration"),
