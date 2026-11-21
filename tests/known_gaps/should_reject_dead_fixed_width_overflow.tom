@@ -1,0 +1,6 @@
+@main
+def main():
+    if False:
+        a: int[length=8] = 100 + 100
+        print(a)
+    print(1)

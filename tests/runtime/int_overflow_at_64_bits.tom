@@ -1,0 +1,4 @@
+@main
+def main():
+    big: int = 4611686018427387904
+    print(big * 2)
