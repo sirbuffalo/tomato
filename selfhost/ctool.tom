@@ -1,0 +1,13 @@
+# The Tomato compiler (slice) as a command: tomato run selfhost/ctool.tom compile FILE   (prints LLVM IR)
+from compiler import compile_module
+
+@main
+def main():
+    print('usage: tomato run selfhost/ctool.tom compile FILE')
+
+@compile
+def compile(path: str):
+    f = open(path)
+    src = f.read()
+    f.close()
+    print(compile_module(src))
