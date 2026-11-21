@@ -1,8 +1,9 @@
 #!/bin/sh
 # The `tomato` command, built on the Tomato compiler written in Tomato (tomatoc). Needs only clang.
-#   tomato run FILE [ENTRY [INPUTS...]] [--llvm FILE.ll ...]   compile, link and run (-- ends flags, so inputs may look like flags)
+#   tomato run FILE [ENTRY [INPUTS...]] [--mode debug|normal|release] [--llvm FILE.ll ...]   compile, link and run (-- ends flags, so inputs may look like flags)
 #   tomato build FILE [-o OUT] [--entry NAME] [--llvm FILE.ll ...]   write a native program
 #   tomato compile FILE [--entry NAME]                         print the LLVM IR
+#   tomato explain CODE FILE                                   decode an error code such as E01:4 (see --mode normal)
 #   tomato repl [FILE ...]                                     type Tomato one piece at a time 
 #   tomato update                                              install the newest release
 #   tomato version
@@ -17,7 +18,7 @@ home="$(cd "$(dirname "$src")/.." && pwd)"
 tomatoc="$home/bin/tomatoc"
 runtime="$home/runtime/tomato_rt.c"
 std="$home/std/"
-commands() { sed -n '3,8p' "$src" | sed 's/^# \{0,1\}//'; }
+commands() { sed -n '3,9p' "$src" | sed 's/^# \{0,1\}//'; }
 usage() { sed -n '2p' "$src" | sed 's/^# \{0,1\}//' >&2; commands >&2; exit 2; }
 die() { echo "error: $*" >&2; exit 1; }
 # update downloads use https only, including after redirects (file:// only for tests, with the override)
@@ -60,6 +61,20 @@ case "$cmd" in
     # reinstall where this copy lives, not into the default folders
     TOMATO_HOME="${home%/native}" TOMATO_BIN="$bindir_for_update" "$work"/tomato-*/install-native.sh || die "the installer failed"
     exit 0 ;;
+  explain)
+    # tomato explain CODE FILE: a code printed by a program built with --mode normal, as the readable error and the source line
+    [ $# -eq 2 ] || usage
+    code="$1"; src_file="$2"
+    [ -f "$src_file" ] || die "cannot read $src_file"
+    case "$code" in E[0-9][0-9]:[0-9]*) ;; *) die "$code is not an error code (they look like E01:4)" ;; esac
+    kind="$(printf '%s' "$code" | sed 's/^E\([0-9][0-9]\):.*/\1/' | sed 's/^0//')"
+    line="$(printf '%s' "$code" | sed 's/^E[0-9][0-9]://')"
+    msg="$(sed -n "${kind}p" "$home/std/errors.txt" 2>/dev/null)"
+    [ -n "$msg" ] || msg="an error the table does not list (code $kind)"
+    echo "error: $msg"
+    text="$(sed -n "${line}p" "$src_file")"
+    echo "  line $line: $(printf '%s' "$text" | sed 's/^[ \t]*//')"
+    exit 0 ;;
   repl|shell) TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;
   run|build|compile) ;;
   *) echo "error: unknown command '$cmd'" >&2; echo "run 'tomato help' for the commands" >&2; exit 2 ;;
@@ -68,7 +83,7 @@ esac
 set -f      # words are split on newlines below; never expand * or ? in them
 nl="
 "
-file=""; entry=""; out=""; llvm=""
+file=""; entry=""; out=""; llvm=""; mode="debug"
 # the words after FILE: for run, ENTRY then inputs; for build/compile, flags. Positional words are kept in "$@" (not
 # a string) so empty and glob-like inputs survive untouched.
 [ $# -ge 1 ] || usage
@@ -83,6 +98,7 @@ while [ $n -gt 0 ]; do
     --) stop=1; shift ;;
     -o) [ "$cmd" = run ] && usage; [ $# -ge 2 ] || usage; out="$2"; shift 2; n=$((n - 1)) ;;
     --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; n=$((n - 1)) ;;
+    --mode) [ $# -ge 2 ] || usage; mode="$2"; shift 2; n=$((n - 1)) ;;
     --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; n=$((n - 1)) ;;
     *) set -- "$@" "$1"; shift ;;
   esac
@@ -97,7 +113,7 @@ else
 fi
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-if ! "$tomatoc" "$file" "$entry" "$std" > "$tmp/program.ll" 2> "$tmp/errors"; then
+if ! "$tomatoc" "$file" "$entry" "$std" "$mode" > "$tmp/program.ll" 2> "$tmp/errors"; then
   sed -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): line \([0-9]*\): /\1 on line \2: /' -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): /\1: /' "$tmp/errors" >&2
   if grep -q "declarations yet" "$tmp/errors"; then
     echo "hint: programs have no top-level code (D47a): put them in a function marked @main; only the repl accepts bare statements" >&2

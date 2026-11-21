@@ -320,6 +320,8 @@ class ClassInfo:
 
 class Mod:
     # what every function of the program shares
+    mode: int = 1                 # error output: 1 debug (full text), 2 normal (short codes), 3 release (nothing) (D34a)
+    errors: list[str] = []        # the messages of std/errors.txt: the code of a message is its line number (normal mode)
     strings: list[str] = []
     infos: list[FuncInfo] = []
     llvm_decls: list[FuncInfo] = []    # the `!name(...)` functions the program declares (D27a)
@@ -342,6 +344,23 @@ class Mod:
             k = k + 1
         self.codes.append(t)
         return len(self.codes) + 1
+
+    def failure_text(self, message: str, line: int) -> str:
+        # what a failure the language raises says in this error mode (D34a): the message, a short code, or nothing
+        if self.mode == 1:
+            return message
+        if self.mode == 3:
+            return ''
+        kind = 99
+        k = 0
+        for known in self.errors:
+            if kind == 99 and known != '' and message.startswith(known):
+                kind = k + 1
+            k = k + 1
+        text = str(kind)
+        if kind < 10:
+            text = '0' + text
+        return 'E' + text + ':' + str(line)
 
     def declare(self, text: str):
         if not (text in self.decls):
@@ -1296,7 +1315,7 @@ class Gen:
         self.cond_br(bad, stop, ok)
         self.place(stop)
         err = self.tmp('err')
-        self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(ptr ' + self.mod.intern(message) + ')')
+        self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(ptr ' + self.mod.intern(self.mod.failure_text(message, self.line)) + ')')
         self.emit('store ptr ' + err + ', ptr @tomato_exc')
         self.emit('store i32 ' + str(self.line) + ', ptr @tomato_exc_line')
         self.emit('store i32 1, ptr @tomato_exc_rt')
@@ -3351,7 +3370,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     out = out + '  call void @tomato.' + info.key + '(' + ', '.join(args) + ')\n'
     out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
     out = out + 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
-    out = out + '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 1)\n  unreachable\n'
+    out = out + '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 ' + str(mod.mode) + ')\n  unreachable\n'
     out = out + 'fine:\n'
     for reg in owned:
         out = out + '  call void @tomato_release(ptr ' + reg + ')\n'
@@ -3599,8 +3618,17 @@ def build_scopes(mod: Mod, items: list[Node], mods: list[str], imports: list[Imp
         for nm in ii.names:
             mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
 
-export def compile_module(src: str, dir: str, std: str, entry_name: str) -> str:
+export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug') -> str:
     mod = Mod()
+    if mode == 'normal':
+        mod.mode = 2
+        table = open(std + 'errors.txt')
+        mod.errors = table.read().split('\n')
+        table.close()
+    elif mode == 'release':
+        mod.mode = 3
+    elif mode != 'debug':
+        raise CompileError('the mode is debug, normal or release, not ' + mode, 0)
     items = val_nodes(parse(builtin_source()).fields[0])
     mods = new_strs()
     for b in items:

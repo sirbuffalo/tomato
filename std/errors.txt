@@ -1,0 +1,15 @@
+division by zero
+modulo by zero
+integer overflow
+index out of range
+slice out of range
+the key is not there
+the element is not there
+duplicate key in a dict literal
+the number does not fit the integer type
+None where a value is needed
+an error raised by the program
+a negative exponent needs a float
+the float result is infinite or not a number
+a float that is infinite or not a number cannot become an int
+an empty text to 

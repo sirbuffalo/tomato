@@ -11,7 +11,7 @@ mkdir -p "$home/bin" "$home/runtime" "$home/std" "$bindir"
 echo "building the Tomato compiler from compiler/bootstrap/tomatoc.ll ..."
 clang -O1 -Wno-override-module -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm
 cp "$root/runtime/tomato_rt.c" "$home/runtime/"
-rm -rf "$home/std"; mkdir -p "$home/std"; cp "$root/std/"*.tom "$home/std/"
+rm -rf "$home/std"; mkdir -p "$home/std"; cp "$root/std/"*.tom "$root/std/errors.txt" "$home/std/"
 rm -rf "$home/examples"; cp -R "$root/examples" "$home/examples"
 cp "$root/VERSION" "$home/VERSION"
 # copy over a temporary name and rename, so a running `tomato update` (a shell script reading this very file) is never

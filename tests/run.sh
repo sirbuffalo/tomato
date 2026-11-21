@@ -83,6 +83,12 @@ t="$home/bin/tomato"
 printf 'print(1)\n' > "$work/top.tom"
 r="$($t run "$work/top.tom" 2>&1)"; case "$r" in *"put them in a function marked @main"*) ok "top-level code gives a clear hint";; *) bad "top-level code gives a clear hint" "$r";; esac
 check "version" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
+printf '@main\ndef main():\n    x = 0\n    print(5 // x)\n' > "$work/dz.tom"
+check "mode debug is readable" "error: division by zero" "$($t run "$work/dz.tom" 2>&1)"
+check "mode normal prints a code" "error E01:4" "$($t run "$work/dz.tom" --mode normal 2>&1)"
+check "mode release prints nothing" "" "$($t run "$work/dz.tom" --mode release 2>&1)"
+check "explain decodes a code" "error: division by zero
+  line 4: print(5 // x)" "$($t explain E01:4 "$work/dz.tom")"
 check "run with inputs" "17 True" "$($t run examples/args.tom prime 17)"
 check "unknown command exits 2" "2" "$($t wghwrltghs >/dev/null 2>&1; echo $?)"
 printf '@main\ndef main(a: str, b: str):\n    print("[" + a + "][" + b + "]")\n' > "$work/echo.tom"

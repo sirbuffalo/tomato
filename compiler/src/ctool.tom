@@ -6,11 +6,11 @@ def main():
     print('usage: tomato run compiler/src/ctool.tom compile FILE')
 
 @compile
-def compile(path: str, entry: str = 'main', std: str = 'std/'):
+def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debug'):
     f = open(path)
     src = f.read()
     f.close()
     i = len(path)
     while i > 0 and path[i - 1] != '/':
         i = i - 1
-    print(compile_module(src, path[0:i], std, entry))
+    print(compile_module(src, path[0:i], std, entry, mode))
