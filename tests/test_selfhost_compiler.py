@@ -272,6 +272,63 @@ class SelfhostCompiler(unittest.TestCase):
                 # stage 1: the same compiler, built natively by the Python compiler, writes the same IR
                 self.assertEqual(self.ir_by_native(path), ir)
 
+    def test_errors_and_inheritance(self):
+        if self.native is None:
+            self.skipTest("clang is not installed")
+        src = """class NegativeError(Error):
+    @init
+    def make(self, message: str, value: int):
+        Error.start(self, message)
+        self.value = value
+
+    value: int = 0
+
+class Base:
+    n: int = 1
+
+    def show(self) -> int:
+        return self.n
+
+class Derived(Base):
+    extra: str = 'x'
+
+def root(n: int) -> int:
+    if n < 0:
+        raise NegativeError('negative', n)
+    r = 0
+    while (r + 1) * (r + 1) <= n:
+        r = r + 1
+    return r
+
+def take(b: Base) -> int:
+    return b.show() + b.n
+
+@main
+def main():
+    d = Derived()
+    d.n = 5
+    print(take(d), d.show(), d.extra, root(17))
+    print(root(0 - 4))
+    print('not reached')
+"""
+        path = self.write("errors", src)
+        out = io.StringIO()
+        with self.assertRaises(TomatoError) as cm:
+            run_source(src, out)
+        ir = self.ir_by_interpreter(path)
+        self.assertEqual(self.ir_by_native(path), ir)
+        ll = os.path.join(self.dir, "errors.ll")
+        with open(ll, "w") as f:
+            f.write(ir)
+        exe = os.path.join(self.dir, "errors")
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+                       check=True, capture_output=True)
+        run = subprocess.run([exe], capture_output=True, text=True)
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(run.stdout, out.getvalue())
+        self.assertIn("uncaught error NegativeError: negative", run.stderr)
+        self.assertIn("uncaught error NegativeError: negative", str(cm.exception))
+
     def test_unsupported_programs_say_so(self):
         for src, text in (("interface I:\n    def f(self)\n@main\ndef main():\n    print(1)\n", "does not support InterfaceDef"),
                           ("@main\ndef main():\n    print([1])\n", "does not print lists"),
@@ -279,7 +336,7 @@ class SelfhostCompiler(unittest.TestCase):
                           ("@main\ndef main():\n    xs = []\n", "empty list needs a declaration"),
                           ("@main\ndef main():\n    x: str = 1\n", "type error"),
                           ("class A:\n    x: int = 0\n@main\ndef main():\n    a = A()\n    a.y = 1\n", "has no field y"),
-                          ("class A:\n    pass\nclass B(A):\n    pass\n@main\ndef main():\n    pass\n", "does not support inheritance"),
+                          ("class A:\n    def f(self):\n        pass\nclass B(A):\n    override def f(self):\n        pass\n@main\ndef main():\n    pass\n", "does not support override"),
                           ("@main\ndef main():\n    print('a' + 1)\n", "type error"),
                           ("def f():\n    pass\n", "no function marked @main"),
                           ("@main\ndef main():\n    x = 1 / 2\n", "operator /")):

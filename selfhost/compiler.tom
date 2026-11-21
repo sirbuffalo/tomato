@@ -79,6 +79,8 @@ class ClassInfo:
     has_default: list[bool] = []
     defaults: list[Node] = []     # only the fields that have a default, in order
     init: str = ''                # the name of the @init method, or ''
+    parent: str = ''              # the parent class, or ''
+    done: bool = False            # fields and defaults are complete (inherited ones come first)
     line: int = 0
 
 class Mod:
@@ -113,10 +115,25 @@ class Mod:
         raise CompileError('unknown function ' + name, line)
 
     def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
+        # the method as the class or its nearest parent defines it
         for f in self.infos:
             if f.name == name and f.owner == cls:
                 return f
+        c = self.find_class(cls, line)
+        if c.parent != '':
+            return self.find_method(c.parent, name, line)
         raise CompileError(cls + ' has no method ' + name, line)
+
+    def subclass(self, a: str, b: str) -> bool:
+        # is class a (written '@A') the same as b or a descendant of it?
+        if a == b:
+            return True
+        if not (is_class(a) and is_class(b)) or not self.has_class(a[1:]):
+            return False
+        c = self.find_class(a[1:], 0)
+        if c.parent == '':
+            return False
+        return self.subclass('@' + c.parent, b)
 
     def has_class(self, name: str) -> bool:
         for c in self.classes:
@@ -279,7 +296,7 @@ class Gen:
             self.emit('store ' + llvm_type(e.ty) + ' ' + e.reg + ', ptr ' + slot)
 
     def want(self, e: Ex, ty: str, line: int, what: str):
-        if e.ty != ty:
+        if e.ty != ty and not self.mod.subclass(e.ty, ty):
             raise CompileError('type error: ' + what + ' is ' + e.ty + ' where ' + ty + ' is needed', line)
 
     # ---- small instructions
@@ -642,6 +659,9 @@ class Gen:
     def call(self, n: Node, statement: bool) -> Ex:
         f = val_node(n.fields[0])
         if f.kind == 'Attr':
+            target = val_node(f.fields[0])
+            if target.kind == 'Name' and not (target.fields[0].text in self.slots) and self.mod.has_class(target.fields[0].text):
+                return self.qualified_call(n, f, target.fields[0].text)
             return self.method_call(n, f)
         if f.kind != 'Name':
             raise CompileError('the Tomato compiler only calls plain functions yet', n.line)
@@ -688,9 +708,25 @@ class Gen:
             r = self.tmp('call')
             self.emit(r + ' = ' + text)
             result = ex(r, info.ret)
+        self.check_error(values)
         for v in values:
             self.release(v)
         return result
+
+    def check_error(self, values: list[Ex]):
+        # an error raised by the callee is pending: drop the borrowed arguments and leave this function (D22a)
+        ex1 = self.tmp('ex')
+        self.emit(ex1 + ' = load ptr, ptr @tomato_exc')
+        has = self.tmp('has')
+        self.emit(has + ' = icmp ne ptr ' + ex1 + ', null')
+        bad = self.label('raised')
+        fine = self.label('fine')
+        self.cond_br(has, bad, fine)
+        self.place(bad)
+        for v in values:
+            self.release(v)
+        self.br('epilogue')
+        self.place(fine)
 
     def construct(self, c: ClassInfo, args: list[Node], line: int) -> Ex:
         # Name(args): allocate, set the declared defaults, run @init (the constructor function does all three)
@@ -711,9 +747,27 @@ class Gen:
             parts.append(llvm_type(v.ty) + ' ' + v.reg)
         r = self.tmp('obj')
         self.emit(r + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + c.name)) + '(' + ', '.join(parts) + ')')
+        self.check_error(values)
         for v in values:
             self.release(v)
         return ex(r, '@' + c.name)
+
+    def qualified_call(self, n: Node, f: Node, cls: str) -> Ex:
+        # Class.method(self, args): the parent's version of a method, called on an object we already have (D12ao)
+        info = self.mod.find_method(cls, f.fields[1].text, n.line)
+        args = val_nodes(n.fields[1])
+        if len(args) == 0:
+            raise CompileError(cls + '.' + info.name + ' needs self as its first argument', n.line)
+        obj = self.expr(args[0])
+        if not self.mod.subclass(obj.ty, '@' + cls):
+            raise CompileError('the first argument must be an instance of ' + cls, n.line)
+        rest: list[Node] = []
+        k = 0
+        for a in args:
+            if k > 0:
+                rest.append(a)
+            k = k + 1
+        return self.call_function(info, '@tomato.m.' + str(self.mod.code_of('@' + info.owner)) + '.' + info.name, obj, rest, n.line)
 
     def method_call(self, n: Node, f: Node) -> Ex:
         name = f.fields[1].text
@@ -735,7 +789,7 @@ class Gen:
             return self.file_method(obj, name, args, n.line)
         if is_class(obj.ty):
             info = self.mod.find_method(obj.ty[1:], name, n.line)
-            return self.call_function(info, '@tomato.m.' + str(self.mod.code_of(obj.ty)) + '.' + name, obj, args, n.line)
+            return self.call_function(info, '@tomato.m.' + str(self.mod.code_of('@' + info.owner)) + '.' + name, obj, args, n.line)
         raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + shown(obj.ty) + ' yet', n.line)
 
     def text_args(self, obj: Ex, name: str, args: list[Node], count: int, line: int) -> list[Ex]:
@@ -952,6 +1006,15 @@ class Gen:
                 v = self.expr(val_node(s.fields[0]), self.ret)
                 self.want(v, self.ret, s.line, 'the returned value')
                 self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr %retval')
+            self.br('epilogue')
+        elif k == 'Raise':
+            v = self.expr(val_node(s.fields[0]))
+            if not self.mod.subclass(v.ty, '@Error'):
+                raise CompileError('raise needs an Error object, found ' + shown(v.ty), s.line)
+            self.emit('store ptr ' + v.reg + ', ptr @tomato_exc')            # the pending error owns the reference
+            self.emit('store i32 ' + str(s.line) + ', ptr @tomato_exc_line')
+            self.emit('store i32 0, ptr @tomato_exc_rt')
+            self.emit('store i32 1, ptr @tomato_exc_seen')
             self.br('epilogue')
         elif k == 'If':
             self.if_stmt(s)
@@ -1231,7 +1294,18 @@ def compile_constructor(c: ClassInfo, mod: Mod) -> str:
         for t in ptypes:
             parts.append(llvm_type(t) + ' %arg.' + str(k))
             k = k + 1
-        g.emit('call void @tomato.m.' + code + '.' + c.init + '(' + ', '.join(parts) + ')')
+        g.emit('call void @' + 'tomato.m.' + str(mod.code_of('@' + mod.find_method(c.name, c.init, c.line).owner)) + '.' + c.init + '(' + ', '.join(parts) + ')')
+        pending = g.tmp('ex')
+        g.emit(pending + ' = load ptr, ptr @tomato_exc')
+        has = g.tmp('has')
+        g.emit(has + ' = icmp ne ptr ' + pending + ', null')
+        bad = g.label('initfailed')
+        ok = g.label('initok')
+        g.cond_br(has, bad, ok)
+        g.place(bad)
+        g.emit('call void @tomato_release(ptr ' + obj + ')')          # an @init that raised leaves no object behind
+        g.br('epilogue')
+        g.place(ok)
     g.emit('store ptr ' + obj + ', ptr %retval')
     g.br('epilogue')
     return finish_function(g, '@tomato.new.' + code, sig, '@' + c.name)
@@ -1266,6 +1340,8 @@ def runtime_tables(mod: Mod) -> str:
         if is_class(code):
             c = mod.find_class(code[1:], 0)
             kinds[slot] = 'i32 1'
+            if c.parent != '':
+                zeros[slot] = 'i64 ' + str(mod.code_of('@' + c.parent))
             offs = new_strs()
             j = 0
             for ft in c.ftypes:
@@ -1313,6 +1389,7 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
     d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
+    d = d + 'declare void @tomato_report_uncaught(ptr, i32, i32, i32)\n'
     d = d + 'declare i64 @tomato_str_find(ptr, ptr)\n'
     d = d + 'declare i32 @tomato_str_startswith(ptr, ptr)\n'
     d = d + 'declare i32 @tomato_str_endswith(ptr, ptr)\n'
@@ -1348,31 +1425,66 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
         info.ptypes.append(pt)
     return info
 
+def builtin_source() -> str:
+    # the names every program can use without importing them (D22a): the same text as tomato/std/builtin.tom
+    t = 'class Error:\n    message: str\n\n    @init\n    def start(self, message: str):\n        self.message = message\n\n'
+    t = t + 'class RuntimeError(Error):\n    @init\n    def make(self, message: str):\n        Error.start(self, message)\n\n'
+    t = t + 'class IOError(RuntimeError):\n    @init\n    def make_io(self, message: str):\n        RuntimeError.make(self, message)\n'
+    return t
+
+def class_node(items: list[Node], name: str) -> Node:
+    for item in items:
+        if item.kind == 'ClassDef' and item.fields[0].text == name:
+            return item
+    raise CompileError('unknown class ' + name, 0)
+
+def resolve_class(mod: Mod, items: list[Node], name: str):
+    # fill a class's fields and defaults, its parent's first (a field may name a class declared later)
+    c = mod.find_class(name, 0)
+    if c.done:
+        return
+    c.done = True
+    node = class_node(items, name)
+    if c.parent != '':
+        if not mod.has_class(c.parent):
+            raise CompileError('unknown parent class ' + c.parent, node.line)
+        resolve_class(mod, items, c.parent)
+        p = mod.find_class(c.parent, node.line)
+        for fname in p.fnames:
+            c.fnames.append(fname)
+        for ftype in p.ftypes:
+            c.ftypes.append(ftype)
+        for flag in p.has_default:
+            c.has_default.append(flag)
+        for dnode in p.defaults:
+            c.defaults.append(dnode)
+    for fd in val_nodes(node.fields[3]):
+        ft = mod.type_name(fd.fields[1])
+        if ft == '':
+            raise CompileError('the Tomato compiler only supports int, bool, str, list and class fields yet', fd.line)
+        c.fnames.append(fd.fields[0].text)
+        c.ftypes.append(ft)
+        c.has_default.append(fd.fields[4].tag == 'n')
+        if fd.fields[4].tag == 'n':
+            c.defaults.append(val_node(fd.fields[4]))
+
 export def compile_module(src: str) -> str:
-    tree = parse(src)
     mod = Mod()
-    items = val_nodes(tree.fields[0])
-    # classes first: their names, then their fields (a field may name a class declared later)
+    items = val_nodes(parse(builtin_source()).fields[0])
+    for user in val_nodes(parse(src).fields[0]):
+        items.append(user)
     for item in items:
         if item.kind == 'ClassDef':
-            if item.fields[1].tag != 'z' or len(item.fields[2].items) > 0:
-                raise CompileError('the Tomato compiler does not support inheritance or interfaces yet', item.line)
+            if len(item.fields[2].items) > 0:
+                raise CompileError('the Tomato compiler does not support interfaces yet', item.line)
             c = ClassInfo()
             c.name = item.fields[0].text
             c.line = item.line
+            if item.fields[1].tag == 's':
+                c.parent = item.fields[1].text
             mod.classes.append(c)
-    for item in items:
-        if item.kind == 'ClassDef':
-            c = mod.find_class(item.fields[0].text, item.line)
-            for fd in val_nodes(item.fields[3]):
-                ft = mod.type_name(fd.fields[1])
-                if ft == '':
-                    raise CompileError('the Tomato compiler only supports int, bool, str, list and class fields yet', fd.line)
-                c.fnames.append(fd.fields[0].text)
-                c.ftypes.append(ft)
-                c.has_default.append(fd.fields[4].tag == 'n')
-                if fd.fields[4].tag == 'n':
-                    c.defaults.append(val_node(fd.fields[4]))
+    for c in mod.classes:
+        resolve_class(mod, items, c.name)
     funcs: list[Node] = []
     entry = ''
     for item in items:
@@ -1387,6 +1499,8 @@ export def compile_module(src: str) -> str:
         elif item.kind == 'ClassDef':
             c = mod.find_class(item.fields[0].text, item.line)
             for m in val_nodes(item.fields[4]):
+                if m.fields[5].flag:
+                    raise CompileError('the Tomato compiler does not support override yet', m.line)
                 info = function_info(m, mod, c.name)
                 mod.infos.append(info)
                 funcs.append(m)
@@ -1411,5 +1525,9 @@ export def compile_module(src: str) -> str:
         out = out + string_c(j, s) + '\n'
         j = j + 1
     out = out + '\n' + bodies
-    out = out + 'define i32 @main() {\n  call void @tomato.' + entry + '()\n  call void @tomato_leak_check()\n  ret i32 0\n}\n'
+    out = out + 'define i32 @main() {\n  call void @tomato.' + entry + '()\n'
+    out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
+    out = out + 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
+    out = out + '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 1)\n  unreachable\n'
+    out = out + 'fine:\n  call void @tomato_leak_check()\n  ret i32 0\n}\n'
     return out
