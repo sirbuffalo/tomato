@@ -1,9 +1,0 @@
-def total(*nums: tuple[int]) -> int:
-    t = 0
-    for n in nums:
-        t += n
-    return t
-
-@main
-def main():
-    print(total(1, 2, 3))

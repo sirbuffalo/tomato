@@ -247,6 +247,10 @@ class FuncInfo:
     owner: str = ''          # the class a method belongs to, or ''
     ret: str = ''
     ptypes: list[str] = []   # without self
+    pnames: list[str] = []   # the names of the parameters, in order
+    stars: int = 0           # how many trailing parameters are *args or **kwargs
+    has_varargs: bool = False
+    has_kwargs: bool = False
     defaults: list[Node] = []     # the default values of the last parameters, in order
     is_init: bool = False
     is_override: bool = False
@@ -628,6 +632,7 @@ class Gen:
     lines: list[str] = []
     allocas: list[str] = []
     rc_slots: list[str] = []
+    kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
     slots: dict[str, str] = {}
     types: dict[str, str] = {}
@@ -1849,17 +1854,20 @@ class Gen:
     def call(self, n: Node, statement: bool) -> Ex:
         f = val_node(n.fields[0])
         if f.kind == 'LlvmRef':
+            if len(n.fields[2].items) > 0:
+                raise CompileError('an LLVM function takes no keyword arguments', n.line)
             return self.llvm_call(n, f.fields[0].text)
         if f.kind == 'Attr':
+            self.kw = n.fields[2].items
             target = val_node(f.fields[0])
             if target.kind == 'Name' and not (target.fields[0].text in self.slots) and self.mod.resolve(target.fields[0].text) != '' and self.mod.has_class(self.mod.resolve(target.fields[0].text)):
                 return self.qualified_call(n, f, self.mod.resolve(target.fields[0].text))
             return self.method_call(n, f)
         if f.kind != 'Name':
             raise CompileError('the Tomato compiler only calls plain functions yet', n.line)
-        if len(n.fields[2].items) > 0:
-            raise CompileError('the Tomato compiler does not support keyword arguments yet', n.line)
         name = f.fields[0].text
+        if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int']:
+            raise CompileError(name + ' takes no keyword arguments', n.line)
         args = val_nodes(n.fields[1])
         if name == 'print':
             if not statement:
@@ -1878,7 +1886,10 @@ class Gen:
         if key == '':
             raise CompileError('unknown function ' + name, n.line)
         if self.mod.has_class(key):
+            if len(n.fields[2].items) > 0:
+                raise CompileError('the Tomato compiler does not take keyword arguments in a constructor yet', n.line)
             return self.construct(self.mod.find_class(key, n.line), args, n.line)
+        self.kw = n.fields[2].items
         return self.call_function(self.mod.find(key, n.line), '@tomato.' + key, ex('', ''), args, n.line)
 
     def llvm_type_of(self, t: str) -> str:
@@ -1935,26 +1946,71 @@ class Gen:
 
     def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
         # a function, or a method when `receiver` holds the object; the callee only borrows its arguments
-        required = len(info.ptypes) - len(info.defaults)
-        if len(args) < required or len(args) > len(info.ptypes):
-            raise CompileError(info.name + ' takes ' + str(len(info.ptypes)) + ' argument(s), got ' + str(len(args)), line)
+        keywords = self.kw
+        self.kw = []
+        nfixed = len(info.ptypes) - info.stars
+        required = nfixed - len(info.defaults)
+        if len(args) > nfixed and not info.has_varargs:
+            raise CompileError(info.name + ' takes ' + str(nfixed) + ' argument(s), got ' + str(len(args)), line)
         values: list[Ex] = []
         if receiver.ty != '':
             values.append(receiver)
+        slots: list[Ex] = []        # one per fixed parameter: its value, or an empty Ex until a keyword or a default fills it
+        for pi in range(nfixed):
+            slots.append(ex('', ''))
+        extra: list[Ex] = []        # the positional values beyond the named parameters (for *args)
         k = 0
+        v = ex('', '')
         for a in args:
-            v = self.expr(a, info.ptypes[k])
-            v = self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + info.name)
-            values.append(v)
+            if k < nfixed:
+                v = self.expr(a, info.ptypes[k])
+                v = self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + info.name)
+                slots[k] = v
+            else:
+                v = self.expr(a, elem_of(info.ptypes[nfixed]))
+                v = self.want(v, elem_of(info.ptypes[nfixed]), line, 'an extra argument of ' + info.name)
+                extra.append(v)
             k = k + 1
-        while k < len(info.ptypes):             # the caller supplies the defaults it left out (D19c)
-            v = self.expr(info.defaults[k - required], info.ptypes[k])
-            v = self.want(v, info.ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + info.name)
-            values.append(v)
-            k = k + 1
+        extra_names: list[str] = []
+        extra_values: list[Ex] = []
+        at = 0
+        for kv in keywords:
+            kname = kv.items[0].text
+            at = -1
+            for pi in range(nfixed):
+                if info.pnames[pi] == kname:
+                    at = pi
+            if at >= 0:
+                if slots[at].ty != '':
+                    raise CompileError('argument ' + kname + ' of ' + info.name + ' is given twice', line)
+                v = self.expr(val_node(kv.items[1]), info.ptypes[at])
+                v = self.want(v, info.ptypes[at], line, 'argument ' + kname + ' of ' + info.name)
+                slots[at] = v
+            elif info.has_kwargs:
+                if kname in extra_names:
+                    raise CompileError('keyword argument ' + kname + ' is given twice', line)
+                kt = dict_value(info.ptypes[len(info.ptypes) - 1])
+                v = self.expr(val_node(kv.items[1]), kt)
+                v = self.want(v, kt, line, 'keyword argument ' + kname + ' of ' + info.name)
+                extra_names.append(kname)
+                extra_values.append(v)
+            else:
+                raise CompileError(info.name + ' has no parameter named ' + kname, line)
+        for pi in range(nfixed):               # the caller supplies the defaults it left out (D19c)
+            if slots[pi].ty == '':
+                if pi < required:
+                    raise CompileError(info.name + ' needs a value for ' + info.pnames[pi], line)
+                v = self.expr(info.defaults[pi - required], info.ptypes[pi])
+                v = self.want(v, info.ptypes[pi], line, 'the default of argument ' + str(pi + 1) + ' of ' + info.name)
+                slots[pi] = v
+            values.append(slots[pi])
+        if info.has_varargs:
+            values.append(self.build_tuple(info.ptypes[nfixed], extra))
+        if info.has_kwargs:
+            values.append(self.build_kwargs(info.ptypes[len(info.ptypes) - 1], extra_names, extra_values))
         parts: list[str] = []
-        for v in values:
-            parts.append(llvm_type(v.ty) + ' ' + v.reg)
+        for v2 in values:
+            parts.append(llvm_type(v2.ty) + ' ' + v2.reg)
         text = 'call ' + self.ret_llvm(info) + ' ' + symbol + '(' + ', '.join(parts) + ')'
         result = ex('', '')
         if info.ret == '':
@@ -1964,9 +2020,30 @@ class Gen:
             self.emit(r + ' = ' + text)
             result = ex(r, info.ret)
         self.check_error(values)
-        for v in values:
-            self.release(v)
+        for v3 in values:
+            self.release(v3)
         return result
+
+    def build_tuple(self, t: str, items: list[Ex]) -> Ex:
+        lst = self.tmp('varargs')
+        self.emit(lst + ' = call ptr @tomato_list_new(i64 ' + str(self.mod.code_of(t)) + ')')
+        for it in items:
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + lst + ', i64 8)')
+            self.emit('store ' + llvm_type(it.ty) + ' ' + it.reg + ', ptr ' + slot)
+        return ex(lst, t)
+
+    def build_kwargs(self, t: str, names: list[str], items: list[Ex]) -> Ex:
+        d = self.tmp('kwargs')
+        self.emit(d + ' = call ptr @tomato_dict_new(i64 ' + str(self.mod.code_of(t)) + ', i64 8, i32 1)')
+        k = 0
+        for it in items:
+            key = ex(self.mod.intern(names[k]), 'str')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + d + ', i64 ' + self.key_word(key) + ', i32 1)')
+            self.emit('store ' + llvm_type(it.ty) + ' ' + it.reg + ', ptr ' + slot)
+            k = k + 1
+        return ex(d, t)
 
     def check_error(self, values: list[Ex]):
         # an error raised by the callee is pending: drop the borrowed arguments and leave this function (D22a)
@@ -3139,13 +3216,22 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     for p in val_nodes(item.fields[1]):
         if p.fields[0].text == 'self' and owner != '':
             continue
-        if p.fields[3].tag != 'z':
-            raise CompileError('the Tomato compiler does not support *args or **kwargs yet', p.line)
         if p.fields[2].tag == 'n':
             info.defaults.append(val_node(p.fields[2]))
         pt = mod.type_name(p.fields[1])
         if pt == '':
             raise CompileError('the Tomato compiler only takes int, bool, str, list and class parameters yet', p.line)
+        if p.fields[3].tag == 's':
+            if p.fields[3].text == '*' and not pt.startswith('tuple['):
+                raise CompileError('*' + p.fields[0].text + ' needs a tuple type, such as tuple[int] (D39a)', p.line)
+            if p.fields[3].text == '**' and not is_dict(pt):
+                raise CompileError('**' + p.fields[0].text + ' needs a dict type, such as dict[str, int] (D39a)', p.line)
+            info.stars = info.stars + 1
+            if p.fields[3].text == '*':
+                info.has_varargs = True
+            else:
+                info.has_kwargs = True
+        info.pnames.append(p.fields[0].text)
         info.ptypes.append(pt)
     return info
 

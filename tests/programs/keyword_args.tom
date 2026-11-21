@@ -1,0 +1,39 @@
+def sub(a: int, b: int) -> int:
+    return a - b
+
+def greet(name: str, times: int = 1, loud: bool = False) -> str:
+    out = ''
+    for i in range(times):
+        if loud:
+            out = out + name.upper()
+        else:
+            out = out + name
+    return out
+
+def total(*nums: tuple[int]) -> int:
+    t = 0
+    for n in nums:
+        t += n
+    return t
+
+def count(**opts: dict[str, int]) -> int:
+    return len(opts)
+
+def mixed(first: int, *rest: tuple[int], **named: dict[str, int]) -> int:
+    return first * 100 + len(rest) * 10 + len(named)
+
+class Calc:
+    base: int = 10
+
+    def add(self, x: int, y: int = 0) -> int:
+        return self.base + x + y
+
+@main
+def main():
+    print(sub(b=1, a=5), sub(5, b=1))
+    print(greet('ab', loud=True, times=2), greet(name='x'))
+    print(total(), total(1), total(1, 2, 3))
+    print(count(), count(a=1), count(a=1, b=2))
+    print(mixed(1), mixed(1, 2, 3), mixed(1, 2, k=5, j=6))
+    c = Calc()
+    print(c.add(1), c.add(y=5, x=1))

@@ -323,7 +323,10 @@ export class Parser:
         out: list[Node] = []
         while not self.is_op(')'):
             star = ''
-            if self.is_op('*'):
+            if self.is_op('**'):
+                self.adv()
+                star = '**'
+            elif self.is_op('*'):
                 self.adv()
                 if self.accept_op('*'):
                     star = '**'

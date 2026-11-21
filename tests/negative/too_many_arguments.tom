@@ -1,0 +1,6 @@
+def f(a: int) -> int:
+    return a
+
+@main
+def main():
+    print(f(1, 2))

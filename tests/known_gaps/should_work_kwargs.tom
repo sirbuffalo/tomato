@@ -1,6 +1,0 @@
-def show(**opts: dict[str, int]) -> int:
-    return len(opts)
-
-@main
-def main():
-    print(show(a=1, b=2))
