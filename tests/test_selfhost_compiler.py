@@ -768,6 +768,13 @@ def main():
     def test_unsupported_programs_say_so(self):
         for src, text in (("@main\ndef main():\n    x: tuple[int] = [1]\n", "only declares"),
                           ("@main\ndef main():\n    x: int[length=8] = 300\n", "does not fit int[length=8]"),
+                          ("class A:\n    private secret: int = 1\n@main\ndef main():\n    a = A()\n    print(a.secret)\n", "field secret is private to class A"),
+                          ("class A:\n    private secret: int = 1\n@main\ndef main():\n    a = A()\n    a.secret = 2\n", "field secret is private to class A"),
+                          ("class A:\n    const id: int = 1\n@main\ndef main():\n    a = A()\n    a.id = 2\n", "const field id cannot change"),
+                          ("class A:\n    def private hidden(self) -> int:\n        return 1\n@main\ndef main():\n    a = A()\n    print(a.hidden())\n", "method hidden is private to class A"),
+                          ("class A:\n    n: int\n@main\ndef main():\n    pass\n", "has no @init but field n has no value"),
+                          ("class A:\n    n: int = 1\n    n: int = 2\n@main\ndef main():\n    pass\n", "field n declared twice"),
+                          ("class A:\n    @init\n    def a(self):\n        pass\n    @init\n    def b(self):\n        pass\n@main\ndef main():\n    pass\n", "more than one @init"),
                           ("@main\ndef main():\n    n = 5\n    x: int[length=8] = n\n", "explicit conversion"),
                           ("@main\ndef main():\n    a: uint[length=8] = 1\n    print(-a)\n", "cannot be negated"),
                           ("@main\ndef main():\n    print([1])\n", "does not print lists"),

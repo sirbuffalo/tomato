@@ -193,6 +193,7 @@ class FuncInfo:
     defaults: list[Node] = []     # the default values of the last parameters, in order
     is_init: bool = False
     is_override: bool = False
+    is_private: bool = False
     key: str = ''            # the program-wide name of a function (module.name outside the main program)
     module: str = 'main'
 
@@ -216,6 +217,9 @@ class ClassInfo:
     node: Node | None = None
     fnames: list[str] = []
     ftypes: list[str] = []
+    fprivate: list[bool] = []     # per field, parent fields first
+    fconst: list[bool] = []
+    fowner: list[str] = []        # the class that declares the field
     has_default: list[bool] = []
     defaults: list[Node] = []     # only the fields that have a default, in order
     init: str = ''                # the name of the @init method, or ''
@@ -545,6 +549,8 @@ class Gen:
     try_depth: int = 0
     slot_count: int = 0
     line: int = 0
+    owner: str = ''           # the class whose method is being compiled, or ''
+    in_init: bool = False
     ret: str = ''
 
     def tmp(self, hint: str) -> str:
@@ -933,9 +939,20 @@ class Gen:
         c = self.mod.find_class(obj.ty[1:], line)
         return c.ftypes[self.mod.field_index(c, name, line)]
 
+    def check_field_access(self, obj: Ex, name: str, writing: bool, line: int):
+        # private fields belong to their class (D12ac, D12r); a const field is set only by its own class's @init (D12o)
+        c = self.mod.find_class(obj.ty[1:], line)
+        k = self.mod.field_index(c, name, line)
+        if c.fprivate[k] and self.owner != c.fowner[k]:
+            raise CompileError('field ' + name + ' is private to class ' + c.fowner[k] + ' (D12ac, D12r)', line)
+        if writing and c.fconst[k] and not (self.in_init and self.owner == c.fowner[k]):
+            raise CompileError('const field ' + name + ' cannot change after initialization (D12o)', line)
+
     def field_get(self, n: Node) -> Ex:
         obj = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
         name = n.fields[1].text
+        if is_class(obj.ty):
+            self.check_field_access(obj, name, False, n.line)
         addr = self.field_addr(obj, name, n.line)
         ft = self.field_type(obj, name, n.line)
         v = self.tmp('f')
@@ -948,6 +965,8 @@ class Gen:
     def assign_field(self, s: Node, target: Node):
         obj = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
         name = target.fields[1].text
+        if is_class(obj.ty):
+            self.check_field_access(obj, name, True, s.line)
         ft = self.field_type(obj, name, s.line)
         v = self.expr(val_node(s.fields[1]), ft)
         v = self.want(v, ft, s.line, 'the assigned value')
@@ -1545,6 +1564,8 @@ class Gen:
     def qualified_call(self, n: Node, f: Node, cls: str) -> Ex:
         # Class.method(self, args): the parent's version of a method, called on an object we already have (D12ao)
         info = self.mod.find_method(cls, f.fields[1].text, n.line)
+        if info.is_private and self.owner != info.owner:
+            raise CompileError('method ' + info.name + ' is private to class ' + info.owner + ' (D12ac, D12r)', n.line)
         args = val_nodes(n.fields[1])
         if len(args) == 0:
             raise CompileError(cls + '.' + info.name + ' needs self as its first argument', n.line)
@@ -1586,6 +1607,8 @@ class Gen:
             return self.call_function(req[0], self.dispatch(obj, name), obj, args, n.line)
         if is_class(obj.ty):
             info = self.mod.find_method(obj.ty[1:], name, n.line)
+            if info.is_private and self.owner != info.owner:
+                raise CompileError('method ' + name + ' is private to class ' + info.owner + ' (D12ac, D12r)', n.line)
             return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
         raise CompileError('the Tomato compiler does not support the method ' + name + ' on ' + shown(obj.ty) + ' yet', n.line)
 
@@ -2203,6 +2226,8 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     mod.cur = info.module
     g = Gen()
     g.mod = mod
+    g.owner = info.owner
+    g.in_init = info.is_init
     g.ret = info.ret
     params = val_nodes(f.fields[1])
     names: list[str] = []
@@ -2533,6 +2558,7 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info.module = mod.cur
     info.key = key_of(mod.cur, info.name)
     if len(item.fields) > 6:
+        info.is_private = item.fields[4].flag
         info.is_override = item.fields[5].flag
         info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
     if item.fields[2].tag != 'z':
@@ -2600,6 +2626,42 @@ def check_classes(mod: Mod):
                     if not same_signature(found[0], r):
                         raise CompileError(c.name + '.' + r.name + ' does not match ' + j + "'s types exactly", c.line)
 
+def check_class_shapes(mod: Mod):
+    # one @init per class (D12aj); a class with no @init anywhere needs every field to have a value (D12af);
+    # a method name is declared once; no class inherits from itself
+    for c in mod.classes:
+        inits = 0
+        names = new_strs()
+        for f in mod.infos:
+            if f.owner == c.name:
+                if f.name in names or f.name in c.fnames:
+                    raise CompileError(f.name + ' is declared twice in ' + c.display, c.line)
+                names.append(f.name)
+                if f.is_init:
+                    inits = inits + 1
+        if inits > 1:
+            raise CompileError('class ' + c.display + ' has more than one @init (D12aj)', c.line)
+        seen = new_strs()
+        walk = c
+        while walk.parent != '':
+            if walk.parent in seen or walk.parent == c.name:
+                raise CompileError('class ' + c.display + ' inherits from itself', c.line)
+            seen.append(walk.parent)
+            walk = mod.find_class(walk.parent, c.line)
+        if not has_init(mod, c):
+            k = 0
+            for fname in c.fnames:
+                if c.fowner[k] == c.name and not c.has_default[k]:
+                    raise CompileError('class ' + c.display + ' has no @init but field ' + fname + ' has no value (D12af)', c.line)
+                k = k + 1
+
+def has_init(mod: Mod, c: ClassInfo) -> bool:
+    if c.init != '':
+        return True
+    if c.parent != '':
+        return has_init(mod, mod.find_class(c.parent, c.line))
+    return False
+
 def builtin_source() -> str:
     # the names every program can use without importing them (D22a): the same text as tomato/std/builtin.tom
     t = 'class Error:\n    message: str\n\n    @init\n    def start(self, message: str):\n        self.message = message\n\n'
@@ -2612,6 +2674,14 @@ def class_def(c: ClassInfo) -> Node:
     if n is None:
         raise CompileError('internal error: class ' + c.name + ' has no declaration', c.line)
     return n
+
+def field_position(c: ClassInfo, name: str) -> int:
+    k = 0
+    for f in c.fnames:
+        if f == name:
+            return k
+        k = k + 1
+    return -1
 
 def resolve_class(mod: Mod, c: ClassInfo):
     # fill a class's fields and defaults, its parent's first (a field may name a class declared later)
@@ -2626,6 +2696,12 @@ def resolve_class(mod: Mod, c: ClassInfo):
         mod.cur = c.module
         for fname in p.fnames:
             c.fnames.append(fname)
+        for fp in p.fprivate:
+            c.fprivate.append(fp)
+        for fc in p.fconst:
+            c.fconst.append(fc)
+        for fo in p.fowner:
+            c.fowner.append(fo)
         for ftype in p.ftypes:
             c.ftypes.append(ftype)
         for flag in p.has_default:
@@ -2636,7 +2712,15 @@ def resolve_class(mod: Mod, c: ClassInfo):
         ft = mod.type_name(fd.fields[1])
         if ft == '':
             raise CompileError('the Tomato compiler only supports int, bool, str, list and class fields yet', fd.line)
+        before = field_position(c, fd.fields[0].text)
+        if before >= 0:
+            if c.fowner[before] == c.name:
+                raise CompileError('field ' + fd.fields[0].text + ' declared twice', fd.line)
+            raise CompileError("redeclaring a parent's field in a subclass is not decided (" + fd.fields[0].text + ')', node.line)
         c.fnames.append(fd.fields[0].text)
+        c.fprivate.append(fd.fields[2].flag)
+        c.fconst.append(fd.fields[3].flag)
+        c.fowner.append(c.name)
         c.ftypes.append(ft)
         c.has_default.append(fd.fields[4].tag == 'n')
         if fd.fields[4].tag == 'n':
@@ -2775,6 +2859,7 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str) -> str:
             raise CompileError('the Tomato compiler does not support ' + item.kind + ' declarations yet', item.line)
         k = k + 1
     check_classes(mod)
+    check_class_shapes(mod)
     for item in user:
         if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text == 'entry:' + entry_name:
             entry = item.fields[0].text
