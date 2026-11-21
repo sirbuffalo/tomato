@@ -34,7 +34,7 @@ def val_nodes(v: Val) -> list[Node]:
     return out
 
 def basic_type(name: str) -> bool:
-    return name == 'int' or name == 'bool' or name == 'str' or name == 'File'
+    return name == 'int' or name == 'bool' or name == 'str' or name == 'File' or name == 'float'
 
 def is_list(t: str) -> bool:
     return t.startswith('list[')
@@ -79,7 +79,17 @@ def shown(t: str) -> str:
 def llvm_type(t: str) -> str:
     if is_rc(t) or t == 'File':
         return 'ptr'
+    if t == 'float':
+        return 'double'
     return 'i64'
+
+def zero_of(t: str) -> str:
+    # the value a function returns when it never stored one
+    if is_rc(t):
+        return 'null'
+    if t == 'float':
+        return '0.0'
+    return '0'
 
 class Ex:
     # a compiled expression: the register or constant that holds it, and its Tomato type
@@ -803,6 +813,17 @@ class Gen:
             return ex(self.arith('mul', a.reg, b.reg), 'int')
         if op == '%':
             return ex(self.modulo(a.reg, b.reg), 'int')
+        if op == '/':
+            bad = self.tmp('zero')
+            self.emit(bad + ' = icmp eq i64 ' + b.reg + ', 0')
+            self.fail_if(bad, 'division by zero')
+            x = self.tmp('x')
+            self.emit(x + ' = sitofp i64 ' + a.reg + ' to double')
+            y = self.tmp('y')
+            self.emit(y + ' = sitofp i64 ' + b.reg + ' to double')
+            q = self.tmp('div')
+            self.emit(q + ' = fdiv double ' + x + ', ' + y)
+            return ex(q, 'float')
         if op == '==':
             return self.icmp('eq', a.reg, b.reg)
         if op == '!=':
@@ -1093,6 +1114,8 @@ class Gen:
         r = self.tmp('text')
         if v.ty == 'int':
             self.emit(r + ' = call ptr @tomato_str_from_i64(i64 ' + v.reg + ')')
+        elif v.ty == 'float':
+            self.emit(r + ' = call ptr @tomato_str_from_f64(double ' + v.reg + ')')
         else:
             w = self.tmp('w')
             self.emit(w + ' = trunc i64 ' + v.reg + ' to i32')
@@ -1115,6 +1138,11 @@ class Gen:
                 self.emit(w + ' = trunc i64 ' + v.reg + ' to i32')
                 t = self.tmp('text')
                 self.emit(t + ' = call ptr @tomato_str_from_bool(i32 ' + w + ')')
+                self.emit('call void @tomato_print_strobj(ptr ' + t + ')')
+                self.emit('call void @tomato_release(ptr ' + t + ')')
+            elif v.ty == 'float':
+                t = self.tmp('text')
+                self.emit(t + ' = call ptr @tomato_str_from_f64(double ' + v.reg + ')')
                 self.emit('call void @tomato_print_strobj(ptr ' + t + ')')
                 self.emit('call void @tomato_release(ptr ' + t + ')')
             else:
@@ -1405,10 +1433,7 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
         g.lines.append('  ret void')
     text = 'define ' + llvm_ret + ' ' + symbol + '(' + ', '.join(sig) + ') {\nentry:\n'
     if ret != '':
-        zero = '0'
-        if is_rc(ret):
-            zero = 'null'
-        text = text + '  %retval = alloca ' + llvm_ret + '\n  store ' + llvm_ret + ' ' + zero + ', ptr %retval\n'
+        text = text + '  %retval = alloca ' + llvm_ret + '\n  store ' + llvm_ret + ' ' + zero_of(ret) + ', ptr %retval\n'
     if len(g.allocas) > 0:
         text = text + '\n'.join(g.allocas) + '\n'
     text = text + '\n'.join(g.lines) + '\n}\n'
@@ -1583,6 +1608,8 @@ def declarations() -> str:
     d = d + 'declare ptr @tomato_str_slice(ptr, i64, i64)\n'
     d = d + 'declare ptr @tomato_str_from_i64(i64)\n'
     d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
+    d = d + 'declare ptr @tomato_str_from_f64(double)\n'
+    d = d + 'declare double @tomato_parse_f64(ptr, i32)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
     d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
     d = d + 'declare ptr @tomato_dict_new(i64, i64, i32)\n'
@@ -1641,6 +1668,8 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             out = out + '  %a' + si + '.v = call ptr @tomato_str_from_cstr(ptr %a' + si + '.s)\n'
         elif t == 'int':
             out = out + '  %a' + si + '.v = call i64 @tomato_parse_i64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+        elif t == 'float':
+            out = out + '  %a' + si + '.v = call double @tomato_parse_f64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
         elif t == 'bool':
             out = out + '  %a' + si + '.w = call i32 @tomato_parse_bool(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
             out = out + '  %a' + si + '.v = zext i32 %a' + si + '.w to i64\n'
@@ -1653,6 +1682,8 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
                 if dflt.kind != 'StrLit':
                     raise CompileError('the Tomato compiler reads a text entry point default only as a text literal yet', dflt.line)
                 out = out + '  %a' + si + ' = phi ptr [ %a' + si + '.v, %p' + si + ' ], [ ' + mod.intern(dflt.fields[0].text) + ', %d' + si + ' ]\n'
+            elif t == 'float':
+                raise CompileError('the Tomato compiler does not read a float entry point default yet', dflt.line)
             else:
                 out = out + '  %a' + si + ' = phi i64 [ %a' + si + '.v, %p' + si + ' ], [ ' + literal_text(dflt, t) + ', %d' + si + ' ]\n'
         else:
@@ -1660,6 +1691,8 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
         if t == 'str':
             args.append('ptr ' + reg)
             owned.append(reg)
+        elif t == 'float':
+            args.append('double ' + reg)
         else:
             args.append('i64 ' + reg)
         i = i + 1

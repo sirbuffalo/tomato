@@ -16,6 +16,24 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SELF = os.path.join(ROOT, "selfhost")
 
 PROGRAMS = {
+    "floats": """def half(n: int) -> float:
+    return n / 2
+
+def average(a: int, b: int) -> float:
+    return (a + b) / 2
+
+class Stat:
+    mean: float = 0 / 1
+
+@main
+def main():
+    x = half(7)
+    s = Stat()
+    s.mean = average(3, 4)
+    print(x, half(10), s.mean, 1 / 3, str(x) + '!')
+    y: float = 22 / 7
+    print(y)
+""",
     "dicts": """class Table:
     names: dict[str, int] = {}
     labels: dict[str, str] = {}
@@ -462,7 +480,7 @@ def main():
                           ("class A:\n    def f(self):\n        pass\nclass B(A):\n    override def f(self):\n        pass\n@main\ndef main():\n    pass\n", "does not support override"),
                           ("@main\ndef main():\n    print('a' + 1)\n", "type error"),
                           ("def f():\n    pass\n", "no function marked @main"),
-                          ("@main\ndef main():\n    x = 1 / 2\n", "operator /")):
+                          ("@main\ndef main():\n    x = 1 / 2\n    print(x + x)\n", "type error")):
             with self.subTest(src=src):
                 path = self.write("bad", src)
                 with self.assertRaises(TomatoError) as cm:
