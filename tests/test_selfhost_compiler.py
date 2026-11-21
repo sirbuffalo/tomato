@@ -470,6 +470,103 @@ def main():
                 self.assertEqual(run.stderr, "")
                 self.assertEqual(run.stdout.rstrip("\n"), dump(parse(open(f).read())))
 
+    def test_try_catch(self):
+        if self.native is None:
+            self.skipTest("clang is not installed")
+        src = """class MyError(Error):
+    @init
+    def make(self, message: str, code: int):
+        Error.start(self, message)
+        self.code = code
+
+    code: int = 0
+
+def risky(n: int) -> int:
+    if n < 0:
+        raise MyError('negative', n)
+    if n == 0:
+        raise RuntimeError('zero')
+    return n * 2
+
+def guarded(n: int) -> str:
+    try:
+        v = risky(n)
+        return 'ok ' + str(v)
+    catch MyError as e:
+        return 'mine ' + e.message + str(e.code)
+    catch RuntimeError as e:
+        return 'runtime ' + e.message
+    finally:
+        print('finally', n)
+
+def loop() -> int:
+    total = 0
+    for i in range(5):
+        try:
+            if i == 1:
+                continue
+            if i == 3:
+                break
+            total = total + i
+        finally:
+            total = total + 100
+    return total
+
+def nested() -> str:
+    try:
+        try:
+            risky(0)
+        catch MyError:
+            return 'wrong'
+        finally:
+            print('inner finally')
+    catch Error as e:
+        return 'outer ' + e.message
+    return 'none'
+
+def with_else(n: int) -> str:
+    out = ''
+    try:
+        v = risky(n)
+        out = 'v' + str(v)
+    catch Error:
+        out = 'err'
+    else:
+        out = out + ' else'
+    return out
+
+@main
+def main():
+    print(guarded(4))
+    print(guarded(0 - 2))
+    print(guarded(0))
+    print(loop())
+    print(nested())
+    print(with_else(3), with_else(0))
+    try:
+        risky(0 - 1)
+    catch MyError as e:
+        print('caught', e.code)
+    risky(0)
+    print('not reached')
+"""
+        path = self.write("trycatch", src)
+        out = io.StringIO()
+        with self.assertRaises(TomatoError):
+            run_source(src, out)
+        ir = self.ir_by_interpreter(path)
+        self.assertEqual(self.ir_by_native(path), ir)
+        ll = os.path.join(self.dir, "trycatch.ll")
+        with open(ll, "w") as f:
+            f.write(ir)
+        exe = os.path.join(self.dir, "trycatch")
+        subprocess.run(["clang", "-Wno-override-module", "-o", exe, ll, os.path.join(ROOT, "tomato", "runtime", "tomato_rt.c"), "-lm"],
+                       check=True, capture_output=True)
+        run = subprocess.run([exe], capture_output=True, text=True)
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(run.stdout, out.getvalue())
+        self.assertIn("uncaught error RuntimeError: zero", run.stderr)
+
     def test_unsupported_programs_say_so(self):
         for src, text in (("interface I:\n    def f(self)\n@main\ndef main():\n    print(1)\n", "does not support InterfaceDef"),
                           ("@main\ndef main():\n    print([1])\n", "does not print lists"),

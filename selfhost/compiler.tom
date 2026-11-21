@@ -274,6 +274,15 @@ def string_c(index: int, s: str) -> str:
     # a plain C copy, which is what tomato_fail prints
     return '@.str.' + str(index) + '.c = private constant [' + str(len(s) + 1) + ' x i8] c"' + escape_text(s) + '\\00"'
 
+class TryInfo:
+    # a try statement being compiled (D22a)
+    catch_l: str = ''         # where an error raised in the body goes
+    prop_l: str = ''          # where an error leaving the statement goes (after the finally block runs)
+    final: list[Node] = []
+    has_final: bool = False
+    loop_depth: int = 0
+    state: str = 'body'       # 'body' while compiling the try body, then 'post'
+
 class Gen:
     # one function being compiled
     mod: Mod = Mod()
@@ -287,6 +296,9 @@ class Gen:
     breaks: list[str] = []
     conts: list[str] = []
     loop_depth: int = 0
+    tries: list[TryInfo] = []
+    try_depth: int = 0
+    slot_count: int = 0
     ret: str = ''
 
     def tmp(self, hint: str) -> str:
@@ -315,12 +327,26 @@ class Gen:
         self.emit('br i1 ' + c + ', label %' + yes + ', label %' + no)
         self.terminated = True
 
+    def unwind_target(self) -> str:
+        # where an error raised here goes: the innermost try's catch (or its finally once past the body), else out of
+        # the function, which returns early so that its caller can check (D22a)
+        if self.try_depth > 0:
+            t = self.tries[self.try_depth - 1]
+            if t.state == 'body':
+                return t.catch_l
+            return t.prop_l
+        return 'epilogue'
+
     def slot(self, name: str, ty: str, line: int) -> str:
         if name in self.slots:
             if self.types[name] != ty:
                 raise CompileError('variable ' + name + ' has type ' + self.types[name] + ', not ' + ty, line)
             return self.slots[name]
-        reg = '%v.' + name + '.' + str(len(self.slots))
+        return self.new_slot(name, ty)
+
+    def new_slot(self, name: str, ty: str) -> str:
+        self.slot_count = self.slot_count + 1
+        reg = '%v.' + name + '.' + str(self.slot_count)
         self.allocas.append('  ' + reg + ' = alloca ' + llvm_type(ty))
         if is_rc(ty):
             self.allocas.append('  store ptr null, ptr ' + reg)
@@ -913,7 +939,7 @@ class Gen:
         self.place(bad)
         for v in values:
             self.release(v)
-        self.br('epilogue')
+        self.br(self.unwind_target())
         self.place(fine)
 
     def construct(self, c: ClassInfo, args: list[Node], line: int) -> Ex:
@@ -1214,6 +1240,7 @@ class Gen:
                 v = self.expr(val_node(s.fields[0]), self.ret)
                 self.want(v, self.ret, s.line, 'the returned value')
                 self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr %retval')
+            self.run_finallies(self.try_depth)
             self.br('epilogue')
         elif k == 'Raise':
             v = self.expr(val_node(s.fields[0]))
@@ -1223,7 +1250,9 @@ class Gen:
             self.emit('store i32 ' + str(s.line) + ', ptr @tomato_exc_line')
             self.emit('store i32 0, ptr @tomato_exc_rt')
             self.emit('store i32 1, ptr @tomato_exc_seen')
-            self.br('epilogue')
+            self.br(self.unwind_target())
+        elif k == 'Try':
+            self.try_stmt(s)
         elif k == 'If':
             self.if_stmt(s)
         elif k == 'While':
@@ -1233,15 +1262,130 @@ class Gen:
         elif k == 'Break':
             if self.loop_depth == 0:
                 raise CompileError('break outside a loop', s.line)
+            self.run_finallies(self.tries_in_loop())
             self.br(self.breaks[self.loop_depth - 1])
         elif k == 'Continue':
             if self.loop_depth == 0:
                 raise CompileError('continue outside a loop', s.line)
+            self.run_finallies(self.tries_in_loop())
             self.br(self.conts[self.loop_depth - 1])
         elif k == 'Pass':
             pass
         else:
             raise CompileError('the Tomato compiler does not support ' + k + ' statements yet', s.line)
+
+    def tries_in_loop(self) -> int:
+        # how many of the innermost try statements sit inside the current loop
+        n = 0
+        k = self.try_depth
+        while k > 0 and self.tries[k - 1].loop_depth == self.loop_depth:
+            n = n + 1
+            k = k - 1
+        return n
+
+    def run_finallies(self, n: int):
+        # run the finally blocks of the n innermost try statements, innermost first: a return, break or continue is
+        # leaving them. A raise inside one of these blocks goes to the handlers outside its try (D22a).
+        saved = self.try_depth
+        k = saved - 1
+        while k >= saved - n:
+            if self.tries[k].has_final:
+                self.try_depth = k
+                self.block(self.tries[k].final)
+            k = k - 1
+        self.try_depth = saved
+
+    def push_try(self, info: TryInfo):
+        if self.try_depth < len(self.tries):
+            self.tries[self.try_depth] = info
+        else:
+            self.tries.append(info)
+        self.try_depth = self.try_depth + 1
+
+    def try_stmt(self, s: Node):
+        handlers = s.fields[1].items
+        for h in handlers:
+            cname = h.items[0].text
+            if not self.mod.has_class(cname) or not self.mod.subclass('@' + cname, '@Error'):
+                raise CompileError('catch needs an error class (a subclass of Error), found ' + cname, s.line)
+        info = TryInfo()
+        info.catch_l = self.label('catch')
+        info.prop_l = self.label('prop')
+        info.has_final = s.fields[3].tag == 'l'
+        if info.has_final:
+            info.final = val_nodes(s.fields[3])
+        info.loop_depth = self.loop_depth
+        else_l = self.label('tryelse')
+        handled_l = self.label('tryhandled')
+        end_l = self.label('tryend')
+        self.push_try(info)
+        self.block(val_nodes(s.fields[0]))
+        if not self.terminated:
+            self.br(else_l)
+        # an error raised in the body arrives here with the pending error set
+        self.place(info.catch_l)
+        info.state = 'post'
+        pending = self.tmp('ex')
+        self.emit(pending + ' = load ptr, ptr @tomato_exc')
+        tp = self.tmp('tp')
+        self.emit(tp + ' = getelementptr { i64, i64 }, ptr ' + pending + ', i32 0, i32 1')
+        raw = self.tmp('rawcode')
+        self.emit(raw + ' = load i64, ptr ' + tp)
+        code = self.tmp('code')
+        self.emit(code + ' = and i64 ' + raw + ', 4294967295')
+        for h in handlers:
+            cname = h.items[0].text
+            isa = self.tmp('isa')
+            self.emit(isa + ' = call i32 @tomato_is_subclass(i64 ' + code + ', i64 ' + str(self.mod.code_of('@' + cname)) + ')')
+            hit = self.tmp('hit')
+            self.emit(hit + ' = icmp ne i32 ' + isa + ', 0')
+            match = self.label('match')
+            nxt = self.label('nomatch')
+            self.cond_br(hit, match, nxt)
+            self.place(match)
+            self.emit('store ptr null, ptr @tomato_exc')             # handled: the catch variable takes the reference
+            if h.items[1].tag == 's':
+                var = h.items[1].text
+                reg = ''
+                if var in self.slots and self.types[var] != '@' + cname:
+                    reg = self.new_slot(var, '@' + cname)     # the name is bound again, to a new slot of the new type
+                else:
+                    reg = self.slot(var, '@' + cname, s.line)
+                self.store_owned(reg, ex(pending, '@' + cname))
+            else:
+                self.emit('call void @tomato_release(ptr ' + pending + ')')
+            self.block(val_nodes(h.items[2]))
+            if not self.terminated:
+                self.br(handled_l)
+            self.place(nxt)
+        self.br(info.prop_l)                                          # no clause matched: keep propagating
+        self.place(else_l)
+        if s.fields[2].tag == 'l':
+            self.block(val_nodes(s.fields[2]))
+        if not self.terminated:
+            self.br(handled_l)
+        # every normal way out of the statement runs the finally block once
+        self.place(handled_l)
+        self.try_depth = self.try_depth - 1
+        if info.has_final:
+            self.block(info.final)
+        if not self.terminated:
+            self.br(end_l)
+        # an error is leaving the statement: park it while the finally block runs, then keep propagating
+        self.place(info.prop_l)
+        if info.has_final:
+            hold = self.tmp('hold')
+            self.allocas.append('  ' + hold + ' = alloca ptr')
+            held = self.tmp('pending')
+            self.emit(held + ' = load ptr, ptr @tomato_exc')
+            self.emit('store ptr ' + held + ', ptr ' + hold)
+            self.emit('store ptr null, ptr @tomato_exc')
+            self.block(info.final)
+            back = self.tmp('back')
+            self.emit(back + ' = load ptr, ptr ' + hold)
+            self.emit('store ptr ' + back + ', ptr @tomato_exc')
+        self.br(self.unwind_target())
+        self.place(end_l)
 
     def assign_item(self, s: Node, target: Node):
         lst = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
@@ -1612,6 +1756,7 @@ def declarations() -> str:
     d = d + 'declare double @tomato_parse_f64(ptr, i32)\n'
     d = d + 'declare void @tomato_print_strobj(ptr)\n'
     d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
+    d = d + 'declare i32 @tomato_is_subclass(i64, i64)\n'
     d = d + 'declare ptr @tomato_dict_new(i64, i64, i32)\n'
     d = d + 'declare ptr @tomato_dict_find(ptr, i64)\n'
     d = d + 'declare ptr @tomato_dict_insert(ptr, i64, i32)\n'
