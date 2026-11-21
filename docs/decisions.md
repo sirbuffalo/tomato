@@ -1134,6 +1134,7 @@ Source: Davis's Dashboard message:
 - Reading: from now on new compiler and tooling code is written in Tomato (with LLVM IR for low-level runtime pieces), not Python. The Python implementation stays as the bootstrap: it builds compiler v1 written in Tomato, v1 builds v2, and so on. The Python interpreter is not extended unless a Tomato program needs a feature it lacks.
 - First step: `selfhost/lexer.tom`, a lexer in Tomato that produces exactly the tokens of the Python lexer on every example, standard-library and self-hosting file (checked by `tests/test_selfhost.py`). It runs under the interpreter; the Python compiler cannot build it yet (`in` on lists and text, text methods and slicing, reading files in compiled code).
 - Git: I commit as I go and push once a feature fully works, not every time. The first push was a single clean commit on top of `origin/main`.
+- Confirmed by Davis (asked whether Python may still change): language features go in the Python bootstrap until Tomato can build itself; new tools and the compiler passes are written in Tomato.
 - Open: the order of the remaining compiler passes (parser, checker, code generator), how the runtime moves from C to LLVM IR, and the compiled-code features the lexer needs.
 
 ### D28b — command-line inputs take the most restrictive type: accepted (reading to confirm)

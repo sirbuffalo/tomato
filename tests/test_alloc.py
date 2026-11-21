@@ -617,6 +617,11 @@ class OptionalsAndDefaults(unittest.TestCase):
         self.same(prog("x: Node | None = None\ns: str | None = 'a'\nprint(x in None, s in None, None in None, 3 in None, Node() in None)\n"
                        "if x in None:\n    print('none')", pre=self.NODE))
 
+    def test_in_list(self):
+        self.same(prog("xs = [1, 2, 3]\nss = ['a', 'bc']\nw = 'b' + 'c'\n"
+                       "print(2 in xs, 5 in xs, 'a' in ss, w in ss, 'z' in ss, 1 in [4, 1], 'x' in ['x'])\n"
+                       "if 3 in xs:\n    print('yes')"))
+
     def test_xor(self):
         self.same(prog("a = True\nb = False\nprint(a xor b, a xor a, b xor b, a or b xor a, not a xor a)"))
 
@@ -924,7 +929,6 @@ class CompileTime(unittest.TestCase):
 
     def test_unsupported_heap_features_say_so(self):
         for body, pre in (("x = 'a'.upper()", ""), ("print([1])", ""),
-                          ("print(1 in [1])", ""),
                           ("xs = [1]\nprint(xs[0:1])", "")):
             with self.assertRaises(TomatoError, msg=body) as cm:
                 compile_to_ir(prog(body.replace("print(len(d))", "d = {1: 2}\nprint(len(d))"), pre=pre) if False else prog(body, pre=pre))

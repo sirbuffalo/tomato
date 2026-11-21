@@ -974,6 +974,8 @@ class FuncCompiler:
             slot = self.tmp("slot")
             self.emit("%s = call ptr @tomato_dict_find(ptr %s, i64 %s)" % (slot, b, self.key_word(a, ta)))   # keys compare by value
             self.emit("%s = icmp ne ptr %s, null" % (r, slot))
+        elif isinstance(tb, ListT):
+            return self.list_contains(a, ta, b, tb, line)
         else:
             self.release(a, ta)
             self.release(b, tb)
@@ -982,6 +984,47 @@ class FuncCompiler:
             raise NotCompiled("the in operator on %r" % (tb,), line)
         self.release(a, ta)
         self.release(b, tb)
+        return r, BoolT
+
+    def list_contains(self, a, ta, lst, lt, line):
+        """`x in list`: walk the items and compare each with ==, stopping at the first match."""
+        found = self.hidden_slot("in.found", INT)
+        counter = self.hidden_slot("in.i", INT)
+        self.emit("store i64 0, ptr %s" % found)
+        self.emit("store i64 0, ptr %s" % counter)
+        head, body, step, end = self.label("inhead"), self.label("inbody"), self.label("instep"), self.label("inend")
+        self.br(head)
+        self.place(head)
+        i, ln, go, lenp = [self.tmp(x) for x in ("i", "n", "go", "lenp")]
+        self.emit("%s = load i64, ptr %s" % (i, counter))
+        self.emit("%s = getelementptr { i64, i64, i64, i64, ptr }, ptr %s, i32 0, i32 2" % (lenp, lst))
+        self.emit("%s = load i64, ptr %s" % (ln, lenp))
+        self.emit("%s = icmp slt i64 %s, %s" % (go, i, ln))
+        self.cond_br(go, body, end)
+        self.place(body)
+        addr = self.list_slot(lst, lt, i)
+        item = self.tmp("item")
+        self.emit("%s = load %s, ptr %s" % (item, llvm_type(lt.elem), addr))
+        self.retain(item, lt.elem)
+        self.retain(a, ta)
+        eq, _ = self.compare("==", item, lt.elem, a, ta, line)
+        hit = self.label("inhit")
+        self.cond_br(eq, hit, step)
+        self.place(hit)
+        self.emit("store i64 1, ptr %s" % found)
+        self.br(end)
+        self.place(step)
+        cur, nxt = self.tmp("cur"), self.tmp("next")
+        self.emit("%s = load i64, ptr %s" % (cur, counter))
+        self.emit("%s = add i64 %s, 1" % (nxt, cur))
+        self.emit("store i64 %s, ptr %s" % (nxt, counter))
+        self.br(head)
+        self.place(end)
+        f, r = self.tmp("found"), self.tmp("in")
+        self.emit("%s = load i64, ptr %s" % (f, found))
+        self.emit("%s = icmp ne i64 %s, 0" % (r, f))
+        self.release(a, ta)
+        self.release(lst, lt)
         return r, BoolT
 
     def key_list(self, d, t):
