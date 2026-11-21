@@ -1,0 +1,21 @@
+interface Named:
+    def name(self) -> str
+
+class Thing implements Named:
+    label: str
+    @init
+    def make(self, label: str):
+        self.label = label
+    def name(self) -> str:
+        return self.label
+    @add
+    def plus(self, other: Thing) -> Thing:
+        return Thing(self.label + '+' + other.label)
+
+def show(n: Named) -> str:
+    return n.name()
+
+@main
+def main():
+    t = Thing('a') + Thing('b')
+    print(show(t))

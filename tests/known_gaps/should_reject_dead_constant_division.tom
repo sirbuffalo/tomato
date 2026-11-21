@@ -1,0 +1,5 @@
+@main
+def main():
+    if False:
+        print(5 / 0)
+    print(1)

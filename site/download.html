@@ -14,6 +14,8 @@ tomato version</code></pre>
 <h2>Update</h2>
 <pre><code>tomato update</code></pre>
 <p>Reads <a href="latest.json">latest.json</a>, checks the download against its SHA-256, and reinstalls when a newer version exists.</p>
+<h2>Trust</h2>
+<p><code>tomato update</code> trusts HTTPS and the manifest: it reads the version, download URL and SHA-256 from one file, requires an official <code>github.com/sirbuffalo/tomato/releases</code> URL and a valid checksum, and only ever upgrades. Archives are not separately signed yet, so anyone who can change <code>latest.json</code> on the site or the <code>main</code> branch can change what gets installed.</p>
 <h2>From source</h2>
 <pre><code>git clone https://github.com/sirbuffalo/tomato
 cd tomato

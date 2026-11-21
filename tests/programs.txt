@@ -6,3 +6,6 @@ modules
 fixed_width
 text_and_maps
 cycle
+numbers_rules
+optionals_defaults
+try_paths

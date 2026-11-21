@@ -510,7 +510,13 @@ def escape_ir_char(c: str, line: int) -> str:
         return '\\5C'
     if c == '\0':
         return '\\00'
-    raise CompileError('the Tomato compiler only supports ASCII text literals yet', line)
+    raise CompileError('the Tomato compiler only supports ASCII text literals yet (D17a-c say text is UTF-8)', line)
+
+def check_ascii_literal(s: str, line: int):
+    i = 0
+    while i < len(s):
+        escape_ir_char(s[i], line)       # stops with the literal's line on a character that is not ASCII
+        i = i + 1
 
 def escape_text(s: str) -> str:
     body = ''
@@ -869,6 +875,7 @@ class Gen:
                 return ex('1', 'bool')
             return ex('0', 'bool')
         if k == 'StrLit':
+            check_ascii_literal(n.fields[0].text, n.line)    # reported against the literal's own line
             return ex(self.mod.intern(n.fields[0].text), 'str')
         if k == 'Name':
             name = n.fields[0].text

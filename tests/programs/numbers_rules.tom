@@ -1,0 +1,9 @@
+@main
+def main():
+    print(7 % 3, -7 % 3, 7 % -3, -7 % -3, 0 % 5)
+    z = 0 / 5
+    n = 0 / -5
+    print(z, n)
+    print(5 / 2, 4 / 2, 1 / 4)
+    a: int[length=8] = -128
+    print(a)

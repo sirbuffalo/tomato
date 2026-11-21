@@ -33,15 +33,15 @@ case "$cmd" in
     # the site's own HTTPS may not be ready (GitHub issues its certificate after DNS is set up), so fall back to the
     # same manifest on GitHub's HTTPS host; plain HTTP is never used because the manifest carries the checksum
     manifest="$(curl -fsSL "$url" 2>/dev/null)" || manifest="$(curl -fsSL "${TOMATO_UPDATE_FALLBACK:-https://raw.githubusercontent.com/sirbuffalo/tomato/main/site/latest.json}" 2>/dev/null)" || die "cannot read $url"
-    latest="$(printf '%s' "$manifest" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p')"
-    archive="$(printf '%s' "$manifest" | sed -n 's/.*"url" *: *"\([^"]*\)".*/\1/p')"
+    latest="$(printf '%s' "$manifest" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -1)"
+    archive="$(printf '%s' "$manifest" | sed -n 's/.*"url" *: *"\([^"]*\)".*/\1/p' | head -1)"
     [ -n "$latest" ] && [ -n "$archive" ] || die "the manifest at $url is not understood"
     # only upgrade: an older or equal version (a stale cache, a rolled-back manifest) is left alone
     newer="$(printf '%s\n%s\n' "$have" "$latest" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
     if [ "$latest" = "$have" ] || [ "$newer" != "$latest" ]; then echo "tomato v$have is the latest"; exit 0; fi
     echo "updating v$have -> v$latest"
     work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-    want="$(printf '%s' "$manifest" | sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p')"
+    want="$(printf '%s' "$manifest" | sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' | head -1)"
     # fail closed: the manifest is the only integrity anchor, so it must carry a checksum and name an official download
     case "$want" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) die "the manifest has no valid sha256: not updating" ;; esac
     if [ -z "$TOMATO_UPDATE_ALLOW_ANY_URL" ]; then

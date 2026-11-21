@@ -1,0 +1,23 @@
+class Cell:
+    next: Cell | None
+    value: int
+    @init
+    def make(self, value: int):
+        self.next = None
+        self.value = value
+
+def total(c: Cell | None) -> int:
+    if c is None:
+        return 0
+    return c.value + total(c.next)
+
+def greet(name: str, punct: str = '!') -> str:
+    return 'hi ' + name + punct
+
+@main
+def main():
+    a = Cell(1)
+    b = Cell(2)
+    a.next = b
+    print(total(a), total(None))
+    print(greet('x'), greet('y', '?'))

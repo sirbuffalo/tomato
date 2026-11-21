@@ -49,7 +49,7 @@ for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tes
   if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
     out="$("$work/asan" $arg 2>&1 >/dev/null | head -3)"
     [ -z "$out" ] && ok "asan $name" || bad "asan $name" "$out"
-  else echo "skip asan $name (this clang cannot build with the sanitizer)"; fi
+  else bad "asan $name" "this clang cannot build with -fsanitize=address"; fi
 done
 
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
@@ -111,6 +111,9 @@ neg private_field "is private to class C"
 neg const_field "cannot change after initialization"
 neg bad_argument "argument 1 of f is str where int is needed"
 neg bad_return "the returned value is str where int is needed"
+neg dead_range_literal "does not fit uint[length=8]"
+neg wrong_type_in_branch "the assigned value is str where int is needed"
+neg non_ascii "only supports ASCII text literals"
 neg bad_assign "the assigned value is str where int is needed"
 neg non_bool_condition "a condition is int where bool is needed"
 
@@ -124,7 +127,25 @@ rt divide_by_zero "division by zero" 1
 rt index "index out of range" 1
 rt overflow "integer overflow" 1
 rt caught "caught boom" 0
+rt dict_missing_key "the key is not there" 1
+rt set_missing "the element is not there" 1
 
+
+echo "== known gaps (decided behavior the compiler does not have yet) =="
+# Each file is a program a decision says must be rejected (should_reject_*) or must work (should_work_*). The test passes
+# while the gap exists and FAILS when the compiler gains the behavior, so the list cannot go stale: then move the program
+# to tests/negative or tests/programs.
+for f in tests/known_gaps/*.tom; do
+  n="$(basename "$f" .tom)"
+  accepted=no
+  if "$work/c1" "$f" main std/ > "$work/g.ll" 2>/dev/null && clang -O1 -w -o "$work/g" "$work/g.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+    accepted=yes; "$work/g" > /dev/null 2>&1 || accepted=fails
+  fi
+  case "$n" in
+    should_reject_*) [ "$accepted" = no ] && bad "known gap closed: $n" "move it to tests/negative" || ok "known gap: $n (still accepted)";;
+    should_work_*) [ "$accepted" = yes ] && bad "known gap closed: $n" "move it to tests/programs" || ok "known gap: $n (still unsupported)";;
+  esac
+done
 
 echo "== release files =="
 for d in specification decisions decision-inventory open-questions; do cmp -s "docs/$d.md" "site/docs/$d.md" && ok "site/docs/$d.md is in sync" || bad "site/docs/$d.md is in sync" "run site/build.sh"; done

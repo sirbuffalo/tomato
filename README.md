@@ -5,6 +5,7 @@ Tomato is a statically typed, reference-counted language with indentation syntax
 - **Version:** in `VERSION` (v0.x).
 - **Install:** `./install-native.sh` builds the compiler from the checked-in IR with clang alone and installs `tomato` (`run`, `build`, `compile`, `repl`, `update`, `version`, `help`).
 - **Numbers:** `int` is 64-bit and stops on overflow for now (see the status table in `docs/specification.md`).
+- **Update trust:** `tomato update` trusts HTTPS plus the checksum in `site/latest.json`; archives are not signed yet.
 - **Test:** `tests/run.sh` (needs only clang).
 
 ## Layout

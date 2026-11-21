@@ -1,0 +1,5 @@
+@main
+def main():
+    d: dict[str, int] = {}
+    d["a"] = 1
+    print(d["b"])

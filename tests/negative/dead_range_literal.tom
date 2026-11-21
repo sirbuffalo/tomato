@@ -1,0 +1,5 @@
+@main
+def main():
+    if False:
+        x: uint[length=8] = 300
+    print(1)

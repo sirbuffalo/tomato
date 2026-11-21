@@ -1,0 +1,29 @@
+def f(n: int) -> int:
+    try:
+        if n == 1:
+            raise Error('one')
+        if n == 2:
+            return 20
+    catch Error as e:
+        print('catch', e.message)
+        return 10
+    else:
+        print('else', n)
+    finally:
+        print('finally', n)
+    return 30
+
+@main
+def main():
+    print(f(1), f(2), f(3))
+    i = 0
+    while i < 5:
+        i += 1
+        try:
+            if i == 2:
+                continue
+            if i == 4:
+                break
+            print('i', i)
+        finally:
+            print('f', i)

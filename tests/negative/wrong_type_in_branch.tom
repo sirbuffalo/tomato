@@ -1,0 +1,6 @@
+@main
+def main():
+    x: int = 3
+    if 1 < 2:
+        x = "s"
+    print(x)
