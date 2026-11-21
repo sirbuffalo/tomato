@@ -1,0 +1,12 @@
+from rational import rational
+
+@main
+def main():
+    a = rational(1, 3)
+    b = rational(1, 6)
+    print(a + b, a - b, a * b, a / b)
+    print(rational(6, -8), rational(4, 2), rational(0, 5))
+    print(a < b, a > b, a == rational(2, 6), a != b, a <= a, b >= a)
+    print(str(a + b) + '!', (a + b).to_float())
+    big = rational(10 ** 30, 3)
+    print(big * big)

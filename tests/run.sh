@@ -160,6 +160,7 @@ rt overflow "integer overflow" 1
 rt caught "caught boom" 0
 rt dict_missing_key "the key is not there" 1
 rt set_missing "the element is not there" 1
+rt rational_zero "a rational cannot have a zero denominator" 1
 rt float_overflow "infinite or not a number" 1
 rt negative_exponent "a negative exponent needs a float" 1
 

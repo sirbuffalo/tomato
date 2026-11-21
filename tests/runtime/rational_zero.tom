@@ -1,0 +1,5 @@
+from rational import rational
+
+@main
+def main():
+    print(rational(1, 0))

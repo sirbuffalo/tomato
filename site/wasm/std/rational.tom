@@ -1,0 +1,77 @@
+# Exact fractions, written in Tomato (D05am-ar): `from rational import rational`.
+# A rational is always stored reduced, with a positive denominator.
+
+def gcd(a: int, b: int) -> int:
+    x = a
+    y = b
+    if x < 0:
+        x = 0 - x
+    if y < 0:
+        y = 0 - y
+    while y != 0:
+        t = x % y
+        x = y
+        y = t
+    return x
+
+export class rational:
+    num: int = 0
+    den: int = 1
+
+    @init
+    def make(self, n: int, d: int = 1):
+        if d == 0:
+            raise RuntimeError('a rational cannot have a zero denominator')
+        top = n
+        bottom = d
+        if bottom < 0:
+            top = 0 - top
+            bottom = 0 - bottom
+        g = gcd(top, bottom)
+        self.num = top // g
+        self.den = bottom // g
+
+    @add
+    def plus(self, other: rational) -> rational:
+        return rational(self.num * other.den + other.num * self.den, self.den * other.den)
+
+    @sub
+    def minus(self, other: rational) -> rational:
+        return rational(self.num * other.den - other.num * self.den, self.den * other.den)
+
+    @mul
+    def times(self, other: rational) -> rational:
+        return rational(self.num * other.num, self.den * other.den)
+
+    @div
+    def over(self, other: rational) -> rational:
+        return rational(self.num * other.den, self.den * other.num)
+
+    @eq
+    def same(self, other: rational) -> bool:
+        return self.num == other.num and self.den == other.den
+
+    @lt
+    def less(self, other: rational) -> bool:
+        return self.num * other.den < other.num * self.den
+
+    @le
+    def less_equal(self, other: rational) -> bool:
+        return self.num * other.den <= other.num * self.den
+
+    @gt
+    def greater(self, other: rational) -> bool:
+        return self.num * other.den > other.num * self.den
+
+    @ge
+    def greater_equal(self, other: rational) -> bool:
+        return self.num * other.den >= other.num * self.den
+
+    @str
+    def text(self) -> str:
+        if self.den == 1:
+            return str(self.num)
+        return str(self.num) + '/' + str(self.den)
+
+    def to_float(self) -> float:
+        return self.num / self.den

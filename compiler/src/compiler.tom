@@ -8,7 +8,7 @@
 # uses it, and a slot releases what it held. Everything else stops with a CompileError that says what is not
 # supported yet. Numbers are 64-bit and wrap on overflow, a zero `%` divisor is not checked, and `and` and `or`
 # evaluate both sides (P53).
-from parser import Node, Val, parse, new_strs
+from parser import Node, Val, parse, new_strs, is_operator_marker
 
 def with_line(message: str, line: int) -> str:
     # errors say which line of the program they are about
@@ -172,6 +172,34 @@ def fits_literal(n: int, t: str, negative: bool) -> bool:
         return True
     return n <= pow2(bits) - 1
 
+def operator_marker_of(op: str) -> str:
+    # the marker of the method that implements an operator ('' when the operator cannot be customised)
+    if op == '+':
+        return 'add'
+    if op == '-':
+        return 'sub'
+    if op == '*':
+        return 'mul'
+    if op == '/':
+        return 'div'
+    if op == '//':
+        return 'floordiv'
+    if op == '%':
+        return 'mod'
+    if op == '**':
+        return 'pow'
+    if op == '==' or op == '!=':
+        return 'eq'
+    if op == '<':
+        return 'lt'
+    if op == '<=':
+        return 'le'
+    if op == '>':
+        return 'gt'
+    if op == '>=':
+        return 'ge'
+    return ''
+
 def is_optional(t: str) -> bool:
     return t.endswith('?')
 
@@ -253,6 +281,7 @@ class FuncInfo:
     has_kwargs: bool = False
     defaults: list[Node] = []     # the default values of the last parameters, in order
     is_init: bool = False
+    op: str = ''           # the operator a method implements (@add and the other operator markers), or ''
     is_override: bool = False
     is_private: bool = False
     key: str = ''            # the program-wide name of a function (module.name outside the main program)
@@ -343,6 +372,18 @@ class Mod:
         c = self.find_class(cls, 0)
         if c.parent != '':
             return self.lookup_method(c.parent, name)
+        return found
+
+    def find_op(self, cls: str, marker: str) -> list[FuncInfo]:
+        # the method of the class (or its nearest parent) marked as implementing this operator: a list of one, or none
+        found: list[FuncInfo] = []
+        for fi in self.infos:
+            if fi.owner == cls and fi.op == marker:
+                found.append(fi)
+                return found
+        c = self.find_class(cls, 0)
+        if c.parent != '':
+            return self.find_op(c.parent, marker)
         return found
 
     def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
@@ -1857,6 +1898,8 @@ class Gen:
             self.release(a)
             self.release(b)
             return self.bool_of(c)
+        if is_class(a.ty) and operator_marker_of(op) != '' and (len(self.mod.find_op(a.ty[1:], operator_marker_of(op))) > 0 or not (op == '==' or op == '!=')):
+            return self.operator_call(a, b, op, n.line)
         if a.ty == 'str' or b.ty == 'str':
             if a.ty != b.ty:
                 raise CompileError('type error: cannot use ' + op + ' with ' + a.ty + ' and ' + b.ty, n.line)
@@ -1906,6 +1949,36 @@ class Gen:
                 return self.icmp('eq', a.reg, b.reg)
             return self.icmp('ne', a.reg, b.reg)
         raise CompileError('the Tomato compiler does not support the operator ' + op + ' yet', n.line)
+
+    def operator_call(self, a: Ex, b: Ex, op: str, line: int) -> Ex:
+        # a + b on a class whose method is marked @add (and the same for the other operators): the method of the left
+        # operand runs with the right operand as its one argument (D12l)
+        marker = operator_marker_of(op)
+        found = self.mod.find_op(a.ty[1:], marker)
+        if len(found) == 0:
+            raise CompileError('class ' + a.ty[1:] + ' has no method marked @' + marker + ' for ' + op + ' (D12j)', line)
+        info = found[0]
+        if len(info.ptypes) != 1:
+            raise CompileError('the @' + marker + ' method ' + info.name + ' takes exactly one argument besides self', line)
+        b = self.want(b, info.ptypes[0], line, 'the right operand of ' + op)
+        values: list[Ex] = [a, b]
+        text = 'call ' + self.ret_llvm(info) + ' ' + self.dispatch(a, info.name) + '(ptr ' + a.reg + ', ' + llvm_type(b.ty) + ' ' + b.reg + ')'
+        result = ex('', '')
+        if info.ret == '':
+            self.emit(text)
+        else:
+            r = self.tmp('op')
+            self.emit(r + ' = ' + text)
+            result = ex(r, info.ret)
+        self.check_error(values)
+        self.release(a)
+        self.release(b)
+        if marker == 'eq' or marker == 'lt' or marker == 'le' or marker == 'gt' or marker == 'ge':
+            if result.ty != 'bool':
+                raise CompileError('the @' + marker + ' method ' + info.name + ' must return bool', line)
+        if op == '!=':
+            return ex(self.arith('xor', result.reg, '1'), 'bool')
+        return result
 
     def call(self, n: Node, statement: bool) -> Ex:
         f = val_node(n.fields[0])
@@ -2372,12 +2445,29 @@ class Gen:
         self.release(v)
         return self.tag_small(r)
 
+    def class_text(self, v: Ex, line: int) -> Ex:
+        # print and str() of an object whose class has a method marked @str: that method's text (P65)
+        found = self.mod.find_op(v.ty[1:], 'str')
+        if len(found) == 0:
+            raise CompileError('class ' + v.ty[1:] + ' has no method marked @str, so print and str() cannot show it (P65)', line)
+        info = found[0]
+        if len(info.ptypes) != 0 or info.ret != 'str':
+            raise CompileError('the @str method ' + info.name + ' takes no argument besides self and returns str', line)
+        r = self.tmp('shown')
+        self.emit(r + ' = call ptr ' + self.dispatch(v, info.name) + '(ptr ' + v.reg + ')')
+        self.check_error([v])
+        return ex(r, 'str')
+
     def str_call(self, args: list[Node], line: int) -> Ex:
         if len(args) != 1:
             raise CompileError('str(x) takes one argument', line)
         v = self.expr(args[0])
         if v.ty == 'str':
             return v
+        if is_class(v.ty):
+            shown_text = self.class_text(v, line)
+            self.release(v)
+            return shown_text
         r = self.tmp('text')
         if v.ty == 'int':
             self.emit(r + ' = call ptr @tomato_int_str(i64 ' + v.reg + ')')
@@ -2429,6 +2519,12 @@ class Gen:
                 self.emit(t + ' = call ptr @tomato_str_from_f64(double ' + v.reg + ')')
                 self.emit('call void @tomato_print_strobj(ptr ' + t + ')')
                 self.emit('call void @tomato_release(ptr ' + t + ')')
+            elif is_class(v.ty):
+                t = self.tmp('text')
+                shown_text = self.class_text(v, self.line)
+                self.emit('call void @tomato_print_strobj(ptr ' + shown_text.reg + ')')
+                self.emit('call void @tomato_release(ptr ' + shown_text.reg + ')')
+                self.release(v)
             elif is_union(v.ty):
                 t = self.tmp('text')
                 self.emit(t + ' = call ptr @tomato_box_str(ptr ' + v.reg + ')')
@@ -3278,6 +3374,8 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
         info.is_private = item.fields[4].flag
         info.is_override = item.fields[5].flag
         info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
+        if item.fields[6].tag == 's' and item.fields[6].text != 'init' and is_operator_marker(item.fields[6].text):
+            info.op = item.fields[6].text
     if item.fields[2].tag != 'z':
         info.ret = mod.type_name(item.fields[2])
         if info.ret == '':
