@@ -4,7 +4,7 @@
 <h1>Guide</h1>
 <p class="lead">A tour of the language as it runs today. Every example runs on this site's Run page. The <a href="docs.html">reference</a> lists every decision behind these rules.</p>
 <h2>Programs</h2>
-<p>A program starts at a function marked <code>@main</code>. The examples below show bare statements, which this site's Run page and repl wrap in an <code>@main</code> for you. Functions also take other entry names, such as <code>@prime</code>; <code>tomato run FILE prime 17</code> runs it with the input <code>17</code>, read as the most restrictive type its parameter allows.</p>
+<p>A program starts at a function marked <code>@main</code>. A program has no top-level code: statements go inside a function. Only the repl accepts bare statements, and some short examples below are written that way, as you would type them there. Functions also take other entry names, such as <code>@prime</code>; <code>tomato run FILE prime 17</code> runs it with the input <code>17</code>, read as the most restrictive type its parameter allows.</p>
 <pre><code>def greet(name: str, times: int = 2) -> str:
     out = ""
     for i in range(times):

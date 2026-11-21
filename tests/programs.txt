@@ -15,4 +15,3 @@ mixed_arithmetic
 floor_divide_power
 bitwise
 float_ops
-top_level_code

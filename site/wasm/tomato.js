@@ -55,14 +55,43 @@
     });
   };
 
+  // Programs have no top-level code (D16a); only the repl (options.repl) accepts bare statements, and they are
+  // moved into an @main function first.
+  // Returns { text, map } where map[n] is the line of the user's source that line n of the generated program came from,
+  // so errors are reported against what the user typed.
+  function wrapMain(src) {
+    var lines = src.split("\n"), identity = lines.map(function (_, i) { return i + 1; });
+    if (/^@main\b/m.test(src)) return { text: src, map: [0].concat(identity) };
+    var decl = [], body = [], cur = null;
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i];
+      if (!l.trim() || l[0] === " " || l[0] === "\t" || l[0] === "#") { (cur || decl).push([l, i + 1]); continue; }
+      var first = l.split(/[ (]/)[0];
+      var isDecl = /^(def|class|interface|from|import|export)$/.test(first) || l[0] === "@" || l[0] === "!" || /^\w+ implements /.test(l);
+      cur = isDecl ? decl : body; cur.push([l, i + 1]);
+      if (l[0] === "@" && i + 1 < lines.length) { i++; cur.push([lines[i], i + 1]); }
+    }
+    if (!body.some(function (b) { return b[0].trim() && b[0][0] !== "#"; })) return { text: src, map: [0].concat(identity) };
+    var out = [], map = [0], firstBody = body[0][1];
+    decl.forEach(function (d) { out.push(d[0]); map.push(d[1]); });
+    out.push(""); map.push(firstBody);
+    out.push("@main"); map.push(firstBody);
+    out.push("def main():"); map.push(firstBody);
+    body.forEach(function (b) { out.push(b[0].trim() ? "    " + b[0] : b[0]); map.push(b[1]); });
+    return { text: out.join("\n") + "\n", map: map };
+  }
+  function remap(text, map) {
+    return text.replace(/\bline (\d+)/g, function (m, n) { return "line " + (map[+n] || n); });
+  }
+  TomatoWasm.wrapMain = wrapMain;
 
   TomatoWasm.prototype.build = function (source, options) {   // options.extra: imported modules
     var self = this, t0 = Date.now();
-    var wrapped = { text: source };
+    var wrapped = (options && options.repl) ? wrapMain(source) : { text: source, map: [0].concat(source.split("\n").map(function (_, i) { return i + 1; })) };
     return this.compile(wrapped.text, "main", options && options.extra).then(function (c) {
-      if (!c.ok) return { ok: false, stage: "compile", error: tidy(c.error), ms: Date.now() - t0 };
+      if (!c.ok) return { ok: false, stage: "compile", error: remap(tidy(c.error), wrapped.map), ms: Date.now() - t0 };
       return self.run(c.ir, options).then(function (r) {
-        return { ok: true, stage: "run", stdout: r.stdout, stderr: r.stderr, exit: r.code, timed_out: r.timedOut, ir: c.ir, ms: Date.now() - t0 };
+        return { ok: true, stage: "run", stdout: r.stdout, stderr: remap(r.stderr, wrapped.map), exit: r.code, timed_out: r.timedOut, ir: c.ir, ms: Date.now() - t0 };
       });
     });
   };

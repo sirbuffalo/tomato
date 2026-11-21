@@ -1174,7 +1174,7 @@ Source: Davis's Dashboard message:
 - `a ** b`: whole ** whole is a whole number and a negative exponent is an error, because the result type may not depend on a value (write `2.0 ** -2`); a float on either side gives a float. `**` binds tighter than a minus on its left (`-2 ** 2` is -4) and nests to the right (P57).
 - Open: mixing `rational` with `float`, how a fixed-width result of `//` or `**` is typed from literals (it needs an explicit conversion like other non-literal results), `float` as an entry-point parameter in compiled programs beyond what D28b gives, and the compiler written in Tomato, which does not have these yet.
 
-### D42a — top-level code, version numbers and the repl: accepted (reading to confirm; top-level code not implemented in v0.x, the “v-1.x” Python version is retired by D46a)
+### D42a — top-level code, version numbers and the repl: accepted (reading to confirm; the top-level-code rule is replaced by D47a, the “v-1.x” Python version is retired by D46a)
 
 - Evidence: Davis wrote “no @main needed toplevel code works”, then “though if there is a @main run it instead”, then “you can just do @main()”; “add version number this is v0” and “python is v-1” with “v0.x” and “v-1.x”; and asked for a repl (“tomato shell … open a shell … with compiling and variables already set”), then chose the name `repl`.
 - A main program may have statements at the top level; they are the program, run top to bottom. If the file has an `@main`, only `@main` runs and the top-level code is checked but not run; code can also call `main()` itself. This replaces the “no top-level code” rule of D16a for the main program. Imported modules still may not have top-level code (P60).
@@ -1209,6 +1209,12 @@ Source: Davis's Dashboard message:
 - Evidence: Davis wrote “stop updating python version it should never be used … remove it from the github, delete it, it will still be backed up in past commit” and “no more python”.
 - v0.6 removed `python/`, the Python compile server, the Python tests and `install.sh`. The runtime moved to `runtime/` and the standard library to `std/`. Tests are `tests/run.sh` (shell, clang only).
 - D38a's “language features go in the Python bootstrap” no longer applies: features are added to the compiler written in Tomato. Features that existed only in the Python prototype (see the status table in the specification) are not implemented until rebuilt there. D40a, D41a and D42a describe intended behavior; the status table says what runs today.
+
+### D47a — no top-level code, except in the repl: accepted (reading to confirm)
+
+- Evidence: after v0.18 made the compiler read top-level statements as the program (D42a), Davis wrote “No top level”, then “Only main”, then “Except in repl”.
+- A program file has no top-level code: files hold declarations, and execution starts at `@main` or another entry point (D16a stands). This replaces the top-level-code rule of D42a and P60. The repl is the one place bare statements are accepted; it wraps them into a generated `@main` and replays the session (D42a's repl part stands). The website's Run page follows the file rule; its repl tab follows the repl rule.
+- Reading to confirm: “Only main” is read as keeping `@main` as the entry, not as removing the other `@name` entry points of D16a.
 
 ## Pending discussion
 
