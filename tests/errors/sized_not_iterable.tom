@@ -1,0 +1,7 @@
+def walk(thing: Sized):
+    for x in thing:
+        print(x)
+
+@main
+def main():
+    walk([1, 2])

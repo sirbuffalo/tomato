@@ -58,6 +58,27 @@ def union_members(t: str) -> list[str]:
 def union_type(members: list[str]) -> str:
     return 'U:' + ';'.join(sorted(members))
 
+# The built-in interfaces (D50a): 'I:T' is Iterable[T], 'Z' is Sized and 'IZ:T' is Iterable[T] & Sized. A value of one of these types
+# is a box like a union's, holding whatever concrete value was passed (a list, text, a range, an object with @iter or @len).
+def is_dyn(t: str) -> bool:
+    return t == 'Z' or t.startswith('I:') or t.startswith('IZ:')
+
+def dyn_iterable(t: str) -> bool:
+    return t != 'Z'
+
+def dyn_sized(t: str) -> bool:
+    return t == 'Z' or t.startswith('IZ:')
+
+# the item type of an Iterable type
+def dyn_item(t: str) -> str:
+    if t.startswith('IZ:'):
+        return t[3:]
+    return t[2:]
+
+# lists, tuples, sets and dicts share one layout, so one box member stands for all of them
+def dyn_seq() -> str:
+    return 'list[int]'
+
 def box_kind(member: str) -> int:
     # how the runtime prints a boxed value: 1 whole number, 3 float, 4 text, 5 bool, 6 anything else
     if member == 'int':
@@ -215,7 +236,7 @@ def strip_optional(t: str) -> str:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t)
+    return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t)
 
 def shown(t: str) -> str:
     # a type as the user writes it
@@ -223,6 +244,12 @@ def shown(t: str) -> str:
         if task_status(t) != '':
             return 'task[' + shown(task_result(t)) + ', ' + shown(task_status(t)) + ']'
         return 'task[' + shown(task_result(t)) + ']'
+    if t == 'Z':
+        return 'Sized'
+    if t.startswith('I:'):
+        return 'Iterable[' + shown(dyn_item(t)) + ']'
+    if t.startswith('IZ:'):
+        return 'Iterable[' + shown(dyn_item(t)) + '] & Sized'
     if is_optional(t):
         return shown(strip_optional(t)) + ' | None'
     if is_class(t) or is_iface(t):
@@ -560,6 +587,8 @@ class Mod:
         # may a value of type a be used where b is wanted (no conversion needed)?
         if a == b or self.subclass(a, b):
             return True
+        if is_dyn(a) and is_dyn(b):
+            return self.dyn_covers(a, b)
         if is_iface(b):
             if is_class(a) and self.has_class(a[1:]):
                 return b[1:] in self.class_ifaces(a[1:])
@@ -577,6 +606,49 @@ class Mod:
         if is_optional(b):
             return a == 'None' or self.assignable(a, strip_optional(b))
         return False
+
+    # what a for loop yields from a value of type vt, or '' when it cannot loop over one
+    def iter_item(self, vt: str) -> str:
+        if vt == 'str' or is_dict(vt):
+            return 'str'
+        if is_list(vt) or is_set(vt):
+            return elem_of(vt)
+        if is_class(vt) and self.has_class(vt[1:]):
+            f = self.find_op(vt[1:], 'iter')
+            if f is not None:
+                return f.ret
+        return ''
+
+    # does len() work on a value of type vt?
+    def has_length(self, vt: str) -> bool:
+        if vt == 'str' or is_list(vt) or is_dict(vt) or is_set(vt):
+            return True
+        if is_class(vt) and self.has_class(vt[1:]):
+            f = self.find_op(vt[1:], 'len')
+            return f is not None and len(f.ptypes) == 0 and f.ret == 'int'
+        return False
+
+    # may a value of the concrete type vt be used as the interface type dyn? (no `implements` needed: having the method is enough)
+    def dyn_accepts(self, vt: str, dyn: str) -> bool:
+        if dyn_iterable(dyn) and self.iter_item(vt) != dyn_item(dyn):
+            return False
+        return not dyn_sized(dyn) or self.has_length(vt)
+
+    # does the interface type a give everything the interface type b does?
+    def dyn_covers(self, a: str, b: str) -> bool:
+        if dyn_iterable(b) and not (dyn_iterable(a) and dyn_item(a) == dyn_item(b)):
+            return False
+        return not dyn_sized(b) or dyn_sized(a)
+
+    # the concrete types a value of an interface type can be holding: the shared container layout, text and every class that fits
+    def dyn_members(self, dyn: str) -> list[str]:
+        out = [dyn_seq()]
+        if self.dyn_accepts('str', dyn):
+            out.append('str')
+        for c in self.classes:
+            if self.dyn_accepts('@' + c.name, dyn):
+                out.append('@' + c.name)
+        return out
 
     def subclass(self, a: str, b: str) -> bool:
         # is class a (written '@A') the same as b or a descendant of it?
@@ -632,6 +704,24 @@ class Mod:
                 names.append(x)
         return union_type(names)
 
+    # `Iterable[T] & Sized`: the built-in interfaces joined (D50a); the other uses of & are not built yet
+    def dyn_intersection(self, members: list[Node]) -> str:
+        item = ''
+        sized = False
+        for m in members:
+            part = self.type_name(vn(m))
+            if part == 'Z':
+                sized = True
+            elif part.startswith('I:') and (item == '' or item == dyn_item(part)):
+                item = dyn_item(part)
+            else:
+                return ''
+        if item == '':
+            return 'Z'
+        if sized:
+            return 'IZ:' + item
+        return 'I:' + item
+
     def type_name(self, v: Val) -> str:
         # the name of a type the compiler knows: int, bool, str, a declared class ('@Name') or a list of those; '' otherwise
         if v.tag != 'n':
@@ -672,6 +762,15 @@ class Mod:
                     return ''
                 return 'task[' + res + ';' + st + ']'
             return 'task[' + res + ']'
+        if name == 'intersection':
+            return self.dyn_intersection(val_nodes(t.fields[2]))
+        if name == 'Iterable' and t.fields[2].tag == 'n' and self.resolve(name) == '':
+            item = self.type_name(t.fields[2])
+            if item == '' or is_optional(item):
+                return ''
+            return 'I:' + item
+        if name == 'Sized' and t.fields[2].tag == 'z' and t.fields[1].tag == 'z' and self.resolve(name) == '':
+            return 'Z'
         if name == 'set' and t.fields[2].tag == 'n':
             member = self.type_name(t.fields[2])
             if member == 'str' or member == 'int' or member == 'bool':
@@ -924,6 +1023,8 @@ class Gen:
             return self.resize(e, ty)
         if is_union(ty) and not is_union(e.ty):
             return self.box_value(e, ty, line, what)
+        if is_dyn(ty) and not is_dyn(e.ty):
+            return self.box_dyn(e, ty, line, what)
         if not self.mod.assignable(e.ty, ty):
             raise CompileError(what + ' has type ' + shown(e.ty) + ', but ' + shown(ty) + ' is expected', line)
         return e
@@ -945,6 +1046,9 @@ class Gen:
             raise CompileError(what + ' has type ' + shown(e.ty) + ', but ' + shown(ty) + ' is expected', line)
         if is_numeric(e.ty) and e.ty != member:
             raise CompileError(what + ' has type ' + shown(e.ty) + ', but ' + shown(ty) + ' is expected', line)
+        return self.box_as(e, member, ty)
+
+    def box_as(self, e: Ex, member: str, ty: str) -> Ex:
         b = self.tmp('box')
         self.emit(b + ' = call ptr @tomato_alloc(i64 32, i64 ' + str(self.mod.code_of('box:' + member)) + ')')
         p = self.tmp('payload')
@@ -954,6 +1058,23 @@ class Gen:
         self.emit(k + ' = getelementptr i8, ptr ' + b + ', i64 24')
         self.emit('store i64 ' + str(box_kind(member)) + ', ptr ' + k)
         return ex(b, ty)
+
+    def box_dyn(self, e: Ex, ty: str, line: int, what: str) -> Ex:
+        # a value stored where Iterable[T] or Sized is wanted (D50a). A set or dict that will be looped over is boxed as a
+        # snapshot of its keys, which is what a for loop over it walks anyway.
+        if not self.mod.dyn_accepts(e.ty, ty):
+            raise CompileError(what + ' has type ' + shown(e.ty) + ', but ' + shown(ty) + ' is expected', line)
+        if not (is_list(e.ty) or is_dict(e.ty) or is_set(e.ty)):
+            return self.box_as(e, e.ty, ty)
+        if dyn_iterable(ty) and not is_list(e.ty):
+            keys = 'list[' + elem_of(e.ty) + ']'
+            if is_dict(e.ty):
+                keys = 'list[str]'
+            snap = self.tmp('keys')
+            self.emit(snap + ' = call ptr @tomato_dict_keys(ptr ' + e.reg + ', i64 ' + str(self.mod.code_of(keys)) + ', i64 8)')
+            self.release(e)
+            e = ex(snap, keys)
+        return self.box_as(e, dyn_seq(), ty)
 
     def unbox_value(self, box: Ex, member: str) -> Ex:
         # the value inside a union, as a new reference when it is a heap value
@@ -3324,9 +3445,37 @@ class Gen:
         if len(args) != 1:
             raise CompileError('len() takes exactly one argument', line)
         v = self.expr(args[0])
+        if is_dyn(v.ty):
+            return self.len_dyn(v, line)
         if is_union(v.ty):
             return self.union_len(v, line)
         return self.len_of(v, line)
+
+    # len() of a value of a Sized type: ask whichever kind of value the box holds, and keep the answer in a slot
+    def len_dyn(self, box: Ex, line: int) -> Ex:
+        if not dyn_sized(box.ty):
+            raise CompileError('len() needs a value with a length, but this is ' + shown(box.ty) + '\nuse Sized, or Iterable[T] & Sized', line)
+        holder = self.hidden_rc_slot('len.dyn')
+        self.store_owned(holder, box)
+        answer = self.hidden_slot('len.answer')
+        join = self.label('endlen')
+        for member in self.mod.dyn_members(box.ty):
+            held = self.tmp('held')
+            self.emit(held + ' = load ptr, ptr ' + holder)
+            yes = self.label('lenis')
+            no = self.label('lennot')
+            self.cond_br(self.box_is(ex(held, box.ty), member), yes, no)
+            self.place(yes)
+            inner = self.unbox_value(ex(held, box.ty), member)
+            n = self.len_of(inner, line)
+            self.emit('store i64 ' + n.reg + ', ptr ' + answer)
+            self.br(join)
+            self.place(no)
+        self.br(join)
+        self.place(join)
+        r = self.tmp('answer')
+        self.emit(r + ' = load i64, ptr ' + answer)
+        return ex(r, 'int')
 
     def union_len(self, v: Ex, line: int) -> Ex:
         # len() of a union: the length of whichever member it holds (every member must have one)
@@ -3398,6 +3547,8 @@ class Gen:
         v = self.expr(args[0])
         if v.ty == 'str':
             return v
+        if is_dyn(v.ty):
+            raise CompileError('a value of type ' + shown(v.ty) + ' cannot be converted to text\nloop over it and print the items instead', line)
         if is_class(v.ty):
             shown_text = self.class_text(v, line)
             self.release(v)
@@ -3427,6 +3578,8 @@ class Gen:
         values: list[Ex] = []
         for a in args:
             v = self.expr(a)                   # every argument is evaluated before anything is printed
+            if is_dyn(v.ty):
+                raise CompileError('a value of type ' + shown(v.ty) + ' cannot be printed\nloop over it and print the items instead', self.line)
             values.append(v)
         for k, v in enumerate(values):
             if v.ty == 'int':
@@ -4149,7 +4302,37 @@ class Gen:
         self.place(end)
 
     def for_each(self, s: Node, it: Node):
-        lst = self.expr(it)
+        self.for_value(s, self.expr(it))
+
+    # a loop over a value of an Iterable type: the loop is compiled once for each kind of value the box can hold, and the
+    # one matching the box's contents runs (the same way a union is narrowed)
+    def for_dyn(self, s: Node, box: Ex):
+        if not dyn_iterable(box.ty):
+            raise CompileError('a for loop cannot loop over a value of type Sized\nuse Iterable[T] to say what the loop gives', s.line)
+        holder = self.hidden_rc_slot('for.dyn')
+        self.store_owned(holder, box)
+        join = self.label('enddyn')
+        for member in self.mod.dyn_members(box.ty):
+            held = self.tmp('held')
+            self.emit(held + ' = load ptr, ptr ' + holder)
+            yes = self.label('dynis')
+            no = self.label('dynnot')
+            self.cond_br(self.box_is(ex(held, box.ty), member), yes, no)
+            self.place(yes)
+            inner = self.unbox_value(ex(held, box.ty), member)
+            if member == dyn_seq():
+                inner = ex(inner.reg, 'list[' + dyn_item(box.ty) + ']')
+            self.for_value(s, inner)
+            if not self.terminated:
+                self.br(join)
+            self.place(no)
+        self.br(join)
+        self.place(join)
+
+    def for_value(self, s: Node, lst: Ex):
+        if is_dyn(lst.ty):
+            self.for_dyn(s, lst)
+            return
         if is_class(lst.ty) and self.mod.has_op(lst.ty[1:], 'iter'):
             self.inline_gen(s, self.mod.find_op(lst.ty[1:], 'iter'), lst, [], s.line)
             return

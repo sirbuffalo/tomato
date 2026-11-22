@@ -205,6 +205,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 177. D54a is accepted: multiple assignment and tuple unpacking (`a, b = b, a`, `x, y = pair`); a constant count mismatch is a compile error, an unknown length is checked at run time with a RuntimeError.
 178. D55a is accepted: a union narrowed by `x in T` stays narrowed in `else:` and after an `if` whose other branches leave the block (to the end of the block, no assignment meanwhile); `len()` and `for` work on a union when every member supports them.
 179. D56a is accepted: the built-ins `abs`, `chr` and `ord`; `dict.get(key, default)`, `keys`, `values` and `items` (pairs as two-item tuples of `str | V`); and the text methods `find(sub, start)`, `rfind`, `count`, `isdigit`, `isalpha`, `isspace`, `lstrip` and `rstrip`, all following Python.
+180. D57a is accepted: `Iterable[T]`, `Sized` and `Iterable[T] & Sized` are built-in interfaces that any list, tuple, set, dict, text, range or class with `@iter` / `@len` satisfies without `implements`; a function can loop over an `Iterable[T]` and call `len()` on a `Sized`; `progress_bar` uses `Iterable[int] & Sized`.
 167. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass

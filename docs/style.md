@@ -28,6 +28,7 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 - `for i in range(n):` / `range(a, b)` / `range(a, b, step)` for counted loops; never a `while` with a counter you step by
   hand. `for i, x in enumerate(items):` when you need the position too.
 - `while` is for loops whose end is not a count: scanning until a condition, Euclid's algorithm, a worklist.
+- A parameter that only needs to be looped over is `Iterable[int]` (add `& Sized` if it also needs `len()`), not `list[int]`, so a range or your own class fits too.
 - A generator (`@iter` method with `yield`) when a class is a sequence, instead of building a list just to loop over it.
 - A variable has one type in the whole function, loop variables included, so give loops over different kinds of
   values different names (`for fld in c.fields:` and `for f in infos:`, not `f` for both).

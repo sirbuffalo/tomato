@@ -380,7 +380,7 @@ export class Parser:
         if self.cur().kind != 'NAME':
             self.err('expected a type name')
         t = self.expect('NAME')
-        if t.text == 'list' or t.text == 'set' or t.text == 'tuple':
+        if t.text == 'list' or t.text == 'set' or t.text == 'tuple' or (t.text == 'Iterable' and self.is_op('[')):
             self.expect_op('[')
             arg = self.type()
             self.expect_op(']')

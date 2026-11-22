@@ -1,0 +1,103 @@
+# Iterable[T] and Sized: built-in interfaces that anything with the matching loop or length satisfies, with no `implements`.
+from itertools import progress_bar
+class Countdown:
+    start: int
+
+    @init
+    def make(self, start: int):
+        self.start = start
+
+    @iter
+    def each(self) -> int:
+        i = self.start
+        while i > 0:
+            yield i
+            i -= 1
+
+    @len
+    def size(self) -> int:
+        return self.start
+
+class Bag:
+    count: int
+
+    @init
+    def make(self, count: int):
+        self.count = count
+
+    @len
+    def size(self) -> int:
+        return self.count
+
+def total(items: Iterable[int]) -> int:
+    t = 0
+    for x in items:
+        t += x
+    return t
+
+def first_big(items: Iterable[int], limit: int) -> int:
+    for x in items:
+        if x > limit:
+            return x
+    return -1
+
+def shout(words: Iterable[str]) -> str:
+    out = ''
+    for w in words:
+        out += w + '!'
+    return out
+
+def size_of(thing: Sized) -> int:
+    return len(thing)
+
+def average(items: Iterable[int] & Sized) -> int:
+    t = 0
+    for x in items:
+        t += x
+    return t // len(items)
+
+class Holder:
+    items: Iterable[int] & Sized
+
+    @init
+    def make(self, items: Iterable[int] & Sized):
+        self.items = items
+
+    def describe(self) -> str:
+        return str(len(self.items)) + ' items, sum ' + str(total(self.items))
+
+@main
+def main():
+    print(total([1, 2, 3]))
+    print(total(range(5)))
+    print(total(range(10, 0, -3)))
+    print(total(Countdown(4)))
+    print(total((7, 8, 9)))
+    nums: set[int] = {1, 2, 3}
+    print(total(nums))
+    print(first_big([1, 5, 9], 4), first_big(range(100), 50), first_big([1, 2], 9))
+    print(shout(['a', 'b']))
+    print(shout('xyz'))
+    ages: dict[str, int] = {'k': 1}
+    print(shout(ages))
+    print(size_of([1, 2, 3]), size_of('hello'), size_of(range(7)), size_of(Countdown(6)), size_of(Bag(11)), size_of(ages))
+    print(average([2, 4, 6]), average(range(1, 10)), average(Countdown(4)))
+    h = Holder([5, 5])
+    print(h.describe())
+    print(Holder(Countdown(3)).describe())
+    # break and continue work inside a loop over an Iterable
+    n = 0
+    for k in range(3):
+        n += first_big(Countdown(k + 3), 1)
+    print(n)
+    boxed: Iterable[int] = Countdown(3)
+    seen = ''
+    for x in boxed:
+        if x == 2:
+            continue
+        seen += str(x)
+    print(seen)
+    # progress_bar takes any iterable that has a length
+    print(progress_bar(Countdown(4), 'cd', 8).render())
+    print(progress_bar(range(2), '', 4).render())
+    print(progress_bar([7, 8], '', 4).total)

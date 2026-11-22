@@ -1,0 +1,9 @@
+def total(items: Iterable[int]) -> int:
+    t = 0
+    for x in items:
+        t += x
+    return t
+
+@main
+def main():
+    print(total(['a', 'b']))

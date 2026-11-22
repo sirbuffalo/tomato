@@ -1,0 +1,6 @@
+def total(items: Iterable[int]) -> int:
+    return 0
+
+@main
+def main():
+    print(total(5))

@@ -1,0 +1,6 @@
+def count(items: Iterable[int]) -> int:
+    return len(items)
+
+@main
+def main():
+    print(count([1, 2]))

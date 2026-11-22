@@ -1,0 +1,6 @@
+error: a value of type Iterable[int] cannot be printed
+ --> tests/errors/iterable_print.tom:2:5
+  |
+2 |     print(items)
+  |     ^^^^^^^^^^^^
+  = help: loop over it and print the items instead

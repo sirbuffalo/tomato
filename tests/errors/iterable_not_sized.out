@@ -1,0 +1,6 @@
+error: len() needs a value with a length, but this is Iterable[int]
+ --> tests/errors/iterable_not_sized.tom:2:5
+  |
+2 |     return len(items)
+  |     ^^^^^^^^^^^^^^^^^
+  = help: use Sized, or Iterable[T] & Sized

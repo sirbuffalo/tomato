@@ -1,0 +1,5 @@
+error: argument 1 of 'total' has type list[str], but Iterable[int] is expected
+ --> tests/errors/iterable_wrong_item.tom:9:11
+  |
+9 |     print(total(['a', 'b']))
+  |           ^^^^^

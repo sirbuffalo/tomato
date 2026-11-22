@@ -1,0 +1,6 @@
+def show(items: Iterable[int]):
+    print(items)
+
+@main
+def main():
+    show([1, 2])
