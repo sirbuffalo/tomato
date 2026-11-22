@@ -11,6 +11,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+#define TOMATO_STACK_GUARD   /* native programs only: WebAssembly has no signals */
+#include <signal.h>
+#include <unistd.h>
+#include <sys/resource.h>
+#endif
 
 typedef struct { int64_t rc; int64_t type; } Hdr;
 
@@ -60,6 +66,34 @@ void tomato_fail_code(int kind, int line) {
     fprintf(stderr, "error E%02d:%d\n", kind, line);
     exit(1);
 }
+
+#ifdef TOMATO_STACK_GUARD
+/* A function that calls itself without end used to die with a bare segmentation fault. A fault just below the stack
+ * (the guard page) is reported as an ordinary error instead; any other fault keeps its default behavior. */
+static char *stack_top, *stack_low;
+static void on_fault(int sig, siginfo_t *info, void *ctx) {
+    (void)ctx;
+    char *at = (char *)info->si_addr;
+    if (at >= stack_low - 65536 && at <= stack_top) {
+        static const char msg[] = "error: stack overflow: a function calls itself too deeply\n";
+        fflush(stdout);
+        if (write(2, msg, sizeof msg - 1) < 0) { /* nothing more to do */ }
+        _exit(1);
+    }
+    signal(sig, SIG_DFL);   /* not a stack overflow: return, and the fault happens again with the default action */
+}
+__attribute__((constructor)) static void install_stack_guard(void) {
+    struct rlimit rl; char here;
+    if (getrlimit(RLIMIT_STACK, &rl) != 0 || rl.rlim_cur == RLIM_INFINITY) return;
+    stack_top = &here + 65536; stack_low = &here - (rl.rlim_cur > 65536 ? rl.rlim_cur - 65536 : 0);
+    static char alt[65536];
+    stack_t ss; ss.ss_sp = alt; ss.ss_size = sizeof alt; ss.ss_flags = 0;
+    if (sigaltstack(&ss, NULL) != 0) return;
+    struct sigaction sa; memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = on_fault; sa.sa_flags = SA_SIGINFO | SA_ONSTACK; sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, NULL); sigaction(SIGBUS, &sa, NULL);
+}
+#endif
 
 /* Release mode (D34a): no readable error. */
 void tomato_trap(void) {

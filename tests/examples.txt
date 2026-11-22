@@ -6,3 +6,4 @@ compiled main 12
 features main
 objects main 4
 shapes main
+primes main

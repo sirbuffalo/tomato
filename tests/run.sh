@@ -74,6 +74,7 @@ got: $m";; esac; }
   wasm_rt overflow "integer overflow" 1
   wasm_rt dict_missing_key "the key is not there" 1
   wasm_rt caught "caught boom" 0
+  wasm_rt stack_overflow "stack overflow" 1
 else [ -n "$CI" ] && bad "wasm path" "jsc is required in CI (macOS runner)" || echo "skip: jsc is not available on this system"; fi
 
 echo "== command line =="
@@ -90,6 +91,10 @@ check "mode release prints nothing" "" "$($t run "$work/dz.tom" --mode release 2
 check "explain decodes a code" "error: division by zero
   line 4: print(5 // x)" "$($t explain E01:4 "$work/dz.tom")"
 check "run with inputs" "17 True" "$($t run examples/args.tom prime 17)"
+check "--version is version" "$($t version)" "$($t --version)"
+case "$($t help)" in *"tomato explain"*"tomato version"*) ok "help lists every command";; *) bad "help lists every command" "$($t help)";; esac
+check "explain says when the line is not in the file" "error: division by zero
+  (line 999 is past the end of $work/dz.tom: is this the file the program was built from?)" "$($t explain E01:999 "$work/dz.tom")"
 check "unknown command exits 2" "2" "$($t wghwrltghs >/dev/null 2>&1; echo $?)"
 printf '@main\ndef main():\n    print(tets)\n' > "$work/typo.tom"
 printf '@main\ndef main(a: str, b: str):\n    print("[" + a + "][" + b + "]")\n' > "$work/echo.tom"
@@ -116,6 +121,8 @@ check "tomato run shows the same error text" "error: name 'tets' is not defined
  --> $work/typo.tom:3:11" "$($t run "$work/typo.tom" 2>&1 | head -2)"
 check "repl: == is a comparison, = is an assignment" "False
 3" "$(printf 'x = 3\nx == 4\nx\n:quit\n' | $t repl)"
+case "$(printf ':help\n:quit\n' | $t repl 2>&1)" in *":reset"*":quit"*) ok "repl: :help lists every command";; *) bad "repl: :help lists every command";; esac
+r="$(printf 'from nosuch_mod import a\n:quit\n' | $t repl 2>&1)"; case "$r" in *"Could not open"*|*"$TMPDIR"*|*"/tmp/"*|*"/var/folders/"*) bad "repl: a missing module shows no temp path or tool noise" "$r";; *"nosuch_mod"*) ok "repl: a missing module shows no temp path or tool noise";; *) bad "repl: a missing module shows no temp path or tool noise" "$r";; esac
 check "repl: += works" "8" "$(printf 'x = 5\nx += 3\nx\n:quit\n' | $t repl)"
 check "repl: leave() leaves" "a" "$(printf "print('a')\nleave()\nprint('b')\n" | $t repl)"
 if command -v expect >/dev/null 2>&1; then check "repl: up-arrow recalls a multi-line block as one history entry" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/repl_history.exp 2>&1 | tail -1)"; fi
@@ -190,6 +197,7 @@ rt rational_zero "a rational cannot have a zero denominator" 1
 rt progress_bar_live "live: 100%|####| 2/2" 0
 rt float_overflow "infinite or not a number" 1
 rt negative_exponent "a negative exponent needs a float" 1
+rt stack_overflow "stack overflow" 1
 
 
 echo "== known gaps (decided behavior the compiler does not have yet) =="

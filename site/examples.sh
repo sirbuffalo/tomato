@@ -5,7 +5,7 @@ out="$root/site/examples.json"
 printf '{' > "$out"; first=1
 for f in "$root"/examples/*.tom; do
   name="$(basename "$f" .tom)"
-  case "$name" in primes|mathlib) continue ;; esac   # those need features or LLVM files the page does not offer
+  case "$name" in mathlib) continue ;; esac   # it needs an LLVM file the page does not offer
   [ $first = 1 ] || printf ',' >> "$out"; first=0
   printf '\n  "%s": "' "$name" >> "$out"
   awk 'BEGIN{ORS=""} { gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); gsub(/\t/,"\\t"); print $0 "\\n" }' "$f" >> "$out"

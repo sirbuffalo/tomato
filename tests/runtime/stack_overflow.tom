@@ -1,0 +1,7 @@
+# a function that never stops calling itself ends with a readable error, not a crash
+def f(n: int) -> int:
+    return f(n + 1) + 1
+
+@main
+def main():
+    print(f(0))

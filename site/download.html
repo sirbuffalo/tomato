@@ -1,23 +1,23 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Download Tomato</title><link rel="stylesheet" href="style.css"></head>
+<title>Download Tomato</title><meta name="description" content="Download the Tomato compiler and install it with clang alone."><link rel="stylesheet" href="style.css"></head>
 <body><header id="site-header"></header><main class="doc">
 <h1>Download</h1>
 <p>Tomato needs only <code>clang</code> (on a Mac: <code>xcode-select --install</code>).</p>
 <h2>Latest release</h2>
 <p id="release" class="status">Looking up the latest release…</p>
 <h2>Install</h2>
-<pre><code>tar -xzf tomato-VERSION.tar.gz
+<pre><code class="no-hl">tar -xzf tomato-VERSION.tar.gz
 cd tomato-VERSION
 ./install-native.sh
 tomato version</code></pre>
 <p>This builds the compiler from the checked-in IR into <code>~/.tomato/native</code> and links <code>~/.local/bin/tomato</code>. Put <code>~/.local/bin</code> on your PATH. An existing <code>tomato</code> that is not ours is kept as <code>tomato.old</code>.</p>
 <h2>Update</h2>
-<pre><code>tomato update</code></pre>
+<pre><code class="no-hl">tomato update</code></pre>
 <p>Reads <a href="latest.json">latest.json</a>, checks the download against its SHA-256, and reinstalls when a newer version exists.</p>
 <h2>Trust</h2>
 <p><code>tomato update</code> trusts HTTPS and the manifest: it reads the version, download URL and SHA-256 from one file, requires an official <code>github.com/sirbuffalo/tomato/releases</code> URL and a valid checksum, and only ever upgrades. Archives are not separately signed yet, so anyone who can change <code>latest.json</code> on the site or the <code>main</code> branch can change what gets installed.</p>
 <h2>From source</h2>
-<pre><code>git clone https://github.com/sirbuffalo/tomato
+<pre><code class="no-hl">git clone https://github.com/sirbuffalo/tomato
 cd tomato
 ./install-native.sh</code></pre>
 </main><script src="config.js"></script><script src="site.js"></script>

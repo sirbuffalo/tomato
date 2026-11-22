@@ -50,6 +50,7 @@
         } catch (e) {
           if (e && e.wasiExit !== undefined) code = e.wasiExit;
           else if (e && e.timeout) { timedOut = true; code = 124; }
+          else if (e instanceof RangeError && /call stack/i.test(e.message)) { failure = "stack overflow: a function calls itself too deeply"; code = 1; }   // the native runtime says the same
           else { failure = String(e && e.message || e); code = 1; }
         }
         return { stdout: host.text("out"), stderr: host.text("err") + (failure ? "error: " + failure + "\n" : ""), code: code, timedOut: timedOut };

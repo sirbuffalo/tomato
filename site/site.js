@@ -2,39 +2,87 @@
 (function () {
   var pages = [["index.html", "Home"], ["guide.html", "Guide"], ["docs.html", "Reference"], ["play.html", "Run & Repl"], ["download.html", "Download"]];
   var here = location.pathname.split("/").pop() || "index.html";
-  var h = '<nav><a class="brand" href="index.html">🍅 Tomato</a>';
+  var h = '<a class="skip" href="#main">Skip to content</a><nav aria-label="Site"><a class="brand" href="index.html">🍅 Tomato</a>';
   pages.forEach(function (p) { h += '<a href="' + p[0] + '"' + (p[0] === here ? ' aria-current="page"' : "") + ">" + p[1] + "</a>"; });
+  if (!document.querySelector("link[rel=icon]")) { var ic = document.createElement("link"); ic.rel = "icon"; ic.href = "data:image/svg+xml," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍅</text></svg>"); document.head.appendChild(ic); }
+  var main = document.querySelector("main"); if (main && !main.id) main.id = "main";
   var el = document.getElementById("site-header");
   if (el) el.innerHTML = h + "</nav>";
   ["version", "version2"].forEach(function (id) { var v = document.getElementById(id); if (v) v.textContent = window.TOMATO_VERSION; });
 })();
 
 function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+// A link to another document of the reference (decisions.md, specification.md#x) becomes a link inside the Reference page.
+var DOC_KEYS = { "specification.md": "specification", "decisions.md": "decisions", "decision-inventory.md": "decision-inventory", "open-questions.md": "open-questions", "provisional.md": "provisional", "PROVISIONAL.md": "provisional" };
+function linkTarget(u) {
+  if (/^https?:/.test(u)) return u;
+  var name = u.split("#")[0];
+  return DOC_KEYS[name] ? "docs.html#" + DOC_KEYS[name] : null;
+}
 function inline(s) {
+  var codes = [];
+  s = s.replace(/`([^`]+)`/g, function (_, c) { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
   s = esc(s);
-  s = s.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2">$1</a>');
-  return s;
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*\w])\*([^*\s][^*]*)\*(?![*\w])/g, "$1<em>$2</em>");
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (m, text, url) {
+    var t = linkTarget(url.replace(/&amp;/g, "&"));
+    return t ? '<a href="' + t + '">' + text + "</a>" : text;
+  });
+  return s.replace(/\u0000(\d+)\u0000/g, function (_, i) { return "<code>" + esc(codes[+i]) + "</code>"; });
+}
+function splitRow(l) {
+  var cells = [], cur = "";
+  l = l.trim().replace(/^\|/, "").replace(/\|$/, "");
+  for (var i = 0; i < l.length; i++) {
+    if (l[i] === "\\" && l[i + 1] === "|") { cur += "|"; i++; }
+    else if (l[i] === "|") { cells.push(cur.trim()); cur = ""; }
+    else cur += l[i];
+  }
+  cells.push(cur.trim());
+  return cells;
 }
 function markdown(src) {
-  var out = [], lines = src.split("\n"), list = false, code = false, para = [];
+  var out = [], lines = src.split("\n"), list = "", code = false, para = [], table = null, quote = [];
   function flush() { if (para.length) { out.push("<p>" + inline(para.join(" ")) + "</p>"); para = []; } }
-  function closeList() { if (list) { out.push("</ul>"); list = false; } }
-  lines.forEach(function (l) {
-    if (l.indexOf("```") === 0) { flush(); closeList(); out.push(code ? "</code></pre>" : "<pre><code>"); code = !code; return; }
+  function closeList() { if (list) { out.push("</" + list + ">"); list = ""; } }
+  function closeTable() {
+    if (!table) return;
+    var h = "<div class=\"table-wrap\"><table><thead><tr>" + table.head.map(function (c) { return "<th>" + inline(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
+    table.rows.forEach(function (r) { h += "<tr>" + r.map(function (c) { return "<td>" + inline(c) + "</td>"; }).join("") + "</tr>"; });
+    out.push(h + "</tbody></table></div>"); table = null;
+  }
+  function closeQuote() { if (quote.length) { out.push("<blockquote>" + inline(quote.join(" ")) + "</blockquote>"); quote = []; } }
+  function closeAll() { flush(); closeList(); closeTable(); closeQuote(); }
+  lines.forEach(function (l, i) {
+    if (l.indexOf("```") === 0) { closeAll(); out.push(code ? "</code></pre>" : "<pre><code>"); code = !code; return; }
     if (code) { out.push(esc(l)); return; }
-    var m = /^(#{1,4}) (.*)$/.exec(l);
+    if (/^\s*\|.*\|\s*$/.test(l)) {
+      flush(); closeList(); closeQuote();
+      var cells = splitRow(l);
+      if (!table) table = { head: cells, rows: [], sep: false };
+      else if (!table.sep && cells.every(function (c) { return /^:?-{2,}:?$/.test(c); })) table.sep = true;
+      else table.rows.push(cells);
+      return;
+    }
+    closeTable();
+    var m = /^(#{1,6}) (.*)$/.exec(l);
     if (m) {
-      flush(); closeList();
+      closeAll();
       var id = m[2].toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       out.push("<h" + m[1].length + ' id="' + id + '">' + inline(m[2]) + "</h" + m[1].length + ">");
       return;
     }
-    if (/^\s*[-*] /.test(l)) { flush(); if (!list) { out.push("<ul>"); list = true; } out.push("<li>" + inline(l.replace(/^\s*[-*] /, "")) + "</li>"); return; }
+    var q = /^>\s?(.*)$/.exec(l);
+    if (q) { flush(); closeList(); quote.push(q[1]); return; }
+    closeQuote();
+    if (/^---+\s*$/.test(l)) { closeAll(); out.push("<hr>"); return; }
+    var li = /^\s*(?:([-*])|(\d+)\.) (.*)$/.exec(l);
+    if (li) { flush(); var kind = li[2] ? "ol" : "ul"; if (list !== kind) { closeList(); out.push("<" + kind + ">"); list = kind; } out.push("<li>" + inline(li[3]) + "</li>"); return; }
     if (l.trim() === "") { flush(); closeList(); return; }
+    closeList();
     para.push(l.trim());
   });
-  flush(); closeList();
+  closeAll();
   return out.join("\n");
 }
 

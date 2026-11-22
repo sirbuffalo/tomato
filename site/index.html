@@ -1,22 +1,25 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tomato — a statically typed language that builds itself</title><link rel="stylesheet" href="style.css"></head>
+<title>Tomato — a statically typed language that builds itself</title><meta name="description" content="Tomato is a statically typed, reference-counted language with indentation syntax, compiled through LLVM. Its compiler is written in Tomato."><link rel="stylesheet" href="style.css"></head>
 <body><header id="site-header"></header><main>
 <h1>Tomato <small class="status">v<span id="version"></span></small></h1>
 <p class="lead">A statically typed, reference-counted language with indentation syntax, compiled through LLVM. Its compiler is written in Tomato and compiles itself.</p>
-<p class="status"><strong>An implemented subset.</strong> The core language runs today. <code>rational</code> and several other decided features are not built yet; see the <a href="guide.html">guide</a>.</p>
+<p class="status"><strong>An implemented subset.</strong> The core language runs today; some decided features are not built yet. The <a href="guide.html">guide</a> shows what works, and the <a href="docs.html">reference</a> marks the rest.</p>
 <p><a class="btn primary" href="play.html">Try it in your browser</a> <a class="btn" href="download.html">Download</a> <a class="btn" href="guide.html">Read the guide</a></p>
 <pre><code>def fib(n: int) -> int:
     if n &lt; 2:
         return n
     return fib(n - 1) + fib(n - 2)
 
-print(fib(20))
-print(10 / 4)   # 2.5</code></pre>
+@main
+def main():
+    print(fib(20))   # 6765
+    print(10 / 4)    # 2.5
+    print(2 ** 100)  # whole numbers do not overflow</code></pre>
 <div class="cards">
 <div class="card"><h3>Familiar and typed</h3><p>Indentation blocks and familiar syntax, with types checked at compile time.</p></div>
 <div class="card"><h3>Native through LLVM</h3><p>Programs compile to LLVM IR and link with a small C runtime. Only <code>clang</code> is needed to build the compiler and your programs.</p></div>
 <div class="card"><h3>Self-hosted</h3><p>The compiler is written in Tomato. It builds itself to a byte-for-byte fixed point, and the checked-in IR bootstraps a machine that has only clang.</p></div>
-<div class="card"><h3>Exact where it matters</h3><p>Whole numbers grow without limit or use a fixed width with overflow errors. <code>float</code> is 64-bit; <code>rational</code> is exact.</p></div>
+<div class="card"><h3>Exact where it matters</h3><p>Whole numbers grow without limit or use a fixed width with overflow errors. <code>float</code> is 64-bit; <code>rational</code> (a library module) is exact.</p></div>
 </div>
 <h2>Version</h2>
 <p>The current version is <strong>v<span id="version2"></span></strong>: the compiler written in Tomato, the only implementation. The command is <code>tomato</code>.</p>

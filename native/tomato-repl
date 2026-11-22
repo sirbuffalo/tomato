@@ -67,7 +67,7 @@ try_run() {
   } > "$S/try.tom"
   if [ $fast = 2 ]; then
     "$jsc" "$TOMATO_JSC_JS" -- "$wasmdir" run "$S/try.tom" > "$S/out" 2> "$S/err"
-    rc=$(sed -n 's/^~rc //p' "$S/err" | tail -1); grep -v '^~rc ' "$S/err" | sed -e 's/ (raised on line [0-9]*)//' > "$S/err2"; mv "$S/err2" "$S/err"
+    rc=$(sed -n 's/^~rc //p' "$S/err" | tail -1); grep -v -e '^~rc ' -e '^Could not open file: ' "$S/err" | sed -e 's/ (raised on line [0-9]*)//' > "$S/err2"; mv "$S/err2" "$S/err"
     [ -n "$rc" ] && [ "$rc" = 0 ]; return
   elif [ $fast = 1 ]; then
     if ! "$tomatoc" "$S/try.tom" main "$std" > "$S/try.ll" 2> "$S/err"; then
@@ -180,7 +180,7 @@ load_file() {
   fi
 }
 
-help() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
+help() { awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; }   # the comment block at the top of this file
 
 for f in "$@"; do load_file "$f"; done
 interactive=0; [ -t 0 ] && interactive=1
