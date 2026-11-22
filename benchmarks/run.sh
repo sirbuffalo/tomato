@@ -114,8 +114,8 @@ ver() { "$@" 2>&1 | head -1 | sed 's/"/\\"/g'; }
   printf '  "versions": {"tomato": "%s", "clang": "%s", "go": "%s", "rust": "%s", "python": "%s"},\n' \
     "$(cat "$root/VERSION")" "$(ver clang --version)" "$(have go && ver go version)" "$(have rustc && ver rustc --version)" "$(have python3 && ver python3 --version)"
   printf '  "runs": %s,\n  "python_runs": %s,\n  "load_before": "%s",\n  "load_after": "%s",\n' "$runs" "$python_runs" "$load_before" "$load_after"
-  # the -O level clang really got for the Tomato builds, read from the wrapper's log
-  olevel() { awk -v l="$1" '$1 == "BUILD" { m = ($3 == l); next } m { for (i = 1; i <= NF; i++) if ($i ~ /^-O[0-9sz]$/) { print $i; exit } }' "$work/clang.log"; }
+  # the -O level (and -flto, when used) clang really got for the Tomato builds, read from the wrapper's log
+  olevel() { awk -v l="$1" '$1 == "BUILD" { m = ($3 == l); next } m { s = ""; for (i = 1; i <= NF; i++) if ($i ~ /^-O[0-9sz]$/ || $i == "-flto") s = s (s == "" ? "" : " ") $i; if (s != "") { print s; exit } }' "$work/clang.log"; }
   printf '  "commands": {"tomato": "tomato build --mode %s (clang %s on the LLVM IR)", "tomato-debug": "tomato build --mode debug (clang %s on the LLVM IR)", "go": "go build", "rust": "rustc -O", "python": "python3 FILE"},\n' \
     "$release_mode" "$(olevel tomato | head -1)" "$(olevel tomato-debug | head -1)"
   printf '  "benchmarks": [\n'
