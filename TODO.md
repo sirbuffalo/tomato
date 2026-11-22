@@ -14,8 +14,6 @@
   A for loop with several variables only accepts `enumerate(...)` or `zip(...)` today, so looping over `dict.items()` or a list of tuples needs indexing; found while using the new features across the code.
 - Act on docs/performance.md: cut refcount and cycle-collector bookkeeping, inline the small-int fast path, compile list indexing to a bounds check plus load
   The benchmarks (benchmarks/, site/benchmarks.html) show Tomato 12x to 48x slower than Rust on loops over big lists, sort and objects; docs/performance.md ranks the likely causes. Profile before building each one.
-- Add a size-class free-list allocator for small objects
-  Bypassed under ASan, to cut malloc/free cost in the objects benchmark (about 0.5 s left after the collector fix).
 - Free temporaries on the failure path of compiler checks
   An error caught in the middle of an expression drops a fresh big-number (and object) temporary without freeing it (`huge() // 0`, `huge() ** -1`, `huge() + int('x')`). Free the pending temporaries on the failure path of `fail_if` checks (`int_zero_check`, the pow negative-exponent check, failing `int()` conversions), then make the big-number leak check strict after errors again and add those shapes to `bigint_unwind`.
 - Recover the debug-mode small-int arithmetic regression from the big-integer ownership change

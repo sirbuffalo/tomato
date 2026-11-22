@@ -95,6 +95,18 @@ size-class allocator task covers.
    `bigint` (40000): 0.224 s and 1.53 GB peak memory before; 0.11 s and a few MB after, with the debug-mode leak check
    clean. The price is a slower small-int path in debug mode (see the notes above).
 
+4. **Size-class free-list allocator** for small objects. Objects up to 256 bytes (every instance, string, list and dict
+   header; strings up to about 230 bytes) come from 16 size classes in 16-byte steps, each a singly linked free list carved
+   from 64 KB chunks; the class lives in bits 48..52 of the header's type word, so freeing needs no size and no prefix.
+   Freed memory is reused within its class but chunks are never returned to the operating system (documented trade-off:
+   a program that allocates a lot of one size and then only another keeps the first size's memory). List and dict
+   buffers, string builders, big-integer limbs and objects over 256 bytes still use malloc. Under AddressSanitizer (and with
+   `-DTOMATO_NO_POOL`) everything uses malloc, so the ASan tests and use-after-free checks are exact; the debug leak
+   check counts live objects separately and still works. The runtime has no threads, so there is no locking; the
+   WebAssembly build uses the same code. Gains are about 10%: objects, strings and wordcount each ran about 10% faster in
+   interleaved runs on a loaded machine; `strings` peak memory grows about 6% (size-class rounding). Remaining malloc in
+   those profiles is list/dict buffers and temporary string builders, see Still to do 4.
+
 ## What was done (v0.48)
 
 1. **Release mode optimises.** `--mode release` links the program and the runtime with `clang -O2 -flto
@@ -112,8 +124,6 @@ size-class allocator task covers.
 
 - `clang -O3 -flto` alone, before the runtime was restructured for inlining: collatz -15%, objects -6%, nothing on fib,
   sieve or sort. The gains came once the hot runtime paths were made inlinable.
-- A free-list allocator for small objects was not tried yet; after the collector change `objects` is no longer
-  dominated by allocation.
 
 ## Still to do, biggest first
 
@@ -124,4 +134,3 @@ size-class allocator task covers.
 3. **Typed list storage** (`list[bool]` as bytes, unboxed floats) if measurements justify it.
 4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).
 5. **Debug-mode small-int arithmetic** got slower with the big-integer ownership change (fib 0.41 → 0.60 s); recover it.
-6. **Size-class free-list allocator** for small objects (`objects`, `strings`, `wordcount`).

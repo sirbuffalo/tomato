@@ -285,9 +285,65 @@ void tomato_fit_unsigned(uint64_t v, int bits, int position) {
 
 
 /* ---- allocation and reference counting ---- */
+/* Small objects (up to 256 bytes) come from a size-class free-list allocator: 16 classes in steps of 16 bytes, each with
+ * a singly linked free list, carved from 64 KB chunks obtained from malloc. The class is kept in bits 48..52 of the
+ * header's type word, so freeing needs no size and no prefix. Memory is recycled within its class but never returned to
+ * the operating system (chunks live until the program exits). Larger objects and the buffers that grow (list data, dict
+ * tables, string builders) keep using malloc. Under AddressSanitizer, and with -DTOMATO_NO_POOL, every object uses
+ * malloc so use-after-free and leak detection stay exact. The runtime is single-threaded: no locking. */
+#if defined(__SANITIZE_ADDRESS__)
+#define TOMATO_NO_POOL 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define TOMATO_NO_POOL 1
+#endif
+#endif
+#define POOL_SHIFT 48
+#define POOL_MAX 256
+#define POOL_CHUNK 65536
+#ifndef TOMATO_NO_POOL
+typedef struct FreeCell { struct FreeCell *next; } FreeCell;
+static FreeCell *pool_free[POOL_MAX / 16 + 1];
+static char *pool_cur, *pool_end;
+
+NOINLINE static void *pool_refill(int64_t cls) {
+    size_t need = (size_t)cls * 16;
+    if ((size_t)(pool_end - pool_cur) < need) {
+        char *c = malloc(POOL_CHUNK);
+        if (!c) tomato_fail("out of memory");
+        pool_cur = c; pool_end = c + POOL_CHUNK;
+    }
+    void *p = pool_cur;
+    pool_cur += need;
+    return p;
+}
+#endif
+
+/* free an object made by tomato_alloc */
+static inline void obj_free(Hdr *h) {
+#ifndef TOMATO_NO_POOL
+    int64_t cls = (h->type >> POOL_SHIFT) & 31;
+    if (cls) { FreeCell *c = (FreeCell *)h; c->next = pool_free[cls]; pool_free[cls] = c; return; }
+#endif
+    free(h);
+}
+
 void *tomato_alloc(int64_t size, int64_t type) {
-    Hdr *h = calloc(1, (size_t)size);
-    if (!h) tomato_fail("out of memory");
+    Hdr *h;
+#ifndef TOMATO_NO_POOL
+    if (size <= POOL_MAX) {
+        int64_t cls = (size + 15) >> 4;
+        FreeCell *c = pool_free[cls];
+        if (c) pool_free[cls] = c->next; else c = pool_refill(cls);
+        memset(c, 0, (size_t)cls * 16);
+        h = (Hdr *)c;
+        type |= cls << POOL_SHIFT;
+    } else
+#endif
+    {
+        h = calloc(1, (size_t)size);
+        if (!h) tomato_fail("out of memory");
+    }
     h->rc = 1;
     h->type = type;
     LIVE_ADJUST(1);
@@ -1415,7 +1471,7 @@ static void destroy_one(Hdr *h) {
     each_child(h, release_visit);
     free_internals(h);
     if (h->type & F_BUFFERED) { h->type |= F_DEAD; return; }   /* the collector still points at it: freed there */
-    free(h);
+    obj_free(h);
     LIVE_ADJUST(-1);
 }
 
@@ -1521,7 +1577,7 @@ void tomato_collect_cycles(void) {
             roots[keep++] = s;
         } else {
             s->type &= ~F_BUFFERED;
-            if (s->rc == 0 && (s->type & F_DEAD)) { free(s); LIVE_ADJUST(-1); }
+            if (s->rc == 0 && (s->type & F_DEAD)) { obj_free(s); LIVE_ADJUST(-1); }
         }
     }
     roots_n = keep;
@@ -1531,7 +1587,7 @@ void tomato_collect_cycles(void) {
     for (int64_t i = 0; i < roots_n; i++) collect_white(roots[i]);   /* collect: what is left white is a cycle */
     for (int64_t i = 0; i < garbage_n; i++) {
         free_internals(garbage[i]);
-        free(garbage[i]);
+        obj_free(garbage[i]);
         LIVE_ADJUST(-1);
         gc_freed++;
     }

@@ -1,0 +1,104 @@
+# Small objects come from a size-class free-list allocator: this allocates and frees objects of several sizes, strings of
+# many lengths, and reference cycles over and over, so recycled memory has to be zeroed and reused correctly.
+class Small:
+    a: int
+    @init
+    def make(self, a: int):
+        self.a = a
+
+class Medium:
+    a: int
+    b: int
+    c: int
+    d: int
+    @init
+    def make(self, a: int, b: int, c: int, d: int):
+        self.a = a
+        self.b = b
+        self.c = c
+        self.d = d
+
+class Big:
+    a: int
+    b: int
+    c: int
+    d: int
+    e: int
+    f: int
+    g: int
+    h: int
+    i: int
+    j: int
+    k: int
+    l: int
+    m: int
+    n: int
+    o: int
+    p: int
+    q: int
+    r: int
+    s: int
+    t: int
+    u: int
+    v: int
+    w: int
+    x: int
+    y: int
+    z: int
+    aa: int
+    bb: int
+    cc: int
+    dd: int
+    ee: int
+    ff: int
+    gg: int
+    @init
+    def make(self, a: int, gg: int):
+        self.a = a
+        self.gg = gg
+
+class Node:
+    peer: Node | None
+    n: int
+    @init
+    def make(self, n: int):
+        self.peer = None
+        self.n = n
+
+def cycle(i: int) -> int:
+    a = Node(i)
+    b = Node(i + 1)
+    b.peer = a
+    a.peer = b
+    return a.n + b.n
+
+def make_text(n: int) -> str:
+    out = ''
+    for i in range(n % 70):
+        out += 'x'
+    return out
+
+@main
+def main():
+    total = 0
+    for round in range(200):
+        smalls: list[Small] = []
+        mediums: list[Medium] = []
+        bigs: list[Big] = []
+        texts: list[str] = []
+        for i in range(100):
+            smalls.append(Small(i))
+            mediums.append(Medium(i, i + 1, i + 2, i + 3))
+            if i % 10 == 0:
+                bigs.append(Big(i, i * 2))
+            texts.append(make_text(i + round))
+            total += cycle(i)
+        for s in smalls:
+            total += s.a
+        for m in mediums:
+            total += m.a + m.b + m.c + m.d
+        for b in bigs:
+            total += b.a + b.gg
+        for t in texts:
+            total += len(t)
+    print(total)
