@@ -161,11 +161,14 @@ HISTFILE="${TOMATO_HISTORY:-$HOME/.tomato/repl_history_v2}"; HISTSIZE=1000; HIST
 # Tab inserts an indent: readline's own file-completion would list the directory. bind in a script is not enough (bash 3.2
 # ignores it), so readline gets a private inputrc. History holds only what the user types (see readline below).
 if [ $interactive = 1 ]; then { printf '%s\n' '$include /etc/inputrc'; user="${INPUTRC:-$HOME/.inputrc}"; [ -f "$user" ] && printf '%s\n' "\$include $user"; printf '%s\n' '"\t": "    "' 'set bell-style none'; } > "$S/inputrc"; export INPUTRC="$S/inputrc"; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
+# A block is one history entry, its lines joined by BLK (readline cannot hand back a multi-line entry: bash returns only its
+# first line). Up-arrow recalls the whole block on one editable line; entering it splits it back into lines.
+BLK='⏎'
+remember() { [ $interactive = 1 ] && [ -n "$(printf '%s' "$1" | tr -d ' ')" ] && { history -s -- "$1"; history -a "$HISTFILE" 2>/dev/null; }; }
 readline() {   # readline PROMPT [INITIAL TEXT] -> sets $REPLY_LINE
   if [ $interactive = 1 ]; then
     if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then IFS= read -r -e -p "$1" -i "$2" REPLY_LINE || return 1   # macOS ships bash 3.2, which has no -i: there Tab inserts the indent
     else IFS= read -r -e -p "$1" REPLY_LINE || return 1; fi
-    [ -n "$(printf '%s' "$REPLY_LINE" | tr -d ' ')" ] && { history -s -- "$REPLY_LINE"; history -a "$HISTFILE" 2>/dev/null; }  # append now: a Ctrl-C or closed terminal must not lose the session
   else IFS= read -r REPLY_LINE || return 1; fi
 }
 [ $interactive = 1 ] && say "Tomato repl (each line re-runs the whole session, so file writes repeat). :help for commands, :quit or Ctrl-D to leave."
@@ -185,8 +188,12 @@ while :; do
     :*) err "error: unknown command ${line%% *} (try :help)"; continue ;;
   esac
   text="$line"
+  case "$line" in *:|@*|*"$BLK"*) ;; *) remember "$line" ;; esac   # a block is remembered whole, once its body is read
   case "$line" in
-    *:|@*)   # a block: read lines until an empty one; each line starts with the previous line's indent (four more after a colon)
+    *"$BLK"*) text="${line//$BLK/
+}" ;;   # a recalled block: its lines are all here
+    *:|@*)
+      # a block: read lines until an empty one; each line starts with the previous line's indent (four more after a colon)
       prev="$line"
       while :; do
         indent="$(printf '%s' "$prev" | sed 's/^\([ ]*\).*/\1/')"
@@ -197,7 +204,10 @@ while :; do
         prev="$more"
         text="$text
 $more"
-      done ;;
+      done
+      case "$text" in *"
+"*) remember "${text//
+/$BLK}" ;; *) remember "$text" ;; esac ;;
   esac
   submit "$text"
 done

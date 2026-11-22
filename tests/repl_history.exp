@@ -1,0 +1,27 @@
+# Drives `tomato repl` in a pty (no Python): a multi-line block must come back from the up arrow as one entry that runs
+# whole, and the history file must hold only typed input. Usage: expect tests/repl_history.exp   (needs `tomato` on PATH)
+set timeout 20
+match_max 100000
+set home [exec mktemp -d]
+set env(HOME) $home
+set env(TERM) xterm
+set env(TOMATO_HISTORY) $home/hist
+spawn bash [file dirname [info script]]/../native/tomato-repl
+proc line {s} { send "$s\r"; sleep 0.8 }
+line "for i in range(2):"
+line "\tprint(i)"
+line ""
+line "x = 5"
+line "print(1 + \"a\")"
+send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3   ;# print(1+"a"), x = 5, then the block
+send "\r"; sleep 1.5
+line ":quit"
+expect eof
+set hist [exec cat $home/hist]
+set bad ""
+if {[regexp -all {0\r\n1\r\n} $expect_out(buffer)] < 2} { append bad "recalled block did not run whole; " }
+if {![string match "*for i in range(2):⏎*print(i)*" $hist]} { append bad "block not stored as one entry: $hist; " }
+if {[regexp {\nprint\(i\)} $hist]} { append bad "body stored as its own entry; " }
+if {[string match "*Error*" $hist]} { append bad "error text in history; " }
+if {$bad ne ""} { puts "FAIL: $bad"; exit 1 }
+puts ok
