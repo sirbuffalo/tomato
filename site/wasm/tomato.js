@@ -10,10 +10,11 @@
     this.ready = Promise.all([
       get("tomatoc.wasm").then(function (r) { return r.arrayBuffer(); }).then(WebAssembly.compile),
       get("runtime.wasm").then(function (r) { return r.arrayBuffer(); }).then(WebAssembly.compile),
-      Promise.all(["builtin", "math"].map(function (n) { return get("std/" + n + ".tom").then(function (r) { return r.arrayBuffer(); }); }))
+      Promise.all(TomatoWasm.STD.map(function (n) { return get("std/" + n + ".tom").then(function (r) { return r.arrayBuffer(); }); }))
     ]).then(function (x) { self.compiler = x[0]; self.runtime = x[1]; self.std = x[2]; return self; });
     return this.ready;
   };
+  TomatoWasm.STD = ["builtin", "math", "itertools", "rational"];   // the standard library modules (std/NAME.tom)
   var enc = function (s) { return new TextEncoder().encode(s); };
 
   // extra: optional { "/name.tom": Uint8Array } for the modules the program imports (the command-line repl supplies them;
@@ -21,11 +22,12 @@
   TomatoWasm.prototype.compile = function (source, entry, extra) {
     var self = this;
     return this.load().then(function () {
-      var files = Object.assign({}, extra || {}, { "/program.tom": enc(source), "/std/builtin.tom": new Uint8Array(self.std[0]), "/std/math.tom": new Uint8Array(self.std[1]) });
+      var files = Object.assign({}, extra || {}, { "/program.tom": enc(source) });
+      TomatoWasm.STD.forEach(function (n, i) { files["/std/" + n + ".tom"] = new Uint8Array(self.std[i]); });
       var host = new WasiHost({ args: ["tomatoc", "/program.tom", entry || "main", "/std/"], files: files });
       return host.run(self.compiler).then(function (r) {
         var err = r.stderr.trim();
-        if (r.code !== 0 && /could not be opened/.test(err) && /^\s*(from|import)\s/m.test(source))
+        if (!self.local && r.code !== 0 && /could not be opened/.test(err) && /^\s*(from|import)\s/m.test(source))
           err += "\n(imports of your own modules are not supported on this page; the installed tomato command supports them)";
         return { ok: r.code === 0, ir: r.stdout, error: err };
       });

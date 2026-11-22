@@ -43,7 +43,8 @@ var bin = function (p) { return read(p, "binary"); };
 var tw = new TomatoWasm("");
 tw.compiler = new WebAssembly.Module(bin(dir + "/tomatoc.wasm"));
 tw.runtime = new WebAssembly.Module(bin(dir + "/runtime.wasm"));
-tw.std = [bin(dir + "/std/builtin.tom"), bin(dir + "/std/math.tom")].map(function (u) { return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); });
+tw.local = true;   // not the website: the "own modules are not supported on this page" hint does not apply
+tw.std = TomatoWasm.STD.map(function (n) { return bin(dir + "/std/" + n + ".tom"); }).map(function (u) { return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); });
 tw.ready = Promise.resolve(tw);
 
 var source = new TextDecoder().decode(bin(file));
