@@ -4,7 +4,7 @@ Tomato is a statically typed, reference-counted language with indentation syntax
 
 - **Status: an implemented subset.** The status table in `docs/specification.md` says what is built and what is not; `tests/known_gaps/` explains how unbuilt rules are tracked. Programs have no top-level code: they start at a function marked `@main`.
 - **Version:** in `VERSION` (v0.x).
-- **Install on a Mac:** download `tomato-VERSION.pkg` from the Download page (unsigned: right-click, Open). It installs prebuilt universal binaries into `/usr/local/lib/tomato` and links `/usr/local/bin/tomato`; `release/pkg.sh` builds it.
+- **Install on a Mac:** download `tomato-VERSION.pkg` from the Download page (unsigned until notarization is set up, see `docs/releasing.md`: right-click, Open). It installs prebuilt universal binaries into `/usr/local/lib/tomato` and links `/usr/local/bin/tomato`; `release/pkg.sh` builds it and `release/sign-pkg.sh` signs and notarizes it.
 - **Install:** `./install-native.sh` builds the compiler from the checked-in IR with clang alone and installs `tomato` (`run`, `build`, `compile`, `explain`, `repl`, `update`, `version`, `help`).
 - **Try it:** the website (https://tomato.davismcd.com) compiles and runs programs in the browser, with no install.
 - **Numbers:** `int` has unlimited size (a number beyond 4.6 quintillion is a heap number that its variable, field or container owns, copies on assignment and frees when overwritten or dropped, D05av); fixed-width integers stop on overflow.

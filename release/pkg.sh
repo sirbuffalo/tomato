@@ -2,7 +2,7 @@
 # Builds release/out/tomato-VERSION.pkg: a macOS installer that needs no build step at install time. It ships a universal
 # (arm64 + x86_64) tomatoc, installs into /usr/local/lib/tomato/native (the same layout install-native.sh makes, so
 # `tomato update` keeps working) and links /usr/local/bin/tomato. Programs still need clang to compile (Xcode command line tools).
-# The package is signed when TOMATO_PKG_SIGN names an installer identity ("Developer ID Installer: ..."), else it is unsigned.
+# The package is always unsigned here; release/sign-pkg.sh signs and notarizes it (see docs/releasing.md).
 # Usage: release/pkg.sh   (macOS only; needs clang, lipo, pkgbuild, productbuild; run release/build.sh first so latest.json lists the package)
 set -e
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -47,9 +47,7 @@ cat > "$work/dist.xml" <<XML
   <pkg-ref id="com.davismcd.tomato" version="$version">component.pkg</pkg-ref>
 </installer-gui-script>
 XML
-sign=""; [ -n "$TOMATO_PKG_SIGN" ] && sign="--sign $TOMATO_PKG_SIGN"
-# shellcheck disable=SC2086
-productbuild --distribution "$work/dist.xml" --package-path "$work" $sign "$out/tomato-$version.pkg" >/dev/null
+productbuild --distribution "$work/dist.xml" --package-path "$work" "$out/tomato-$version.pkg" >/dev/null
 echo "built $out/tomato-$version.pkg ($(shasum -a 256 "$out/tomato-$version.pkg" | cut -d' ' -f1))"
 # record the package in latest.json (run release/build.sh first): the download page reads pkg_url and pkg_sha256
 if [ -f "$out/latest.json" ]; then
