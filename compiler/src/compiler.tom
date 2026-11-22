@@ -1293,13 +1293,6 @@ class Gen:
         elif e.ty == 'int' and e.fresh and not e.small and not small_text(e.reg):
             self.emit(f'call void @tomato_int_free(i64 {e.reg})')
 
-    def release2(self, x: Ex, y: Ex):
-        # the two operands of an operation: one test when both are small numbers that were computed here
-        if x.ty == 'int' and y.ty == 'int' and x.fresh and y.fresh and not x.small and not y.small and not small_text(x.reg) and not small_text(y.reg) and x.reg != y.reg:
-            self.emit(f'call void @tomato_int_free2(i64 {x.reg}, i64 {y.reg})')
-            return
-        self.release(x)
-        self.release(y)
 
     def owned(self, e: Ex) -> Ex:
         # e as a value the caller may keep: an int borrowed from a variable is copied, everything else is already owned
@@ -1499,6 +1492,31 @@ class Gen:
         self.emit(f'{r} = call i64 @tomato_int_{name}(i64 {a}, i64 {b})')
         return exf(r, 'int')
 
+    def consumable(self, e: Ex) -> bool:
+        return e.ty == 'int' and e.fresh and not e.small and not small_text(e.reg)
+
+    def consume_mask(self, x: Ex, y: Ex) -> int:
+        # which operands an operation frees itself (those we own): bit 0 for x, bit 1 for y. Their Ex values are used up.
+        m = 0
+        if self.consumable(x):
+            m += 1
+        if self.consumable(y) and y.reg != x.reg:
+            m += 2
+        if m % 2 == 1:
+            x.fresh = False
+        if m >= 2:
+            y.fresh = False
+        return m
+
+    def int_call_c(self, name: str, x: Ex, y: Ex) -> Ex:
+        # like int_call, and the operation frees the operands that are ours when they turn out to be big numbers
+        m = self.consume_mask(x, y)
+        if m == 0:
+            return self.int_call(name, x.reg, y.reg)
+        r = self.tmp('int')
+        self.emit(f'{r} = call i64 @tomato_int_{name}_c(i64 {x.reg}, i64 {y.reg}, i32 {m})')
+        return exf(r, 'int')
+
     def tag_small(self, raw: str) -> Ex:
         # a machine number known to be small (a length, a loop counter, a position) as an int
         s = self.tmp('shl')
@@ -1519,9 +1537,11 @@ class Gen:
     def int_raw(self, e: Ex) -> str:
         # the machine number for places that need one (an index, a range bound); stops when the int is too big. The int is used up.
         r = self.tmp('raw')
+        if self.consumable(e):
+            self.emit(f'{r} = call i64 @tomato_int_raw_c(i64 {e.reg}, i32 1)')
+            e.fresh = False              # used up: a second release must not free it again
+            return r
         self.emit(f'{r} = call i64 @tomato_int_raw(i64 {e.reg})')
-        self.release(e)
-        e.fresh = False                  # used up: a second release must not free it again
         return r
 
     def int_zero_check(self, b: Ex, message: str):
@@ -1537,9 +1557,7 @@ class Gen:
         x = self.resize(a, t)
         y = self.resize(b, t)
         if t == 'int':
-            r0 = self.int_call(op, x.reg, y.reg)
-            self.release2(x, y)
-            return r0
+            return self.int_call_c(op, x, y)
         llt = llvm_type(t)
         sg = 's' if is_signed(t) else 'u'
         intr = f'llvm.{sg}{op}.with.overflow.{llt}'
@@ -1555,8 +1573,11 @@ class Gen:
 
     def int_compare(self, op: str, x: Ex, y: Ex) -> Ex:
         c = self.tmp('icmp')
-        self.emit(f'{c} = call i32 @tomato_int_cmp(i64 {x.reg}, i64 {y.reg})')
-        self.release2(x, y)
+        m = self.consume_mask(x, y)
+        if m == 0:
+            self.emit(f'{c} = call i32 @tomato_int_cmp(i64 {x.reg}, i64 {y.reg})')
+        else:
+            self.emit(f'{c} = call i32 @tomato_int_cmp_c(i64 {x.reg}, i64 {y.reg}, i32 {m})')
         cc = 'eq'
         if op == '!=':
             cc = 'ne'
@@ -1602,9 +1623,7 @@ class Gen:
         y = self.resize(b, t)
         if t == 'int':
             self.int_zero_check(y, 'modulo by zero')
-            r0 = self.int_call('mod', x.reg, y.reg)
-            self.release2(x, y)
-            return r0
+            return self.int_call_c('mod', x, y)
         llt = llvm_type(t)
         zero = self.tmp('zero')
         self.emit(f'{zero} = icmp eq {llt} {y.reg}, 0')
@@ -1636,9 +1655,7 @@ class Gen:
         y = self.resize(b, t)
         if t == 'int':
             self.int_zero_check(y, 'division by zero')
-            r0 = self.int_call('floordiv', x.reg, y.reg)
-            self.release2(x, y)
-            return r0
+            return self.int_call_c('floordiv', x, y)
         llt = llvm_type(t)
         zero = self.tmp('zero')
         self.emit(f'{zero} = icmp eq {llt} {y.reg}, 0')
@@ -2487,6 +2504,37 @@ class Gen:
         v = self.expr(args[0])
         return self.convert_explicit(v, target, n.line)
 
+    def plain_num(self, n: Node) -> bool:
+        # an expression made only of numbers read from local variables and their fields, literals and arithmetic: no user code can run
+        # while it is evaluated (an operator on an object, or an item of an object, could), so a number lent before it stays valid
+        k = n.kind
+        if k == 'IntLit' or k == 'FloatLit' or k == 'BoolLit':
+            return True
+        if k == 'Name':
+            name = n.fields[0].text
+            if name not in self.slots:
+                return False
+            t = self.types[name]
+            return t == 'float' or t == 'bool' or is_numeric(t)
+        if k == 'Attr':
+            b = val_node(n.fields[0])
+            if b.kind != 'Name' or b.fields[0].text not in self.slots or not is_class(self.types[b.fields[0].text]):
+                return False
+            c = self.mod.find_class(self.types[b.fields[0].text][1:], n.line)
+            at = field_position(c, n.fields[1].text)
+            if at < 0:
+                return False
+            t2 = c.fields[at].ty
+            return t2 == 'float' or t2 == 'bool' or is_numeric(t2)
+        if k == 'UnOp':
+            return self.plain_num(val_node(n.fields[1]))
+        if k == 'BinOp':
+            op = n.fields[0].text
+            if op == 'and' or op == 'or' or op == 'in' or op == 'is' or op == 'is not':
+                return False
+            return self.plain_num(val_node(n.fields[1])) and self.plain_num(val_node(n.fields[2]))
+        return False
+
     def operand(self, n: Node, lend: bool) -> Ex:
         # an operand of an arithmetic or comparison operator. With lend, a number read from a field or a list item of a local is
         # not copied: nothing runs between the read and the operator that uses it up, so nothing can change what it points at.
@@ -2498,7 +2546,7 @@ class Gen:
 
     def index(self, n: Node, lend: bool = False, as_base: bool = False) -> Ex:
         base = val_node(n.fields[0])
-        if (lend or as_base) and (base.kind == 'Attr' or base.kind == 'Index') and pure_read(val_node(n.fields[1])):
+        if (lend or as_base) and (base.kind == 'Attr' or base.kind == 'Index') and (pure_read(val_node(n.fields[1])) or self.plain_num(val_node(n.fields[1]))):
             s = self.unwrap(self.lent_base(base), n.line)
         else:
             s = self.unwrap(self.expr_b(base, [val_node(n.fields[1])]), n.line)
@@ -2822,7 +2870,7 @@ class Gen:
             hint = a.ty if is_fixed(a.ty) else ''
             b = self.expr(right, hint)
         else:
-            a = self.operand(left, pure_read(right))
+            a = self.operand(left, pure_read(right) or self.plain_num(right))
             b = self.operand(right, True)
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
         if op == 'in':
@@ -5519,7 +5567,11 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_from_f64(double)\n'
     d += 'declare ptr @tomato_box_str(ptr)\n'
     d += 'declare i64 @tomato_int_dup(i64)\n'
-    d += 'declare void @tomato_int_free2(i64, i64)\n'
+
+    for op in ['add', 'sub', 'mul', 'floordiv', 'mod']:
+        d += f'declare i64 @tomato_int_{op}_c(i64, i64, i32)\n'
+    d += 'declare i32 @tomato_int_cmp_c(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_int_raw_c(i64, i32)\n'
     d += 'declare void @tomato_int_free(i64)\n'
     d += 'declare i64 @tomato_int_add(i64, i64)\n'
     d += 'declare i64 @tomato_int_sub(i64, i64)\n'

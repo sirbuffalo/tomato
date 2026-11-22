@@ -1616,8 +1616,7 @@ NOINLINE static int64_t int_dup_slow(int64_t x) {
 NOINLINE static void int_free_slow(int64_t x) { if (x == 0) return; free((void *)(uintptr_t)x); LIVE_ADJUST(-1); }
 ALWAYS int64_t tomato_int_dup(int64_t x) { return __builtin_expect(x & 1, 1) ? x : int_dup_slow(x); }
 ALWAYS void tomato_int_free(int64_t x) { if (__builtin_expect(!(x & 1), 0)) int_free_slow(x); }
-/* two numbers at once, for the two operands of an operation: one test when both are small */
-ALWAYS void tomato_int_free2(int64_t x, int64_t y) { if (__builtin_expect(!(x & y & 1), 0)) { tomato_int_free(x); tomato_int_free(y); } }
+
 /* a hash of the value: the word for a small number, else the limbs mixed in */
 int64_t tomato_int_hash(int64_t x) {
     if (int_is_small(x)) return x;
@@ -1692,13 +1691,19 @@ NOINLINE static int64_t int_add_slow(int64_t x, int64_t y) {
 
 /* The small-number fast paths are small enough for the optimiser to inline into the program (release links with LTO);
  * the big-number work stays out of line. */
-ALWAYS int64_t tomato_int_add(int64_t x, int64_t y) {
+/* The _c forms also free an operand that the caller owns (a temporary): bit 0 of m for x, bit 1 for y. When both operands are small
+ * there is nothing to free, so the small-number path pays nothing for it. */
+#define INT_CONSUME(m, x, y) do { if ((m) & 1) tomato_int_free(x); if ((m) & 2) tomato_int_free(y); } while (0)
+
+NOINLINE static int64_t int_add_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_add_slow(x, y); INT_CONSUME(m, x, y); return r; }
+ALWAYS int64_t tomato_int_add_c(int64_t x, int64_t y, int32_t m) {
     if (x & y & 1) {
         int64_t s = int_small_val(x) + int_small_val(y);
         if (s >= INT_SMALL_MIN && s <= INT_SMALL_MAX) return int_mk_small(s);
     }
-    return int_add_slow(x, y);
+    return int_add_slow_c(x, y, m);
 }
+ALWAYS int64_t tomato_int_add(int64_t x, int64_t y) { return tomato_int_add_c(x, y, 0); }
 
 int64_t tomato_int_neg(int64_t x) {
     IntView a; int_view(x, &a);
@@ -1712,13 +1717,15 @@ NOINLINE static int64_t int_sub_slow(int64_t x, int64_t y) {
     return int_add_signed(a.sign, a.d, a.n, -b.sign, b.d, b.n);
 }
 
-ALWAYS int64_t tomato_int_sub(int64_t x, int64_t y) {
+NOINLINE static int64_t int_sub_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_sub_slow(x, y); INT_CONSUME(m, x, y); return r; }
+ALWAYS int64_t tomato_int_sub_c(int64_t x, int64_t y, int32_t m) {
     if ((x & y & 1)) {
         int64_t s = int_small_val(x) - int_small_val(y);
         if (s >= INT_SMALL_MIN && s <= INT_SMALL_MAX) return int_mk_small(s);
     }
-    return int_sub_slow(x, y);
+    return int_sub_slow_c(x, y, m);
 }
+ALWAYS int64_t tomato_int_sub(int64_t x, int64_t y) { return tomato_int_sub_c(x, y, 0); }
 
 NOINLINE static int64_t int_mul_slow(int64_t x, int64_t y) {
     IntView a, b; int_view(x, &a); int_view(y, &b);
@@ -1761,14 +1768,16 @@ NOINLINE static int64_t int_mul_slow(int64_t x, int64_t y) {
     return int_finish(res, a.sign * b.sign, rn);
 }
 
-ALWAYS int64_t tomato_int_mul(int64_t x, int64_t y) {
+NOINLINE static int64_t int_mul_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_mul_slow(x, y); INT_CONSUME(m, x, y); return r; }
+ALWAYS int64_t tomato_int_mul_c(int64_t x, int64_t y, int32_t m) {
     if (x & y & 1) {
         int64_t p;
         if (!__builtin_mul_overflow(int_small_val(x), int_small_val(y), &p) && p >= INT_SMALL_MIN && p <= INT_SMALL_MAX)
             return int_mk_small(p);
     }
-    return int_mul_slow(x, y);
+    return int_mul_slow_c(x, y, m);
 }
+ALWAYS int64_t tomato_int_mul(int64_t x, int64_t y) { return tomato_int_mul_c(x, y, 0); }
 
 /* magnitude division (Knuth algorithm D): q = u / v, r = u % v; q has un limbs, r has vn limbs; v is not zero */
 static void mag_divmod(const uint32_t *u, int64_t un, const uint32_t *v, int64_t vn, uint32_t *q, uint32_t *r) {
@@ -1851,22 +1860,26 @@ static void int_floordivmod(int64_t x, int64_t y, int64_t *quot, int64_t *rem) {
 NOINLINE static int64_t int_floordiv_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(r); return q; }
 NOINLINE static int64_t int_mod_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(q); return r; }
 /* Python-style floor division and remainder of two small numbers, inline (the caller has checked the divisor is not zero). */
-ALWAYS int64_t tomato_int_floordiv(int64_t x, int64_t y) {
+NOINLINE static int64_t int_floordiv_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_floordiv_slow(x, y); INT_CONSUME(m, x, y); return r; }
+NOINLINE static int64_t int_mod_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_mod_slow(x, y); INT_CONSUME(m, x, y); return r; }
+ALWAYS int64_t tomato_int_floordiv_c(int64_t x, int64_t y, int32_t m) {
     if ((x & y & 1) && !(int_small_val(x) == INT_SMALL_MIN && int_small_val(y) == -1)) {
         int64_t a = int_small_val(x), b = int_small_val(y), q = a / b, r = a % b;
         if (r != 0 && ((r < 0) != (b < 0))) q--;
         return int_mk_small(q);
     }
-    return int_floordiv_slow(x, y);
+    return int_floordiv_slow_c(x, y, m);
 }
-ALWAYS int64_t tomato_int_mod(int64_t x, int64_t y) {
+ALWAYS int64_t tomato_int_mod_c(int64_t x, int64_t y, int32_t m) {
     if ((x & y & 1) && !(int_small_val(x) == INT_SMALL_MIN && int_small_val(y) == -1)) {
         int64_t a = int_small_val(x), b = int_small_val(y), r = a % b;
         if (r != 0 && ((r < 0) != (b < 0))) r += b;
         return int_mk_small(r);
     }
-    return int_mod_slow(x, y);
+    return int_mod_slow_c(x, y, m);
 }
+ALWAYS int64_t tomato_int_floordiv(int64_t x, int64_t y) { return tomato_int_floordiv_c(x, y, 0); }
+ALWAYS int64_t tomato_int_mod(int64_t x, int64_t y) { return tomato_int_mod_c(x, y, 0); }
 
 NOINLINE static int32_t int_cmp_slow(int64_t x, int64_t y) {
     IntView a, b; int_view(x, &a); int_view(y, &b);
@@ -1876,13 +1889,15 @@ NOINLINE static int32_t int_cmp_slow(int64_t x, int64_t y) {
     return sa < 0 ? -c : c;
 }
 
-ALWAYS int32_t tomato_int_cmp(int64_t x, int64_t y) {
+NOINLINE static int32_t int_cmp_slow_c(int64_t x, int64_t y, int32_t m) { int32_t r = int_cmp_slow(x, y); INT_CONSUME(m, x, y); return r; }
+ALWAYS int32_t tomato_int_cmp_c(int64_t x, int64_t y, int32_t m) {
     if (int_is_small(x) && int_is_small(y)) {
         int64_t a = int_small_val(x), b = int_small_val(y);
         return a < b ? -1 : (a > b ? 1 : 0);
     }
-    return int_cmp_slow(x, y);
+    return int_cmp_slow_c(x, y, m);
 }
+ALWAYS int32_t tomato_int_cmp(int64_t x, int64_t y) { return tomato_int_cmp_c(x, y, 0); }
 
 
 /* ---- sorted(): a new list with the items of a list[int], list[float] or list[str] in order ----
@@ -2042,6 +2057,12 @@ NOINLINE static int64_t int_raw_slow(int64_t x) {
 ALWAYS int64_t tomato_int_raw(int64_t x) {
     if (int_is_small(x)) return int_small_val(x);
     return int_raw_slow(x);
+}
+/* the same, for a number the caller owns: a big one is freed (m is 1) once it is known to fit */
+NOINLINE static int64_t int_raw_slow_c(int64_t x, int32_t m) { int64_t r = int_raw_slow(x); if (m & 1) tomato_int_free(x); return r; }
+ALWAYS int64_t tomato_int_raw_c(int64_t x, int32_t m) {
+    if (int_is_small(x)) return int_small_val(x);
+    return int_raw_slow_c(x, m);
 }
 
 double tomato_int_to_f64(int64_t x) {
