@@ -1207,11 +1207,11 @@ Source: Davis's Dashboard message:
 - Layout: `python/` (the Python implementation), `compiler/` (`src/` and `bootstrap/`), `server/`, `site/`, `release/`, `native/`, `docs/`, `examples/`, `tests/`. The old chat and decision site, its `static/` page and the Pyodide playground were deleted; they remain in git history.
 - Open: the public location of the releases (the repository is private today) and the public URL of the compile server.
 
-### D43b — signing and notarizing the macOS package: partly done, blocked on a Developer ID Application certificate
+### D43b — signing and notarizing the macOS package: accepted (reading to confirm)
 
 - Evidence: Davis asked for the installer to be signed and notarized so Gatekeeper accepts it without right-click Open, and set up a Developer ID Installer certificate and a `tomato-notary` notarytool profile on his MacBook Pro (the build Mac has no certificate).
 - `release/sign-pkg.sh` (see `docs/releasing.md`) signs the binaries, signs the package, notarizes, staples and validates; identity and profile names come from `TOMATO_PKG_SIGN`, `TOMATO_APP_SIGN`, `TOMATO_NOTARY_PROFILE`. Private keys stay on the MacBook; the package is copied there and back.
-- Finding: submitting the v0.49 package signed with the Installer certificate only was rejected (status Invalid): the universal `tomatoc` inside is unsigned, has no secure timestamp and no hardened runtime. Notarization needs a Developer ID Application certificate for that; it does not exist yet. The Download page keeps its unsigned note until a notarized package is published.
+- Finding: submitting the v0.49 package signed with the Installer certificate only was rejected (status Invalid) because the universal `tomatoc` inside was unsigned. After Davis installed a Developer ID Application certificate, `sign-pkg.sh` signed `tomatoc` (hardened runtime, secure timestamp, the only Mach-O file in the package), rebuilt, signed and notarized the package on the first try (Accepted); it was stapled and Gatekeeper reports `accepted, source=Notarized Developer ID`. The signed package replaced the v0.49 release asset and `pkg_sha256` was updated. The Download page no longer says the package is unsigned.
 
 ### D44a — editor support and syntax highlighting: accepted (reading to confirm)
 
