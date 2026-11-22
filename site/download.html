@@ -5,7 +5,11 @@
 <p>Tomato needs only <code>clang</code> (on a Mac: <code>xcode-select --install</code>).</p>
 <h2>Latest release</h2>
 <p id="release" class="status">Looking up the latest release…</p>
-<h2>Install</h2>
+<h2>macOS installer</h2>
+<p id="pkg" class="status"></p>
+<p>Double-click the package and follow the steps. It installs to <code>/usr/local/lib/tomato</code> and links <code>/usr/local/bin/tomato</code>, with prebuilt compilers for Apple silicon and Intel, so nothing is built at install time. Programs are still compiled with <code>clang</code>, so you need the command line tools.</p>
+<p>The package is not signed yet, so macOS will not open it on a plain double-click: right-click it and choose Open (then Open again), or run <code>sudo installer -pkg tomato-VERSION.pkg -target /</code>. To check the download, compare <code>shasum -a 256 tomato-VERSION.pkg</code> with the SHA-256 above. <code>tomato update</code> works on a package install too. The installer hands <code>/usr/local/lib/tomato</code> to the user who installs it, so update needs no sudo; the flip side is that any process running as that user can change the command, which is the same trust as the <code>~/.tomato</code> install. On a shared Mac, run <code>sudo chown -R root /usr/local/lib/tomato</code> and update with sudo instead. To uninstall: <code>sudo rm -rf /usr/local/lib/tomato /usr/local/bin/tomato</code>, then <code>sudo pkgutil --forget com.davismcd.tomato</code>.</p>
+<h2>Install from the tarball</h2>
 <pre><code class="no-hl">tar -xzf tomato-VERSION.tar.gz
 cd tomato-VERSION
 ./install-native.sh
@@ -24,5 +28,6 @@ cd tomato
 <script>
 fetch("latest.json").then(function (r) { return r.json(); }).then(function (m) {
   document.getElementById("release").innerHTML = "Version <strong>" + esc(m.version) + "</strong> — <a href=\"" + esc(m.url) + "\">tomato-" + esc(m.version) + ".tar.gz</a><br>SHA-256 <code>" + esc(m.sha256 || "") + "</code>";
+  document.getElementById("pkg").innerHTML = m.pkg_url ? "<a href=\"" + esc(m.pkg_url) + "\">tomato-" + esc(m.version) + ".pkg</a> (universal)<br>SHA-256 <code>" + esc(m.pkg_sha256 || "") + "</code>" : "No installer package is published for this release.";
 }).catch(function () { document.getElementById("release").textContent = "No release is published yet."; });
 </script></body></html>

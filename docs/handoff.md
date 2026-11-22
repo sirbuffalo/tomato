@@ -8,8 +8,8 @@
 - Releases are GitHub releases `vN` with `tomato-N.tar.gz` and `latest.json`; `tomato update` reads it. The status table in `docs/specification.md` is authoritative about what is built.
 
 **How to work here:**
-- Run `tests/run.sh` (set `WASI_SDK` to a WASI SDK folder to also rebuild the wasm files). After changing `compiler/src`, run `sh compiler/bootstrap/refresh.sh`; after changing the compiler or runtime, rebuild `site/wasm` with `site/wasm/build.sh`; bump `VERSION` and `site/config.js` together, run `release/build.sh` and `sh site/build.sh`.
-- Git: commit with byre's snapshot tool; **never push this branch's history** (two old commit subjects mention chat passwords). Push one squashed commit onto `origin/main`: `git fetch origin; T=$(git write-tree); C=$(git commit-tree $T -p origin/main -m "..."); git push origin ${C}:refs/heads/main`, then `gh release create vN release/out/tomato-N.tar.gz release/out/latest.json`.
+- Run `tests/run.sh` (set `WASI_SDK` to a WASI SDK folder to also rebuild the wasm files). After changing `compiler/src`, run `sh compiler/bootstrap/refresh.sh`; after changing the compiler or runtime, rebuild `site/wasm` with `site/wasm/build.sh`; bump `VERSION` and `site/config.js` together, run `release/build.sh`, then `release/pkg.sh`, and `sh site/build.sh`; upload `tomato-N.pkg` with the release.
+- Git: commit with byre's snapshot tool; **never push this branch's history** (two old commit subjects mention chat passwords). Push one squashed commit onto `origin/main`: `git fetch origin; T=$(git write-tree); C=$(git commit-tree $T -p origin/main -m "..."); git push origin ${C}:refs/heads/main`, then `gh release create vN release/out/tomato-N.pkg release/out/tomato-N.tar.gz release/out/latest.json`.
 - Davis's MacBook is client `cli6qNVzVPIybU` (when connected); update it with `tomato update`. Never touch Ian's or John's devices.
 - Docs: add each decision to `docs/decisions.md` (before "Pending discussion"), a numbered line in `docs/decision-inventory.md`, a bullet in `docs/specification.md`.
 

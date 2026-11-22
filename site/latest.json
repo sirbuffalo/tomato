@@ -1,5 +1,7 @@
 {
-  "version": "0.40",
-  "url": "https://github.com/sirbuffalo/tomato/releases/download/v0.40/tomato-0.40.tar.gz",
-  "sha256": "e427aebae556e29b44b8ea97abb2d9c5641bcd9919605356e5e0e073c8774315"
+  "version": "0.42",
+  "url": "https://github.com/sirbuffalo/tomato/releases/download/v0.42/tomato-0.42.tar.gz",
+  "sha256": "e33b16e2a025f5273110c1ce1ecd197c96f04775dc1cf936c3b9cbb5e0d0eba5",
+  "pkg_url": "https://github.com/sirbuffalo/tomato/releases/download/v0.42/tomato-0.42.pkg",
+  "pkg_sha256": "e807e573956aab91b8ec6aab9f2f4cb8efaacd1f87e5d53a43fc9b7fca792da1"
 }

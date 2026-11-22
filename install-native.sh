@@ -29,7 +29,8 @@ old="$bindir/tomato"
 if [ -e "$old" ] && [ ! -L "$old" ]; then
   mv "$old" "$bindir/tomato.old" && echo "kept the existing $old as $bindir/tomato.old"
 fi
-ln -sf "$home/bin/tomato" "$bindir/tomato"
+# a link that already resolves to this install is left alone: the package install keeps /usr/local/bin root-owned, so `tomato update` must not need to write there
+if [ -L "$old" ] && [ "$old" -ef "$home/bin/tomato" ]; then :; else ln -sf "$home/bin/tomato" "$bindir/tomato"; fi
 echo "installed to $home"
 echo "linked $bindir/tomato"
 case ":$PATH:" in *":$bindir:"*) ;; *) echo "add $bindir to your PATH to run 'tomato'" ;; esac
