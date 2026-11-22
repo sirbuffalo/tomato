@@ -228,6 +228,49 @@ readline() {   # readline PROMPT [INITIAL TEXT] -> sets $REPLY_LINE
     else IFS= read -r -e -p "$1" REPLY_LINE || return 1; fi
   else IFS= read -r REPLY_LINE || return 1; fi
 }
+# A block recalled from history arrives as one line (lines joined by BLK). Show it as the real multi-line block, then let
+# the user run it (Enter) or edit it line by line (e): for each line, Enter keeps it, Up recalls it into the editor
+# (bash 3.2 cannot prefill the editor, so the line is put at the top of the history) and - deletes it; after the last line
+# more lines can be added, and an empty line finishes, as when typing a block. An edited block is remembered as a new entry.
+recall_block() {
+  local n l r p old new prev indent
+  [ $interactive = 1 ] || return
+  show_block
+  readline "[Enter] run  [e] edit: " || return
+  [ "$REPLY_LINE" = e ] || return
+  old="$text"; new=""; n=0;
+  while IFS= read -r -u 3 l; do
+    n=$((n + 1)); [ $n = 1 ] && p='>>> ' || p='... '
+    if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then readline "$p" "$l" || break; r="$REPLY_LINE"
+    else
+      history -s -- "$l"
+      readline "$p" || { history -d "$HISTCMD" 2>/dev/null; break; }
+      history -d $(history 1 | awk '{print $1}') 2>/dev/null
+      r="$REPLY_LINE"; [ -z "$r" ] && r="$l"
+    fi
+    [ "$r" = - ] && continue
+    new="${new:+$new
+}$r"
+  done 3<<EOF
+$old
+EOF
+  prev="$(printf '%s\n' "$new" | tail -1)"
+  while :; do
+    indent="$(printf '%s' "$prev" | sed 's/^\([ ]*\).*/\1/')"; case "$prev" in *:) indent="$indent    " ;; esac
+    readline '... ' "$indent" || break
+    [ -z "$(printf '%s' "$REPLY_LINE" | tr -d ' ')" ] && break
+    prev="$REPLY_LINE"; new="$new
+$prev"
+  done
+  text="$new"
+  [ "$new" != "$old" ] && remember "${new//
+/$BLK}"
+}
+show_block() { local n l; n=0; while IFS= read -r l; do n=$((n + 1)); if [ $n = 1 ]; then printf '>>> %s\n' "$l"; else printf '... %s\n' "$l"; fi; done <<EOF
+$text
+EOF
+}
+
 [ $interactive = 1 ] && say "Tomato repl (each line re-runs the whole session, so file writes repeat). :help for commands, :quit or Ctrl-D to leave."
 
 while :; do
@@ -248,7 +291,7 @@ while :; do
   case "$line" in *:|@*|*"$BLK"*) ;; *) remember "$line" ;; esac   # a block is remembered whole, once its body is read
   case "$line" in
     *"$BLK"*) text="${line//$BLK/
-}" ;;   # a recalled block: its lines are all here
+}"; recall_block ;;   # a recalled block: show it as real lines, offer to edit
     *:|@*)
       # a block: read lines until an empty one; each line starts with the previous line's indent (four more after a colon)
       prev="$line"

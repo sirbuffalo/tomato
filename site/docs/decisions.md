@@ -1292,7 +1292,7 @@ Source: Davis's Dashboard message:
 - Both use one mechanism. A program whose answers have run out and that asks for another stops with exit code 75 (the host sets `TOMATO_INPUT_ASK=1` in the environment; the browser host does the same); the host shows what the program printed up to its prompt, reads one line, and runs the program again from the start with all answers so far as its standard input. Answers are replayed silently and the program echoes each answer after its prompt (as a terminal would), so the output of every run starts with the output of the run before, and only the new part is shown. Nothing is asked twice.
 - Repl: each line that asks adds its answers to the session; `:reset` forgets them. A line that fails does not keep its answers. The session `main` becomes `async def` when a statement uses `await`, `async` or `start`. In a script or pipe the answer is the next line of the script.
 - Playground: the Run page shows a field right after the output when the program asks; Enter re-runs with the answer added. Pressing Run again starts over with no answers. The repl tab behaves like the installed repl. The 5 second limit applies to each run.
-- Cost: a program that ran for a long time before asking is run again from the start for each answer, and a program with side effects outside itself repeats them (the same caveat the repl already had).
+- Limit (bash 3.2): no `bind -x`/`READLINE_LINE`, so Up cannot itself show the multi-line form. Cost: a program that ran for a long time before asking is run again from the start for each answer, and a program with side effects outside itself repeats them (the same caveat the repl already had).
 
 ### D51a — `async def` and `await`: accepted
 
@@ -1384,6 +1384,14 @@ Source: Davis's Dashboard message:
 - Inside a function, `for x in items:` loops over an `Iterable[T]` (x is a `T`) and `len(items)` works on a `Sized`. A `for` over a plain `Sized`, or `len()` of a plain `Iterable[T]`, is a compile error. Nothing else is built on them yet: `sum`, `min`, `max`, `sorted`, `list()`, `in` and indexing on these types are follow-ups.
 - How it works: a value of these types is boxed, as a union is, holding the concrete value passed in; a loop or `len()` is compiled once for every kind of value that can be in the box and the matching one runs. A generator is part of the loop that uses it, so it cannot be called through a plain interface, and this is how its loop is still lazy. A set or dict passed as an `Iterable` is boxed as a snapshot of its keys, which is what a `for` loop over it walks anyway (P28).
 - `std/itertools.tom`'s `progress_bar` now takes `Iterable[int] & Sized`, so it accepts a list, a range, or your own class with `@iter` and `@len`.
+
+### D59a — repl: a recalled multi-line block is shown as real lines and edited line by line: accepted
+
+- Evidence: in `tomato repl`, pressing the up arrow after a multi-line block showed it as one line with `⏎` markers (`for i in progress_bar(1000):⏎    if ...⏎        print(i)`). The request was to get the block back as multi-line text, ready to edit and run.
+- Why not a true multi-line editor: the repl is bash 3.2 (macOS) without Python. Readline keeps one line per history entry and `read -e` cannot hand back or prefill a multi-line buffer (`-i` needs bash 4), so a real editor with arrow keys across lines is not possible without writing a terminal program; that was rejected as too large.
+- Rule: a block is still stored as one history entry (lines joined by `⏎`, so the history file stays plain text). When a recalled entry is entered, the repl prints it as the real block (`>>> ` then `... ` lines, with their indentation) and asks `[Enter] run  [e] edit:`. Enter runs it whole. `e` goes through the lines: Enter keeps a line, Up puts the line into the editor to change it (on bash 4 and later it is prefilled instead), `-` deletes it; after the last line more lines may be added and an empty line finishes, as when typing a block. An edited block is remembered as a new history entry.
+- Limit (bash 3.2): no `bind -x`/`READLINE_LINE`, so Up cannot itself show the multi-line form. Cost: the recalled one-line `⏎` form is still what the up arrow shows before Enter, and one extra Enter is needed to run a recalled block. Tested by `tests/repl_history.exp` (pty).
+- `from itertools` alone keeps the error `expected 'import', but found the end of the line` with the caret just past the last character; this wording was judged acceptable and no compiler change was made.
 
 ## Pending discussion
 

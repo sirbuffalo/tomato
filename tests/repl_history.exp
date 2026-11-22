@@ -14,12 +14,18 @@ line ""
 line "x = 5"
 line "print(1 + \"a\")"
 send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3   ;# print(1+"a"), x = 5, then the block
-send "\r"; sleep 1.5
+send "\r"; sleep 0.8          ;# the block is shown as real lines with the run/edit prompt
+send "\r"; sleep 1.5          ;# Enter runs it whole
+send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3; send "\r"; sleep 0.8   ;# the block again
+send "e\r"; sleep 0.5; send "\r"; sleep 0.5   ;# edit: keep line 1
+send "\033\[A"; sleep 0.3; send "\b * 10)\r"; sleep 0.5   ;# line 2: up arrow recalls it, change it
+send "\r"; sleep 1.5          ;# no more lines: run
 line ":quit"
 expect eof
 set hist [exec cat $home/hist]
 set bad ""
 if {[regexp -all {0\r\n1\r\n} $expect_out(buffer)] < 2} { append bad "recalled block did not run whole; " }
+if {![regexp {0\r\n10\r\n} $expect_out(buffer)]} { append bad "edited block did not run; " }
 if {![string match "*for i in range(2):⏎*print(i)*" $hist]} { append bad "block not stored as one entry: $hist; " }
 if {[regexp {\nprint\(i\)} $hist]} { append bad "body stored as its own entry; " }
 if {[string match "*Error*" $hist]} { append bad "error text in history; " }
