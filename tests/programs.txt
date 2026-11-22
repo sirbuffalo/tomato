@@ -18,6 +18,7 @@ float_ops
 tuples
 unions
 big_numbers
+big_mul
 unlimited_int
 keyword_args
 float_more

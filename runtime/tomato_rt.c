@@ -1584,6 +1584,20 @@ static int64_t int_add_signed(int sa, const uint32_t *a, int64_t an, int sb, con
     return w;
 }
 
+/* finish a Big whose limbs were written in place: drop leading zeros, and turn it into the small form when it fits */
+static int64_t int_finish(Big *b, int sign, int64_t n) {
+    while (n > 0 && b->d[n - 1] == 0) n--;
+    if (n <= 2) {
+        uint64_t m = 0;
+        if (n > 0) m = b->d[0];
+        if (n > 1) m |= (uint64_t)b->d[1] << 32;
+        if (sign > 0 && m <= (uint64_t)INT_SMALL_MAX) { free(b); return int_mk_small((int64_t)m); }
+        if (sign < 0 && m <= ((uint64_t)1 << 62)) { free(b); return int_mk_small((int64_t)0 - (int64_t)m); }
+    }
+    b->sign = sign; b->n = n;
+    return (int64_t)(uintptr_t)b;
+}
+
 int64_t tomato_int_add(int64_t x, int64_t y) {
     if (x & y & 1) {
         int64_t s = int_small_val(x) + int_small_val(y);
@@ -1617,9 +1631,31 @@ int64_t tomato_int_mul(int64_t x, int64_t y) {
     }
     IntView a, b; int_view(x, &a); int_view(y, &b);
     if (a.n == 0 || b.n == 0) return int_mk_small(0);
+    if (a.n <= 2 || b.n <= 2) {                       /* one operand fits in 64 bits: one pass straight into the result */
+        const IntView *big = a.n <= 2 ? &b : &a, *sm = a.n <= 2 ? &a : &b;
+        uint64_t m = (uint64_t)sm->d[0] | (sm->n > 1 ? (uint64_t)sm->d[1] << 32 : 0);
+        int64_t n = big->n, pairs = n / 2;
+        Big *r = malloc(sizeof(Big) + (size_t)(n + 2) * 4);
+        if (!r) tomato_fail("out of memory");
+        unsigned __int128 carry = 0;
+        for (int64_t i = 0; i < pairs; i++) {
+            uint64_t w; memcpy(&w, big->d + 2 * i, 8);
+            unsigned __int128 t = (unsigned __int128)w * m + carry;
+            uint64_t lo = (uint64_t)t; memcpy(r->d + 2 * i, &lo, 8);
+            carry = t >> 64;
+        }
+        int64_t rn = 2 * pairs;
+        if (n & 1) {
+            unsigned __int128 t = (unsigned __int128)big->d[n - 1] * m + carry;
+            r->d[rn++] = (uint32_t)t; carry = t >> 32;
+        }
+        while (carry) { r->d[rn++] = (uint32_t)carry; carry >>= 32; }
+        return int_finish(r, a.sign * b.sign, rn);
+    }
     int64_t rn = a.n + b.n;
-    uint32_t *out = calloc((size_t)rn, 4);
-    if (!out) tomato_fail("out of memory");
+    Big *res = calloc(1, sizeof(Big) + (size_t)rn * 4);
+    if (!res) tomato_fail("out of memory");
+    uint32_t *out = res->d;
     for (int64_t i = 0; i < a.n; i++) {
         uint64_t carry = 0;
         for (int64_t j = 0; j < b.n; j++) {
@@ -1628,9 +1664,7 @@ int64_t tomato_int_mul(int64_t x, int64_t y) {
         }
         out[i + b.n] += (uint32_t)carry;
     }
-    int64_t w = int_make(a.sign * b.sign, out, rn);
-    free(out);
-    return w;
+    return int_finish(res, a.sign * b.sign, rn);
 }
 
 /* magnitude division (Knuth algorithm D): q = u / v, r = u % v; q has un limbs, r has vn limbs; v is not zero */
