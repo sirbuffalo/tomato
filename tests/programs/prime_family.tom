@@ -1,0 +1,38 @@
+from math import next_prime, prev_prime, primes_up_to, nth_prime, prime_factors, factorize, prime_count, totient, is_coprime, lcm
+
+def show(xs: list[int]) -> str:
+    out = '['
+    for i in range(len(xs)):
+        if i > 0:
+            out = out + ' '
+        out = out + str(xs[i])
+    return out + ']'
+
+def show_pairs(xs: list[list[int]]) -> str:
+    out = ''
+    for p in xs:
+        out = out + str(p[0]) + '^' + str(p[1]) + ' '
+    return '{' + out + '}'
+
+@main
+def main():
+    print(next_prime(-3), next_prime(0), next_prime(1), next_prime(2), next_prime(3), next_prime(13), next_prime(14))
+    print(next_prime(1000000006), next_prime(2 ** 64), next_prime(9223372036854775783))
+    print(prev_prime(3), prev_prime(4), prev_prime(14), prev_prime(1000000008), prev_prime(2 ** 64))
+    print(show(primes_up_to(-1)), show(primes_up_to(1)), show(primes_up_to(2)), show(primes_up_to(50)))
+    print(len(show(primes_up_to(10000))), prime_count(100))
+    print(nth_prime(1), nth_prime(2), nth_prime(10), nth_prime(100), nth_prime(1000))
+    print(show(prime_factors(0)), show(prime_factors(1)), show(prime_factors(2)), show(prime_factors(12)), show(prime_factors(-360)), show(prime_factors(97)))
+    print(show(prime_factors(600851475143)), show(prime_factors(2 ** 20)), show(prime_factors(1000000007 * 998244353)))
+    print(show_pairs(factorize(1)), show_pairs(factorize(12)), show_pairs(factorize(360)), show_pairs(factorize(-49)), show_pairs(factorize(2 ** 10 * 3)))
+    print(totient(0), totient(1), totient(9), totient(10), totient(97), totient(360))
+    print(is_coprime(8, 9), is_coprime(8, 12), is_coprime(0, 1), is_coprime(0, 0), is_coprime(-3, 7))
+    print(lcm(4, 6), lcm(0, 5), lcm(-4, 6), lcm(7, 13), lcm(21, 6))
+    try:
+        prev_prime(2)
+    catch RuntimeError as e:
+        print("error", e.message)
+    try:
+        nth_prime(0)
+    catch RuntimeError as e:
+        print("error", e.message)
