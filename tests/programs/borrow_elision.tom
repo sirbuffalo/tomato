@@ -1,0 +1,133 @@
+# Reads of local variables that need no reference count (indexing, fields, method calls, len, call arguments):
+# the variable keeps its value alive, so nothing may be freed while the operation runs, whatever the callee does.
+class Box:
+    items: list[int]
+    child: Box | None
+    n: int
+    @init
+    def make(self, n: int):
+        self.items = [n, n + 1, n + 2]
+        self.child = None
+        self.n = n
+
+    def drop_child(self) -> int:
+        self.child = None
+        return 7
+
+    def replace_items(self) -> int:
+        self.items = [100]
+        return 1
+
+    def total(self) -> int:
+        t = 0
+        for i in range(len(self.items)):
+            t += self.items[i]
+        return t
+
+    def grow(self, other: Box) -> int:
+        self.child = other
+        return self.n + other.n
+
+class Holder:
+    node: Leaf | None
+    @init
+    def make(self):
+        self.node = Leaf(41)
+
+class Leaf:
+    v: int
+    @init
+    def make(self, v: int):
+        self.v = v
+
+    def cut(self, owner: Holder) -> int:
+        owner.node = None
+        return self.v + 1
+
+    def twice(self, other: Leaf) -> int:
+        return self.v + other.v
+
+def shrink(xs: list[int]) -> int:
+    xs = [9]
+    return xs[0]
+
+def reassign_arg(b: Box) -> int:
+    b = Box(50)
+    return b.n
+
+def clear_box(b: Box) -> int:
+    b.items = []
+    return 0
+
+def same(xs: list[int]) -> list[int]:
+    return xs
+
+def first(xs: list[int]) -> int:
+    return xs[0]
+
+def pick(ll: list[list[int]], k: int) -> int:
+    return ll[k][0]
+
+@main
+def main():
+    # the index expression calls a method that drops the only other reference
+    b = Box(1)
+    b.child = Box(2)
+    print(b.items[b.drop_child() - 6])
+    print(b.child is None)
+
+    # the receiver's field is replaced while the method that reads it runs
+    c = Box(10)
+    print(c.items[c.replace_items() - 1], c.total())
+
+    # a callee reassigns its own parameter: the caller's variable is untouched
+    xs = [1, 2, 3]
+    print(shrink(xs), xs[0], len(xs))
+    d = Box(5)
+    print(reassign_arg(d), d.n)
+
+    # a callee empties the object the caller is reading through
+    e = Box(3)
+    print(clear_box(e), len(e.items), e.items)
+
+    # x = f(x): the old value goes only after the new one exists
+    ys = [4, 5]
+    ys = same(ys)
+    print(ys, first(ys) + len(ys))
+    ys = [first(ys), ys[1]] + same(ys)
+    print(ys)
+
+    # a list comprehension that reuses the variable's name in the index
+    ll = [[7, 8], [9]]
+    zs = [1, 2, 3]
+    print(zs[[len(zs) for zs in ll][1] - 1])
+    print(first(zs), pick(ll, 1))
+
+    # appending to the list that is being read
+    ws = [1]
+    for i in range(5):
+        ws.append(ws[len(ws) - 1] + len(ws))
+    print(ws)
+
+    # the object becomes a field of another and is read through the original name
+    f = Box(20)
+    g = Box(30)
+    print(f.grow(g), f.child.n, g.n)
+    g = Box(31)
+    print(f.child.n, g.n)
+
+    # a method whose receiver is held only by the object it removes itself from
+    h = Holder()
+    print(h.node.cut(h), h.node is None)
+    lf = Leaf(2)
+    print(lf.twice(lf), lf.twice(Leaf(5)))
+
+    # items assigned through a variable that is reassigned in the value expression's callee frame
+    hs = [0, 0, 0]
+    hs[first(hs)] = len(hs)
+    hs[2] = first(hs) + hs[0]
+    print(hs)
+    m: dict[str, int] = {}
+    m['a'] = 1
+    m['b'] = len(m)
+    print(m['b'], len(m))

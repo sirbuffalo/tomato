@@ -334,6 +334,24 @@ def ex(reg: str, ty: str) -> Ex:
     e.ty = ty
     return e
 
+def has_comp(n: Node) -> bool:
+    # does this expression contain a list comprehension (the one expression that assigns to variables)?
+    if n.kind == 'ListComp':
+        return True
+    for f in n.fields:
+        if val_has_comp(f):
+            return True
+    return False
+
+def val_has_comp(v: Val) -> bool:
+    if v.tag == 'n':
+        return has_comp(val_node(v))
+    if v.tag == 'l' or v.tag == 't':
+        for it in v.items:
+            if val_has_comp(it):
+                return True
+    return False
+
 class FuncInfo:
     name: str = ''
     line: int = 0            # the line of the def
@@ -1097,6 +1115,7 @@ class Gen:
     lines: list[str] = []
     allocas: list[str] = []
     rc_slots: list[str] = []
+    assigned: list[str] = []      # the names of variables that are written (a name given to slot()) after the parameters were set up
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
     settled: list[str] = []       # the narrowed variables whose narrowing lasts to the end of the block (after an if that left)
@@ -1164,6 +1183,7 @@ class Gen:
         return 'epilogue'
 
     def slot(self, name: str, ty: str, line: int) -> str:
+        self.assigned.append(name)
         if name in self.slots:
             if self.types[name] != ty:
                 raise CompileError(f"the variable '{name}' already has type {shown(self.types[name])}, so it cannot be redeclared as {shown(ty)}", line)
@@ -1207,8 +1227,33 @@ class Gen:
             self.emit(f'call void @tomato_retain(ptr {e.reg})')
 
     def release(self, e: Ex):
-        if is_rc(e.ty):
+        # a borrowed read of a local (see expr_b) holds no reference of its own, so there is nothing to release
+        if is_rc(e.ty) and not e.reg.startswith('%bl.'):
             self.emit(f'call void @tomato_release(ptr {e.reg})')
+
+    def can_borrow(self, n: Node, others: list[Node]) -> bool:
+        # a plain local that holds a heap value can be read without retain/release when it is only looked at while the current
+        # operation runs: the local itself keeps the value alive, and nothing in an expression can assign to a local of this
+        # function except a list comprehension that reuses its name (calls run in their own frames, there are no closures)
+        if n.kind != 'Name':
+            return False
+        name = n.fields[0].text
+        if name not in self.slots or not is_rc(self.types[name]):
+            return False
+        for o in others:
+            if has_comp(o):
+                return False
+        return True
+
+    def expr_b(self, n: Node, others: list[Node]) -> Ex:
+        # like expr, but a local variable is lent without a retain; release() ignores the result. others are the expressions
+        # evaluated while the lent value is in use.
+        if self.can_borrow(n, others):
+            name = n.fields[0].text
+            r = self.tmp('bl')
+            self.emit(f'{r} = load ptr, ptr {self.slots[name]}')
+            return ex(r, self.types[name])
+        return self.expr(n)
 
     def store_owned(self, slot: str, e: Ex):
         # the slot takes over the reference and releases what it held
@@ -2133,7 +2178,7 @@ class Gen:
             raise CompileError(f"the const field '{name}' cannot be changed after the object is created", line)
 
     def field_get(self, n: Node) -> Ex:
-        obj = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
+        obj = self.unwrap(self.expr_b(val_node(n.fields[0]), []), n.line)
         name = n.fields[1].text
         if is_class(obj.ty):
             self.check_field_access(obj, name, False, n.line)
@@ -2147,7 +2192,7 @@ class Gen:
         return e
 
     def assign_field(self, s: Node, target: Node):
-        obj = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
+        obj = self.unwrap(self.expr_b(val_node(target.fields[0]), [val_node(s.fields[1])]), s.line)
         name = target.fields[1].text
         if is_class(obj.ty):
             self.check_field_access(obj, name, True, s.line)
@@ -2310,7 +2355,7 @@ class Gen:
         return self.convert_explicit(v, target, n.line)
 
     def index(self, n: Node) -> Ex:
-        s = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
+        s = self.unwrap(self.expr_b(val_node(n.fields[0]), [val_node(n.fields[1])]), n.line)
         if is_dict(s.ty):
             k = self.expr(val_node(n.fields[1]))
             k = self.want(k, 'str', n.line, 'a dict key')
@@ -3011,9 +3056,17 @@ class Gen:
         extra: list[Ex] = []        # the positional values beyond the named parameters (for *args)
         k = 0
         v = ex('', '')
+        around: list[Node] = [a0 for a0 in args]
+        for kv0 in keywords:
+            around.append(val_node(kv0.items[1]))
+        for d0 in info.defaults:
+            around.append(d0)
         for a in args:
             if k < nfixed:
-                v = self.expr(a, info.ptypes[k])
+                if not info.is_async and a.kind == 'Name' and a.fields[0].text in self.slots and self.types[a.fields[0].text] == info.ptypes[k]:
+                    v = self.expr_b(a, around)          # the callee only borrows it, and so does the call
+                else:
+                    v = self.expr(a, info.ptypes[k])
                 v = self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + " of '" + info.name + "' (the parameter '" + info.pnames[k] + "')")
                 slots[k] = v
             else:
@@ -3167,8 +3220,12 @@ class Gen:
 
     def method_call(self, n: Node, f: Node) -> Ex:
         name = f.fields[1].text
-        obj = self.unwrap(self.expr(val_node(f.fields[0])), n.line)
         args = val_nodes(n.fields[1])
+        recv = val_node(f.fields[0])
+        if recv.kind == 'Name' and recv.fields[0].text in self.slots and self.borrowable_receiver(self.types[recv.fields[0].text], name):
+            obj = self.unwrap(self.expr_b(recv, args), n.line)
+        else:
+            obj = self.unwrap(self.expr(recv), n.line)
         if obj.ty.startswith('tuple[') and name == 'append':
             raise CompileError(f"a tuple cannot be changed, so it has no '{name}'\nuse a list if the items must change", n.line)
         if is_list(obj.ty) and name == 'append':
@@ -3202,6 +3259,11 @@ class Gen:
                 raise CompileError(f"the method '{name}' is private to class '{info.owner}'\nonly its own methods can call it", n.line)
             return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
         raise CompileError(self.no_method(name, obj.ty), n.line)
+
+    def borrowable_receiver(self, ty: str, name: str) -> bool:
+        # receivers whose method code only looks at them and releases them at the end: lists, sets, dicts, objects and interfaces
+        t = strip_optional(ty)
+        return is_list(t) or is_set(t) or is_dict(t) or is_class(t) or is_iface(t)
 
     def task_method(self, t: Ex, name: str, args: list[Node], line: int) -> Ex:
         # t.done() says whether the task has finished (in any way) and t.cancel() asks it to stop (D58d); neither waits
@@ -3838,7 +3900,10 @@ class Gen:
     def len_call(self, args: list[Node], line: int) -> Ex:
         if len(args) != 1:
             raise CompileError('len() takes exactly one argument', line)
-        v = self.expr(args[0])
+        if args[0].kind == 'Name' and args[0].fields[0].text in self.slots and not is_dyn(self.types[args[0].fields[0].text]):
+            v = self.expr_b(args[0], [])
+        else:
+            v = self.expr(args[0])
         if is_dyn(v.ty):
             return self.len_dyn(v, line)
         if is_union(v.ty):
@@ -4315,7 +4380,7 @@ class Gen:
         self.place(end_l)
 
     def assign_item(self, s: Node, target: Node):
-        lst = self.unwrap(self.expr(val_node(target.fields[0])), s.line)
+        lst = self.unwrap(self.expr_b(val_node(target.fields[0]), [val_node(target.fields[1]), val_node(s.fields[1])]), s.line)
         if lst.ty.startswith('tuple['):
             raise CompileError('a tuple cannot be changed, so its items cannot be assigned\nuse a list if the items must change', s.line)
         if is_dict(lst.ty):
@@ -4928,13 +4993,22 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
             types.append(info.ptypes[k])
             k += 1
     sig: list[str] = []
+    lent: list[list[str]] = []          # per rc parameter: its name, its slot, and the line index of its retain
     for k, name in enumerate(names):
         reg = g.slot(name, types[k], f.line)
         sig.append(f'{llvm_type(types[k])} %arg.{name}')
         g.emit(f'store {llvm_type(types[k])} %arg.{name}, ptr {reg}')
         if is_rc(types[k]):
+            lent.append([name, reg, str(len(g.lines))])
             g.emit('call void @tomato_retain(ptr %arg.' + name + ')')    # the caller only lent it
+    g.assigned = []
     g.block(val_nodes(f.fields[3]))
+    # a parameter that the body never assigns keeps the caller's reference for as long as the call lasts (the caller holds one
+    # during the call), so it needs no reference of its own: no retain now and no release in the epilogue
+    for pl in lent:
+        if pl[0] not in g.assigned:
+            g.lines[int(pl[2])] = '  ; the parameter ' + pl[0] + ' is only lent'
+            g.rc_slots = [r for r in g.rc_slots if r != pl[1]]
     if info.ret != '' and falls_through(val_nodes(f.fields[3])):
         raise CompileError(f"the function '{info.name}' can reach its end without returning a value\nend every path with a return, for example give the last if an else that returns", f.line)
     if not g.terminated:
