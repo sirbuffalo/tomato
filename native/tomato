@@ -160,8 +160,10 @@ case "$mode" in
   normal) die "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" ;;
   *) die "the mode must be debug or release, not '$mode'" ;;
 esac
-# debug links at -O1 and keeps readable errors and the leak report; release links at -O2 and prints short error codes
-opt=-O1; [ "$mode" = release ] && opt=-O2
+# debug links at -O1 and keeps readable errors and the leak report; release links at -O2 with link-time optimisation (so the
+# runtime's small-number and reference-count fast paths are inlined into the program), without the leak report, and prints
+# short error codes. If this clang cannot do LTO, release falls back to a plain -O2 link.
+opt=-O1; ltoflags=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; }
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 if ! "$tomatoc" "$file" "$entry" "$std" "$mode" > "$tmp/program.ll" 2> "$tmp/errors"; then
@@ -172,13 +174,14 @@ fi
 [ "$cmd" = compile ] && { grep -v '^;! ' "$tmp/program.ll"; exit 0; }
 exe="$tmp/program"
 [ "$cmd" = build ] && exe="${out:-$(basename "${file%.tom}")}"
-link() {   # a function has its own "$@", so the run inputs survive
-  set -- clang $opt -Wno-override-module -o "$exe" "$tmp/program.ll"
+link() {   # a function has its own "$@", so the run inputs survive; $1 holds the extra clang flags (release: LTO)
+  extra="$1"
+  set -- clang $opt $extra -Wno-override-module -o "$exe" "$tmp/program.ll"
   OLDIFS="$IFS"; IFS="$nl"
   for f in $llvm; do set -- "$@" "$f"; done
   IFS="$OLDIFS"
   "$@" "$runtime" -lm
 }
-link || exit 1
+if [ -n "$ltoflags" ]; then link "$ltoflags" 2>/dev/null || link "-DTOMATO_RELEASE" || exit 1; else link "" || exit 1; fi
 [ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }
 "$exe" "$@"

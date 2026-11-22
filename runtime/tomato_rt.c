@@ -5,6 +5,8 @@
  * marks an immortal object, such as a string literal. A cycle collector frees reference cycles (D29d), and debug
  * mode reports objects that were never freed (D29c). */
 #include <ctype.h>
+#define NOINLINE __attribute__((noinline))
+#define ALWAYS __attribute__((always_inline))
 #include <errno.h>
 #include <math.h>
 #include <stdint.h>
@@ -83,6 +85,11 @@ extern const int32_t *const tomato_offsets[];
 extern int64_t tomato_parents[];  /* generated: the type code of each class's parent, or 0 */
 #endif
 static int64_t live_objects = 0;
+#ifdef TOMATO_RELEASE   /* a release program does not report leaks, so it does not count live objects either */
+#define LIVE_ADJUST(d) ((void)0)
+#else
+#define LIVE_ADJUST(d) (live_objects += (d))
+#endif
 
 /* The type word also carries the cycle collector's state in its upper bits (the type code is the low 32 bits). */
 #define TYPE_MASK 0xFFFFFFFFLL
@@ -93,8 +100,8 @@ static int hcolor(Hdr *h) { return (int)((h->type >> 32) & 3); }
 static void set_color(Hdr *h, int col) { h->type = (h->type & ~(3LL << 32)) | ((int64_t)col << 32); }
 static int64_t tcode(Hdr *h) { return h->type & TYPE_MASK; }
 
-static void possible_root(Hdr *h);
-static void destroy_object(Hdr *h);
+NOINLINE static void possible_root(Hdr *h);
+NOINLINE static void destroy_object(Hdr *h);
 
 void tomato_fail(const char *message) {
     fflush(stdout);
@@ -276,20 +283,40 @@ void *tomato_alloc(int64_t size, int64_t type) {
     if (!h) tomato_fail("out of memory");
     h->rc = 1;
     h->type = type;
-    live_objects++;
+    LIVE_ADJUST(1);
     return h;
 }
 
-void tomato_retain(void *p) {
+ALWAYS void tomato_retain(void *p) {
     if (p && ((Hdr *)p)->rc > 0) ((Hdr *)p)->rc++;   /* an immortal object (rc < 0) is never counted */
 }
 
-void tomato_release(void *p) {
+static Hdr **roots;
+static int64_t roots_n, roots_cap;
+static int64_t gc_threshold = 10000;
+
+/* The common cases (a count that stays above zero on an object that is already a candidate root, or on a string) are
+ * decided inline; everything else goes through the out-of-line slow paths. */
+/* an object that holds no references can never be in a cycle */
+static inline int never_in_cycle(int64_t code) {
+    int32_t kind = tomato_kinds[code];
+    switch (kind & 15) {
+    case 0: return 1;                                   /* strings */
+    case 1: return *tomato_offsets[code] < 0;           /* a class with no heap-valued fields */
+    case 2: return !(kind & 256);                       /* a list of numbers */
+    case 3: return !(kind & 512);                       /* string keys hold no references; only values can */
+    }
+    return 0;
+}
+
+ALWAYS void tomato_release(void *p) {
     if (!p) return;
     Hdr *h = p;
     if (h->rc <= 0) return;                 /* immortal (negative) or already dead */
-    if (--h->rc == 0) destroy_object(h);
-    else possible_root(h);                  /* still referenced: it might be the last outside reference of a cycle */
+    if (--h->rc == 0) { destroy_object(h); return; }
+    /* still referenced: it might be the last outside reference of a cycle */
+    if (hcolor(h) == PURPLE ? roots_n < gc_threshold : never_in_cycle(tcode(h))) return;
+    possible_root(h);
 }
 
 /* Debug mode: objects still alive at exit were never released, usually a reference cycle (D29c). */
@@ -301,6 +328,9 @@ extern const char *tomato_class_names[];
 void tomato_collect_cycles(void);
 
 void tomato_leak_check(void) {
+#ifdef TOMATO_RELEASE
+    return;                      /* release: no leak report, and no collection at exit (nothing observes what is left) */
+#endif
     tomato_collect_cycles();     /* cycles are freed automatically (D29d), so only true leaks are left to report */
     /* After an error was raised, temporaries held in the middle of an expression can be dropped without being
      * released, so the check would report false leaks: it stays quiet then. */
@@ -1310,7 +1340,7 @@ static void destroy_one(Hdr *h) {
     free_internals(h);
     if (h->type & F_BUFFERED) { h->type |= F_DEAD; return; }   /* the collector still points at it: freed there */
     free(h);
-    live_objects--;
+    LIVE_ADJUST(-1);
 }
 
 static void destroy_object(Hdr *h) {
@@ -1329,9 +1359,6 @@ static void destroy_object(Hdr *h) {
     destroying = 0;
 }
 
-static Hdr **roots;
-static int64_t roots_n, roots_cap;
-static int64_t gc_threshold = 10000;
 static int64_t gc_freed, gc_runs;
 
 static Hdr **stack;
@@ -1418,7 +1445,7 @@ void tomato_collect_cycles(void) {
             roots[keep++] = s;
         } else {
             s->type &= ~F_BUFFERED;
-            if (s->rc == 0 && (s->type & F_DEAD)) { free(s); live_objects--; }
+            if (s->rc == 0 && (s->type & F_DEAD)) { free(s); LIVE_ADJUST(-1); }
         }
     }
     roots_n = keep;
@@ -1429,7 +1456,7 @@ void tomato_collect_cycles(void) {
     for (int64_t i = 0; i < garbage_n; i++) {
         free_internals(garbage[i]);
         free(garbage[i]);
-        live_objects--;
+        LIVE_ADJUST(-1);
         gc_freed++;
     }
     roots_n = 0;
@@ -1441,14 +1468,7 @@ void tomato_collect_cycles(void) {
 }
 
 static void possible_root(Hdr *h) {
-    int64_t code = tcode(h);
-    int32_t kind = tomato_kinds[code];
-    switch (kind & 15) {                  /* an object that holds no references can never be in a cycle */
-    case 0: return;                       /* strings */
-    case 1: if (*tomato_offsets[code] < 0) return; break;   /* a class with no heap-valued fields */
-    case 2: if (!(kind & 256)) return; break;                /* a list of numbers */
-    case 3: if (!(kind & 512)) return; break;   /* string keys hold no references; only values can */
-    }
+    if (never_in_cycle(tcode(h))) return;
     if (hcolor(h) != PURPLE) {
         set_color(h, PURPLE);
         if (!(h->type & F_BUFFERED)) {
@@ -1598,13 +1618,19 @@ static int64_t int_finish(Big *b, int sign, int64_t n) {
     return (int64_t)(uintptr_t)b;
 }
 
-int64_t tomato_int_add(int64_t x, int64_t y) {
+NOINLINE static int64_t int_add_slow(int64_t x, int64_t y) {
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    return int_add_signed(a.sign, a.d, a.n, b.sign, b.d, b.n);
+}
+
+/* The small-number fast paths are small enough for the optimiser to inline into the program (release links with LTO);
+ * the big-number work stays out of line. */
+ALWAYS int64_t tomato_int_add(int64_t x, int64_t y) {
     if (x & y & 1) {
         int64_t s = int_small_val(x) + int_small_val(y);
         if (s >= INT_SMALL_MIN && s <= INT_SMALL_MAX) return int_mk_small(s);
     }
-    IntView a, b; int_view(x, &a); int_view(y, &b);
-    return int_add_signed(a.sign, a.d, a.n, b.sign, b.d, b.n);
+    return int_add_slow(x, y);
 }
 
 int64_t tomato_int_neg(int64_t x) {
@@ -1613,22 +1639,21 @@ int64_t tomato_int_neg(int64_t x) {
     return int_make(-a.sign, a.d, a.n);
 }
 
-int64_t tomato_int_sub(int64_t x, int64_t y) {
-    if ((x & y & 1)) {
-        int64_t s = int_small_val(x) - int_small_val(y);
-        if (s >= INT_SMALL_MIN && s <= INT_SMALL_MAX) return int_mk_small(s);
-    }
+NOINLINE static int64_t int_sub_slow(int64_t x, int64_t y) {
     IntView a, b; int_view(x, &a); int_view(y, &b);
     if (b.n == 0) return int_make(a.sign, a.d, a.n);
     return int_add_signed(a.sign, a.d, a.n, -b.sign, b.d, b.n);
 }
 
-int64_t tomato_int_mul(int64_t x, int64_t y) {
-    if (x & y & 1) {
-        int64_t p;
-        if (!__builtin_mul_overflow(int_small_val(x), int_small_val(y), &p) && p >= INT_SMALL_MIN && p <= INT_SMALL_MAX)
-            return int_mk_small(p);
+ALWAYS int64_t tomato_int_sub(int64_t x, int64_t y) {
+    if ((x & y & 1)) {
+        int64_t s = int_small_val(x) - int_small_val(y);
+        if (s >= INT_SMALL_MIN && s <= INT_SMALL_MAX) return int_mk_small(s);
     }
+    return int_sub_slow(x, y);
+}
+
+NOINLINE static int64_t int_mul_slow(int64_t x, int64_t y) {
     IntView a, b; int_view(x, &a); int_view(y, &b);
     if (a.n == 0 || b.n == 0) return int_mk_small(0);
     if (a.n <= 2 || b.n <= 2) {                       /* one operand fits in 64 bits: one pass straight into the result */
@@ -1665,6 +1690,15 @@ int64_t tomato_int_mul(int64_t x, int64_t y) {
         out[i + b.n] += (uint32_t)carry;
     }
     return int_finish(res, a.sign * b.sign, rn);
+}
+
+ALWAYS int64_t tomato_int_mul(int64_t x, int64_t y) {
+    if (x & y & 1) {
+        int64_t p;
+        if (!__builtin_mul_overflow(int_small_val(x), int_small_val(y), &p) && p >= INT_SMALL_MIN && p <= INT_SMALL_MAX)
+            return int_mk_small(p);
+    }
+    return int_mul_slow(x, y);
 }
 
 /* magnitude division (Knuth algorithm D): q = u / v, r = u % v; q has un limbs, r has vn limbs; v is not zero */
@@ -1745,19 +1779,40 @@ static void int_floordivmod(int64_t x, int64_t y, int64_t *quot, int64_t *rem) {
     *quot = qw; *rem = rw;
 }
 
-int64_t tomato_int_floordiv(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); return q; }
-int64_t tomato_int_mod(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); return r; }
-
-int32_t tomato_int_cmp(int64_t x, int64_t y) {
-    if (int_is_small(x) && int_is_small(y)) {
-        int64_t a = int_small_val(x), b = int_small_val(y);
-        return a < b ? -1 : (a > b ? 1 : 0);
+NOINLINE static int64_t int_floordiv_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); return q; }
+NOINLINE static int64_t int_mod_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); return r; }
+/* Python-style floor division and remainder of two small numbers, inline (the caller has checked the divisor is not zero). */
+ALWAYS int64_t tomato_int_floordiv(int64_t x, int64_t y) {
+    if ((x & y & 1) && !(int_small_val(x) == INT_SMALL_MIN && int_small_val(y) == -1)) {
+        int64_t a = int_small_val(x), b = int_small_val(y), q = a / b, r = a % b;
+        if (r != 0 && ((r < 0) != (b < 0))) q--;
+        return int_mk_small(q);
     }
+    return int_floordiv_slow(x, y);
+}
+ALWAYS int64_t tomato_int_mod(int64_t x, int64_t y) {
+    if ((x & y & 1) && !(int_small_val(x) == INT_SMALL_MIN && int_small_val(y) == -1)) {
+        int64_t a = int_small_val(x), b = int_small_val(y), r = a % b;
+        if (r != 0 && ((r < 0) != (b < 0))) r += b;
+        return int_mk_small(r);
+    }
+    return int_mod_slow(x, y);
+}
+
+NOINLINE static int32_t int_cmp_slow(int64_t x, int64_t y) {
     IntView a, b; int_view(x, &a); int_view(y, &b);
     int sa = a.n == 0 ? 0 : a.sign, sb = b.n == 0 ? 0 : b.sign;
     if (sa != sb) return sa < sb ? -1 : 1;
     int c = mag_cmp(a.d, a.n, b.d, b.n);
     return sa < 0 ? -c : c;
+}
+
+ALWAYS int32_t tomato_int_cmp(int64_t x, int64_t y) {
+    if (int_is_small(x) && int_is_small(y)) {
+        int64_t a = int_small_val(x), b = int_small_val(y);
+        return a < b ? -1 : (a > b ? 1 : 0);
+    }
+    return int_cmp_slow(x, y);
 }
 
 int64_t tomato_int_pow(int64_t base, int64_t exp) {
@@ -1810,12 +1865,16 @@ int32_t tomato_int_in_range(int64_t x, int32_t bits, int32_t is_signed) {
 }
 
 /* a number as a machine integer, for places that need one (an index, a range, a count): stops when it does not fit */
-int64_t tomato_int_raw(int64_t x) {
-    if (int_is_small(x)) return int_small_val(x);
+NOINLINE static int64_t int_raw_slow(int64_t x) {
     IntView a; int_view(x, &a);
     if (a.n <= 2 && tomato_int_in_range(x, 64, 1)) return tomato_int_low64(x);
     tomato_fail("the number is too big here");
     return 0;
+}
+
+ALWAYS int64_t tomato_int_raw(int64_t x) {
+    if (int_is_small(x)) return int_small_val(x);
+    return int_raw_slow(x);
 }
 
 double tomato_int_to_f64(int64_t x) {

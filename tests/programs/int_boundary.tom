@@ -1,0 +1,22 @@
+# Arithmetic and comparison across the small-int / big-int boundary (2**62), the cases the inlined fast paths must keep exact.
+@main
+def main():
+    edge = 2 ** 62
+    for base in [edge - 1, edge, edge + 1, 2 ** 63 - 1, 2 ** 63, 2 ** 63 + 1, 0 - edge, 0 - edge - 1, 0 - edge + 1, 0 - 2 ** 63, 0 - 2 ** 63 - 1]:
+        print(base, base + 1, base - 1, base * 2, base * 0 - base, base // 3, base % 3, base // (0 - 3), base % (0 - 3))
+        print(base < 0, base == edge, base > edge - 1, base <= edge, base >= 0 - edge)
+    print(edge + edge, edge - (0 - edge), (0 - edge) - edge, (0 - edge) * (0 - 1), (0 - edge) // (0 - 1), (0 - edge) % (0 - 1))
+    print((edge - 1) * (edge - 1), (edge - 1) + (edge - 1), (0 - edge) + (0 - edge), 3037000500 * 3037000500)
+    print(7 // 2, 7 // (0 - 2), (0 - 7) // 2, (0 - 7) // (0 - 2), 7 % 2, 7 % (0 - 2), (0 - 7) % 2, (0 - 7) % (0 - 2), 0 // 5, 0 % 5, 0 // (0 - 5), 0 % (0 - 5))
+    x = 2 ** 62 - 1
+    x += 1
+    x -= 1
+    print(x, x + 1 - 1 == x)
+    big = 2 ** 100
+    print(big // (2 ** 98), big % 7, (0 - big) // 7, (0 - big) % 7, big - big, big - big + 5)
+    items = [10, 20, 30]
+    print(items[0], items[2], items[0 - 1], items[0 - 3])
+    n = 0
+    for i in range(1, 6):
+        n = n * 10 + i
+    print(n)

@@ -103,6 +103,11 @@ check "mode normal was renamed to release" "error: the mode 'normal' was renamed
 check "unknown mode is refused" "error: the mode must be debug or release, not 'fast'" "$($t run "$work/dz.tom" --mode fast 2>&1)"
 $t build "$work/dz.tom" -o "$work/dz_rel" --mode release > /dev/null 2>&1; check "build --mode release makes a release binary" "error E01:4" "$("$work/dz_rel" 2>&1)"
 check "compile --mode release works" "tomato_report_uncaught" "$($t compile "$work/dz.tom" --mode release 2>&1 | grep -o tomato_report_uncaught | head -1)"
+# release links with LTO and an inlined runtime: the same programs must print exactly what debug mode prints
+for name in int_boundary big_numbers bitwise floor_divide_power containers cycle list_ops compound_ops fixed_width numbers_rules; do
+  check "release mode runs $name like debug" "$(cat "tests/expected/$name.main.out")" "$($t run "tests/programs/$name.tom" --mode release 2>&1)"
+done
+$t build tests/programs/cycle.tom -o "$work/cyc_rel" --mode release > /dev/null 2>&1; check "release mode does not print a leak report" "$(cat tests/expected/cycle.main.out)" "$("$work/cyc_rel" 2>&1)"
 check "explain decodes a release code" "error: division by zero" "$($t explain E01:4 "$work/dz.tom" 2>&1 | head -1)"
 check "explain decodes a code" "error: division by zero
   line 4: print(5 // x)" "$($t explain E01:4 "$work/dz.tom")"
