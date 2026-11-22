@@ -30,7 +30,7 @@
 
 <h2>Caveats</h2>
 <ul>
-<li>One machine, one run of the suite, fixed inputs. About 40% of the timings (mostly the ones near 0.1 s) varied by more than 20% between the fastest and slowest run. Other programs ran on the machine at the same time (the load average is at the top of the page), so small differences are noise; the spread between the fastest and slowest run is in the JSON.</li>
+<li>One machine, one run of the suite, fixed inputs. About 60% of the timings varied by more than 20% between the fastest and slowest run. Other programs ran on the machine at the same time (the load average is at the top of the page), so small differences are noise; the spread between the fastest and slowest run is in the JSON.</li>
 <li>Tomato is young and its compiler does little optimization of its own (release mode relies on clang and link-time inlining of the runtime). The numbers are a snapshot of this version, not a verdict on the language.</li>
 <li>Tomato's <code>int</code> is unlimited in size, with small values held in one tagged word; Go, Rust and (for big values) Python pay different costs for numbers, so the integer benchmarks compare designs as much as compilers. The Go <code>int</code> and Rust <code>u64</code> versions can overflow silently or stop; the checksums are chosen not to.</li>
 <li>The <em>bigint</em> benchmark uses <code>math/big</code> in Go, Python's built-in integers and a hand-written limb array in Rust (Rust's standard library has no big integers).</li>
