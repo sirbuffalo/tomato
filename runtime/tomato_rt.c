@@ -60,7 +60,7 @@ void tomato_fail(const char *message) {
     exit(1);
 }
 
-/* Normal mode (D34a): a short code that `tomato explain` decodes with the source. Printed as E<kind>:<line>. */
+/* Release mode (D34b): a short code that `tomato explain` decodes with the source. Printed as E<kind>:<line>. */
 void tomato_fail_code(int kind, int line) {
     fflush(stdout);
     fprintf(stderr, "error E%02d:%d\n", kind, line);
@@ -94,12 +94,6 @@ __attribute__((constructor)) static void install_stack_guard(void) {
     sigaction(SIGSEGV, &sa, NULL); sigaction(SIGBUS, &sa, NULL);
 }
 #endif
-
-/* Release mode (D34a): no readable error. */
-void tomato_trap(void) {
-    fflush(stdout);
-    exit(1);
-}
 
 void tomato_print_i64(int64_t v) { printf("%lld", (long long)v); }
 void tomato_print_u64(uint64_t v) { printf("%llu", (unsigned long long)v); }
@@ -1110,7 +1104,7 @@ int tomato_str_contains(void *hay, void *needle) {
 }
 
 /* An error nobody caught reached the entry point (D22a). `runtime` is 1 for a failure the language itself raised,
- * whose message is already in the current error mode's form; mode is 1 debug, 2 normal, 3 release (D34a). */
+ * whose message is already in the current error mode's form; mode is 1 debug, 2 release (D34b). */
 static void print_uncaught(void *obj, int line, int runtime, int mode, const char *where) {
     fflush(stdout);
     Str *msg = *(Str **)((char *)obj + 16);

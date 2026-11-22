@@ -1,9 +1,9 @@
 #!/bin/sh
 # The `tomato` command, built on the Tomato compiler written in Tomato (tomatoc). Needs only clang.
-#   tomato run FILE [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]   compile, link and run (MODE: debug, normal or release)
-#   tomato build FILE [-o OUT] [--entry NAME] [--llvm F.ll]           write a native program
-#   tomato compile FILE [--entry NAME]                                print the LLVM IR
-#   tomato explain CODE FILE                                          decode an error code such as E01:4 (see --mode normal)
+#   tomato run FILE [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]   compile, link and run (MODE: debug or release; debug is the default)
+#   tomato build FILE [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]   write a native program (--mode release for the optimised build)
+#   tomato compile FILE [--entry NAME] [--mode MODE]                  print the LLVM IR
+#   tomato explain CODE FILE                                          decode an error code such as E01:4 printed by a release build
 #   tomato repl [FILE ...]                                            type Tomato one piece at a time
 #   tomato update                                                     install the newest release
 #   tomato version                                                    print the version (also --version)
@@ -63,7 +63,7 @@ case "$cmd" in
     TOMATO_HOME="${home%/native}" TOMATO_BIN="$bindir_for_update" "$work"/tomato-*/install-native.sh || die "the installer failed"
     exit 0 ;;
   explain)
-    # tomato explain CODE FILE: a code printed by a program built with --mode normal, as the readable error and the source line
+    # tomato explain CODE FILE: a code printed by a program built with --mode release, as the readable error and the source line
     [ $# -eq 2 ] || usage
     code="$1"; src_file="$2"
     [ -f "$src_file" ] || die "cannot read $src_file"
@@ -114,6 +114,14 @@ else
   entry="${entry:-main}"
 fi
 
+case "$mode" in
+  debug|release) ;;
+  normal) die "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" ;;
+  *) die "the mode must be debug or release, not '$mode'" ;;
+esac
+# debug links at -O1 and keeps readable errors and the leak report; release links at -O2 and prints short error codes
+opt=-O1; [ "$mode" = release ] && opt=-O2
+
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 if ! "$tomatoc" "$file" "$entry" "$std" "$mode" > "$tmp/program.ll" 2> "$tmp/errors"; then
   cat "$tmp/errors" >&2        # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
@@ -123,7 +131,7 @@ fi
 exe="$tmp/program"
 [ "$cmd" = build ] && exe="${out:-$(basename "${file%.tom}")}"
 link() {   # a function has its own "$@", so the run inputs survive
-  set -- clang -O1 -Wno-override-module -o "$exe" "$tmp/program.ll"
+  set -- clang $opt -Wno-override-module -o "$exe" "$tmp/program.ll"
   OLDIFS="$IFS"; IFS="$nl"
   for f in $llvm; do set -- "$@" "$f"; done
   IFS="$OLDIFS"

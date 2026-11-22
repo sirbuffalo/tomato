@@ -161,7 +161,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 133. D32a is accepted (reading to confirm): plain int chooses its own size and stays unlimited in range. Analysis and performance guarantees remain open.
 134. D33a is accepted: types are checked at compile time (confirms D04a).
 135. D24b is accepted: a plain `import module` form exists. Its details remain open.
-136. D34a is accepted: debug mode gives full errors; normal mode gives short codes a second program decodes using the source; release mode needs none. Code format and selection remain open.
+136. D34a is accepted (superseded by D34b: two modes, debug and release, where release is the old normal mode): debug mode gives full errors; normal mode gives short codes a second program decodes using the source; release mode needs none. Code format and selection remain open.
 137. D29b is accepted: best-effort compile-time cycle detection, not a priority. D29d and D36a later added the runtime cycle collector, and the compile-time notice is a warning (P38). Accuracy remains open.
 138. D35a is accepted (reading to confirm): a value is a 64-bit type code plus 64-bit data; small values inline, others a pointer with a reference count. Codes, inline types, and count placement remain open.
 139. D20c is accepted: the key-value collection is `dict[K, V]`, not `map`.

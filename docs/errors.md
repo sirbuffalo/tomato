@@ -29,9 +29,11 @@ for loop instead").
 ## Errors while a program runs
 
 An error that stops a running program prints `error: MESSAGE`, for example `error: division by zero`. An error the program
-raises itself and nobody catches prints `error: ClassName: message (raised on line N)`. With `--mode normal` it prints a
-short code that `tomato explain CODE FILE` turns back into the message and the source line; with `--mode release` it prints
-nothing.
+raises itself and nobody catches prints `error: ClassName: message (raised on line N)`. There are two modes (D34b). `--mode debug`
+(the default) prints the readable text above and reports objects that were never freed. `--mode release` prints a short code
+such as `error E01:4` (message kind 1, source line 4) that `tomato explain CODE FILE` turns back into the message and the source
+line, and links the program with a higher optimisation level (`clang -O2`; debug uses `-O1`). `tomato run`, `build` and
+`compile` all take `--mode`; `--mode normal` is an error that says it was renamed to `release`.
 
 ## For compiler authors
 

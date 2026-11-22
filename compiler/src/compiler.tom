@@ -400,8 +400,8 @@ class Binding:
 
 class Mod:
     # what every function of the program shares
-    mode: int = 1                 # error output: 1 debug (full text), 2 normal (short codes), 3 release (nothing) (D34a)
-    errors: list[str] = []        # the messages of std/errors.txt: the code of a message is its line number (normal mode)
+    mode: int = 1                 # error output: 1 debug (full text), 2 release (short codes) (D34b)
+    errors: list[str] = []        # the messages of std/errors.txt: the code of a message is its line number (release mode)
     strings: list[str] = []       # the text constants, in the order they are numbered
     string_index: dict[str, int] = {}
     infos: list[FuncInfo] = []
@@ -441,11 +441,9 @@ class Mod:
         return code
 
     def failure_text(self, message: str, line: int) -> str:
-        # what a failure the language raises says in this error mode (D34a): the message, a short code, or nothing
+        # what a failure the language raises says in this build mode (D34b): the message, or a short code
         if self.mode == 1:
             return message
-        if self.mode == 3:
-            return ''
         kind = 99
         for k, known in enumerate(self.errors):
             if known != '' and message.startswith(known):
@@ -5757,15 +5755,15 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
             mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
 
 def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: str) -> str:
-    if mode == 'normal':
+    if mode == 'release':
         mod.mode = 2
         table = open(f'{std}errors.txt')
         mod.errors = table.read().split('\n')
         table.close()
-    elif mode == 'release':
-        mod.mode = 3
+    elif mode == 'normal':
+        raise CompileError("the mode 'normal' was renamed to 'release': use --mode release (the old release mode, which printed nothing, is gone)", 0)
     elif mode != 'debug':
-        raise CompileError(f"the mode must be debug, normal or release, not '{mode}'", 0)
+        raise CompileError(f"the mode must be debug or release, not '{mode}'", 0)
     mod.loading = 'builtin'
     base = open(f'{std}builtin.tom')
     base_text = base.read()

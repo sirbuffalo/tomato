@@ -999,11 +999,18 @@ Source: Davis's Dashboard message:
 - Evidence: asked whether a plain `import module` form should exist besides `from module import a`, Davis wrote “import module uses the”. The sentence is incomplete, so only the existence of the form is recorded.
 - Open: how names are used afterwards, aliases, and the rest of his sentence.
 
-### D34a — error output has debug, normal and release modes: accepted
+### D34a — error output has debug, normal and release modes: accepted (superseded by D34b: two modes)
 
 - Evidence: Davis wrote “I want readable errors in debug and somewhat in normal bt not needed in release debug full error normal outputs codes thta cna be decoded back tom debug that chatgpt”, then “with the source code normal can be decoded to debug style with a second prohrsm” and “the chatgpt does not matter”, withdrawing the unreadable phrase.
 - Debug mode prints full readable errors; normal mode prints a short code that a second program decodes against the source into the debug text; release mode needs no readable errors.
 - Open: the code format, how a mode is selected, location details, and what release prints, if anything.
+
+### D34b — two modes, debug and release: normal renamed to release, the old release removed: accepted
+
+- Evidence: Davis decided to remove the build mode called `release` (which printed nothing) and rename `normal` to `release`, so Tomato has exactly two modes. This supersedes the three-mode wording of D34a; the history above stays.
+- `debug` is the default: full readable errors and the leak report (D29c). `release` is what `normal` was: failures print a short code such as `E01:4`, and `tomato explain CODE FILE` decodes it back to the full message and the source line. `--mode normal` is refused with a message saying it was renamed to `release`.
+- `tomato run`, `build` and `compile` all accept `--mode`. Release builds link at `clang -O2`; debug builds link at `-O1`.
+- Chosen over keeping a silent third mode: a program that prints nothing on failure helped nobody, and two modes are easier to explain. Cost: no mode can drop the error codes entirely.
 
 ### D29b — best-effort compile-time cycle detection: accepted
 

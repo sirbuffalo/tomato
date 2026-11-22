@@ -201,10 +201,10 @@ def main():
 <h2>Commands</h2>
 <table>
 <caption class="sr">The tomato command</caption>
-<tr><td><code>tomato run FILE [ENTRY [INPUTS…]]</code></td><td>compile, link and run (reads standard input for <code>await input()</code>)</td></tr>
-<tr><td><code>tomato build FILE [-o OUT]</code></td><td>write a native program</td></tr>
-<tr><td><code>tomato compile FILE</code></td><td>print the LLVM IR</td></tr>
-<tr><td><code>tomato explain CODE FILE</code></td><td>decode an error code such as <code>E01:4</code> printed by a program built with <code>--mode normal</code></td></tr>
+<tr><td><code>tomato run FILE [ENTRY [INPUTS…]] [--mode MODE]</code></td><td>compile, link and run; MODE is <code>debug</code> (the default: readable errors, leak report) or <code>release</code> (short error codes, linked with <code>-O2</code>) (reads standard input for <code>await input()</code>)</td></tr>
+<tr><td><code>tomato build FILE [-o OUT] [--mode MODE]</code></td><td>write a native program (<code>--mode release</code> for the optimised build)</td></tr>
+<tr><td><code>tomato compile FILE [--mode MODE]</code></td><td>print the LLVM IR</td></tr>
+<tr><td><code>tomato explain CODE FILE</code></td><td>decode an error code such as <code>E01:4</code> printed by a program built with <code>--mode release</code></td></tr>
 <tr><td><code>tomato repl [FILE…]</code></td><td>interactive prompt with history (arrow keys) and <code>+=</code>; needs only the compiler and clang; each line joins the session, which is compiled and run, and only new output is shown; <code>:program</code>, <code>:save</code>, <code>:compile</code>. Because the whole session re-runs on each line, a side effect outside the program (writing a file) repeats, and a function or class you define cannot read your variables (pass them as arguments)</td></tr>
 <tr><td><code>tomato update</code></td><td>install the newest release</td></tr>
 <tr><td><code>tomato version</code></td><td>print the version</td></tr>
