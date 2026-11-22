@@ -81,7 +81,7 @@ def main():
     for n in Countdown(3):
         print(n)
     print(len(Countdown(7)), sum(Countdown(4)), list(Countdown(3)))</code></pre>
-<p>A generator says what it yields with <code>-&gt; Type</code> and runs inside the <code>for</code> that uses it, one value at a time, with nothing built up in memory (<code>break</code> and <code>continue</code> work as usual). It can only be used as what a <code>for</code> loops over, not stored or passed around. The markers <code>@len</code>, <code>@get</code> (<code>x[i]</code>), <code>@slice</code> (<code>x[a:b:c]</code>), <code>@contains</code> (<code>v in x</code>) and <code>@reversed</code> make the matching built-ins work on your class, and <code>sum</code>, <code>min</code>, <code>max</code>, <code>sorted</code> and <code>list()</code> accept anything with an <code>@iter</code> method. <code>from itertools import progress_bar</code>: <code>for x in progress_bar(items):</code> draws a bar as it goes. Text loops too: <code>for ch in "abc"</code>.</p>
+<p>A generator says what it yields with <code>-&gt; Type</code> and runs inside the <code>for</code> that uses it, one value at a time, with nothing built up in memory (<code>break</code> and <code>continue</code> work as usual). It can only be used as what a <code>for</code> loops over, not stored or passed around. The markers <code>@len</code>, <code>@get</code> (<code>x[i]</code>), <code>@slice</code> (<code>x[a:b:c]</code>), <code>@contains</code> (<code>v in x</code>) and <code>@reversed</code> make the matching built-ins work on your class, and <code>sum</code>, <code>min</code>, <code>max</code>, <code>sorted</code> and <code>list()</code> accept anything with an <code>@iter</code> method. <code>from itertools import progress_bar</code>: <code>for x in progress_bar(items):</code> draws a bar as it goes, for a list, range, text, dict or object of any item type (see Generics below). Text loops too: <code>for ch in "abc"</code>.</p>
 <h2>Input</h2>
 <pre><code>@main
 async def main():
@@ -163,6 +163,27 @@ def main():
         total = total + s.area()
     print(total)</code></pre>
 <p>Single inheritance with <code>override</code>, <code>private</code> and <code>const</code> fields, and interfaces with dynamic dispatch. Memory is reference counted and the runtime frees cycles.</p>
+<h2>Generics</h2>
+<pre><code>class Box[T]:
+    item: T
+
+    @init
+    def make(self, item: T):
+        self.item = item
+
+    def get(self) -&gt; T:
+        return self.item
+
+def first[T](items: list[T]) -&gt; T:
+    return items[0]
+
+@main
+def main():
+    print(Box(3).get(), Box('hi').get())     # a Box[int], then a Box[str]
+    print(first(['a', 'b']), first([1.5]))
+    b: Box[str] = Box('typed')
+    s = Stack[str]()                         # write the type out when no argument has it</code></pre>
+<p>A class or function can take type parameters in brackets after its name (<code>class Pair[A, B]</code>, up to two). Each call works out the types from its arguments, and the compiler makes one copy of the declaration per set of types, so nothing is slower at run time. An <code>Iterable[T]</code> parameter takes <code>T</code> from the items of a list, tuple, set, dict, text, range or object with <code>@iter</code>. That is how <code>progress_bar</code> and the <code>itertools</code> helpers (<code>permutations</code>, <code>combinations</code>, <code>product</code>, <code>chain</code>, <code>pairwise</code>, <code>batched</code>, <code>repeat</code>) work with any item type: <code>for name in progress_bar(['a', 'b']):</code> gives text, <code>progress_bar(range(10))</code> gives ints. Generic interfaces, generic methods and bounds on <code>T</code> are not built yet.</p>
 <h2>Errors</h2>
 <pre><code>@main
 def main():

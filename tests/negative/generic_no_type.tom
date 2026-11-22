@@ -1,0 +1,13 @@
+class Box[T]:
+    item: T
+
+    @init
+    def make(self, item: T):
+        self.item = item
+
+def show(b: Box):
+    print(b.item)
+
+@main
+def main():
+    show(Box(1))

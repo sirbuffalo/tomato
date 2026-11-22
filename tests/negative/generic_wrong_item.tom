@@ -1,0 +1,14 @@
+class Box[T]:
+    item: T
+
+    @init
+    def make(self, item: T):
+        self.item = item
+
+    def put(self, item: T):
+        self.item = item
+
+@main
+def main():
+    b = Box(1)
+    b.put('one')

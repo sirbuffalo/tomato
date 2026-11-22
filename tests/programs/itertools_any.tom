@@ -1,0 +1,80 @@
+from itertools import progress_bar, permutations, combinations, combinations_with_replacement, product, product_repeat, chain, pairwise, batched, repeat
+
+class Dog:
+    name: str = ''
+    age: int = 0
+
+    @init
+    def make(self, name: str, age: int):
+        self.name = name
+        self.age = age
+
+class Pack:
+    dogs: list[Dog] = []
+
+    @iter
+    def each(self) -> Dog:
+        for d in self.dogs:
+            yield d
+
+    @len
+    def size(self) -> int:
+        return len(self.dogs)
+
+def words(rows: list[list[str]]):
+    print(len(rows), ' '.join([''.join(row) for row in rows]))
+
+@main
+def main():
+    # a progress bar takes any sized iterable, whatever the items are: its loop gives those items back
+    for name in progress_bar(['ann', 'bob', 'cy'], 'names', 6):
+        print(name)
+    for ch in progress_bar('abc', 'text', 3):
+        print(ch)
+    for x in progress_bar([0.5, 1.5], 'floats', 4):
+        print(x)
+    for p in progress_bar([(1, 2), (3, 4)], 'pairs', 4):
+        print(p)
+    for flag in progress_bar([True, False], 'flags', 2):
+        print(flag)
+    for rows in progress_bar([[1], [2, 3]], 'lists', 2):
+        print(rows)
+    for t in progress_bar((7, 8, 9), 'tuple', 3):
+        print(t)
+    for i in progress_bar(range(3), 'ints', 3):
+        print(i)
+    ages: dict[str, int] = {'a': 1, 'b': 2}
+    for key in progress_bar(ages, 'keys', 2):
+        print(key)
+    seen: set[str] = {'x', 'y'}
+    for s in progress_bar(seen, 'set', 2):
+        print(len(s))
+    pack = Pack()
+    pack.dogs = [Dog('rex', 3), Dog('fido', 5)]
+    for d in progress_bar(pack, 'dogs', 4):
+        print(d.name, d.age)
+    # the bar itself keeps counting, and shows its text the same way for every item type
+    bar = progress_bar(['a', 'b', 'c', 'd'], 'strs', 8)
+    bar.update(2)
+    print(bar.render())
+    nums = progress_bar([1.5, 2.5, 3.5], 'f', 6)
+    nums.count = 3
+    print(nums.render())
+    # the helpers take lists of any item type
+    words(permutations(['a', 'b', 'c']))
+    words(permutations(['a', 'b', 'c'], 2))
+    words(combinations(['a', 'b', 'c', 'd'], 2))
+    words(combinations_with_replacement(['x', 'y'], 2))
+    words(product(['a', 'b'], ['c', 'd']))
+    words(product_repeat(['0', '1'], 2))
+    print(chain(['a'], ['b', 'c']))
+    print(pairwise(['a', 'b', 'c']))
+    print(batched([1.5, 2.5, 3.5], 2))
+    print(repeat('ab', 3))
+    print(repeat(2.5, 2))
+    print(permutations([(1, 2), (3, 4)]))
+    dogs = [Dog('rex', 3), Dog('fido', 5)]
+    for pair in permutations(dogs):
+        print(pair[0].name, pair[1].name)
+    print(len(product(dogs, dogs)))
+    print(chain([1, 2], [3]), batched([1, 2, 3], 2), repeat(7, 2))

@@ -1,0 +1,106 @@
+class Box[T]:
+    item: T
+    count: int = 0
+
+    @init
+    def make(self, item: T):
+        self.item = item
+
+    def get(self) -> T:
+        self.count += 1
+        return self.item
+
+    def swap(self, other: T) -> T:
+        old = self.item
+        self.item = other
+        return old
+
+class Pair[A, B]:
+    first: A
+    second: B
+
+    @init
+    def make(self, first: A, second: B):
+        self.first = first
+        self.second = second
+
+    def flipped(self) -> Pair[B, A]:
+        return Pair(self.second, self.first)
+
+    @str
+    def text(self) -> str:
+        return f'({self.first}, {self.second})'
+
+class Stack[T]:
+    items: list[T] = []
+
+    def push(self, x: T):
+        self.items.append(x)
+
+    def top(self) -> T:
+        return self.items[len(self.items) - 1]
+
+    @iter
+    def each(self) -> T:
+        for x in self.items:
+            yield x
+
+    @len
+    def size(self) -> int:
+        return len(self.items)
+
+class Dog:
+    name: str = 'rex'
+
+def first[T](items: list[T]) -> T:
+    return items[0]
+
+def last[T](items: list[T]) -> T:
+    return items[len(items) - 1]
+
+def twice[T](x: T) -> list[T]:
+    return [x, x]
+
+def keyed[K, V](key: K, value: V) -> Pair[K, V]:
+    return Pair(key, value)
+
+def each_item[T](items: list[T]) -> T:
+    for x in items:
+        yield x
+
+def total[T](stack: Stack[T]) -> int:
+    n = 0
+    for x in stack:
+        n += 1
+    return n
+
+@main
+def main():
+    print(Box(3).get(), Box('hi').get(), Box(2.5).get(), Box(True).get())
+    b = Box([1, 2])
+    print(b.get(), b.swap([9]), b.get(), b.count)
+    print(Box(Dog()).get().name)
+    print(Box((1, 2)).get())
+    nested = Box(Box('deep'))
+    print(nested.get().get())
+    typed: Box[str] = Box('typed')
+    print(typed.get())
+    p = Pair('age', 3)
+    print(p, p.flipped(), p.flipped().flipped())
+    print(keyed('k', 1.5))
+    print(first(['a', 'b']), last([1.5, 2.5]), first([Dog()]).name)
+    print(twice('x'), twice(7), twice((1, 2)))
+    for s in each_item(['p', 'q']):
+        print(s)
+    for n in each_item([10, 20]):
+        print(n)
+    st = Stack[str]()
+    print(len(st))
+    st.push('a')
+    st.push('b')
+    print(st.top(), len(st), total(st))
+    for s in st:
+        print(s)
+    nums = Stack[float]()
+    nums.push(1.5)
+    print(nums.top(), twice[int](4), first[str](['z']))

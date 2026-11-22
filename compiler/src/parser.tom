@@ -407,6 +407,15 @@ export class Parser:
             self.expect_op('=')
             length = vn(self.expr())
             self.expect_op(']')
+        elif self.is_op('[') and t.text != 'int' and t.text != 'uint':
+            # a generic class with its type arguments: Box[int], Pair[str, int] (D60a)
+            self.adv()
+            first = self.type()
+            second = vz()
+            if self.accept_op(','):
+                second = vn(self.type())
+            self.expect_op(']')
+            return mk('TypeRef', t.line, [vs(t.text), vz(), vn(first), second])
         return mk('TypeRef', t.line, [vs(t.text), length, vz(), vz()])
 
     # declarations
@@ -468,6 +477,7 @@ export class Parser:
         line = self.expect_kw('def').line
         is_private = self.accept_kw('private')
         name = self.expect('NAME').text
+        tparams = self.type_params()
         params = self.params()
         ret = vz()
         if self.accept_op('->'):
@@ -480,11 +490,36 @@ export class Parser:
             if self.is_op(':'):
                 raise ParseError('an interface method has no body\nwrite only its signature', line)
             self.expect('NEWLINE')
-            return mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker), vb(False), vb(is_async), yt])
+            return self.with_params(mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker), vb(False), vb(is_async), yt]), tparams)
         self.expect_op(':')
         before = self.yields
         body = self.block()
-        return mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker), vb(self.yields > before), vb(is_async), yt])
+        return self.with_params(mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker), vb(self.yields > before), vb(is_async), yt]), tparams)
+
+    # `[T]` or `[K, V]` after the name of a function or class: its type parameters (D60a)
+    def type_params(self) -> list[Val]:
+        out: list[Val] = []
+        if not self.is_op('['):
+            return out
+        self.adv()
+        while True:
+            nm = self.expect('NAME')
+            for seen in out:
+                if seen.text == nm.text:
+                    raise ParseError(f"the type parameter '{nm.text}' is declared twice", nm.line, nm.col)
+            out.append(vs(nm.text))
+            if len(out) > 2:
+                raise ParseError('a class or function takes at most two type parameters', nm.line, nm.col)
+            if not self.accept_op(','):
+                break
+        self.expect_op(']')
+        return out
+
+    # a declaration with type parameters carries them in one extra last field
+    def with_params(self, n: Node, tparams: list[Val]) -> Node:
+        if len(tparams) > 0:
+            n.fields.append(vlist(tparams))
+        return n
 
     def block(self) -> list[Node]:
         if self.cur().kind != 'NEWLINE':
@@ -503,6 +538,7 @@ export class Parser:
     def classdef(self) -> Node:
         line = self.expect_kw('class').line
         name = self.expect('NAME').text
+        tparams = self.type_params()
         parent = vz()
         if self.accept_op('('):
             parent = vs(self.expect('NAME').text)
@@ -523,7 +559,7 @@ export class Parser:
                 continue
             self.member(fields, methods)
         self.adv()
-        return mk('ClassDef', line, [vs(name), parent, vlist(ifaces), vnodes(fields), vnodes(methods)])
+        return self.with_params(mk('ClassDef', line, [vs(name), parent, vlist(ifaces), vnodes(fields), vnodes(methods)]), tparams)
 
     def member(self, fields: list[Node], methods: list[Node]):
         marker = ''

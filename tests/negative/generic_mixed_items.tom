@@ -1,0 +1,6 @@
+def pair[T](a: list[T], b: list[T]) -> list[T]:
+    return a + b
+
+@main
+def main():
+    print(pair([1], ['a']))

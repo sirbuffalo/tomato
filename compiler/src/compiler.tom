@@ -10,6 +10,13 @@ from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, v
 from lexer import LexError
 from diag import Diagnostic, format_error, closest
 
+class NeedsEarlyCopy(Error):
+    # a copy of a generic class is first made after code that loops over every class that fits an Iterable or Sized type was
+    # compiled, so that code missed it: the compile starts again with the copy made first (D60a). The message is the class and its type arguments
+    @init
+    def make(self, message: str):
+        Error.start(self, message)
+
 export class CompileError(Error):
     line: int = 0
     col: int = 0
@@ -238,6 +245,25 @@ def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
     return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t)
 
+def shown_generic(name: str) -> str:
+    # a copy of a generic class, as Box[int]: its type arguments are kept in the internal form inside the name
+    at = name.find('[')
+    inner = name[at + 1:-1]
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for k in range(len(inner)):
+        ch = inner[k]
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            parts.append(shown(inner[start:k]))
+            start = k + 1
+    parts.append(shown(inner[start:]))
+    return name[:at] + '[' + ', '.join(parts) + ']'
+
 def shown(t: str) -> str:
     # a type as the user writes it
     if is_task(t):
@@ -252,6 +278,8 @@ def shown(t: str) -> str:
         return f'Iterable[{shown(dyn_item(t))}] & Sized'
     if is_optional(t):
         return f'{shown(strip_optional(t))} | None'
+    if is_class(t) and t.find('[') > 0:
+        return shown_generic(t[1:])
     if is_class(t) or is_iface(t):
         return t[1:]
     if is_union(t):
@@ -324,6 +352,7 @@ class FuncInfo:
     yields: str = ''        # what an async function yields as status, or ''
     key: str = ''            # the program-wide name of a function (module.name outside the main program)
     module: str = 'main'
+    targs: dict[str, str] = {}   # what the type parameters of a generic class or function stand for in this copy (D60a)
 
 class ImportInfo:
     importer: str = ''
@@ -358,6 +387,9 @@ class ClassInfo:
     done: bool = False            # fields and defaults are complete (inherited ones come first)
     is_frame: bool = False        # the frame of an async function, made by the compiler: no constructor or methods
     line: int = 0
+    targs: dict[str, str] = {}    # the type arguments of a copy of a generic class (D60a)
+    generic: str = ''             # the generic class this is a copy of, or ''
+    populated: bool = True        # the methods of a copy of a generic class are in mod.infos
 
 class Binding:
     # a name a module can see, and the program-wide key it stands for
@@ -390,6 +422,15 @@ class Mod:
     func_nodes: list[Node] = []   # the FuncDef of each entry of infos, in the same order
     sources: dict[str, str] = {}  # the source text of each module loaded (for showing an error's line)
     helper_count: int = 0
+    tvars: dict[str, str] = {}    # the type parameters in scope and the types they stand for (D60a)
+    generics: dict[str, Node] = {}      # the generic classes and functions, by program-wide name
+    generic_mods: dict[str, str] = {}   # the module that declared each
+    instance_funcs: dict[str, str] = {} # the copies of generic functions made so far: name and type arguments to key
+    pending: list[ClassInfo] = []       # copies of generic classes whose methods are not in infos yet
+    late: bool = False                  # the bodies are being compiled: a new copy is complete at once
+    instance_count: int = 0
+    preload: list[str] = []             # copies of generic classes to make before any body is compiled (see NeedsEarlyCopy)
+    dyn_seen: list[str] = []            # the Iterable and Sized types whose loops and lengths are compiled over the classes there are so far
 
     def code_of(self, t: str) -> int:
         if t in self.code_index:
@@ -436,12 +477,15 @@ class Mod:
         fkey = key_of('builtin', name)
         saved = self.cur
         self.cur = 'builtin'
+        saved_vars = self.tvars
+        self.tvars = {}
         self.declare_name('builtin', name, fkey, False, 0)
         text = helper_source(self, name, kind, ty, line)
         item = val_nodes(parse(text).fields[0])[0]
         info = function_info(item, self, '')
         helper_types(self, info, kind, ty)
         self.cur = saved
+        self.tvars = saved_vars
         self.helpers[key] = info
         self.infos.append(info)
         self.func_nodes.append(item)
@@ -641,6 +685,7 @@ class Mod:
 
     # the concrete types a value of an interface type can be holding: the shared container layout, text and every class that fits
     def dyn_members(self, dyn: str) -> list[str]:
+        self.dyn_seen.append(dyn)
         out = [dyn_seq()]
         if self.dyn_accepts('str', dyn):
             out.append('str')
@@ -703,6 +748,179 @@ class Mod:
                 names.append(x)
         return union_type(names)
 
+    # ---- generic classes and functions (D60a): `class Box[T]` and `def first[T](items: list[T]) -> T`. Nothing is compiled for the
+    # declaration itself; each use with other types makes a copy in which every T stands for a type (the type arguments).
+    def is_generic(self, key: str, kind: str) -> bool:
+        return key in self.generics and self.generics[key].kind == kind
+
+    def type_params_of(self, key: str) -> list[str]:
+        node = self.generics[key]
+        out: list[str] = []
+        for tp in node.fields[len(node.fields) - 1].items:
+            out.append(tp.text)
+        return out
+
+    def class_args(self, c: ClassInfo) -> list[str]:
+        out: list[str] = []
+        for tp in self.type_params_of(c.generic):
+            out.append(c.targs[tp])
+        return out
+
+    def arg_key(self, args: list[str]) -> str:
+        return ','.join(args)
+
+    # the copy of a generic class for these type arguments (made the first time it is asked for); returns its program-wide name
+    def instance_class(self, gkey: str, args: list[str], line: int) -> str:
+        tparams = self.type_params_of(gkey)
+        node = self.generics[gkey]
+        if len(args) != len(tparams):
+            raise CompileError(f"'{node.fields[0].text}' takes {plural(len(tparams), 'type argument')}, but {len(args)} given", line)
+        key = f'{gkey}[{self.arg_key(args)}]'
+        if self.has_class(key):
+            return key
+        c = ClassInfo()
+        c.name = key
+        c.display = shown('@' + key)
+        c.module = self.generic_mods[gkey]
+        c.node = node
+        c.line = node.line
+        c.generic = gkey
+        c.populated = False
+        for k, tp in enumerate(tparams):
+            c.targs[tp] = args[k]
+        saved = self.cur
+        self.cur = c.module
+        if node.fields[1].tag == 's':
+            c.parent = self.class_key(node.fields[1].text, node.line)
+        for iv in node.fields[2].items:
+            c.ifaces.append(self.iface_key(iv.text, node.line))
+        self.cur = saved
+        self.classes.append(c)
+        self.pending.append(c)
+        if self.late:
+            self.populate_pending()
+        return key
+
+    # give the copies made so far their methods (they are compiled with the program like any other function)
+    def populate_pending(self):
+        while len(self.pending) > 0:
+            c = self.pending[0]
+            self.pending = self.pending[1:]
+            saved = self.cur
+            saved_vars = self.tvars
+            resolve_class(self, c)
+            self.cur = c.module
+            self.tvars = c.targs
+            for m in val_nodes(class_def(c).fields[4]):
+                info = function_info(m, self, c.name)
+                info.targs = c.targs
+                self.infos.append(info)
+                self.func_nodes.append(m)
+                self.extra_funcs.append(m)
+                if m.fields[6].tag == 's' and m.fields[6].text == 'init':
+                    c.init = info.name
+            self.tvars = saved_vars
+            c.populated = True
+            self.cur = saved
+            if self.late:
+                check_classes(self)
+                check_class_shapes(self)
+                for d in self.dyn_seen:
+                    if self.dyn_accepts('@' + c.name, d):
+                        raise NeedsEarlyCopy(c.generic + '\n' + '\n'.join(self.class_args(c)))
+
+    # the copy of a generic function for these type arguments
+    def instance_func(self, gkey: str, args: list[str], line: int) -> FuncInfo:
+        tparams = self.type_params_of(gkey)
+        node = self.generics[gkey]
+        if len(args) != len(tparams):
+            raise CompileError(f"'{node.fields[0].text}' takes {plural(len(tparams), 'type argument')}, but {len(args)} given", line)
+        name = f'{gkey}[{self.arg_key(args)}]'
+        if name in self.instance_funcs:
+            return self.find(self.instance_funcs[name], line)
+        binds: dict[str, str] = {}
+        for k, tp in enumerate(tparams):
+            binds[tp] = args[k]
+        saved = self.cur
+        saved_vars = self.tvars
+        self.cur = self.generic_mods[gkey]
+        self.tvars = binds
+        info = function_info(node, self, '')
+        self.cur = saved
+        self.tvars = saved_vars
+        self.instance_count += 1
+        info.targs = binds
+        info.key = f'{gkey}.g{self.instance_count}'
+        self.instance_funcs[name] = info.key
+        self.infos.append(info)
+        self.func_nodes.append(node)
+        self.extra_funcs.append(node)
+        return info
+
+    # are these types patterns, with a $T standing for a type still to be found?
+    def pattern_mode(self, targs: list[str]) -> bool:
+        for ta in targs:
+            if ta.find('$') >= 0:
+                return True
+        return False
+
+    def type_delim(self, c: str) -> bool:
+        return c == ']' or c == '[' or c == ',' or c == ';' or c == '?' or c == '|' or c == ':'
+
+    # does the real type act fit the pattern pat, whose $T parts stand for types still to be found? Records them in binds.
+    def unify(self, pat: str, act: str, binds: dict[str, str]) -> bool:
+        if (pat.startswith('I:') or pat.startswith('IZ:')) and pat.find('$') >= 0:
+            item = ''
+            if is_dyn(act):
+                if dyn_iterable(act):
+                    item = dyn_item(act)
+            else:
+                item = self.iter_item(act)
+            if item == '':
+                return False
+            return self.unify(dyn_item(pat), item, binds)
+        i = 0
+        j = 0
+        while i < len(pat):
+            c = pat[i]
+            if c == '$':
+                end = i + 1
+                while end < len(pat) and not self.type_delim(pat[end]):
+                    end += 1
+                name = pat[i + 1:end]
+                stop = ''
+                if end < len(pat):
+                    stop = pat[end]
+                k = j
+                depth = 0
+                while k < len(act):
+                    d = act[k]
+                    if depth == 0 and stop != '' and d == stop:
+                        break
+                    if d == '[':
+                        depth += 1
+                    elif d == ']':
+                        if depth == 0:
+                            break
+                        depth -= 1
+                    k += 1
+                found = act[j:k]
+                if found == '':
+                    return False
+                if name in binds:
+                    if binds[name] != found:
+                        return False
+                else:
+                    binds[name] = found
+                i = end
+                j = k
+            else:
+                if j >= len(act) or act[j] != c:
+                    return False
+                i += 1
+                j += 1
+        return j == len(act)
+
     # `Iterable[T] & Sized`: the built-in interfaces joined (D50a); the other uses of & are not built yet
     def dyn_intersection(self, members: list[Node]) -> str:
         item = ''
@@ -727,6 +945,8 @@ class Mod:
             return ''
         t = val_node(v)
         name = t.fields[0].text
+        if t.fields[1].tag == 'z' and t.fields[2].tag == 'z' and name in self.tvars:
+            return self.tvars[name]
         if (name == 'int' or name == 'uint') and t.fields[1].tag == 'n':
             length = val_node(t.fields[1])
             if length.kind != 'IntLit' or length.fields[0].num < 1 or length.fields[0].num > 64:
@@ -787,6 +1007,19 @@ class Mod:
             if inner == '' or is_fixed(inner):
                 return ''
             return f'{name}[{inner}]'
+        gkey = self.resolve(name)
+        if gkey != '' and self.is_generic(gkey, 'ClassDef'):
+            if t.fields[2].tag != 'n' or t.fields[1].tag != 'z':
+                raise CompileError(f"'{name}' is generic, so it needs its type arguments: {name}[{', '.join(self.type_params_of(gkey))}]", t.line)
+            targs: list[str] = [self.type_name(t.fields[2])]
+            if t.fields[3].tag == 'n':
+                targs.append(self.type_name(t.fields[3]))
+            for ta in targs:
+                if ta == '':
+                    return ''
+            if self.pattern_mode(targs):
+                return f'@{gkey}[{self.arg_key(targs)}]'
+            return '@' + self.instance_class(gkey, targs, t.line)
         if t.fields[2].tag != 'z' or t.fields[1].tag != 'z':
             return ''
         if basic_type(name):
@@ -848,6 +1081,7 @@ class GenCtx:
     owner: str = ''
     in_init: bool = False
     module: str = ''
+    targs: dict[str, str] = {}
 
 class CompCtx:
     # a list comprehension being compiled: the slot holding the new list and its type (known once the first item is compiled)
@@ -2497,6 +2731,8 @@ class Gen:
             if target.kind == 'Name' and target.fields[0].text not in self.slots and self.mod.resolve(target.fields[0].text) != '' and self.mod.has_class(self.mod.resolve(target.fields[0].text)):
                 return self.qualified_call(n, f, self.mod.resolve(target.fields[0].text))
             return self.method_call(n, f)
+        if f.kind == 'Index' and val_node(f.fields[0]).kind == 'Name' and val_node(f.fields[0]).fields[0].text not in self.slots and self.mod.resolve(val_node(f.fields[0]).fields[0].text) in self.mod.generics:
+            return self.explicit_call(self.mod.resolve(val_node(f.fields[0]).fields[0].text), n, f, val_nodes(n.fields[1]))
         if f.kind != 'Name':
             raise CompileError('only a function name can be called here\ncalling the result of another expression is not supported', n.line)
         name = f.fields[0].text
@@ -2543,12 +2779,103 @@ class Gen:
             return self.list_call(args, n.line)
         if key == '':
             raise CompileError(self.unknown_function(name), n.line)
+        if key in self.mod.generics:
+            return self.generic_call(key, n, args)
         if self.mod.has_class(key):
             if len(n.fields[2].items) > 0:
                 raise CompileError('keyword arguments are not supported when creating an object\npass the arguments by position', n.line)
             return self.construct(self.mod.find_class(key, n.line), args, n.line)
         self.kw = n.fields[2].items
         return self.call_function(self.mod.find(key, n.line), '@tomato.' + key, ex('', ''), args, n.line)
+
+    # ---- generic classes and functions (D60a)
+    # the type of an argument, found by compiling it and throwing the code away (it is compiled again for real afterwards)
+    def arg_type(self, a: Node) -> str:
+        mark = len(self.lines)
+        ty = ''
+        try:
+            ty = self.expr(a).ty
+        catch CompileError:
+            ty = ''          # such as an empty list, whose type only the other arguments settle
+        self.lines = self.lines[:mark]
+        self.terminated = False
+        return ty
+
+    # what each type parameter of a generic class or function stands for, found from the types of the arguments
+    def infer_targs(self, gkey: str, params: list[Node], args: list[Node], line: int) -> list[str]:
+        saved = self.mod.cur
+        saved_vars = self.mod.tvars
+        self.mod.cur = self.mod.generic_mods[gkey]
+        tparams = self.mod.type_params_of(gkey)
+        pattern: dict[str, str] = {}
+        for tp in tparams:
+            pattern[tp] = '$' + tp
+        self.mod.tvars = pattern
+        patterns: list[str] = []
+        for p in params:
+            patterns.append(self.mod.type_name(p.fields[1]))
+        self.mod.cur = saved
+        self.mod.tvars = saved_vars
+        binds: dict[str, str] = {}
+        for k, a in enumerate(args):
+            if k < len(patterns) and patterns[k].find('$') >= 0:
+                self.mod.unify(patterns[k], self.arg_type(a), binds)
+        out: list[str] = []
+        for tp in tparams:
+            if tp not in binds:
+                raise CompileError(f"cannot tell what {tp} is in this call of '{self.mod.generics[gkey].fields[0].text}'\n{tp} comes from the types of the arguments: pass a value that has it, or write the type out, as in {self.mod.generics[gkey].fields[0].text}[int](...)", line)
+            out.append(binds[tp])
+        return out
+
+    def generic_class_init(self, gkey: str) -> list[Node]:
+        for m in val_nodes(self.mod.generics[gkey].fields[4]):
+            if m.fields[6].tag == 's' and m.fields[6].text == 'init':
+                out: list[Node] = []
+                for p in val_nodes(m.fields[1]):
+                    if p.fields[0].text != 'self':
+                        out.append(p)
+                return out
+        return []
+
+    # a type written as an expression, such as the `str` in Stack[str]() or the `list[int]` in Box[list[int]](...), as a type node
+    def type_node_of(self, n: Node) -> Node:
+        if n.kind == 'Name':
+            return mk('TypeRef', n.line, [vs(n.fields[0].text), vz(), vz(), vz()])
+        if n.kind == 'Index':
+            base = val_node(n.fields[0])
+            if base.kind == 'Name' and n.fields[1].tag == 'n':
+                return mk('TypeRef', n.line, [vs(base.fields[0].text), vz(), vn(self.type_node_of(val_node(n.fields[1]))), vz()])
+        raise CompileError('this is not a type\nwrite the type of the items, such as Stack[str]()', n.line)
+
+    # Name[Type](args): a generic class or function used with its type argument written out
+    def explicit_call(self, gkey: str, n: Node, f: Node, args: list[Node]) -> Ex:
+        g = self.mod.generics[gkey]
+        if f.fields[1].tag != 'n':
+            raise CompileError('this is not a type\nwrite the type of the items, such as Stack[str]()', n.line)
+        saved = self.mod.cur
+        targ = self.mod.type_name(vn(self.type_node_of(val_node(f.fields[1]))))
+        self.mod.cur = saved
+        if targ == '':
+            raise CompileError('this type is not supported here', n.line)
+        if g.kind == 'ClassDef':
+            ckey = self.mod.instance_class(gkey, [targ], n.line)
+            return self.construct(self.mod.find_class(ckey, n.line), args, n.line)
+        info = self.mod.instance_func(gkey, [targ], n.line)
+        self.kw = n.fields[2].items
+        return self.call_function(info, '@tomato.' + info.key, ex('', ''), args, n.line)
+
+    def generic_call(self, gkey: str, n: Node, args: list[Node]) -> Ex:
+        g = self.mod.generics[gkey]
+        if g.kind == 'ClassDef':
+            if len(n.fields[2].items) > 0:
+                raise CompileError('keyword arguments are not supported when creating an object\npass the arguments by position', n.line)
+            targs = self.infer_targs(gkey, self.generic_class_init(gkey), args, n.line)
+            ckey = self.mod.instance_class(gkey, targs, n.line)
+            return self.construct(self.mod.find_class(ckey, n.line), args, n.line)
+        targs = self.infer_targs(gkey, val_nodes(g.fields[1]), args, n.line)
+        info = self.mod.instance_func(gkey, targs, n.line)
+        self.kw = n.fields[2].items
+        return self.call_function(info, '@tomato.' + info.key, ex('', ''), args, n.line)
 
     def number_text_builtin(self, name: str, args: list[Node], line: int) -> Ex:
         # abs(x) for an int or a float (std/builtin.tom), chr(n) and ord(c)
@@ -4162,6 +4489,7 @@ class Gen:
         self.owner, c.owner = c.owner, self.owner
         self.in_init, c.in_init = c.in_init, self.in_init
         self.mod.cur, c.module = c.module, self.mod.cur
+        self.mod.tvars, c.targs = c.targs, self.mod.tvars
 
     def gen_args(self, info: FuncInfo, args: list[Node], line: int) -> list[Ex]:
         if info.stars > 0:
@@ -4200,6 +4528,7 @@ class Gen:
         c.try_depth = self.try_depth
         c.owner = info.owner
         c.module = info.module
+        c.targs = info.targs
         self.swap_scope(c)
         self.gen_push(c)
         k = 0
@@ -4251,7 +4580,13 @@ class Gen:
             key = self.mod.resolve(name)
             if key == '' or self.mod.has_class(key):
                 return False
-            info = self.mod.find(key, s.line)
+            if key in self.mod.generics:
+                g = self.mod.generics[key]
+                if g.kind != 'FuncDef' or not g.fields[7].flag:
+                    return False
+                info = self.mod.instance_func(key, self.infer_targs(key, val_nodes(g.fields[1]), args, s.line), s.line)
+            else:
+                info = self.mod.find(key, s.line)
             if not info.is_gen:
                 return False
             self.inline_gen(s, info, ex('', ''), self.gen_args(info, args, s.line), s.line)
@@ -4556,6 +4891,7 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
 
 def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     mod.cur = info.module
+    mod.tvars = info.targs
     g = Gen()
     g.mod = mod
     g.owner = info.owner
@@ -4596,6 +4932,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     # an async function becomes a frame (its variables on the heap), a constructor that makes the frame from the arguments,
     # and a resume function that runs the body from where it last stopped
     mod.cur = info.module
+    mod.tvars = info.targs
     g = Gen()
     g.mod = mod
     g.owner = info.owner
@@ -4723,6 +5060,7 @@ def scheduler_ir(mod: Mod) -> str:
 def compile_constructor(c: ClassInfo, mod: Mod) -> str:
     # allocate, store the declared field defaults, then run @init
     mod.cur = c.module
+    mod.tvars = c.targs
     g = Gen()
     g.mod = mod
     code = str(mod.code_of('@' + c.name))
@@ -5299,6 +5637,14 @@ def top_level_message(item: Node) -> str:
         return 'this statement is outside any function\nprograms have no top-level code: put it inside a function marked @main (only the repl accepts bare statements)'
     return f'this kind of declaration ({item.kind}) is not supported'
 
+def is_generic_item(item: Node) -> bool:
+    # a class or function declared with type parameters, `class Box[T]` (D60a): its last field is the list of them
+    if item.kind == 'ClassDef':
+        return len(item.fields) > 5
+    if item.kind == 'FuncDef':
+        return len(item.fields) > 10
+    return False
+
 def class_def(c: ClassInfo) -> Node:
     n = c.node
     if n is None:
@@ -5318,6 +5664,8 @@ def resolve_class(mod: Mod, c: ClassInfo):
     c.done = True
     node = class_def(c)
     mod.cur = c.module
+    saved_vars = mod.tvars
+    mod.tvars = c.targs
     if c.parent != '':
         p = mod.find_class(c.parent, node.line)
         resolve_class(mod, p)
@@ -5341,6 +5689,7 @@ def resolve_class(mod: Mod, c: ClassInfo):
         if fd.fields[4].tag == 'n':
             fld.default = val_node(fd.fields[4])
         c.fields.append(fld)
+    mod.tvars = saved_vars
 
 def read_module(dir: str, std: str, name: str, line: int) -> str:
     # a module next to the program, else one from the standard library
@@ -5428,6 +5777,15 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     loaded: list[str] = []
     user = load_items(mod, dir, std, src, 'main', items, imports, loaded)
     build_scopes(mod, items, imports)
+    plain: list[TopItem] = []
+    for top in items:
+        if is_generic_item(top.node):
+            gk = key_of(top.module, top.node.fields[0].text)
+            mod.generics[gk] = top.node
+            mod.generic_mods[gk] = top.module
+        else:
+            plain.append(top)
+    items = plain
     for top in items:
         item = top.node
         mod.cur = top.module
@@ -5506,8 +5864,13 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             mod.llvm_decls.append(decl)
         else:
             raise CompileError(top_level_message(item), item.line)
+    for entry in mod.preload:
+        parts = entry.split('\n')
+        mod.instance_class(parts[0], parts[1:], 0)
+    mod.populate_pending()
     check_classes(mod)
     check_class_shapes(mod)
+    mod.late = True
     for item in user:
         if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text == 'entry:' + entry_name:
             entry = item.fields[0].text
@@ -5525,7 +5888,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     # compiling a function can ask for more helper functions, so the list may grow while this runs
     done = 0
     while done < len(mod.extra_funcs):
-        bodies += f'{compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done])}\n'
+        if not mod.infos[len(funcs) + done].is_gen:
+            bodies += f'{compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done])}\n'
         done += 1
     for c in mod.classes:
         bodies += f'{compile_constructor(c, mod)}\n'
@@ -5557,12 +5921,20 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
     # LLVM IR for the program, or a Diagnostic whose message is the finished error text
     mod = Mod()
     result = ''
-    try:
-        result = compile_with(mod, src, dir, std, entry_name, mode)
-    catch LexError as e:
-        raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading, path))
-    catch ParseError as e:
-        raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading, path))
-    catch CompileError as e:
-        raise Diagnostic(located(mod, e.message, e.line, e.col, mod.cur, path))
-    return result
+    early: list[str] = []
+    for attempt in range(40):
+        mod = Mod()
+        mod.preload = early
+        try:
+            result = compile_with(mod, src, dir, std, entry_name, mode)
+        catch NeedsEarlyCopy as again:
+            early.append(again.message)
+            continue
+        catch LexError as e:
+            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading, path))
+        catch ParseError as e:
+            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading, path))
+        catch CompileError as e:
+            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.cur, path))
+        return result
+    raise Diagnostic('internal compiler error: too many generic copies had to be made early')

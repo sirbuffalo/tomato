@@ -55,7 +55,7 @@ done
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
 jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
 if [ -x "$jsc" ]; then
-  for name in angles containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks; do
+  for name in angles containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics; do
     "$jsc" native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
@@ -198,6 +198,10 @@ neg sync_input "input() is async, so it must be awaited"
 neg sync_sleep "sleep() is async, so it must be awaited"
 neg async_call_without_await "'work' is async, so it must be awaited or started"
 neg await_outside_async "'await' can only be used inside an async function"
+neg generic_no_type "'Box' is generic, so it needs its type arguments: Box[T]"
+neg generic_cannot_infer "cannot tell what T is in this call of 'Stack'"
+neg generic_wrong_item "argument 1 of 'put' has type str, but int is expected"
+neg generic_mixed_items "a list item has type str, but int is expected"
 neg await_non_task "only a task can be awaited, but this is int"
 neg await_in_conditional "an await cannot be in either value of a conditional expression"
 neg async_init "cannot be async"
