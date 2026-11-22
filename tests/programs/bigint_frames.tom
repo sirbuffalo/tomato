@@ -1,0 +1,96 @@
+# Big numbers held by async frames, generators, generic classes, unions and tuples are owned and freed with them,
+# also when an error unwinds through the frames and when a frame is dropped without being awaited.
+class Box[T]:
+    item: T
+    @init
+    def make(self, item: T):
+        self.item = item
+
+    def swap(self, other: T) -> T:
+        old = self.item
+        self.item = other
+        return old
+
+def huge(n: int) -> int:
+    r = 1
+    for i in range(1, n + 1):
+        r *= i
+    return r
+
+def factorials(n: int) -> int:
+    f = 1
+    for i in range(1, n + 1):
+        f = f * i
+        yield f
+
+def first_over(limit: int) -> int:
+    for f in factorials(60):
+        if f > limit:
+            return f
+    return 0
+
+async def square(n: int) -> int:
+    a = huge(n)
+    b = a * a
+    return b + 1
+
+async def chain(n: int) -> int:
+    t = await square(n)
+    u = t + 1
+    return u
+
+async def counter(n: int) -> int yields int:
+    f = 1
+    for i in range(1, n):
+        f = f * (i + 20)
+        yield f
+    return f
+
+async def watch(t: task[int, int]):
+    async for v in t:
+        print(v > 0)
+
+async def params(a: int, b: int) -> int:
+    a = a * a
+    return a + b
+
+def maybe(n: int) -> int | str:
+    if n > 0:
+        return huge(n)
+    return 'none'
+
+def depth(n: int, acc: int) -> int:
+    if n == 0:
+        return acc
+    return depth(n - 1, acc * (n + 20))
+
+@main
+async def main():
+    print(first_over(huge(30)) > huge(30))
+    print(await square(22) > 0)
+    print(await chain(21) > 0)
+    c = start counter(5)
+    w = start watch(c)
+    await w
+    print(await c > 0)
+    _dropped = start square(25)
+    _gone = start counter(4)
+    print(await params(huge(23), huge(22)) > 0)
+    b = Box(huge(25))
+    b2 = Box(huge(24))
+    old = b.swap(huge(26))
+    print(old > 0, b.item > old, b2.item > 0)
+    bs = [Box(huge(20)), Box(huge(21))]
+    bs[0] = bs[1]
+    print(bs[0].item == bs[1].item)
+    m = maybe(24)
+    n = maybe(0)
+    if m in int:
+        print(m > 0)
+    print(n)
+    print(depth(25, 1) > 0)
+    seen = [huge(22), huge(23)]
+    pairs = (huge(21), huge(22), 5)
+    print(len(seen), len(pairs))
+    x, y, k = pairs
+    print(x < y, k)

@@ -856,6 +856,14 @@ void *tomato_list_push(void *l, int64_t elem_size) {
     return x->data + (x->len++) * elem_size;
 }
 
+/* what a copy of a list item holds: `rc` is 1 for a reference-counted item (retained, shared), 2 for an int (a big number is duplicated, a small one is the word itself) */
+int64_t tomato_int_dup(int64_t x);
+static int64_t item_copy(int rc, int64_t item) {
+    if (rc == 1) tomato_retain((void *)(intptr_t)item);
+    else if (rc == 2) return tomato_int_dup(item);
+    return item;
+}
+
 /* a new list (or tuple) of the selected items, with the same rules as for text; `rc` is 1 when the items are heap values */
 void *tomato_list_slice(void *src, int64_t lo, int64_t hi, int64_t step, int flags, int rc) {
     List *l = src;
@@ -865,8 +873,7 @@ void *tomato_list_slice(void *src, int64_t lo, int64_t hi, int64_t step, int fla
     List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
     for (int64_t k = 0; k < n; k++) {
         int64_t item = LIST_SLOT(l, start + k * step, int64_t);
-        *(int64_t *)tomato_list_push(r, 8) = item;
-        if (rc) tomato_retain((void *)(intptr_t)item);
+        *(int64_t *)tomato_list_push(r, 8) = item_copy(rc, item);
     }
     return r;
 }
@@ -879,8 +886,7 @@ void *tomato_list_concat(void *a, void *b, int rc) {
         List *from = pass ? y : x;
         for (int64_t i = 0; i < from->len; i++) {
             int64_t item = LIST_SLOT(from, i, int64_t);
-            *(int64_t *)tomato_list_push(r, 8) = item;
-            if (rc) tomato_retain((void *)(intptr_t)item);
+            *(int64_t *)tomato_list_push(r, 8) = item_copy(rc, item);
         }
     }
     return r;
@@ -893,8 +899,7 @@ void *tomato_list_repeat(void *a, int64_t n, int rc) {
     for (int64_t k = 0; k < n; k++)
         for (int64_t i = 0; i < x->len; i++) {
             int64_t item = LIST_SLOT(x, i, int64_t);
-            *(int64_t *)tomato_list_push(r, 8) = item;
-            if (rc) tomato_retain((void *)(intptr_t)item);
+            *(int64_t *)tomato_list_push(r, 8) = item_copy(rc, item);
         }
     return r;
 }
@@ -970,9 +975,18 @@ void *tomato_dict_new(int64_t type, int64_t val_size, int key_kind) {
     return d;
 }
 
+int64_t tomato_int_hash(int64_t x);
+int32_t tomato_int_cmp(int64_t x, int64_t y);
+void tomato_int_free(int64_t x);
+
 static int64_t hash_key(int kind, int64_t key) {
     uint64_t h;
-    if (kind == 1) {
+    if (kind == 2) {                       /* an int that may be a big number: hashed by value */
+        h = (uint64_t)tomato_int_hash(key) + 0x9e3779b97f4a7c15ULL;
+        h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        h = (h ^ (h >> 27)) * 0x94d049bb133111ebULL;
+        h ^= h >> 31;
+    } else if (kind == 1) {
         Str *s = (Str *)key;
         h = 1469598103934665603ULL;
         for (int64_t i = 0; i < s->bytes; i++) { h ^= (unsigned char)s->data[i]; h *= 1099511628211ULL; }
@@ -987,6 +1001,7 @@ static int64_t hash_key(int kind, int64_t key) {
 
 static int key_eq(int kind, int64_t a, int64_t b) {
     if (kind == 1) return tomato_str_cmp((void *)a, (void *)b) == 0;
+    if (kind == 2) return tomato_int_cmp(a, b) == 0;
     return a == b;
 }
 
@@ -1067,6 +1082,7 @@ void *tomato_dict_insert(void *dp, int64_t key, int only_new) {
     E_KEY(e) = key;
     E_HASH(e) = hash;
     if (d->key_kind == 1) tomato_retain((void *)key);
+    else if (d->key_kind == 2) E_KEY(e) = tomato_int_dup(key);       /* the table owns its own copy of a big number */
     int64_t pos = hash & (d->index_cap - 1);
     while (d->index[pos] >= 0) pos = (pos + 1) & (d->index_cap - 1);
     d->index[pos] = (int32_t)d->used;
@@ -1082,6 +1098,7 @@ int tomato_dict_delete(void *dp, int64_t key) {
     char *e = dict_find_entry(d, key, hash);
     if (!e) return 0;
     if (d->key_kind == 1) tomato_release((void *)E_KEY(e));
+    else if (d->key_kind == 2) tomato_int_free(E_KEY(e));
     E_LIVE(e) = 0;
     memset(E_VAL(e), 0, (size_t)(d->stride - 24));
     d->count--;
@@ -1104,6 +1121,7 @@ void *tomato_dict_keys(void *dp, int64_t list_type, int64_t elem_size) {
         void *slot = tomato_list_push(l, elem_size);
         memcpy(slot, &E_KEY(e), (size_t)elem_size);
         if (d->key_kind == 1) tomato_retain((void *)E_KEY(e));
+        else if (d->key_kind == 2) *(int64_t *)slot = tomato_int_dup(E_KEY(e));
     }
     return l;
 }
@@ -1116,7 +1134,8 @@ void *tomato_dict_values(void *dp, int64_t list_type, int64_t elem_size, int val
         if (!E_LIVE(e)) continue;
         void *slot = tomato_list_push(l, elem_size);
         memcpy(slot, E_VAL(e), (size_t)elem_size);
-        if (val_rc) tomato_retain(*(void **)E_VAL(e));
+        if (val_rc == 1) tomato_retain(*(void **)E_VAL(e));
+        else if (val_rc == 2) *(int64_t *)slot = tomato_int_dup(*(int64_t *)E_VAL(e));
     }
     return l;
 }
@@ -1139,7 +1158,7 @@ void *tomato_dict_items(void *dp, int64_t list_type, int64_t tuple_type, int64_t
         if (!E_LIVE(e)) continue;
         int64_t k = E_KEY(e), v;
         memcpy(&v, E_VAL(e), 8);
-        if (val_rc) tomato_retain((void *)v);
+        v = item_copy(val_rc, v);
         tomato_retain((void *)k);
         void *pair = tomato_list_new(tuple_type);
         void **a = tomato_list_push(pair, 8);
@@ -1252,10 +1271,30 @@ static void each_child(Hdr *h, Visit f) {
 
 static void release_visit(Hdr *c) { tomato_release(c); }
 
+/* The int slots are not references: a big number in one belongs to the object, which frees it here. A class lists its int fields
+ * after the reference-counted ones in its offsets table (each list ends with -1); a list or table says so with kind bit 2048. */
 static void free_internals(Hdr *h) {
-    int32_t kind = tomato_kinds[tcode(h)] & 15;
-    if (kind == 2) { List *l = (List *)h; free(l->data); l->data = NULL; }
-    else if (kind == 3) { Dict *d = (Dict *)h; free(d->entries); free(d->index); d->entries = NULL; d->index = NULL; d->used = 0; }
+    int64_t code = tcode(h);
+    int32_t full = tomato_kinds[code], kind = full & 15;
+    if (kind == 1) {
+        const int32_t *o = tomato_offsets[code];
+        while (*o >= 0) o++;
+        for (o++; *o >= 0; o++) tomato_int_free(*(int64_t *)((char *)h + *o));
+    } else if (kind == 2) {
+        List *l = (List *)h;
+        if (full & 2048) for (int64_t i = 0; i < l->len; i++) tomato_int_free(LIST_SLOT(l, i, int64_t));
+        free(l->data); l->data = NULL;
+    } else if (kind == 3) {
+        Dict *d = (Dict *)h;
+        if (d->key_kind == 2 || (full & 2048))
+            for (int64_t i = 0; i < d->used; i++) {
+                char *e = ENTRY(d, i);
+                if (!E_LIVE(e)) continue;
+                if (d->key_kind == 2) tomato_int_free(E_KEY(e));
+                if (full & 2048) tomato_int_free(*(int64_t *)E_VAL(e));
+            }
+        free(d->entries); free(d->index); d->entries = NULL; d->index = NULL; d->used = 0;
+    }
 }
 
 /* Objects whose count reached 0 while another is being destroyed wait here, so a long chain does not recurse. */
@@ -1516,8 +1555,10 @@ void *tomato_box_str(void *b) {
 /* ---- unlimited-size integers (D05c) ----
  * An int is one 64-bit word. An odd word (or zero) holds a small number, value = word >> 1, in -2^62 .. 2^62 - 1;
  * an even non-zero word is the address of a Big. Results are always the small form when they fit, so two equal
- * numbers that are both small have equal words. Big numbers are allocated and not freed while the program runs
- * (they are not reference counted: P63). */
+ * numbers that are both small have equal words. A big number is owned by exactly one place (a variable, a field, a list or
+ * table slot, or a temporary) and is copied, not shared, when it is stored somewhere else (value semantics, D05d): the
+ * compiler calls tomato_int_dup when it copies one and tomato_int_free when its owner lets go. The arithmetic below takes
+ * borrowed operands and always returns a fresh number; it never frees or returns one of its operands. */
 typedef struct { int sign; int64_t n; uint32_t d[]; } Big;    /* magnitude, least significant limb first, no leading zero limbs */
 typedef struct { int sign; int64_t n; const uint32_t *d; uint32_t buf[2]; } IntView;
 
@@ -1555,9 +1596,35 @@ static int64_t int_make(int sign, const uint32_t *d, int64_t n) {
     }
     Big *b = malloc(sizeof(Big) + (size_t)(n ? n : 1) * 4);
     if (!b) tomato_fail("out of memory");
+    LIVE_ADJUST(1);
     b->sign = sign; b->n = n;
     memcpy(b->d, d, (size_t)n * 4);
     return (int64_t)(uintptr_t)b;
+}
+
+/* a copy of a number: the word itself when it is small, else a new Big with the same limbs */
+NOINLINE static int64_t int_dup_slow(int64_t x) {
+    if (x == 0) return 0;                          /* the word 0 is a small zero too (zeroed memory), but only the low bit is tested inline */
+    Big *b = (Big *)(uintptr_t)x;
+    size_t size = sizeof(Big) + (size_t)(b->n ? b->n : 1) * 4;
+    Big *c = malloc(size);
+    if (!c) tomato_fail("out of memory");
+    LIVE_ADJUST(1);
+    memcpy(c, b, size);
+    return (int64_t)(uintptr_t)c;
+}
+NOINLINE static void int_free_slow(int64_t x) { if (x == 0) return; free((void *)(uintptr_t)x); LIVE_ADJUST(-1); }
+ALWAYS int64_t tomato_int_dup(int64_t x) { return __builtin_expect(x & 1, 1) ? x : int_dup_slow(x); }
+ALWAYS void tomato_int_free(int64_t x) { if (__builtin_expect(!(x & 1), 0)) int_free_slow(x); }
+/* two numbers at once, for the two operands of an operation: one test when both are small */
+ALWAYS void tomato_int_free2(int64_t x, int64_t y) { if (__builtin_expect(!(x & y & 1), 0)) { tomato_int_free(x); tomato_int_free(y); } }
+/* a hash of the value: the word for a small number, else the limbs mixed in */
+int64_t tomato_int_hash(int64_t x) {
+    if (int_is_small(x)) return x;
+    Big *b = (Big *)(uintptr_t)x;
+    uint64_t h = 1469598103934665603ULL ^ (uint64_t)b->sign;
+    for (int64_t i = 0; i < b->n; i++) { h ^= b->d[i]; h *= 1099511628211ULL; }
+    return (int64_t)h;
 }
 
 static int mag_cmp(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn) {
@@ -1611,8 +1678,8 @@ static int64_t int_finish(Big *b, int sign, int64_t n) {
         uint64_t m = 0;
         if (n > 0) m = b->d[0];
         if (n > 1) m |= (uint64_t)b->d[1] << 32;
-        if (sign > 0 && m <= (uint64_t)INT_SMALL_MAX) { free(b); return int_mk_small((int64_t)m); }
-        if (sign < 0 && m <= ((uint64_t)1 << 62)) { free(b); return int_mk_small((int64_t)0 - (int64_t)m); }
+        if (sign > 0 && m <= (uint64_t)INT_SMALL_MAX) { free(b); LIVE_ADJUST(-1); return int_mk_small((int64_t)m); }
+        if (sign < 0 && m <= ((uint64_t)1 << 62)) { free(b); LIVE_ADJUST(-1); return int_mk_small((int64_t)0 - (int64_t)m); }
     }
     b->sign = sign; b->n = n;
     return (int64_t)(uintptr_t)b;
@@ -1662,6 +1729,7 @@ NOINLINE static int64_t int_mul_slow(int64_t x, int64_t y) {
         int64_t n = big->n, pairs = n / 2;
         Big *r = malloc(sizeof(Big) + (size_t)(n + 2) * 4);
         if (!r) tomato_fail("out of memory");
+        LIVE_ADJUST(1);
         unsigned __int128 carry = 0;
         for (int64_t i = 0; i < pairs; i++) {
             uint64_t w; memcpy(&w, big->d + 2 * i, 8);
@@ -1680,6 +1748,7 @@ NOINLINE static int64_t int_mul_slow(int64_t x, int64_t y) {
     int64_t rn = a.n + b.n;
     Big *res = calloc(1, sizeof(Big) + (size_t)rn * 4);
     if (!res) tomato_fail("out of memory");
+    LIVE_ADJUST(1);
     uint32_t *out = res->d;
     for (int64_t i = 0; i < a.n; i++) {
         uint64_t carry = 0;
@@ -1779,8 +1848,8 @@ static void int_floordivmod(int64_t x, int64_t y, int64_t *quot, int64_t *rem) {
     *quot = qw; *rem = rw;
 }
 
-NOINLINE static int64_t int_floordiv_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); return q; }
-NOINLINE static int64_t int_mod_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); return r; }
+NOINLINE static int64_t int_floordiv_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(r); return q; }
+NOINLINE static int64_t int_mod_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(q); return r; }
 /* Python-style floor division and remainder of two small numbers, inline (the caller has checked the divisor is not zero). */
 ALWAYS int64_t tomato_int_floordiv(int64_t x, int64_t y) {
     if ((x & y & 1) && !(int_small_val(x) == INT_SMALL_MIN && int_small_val(y) == -1)) {
@@ -1819,11 +1888,13 @@ int64_t tomato_int_pow(int64_t base, int64_t exp) {
     /* the exponent is not negative (the caller checked) and small enough to count */
     if (!int_is_small(exp)) tomato_fail("the exponent is too big");
     int64_t e = int_small_val(exp), result = int_mk_small(1), b = base;
+    int own_b = 0;                                    /* b is the caller's base until it is squared for the first time */
     while (e > 0) {
-        if (e & 1) result = tomato_int_mul(result, b);
+        if (e & 1) { int64_t r = tomato_int_mul(result, b); tomato_int_free(result); result = r; }
         e >>= 1;
-        if (e > 0) b = tomato_int_mul(b, b);
+        if (e > 0) { int64_t s = tomato_int_mul(b, b); if (own_b) tomato_int_free(b); b = s; own_b = 1; }
     }
+    if (own_b) tomato_int_free(b);
     return result;
 }
 
@@ -1941,7 +2012,7 @@ int32_t tomato_text_int_ok(void *text) {
     if (n > 0 && s[0] == '+') { s++; n--; if (n > 0 && s[0] == '-') return 0; }
     int ok;
     int64_t w = int_from_digits(s, n, &ok);
-    (void)w;
+    if (ok) tomato_int_free(w);
     return ok;
 }
 
@@ -1995,8 +2066,11 @@ int64_t tomato_f64_to_int(double d) {
     int e;
     double m = frexp(fabs(d), &e);
     int64_t mant = (int64_t)ldexp(m, 53);
-    int64_t big = tomato_int_mul(tomato_int_from_i64(mant), tomato_int_pow(int_mk_small(2), int_mk_small(e - 53)));
-    return d < 0 ? tomato_int_neg(big) : big;
+    int64_t m1 = tomato_int_from_i64(mant), p2 = tomato_int_pow(int_mk_small(2), int_mk_small(e - 53));
+    int64_t big = tomato_int_mul(m1, p2);
+    tomato_int_free(m1); tomato_int_free(p2);
+    if (d < 0) { int64_t n = tomato_int_neg(big); tomato_int_free(big); return n; }
+    return big;
 }
 
 /* the compiler writes text constants byte by byte (D17a-b: text is UTF-8) */

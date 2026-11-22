@@ -327,12 +327,54 @@ class Ex:
     # a compiled expression: the register or constant that holds it, and its Tomato type
     reg: str = ''
     ty: str = ''
+    fresh: bool = False       # an int that the code holding it owns (it frees it or moves it into a place that keeps it), not one borrowed from a variable
+    small: bool = False       # an int known to be in the small form, which owns nothing
 
 def ex(reg: str, ty: str) -> Ex:
     e = Ex()
     e.reg = reg
     e.ty = ty
     return e
+
+def exf(reg: str, ty: str) -> Ex:
+    # an owned value: a number that nobody else holds (the result of arithmetic or of a call)
+    e = ex(reg, ty)
+    e.fresh = True
+    return e
+
+def exs(reg: str, ty: str) -> Ex:
+    # a number known to be small (a length, a position, a loop counter)
+    e = ex(reg, ty)
+    e.small = True
+    return e
+
+def ret_ex(reg: str, ty: str) -> Ex:
+    # what a call gave back: the callee hands over a value of its own, so an int is owned
+    if ty == 'int':
+        return exf(reg, ty)
+    return ex(reg, ty)
+
+def small_text(reg: str) -> bool:
+    # a constant tagged whole number (written in the IR as digits), which owns nothing
+    return reg != '' and (reg[0].isdigit() or reg[0] == '-')
+
+def elem_rc(t: str) -> str:
+    # the runtime's flag for list items and table values of type t: 1 reference counted, 2 an int (a big number is copied), 0 plain
+    if is_rc(t):
+        return '1'
+    if t == 'int':
+        return '2'
+    return '0'
+
+def pure_read(n: Node) -> bool:
+    # an expression that only reads variables and fields, so no user code runs while it is evaluated
+    if n.kind == 'Name' or n.kind == 'IntLit' or n.kind == 'FloatLit' or n.kind == 'BoolLit' or n.kind == 'StrLit':
+        return True
+    if n.kind == 'Attr':
+        return pure_read(val_node(n.fields[0]))
+    if n.kind == 'UnOp':
+        return pure_read(val_node(n.fields[1]))
+    return False
 
 def has_comp(n: Node) -> bool:
     # does this expression contain a list comprehension (the one expression that assigns to variables)?
@@ -1115,6 +1157,7 @@ class Gen:
     lines: list[str] = []
     allocas: list[str] = []
     rc_slots: list[str] = []
+    int_slots: list[str] = []     # the places that own an int (a big number in one is freed with the function)
     assigned: list[str] = []      # the names of variables that are written (a name given to slot()) after the parameters were set up
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
@@ -1197,11 +1240,16 @@ class Gen:
             self.allocas.append(f'  {reg} = getelementptr %class.{self.frame_code}, ptr %frame, i32 0, i32 {str(len(self.frame_types) - 1 + FRAME_FIXED + 2)}')
             if is_rc(ty):
                 self.rc_slots.append(reg)
+            elif ty == 'int':
+                self.int_slots.append(reg)
             return
         self.allocas.append(f'  {reg} = alloca {llvm_type(ty)}')
         if is_rc(ty):
             self.allocas.append(f'  store ptr null, ptr {reg}')
             self.rc_slots.append(reg)
+        elif ty == 'int':
+            self.allocas.append(f'  store i64 0, ptr {reg}')
+            self.int_slots.append(reg)
 
     def new_slot(self, name: str, ty: str) -> str:
         self.slot_count += 1
@@ -1216,6 +1264,11 @@ class Gen:
         self.make_slot(reg, 'u64')
         return reg
 
+    def hidden_int_slot(self, hint: str) -> str:
+        reg = self.tmp(hint)
+        self.make_slot(reg, 'int')
+        return reg
+
     def hidden_rc_slot(self, hint: str) -> str:
         reg = self.tmp(hint)
         self.make_slot(reg, 'str')
@@ -1223,13 +1276,38 @@ class Gen:
 
     # ---- reference counting
     def retain(self, e: Ex):
+        # e was just read from a place that keeps its value (a field, a list item): take a reference of our own. A big int cannot
+        # be shared, so e becomes a copy that we own.
         if is_rc(e.ty):
             self.emit(f'call void @tomato_retain(ptr {e.reg})')
+        elif e.ty == 'int':
+            d = self.tmp('dup')
+            self.emit(f'{d} = call i64 @tomato_int_dup(i64 {e.reg})')
+            e.reg = d
+            e.fresh = True
 
     def release(self, e: Ex):
         # a borrowed read of a local (see expr_b) holds no reference of its own, so there is nothing to release
         if is_rc(e.ty) and not e.reg.startswith('%bl.'):
             self.emit(f'call void @tomato_release(ptr {e.reg})')
+        elif e.ty == 'int' and e.fresh and not e.small and not small_text(e.reg):
+            self.emit(f'call void @tomato_int_free(i64 {e.reg})')
+
+    def release2(self, x: Ex, y: Ex):
+        # the two operands of an operation: one test when both are small numbers that were computed here
+        if x.ty == 'int' and y.ty == 'int' and x.fresh and y.fresh and not x.small and not y.small and not small_text(x.reg) and not small_text(y.reg) and x.reg != y.reg:
+            self.emit(f'call void @tomato_int_free2(i64 {x.reg}, i64 {y.reg})')
+            return
+        self.release(x)
+        self.release(y)
+
+    def owned(self, e: Ex) -> Ex:
+        # e as a value the caller may keep: an int borrowed from a variable is copied, everything else is already owned
+        if e.ty == 'int' and not e.fresh and not e.small and not small_text(e.reg):
+            d = self.tmp('dup')
+            self.emit(f'{d} = call i64 @tomato_int_dup(i64 {e.reg})')
+            return exf(d, 'int')
+        return e
 
     def can_borrow(self, n: Node, others: list[Node]) -> bool:
         # a plain local that holds a heap value can be read without retain/release when it is only looked at while the current
@@ -1262,6 +1340,12 @@ class Gen:
             self.emit(f'{old} = load ptr, ptr {slot}')
             self.emit(f'store ptr {e.reg}, ptr {slot}')
             self.emit(f'call void @tomato_release(ptr {old})')
+        elif e.ty == 'int':
+            v = self.owned(e)                 # copied first: it may be the very number the slot is about to drop
+            old = self.tmp('old')
+            self.emit(f'{old} = load i64, ptr {slot}')
+            self.emit(f'store i64 {v.reg}, ptr {slot}')
+            self.emit(f'call void @tomato_int_free(i64 {old})')
         else:
             self.emit(f'store {llvm_type(e.ty)} {e.reg}, ptr {slot}')
 
@@ -1276,6 +1360,8 @@ class Gen:
 
     def resize(self, e: Ex, to: str) -> Ex:
         # the same number in another integer type that holds all of its values
+        if e.ty == to:
+            return e
         if to == 'int' and e.ty != 'int':
             if bits_of(e.ty) < 62:
                 return self.tag_small(self.widen(e, 64))
@@ -1328,6 +1414,7 @@ class Gen:
         return self.box_as(e, member, ty)
 
     def box_as(self, e: Ex, member: str, ty: str) -> Ex:
+        e = self.owned(e)
         b = self.tmp('box')
         self.emit(b + ' = call ptr @tomato_alloc(i64 32, i64 ' + str(self.mod.code_of('box:' + member)) + ')')
         p = self.tmp('payload')
@@ -1410,7 +1497,7 @@ class Gen:
     def int_call(self, name: str, a: str, b: str) -> Ex:
         r = self.tmp('int')
         self.emit(f'{r} = call i64 @tomato_int_{name}(i64 {a}, i64 {b})')
-        return ex(r, 'int')
+        return exf(r, 'int')
 
     def tag_small(self, raw: str) -> Ex:
         # a machine number known to be small (a length, a loop counter, a position) as an int
@@ -1418,7 +1505,7 @@ class Gen:
         self.emit(f'{s} = shl i64 {raw}, 1')
         t = self.tmp('tag')
         self.emit(f'{t} = or i64 {s}, 1')
-        return ex(t, 'int')
+        return exs(t, 'int')
 
     def int_from_machine(self, raw: str, signed: bool) -> Ex:
         # any 64-bit machine number (or an unsigned one) as an int
@@ -1427,12 +1514,14 @@ class Gen:
             self.emit(f'{r} = call i64 @tomato_int_from_i64(i64 {raw})')
         else:
             self.emit(f'{r} = call i64 @tomato_int_from_u64(i64 {raw})')
-        return ex(r, 'int')
+        return exf(r, 'int')
 
     def int_raw(self, e: Ex) -> str:
-        # the machine number for places that need one (an index, a range bound); stops when the int is too big
+        # the machine number for places that need one (an index, a range bound); stops when the int is too big. The int is used up.
         r = self.tmp('raw')
         self.emit(f'{r} = call i64 @tomato_int_raw(i64 {e.reg})')
+        self.release(e)
+        e.fresh = False                  # used up: a second release must not free it again
         return r
 
     def int_zero_check(self, b: Ex, message: str):
@@ -1448,7 +1537,9 @@ class Gen:
         x = self.resize(a, t)
         y = self.resize(b, t)
         if t == 'int':
-            return self.int_call(op, x.reg, y.reg)
+            r0 = self.int_call(op, x.reg, y.reg)
+            self.release2(x, y)
+            return r0
         llt = llvm_type(t)
         sg = 's' if is_signed(t) else 'u'
         intr = f'llvm.{sg}{op}.with.overflow.{llt}'
@@ -1465,6 +1556,7 @@ class Gen:
     def int_compare(self, op: str, x: Ex, y: Ex) -> Ex:
         c = self.tmp('icmp')
         self.emit(f'{c} = call i32 @tomato_int_cmp(i64 {x.reg}, i64 {y.reg})')
+        self.release2(x, y)
         cc = 'eq'
         if op == '!=':
             cc = 'ne'
@@ -1510,7 +1602,9 @@ class Gen:
         y = self.resize(b, t)
         if t == 'int':
             self.int_zero_check(y, 'modulo by zero')
-            return self.int_call('mod', x.reg, y.reg)
+            r0 = self.int_call('mod', x.reg, y.reg)
+            self.release2(x, y)
+            return r0
         llt = llvm_type(t)
         zero = self.tmp('zero')
         self.emit(f'{zero} = icmp eq {llt} {y.reg}, 0')
@@ -1542,7 +1636,9 @@ class Gen:
         y = self.resize(b, t)
         if t == 'int':
             self.int_zero_check(y, 'division by zero')
-            return self.int_call('floordiv', x.reg, y.reg)
+            r0 = self.int_call('floordiv', x.reg, y.reg)
+            self.release2(x, y)
+            return r0
         llt = llvm_type(t)
         zero = self.tmp('zero')
         self.emit(f'{zero} = icmp eq {llt} {y.reg}, 0')
@@ -1591,7 +1687,9 @@ class Gen:
                 code = '2'
             r = self.tmp('bit')
             self.emit(f'{r} = call i64 @tomato_int_bitop(i64 {x.reg}, i64 {y.reg}, i32 {code})')
-            return ex(r, 'int')
+            self.release(x)
+            self.release(y)
+            return exs(r, 'int')
         ins = 'and'
         if op == '|':
             ins = 'or'
@@ -1614,9 +1712,11 @@ class Gen:
         self.fail_if(negative, 'a negative exponent needs a float')
         r = self.tmp('pow')
         self.emit(f'{r} = call i64 @tomato_int_pow(i64 {x.reg}, i64 {y.reg})')
+        self.release(x)
+        self.release(y)
         if t != 'int':
-            return self.convert_explicit(ex(r, 'int'), t, line)
-        return ex(r, 'int')
+            return self.convert_explicit(exf(r, 'int'), t, line)
+        return exf(r, 'int')
 
     def as_double(self, e: Ex) -> str:
         if e.ty == 'float':
@@ -1709,7 +1809,7 @@ class Gen:
         self.emit(f'{r} = call i64 @tomato_text_int(ptr {v.reg})')
         self.release(v)
         self.fail_if(bad, 'the text is not a whole number')
-        return ex(r, 'int')
+        return exf(r, 'int')
 
     def text_to_float(self, v: Ex) -> Ex:
         ok = self.tmp('isfloat')
@@ -1733,7 +1833,7 @@ class Gen:
         self.fail_if(bad, 'a float that is infinite or not a number cannot become an int')
         r = self.tmp('whole')
         self.emit(f'{r} = call i64 @tomato_f64_to_int(double {v.reg})')
-        return ex(r, 'int')
+        return exf(r, 'int')
 
     def float_literal(self, mantissa: int, scale: int) -> Ex:
         # the digits as a decimal constant, which LLVM rounds to the nearest float
@@ -1748,6 +1848,7 @@ class Gen:
         if e.ty == 'int':
             d = self.tmp('fp')
             self.emit(f'{d} = call double @tomato_int_to_f64(i64 {e.reg})')
+            self.release(e)
             return d
         r = self.tmp('fp')
         op = 'sitofp' if is_signed(e.ty) else 'uitofp'
@@ -1783,6 +1884,7 @@ class Gen:
             self.fail_if(bad, 'the number does not fit the integer type')
             low = self.tmp('low')
             self.emit(f'{low} = call i64 @tomato_int_low64(i64 {v.reg})')
+            self.release(v)
             if bits_of(target) == 64:
                 return ex(low, target)
             cut = self.tmp('cut')
@@ -1878,7 +1980,8 @@ class Gen:
             r = self.tmp('l')
             self.emit(f'{r} = load {llvm_type(ty)}, ptr {self.slots[name]}')
             e = ex(r, ty)
-            self.retain(e)
+            if ty != 'int':
+                self.retain(e)         # an int is lent: whoever keeps it copies it (see owned)
             return e
         if k == 'UnOp':
             op = n.fields[0].text
@@ -1940,6 +2043,8 @@ class Gen:
         res = self.hidden_slot('cond')
         if is_rc(a.ty):
             res = self.hidden_rc_slot('cond')
+        elif a.ty == 'int':
+            res = self.hidden_int_slot('cond')
         self.store_owned(res, a)
         self.br(end)
         self.place(no)
@@ -2003,12 +2108,13 @@ class Gen:
         self.emit(f'{lst} = load ptr, ptr {ctx.holder}')
         slot = self.tmp('slot')
         self.emit(f'{slot} = call ptr @tomato_list_push(ptr {lst}, i64 8)')
+        v = self.owned(v)
         self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
 
     def sequence_op(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
         # list + list, tuple + tuple, list * n, n * list, text * n and n * text; an empty type when the operands are something else
         if op == '+' and is_list(a.ty) and a.ty == b.ty:
-            rc = '1' if is_rc(elem_of(a.ty)) else '0'
+            rc = elem_rc(elem_of(a.ty))
             r = self.tmp('joined')
             self.emit(f'{r} = call ptr @tomato_list_concat(ptr {a.reg}, ptr {b.reg}, i32 {rc})')
             self.release(a)
@@ -2026,7 +2132,7 @@ class Gen:
         if seq.ty == 'str':
             self.emit(f'{r} = call ptr @tomato_str_repeat(ptr {seq.reg}, i64 {self.int_raw(n)})')
         else:
-            rc = '1' if is_rc(elem_of(seq.ty)) else '0'
+            rc = elem_rc(elem_of(seq.ty))
             self.emit(f'{r} = call ptr @tomato_list_repeat(ptr {seq.reg}, i64 {self.int_raw(n)}, i32 {rc})')
         self.release(seq)
         return ex(r, seq.ty)
@@ -2039,7 +2145,7 @@ class Gen:
         self.check_error(values)
         for v2 in values:
             self.release(v2)
-        return ex(r, info.ret)
+        return ret_ex(r, info.ret)
 
     def marker_call(self, a: Ex, info: FuncInfo, args: list[Ex], line: int) -> Ex:
         # run the method that a protocol marker (@len, @get, @slice, @contains, @reversed) names on the object a; a and the arguments are released
@@ -2053,7 +2159,7 @@ class Gen:
         else:
             r = self.tmp('mark')
             self.emit(f'{r} = {text}')
-            result = ex(r, info.ret)
+            result = ret_ex(r, info.ret)
         values: list[Ex] = [a]
         for b2 in args:
             values.append(b2)
@@ -2091,7 +2197,7 @@ class Gen:
         if is_class(v.ty) and self.mod.has_op(v.ty[1:], 'iter'):
             return self.call_helper(self.mod.helper('tolist', v.ty, line), [v])
         if is_list(v.ty) and not v.ty.startswith('tuple['):
-            rc = '1' if is_rc(elem_of(v.ty)) else '0'
+            rc = elem_rc(elem_of(v.ty))
             r = self.tmp('copy')
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {v.reg}, i64 0, i64 0, i64 1, i32 0, i32 {rc})')
             self.release(v)
@@ -2127,7 +2233,7 @@ class Gen:
             raise CompileError(f'{name}() takes a list or a range, but this is {shown(lst.ty)}', line)
         elem = elem_of(lst.ty)
         if name == 'reversed':
-            rc = '1' if is_rc(elem) else '0'
+            rc = elem_rc(elem)
             r = self.tmp('reversed')
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {lst.reg}, i64 0, i64 0, i64 -1, i32 4, i32 {rc})')
             self.release(lst)
@@ -2177,16 +2283,32 @@ class Gen:
         if writing and fld.is_const and not (self.in_init and self.owner == fld.owner):
             raise CompileError(f"the const field '{name}' cannot be changed after the object is created", line)
 
-    def field_get(self, n: Node) -> Ex:
-        obj = self.unwrap(self.expr_b(val_node(n.fields[0]), []), n.line)
+    def lent_base(self, base: Node) -> Ex:
+        # the object or list that a field or item is read from, when it is itself a field or item of a local: lent, not retained
+        if base.kind == 'Index':
+            return self.index(base, False, True)
+        return self.field_get(base, False, True)
+
+    def field_get(self, n: Node, lend: bool = False, as_base: bool = False) -> Ex:
+        # lend: the result is a number that the caller uses up at once; as_base: the caller only reads from the result and lets it go.
+        # In both cases a value read from a local (or from something lent) is not copied: the local stays alive and nothing runs
+        # in between, so nothing can change what it points at.
+        base = val_node(n.fields[0])
+        if (lend or as_base) and (base.kind == 'Attr' or base.kind == 'Index'):
+            obj = self.unwrap(self.lent_base(base), n.line)
+        else:
+            obj = self.unwrap(self.expr_b(base, []), n.line)
         name = n.fields[1].text
         if is_class(obj.ty):
             self.check_field_access(obj, name, False, n.line)
         addr = self.field_addr(obj, name, n.line)
         ft = self.field_type(obj, name, n.line)
-        v = self.tmp('f')
+        lent = obj.reg.startswith('%bl.') and ((lend and ft == 'int') or (as_base and is_rc(ft)))
+        v = self.tmp('bl' if lent else 'f')
         self.emit(f'{v} = load {llvm_type(ft)}, ptr {addr}')
         e = ex(v, ft)
+        if lent:
+            return e
         self.retain(e)
         self.release(obj)
         return e
@@ -2226,6 +2348,7 @@ class Gen:
             else:
                 v = self.expr(item, elem_of(t))
             v = self.want(v, elem_of(t), n.line, 'a list item')
+            v = self.owned(v)
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_list_push(ptr {lst}, i64 8)')
             self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
@@ -2241,6 +2364,8 @@ class Gen:
 
     def new_set(self, t: str) -> Ex:
         kind = '1' if set_elem(t) == 'str' else '0'
+        if set_elem(t) == 'int':
+            kind = '2'                  # a table that copies big numbers
         r = self.tmp('set')
         self.emit(f'{r} = call ptr @tomato_dict_new(i64 {self.mod.code_of(t)}, i64 0, i32 {kind})')
         return ex(r, t)
@@ -2286,6 +2411,7 @@ class Gen:
             dup = self.tmp('dup')
             self.emit(f'{dup} = icmp eq ptr {slot}, null')
             self.fail_if(dup, 'duplicate key in a dict literal')
+            v = self.owned(v)
             self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {slot}')
             self.release(k)
         return ex(d, expected)
@@ -2302,7 +2428,7 @@ class Gen:
                     text = f'-{text}'
                 r = self.tmp('big')
                 self.emit(f'{r} = call i64 @tomato_int_parse(ptr {self.mod.intern(text)})')
-                return ex(r, 'int')
+                return exf(r, 'int')
             if negative:
                 return ex(str(1 - v * 2), t)
             return ex(str(v * 2 + 1), t)
@@ -2354,8 +2480,21 @@ class Gen:
         v = self.expr(args[0])
         return self.convert_explicit(v, target, n.line)
 
-    def index(self, n: Node) -> Ex:
-        s = self.unwrap(self.expr_b(val_node(n.fields[0]), [val_node(n.fields[1])]), n.line)
+    def operand(self, n: Node, lend: bool) -> Ex:
+        # an operand of an arithmetic or comparison operator. With lend, a number read from a field or a list item of a local is
+        # not copied: nothing runs between the read and the operator that uses it up, so nothing can change what it points at.
+        if lend and n.kind == 'Attr':
+            return self.field_get(n, True)
+        if lend and n.kind == 'Index':
+            return self.index(n, True)
+        return self.expr(n)
+
+    def index(self, n: Node, lend: bool = False, as_base: bool = False) -> Ex:
+        base = val_node(n.fields[0])
+        if (lend or as_base) and (base.kind == 'Attr' or base.kind == 'Index') and pure_read(val_node(n.fields[1])):
+            s = self.unwrap(self.lent_base(base), n.line)
+        else:
+            s = self.unwrap(self.expr_b(base, [val_node(n.fields[1])]), n.line)
         if is_dict(s.ty):
             k = self.expr(val_node(n.fields[1]))
             k = self.want(k, 'str', n.line, 'a dict key')
@@ -2382,9 +2521,12 @@ class Gen:
             li = self.expr(val_node(n.fields[1]))
             li = self.want(li, 'int', n.line, 'an index')
             addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li)), 'int'))
-            item = self.tmp('item')
+            lent = s.reg.startswith('%bl.') and ((lend and elem_of(s.ty) == 'int') or (as_base and is_rc(elem_of(s.ty))))
+            item = self.tmp('bl' if lent else 'item')
             self.emit(f'{item} = load {llvm_type(elem_of(s.ty))}, ptr {addr}')
             e = ex(item, elem_of(s.ty))
+            if lent:
+                return e
             self.retain(e)
             self.release(s)
             return e
@@ -2439,7 +2581,7 @@ class Gen:
         if s.ty == 'str':
             self.emit(f'{r} = call ptr @tomato_str_slice3(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags})')
         else:
-            rc = '1' if is_rc(elem_of(s.ty)) else '0'
+            rc = elem_rc(elem_of(s.ty))
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags}, i32 {rc})')
         bad = self.tmp('zero')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
@@ -2673,8 +2815,8 @@ class Gen:
             hint = a.ty if is_fixed(a.ty) else ''
             b = self.expr(right, hint)
         else:
-            a = self.expr(left)
-            b = self.expr(right)
+            a = self.operand(left, pure_read(right))
+            b = self.operand(right, True)
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
         if op == 'in':
             return self.membership(a, b, n.line)
@@ -2768,7 +2910,7 @@ class Gen:
         else:
             r = self.tmp('op')
             self.emit(f'{r} = {text}')
-            result = ex(r, info.ret)
+            result = ret_ex(r, info.ret)
         self.check_error(values)
         self.release(a)
         self.release(b)
@@ -3126,7 +3268,7 @@ class Gen:
         else:
             r = self.tmp('call')
             self.emit(f'{r} = {text}')
-            result = ex(r, info.ret)
+            result = ret_ex(r, info.ret)
         self.check_error(values)
         for v3 in values:
             self.release(v3)
@@ -3135,7 +3277,8 @@ class Gen:
     def build_tuple(self, t: str, items: list[Ex]) -> Ex:
         lst = self.tmp('varargs')
         self.emit(f'{lst} = call ptr @tomato_list_new(i64 {self.mod.code_of(t)})')
-        for it in items:
+        for it0 in items:
+            it = self.owned(it0)
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_list_push(ptr {lst}, i64 8)')
             self.emit(f'store {llvm_type(it.ty)} {it.reg}, ptr {slot}')
@@ -3144,7 +3287,8 @@ class Gen:
     def build_kwargs(self, t: str, names: list[str], items: list[Ex]) -> Ex:
         d = self.tmp('kwargs')
         self.emit(f'{d} = call ptr @tomato_dict_new(i64 {self.mod.code_of(t)}, i64 8, i32 1)')
-        for k, it in enumerate(items):
+        for k, it0 in enumerate(items):
+            it = self.owned(it0)
             key = ex(self.mod.intern(names[k]), 'str')
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_insert(ptr {d}, i64 {self.key_word(key)}, i32 1)')
@@ -3233,6 +3377,7 @@ class Gen:
                 raise CompileError(f'append() takes 1 argument, but {len(args)} given', n.line)
             v = self.expr(args[0], elem_of(obj.ty))
             v = self.want(v, elem_of(obj.ty), n.line, 'the appended item')
+            v = self.owned(v)
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_list_push(ptr {obj.reg}, i64 8)')
             self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {slot}')
@@ -3290,7 +3435,7 @@ class Gen:
             if len(args) != 2:
                 raise CompileError("get() takes a key and a default value: get(key, default)", line)
             k = self.want(self.expr(args[0]), 'str', line, 'a dict key')
-            fallback = self.want(self.expr(args[1], vt), vt, line, 'the default of get')
+            fallback = self.owned(self.want(self.expr(args[1], vt), vt, line, 'the default of get'))
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {self.key_word(k)})')
             missing = self.tmp('missing')
@@ -3302,17 +3447,18 @@ class Gen:
             self.place(hit)
             found = self.tmp('val')
             self.emit(f'{found} = load {llvm_type(vt)}, ptr {slot}')
-            self.retain(ex(found, vt))
+            got = ex(found, vt)
+            self.retain(got)
             self.release(fallback)
             self.br(join)
             self.place(miss)
             self.br(join)
             self.place(join)
             r = self.tmp('got')
-            self.emit(f'{r} = phi {llvm_type(vt)} [{found}, %{hit}], [{fallback.reg}, %{miss}]')
+            self.emit(f'{r} = phi {llvm_type(vt)} [{got.reg}, %{hit}], [{fallback.reg}, %{miss}]')
             self.release(k)
             self.release(d)
-            return ex(r, vt)
+            return ret_ex(r, vt)
         if name not in ['keys', 'values', 'items']:
             raise CompileError(self.no_method(name, d.ty), line)
         if len(args) != 0:
@@ -3325,7 +3471,7 @@ class Gen:
         if name == 'values':
             t = f'list[{vt}]'
             r = self.tmp('values')
-            self.emit(f'{r} = call ptr @tomato_dict_values(ptr {d.reg}, i64 {self.mod.code_of(t)}, i64 8, i32 {int_of_bool(is_rc(vt))})')
+            self.emit(f'{r} = call ptr @tomato_dict_values(ptr {d.reg}, i64 {self.mod.code_of(t)}, i64 8, i32 {elem_rc(vt)})')
             self.release(d)
             return ex(r, t)
         if name == 'items':
@@ -3343,7 +3489,7 @@ class Gen:
                 val_box = self.mod.code_of(f'box:{vt}')
             t = f'list[tuple[{item}]]'
             r = self.tmp('items')
-            self.emit(r + ' = call ptr @tomato_dict_items(ptr ' + d.reg + ', i64 ' + str(self.mod.code_of(t)) + ', i64 ' + str(self.mod.code_of('tuple[' + item + ']')) + ', i64 ' + str(key_box) + ', i64 ' + str(val_box) + ', i64 ' + str(box_kind(vt)) + ', i32 ' + str(int_of_bool(is_rc(vt))) + ')')
+            self.emit(r + ' = call ptr @tomato_dict_items(ptr ' + d.reg + ', i64 ' + str(self.mod.code_of(t)) + ', i64 ' + str(self.mod.code_of('tuple[' + item + ']')) + ', i64 ' + str(key_box) + ', i64 ' + str(val_box) + ', i64 ' + str(box_kind(vt)) + ', i32 ' + elem_rc(vt) + ')')
             self.release(d)
             return ex(r, t)
         raise CompileError(self.no_method(name, d.ty), line)
@@ -3569,7 +3715,12 @@ class Gen:
             self.emit(f'{r} = load {llvm_type(result)}, ptr {rp}')
             if is_rc(result):
                 self.emit(f'store ptr null, ptr {rp}')
-            out = ex(r, result)
+                out = ex(r, result)
+            elif result == 'int':
+                self.emit(f'store i64 0, ptr {rp}')         # the awaiting code owns the number now
+                out = exf(r, result)
+            else:
+                out = ex(r, result)
         self.emit(f'call void @tomato_release(ptr {h})')
         self.emit(f'store ptr null, ptr {holder}')
         return out
@@ -3737,6 +3888,7 @@ class Gen:
         v = self.expr(val_node(s.fields[0]), self.ret_yields)
         self.check_unread()
         v = self.want(v, self.ret_yields, s.line, 'the yielded status')
+        v = self.owned(v)
         q = self.tmp('queue')
         self.emit(q + ' = load ptr, ptr ' + self.frame_field('%frame', 11, 'str'))
         slot = self.tmp('slot')
@@ -4019,6 +4171,7 @@ class Gen:
         r = self.tmp('text')
         if v.ty == 'int':
             self.emit(f'{r} = call ptr @tomato_int_str(i64 {v.reg})')
+            self.release(v)
         elif is_numeric(v.ty):
             if is_signed(v.ty):
                 self.emit(f'{r} = call ptr @tomato_str_from_i64(i64 {self.widen(v, 64)})')
@@ -4046,6 +4199,7 @@ class Gen:
             if v.ty == 'int':
                 t = self.tmp('text')
                 self.emit(f'{t} = call ptr @tomato_int_str(i64 {v.reg})')
+                self.release(v)
                 self.emit(f'call void @tomato_print_strobj(ptr {t})')
                 self.emit(f'call void @tomato_release(ptr {t})')
             elif is_numeric(v.ty):
@@ -4227,6 +4381,7 @@ class Gen:
                     raise CompileError('this function is declared to return nothing, so it cannot return a value\nremove the value, or add -> Type to the def', s.line)
                 v = self.expr(val_node(s.fields[0]), self.ret)
                 v = self.want(v, self.ret, s.line, 'the returned value')
+                v = self.owned(v)
                 self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr %retval')
             self.run_finallies(self.try_depth)
             self.br('epilogue')
@@ -4407,6 +4562,8 @@ class Gen:
             self.emit(f'{old} = load ptr, ptr {addr}')
             self.emit(f'store ptr {v.reg}, ptr {addr}')
             self.emit(f'call void @tomato_release(ptr {old})')
+        elif v.ty == 'int':
+            self.store_owned(addr, v)
         else:
             self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {addr}')
         self.release(lst)
@@ -4894,6 +5051,10 @@ class Gen:
             start = self.int_raw(a)
             stop = self.int_raw(b)
         var = self.slot(s.fields[0].text, 'int', s.line)
+        old = self.tmp('old')
+        self.emit(f'{old} = load i64, ptr {var}')
+        self.emit(f'call void @tomato_int_free(i64 {old})')           # a number the variable held before the loop; the loop stores small ones
+        self.emit(f'store i64 1, ptr {var}')
         counter = self.hidden_slot('for.i')
         limit = self.hidden_slot('for.n')
         self.emit(f'store i64 {start}, ptr {counter}')
@@ -4947,6 +5108,10 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
         o = g.tmp('rel')
         g.lines.append(f'  {o} = load ptr, ptr {reg}')
         g.lines.append(f'  call void @tomato_release(ptr {o})')
+    for reg in g.int_slots:
+        o = g.tmp('free')
+        g.lines.append(f'  {o} = load i64, ptr {reg}')
+        g.lines.append(f'  call void @tomato_int_free(i64 {o})')
     llvm_ret = 'void'
     if ret != '':
         llvm_ret = llvm_type(ret)
@@ -4993,10 +5158,15 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
             types.append(info.ptypes[k])
             k += 1
     sig: list[str] = []
-    lent: list[list[str]] = []          # per rc parameter: its name, its slot, and the line index of its retain
+    lent: list[list[str]] = []          # per rc or int parameter: its name, its slot, and the line index of its retain (of its copy, for an int)
     for k, name in enumerate(names):
         reg = g.slot(name, types[k], f.line)
         sig.append(f'{llvm_type(types[k])} %arg.{name}')
+        if types[k] == 'int':
+            lent.append([name, reg, str(len(g.lines))])
+            g.emit(f'%arg.{name}.own = call i64 @tomato_int_dup(i64 %arg.{name})')    # the caller only lent it
+            g.emit(f'store i64 %arg.{name}.own, ptr {reg}')
+            continue
         g.emit(f'store {llvm_type(types[k])} %arg.{name}, ptr {reg}')
         if is_rc(types[k]):
             lent.append([name, reg, str(len(g.lines))])
@@ -5009,6 +5179,10 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         if pl[0] not in g.assigned:
             g.lines[int(pl[2])] = '  ; the parameter ' + pl[0] + ' is only lent'
             g.rc_slots = [r for r in g.rc_slots if r != pl[1]]
+            if g.types[pl[0]] == 'int':
+                # the slot holds the caller's number: no copy, and nothing to free
+                g.lines[int(pl[2]) + 1] = '  store i64 %arg.' + pl[0] + ', ptr ' + pl[1]
+                g.int_slots = [r for r in g.int_slots if r != pl[1]]
     if info.ret != '' and falls_through(val_nodes(f.fields[3])):
         raise CompileError(f"the function '{info.name}' can reach its end without returning a value\nend every path with a return, for example give the last if an else that returns", f.line)
     if not g.terminated:
@@ -5106,6 +5280,9 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     for reg in g.rc_slots:
         o = g.tmp('rel')
         text += f'  {o} = load ptr, ptr {reg}\n  call void @tomato_release(ptr {o})\n  store ptr null, ptr {reg}\n'
+    for reg in g.int_slots:
+        o = g.tmp('free')
+        text += f'  {o} = load i64, ptr {reg}\n  call void @tomato_int_free(i64 {o})\n  store i64 0, ptr {reg}\n'
     text += '  %ex.p = load ptr, ptr @tomato_exc\n  %ex.has = icmp ne ptr %ex.p, null\n  br i1 %ex.has, label %failed, label %succeeded\n'
     text += f'failed:\n  %e.p = getelementptr {cls}, ptr %frame, i32 0, i32 12\n  store ptr %ex.p, ptr %e.p\n'
     text += f'  %el = load i32, ptr @tomato_exc_line\n  %el64 = zext i32 %el to i64\n  %el.p = getelementptr {cls}, ptr %frame, i32 0, i32 6\n  store i64 %el64, ptr %el.p\n'
@@ -5125,7 +5302,10 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     k = 0
     for name in names:
         text += f'  %pf{k} = getelementptr {cls}, ptr %f, i32 0, i32 {str(FRAME_FIXED + k + 2)}\n'
-        text += f'  store {llvm_type(types[k])} %arg.{name}, ptr %pf{k}\n'
+        if types[k] == 'int':
+            text += f'  %arg.{name}.own = call i64 @tomato_int_dup(i64 %arg.{name})\n  store i64 %arg.{name}.own, ptr %pf{k}\n'
+        else:
+            text += f'  store {llvm_type(types[k])} %arg.{name}, ptr %pf{k}\n'
         if is_rc(types[k]):
             text += f'  call void @tomato_retain(ptr %arg.{name})\n'
         k += 1
@@ -5173,6 +5353,7 @@ def compile_constructor(c: ClassInfo, mod: Mod) -> str:
         if fld.default is not None:
             v = g.expr(fld.default, fld.ty)
             v = g.want(v, fld.ty, c.line, 'the default of field ' + fld.name)
+            v = g.owned(v)
             addr = g.tmp('fld')
             g.emit(f'{addr} = getelementptr %class.{code}, ptr {obj}, i32 0, i32 {str(k + 2)}')
             g.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {addr}')
@@ -5257,6 +5438,9 @@ def runtime_tables(mod: Mod) -> str:
             if is_rc(code[4:]):
                 offs.append('i32 16')
             offs.append('i32 -1')
+            if code[4:] == 'int':
+                offs.append('i32 16')           # the number it holds belongs to the box
+            offs.append('i32 -1')
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
         elif is_class(code):
@@ -5271,16 +5455,22 @@ def runtime_tables(mod: Mod) -> str:
                 if is_rc(fld.ty):
                     offs.append(f'i32 trunc (i64 ptrtoint (ptr getelementptr (%class.{slot}, ptr null, i32 0, i32 {str(j + 2)}) to i64) to i32)')
             offs.append('i32 -1')
+            for j, fld in enumerate(c.fields):
+                if fld.ty == 'int':
+                    offs.append(f'i32 trunc (i64 ptrtoint (ptr getelementptr (%class.{slot}, ptr null, i32 0, i32 {str(j + 2)}) to i64) to i32)')
+            offs.append('i32 -1')
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
             extra += f'@tomato.name.{slot} = private constant [{str(len(c.display) + 1)} x i8] c"{c.display}\\00"\n'
             names[slot] = f'ptr @tomato.name.{slot}'
         elif is_set(code):
-            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))
+            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))      # a set of ints says so in its key kind
         elif is_dict(code):
-            kinds[slot] = 'i32 ' + str(3 + 256 + 512 * int_of_bool(is_rc(dict_value(code))))    # a table with text keys
+            kinds[slot] = 'i32 ' + str(3 + 256 + 512 * int_of_bool(is_rc(dict_value(code))) + 2048 * int_of_bool(dict_value(code) == 'int'))    # a table with text keys
         elif elem_of(code) == 'str' or is_rc(elem_of(code)):
             kinds[slot] = 'i32 258'          # a list: 2, plus 256 when its items are reference counted
+        elif elem_of(code) == 'int':
+            kinds[slot] = 'i32 2050'         # plus 2048 when its items are ints, whose big numbers it frees
         else:
             kinds[slot] = 'i32 2'
         k += 1
@@ -5320,6 +5510,9 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_from_bool(i32)\n'
     d += 'declare ptr @tomato_str_from_f64(double)\n'
     d += 'declare ptr @tomato_box_str(ptr)\n'
+    d += 'declare i64 @tomato_int_dup(i64)\n'
+    d += 'declare void @tomato_int_free2(i64, i64)\n'
+    d += 'declare void @tomato_int_free(i64)\n'
     d += 'declare i64 @tomato_int_add(i64, i64)\n'
     d += 'declare i64 @tomato_int_sub(i64, i64)\n'
     d += 'declare i64 @tomato_int_mul(i64, i64)\n'
@@ -5434,6 +5627,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     out += f'bad:\n  call void @tomato_usage(i32 {k}, i32 %n)\n  unreachable\ngo:\n'
     args: list[str] = []
     owned: list[str] = []
+    owned_ints: list[str] = []
     for i, t in enumerate(info.ptypes):
         si = str(i)
         optional = i >= low
@@ -5486,6 +5680,8 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             args.append(f'double {reg}')
         else:
             args.append(f'{llvm_type(t)} {reg}')
+            if t == 'int' and not optional:
+                owned_ints.append(reg)
     if info.is_async:
         out += '  %fr = call ptr @tomato.async.' + info.key + '(' + ', '.join(args) + ')\n  call void @tomato.sched.run(ptr %fr)\n'
     else:
@@ -5496,6 +5692,8 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     out += 'fine:\n'
     for reg in owned:
         out += f'  call void @tomato_release(ptr {reg})\n'
+    for reg in owned_ints:
+        out += f'  call void @tomato_int_free(i64 {reg})\n'
     out += '  call void @tomato_leak_check()\n  %rc = call i32 @tomato_exit_code()\n  ret i32 %rc\n}\n'
     return out
 
