@@ -22,10 +22,7 @@ export def val_node(v: Val) -> Node:
     return n
 
 export def val_nodes(v: Val) -> list[Node]:
-    out: list[Node] = []
-    for item in v.items:
-        out.append(val_node(item))
-    return out
+    return [val_node(item) for item in v.items]
 
 def pairing_call(n: Node) -> str:
     # enumerate or zip when this expression is a call of one, else ''
@@ -742,7 +739,14 @@ export class Parser:
 
     # expressions
     def expr(self) -> Node:
-        return self.or_()
+        # a if condition else b: the loosest operator, grouping to the right
+        e = self.or_()
+        if self.is_kw('if'):
+            ln = self.adv().line
+            cond = self.or_()
+            self.expect_kw('else')
+            return mk('Cond', ln, [vn(cond), vn(e), vn(self.expr())])
+        return e
 
     def binop(self, op: str, line: int, left: Node, right: Node) -> Node:
         return mk('BinOp', line, [vs(op), vn(left), vn(right)])
@@ -902,6 +906,25 @@ export class Parser:
             else:
                 return e
 
+    # [item for x in items if condition] after its first item: the loop is an ordinary For whose body adds the item
+    # to the list being built (a CompAppend statement), inside an If for the condition
+    def comprehension(self, line: int, item: Node) -> Node:
+        self.expect_kw('for')
+        names: list[str] = [self.expect('NAME').text]
+        while self.accept_op(','):
+            names.append(self.expect('NAME').text)
+        self.expect_kw('in')
+        it = self.or_()
+        body: list[Node] = [mk('CompAppend', line, [vn(item)])]
+        if self.is_kw('if'):
+            ln = self.adv().line
+            cond = self.or_()
+            body = [mk('If', ln, [vlist([vtuple([vn(cond), vnodes(body)])]), vz()])]
+        self.expect_op(']')
+        if len(names) > 1 or pairing_call(it) != '':
+            return mk('ListComp', line, [vn(self.pairs_for(line, names, it, body))])
+        return mk('ListComp', line, [vn(mk('For', line, [vs(names[0]), vn(it), vnodes(body)]))])
+
     def atom(self) -> Node:
         t = self.cur()
         if t.kind == 'INT':
@@ -975,6 +998,8 @@ export class Parser:
             elems: list[Node] = []
             while not self.is_op(']'):
                 elems.append(self.expr())
+                if len(elems) == 1 and self.is_kw('for'):
+                    return self.comprehension(t.line, elems[0])
                 if not self.accept_op(','):
                     break
             self.expect_op(']')

@@ -199,6 +199,9 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 171. D50a is accepted: `await input(prompt)` gives one line of text and raises a catchable `EOFError` at the end of input; `int(text)` and `float(text)` read numbers and raise `RuntimeError` on bad text. D50b: the repl and the website replay recorded answers (exit code 75 asks for one more) and show a field where the program asks.
 172. D51a-c are accepted: `async def` and `await`, `start f()` giving a `task[T]` that runs at the same time (cooperative, one thread), and `yield` statuses read with `async for`; a missing `await` is a compile error. Settles the syntax D31a and D31b left open. Async methods, timers, cancelling and errors from unawaited tasks remain open.
 173. D52a is accepted: `x not in items` is `not (x in items)`, and `//=`, `**=`, `&=`, `|=`, `^=` are compound assignments, like Python.
+174. D53a is accepted: `f'text {expr} more'` is an f-string; each expression goes through `str()`, `{{` and `}}` are literal braces, format options are not built.
+175. D53b is accepted: `a if condition else b` evaluates only the chosen side; both sides have one type (`None` with a class, text or list gives an optional; a declared union or optional type converts each side).
+176. D53c is accepted: `[item for x in items]` and `[item for x in items if condition]` build a list over anything `for` accepts; the loop variable is a variable of the function, as in `for`.
 167. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass

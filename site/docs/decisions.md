@@ -1252,6 +1252,24 @@ Source: Davis's Dashboard message:
 - A value libm cannot answer is a `RuntimeError` written in plain words, checked before the call: `sqrt` of a negative number, `log` of zero or less, `asin`/`acos` outside −1 to 1, `acosh` below 1, `atanh` at or beyond ±1, `atan2(0, 0)`, `tan` at a quarter turn; an overflowing result (`exp(1000)`) is “too large to be a float”. This follows D41a (a float result that is infinite or not a number is an error). Chosen over returning infinity or NaN, which Tomato does not allow as float values.
 - The integer-only helpers `abs`, `min`, `max` and `pow` already in `math` are unchanged.
 
+### D53a — f-strings: `f'text {expr} more'`: accepted
+
+- Evidence: the task brief asked for f-strings, following Python.
+- A text literal with an `f` straight before the opening quote is an f-string. Each `{expr}` is replaced by `str(expr)`, so a value prints the way `print` shows it (a class with `@str` uses it); `{{` and `}}` give literal braces. Both quote styles work, and the usual escapes (`\n`, `\'`) work in the text parts. The lexer turns an f-string into the tokens of `('text ' + str(expr) + ' more')`, so it is an ordinary text expression of type `str`.
+- Following Python: f-strings nest (`f'{f"{x}"}'`), and an expression may use the other quote kind. Not built: format options (`{x:5}`, `{x!r}`, `{x=}`) are an error saying so, and an expression cannot hold the f-string's own quote character.
+
+### D53b — conditional expressions: `a if condition else b`: accepted
+
+- Evidence: the task brief asked for it, following Python.
+- `a if condition else b` has the loosest precedence of any operator and groups to the right (`x if p else y if q else z`). Only the chosen side is evaluated. The condition must be a `bool`.
+- Both sides have one type. The exceptions: `None` with a class, text or list value gives that type with `| None`; a side that can be used as the other's type (a subclass, a smaller integer type) takes that type; and where a union or optional type is expected (a declared variable, a return, an argument) each side converts to it. Otherwise it is a compile error naming both types. Chosen over making the type a union of the two, which would hide mistakes such as `n if ok else 'none'`.
+
+### D53c — list comprehensions: `[item for x in items if condition]`: accepted
+
+- Evidence: the task brief asked for it, following Python.
+- `[item for x in items]` and `[item for x in items if condition]` build a `list[T]`, where `T` is the type of `item`. `items` can be anything a `for` loop accepts, including `range`, text, a set, an object with `@iter` and `enumerate(xs)`/`zip(xs, ys)` with several variables (`[i * w for i, w in enumerate(ws)]`). The item and the condition may use any variable of the function. Comprehensions nest.
+- The loop variable is an ordinary variable of the function, as in a `for` loop (not a private scope as in Python 3), so it keeps its last value and must have the same type as any variable of that name already in the function.
+- Not built: several `for` clauses or several `if` clauses in one comprehension, and set and dict comprehensions.
 ### D50a — reading input: `await input(prompt)`, one line of text: accepted
 
 - Evidence: Davis asked "how should we add input". He chose `input(prompt)` "like Python" (the prompt is optional), end of input raising a catchable `EOFError`, and numbers through the existing conversions rather than new helpers. He rejected a separate `stdin()` / `read_all()` ("no just tomatos input function"); `tomato run` entry points already take inputs from the command line (D28a).

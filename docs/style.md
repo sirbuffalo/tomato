@@ -42,6 +42,9 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 - List literals and operators: `[a, b]`, `xs + [y]`, `[False] * n`, instead of appending item by item.
 - Built-ins before hand-written loops: `min`, `max`, `sum`, `sorted`, `reversed`, `list(range(n))`, `len`, `in`,
   `str.join`, `str.split`, `str.find`, `str.replace`, `str.startswith`, `str.endswith`, `str.strip`.
+- f-strings to build text: `f'{name} has {count} items'`, not a chain of `+` and `str()`. `{{` and `}}` are literal braces.
+- `a if cond else b` for a choice between two values; an `if` statement when each branch does more than produce a value.
+- `[f(x) for x in items if cond]` to build a list from another sequence; a loop when the body does more than add one item.
 - A class with fields instead of parallel lists or a list used as a record (`[prime, exponent]` pairs are acceptable only
   where they are a documented result type). Fields with defaults (`count: int = 0`) instead of setting each in `@init`.
 - `dict[str, V]` to find things by name, instead of a search through a list (or two lists kept side by side).

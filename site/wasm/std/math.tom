@@ -477,20 +477,20 @@ export def tan(a: Angle) -> float:
     if k % 2 == 0:
         return !tomato_math1(7, x)
     if x == 0.0:
-        raise RuntimeError('tan is not defined at ' + str(a) + ': the cosine is zero there')
+        raise RuntimeError(f'tan is not defined at {a}: the cosine is zero there')
     return 0.0 - !tomato_math1(6, x) / !tomato_math1(5, x)
 
 # the inverses give an angle in radians: asin and atan between -pi/2 and pi/2, acos between 0 and pi
 export def asin(x: int | float) -> Angle:
     v = _f(x)
     if v < -1.0 or v > 1.0:
-        raise RuntimeError('asin needs a number from -1 to 1, but got ' + str(v))
+        raise RuntimeError(f'asin needs a number from -1 to 1, but got {v}')
     return Radians(!tomato_math1(8, v))
 
 export def acos(x: int | float) -> Angle:
     v = _f(x)
     if v < -1.0 or v > 1.0:
-        raise RuntimeError('acos needs a number from -1 to 1, but got ' + str(v))
+        raise RuntimeError(f'acos needs a number from -1 to 1, but got {v}')
     return Radians(!tomato_math1(9, v))
 
 export def atan(x: int | float) -> Angle:
@@ -508,7 +508,7 @@ export def atan2(y: int | float, x: int | float) -> Angle:
 export def sqrt(x: int | float) -> float:
     v = _f(x)
     if v < 0.0:
-        raise RuntimeError('sqrt needs a number that is not negative, but got ' + str(v))
+        raise RuntimeError(f'sqrt needs a number that is not negative, but got {v}')
     return !tomato_math1(0, v)
 
 export def cbrt(x: int | float) -> float:
@@ -521,52 +521,52 @@ export def hypot(x: int | float, y: int | float) -> float:
     return r
 
 export def exp(x: int | float) -> float:
-    return _call1(1, _f(x), 'exp(' + str(x) + ')')
+    return _call1(1, _f(x), f'exp({x})')
 
 export def expm1(x: int | float) -> float:
-    return _call1(17, _f(x), 'expm1(' + str(x) + ')')
+    return _call1(17, _f(x), f'expm1({x})')
 
 # the natural logarithm
 export def log(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
-        raise RuntimeError('log needs a positive number, but got ' + str(v))
+        raise RuntimeError(f'log needs a positive number, but got {v}')
     return !tomato_math1(2, v)
 
 # the logarithm to a base, which must be positive and not 1 (a separate function so that a base of 0 is an error, not "no base")
 export def log_base(x: int | float, base: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
-        raise RuntimeError('log_base needs a positive number, but got ' + str(v))
+        raise RuntimeError(f'log_base needs a positive number, but got {v}')
     b = _f(base)
     if b <= 0.0 or b == 1.0:
-        raise RuntimeError('a logarithm base must be positive and not 1, but got ' + str(b))
+        raise RuntimeError(f'a logarithm base must be positive and not 1, but got {b}')
     return !tomato_math1(2, v) / !tomato_math1(2, b)
 
 export def log2(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
-        raise RuntimeError('log2 needs a positive number, but got ' + str(v))
+        raise RuntimeError(f'log2 needs a positive number, but got {v}')
     return !tomato_math1(3, v)
 
 export def log10(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
-        raise RuntimeError('log10 needs a positive number, but got ' + str(v))
+        raise RuntimeError(f'log10 needs a positive number, but got {v}')
     return !tomato_math1(4, v)
 
 export def log1p(x: int | float) -> float:
     v = _f(x)
     if v <= -1.0:
-        raise RuntimeError('log1p needs a number above -1, but got ' + str(v))
+        raise RuntimeError(f'log1p needs a number above -1, but got {v}')
     return !tomato_math1(18, v)
 
 # hyperbolic functions take and give plain numbers (the argument is not an angle)
 export def sinh(x: int | float) -> float:
-    return _call1(11, _f(x), 'sinh(' + str(x) + ')')
+    return _call1(11, _f(x), f'sinh({x})')
 
 export def cosh(x: int | float) -> float:
-    return _call1(12, _f(x), 'cosh(' + str(x) + ')')
+    return _call1(12, _f(x), f'cosh({x})')
 
 export def tanh(x: int | float) -> float:
     return !tomato_math1(13, _f(x))
@@ -577,11 +577,11 @@ export def asinh(x: int | float) -> float:
 export def acosh(x: int | float) -> float:
     v = _f(x)
     if v < 1.0:
-        raise RuntimeError('acosh needs a number of at least 1, but got ' + str(v))
+        raise RuntimeError(f'acosh needs a number of at least 1, but got {v}')
     return !tomato_math1(15, v)
 
 export def atanh(x: int | float) -> float:
     v = _f(x)
     if v <= -1.0 or v >= 1.0:
-        raise RuntimeError('atanh needs a number between -1 and 1, but got ' + str(v))
+        raise RuntimeError(f'atanh needs a number between -1 and 1, but got {v}')
     return !tomato_math1(16, v)

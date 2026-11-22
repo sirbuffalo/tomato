@@ -57,7 +57,7 @@ export class rational:
     def text(self) -> str:
         if self.den == 1:
             return str(self.num)
-        return str(self.num) + '/' + str(self.den)
+        return f'{self.num}/{self.den}'
 
     def to_float(self) -> float:
         return self.num / self.den

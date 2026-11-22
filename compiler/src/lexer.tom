@@ -116,6 +116,94 @@ def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
         toks.append(make_token('INT', raw[i:j], value, ln))
     return j
 
+def push_op(toks: list[Token], op: str, ln: int, col: int):
+    t = make_token('OP', op, 0, ln, col)
+    toks.append(t)
+
+def push_text(toks: list[Token], text: str, ln: int, col: int):
+    toks.append(make_token('STR', text, 0, ln, col))
+
+# the index of the '}' that closes the replacement field whose expression starts at `start`
+def field_end(raw: str, start: int, ln: int) -> int:
+    n = len(raw)
+    j = start
+    nesting = 0
+    while j < n:
+        c = raw[j]
+        if c == '"' or c == "'":
+            j += 1
+            while j < n and raw[j] != c:
+                j += 1
+        elif c in '([{':
+            nesting += 1
+        elif c in ')]':
+            nesting -= 1
+        elif c == '}':
+            if nesting == 0:
+                return j
+            nesting -= 1
+        elif c == ':' and nesting == 0:
+            raise LexError("a replacement field in an f-string has no format options\nwrite just the expression, such as f'{x}'", ln, j + 1)
+        j += 1
+    raise LexError("this f-string has a '{' that is never closed\nadd '}' after the expression, or write '{{' for a literal brace", ln, start)
+
+# An f-string f'text {expr} more' becomes the tokens of ('text ' + str(expr) + ' more'); returns the index after it.
+def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
+    n = len(raw)
+    quote = raw[i + 1]
+    col = i + 1
+    push_op(toks, '(', ln, col)
+    buf = ''
+    first = True
+    j = i + 2
+    while j < n and raw[j] != quote:
+        c = raw[j]
+        if c == '\\':
+            j += 1
+            if j >= n:
+                break
+            buf += escape_char(raw[j], ln, j)
+        elif c == '{' and j + 1 < n and raw[j + 1] == '{':
+            buf += '{'
+            j += 1
+        elif c == '}' and j + 1 < n and raw[j + 1] == '}':
+            buf += '}'
+            j += 1
+        elif c == '}':
+            raise LexError("this f-string has a single '}'\nwrite '}}' for a literal brace", ln, j + 1)
+        elif c == '{':
+            end = field_end(raw, j + 1, ln)
+            source = raw[j + 1:end]
+            if source.strip() == '':
+                raise LexError("this f-string has an empty '{}'\nput an expression between the braces, or write '{{}}' for literal braces", ln, j + 1)
+            if buf != '' or first:
+                if not first:
+                    push_op(toks, '+', ln, col)
+                push_text(toks, buf, ln, col)
+                buf = ''
+            push_op(toks, '+', ln, col)
+            toks.append(make_token('NAME', 'str', 0, ln, col))
+            push_op(toks, '(', ln, col)
+            inner: list[Token] = []
+            lex_line(source, ln, inner, 0)
+            for t in inner:
+                t.col = j + 2
+                toks.append(t)
+            push_op(toks, ')', ln, col)
+            first = False
+            j = end
+        else:
+            buf += c
+        j += 1
+    if j >= n:
+        raise LexError('this text is missing its closing quote ' + quote + '\nadd ' + quote + ' at the end of the text', ln, i + 2)
+    if buf != '' or first:
+        if not first:
+            push_op(toks, '+', ln, col)
+        push_text(toks, buf, ln, col)
+    push_op(toks, ')', ln, col)
+    return j + 1
+
 def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
     # Lexes one line's tokens after its indentation; returns the bracket depth at the end of the line.
     i = 0
@@ -130,6 +218,8 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             break
         elif is_digit(c):
             i = lex_number(raw, i, ln, toks)
+        elif c == 'f' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
+            i = lex_fstring(raw, i, ln, toks)
         elif is_alpha(c) or c == '_':
             j = i
             while j < n and is_name_char(raw[j]):

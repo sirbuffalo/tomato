@@ -36,5 +36,8 @@ list_mixed
 iter_protocol
 angles
 constants
+fstrings
+conditional
+comprehension
 async_tasks
 compound_ops

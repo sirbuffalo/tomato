@@ -747,8 +747,14 @@ class GenCtx:
     in_init: bool = False
     module: str = ''
 
+class CompCtx:
+    # a list comprehension being compiled: the slot holding the new list and its type (known once the first item is compiled)
+    holder: str = ''
+    ty: str = ''
+
 class Gen:
     # one function being compiled
+    comps: list[CompCtx] = []     # the list comprehensions being compiled, innermost last
     mod: Mod = Mod()
     lines: list[str] = []
     allocas: list[str] = []
@@ -1508,7 +1514,95 @@ class Gen:
             return self.index(n)
         if k == 'Slice':
             return self.slice(n)
+        if k == 'Cond':
+            return self.conditional(n, expected)
+        if k == 'ListComp':
+            return self.list_comp(n)
         raise CompileError('this kind of expression (' + k + ') is not supported', n.line)
+
+    def conditional(self, n: Node, expected: str) -> Ex:
+        # a if condition else b: only the chosen side runs. Both sides have one type; None with a class, text or list gives an
+        # optional of it. The value goes through a slot, so the sides need no phi.
+        c = self.truth(self.expr(val_node(n.fields[0])), n.line)
+        yes = self.label('then')
+        no = self.label('else')
+        end = self.label('endcond')
+        self.cond_br(c, yes, no)
+        self.place(yes)
+        a = self.expr(val_node(n.fields[1]), expected)
+        wide = is_union(expected) or is_optional(expected)
+        if wide:
+            a = self.want(a, expected, n.line, 'the value of a conditional expression')
+        ty = a.ty
+        if wide:
+            ty = expected
+        res = self.hidden_slot('cond')
+        if is_rc(a.ty):
+            res = self.hidden_rc_slot('cond')
+        self.store_owned(res, a)
+        self.br(end)
+        self.place(no)
+        hint = ty
+        if ty == 'None':
+            hint = expected
+        b = self.expr(val_node(n.fields[2]), hint)
+        if b.ty != ty:
+            if ty == 'None' and (b.ty == 'str' or is_list(b.ty) or is_class(b.ty)):
+                ty = b.ty + '?'
+            elif b.ty == 'None' and (ty == 'str' or is_list(ty) or is_class(ty)):
+                ty = ty + '?'
+            elif self.mod.assignable(b.ty, ty) or is_union(ty) or (is_numeric(b.ty) and is_numeric(ty) and contains(ty, b.ty)):
+                b = self.want(b, ty, n.line, 'the else value of a conditional expression')
+            elif is_class(a.ty) and is_class(b.ty) and self.mod.assignable(a.ty, b.ty):
+                ty = b.ty
+            else:
+                raise CompileError('the two values of this conditional expression have different types: ' + shown(a.ty) + ' and ' + shown(b.ty) + '\nconvert one so that both have the same type', n.line)
+        self.store_owned(res, b)
+        self.br(end)
+        self.place(end)
+        r = self.tmp('cond')
+        self.emit(r + ' = load ' + llvm_type(ty) + ', ptr ' + res)
+        v = ex(r, ty)
+        self.retain(v)
+        return v
+
+    def list_comp(self, n: Node) -> Ex:
+        # [item for x in items if cond]: the list is built by an ordinary for loop whose body is a CompAppend statement. The
+        # list's type is the type of the first item compiled, so the line that creates the list is filled in afterwards.
+        holder = self.hidden_rc_slot('comp')
+        ctx = CompCtx()
+        ctx.holder = holder
+        self.emit('; the new list goes here')
+        at = len(self.lines) - 1
+        self.comps.append(ctx)
+        self.for_stmt(val_node(n.fields[0]))
+        self.comps = self.comps[:-1]
+        if ctx.ty == '':
+            raise CompileError('the items of this list comprehension have no type', n.line)
+        old = self.tmp('old')
+        fresh = self.tmp('list')
+        self.lines[at] = '  ' + fresh + ' = call ptr @tomato_list_new(i64 ' + str(self.mod.code_of(ctx.ty)) + ')\n  ' + old + ' = load ptr, ptr ' + holder + '\n  store ptr ' + fresh + ', ptr ' + holder + '\n  call void @tomato_release(ptr ' + old + ')'
+        lst = self.tmp('comp')
+        self.emit(lst + ' = load ptr, ptr ' + holder)
+        v = ex(lst, ctx.ty)
+        self.retain(v)
+        return v
+
+    def comp_append(self, s: Node):
+        ctx = self.comps[len(self.comps) - 1]
+        item = val_node(s.fields[0])
+        if ctx.ty == '':
+            v = self.expr(item)
+            if v.ty == '' or v.ty == 'None':
+                raise CompileError('the type of the items of this list comprehension cannot be guessed\nmake the item a value with a type', s.line)
+            ctx.ty = 'list[' + v.ty + ']'
+        else:
+            v = self.want(self.expr(item, elem_of(ctx.ty)), elem_of(ctx.ty), s.line, 'a list item')
+        lst = self.tmp('lst')
+        self.emit(lst + ' = load ptr, ptr ' + ctx.holder)
+        slot = self.tmp('slot')
+        self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + lst + ', i64 8)')
+        self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
 
     def sequence_op(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
         # list + list, tuple + tuple, list * n, n * list, text * n and n * text; an empty type when the operands are something else
@@ -3384,6 +3478,8 @@ class Gen:
                 raise CompileError("'continue' can only be used inside a loop", s.line)
             self.run_finallies(self.tries_in_loop())
             self.br(self.conts[self.loop_depth - 1])
+        elif k == 'CompAppend':
+            self.comp_append(s)
         elif k == 'Pass':
             pass
         else:

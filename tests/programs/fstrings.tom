@@ -1,0 +1,33 @@
+class Point:
+    x: int = 0
+    y: int = 0
+
+    @str
+    def show(self) -> str:
+        return f'({self.x}, {self.y})'
+
+@main
+def main():
+    name = 'tomato'
+    n = 42
+    print(f'hello {name}')
+    print(f'{n}')
+    print(f'{n} and {n + 1}!')
+    print(f'{name}{n}')
+    print(f'no fields')
+    print(f'')
+    print(f'braces {{literal}} and {{{n}}}')
+    print(f"{name}'s {n * 2}")
+    print(f'{1.5} {True}')
+    print(f'{[1, 2, 3]} {len(name)} {name[0]}')
+    m: dict[str, int] = {'a': 1}
+    print(f'{m["a"]} {m}')
+    print(f'tab\there {n}')
+    p = Point()
+    p.x = 3
+    p.y = -4
+    print(f'point {p} x={p.x}')
+    print(f'{f"inner {n}"} outer')
+    s = f'{n}' + '!'
+    print(s)
+    print(len(f'{n}{n}'))

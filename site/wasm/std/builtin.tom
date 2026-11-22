@@ -44,7 +44,7 @@ class range:
 
     @str
     def text(self) -> str:
-        return 'range(' + str(self.start) + ', ' + str(self.stop) + ', ' + str(self.step) + ')'
+        return f'range({self.start}, {self.stop}, {self.step})'
 
     @iter
     def numbers(self) -> int:

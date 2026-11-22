@@ -1,0 +1,6 @@
+error: this f-string has an empty '{}'
+ --> tests/errors/fstring_empty.tom:3:21
+  |
+3 |     print(f'nothing {} here')
+  |                     ^
+  = help: put an expression between the braces, or write '{{}}' for literal braces

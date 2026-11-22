@@ -1,0 +1,41 @@
+class Countdown:
+    start: int = 0
+
+    @iter
+    def each(self) -> int:
+        i = self.start
+        while i > 0:
+            yield i
+            i -= 1
+
+@main
+def main():
+    xs = [1, 2, 3, 4, 5, 6]
+    print([x * x for x in xs])
+    print([x for x in xs if x % 2 == 0])
+    print([x * 10 for x in range(4)])
+    print([c for c in 'tomato'])
+    words = ['pear', 'fig', 'apple']
+    print([len(w) for w in words])
+    print([w + '!' for w in words if len(w) > 3])
+    print([str(x) + 'z' for x in xs if x > 4])
+    print([x for x in xs if x > 100])
+    down = Countdown()
+    down.start = 3
+    print([x for x in down])
+    print([(x, x + 1) for x in range(2)])
+    print([[y for y in range(x)] for x in range(4)])
+    print([x if x % 2 == 0 else -x for x in xs])
+    print(sum([x for x in range(101) if x % 3 == 0]))
+    for i in range(2):
+        print([i + k for k in range(3)])
+    print([i * w for i, w in enumerate(words)])
+    for n in [x + 1 for x in range(3)]:
+        print(n)
+    total = 0
+    for n in [x for x in range(5)]:
+        total += n
+    print(total)
+    s = {1, 2}
+    print(sorted([x + 1 for x in s]))
+    print(len([1 for x in xs]))

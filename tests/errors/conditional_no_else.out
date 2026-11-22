@@ -1,0 +1,5 @@
+error: expected 'else', but found ')'
+ --> tests/errors/conditional_no_else.tom:4:21
+  |
+4 |     print(n if n > 1)
+  |                     ^

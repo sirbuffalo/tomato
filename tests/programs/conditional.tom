@@ -1,0 +1,54 @@
+class Animal:
+    name: str = ''
+
+class Dog(Animal):
+    pass
+
+def sign(n: int) -> str:
+    return 'negative' if n < 0 else 'zero' if n == 0 else 'positive'
+
+def first_or_none(xs: list[str]) -> str | None:
+    return xs[0] if len(xs) > 0 else None
+
+def pick(flag: bool, a: Animal, b: Dog) -> Animal:
+    return b if flag else a
+
+def noisy(n: int) -> int:
+    print('evaluated', n)
+    return n
+
+@main
+def main():
+    print(sign(-5), sign(0), sign(7))
+    x = 10
+    y = x * 2 if x > 5 else x
+    print(y)
+    print('big' if x > 100 else 'small')
+    print(1.5 if x > 5 else 2.5)
+    print(noisy(1) if True else noisy(2))
+    print(noisy(3) if False else noisy(4))
+    found = first_or_none(['a', 'b'])
+    missing = first_or_none([])
+    print(found is None, missing is None)
+    if found is not None:
+        print(found)
+    z: int | str = 5 if x > 5 else 'five'
+    print(z)
+    ws = ['a', 'b'] if x > 5 else []
+    print(ws)
+    count = 0
+    for i in range(4):
+        count += 1 if i % 2 == 0 else 10
+    print(count)
+    d = Dog()
+    a = Animal()
+    d.name = 'rex'
+    a.name = 'cat'
+    print(pick(True, a, d).name, pick(False, a, d).name)
+    print((x if x < 5 else 0) + 1)
+    flag = x > 5 if x > 1 else False
+    print(flag)
+    maybe = None if x > 100 else 'set'
+    print(maybe is None)
+    nothing = None if x < 100 else 'set'
+    print(nothing is None)
