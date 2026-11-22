@@ -1,0 +1,6 @@
+error: unexpected character '$'
+ --> tests/errors/bad_character.tom:3:11
+  |
+3 |     x = 3 $ 4
+  |           ^
+  = help: Tomato has no such symbol; remove it or put it inside a text

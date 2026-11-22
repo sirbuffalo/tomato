@@ -1,0 +1,5 @@
+from nosuchmodule import thing
+
+@main
+def main():
+    print(thing)

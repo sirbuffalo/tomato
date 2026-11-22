@@ -1,0 +1,20 @@
+@main
+def main():
+    xs = [3, 1, 2, 9, 4, 4, 0]
+    print(sorted(xs))
+    print(reversed(xs))
+    print(sum(xs), min(xs), max(xs))
+    print(min(5, 2, 9), max(5, 2, 9))
+    print(xs + [10, 11])
+    print([1, 2] * 3)
+    print(3 * [0])
+    print('ab' * 3)
+    ws: list[str] = ['pear', 'apple', 'fig']
+    print(sorted(ws), min(ws), max(ws))
+    fs: list[float] = [2.5, 1.5]
+    print(sorted(fs), sum(fs))
+    print(sorted(range(10, 0, -3)))
+    for i, x in enumerate(ws):
+        print(i, x)
+    for a, b in zip(xs, ws):
+        print(a, b)

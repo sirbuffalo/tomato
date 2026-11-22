@@ -1,0 +1,6 @@
+error: this line ends with ':' but no indented block follows
+ --> tests/errors/missing_block.tom:4:14
+  |
+4 |     if x > 0:
+  |              ^
+  = help: indent the lines that belong to it, or write 'pass' for an empty block

@@ -65,10 +65,10 @@ if [ -x "$jsc" ]; then
 got: $m";; esac; }
   wasm_rt() { m="$("$jsc" native/tomato-jsc.js -- site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
 got: $m";; esac; }
-  wasm_neg type_mismatch "cannot use + with int and str"
-  wasm_neg fixed_range "does not fit uint[length=8]"
-  wasm_neg private_field "is private to class C"
-  wasm_neg bad_return "the returned value is str where int is needed"
+  wasm_neg type_mismatch "cannot use '+' with int and str"
+  wasm_neg fixed_range "300 does not fit in uint[length=8]"
+  wasm_neg private_field "the field 'x' is private to class 'C'"
+  wasm_neg bad_return "the returned value has type str, but int is expected"
   wasm_rt divide_by_zero "division by zero" 1
   wasm_rt index "index out of range" 1
   wasm_rt overflow "integer overflow" 1
@@ -81,7 +81,7 @@ home="$work/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"
 ./install-native.sh > /dev/null 2>&1 && ok "install-native.sh" || bad "install-native.sh"
 t="$home/bin/tomato"
 printf 'print(1)\n' > "$work/top.tom"
-r="$($t run "$work/top.tom" 2>&1)"; case "$r" in *"put them in a function marked @main"*) ok "top-level code gives a clear hint";; *) bad "top-level code gives a clear hint" "$r";; esac
+r="$($t run "$work/top.tom" 2>&1)"; case "$r" in *"put it inside a function marked @main"*) ok "top-level code gives a clear hint";; *) bad "top-level code gives a clear hint" "$r";; esac
 check "version" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
 printf '@main\ndef main():\n    x = 0\n    print(5 // x)\n' > "$work/dz.tom"
 check "mode debug is readable" "error: division by zero" "$($t run "$work/dz.tom" 2>&1)"
@@ -91,6 +91,7 @@ check "explain decodes a code" "error: division by zero
   line 4: print(5 // x)" "$($t explain E01:4 "$work/dz.tom")"
 check "run with inputs" "17 True" "$($t run examples/args.tom prime 17)"
 check "unknown command exits 2" "2" "$($t wghwrltghs >/dev/null 2>&1; echo $?)"
+printf '@main\ndef main():\n    print(tets)\n' > "$work/typo.tom"
 printf '@main\ndef main(a: str, b: str):\n    print("[" + a + "][" + b + "]")\n' > "$work/echo.tom"
 check "glob and empty inputs survive" "[*][]" "$(cd "$work" && $t run echo.tom main '*' '')"
 check "-- passes flag-like inputs" "[-o][--entry]" "$($t run "$work/echo.tom" -- main -o --entry)"
@@ -101,8 +102,18 @@ check "repl: std imports resolve (itertools, math)" "True
 False" "$(printf 'from math import is_prime\nfrom itertools import progress_bar\nis_prime(97)\nis_prime(91)\n:quit\n' | $t repl 2>&1)"
 check "repl: :load runs a program that has its own @main" "$(cat tests/expected/shapes.main.out)" "$(printf ':load examples/shapes.tom\n:quit\n' | $t repl)"
 check "repl: a block, then a failing line, then a good one" "9
-error: x
-5" "$(printf 'def sq(n: int) -> int:\n    return n * n\n\nsq(3)\nprint(1 + "a")\nsq(2) + 1\n:quit\n' | $t repl 2>&1 | sed -e 's/^CompileError.*/error: x/' -e 's/^type error.*/error: x/' | head -3)"
+error: cannot use '+' with int and str
+5" "$(printf 'def sq(n: int) -> int:\n    return n * n\n\nsq(3)\nprint(1 + "a")\nsq(2) + 1\n:quit\n' | $t repl 2>&1 | grep -E '^(9|5|error:)')"
+check "repl: a misspelled name says so, with the line and a suggestion" "error: name 'tets' is not defined
+ --> repl:1:1
+  |
+1 | tets
+  | ^^^^
+  = help: did you mean 'test'?" "$(printf 'def test(n: int) -> int:\n    return n\n\ntets\n:quit\n' | $t repl 2>&1)"
+check "repl: lists print like Python" "[2, 3, 5]
+[3, 4]" "$(printf 'primes = [2, 3, 5]\nprimes\nrange(1, 6)[2:4]\n:quit\n' | $t repl 2>&1)"
+check "tomato run shows the same error text" "error: name 'tets' is not defined
+ --> $work/typo.tom:3:11" "$($t run "$work/typo.tom" 2>&1 | head -2)"
 check "repl: == is a comparison, = is an assignment" "False
 3" "$(printf 'x = 3\nx == 4\nx\n:quit\n' | $t repl)"
 check "repl: += works" "8" "$(printf 'x = 5\nx += 3\nx\n:quit\n' | $t repl)"
@@ -135,27 +146,33 @@ neg() { # file, message that the compiler must report
   case "$msg" in *"$2"*) [ $code -ne 0 ] && ok "rejects $1" || bad "rejects $1" "exit status was 0";; *) bad "rejects $1" "wanted: $2
 got:    $msg";; esac
 }
-neg type_mismatch "cannot use + with int and str"
-neg fixed_range "does not fit uint[length=8]"
-neg unknown_name "unknown name nothing"
-neg private_field "is private to class C"
-neg const_field "cannot change after initialization"
-neg bad_argument "argument 1 of f is str where int is needed"
-neg bad_return "the returned value is str where int is needed"
-neg dead_range_literal "does not fit uint[length=8]"
-neg wrong_type_in_branch "the assigned value is str where int is needed"
-neg bad_assign "the assigned value is str where int is needed"
+neg type_mismatch "cannot use '+' with int and str"
+neg fixed_range "300 does not fit in uint[length=8]"
+neg unknown_name "name 'nothing' is not defined"
+neg private_field "the field 'x' is private to class 'C'"
+neg const_field "the const field 'x' cannot be changed after the object is created"
+neg bad_argument "argument 1 of 'f' has type str, but int is expected"
+neg bad_return "the returned value has type str, but int is expected"
+neg dead_range_literal "300 does not fit in uint[length=8]"
+neg wrong_type_in_branch "the assigned value has type str, but int is expected"
+neg bad_assign "the assigned value has type str, but int is expected"
 neg constant_division_by_zero "the divisor is the constant 0"
 neg dead_constant_division "the divisor is the constant 0"
-neg dead_fixed_width_overflow "does not fit int[length=8]"
-neg keyword_twice "argument a of f is given twice"
-neg keyword_unknown "f has no parameter named b"
-neg too_many_arguments "f takes 1 argument(s), got 2"
-neg union_wrong_member "is float where int | str is needed"
-neg union_narrowed_assign "is narrowed to int here"
-neg tuple_append "a tuple cannot change"
-neg tuple_assign "a tuple cannot change"
-neg non_bool_condition "a condition is int where bool is needed"
+neg dead_fixed_width_overflow "does not fit in int[length=8]"
+neg keyword_twice "the argument 'a' of 'f' is given twice"
+neg keyword_unknown "'f' has no parameter named 'b'"
+neg too_many_arguments "'f' takes 1 argument, but 2 given"
+neg union_wrong_member "has type float, but int | str is expected"
+neg union_narrowed_assign "is known to be int inside this check"
+neg tuple_append "a tuple cannot be changed"
+neg tuple_assign "a tuple cannot be changed"
+neg non_bool_condition "a condition has type int, but bool is expected"
+
+echo "== error messages (tests/errors: the whole text, the one format everywhere) =="
+for f in tests/errors/*.tom; do
+  n="$(basename "$f" .tom)"; "$work/c1" "$f" main std/ > /dev/null 2> "$work/err.out"
+  if cmp -s "$work/err.out" "tests/errors/$n.out"; then ok "error text: $n"; else bad "error text: $n" "$(diff "$work/err.out" "tests/errors/$n.out" | head -6)"; fi
+done
 
 echo "== runtime errors and modes =="
 rt() { # file, expected stderr text, expected exit status

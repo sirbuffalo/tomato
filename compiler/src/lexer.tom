@@ -3,16 +3,15 @@
 #
 # Used by compiler/src/parser.tom; the command-line tool is compiler/src/lextool.tom.
 
-def with_line(message: str, line: int) -> str:
-    # errors say which line of the program they are about
-    if line > 0:
-        return 'line ' + str(line) + ': ' + message
-    return message
-
 export class LexError(Error):
+    line: int = 0
+    col: int = 0
+
     @init
-    def make(self, message: str, line: int):
-        Error.start(self, with_line(message, line))
+    def make(self, message: str, line: int, col: int = 0):
+        Error.start(self, message)
+        self.line = line
+        self.col = col
 
 export class Token:
     kind: str = ''       # INT, NAME, KW, STR, OP, NEWLINE, INDENT, DEDENT or EOF
@@ -20,6 +19,7 @@ export class Token:
     num: int = 0         # the value of an INT
     scale: int = 0       # for a FLOAT: the digits after the point, less the exponent
     line: int = 0
+    col: int = 0
 
 export def make_token(kind: str, text: str, num: int, line: int) -> Token:
     t = Token()
@@ -41,7 +41,7 @@ def is_keyword(w: str) -> bool:
              'import', 'from', 'export', 'as', 'is', 'and', 'or', 'xor', 'not', 'True', 'False']
     return w in words
 
-def escape_char(e: str, line: int) -> str:
+def escape_char(e: str, line: int, col: int) -> str:
     if e == 'n':
         return '\n'
     if e == 't':
@@ -52,7 +52,7 @@ def escape_char(e: str, line: int) -> str:
         return '\0'
     if e == '\\' or e == "'" or e == '"':
         return e
-    raise LexError('unknown escape \\' + e, line)
+    raise LexError("this text has an unknown escape '\\" + e + "'\nuse one of \\n \\t \\r \\0 \\\\ \\' \\\" (to write a backslash, double it)", line, col)
 
 def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
     # a whole number or a decimal literal, with an optional exponent (1.5e3, 2E-2); returns the index after it
@@ -70,7 +70,7 @@ def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
         j = j + 1
         while j < n and is_digit(raw[j]):
             if j - i > 17:
-                raise LexError('this decimal literal has too many digits for a 64-bit float yet', ln)
+                raise LexError('this number has too many digits for a float\nwrite fewer significant digits (about 17 fit)', ln, i + 1)
             value = value * 10 + '0123456789'.find(raw[j])
             frac = frac + 1
             j = j + 1
@@ -84,7 +84,7 @@ def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
             is_float = True
             while k < n and is_digit(raw[k]):
                 if k - j > 4:
-                    raise LexError('this exponent is too large for a 64-bit float yet', ln)
+                    raise LexError('this number has too large an exponent for a float\nuse an exponent between about -330 and 330', ln, i + 1)
                 exp = exp * 10 + '0123456789'.find(raw[k])
                 k = k + 1
             if negative:
@@ -92,15 +92,21 @@ def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
             j = k
     if is_float:
         if j < n and (is_alpha(raw[j]) or raw[j] == '_'):
-            raise LexError('a decimal literal cannot be followed by letters', ln)
+            word_end = j
+            while word_end < n and (is_alpha(raw[word_end]) or is_digit(raw[word_end]) or raw[word_end] == '_'):
+                word_end = word_end + 1
+            raise LexError('a number cannot be followed by letters: ' + raw[i:word_end] + '\nput a space or an operator between the number and the name', ln, i + 1)
         if value > 9007199254740992 or frac - exp > 330 or frac - exp < 0 - 330:
-            raise LexError('this decimal literal needs more digits or range than a 64-bit float literal holds yet', ln)
+            raise LexError('this number is too large or too precise for a float\nwrite it with fewer digits or a smaller exponent', ln, i + 1)
         tok = make_token('FLOAT', raw[i:j], value, ln)
         tok.scale = frac - exp
         toks.append(tok)
     else:
         if j < n and (is_alpha(raw[j]) or raw[j] in '._'):
-            raise LexError('only whole-number and decimal literals exist so far', ln)
+            word_end = j + 1
+            while word_end < n and (is_alpha(raw[word_end]) or is_digit(raw[word_end]) or raw[word_end] == '_'):
+                word_end = word_end + 1
+            raise LexError('a number cannot be followed by letters, an underscore or a dot: ' + raw[i:word_end] + '\nput a space or an operator between the number and the name', ln, i + 1)
         toks.append(make_token('INT', raw[i:j], value, ln))
     return j
 
@@ -110,6 +116,8 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
     n = len(raw)
     while i < n:
         c = raw[i]
+        start = i
+        made = len(toks)
         if c == ' ':
             i = i + 1
         elif c == '#':
@@ -134,12 +142,12 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
                     j = j + 1
                     if j >= n:
                         break
-                    buf = buf + escape_char(raw[j], ln)
+                    buf = buf + escape_char(raw[j], ln, j)
                 else:
                     buf = buf + raw[j]
                 j = j + 1
             if j >= n:
-                raise LexError('unterminated string', ln)
+                raise LexError('this text is missing its closing quote ' + c + '\nadd ' + c + ' at the end of the text', ln, i + 1)
             toks.append(make_token('STR', buf, 0, ln))
             i = j + 1
         elif i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->', '+=', '-=', '*=', '/=', '%=', '//', '**']:
@@ -153,7 +161,10 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             toks.append(make_token('OP', c, 0, ln))
             i = i + 1
         else:
-            raise LexError('unexpected character ' + c, ln)
+            raise LexError("unexpected character '" + c + "'\nTomato has no such symbol; remove it or put it inside a text", ln, i + 1)
+        if len(toks) > made:
+            ct = toks[made]
+            ct.col = start + 1
     return depth
 
 export def lex(src: str) -> list[Token]:
@@ -161,6 +172,8 @@ export def lex(src: str) -> list[Token]:
     indents: list[int] = [0]       # a stack: list methods beyond append are undecided, so `level` is its size
     level = 1
     depth = 0
+    open_line = 1
+    open_col = 0
     lines = src.split('\n')
     ln = 0
     for raw in lines:
@@ -171,7 +184,7 @@ export def lex(src: str) -> list[Token]:
             while width < n and raw[width] == ' ':
                 width = width + 1
             if width < n and raw[width] == '\t':
-                raise LexError('tabs are not allowed for indentation (not yet decided)', ln)
+                raise LexError('a tab cannot be used for indentation\nindent with spaces instead', ln, width + 1)
             if width >= n or raw[width] == '#':
                 continue
             if width > indents[level - 1]:
@@ -180,17 +193,39 @@ export def lex(src: str) -> list[Token]:
                 else:
                     indents.append(width)
                 level = level + 1
-                toks.append(make_token('INDENT', '', 0, ln))
+                it = make_token('INDENT', '', 0, ln)
+                it.col = width + 1
+                toks.append(it)
             while width < indents[level - 1]:
                 level = level - 1
-                toks.append(make_token('DEDENT', '', 0, ln))
+                dt = make_token('DEDENT', '', 0, ln)
+                dt.col = width + 1
+                toks.append(dt)
                 if width > indents[level - 1]:
-                    raise LexError('inconsistent indentation', ln)
+                    raise LexError('this line is indented differently from the block it belongs to\nindent it by the same number of spaces as the lines above it, or as an outer line', ln, width + 1)
+        before = depth
+        first_tok = len(toks)
         depth = lex_line(raw, ln, toks, depth)
+        if before == 0 and depth > 0:
+            open_line = ln
+            open_col = 0
+            level_b = 0
+            bk = first_tok
+            while bk < len(toks):
+                bt = toks[bk]
+                bk = bk + 1
+                if bt.kind == 'OP' and bt.text in ['(', '[', '{']:
+                    if level_b == 0:
+                        open_col = bt.col
+                    level_b = level_b + 1
+                elif bt.kind == 'OP' and bt.text in [')', ']', '}']:
+                    level_b = level_b - 1
         if depth == 0:
-            toks.append(make_token('NEWLINE', '', 0, ln))
+            nlt = make_token('NEWLINE', '', 0, ln)
+            nlt.col = n + 1
+            toks.append(nlt)
     if depth != 0:
-        raise LexError('unclosed bracket', len(lines))
+        raise LexError("a bracket is opened here but never closed\nadd the matching ')', ']' or '}'", open_line, open_col)
     while level > 1:
         level = level - 1
         toks.append(make_token('DEDENT', '', 0, len(lines)))

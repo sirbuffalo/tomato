@@ -1,0 +1,4 @@
+@main
+def main():
+    word = "abc"
+    print(word.upcase())

@@ -1,0 +1,6 @@
+error: text has no method 'upcase'
+ --> tests/errors/unknown_method.tom:4:16
+  |
+4 |     print(word.upcase())
+  |                ^^^^^^
+  = help: the methods it has are: find, startswith, endswith, replace, split, join, upper, lower, strip

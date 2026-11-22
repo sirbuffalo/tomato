@@ -1,0 +1,6 @@
+def total(a: int, b: int) -> int:
+    return a + b
+
+@main
+def main():
+    print(totl(1, 2))

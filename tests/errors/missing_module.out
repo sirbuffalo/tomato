@@ -1,0 +1,6 @@
+error: cannot find the module 'nosuchmodule'
+ --> tests/errors/missing_module.tom:1:6
+  |
+1 | from nosuchmodule import thing
+  |      ^^^^^^^^^^^^
+  = help: looked for nosuchmodule.tom next to the program and in the standard library

@@ -5,16 +5,72 @@
 # the tree can be inspected.
 from lexer import Token, lex
 
-def with_line(message: str, line: int) -> str:
-    # errors say which line of the program they are about
-    if line > 0:
-        return 'line ' + str(line) + ': ' + message
-    return message
-
 export class ParseError(Error):
+    line: int = 0
+    col: int = 0
+
     @init
-    def make(self, message: str, line: int):
-        Error.start(self, with_line(message, line))
+    def make(self, message: str, line: int, col: int = 0):
+        Error.start(self, message)
+        self.line = line
+        self.col = col
+
+def pnode(v: Val) -> Node:
+    n = v.node
+    if n is None:
+        raise ParseError('internal compiler error: a missing syntax node', 0)
+    return n
+
+def pnodes(v: Val) -> list[Node]:
+    out: list[Node] = []
+    for item in v.items:
+        out.append(pnode(item))
+    return out
+
+def pairing_call(n: Node) -> str:
+    # enumerate or zip when this expression is a call of one, else ''
+    if n.kind != 'Call':
+        return ''
+    f = pnode(n.fields[0])
+    if f.kind == 'Name' and (f.fields[0].text == 'enumerate' or f.fields[0].text == 'zip'):
+        return f.fields[0].text
+    return ''
+
+def path_text(n: Node) -> str:
+    # a variable or a chain of fields written as text, or '' for any other expression
+    if n.kind == 'Name':
+        return n.fields[0].text
+    if n.kind == 'Attr':
+        inner = path_text(pnode(n.fields[0]))
+        if inner == '':
+            return ''
+        return inner + '.' + n.fields[1].text
+    return ''
+
+def found_text(t: Token) -> str:
+    # what the offending token is, in words
+    if t.kind == 'NEWLINE':
+        return 'the end of the line'
+    if t.kind == 'INDENT':
+        return 'an unexpected indented line'
+    if t.kind == 'DEDENT':
+        return 'the end of the block'
+    if t.kind == 'EOF':
+        return 'the end of the file'
+    if t.kind == 'STR':
+        return 'a text'
+    if t.kind == 'KW':
+        return "the word '" + t.text + "'"
+    return "'" + t.text + "'"
+
+def kind_text(kind: str) -> str:
+    if kind == 'NAME':
+        return 'a name'
+    if kind == 'NEWLINE':
+        return 'the end of the line'
+    if kind == 'INDENT':
+        return 'an indented block'
+    return 'a ' + kind
 
 export class Val:
     tag: str = 'z'       # n node, s text, i number, b bool, z None, l list, t tuple
@@ -186,10 +242,7 @@ export class Parser:
 
     def err(self, msg: str):
         t = self.cur()
-        shown = t.kind
-        if t.text != '':
-            shown = t.text
-        raise ParseError(msg + ", found '" + shown + "'", t.line)
+        raise ParseError(msg + ', but found ' + found_text(t), t.line, t.col)
 
     def expect_op(self, v: str) -> Token:
         if not self.is_op(v):
@@ -203,7 +256,7 @@ export class Parser:
 
     def expect(self, kind: str) -> Token:
         if self.cur().kind != kind:
-            self.err('expected a ' + kind + ' token')
+            self.err('expected ' + kind_text(kind))
         return self.adv()
 
     # module
@@ -241,12 +294,12 @@ export class Parser:
             self.expect('NEWLINE')
             return mk('Import', t.line, [vs(mod), vlist(names)])
         if self.is_kw('import'):
-            raise ParseError('`import module` is not decided (only `from module import name, ...`)', t.line)
+            raise ParseError("'import module' is not supported\nwrite 'from module import name' instead", t.line, t.col)
         if self.is_op('@'):
             self.adv()
             m = self.expect('NAME')
             if m.text == 'init' or is_operator_marker(m.text):
-                raise ParseError('@' + m.text + ' belongs to a method inside a class', m.line)
+                raise ParseError("'@" + m.text + "' marks a method, so it belongs inside a class\nmove this function into a class, or remove the marker", m.line, m.col - 1)
             self.expect('NEWLINE')
             if not self.is_kw('def'):
                 self.err('expected a function after @' + m.text)
@@ -296,7 +349,7 @@ export class Parser:
 
     def base_type(self) -> Node:
         if self.cur().kind != 'NAME':
-            self.err('expected a type')
+            self.err('expected a type name')
         t = self.expect('NAME')
         if t.text == 'list' or t.text == 'set' or t.text == 'tuple':
             self.expect_op('[')
@@ -315,7 +368,7 @@ export class Parser:
             self.adv()
             key = self.expect('NAME')
             if key.text != 'length':
-                raise ParseError('only the length= argument exists for integer types', key.line)
+                raise ParseError('integer types take only length=, as in int[length=32]', key.line, key.col)
             self.expect_op('=')
             length = vn(self.expr())
             self.expect_op(']')
@@ -345,13 +398,13 @@ export class Parser:
                 default = vn(self.expr())
             if star != '':
                 if ty.tag == 'z' or default.tag != 'z':
-                    raise ParseError(star + nm.text + ' needs a type and takes no default (D39a)', nm.line)
+                    raise ParseError("'" + star + nm.text + "' needs a type and cannot have a default value", nm.line, nm.col)
                 if self.any_star(out, '**') or (star == '*' and self.any_star(out, '')):
-                    raise ParseError('*args comes before **kwargs, and both come last (D39a)', nm.line)
+                    raise ParseError("'*args' must come before '**kwargs', and both must be last in the parameter list", nm.line, nm.col)
             elif self.any_star(out, ''):
-                raise ParseError('parameter ' + nm.text + ' follows *args or **kwargs; they come last (D39a)', nm.line)
+                raise ParseError("the parameter '" + nm.text + "' cannot come after '*args' or '**kwargs'\nmove it before them", nm.line, nm.col)
             elif default.tag == 'z' and self.any_default(out):
-                raise ParseError('parameter ' + nm.text + ' needs a default value: it follows one that has a default (D19c)', nm.line)
+                raise ParseError("the parameter '" + nm.text + "' needs a default value because an earlier parameter has one\ngive it a default such as '" + nm.text + ": int = 0', or move it before the others", nm.line, nm.col)
             out.append(mk('Param', nm.line, [vs(nm.text), ty, default, vopt_text(star)]))
             if not self.accept_op(','):
                 break
@@ -382,7 +435,7 @@ export class Parser:
             ret = vn(self.type())
         if not body_required:
             if self.is_op(':'):
-                raise ParseError('interface methods cannot have bodies (D12e)', line)
+                raise ParseError('an interface method has no body\nwrite only its signature', line)
             self.expect('NEWLINE')
             return mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker)])
         self.expect_op(':')
@@ -390,8 +443,13 @@ export class Parser:
         return mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker)])
 
     def block(self) -> list[Node]:
-        self.expect('NEWLINE')
-        self.expect('INDENT')
+        if self.cur().kind != 'NEWLINE':
+            c = self.cur()
+            raise ParseError("the body of a block goes on its own indented line\nstart a new line after the ':' and indent it", c.line, c.col)
+        nl = self.adv()
+        if self.cur().kind != 'INDENT':
+            raise ParseError("this line ends with ':' but no indented block follows\nindent the lines that belong to it, or write 'pass' for an empty block", nl.line, nl.col)
+        self.adv()
         out: list[Node] = []
         while self.cur().kind != 'DEDENT':
             out.append(self.statement())
@@ -405,7 +463,7 @@ export class Parser:
         if self.accept_op('('):
             parent = vs(self.expect('NAME').text)
             if self.is_op(','):
-                raise ParseError('a class may inherit from at most one parent class (D12b)', self.cur().line)
+                raise ParseError("a class can inherit from only one parent class\nto share more behavior, list interfaces after 'implements'", self.cur().line, self.cur().col)
             self.expect_op(')')
         ifaces: list[Val] = []
         if self.accept_kw('implements'):
@@ -431,7 +489,7 @@ export class Parser:
             self.adv()
             m = self.expect('NAME')
             if m.text != 'init' and not is_operator_marker(m.text):
-                raise ParseError('unknown marker @' + m.text + ' (only @init and the operator markers such as @add exist)', m.line)
+                raise ParseError("'@" + m.text + "' is not a method marker\nthe markers are @init and the operator markers such as @add", m.line, m.col - 1)
             marker = m.text
             self.expect('NEWLINE')
         is_override = self.accept_kw('override')
@@ -446,7 +504,7 @@ export class Parser:
         while self.is_kw('private') or self.is_kw('const'):
             if self.adv().text == 'private':
                 if is_const:
-                    raise ParseError('write `private const`, not `const private` (D12y)', line)
+                    raise ParseError("write 'private const', not 'const private'", line)
                 is_private = True
             else:
                 is_const = True
@@ -480,11 +538,58 @@ export class Parser:
         self.adv()
         return mk('InterfaceDef', line, [vs(name), vlist(parents), vnodes(methods)])
 
+    def pairs_for(self, line: int, names: list[str], it: Node, body: list[Node]) -> Node:
+        # for i, x in enumerate(xs) and for a, b in zip(xs, ys) are written as ordinary index loops
+        which = pairing_call(it)
+        if which == '':
+            raise ParseError("a for loop with several variables needs enumerate(...) or zip(...)\nwrite for i, x in enumerate(items):", line)
+        args = pnodes(it.fields[1])
+        paths: list[str] = []
+        for a in args:
+            p = path_text(a)
+            if p == '':
+                raise ParseError(which + "() in a for loop needs plain variables or fields\nassign the list to a variable first, then loop over that variable", line)
+            paths.append(p)
+        if len(it.fields[2].items) > 0:
+            raise ParseError(which + '() takes no keyword arguments', line)
+        text = ''
+        if which == 'enumerate':
+            if len(args) != 1 or len(names) != 2:
+                raise ParseError('enumerate() takes one list and gives two variables\nwrite for i, x in enumerate(items):', line)
+            text = 'for ' + names[0] + ' in range(len(' + paths[0] + ')):\n    ' + names[1] + ' = ' + paths[0] + '[' + names[0] + ']\n    pass\n'
+        else:
+            if len(args) < 2 or len(args) != len(names):
+                raise ParseError('zip() needs as many variables as lists\nwrite for a, b in zip(xs, ys):', line)
+            idx = '_zip_index' + str(line)
+            text = 'for ' + idx + ' in range(len(' + paths[0] + ')):\n'
+            k = 1
+            while k < len(paths):
+                text = text + '    if ' + idx + ' >= len(' + paths[k] + '):\n        break\n'
+                k = k + 1
+            k = 0
+            while k < len(paths):
+                text = text + '    ' + names[k] + ' = ' + paths[k] + '[' + idx + ']\n'
+                k = k + 1
+            text = text + '    pass\n'
+        q = Parser()
+        q.toks = lex(text)
+        loop = q.statement()
+        made = pnodes(loop.fields[2])
+        stmts: list[Node] = []
+        for m in made:
+            if m.kind != 'Pass':
+                m.line = line
+                stmts.append(m)
+        for b in body:
+            stmts.append(b)
+        loop.line = line
+        return mk('For', line, [loop.fields[0], loop.fields[1], vnodes(stmts)])
+
     # statements
     def statement(self) -> Node:
         t = self.cur()
         if self.is_kw('def') or self.is_kw('class') or self.is_kw('interface'):
-            raise ParseError('declarations nested inside blocks are not decided', t.line)
+            raise ParseError('a function, class or interface cannot be declared inside another block\nmove it to the top level of the file', t.line, t.col)
         if self.is_kw('return'):
             self.adv()
             rv = vz()
@@ -513,11 +618,16 @@ export class Parser:
             return self.ifstmt()
         if self.is_kw('for'):
             self.adv()
-            var = self.expect('NAME').text
+            names: list[str] = [self.expect('NAME').text]
+            while self.accept_op(','):
+                names.append(self.expect('NAME').text)
             self.expect_kw('in')
             it = self.expr()
             self.expect_op(':')
-            return mk('For', t.line, [vs(var), vn(it), vnodes(self.block())])
+            body = self.block()
+            if len(names) > 1 or pairing_call(it) != '':
+                return self.pairs_for(t.line, names, it, body)
+            return mk('For', t.line, [vs(names[0]), vn(it), vnodes(body)])
         if self.is_kw('while'):
             self.adv()
             cond = self.expr()
@@ -534,7 +644,7 @@ export class Parser:
         if self.is_op('='):
             self.adv()
             if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
-                raise ParseError('cannot assign to this expression', t.line)
+                raise ParseError('cannot assign to this expression\nthe left side of = must be a variable, a field or a list item', t.line, t.col)
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Assign', t.line, [vn(e), vn(v)])
@@ -542,7 +652,7 @@ export class Parser:
             # x += v is x = x + v (compound assignment, like Python)
             op = self.adv().text[0:1]
             if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
-                raise ParseError('cannot assign to this expression', t.line)
+                raise ParseError('cannot assign to this expression\nthe left side of = must be a variable, a field or a list item', t.line, t.col)
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Assign', t.line, [vn(e), vn(mk('BinOp', t.line, [vs(op), vn(e), vn(v)]))])
@@ -566,7 +676,7 @@ export class Parser:
             handlers.append(vtuple([vs(cls), var, vnodes(self.block())]))
         if self.is_kw('else'):
             if len(handlers) == 0:
-                raise ParseError('else after try needs a catch', self.cur().line)
+                raise ParseError("'else' after 'try' needs a 'catch' block before it", self.cur().line, self.cur().col)
             self.adv()
             self.expect_op(':')
             orelse = vnodes(self.block())
@@ -575,7 +685,7 @@ export class Parser:
             self.expect_op(':')
             final = vnodes(self.block())
         if len(handlers) == 0 and final.tag == 'z':
-            raise ParseError('try needs a catch or a finally', line)
+            raise ParseError("'try' needs a 'catch' or a 'finally' block after it", line)
         return mk('Try', line, [vnodes(body), vlist(handlers), orelse, final])
 
     def ifstmt(self) -> Node:
@@ -651,7 +761,7 @@ export class Parser:
             t = self.adv()
             e = self.binop(t.text, t.line, e, self.bit_or())
             if self.is_cmp_op():
-                raise ParseError('chained comparisons are not decided', self.cur().line)
+                raise ParseError('comparisons cannot be chained like a < b < c\nwrite a < b and b < c instead', self.cur().line, self.cur().col)
         return e
 
     def bit_or(self) -> Node:
@@ -716,12 +826,12 @@ export class Parser:
                         kw = self.adv()
                         self.adv()
                         if kw.text in names:
-                            raise ParseError('keyword argument ' + kw.text + ' is given twice', kw.line)
+                            raise ParseError("the keyword argument '" + kw.text + "' is given twice\npass each argument only once", kw.line, kw.col)
                         names.append(kw.text)
                         kwargs.append(vtuple([vs(kw.text), vn(self.expr())]))
                     else:
                         if len(kwargs) > 0:
-                            raise ParseError('a positional argument cannot follow a keyword argument (D39a)', self.cur().line)
+                            raise ParseError('a positional argument cannot follow a keyword argument\nput all positional arguments first', self.cur().line, self.cur().col)
                         args.append(self.expr())
                     if not self.accept_op(','):
                         break
@@ -734,10 +844,14 @@ export class Parser:
                     lo = vn(self.expr())
                 if self.accept_op(':'):
                     hi = vz()
-                    if not self.is_op(']'):
+                    step = vz()
+                    if not self.is_op(']') and not self.is_op(':'):
                         hi = vn(self.expr())
+                    if self.accept_op(':'):
+                        if not self.is_op(']'):
+                            step = vn(self.expr())
                     self.expect_op(']')
-                    e = mk('Slice', ln, [vn(e), lo, hi])
+                    e = mk('Slice', ln, [vn(e), lo, hi, step])
                 else:
                     self.expect_op(']')
                     e = mk('Index', ln, [vn(e), lo])
@@ -821,7 +935,7 @@ export class Parser:
                     break
             self.expect_op(']')
             return mk('ListLit', t.line, [vnodes(elems)])
-        self.err('expected an expression')
+        self.err('expected a value or expression')
 
 export def parse(src: str) -> Node:
     p = Parser()

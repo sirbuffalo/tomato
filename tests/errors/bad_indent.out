@@ -1,0 +1,6 @@
+error: this line is indented differently from the block it belongs to
+ --> tests/errors/bad_indent.tom:5:7
+  |
+5 |       print(2)
+  |       ^^^^^
+  = help: indent it by the same number of spaces as the lines above it, or as an outer line

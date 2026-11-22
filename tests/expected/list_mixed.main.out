@@ -1,0 +1,9 @@
+o h éll olléh
+[1, 2, 7] 1
+0 1
+1 2
+2 7
+2
+[['b', 'c'], ['a']] [1, 2]
+12 b
+caught min() of an empty list

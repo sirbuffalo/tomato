@@ -1,0 +1,38 @@
+class P:
+    n: int = 1
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @str
+    def text(self) -> str:
+        return 'P' + str(self.n)
+
+@main
+def main():
+    xs: list[int] = [2, 3, 5]
+    print(xs)
+    s: list[str] = ['a', "it's", 'b\n']
+    print(s)
+    n: list[list[int]] = [[1], [], [2, 3]]
+    print(n)
+    d: dict[str, int] = {'a': 1, 'b': 2}
+    print(d)
+    e: dict[str, str] = {}
+    print(e)
+    st: set[int] = {1, 2}
+    print(st)
+    b: list[bool] = [True, False]
+    print(b)
+    f: list[float] = [1.5, 2.0]
+    print(f)
+    t = (1, 2)
+    print(t)
+    o = (1,)
+    print(o)
+    ps: list[P] = [P(1), P(2)]
+    print(ps)
+    print(str(xs) + '!')
+    dl: dict[str, list[int]] = {'k': [1, 2]}
+    print(dl)
