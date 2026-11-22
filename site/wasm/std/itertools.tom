@@ -41,23 +41,11 @@ export class progress_bar:
             prefix = self.label + ': '
         if self.total == 0:
             return prefix + str(self.count) + 'it'
-        shown = self.count
-        if shown > self.total:
-            shown = self.total
+        shown = min(self.count, self.total)
         filled = shown * self.width // self.total
-        pct = shown * 100 // self.total
-        line = prefix
-        if pct < 100:
-            line = line + ' '
-        if pct < 10:
-            line = line + ' '
-        line = line + str(pct) + '%|'
-        for i in range(self.width):
-            if i < filled:
-                line = line + '#'
-            else:
-                line = line + '-'
-        return line + '| ' + str(self.count) + '/' + str(self.total)
+        pct = str(shown * 100 // self.total)
+        bar = '#' * filled + '-' * (self.width - filled)
+        return prefix + ' ' * (3 - len(pct)) + pct + '%|' + bar + '| ' + str(self.count) + '/' + str(self.total)
 
     def show(self, end: str):
         f = open('/dev/stderr', 'w')
@@ -65,12 +53,13 @@ export class progress_bar:
         f.close()
 
     def update(self, n: int = 1):
-        self.count = self.count + n
+        self.count += n
         self.show('')
 
     def close(self):
         self.show('\n')
 
+    # the two loops are the same, but each needs its own branch: a union is narrowed to one type only inside `if x in T:`
     @iter
     def each(self) -> int:
         source = self.items
@@ -84,15 +73,8 @@ export class progress_bar:
                 self.update()
         self.close()
 
-# The helpers below work on `list[int]` and return whole lists (there are no generics or iterators yet).
+# The helpers below work on `list[int]` and return whole lists (there are no generics yet).
 # Results come in the same order as Python's itertools.
-
-def extend_with(base: list[int], item: int) -> list[int]:
-    out: list[int] = []
-    for x in base:
-        out.append(x)
-    out.append(item)
-    return out
 
 # Every ordering of r items from `items` (all of them when r is -1), by position, so repeated values repeat.
 export def permutations(items: list[int], r: int = -1) -> list[list[int]]:
@@ -102,21 +84,17 @@ export def permutations(items: list[int], r: int = -1) -> list[list[int]]:
     result: list[list[int]] = []
     if size > len(items):
         return result
-    start: list[int] = []
-    used: list[bool] = []
-    for i in range(len(items)):
-        used.append(False)
-    permute_into(items, size, start, used, result)
+    _permute_into(items, size, [], [False] * len(items), result)
     return result
 
-def permute_into(items: list[int], size: int, prefix: list[int], used: list[bool], result: list[list[int]]):
+def _permute_into(items: list[int], size: int, prefix: list[int], used: list[bool], result: list[list[int]]):
     if len(prefix) == size:
         result.append(prefix)
         return
-    for i in range(len(items)):
+    for i, x in enumerate(items):
         if not used[i]:
             used[i] = True
-            permute_into(items, size, extend_with(prefix, items[i]), used, result)
+            _permute_into(items, size, prefix + [x], used, result)
             used[i] = False
 
 # Every r-item selection in input order, with no repeats of a position.
@@ -124,8 +102,7 @@ export def combinations(items: list[int], r: int) -> list[list[int]]:
     result: list[list[int]] = []
     if r < 0 or r > len(items):
         return result
-    start: list[int] = []
-    combine_into(items, r, 0, start, False, result)
+    _combine_into(items, r, 0, [], False, result)
     return result
 
 # Like combinations, but an item may be picked again.
@@ -133,11 +110,10 @@ export def combinations_with_replacement(items: list[int], r: int) -> list[list[
     result: list[list[int]] = []
     if r < 0:
         return result
-    start: list[int] = []
-    combine_into(items, r, 0, start, True, result)
+    _combine_into(items, r, 0, [], True, result)
     return result
 
-def combine_into(items: list[int], r: int, first: int, prefix: list[int], again: bool, result: list[list[int]]):
+def _combine_into(items: list[int], r: int, first: int, prefix: list[int], again: bool, result: list[list[int]]):
     if len(prefix) == r:
         result.append(prefix)
         return
@@ -145,17 +121,14 @@ def combine_into(items: list[int], r: int, first: int, prefix: list[int], again:
         next_first = i + 1
         if again:
             next_first = i
-        combine_into(items, r, next_first, extend_with(prefix, items[i]), again, result)
+        _combine_into(items, r, next_first, prefix + [items[i]], again, result)
 
 # Every pair (a, b) as a two-item list, first list varying slowest.
 export def product(a: list[int], b: list[int]) -> list[list[int]]:
     result: list[list[int]] = []
     for x in a:
         for y in b:
-            pair: list[int] = []
-            pair.append(x)
-            pair.append(y)
-            result.append(pair)
+            result.append([x, y])
     return result
 
 # Every list of `repeat` items from `items` (the product of items with itself repeat times).
@@ -163,13 +136,12 @@ export def product_repeat(items: list[int], repeat: int) -> list[list[int]]:
     result: list[list[int]] = []
     if repeat < 0:
         return result
-    start: list[int] = []
-    result.append(start)
+    result.append([])
     for step in range(repeat):
         grown: list[list[int]] = []
         for prefix in result:
             for x in items:
-                grown.append(extend_with(prefix, x))
+                grown.append(prefix + [x])
         result = grown
     return result
 
@@ -178,26 +150,18 @@ export def accumulate(items: list[int]) -> list[int]:
     out: list[int] = []
     total = 0
     for x in items:
-        total = total + x
+        total += x
         out.append(total)
     return out
 
 export def chain(a: list[int], b: list[int]) -> list[int]:
-    out: list[int] = []
-    for x in a:
-        out.append(x)
-    for x in b:
-        out.append(x)
-    return out
+    return a + b
 
 # Neighbouring pairs: pairwise([1, 2, 3]) is [[1, 2], [2, 3]].
 export def pairwise(items: list[int]) -> list[list[int]]:
     out: list[list[int]] = []
     for i in range(1, len(items)):
-        pair: list[int] = []
-        pair.append(items[i - 1])
-        pair.append(items[i])
-        out.append(pair)
+        out.append([items[i - 1], items[i]])
     return out
 
 # Chunks of n items; the last may be shorter.
@@ -205,18 +169,9 @@ export def batched(items: list[int], n: int) -> list[list[int]]:
     if n < 1:
         raise RuntimeError('batched needs a batch size of at least 1')
     out: list[list[int]] = []
-    current: list[int] = []
-    for x in items:
-        current.append(x)
-        if len(current) == n:
-            out.append(current)
-            current = []
-    if len(current) > 0:
-        out.append(current)
+    for i in range(0, len(items), n):
+        out.append(items[i:i + n])
     return out
 
 export def repeat(item: int, times: int) -> list[int]:
-    out: list[int] = []
-    for i in range(times):
-        out.append(item)
-    return out
+    return [item] * times

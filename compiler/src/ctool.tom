@@ -10,7 +10,5 @@ def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debu
     f = open(path)
     src = f.read()
     f.close()
-    i = len(path)
-    while i > 0 and path[i - 1] != '/':
-        i = i - 1
-    print(compile_module(src, path[0:i], std, entry, mode, path))
+    name = path.split('/')[-1]          # the program's folder is what comes before its file name
+    print(compile_module(src, path[:len(path) - len(name)], std, entry, mode, path))

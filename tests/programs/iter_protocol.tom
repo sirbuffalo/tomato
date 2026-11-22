@@ -4,7 +4,7 @@
 def countdown(n: int, label: str = 'go') -> str:
     while n > 0:
         yield str(n)
-        n = n - 1
+        n -= 1
     yield label
 
 def squares(limit: int) -> int:
@@ -35,16 +35,16 @@ class Evens:
     def each(self) -> int:
         i = 0
         while i <= self.top:
-            self.total = self.total + i
+            self.total += i
             yield i
-            i = i + 2
+            i += 2
 
     # a second generator of the same class, called by name
     def odds(self, count: int) -> int:
         i = 1
         for k in range(count):
             yield i
-            i = i + 2
+            i += 2
 
     @len
     def size(self) -> int:
@@ -71,10 +71,8 @@ class Evens:
     @reversed
     def backwards(self) -> list[int]:
         out: list[int] = []
-        k = self.top // 2
-        while k >= 0:
+        for k in range(self.top // 2, -1, -1):
             out.append(k * 2)
-            k = k - 1
         return out
 
     @str

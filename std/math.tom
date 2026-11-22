@@ -2,7 +2,7 @@
 
 export def abs(n: int) -> int:
     if n < 0:
-        return 0 - n
+        return -n
     return n
 
 export def min(a: int, b: int) -> int:
@@ -29,7 +29,7 @@ export def pow(base: int, exponent: int) -> int:
         raise RuntimeError('pow needs a non-negative exponent')
     result = 1
     for i in range(exponent):
-        result = result * base
+        result *= base
     return result
 
 def powmod(base: int, exponent: int, modulus: int) -> int:
@@ -62,7 +62,7 @@ export def is_prime(n: int) -> bool:
     r = 0
     while d % 2 == 0:
         d = d // 2
-        r = r + 1
+        r += 1
     for a in witnesses:
         x = powmod(a, d, n)
         if x == 1 or x == n - 1:
@@ -83,9 +83,9 @@ export def next_prime(n: int) -> int:
         return 2
     c = n + 1
     if c % 2 == 0:
-        c = c + 1
+        c += 1
     while not is_prime(c):
-        c = c + 2
+        c += 2
     return c
 
 # The largest prime less than n. There is none below 3, so n < 3 raises a RuntimeError.
@@ -96,9 +96,9 @@ export def prev_prime(n: int) -> int:
         return 2
     c = n - 1
     if c % 2 == 0:
-        c = c - 1
+        c -= 1
     while not is_prime(c):
-        c = c - 2
+        c -= 2
     return c
 
 # Every prime <= n in ascending order, by the sieve of Eratosthenes (empty below 2).
@@ -106,16 +106,12 @@ export def primes_up_to(n: int) -> list[int]:
     result: list[int] = []
     if n < 2:
         return result
-    composite: list[bool] = []
-    for i in range(n + 1):
-        composite.append(False)
+    composite = [False] * (n + 1)
     for i in range(2, n + 1):
         if not composite[i]:
             result.append(i)
-            j = i * i
-            while j <= n:
+            for j in range(i * i, n + 1, i):
                 composite[j] = True
-                j = j + i
     return result
 
 # The k-th prime, counting from 1: nth_prime(1) is 2. k < 1 raises a RuntimeError.
@@ -140,7 +136,7 @@ export def prime_factors(n: int) -> list[int]:
         while m % d == 0:
             result.append(d)
             m = m // d
-        d = d + 2
+        d += 2
     if m > 1:
         result.append(m)
     return result
@@ -149,8 +145,8 @@ export def prime_factors(n: int) -> list[int]:
 export def factorize(n: int) -> list[list[int]]:
     result: list[list[int]] = []
     for p in prime_factors(n):
-        if len(result) > 0 and result[len(result) - 1][0] == p:
-            result[len(result) - 1][1] = result[len(result) - 1][1] + 1
+        if len(result) > 0 and result[-1][0] == p:
+            result[-1][1] += 1
         else:
             result.append([p, 1])
     return result
@@ -205,8 +201,8 @@ def _f(x: int | float) -> float:
 
 def _fmt(x: float) -> str:
     s = str(x)
-    if len(s) > 2 and s[len(s) - 2:] == '.0':
-        return s[:len(s) - 2]
+    if s.endswith('.0'):
+        return s[:-2]
     return s
 
 # a libm call whose answer must be an ordinary number: infinity (an overflow) is reported instead of passed along
@@ -277,30 +273,28 @@ export class Angle:
     # the angle brought into -half a turn up to and including half a turn: deg(270).signed() is -90 deg
     def signed(self) -> Angle:
         full = self.per_turn()
-        half = full / 2.0
-        v = self.value - (self.value // full) * full
-        if v >= full:
-            v = 0.0
-        if v > half:
+        v = self.normalized().value
+        if v > full / 2.0:
             v = v - full
         return self.like(v)
 
+    # 0.0 - value rather than -value, so the negation of 0 prints as 0, not -0
     def negated(self) -> Angle:
         return self.like(0.0 - self.value)
 
     def abs(self) -> Angle:
         if self.value < 0.0:
-            return self.like(0.0 - self.value)
+            return self.like(-self.value)
         return self.like(self.value)
 
     # True when the two angles differ by no more than tolerance (angles are floats inside, so == is exact)
     def is_close(self, other: Angle, tolerance: Angle) -> bool:
         d = self.turn() - other.turn()
         if d < 0.0:
-            d = 0.0 - d
+            d = -d
         t = tolerance.turn()
         if t < 0.0:
-            t = 0.0 - t
+            t = -t
         return d <= t
 
     @add
@@ -427,16 +421,16 @@ export def grad(x: int | float) -> Angle:
     return Gradians(_f(x))
 
 export def degrees(x: int | float) -> Angle:
-    return Degrees(_f(x))
+    return deg(x)
 
 export def radians(x: int | float) -> Angle:
-    return Radians(_f(x))
+    return rad(x)
 
 export def turns(x: int | float) -> Angle:
-    return Turns(_f(x))
+    return turn(x)
 
 export def gradians(x: int | float) -> Angle:
-    return Gradians(_f(x))
+    return grad(x)
 
 # Trigonometry reduces the angle to a quarter turn first (in turns, which are exact for degrees and gradians), so the
 # multiples of a quarter turn come out exactly: sin(deg(180)) is 0.0, cos(deg(90)) is 0.0 and sin(deg(90)) is 1.0.

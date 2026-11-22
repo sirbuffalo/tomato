@@ -5,7 +5,7 @@ from math import sinh, cosh, tanh, asinh, acosh, atanh, hypot, sqrt, cbrt, exp, 
 def near(a: float, b: float) -> bool:
     d = a - b
     if d < 0.0:
-        d = 0.0 - d
+        d = -d
     return d < 0.000000001
 
 @main

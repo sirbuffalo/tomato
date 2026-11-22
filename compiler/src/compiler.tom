@@ -1,14 +1,12 @@
-# A slice of the Tomato compiler, written in Tomato (D38a): int, bool and str programs.
+# The Tomato compiler, written in Tomato (D38a). It compiles itself, and it is the only implementation.
 #
 # It takes the syntax tree from compiler/src/parser.tom and writes LLVM IR text that links with the C runtime
-# (runtime/tomato_rt.c). Supported: functions with int/bool/str parameters and results, locals, + - * % and
-# comparisons, string + == != < <= > >=, indexing and slicing, len, str(), and/or/xor/not, if/elif/else, while,
-# for over range(), break, continue, calls, print, and an @main entry point without inputs. Text values are
-# reference counted exactly like the Python compiler: every text value an expression produces is owned by whoever
-# uses it, and a slot releases what it held. Everything else stops with a CompileError that says what is not
-# supported yet. Numbers are 64-bit and wrap on overflow, a zero `%` divisor is not checked, and `and` and `or`
-# evaluate both sides (P53).
-from parser import Node, Val, parse, new_strs, is_operator_marker, ParseError
+# (runtime/tomato_rt.c). compile_module at the end is the entry point: it loads std/builtin.tom and every imported module,
+# collects the classes, interfaces and functions (Mod), then compiles each function (Gen) and adds the type tables.
+# Types are written as short texts: int, str, list[int], @Class, %Interface, U:a;b for a union, str? for str | None, and
+# iN / uN for fixed-width integers. Heap values are reference counted: whoever an expression's value is handed to owns it.
+# A problem with the program is raised as a CompileError and reported by diag.tom.
+from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, val_nodes, vn
 from lexer import LexError
 from diag import Diagnostic, format_error, closest
 
@@ -22,24 +20,6 @@ export class CompileError(Error):
         self.line = line
         self.col = col
 
-def val_node(v: Val) -> Node:
-    n = v.node
-    if n is None:
-        raise CompileError('internal compiler error: a missing syntax node', 0)
-    return n
-
-def node_val(n: Node) -> Val:
-    v = Val()
-    v.tag = 'n'
-    v.node = n
-    return v
-
-def val_nodes(v: Val) -> list[Node]:
-    out: list[Node] = []
-    for item in v.items:
-        out.append(val_node(item))
-    return out
-
 def basic_type(name: str) -> bool:
     return name == 'int' or name == 'bool' or name == 'str' or name == 'File' or name == 'float'
 
@@ -52,12 +32,15 @@ def is_dict(t: str) -> bool:
 def is_set(t: str) -> bool:
     return t.startswith('set[')
 
+# the type inside the brackets: the item type of list[T], tuple[T] and set[T], the value type of dict[V] (whose keys are text)
+def elem_of(t: str) -> str:
+    return t[t.find('[') + 1:-1]
+
 def set_elem(t: str) -> str:
-    return t[4:len(t) - 1]
+    return elem_of(t)
 
 def dict_value(t: str) -> str:
-    # the value type of dict[V], a dict with text keys
-    return t[t.find('[') + 1:len(t) - 1]
+    return elem_of(t)
 
 def is_class(t: str) -> bool:
     return t.startswith('@')
@@ -72,28 +55,8 @@ def is_union(t: str) -> bool:
 def union_members(t: str) -> list[str]:
     return t[2:].split(';')
 
-def without_index(xs: list[str], skip: int) -> list[str]:
-    out: list[str] = []
-    k = 0
-    while k < len(xs):
-        if k != skip:
-            out.append(xs[k])
-        k = k + 1
-    return out
-
 def union_type(members: list[str]) -> str:
-    left = members
-    sorted_members: list[str] = []
-    while len(left) > 0:
-        best = 0
-        k = 1
-        while k < len(left):
-            if left[k] < left[best]:
-                best = k
-            k = k + 1
-        sorted_members.append(left[best])
-        left = without_index(left, best)
-    return 'U:' + ';'.join(sorted_members)
+    return 'U:' + ';'.join(sorted(members))
 
 def box_kind(member: str) -> int:
     # how the runtime prints a boxed value: 1 whole number, 3 float, 4 text, 5 bool, 6 anything else
@@ -112,20 +75,18 @@ def digits_value(s: str) -> int:
     if len(s) == 0:
         return -1
     v = 0
-    i = 0
-    while i < len(s):
-        d = '0123456789'.find(s[i])
+    for c in s:
+        d = '0123456789'.find(c)
         if d < 0:
             return -1
         v = v * 10 + d
-        i = i + 1
     return v
 
 def is_fixed(t: str) -> bool:
     # int[length=N] is written iN and uint[length=N] uN
     if len(t) < 2:
         return False
-    if not (t[0:1] == 'i' or t[0:1] == 'u'):
+    if not (t.startswith('i') or t.startswith('u')):
         return False
     return digits_value(t[1:]) > 0
 
@@ -138,7 +99,7 @@ def bits_of(t: str) -> int:
     return digits_value(t[1:])
 
 def is_signed(t: str) -> bool:
-    return t == 'int' or t[0:1] == 'i'
+    return t == 'int' or t.startswith('i')
 
 def contains(outer: str, inner: str) -> bool:
     # every value of integer type inner is a value of outer
@@ -150,14 +111,6 @@ def contains(outer: str, inner: str) -> bool:
         return False
     return bits_of(outer) >= bits_of(inner)
 
-def pow2(k: int) -> int:
-    v = 1
-    i = 0
-    while i < k:
-        v = v * 2
-        i = i + 1
-    return v
-
 def fits_literal(n: int, t: str, negative: bool) -> bool:
     # does the literal n (written with a minus sign when negative) fit the integer type t?
     bits = bits_of(t)
@@ -165,13 +118,13 @@ def fits_literal(n: int, t: str, negative: bool) -> bool:
         if bits >= 64:
             return True
         if negative:
-            return n <= pow2(bits - 1)
-        return n <= pow2(bits - 1) - 1
+            return n <= 2 ** (bits - 1)
+        return n <= 2 ** (bits - 1) - 1
     if negative:
         return n == 0
     if bits >= 63:
         return True
-    return n <= pow2(bits) - 1
+    return n <= 2 ** bits - 1
 
 def operator_marker_of(op: str) -> str:
     # the marker of the method that implements an operator ('' when the operator cannot be customised)
@@ -206,15 +159,12 @@ def is_optional(t: str) -> bool:
 
 def strip_optional(t: str) -> str:
     if is_optional(t):
-        return t[0:len(t) - 1]
+        return t[:-1]
     return t
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
     return t == 'str' or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t)
-
-def elem_of(t: str) -> str:
-    return t[t.find('[') + 1:len(t) - 1]
 
 def shown(t: str) -> str:
     # a type as the user writes it
@@ -236,7 +186,7 @@ def shown(t: str) -> str:
     if is_set(t):
         return 'set[' + shown(set_elem(t)) + ']'
     if is_fixed(t):
-        if t[0:1] == 'i':
+        if t.startswith('i'):
             return 'int[length=' + t[1:] + ']'
         return 'uint[length=' + t[1:] + ']'
     return t
@@ -259,6 +209,10 @@ def zero_of(t: str) -> str:
     if t == 'float':
         return '0.0'
     return '0'
+
+# a class or interface name that nothing declares or imports
+def not_found(what: str, name: str, line: int) -> CompileError:
+    return CompileError("the " + what + " '" + name + "' does not exist\ncheck its spelling, or import it with 'from module import " + name + "'", line)
 
 class Ex:
     # a compiled expression: the register or constant that holds it, and its Tomato type
@@ -302,60 +256,64 @@ class IfaceInfo:
     reqs: list[FuncInfo] = []     # the methods the interface itself requires (without self)
     line: int = 0
 
+class FieldInfo:
+    name: str = ''
+    ty: str = ''
+    is_private: bool = False
+    is_const: bool = False
+    owner: str = ''                # the class that declares the field
+    default: Node | None = None   # the starting value, when the field has one
+
 class ClassInfo:
     name: str = ''                # the program-wide key (module.Name outside the main program)
     display: str = ''             # the name as written
     module: str = 'main'
     node: Node | None = None
-    fnames: list[str] = []
-    ftypes: list[str] = []
-    fprivate: list[bool] = []     # per field, parent fields first
-    fconst: list[bool] = []
-    fowner: list[str] = []        # the class that declares the field
-    has_default: list[bool] = []
-    defaults: list[Node] = []     # only the fields that have a default, in order
+    fields: list[FieldInfo] = []  # parent fields first
     init: str = ''                # the name of the @init method, or ''
     parent: str = ''              # the parent class, or ''
     ifaces: list[str] = []        # the interfaces the class declares it implements
     done: bool = False            # fields and defaults are complete (inherited ones come first)
     line: int = 0
 
+class Binding:
+    # a name a module can see, and the program-wide key it stands for
+    module: str = ''
+    name: str = ''
+    key: str = ''
+    exported: bool = False
+
 class Mod:
     # what every function of the program shares
     mode: int = 1                 # error output: 1 debug (full text), 2 normal (short codes), 3 release (nothing) (D34a)
     errors: list[str] = []        # the messages of std/errors.txt: the code of a message is its line number (normal mode)
-    strings: list[str] = []
+    strings: list[str] = []       # the text constants, in the order they are numbered
+    string_index: dict[str, int] = {}
     infos: list[FuncInfo] = []
     llvm_decls: list[FuncInfo] = []    # the `!name(...)` functions the program declares (D27a)
-    const_keys: list[str] = []    # module constants (export const pi = 3.14): the program-wide name and the literal each stands for
-    const_nodes: list[Node] = []
+    consts: dict[str, Node] = {}  # module constants (export const pi = 3.14): the literal each program-wide name stands for
     decls: list[str] = []         # extra declarations (the overflow intrinsics the program uses)
     codes: list[str] = []         # the heap types the program uses; a type's code is 2 plus its place here
+    code_index: dict[str, int] = {}
     classes: list[ClassInfo] = []
     ifaces: list[IfaceInfo] = []
     slots: list[str] = []         # method names, one vtable slot each
     cur: str = 'main'             # the module whose names are being resolved
     loading: str = ''             # the module being parsed, for a syntax error
-    scope_mod: list[str] = []     # the names each module can see: module, name, program-wide key, exported
-    show_keys: list[str] = []     # helper functions the compiler writes for itself (printing a list, sorted, ...): their kind and type
-    show_infos: list[FuncInfo] = []
+    scope: list[Binding] = []     # the names each module can see, in the order they were declared
+    helpers: dict[str, FuncInfo] = {}  # functions the compiler writes for itself (printing a list, sorted, ...), by kind and type
     extra_funcs: list[Node] = []
     func_nodes: list[Node] = []   # the FuncDef of each entry of infos, in the same order
+    sources: dict[str, str] = {}  # the source text of each module loaded (for showing an error's line)
     helper_count: int = 0
-    src_modules: list[str] = []   # the modules loaded, and their source text (for showing an error's line)
-    src_texts: list[str] = []
-    scope_name: list[str] = []
-    scope_key: list[str] = []
-    scope_exported: list[bool] = []
 
     def code_of(self, t: str) -> int:
-        k = 0
-        for x in self.codes:
-            if x == t:
-                return k + 2
-            k = k + 1
+        if t in self.code_index:
+            return self.code_index[t]
         self.codes.append(t)
-        return len(self.codes) + 1
+        code = len(self.codes) + 1
+        self.code_index[t] = code
+        return code
 
     def failure_text(self, message: str, line: int) -> str:
         # what a failure the language raises says in this error mode (D34a): the message, a short code, or nothing
@@ -364,11 +322,10 @@ class Mod:
         if self.mode == 3:
             return ''
         kind = 99
-        k = 0
-        for known in self.errors:
-            if kind == 99 and known != '' and message.startswith(known):
+        for k, known in enumerate(self.errors):
+            if known != '' and message.startswith(known):
                 kind = k + 1
-            k = k + 1
+                break
         text = str(kind)
         if kind < 10:
             text = '0' + text
@@ -379,24 +336,18 @@ class Mod:
             self.decls.append(text)
 
     def intern(self, s: str) -> str:
-        k = 0
-        for x in self.strings:
-            if x == s:
-                return '@.str.' + str(k)
-            k = k + 1
-        self.strings.append(s)
-        return '@.str.' + str(k)
+        if not (s in self.string_index):
+            self.string_index[s] = len(self.strings)
+            self.strings.append(s)
+        return '@.str.' + str(self.string_index[s])
 
     def helper(self, kind: str, ty: str, line: int) -> FuncInfo:
         # a function the compiler writes in Tomato for one kind of value (showing a list, sorting one, ...), made the first time it
         # is needed and compiled with the program
         key = kind + ':' + ty
-        k = 0
-        for known in self.show_keys:
-            if known == key:
-                return self.show_infos[k]
-            k = k + 1
-        self.helper_count = self.helper_count + 1
+        if key in self.helpers:
+            return self.helpers[key]
+        self.helper_count += 1
         name = '_' + kind + str(self.helper_count)
         fkey = key_of('builtin', name)
         saved = self.cur
@@ -407,19 +358,16 @@ class Mod:
         info = function_info(item, self, '')
         helper_types(self, info, kind, ty)
         self.cur = saved
-        self.show_keys.append(key)
-        self.show_infos.append(info)
+        self.helpers[key] = info
         self.infos.append(info)
         self.func_nodes.append(item)
         self.extra_funcs.append(item)
         return info
 
     def node_of(self, info: FuncInfo) -> Node:
-        k = 0
-        for f in self.infos:
+        for k, f in enumerate(self.infos):
             if f.key == info.key and f.owner == info.owner and f.name == info.name:
                 return self.func_nodes[k]
-            k = k + 1
         raise CompileError("internal compiler error: no definition for '" + info.name + "'", 0)
 
     def find(self, key: str, line: int) -> FuncInfo:
@@ -428,81 +376,78 @@ class Mod:
                 return f
         raise CompileError("the function '" + key + "' does not exist", line)
 
-    def lookup_method(self, cls: str, name: str) -> list[FuncInfo]:
-        # the method as the class or its nearest parent defines it: a list of one, or none
-        found: list[FuncInfo] = []
+    def lookup_method(self, cls: str, name: str) -> FuncInfo | None:
+        # the method as the class or its nearest parent defines it
         for f in self.infos:
             if f.name == name and f.owner == cls:
-                found.append(f)
-                return found
+                return f
         c = self.find_class(cls, 0)
         if c.parent != '':
             return self.lookup_method(c.parent, name)
-        return found
+        return None
 
-    def find_op(self, cls: str, marker: str) -> list[FuncInfo]:
-        # the method of the class (or its nearest parent) marked as implementing this operator: a list of one, or none
-        found: list[FuncInfo] = []
+    def find_op(self, cls: str, marker: str) -> FuncInfo | None:
+        # the method of the class (or its nearest parent) marked as implementing this operator
         for fi in self.infos:
             if fi.owner == cls and fi.op == marker:
-                found.append(fi)
-                return found
+                return fi
         c = self.find_class(cls, 0)
         if c.parent != '':
             return self.find_op(c.parent, marker)
-        return found
+        return None
+
+    def has_op(self, cls: str, marker: str) -> bool:
+        return self.find_op(cls, marker) is not None
 
     def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
         found = self.lookup_method(cls, name)
-        if len(found) == 0:
+        if found is None:
             raise CompileError("'" + cls + "' has no method '" + name + "'", line)
-        return found[0]
+        return found
 
     def resolve(self, name: str) -> str:
         # the program-wide key a name written in the current module stands for, or '' (D24c)
-        k = 0
-        for m in self.scope_mod:
-            if m == self.cur and self.scope_name[k] == name:
-                return self.scope_key[k]
-            k = k + 1
-        k = 0
-        for m in self.scope_mod:
-            if m == 'builtin' and self.scope_name[k] == name:
-                return self.scope_key[k]
-            k = k + 1
-        return ''
+        found = self.binding(self.cur, name)
+        if found is None:
+            found = self.binding('builtin', name)
+        if found is None:
+            return ''
+        return found.key
+
+    def binding(self, module: str, name: str) -> Binding | None:
+        for b in self.scope:
+            if b.module == module and b.name == name:
+                return b
+        return None
 
     def class_key(self, name: str, line: int) -> str:
         key = self.resolve(name)
         if key == '' or not self.has_class(key):
-            raise CompileError("the class '" + name + "' does not exist\nchecks its spelling, or import it with 'from module import " + name + "'", line)
+            raise not_found('class', name, line)
         return key
 
     def iface_key(self, name: str, line: int) -> str:
         key = self.resolve(name)
         if key == '' or not self.has_iface(key):
-            raise CompileError("the interface '" + name + "' does not exist\ncheck its spelling, or import it with 'from module import " + name + "'", line)
+            raise not_found('interface', name, line)
         return key
 
     def declare_name(self, module: str, name: str, key: str, exported: bool, line: int):
-        k = 0
-        for m in self.scope_mod:
-            if m == module and self.scope_name[k] == name:
-                raise CompileError("'" + name + "' is defined twice in module '" + module + "'\nrename one of them", line)
-            k = k + 1
-        self.scope_mod.append(module)
-        self.scope_name.append(name)
-        self.scope_key.append(key)
-        self.scope_exported.append(exported)
+        if self.binding(module, name) is not None:
+            raise CompileError("'" + name + "' is defined twice in module '" + module + "'\nrename one of them", line)
+        b = Binding()
+        b.module = module
+        b.name = name
+        b.key = key
+        b.exported = exported
+        self.scope.append(b)
 
     def exported_key(self, module: str, name: str, line: int) -> str:
-        k = 0
-        for m in self.scope_mod:
-            if m == module and self.scope_name[k] == name:
-                if not self.scope_exported[k]:
-                    raise CompileError("module '" + module + "' does not export '" + name + "'\nput 'export' before its definition in " + module + ".tom", line)
-                return self.scope_key[k]
-            k = k + 1
+        b = self.binding(module, name)
+        if b is not None:
+            if not b.exported:
+                raise CompileError("module '" + module + "' does not export '" + name + "'\nput 'export' before its definition in " + module + ".tom", line)
+            return b.key
         raise CompileError("module '" + module + "' has no '" + name + "'\ncheck the spelling in " + module + ".tom", line)
 
     def has_iface(self, name: str) -> bool:
@@ -515,7 +460,7 @@ class Mod:
         for i in self.ifaces:
             if i.name == name:
                 return i
-        raise CompileError("the interface '" + name + "' does not exist\ncheck its spelling, or import it with 'from module import " + name + "'", line)
+        raise not_found('interface', name, line)
 
     def iface_closure(self, name: str, out: list[str]):
         # the interface and every interface it extends
@@ -527,7 +472,7 @@ class Mod:
 
     def class_ifaces(self, cls: str) -> list[str]:
         # every interface a class satisfies: its own, its parents', and what those extend
-        out = new_strs()
+        out: list[str] = []
         c = self.find_class(cls, 0)
         for i in c.ifaces:
             self.iface_closure(i, out)
@@ -536,23 +481,20 @@ class Mod:
                 self.iface_closure(i, out)
         return out
 
-    def requirement(self, iface: str, name: str) -> list[FuncInfo]:
-        # the method an interface (or one it extends) requires: a list of one, or none
-        found: list[FuncInfo] = []
-        closure = new_strs()
+    def requirement(self, iface: str, name: str) -> FuncInfo | None:
+        # the method an interface (or one it extends) requires
+        closure: list[str] = []
         self.iface_closure(iface, closure)
         for i in closure:
             for r in self.find_iface(i, 0).reqs:
-                if r.name == name and len(found) == 0:
-                    found.append(r)
-        return found
+                if r.name == name:
+                    return r
+        return None
 
     def slot_of(self, name: str) -> int:
-        k = 0
-        for n in self.slots:
+        for k, n in enumerate(self.slots):
             if n == name:
                 return k
-            k = k + 1
         raise CompileError('internal compiler error: no method table slot for ' + name, 0)
 
     def assignable(self, a: str, b: str) -> bool:
@@ -563,7 +505,7 @@ class Mod:
             if is_class(a) and self.has_class(a[1:]):
                 return b[1:] in self.class_ifaces(a[1:])
             if is_iface(a):
-                closure = new_strs()
+                closure: list[str] = []
                 self.iface_closure(a[1:], closure)
                 return b[1:] in closure
             return False
@@ -592,14 +534,12 @@ class Mod:
         for c in self.classes:
             if c.name == name:
                 return c
-        raise CompileError("the class '" + name + "' does not exist\nchecks its spelling, or import it with 'from module import " + name + "'", line)
+        raise not_found('class', name, line)
 
     def field_index(self, c: ClassInfo, name: str, line: int) -> int:
-        k = 0
-        for f in c.fnames:
-            if f == name:
-                return k
-            k = k + 1
+        k = field_position(c, name)
+        if k >= 0:
+            return k
         raise CompileError("'" + c.name + "' has no field '" + name + "'", line)
 
     def has_none_member(self, members: list[Node]) -> bool:
@@ -615,7 +555,7 @@ class Mod:
         inner = ''
         parts: list[str] = []
         for m in members:
-            inner = self.type_name(node_val(m))
+            inner = self.type_name(vn(m))
             if inner == '' or is_fixed(inner) or is_optional(inner):
                 return ''
             parts = [inner]
@@ -651,7 +591,7 @@ class Mod:
                 other = members[1]
             elif members[1].fields[0].text != 'None':
                 return ''
-            wrapped = self.type_name(node_val(other))
+            wrapped = self.type_name(vn(other))
             if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped)):
                 return ''
             return wrapped + '?'
@@ -690,17 +630,14 @@ def escape_byte(b: int) -> str:
     # one byte of a text constant as LLVM writes it: printable ASCII as itself, anything else as \XX (D17a-b: text is UTF-8)
     ascii = ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
     if b >= 32 and b < 127 and b != 34 and b != 92:
-        return ascii[b - 32:b - 31]
+        return ascii[b - 32]
     digits = '0123456789ABCDEF'
-    return '\\' + digits[b // 16:b // 16 + 1] + digits[b % 16:b % 16 + 1]
+    return '\\' + digits[b // 16] + digits[b % 16]
 
 def escape_text(s: str) -> str:
     body = ''
-    i = 0
-    n = !tomato_str_nbytes(s)
-    while i < n:
-        body = body + escape_byte(!tomato_str_byte(s, i))
-        i = i + 1
+    for i in range(!tomato_str_nbytes(s)):
+        body += escape_byte(!tomato_str_byte(s, i))
     return body
 
 def string_global(index: int, s: str) -> str:
@@ -762,11 +699,11 @@ class Gen:
     gen_n: int = 0
 
     def tmp(self, hint: str) -> str:
-        self.n = self.n + 1
+        self.n += 1
         return '%' + hint + '.' + str(self.n)
 
     def label(self, hint: str) -> str:
-        self.n = self.n + 1
+        self.n += 1
         return hint + '.' + str(self.n)
 
     def emit(self, text: str):
@@ -805,7 +742,7 @@ class Gen:
         return self.new_slot(name, ty)
 
     def new_slot(self, name: str, ty: str) -> str:
-        self.slot_count = self.slot_count + 1
+        self.slot_count += 1
         reg = '%v.' + name + '.' + str(self.slot_count)
         self.allocas.append('  ' + reg + ' = alloca ' + llvm_type(ty))
         if is_rc(ty):
@@ -1281,9 +1218,9 @@ class Gen:
         # the digits as a decimal constant, which LLVM rounds to the nearest float
         text = str(mantissa) + '.0e'
         if scale > 0:
-            text = text + '-' + str(scale)
+            text += '-' + str(scale)
         else:
-            text = text + '+' + str(0 - scale)
+            text += '+' + str(-scale)
         return ex(text, 'float')
 
     def to_double(self, e: Ex) -> str:
@@ -1335,7 +1272,7 @@ class Gen:
         width = bits_of(v.ty)
         if bits_of(target) > width:
             width = bits_of(target)
-        width = width + 1
+        width += 1
         wide = ex(self.widen(v, width), 'int')
         cut = self.tmp('cut')
         self.emit(cut + ' = trunc i' + str(width) + ' ' + wide.reg + ' to ' + llvm_type(target))
@@ -1406,11 +1343,8 @@ class Gen:
                 return ex('null', 'None')
             if not (name in self.slots):
                 ck = self.mod.resolve(name)
-                kk = 0
-                for cname in self.mod.const_keys:
-                    if cname == ck:
-                        return self.expr(self.mod.const_nodes[kk], expected)
-                    kk = kk + 1
+                if ck in self.mod.consts:
+                    return self.expr(self.mod.consts[ck], expected)
                 raise CompileError("name '" + name + "' is not defined" + self.name_hint(name), n.line)
             ty = self.types[name]
             r = self.tmp('l')
@@ -1522,7 +1456,7 @@ class Gen:
         # obj[a:b:c] on an object whose class has a method marked @slice(start, stop, step, flags): the flags say which of the three
         # were written (1 start, 2 stop, 4 step), the numbers that were not written are 0
         f = self.mod.find_op(s.ty[1:], 'slice')
-        if len(f) == 0 or len(f[0].ptypes) != 4 or f[0].ret == '':
+        if f is None or len(f.ptypes) != 4 or f.ret == '':
             raise CompileError("'" + s.ty[1:] + "' objects cannot be sliced\nadd a method marked @slice that takes start, stop, step and flags (four ints)", n.line)
         flags = 0
         lo = ex('1', 'int')
@@ -1530,21 +1464,21 @@ class Gen:
         step = ex('1', 'int')
         if n.fields[1].tag == 'n':
             lo = self.want(self.expr(val_node(n.fields[1])), 'int', n.line, 'a slice start')
-            flags = flags + 1
+            flags += 1
         if n.fields[2].tag == 'n':
             hi = self.want(self.expr(val_node(n.fields[2])), 'int', n.line, 'a slice end')
-            flags = flags + 2
+            flags += 2
         if len(n.fields) > 3 and n.fields[3].tag == 'n':
             step = self.want(self.expr(val_node(n.fields[3])), 'int', n.line, 'a slice step')
-            flags = flags + 4
-        return self.marker_call(s, f[0], [lo, hi, step, self.tag_small(str(flags))], n.line)
+            flags += 4
+        return self.marker_call(s, f, [lo, hi, step, self.tag_small(str(flags))], n.line)
 
     def list_call(self, args: list[Node], line: int) -> Ex:
         # list(x): a new list of the items of a list, or of anything with a method marked @iter (a range, a progress bar, your own class)
         if len(args) != 1:
             raise CompileError('list() takes exactly one argument: a list or a range', line)
         v = self.unwrap(self.expr(args[0]), line)
-        if is_class(v.ty) and len(self.mod.find_op(v.ty[1:], 'iter')) > 0:
+        if is_class(v.ty) and self.mod.has_op(v.ty[1:], 'iter'):
             return self.call_helper(self.mod.helper('tolist', v.ty, line), [v])
         if is_list(v.ty) and not v.ty.startswith('tuple['):
             rc = '0'
@@ -1563,10 +1497,8 @@ class Gen:
             items: list[Ex] = []
             first = self.expr(args[0])
             items.append(first)
-            k = 1
-            while k < len(args):
-                items.append(self.want(self.expr(args[k]), first.ty, line, 'every value given to ' + name + '()'))
-                k = k + 1
+            for a in args[1:]:
+                items.append(self.want(self.expr(a), first.ty, line, 'every value given to ' + name + '()'))
             lst = self.build_tuple('list[' + first.ty + ']', items)
         else:
             if len(args) != 1:
@@ -1575,9 +1507,9 @@ class Gen:
         if is_class(lst.ty):
             if name == 'reversed':
                 rf = self.mod.find_op(lst.ty[1:], 'reversed')
-                if len(rf) > 0:
-                    return self.marker_call(lst, rf[0], [], line)
-            if len(self.mod.find_op(lst.ty[1:], 'iter')) == 0:
+                if rf is not None:
+                    return self.marker_call(lst, rf, [], line)
+            if not self.mod.has_op(lst.ty[1:], 'iter'):
                 raise CompileError(name + '() takes a list or an object with a method marked @iter, but this is ' + shown(lst.ty), line)
             if name == 'sorted' or name == 'reversed':
                 lst = self.call_helper(self.mod.helper('tolist', lst.ty, line), [lst])
@@ -1630,15 +1562,15 @@ class Gen:
 
     def field_type(self, obj: Ex, name: str, line: int) -> str:
         c = self.mod.find_class(obj.ty[1:], line)
-        return c.ftypes[self.mod.field_index(c, name, line)]
+        return c.fields[self.mod.field_index(c, name, line)].ty
 
     def check_field_access(self, obj: Ex, name: str, writing: bool, line: int):
         # private fields belong to their class (D12ac, D12r); a const field is set only by its own class's @init (D12o)
         c = self.mod.find_class(obj.ty[1:], line)
-        k = self.mod.field_index(c, name, line)
-        if c.fprivate[k] and self.owner != c.fowner[k]:
-            raise CompileError("the field '" + name + "' is private to class '" + c.fowner[k] + "'\nonly its own methods can use it", line)
-        if writing and c.fconst[k] and not (self.in_init and self.owner == c.fowner[k]):
+        fld = c.fields[self.mod.field_index(c, name, line)]
+        if fld.is_private and self.owner != fld.owner:
+            raise CompileError("the field '" + name + "' is private to class '" + fld.owner + "'\nonly its own methods can use it", line)
+        if writing and fld.is_const and not (self.in_init and self.owner == fld.owner):
             raise CompileError("the const field '" + name + "' cannot be changed after the object is created", line)
 
     def field_get(self, n: Node) -> Ex:
@@ -1685,8 +1617,7 @@ class Gen:
             t = kind + '[' + first.ty + ']'
         lst = self.tmp('list')
         self.emit(lst + ' = call ptr @tomato_list_new(i64 ' + str(self.mod.code_of(t)) + ')')
-        k = 0
-        for item in items:
+        for k, item in enumerate(items):
             v = ex('', '')
             if k == 0 and first.ty != '':
                 v = first
@@ -1696,7 +1627,6 @@ class Gen:
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + lst + ', i64 8)')
             self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
-            k = k + 1
         return ex(lst, t)
 
     def key_word(self, k: Ex) -> str:
@@ -1725,8 +1655,7 @@ class Gen:
             if not is_set(t) or not (first.ty == 'str' or first.ty == 'int' or first.ty == 'bool'):
                 raise CompileError('a set can hold only int, bool or str values', n.line)
         st = self.new_set(t)
-        k = 0
-        for item in items:
+        for k, item in enumerate(items):
             v = ex('', '')
             if k == 0 and first.ty != '':
                 v = first
@@ -1736,7 +1665,6 @@ class Gen:
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + st.reg + ', i64 ' + self.key_word(v) + ', i32 0)')
             self.release(v)
-            k = k + 1
         return st
 
     def map_lit(self, n: Node, expected: str) -> Ex:
@@ -1770,7 +1698,7 @@ class Gen:
         if not fits_literal(v, t, negative):
             raise CompileError(str(v) + ' does not fit in ' + shown(t) + '\nuse a wider type, or a value in its range', line)
         if t == 'int':
-            if v >= pow2(61):
+            if v >= 2 ** 61:
                 text = str(v)
                 if negative:
                     text = '-' + text
@@ -1778,10 +1706,10 @@ class Gen:
                 self.emit(r + ' = call i64 @tomato_int_parse(ptr ' + self.mod.intern(text) + ')')
                 return ex(r, 'int')
             if negative:
-                return ex(str(0 - v * 2 + 1), t)
+                return ex(str(1 - v * 2), t)
             return ex(str(v * 2 + 1), t)
         if negative:
-            return ex(str(0 - v), t)
+            return ex(str(-v), t)
         return ex(str(v), t)
 
     def const_eval(self, n: Node) -> int:
@@ -1789,7 +1717,7 @@ class Gen:
         if n.kind == 'IntLit':
             return n.fields[0].num
         if n.kind == 'UnOp':
-            return 0 - self.const_eval(val_node(n.fields[1]))
+            return -self.const_eval(val_node(n.fields[1]))
         a = self.const_eval(val_node(n.fields[1]))
         b = self.const_eval(val_node(n.fields[2]))
         op = n.fields[0].text
@@ -1821,7 +1749,7 @@ class Gen:
     def type_call(self, n: Node) -> Ex:
         # int[length=8](x) and uint[length=8](x): an explicit conversion that stops when the number does not fit
         t = val_node(n.fields[0])
-        target = self.mod.type_name(node_val(t))
+        target = self.mod.type_name(vn(t))
         if not is_fixed(target):
             raise CompileError('this conversion is not supported\nonly int(), float(), str() and int[length=N] / uint[length=N] conversions exist', n.line)
         args = val_nodes(n.fields[1])
@@ -1848,10 +1776,10 @@ class Gen:
             return e
         if is_class(s.ty):
             g = self.mod.find_op(s.ty[1:], 'get')
-            if len(g) == 0 or len(g[0].ptypes) != 1 or g[0].ret == '':
+            if g is None or len(g.ptypes) != 1 or g.ret == '':
                 raise CompileError("'" + s.ty[1:] + "' objects cannot be indexed\nadd a method marked @get that takes the index and returns the item", n.line)
-            gi = self.want(self.expr(val_node(n.fields[1])), g[0].ptypes[0], n.line, 'an index')
-            return self.marker_call(s, g[0], [gi], n.line)
+            gi = self.want(self.expr(val_node(n.fields[1])), g.ptypes[0], n.line, 'an index')
+            return self.marker_call(s, g, [gi], n.line)
         if is_list(s.ty):
             li = self.expr(val_node(n.fields[1]))
             li = self.want(li, 'int', n.line, 'an index')
@@ -1900,15 +1828,15 @@ class Gen:
         if n.fields[1].tag == 'n':
             e = self.want(self.expr(val_node(n.fields[1])), 'int', n.line, 'a slice start')
             lo = self.int_raw(e)
-            flags = flags + 1
+            flags += 1
         if n.fields[2].tag == 'n':
             e2 = self.want(self.expr(val_node(n.fields[2])), 'int', n.line, 'a slice end')
             hi = self.int_raw(e2)
-            flags = flags + 2
+            flags += 2
         if len(n.fields) > 3 and n.fields[3].tag == 'n':
             e3 = self.want(self.expr(val_node(n.fields[3])), 'int', n.line, 'a slice step')
             step = self.int_raw(e3)
-            flags = flags + 4
+            flags += 4
         r = self.tmp('part')
         if s.ty == 'str':
             self.emit(r + ' = call ptr @tomato_str_slice3(ptr ' + s.reg + ', i64 ' + lo + ', i64 ' + hi + ', i64 ' + step + ', i32 ' + str(flags) + ')')
@@ -1926,10 +1854,10 @@ class Gen:
     def membership(self, a: Ex, b: Ex, line: int) -> Ex:
         if is_class(b.ty):
             cf = self.mod.find_op(b.ty[1:], 'contains')
-            if len(cf) == 0 or len(cf[0].ptypes) != 1 or cf[0].ret != 'bool':
+            if cf is None or len(cf.ptypes) != 1 or cf.ret != 'bool':
                 raise CompileError("'in' does not work with '" + b.ty[1:] + "' objects\nadd a method marked @contains that takes the value and returns bool", line)
-            a = self.want(a, cf[0].ptypes[0], line, 'the left side of in')
-            return self.marker_call(b, cf[0], [a], line)
+            a = self.want(a, cf.ptypes[0], line, 'the left side of in')
+            return self.marker_call(b, cf, [a], line)
         if b.ty == 'str':
             a = self.want(a, 'str', line, 'the left side of in')
             c = self.tmp('c')
@@ -2130,7 +2058,7 @@ class Gen:
             total = self.const_eval(n)
             negative_total = total < 0
             if negative_total:
-                total = 0 - total
+                total = -total
             if not fits_literal(total, expected, negative_total):
                 raise CompileError('the constant ' + str(self.const_eval(n)) + ' does not fit in ' + shown(expected), n.line)
         if op == 'in' and self.type_operand(right) != '':
@@ -2172,7 +2100,7 @@ class Gen:
             self.release(a)
             self.release(b)
             return self.bool_of(c)
-        if is_class(a.ty) and operator_marker_of(op) != '' and (len(self.mod.find_op(a.ty[1:], operator_marker_of(op))) > 0 or not (op == '==' or op == '!=')):
+        if is_class(a.ty) and operator_marker_of(op) != '' and (self.mod.has_op(a.ty[1:], operator_marker_of(op)) or not (op == '==' or op == '!=')):
             return self.operator_call(a, b, op, n.line)
         if (op == '+' or op == '*') and (is_list(a.ty) or is_list(b.ty) or a.ty == 'str' or b.ty == 'str'):
             joined = self.sequence_op(op, a, b, n.line)
@@ -2233,9 +2161,9 @@ class Gen:
         # operand runs with the right operand as its one argument (D12l)
         marker = operator_marker_of(op)
         found = self.mod.find_op(a.ty[1:], marker)
-        if len(found) == 0:
+        if found is None:
             raise CompileError("cannot use '" + op + "' on '" + a.ty[1:] + "' objects\nadd a method marked @" + marker + ' to the class', line)
-        info = found[0]
+        info = found
         if len(info.ptypes) != 1:
             raise CompileError("the @" + marker + " method '" + info.name + "' must take exactly one argument besides self", line)
         b = self.want(b, info.ptypes[0], line, 'the right operand of ' + op)
@@ -2336,11 +2264,10 @@ class Gen:
         args = val_nodes(n.fields[1])
         if len(args) != len(info.ptypes):
             raise CompileError("the LLVM function '!" + name + "' takes " + plural(len(info.ptypes), 'argument') + ', but ' + str(len(args)) + ' given', n.line)
-        parts = new_strs()
-        types = new_strs()
+        parts: list[str] = []
+        types: list[str] = []
         held: list[Ex] = []
-        k = 0
-        for a in args:
+        for k, a in enumerate(args):
             v = self.expr(a, info.ptypes[k])
             v = self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of !' + name)
             held.append(v)
@@ -2352,7 +2279,6 @@ class Gen:
                 reg = self.int_raw(v)
             parts.append(self.llvm_type_of(v.ty) + ' ' + reg)
             types.append(self.llvm_type_of(v.ty))
-            k = k + 1
         ret = 'void'
         if info.ret != '':
             ret = self.llvm_type_of(info.ret)
@@ -2404,7 +2330,7 @@ class Gen:
                 v = self.expr(a, elem_of(info.ptypes[nfixed]))
                 v = self.want(v, elem_of(info.ptypes[nfixed]), line, 'an extra argument of ' + info.name)
                 extra.append(v)
-            k = k + 1
+            k += 1
         extra_names: list[str] = []
         extra_values: list[Ex] = []
         at = 0
@@ -2423,7 +2349,7 @@ class Gen:
             elif info.has_kwargs:
                 if kname in extra_names:
                     raise CompileError("the keyword argument '" + kname + "' is given twice", line)
-                kt = dict_value(info.ptypes[len(info.ptypes) - 1])
+                kt = dict_value(info.ptypes[-1])
                 v = self.expr(val_node(kv.items[1]), kt)
                 v = self.want(v, kt, line, 'keyword argument ' + kname + " of '" + info.name + "'")
                 extra_names.append(kname)
@@ -2441,7 +2367,7 @@ class Gen:
         if info.has_varargs:
             values.append(self.build_tuple(info.ptypes[nfixed], extra))
         if info.has_kwargs:
-            values.append(self.build_kwargs(info.ptypes[len(info.ptypes) - 1], extra_names, extra_values))
+            values.append(self.build_kwargs(info.ptypes[-1], extra_names, extra_values))
         parts: list[str] = []
         for v2 in values:
             parts.append(llvm_type(v2.ty) + ' ' + v2.reg)
@@ -2470,13 +2396,11 @@ class Gen:
     def build_kwargs(self, t: str, names: list[str], items: list[Ex]) -> Ex:
         d = self.tmp('kwargs')
         self.emit(d + ' = call ptr @tomato_dict_new(i64 ' + str(self.mod.code_of(t)) + ', i64 8, i32 1)')
-        k = 0
-        for it in items:
+        for k, it in enumerate(items):
             key = ex(self.mod.intern(names[k]), 'str')
             slot = self.tmp('slot')
             self.emit(slot + ' = call ptr @tomato_dict_insert(ptr ' + d + ', i64 ' + self.key_word(key) + ', i32 1)')
             self.emit('store ' + llvm_type(it.ty) + ' ' + it.reg + ', ptr ' + slot)
-            k = k + 1
         return ex(d, t)
 
     def check_error(self, values: list[Ex]):
@@ -2505,18 +2429,7 @@ class Gen:
         required = len(ptypes) - len(defaults)
         if len(args) < required or len(args) > len(ptypes):
             raise CompileError("'" + c.name + "' takes " + plural(len(ptypes), 'argument') + ', but ' + str(len(args)) + ' given', line)
-        values: list[Ex] = []
-        k = 0
-        for a in args:
-            v = self.expr(a, ptypes[k])
-            v = self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + c.name)
-            values.append(v)
-            k = k + 1
-        while k < len(ptypes):
-            v = self.expr(defaults[k - required], ptypes[k])
-            v = self.want(v, ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + c.name)
-            values.append(v)
-            k = k + 1
+        values = self.args_with_defaults(args, ptypes, defaults, line, c.name)
         parts: list[str] = []
         for v in values:
             parts.append(llvm_type(v.ty) + ' ' + v.reg)
@@ -2556,13 +2469,7 @@ class Gen:
         obj = self.expr(args[0])
         if not self.mod.subclass(obj.ty, '@' + cls):
             raise CompileError("the first argument must be a '" + cls + "' object", n.line)
-        rest: list[Node] = []
-        k = 0
-        for a in args:
-            if k > 0:
-                rest.append(a)
-            k = k + 1
-        return self.call_function(info, '@tomato.m.' + str(self.mod.code_of('@' + info.owner)) + '.' + info.name, obj, rest, n.line)
+        return self.call_function(info, '@tomato.m.' + str(self.mod.code_of('@' + info.owner)) + '.' + info.name, obj, args[1:], n.line)
 
     def method_call(self, n: Node, f: Node) -> Ex:
         name = f.fields[1].text
@@ -2588,9 +2495,9 @@ class Gen:
             return self.file_method(obj, name, args, n.line)
         if is_iface(obj.ty):
             req = self.mod.requirement(obj.ty[1:], name)
-            if len(req) == 0:
+            if req is None:
                 raise CompileError("the interface '" + obj.ty[1:] + "' has no method '" + name + "'", n.line)
-            return self.call_function(req[0], self.dispatch(obj, name), obj, args, n.line)
+            return self.call_function(req, self.dispatch(obj, name), obj, args, n.line)
         if is_class(obj.ty):
             info = self.mod.find_method(obj.ty[1:], name, n.line)
             if info.is_private and self.owner != info.owner:
@@ -2729,9 +2636,9 @@ class Gen:
         v = self.expr(args[0])
         if is_class(v.ty):
             f = self.mod.find_op(v.ty[1:], 'len')
-            if len(f) == 0 or len(f[0].ptypes) != 0 or f[0].ret != 'int':
+            if f is None or len(f.ptypes) != 0 or f.ret != 'int':
                 raise CompileError("'" + v.ty[1:] + "' objects have no length\nadd a method marked @len that takes no argument and returns int", line)
-            return self.marker_call(v, f[0], [], line)
+            return self.marker_call(v, f, [], line)
         r = self.tmp('len')
         if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty):
             lenp = self.tmp('lenp')
@@ -2746,9 +2653,9 @@ class Gen:
     def class_text(self, v: Ex, line: int) -> Ex:
         # print and str() of an object whose class has a method marked @str: that method's text (P65)
         found = self.mod.find_op(v.ty[1:], 'str')
-        if len(found) == 0:
+        if found is None:
             raise CompileError("'" + v.ty[1:] + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
-        info = found[0]
+        info = found
         if len(info.ptypes) != 0 or info.ret != 'str':
             raise CompileError("the @str method '" + info.name + "' must take no argument besides self and return str", line)
         r = self.tmp('shown')
@@ -2801,8 +2708,7 @@ class Gen:
         for a in args:
             v = self.expr(a)                   # every argument is evaluated before anything is printed
             values.append(v)
-        k = 0
-        for v in values:
+        for k, v in enumerate(values):
             if v.ty == 'int':
                 t = self.tmp('text')
                 self.emit(t + ' = call ptr @tomato_int_str(i64 ' + v.reg + ')')
@@ -2847,7 +2753,6 @@ class Gen:
                 self.release(v)
             if k < len(values) - 1:
                 self.emit('call i32 @putchar(i32 32)')
-            k = k + 1
         self.emit('call i32 @putchar(i32 10)')
 
     # ---- statements
@@ -2862,18 +2767,16 @@ class Gen:
         else:
             self.breaks.append(brk)
             self.conts.append(cont)
-        self.loop_depth = self.loop_depth + 1
+        self.loop_depth += 1
 
     def visible_names(self) -> list[str]:
         # the names a program could have meant: variables, functions, classes and the built-ins
         out: list[str] = []
         for name in self.slots:
             out.append(name)
-        k = 0
-        for m in self.mod.scope_mod:
-            if m == self.mod.cur or m == 'builtin':
-                out.append(self.mod.scope_name[k])
-            k = k + 1
+        for seen in self.mod.scope:
+            if seen.module == self.mod.cur or seen.module == 'builtin':
+                out.append(seen.name)
         for b in ['print', 'len', 'str', 'int', 'float', 'open', 'range']:
             out.append(b)
         return out
@@ -3016,20 +2919,18 @@ class Gen:
         n = 0
         k = self.try_depth
         while k > 0 and self.tries[k - 1].loop_depth == self.loop_depth:
-            n = n + 1
-            k = k - 1
+            n += 1
+            k -= 1
         return n
 
     def run_finallies(self, n: int):
         # run the finally blocks of the n innermost try statements, innermost first: a return, break or continue is
         # leaving them. A raise inside one of these blocks goes to the handlers outside its try (D22a).
         saved = self.try_depth
-        k = saved - 1
-        while k >= saved - n:
+        for k in range(saved - 1, saved - n - 1, -1):
             if self.tries[k].has_final:
                 self.try_depth = k
                 self.block(self.tries[k].final)
-            k = k - 1
         self.try_depth = saved
 
     def push_try(self, info: TryInfo):
@@ -3037,7 +2938,7 @@ class Gen:
             self.tries[self.try_depth] = info
         else:
             self.tries.append(info)
-        self.try_depth = self.try_depth + 1
+        self.try_depth += 1
 
     def try_stmt(self, s: Node):
         handlers = s.fields[1].items
@@ -3104,7 +3005,7 @@ class Gen:
             self.br(handled_l)
         # every normal way out of the statement runs the finally block once
         self.place(handled_l)
-        self.try_depth = self.try_depth - 1
+        self.try_depth -= 1
         if info.has_final:
             self.block(info.final)
         if not self.terminated:
@@ -3186,7 +3087,7 @@ class Gen:
     def leave_narrow(self, name: str, saved: list[str]):
         self.slots[name] = saved[0]
         self.types[name] = saved[1]
-        self.narrowed = without_index(self.narrowed, len(self.narrowed) - 1)
+        self.narrowed = self.narrowed[:-1]
 
     def if_stmt(self, s: Node):
         end = self.label('endif')
@@ -3236,7 +3137,7 @@ class Gen:
         self.place(body)
         self.push_loop(end, head)
         self.block(val_nodes(s.fields[1]))
-        self.loop_depth = self.loop_depth - 1
+        self.loop_depth -= 1
         if not self.terminated:
             self.br(head)
         self.place(end)
@@ -3246,7 +3147,7 @@ class Gen:
             self.gens[self.gen_n] = c
         else:
             self.gens.append(c)
-        self.gen_n = self.gen_n + 1
+        self.gen_n += 1
 
     def swap_scope(self, c: GenCtx):
         # exchange the names in scope with those the context keeps: the caller's loop body and the generator's body each see their own variables
@@ -3278,16 +3179,18 @@ class Gen:
         required = len(info.ptypes) - len(info.defaults)
         if len(args) < required or len(args) > len(info.ptypes):
             raise CompileError("'" + info.name + "' takes " + plural(len(info.ptypes), 'argument') + ', but ' + str(len(args)) + ' given', line)
+        return self.args_with_defaults(args, info.ptypes, info.defaults, line, "'" + info.name + "'")
+
+    # the arguments of a call, then the defaults of the parameters it leaves out, each checked against its parameter's type
+    def args_with_defaults(self, args: list[Node], ptypes: list[str], defaults: list[Node], line: int, callee: str) -> list[Ex]:
+        required = len(ptypes) - len(defaults)
         vals: list[Ex] = []
-        k = 0
-        for a in args:
-            v = self.expr(a, info.ptypes[k])
-            vals.append(self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + " of '" + info.name + "'"))
-            k = k + 1
-        while k < len(info.ptypes):
-            v = self.expr(info.defaults[k - required], info.ptypes[k])
-            vals.append(self.want(v, info.ptypes[k], line, 'the default of argument ' + str(k + 1) + " of '" + info.name + "'"))
-            k = k + 1
+        for k, a in enumerate(args):
+            v = self.expr(a, ptypes[k])
+            vals.append(self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + callee))
+        for k in range(len(args), len(ptypes)):
+            v = self.expr(defaults[k - required], ptypes[k])
+            vals.append(self.want(v, ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + callee))
         return vals
 
     def inline_gen(self, s: Node, info: FuncInfo, recv: Ex, vals: list[Ex], line: int):
@@ -3316,12 +3219,12 @@ class Gen:
                 self.store_owned(self.slot('self', '@' + info.owner, line), recv)
             else:
                 self.store_owned(self.slot(pname, info.ptypes[k], line), vals[k])
-                k = k + 1
+                k += 1
         self.block(val_nodes(node.fields[3]))
         if not self.terminated:
             self.br(c.end)
         self.place(c.end)
-        self.gen_n = self.gen_n - 1
+        self.gen_n -= 1
         self.swap_scope(c)
 
     def yield_stmt(self, s: Node):
@@ -3333,12 +3236,12 @@ class Gen:
         v = self.expr(val_node(s.fields[0]), c.ty)
         v = self.want(v, c.ty, s.line, 'the yielded value')
         self.store_owned(c.var, v)
-        self.gen_n = self.gen_n - 1
+        self.gen_n -= 1
         self.swap_scope(c)
         cont = self.label('afteryield')
         self.push_loop(c.end, cont)
         self.block(c.body)
-        self.loop_depth = self.loop_depth - 1
+        self.loop_depth -= 1
         if not self.terminated:
             self.br(cont)
         self.place(cont)
@@ -3374,10 +3277,13 @@ class Gen:
         if not known or (target.kind == 'Name' and not (target.fields[0].text in self.slots)):
             return False
         obj = self.unwrap(self.expr(target), s.line)
-        if not is_class(obj.ty) or len(self.mod.lookup_method(obj.ty[1:], name)) == 0 or not self.mod.lookup_method(obj.ty[1:], name)[0].is_gen:
+        found: FuncInfo | None = None
+        if is_class(obj.ty):
+            found = self.mod.lookup_method(obj.ty[1:], name)
+        if found is None or not found.is_gen:
             self.release(obj)
             return False
-        info = self.mod.lookup_method(obj.ty[1:], name)[0]
+        info: FuncInfo = found
         self.inline_gen(s, info, obj, self.gen_args(info, args, s.line), s.line)
         return True
 
@@ -3409,7 +3315,7 @@ class Gen:
         self.store_owned(var, ex(ch, 'str'))
         self.push_loop(end, step)
         self.block(val_nodes(s.fields[2]))
-        self.loop_depth = self.loop_depth - 1
+        self.loop_depth -= 1
         if not self.terminated:
             self.br(step)
         self.place(step)
@@ -3423,8 +3329,8 @@ class Gen:
 
     def for_each(self, s: Node, it: Node):
         lst = self.expr(it)
-        if is_class(lst.ty) and len(self.mod.find_op(lst.ty[1:], 'iter')) > 0:
-            self.inline_gen(s, self.mod.find_op(lst.ty[1:], 'iter')[0], lst, [], s.line)
+        if is_class(lst.ty) and self.mod.has_op(lst.ty[1:], 'iter'):
+            self.inline_gen(s, self.mod.find_op(lst.ty[1:], 'iter'), lst, [], s.line)
             return
         if is_set(lst.ty) or is_dict(lst.ty):
             # a loop over a set or dict walks a snapshot of its keys (P28)
@@ -3474,7 +3380,7 @@ class Gen:
         self.store_owned(var, e)
         self.push_loop(end, step)
         self.block(val_nodes(s.fields[2]))
-        self.loop_depth = self.loop_depth - 1
+        self.loop_depth -= 1
         if not self.terminated:
             self.br(step)
         self.place(step)
@@ -3536,7 +3442,7 @@ class Gen:
         self.emit('store i64 ' + self.tag_small(i).reg + ', ptr ' + var)
         self.push_loop(end, step)
         self.block(val_nodes(s.fields[2]))
-        self.loop_depth = self.loop_depth - 1
+        self.loop_depth -= 1
         if not self.terminated:
             self.br(step)
         self.place(step)
@@ -3570,10 +3476,10 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
         g.lines.append('  ret void')
     text = 'define ' + llvm_ret + ' ' + symbol + '(' + ', '.join(sig) + ') {\nentry:\n'
     if ret != '':
-        text = text + '  %retval = alloca ' + llvm_ret + '\n  store ' + llvm_ret + ' ' + zero_of(ret) + ', ptr %retval\n'
+        text += '  %retval = alloca ' + llvm_ret + '\n  store ' + llvm_ret + ' ' + zero_of(ret) + ', ptr %retval\n'
     if len(g.allocas) > 0:
-        text = text + '\n'.join(g.allocas) + '\n'
-    text = text + '\n'.join(g.lines) + '\n}\n'
+        text += '\n'.join(g.allocas) + '\n'
+    text += '\n'.join(g.lines) + '\n}\n'
     return text
 
 def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
@@ -3596,16 +3502,14 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         else:
             names.append(p.fields[0].text)
             types.append(info.ptypes[k])
-            k = k + 1
+            k += 1
     sig: list[str] = []
-    k = 0
-    for name in names:
+    for k, name in enumerate(names):
         reg = g.slot(name, types[k], f.line)
         sig.append(llvm_type(types[k]) + ' %arg.' + name)
         g.emit('store ' + llvm_type(types[k]) + ' %arg.' + name + ', ptr ' + reg)
         if is_rc(types[k]):
             g.emit('call void @tomato_retain(ptr %arg.' + name + ')')    # the caller only lent it
-        k = k + 1
     g.block(val_nodes(f.fields[3]))
     if not g.terminated:
         if info.ret == '':
@@ -3626,31 +3530,23 @@ def compile_constructor(c: ClassInfo, mod: Mod) -> str:
     if c.init != '':
         ptypes = mod.find_method(c.name, c.init, c.line).ptypes
     sig: list[str] = []
-    k = 0
-    for t in ptypes:
+    for k, t in enumerate(ptypes):
         sig.append(llvm_type(t) + ' %arg.' + str(k))
-        k = k + 1
     size = g.tmp('size')
     g.emit(size + ' = ptrtoint ptr getelementptr (%class.' + code + ', ptr null, i32 1) to i64')
     obj = g.tmp('obj')
     g.emit(obj + ' = call ptr @tomato_alloc(i64 ' + size + ', i64 ' + code + ')')
-    d = 0
-    k = 0
-    for name in c.fnames:
-        if c.has_default[k]:
-            v = g.expr(c.defaults[d], c.ftypes[k])
-            v = g.want(v, c.ftypes[k], c.line, 'the default of field ' + name)
+    for k, fld in enumerate(c.fields):
+        if fld.default is not None:
+            v = g.expr(fld.default, fld.ty)
+            v = g.want(v, fld.ty, c.line, 'the default of field ' + fld.name)
             addr = g.tmp('fld')
             g.emit(addr + ' = getelementptr %class.' + code + ', ptr ' + obj + ', i32 0, i32 ' + str(k + 2))
             g.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + addr)
-            d = d + 1
-        k = k + 1
     if c.init != '':
         parts: list[str] = ['ptr ' + obj]
-        k = 0
-        for t in ptypes:
+        for k, t in enumerate(ptypes):
             parts.append(llvm_type(t) + ' %arg.' + str(k))
-            k = k + 1
         g.emit('call void @' + 'tomato.m.' + str(mod.code_of('@' + mod.find_method(c.name, c.init, c.line).owner)) + '.' + c.init + '(' + ', '.join(parts) + ')')
         pending = g.tmp('ex')
         g.emit(pending + ' = load ptr, ptr @tomato_exc')
@@ -3671,18 +3567,18 @@ def class_types(mod: Mod) -> str:
     # one struct type per class: the reference count and type code, then the fields
     t = ''
     for c in mod.classes:
-        parts = new_strs()
+        parts: list[str] = []
         parts.append('i64')
         parts.append('i64')
-        for ft in c.ftypes:
-            parts.append(llvm_type(ft))
-        t = t + '%class.' + str(mod.code_of('@' + c.name)) + ' = type { ' + ', '.join(parts) + ' }\n'
+        for fld in c.fields:
+            parts.append(llvm_type(fld.ty))
+        t += '%class.' + str(mod.code_of('@' + c.name)) + ' = type { ' + ', '.join(parts) + ' }\n'
     return t
 
 def vtables(mod: Mod) -> str:
     # one method table per class (a slot per method name), and the table of tables indexed by type code
     n = len(mod.codes) + 2
-    heads = new_strs()
+    heads: list[str] = []
     for k in range(n):
         heads.append('ptr null')
     text = ''
@@ -3690,17 +3586,17 @@ def vtables(mod: Mod) -> str:
     for code in mod.codes:
         slot = k + 2
         if is_class(code) and len(mod.slots) > 0:
-            entries = new_strs()
+            entries: list[str] = []
             for name in mod.slots:
                 found = mod.lookup_method(code[1:], name)
-                if len(found) > 0 and not found[0].is_gen:
-                    entries.append('ptr ' + function_symbol(mod, found[0]))
+                if found is not None and not found.is_gen:
+                    entries.append('ptr ' + function_symbol(mod, found))
                 else:
                     entries.append('ptr null')
-            text = text + '@tomato.vt.' + str(slot) + ' = constant [' + str(len(entries)) + ' x ptr] [' + ', '.join(entries) + ']\n'
+            text += '@tomato.vt.' + str(slot) + ' = constant [' + str(len(entries)) + ' x ptr] [' + ', '.join(entries) + ']\n'
             heads[slot] = 'ptr @tomato.vt.' + str(slot)
-        k = k + 1
-    text = text + '@tomato_vtables = constant [' + str(n) + ' x ptr] [' + ', '.join(heads) + ']\n'
+        k += 1
+    text += '@tomato_vtables = constant [' + str(n) + ' x ptr] [' + ', '.join(heads) + ']\n'
     return text
 
 def int_of_bool(b: bool) -> int:
@@ -3710,10 +3606,10 @@ def int_of_bool(b: bool) -> int:
 
 def runtime_tables(mod: Mod) -> str:
     n = len(mod.codes) + 2
-    names = new_strs()
-    zeros = new_strs()
-    kinds = new_strs()
-    offsets = new_strs()
+    names: list[str] = []
+    zeros: list[str] = []
+    kinds: list[str] = []
+    offsets: list[str] = []
     extra = ''
     for k in range(n):
         names.append('ptr null')
@@ -3726,27 +3622,25 @@ def runtime_tables(mod: Mod) -> str:
         if code.startswith('box:'):
             # a union's box: a class-like object with one field, at byte 16, that the runtime releases when it is a heap value
             kinds[slot] = 'i32 1'
-            offs = new_strs()
+            offs: list[str] = []
             if is_rc(code[4:]):
                 offs.append('i32 16')
             offs.append('i32 -1')
-            extra = extra + '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
+            extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = 'ptr @tomato.offs.' + str(slot)
         elif is_class(code):
             c = mod.find_class(code[1:], 0)
             kinds[slot] = 'i32 1'
             if c.parent != '':
                 zeros[slot] = 'i64 ' + str(mod.code_of('@' + c.parent))
-            offs = new_strs()
-            j = 0
-            for ft in c.ftypes:
-                if is_rc(ft):
+            offs: list[str] = []
+            for j, fld in enumerate(c.fields):
+                if is_rc(fld.ty):
                     offs.append('i32 trunc (i64 ptrtoint (ptr getelementptr (%class.' + str(slot) + ', ptr null, i32 0, i32 ' + str(j + 2) + ') to i64) to i32)')
-                j = j + 1
             offs.append('i32 -1')
-            extra = extra + '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
+            extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = 'ptr @tomato.offs.' + str(slot)
-            extra = extra + '@tomato.name.' + str(slot) + ' = private constant [' + str(len(c.display) + 1) + ' x i8] c"' + c.display + '\\00"\n'
+            extra += '@tomato.name.' + str(slot) + ' = private constant [' + str(len(c.display) + 1) + ' x i8] c"' + c.display + '\\00"\n'
             names[slot] = 'ptr @tomato.name.' + str(slot)
         elif is_set(code):
             kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))
@@ -3756,108 +3650,108 @@ def runtime_tables(mod: Mod) -> str:
             kinds[slot] = 'i32 258'          # a list: 2, plus 256 when its items are reference counted
         else:
             kinds[slot] = 'i32 2'
-        k = k + 1
+        k += 1
     count = str(n)
     t = '@tomato_exc = global ptr null\n'
-    t = t + '@tomato_exc_line = global i32 0\n'
-    t = t + '@tomato_exc_rt = global i32 0\n'
-    t = t + '@tomato_exc_seen = global i32 0\n'
-    t = t + extra
-    t = t + '@tomato_class_names = constant [' + count + ' x ptr] [' + ', '.join(names) + ']\n'
-    t = t + '@tomato_parents = global [' + count + ' x i64] [' + ', '.join(zeros) + ']\n'
-    t = t + '@tomato_kinds = constant [' + count + ' x i32] [' + ', '.join(kinds) + ']\n'
-    t = t + '@tomato_offsets = constant [' + count + ' x ptr] [' + ', '.join(offsets) + ']\n'
+    t += '@tomato_exc_line = global i32 0\n'
+    t += '@tomato_exc_rt = global i32 0\n'
+    t += '@tomato_exc_seen = global i32 0\n'
+    t += extra
+    t += '@tomato_class_names = constant [' + count + ' x ptr] [' + ', '.join(names) + ']\n'
+    t += '@tomato_parents = global [' + count + ' x i64] [' + ', '.join(zeros) + ']\n'
+    t += '@tomato_kinds = constant [' + count + ' x i32] [' + ', '.join(kinds) + ']\n'
+    t += '@tomato_offsets = constant [' + count + ' x ptr] [' + ', '.join(offsets) + ']\n'
     return t
 
 def declarations(mod: Mod) -> str:
     d = 'declare i32 @printf(ptr, ...)\n'
-    d = d + 'declare i32 @putchar(i32)\n'
-    d = d + 'declare void @tomato_fail(ptr)\n'
-    d = d + 'declare void @tomato_leak_check()\n'
-    d = d + 'declare void @tomato_retain(ptr)\n'
-    d = d + 'declare void @tomato_release(ptr)\n'
-    d = d + 'declare ptr @tomato_str_concat(ptr, ptr)\n'
-    d = d + 'declare ptr @tomato_str_from_cstr(ptr)\n'
-    d = d + 'declare i64 @tomato_str_len(ptr)\n'
-    d = d + 'declare i32 @tomato_str_cmp(ptr, ptr)\n'
-    d = d + 'declare ptr @tomato_str_index(ptr, i64)\n'
-    d = d + 'declare ptr @tomato_str_slice(ptr, i64, i64)\n'
-    d = d + 'declare ptr @tomato_list_concat(ptr, ptr, i32)\n'
-    d = d + 'declare ptr @tomato_list_repeat(ptr, i64, i32)\n'
-    d = d + 'declare ptr @tomato_str_repeat(ptr, i64)\n'
-    d = d + 'declare ptr @tomato_str_slice3(ptr, i64, i64, i64, i32)\n'
-    d = d + 'declare ptr @tomato_list_slice(ptr, i64, i64, i64, i32, i32)\n'
-    d = d + 'declare ptr @tomato_str_from_i64(i64)\n'
-    d = d + 'declare ptr @tomato_str_from_bool(i32)\n'
-    d = d + 'declare ptr @tomato_str_from_f64(double)\n'
-    d = d + 'declare ptr @tomato_box_str(ptr)\n'
-    d = d + 'declare i64 @tomato_int_add(i64, i64)\n'
-    d = d + 'declare i64 @tomato_int_sub(i64, i64)\n'
-    d = d + 'declare i64 @tomato_int_mul(i64, i64)\n'
-    d = d + 'declare i64 @tomato_int_floordiv(i64, i64)\n'
-    d = d + 'declare i64 @tomato_int_mod(i64, i64)\n'
-    d = d + 'declare i64 @tomato_int_pow(i64, i64)\n'
-    d = d + 'declare i32 @tomato_int_cmp(i64, i64)\n'
-    d = d + 'declare i32 @tomato_int_sign(i64)\n'
-    d = d + 'declare i64 @tomato_int_from_i64(i64)\n'
-    d = d + 'declare i64 @tomato_int_from_u64(i64)\n'
-    d = d + 'declare i64 @tomato_int_raw(i64)\n'
-    d = d + 'declare i64 @tomato_int_low64(i64)\n'
-    d = d + 'declare i32 @tomato_int_in_range(i64, i32, i32)\n'
-    d = d + 'declare double @tomato_int_to_f64(i64)\n'
-    d = d + 'declare ptr @tomato_int_str(i64)\n'
-    d = d + 'declare i64 @tomato_int_parse(ptr)\n'
-    d = d + 'declare i64 @tomato_int_parse_cstr(ptr, i32)\n'
-    d = d + 'declare i64 @tomato_int_bitop(i64, i64, i32)\n'
-    d = d + 'declare i64 @tomato_f64_to_int(double)\n'
-    d = d + 'declare double @tomato_parse_f64(ptr, i32)\n'
-    d = d + 'declare i32 @tomato_ipow_check(i64, i64)\n'
-    d = d + 'declare i64 @tomato_ipow(i64, i64)\n'
-    d = d + 'declare double @tomato_floor_div_f64(double, double)\n'
-    d = d + 'declare double @tomato_mod_f64(double, double)\n'
-    d = d + 'declare double @tomato_pow_f64(double, double)\n'
-    d = d + 'declare void @tomato_print_strobj(ptr)\n'
-    d = d + 'declare ptr @tomato_alloc(i64, i64)\n'
-    d = d + 'declare i32 @tomato_is_subclass(i64, i64)\n'
-    d = d + 'declare ptr @tomato_dict_new(i64, i64, i32)\n'
-    d = d + 'declare ptr @tomato_dict_find(ptr, i64)\n'
-    d = d + 'declare ptr @tomato_dict_insert(ptr, i64, i32)\n'
-    d = d + 'declare i32 @tomato_dict_delete(ptr, i64)\n'
-    d = d + 'declare ptr @tomato_dict_keys(ptr, i64, i64)\n'
-    d = d + 'declare void @tomato_usage(i32, i32)\n'
-    d = d + 'declare i64 @tomato_parse_i64(ptr, i32)\n'
-    d = d + 'declare i64 @tomato_parse_u64(ptr, i32)\n'
-    d = d + 'declare void @tomato_fit_signed(i64, i32, i32)\n'
-    d = d + 'declare void @tomato_fit_unsigned(i64, i32, i32)\n'
-    d = d + 'declare i32 @tomato_parse_bool(ptr, i32)\n'
-    d = d + 'declare void @tomato_report_uncaught(ptr, i32, i32, i32)\n'
-    d = d + 'declare i64 @tomato_str_find(ptr, ptr)\n'
-    d = d + 'declare i32 @tomato_str_startswith(ptr, ptr)\n'
-    d = d + 'declare i32 @tomato_str_endswith(ptr, ptr)\n'
-    d = d + 'declare i32 @tomato_str_contains(ptr, ptr)\n'
-    d = d + 'declare ptr @tomato_str_replace(ptr, ptr, ptr)\n'
-    d = d + 'declare ptr @tomato_str_split(ptr, ptr, i64, i64)\n'
-    d = d + 'declare ptr @tomato_str_join(ptr, ptr)\n'
-    d = d + 'declare ptr @tomato_str_upper(ptr)\n'
-    d = d + 'declare ptr @tomato_str_lower(ptr)\n'
-    d = d + 'declare ptr @tomato_str_strip(ptr)\n'
-    d = d + 'declare ptr @tomato_file_open(ptr, ptr)\n'
-    d = d + 'declare ptr @tomato_file_read(ptr)\n'
-    d = d + 'declare void @tomato_file_write(ptr, ptr)\n'
-    d = d + 'declare void @tomato_file_close(ptr)\n'
-    d = d + 'declare ptr @tomato_list_new(i64)\n'
-    d = d + 'declare ptr @tomato_list_push(ptr, i64)\n'
-    d = d + '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
-    d = d + '@.fmt.uint = private constant [5 x i8] c"%llu\\00"\n'
+    d += 'declare i32 @putchar(i32)\n'
+    d += 'declare void @tomato_fail(ptr)\n'
+    d += 'declare void @tomato_leak_check()\n'
+    d += 'declare void @tomato_retain(ptr)\n'
+    d += 'declare void @tomato_release(ptr)\n'
+    d += 'declare ptr @tomato_str_concat(ptr, ptr)\n'
+    d += 'declare ptr @tomato_str_from_cstr(ptr)\n'
+    d += 'declare i64 @tomato_str_len(ptr)\n'
+    d += 'declare i32 @tomato_str_cmp(ptr, ptr)\n'
+    d += 'declare ptr @tomato_str_index(ptr, i64)\n'
+    d += 'declare ptr @tomato_str_slice(ptr, i64, i64)\n'
+    d += 'declare ptr @tomato_list_concat(ptr, ptr, i32)\n'
+    d += 'declare ptr @tomato_list_repeat(ptr, i64, i32)\n'
+    d += 'declare ptr @tomato_str_repeat(ptr, i64)\n'
+    d += 'declare ptr @tomato_str_slice3(ptr, i64, i64, i64, i32)\n'
+    d += 'declare ptr @tomato_list_slice(ptr, i64, i64, i64, i32, i32)\n'
+    d += 'declare ptr @tomato_str_from_i64(i64)\n'
+    d += 'declare ptr @tomato_str_from_bool(i32)\n'
+    d += 'declare ptr @tomato_str_from_f64(double)\n'
+    d += 'declare ptr @tomato_box_str(ptr)\n'
+    d += 'declare i64 @tomato_int_add(i64, i64)\n'
+    d += 'declare i64 @tomato_int_sub(i64, i64)\n'
+    d += 'declare i64 @tomato_int_mul(i64, i64)\n'
+    d += 'declare i64 @tomato_int_floordiv(i64, i64)\n'
+    d += 'declare i64 @tomato_int_mod(i64, i64)\n'
+    d += 'declare i64 @tomato_int_pow(i64, i64)\n'
+    d += 'declare i32 @tomato_int_cmp(i64, i64)\n'
+    d += 'declare i32 @tomato_int_sign(i64)\n'
+    d += 'declare i64 @tomato_int_from_i64(i64)\n'
+    d += 'declare i64 @tomato_int_from_u64(i64)\n'
+    d += 'declare i64 @tomato_int_raw(i64)\n'
+    d += 'declare i64 @tomato_int_low64(i64)\n'
+    d += 'declare i32 @tomato_int_in_range(i64, i32, i32)\n'
+    d += 'declare double @tomato_int_to_f64(i64)\n'
+    d += 'declare ptr @tomato_int_str(i64)\n'
+    d += 'declare i64 @tomato_int_parse(ptr)\n'
+    d += 'declare i64 @tomato_int_parse_cstr(ptr, i32)\n'
+    d += 'declare i64 @tomato_int_bitop(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_f64_to_int(double)\n'
+    d += 'declare double @tomato_parse_f64(ptr, i32)\n'
+    d += 'declare i32 @tomato_ipow_check(i64, i64)\n'
+    d += 'declare i64 @tomato_ipow(i64, i64)\n'
+    d += 'declare double @tomato_floor_div_f64(double, double)\n'
+    d += 'declare double @tomato_mod_f64(double, double)\n'
+    d += 'declare double @tomato_pow_f64(double, double)\n'
+    d += 'declare void @tomato_print_strobj(ptr)\n'
+    d += 'declare ptr @tomato_alloc(i64, i64)\n'
+    d += 'declare i32 @tomato_is_subclass(i64, i64)\n'
+    d += 'declare ptr @tomato_dict_new(i64, i64, i32)\n'
+    d += 'declare ptr @tomato_dict_find(ptr, i64)\n'
+    d += 'declare ptr @tomato_dict_insert(ptr, i64, i32)\n'
+    d += 'declare i32 @tomato_dict_delete(ptr, i64)\n'
+    d += 'declare ptr @tomato_dict_keys(ptr, i64, i64)\n'
+    d += 'declare void @tomato_usage(i32, i32)\n'
+    d += 'declare i64 @tomato_parse_i64(ptr, i32)\n'
+    d += 'declare i64 @tomato_parse_u64(ptr, i32)\n'
+    d += 'declare void @tomato_fit_signed(i64, i32, i32)\n'
+    d += 'declare void @tomato_fit_unsigned(i64, i32, i32)\n'
+    d += 'declare i32 @tomato_parse_bool(ptr, i32)\n'
+    d += 'declare void @tomato_report_uncaught(ptr, i32, i32, i32)\n'
+    d += 'declare i64 @tomato_str_find(ptr, ptr)\n'
+    d += 'declare i32 @tomato_str_startswith(ptr, ptr)\n'
+    d += 'declare i32 @tomato_str_endswith(ptr, ptr)\n'
+    d += 'declare i32 @tomato_str_contains(ptr, ptr)\n'
+    d += 'declare ptr @tomato_str_replace(ptr, ptr, ptr)\n'
+    d += 'declare ptr @tomato_str_split(ptr, ptr, i64, i64)\n'
+    d += 'declare ptr @tomato_str_join(ptr, ptr)\n'
+    d += 'declare ptr @tomato_str_upper(ptr)\n'
+    d += 'declare ptr @tomato_str_lower(ptr)\n'
+    d += 'declare ptr @tomato_str_strip(ptr)\n'
+    d += 'declare ptr @tomato_file_open(ptr, ptr)\n'
+    d += 'declare ptr @tomato_file_read(ptr)\n'
+    d += 'declare void @tomato_file_write(ptr, ptr)\n'
+    d += 'declare void @tomato_file_close(ptr)\n'
+    d += 'declare ptr @tomato_list_new(i64)\n'
+    d += 'declare ptr @tomato_list_push(ptr, i64)\n'
+    d += '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
+    d += '@.fmt.uint = private constant [5 x i8] c"%llu\\00"\n'
     for extra in mod.decls:
-        d = d + extra + '\n'
-    d = d + 'declare ptr @tomato_str_from_u64(i64)\n'
+        d += extra + '\n'
+    d += 'declare ptr @tomato_str_from_u64(i64)\n'
     return d
 
 def literal_text(n: Node, ty: str) -> str:
     # the IR constant for a default written as a plain literal (entry point inputs)
     if ty == 'int' and n.kind == 'IntLit':
-        if n.fields[0].num >= pow2(61):
+        if n.fields[0].num >= 2 ** 61:
             raise CompileError('the default of an entry point input must be a whole number below 2 ** 61', n.line)
         return str(n.fields[0].num * 2 + 1)
     if is_numeric(ty) and n.kind == 'IntLit':
@@ -3873,24 +3767,23 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     k = len(info.ptypes)
     low = k - len(info.defaults)
     out = 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
-    out = out + '  %lo = icmp sge i32 %n, ' + str(low) + '\n  %hi = icmp sle i32 %n, ' + str(k) + '\n  %ok = and i1 %lo, %hi\n'
-    out = out + '  br i1 %ok, label %go, label %bad\n'
-    out = out + 'bad:\n  call void @tomato_usage(i32 ' + str(k) + ', i32 %n)\n  unreachable\ngo:\n'
-    args = new_strs()
-    owned = new_strs()
-    i = 0
-    for t in info.ptypes:
+    out += '  %lo = icmp sge i32 %n, ' + str(low) + '\n  %hi = icmp sle i32 %n, ' + str(k) + '\n  %ok = and i1 %lo, %hi\n'
+    out += '  br i1 %ok, label %go, label %bad\n'
+    out += 'bad:\n  call void @tomato_usage(i32 ' + str(k) + ', i32 %n)\n  unreachable\ngo:\n'
+    args: list[str] = []
+    owned: list[str] = []
+    for i, t in enumerate(info.ptypes):
         si = str(i)
         optional = i >= low
         if optional:
-            out = out + '  %has' + si + ' = icmp sgt i32 %n, ' + si + '\n  br i1 %has' + si + ', label %p' + si + ', label %d' + si + '\np' + si + ':\n'
-        out = out + '  %a' + si + '.ptr = getelementptr ptr, ptr %argv, i64 ' + str(i + 1) + '\n'
-        out = out + '  %a' + si + '.s = load ptr, ptr %a' + si + '.ptr\n'
+            out += '  %has' + si + ' = icmp sgt i32 %n, ' + si + '\n  br i1 %has' + si + ', label %p' + si + ', label %d' + si + '\np' + si + ':\n'
+        out += '  %a' + si + '.ptr = getelementptr ptr, ptr %argv, i64 ' + str(i + 1) + '\n'
+        out += '  %a' + si + '.s = load ptr, ptr %a' + si + '.ptr\n'
         reg = '%a' + si
         if t == 'str':
-            out = out + '  %a' + si + '.v = call ptr @tomato_str_from_cstr(ptr %a' + si + '.s)\n'
+            out += '  %a' + si + '.v = call ptr @tomato_str_from_cstr(ptr %a' + si + '.s)\n'
         elif t == 'int':
-            out = out + '  %a' + si + '.v = call i64 @tomato_int_parse_cstr(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            out += '  %a' + si + '.v = call i64 @tomato_int_parse_cstr(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
         elif is_fixed(t):
             bits = bits_of(t)
             parse = 'tomato_parse_u64'
@@ -3898,30 +3791,30 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             if is_signed(t):
                 parse = 'tomato_parse_i64'
                 fit = 'tomato_fit_signed'
-            out = out + '  %a' + si + '.w = call i64 @' + parse + '(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            out += '  %a' + si + '.w = call i64 @' + parse + '(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
             if bits < 64:
-                out = out + '  call void @' + fit + '(i64 %a' + si + '.w, i32 ' + str(bits) + ', i32 ' + str(i + 1) + ')\n'
-                out = out + '  %a' + si + '.v = trunc i64 %a' + si + '.w to i' + str(bits) + '\n'
+                out += '  call void @' + fit + '(i64 %a' + si + '.w, i32 ' + str(bits) + ', i32 ' + str(i + 1) + ')\n'
+                out += '  %a' + si + '.v = trunc i64 %a' + si + '.w to i' + str(bits) + '\n'
             else:
-                out = out + '  %a' + si + '.v = add i64 %a' + si + '.w, 0\n'
+                out += '  %a' + si + '.v = add i64 %a' + si + '.w, 0\n'
         elif t == 'float':
-            out = out + '  %a' + si + '.v = call double @tomato_parse_f64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            out += '  %a' + si + '.v = call double @tomato_parse_f64(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
         elif t == 'bool':
-            out = out + '  %a' + si + '.w = call i32 @tomato_parse_bool(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
-            out = out + '  %a' + si + '.v = zext i32 %a' + si + '.w to i64\n'
+            out += '  %a' + si + '.w = call i32 @tomato_parse_bool(ptr %a' + si + '.s, i32 ' + str(i + 1) + ')\n'
+            out += '  %a' + si + '.v = zext i32 %a' + si + '.w to i64\n'
         else:
             raise CompileError('a program input (a parameter of the @main function) must be an int, bool or str', 0)
         if optional:
             dflt = info.defaults[i - low]
-            out = out + '  br label %m' + si + '\nd' + si + ':\n  br label %m' + si + '\nm' + si + ':\n'
+            out += '  br label %m' + si + '\nd' + si + ':\n  br label %m' + si + '\nm' + si + ':\n'
             if t == 'str':
                 if dflt.kind != 'StrLit':
                     raise CompileError('the default of a text input must be a plain text such as "abc"', dflt.line)
-                out = out + '  %a' + si + ' = phi ptr [ %a' + si + '.v, %p' + si + ' ], [ ' + mod.intern(dflt.fields[0].text) + ', %d' + si + ' ]\n'
+                out += '  %a' + si + ' = phi ptr [ %a' + si + '.v, %p' + si + ' ], [ ' + mod.intern(dflt.fields[0].text) + ', %d' + si + ' ]\n'
             elif t == 'float':
                 raise CompileError('a program input cannot have a float default', dflt.line)
             else:
-                out = out + '  %a' + si + ' = phi ' + llvm_type(t) + ' [ %a' + si + '.v, %p' + si + ' ], [ ' + literal_text(dflt, t) + ', %d' + si + ' ]\n'
+                out += '  %a' + si + ' = phi ' + llvm_type(t) + ' [ %a' + si + '.v, %p' + si + ' ], [ ' + literal_text(dflt, t) + ', %d' + si + ' ]\n'
         else:
             reg = '%a' + si + '.v'
         if t == 'str':
@@ -3931,15 +3824,14 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             args.append('double ' + reg)
         else:
             args.append(llvm_type(t) + ' ' + reg)
-        i = i + 1
-    out = out + '  call void @tomato.' + info.key + '(' + ', '.join(args) + ')\n'
-    out = out + '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
-    out = out + 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
-    out = out + '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 ' + str(mod.mode) + ')\n  unreachable\n'
-    out = out + 'fine:\n'
+    out += '  call void @tomato.' + info.key + '(' + ', '.join(args) + ')\n'
+    out += '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
+    out += 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
+    out += '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 ' + str(mod.mode) + ')\n  unreachable\n'
+    out += 'fine:\n'
     for reg in owned:
-        out = out + '  call void @tomato_release(ptr ' + reg + ')\n'
-    out = out + '  call void @tomato_leak_check()\n  ret i32 0\n}\n'
+        out += '  call void @tomato_release(ptr ' + reg + ')\n'
+    out += '  call void @tomato_leak_check()\n  ret i32 0\n}\n'
     return out
 
 def key_of(module: str, name: str) -> str:
@@ -3978,7 +3870,7 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
                 raise CompileError("'*" + p.fields[0].text + "' needs a tuple type, such as tuple[int]", p.line)
             if p.fields[3].text == '**' and not is_dict(pt):
                 raise CompileError("'**" + p.fields[0].text + "' needs a dict type, such as dict[int]", p.line)
-            info.stars = info.stars + 1
+            info.stars += 1
             if p.fields[3].text == '*':
                 info.has_varargs = True
             else:
@@ -3987,20 +3879,12 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
         info.ptypes.append(pt)
     return info
 
-def new_infos() -> list[FuncInfo]:
-    return []
-
-def new_nodes() -> list[Node]:
-    return []
-
 def same_signature(a: FuncInfo, b: FuncInfo) -> bool:
     if a.ret != b.ret or len(a.ptypes) != len(b.ptypes):
         return False
-    k = 0
-    for t in a.ptypes:
+    for k, t in enumerate(a.ptypes):
         if t != b.ptypes[k]:
             return False
-        k = k + 1
     return True
 
 def check_classes(mod: Mod):
@@ -4008,14 +3892,14 @@ def check_classes(mod: Mod):
     for f in mod.infos:
         if f.owner != '' and not f.is_init:
             c = mod.find_class(f.owner, 0)
-            inherited = new_infos()
+            inherited: FuncInfo | None = None
             if c.parent != '':
                 inherited = mod.lookup_method(c.parent, f.name)
-            if len(inherited) > 0 and not f.is_override:
+            if inherited is not None and not f.is_override:
                 raise CompileError("'" + f.owner + '.' + f.name + "' replaces a method of the parent class\nwrite 'override def' to say so", c.line)
-            if len(inherited) == 0 and f.is_override:
+            if inherited is None and f.is_override:
                 raise CompileError("'" + f.owner + '.' + f.name + "' is marked 'override' but no parent class has that method", c.line)
-            if len(inherited) > 0 and not same_signature(f, inherited[0]):
+            if inherited is not None and not same_signature(f, inherited):
                 raise CompileError("'" + f.owner + '.' + f.name + "' must take and return the same types as the method it overrides", c.line)
             if not (f.name in mod.slots):
                 mod.slots.append(f.name)
@@ -4025,14 +3909,14 @@ def check_classes(mod: Mod):
                 mod.slots.append(r.name)
     for c in mod.classes:
         for iname in mod.class_ifaces(c.name):
-            closure = new_strs()
+            closure: list[str] = []
             mod.iface_closure(iname, closure)
             for j in closure:
                 for r in mod.find_iface(j, 0).reqs:
                     found = mod.lookup_method(c.name, r.name)
-                    if len(found) == 0:
+                    if found is None:
                         raise CompileError("class '" + c.name + "' is missing the method '" + r.name + "' that interface '" + j + "' requires", c.line)
-                    if not same_signature(found[0], r):
+                    if not same_signature(found, r):
                         raise CompileError("'" + c.name + '.' + r.name + "' must take and return exactly the types that interface '" + j + "' declares", c.line)
 
 def check_class_shapes(mod: Mod):
@@ -4040,17 +3924,17 @@ def check_class_shapes(mod: Mod):
     # a method name is declared once; no class inherits from itself
     for c in mod.classes:
         inits = 0
-        names = new_strs()
+        names: list[str] = []
         for f in mod.infos:
             if f.owner == c.name:
-                if f.name in names or f.name in c.fnames:
+                if f.name in names or field_position(c, f.name) >= 0:
                     raise CompileError("'" + f.name + "' is defined twice in class '" + c.display + "'", c.line)
                 names.append(f.name)
                 if f.is_init:
-                    inits = inits + 1
+                    inits += 1
         if inits > 1:
             raise CompileError("class '" + c.display + "' has more than one @init method\nkeep one", c.line)
-        seen = new_strs()
+        seen: list[str] = []
         walk = c
         while walk.parent != '':
             if walk.parent in seen or walk.parent == c.name:
@@ -4058,11 +3942,9 @@ def check_class_shapes(mod: Mod):
             seen.append(walk.parent)
             walk = mod.find_class(walk.parent, c.line)
         if not has_init(mod, c):
-            k = 0
-            for fname in c.fnames:
-                if c.fowner[k] == c.name and not c.has_default[k]:
-                    raise CompileError("class '" + c.display + "' has no @init method, but the field '" + fname + "' has no starting value\ngive the field a value, or add an @init method that sets it", c.line)
-                k = k + 1
+            for fld in c.fields:
+                if fld.owner == c.name and fld.default is None:
+                    raise CompileError("class '" + c.display + "' has no @init method, but the field '" + fld.name + "' has no starting value\ngive the field a value, or add an @init method that sets it", c.line)
 
 def has_init(mod: Mod, c: ClassInfo) -> bool:
     if c.init != '':
@@ -4078,7 +3960,7 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
     if is_list(et) or is_dict(et) or is_set(et):
         return mod.helper('show', et, line).name + '(' + e + ')'
     if is_class(et):
-        if len(mod.find_op(et[1:], 'str')) == 0:
+        if not mod.has_op(et[1:], 'str'):
             raise CompileError("'" + et[1:] + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
     elif not (is_numeric(et) or et == 'bool' or et == 'float' or is_union(et)):
         raise CompileError('a list of ' + shown(et) + ' cannot be printed\nprint its items one by one instead', line)
@@ -4086,7 +3968,7 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
 
 def iter_elem(mod: Mod, ty: str) -> str:
     # what the @iter method of a class yields
-    return mod.find_op(ty[1:], 'iter')[0].ret
+    return mod.find_op(ty[1:], 'iter').ret
 
 def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     # the Tomato source of a helper function; parameters are written as int and given their real types by helper_types
@@ -4114,7 +3996,7 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     if kind == 'show':
         if is_dict(ty):
             body = "    out = '{'\n    first = True\n    for k in x:\n        if not first:\n            out = out + ', '\n        first = False\n"
-            body = body + "        out = out + _quote(k) + ': ' + " + show_item(mod, dict_value(ty), 'x[k]', line) + '\n'
+            body += "        out = out + _quote(k) + ': ' + " + show_item(mod, dict_value(ty), 'x[k]', line) + '\n'
             return head + body + "    return out + '}'\n"
         open_text = '['
         close_text = ']'
@@ -4129,10 +4011,10 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
         body = ''
         if is_set(ty):
             body = "    if len(x) == 0:\n        return 'set()'\n"
-        body = body + "    out = '" + open_text + "'\n    first = True\n    for e in x:\n        if not first:\n            out = out + ', '\n        first = False\n"
-        body = body + '        out = out + ' + show_item(mod, elem, 'e', line) + '\n'
+        body += "    out = '" + open_text + "'\n    first = True\n    for e in x:\n        if not first:\n            out = out + ', '\n        first = False\n"
+        body += '        out = out + ' + show_item(mod, elem, 'e', line) + '\n'
         if ty.startswith('tuple['):
-            body = body + "    if len(x) == 1:\n        out = out + ','\n"
+            body += "    if len(x) == 1:\n        out = out + ','\n"
         return head + body + "    return out + '" + close_text + "'\n"
     if kind == 'sum':
         zero = '0'
@@ -4147,13 +4029,13 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     if kind == 'sorted':
         t = shown(elem_of(ty))
         body = '    a: list[' + t + '] = []\n    b: list[' + t + '] = []\n    for v in x:\n        a.append(v)\n        b.append(v)\n'
-        body = body + '    n = len(a)\n    width = 1\n    while width < n:\n        i = 0\n        while i < n:\n'
-        body = body + '            mid = i + width\n            if mid > n:\n                mid = n\n            hi = i + 2 * width\n            if hi > n:\n                hi = n\n'
-        body = body + '            left = i\n            right = mid\n            k = i\n            while left < mid and right < hi:\n'
-        body = body + '                if a[right] < a[left]:\n                    b[k] = a[right]\n                    right = right + 1\n                else:\n                    b[k] = a[left]\n                    left = left + 1\n                k = k + 1\n'
-        body = body + '            while left < mid:\n                b[k] = a[left]\n                left = left + 1\n                k = k + 1\n'
-        body = body + '            while right < hi:\n                b[k] = a[right]\n                right = right + 1\n                k = k + 1\n'
-        body = body + '            i = i + 2 * width\n        j = 0\n        while j < n:\n            a[j] = b[j]\n            j = j + 1\n        width = width * 2\n    return a\n'
+        body += '    n = len(a)\n    width = 1\n    while width < n:\n        i = 0\n        while i < n:\n'
+        body += '            mid = i + width\n            if mid > n:\n                mid = n\n            hi = i + 2 * width\n            if hi > n:\n                hi = n\n'
+        body += '            left = i\n            right = mid\n            k = i\n            while left < mid and right < hi:\n'
+        body += '                if a[right] < a[left]:\n                    b[k] = a[right]\n                    right = right + 1\n                else:\n                    b[k] = a[left]\n                    left = left + 1\n                k = k + 1\n'
+        body += '            while left < mid:\n                b[k] = a[left]\n                left = left + 1\n                k = k + 1\n'
+        body += '            while right < hi:\n                b[k] = a[right]\n                right = right + 1\n                k = k + 1\n'
+        body += '            i = i + 2 * width\n        j = 0\n        while j < n:\n            a[j] = b[j]\n            j = j + 1\n        width = width * 2\n    return a\n'
         return head + body
     raise CompileError('internal compiler error: no helper of kind ' + kind, line)
 
@@ -4193,11 +4075,9 @@ def class_def(c: ClassInfo) -> Node:
     return n
 
 def field_position(c: ClassInfo, name: str) -> int:
-    k = 0
-    for f in c.fnames:
-        if f == name:
+    for k, fld in enumerate(c.fields):
+        if fld.name == name:
             return k
-        k = k + 1
     return -1
 
 def resolve_class(mod: Mod, c: ClassInfo):
@@ -4211,37 +4091,25 @@ def resolve_class(mod: Mod, c: ClassInfo):
         p = mod.find_class(c.parent, node.line)
         resolve_class(mod, p)
         mod.cur = c.module
-        for fname in p.fnames:
-            c.fnames.append(fname)
-        for fp in p.fprivate:
-            c.fprivate.append(fp)
-        for fc in p.fconst:
-            c.fconst.append(fc)
-        for fo in p.fowner:
-            c.fowner.append(fo)
-        for ftype in p.ftypes:
-            c.ftypes.append(ftype)
-        for flag in p.has_default:
-            c.has_default.append(flag)
-        for dnode in p.defaults:
-            c.defaults.append(dnode)
+        c.fields = c.fields + p.fields
     for fd in val_nodes(node.fields[3]):
         ft = mod.type_name(fd.fields[1])
         if ft == '':
             raise CompileError('this field type is not supported\na field can hold int, bool, str, float, a list, a set, a dict or a class', fd.line)
         before = field_position(c, fd.fields[0].text)
         if before >= 0:
-            if c.fowner[before] == c.name:
+            if c.fields[before].owner == c.name:
                 raise CompileError("the field '" + fd.fields[0].text + "' is defined twice", fd.line)
             raise CompileError("the field '" + fd.fields[0].text + "' is already defined by a parent class\nuse a different name", node.line)
-        c.fnames.append(fd.fields[0].text)
-        c.fprivate.append(fd.fields[2].flag)
-        c.fconst.append(fd.fields[3].flag)
-        c.fowner.append(c.name)
-        c.ftypes.append(ft)
-        c.has_default.append(fd.fields[4].tag == 'n')
+        fld = FieldInfo()
+        fld.name = fd.fields[0].text
+        fld.ty = ft
+        fld.is_private = fd.fields[2].flag
+        fld.is_const = fd.fields[3].flag
+        fld.owner = c.name
         if fd.fields[4].tag == 'n':
-            c.defaults.append(val_node(fd.fields[4]))
+            fld.default = val_node(fd.fields[4])
+        c.fields.append(fld)
 
 def read_module(dir: str, std: str, name: str, line: int) -> str:
     # a module next to the program, else one from the standard library
@@ -4259,10 +4127,20 @@ def read_module(dir: str, std: str, name: str, line: int) -> str:
             raise CompileError("cannot find the module '" + name + "'\nlooked for " + name + ".tom next to the program and in the standard library", line)
     return text
 
-def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[Node], mods: list[str], imports: list[ImportInfo], loaded: list[str]) -> list[Node]:
+class TopItem:
+    # a top-level declaration and the module that wrote it
+    node: Node = Node()
+    module: str = ''
+
+def top_item(node: Node, module: str) -> TopItem:
+    t = TopItem()
+    t.node = node
+    t.module = module
+    return t
+
+def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[TopItem], imports: list[ImportInfo], loaded: list[str]) -> list[Node]:
     # the declarations of src, placed after those of the modules it imports (each module once)
-    mod.src_modules.append(module)
-    mod.src_texts.append(src)
+    mod.sources[module] = src
     mod.loading = module
     mine = val_nodes(parse(src).fields[0])
     mod.loading = ''
@@ -4279,23 +4157,21 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
             if not (wanted in loaded):
                 mod.cur = module
                 loaded.append(wanted)
-                load_items(mod, dir, std, read_module(dir, std, wanted, item.line), wanted, items, mods, imports, loaded)
-    own = new_nodes()
+                load_items(mod, dir, std, read_module(dir, std, wanted, item.line), wanted, items, imports, loaded)
+    own: list[Node] = []
     for item in mine:
         if item.kind != 'Import':
             own.append(item)
-            items.append(item)
-            mods.append(module)
+            items.append(top_item(item, module))
     return own
 
-def build_scopes(mod: Mod, items: list[Node], mods: list[str], imports: list[ImportInfo]):
+def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
     # every module sees its own declarations, the built-ins, and what it imports (D24c)
-    k = 0
-    for item in items:
+    for top in items:
+        item = top.node
         if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'ConstDef':
             name = item.fields[0].text
-            mod.declare_name(mods[k], name, key_of(mods[k], name), item.exported, item.line)
-        k = k + 1
+            mod.declare_name(top.module, name, key_of(top.module, name), item.exported, item.line)
     for ii in imports:
         for nm in ii.names:
             mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
@@ -4311,77 +4187,72 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     elif mode != 'debug':
         raise CompileError("the mode must be debug, normal or release, not '" + mode + "'", 0)
     mod.loading = 'builtin'
-    mod.src_modules.append('builtin')
     base = open(std + 'builtin.tom')
     base_text = base.read()
     base.close()
-    mod.src_texts.append(base_text)
-    items = val_nodes(parse(base_text).fields[0])
+    mod.sources['builtin'] = base_text
+    items: list[TopItem] = []
+    for b in val_nodes(parse(base_text).fields[0]):
+        items.append(top_item(b, 'builtin'))
     mod.loading = ''
-    mods = new_strs()
-    for b in items:
-        mods.append('builtin')
     imports: list[ImportInfo] = []
-    loaded = new_strs()
-    user = load_items(mod, dir, std, src, 'main', items, mods, imports, loaded)
-    build_scopes(mod, items, mods, imports)
-    k = 0
-    for item in items:
-        mod.cur = mods[k]
+    loaded: list[str] = []
+    user = load_items(mod, dir, std, src, 'main', items, imports, loaded)
+    build_scopes(mod, items, imports)
+    for top in items:
+        item = top.node
+        mod.cur = top.module
         if item.kind == 'InterfaceDef':
             ifc = IfaceInfo()
-            ifc.name = key_of(mods[k], item.fields[0].text)
-            ifc.module = mods[k]
+            ifc.name = key_of(top.module, item.fields[0].text)
+            ifc.module = top.module
             ifc.line = item.line
             mod.ifaces.append(ifc)
         elif item.kind == 'ClassDef':
             c = ClassInfo()
-            c.name = key_of(mods[k], item.fields[0].text)
+            c.name = key_of(top.module, item.fields[0].text)
             c.display = item.fields[0].text
-            c.module = mods[k]
+            c.module = top.module
             c.node = item
             c.line = item.line
             mod.classes.append(c)
-        k = k + 1
     # parents, interfaces and `implements` lines, resolved in the module that wrote them
-    k = 0
-    for item in items:
-        mod.cur = mods[k]
+    for top in items:
+        item = top.node
+        mod.cur = top.module
         if item.kind == 'InterfaceDef':
-            target = mod.find_iface(key_of(mods[k], item.fields[0].text), item.line)
+            target = mod.find_iface(key_of(top.module, item.fields[0].text), item.line)
             for pv in item.fields[1].items:
                 target.parents.append(mod.iface_key(pv.text, item.line))
         elif item.kind == 'ClassDef':
-            c = mod.find_class(key_of(mods[k], item.fields[0].text), item.line)
+            c = mod.find_class(key_of(top.module, item.fields[0].text), item.line)
             if item.fields[1].tag == 's':
                 c.parent = mod.class_key(item.fields[1].text, item.line)
             for iv in item.fields[2].items:
                 c.ifaces.append(mod.iface_key(iv.text, item.line))
         elif item.kind == 'Implements':
             mod.find_class(mod.class_key(item.fields[0].text, item.line), item.line).ifaces.append(mod.iface_key(item.fields[1].text, item.line))
-        k = k + 1
     for c in mod.classes:
         resolve_class(mod, c)
-    k = 0
-    for item in items:
-        mod.cur = mods[k]
+    for top in items:
+        item = top.node
+        mod.cur = top.module
         if item.kind == 'InterfaceDef':
-            target = mod.find_iface(key_of(mods[k], item.fields[0].text), item.line)
+            target = mod.find_iface(key_of(top.module, item.fields[0].text), item.line)
             for m in val_nodes(item.fields[2]):
                 target.reqs.append(function_info(m, mod, 'self'))
-        k = k + 1
     funcs: list[Node] = []
     entry = ''
-    k = 0
-    for item in items:
-        mod.cur = mods[k]
+    for top in items:
+        item = top.node
+        mod.cur = top.module
         if item.kind == 'FuncDef':
             info = function_info(item, mod, '')
             mod.infos.append(info)
             mod.func_nodes.append(item)
             funcs.append(item)
         elif item.kind == 'ClassDef':
-            c = mod.find_class(key_of(mods[k], item.fields[0].text), item.line)
+            c = mod.find_class(key_of(top.module, item.fields[0].text), item.line)
             for m in val_nodes(item.fields[4]):
                 info = function_info(m, mod, c.name)
                 mod.infos.append(info)
@@ -4397,8 +4268,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
                 cv = val_node(cv.fields[1])
             if not (cv.kind == 'IntLit' or cv.kind == 'FloatLit' or cv.kind == 'StrLit' or cv.kind == 'BoolLit'):
                 raise CompileError("the constant '" + item.fields[0].text + "' must be a number, text or True or False written out\na constant is not code: write its value as a literal, such as 3.14", item.line)
-            mod.const_keys.append(key_of(mods[k], item.fields[0].text))
-            mod.const_nodes.append(val_node(item.fields[1]))
+            mod.consts[key_of(top.module, item.fields[0].text)] = val_node(item.fields[1])
         elif item.kind == 'LlvmDecl':
             decl = function_info(item, mod, '')
             for pt in decl.ptypes:
@@ -4407,7 +4277,6 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             mod.llvm_decls.append(decl)
         else:
             raise CompileError(top_level_message(item), item.line)
-        k = k + 1
     check_classes(mod)
     check_class_shapes(mod)
     for item in user:
@@ -4418,40 +4287,34 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     if entry == '':
         raise CompileError("no function is marked @" + entry_name + "\nwrite @" + entry_name + " on the line above the function that should start the program", 0)
     bodies = ''
-    k = 0
-    for f in funcs:
+    for k, f in enumerate(funcs):
         if not mod.infos[k].is_gen:          # a generator is compiled where a for loop uses it
-            bodies = bodies + compile_function(f, mod, mod.infos[k]) + '\n'
-        k = k + 1
+            bodies += compile_function(f, mod, mod.infos[k]) + '\n'
+    # compiling a function can ask for more helper functions, so the list may grow while this runs
     done = 0
     while done < len(mod.extra_funcs):
-        bodies = bodies + compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done]) + '\n'
-        done = done + 1
+        bodies += compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done]) + '\n'
+        done += 1
     for c in mod.classes:
-        bodies = bodies + compile_constructor(c, mod) + '\n'
+        bodies += compile_constructor(c, mod) + '\n'
     mod.cur = 'main'
     wrapper = entry_wrapper(mod.find(entry, 1), mod)
     out = '; written by the Tomato compiler in Tomato (compiler/src/compiler.tom)\n'
-    out = out + declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod)
-    j = 0
-    for s in mod.strings:
-        out = out + string_global(j, s) + '\n'
-        out = out + string_c(j, s) + '\n'
-        j = j + 1
-    out = out + '\n' + bodies
-    out = out + wrapper
+    out += declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod)
+    for j, s in enumerate(mod.strings):
+        out += string_global(j, s) + '\n'
+        out += string_c(j, s) + '\n'
+    out += '\n' + bodies
+    out += wrapper
     return out
 
 def located(mod: Mod, message: str, line: int, col: int, module: str, path: str) -> str:
     # the error as the user sees it: the message, then the place and the source line of the module it is in
-    k = 0
-    for m in mod.src_modules:
-        if m == module:
-            where = path
-            if module != 'main':
-                where = module + '.tom'
-            return format_error(message, line, col, mod.src_texts[k], where)
-        k = k + 1
+    if module in mod.sources:
+        where = path
+        if module != 'main':
+            where = module + '.tom'
+        return format_error(message, line, col, mod.sources[module], where)
     return format_error(message, 0, 0, '', '')
 
 export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '') -> str:

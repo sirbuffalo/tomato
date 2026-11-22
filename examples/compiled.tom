@@ -11,7 +11,7 @@ def is_prime(n: int) -> bool:
     while d * d <= n:
         if n % d == 0:
             return False
-        d = d + 1
+        d += 1
     return True
 
 @main
@@ -20,6 +20,6 @@ def main(n: int):
     count = 0
     for i in range(2, n + 1):
         if is_prime(i):
-            count = count + 1
+            count += 1
     print('primes up to', n, ':', count)
     print(n / 7, n % 7)

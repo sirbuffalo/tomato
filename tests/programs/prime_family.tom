@@ -2,16 +2,16 @@ from math import next_prime, prev_prime, primes_up_to, nth_prime, prime_factors,
 
 def show(xs: list[int]) -> str:
     out = '['
-    for i in range(len(xs)):
+    for i, x in enumerate(xs):
         if i > 0:
-            out = out + ' '
-        out = out + str(xs[i])
+            out += ' '
+        out += str(x)
     return out + ']'
 
 def show_pairs(xs: list[list[int]]) -> str:
     out = ''
     for p in xs:
-        out = out + str(p[0]) + '^' + str(p[1]) + ' '
+        out += str(p[0]) + '^' + str(p[1]) + ' '
     return '{' + out + '}'
 
 @main

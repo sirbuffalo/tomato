@@ -1,0 +1,6 @@
+class Dog(Animl):
+    name: str = 'rex'
+
+@main
+def main():
+    print(Dog().name)

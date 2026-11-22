@@ -23,7 +23,7 @@ class Countdown:
         n = self.start
         while n > 0:
             yield n
-            n = n - 1
+            n -= 1
 
     @len
     def size(self) -> int:

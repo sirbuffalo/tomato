@@ -1,4 +1,4 @@
-# The Tomato parser, written in Tomato (D38a). It mirrors tomato/parser.py and builds the same syntax tree.
+# The Tomato parser, written in Tomato (D38a): turns the lexer's tokens into a syntax tree.
 #
 # Every node is one class: a kind, a line and an ordered list of field values (a Val holds a name, number, bool,
 # None, node, list or tuple), in the order the language grammar lists them. `dump` writes the tree as text so
@@ -15,23 +15,23 @@ export class ParseError(Error):
         self.line = line
         self.col = col
 
-def pnode(v: Val) -> Node:
+export def val_node(v: Val) -> Node:
     n = v.node
     if n is None:
         raise ParseError('internal compiler error: a missing syntax node', 0)
     return n
 
-def pnodes(v: Val) -> list[Node]:
+export def val_nodes(v: Val) -> list[Node]:
     out: list[Node] = []
     for item in v.items:
-        out.append(pnode(item))
+        out.append(val_node(item))
     return out
 
 def pairing_call(n: Node) -> str:
     # enumerate or zip when this expression is a call of one, else ''
     if n.kind != 'Call':
         return ''
-    f = pnode(n.fields[0])
+    f = val_node(n.fields[0])
     if f.kind == 'Name' and (f.fields[0].text == 'enumerate' or f.fields[0].text == 'zip'):
         return f.fields[0].text
     return ''
@@ -41,7 +41,7 @@ def path_text(n: Node) -> str:
     if n.kind == 'Name':
         return n.fields[0].text
     if n.kind == 'Attr':
-        inner = path_text(pnode(n.fields[0]))
+        inner = path_text(val_node(n.fields[0]))
         if inner == '':
             return ''
         return inner + '.' + n.fields[1].text
@@ -86,16 +86,6 @@ export class Node:
     exported: bool = False
     fields: list[Val] = []
 
-# a declaration inside a loop would be a second declaration on the next pass (not decided), so loops call these
-def new_nodes() -> list[Node]:
-    return []
-
-def new_vals() -> list[Val]:
-    return []
-
-export def new_strs() -> list[str]:
-    return []
-
 def vs(text: str) -> Val:
     v = Val()
     v.tag = 's'
@@ -117,7 +107,7 @@ def vb(b: bool) -> Val:
 def vz() -> Val:
     return Val()
 
-def vn(n: Node) -> Val:
+export def vn(n: Node) -> Val:
     v = Val()
     v.tag = 'n'
     v.node = n
@@ -190,9 +180,9 @@ def dump_val(v: Val) -> str:
 export def dump(n: Node) -> str:
     s = '(' + n.kind + ' ' + str(n.line)
     if n.exported:
-        s = s + ' exported'
+        s += ' exported'
     for v in n.fields:
-        s = s + ' ' + dump_val(v)
+        s += ' ' + dump_val(v)
     return s + ')'
 
 def is_type_with_length(name: str) -> bool:
@@ -203,6 +193,11 @@ export def is_operator_marker(name: str) -> bool:
     return name in ['add', 'sub', 'mul', 'div', 'floordiv', 'mod', 'pow', 'eq', 'lt', 'le', 'gt', 'ge', 'str',
                     'iter', 'len', 'get', 'slice', 'contains', 'reversed']
 
+# the left side of = and += must be a variable, a field or a list item; t is the first token of the statement
+def check_target(e: Node, t: Token):
+    if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
+        raise ParseError('cannot assign to this expression\nthe left side of = must be a variable, a field or a list item', t.line, t.col)
+
 export class Parser:
     toks: list[Token] = []
     p: int = 0
@@ -212,35 +207,41 @@ export class Parser:
         return self.toks[self.p]
 
     def peek(self, k: int) -> Token:
-        i = self.p + k
-        if i > len(self.toks) - 1:
-            i = len(self.toks) - 1
-        return self.toks[i]
+        return self.toks[min(self.p + k, len(self.toks) - 1)]
 
     def adv(self) -> Token:
         t = self.toks[self.p]
-        self.p = self.p + 1
+        self.p += 1
         return t
 
+    def peek_is(self, k: int, kind: str, text: str) -> bool:
+        t = self.peek(k)
+        return t.kind == kind and t.text == text
+
     def is_op(self, v: str) -> bool:
-        t = self.cur()
-        return t.kind == 'OP' and t.text == v
+        return self.peek_is(0, 'OP', v)
 
     def is_kw(self, v: str) -> bool:
-        t = self.cur()
-        return t.kind == 'KW' and t.text == v
+        return self.peek_is(0, 'KW', v)
 
     def accept_op(self, v: str) -> bool:
         if self.is_op(v):
-            self.p = self.p + 1
+            self.p += 1
             return True
         return False
 
     def accept_kw(self, v: str) -> bool:
         if self.is_kw(v):
-            self.p = self.p + 1
+            self.p += 1
             return True
         return False
+
+    # one or more names separated by commas, as text values
+    def name_list(self) -> list[Val]:
+        names = [vs(self.expect('NAME').text)]
+        while self.accept_op(','):
+            names.append(vs(self.expect('NAME').text))
+        return names
 
     def err(self, msg: str):
         t = self.cur()
@@ -297,9 +298,7 @@ export class Parser:
             self.adv()
             mod = self.expect('NAME').text
             self.expect_kw('import')
-            names: list[Val] = [vs(self.expect('NAME').text)]
-            while self.accept_op(','):
-                names.append(vs(self.expect('NAME').text))
+            names = self.name_list()
             self.expect('NEWLINE')
             return mk('Import', t.line, [vs(mod), vlist(names)])
         if self.is_kw('import'):
@@ -319,7 +318,7 @@ export class Parser:
             return self.classdef()
         if self.is_kw('interface'):
             return self.interfacedef()
-        if t.kind == 'NAME' and self.peek(1).kind == 'KW' and self.peek(1).text == 'implements':
+        if t.kind == 'NAME' and self.peek_is(1, 'KW', 'implements'):
             cls = self.adv()
             self.adv()
             out: list[Node] = []
@@ -477,9 +476,7 @@ export class Parser:
             self.expect_op(')')
         ifaces: list[Val] = []
         if self.accept_kw('implements'):
-            ifaces.append(vs(self.expect('NAME').text))
-            while self.accept_op(','):
-                ifaces.append(vs(self.expect('NAME').text))
+            ifaces = self.name_list()
         self.expect_op(':')
         self.expect('NEWLINE')
         self.expect('INDENT')
@@ -532,9 +529,7 @@ export class Parser:
         name = self.expect('NAME').text
         parents: list[Val] = []
         if self.accept_op('('):
-            parents.append(vs(self.expect('NAME').text))
-            while self.accept_op(','):
-                parents.append(vs(self.expect('NAME').text))
+            parents = self.name_list()
             self.expect_op(')')
         self.expect_op(':')
         self.expect('NEWLINE')
@@ -553,7 +548,7 @@ export class Parser:
         which = pairing_call(it)
         if which == '':
             raise ParseError("a for loop with several variables needs enumerate(...) or zip(...)\nwrite for i, x in enumerate(items):", line)
-        args = pnodes(it.fields[1])
+        args = val_nodes(it.fields[1])
         paths: list[str] = []
         for a in args:
             p = path_text(a)
@@ -572,19 +567,15 @@ export class Parser:
                 raise ParseError('zip() needs as many variables as lists\nwrite for a, b in zip(xs, ys):', line)
             idx = '_zip_index' + str(line)
             text = 'for ' + idx + ' in range(len(' + paths[0] + ')):\n'
-            k = 1
-            while k < len(paths):
-                text = text + '    if ' + idx + ' >= len(' + paths[k] + '):\n        break\n'
-                k = k + 1
-            k = 0
-            while k < len(paths):
-                text = text + '    ' + names[k] + ' = ' + paths[k] + '[' + idx + ']\n'
-                k = k + 1
-            text = text + '    pass\n'
+            for p in paths[1:]:
+                text += '    if ' + idx + ' >= len(' + p + '):\n        break\n'
+            for k, p in enumerate(paths):
+                text += '    ' + names[k] + ' = ' + p + '[' + idx + ']\n'
+            text += '    pass\n'
         q = Parser()
         q.toks = lex(text)
         loop = q.statement()
-        made = pnodes(loop.fields[2])
+        made = val_nodes(loop.fields[2])
         stmts: list[Node] = []
         for m in made:
             if m.kind != 'Pass':
@@ -626,7 +617,7 @@ export class Parser:
             self.adv()
             yv = self.expr()
             self.expect('NEWLINE')
-            self.yields = self.yields + 1
+            self.yields += 1
             return mk('Yield', t.line, [vn(yv)])
         if self.is_kw('try'):
             return self.trystmt()
@@ -659,16 +650,14 @@ export class Parser:
             return mk('Declare', t.line, [e.fields[0], vn(ty), vn(v)])
         if self.is_op('='):
             self.adv()
-            if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
-                raise ParseError('cannot assign to this expression\nthe left side of = must be a variable, a field or a list item', t.line, t.col)
+            check_target(e, t)
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Assign', t.line, [vn(e), vn(v)])
         if self.cur().kind == 'OP' and self.cur().text in ['+=', '-=', '*=', '/=', '%=']:
             # x += v is x = x + v (compound assignment, like Python)
-            op = self.adv().text[0:1]
-            if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
-                raise ParseError('cannot assign to this expression\nthe left side of = must be a variable, a field or a list item', t.line, t.col)
+            op = self.adv().text[:1]
+            check_target(e, t)
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Assign', t.line, [vn(e), vn(mk('BinOp', t.line, [vs(op), vn(e), vn(v)]))])
@@ -834,11 +823,11 @@ export class Parser:
         while True:
             if self.is_op('('):
                 ln = self.adv().line
-                args = new_nodes()
-                kwargs = new_vals()
-                names = new_strs()
+                args: list[Node] = []
+                kwargs: list[Val] = []
+                names: list[str] = []
                 while not self.is_op(')'):
-                    if self.cur().kind == 'NAME' and self.peek(1).kind == 'OP' and self.peek(1).text == '=':
+                    if self.cur().kind == 'NAME' and self.peek_is(1, 'OP', '='):
                         kw = self.adv()
                         self.adv()
                         if kw.text in names:
@@ -892,7 +881,7 @@ export class Parser:
             self.adv()
             return mk('BoolLit', t.line, [vb(t.text == 'True')])
         if t.kind == 'NAME':
-            if is_type_with_length(t.text) and self.peek(1).kind == 'OP' and self.peek(1).text == '[':
+            if is_type_with_length(t.text) and self.peek_is(1, 'OP', '['):
                 ty = self.type()
                 self.expect_op('(')
                 args: list[Node] = [self.expr()]
@@ -903,7 +892,7 @@ export class Parser:
         if self.is_op('('):
             self.adv()
             if self.accept_op(')'):
-                return mk('TupleLit', t.line, [vnodes(new_nodes())])
+                return mk('TupleLit', t.line, [vnodes([])])
             e = self.expr()
             if self.is_op(','):
                 # a tuple: (a, b), or (a,) for one item

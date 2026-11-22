@@ -1,0 +1,6 @@
+error: the class 'Animl' does not exist
+ --> tests/errors/missing_class.tom:1:11
+  |
+1 | class Dog(Animl):
+  |           ^^^^^
+  = help: check its spelling, or import it with 'from module import Animl'

@@ -42,7 +42,7 @@ def main():
         print(i, i * 2)
     total = 0
     for x in r:
-        total = total + x
+        total += x
     print(total)
     for x in r[::-1]:
         if x == 7:

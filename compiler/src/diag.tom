@@ -19,105 +19,76 @@ export class Diagnostic(Error):
 def is_word_char(c: str) -> bool:
     return c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
 
-def digits_of(n: int) -> int:
-    d = 1
-    while n >= 10:
-        n = n // 10
-        d = d + 1
-    return d
-
-def spaces(n: int) -> str:
-    out = ''
-    for i in range(n):
-        out = out + ' '
-    return out
-
-def carets(n: int) -> str:
-    out = ''
-    for i in range(n):
-        out = out + '^'
-    return out
-
+# the text between the first pair of single quotes, or ''
 def first_quoted(message: str) -> str:
-    # the text between the first pair of single quotes, or ''
     a = message.find("'")
     if a < 0:
         return ''
-    rest = message[a + 1:len(message)]
+    rest = message[a + 1:]
     b = rest.find("'")
     if b < 0:
         return ''
-    return rest[0:b]
+    return rest[:b]
 
+# the first run of digits in the message, or ''
 def first_number(message: str) -> str:
-    # the first run of digits in the message, or ''
     i = 0
     while i < len(message) and not (message[i] in '0123456789'):
-        i = i + 1
+        i += 1
     j = i
     while j < len(message) and message[j] in '0123456789':
-        j = j + 1
+        j += 1
     return message[i:j]
 
+# the first place `word` appears in `text` as a whole word, or -1
 def find_word(text: str, word: str) -> int:
-    # the first place `word` appears in `text` as a whole word, or -1
     if len(word) == 0:
         return -1
     start = 0
     while start + len(word) <= len(text):
-        rest = text[start:len(text)]
-        at = rest.find(word)
+        at = text[start:].find(word)
         if at < 0:
             return -1
         i = start + at
         before_ok = i == 0 or not is_word_char(text[i - 1]) or not is_word_char(word[0])
         after = i + len(word)
-        after_ok = after >= len(text) or not is_word_char(text[after]) or not is_word_char(word[len(word) - 1])
+        after_ok = after >= len(text) or not is_word_char(text[after]) or not is_word_char(word[-1])
         if before_ok and after_ok:
             return i
         start = i + 1
     return -1
 
+# how many characters of the token that starts at index `at`
 def token_width(text: str, at: int) -> int:
-    # how many characters of the token that starts at index `at`
     if at >= len(text):
         return 1
     c = text[at]
-    n = 0
     if is_word_char(c):
+        n = 0
         while at + n < len(text) and is_word_char(text[at + n]):
-            n = n + 1
+            n += 1
         return n
     if c == "'" or c == '"':
-        j = at + 1
-        while j < len(text) and text[j] != c:
-            j = j + 1
-        if j < len(text):
-            return j - at + 1
+        end = text[at + 1:].find(c)
+        if end >= 0:
+            return end + 2
     return 1
 
 # the edit distance between two names, for did-you-mean
 export def distance(a: str, b: str) -> int:
-    prev: list[int] = []
-    for j in range(len(b) + 1):
-        prev.append(j)
+    prev = list(range(len(b) + 1))
     for i in range(len(a)):
-        cur: list[int] = [i + 1]
+        cur = [i + 1]
         for j in range(len(b)):
             cost = 1
             if a[i] == b[j]:
                 cost = 0
-            best = prev[j] + cost
-            if prev[j + 1] + 1 < best:
-                best = prev[j + 1] + 1
-            if cur[j] + 1 < best:
-                best = cur[j] + 1
-            cur.append(best)
+            cur.append(min(prev[j] + cost, prev[j + 1] + 1, cur[j] + 1))
         prev = cur
-    return prev[len(b)]
+    return prev[-1]
 
+# the candidate nearest to `name` when it is close enough to be a likely typo, else ''
 export def closest(name: str, candidates: list[str]) -> str:
-    # the candidate nearest to `name` when it is close enough to be a likely typo, else ''
     limit = 1
     if len(name) >= 4:
         limit = 2
@@ -133,59 +104,60 @@ export def closest(name: str, candidates: list[str]) -> str:
                 best = c
     return best
 
+# Where in the source line the caret goes when the column is not known (0) or past the end (-1): at the word the message
+# quotes, else at the first number it names, else under the whole line. Gives the 1-based column and the caret width.
+def guess_span(head: str, text: str, at: int) -> tuple[int]:
+    if at == -1:
+        return (len(text) + 1, 1)
+    q = first_quoted(head)
+    if q == '':
+        q = first_number(head)
+    found = find_word(text, q)
+    if found >= 0:
+        return (found + 1, len(q))
+    indent = 0
+    while indent < len(text) and text[indent] == ' ':
+        indent += 1
+    return (indent + 1, max(len(text.strip()), 1))
+
 export def format_error(message: str, line: int, col: int, src: str, path: str) -> str:
     parts = message.split('\n')
     head = parts[0]
+    helps = parts[1:]
     out = 'error: ' + head
     if line < 1:
-        for i in range(len(parts) - 1):
-            out = out + '\n  = help: ' + parts[i + 1]
+        for h in helps:
+            out += '\n  = help: ' + h
         return out
     lines = src.split('\n')
-    ln = line
-    if ln > len(lines):
-        ln = len(lines)
+    ln = min(line, len(lines))
     at = col
     # a position past the last text (the end of the file): show the last line that has text, at its end
     while ln > 1 and len(lines[ln - 1].strip()) == 0:
-        ln = ln - 1
+        ln -= 1
         at = -1
     text = ''
-    if ln >= 1 and ln <= len(lines):
+    if ln >= 1:
         text = lines[ln - 1]
-    while len(text) > 0 and text[len(text) - 1] == '\r':
-        text = text[0:len(text) - 1]
+    while text.endswith('\r'):
+        text = text[:-1]
     width = 1
     if at <= 0:
-        q = first_quoted(head)
-        if q == '':
-            q = first_number(head)
-        found = find_word(text, q)
-        if at == -1:
-            at = len(text) + 1
-        elif found >= 0:
-            at = found + 1
-            width = len(q)
-        else:
-            at = 1
-            while at <= len(text) and text[at - 1] == ' ':
-                at = at + 1
-            width = len(text.strip())
-            if width < 1:
-                width = 1
+        span = guess_span(head, text, at)
+        at = span[0]
+        width = span[1]
     else:
         width = token_width(text, at - 1)
-    if at > len(text) + 1:
-        at = len(text) + 1
+    at = min(at, len(text) + 1)
     num = str(ln)
-    pad = spaces(digits_of(ln))
+    pad = ' ' * len(num)
     where = path
     if where == '':
         where = 'line'
-    out = out + '\n' + pad + '--> ' + where + ':' + num + ':' + str(at)
-    out = out + '\n' + pad + ' |'
-    out = out + '\n' + num + ' | ' + text
-    out = out + '\n' + pad + ' | ' + spaces(at - 1) + carets(width)
-    for i in range(len(parts) - 1):
-        out = out + '\n' + pad + ' = help: ' + parts[i + 1]
+    out += '\n' + pad + '--> ' + where + ':' + num + ':' + str(at)
+    out += '\n' + pad + ' |'
+    out += '\n' + num + ' | ' + text
+    out += '\n' + pad + ' | ' + ' ' * (at - 1) + '^' * width
+    for h in helps:
+        out += '\n' + pad + ' = help: ' + h
     return out

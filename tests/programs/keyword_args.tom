@@ -5,9 +5,9 @@ def greet(name: str, times: int = 1, loud: bool = False) -> str:
     out = ''
     for i in range(times):
         if loud:
-            out = out + name.upper()
+            out += name.upper()
         else:
-            out = out + name
+            out += name
     return out
 
 def total(*nums: tuple[int]) -> int:

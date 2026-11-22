@@ -1,18 +1,6 @@
 # Exact fractions, written in Tomato (D05am-ar): `from rational import rational`.
 # A rational is always stored reduced, with a positive denominator.
-
-def gcd(a: int, b: int) -> int:
-    x = a
-    y = b
-    if x < 0:
-        x = 0 - x
-    if y < 0:
-        y = 0 - y
-    while y != 0:
-        t = x % y
-        x = y
-        y = t
-    return x
+from math import gcd
 
 export class rational:
     num: int = 0
@@ -22,14 +10,12 @@ export class rational:
     def make(self, n: int, d: int = 1):
         if d == 0:
             raise RuntimeError('a rational cannot have a zero denominator')
-        top = n
-        bottom = d
-        if bottom < 0:
-            top = 0 - top
-            bottom = 0 - bottom
-        g = gcd(top, bottom)
-        self.num = top // g
-        self.den = bottom // g
+        if d < 0:
+            n = -n
+            d = -d
+        g = gcd(n, d)
+        self.num = n // g
+        self.den = d // g
 
     @add
     def plus(self, other: rational) -> rational:

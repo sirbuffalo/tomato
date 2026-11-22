@@ -10,7 +10,7 @@ def square_root_floor(n: int) -> int:
         raise NegativeError('no square root of a negative number')
     r = 0
     while (r + 1) * (r + 1) <= n:
-        r = r + 1
+        r += 1
     return r
 
 @main
@@ -19,7 +19,7 @@ def main():
     counts: dict[str, int] = {}
     for w in words:
         if w in counts:
-            counts[w] = counts[w] + 1
+            counts[w] += 1
         else:
             counts[w] = 1
     print(counts['the'], len(counts))
@@ -28,7 +28,7 @@ def main():
         seen.add(w)
     print(len(seen), 'fox' in seen)
     print(gcd(84, 36), pow(2, 20))
-    for n in [16, 17, 0 - 4]:
+    for n in [16, 17, -4]:
         try:
             print(n, square_root_floor(n))
         catch NegativeError as e:
@@ -41,5 +41,5 @@ def main():
             continue
         if i > 10:
             break
-        total = total + i
+        total += i
     print(total)

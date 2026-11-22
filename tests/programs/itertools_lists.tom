@@ -4,14 +4,14 @@ def show(rows: list[list[int]]):
     text = ''
     for row in rows:
         for x in row:
-            text = text + str(x)
-        text = text + ' '
+            text += str(x)
+        text += ' '
     print(len(rows), text)
 
 def flat(xs: list[int]):
     text = ''
     for x in xs:
-        text = text + str(x) + ','
+        text += str(x) + ','
     print(text)
 
 @main
