@@ -20,10 +20,10 @@ beats Rust on big integers, and beats Python on all ten benchmarks. Debug mode (
 | strings | 0.563 | 0.484 | 0.555 | 0.106 | 1.2x |
 | sort | 2.110 | 1.167 | 1.998 | 0.079 | 1.8x |
 | wordcount | 0.658 | 0.581 | 0.664 | 0.324 | 1.1x |
-| bigint | 1.413 | 0.224 | 0.220 | 0.423 | 6.3x |
+| bigint | 1.413 | 0.130 | 0.113 | 0.429 | 0.3x |
 | objects | 2.749 | 0.329 | 0.518 | 0.056 | 8.4x |
 
-## What was done (v0.48)
+## What was done (v0.48; the `bigint` row was remeasured after D05av)
 
 1. **Release mode optimises.** `--mode release` links the program and the runtime with `clang -O2 -flto
    -DTOMATO_RELEASE`, so the runtime's small-integer fast paths (`tomato_int_add`, `_cmp`, `_raw`, ...) and
@@ -35,6 +35,10 @@ beats Rust on big integers, and beats Python on all ten benchmarks. Debug mode (
 3. **Big integers.** Multiplying a big number by a small one is a single pass over the limbs (128-bit products, no
    scratch array), and big-by-big products are computed straight into their final allocation. `bigint` went from
    1.41 s to 0.22 s, faster than Rust's hand-written limb array and Python.
+4. **Big integers are freed** (D05av, replacing placeholder P63). Every variable, field and container slot owns its own
+   limb array (copied when stored, freed when overwritten, out of scope, consumed or unwound), so no reference counts.
+   `bigint` (40000): 0.224 s and 1.53 GB peak memory before; 0.130 s and 2.8 MB after (Rust 0.429 s / 2.1 MB), with the
+   debug-mode leak check clean.
 
 ## Tried and not kept
 
@@ -53,6 +57,4 @@ beats Rust on big integers, and beats Python on all ten benchmarks. Debug mode (
 3. **`sorted`** is a generic sort written in Tomato IR with a runtime comparison per pair; a native sort for
    `list[int]`/`list[float]`/`list[str]` in the runtime.
 4. **Typed list storage** (`list[bool]` as bytes, unboxed floats) if measurements justify it.
-5. **Big integers are never freed** (placeholder P63): `bigint` reaches about 1.5 GB peak memory and its remaining time is
-   mostly page faults; reference-counting big numbers would fix both.
-6. **Strings** (`strings` 4.6x): `str(i)`, `join` and `split` allocate one string per piece.
+5. **Strings** (`strings` 4.6x): `str(i)`, `join` and `split` allocate one string per piece.

@@ -1,0 +1,102 @@
+# An error unwinding through frames that hold big numbers frees them (checked under AddressSanitizer); the leak check
+# is off once an error was raised, so this file only guards against double frees and use after free.
+def huge(n: int) -> int:
+    r = 1
+    for i in range(1, n + 1):
+        r *= i
+    return r
+
+class Keeper:
+    big: int = 0
+    items: list[int] = []
+
+    @init
+    def make(self, n: int):
+        self.big = huge(n)
+        self.items = [self.big, self.big + 1]
+
+def fails(x: int) -> int:
+    y = x * x
+    z = y * y
+    keep = [y, z]
+    if z > 0:
+        raise RuntimeError('boom ' + str(z % 1000) + ' ' + str(len(keep)))
+    return z
+
+def through_frames(x: int) -> int:
+    a = x * 3
+    k = Keeper(24)
+    return fails(a) + k.big
+
+def deep_fail(n: int, acc: int) -> int:
+    if n == 0:
+        raise Error('bottom')
+    big = acc * acc
+    return deep_fail(n - 1, big) + 1
+
+def in_finally(x: int) -> int:
+    y = x * 2
+    try:
+        z = y * y
+        return z
+    finally:
+        w = y + 1
+        print(w > 0)
+
+def retry(x: int) -> int:
+    total = 0
+    for i in range(3):
+        try:
+            total += fails(x + i)
+        catch RuntimeError as e:
+            total += huge(22)
+            print(e.message)
+    return total
+
+async def failing(n: int) -> int:
+    a = huge(n)
+    b = a * a
+    if b > 0:
+        raise Error('failed ' + str(b % 1000))
+    return b
+
+async def holder(n: int) -> int:
+    big = huge(n)
+    other = await failing(n)
+    return big + other
+
+@main
+async def main():
+    a = huge(30)
+    try:
+        print(through_frames(a))
+    catch RuntimeError as e:
+        print(e.message)
+    try:
+        r = fails(a)
+        print(r)
+    catch RuntimeError as e2:
+        print(e2.message)
+    finally:
+        k2 = huge(26)
+        print(k2 > 0)
+    try:
+        print(deep_fail(6, huge(23)))
+    catch Error as e3:
+        print(e3.message)
+    print(in_finally(a) > 0)
+    print(retry(a) > 0)
+    try:
+        await failing(24)
+    catch Error as e4:
+        print(e4.message)
+    t = start failing(26)
+    try:
+        await t
+    catch Error as e5:
+        print(e5.message)
+    try:
+        await holder(22)
+    catch Error as e6:
+        print(e6.message)
+    print(a > 0)

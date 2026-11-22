@@ -1,0 +1,164 @@
+# Big numbers are values: each variable, field, list item and table entry owns its own copy and frees it when it is
+# overwritten, goes out of scope or its container is destroyed. Run under AddressSanitizer and the debug leak check, a
+# double free, a use after free or a missed free in any of these shows up.
+class Holder:
+    big: int = 0
+    items: list[int] = []
+    name: str = ''
+
+    @init
+    def make(self, big: int, name: str):
+        self.big = big
+        self.items = [big, big + 1]
+        self.name = name
+
+    def bump(self) -> int:
+        self.big = self.big * self.big
+        return self.big
+
+def huge(n: int) -> int:
+    r = 1
+    for i in range(1, n + 1):
+        r *= i
+    return r
+
+def reassign_param(x: int) -> int:
+    x = x * x
+    return x + 1
+
+def keep_param(x: int) -> int:
+    return x
+
+def pass_through(x: int) -> int:
+    return keep_param(keep_param(x))
+
+def make_pair(x: int) -> tuple[int]:
+    return (x, x * 2)
+
+def swap_sum(a: int, b: int) -> int:
+    a, b = b, a
+    return a - b
+
+def pick(c: bool, a: int, b: int) -> int:
+    return a if c else b
+
+def total(xs: list[int]) -> int:
+    t = 0
+    for x in xs:
+        t += x
+    return t
+
+def gen(n: int) -> int:
+    s = 0
+    for i in range(n):
+        s += huge(25 + i)
+    return s
+
+@main
+def main():
+    a = huge(30)
+    b = a
+    b = b + 1
+    print(a, b)
+    a = a * a
+    print(a)
+    a = a
+    print(a)
+    c = a * a * a - a
+    print(c)
+    a = huge(25)
+    b = huge(26)
+    a, b = b, a
+    print(a, b)
+    print(swap_sum(a, b), swap_sum(5, 7))
+    print(reassign_param(a), a)
+    print(pass_through(a) == a, keep_param(c) == c)
+    print(pick(True, a, b), pick(False, a, b), pick(False, 1, 2))
+
+    xs = [a, b, a * b]
+    xs.append(c)
+    xs.append(huge(28))
+    print(xs[0], xs[3], len(xs))
+    ys = xs[1:4]
+    zs = xs + ys
+    ws = ys * 2
+    xs[0] = xs[1] + xs[2]
+    print(xs[0] == b + a * b, ys[0] == b, len(zs), len(ws))
+    xs[2] = 7
+    xs[1] = huge(21)
+    print(total(xs) > 0, total(zs) > 0, total(ws) > 0)
+    copy = list(xs)
+    copy[0] = 1
+    print(copy[0], xs[0] == b + a * b)
+    print(sorted(zs)[0] <= sorted(zs)[1], max(zs) >= min(zs), sum(zs) > 0)
+    rev = reversed(zs)
+    print(rev[0] == zs[len(zs) - 1])
+    print(5 in zs, a in zs, huge(27) in [1, 2, huge(27)])
+    lst = [huge(22), huge(23)]
+    del_big = lst[0]
+    lst[0] = lst[1]
+    print(del_big < lst[0])
+    m = [[a, b], [c]]
+    print(m[0][1] == b, m[1][0] == c)
+    m[0][0] = m[1][0]
+    print(m[0][0] == c)
+    print(str(a), str(-a), -a < 0, a // 7, a % 1000003, a ** 2 == a * a)
+    print(2 ** 100, (-2) ** 101, 10 ** 30 // 10 ** 29)
+    print(int('123456789012345678901234567890') + 1)
+    print(float(a) > 1e20, int(1e25))
+
+    h = Holder(huge(24), 'h')
+    print(h.big, h.bump() > h.big - 1, len(h.items))
+    h.items.append(huge(29))
+    h.items[0] = h.big
+    h2 = Holder(h.big, 'h2')
+    h = Holder(1, 'h3')
+    print(h.big, h2.items[0] == h2.big)
+    hs = [Holder(huge(20), 'x'), Holder(huge(21), 'y')]
+    hs[0].big = hs[1].big * 2
+    hs[1].items.append(hs[0].big)
+    hs = []
+
+    d: dict[str, int] = {}
+    d['a'] = a
+    d['b'] = b
+    d['a'] = d['a'] + d['b']
+    print(d['a'] == a + b, d.get('zz', c) == c, d.get('a', 0) == d['a'])
+    for v in d.values():
+        print(v > 0)
+    for k in d.keys():
+        d[k] = d[k] * 2
+    d2: dict[str, int] = {'p': huge(23), 'q': huge(24)}
+    print(len(d2), d2['q'] > d2['p'])
+
+    s = {huge(20), huge(21), 5}
+    s.add(huge(20))
+    s.add(huge(22))
+    s.remove(huge(21))
+    print(len(s), huge(20) in s, huge(21) in s, 5 in s)
+    for e in s:
+        print(e > 0)
+
+    t = make_pair(huge(23))
+    u, v = t
+    print(u * 2 == v)
+    for i in range(3):
+        w, x = make_pair(huge(20 + i))
+        print(w < x)
+
+    both = [(huge(20), 1), (huge(21), 2)]
+    print(len(both))
+
+    cmp = [huge(20 + i) for i in range(3)]
+    print(len(cmp), cmp[2] > cmp[1])
+    print(gen(3) > 0)
+    cnt = 0
+    while cnt < 3:
+        q2 = huge(20 + cnt) * huge(21)
+        cnt += 1
+        if q2 < 0:
+            break
+    print(cnt)
+    big_loop = huge(26)
+    for big_loop in range(3):
+        print(big_loop)
