@@ -1,0 +1,10 @@
+def gen(n: int) -> int:
+    try:
+        yield n
+    catch RuntimeError:
+        pass
+
+@main
+def main():
+    for x in gen(3):
+        print(x)

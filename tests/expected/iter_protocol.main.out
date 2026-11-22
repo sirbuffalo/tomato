@@ -1,0 +1,45 @@
+3
+2
+1
+go
+1
+liftoff
+0
+1
+4
+9
+16
+0
+4
+16
+36
+first 0
+first 1
+first 2
+0
+2
+4
+6
+12
+1
+3
+5
+kept 0
+kept 4
+kept 6
+kept 8
+0 0
+0 2
+2 0
+2 2
+a
+b
+c
+b
+a
+c
+4 6 True False [2] [0] [2, 4, 6] [6, 4, 2, 0] Evens(6)
+12 0 6 [0, 2, 4, 6] [0, 2, 4, 6] 0
+['a', 'b', 'c'] a c ['b', 'a', 'c']
+caught no such item
+caught min() of an empty sequence

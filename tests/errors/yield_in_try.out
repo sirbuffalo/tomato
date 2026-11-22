@@ -1,0 +1,5 @@
+error: 'yield' cannot be used inside a try block
+ --> tests/errors/yield_in_try.tom:3:9
+  |
+3 |         yield n
+  |         ^^^^^

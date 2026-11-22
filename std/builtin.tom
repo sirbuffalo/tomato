@@ -18,22 +18,124 @@ class IOError(RuntimeError):
     def make_io(self, message: str):
         RuntimeError.make(self, message)
 
-# range(...) used as a value (not directly in a `for`) is a list of ints, built by these helpers.
-def _range1(stop: int) -> list[int]:
-    return _range3(0, stop, 1)
+# range(stop), range(start, stop) and range(start, stop, step) are a value of their own. It keeps only the three numbers, so it
+# takes the same small amount of memory however long it is, and prints as range(0, 100, 1). It is a sequence of ints: `for`,
+# len(), indexing (negative too), slicing (gives another range), `in`, ==, reversed(), sorted(), sum(), min(), max() and
+# list() all work, each through the method marked for it. `for i in range(n)` and `range(a, b)` are counted by the compiler
+# directly; everything else about range is written here, in Tomato.
+class range:
+    start: int
+    stop: int
+    step: int
 
-def _range2(start: int, stop: int) -> list[int]:
-    return _range3(start, stop, 1)
+    @init
+    def make(self, start: int, stop: int, step: int):
+        if step == 0:
+            raise RuntimeError('range step cannot be zero')
+        self.start = start
+        self.stop = stop
+        self.step = step
 
-def _range3(start: int, stop: int, step: int) -> list[int]:
-    if step == 0:
-        raise RuntimeError('range step cannot be zero')
-    result: list[int] = []
-    i = start
-    while (step > 0 and i < stop) or (step < 0 and i > stop):
-        result.append(i)
-        i = i + step
-    return result
+    @str
+    def text(self) -> str:
+        return 'range(' + str(self.start) + ', ' + str(self.stop) + ', ' + str(self.step) + ')'
+
+    @iter
+    def numbers(self) -> int:
+        i = self.start
+        if self.step > 0:
+            while i < self.stop:
+                yield i
+                i += self.step
+        else:
+            while i > self.stop:
+                yield i
+                i += self.step
+
+    @len
+    def count(self) -> int:
+        if self.step > 0:
+            if self.stop <= self.start:
+                return 0
+            return (self.stop - self.start - 1) // self.step + 1
+        if self.start <= self.stop:
+            return 0
+        return (self.start - self.stop - 1) // (0 - self.step) + 1
+
+    @get
+    def at(self, i: int) -> int:
+        n = self.count()
+        j = i
+        if j < 0:
+            j = j + n
+        if j < 0 or j >= n:
+            raise RuntimeError('index out of range')
+        return self.start + j * self.step
+
+    @contains
+    def has(self, x: int) -> bool:
+        if self.step > 0:
+            return x >= self.start and x < self.stop and (x - self.start) % self.step == 0
+        return x <= self.start and x > self.stop and (self.start - x) % (0 - self.step) == 0
+
+    # flags: 1 = a start was written, 2 = an end was written, 4 = a step was written (as for list slices)
+    @slice
+    def part(self, lo: int, hi: int, st: int, flags: int) -> range:
+        n = self.count()
+        k = 1
+        if flags & 4 != 0:
+            k = st
+        if k == 0:
+            raise RuntimeError('slice step cannot be zero')
+        low = 0
+        high = n
+        a = 0
+        b = n
+        if k < 0:
+            low = -1
+            high = n - 1
+            a = n - 1
+            b = -1
+        if flags & 1 != 0:
+            a = lo
+            if a < 0:
+                a = a + n
+            if a < low:
+                a = low
+            if a > high:
+                a = high
+        if flags & 2 != 0:
+            b = hi
+            if b < 0:
+                b = b + n
+            if b < low:
+                b = low
+            if b > high:
+                b = high
+        return range(self.start + a * self.step, self.start + b * self.step, self.step * k)
+
+    @reversed
+    def backwards(self) -> range:
+        n = self.count()
+        return range(self.start + (n - 1) * self.step, self.start - self.step, 0 - self.step)
+
+    # two ranges are equal when they hold the same numbers, so range(0) == range(5, 5)
+    @eq
+    def same(self, other: range) -> bool:
+        n = self.count()
+        if n != other.count():
+            return False
+        if n == 0:
+            return True
+        if self.start != other.start:
+            return False
+        return n == 1 or self.step == other.step
+
+def _range1(stop: int) -> range:
+    return range(0, stop, 1)
+
+def _range2(start: int, stop: int) -> range:
+    return range(start, stop, 1)
 
 # The text of a string inside a printed list, dict or set, quoted the way Python shows it: 'abc'.
 def _quote(s: str) -> str:

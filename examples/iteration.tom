@@ -1,0 +1,45 @@
+# Ranges and iteration: a range keeps only start, stop and step; a method marked @iter (or any function that uses yield)
+# can be looped over with `for`.
+from itertools import progress_bar
+
+def fib(limit: int) -> int:
+    a = 0
+    b = 1
+    while a < limit:
+        yield a
+        c = a + b
+        a = b
+        b = c
+
+class Countdown:
+    start: int
+
+    @init
+    def make(self, start: int):
+        self.start = start
+
+    @iter
+    def numbers(self) -> int:
+        n = self.start
+        while n > 0:
+            yield n
+            n = n - 1
+
+    @len
+    def size(self) -> int:
+        return self.start
+
+@main
+def main():
+    r = range(5, 50, 5)
+    print(r, len(r), r[1], r[-1], r[2:5], 25 in r)
+    print(sum(r), list(range(3)), reversed(range(4)), range(100) == range(0, 100, 1))
+    for x in fib(60):
+        print(x)
+    for n in Countdown(3):
+        print(n)
+    print(len(Countdown(7)), sum(Countdown(4)), list(Countdown(3)))
+    for ch in 'abc':
+        print(ch)
+    for i in progress_bar(range(3), 'work'):
+        print(i)

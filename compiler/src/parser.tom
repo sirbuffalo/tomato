@@ -200,11 +200,13 @@ def is_type_with_length(name: str) -> bool:
 
 export def is_operator_marker(name: str) -> bool:
     # a method marked with an operator's name implements that operator for its class (D12j-l); names beyond @add are placeholders (P65)
-    return name in ['add', 'sub', 'mul', 'div', 'floordiv', 'mod', 'pow', 'eq', 'lt', 'le', 'gt', 'ge', 'str']
+    return name in ['add', 'sub', 'mul', 'div', 'floordiv', 'mod', 'pow', 'eq', 'lt', 'le', 'gt', 'ge', 'str',
+                    'iter', 'len', 'get', 'slice', 'contains', 'reversed']
 
 export class Parser:
     toks: list[Token] = []
     p: int = 0
+    yields: int = 0          # how many yield statements have been read so far (a function with any is a generator)
 
     def cur(self) -> Token:
         return self.toks[self.p]
@@ -437,10 +439,11 @@ export class Parser:
             if self.is_op(':'):
                 raise ParseError('an interface method has no body\nwrite only its signature', line)
             self.expect('NEWLINE')
-            return mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker)])
+            return mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker), vb(False)])
         self.expect_op(':')
+        before = self.yields
         body = self.block()
-        return mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker)])
+        return mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker), vb(self.yields > before)])
 
     def block(self) -> list[Node]:
         if self.cur().kind != 'NEWLINE':
@@ -489,7 +492,7 @@ export class Parser:
             self.adv()
             m = self.expect('NAME')
             if m.text != 'init' and not is_operator_marker(m.text):
-                raise ParseError("'@" + m.text + "' is not a method marker\nthe markers are @init and the operator markers such as @add", m.line, m.col - 1)
+                raise ParseError("'@" + m.text + "' is not a method marker\nthe markers are @init, @iter and the operator markers such as @add", m.line, m.col - 1)
             marker = m.text
             self.expect('NEWLINE')
         is_override = self.accept_kw('override')
@@ -612,6 +615,12 @@ export class Parser:
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Raise', t.line, [vn(v)])
+        if self.is_kw('yield'):
+            self.adv()
+            yv = self.expr()
+            self.expect('NEWLINE')
+            self.yields = self.yields + 1
+            return mk('Yield', t.line, [vn(yv)])
         if self.is_kw('try'):
             return self.trystmt()
         if self.is_kw('if'):

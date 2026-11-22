@@ -1,0 +1,138 @@
+# Iteration (D41a): a method marked @iter, or any function that uses yield, can be the thing a for loop loops over.
+# The protocol markers @len, @get, @slice, @contains and @reversed make len(), x[i], x[a:b], `in` and reversed() work.
+
+def countdown(n: int, label: str = 'go') -> str:
+    while n > 0:
+        yield str(n)
+        n = n - 1
+    yield label
+
+def squares(limit: int) -> int:
+    for i in range(limit):
+        yield i * i
+
+# a generator can loop over another one
+def evens_of_squares(limit: int) -> int:
+    for q in squares(limit):
+        if q % 2 == 0:
+            yield q
+
+def first_big(limit: int) -> int:
+    for i in range(limit):
+        if i > 2:
+            return
+        yield i
+
+class Evens:
+    top: int
+    total: int = 0
+
+    @init
+    def make(self, top: int):
+        self.top = top
+
+    @iter
+    def each(self) -> int:
+        i = 0
+        while i <= self.top:
+            self.total = self.total + i
+            yield i
+            i = i + 2
+
+    # a second generator of the same class, called by name
+    def odds(self, count: int) -> int:
+        i = 1
+        for k in range(count):
+            yield i
+            i = i + 2
+
+    @len
+    def size(self) -> int:
+        return self.top // 2 + 1
+
+    @get
+    def item(self, k: int) -> int:
+        if k < 0 or k >= self.size():
+            raise RuntimeError('no such item')
+        return k * 2
+
+    @contains
+    def has(self, x: int) -> bool:
+        return x >= 0 and x <= self.top and x % 2 == 0
+
+    @slice
+    def part(self, lo: int, hi: int, st: int, flags: int) -> list[int]:
+        out: list[int] = []
+        for x in self:
+            if (flags & 1 == 0 or x >= lo) and (flags & 2 == 0 or x < hi):
+                out.append(x)
+        return out
+
+    @reversed
+    def backwards(self) -> list[int]:
+        out: list[int] = []
+        k = self.top // 2
+        while k >= 0:
+            out.append(k * 2)
+            k = k - 1
+        return out
+
+    @str
+    def text(self) -> str:
+        return 'Evens(' + str(self.top) + ')'
+
+class Words:
+    @iter
+    def each(self) -> str:
+        yield 'b'
+        yield 'a'
+        yield 'c'
+
+@main
+def main():
+    for s in countdown(3):
+        print(s)
+    for s in countdown(1, 'liftoff'):
+        print(s)
+    for q in squares(5):
+        print(q)
+    for q in evens_of_squares(7):
+        print(q)
+    for i in first_big(100):
+        print('first', i)
+    e = Evens(6)
+    for x in e:
+        print(x)
+    print(e.total)
+    for o in e.odds(3):
+        print(o)
+    # break and continue act on the for loop, however the generator is written
+    for x in Evens(100):
+        if x == 2:
+            continue
+        if x > 8:
+            break
+        print('kept', x)
+    # nested loops over the same object
+    for a in Evens(2):
+        for b in Evens(2):
+            print(a, b)
+    for c in 'abc':
+        print(c)
+    for c in '':
+        print('never')
+    for w in Words():
+        print(w)
+    # the protocol markers
+    print(len(e), e[3], 4 in e, 5 in e, e[1:3], e[:2], e[2:], reversed(e), e)
+    # sum, min, max, sorted, list work on anything with @iter
+    print(sum(e), min(e), max(e), sorted(e), list(e), sum(Evens(0)))
+    print(sorted(Words()), min(Words()), max(Words()), list(Words()))
+    try:
+        print(e[9])
+    catch RuntimeError as err:
+        print('caught', err.message)
+    try:
+        print(min(Evens(-2)))
+    catch RuntimeError as err:
+        print('caught', err.message)

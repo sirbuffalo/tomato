@@ -16,3 +16,12 @@ def main():
     unknown = progress_bar(repeat(0, 0), 'seen')
     unknown.count = 7
     print(unknown.render())
+    # a progress bar takes a range as well as a list, and looping over the bar draws it (on standard error) as it goes
+    for i in progress_bar(range(1, 4)):
+        print(i)
+    bar = progress_bar(range(2), 'r', 4)
+    for i in bar:
+        print(i)
+    print(bar.count, bar.total)
+    for i in progress_bar(list(range(2)), 'list', 4):
+        print(i)

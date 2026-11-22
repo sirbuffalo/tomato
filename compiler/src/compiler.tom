@@ -285,6 +285,7 @@ class FuncInfo:
     op: str = ''           # the operator a method implements (@add and the other operator markers), or ''
     is_override: bool = False
     is_private: bool = False
+    is_gen: bool = False     # the body has a yield: a generator, only usable as what a for loop loops over
     key: str = ''            # the program-wide name of a function (module.name outside the main program)
     module: str = 'main'
 
@@ -337,6 +338,7 @@ class Mod:
     show_keys: list[str] = []     # helper functions the compiler writes for itself (printing a list, sorted, ...): their kind and type
     show_infos: list[FuncInfo] = []
     extra_funcs: list[Node] = []
+    func_nodes: list[Node] = []   # the FuncDef of each entry of infos, in the same order
     helper_count: int = 0
     src_modules: list[str] = []   # the modules loaded, and their source text (for showing an error's line)
     src_texts: list[str] = []
@@ -401,13 +403,22 @@ class Mod:
         text = helper_source(self, name, kind, ty, line)
         item = val_nodes(parse(text).fields[0])[0]
         info = function_info(item, self, '')
-        helper_types(info, kind, ty)
+        helper_types(self, info, kind, ty)
         self.cur = saved
         self.show_keys.append(key)
         self.show_infos.append(info)
         self.infos.append(info)
+        self.func_nodes.append(item)
         self.extra_funcs.append(item)
         return info
+
+    def node_of(self, info: FuncInfo) -> Node:
+        k = 0
+        for f in self.infos:
+            if f.key == info.key and f.owner == info.owner and f.name == info.name:
+                return self.func_nodes[k]
+            k = k + 1
+        raise CompileError("internal compiler error: no definition for '" + info.name + "'", 0)
 
     def find(self, key: str, line: int) -> FuncInfo:
         for f in self.infos:
@@ -708,6 +719,21 @@ class TryInfo:
     loop_depth: int = 0
     state: str = 'body'       # 'body' while compiling the try body, then 'post'
 
+class GenCtx:
+    # one generator being compiled into a for loop: where the loop variable lives, the loop body, and the scope not currently in use
+    var: str = ''
+    ty: str = ''
+    body: list[Node] = []
+    end: str = ''
+    try_depth: int = 0
+    slots: dict[str, str] = {}
+    types: dict[str, str] = {}
+    narrowed: list[str] = []
+    ret: str = ''
+    owner: str = ''
+    in_init: bool = False
+    module: str = ''
+
 class Gen:
     # one function being compiled
     mod: Mod = Mod()
@@ -730,6 +756,8 @@ class Gen:
     owner: str = ''           # the class whose method is being compiled, or ''
     in_init: bool = False
     ret: str = ''
+    gens: list[GenCtx] = []   # the generators being compiled into for loops, innermost last (only the first gen_n count)
+    gen_n: int = 0
 
     def tmp(self, hint: str) -> str:
         self.n = self.n + 1
@@ -1461,6 +1489,65 @@ class Gen:
             self.release(v2)
         return ex(r, info.ret)
 
+    def marker_call(self, a: Ex, info: FuncInfo, args: list[Ex], line: int) -> Ex:
+        # run the method that a protocol marker (@len, @get, @slice, @contains, @reversed) names on the object a; a and the arguments are released
+        parts: list[str] = ['ptr ' + a.reg]
+        for b in args:
+            parts.append(llvm_type(b.ty) + ' ' + b.reg)
+        text = 'call ' + self.ret_llvm(info) + ' ' + self.dispatch(a, info.name) + '(' + ', '.join(parts) + ')'
+        result = ex('', '')
+        if info.ret == '':
+            self.emit(text)
+        else:
+            r = self.tmp('mark')
+            self.emit(r + ' = ' + text)
+            result = ex(r, info.ret)
+        values: list[Ex] = [a]
+        for b2 in args:
+            values.append(b2)
+        self.check_error(values)
+        for v in values:
+            self.release(v)
+        return result
+
+    def object_slice(self, s: Ex, n: Node) -> Ex:
+        # obj[a:b:c] on an object whose class has a method marked @slice(start, stop, step, flags): the flags say which of the three
+        # were written (1 start, 2 stop, 4 step), the numbers that were not written are 0
+        f = self.mod.find_op(s.ty[1:], 'slice')
+        if len(f) == 0 or len(f[0].ptypes) != 4 or f[0].ret == '':
+            raise CompileError("'" + s.ty[1:] + "' objects cannot be sliced\nadd a method marked @slice that takes start, stop, step and flags (four ints)", n.line)
+        flags = 0
+        lo = ex('1', 'int')
+        hi = ex('1', 'int')
+        step = ex('1', 'int')
+        if n.fields[1].tag == 'n':
+            lo = self.want(self.expr(val_node(n.fields[1])), 'int', n.line, 'a slice start')
+            flags = flags + 1
+        if n.fields[2].tag == 'n':
+            hi = self.want(self.expr(val_node(n.fields[2])), 'int', n.line, 'a slice end')
+            flags = flags + 2
+        if len(n.fields) > 3 and n.fields[3].tag == 'n':
+            step = self.want(self.expr(val_node(n.fields[3])), 'int', n.line, 'a slice step')
+            flags = flags + 4
+        return self.marker_call(s, f[0], [lo, hi, step, self.tag_small(str(flags))], n.line)
+
+    def list_call(self, args: list[Node], line: int) -> Ex:
+        # list(x): a new list of the items of a list, or of anything with a method marked @iter (a range, a progress bar, your own class)
+        if len(args) != 1:
+            raise CompileError('list() takes exactly one argument: a list or a range', line)
+        v = self.unwrap(self.expr(args[0]), line)
+        if is_class(v.ty) and len(self.mod.find_op(v.ty[1:], 'iter')) > 0:
+            return self.call_helper(self.mod.helper('tolist', v.ty, line), [v])
+        if is_list(v.ty) and not v.ty.startswith('tuple['):
+            rc = '0'
+            if is_rc(elem_of(v.ty)):
+                rc = '1'
+            r = self.tmp('copy')
+            self.emit(r + ' = call ptr @tomato_list_slice(ptr ' + v.reg + ', i64 0, i64 0, i64 1, i32 0, i32 ' + rc + ')')
+            self.release(v)
+            return ex(r, v.ty)
+        raise CompileError('list() takes a list or something that can be looped over (a range, or an object with an @iter method), but this is ' + shown(v.ty), line)
+
     def list_builtin(self, name: str, args: list[Node], line: int) -> Ex:
         # sorted, reversed, sum, min and max of a list
         lst = ex('', '')
@@ -1477,8 +1564,19 @@ class Gen:
             if len(args) != 1:
                 raise CompileError(name + '() takes one list', line)
             lst = self.unwrap(self.expr(args[0]), line)
+        if is_class(lst.ty):
+            if name == 'reversed':
+                rf = self.mod.find_op(lst.ty[1:], 'reversed')
+                if len(rf) > 0:
+                    return self.marker_call(lst, rf[0], [], line)
+            if len(self.mod.find_op(lst.ty[1:], 'iter')) == 0:
+                raise CompileError(name + '() takes a list or an object with a method marked @iter, but this is ' + shown(lst.ty), line)
+            if name == 'sorted' or name == 'reversed':
+                lst = self.call_helper(self.mod.helper('tolist', lst.ty, line), [lst])
+            else:
+                return self.call_helper(self.mod.helper(name, lst.ty, line), [lst])
         if not is_list(lst.ty):
-            raise CompileError(name + '() takes a list, but this is ' + shown(lst.ty), line)
+            raise CompileError(name + '() takes a list or a range, but this is ' + shown(lst.ty), line)
         elem = elem_of(lst.ty)
         if name == 'reversed':
             rc = '0'
@@ -1740,6 +1838,12 @@ class Gen:
             self.release(k)
             self.release(s)
             return e
+        if is_class(s.ty):
+            g = self.mod.find_op(s.ty[1:], 'get')
+            if len(g) == 0 or len(g[0].ptypes) != 1 or g[0].ret == '':
+                raise CompileError("'" + s.ty[1:] + "' objects cannot be indexed\nadd a method marked @get that takes the index and returns the item", n.line)
+            gi = self.want(self.expr(val_node(n.fields[1])), g[0].ptypes[0], n.line, 'an index')
+            return self.marker_call(s, g[0], [gi], n.line)
         if is_list(s.ty):
             li = self.expr(val_node(n.fields[1]))
             li = self.want(li, 'int', n.line, 'an index')
@@ -1777,8 +1881,10 @@ class Gen:
 
     def slice(self, n: Node) -> Ex:
         s = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
+        if is_class(s.ty):
+            return self.object_slice(s, n)
         if not (s.ty == 'str' or is_list(s.ty)):
-            raise CompileError('only text, lists and tuples can be sliced, but this is ' + shown(s.ty), n.line)
+            raise CompileError('only text, lists, tuples and ranges can be sliced, but this is ' + shown(s.ty), n.line)
         flags = 0
         lo = '0'
         hi = '0'
@@ -1810,6 +1916,12 @@ class Gen:
         return ex(r, s.ty)
 
     def membership(self, a: Ex, b: Ex, line: int) -> Ex:
+        if is_class(b.ty):
+            cf = self.mod.find_op(b.ty[1:], 'contains')
+            if len(cf) == 0 or len(cf[0].ptypes) != 1 or cf[0].ret != 'bool':
+                raise CompileError("'in' does not work with '" + b.ty[1:] + "' objects\nadd a method marked @contains that takes the value and returns bool", line)
+            a = self.want(a, cf[0].ptypes[0], line, 'the left side of in')
+            return self.marker_call(b, cf[0], [a], line)
         if b.ty == 'str':
             a = self.want(a, 'str', line, 'the left side of in')
             c = self.tmp('c')
@@ -2178,13 +2290,16 @@ class Gen:
         if key == '' and name in ['sorted', 'reversed', 'sum', 'min', 'max']:
             self.kw = []
             return self.list_builtin(name, args, n.line)
-        if key == '' and name == 'range':
-            # range used as a value is a list[int] built by a built-in helper (the `for` loop has its own fast path)
+        if name == 'range' and not (name in self.slots):
+            # range(...) is a value of the builtin class `range` (std/builtin.tom); range(a, b, c) is its constructor
             if len(args) < 1 or len(args) > 3 or len(n.fields[2].items) > 0:
                 raise CompileError('range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', n.line)
-            helper = self.mod.resolve('_range' + str(len(args)))
-            self.kw = []
-            return self.call_function(self.mod.find(helper, n.line), '@tomato.' + helper, ex('', ''), args, n.line)
+            if len(args) < 3:
+                helper = self.mod.resolve('_range' + str(len(args)))
+                self.kw = []
+                return self.call_function(self.mod.find(helper, n.line), '@tomato.' + helper, ex('', ''), args, n.line)
+        if key == '' and name == 'list':
+            return self.list_call(args, n.line)
         if key == '':
             raise CompileError(self.unknown_function(name), n.line)
         if self.mod.has_class(key):
@@ -2254,6 +2369,8 @@ class Gen:
         return ex(r, info.ret)
 
     def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
+        if info.is_gen:
+            raise CompileError("'" + info.name + "' is a generator (it uses yield), so it can only be used as what a for loop loops over\nwrite: for x in " + info.name + "(...):", line)
         # a function, or a method when `receiver` holds the object; the callee only borrows its arguments
         keywords = self.kw
         self.kw = []
@@ -2602,6 +2719,11 @@ class Gen:
         if len(args) != 1:
             raise CompileError('len() takes exactly one argument', line)
         v = self.expr(args[0])
+        if is_class(v.ty):
+            f = self.mod.find_op(v.ty[1:], 'len')
+            if len(f) == 0 or len(f[0].ptypes) != 0 or f[0].ret != 'int':
+                raise CompileError("'" + v.ty[1:] + "' objects have no length\nadd a method marked @len that takes no argument and returns int", line)
+            return self.marker_call(v, f[0], [], line)
         r = self.tmp('len')
         if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty):
             lenp = self.tmp('lenp')
@@ -2831,6 +2953,12 @@ class Gen:
             v = self.expr(val_node(s.fields[2]), ty)
             v = self.want(v, ty, s.line, 'the value')
             self.store_owned(self.slot(s.fields[0].text, ty, s.line), v)
+        elif k == 'Yield':
+            self.yield_stmt(s)
+        elif k == 'Return' and self.gen_n > 0:
+            if s.fields[0].tag != 'z':
+                raise CompileError("a generator cannot return a value\nuse yield to give out values", s.line)
+            self.br(self.gens[self.gen_n - 1].end)
         elif k == 'Return':
             if s.fields[0].tag == 'z':
                 if self.ret != '':
@@ -3072,7 +3200,19 @@ class Gen:
                 self.br(end)
             self.place(nxt)
         if s.fields[1].tag == 'l':
+            # `if x in T: ... else: ...` on a union of exactly two types: the else part knows x is the other one
+            other = ''
+            if len(s.fields[0].items) == 1 and len(target) > 0:
+                members = union_members(self.types[target[0]])
+                if len(members) == 2:
+                    other = members[0]
+                    if other == target[1]:
+                        other = members[1]
+            if other != '':
+                saved = self.enter_narrow(target[0], other)
             self.block(val_nodes(s.fields[1]))
+            if other != '':
+                self.leave_narrow(target[0], saved)
         if not self.terminated:
             self.br(end)
         self.place(end)
@@ -3093,8 +3233,191 @@ class Gen:
             self.br(head)
         self.place(end)
 
+    def gen_push(self, c: GenCtx):
+        if len(self.gens) > self.gen_n:
+            self.gens[self.gen_n] = c
+        else:
+            self.gens.append(c)
+        self.gen_n = self.gen_n + 1
+
+    def swap_scope(self, c: GenCtx):
+        # exchange the names in scope with those the context keeps: the caller's loop body and the generator's body each see their own variables
+        t1 = self.slots
+        self.slots = c.slots
+        c.slots = t1
+        t2 = self.types
+        self.types = c.types
+        c.types = t2
+        t3 = self.narrowed
+        self.narrowed = c.narrowed
+        c.narrowed = t3
+        t4 = self.ret
+        self.ret = c.ret
+        c.ret = t4
+        t5 = self.owner
+        self.owner = c.owner
+        c.owner = t5
+        t6 = self.in_init
+        self.in_init = c.in_init
+        c.in_init = t6
+        t7 = self.mod.cur
+        self.mod.cur = c.module
+        c.module = t7
+
+    def gen_args(self, info: FuncInfo, args: list[Node], line: int) -> list[Ex]:
+        if info.stars > 0:
+            raise CompileError("the generator '" + info.name + "' cannot take *args or **kwargs", line)
+        required = len(info.ptypes) - len(info.defaults)
+        if len(args) < required or len(args) > len(info.ptypes):
+            raise CompileError("'" + info.name + "' takes " + plural(len(info.ptypes), 'argument') + ', but ' + str(len(args)) + ' given', line)
+        vals: list[Ex] = []
+        k = 0
+        for a in args:
+            v = self.expr(a, info.ptypes[k])
+            vals.append(self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + " of '" + info.name + "'"))
+            k = k + 1
+        while k < len(info.ptypes):
+            v = self.expr(info.defaults[k - required], info.ptypes[k])
+            vals.append(self.want(v, info.ptypes[k], line, 'the default of argument ' + str(k + 1) + " of '" + info.name + "'"))
+            k = k + 1
+        return vals
+
+    def inline_gen(self, s: Node, info: FuncInfo, recv: Ex, vals: list[Ex], line: int):
+        # for x in <generator>: the generator's body is compiled right here, as part of the loop. Each `yield v` sets x to v and
+        # runs the loop body; `break` leaves the whole thing and `continue` goes on after the yield. Nothing is built up in memory.
+        if info.ret == '':
+            raise CompileError("the generator '" + info.name + "' must say what it yields\nadd -> Type to its def, such as -> int", line)
+        if self.gen_n >= 6:
+            raise CompileError("generators are nested too deeply here\na generator cannot loop over itself", line)
+        node = self.mod.node_of(info)
+        var = self.slot(s.fields[0].text, info.ret, s.line)
+        c = GenCtx()
+        c.var = var
+        c.ty = info.ret
+        c.body = val_nodes(s.fields[2])
+        c.end = self.label('endgen')
+        c.try_depth = self.try_depth
+        c.owner = info.owner
+        c.module = info.module
+        self.swap_scope(c)
+        self.gen_push(c)
+        k = 0
+        for p in val_nodes(node.fields[1]):
+            pname = p.fields[0].text
+            if pname == 'self' and info.owner != '':
+                self.store_owned(self.slot('self', '@' + info.owner, line), recv)
+            else:
+                self.store_owned(self.slot(pname, info.ptypes[k], line), vals[k])
+                k = k + 1
+        self.block(val_nodes(node.fields[3]))
+        if not self.terminated:
+            self.br(c.end)
+        self.place(c.end)
+        self.gen_n = self.gen_n - 1
+        self.swap_scope(c)
+
+    def yield_stmt(self, s: Node):
+        if self.gen_n == 0:
+            raise CompileError("'yield' can only be used in a generator, that is a function or method that a for loop loops over", s.line)
+        c = self.gens[self.gen_n - 1]
+        if self.try_depth != c.try_depth:
+            raise CompileError("'yield' cannot be used inside a try block", s.line)
+        v = self.expr(val_node(s.fields[0]), c.ty)
+        v = self.want(v, c.ty, s.line, 'the yielded value')
+        self.store_owned(c.var, v)
+        self.gen_n = self.gen_n - 1
+        self.swap_scope(c)
+        cont = self.label('afteryield')
+        self.push_loop(c.end, cont)
+        self.block(c.body)
+        self.loop_depth = self.loop_depth - 1
+        if not self.terminated:
+            self.br(cont)
+        self.place(cont)
+        self.swap_scope(c)
+        self.gen_push(c)
+
+    def gen_call(self, s: Node, it: Node) -> bool:
+        # for x in gen(args) and for x in obj.gen(args), where the function or method is a generator
+        if it.kind != 'Call' or len(it.fields[2].items) > 0:
+            return False
+        f = val_node(it.fields[0])
+        args = val_nodes(it.fields[1])
+        if f.kind == 'Name':
+            name = f.fields[0].text
+            if name in self.slots or name == 'range':
+                return False
+            key = self.mod.resolve(name)
+            if key == '' or self.mod.has_class(key):
+                return False
+            info = self.mod.find(key, s.line)
+            if not info.is_gen:
+                return False
+            self.inline_gen(s, info, ex('', ''), self.gen_args(info, args, s.line), s.line)
+            return True
+        if f.kind != 'Attr':
+            return False
+        name = f.fields[1].text
+        known = False
+        for fi in self.mod.infos:
+            if fi.name == name and fi.owner != '' and fi.is_gen:
+                known = True
+        target = val_node(f.fields[0])
+        if not known or (target.kind == 'Name' and not (target.fields[0].text in self.slots)):
+            return False
+        obj = self.unwrap(self.expr(target), s.line)
+        if not is_class(obj.ty) or len(self.mod.lookup_method(obj.ty[1:], name)) == 0 or not self.mod.lookup_method(obj.ty[1:], name)[0].is_gen:
+            self.release(obj)
+            return False
+        info = self.mod.lookup_method(obj.ty[1:], name)[0]
+        self.inline_gen(s, info, obj, self.gen_args(info, args, s.line), s.line)
+        return True
+
+    def for_text(self, s: Node, text: Ex):
+        # for ch in text: each character as a one-character text
+        holder = self.hidden_rc_slot('for.text')
+        self.store_owned(holder, text)
+        counter = self.hidden_slot('for.i')
+        self.emit('store i64 0, ptr ' + counter)
+        var = self.slot(s.fields[0].text, 'str', s.line)
+        head = self.label('eachchar')
+        body = self.label('eachcharbody')
+        step = self.label('eachcharstep')
+        end = self.label('endeachchar')
+        self.br(head)
+        self.place(head)
+        t = self.tmp('txt')
+        self.emit(t + ' = load ptr, ptr ' + holder)
+        i = self.tmp('i')
+        self.emit(i + ' = load i64, ptr ' + counter)
+        n = self.tmp('n')
+        self.emit(n + ' = call i64 @tomato_str_len(ptr ' + t + ')')
+        go = self.tmp('go')
+        self.emit(go + ' = icmp slt i64 ' + i + ', ' + n)
+        self.cond_br(go, body, end)
+        self.place(body)
+        ch = self.tmp('ch')
+        self.emit(ch + ' = call ptr @tomato_str_index(ptr ' + t + ', i64 ' + i + ')')
+        self.store_owned(var, ex(ch, 'str'))
+        self.push_loop(end, step)
+        self.block(val_nodes(s.fields[2]))
+        self.loop_depth = self.loop_depth - 1
+        if not self.terminated:
+            self.br(step)
+        self.place(step)
+        cur = self.tmp('cur')
+        self.emit(cur + ' = load i64, ptr ' + counter)
+        nxt = self.tmp('next')
+        self.emit(nxt + ' = add i64 ' + cur + ', 1')
+        self.emit('store i64 ' + nxt + ', ptr ' + counter)
+        self.br(head)
+        self.place(end)
+
     def for_each(self, s: Node, it: Node):
         lst = self.expr(it)
+        if is_class(lst.ty) and len(self.mod.find_op(lst.ty[1:], 'iter')) > 0:
+            self.inline_gen(s, self.mod.find_op(lst.ty[1:], 'iter')[0], lst, [], s.line)
+            return
         if is_set(lst.ty) or is_dict(lst.ty):
             # a loop over a set or dict walks a snapshot of its keys (P28)
             keys = 'list[' + set_elem(lst.ty) + ']'
@@ -3104,10 +3427,13 @@ class Gen:
             self.emit(snap + ' = call ptr @tomato_dict_keys(ptr ' + lst.reg + ', i64 ' + str(self.mod.code_of(keys)) + ', i64 8)')
             self.release(lst)
             lst = ex(snap, keys)
+        if lst.ty == 'str':
+            self.for_text(s, lst)
+            return
         if not is_list(lst.ty):
             if is_class(lst.ty):
-                raise CompileError("a for loop cannot loop over a '" + lst.ty[1:] + "' object\nloop over a list field of it instead, such as obj.items", s.line)
-            raise CompileError('a for loop can loop over a range(), a list, a tuple, a set or a dict, but this is ' + shown(lst.ty), s.line)
+                raise CompileError("a for loop cannot loop over a '" + lst.ty[1:] + "' object\ngive the class a method marked @iter that yields the items, or loop over a list field of it such as obj.items", s.line)
+            raise CompileError('a for loop can loop over a range(), a list, a tuple, a set, a dict, text or an object with an @iter method, but this is ' + shown(lst.ty), s.line)
         elem = elem_of(lst.ty)
         holder = self.hidden_rc_slot('for.list')
         self.store_owned(holder, lst)
@@ -3154,6 +3480,8 @@ class Gen:
 
     def for_stmt(self, s: Node):
         it = val_node(s.fields[1])
+        if self.gen_call(s, it):
+            return
         if not (it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'range'):
             self.for_each(s, it)
             return
@@ -3357,7 +3685,7 @@ def vtables(mod: Mod) -> str:
             entries = new_strs()
             for name in mod.slots:
                 found = mod.lookup_method(code[1:], name)
-                if len(found) > 0:
+                if len(found) > 0 and not found[0].is_gen:
                     entries.append('ptr ' + function_symbol(mod, found[0]))
                 else:
                     entries.append('ptr null')
@@ -3620,6 +3948,7 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info.key = key_of(mod.cur, info.name)
     if len(item.fields) > 6:
         info.is_private = item.fields[4].flag
+        info.is_gen = len(item.fields) > 7 and item.fields[7].flag
         info.is_override = item.fields[5].flag
         info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
         if item.fields[6].tag == 's' and item.fields[6].text != 'init' and is_operator_marker(item.fields[6].text):
@@ -3747,9 +4076,33 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
         raise CompileError('a list of ' + shown(et) + ' cannot be printed\nprint its items one by one instead', line)
     return 'str(' + e + ')'
 
+def iter_elem(mod: Mod, ty: str) -> str:
+    # what the @iter method of a class yields
+    return mod.find_op(ty[1:], 'iter')[0].ret
+
 def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     # the Tomato source of a helper function; parameters are written as int and given their real types by helper_types
     head = 'def ' + name + '(x: int) -> str:\n'
+    if is_class(ty):
+        et = iter_elem(mod, ty)
+        if kind == 'tolist':
+            return head + '    out: list[' + shown(et) + '] = []\n    for v in x:\n        out.append(v)\n    return out\n'
+        if not (et == 'int' or et == 'float' or (et == 'str' and kind != 'sum')):
+            wanted = ' or text'
+            if kind == 'sum':
+                wanted = ''
+            raise CompileError(kind + '() needs something that gives numbers' + wanted + ', but ' + shown(ty) + ' gives ' + shown(et), line)
+        zero = '0'
+        if et == 'float':
+            zero = '0.0'
+        if et == 'str':
+            zero = "''"
+        if kind == 'sum':
+            return head + '    total: ' + shown(et) + ' = ' + zero + '\n    for v in x:\n        total = total + v\n    return total\n'
+        better = '<'
+        if kind == 'max':
+            better = '>'
+        return head + '    first = True\n    best: ' + shown(et) + ' = ' + zero + '\n    for v in x:\n        if first or v ' + better + ' best:\n            best = v\n            first = False\n    if first:\n        raise RuntimeError(\'' + kind + '() of an empty sequence\')\n    return best\n'
     if kind == 'show':
         if is_dict(ty):
             body = "    out = '{'\n    first = True\n    for k in x:\n        if not first:\n            out = out + ', '\n        first = False\n"
@@ -3796,8 +4149,15 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
         return head + body
     raise CompileError('internal compiler error: no helper of kind ' + kind, line)
 
-def helper_types(info: FuncInfo, kind: str, ty: str):
+def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):
     # give the stub parameter its real type
+    if is_class(ty):
+        info.ptypes[0] = ty
+        if kind == 'tolist':
+            info.ret = 'list[' + iter_elem(mod, ty) + ']'
+        else:
+            info.ret = iter_elem(mod, ty)
+        return
     if kind == 'show':
         info.ptypes[0] = ty
         info.ret = 'str'
@@ -4010,12 +4370,14 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         if item.kind == 'FuncDef':
             info = function_info(item, mod, '')
             mod.infos.append(info)
+            mod.func_nodes.append(item)
             funcs.append(item)
         elif item.kind == 'ClassDef':
             c = mod.find_class(key_of(mods[k], item.fields[0].text), item.line)
             for m in val_nodes(item.fields[4]):
                 info = function_info(m, mod, c.name)
                 mod.infos.append(info)
+                mod.func_nodes.append(m)
                 funcs.append(m)
                 if m.fields[6].tag == 's' and m.fields[6].text == 'init':
                     c.init = info.name
@@ -4042,7 +4404,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     bodies = ''
     k = 0
     for f in funcs:
-        bodies = bodies + compile_function(f, mod, mod.infos[k]) + '\n'
+        if not mod.infos[k].is_gen:          # a generator is compiled where a for loop uses it
+            bodies = bodies + compile_function(f, mod, mod.infos[k]) + '\n'
         k = k + 1
     done = 0
     while done < len(mod.extra_funcs):

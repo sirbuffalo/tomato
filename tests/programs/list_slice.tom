@@ -1,6 +1,6 @@
 @main
 def main():
-    xs = range(1, 11)
+    xs = list(range(1, 11))
     print(xs[0:3])
     print(xs[3:])
     print(xs[:2])

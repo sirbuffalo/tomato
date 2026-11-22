@@ -1,0 +1,6 @@
+error: generators are nested too deeply here
+ --> tests/errors/generator_recursion.tom:2:5
+  |
+2 |     for x in forever(n):
+  |     ^^^^^^^^^^^^^^^^^^^^
+  = help: a generator cannot loop over itself

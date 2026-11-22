@@ -1,0 +1,6 @@
+error: a for loop cannot loop over a 'Box' object
+ --> tests/errors/loop_over_object.tom:6:14
+  |
+6 |     for x in Box():
+  |              ^^^
+  = help: give the class a method marked @iter that yields the items, or loop over a list field of it such as obj.items

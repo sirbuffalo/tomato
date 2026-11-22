@@ -75,6 +75,7 @@
       "patterns": [
         { "name": "keyword.control.flow.tomato", "match": "\\b(if|elif|else|while|for|return|break|continue|pass)\\b" },
         { "name": "keyword.control.exception.tomato", "match": "\\b(try|catch|finally|raise)\\b" },
+        { "name": "keyword.control.flow.tomato", "match": "\\b(yield)\\b" },
         { "name": "keyword.control.import.tomato", "match": "\\b(import|from|export|as)\\b" },
         { "name": "keyword.operator.logical.tomato", "match": "\\b(and|or|xor|not|in|is)\\b" },
         { "name": "storage.modifier.tomato", "match": "\\b(private|const|override)\\b" },

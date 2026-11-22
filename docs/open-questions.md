@@ -70,7 +70,7 @@ Last updated after D12bg. The question currently asked is marked **asking**.
 ## Syntax the (retired) Python prototype needed (see `docs/provisional.md`)
 
 46. Function and class header syntax, `if` and `while` forms, scoping, and local declaration. (`for name in x:` is settled by D18a.)
-46a. The iteration protocol: what makes a class iterable, and how `range` is defined as a class.
+46a. ~~The iteration protocol~~ is settled by D48a (`@iter` and `yield`); `range` is a class in `std/builtin.tom`. Open: iterators as values (a generator you store or pass), `yield` inside `try`, recursive generators, and a run-time choice of a subclass's `@iter`.
 46b. `range` forms and bounds, the loop variable's scope and type, `break` and `continue`, and loops over collections.
 47. Boolean operators, truthiness, comparison rules between types, and the `%` result type for fixed-width integers (P9; the sign rule is settled by D05au).
 48. String operations and syntax (D17c settles character units), whether a character means code point or grapheme, escapes, multi-line literals, float literals, `print` and other standard-library I/O.

@@ -1,0 +1,8 @@
+def forever(n: int) -> int:
+    for x in forever(n):
+        yield x
+
+@main
+def main():
+    for x in forever(3):
+        print(x)

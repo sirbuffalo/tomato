@@ -55,7 +55,7 @@ done
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
 jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
 if [ -x "$jsc" ]; then
-  for name in containers finally inheritance fixed_width text_and_maps modules numbers_rules; do
+  for name in containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol; do
     "$jsc" native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
@@ -116,7 +116,14 @@ check "repl: a misspelled name says so, with the line and a suggestion" "error: 
   | ^^^^
   = help: did you mean 'test'?" "$(printf 'def test(n: int) -> int:\n    return n\n\ntets\n:quit\n' | $t repl 2>&1)"
 check "repl: lists print like Python" "[2, 3, 5]
-[3, 4]" "$(printf 'primes = [2, 3, 5]\nprimes\nrange(1, 6)[2:4]\n:quit\n' | $t repl 2>&1)"
+[3, 4]" "$(printf 'primes = [2, 3, 5]\nprimes\nlist(range(1, 6))[2:4]\n:quit\n' | $t repl 2>&1)"
+check "repl: print(range(100)) shows start, stop and step" "range(0, 100, 1)
+range(1, 100, 1)
+range(0, 5, 1)" "$(printf 'print(range(100))\nx = range(1, 100)\nx\nrange(5)\n:quit\n' | $t repl 2>&1)"
+printf '@main\ndef main():\n    print(range(100))\n    print(range(1, 100))\n    print(range(5, 10, 2))\n' > "$work/rangeprint.tom"
+check "tomato run prints a range as range(start, stop, step)" "range(0, 100, 1)
+range(1, 100, 1)
+range(5, 10, 2)" "$($t run "$work/rangeprint.tom" 2>&1)"
 check "tomato run shows the same error text" "error: name 'tets' is not defined
  --> $work/typo.tom:3:11" "$($t run "$work/typo.tom" 2>&1 | head -2)"
 check "repl: == is a comparison, = is an assignment" "False

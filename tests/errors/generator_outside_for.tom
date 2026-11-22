@@ -1,0 +1,8 @@
+def squares(n: int) -> int:
+    for i in range(n):
+        yield i * i
+
+@main
+def main():
+    xs = squares(3)
+    print(xs)

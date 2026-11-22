@@ -1,0 +1,6 @@
+error: 'Box' objects have no length
+ --> tests/errors/object_without_len.tom:7:5
+  |
+7 |     print(len(b))
+  |     ^^^^^^^^^^^^^
+  = help: add a method marked @len that takes no argument and returns int
