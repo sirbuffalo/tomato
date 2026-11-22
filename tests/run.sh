@@ -352,7 +352,7 @@ if [ "$(uname)" = Darwin ] && command -v pkgbuild >/dev/null 2>&1; then   # the 
   else bad "pkg: builds and expands"; fi
 fi
 echo "== benchmarks (tiny inputs only; the real run is benchmarks/run.sh) =="
-r="$(sh benchmarks/run.sh --smoke 2>&1 | grep -v " done$" | tail -20)"; rc=$?; [ -n "${r##ok:*}" ] && rc=1
+r="$(sh benchmarks/run.sh --smoke 2>&1 | grep -v -e " done$" -e " built$" -e " runs$" | tail -20)"; rc=$?; [ -n "${r##ok:*}" ] && rc=1
 if [ $rc -eq 0 ]; then ok "benchmarks: the Tomato, Go, Rust and Python versions print the same"; else bad "benchmarks: the versions print the same" "$r"; fi
 cmp -s docs/provisional.md site/docs/PROVISIONAL.md && ok "site/docs/PROVISIONAL.md is in sync" || bad "site/docs/PROVISIONAL.md is in sync" "run site/build.sh"
 check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)"

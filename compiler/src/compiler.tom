@@ -5955,17 +5955,6 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     if kind == 'min' or kind == 'max':
         better = '>' if kind == 'max' else '<'
         return f"{head}    if len(x) == 0:\n        raise RuntimeError('{kind}() of an empty list')\n    best = x[0]\n    for v in x:\n        if v {better} best:\n            best = v\n    return best\n"
-    if kind == 'sorted':
-        t = shown(elem_of(ty))
-        body = f'    a: list[{t}] = []\n    b: list[{t}] = []\n    for v in x:\n        a.append(v)\n        b.append(v)\n'
-        body += '    n = len(a)\n    width = 1\n    while width < n:\n        i = 0\n        while i < n:\n'
-        body += '            mid = i + width\n            if mid > n:\n                mid = n\n            hi = i + 2 * width\n            if hi > n:\n                hi = n\n'
-        body += '            left = i\n            right = mid\n            k = i\n            while left < mid and right < hi:\n'
-        body += '                if a[right] < a[left]:\n                    b[k] = a[right]\n                    right = right + 1\n                else:\n                    b[k] = a[left]\n                    left = left + 1\n                k = k + 1\n'
-        body += '            while left < mid:\n                b[k] = a[left]\n                left = left + 1\n                k = k + 1\n'
-        body += '            while right < hi:\n                b[k] = a[right]\n                right = right + 1\n                k = k + 1\n'
-        body += '            i = i + 2 * width\n        j = 0\n        while j < n:\n            a[j] = b[j]\n            j = j + 1\n        width = width * 2\n    return a\n'
-        return head + body
     raise CompileError(f'internal compiler error: no helper of kind {kind}', line)
 
 def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):
@@ -5980,9 +5969,6 @@ def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):
     if kind == 'show':
         info.ptypes[0] = ty
         info.ret = 'str'
-    elif kind == 'sorted':
-        info.ptypes[0] = ty
-        info.ret = ty
     else:
         info.ptypes[0] = ty
         info.ret = elem_of(ty)
