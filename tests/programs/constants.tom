@@ -1,0 +1,21 @@
+from math import pi, tau, e
+
+const rate = 0.5
+const limit = 10
+const label = 'total'
+const debug = False
+const floor = -3
+
+def scaled(x: float) -> float:
+    return x * rate
+
+@main
+def main():
+    print(rate, limit, label, debug, floor)
+    print(scaled(5.0), limit * 2, label + '!', not debug, floor - 1)
+    print(pi, tau, e, tau == 2 * pi)
+    rate2 = rate + rate
+    print(rate2)
+    # a local variable of the same name hides the constant
+    limit = 99
+    print(limit)

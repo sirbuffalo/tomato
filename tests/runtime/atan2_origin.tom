@@ -1,0 +1,5 @@
+from math import atan2
+
+@main
+def main():
+    print(atan2(0, 0))

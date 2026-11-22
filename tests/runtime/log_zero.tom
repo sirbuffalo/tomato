@@ -1,0 +1,5 @@
+from math import log
+
+@main
+def main():
+    print(log(0))

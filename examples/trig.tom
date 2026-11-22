@@ -1,0 +1,35 @@
+# Angles and trigonometry. An Angle knows its unit, so sin() can never be handed degrees by mistake.
+from math import Angle, deg, rad, turn, grad, sin, cos, tan, atan2, hypot, sqrt, pi
+
+def round3(x: float) -> float:
+    return int(x * 1000 + 0.5) / 1000
+
+def heading(dx: float, dy: float) -> Angle:
+    # the direction of (dx, dy), measured from the x axis; atan2 takes y first and works out the quadrant
+    return atan2(dy, dx)
+
+@main
+def main():
+    # four ways to make an angle, each printing in its own unit
+    a = deg(90)
+    print(a, rad(1.5), turn(0.25), grad(100))
+    # the same right angle in every unit
+    print(a.deg(), a.rad(), a.turn(), a.grad())
+    print(a == turn(0.25), a == grad(100), deg(45) < rad(1))
+    # arithmetic keeps the unit on the left
+    print(deg(90) + deg(45), deg(90) + turn(0.25), deg(30) * 3, deg(90) / 4)
+    # trigonometry takes an Angle; the exact quarter turns are exact
+    print(sin(deg(90)), cos(deg(90)), cos(deg(180)))
+    print(round3(sin(deg(30))), round3(cos(deg(60))), round3(tan(deg(45))))
+    # going back: asin, acos, atan and atan2 give an Angle
+    print(atan2(1, 1), atan2(1, 1).deg())
+    print(heading(-3.0, 3.0).deg(), heading(3.0, -3.0).deg())
+    # angles wrap round
+    print(deg(370).normalized(), deg(270).signed(), turn(2.25).normalized())
+    # a point on a circle of radius 5, 30 degrees round from the x axis
+    r = 5.0
+    t = deg(30)
+    x = r * cos(t)
+    y = r * sin(t)
+    print(round3(x), round3(y), round3(hypot(x, y)), round3(sqrt(x * x + y * y)))
+    print(round3(rad(pi).deg()))

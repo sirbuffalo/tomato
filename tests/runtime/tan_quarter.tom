@@ -1,0 +1,5 @@
+from math import deg, tan
+
+@main
+def main():
+    print(tan(deg(90)))

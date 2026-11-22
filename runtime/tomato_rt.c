@@ -1445,3 +1445,41 @@ int64_t tomato_f64_to_int(double d) {
 /* the compiler writes text constants byte by byte (D17a-b: text is UTF-8) */
 int64_t tomato_str_nbytes(void *s) { return ((Str *)s)->bytes; }
 int64_t tomato_str_byte(void *s, int64_t i) { return (unsigned char)((Str *)s)->data[i]; }
+
+/* ---- libm for the standard library's math module (std/math.tom). One entry point per arity keeps the list the
+ * browser build must export short; std/math.tom checks every domain first, so these never see a value libm rejects.
+ * The WASI C library has libm, so the same code serves the WebAssembly build. */
+double tomato_math1(int64_t op, double x) {
+    switch (op) {
+    case 0: return sqrt(x);
+    case 1: return exp(x);
+    case 2: return log(x);
+    case 3: return log2(x);
+    case 4: return log10(x);
+    case 5: return sin(x);
+    case 6: return cos(x);
+    case 7: return tan(x);
+    case 8: return asin(x);
+    case 9: return acos(x);
+    case 10: return atan(x);
+    case 11: return sinh(x);
+    case 12: return cosh(x);
+    case 13: return tanh(x);
+    case 14: return asinh(x);
+    case 15: return acosh(x);
+    case 16: return atanh(x);
+    case 17: return expm1(x);
+    case 18: return log1p(x);
+    case 19: return cbrt(x);
+    }
+    return 0;
+}
+double tomato_math2(int64_t op, double x, double y) {
+    switch (op) {
+    case 0: return atan2(y, x);
+    case 1: return hypot(x, y);
+    }
+    return 0;
+}
+/* 1 when x is neither infinite nor not-a-number */
+int64_t tomato_is_finite(double x) { return isfinite(x) ? 1 : 0; }

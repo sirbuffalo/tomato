@@ -1,0 +1,5 @@
+from math import exp
+
+@main
+def main():
+    print(exp(1000))

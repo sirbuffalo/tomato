@@ -1,0 +1,5 @@
+from math import log_base
+
+@main
+def main():
+    print(log_base(8, 0))

@@ -193,6 +193,9 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 165. D45a is accepted (reading to confirm): the website runs the compiler written in Tomato and the runtime as WebAssembly in the visitor's browser, with an IR interpreter in JavaScript; no server and no Python.
 166. D47a is accepted (reading to confirm): there is no top-level code in program files, only in the repl; this replaces the top-level-code rule of D42a.
 167. D48a is accepted: a method marked `@iter`, written with `yield`, makes a class iterable by `for`; generator functions work in `for` too (the body is compiled into the loop); the markers `@len`, `@get`, `@slice`, `@contains`, `@reversed` give `len`, indexing, slicing, `in` and `reversed`; `range` is a class written in Tomato that prints as `range(start, stop, step)`; `progress_bar` is iterable.
+168. D49a is accepted: `Angle` is a base class in `math` with `Degrees`, `Radians`, `Turns` and `Gradians` subclasses made by `deg`, `rad`, `turn`, `grad`; `sin`, `cos` and `tan` take an `Angle`, `asin`, `acos`, `atan` and `atan2` return one, and each angle prints in its own unit.
+169. D49b is accepted: `const name = literal` (and `export const`) declares a module constant, inlined where used; `math` has `pi`, `tau` and `e`.
+170. D49c is accepted: `math` also has `sqrt`, `cbrt`, `hypot`, `exp`, `log`, the hyperbolic functions and their inverses, calling libm through the runtime (native and WebAssembly); values libm cannot answer are plain-worded `RuntimeError`s.
 167. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass

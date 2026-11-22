@@ -1,0 +1,63 @@
+from math import Angle, deg, rad, turn, grad, degrees, radians, sin, cos, tan, asin, acos, atan, atan2
+from math import sinh, cosh, tanh, asinh, acosh, atanh, hypot, sqrt, cbrt, exp, log, log_base, log2, log10, pi, tau, e
+
+# libm may differ in the last digit between systems, so inexact results are compared with a tolerance of 1e-9
+def near(a: float, b: float) -> bool:
+    d = a - b
+    if d < 0.0:
+        d = 0.0 - d
+    return d < 0.000000001
+
+@main
+def main():
+    # making angles; each prints in its own unit
+    print(deg(90), rad(1.5), turn(0.25), grad(100), deg(-12.5))
+    print(degrees(45), radians(2), a_list())
+    # converting out to floats
+    print(deg(90).rad() == pi / 2, deg(180).turn(), deg(90).grad(), turn(1).deg(), grad(50).deg(), rad(pi).deg())
+    print(turn(0.25).deg(), rad(tau).turn(), deg(30).deg(), rad(0.5).rad())
+    # other units: the same angle, a different unit
+    print(deg(90).to_turn(), turn(0.5).to_deg(), turn(0.5).to_rad(), deg(45).to_grad())
+    # arithmetic keeps the unit of the left side
+    print(deg(90) + deg(45), deg(90) + turn(0.25), rad(1) + deg(0), deg(90) - turn(0.5), deg(30) * 3, deg(30) * 0.5, deg(90) / 4)
+    # comparing is by size, whatever the unit
+    print(deg(180) == turn(0.5), deg(180) == rad(pi), deg(90) < deg(91), deg(90) < turn(0.2), turn(0.25) >= deg(90), deg(1) > rad(1), deg(5) != deg(5), deg(90) <= grad(100))
+    # normalising
+    print(deg(370).normalized(), deg(-10).normalized(), deg(720).normalized(), turn(2.25).normalized(), grad(-50).normalized())
+    print(deg(270).signed(), deg(180).signed(), deg(-180).signed(), deg(190).signed(), turn(1.75).signed(), deg(-90).abs(), deg(30).negated())
+    print(deg(359).is_close(deg(-1).normalized(), deg(0.001)), deg(10).is_close(deg(11), deg(0.5)))
+    # sin, cos and tan: exact at the quarter turns
+    print(sin(deg(0)), sin(deg(90)), sin(deg(180)), sin(deg(270)), sin(deg(360)), sin(deg(-90)), sin(turn(1000.25)))
+    print(cos(deg(0)), cos(deg(90)), cos(deg(180)), cos(deg(270)), cos(deg(360)), cos(grad(100)), cos(turn(-0.5)))
+    print(tan(deg(0)), tan(deg(180)), tan(turn(1)), tan(deg(360)))
+    print(near(sin(deg(30)), 0.5), near(cos(deg(60)), 0.5), near(tan(deg(45)), 1.0), near(sin(deg(45)), cos(deg(45))), near(sin(deg(150)), 0.5), near(sin(deg(210)), -0.5))
+    print(near(tan(deg(135)), -1.0), near(tan(deg(-45)), -1.0), near(tan(deg(225)), 1.0), near(cos(deg(120)), -0.5), near(sin(rad(pi / 6)), 0.5), near(sin(grad(50)), sin(deg(45))))
+    print(near(sin(deg(1000000)), sin(deg(1000000 % 360))), near(sin(rad(0.5)) ** 2 + cos(rad(0.5)) ** 2, 1.0))
+    print(deg(-1e-20).normalized(), deg(-1e-20).signed())
+    # the inverses give an Angle
+    print(near(asin(0.5).deg(), 30.0), near(acos(0.5).deg(), 60.0), near(atan(1).deg(), 45.0), near(atan(-1).deg(), -45.0), asin(1).deg() == 90.0, asin(0).deg(), acos(1).deg(), acos(-1).deg())
+    print(near(asin(0.5).rad(), 0.5235987756), acos(0), atan(1))
+    # atan2 knows the quadrant (the y value comes first)
+    print(atan2(1, 1).deg(), atan2(1, -1).deg(), atan2(-1, -1).deg(), atan2(-1, 1).deg())
+    print(atan2(0, 1).deg(), atan2(1, 0).deg(), atan2(0, -1).deg(), atan2(-1, 0).deg(), atan2(0.0, -1.0) == rad(pi))
+    print(near(atan2(4, 3).deg(), 53.130102354), atan2(5, 5) == atan2(1, 1), atan2(-0.5, 2) < deg(0))
+    print(near(atan2(sin(deg(100)), cos(deg(100))).deg(), 100.0), near(atan2(sin(deg(-100)), cos(deg(-100))).deg(), -100.0))
+    # roots, powers and logarithms
+    print(sqrt(2) == sqrt(2.0), sqrt(0), sqrt(16), sqrt(2.25), hypot(3, 4), hypot(5, 12), hypot(-3, 4), hypot(0, 0), cbrt(27), cbrt(-8))
+    print(exp(0), near(exp(1), e), near(exp(-1), 1.0 / e), log(1), near(log(e), 1.0), near(log_base(100, 10), 2.0), log2(8), log10(1000), near(log_base(8, 2), 3.0), near(log(2.5), 0.91629073187))
+    # hyperbolic functions take and give plain numbers
+    print(sinh(0), cosh(0), tanh(0), asinh(0), acosh(1), atanh(0))
+    print(near(sinh(1), 1.1752011936), near(cosh(1), 1.5430806348), near(tanh(1), 0.7615941559), near(asinh(sinh(0.7)), 0.7), near(acosh(cosh(2)), 2.0), near(atanh(tanh(0.3)), 0.3))
+    print(near(cosh(0.8) ** 2 - sinh(0.8) ** 2, 1.0), tanh(100) == 1.0, tanh(-100) == -1.0)
+    # the constants
+    print(pi, tau, e, tau == 2 * pi, near(pi * pi, 9.8696044011))
+    # an Angle in a list, and sorted by size
+    angles = [deg(90), rad(1), turn(0.1), grad(50)]
+    best = angles[0]
+    for a in angles:
+        if a < best:
+            best = a
+    print(best, angles)
+
+def a_list() -> list[Angle]:
+    return [deg(1), rad(2)]

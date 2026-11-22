@@ -1,0 +1,30 @@
+90 deg 1.5 rad 0.25 turn 100 grad -12.5 deg
+45 deg 2 rad [1 deg, 2 rad]
+True 0.5 100.0 360.0 45.0 180.0
+90.0 1.0 30.0 0.5
+0.25 turn 180 deg 3.141592653589793 rad 50 grad
+135 deg 180 deg 1 rad -90 deg 90 deg 15 deg 22.5 deg
+True True True False True False False True
+10 deg 350 deg 0 deg 0.25 turn 350 grad
+-90 deg 180 deg 180 deg -170 deg -0.25 turn 90 deg -30 deg
+True False
+0.0 1.0 0.0 -1.0 0.0 -1.0 1.0
+1.0 0.0 -1.0 0.0 1.0 0.0 -1.0
+0.0 0.0 0.0 0.0
+True True True True True True
+True True True True True True
+True True
+0 deg 0 deg
+True True True True True 0.0 0.0 180.0
+True 1.5707963267948966 rad 0.7853981633974483 rad
+45.0 135.0 -135.0 -45.0
+0.0 90.0 180.0 -90.0 True
+True True True
+True True
+True 0.0 4.0 1.5 5.0 13.0 5.0 0.0 3.0 -2.0
+1.0 True True 0.0 True True 3.0 3.0 True True
+0.0 1.0 0.0 0.0 0.0 0.0
+True True True True True True
+True True True
+3.141592653589793 6.283185307179586 2.718281828459045 True True
+0.1 turn [90 deg, 1 rad, 0.1 turn, 50 grad]

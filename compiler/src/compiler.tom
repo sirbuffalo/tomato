@@ -327,6 +327,8 @@ class Mod:
     strings: list[str] = []
     infos: list[FuncInfo] = []
     llvm_decls: list[FuncInfo] = []    # the `!name(...)` functions the program declares (D27a)
+    const_keys: list[str] = []    # module constants (export const pi = 3.14): the program-wide name and the literal each stands for
+    const_nodes: list[Node] = []
     decls: list[str] = []         # extra declarations (the overflow intrinsics the program uses)
     codes: list[str] = []         # the heap types the program uses; a type's code is 2 plus its place here
     classes: list[ClassInfo] = []
@@ -1403,6 +1405,12 @@ class Gen:
             if name == 'None' and not (name in self.slots):
                 return ex('null', 'None')
             if not (name in self.slots):
+                ck = self.mod.resolve(name)
+                kk = 0
+                for cname in self.mod.const_keys:
+                    if cname == ck:
+                        return self.expr(self.mod.const_nodes[kk], expected)
+                    kk = kk + 1
                 raise CompileError("name '" + name + "' is not defined" + self.name_hint(name), n.line)
             ty = self.types[name]
             r = self.tmp('l')
@@ -4284,7 +4292,7 @@ def build_scopes(mod: Mod, items: list[Node], mods: list[str], imports: list[Imp
     # every module sees its own declarations, the built-ins, and what it imports (D24c)
     k = 0
     for item in items:
-        if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef':
+        if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'ConstDef':
             name = item.fields[0].text
             mod.declare_name(mods[k], name, key_of(mods[k], name), item.exported, item.line)
         k = k + 1
@@ -4383,6 +4391,14 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
                     c.init = info.name
         elif item.kind == 'InterfaceDef' or item.kind == 'Implements':
             pass
+        elif item.kind == 'ConstDef':
+            cv = val_node(item.fields[1])
+            if cv.kind == 'UnOp' and cv.fields[0].text == '-':
+                cv = val_node(cv.fields[1])
+            if not (cv.kind == 'IntLit' or cv.kind == 'FloatLit' or cv.kind == 'StrLit' or cv.kind == 'BoolLit'):
+                raise CompileError("the constant '" + item.fields[0].text + "' must be a number, text or True or False written out\na constant is not code: write its value as a literal, such as 3.14", item.line)
+            mod.const_keys.append(key_of(mods[k], item.fields[0].text))
+            mod.const_nodes.append(val_node(item.fields[1]))
         elif item.kind == 'LlvmDecl':
             decl = function_info(item, mod, '')
             for pt in decl.ptypes:

@@ -1227,6 +1227,31 @@ Source: Davis's Dashboard message:
 - `progress_bar` takes a list or a range and is itself iterable: `for x in progress_bar(items):` draws after each step and ends the line when the loop is done.
 - Before: `range(...)` outside a `for` was an eager list (`print(range(5))` showed `[0, 1, 2, 3, 4]`, `len(range(10**9))` built a billion items). After: it is a `range` value, and a `list[int]` parameter no longer accepts a range (call `list(...)`).
 
+### D49a — angles are a class, `Angle`, with a subclass per unit: accepted
+
+- Evidence: Davis asked for sin, cos, tan and their inverses with the remark “angle is a thing and it can be any different formats”, then decided the spelling: `sin(deg(30))`, with `deg`, `rad`, `turn` and `grad` making angles, inverses returning an angle, and `a.deg()` / `a.rad()` converting out to floats. He then asked for a common base for all the units, and asked whether it would be a class or an interface.
+- `Angle` is a base class in `std/math.tom`; `Degrees`, `Radians`, `Turns` and `Gradians` inherit from it. `deg(x)`, `rad(x)`, `turn(x)`, `grad(x)` build them (`degrees`, `radians`, `turns`, `gradians` are longer spellings of the same). Each takes an `int` or a `float`.
+- Class, not interface: every method is the same for every unit, so it is written once on the base and a unit only overrides `per_turn()` (how many of itself make a full turn: 360, 2π, 1, 400), `unit()` (the printed name) and `like(v)` (a new angle of the same unit); each also overrides its own getter, so `deg(90).deg()` is exactly 90 and `rad(1.5).rad()` is exactly 1.5. The language has no abstract methods, so the base versions of `per_turn()` and `like()` raise “Angle is a base class”. Chosen over an interface (the four units would repeat all the logic) and over storing one canonical unit (then `deg(30)` would print as radians, and round trips would add rounding error).
+- Methods, all returning plain floats unless noted: `turn()`, `rad()`, `deg()`, `grad()`; `to_turn()`, `to_rad()`, `to_deg()`, `to_grad()` give an `Angle` in that unit; `normalized()` (0 up to a full turn), `signed()` (−half turn up to and including half a turn), `negated()`, `abs()`, `is_close(other, tolerance)`. Operators: `a + b` and `a - b` (the result keeps the unit of `a`), `a * number`, `a / number`, and `== < <= > >=`, which compare by size whatever the unit (`deg(180) == turn(0.5)`). There is no unary minus on classes in v0.x, so negate with `a.negated()` or `a * -1`.
+- Printing: each angle prints in its own unit, with a whole number written without `.0`: `90 deg`, `1.5 rad`, `0.25 turn`, `100 grad`.
+- `sin`, `cos`, `tan` take only an `Angle`: `sin(1.0)` is a compile error (“argument 1 of 'sin' has type float, but math.Angle is expected”), which is the point of the type. `asin`, `acos`, `atan` and `atan2(y, x)` return an `Angle` in radians (`atan2` takes y first, and is an error at (0, 0)).
+- Accuracy: the trig functions first reduce the angle to the nearest quarter turn in turns, so `sin(deg(90))` is exactly 1.0, `sin(deg(180))` is 0.0 and `cos(deg(90))` is 0.0; other results are libm's to within about 1 unit in the last place (`sin(deg(30))` is 0.49999999999999994), so tests compare them with a tolerance of 1e-9. `tan` at 90 or 270 degrees is an error (“tan is not defined at 90 deg”), not a huge number.
+- Open: unary minus and `float * Angle` (a number on the left) need operator support the language does not have yet; angle ranges and units beyond these four.
+
+### D49b — module constants: `const name = literal`, `export const` to share: accepted
+
+- Evidence: Davis asked for `pi`, `tau` and `e`; programs have no top-level code (D47a), so a constant had to be something that is not code.
+- `const name = 3.14` at the top level (and `export const`) declares a constant whose value is a number, text or `True`/`False` written out; the compiler puts the literal in wherever the name is used, so a constant has no memory and no start-up cost. `from math import pi, tau, e` imports them like any name. A local variable of the same name hides the constant. Anything but a literal is a compile error (“a constant is not code: write its value as a literal”).
+- Float literals in the compiler are limited to what it reads exactly, so `pi`, `tau` and `e` are written with 16 digits: they are the nearest floats to the true values.
+- Open: constants computed from other constants, and constants of class type.
+
+### D49c — math functions, how libm is reached, and domain errors: accepted
+
+- Evidence: Davis asked for sinh, cosh, tanh and inverses, hypot, sqrt, exp, log, pi, tau and e “if missing”, and to check libm and WebAssembly.
+- `std/math.tom` adds `sqrt`, `cbrt`, `hypot`, `exp`, `expm1`, `log` (natural) and `log_base(x, base)`, `log2`, `log10`, `log1p`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`. They take an `int` or a `float` and return a `float`; the hyperbolic functions take plain numbers, not angles. They call libm through two small C functions in the runtime (`tomato_math1`, `tomato_math2`, reached with D27b's `!` declarations), so there is no new compiler mechanism. The WebAssembly build links the WASI C library, which includes libm, and the browser interpreter already calls any `tomato_*` function the runtime exports, so the same functions run in the browser with no extra work and no limits.
+- A value libm cannot answer is a `RuntimeError` written in plain words, checked before the call: `sqrt` of a negative number, `log` of zero or less, `asin`/`acos` outside −1 to 1, `acosh` below 1, `atanh` at or beyond ±1, `atan2(0, 0)`, `tan` at a quarter turn; an overflowing result (`exp(1000)`) is “too large to be a float”. This follows D41a (a float result that is infinite or not a number is an error). Chosen over returning infinity or NaN, which Tomato does not allow as float values.
+- The integer-only helpers `abs`, `min`, `max` and `pow` already in `math` are unchanged.
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.

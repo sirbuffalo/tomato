@@ -55,7 +55,7 @@ done
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
 jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
 if [ -x "$jsc" ]; then
-  for name in containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol; do
+  for name in angles containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol; do
     "$jsc" native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
@@ -69,12 +69,16 @@ got: $m";; esac; }
   wasm_neg fixed_range "300 does not fit in uint[length=8]"
   wasm_neg private_field "the field 'x' is private to class 'C'"
   wasm_neg bad_return "the returned value has type str, but int is expected"
+  wasm_neg trig_needs_angle "argument 1 of 'sin' has type float, but math.Angle is expected"
   wasm_rt divide_by_zero "division by zero" 1
   wasm_rt index "index out of range" 1
   wasm_rt overflow "integer overflow" 1
   wasm_rt dict_missing_key "the key is not there" 1
   wasm_rt caught "caught boom" 0
   wasm_rt stack_overflow "stack overflow" 1
+  wasm_rt tan_quarter "tan is not defined at 90 deg" 1
+  wasm_rt caught_domain "caught sqrt needs a number that is not negative" 0
+  wasm_rt exp_overflow "exp(1000) is too large to be a float" 1
 else [ -n "$CI" ] && bad "wasm path" "jsc is required in CI (macOS runner)" || echo "skip: jsc is not available on this system"; fi
 
 echo "== command line =="
@@ -167,6 +171,7 @@ neg private_field "the field 'x' is private to class 'C'"
 neg const_field "the const field 'x' cannot be changed after the object is created"
 neg bad_argument "argument 1 of 'f' has type str, but int is expected"
 neg bad_return "the returned value has type str, but int is expected"
+neg trig_needs_angle "argument 1 of 'sin' has type float, but math.Angle is expected"
 neg dead_range_literal "300 does not fit in uint[length=8]"
 neg wrong_type_in_branch "the assigned value has type str, but int is expected"
 neg bad_assign "the assigned value has type str, but int is expected"
@@ -205,6 +210,15 @@ rt progress_bar_live "live: 100%|####| 2/2" 0
 rt float_overflow "infinite or not a number" 1
 rt negative_exponent "a negative exponent needs a float" 1
 rt stack_overflow "stack overflow" 1
+rt tan_quarter "tan is not defined at 90 deg" 1
+rt sqrt_negative "sqrt needs a number that is not negative, but got -4.0" 1
+rt asin_domain "asin needs a number from -1 to 1, but got 1.5" 1
+rt atan2_origin "atan2(0, 0) has no angle" 1
+rt exp_overflow "exp(1000) is too large to be a float" 1
+rt log_zero "log needs a positive number, but got 0.0" 1
+rt log_base_zero "a logarithm base must be positive and not 1, but got 0.0" 1
+rt caught_domain "caught sqrt needs a number that is not negative" 0
+rt angle_base "Angle is a base class" 1
 
 
 echo "== known gaps (decided behavior the compiler does not have yet) =="

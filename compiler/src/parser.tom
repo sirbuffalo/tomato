@@ -279,10 +279,17 @@ export class Parser:
                 ret = vn(self.type())
             self.expect('NEWLINE')
             return mk('LlvmDecl', t.line, [vs(nm.text), vnodes(params), ret])
+        if self.is_kw('const'):
+            self.adv()
+            cn = self.expect('NAME')
+            self.expect_op('=')
+            cv = self.expr()
+            self.expect('NEWLINE')
+            return mk('ConstDef', t.line, [vs(cn.text), vn(cv)])
         if self.is_kw('export'):
             self.adv()
-            if not (self.is_kw('def') or self.is_kw('class') or self.is_kw('interface') or self.is_op('@')):
-                self.err('expected a function, class or interface after export')
+            if not (self.is_kw('def') or self.is_kw('class') or self.is_kw('interface') or self.is_kw('const') or self.is_op('@')):
+                self.err('expected a function, class, interface or constant after export')
             d = self.top_item()
             d.exported = True
             return d

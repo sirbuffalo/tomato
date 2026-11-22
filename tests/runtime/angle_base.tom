@@ -1,0 +1,5 @@
+from math import Angle, sin
+
+@main
+def main():
+    print(sin(Angle(1.0)))

@@ -1,0 +1,5 @@
+from math import sin
+
+@main
+def main():
+    print(sin(1.0))

@@ -1,0 +1,8 @@
+from math import sqrt
+
+@main
+def main():
+    try:
+        print(sqrt(-1))
+    catch RuntimeError as err:
+        print('caught', err.message)

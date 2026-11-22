@@ -177,3 +177,417 @@ export def lcm(a: int, b: int) -> int:
     if a == 0 or b == 0:
         return 0
     return abs(a) // gcd(a, b) * abs(b)
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Angles, trigonometry and the other real-number functions (D49a-c). Import what you use:
+#
+#     from math import deg, rad, sin, cos, atan2, sqrt, hypot
+#     print(sin(deg(30)))              # 0.5
+#     print(atan2(1, 1))               # 0.7853981633974483 rad
+#     print(atan2(1, 1).deg())         # 45.0
+#
+# An Angle is a value of its own, not a bare float: it knows its unit, so there is no way to hand sin() degrees by mistake.
+# Angle is a base class; Degrees, Radians, Turns and Gradians are the four units, made by deg(), rad(), turn() and grad()
+# (longer spellings degrees(), radians(), turns() and gradians() do the same). Every method below is written once on Angle;
+# a unit only says how many of itself make a full turn. Printing, + - * / and the result of a method keep the unit.
+
+# libm, reached through the C runtime (the same code runs natively and in the browser)
+!tomato_math1(op: int, x: float) -> float
+!tomato_math2(op: int, x: float, y: float) -> float
+!tomato_is_finite(x: float) -> int
+
+def _f(x: int | float) -> float:
+    if x in int:
+        return float(x)
+    if x in float:
+        return x
+    return 0.0
+
+def _fmt(x: float) -> str:
+    s = str(x)
+    if len(s) > 2 and s[len(s) - 2:] == '.0':
+        return s[:len(s) - 2]
+    return s
+
+# a libm call whose answer must be an ordinary number: infinity (an overflow) is reported instead of passed along
+def _call1(op: int, x: float, what: str) -> float:
+    r = !tomato_math1(op, x)
+    if !tomato_is_finite(r) == 0:
+        raise RuntimeError(what + ' is too large to be a float')
+    return r
+
+# constants, not functions: write pi, not pi(). (Literals here have at most 16 digits, so these are the nearest floats to the true values.)
+export const pi = 3.141592653589793
+export const tau = 6.283185307179586
+export const e = 2.718281828459045
+
+export class Angle:
+    value: float = 0.0
+
+    @init
+    def make(self, value: float):
+        self.value = value
+
+    # how many of this unit make a full turn: 360 for degrees, 6.283185307179586 for radians, 1 for turns, 400 for gradians
+    def per_turn(self) -> float:
+        raise RuntimeError('Angle is a base class: make an angle with deg(), rad(), turn() or grad()')
+
+    # the unit's short name, as printed after the number
+    def unit(self) -> str:
+        return ''
+
+    # a new angle in the same unit as this one, holding v
+    def like(self, v: float) -> Angle:
+        raise RuntimeError('Angle is a base class: make an angle with deg(), rad(), turn() or grad()')
+
+    # the angle as a plain float in each unit
+    def turn(self) -> float:
+        return self.value / self.per_turn()
+
+    def rad(self) -> float:
+        return self.turn() * 6.283185307179586
+
+    def deg(self) -> float:
+        return self.turn() * 360.0
+
+    def grad(self) -> float:
+        return self.turn() * 400.0
+
+    # the same angle in another unit
+    def to_deg(self) -> Angle:
+        return Degrees(self.deg())
+
+    def to_rad(self) -> Angle:
+        return Radians(self.rad())
+
+    def to_turn(self) -> Angle:
+        return Turns(self.turn())
+
+    def to_grad(self) -> Angle:
+        return Gradians(self.grad())
+
+    # the angle brought into one full turn from zero (0 up to, not including, a full turn): deg(370).normalized() is 10 deg
+    def normalized(self) -> Angle:
+        full = self.per_turn()
+        v = self.value - (self.value // full) * full
+        if v >= full:
+            v = 0.0
+        return self.like(v)
+
+    # the angle brought into -half a turn up to and including half a turn: deg(270).signed() is -90 deg
+    def signed(self) -> Angle:
+        full = self.per_turn()
+        half = full / 2.0
+        v = self.value - (self.value // full) * full
+        if v >= full:
+            v = 0.0
+        if v > half:
+            v = v - full
+        return self.like(v)
+
+    def negated(self) -> Angle:
+        return self.like(0.0 - self.value)
+
+    def abs(self) -> Angle:
+        if self.value < 0.0:
+            return self.like(0.0 - self.value)
+        return self.like(self.value)
+
+    # True when the two angles differ by no more than tolerance (angles are floats inside, so == is exact)
+    def is_close(self, other: Angle, tolerance: Angle) -> bool:
+        d = self.turn() - other.turn()
+        if d < 0.0:
+            d = 0.0 - d
+        t = tolerance.turn()
+        if t < 0.0:
+            t = 0.0 - t
+        return d <= t
+
+    @add
+    def plus(self, other: Angle) -> Angle:
+        return self.like(self.value + other.turn() * self.per_turn())
+
+    @sub
+    def minus(self, other: Angle) -> Angle:
+        return self.like(self.value - other.turn() * self.per_turn())
+
+    @mul
+    def times(self, k: int | float) -> Angle:
+        return self.like(self.value * _f(k))
+
+    @div
+    def over(self, k: int | float) -> Angle:
+        d = _f(k)
+        if d == 0.0:
+            raise RuntimeError('an angle cannot be divided by zero')
+        return self.like(self.value / d)
+
+    @eq
+    def same(self, other: Angle) -> bool:
+        return self.turn() == other.turn()
+
+    @lt
+    def less(self, other: Angle) -> bool:
+        return self.turn() < other.turn()
+
+    @le
+    def less_equal(self, other: Angle) -> bool:
+        return self.turn() <= other.turn()
+
+    @gt
+    def greater(self, other: Angle) -> bool:
+        return self.turn() > other.turn()
+
+    @ge
+    def greater_equal(self, other: Angle) -> bool:
+        return self.turn() >= other.turn()
+
+    @str
+    def text(self) -> str:
+        return _fmt(self.value) + ' ' + self.unit()
+
+export class Degrees(Angle):
+    @init
+    def make_deg(self, value: float):
+        Angle.make(self, value)
+
+    override def per_turn(self) -> float:
+        return 360.0
+
+    override def unit(self) -> str:
+        return 'deg'
+
+    override def like(self, v: float) -> Angle:
+        return Degrees(v)
+
+    override def deg(self) -> float:
+        return self.value
+
+export class Radians(Angle):
+    @init
+    def make_rad(self, value: float):
+        Angle.make(self, value)
+
+    override def per_turn(self) -> float:
+        return 6.283185307179586
+
+    override def unit(self) -> str:
+        return 'rad'
+
+    override def like(self, v: float) -> Angle:
+        return Radians(v)
+
+    override def rad(self) -> float:
+        return self.value
+
+export class Turns(Angle):
+    @init
+    def make_turn(self, value: float):
+        Angle.make(self, value)
+
+    override def per_turn(self) -> float:
+        return 1.0
+
+    override def unit(self) -> str:
+        return 'turn'
+
+    override def like(self, v: float) -> Angle:
+        return Turns(v)
+
+    override def turn(self) -> float:
+        return self.value
+
+export class Gradians(Angle):
+    @init
+    def make_grad(self, value: float):
+        Angle.make(self, value)
+
+    override def per_turn(self) -> float:
+        return 400.0
+
+    override def unit(self) -> str:
+        return 'grad'
+
+    override def like(self, v: float) -> Angle:
+        return Gradians(v)
+
+    override def grad(self) -> float:
+        return self.value
+
+export def deg(x: int | float) -> Angle:
+    return Degrees(_f(x))
+
+export def rad(x: int | float) -> Angle:
+    return Radians(_f(x))
+
+export def turn(x: int | float) -> Angle:
+    return Turns(_f(x))
+
+export def grad(x: int | float) -> Angle:
+    return Gradians(_f(x))
+
+export def degrees(x: int | float) -> Angle:
+    return Degrees(_f(x))
+
+export def radians(x: int | float) -> Angle:
+    return Radians(_f(x))
+
+export def turns(x: int | float) -> Angle:
+    return Turns(_f(x))
+
+export def gradians(x: int | float) -> Angle:
+    return Gradians(_f(x))
+
+# Trigonometry reduces the angle to a quarter turn first (in turns, which are exact for degrees and gradians), so the
+# multiples of a quarter turn come out exactly: sin(deg(180)) is 0.0, cos(deg(90)) is 0.0 and sin(deg(90)) is 1.0.
+# k is which quarter turn the angle is nearest (0 to 3); x is the small remainder in radians, -pi/4 up to pi/4.
+def _quarter(a: Angle) -> list[float]:
+    t = a.turn()
+    t = t - (t // 1.0)
+    q = t * 4.0
+    k = (q + 0.5) // 1.0
+    x = (q - k) * (3.141592653589793 / 2.0)
+    if k >= 4.0:
+        k = 0.0
+    return [k, x]
+
+export def sin(a: Angle) -> float:
+    p = _quarter(a)
+    k = int(p[0])
+    x = p[1]
+    if k == 0:
+        return !tomato_math1(5, x)
+    if k == 1:
+        return !tomato_math1(6, x)
+    if k == 2:
+        return 0.0 - !tomato_math1(5, x)
+    return 0.0 - !tomato_math1(6, x)
+
+export def cos(a: Angle) -> float:
+    p = _quarter(a)
+    k = int(p[0])
+    x = p[1]
+    if k == 0:
+        return !tomato_math1(6, x)
+    if k == 1:
+        return 0.0 - !tomato_math1(5, x)
+    if k == 2:
+        return 0.0 - !tomato_math1(6, x)
+    return !tomato_math1(5, x)
+
+# tan is undefined at a quarter turn and three quarters (90 and 270 degrees)
+export def tan(a: Angle) -> float:
+    p = _quarter(a)
+    k = int(p[0])
+    x = p[1]
+    if k % 2 == 0:
+        return !tomato_math1(7, x)
+    if x == 0.0:
+        raise RuntimeError('tan is not defined at ' + str(a) + ': the cosine is zero there')
+    return 0.0 - !tomato_math1(6, x) / !tomato_math1(5, x)
+
+# the inverses give an angle in radians: asin and atan between -pi/2 and pi/2, acos between 0 and pi
+export def asin(x: int | float) -> Angle:
+    v = _f(x)
+    if v < -1.0 or v > 1.0:
+        raise RuntimeError('asin needs a number from -1 to 1, but got ' + str(v))
+    return Radians(!tomato_math1(8, v))
+
+export def acos(x: int | float) -> Angle:
+    v = _f(x)
+    if v < -1.0 or v > 1.0:
+        raise RuntimeError('acos needs a number from -1 to 1, but got ' + str(v))
+    return Radians(!tomato_math1(9, v))
+
+export def atan(x: int | float) -> Angle:
+    return Radians(!tomato_math1(10, _f(x)))
+
+# atan2(y, x): the angle of the point (x, y) from the positive x axis, in -pi up to and including pi. Note y comes first.
+# atan2(0, 0) is an error rather than a silent 0.
+export def atan2(y: int | float, x: int | float) -> Angle:
+    a = _f(y)
+    b = _f(x)
+    if a == 0.0 and b == 0.0:
+        raise RuntimeError('atan2(0, 0) has no angle: the point is the origin')
+    return Radians(!tomato_math2(0, b, a))
+
+export def sqrt(x: int | float) -> float:
+    v = _f(x)
+    if v < 0.0:
+        raise RuntimeError('sqrt needs a number that is not negative, but got ' + str(v))
+    return !tomato_math1(0, v)
+
+export def cbrt(x: int | float) -> float:
+    return !tomato_math1(19, _f(x))
+
+export def hypot(x: int | float, y: int | float) -> float:
+    r = !tomato_math2(1, _f(x), _f(y))
+    if !tomato_is_finite(r) == 0:
+        raise RuntimeError('hypot is too large to be a float')
+    return r
+
+export def exp(x: int | float) -> float:
+    return _call1(1, _f(x), 'exp(' + str(x) + ')')
+
+export def expm1(x: int | float) -> float:
+    return _call1(17, _f(x), 'expm1(' + str(x) + ')')
+
+# the natural logarithm
+export def log(x: int | float) -> float:
+    v = _f(x)
+    if v <= 0.0:
+        raise RuntimeError('log needs a positive number, but got ' + str(v))
+    return !tomato_math1(2, v)
+
+# the logarithm to a base, which must be positive and not 1 (a separate function so that a base of 0 is an error, not "no base")
+export def log_base(x: int | float, base: int | float) -> float:
+    v = _f(x)
+    if v <= 0.0:
+        raise RuntimeError('log_base needs a positive number, but got ' + str(v))
+    b = _f(base)
+    if b <= 0.0 or b == 1.0:
+        raise RuntimeError('a logarithm base must be positive and not 1, but got ' + str(b))
+    return !tomato_math1(2, v) / !tomato_math1(2, b)
+
+export def log2(x: int | float) -> float:
+    v = _f(x)
+    if v <= 0.0:
+        raise RuntimeError('log2 needs a positive number, but got ' + str(v))
+    return !tomato_math1(3, v)
+
+export def log10(x: int | float) -> float:
+    v = _f(x)
+    if v <= 0.0:
+        raise RuntimeError('log10 needs a positive number, but got ' + str(v))
+    return !tomato_math1(4, v)
+
+export def log1p(x: int | float) -> float:
+    v = _f(x)
+    if v <= -1.0:
+        raise RuntimeError('log1p needs a number above -1, but got ' + str(v))
+    return !tomato_math1(18, v)
+
+# hyperbolic functions take and give plain numbers (the argument is not an angle)
+export def sinh(x: int | float) -> float:
+    return _call1(11, _f(x), 'sinh(' + str(x) + ')')
+
+export def cosh(x: int | float) -> float:
+    return _call1(12, _f(x), 'cosh(' + str(x) + ')')
+
+export def tanh(x: int | float) -> float:
+    return !tomato_math1(13, _f(x))
+
+export def asinh(x: int | float) -> float:
+    return !tomato_math1(14, _f(x))
+
+export def acosh(x: int | float) -> float:
+    v = _f(x)
+    if v < 1.0:
+        raise RuntimeError('acosh needs a number of at least 1, but got ' + str(v))
+    return !tomato_math1(15, v)
+
+export def atanh(x: int | float) -> float:
+    v = _f(x)
+    if v <= -1.0 or v >= 1.0:
+        raise RuntimeError('atanh needs a number between -1 and 1, but got ' + str(v))
+    return !tomato_math1(16, v)
