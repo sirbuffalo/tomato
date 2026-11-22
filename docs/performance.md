@@ -60,6 +60,24 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (strings)
+
+Measured on the same machine in one session, release mode, medians of 7 runs (noise about ±0.02 s; the machine drifted
+about 5% between sessions):
+
+1. **`str(i)` writes its digits straight into the string object** (no `snprintf`, no scratch copy) and **`int(text)`
+   parses up to 18 digits into a small integer without allocating limbs**. strings 0.50 → 0.31 s, wordcount 0.61 → 0.36 s
+   (the two changes together; `snprintf` was the top cost of wordcount, the limb `calloc` of `int(text)` of strings).
+2. **`join` builds the result in place**: one allocation, character count summed from the pieces, no scratch buffer and
+   no recount. strings 0.31 → 0.28 s.
+3. Kept for tidiness, no measurable gain: `split` on a one-byte separator uses `memchr`, string dict keys compare length
+   and bytes directly (and the pointer first).
+
+Tried and dropped: hashing string keys eight bytes at a time (wordcount 0.42 → 0.45 s, slower; the keys are about five
+bytes so FNV is already cheap). Not done: an f-string is still `'w' + str(x)` (two allocations); a runtime call that
+formats the pieces into one buffer needs a compiler change, and the rest of the time is `malloc`/`free`, which the
+size-class allocator task covers.
+
 ## What was done (v0.49)
 
 1. **Borrowed reads need no reference count.** The compiler no longer wraps a read of a local variable in
@@ -104,6 +122,6 @@ Notes on the comparison:
 2. **`range(a, b, step)` loops** allocate a range object and iterate it through method calls (`sieve`); compile them to a
    counted loop like `range(a, b)`.
 3. **Typed list storage** (`list[bool]` as bytes, unboxed floats) if measurements justify it.
-4. **Strings** (Tomato ÷ Rust 4.6 on `strings`): `str(i)`, `join` and `split` allocate one string per piece.
+4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).
 5. **Debug-mode small-int arithmetic** got slower with the big-integer ownership change (fib 0.41 → 0.60 s); recover it.
 6. **Size-class free-list allocator** for small objects (`objects`, `strings`, `wordcount`).

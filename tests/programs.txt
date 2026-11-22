@@ -62,3 +62,4 @@ bigint_frames
 bigint_unwind
 bigint_ops
 native_sort
+str_fast

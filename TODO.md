@@ -22,3 +22,5 @@
   Debug-mode fib went from 0.41 s to 0.60 s (sieve 0.32 to 0.38 s, collatz 1.54 to 1.61 s) when big integers started owning their limbs; release mode lost about 7% on fib. Find which check or copy now sits on the small-int path (benchmarks/run.sh --only fib,sieve,collatz) and take it off.
 - Create a Developer ID Application certificate and notarize the pkg
   Davis: create it on the MacBook (Xcode > Settings > Accounts > Manage Certificates > + > Developer ID Application). Then run the flow in docs/releasing.md on v0.49, upload with `gh release upload --clobber`, update site/latest.json pkg_sha256, and drop the unsigned note on the Download page.
+- Fuse f-string chains ('w' + str(x)) into one buffer
+  Needs a compiler change; the remainder of wordcount/strings time is malloc/free (size-class allocator task).

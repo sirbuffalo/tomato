@@ -476,6 +476,11 @@ static int64_t byte_to_char(Str *s, int64_t byte) {
 
 static int64_t find_bytes(Str *h, Str *n, int64_t from) {
     if (n->bytes == 0) return from <= h->bytes ? from : -1;
+    if (n->bytes == 1) {                  /* one byte: memchr scans a word at a time */
+        if (from >= h->bytes) return -1;
+        const char *p = memchr(h->data + from, n->data[0], (size_t)(h->bytes - from));
+        return p ? p - h->data : -1;
+    }
     for (int64_t i = from; i + n->bytes <= h->bytes; i++)
         if (memcmp(h->data + i, n->data, (size_t)n->bytes) == 0) return i;
     return -1;
@@ -846,7 +851,19 @@ void tomato_task_cancel(void *h) {
 
 void tomato_print_strobj(void *s) { fwrite(((Str *)s)->data, 1, (size_t)((Str *)s)->bytes, stdout); }
 
-void *tomato_str_from_i64(int64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%lld", (long long)v); return str_new(b, n); }
+/* the digits are written straight into the new string object (ASCII: one character per byte) */
+void *tomato_str_from_i64(int64_t v) {
+    char b[24];
+    char *e = b + sizeof b, *p = e;
+    uint64_t m = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
+    do { *--p = (char)('0' + m % 10); m /= 10; } while (m);
+    if (v < 0) *--p = '-';
+    int64_t n = e - p;
+    Str *s = tomato_alloc((int64_t)sizeof(Str) + n + 1, 1);
+    memcpy(s->data, p, (size_t)n);
+    s->bytes = n; s->chars = n;
+    return s;
+}
 void *tomato_str_from_u64(uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%llu", (unsigned long long)v); return str_new(b, n); }
 void *tomato_str_from_f64(double v) { char b[96]; int n = format_f64(v, b); return str_new(b, n); }
 void *tomato_str_from_bool(int v) { return tomato_str_from_cstr(v ? "True" : "False"); }
@@ -937,17 +954,18 @@ void *tomato_str_join(void *sep, void *list) {
     List *l = list;
     int64_t total = 0;
     for (int64_t i = 0; i < l->len; i++) total += LIST_SLOT(l, i, Str *)->bytes + (i ? x->bytes : 0);
-    char *out = malloc((size_t)total + 1);
-    if (!out) tomato_fail("out of memory");
-    int64_t at = 0;
+    Str *r = tomato_alloc((int64_t)sizeof(Str) + total + 1, 1);     /* built in place: one allocation, no scratch buffer */
+    char *out = r->data;
+    int64_t at = 0, chars = 0;
     for (int64_t i = 0; i < l->len; i++) {
-        if (i) { memcpy(out + at, x->data, (size_t)x->bytes); at += x->bytes; }
+        if (i) { memcpy(out + at, x->data, (size_t)x->bytes); at += x->bytes; chars += x->chars; }
         Str *piece = LIST_SLOT(l, i, Str *);
         memcpy(out + at, piece->data, (size_t)piece->bytes);
         at += piece->bytes;
+        chars += piece->chars;
     }
-    void *r = str_new(out, total);
-    free(out);
+    r->bytes = total;
+    r->chars = chars;
     return r;
 }
 
@@ -1015,7 +1033,11 @@ static int64_t hash_key(int kind, int64_t key) {
 }
 
 static int key_eq(int kind, int64_t a, int64_t b) {
-    if (kind == 1) return tomato_str_cmp((void *)a, (void *)b) == 0;
+    if (kind == 1) {
+        if (a == b) return 1;
+        Str *x = (Str *)a, *y = (Str *)b;
+        return x->bytes == y->bytes && memcmp(x->data, y->data, (size_t)x->bytes) == 0;
+    }
     if (kind == 2) return tomato_int_cmp(a, b) == 0;
     return a == b;
 }
@@ -2131,6 +2153,16 @@ static int64_t int_from_digits(const char *s, int64_t len, int *ok) {
     int neg = 0; int64_t i = 0;
     if (len > 0 && s[0] == '-') { neg = 1; i = 1; }
     if (i >= len) { *ok = 0; return 0; }
+    if (len - i <= 18) {                        /* up to 18 digits always fit a small number: no limbs needed */
+        int64_t v = 0;
+        for (int64_t k = i; k < len; k++) {
+            unsigned dgt = (unsigned char)s[k] - '0';
+            if (dgt > 9) { *ok = 0; return 0; }
+            v = v * 10 + dgt;
+        }
+        *ok = 1;
+        return int_mk_small(neg ? -v : v);
+    }
     int64_t cap = len / 9 + 2;
     uint32_t *d = calloc((size_t)cap, 4);
     if (!d) tomato_fail("out of memory");

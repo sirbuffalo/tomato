@@ -1,0 +1,12 @@
+# str(int), int(text), join and split have fast paths in the runtime: the results must be the same as ever
+@main
+def main():
+    none: list[str] = []
+    for v in [0, 7, -7, 999999999999999999, -999999999999999999, 1000000000000000000, 4611686018427387903, 4611686018427387904, -4611686018427387904, -4611686018427387905, 123456789012345678901234567890]:
+        t = str(v)
+        print(t, len(t), int(t) == v)
+    print(int('  42 '), int('+17'), int('-0'), int('000123'), int('123456789012345678'), int('1234567890123456789'), int('-1234567890123456789'))
+    print('é,ü,日本'.split(','), ','.join(['é', 'ü', '日本']), len(','.join(['é', 'ü', '日本'])))
+    print(''.split(','), ',,'.split(','), 'a--b---c'.split('--'), 'abc'.split('x'), ', '.join(none),', '.join(['x']))
+    d: dict[str, int] = {'日本': 1, 'a': 2, '': 3}
+    print(d.get('日本', 0), d.get('a', 0), d.get('', 0), d.get('b', 0), d.get('日', 0))
