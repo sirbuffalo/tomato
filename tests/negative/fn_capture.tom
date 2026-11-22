@@ -1,0 +1,10 @@
+def inc(x: int) -> int:
+    return x + 1
+
+def shout(s: str) -> str:
+    return s + "!"
+
+@main
+def main():
+    k = 5
+    f: fn(int) -> int = x -> x + k

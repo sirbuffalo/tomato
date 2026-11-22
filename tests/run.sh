@@ -48,7 +48,7 @@ done
 [ -f "$work/failed2" ] && fails=$((fails + $(wc -l < "$work/failed2")))
 
 echo "== memory (AddressSanitizer and the runtime's leak check) =="
-for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/cache_lru:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:"; do
+for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/cache_lru:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:"; do
   path="${spec%%:*}"; name="$(basename "$path")"; arg="${spec#*:}"
   "$work/c1" "$path.tom" main std/ > "$work/p.ll" 2>/dev/null
   if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
@@ -64,7 +64,7 @@ check "sort with the depth limit forced to 0" "$(cat tests/expected/native_sort.
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
 jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
 if [ -x "$jsc" ]; then
-  for name in angles containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind cache_lru; do
+  for name in angles containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru; do
     "$jsc" native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
@@ -265,6 +265,15 @@ neg await_in_conditional "an await cannot be in either value of a conditional ex
 neg async_init "cannot be async"
 neg async_override_mismatch "must take and return the same types"
 neg for_async_iter "needs async for"
+neg fn_arity "takes 1 argument, but 2 given"
+neg fn_argtype "fn(str) -> str, but fn(int) -> int is expected"
+neg fn_capture "cannot use the variable 'k'"
+neg fn_equal "cannot use '==' with fn(int) -> int"
+neg fn_printit "cannot be printed"
+neg fn_sortboth "not both"
+neg fn_sortkey "key= needs a function of one int item"
+neg fn_maptype "map() needs a function of one str item"
+neg fn_lamnoctx "a lambda needs to know its parameter types"
 
 echo "== input (tests/input: the file NAME.in is the standard input, NAME.out the whole output) =="
 for f in tests/input/*.tom; do

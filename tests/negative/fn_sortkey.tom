@@ -1,0 +1,9 @@
+def inc(x: int) -> int:
+    return x + 1
+
+def shout(s: str) -> str:
+    return s + "!"
+
+@main
+def main():
+    print(sorted([3, 1], key=shout))

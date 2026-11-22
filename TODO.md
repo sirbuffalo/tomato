@@ -1,7 +1,5 @@
 - Add list methods pop, insert, extend, sort and reverse, and list equality (==)
   Lists only have `append` today; `==` on two lists is not supported.
-- Add function values or lambdas so map and filter can exist
-  The language has no function values, so `map` and `filter` give a "not available" error.
 - Make open() failures name the file and decide Unicode case mapping for upper/lower
   The IOError message is the constant 'a file could not be opened', so it never says which file; `str.upper` and `str.lower` only change ASCII letters and the spec does not decide Unicode case mapping.
 - Fix printing and str() of optional values and None
@@ -24,3 +22,5 @@
   std/cache.tom has the cache and the injectable `Clock`, but a function cannot be passed as a value yet, so memoising a function waits for the function values task.
 - Typed list storage: `list[bool]` as bytes (and possibly unboxed floats)
   Shrinks sieve's 160 MB working set; needs the runtime, compiler and site/wasm/llvm.js to know the element width.
+- Speed up cmp= sort (inline small-int fast paths for comparison and index arithmetic, or a native merge sort calling the function directly on native builds)
+  `sorted(xs, cmp=f)` is a merge sort written in Tomato (std/builtin.tom) and takes about 2.3 s for 3,000,000 ints (Rust 0.12 s) because every int operation calls the runtime; see docs/performance.md.

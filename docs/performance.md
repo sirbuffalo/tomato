@@ -60,6 +60,11 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (function values and sort, unreleased)
+
+- `sorted(xs, key=f)`: the keys are worked out once per item in Tomato, then the runtime (`tomato_list_sorted_by`) stable-merge-sorts (key, position) pairs and gathers the items. 3,000,000 ints with `key=`: about 0.3 s for the sort (whole program 0.54 s; Python `sorted(key=lambda)` about 2.3 s, Rust `sort_by_key` 0.14 s on this loaded machine). Plain `sorted(xs)` is untouched (native introsort, same 0.17 s program as before).
+- `sorted(xs, cmp=f)`: a stable run-detecting merge sort written in Tomato (`std/builtin.tom`), so it also runs in the browser, where the C runtime cannot call back into the interpreted program. About 2.3 s for 3,000,000 ints (Python `cmp_to_key` about 12 s, Rust `sort_by` 0.12 s). A first version that sorted positions through `keys[a[j]]` took 3.5 s for `key=`; moving the keys with the positions and then sorting in C fixed that.
+
 ## What was done (after v0.49)
 
 1. **`range(a, b, step)` is a counted loop.** It used to build a `range` object and walk it through its `@iter` method (a generator). The compiler now works out the number of rounds once (`(distance - 1) / |step| + 1`, 0 when empty; a zero step raises the same `RuntimeError`), then counts a hidden index from 0 and sets the loop variable to `start + index * step`, so reassigning the variable in the body does not change the walk, an empty loop leaves the variable alone, and the loop itself is one compare and one add whatever the sign of the step. Like `range(a, b)`, a bound too big for a machine word now stops with `the number is too big here` (the generator version took any big number). Test: `range_step_loop`.
@@ -134,8 +139,9 @@ size-class allocator task covers.
 
 ## Still to do, biggest first
 
-1. **Sort with compare functions:** the introsort for plain lists is done; a stable Timsort-style merge sort for compare
-   and key functions needs function values first.
+1. **Sort with compare functions** is done (function values, D63a): the cmp sort is a stable merge sort written in Tomato and is slow
+   because every int operation in it goes through the runtime (about 2.3 s for 3,000,000 ints; Rust 0.12 s). Next: inline the
+   small-int fast path for comparisons and index arithmetic, or a native merge sort that calls the function directly.
 2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds, tests the tag of each item (for the big-integer copy) and keeps the list pointers in stack slots across the loop.
 3. **Typed list storage** (`list[bool]` as bytes, unboxed floats): the likely next win for `sieve` (cache footprint 8x smaller), measured as memory-bound, not tag-bound; needs every list operation and the IR interpreter to know the element width.
 4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).

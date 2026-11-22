@@ -1,0 +1,34 @@
+def double(x: int) -> int:
+    return x * 2
+
+def greet(name: str):
+    print(f'hi {name}')
+
+def apply(f: fn(int) -> int, v: int) -> int:
+    return f(v)
+
+class Box:
+    op: fn(int, int) -> int
+
+    @init
+    def make(self, op: fn(int, int) -> int):
+        self.op = op
+
+    def go(self, a: int, b: int) -> int:
+        return self.op(a, b)
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+@main
+def main():
+    f = double
+    print(f(21))
+    print(apply(double, 5))
+    g: fn(str) = greet
+    g('bob')
+    b = Box(add)
+    print(b.go(3, 4))
+    print(b.op(10, 20))
+    fs = [double, double]
+    print(fs[1](4))

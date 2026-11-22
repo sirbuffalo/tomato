@@ -66,6 +66,46 @@ def union_members(t: str) -> list[str]:
 def union_type(members: list[str]) -> str:
     return 'U:' + ';'.join(sorted(members))
 
+# a function value, fn(A, B) -> R, is written 'fn[A,B>R]' (R is None when it returns nothing)
+def is_fn(t: str) -> bool:
+    return t.startswith('fn[')
+
+# the position of the > that ends the parameter types of a function type
+def fn_arrow(t: str) -> int:
+    depth = 0
+    for k in range(3, len(t) - 1):
+        ch = t[k]
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+        elif ch == '>' and depth == 0:
+            return k
+    return -1
+
+def fn_result(t: str) -> str:
+    return t[fn_arrow(t) + 1:-1]
+
+# the parameter types of a function type
+def fn_params(t: str) -> list[str]:
+    inner = t[3:fn_arrow(t)]
+    parts: list[str] = []
+    if inner == '':
+        return parts
+    depth = 0
+    start = 0
+    for k in range(len(inner)):
+        ch = inner[k]
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            parts.append(inner[start:k])
+            start = k + 1
+    parts.append(inner[start:])
+    return parts
+
 # The built-in interfaces (D50a): 'I:T' is Iterable[T], 'Z' is Sized and 'IZ:T' is Iterable[T] & Sized. A value of one of these types
 # is a box like a union's, holding whatever concrete value was passed (a list, text, a range, an object with @iter or @len).
 def is_dyn(t: str) -> bool:
@@ -267,6 +307,12 @@ def shown_generic(name: str) -> str:
 
 def shown(t: str) -> str:
     # a type as the user writes it
+    if is_fn(t):
+        shown_params: list[str] = [shown(p) for p in fn_params(t)]
+        res = fn_result(t)
+        if res == 'None':
+            return 'fn(' + ', '.join(shown_params) + ')'
+        return 'fn(' + ', '.join(shown_params) + ') -> ' + shown(res)
     if is_task(t):
         if task_status(t) != '':
             return f'task[{shown(task_result(t))}, {shown(task_status(t))}]'
@@ -301,7 +347,7 @@ def shown(t: str) -> str:
     return t
 
 def llvm_type(t: str) -> str:
-    if is_rc(t) or t == 'File':
+    if is_rc(t) or t == 'File' or is_fn(t):
         return 'ptr'
     if t == 'float':
         return 'double'
@@ -313,7 +359,7 @@ def zero_of(t: str) -> str:
     # the value a function returns when it never stored one
     if t == 'int':
         return '1'
-    if is_rc(t):
+    if is_rc(t) or is_fn(t):
         return 'null'
     if t == 'float':
         return '0.0'
@@ -375,6 +421,20 @@ def pure_read(n: Node) -> bool:
     if n.kind == 'UnOp':
         return pure_read(val_node(n.fields[1]))
     return False
+
+# the names a lambda body reads
+def names_read(n: Node, out: list[str]):
+    if n.kind == 'Name':
+        out.append(n.fields[0].text)
+    for f in n.fields:
+        names_read_val(f, out)
+
+def names_read_val(v: Val, out: list[str]):
+    if v.tag == 'n':
+        names_read(val_node(v), out)
+    elif v.tag == 'l' or v.tag == 't':
+        for it in v.items:
+            names_read_val(it, out)
 
 def has_comp(n: Node) -> bool:
     # does this expression contain a list comprehension (the one expression that assigns to variables)?
@@ -481,6 +541,7 @@ class Mod:
     scope: list[Binding] = []     # the names each module can see, in the order they were declared
     helpers: dict[str, FuncInfo] = {}  # functions the compiler writes for itself (printing a list, sorted, ...), by kind and type
     extra_funcs: list[Node] = []
+    lambda_count: int = 0
     func_nodes: list[Node] = []   # the FuncDef of each entry of infos, in the same order
     sources: dict[str, str] = {}  # the source text of each module loaded (for showing an error's line)
     helper_count: int = 0
@@ -565,6 +626,12 @@ class Mod:
             if f.key == key and f.owner == '':
                 return f
         raise CompileError(f"the function '{key}' does not exist", line)
+
+    def has_func(self, key: str) -> bool:
+        for f in self.infos:
+            if f.key == key and f.owner == '':
+                return True
+        return False
 
     def lookup_method(self, cls: str, name: str) -> FuncInfo | None:
         # the method as the class or its nearest parent defines it
@@ -927,7 +994,7 @@ class Mod:
         return False
 
     def type_delim(self, c: str) -> bool:
-        return c == ']' or c == '[' or c == ',' or c == ';' or c == '?' or c == '|' or c == ':'
+        return c == ']' or c == '[' or c == ',' or c == '>' or c == ';' or c == '?' or c == '|' or c == ':'
 
     # does the real type act fit the pattern pat, whose $T parts stand for types still to be found? Records them in binds.
     def unify(self, pat: str, act: str, binds: dict[str, str]) -> bool:
@@ -1001,6 +1068,23 @@ class Mod:
             return f'IZ:{item}'
         return f'I:{item}'
 
+    # fn(A, B) -> R is written fn[A,B>R] inside the compiler, with None for no result (a function value is a plain pointer)
+    def fn_type(self, t: Node) -> str:
+        parts: list[str] = []
+        for p in val_nodes(t.fields[2]):
+            pt = self.type_name(vn(p))
+            if pt == '' or pt == 'None':
+                return ''
+            parts.append(pt)
+        res = 'None'
+        if t.fields[3].tag == 'n':
+            res = self.type_name(t.fields[3])
+            if res == '':
+                if val_node(t.fields[3]).fields[0].text != 'None':
+                    return ''
+                res = 'None'
+        return 'fn[' + ','.join(parts) + '>' + res + ']'
+
     def type_name(self, v: Val) -> str:
         # the name of a type the compiler knows: int, bool, str, a declared class ('@Name') or a list of those; '' otherwise
         if v.tag != 'n':
@@ -1016,6 +1100,8 @@ class Mod:
             if name == 'int':
                 return f'i{length.fields[0].num}'
             return f'u{length.fields[0].num}'
+        if name == 'fn' and t.fields[1].tag == 'z' and t.fields[2].tag != 'n' and t.fields[2].tag != 'z':
+            return self.fn_type(t)
         if name == 'union':
             members = val_nodes(t.fields[2])
             if len(members) != 2 or not self.has_none_member(members):
@@ -1992,6 +2078,8 @@ class Gen:
                 ck = self.mod.resolve(name)
                 if ck in self.mod.consts:
                     return self.expr(self.mod.consts[ck], expected)
+                if ck != '' and self.mod.has_func(ck):
+                    return self.func_value(name, ck, n.line)
                 raise CompileError(f"name '{name}' is not defined{self.name_hint(name)}", n.line)
             ty = self.types[name]
             r = self.tmp('l')
@@ -2039,6 +2127,8 @@ class Gen:
             return self.conditional(n, expected)
         if k == 'ListComp':
             return self.list_comp(n)
+        if k == 'Lambda':
+            return self.lambda_value(n, expected)
         raise CompileError(f'this kind of expression ({k}) is not supported', n.line)
 
     def conditional(self, n: Node, expected: str) -> Ex:
@@ -2267,6 +2357,80 @@ class Gen:
             return ex(r, lst.ty)
         info = self.mod.helper(name, lst.ty, line)
         return self.call_helper(info, [lst])
+
+    # the list a function like sorted, map and filter works on: a list, or an object with a method marked @iter (copied into a list)
+    def list_arg(self, a: Node, name: str, line: int) -> Ex:
+        lst = self.unwrap(self.expr(a), line)
+        if is_class(lst.ty) and self.mod.has_op(lst.ty[1:], 'iter'):
+            lst = self.call_helper(self.mod.helper('tolist', lst.ty, line), [lst])
+        if not is_list(lst.ty):
+            raise CompileError(f'{name}() takes a list or a range, but this is {shown(lst.ty)}', line)
+        return lst
+
+    # sorted(xs, key=f) and sorted(xs, cmp=f): a new list, stable (D-fn); the work is done by _sorted_key and _sorted_cmp in std/builtin.tom
+    def sorted_by(self, args: list[Node], keywords: list[Val], line: int) -> Ex:
+        if len(args) != 1:
+            raise CompileError('sorted() takes one list, and then key= or cmp=', line)
+        if len(keywords) != 1:
+            raise CompileError('sorted() takes key= or cmp=, not both', line)
+        kname = keywords[0].items[0].text
+        if kname != 'key' and kname != 'cmp':
+            raise CompileError(f"sorted() has no parameter named '{kname}'\nit takes key= (a function giving what to sort by) or cmp= (a function comparing two items)", line)
+        lst = self.list_arg(args[0], 'sorted', line)
+        elem = elem_of(lst.ty)
+        want_fn = 'fn[' + elem + '>?]'
+        if kname == 'cmp':
+            want_fn = 'fn[' + elem + ',' + elem + '>int]'
+        fv = self.expr(val_node(keywords[0].items[1]), want_fn)
+        if not is_fn(fv.ty):
+            raise CompileError(f'{kname}= needs a function, but this is {shown(fv.ty)}', line)
+        if kname == 'cmp':
+            want_ty = 'fn[' + elem + ',' + elem + '>int]'
+            if fv.ty != want_ty:
+                raise CompileError(f'cmp= needs a function of two {shown(elem)} items that returns an int, but this is {shown(fv.ty)}\nit returns a negative number, zero or a positive number', line)
+            info = self.mod.instance_func(self.mod.resolve('_sorted_cmp'), [elem], line)
+            return self.call_helper(info, [lst, fv])
+        params = fn_params(fv.ty)
+        if len(params) != 1 or params[0] != elem:
+            raise CompileError(f'key= needs a function of one {shown(elem)} item, but this is {shown(fv.ty)}', line)
+        kt = fn_result(fv.ty)
+        if kt != 'int' and kt != 'float' and kt != 'str':
+            raise CompileError(f'the key function must return an int, a float or text, but this one returns {shown(kt)}', line)
+        # the keys are worked out here, once per item; the runtime sorts them (stable) and builds the result
+        info = self.mod.instance_func(self.mod.resolve('_keys'), [elem, kt], line)
+        keys = self.tmp('keys')
+        self.emit(f'{keys} = call ptr {function_symbol(self.mod, info)}(ptr {lst.reg}, ptr {fv.reg})')
+        self.check_error([lst])
+        kind = '0' if kt == 'int' else ('1' if kt == 'float' else '2')
+        r = self.tmp('sortedby')
+        self.emit(f'{r} = call ptr @tomato_list_sorted_by(ptr {lst.reg}, ptr {keys}, i32 {kind}, i32 {elem_rc(elem)})')
+        self.release(ex(keys, f'list[{kt}]'))
+        self.release(lst)
+        return ex(r, lst.ty)
+
+    # map(f, xs) and filter(f, xs): a new list (D-fn)
+    def map_filter(self, name: str, args: list[Node], keywords: list[Val], line: int) -> Ex:
+        if len(keywords) > 0 or len(args) != 2:
+            raise CompileError(f'{name}() takes a function and a list: {name}(f, xs)', line)
+        lst = self.list_arg(args[1], name, line)
+        elem = elem_of(lst.ty)
+        want_fn = 'fn[' + elem + '>?]'
+        if name == 'filter':
+            want_fn = 'fn[' + elem + '>bool]'
+        fv = self.expr(args[0], want_fn)
+        if not is_fn(fv.ty):
+            raise CompileError(f'the first argument of {name}() must be a function, but this is {shown(fv.ty)}', line)
+        params = fn_params(fv.ty)
+        if len(params) != 1 or params[0] != elem:
+            raise CompileError(f'{name}() needs a function of one {shown(elem)} item, but this is {shown(fv.ty)}', line)
+        res = fn_result(fv.ty)
+        if name == 'filter':
+            if res != 'bool':
+                raise CompileError(f'the function given to filter() must return a bool, but this one returns {shown(res)}', line)
+            return self.call_helper(self.mod.instance_func(self.mod.resolve('_filter'), [elem], line), [fv, lst])
+        if res == 'None' or is_fixed(res):
+            raise CompileError(f'the function given to map() must return a value, but this one returns {shown(res)}', line)
+        return self.call_helper(self.mod.instance_func(self.mod.resolve('_map'), [elem, res], line), [fv, lst])
 
     def list_slot(self, lst: Ex, i: Ex) -> str:
         # the address of item i, after a bounds check
@@ -2990,12 +3154,22 @@ class Gen:
             return self.method_call(n, f)
         if f.kind == 'Index' and val_node(f.fields[0]).kind == 'Name' and val_node(f.fields[0]).fields[0].text not in self.slots and self.mod.resolve(val_node(f.fields[0]).fields[0].text) in self.mod.generics:
             return self.explicit_call(self.mod.resolve(val_node(f.fields[0]).fields[0].text), n, f, val_nodes(n.fields[1]))
+        if f.kind == 'Index' or f.kind == 'Call':
+            self.kw = n.fields[2].items
+            callee = self.expr(f)
+            if is_fn(callee.ty):
+                return self.call_value(callee, val_nodes(n.fields[1]), n.line, 'this function value')
+            self.kw = []
+            raise CompileError(f'this is {shown(callee.ty)}, not a function, so it cannot be called', n.line)
         if f.kind != 'Name':
             raise CompileError('only a function name can be called here\ncalling the result of another expression is not supported', n.line)
         name = f.fields[0].text
         if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int', 'input', 'sleep']:
             raise CompileError(f"'{name}' does not take keyword arguments", n.line)
         args = val_nodes(n.fields[1])
+        if name in self.slots and is_fn(self.types[name]):
+            self.kw = n.fields[2].items
+            return self.call_value(self.expr(f), args, n.line, "the function value '" + name + "'")
         if name == 'print':
             if not statement:
                 raise CompileError("print() gives no value, so it cannot be used inside an expression", n.line)
@@ -3027,6 +3201,10 @@ class Gen:
         key = self.mod.resolve(name)
         if key == '' and name in ['abs', 'chr', 'ord'] and name not in self.slots:
             return self.number_text_builtin(name, args, n.line)
+        if key == '' and name == 'sorted' and len(n.fields[2].items) > 0:
+            return self.sorted_by(args, n.fields[2].items, n.line)
+        if key == '' and (name == 'map' or name == 'filter') and name not in self.slots:
+            return self.map_filter(name, args, n.fields[2].items, n.line)
         if key == '' and name in ['sorted', 'reversed', 'sum', 'min', 'max']:
             self.kw = []
             return self.list_builtin(name, args, n.line)
@@ -3235,6 +3413,106 @@ class Gen:
         if info.ret == 'int':
             return self.int_from_machine(r, True)
         return ex(r, info.ret)
+
+    # a named function used as a value (D-fn): its address, with the type fn(parameters) -> result
+    def func_value(self, name: str, key: str, line: int) -> Ex:
+        if key in self.mod.generics:
+            raise CompileError(f"'{name}' is generic, so it cannot be used as a value yet\nwrite a plain function that calls it", line)
+        info = self.mod.find(key, line)
+        if info.is_async or info.is_gen or info.has_varargs or info.has_kwargs:
+            raise CompileError(f"'{name}' cannot be used as a value: an async function, a generator and a function with *args or **kwargs have no function type", line)
+        res = info.ret
+        if res == '':
+            res = 'None'
+        return ex('@tomato.' + key, 'fn[' + ','.join(info.ptypes) + '>' + res + ']')
+
+    # a lambda (x -> expression): it becomes a function of its own, so it can use only its parameters and global names. The expected type
+    # gives the parameter types; its result may be written ? (to find out from the body).
+    def lambda_value(self, n: Node, expected: str) -> Ex:
+        names: list[str] = [v.text for v in n.fields[0].items]
+        body = val_node(n.fields[1])
+        if not is_fn(expected):
+            raise CompileError('a lambda needs to know its parameter types\nuse it where a function is expected, such as sorted(xs, key=x -> x.age), or give the variable a type: f: fn(int) -> int = x -> x + 1', n.line)
+        ptypes = fn_params(expected)
+        if len(ptypes) != len(names):
+            raise CompileError('this lambda takes ' + plural(len(names), 'parameter') + ', but ' + shown(expected) + ' takes ' + str(len(ptypes)), n.line)
+        used: list[str] = []
+        names_read(body, used)
+        for u in used:
+            if u in self.slots and u not in names:
+                raise CompileError(f"a lambda cannot use the variable '{u}' from the function around it\nit can use its own parameters and global names; pass the value as a parameter", n.line)
+        res = fn_result(expected)
+        if res == '?':
+            mark = len(self.lines)
+            saved_slots: dict[str, str] = {}
+            saved_types: dict[str, str] = {}
+            for k, nm in enumerate(names):
+                if nm in self.slots:
+                    saved_slots[nm] = self.slots[nm]
+                    saved_types[nm] = self.types[nm]
+                self.new_slot(nm, ptypes[k])
+            res = self.expr(body).ty
+            self.lines = self.lines[:mark]
+            self.terminated = False
+            keep_s: dict[str, str] = {}
+            keep_t: dict[str, str] = {}
+            for key in self.slots:
+                if key in saved_slots:
+                    keep_s[key] = saved_slots[key]
+                    keep_t[key] = saved_types[key]
+                elif key not in names:
+                    keep_s[key] = self.slots[key]
+                    keep_t[key] = self.types[key]
+            self.slots = keep_s
+            self.types = keep_t
+            if res == '' or res == 'None':
+                raise CompileError('the body of this lambda gives no value', n.line)
+        self.mod.lambda_count += 1
+        fname = f'_lambda{self.mod.lambda_count}'
+        binds: dict[str, str] = {}
+        params: list[Node] = []
+        for k, nm in enumerate(names):
+            binds[f'__p{k}'] = ptypes[k]
+            params.append(mk('Param', n.line, [vs(nm), vn(mk('TypeRef', n.line, [vs(f'__p{k}'), vz(), vz(), vz()])), vz(), vz()]))
+        binds['__r'] = res
+        ret_stmt = mk('Return', n.line, [vn(body)])
+        item = mk('FuncDef', n.line, [vs(fname), vnodes(params), vn(mk('TypeRef', n.line, [vs('__r'), vz(), vz(), vz()])), vnodes([ret_stmt]), vb(False), vb(False), vz(), vb(False), vb(False), vz()])
+        saved_vars = self.mod.tvars
+        self.mod.tvars = binds
+        info = function_info(item, self.mod, '')
+        self.mod.tvars = saved_vars
+        info.targs = binds
+        self.mod.infos.append(info)
+        self.mod.func_nodes.append(item)
+        self.mod.extra_funcs.append(item)
+        return ex('@tomato.' + info.key, 'fn[' + ','.join(ptypes) + '>' + res + ']')
+
+    # call a function value: the callee only borrows its arguments, like any call
+    def call_value(self, fv: Ex, args: list[Node], line: int, what: str) -> Ex:
+        if len(self.kw) > 0:
+            self.kw = []
+            raise CompileError('a function value does not take keyword arguments\npass the arguments by position', line)
+        ptypes = fn_params(fv.ty)
+        res = fn_result(fv.ty)
+        if len(args) != len(ptypes):
+            raise CompileError(what + ' takes ' + plural(len(ptypes), 'argument') + ', but ' + str(len(args)) + ' given', line)
+        values: list[Ex] = []
+        for k, a in enumerate(args):
+            v = self.expr(a, ptypes[k])
+            values.append(self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + what))
+        parts: list[str] = [f'{llvm_type(v2.ty)} {v2.reg}' for v2 in values]
+        callee = fv.reg
+        result = ex('', '')
+        if res == 'None':
+            self.emit('call void ' + callee + '(' + ', '.join(parts) + ')')
+        else:
+            r = self.tmp('call')
+            self.emit(f'{r} = call {llvm_type(res)} {callee}(' + ', '.join(parts) + ')')
+            result = ret_ex(r, res)
+        self.check_error(values)
+        for v3 in values:
+            self.release(v3)
+        return result
 
     def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
         if info.is_async:
@@ -3461,6 +3739,12 @@ class Gen:
             if req is None:
                 raise CompileError("the interface '" + obj.ty[1:] + "' has no method '" + name + "'", n.line)
             return self.call_function(req, self.dispatch(obj, name), obj, args, n.line)
+        if is_class(obj.ty) and field_position(self.mod.find_class(obj.ty[1:], n.line), name) >= 0 and is_fn(self.field_type(obj, name, n.line)):
+            fvt = self.field_type(obj, name, n.line)
+            fv = self.tmp('fv')
+            self.emit(f'{fv} = load ptr, ptr {self.field_addr(obj, name, n.line)}')
+            self.release(obj)
+            return self.call_value(ex(fv, fvt), args, n.line, "the function value '" + name + "'")
         if is_class(obj.ty):
             info = self.mod.find_method(obj.ty[1:], name, n.line)
             if info.is_private and self.owner != info.owner:
@@ -4241,6 +4525,8 @@ class Gen:
         v = self.expr(args[0])
         if v.ty == 'str':
             return v
+        if is_fn(v.ty):
+            raise CompileError(f'a function value ({shown(v.ty)}) cannot be converted to text\ncall it and use the result', line)
         if is_dyn(v.ty):
             raise CompileError(f'a value of type {shown(v.ty)} cannot be converted to text\nloop over it and print the items instead', line)
         if is_class(v.ty):
@@ -4273,6 +4559,8 @@ class Gen:
         values: list[Ex] = []
         for a in args:
             v = self.expr(a)                   # every argument is evaluated before anything is printed
+            if is_fn(v.ty):
+                raise CompileError(f'a function value ({shown(v.ty)}) cannot be printed\ncall it and print the result', self.line)
             if is_dyn(v.ty):
                 raise CompileError(f'a value of type {shown(v.ty)} cannot be printed\nloop over it and print the items instead', self.line)
             values.append(v)
@@ -4359,8 +4647,8 @@ class Gen:
     def unknown_function(self, name: str) -> str:
         if name in self.slots:
             return f"'{name}' is a variable, not a function, so it cannot be called"
-        if name in ['map', 'filter', 'lambda', 'reduce']:
-            return f"'{name}' is not available: Tomato has no function values yet\nuse a for loop instead"
+        if name in ['reduce']:
+            return f"'{name}' is not available\nuse a for loop instead"
         if name in ['round', 'pow', 'divmod', 'any', 'all', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'hash', 'format']:
             return f"'{name}' is not built in"
         near = closest(name, self.visible_names())
@@ -5642,6 +5930,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_slice3(ptr, i64, i64, i64, i32)\n'
     d += 'declare ptr @tomato_list_slice(ptr, i64, i64, i64, i32, i32)\n'
     d += 'declare ptr @tomato_list_sorted(ptr, i32)\n'
+    d += 'declare ptr @tomato_list_sorted_by(ptr, ptr, i32, i32)\n'
     d += 'declare ptr @tomato_str_from_i64(i64)\n'
     d += 'declare ptr @tomato_str_from_bool(i32)\n'
     d += 'declare ptr @tomato_str_from_f64(double)\n'

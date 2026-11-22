@@ -2109,6 +2109,70 @@ void *tomato_list_sorted(void *src, int kind) {
     }
     return r;
 }
+
+/* ---- sorted(xs, key=f): the items of a list in the order of their keys, stable ----
+ * The Tomato side has already called the key function once per item; this sorts the (key, position) pairs with a stable merge
+ * sort (insertion-sorted blocks, then merging neighbours; neighbours already in order are not merged) and gathers the items.
+ * No callback is made here, so it works the same in the browser. kind: 0 int, 1 float, 2 str (the type of the keys). */
+typedef struct { int64_t key; int64_t pos; } KeyPos;
+#define DEFINE_MERGESORT(NAME, LT)                                                                 \
+static void NAME(KeyPos *a, KeyPos *tmp, int64_t n) {                                              \
+    const int64_t BLOCK = 16;                                                                      \
+    for (int64_t lo = 0; lo < n; lo += BLOCK) {                                                    \
+        int64_t hi = lo + BLOCK < n ? lo + BLOCK : n;                                              \
+        for (int64_t i = lo + 1; i < hi; i++) {                                                    \
+            KeyPos x = a[i]; int64_t j = i;                                                        \
+            while (j > lo && LT(x.key, a[j - 1].key)) { a[j] = a[j - 1]; j--; }                   \
+            a[j] = x;                                                                              \
+        }                                                                                          \
+    }                                                                                              \
+    KeyPos *src = a, *dst = tmp;                                                                   \
+    for (int64_t w = BLOCK; w < n; w *= 2) {                                                       \
+        for (int64_t lo = 0; lo < n; lo += 2 * w) {                                                \
+            int64_t mid = lo + w < n ? lo + w : n, hi = lo + 2 * w < n ? lo + 2 * w : n;           \
+            int64_t i = lo, j = mid, o = lo;                                                       \
+            if (mid < hi && LT(src[mid].key, src[mid - 1].key)) {                                  \
+                while (i < mid && j < hi) dst[o++] = LT(src[j].key, src[i].key) ? src[j++] : src[i++]; \
+            }                                                                                      \
+            while (i < mid) dst[o++] = src[i++];                                                   \
+            while (j < hi) dst[o++] = src[j++];                                                    \
+        }                                                                                          \
+        KeyPos *t = src; src = dst; dst = t;                                                       \
+    }                                                                                              \
+    if (src != a) memcpy(a, src, (size_t)n * sizeof(KeyPos));                                      \
+}
+DEFINE_MERGESORT(msort_bigint, LT_BIGINT)
+DEFINE_MERGESORT(msort_word, LT_WORD)
+DEFINE_MERGESORT(msort_small, LT_SMALL)
+DEFINE_MERGESORT(msort_str, LT_STR)
+
+/* src: the list to sort; keys: a list of the same length holding each item's key; rc: how a copy of an item is made (see item_copy) */
+void *tomato_list_sorted_by(void *src, void *keys, int kind, int rc) {
+    List *l = src, *k = keys;
+    int64_t n = l->len;
+    List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
+    if (n == 0) return r;
+    KeyPos *a = malloc((size_t)n * 2 * sizeof(KeyPos));
+    if (!a) tomato_fail("out of memory");
+    KeyPos *tmp = a + n;
+    int small = 1;
+    for (int64_t i = 0; i < n; i++) {
+        int64_t w = LIST_SLOT(k, i, int64_t);
+        if (kind == 1) w = f64_order_word(w);
+        else if (kind == 0) small &= int_is_small(w);
+        a[i].key = w;
+        a[i].pos = i;
+    }
+    if (n > 1) {
+        if (kind == 0) { if (small) msort_small(a, tmp, n); else msort_bigint(a, tmp, n); }
+        else if (kind == 1) msort_word(a, tmp, n);
+        else msort_str(a, tmp, n);
+    }
+    for (int64_t i = 0; i < n; i++)
+        *(int64_t *)tomato_list_push(r, 8) = item_copy(rc, LIST_SLOT(l, a[i].pos, int64_t));
+    free(a);
+    return r;
+}
 int64_t tomato_int_pow(int64_t base, int64_t exp) {
     /* the exponent is not negative (the caller checked) and small enough to count */
     if (!int_is_small(exp)) tomato_fail("the exponent is too big");

@@ -378,6 +378,19 @@ export class Parser:
         if self.cur().kind != 'NAME':
             self.err('expected a type name')
         t = self.expect('NAME')
+        if t.text == 'fn' and self.is_op('('):
+            # a function value's type: fn(int, str) -> bool; without -> it returns nothing
+            self.adv()
+            ptypes: list[Node] = []
+            while not self.is_op(')'):
+                ptypes.append(self.type())
+                if not self.accept_op(','):
+                    break
+            self.expect_op(')')
+            res = vz()
+            if self.accept_op('->'):
+                res = vn(self.type())
+            return mk('TypeRef', t.line, [vs('fn'), vz(), vnodes(ptypes), res])
         if t.text == 'list' or t.text == 'set' or t.text == 'tuple' or (t.text == 'Iterable' and self.is_op('[')):
             self.expect_op('[')
             arg = self.type()
@@ -851,6 +864,9 @@ export class Parser:
     # expressions
     def expr(self) -> Node:
         # a if condition else b: the loosest operator, grouping to the right
+        lam = self.lambda_expr()
+        if lam is not None:
+            return lam
         e = self.or_()
         if self.is_kw('if'):
             ln = self.adv().line
@@ -858,6 +874,38 @@ export class Parser:
             self.expect_kw('else')
             return mk('Cond', ln, [vn(cond), vn(e), vn(self.expr())])
         return e
+
+    # a lambda: x -> expression, or (a, b) -> expression; its body is one expression
+    def lambda_expr(self) -> Node | None:
+        line = self.cur().line
+        names: list[Val] = []
+        if self.cur().kind == 'NAME' and self.peek_is(1, 'OP', '->'):
+            names.append(vs(self.adv().text))
+        elif self.is_op('('):
+            k = 1
+            ok = True
+            while not self.peek_is(k, 'OP', ')'):
+                if self.peek(k).kind != 'NAME':
+                    ok = False
+                    break
+                k += 1
+                if self.peek_is(k, 'OP', ','):
+                    k += 1
+                elif not self.peek_is(k, 'OP', ')'):
+                    ok = False
+                    break
+            if not ok or not self.peek_is(k + 1, 'OP', '->'):
+                return None
+            self.adv()
+            while not self.is_op(')'):
+                names.append(vs(self.expect('NAME').text))
+                self.accept_op(',')
+            self.adv()
+        else:
+            return None
+        self.expect_op('->')
+        body = self.expr()
+        return mk('Lambda', line, [vlist(names), vn(body)])
 
     def binop(self, op: str, line: int, left: Node, right: Node) -> Node:
         return mk('BinOp', line, [vs(op), vn(left), vn(right)])

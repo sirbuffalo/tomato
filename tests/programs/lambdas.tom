@@ -1,0 +1,27 @@
+class P:
+    name: str
+    age: int
+
+    @init
+    def make(self, name: str, age: int):
+        self.name = name
+        self.age = age
+
+def apply(f: fn(int, int) -> int, a: int, b: int) -> int:
+    return f(a, b)
+
+@main
+def main():
+    xs = [5, 3, 9, 1]
+    print(sorted(xs, key=x -> 0 - x))
+    print(map(x -> x * 2, xs))
+    print(map(x -> x / 2, xs))
+    print(filter(x -> x > 2, xs))
+    print(sorted(xs, cmp=(a, b) -> b - a))
+    ps = [P('bob', 30), P('al', 25), P('cy', 20)]
+    for p in sorted(ps, key=q -> q.age):
+        print(p.name)
+    f: fn(int) -> int = x -> x + 100
+    print(f(1))
+    print(apply((a, b) -> a * b, 6, 7))
+    print(map(p -> p.name, ps))

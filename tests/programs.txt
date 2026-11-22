@@ -63,6 +63,11 @@ bigint_frames
 bigint_unwind
 bigint_ops
 native_sort
+function_values
+lambdas
+sort_stable
+sort_errors
+sort_key_cmp
 alloc_pool
 str_fast
 cache_lru

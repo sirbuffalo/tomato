@@ -208,3 +208,131 @@ def _str_rstrip(s: str) -> str:
     while n > 0 and _is_space(s[n - 1]):
         n -= 1
     return s[:n]
+
+# sorted(xs, key=f), sorted(xs, cmp=f), map(f, xs) and filter(f, xs) are these, written in Tomato (so they run the same natively and in
+# the browser). The sorts are stable: a merge sort that finds the runs already in order (a strictly descending run is reversed), extends
+# short runs to a minimum length with binary insertion, and merges neighbouring runs; neighbours already in order are not merged.
+# The key version works out the keys here (each once) and the runtime (tomato_list_sorted_by) sorts them and gathers the items; the
+# cmp version sorts a copy of the items here, since it must call the function on pairs.
+def _min_run(n: int) -> int:
+    minrun = n
+    extra = 0
+    while minrun >= 64:
+        if minrun % 2 == 1:
+            extra = 1
+        minrun = minrun // 2
+    return minrun + extra
+
+def _sorted_cmp[T](xs: list[T], cmp: fn(T, T) -> int) -> list[T]:
+    n = len(xs)
+    a = xs[0:n]
+    if n < 2:
+        return a
+    minrun = _min_run(n)
+    starts: list[int] = []
+    lo = 0
+    while lo < n:
+        hi = lo + 1
+        if hi < n:
+            if cmp(a[hi], a[lo]) < 0:
+                hi += 1
+                while hi < n and cmp(a[hi], a[hi - 1]) < 0:
+                    hi += 1
+                i = lo
+                j = hi - 1
+                while i < j:
+                    t = a[i]
+                    a[i] = a[j]
+                    a[j] = t
+                    i += 1
+                    j -= 1
+            else:
+                hi += 1
+                while hi < n and not (cmp(a[hi], a[hi - 1]) < 0):
+                    hi += 1
+        end = lo + minrun
+        if end > n:
+            end = n
+        p = hi
+        while p < end:
+            v = a[p]
+            left = lo
+            right = p
+            while left < right:
+                mid = (left + right) // 2
+                if cmp(v, a[mid]) < 0:
+                    right = mid
+                else:
+                    left = mid + 1
+            q = p
+            while q > left:
+                a[q] = a[q - 1]
+                q -= 1
+            a[left] = v
+            p += 1
+        if hi < end:
+            hi = end
+        starts.append(lo)
+        lo = hi
+    starts.append(n)
+    b = a[0:n]
+    while len(starts) > 2:
+        next_starts: list[int] = []
+        runs = len(starts) - 1
+        k = 0
+        while k < runs:
+            s = starts[k]
+            if k + 1 < runs:
+                mid = starts[k + 1]
+                e = starts[k + 2]
+                i = s
+                j = mid
+                o = s
+                if cmp(a[mid], a[mid - 1]) < 0:
+                    while i < mid and j < e:
+                        if cmp(a[j], a[i]) < 0:
+                            b[o] = a[j]
+                            j += 1
+                        else:
+                            b[o] = a[i]
+                            i += 1
+                        o += 1
+                while i < mid:
+                    b[o] = a[i]
+                    i += 1
+                    o += 1
+                while j < e:
+                    b[o] = a[j]
+                    j += 1
+                    o += 1
+                k += 2
+            else:
+                for o in range(s, starts[k + 1]):
+                    b[o] = a[o]
+                k += 1
+            next_starts.append(s)
+        next_starts.append(n)
+        starts = next_starts
+        t2 = a
+        a = b
+        b = t2
+    return a
+
+def _keys[T, K](xs: list[T], key: fn(T) -> K) -> list[K]:
+    keys: list[K] = []
+    for x in xs:
+        keys.append(key(x))
+    return keys
+
+def _map[T, R](f: fn(T) -> R, xs: list[T]) -> list[R]:
+    out: list[R] = []
+    for x in xs:
+        out.append(f(x))
+    return out
+
+def _filter[T](f: fn(T) -> bool, xs: list[T]) -> list[T]:
+    out: list[T] = []
+    for x in xs:
+        if f(x):
+            out.append(x)
+    return out

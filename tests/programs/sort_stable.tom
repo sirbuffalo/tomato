@@ -1,0 +1,45 @@
+class Item:
+    key: int
+    pos: int
+
+    @init
+    def make(self, key: int, pos: int):
+        self.key = key
+        self.pos = pos
+
+def key_of(it: Item) -> int:
+    return it.key
+
+def cmp_items(a: Item, b: Item) -> int:
+    return a.key - b.key
+
+def check(items: list[Item], tag: str):
+    ok = True
+    for i in range(len(items) - 1):
+        a = items[i]
+        b = items[i + 1]
+        if a.key > b.key or (a.key == b.key and a.pos > b.pos):
+            ok = False
+    print(f'{tag} {len(items)} {ok}')
+
+def make(n: int, mod: int, seed: int, shape: int) -> list[Item]:
+    out: list[Item] = []
+    s = seed
+    for i in range(n):
+        s = (s * 1103515245 + 12345) % 2147483648
+        k = s % mod
+        if shape == 1:
+            k = i // 3
+        if shape == 2:
+            k = (n - i) // 3
+        out.append(Item(k, i))
+    return out
+
+@main
+def main():
+    for n in [0, 1, 2, 3, 31, 64, 65, 100, 700]:
+        for shape in [0, 1, 2]:
+            for mod in [2, 50, 100000]:
+                items = make(n, mod, n + mod, shape)
+                check(sorted(items, key=key_of), f'key {shape} {mod}')
+                check(sorted(items, cmp=cmp_items), f'cmp {shape} {mod}')
