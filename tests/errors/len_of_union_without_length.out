@@ -1,0 +1,5 @@
+error: len() needs every member of int | str to have a length, but int does not
+ --> tests/errors/len_of_union_without_length.tom:2:5
+  |
+2 |     return len(x)
+  |     ^^^^^^^^^^^^^

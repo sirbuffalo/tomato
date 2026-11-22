@@ -1312,6 +1312,15 @@ Source: Davis's Dashboard message:
 
 - `x not in items` means `not (x in items)`, for everything `in` works on (lists, text, sets, dicts, tuples, ranges, classes with `@contains`, `x in Type`). It compares like `in` and `is not`, so it cannot be chained.
 - `//=`, `**=`, `&=`, `|=` and `^=` join `+= -= *= /= %=`; `x op= v` is `x = x op v`.
+### D55a — a union stays narrowed after an early exit and in `else`; `len` and `for` work on a union: accepted
+
+- Evidence: Davis asked for a union narrowed by a type test to be usable beyond the body of `if x in T:`; this follows Python's type checkers (mypy, pyright), which narrow the same way.
+- A union variable tested with `x in T` (T one of its members) is narrowed beyond the `if` body: in `else:` it is the members no condition matched, and after the `if` it is the members of the branches that fall through (a branch that ends in `return`, `raise`, `break` or `continue` does not count). One member left gives that type, several a smaller union that can be tested again. The narrowing lasts to the end of the block the `if` is in.
+- Python's rule on assignment also holds: a narrowed variable cannot be assigned inside the check or in the rest of the block (compile error), so the type never goes stale at a loop head.
+- `len(x)` on a union gives the length of whichever member it holds; `for item in x:` loops over whichever member it holds. Both need every member to support it, and a loop's items must have the same type in every member.
+- A smaller union is accepted where a larger one with those members is wanted.
+- A `for` over a union must name a plain variable; other expressions give the usual not-iterable error.
+- Not covered: narrowing by `not in`, `is None`, `and`/`or`/`not` conditions, by `while` conditions or conditional expressions, of fields (`self.x`) and anything but a plain variable; other operations on a union as a whole (only `len` and `for`).
 
 ### D54a — tuple unpacking and multiple assignment: accepted
 

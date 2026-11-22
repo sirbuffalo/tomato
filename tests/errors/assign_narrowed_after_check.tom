@@ -1,0 +1,9 @@
+def f(x: int | str) -> int:
+    if x in str:
+        return 0
+    x = 5
+    return x
+
+@main
+def main():
+    print(f(1))

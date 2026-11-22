@@ -36,6 +36,8 @@ list_mixed
 iter_protocol
 angles
 constants
+union_narrowing
+union_len_for
 fstrings
 conditional
 comprehension

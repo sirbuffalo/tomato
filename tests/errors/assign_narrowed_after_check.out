@@ -1,0 +1,6 @@
+error: 'x' is known to be int after the check above, so it cannot be assigned here
+ --> tests/errors/assign_narrowed_after_check.tom:4:5
+  |
+4 |     x = 5
+  |     ^
+  = help: assign to it before the check

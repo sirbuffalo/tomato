@@ -1,0 +1,6 @@
+error: 'x' is known to be str inside this check, so it cannot be assigned here
+ --> tests/errors/assign_in_elif_after_check.tom:5:9
+  |
+5 |         x = 5
+  |         ^
+  = help: assign to it outside the check

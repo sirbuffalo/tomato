@@ -1,0 +1,35 @@
+def size(items: list[int] | range) -> int:
+    return len(items)
+
+def total(items: list[int] | range) -> int:
+    t = 0
+    for x in items:
+        t += x
+    return t
+
+def first_over(items: list[int] | range, limit: int) -> int:
+    for x in items:
+        if x > limit:
+            return x
+    return -1
+
+def stops(items: list[int] | range) -> int:
+    n = 0
+    for x in items:
+        if x == 3:
+            break
+        if x == 1:
+            continue
+        n += 10
+    return n
+
+def length_of(x: str | list[int]) -> int:
+    return len(x)
+
+@main
+def main():
+    print(size([4, 5, 6]), size(range(10)), size(range(0, 10, 3)))
+    print(total([1, 2, 3]), total(range(5)))
+    print(first_over([1, 5, 9], 4), first_over(range(100), 41), first_over(range(3), 9))
+    print(stops([0, 1, 2, 3, 4]), stops(range(6)))
+    print(length_of('héllo'), length_of([1, 2]))

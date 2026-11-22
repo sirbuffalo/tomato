@@ -571,6 +571,12 @@ class Mod:
                 self.iface_closure(a[1:], closure)
                 return b[1:] in closure
             return False
+        if is_union(a) and is_union(b):
+            # a narrowed union (some members ruled out) shares the box of the whole one
+            for m in union_members(a):
+                if not (m in union_members(b)):
+                    return False
+            return True
         if is_optional(b):
             return a == 'None' or self.assignable(a, strip_optional(b))
         return False
@@ -742,6 +748,7 @@ class GenCtx:
     slots: dict[str, str] = {}
     types: dict[str, str] = {}
     narrowed: list[str] = []
+    settled: list[str] = []
     ret: str = ''
     owner: str = ''
     in_init: bool = False
@@ -761,6 +768,8 @@ class Gen:
     rc_slots: list[str] = []
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
+    settled: list[str] = []       # the narrowed variables whose narrowing lasts to the end of the block (after an if that left)
+    after: list[list[str]] = []   # for each of those: its name, slot and type before, put back when the block ends
     slots: dict[str, str] = {}
     types: dict[str, str] = {}
     n: int = 0
@@ -3192,6 +3201,36 @@ class Gen:
         if len(args) != 1:
             raise CompileError('len() takes exactly one argument', line)
         v = self.expr(args[0])
+        if is_union(v.ty):
+            return self.union_len(v, line)
+        return self.len_of(v, line)
+
+    def union_len(self, v: Ex, line: int) -> Ex:
+        # len() of a union: the length of whichever member it holds (every member must have one)
+        for m in union_members(v.ty):
+            if not (is_list(m) or is_dict(m) or is_set(m) or m == 'str' or (is_class(m) and self.mod.has_op(m[1:], 'len'))):
+                raise CompileError("len() needs every member of " + shown(v.ty) + " to have a length, but " + shown(m) + " does not", line)
+        result = self.hidden_slot('len.of')
+        end = self.label('endlen')
+        members = union_members(v.ty)
+        for k, m in enumerate(members):
+            if k < len(members) - 1:
+                then = self.label('lenthen')
+                nxt = self.label('lennext')
+                self.cond_br(self.box_is(v, m), then, nxt)
+                self.place(then)
+            n = self.len_of(self.unbox_value(v, m), line)
+            self.emit('store i64 ' + n.reg + ', ptr ' + result)
+            self.br(end)
+            if k < len(members) - 1:
+                self.place(nxt)
+        self.place(end)
+        self.release(v)
+        r = self.tmp('len')
+        self.emit(r + ' = load i64, ptr ' + result)
+        return ex(r, 'int')
+
+    def len_of(self, v: Ex, line: int) -> Ex:
         if is_class(v.ty):
             f = self.mod.find_op(v.ty[1:], 'len')
             if f is None or len(f.ptypes) != 0 or f.ret != 'int':
@@ -3315,8 +3354,10 @@ class Gen:
 
     # ---- statements
     def block(self, body: list[Node]):
+        depth = len(self.after)
         for s in body:
             self.stmt(s)
+        self.end_block_narrowing(depth)
 
     def push_loop(self, brk: str, cont: str):
         if self.loop_depth < len(self.breaks):
@@ -3409,6 +3450,8 @@ class Gen:
             if target.kind != 'Name':
                 raise CompileError('cannot assign to this expression\nthe left side of = must be a variable, a field or an item', s.line)
             name = target.fields[0].text
+            if name in self.settled:
+                raise CompileError("'" + name + "' is known to be " + shown(self.types[name]) + " after the check above, so it cannot be assigned here\nassign to it before the check", s.line)
             if name in self.narrowed:
                 raise CompileError("'" + name + "' is known to be " + shown(self.types[name]) + " inside this check, so it cannot be assigned here\nassign to it outside the check", s.line)
             expected = ''
@@ -3647,8 +3690,13 @@ class Gen:
         return [name, tt]
 
     def enter_narrow(self, name: str, member: str) -> list[str]:
-        # inside the branch the variable is the member's own type: a copy of the value taken out of the box
+        # inside the branch the variable is the member's own type: a copy of the value taken out of the box.
+        # When several members are left (member is a union) the variable keeps its box and only its type gets smaller.
         saved = [self.slots[name], self.types[name]]
+        if is_union(member):
+            self.types[name] = member
+            self.narrowed.append(name)
+            return saved
         holder = self.tmp('whole')
         self.emit(holder + ' = load ptr, ptr ' + saved[0])
         inner = self.unbox_value(ex(holder, saved[1]), member)
@@ -3662,42 +3710,92 @@ class Gen:
         self.types[name] = saved[1]
         self.narrowed = self.narrowed[:-1]
 
+    def narrow_to(self, name: str, keep: list[str]) -> list[str]:
+        # the members `keep` of a union variable (one member gives that type, several a smaller union)
+        if len(keep) == 1:
+            return self.enter_narrow(name, keep[0])
+        return self.enter_narrow(name, union_type(keep))
+
+    def settle_narrow(self, name: str, keep: list[str]):
+        # after an if whose other branches all left the block: the variable stays narrowed to the end of the block
+        saved = self.narrow_to(name, keep)
+        self.settled.append(name)
+        self.after.append([name, saved[0], saved[1]])
+
+    def end_block_narrowing(self, depth: int):
+        while len(self.after) > depth:
+            entry = self.after[len(self.after) - 1]
+            self.after = self.after[:-1]
+            self.settled = self.settled[:-1]
+            self.leave_narrow(entry[0], [entry[1], entry[2]])
+
     def if_stmt(self, s: Node):
         end = self.label('endif')
-        target: list[str] = []
-        saved: list[str] = []
-        for branch in s.fields[0].items:
+        var = ''                       # the union variable the first condition tests, if it does
+        members: list[str] = []
+        left: list[str] = []           # the members it can still be when the next condition is tested
+        kept: list[str] = []           # the members it can be after the whole if, over the branches that do not leave
+        branches = s.fields[0].items
+        for k, branch in enumerate(branches):
             target = self.narrow_target(val_node(branch.items[0]))
+            if k == 0 and len(target) > 0:
+                var = target[0]
+                members = union_members(self.types[var])
+                left = members
             cond = self.truth(self.expr(val_node(branch.items[0])), s.line)
             then = self.label('then')
             nxt = self.label('next')
             self.cond_br(cond, then, nxt)
             self.place(then)
+            saved: list[str] = []
+            # a later branch that does not test the variable still knows which members are left, so it cannot assign it
+            rest_known = var != '' and k > 0 and not (len(target) > 0 and target[0] == var) and len(left) > 0 and len(left) < len(members)
+            saved_rest: list[str] = []
+            if rest_known:
+                saved_rest = self.narrow_to(var, left)
             if len(target) > 0:
                 saved = self.enter_narrow(target[0], target[1])
             self.block(val_nodes(branch.items[1]))
             if len(target) > 0:
                 self.leave_narrow(target[0], saved)
+            if rest_known:
+                self.leave_narrow(var, saved_rest)
             if not self.terminated:
                 self.br(end)
+                if var != '' and len(target) > 0 and target[0] == var:
+                    kept.append(target[1])
+                elif var != '':
+                    kept = kept + left
+            if var != '' and len(target) > 0 and target[0] == var:
+                rest: list[str] = []
+                for m in left:
+                    if m != target[1]:
+                        rest.append(m)
+                left = rest
             self.place(nxt)
         if s.fields[1].tag == 'l':
-            # `if x in T: ... else: ...` on a union of exactly two types: the else part knows x is the other one
-            other = ''
-            if len(s.fields[0].items) == 1 and len(target) > 0:
-                members = union_members(self.types[target[0]])
-                if len(members) == 2:
-                    other = members[0]
-                    if other == target[1]:
-                        other = members[1]
-            if other != '':
-                saved = self.enter_narrow(target[0], other)
+            # `else:` knows the variable is one of the members no condition above matched
+            narrowed_else = var != '' and len(left) > 0 and len(left) < len(members)
+            saved = []
+            if narrowed_else:
+                saved = self.narrow_to(var, left)
             self.block(val_nodes(s.fields[1]))
-            if other != '':
-                self.leave_narrow(target[0], saved)
+            if narrowed_else:
+                self.leave_narrow(var, saved)
+            if not self.terminated:
+                kept = kept + left
+        else:
+            kept = kept + left
         if not self.terminated:
             self.br(end)
         self.place(end)
+        if var != '' and len(kept) > 0 and self.types[var] == union_type(members):
+            keep: list[str] = []
+            for m in members:
+                if m in kept:
+                    keep.append(m)
+            if len(keep) < len(members):
+                self.settle_narrow(var, keep)
 
     def while_stmt(self, s: Node):
         head = self.label('while')
@@ -3727,6 +3825,7 @@ class Gen:
         self.slots, c.slots = c.slots, self.slots
         self.types, c.types = c.types, self.types
         self.narrowed, c.narrowed = c.narrowed, self.narrowed
+        self.settled, c.settled = c.settled, self.settled
         self.ret, c.ret = c.ret, self.ret
         self.owner, c.owner = c.owner, self.owner
         self.in_init, c.in_init = c.in_init, self.in_init
@@ -3886,6 +3985,43 @@ class Gen:
         self.br(head)
         self.place(end)
 
+    def item_type(self, t: str) -> str:
+        # the type of the items a for loop gives over a value of type t, or '' when it is not known here
+        if is_list(t):
+            return elem_of(t)
+        if t == 'str':
+            return 'str'
+        if is_class(t) and self.mod.has_op(t[1:], 'iter'):
+            return self.mod.find_op(t[1:], 'iter').ret
+        return ''
+
+    def for_union(self, s: Node, name: str):
+        # a loop over a union variable: the loop is compiled once for each member, in the branch where the variable is that member
+        members = union_members(self.types[name])
+        first = ''
+        for m in members:
+            item = self.item_type(m)
+            if first == '':
+                first = item
+            elif item != '' and item != first:
+                raise CompileError("a for loop over '" + name + "' needs the same item type in every member of " + shown(self.types[name]) + ", but the items are " + shown(first) + " and " + shown(item), s.line)
+        whole = self.tmp('whole')
+        self.emit(whole + ' = load ptr, ptr ' + self.slots[name])
+        end = self.label('endunion')
+        for k, m in enumerate(members):
+            if k < len(members) - 1:
+                then = self.label('eachof')
+                nxt = self.label('nextof')
+                self.cond_br(self.box_is(ex(whole, self.types[name]), m), then, nxt)
+                self.place(then)
+            saved = self.enter_narrow(name, m)
+            self.for_stmt(s)
+            self.leave_narrow(name, saved)
+            self.br(end)
+            if k < len(members) - 1:
+                self.place(nxt)
+        self.place(end)
+
     def for_each(self, s: Node, it: Node):
         lst = self.expr(it)
         if is_class(lst.ty) and self.mod.has_op(lst.ty[1:], 'iter'):
@@ -3953,6 +4089,9 @@ class Gen:
 
     def for_stmt(self, s: Node):
         it = val_node(s.fields[1])
+        if it.kind == 'Name' and it.fields[0].text in self.slots and is_union(self.types[it.fields[0].text]):
+            self.for_union(s, it.fields[0].text)
+            return
         if self.gen_call(s, it):
             return
         if not (it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'range'):

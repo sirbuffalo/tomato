@@ -1,0 +1,92 @@
+class Dog:
+    name: str = 'rex'
+
+class Cat:
+    name: str = 'tom'
+
+# after `if x in T: return` the variable is the other members
+def after_return(x: int | str) -> str:
+    if x in int:
+        return 'number ' + str(x + 1)
+    return 'text ' + x
+
+def after_raise(x: str | int) -> int:
+    if x in str:
+        raise RuntimeError('wanted a number, got ' + x)
+    return x * 2
+
+# three members: the rest is still a union, which a second test narrows again
+def three(x: int | str | float) -> str:
+    if x in int:
+        return 'int ' + str(x)
+    if x in str:
+        return 'str ' + x
+    return 'float ' + str(x + 0.5)
+
+def either(x: int | str | float) -> str:
+    if x in float:
+        return 'float'
+    y: int | str | float = x
+    return 'int or str ' + str(x in int)
+
+# else knows the members not tested, and an else that leaves narrows what follows
+def with_else(x: int | str | float) -> str:
+    if x in int:
+        return 'int ' + str(x)
+    else:
+        if x in float:
+            return 'float ' + str(x)
+        return 'str ' + x
+
+def else_leaves(x: int | str) -> int:
+    if x in str:
+        pass
+    else:
+        return x + 100
+    return len(x)
+
+def chain(x: Dog | Cat | int) -> str:
+    if x in Dog:
+        return 'dog ' + x.name
+    elif x in Cat:
+        return 'cat ' + x.name
+    else:
+        return 'int ' + str(x)
+
+def chain_out(x: Dog | Cat | int) -> str:
+    if x in Dog:
+        return 'dog ' + x.name
+    elif x in int:
+        return 'int ' + str(x)
+    return 'cat ' + x.name
+
+# the narrowing lasts to the end of the block it is in
+def loop(items: list[int | str]) -> int:
+    total = 0
+    for item in items:
+        if item in str:
+            continue
+        total += item
+    return total
+
+def pass_on(x: int | str | float) -> str:
+    if x in float:
+        return 'float'
+    return either(x)
+
+@main
+def main():
+    print(after_return(1), after_return('a'))
+    print(after_raise(4))
+    print(three(1), three('b'), three(1.5))
+    print(either(2), either('z'), either(0.5))
+    print(with_else(1), with_else(2.5), with_else('c'))
+    print(else_leaves('four'), else_leaves(5))
+    print(chain(Dog()), chain(Cat()), chain(7))
+    print(chain_out(Dog()), chain_out(Cat()), chain_out(8))
+    print(loop([1, 'a', 2, 'b', 3]))
+    print(pass_on(3), pass_on(1.5))
+    try:
+        after_raise('oops')
+    catch RuntimeError as e:
+        print(e.message)

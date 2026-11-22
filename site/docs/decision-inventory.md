@@ -203,6 +203,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 175. D53b is accepted: `a if condition else b` evaluates only the chosen side; both sides have one type (`None` with a class, text or list gives an optional; a declared union or optional type converts each side).
 176. D53c is accepted: `[item for x in items]` and `[item for x in items if condition]` build a list over anything `for` accepts; the loop variable is a variable of the function, as in `for`.
 177. D54a is accepted: multiple assignment and tuple unpacking (`a, b = b, a`, `x, y = pair`); a constant count mismatch is a compile error, an unknown length is checked at run time with a RuntimeError.
+178. D55a is accepted: a union narrowed by `x in T` stays narrowed in `else:` and after an `if` whose other branches leave the block (to the end of the block, no assignment meanwhile); `len()` and `for` work on a union when every member supports them.
 167. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass

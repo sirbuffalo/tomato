@@ -28,10 +28,7 @@ export class progress_bar:
         if width < 1:
             raise RuntimeError('a progress bar width must be at least 1')
         self.items = items
-        if items in range:
-            self.total = len(items)
-        else:
-            self.total = len(items)
+        self.total = len(items)
         self.label = label
         self.width = width
 
@@ -59,18 +56,12 @@ export class progress_bar:
     def close(self):
         self.show('\n')
 
-    # the two loops are the same, but each needs its own branch: a union is narrowed to one type only inside `if x in T:`
     @iter
     def each(self) -> int:
         source = self.items
-        if source in range:
-            for x in source:
-                yield x
-                self.update()
-        else:
-            for x in source:
-                yield x
-                self.update()
+        for x in source:
+            yield x
+            self.update()
         self.close()
 
 # The helpers below work on `list[int]` and return whole lists (there are no generics yet).

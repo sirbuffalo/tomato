@@ -1,0 +1,10 @@
+def f(x: int | str, y: bool) -> str:
+    if x in int:
+        return 'i'
+    elif y:
+        x = 5
+    return 'after ' + x
+
+@main
+def main():
+    print(f('a', True))

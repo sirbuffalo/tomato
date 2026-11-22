@@ -1,0 +1,11 @@
+number 2 text a
+8
+int 1 str b float 2.0
+int or str True int or str False float
+int 1 float 2.5 str c
+4 105
+dog rex cat tom int 7
+dog rex cat tom int 8
+6
+int or str True float
+wanted a number, got oops
