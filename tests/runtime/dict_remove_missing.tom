@@ -1,0 +1,6 @@
+@main
+def main():
+    d: dict[str, int] = {'a': 1}
+    d.remove('a')
+    print(len(d))
+    d.remove('a')

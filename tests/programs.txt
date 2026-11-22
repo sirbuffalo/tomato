@@ -64,3 +64,4 @@ bigint_ops
 native_sort
 alloc_pool
 str_fast
+cache_lru

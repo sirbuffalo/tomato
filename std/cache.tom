@@ -1,0 +1,213 @@
+# An in-memory cache with least-recently-used eviction, written in Tomato: `from cache import Cache`.
+#
+#     c = Cache[int](100)               # keys are text, values are any one type; at most 100 entries
+#     c.set('a', 1)
+#     n = c.get('a', 0)                 # the value, or 0 when 'a' is missing, expired or evicted
+#     n = c['a']                        # the value, or CacheMiss when missing
+#     if 'a' in c: ...                  # does not refresh the entry and does not count as a hit or a miss
+#
+# When a cache is full, `set` of a new key drops the entry that was used longest ago. `get`, `c[key]` and `set` count as
+# a use; `contains`, `peek` and `keys` do not. Every operation takes constant time: a dict finds the entry and a doubly
+# linked list keeps the use order (the most recent entry first), so a use moves one entry to the front.
+#
+# Entries can expire. `Cache[int](100, 60.0)` gives every entry 60 seconds; `c.set('a', 1, ttl=5.0)` gives one entry
+# its own time (a ttl of 0 or less means "no limit"). An expired entry is dropped when it is next looked at, and
+# counts as a miss. Time comes from `clock()`; a test passes its own `Clock` subclass (the third argument,
+# `Cache[int](100, 60.0, fake)`) whose `now()` it controls:
+#
+#     class FakeClock(Clock):
+#         t: float = 0.0
+#         override def now(self) -> float:
+#             return self.t
+#
+# `c.hits`, `c.misses`, `c.evictions` and `c.expirations` count what happened, and `c.hit_rate()` is hits / (hits + misses).
+#
+# A cache belongs to one program and the language runs one thing at a time: tasks switch only at `await`, and no cache
+# method awaits, so a cache can be shared by async tasks without a lock.
+
+export class CacheMiss(RuntimeError):
+    @init
+    def make_miss(self, message: str):
+        RuntimeError.make(self, message)
+
+export class Clock:
+    def now(self) -> float:
+        return clock()
+
+class Entry[V]:
+    key: str
+    value: V
+    expires: float = 0.0          # 0 means never
+    prev: Entry[V] | None = None
+    nxt: Entry[V] | None = None
+
+    @init
+    def make(self, key: str, value: V, expires: float):
+        self.key = key
+        self.value = value
+        self.expires = expires
+
+export class Cache[V]:
+    capacity: int = 0
+    ttl: float = 0.0
+    timer: Clock = Clock()
+    items: dict[str, Entry[V]] = {}
+    first: Entry[V] | None = None        # most recently used
+    last: Entry[V] | None = None         # least recently used
+    hits: int = 0
+    misses: int = 0
+    evictions: int = 0
+    expirations: int = 0
+
+    @init
+    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        if capacity < 0:
+            raise RuntimeError('a cache capacity cannot be negative')
+        self.capacity = capacity
+        self.ttl = ttl
+        if timer is None:
+            self.timer = Clock()
+        else:
+            self.timer = timer
+
+    # counts entries that expired but have not been looked at yet: expiry is lazy (constant time), so an expired
+    # entry is dropped when it is read, deleted, reaches the end of the use order, or is replaced
+    @len
+    def size(self) -> int:
+        return len(self.items)
+
+    def unlink(self, e: Entry[V]):
+        p = e.prev
+        n = e.nxt
+        if p is None:
+            self.first = n
+        else:
+            p.nxt = n
+        if n is None:
+            self.last = p
+        else:
+            n.prev = p
+        e.prev = None
+        e.nxt = None
+
+    def push_front(self, e: Entry[V]):
+        f = self.first
+        e.prev = None
+        e.nxt = f
+        if f is None:
+            self.last = e
+        else:
+            f.prev = e
+        self.first = e
+
+    def remove(self, e: Entry[V]):
+        self.unlink(e)
+        self.items.remove(e.key)
+
+    def expired(self, e: Entry[V]) -> bool:
+        return e.expires > 0.0 and self.timer.now() >= e.expires
+
+    # the live entry for key, or nothing; an expired one is dropped on the way
+    def live(self, key: str) -> bool:
+        if key not in self.items:
+            return False
+        e = self.items[key]
+        if self.expired(e):
+            self.remove(e)
+            self.expirations += 1
+            return False
+        return True
+
+    def get(self, key: str, default: V) -> V:
+        if not self.live(key):
+            self.misses += 1
+            return default
+        e = self.items[key]
+        self.hits += 1
+        self.unlink(e)
+        self.push_front(e)
+        return e.value
+
+    @get
+    def at(self, key: str) -> V:
+        if not self.live(key):
+            self.misses += 1
+            raise CacheMiss(f'{key} is not in the cache')
+        e = self.items[key]
+        self.hits += 1
+        self.unlink(e)
+        self.push_front(e)
+        return e.value
+
+    # like get, but does not refresh the entry and does not count
+    def peek(self, key: str, default: V) -> V:
+        if not self.live(key):
+            return default
+        return self.items[key].value
+
+    @contains
+    def contains(self, key: str) -> bool:
+        return self.live(key)
+
+    def set(self, key: str, value: V, ttl: float = 0.0):
+        if self.capacity == 0:
+            return
+        life = ttl
+        if life <= 0.0:
+            life = self.ttl
+        expires = 0.0
+        if life > 0.0:
+            expires = self.timer.now() + life
+        if key in self.items:
+            e = self.items[key]
+            e.value = value
+            e.expires = expires
+            self.unlink(e)
+            self.push_front(e)
+            return
+        if len(self.items) >= self.capacity:
+            self.evict()
+        e2 = Entry[V](key, value, expires)
+        self.items[key] = e2
+        self.push_front(e2)
+
+    # make room: drop the least recently used entry (an expired one at the end counts as expired, not evicted)
+    def evict(self):
+        e = self.last
+        if e is not None:
+            expired = self.expired(e)
+            self.remove(e)
+            if expired:
+                self.expirations += 1
+            else:
+                self.evictions += 1
+
+    # true when the key was there (and live)
+    def delete(self, key: str) -> bool:
+        if not self.live(key):
+            return False
+        self.remove(self.items[key])
+        return True
+
+    def clear(self):
+        while True:
+            e = self.last
+            if e is None:
+                break
+            self.remove(e)
+
+    # the live keys, most recently used first
+    def keys(self) -> list[str]:
+        out: list[str] = []
+        e = self.first
+        while e is not None:
+            if not self.expired(e):
+                out.append(e.key)
+            e = e.nxt
+        return out
+
+    def hit_rate(self) -> float:
+        total = self.hits + self.misses
+        if total == 0:
+            return 0.0
+        return self.hits / total

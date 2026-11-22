@@ -814,6 +814,10 @@ static double real_seconds(void) { return 0; }
 static void real_wait_until(double logical) { (void)logical; }
 #endif
 
+/* clock(): seconds on a monotonic clock, as a float; only differences mean anything. Real time, not the logical sleep clock. */
+#include <time.h>
+double tomato_clock(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec * 1e-9; }
+
 void tomato_sleep_wait(void *frame, double seconds) {
     if (sl_origin < 0) sl_origin = real_seconds();
     if (!(seconds > 0)) seconds = 0;

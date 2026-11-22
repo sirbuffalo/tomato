@@ -1419,6 +1419,19 @@ Source: Davis's Dashboard message:
 - Not built: generic interfaces, generic methods (a method with its own type parameters), bounds on a type parameter (every use of T is checked in the copy, not against a promise), a generic class as a parent, async generic functions, and writing both type arguments of a two-parameter class in a call (`Pair[str, int](...)`; use inference or a typed variable).
 - `itertools` now uses it: `class progress_bar[T]` (`for name in progress_bar(['a', 'b'])` gives text, `range(10)` gives ints) and `permutations`, `combinations`, `combinations_with_replacement`, `product`, `product_repeat`, `chain`, `pairwise`, `batched` and `repeat` take lists of any item type. Their order and results are unchanged. `accumulate` still adds, so it stays on `list[int]`.
 
+### D62a — `clock()` and `std/cache.tom`, an LRU cache: accepted
+
+- Evidence: Davis asked for a cache library. Asked how a missing key should behave he chose "`get(key, default)` plus `c[key]` raising"; asked how expiry and the clock should work he chose "add a `clock()` builtin (monotonic float seconds); the cache takes an injectable clock".
+- `clock()` is a built-in that gives the seconds on a monotonic clock as a `float` (`time.monotonic()`); only the difference between two readings means anything. It is real time, not the logical clock of `await sleep` (D58c). In the browser it has the resolution of `Date.now()` (milliseconds).
+- `dict.remove(key)` takes an entry out and releases its value; a missing key stops the program ("the key is not in the dict"), as for `set.remove`. Dicts had no way to forget a key before.
+- Creating a generic class with its type written out and keyword arguments (`Box[int](1, n=2)`) silently dropped the keywords; it is now the same error as for other classes ("pass the arguments by position").
+- `from cache import Cache, CacheMiss, Clock`. `Cache[V](capacity, ttl, timer)`: text keys (dicts only have text keys) and one value type, so the generic class has one type parameter. `get(key, default)`, `c[key]` (raises `CacheMiss`, a `RuntimeError`), `peek`, `set(key, value, ttl)`, `delete`, `clear`, `keys()`, `len`, `key in c`. Optional return values are not available yet, so there is no `get(key)` giving `None`.
+- Least recently used entries go first. `get`, `c[key]` and `set` count as a use; `in`, `peek` and `keys` do not. Every operation is O(1): a dict finds the entry and a doubly linked list orders them. Capacity 0 stores nothing; a negative capacity is an error.
+- TTL: a cache-wide `ttl` (0 or less means none) and a per-entry `ttl` on `set`; an expired entry is dropped when next looked at and counts as a miss (`expirations`). Time comes from a `Clock` object (`now()` returns `clock()`); a test passes a subclass whose `now()` it controls. Chosen because functions are not values yet.
+- Statistics: `hits`, `misses`, `evictions`, `expirations`, `hit_rate()`.
+- Concurrency: the runtime runs one thing at a time and tasks switch only at `await`; no cache method awaits, so nothing is locked.
+- Not built: memoising a function (`memoize(f)` or `@cached`; needs function values), a size limit in bytes, a disk-backed cache, a request cache for the HTTP client, a wall-clock `time()`. Keyword arguments cannot be used when creating an object, so `ttl` and `timer` are positional in `Cache[int](100, 60.0)`; they work as keywords on methods (`set('a', 1, ttl=5.0)`).
+
 ### D61a — readable errors: color, warnings, call traces: accepted (the task asked for them; the choices below are the agent's)
 
 - Evidence: the task asked for red errors in the terminal and on the website, and for better error checking: unused variables and imports, unreachable code, a missing `return`, use before a value is given, shadowing, duplicate definitions, a list changed while a loop goes through it, runtime errors that say where they happened.

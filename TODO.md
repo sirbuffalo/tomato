@@ -1,5 +1,3 @@
-- Add a clock builtin
-  So progress_bar can show elapsed time, speed and ETA. The language has no clock yet.
 - Add list methods pop, insert, extend, sort and reverse, and list equality (==)
   Lists only have `append` today; `==` on two lists is not supported.
 - Add function values or lambdas so map and filter can exist
@@ -22,3 +20,5 @@
   Davis: create it on the MacBook (Xcode > Settings > Accounts > Manage Certificates > + > Developer ID Application). Then run the flow in docs/releasing.md on v0.49, upload with `gh release upload --clobber`, update site/latest.json pkg_sha256, and drop the unsigned note on the Download page.
 - Fuse f-string chains ('w' + str(x)) into one buffer
   Needs a compiler change; the remainder of wordcount/strings time is malloc/free (size-class allocator task).
+- Add `memoize(f)` / `@cached` to std/cache once function values land on main
+  std/cache.tom has the cache and the injectable `Clock`, but a function cannot be passed as a value yet, so memoising a function waits for the function values task.

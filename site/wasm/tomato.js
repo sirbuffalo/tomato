@@ -14,7 +14,7 @@
     ]).then(function (x) { self.compiler = x[0]; self.runtime = x[1]; self.std = x[2]; return self; });
     return this.ready;
   };
-  TomatoWasm.STD = ["builtin", "math", "itertools", "rational"];   // the standard library modules (std/NAME.tom)
+  TomatoWasm.STD = ["builtin", "math", "itertools", "rational", "cache"];   // the standard library modules (std/NAME.tom)
   var enc = function (s) { return new TextEncoder().encode(s); };
 
   // extra: optional { "/name.tom": Uint8Array } for the modules the program imports (the command-line repl supplies them;

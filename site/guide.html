@@ -184,6 +184,28 @@ def main():
     b: Box[str] = Box('typed')
     s = Stack[str]()                         # write the type out when no argument has it</code></pre>
 <p>A class or function can take type parameters in brackets after its name (<code>class Pair[A, B]</code>, up to two). Each call works out the types from its arguments, and the compiler makes one copy of the declaration per set of types, so nothing is slower at run time. An <code>Iterable[T]</code> parameter takes <code>T</code> from the items of a list, tuple, set, dict, text, range or object with <code>@iter</code>. That is how <code>progress_bar</code> and the <code>itertools</code> helpers (<code>permutations</code>, <code>combinations</code>, <code>product</code>, <code>chain</code>, <code>pairwise</code>, <code>batched</code>, <code>repeat</code>) work with any item type: <code>for name in progress_bar(['a', 'b']):</code> gives text, <code>progress_bar(range(10))</code> gives ints. Generic interfaces, generic methods and bounds on <code>T</code> are not built yet.</p>
+<h2>Caches and the clock</h2>
+<pre><code>from cache import Cache, CacheMiss
+
+@main
+def main():
+    c = Cache[int](2)                  # at most 2 entries; keys are text, values are all ints
+    c.set('a', 1)
+    c.set('b', 2)
+    print(c.get('a', 0))               # 1, and 'a' is now the most recently used
+    c.set('c', 3)                      # full: 'b', used longest ago, is dropped
+    print(c.keys(), 'b' in c)          # ['c', 'a'] False
+    print(c.get('b', -1))              # -1: missing keys give the default
+    try:
+        print(c['b'])                  # c[key] raises CacheMiss instead
+    catch CacheMiss as e:
+        print(e.message)
+    print(c.hits, c.misses, c.hit_rate())
+
+    t = Cache[str](100, 60.0)          # every entry expires after 60 seconds
+    t.set('token', 'abc', ttl=5.0)     # this one after 5</code></pre>
+<p><code>from cache import Cache</code> is a least-recently-used cache written in Tomato. <code>get</code>, <code>c[key]</code> and <code>set</code> count as a use; <code>in</code>, <code>peek</code> and <code>keys()</code> do not. Every operation takes constant time (a dict plus a doubly linked list). Capacity 0 stores nothing. <code>delete(key)</code>, <code>clear()</code> and <code>len(c)</code> work as expected, and <code>hits</code>, <code>misses</code>, <code>evictions</code>, <code>expirations</code> and <code>hit_rate()</code> count what happened. An expired entry is dropped when it is next looked at. Time comes from the built-in <code>clock()</code>, the seconds on a monotonic clock as a <code>float</code> (take two readings and subtract); a test gives the cache its own <code>Clock</code> subclass, <code>Cache[int](100, 60.0, fake)</code>, whose <code>now()</code> it controls. Object creation takes no keyword arguments, so <code>ttl</code> and the clock are positional there. The cache has no locking because tasks only switch at <code>await</code>. Memoising a function, a disk-backed cache and a request cache for HTTP are not built yet. <code>d.remove(key)</code> deletes an entry from any dict.</p>
+
 <h2>Errors</h2>
 <pre><code>@main
 def main():

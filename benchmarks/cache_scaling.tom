@@ -1,0 +1,24 @@
+# Checks that std/cache.tom operations take constant time: 1,000,000 set and get calls on caches of very different
+# sizes should cost about the same per call. Run by hand (it is not part of benchmarks/run.sh, which compares languages):
+#   tomato run benchmarks/cache_scaling.tom
+from cache import Cache
+
+def run(capacity: int, keyspace: int):
+    c = Cache[int](capacity)
+    n = 1000000
+    t0 = clock()
+    for i in range(n):
+        c.set(str(i % keyspace), i)
+    t1 = clock()
+    s = 0
+    for i in range(n):
+        s += c.get(str(i % keyspace), 0)
+    t2 = clock()
+    print(f'capacity {capacity}: {len(c)} kept, {c.evictions} evicted, set {t1 - t0} s, get {t2 - t1} s per 1M calls ({s > 0})')
+
+@main
+def main():
+    run(10, 20)
+    run(1000, 2000)
+    run(100000, 200000)
+    run(1000000, 1000000)

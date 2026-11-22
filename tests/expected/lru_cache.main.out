@@ -1,0 +1,11 @@
+27 111
+97 118
+27 111
+871 178
+6171 261
+27 111
+97 118
+kept, most recent first: ['97', '27', '6171']
+2 hits, 5 misses, 2 evicted, hit rate 0.2857142857142857
+-1
+not cached: 1 is not in the cache

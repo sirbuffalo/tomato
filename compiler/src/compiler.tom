@@ -3005,6 +3005,12 @@ class Gen:
             return self.open_call(args, n.line)
         if name == 'input' and name not in self.slots and self.mod.resolve(name) == '':
             return self.input_call(args, n.line)
+        if name == 'clock' and name not in self.slots and self.mod.resolve(name) == '':
+            if len(args) > 0:
+                raise CompileError('clock() takes no arguments', n.line)
+            c = self.tmp('clock')
+            self.emit(f'{c} = call double @tomato_clock()')
+            return ex(c, 'float')
         if name == 'sleep' and name not in self.slots and self.mod.resolve(name) == '':
             raise CompileError("sleep() is async, so it must be awaited\nwrite: await sleep(seconds)  inside an async def", n.line)
         if name == 'len':
@@ -3115,6 +3121,8 @@ class Gen:
         if targ == '':
             raise CompileError('this type is not supported here', n.line)
         if g.kind == 'ClassDef':
+            if len(n.fields[2].items) > 0:
+                raise CompileError('keyword arguments are not supported when creating an object\npass the arguments by position', n.line)
             ckey = self.mod.instance_class(gkey, [targ], n.line)
             return self.construct(self.mod.find_class(ckey, n.line), args, n.line)
         info = self.mod.instance_func(gkey, [targ], n.line)
@@ -3514,6 +3522,24 @@ class Gen:
             self.release(k)
             self.release(d)
             return ret_ex(r, vt)
+        if name == 'remove':
+            # d.remove(key) takes an entry out, releasing its value; the key must be there (check with 'key in d')
+            if len(args) != 1:
+                raise CompileError('remove() takes a key: remove(key)', line)
+            k = self.want(self.expr(args[0]), 'str', line, 'a dict key')
+            kw = self.key_word(k)
+            slot = self.tmp('slot')
+            self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {kw})')
+            missing = self.tmp('missing')
+            self.emit(f'{missing} = icmp eq ptr {slot}, null')
+            self.fail_if(missing, 'the key is not in the dict')
+            old = self.tmp('old')
+            self.emit(f'{old} = load {llvm_type(vt)}, ptr {slot}')
+            self.release(exf(old, vt))
+            self.emit(f'call i32 @tomato_dict_delete(ptr {d.reg}, i64 {kw})')
+            self.release(k)
+            self.release(d)
+            return ex('', '')
         if name not in ['keys', 'values', 'items']:
             raise CompileError(self.no_method(name, d.ty), line)
         if len(args) != 0:
@@ -4318,7 +4344,7 @@ class Gen:
         for seen in self.mod.scope:
             if seen.module == self.mod.cur or seen.module == 'builtin':
                 out.append(seen.name)
-        for b in ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'range']:
+        for b in ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range']:
             out.append(b)
         return out
 
@@ -4349,7 +4375,7 @@ class Gen:
             known = ['find', 'rfind', 'count', 'startswith', 'endswith', 'replace', 'split', 'join', 'upper', 'lower', 'strip', 'lstrip', 'rstrip', 'isdigit', 'isalpha', 'isspace']
             word = 'text'
         elif is_dict(ty):
-            known = ['get', 'keys', 'values', 'items']
+            known = ['get', 'remove', 'keys', 'values', 'items']
             word = 'a dict'
         elif is_set(ty) or ty == 'set':
             known = ['add', 'remove', 'discard']
@@ -5587,6 +5613,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare i64 @tomato_int_low64(i64)\n'
     d += 'declare i32 @tomato_int_in_range(i64, i32, i32)\n'
     d += 'declare double @tomato_int_to_f64(i64)\n'
+    d += 'declare double @tomato_clock()\n'
     d += 'declare ptr @tomato_int_str(i64)\n'
     d += 'declare i64 @tomato_int_parse(ptr)\n'
     d += 'declare i64 @tomato_int_parse_cstr(ptr, i32)\n'

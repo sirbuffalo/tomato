@@ -3,4 +3,4 @@ error: a dict has no method 'push'
   |
 4 |     print(ages.push(1))
   |                ^^^^
-  = help: the methods it has are: get, keys, values, items
+  = help: the methods it has are: get, remove, keys, values, items

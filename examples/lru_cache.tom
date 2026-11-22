@@ -1,0 +1,35 @@
+# A least-recently-used cache (std/cache.tom): keep the answers to slow questions, forget the ones asked longest ago.
+from cache import Cache, CacheMiss
+
+# a slow question: the number of steps the Collatz sequence of n takes to reach 1
+def collatz_steps(n: int) -> int:
+    steps = 0
+    while n != 1:
+        if n % 2 == 0:
+            n = n // 2
+        else:
+            n = 3 * n + 1
+        steps += 1
+    return steps
+
+def cached_steps(cache: Cache[int], n: int) -> int:
+    key = str(n)
+    known = cache.get(key, -1)          # -1 cannot be a step count, so it means "not cached"
+    if known >= 0:
+        return known
+    answer = collatz_steps(n)
+    cache.set(key, answer)
+    return answer
+
+@main
+def main():
+    cache = Cache[int](3)
+    for n in [27, 97, 27, 871, 6171, 27, 97]:
+        print(n, cached_steps(cache, n))
+    print('kept, most recent first:', cache.keys())
+    print(f'{cache.hits} hits, {cache.misses} misses, {cache.evictions} evicted, hit rate {cache.hit_rate()}')
+    print(cache.get('1', -1))
+    try:
+        print(cache['1'])
+    catch CacheMiss as e:
+        print('not cached:', e.message)

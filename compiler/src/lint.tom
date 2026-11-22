@@ -24,7 +24,7 @@ def finding(line: int, kind: str, message: str) -> Finding:
 
 # the built-in functions and classes whose names a variable should not take
 def builtin_names() -> list[str]:
-    return ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'range', 'min', 'max', 'sum', 'abs', 'chr', 'ord', 'sorted', 'reversed', 'enumerate', 'zip', 'list', 'dict', 'set', 'tuple', 'bool']
+    return ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range', 'min', 'max', 'sum', 'abs', 'chr', 'ord', 'sorted', 'reversed', 'enumerate', 'zip', 'list', 'dict', 'set', 'tuple', 'bool']
 
 # the nodes directly inside a value: a node itself, or the nodes of a list or tuple
 def kids(v: Val) -> list[Node]:

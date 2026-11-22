@@ -1,0 +1,127 @@
+# The std/cache.tom LRU cache: eviction order, capacity 0 and 1, recency, TTL with a fake clock, statistics and memory.
+from cache import Cache, CacheMiss, Clock
+
+class FakeClock(Clock):
+    t: float = 0.0
+
+    override def now(self) -> float:
+        return self.t
+
+class Thing:
+    name: str
+
+    @init
+    def make(self, name: str):
+        self.name = name
+
+@main
+def main():
+    # eviction order: the least recently used entry goes first
+    c = Cache[int](3)
+    c.set('a', 1)
+    c.set('b', 2)
+    c.set('c', 3)
+    print(c.keys(), len(c))
+    c.set('d', 4)
+    print(c.keys(), 'a' in c, c.evictions)
+    # a get refreshes: b is now the oldest
+    print(c.get('c', -1), c.keys())
+    c.set('e', 5)
+    print(c.keys(), 'd' in c, 'b' in c)
+    # overwriting refreshes the entry and replaces the value without growing the cache
+    c.set('c', 30)
+    c.set('f', 6)
+    print(c.keys(), c['c'], len(c))
+    # contains and peek do not refresh
+    print('f' in c, c.peek('e', -1), c.keys())
+    # missing keys: default, CacheMiss
+    print(c.get('zzz', 99))
+    try:
+        c['zzz']
+    catch CacheMiss as e:
+        print('miss:', e.message)
+    # delete and clear
+    print(c.delete('c'), c.delete('c'), c.keys())
+    c.clear()
+    print(len(c), c.keys())
+    c.set('x', 1)
+    print(c.keys())
+
+    # capacity 0 stores nothing; capacity 1 keeps the last key
+    z = Cache[str](0)
+    z.set('a', 'x')
+    print(len(z), z.get('a', 'none'))
+    one = Cache[str](1)
+    one.set('a', 'x')
+    one.set('b', 'y')
+    print(one.keys(), one.get('a', 'none'), one.get('b', 'none'), one.evictions)
+    one.set('b', 'z')
+    print(one['b'], len(one))
+
+    # statistics
+    s = Cache[int](2)
+    s.set('a', 1)
+    s.get('a', 0)
+    s.get('b', 0)
+    s.get('a', 0)
+    print(s.hits, s.misses, s.hit_rate(), Cache[int](1).hit_rate())
+
+    # TTL with a fake clock: a cache-wide ttl, and a ttl on one entry
+    clk = FakeClock()
+    t = Cache[int](10, 10.0, clk)
+    t.set('a', 1)
+    t.set('b', 2, ttl=3.0)
+    t.set('c', 3, ttl=100.0)
+    clk.t = 2.5
+    print(t.keys(), t.get('b', -1))
+    clk.t = 3.0
+    print(t.get('b', -1), 'b' in t, len(t), t.expirations)
+    clk.t = 9.9
+    print(t.get('a', -1))
+    clk.t = 10.0
+    print(t.get('a', -1), t.get('c', -1), t.expirations, t.keys())
+    # overwriting renews the time
+    t.set('c', 4)
+    clk.t = 19.0
+    print(t.get('c', -1))
+    clk.t = 20.0
+    print(t.get('c', -1), len(t))
+    # a ttl of zero or less means no limit
+    u = Cache[int](2, 0.0, clk)
+    u.set('k', 1)
+    clk.t = 1000000.0
+    print(u.get('k', -1))
+
+    # the real clock never goes backwards
+    a = clock()
+    b = clock()
+    print(b >= a)
+
+    # objects are freed when evicted, deleted or the cache is dropped
+    things = Cache[Thing](2)
+    for i in range(1000):
+        things.set(f'k{i}', Thing(f'thing {i}'))
+    print(len(things), things.keys(), things['k999'].name, things.evictions)
+    things.delete('k999')
+    things.clear()
+    print(len(things))
+    keep = Cache[Thing](5)
+    keep.set('a', Thing('a'))
+
+    # many entries
+    big = Cache[int](1000)
+    for i in range(5000):
+        big.set(str(i), i)
+        if i % 3 == 0:
+            big.get(str(i // 2), -1)
+    print(len(big), big.evictions, big.get('4999', -1), big.get('0', -1))
+
+    # a full cache whose oldest entry has expired drops it as expired, not as an eviction; len counts unread expired entries
+    k = FakeClock()
+    q = Cache[int](2, 0.0, k)
+    q.set('old', 1, ttl=1.0)
+    q.set('new', 2)
+    k.t = 5.0
+    print(len(q))
+    q.set('x', 3)
+    print(q.keys(), q.evictions, q.expirations)

@@ -1,0 +1,13 @@
+class Box[T]:
+    a: T
+    n: int = 0
+
+    @init
+    def make(self, a: T, n: int = 0):
+        self.a = a
+        self.n = n
+
+@main
+def main():
+    b = Box[int](1, n=2)
+    print(b.n)
