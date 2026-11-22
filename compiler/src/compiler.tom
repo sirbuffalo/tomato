@@ -2036,6 +2036,13 @@ class Gen:
                 return self.float_to_int(conv, n.line)
             return self.convert_explicit(conv, 'int', n.line)
         key = self.mod.resolve(name)
+        if key == '' and name == 'range':
+            # range used as a value is a list[int] built by a built-in helper (the `for` loop has its own fast path)
+            if len(args) < 1 or len(args) > 3 or len(n.fields[2].items) > 0:
+                raise CompileError('range takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', n.line)
+            helper = self.mod.resolve('_range' + str(len(args)))
+            self.kw = []
+            return self.call_function(self.mod.find(helper, n.line), '@tomato.' + helper, ex('', ''), args, n.line)
         if key == '':
             raise CompileError('unknown function ' + name, n.line)
         if self.mod.has_class(key):
@@ -2886,6 +2893,8 @@ class Gen:
             self.release(lst)
             lst = ex(snap, keys)
         if not is_list(lst.ty):
+            if is_class(lst.ty):
+                raise CompileError('a for loop cannot walk a ' + lst.ty[1:] + ' object yet (no iteration protocol, D18a); loop over a list field such as its items instead', s.line)
             raise CompileError('the Tomato compiler only loops over range(), lists, sets and dicts yet', s.line)
         elem = elem_of(lst.ty)
         holder = self.hidden_rc_slot('for.list')
@@ -2939,8 +2948,11 @@ class Gen:
         if it.kind != 'Call' or val_node(it.fields[0]).kind != 'Name' or val_node(it.fields[0]).fields[0].text != 'range':
             raise CompileError('the Tomato compiler only loops over range() yet', s.line)
         bounds = val_nodes(it.fields[1])
+        if len(bounds) == 3:
+            self.for_each(s, it)
+            return
         if len(bounds) != 1 and len(bounds) != 2:
-            raise CompileError('the Tomato compiler supports range(stop) and range(start, stop) yet', s.line)
+            raise CompileError('range takes 1 to 3 whole-number arguments', s.line)
         start = '0'
         stop = ''
         if len(bounds) == 1:
@@ -3509,7 +3521,10 @@ def builtin_source() -> str:
     # the names every program can use without importing them (D22a): the same text as std/builtin.tom
     t = 'class Error:\n    message: str\n\n    @init\n    def start(self, message: str):\n        self.message = message\n\n'
     t = t + 'class RuntimeError(Error):\n    @init\n    def make(self, message: str):\n        Error.start(self, message)\n\n'
-    t = t + 'class IOError(RuntimeError):\n    @init\n    def make_io(self, message: str):\n        RuntimeError.make(self, message)\n'
+    t = t + 'class IOError(RuntimeError):\n    @init\n    def make_io(self, message: str):\n        RuntimeError.make(self, message)\n\n'
+    t = t + 'def _range1(stop: int) -> list[int]:\n    return _range3(0, stop, 1)\n\n'
+    t = t + 'def _range2(start: int, stop: int) -> list[int]:\n    return _range3(start, stop, 1)\n\n'
+    t = t + 'def _range3(start: int, stop: int, step: int) -> list[int]:\n    if step == 0:\n        raise RuntimeError(\'range step cannot be zero\')\n    result: list[int] = []\n    i = start\n    while (step > 0 and i < stop) or (step < 0 and i > stop):\n        result.append(i)\n        i = i + step\n    return result\n'
     return t
 
 def class_def(c: ClassInfo) -> Node:
