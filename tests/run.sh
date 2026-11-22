@@ -244,6 +244,9 @@ rt log_zero "log needs a positive number, but got 0.0" 1
 rt log_base_zero "a logarithm base must be positive and not 1, but got 0.0" 1
 rt caught_domain "caught sqrt needs a number that is not negative" 0
 rt angle_base "Angle is a base class" 1
+rt chr_range "chr() takes a number from 0 to 1114111, not a surrogate" 1
+rt ord_length "ord() takes a text of exactly one character" 1
+rt chr_huge "chr() takes a number from 0 to 1114111, not a surrogate" 1
 
 
 echo "== known gaps (decided behavior the compiler does not have yet) =="

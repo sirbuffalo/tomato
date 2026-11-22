@@ -1,0 +1,38 @@
+@main
+def main():
+    # abs, chr, ord
+    print(abs(-5), abs(7), abs(0), abs(-123456789012345678901234567890))
+    print(abs(-2.5), abs(3.25), abs(-0.0))
+    print(chr(65), chr(97), chr(233), chr(8364), chr(128512))
+    print(ord('A'), ord('z'), ord('é'), ord('€'), ord('😀'))
+    print(chr(ord('a') + 1))
+
+    # dict.get, keys, values, items
+    ages: dict[str, int] = {'ann': 31, 'bob': 25}
+    print(ages.get('ann', 0), ages.get('cy', -1))
+    print(ages.keys(), ages.values())
+    names: dict[str, str] = {'a': 'x', 'b': 'y'}
+    print(names.get('a', '?'), names.get('z', '?'))
+    print(names.keys(), names.values(), names.items())
+    print(len(ages.items()))
+    for pair in names.items():
+        print(pair[0] + '=' + pair[1])
+    ages['dee'] = 40
+    ages.get('dee', 0)
+    total = 0
+    for v in ages.values():
+        total += v
+    print(total)
+    lists: dict[str, list[int]] = {'a': [1, 2]}
+    print(lists.get('a', []), lists.get('b', [9]), lists.values())
+    print(ages.items())
+
+    # str methods
+    s = 'hello world hello'
+    print(s.find('hello'), s.find('hello', 1), s.find('hello', -5), s.find('hello', 13), s.find('o', 100), s.find('', 17), s.find('', 18))
+    print(s.rfind('hello'), s.rfind('o'), s.rfind('xyz'), s.rfind(''))
+    print(s.count('l'), s.count('hello'), s.count('ll'), s.count('xyz'), s.count(''), 'aaaa'.count('aa'))
+    print('héllo wörld'.find('ö'), 'héllo wörld'.rfind('l'), 'héllo'.count('é'))
+    print('123'.isdigit(), '12a'.isdigit(), ''.isdigit(), 'abc'.isalpha(), 'ab1'.isalpha(), ''.isalpha())
+    print(' \t\n'.isspace(), ' a '.isspace(), ''.isspace())
+    print('[' + '  hi  '.lstrip() + ']', '[' + '  hi  '.rstrip() + ']', '[' + ' \n '.lstrip() + ']', '[' + ''.rstrip() + ']')

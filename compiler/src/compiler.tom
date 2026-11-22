@@ -72,14 +72,11 @@ def box_kind(member: str) -> int:
 
 def digits_value(s: str) -> int:
     # the number a text of digits writes, or -1 when it is not all digits
-    if len(s) == 0:
+    if not s.isdigit():
         return -1
     v = 0
     for c in s:
-        d = '0123456789'.find(c)
-        if d < 0:
-            return -1
-        v = v * 10 + d
+        v = v * 10 + ord(c) - ord('0')
     return v
 
 def is_fixed(t: str) -> bool:
@@ -2449,6 +2446,8 @@ class Gen:
                 return self.float_to_int(conv, n.line)
             return self.convert_explicit(conv, 'int', n.line)
         key = self.mod.resolve(name)
+        if key == '' and name in ['abs', 'chr', 'ord'] and not (name in self.slots):
+            return self.number_text_builtin(name, args, n.line)
         if key == '' and name in ['sorted', 'reversed', 'sum', 'min', 'max']:
             self.kw = []
             return self.list_builtin(name, args, n.line)
@@ -2470,6 +2469,49 @@ class Gen:
             return self.construct(self.mod.find_class(key, n.line), args, n.line)
         self.kw = n.fields[2].items
         return self.call_function(self.mod.find(key, n.line), '@tomato.' + key, ex('', ''), args, n.line)
+
+    def number_text_builtin(self, name: str, args: list[Node], line: int) -> Ex:
+        # abs(x) for an int or a float (std/builtin.tom), chr(n) and ord(c)
+        if len(args) != 1 or len(self.kw) > 0:
+            raise CompileError("'" + name + "' takes exactly one argument", line)
+        v = self.expr(args[0])
+        if name == 'abs':
+            if v.ty == 'int':
+                return self.builtin_call('_abs_int', [v], line)
+            if v.ty == 'float':
+                return self.builtin_call('_abs_float', [v], line)
+            raise CompileError('abs() takes an int or a float, but this is ' + shown(v.ty), line)
+        if name == 'chr':
+            v = self.want(v, 'int', line, 'the argument of chr')
+            # a number too big for a machine word is a heap number (low bit clear): out of range as well
+            tagbit = self.tmp('tagbit')
+            self.emit(tagbit + ' = and i64 ' + v.reg + ', 1')
+            huge = self.tmp('huge')
+            self.emit(huge + ' = icmp eq i64 ' + tagbit + ', 0')
+            self.fail_if(huge, 'chr() takes a number from 0 to 1114111, not a surrogate')
+            raw = self.int_raw(v)
+            high = self.tmp('toobig')
+            self.emit(high + ' = icmp ugt i64 ' + raw + ', 1114111')
+            low = self.tmp('surrogate')
+            self.emit(low + ' = sub i64 ' + raw + ', 55296')
+            sur = self.tmp('insurrogate')
+            self.emit(sur + ' = icmp ult i64 ' + low + ', 2048')
+            bad = self.tmp('badchar')
+            self.emit(bad + ' = or i1 ' + high + ', ' + sur)
+            self.fail_if(bad, 'chr() takes a number from 0 to 1114111, not a surrogate')
+            r = self.tmp('char')
+            self.emit(r + ' = call ptr @tomato_str_chr(i64 ' + raw + ')')
+            return ex(r, 'str')
+        v = self.want(v, 'str', line, 'the argument of ord')
+        n = self.tmp('alen')
+        self.emit(n + ' = call i64 @tomato_str_len(ptr ' + v.reg + ')')
+        bad = self.tmp('notone')
+        self.emit(bad + ' = icmp ne i64 ' + n + ', 1')
+        self.fail_if(bad, 'ord() takes a text of exactly one character')
+        r = self.tmp('code')
+        self.emit(r + ' = call i64 @tomato_str_ord(ptr ' + v.reg + ')')
+        self.release(v)
+        return self.tag_small(r)
 
     def llvm_type_of(self, t: str) -> str:
         # how an LLVM function sees a Tomato type: a bool is one bit there
@@ -2727,6 +2769,8 @@ class Gen:
             return ex('', '')
         if is_set(obj.ty):
             return self.set_method(obj, name, args, n.line)
+        if is_dict(obj.ty):
+            return self.dict_method(obj, name, args, n.line)
         if obj.ty == 'str':
             return self.text_method(obj, name, args, n.line)
         if obj.ty == 'File':
@@ -2742,6 +2786,70 @@ class Gen:
                 raise CompileError("the method '" + name + "' is private to class '" + info.owner + "'\nonly its own methods can call it", n.line)
             return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
         raise CompileError(self.no_method(name, obj.ty), n.line)
+
+    def dict_method(self, d: Ex, name: str, args: list[Node], line: int) -> Ex:
+        vt = dict_value(d.ty)
+        if name == 'get':
+            if len(args) != 2:
+                raise CompileError("get() takes a key and a default value: get(key, default)", line)
+            k = self.want(self.expr(args[0]), 'str', line, 'a dict key')
+            fallback = self.want(self.expr(args[1], vt), vt, line, 'the default of get')
+            slot = self.tmp('slot')
+            self.emit(slot + ' = call ptr @tomato_dict_find(ptr ' + d.reg + ', i64 ' + self.key_word(k) + ')')
+            missing = self.tmp('missing')
+            self.emit(missing + ' = icmp eq ptr ' + slot + ', null')
+            hit = self.label('gothit')
+            miss = self.label('gotmiss')
+            join = self.label('gotjoin')
+            self.cond_br(missing, miss, hit)
+            self.place(hit)
+            found = self.tmp('val')
+            self.emit(found + ' = load ' + llvm_type(vt) + ', ptr ' + slot)
+            self.retain(ex(found, vt))
+            self.release(fallback)
+            self.br(join)
+            self.place(miss)
+            self.br(join)
+            self.place(join)
+            r = self.tmp('got')
+            self.emit(r + ' = phi ' + llvm_type(vt) + ' [' + found + ', %' + hit + '], [' + fallback.reg + ', %' + miss + ']')
+            self.release(k)
+            self.release(d)
+            return ex(r, vt)
+        if not (name in ['keys', 'values', 'items']):
+            raise CompileError(self.no_method(name, d.ty), line)
+        if len(args) != 0:
+            raise CompileError("'" + name + "' takes no arguments", line)
+        if name == 'keys':
+            r = self.tmp('keys')
+            self.emit(r + ' = call ptr @tomato_dict_keys(ptr ' + d.reg + ', i64 ' + str(self.mod.code_of('list[str]')) + ', i64 8)')
+            self.release(d)
+            return ex(r, 'list[str]')
+        if name == 'values':
+            t = 'list[' + vt + ']'
+            r = self.tmp('values')
+            self.emit(r + ' = call ptr @tomato_dict_values(ptr ' + d.reg + ', i64 ' + str(self.mod.code_of(t)) + ', i64 8, i32 ' + str(int_of_bool(is_rc(vt))) + ')')
+            self.release(d)
+            return ex(r, t)
+        if name == 'items':
+            # each pair is a two-item tuple: a tuple has one item type, so it is str for a dict[str, str] and the union
+            # of str and the value type otherwise (the unions are boxed)
+            item = 'str'
+            key_box = 0
+            val_box = 0
+            if vt != 'str':
+                # a boxed value of kind 6 (a list, class, fixed-width int...) would print as <object>, so refuse it too
+                if is_union(vt) or is_optional(vt) or box_kind(vt) == 6:
+                    raise CompileError('items() is not available for a dict whose values are ' + shown(vt) + '\nloop over the keys and index the dict instead', line)
+                item = union_type(['str', vt])
+                key_box = self.mod.code_of('box:str')
+                val_box = self.mod.code_of('box:' + vt)
+            t = 'list[tuple[' + item + ']]'
+            r = self.tmp('items')
+            self.emit(r + ' = call ptr @tomato_dict_items(ptr ' + d.reg + ', i64 ' + str(self.mod.code_of(t)) + ', i64 ' + str(self.mod.code_of('tuple[' + item + ']')) + ', i64 ' + str(key_box) + ', i64 ' + str(val_box) + ', i64 ' + str(box_kind(vt)) + ', i32 ' + str(int_of_bool(is_rc(vt))) + ')')
+            self.release(d)
+            return ex(r, t)
+        raise CompileError(self.no_method(name, d.ty), line)
 
     def set_method(self, st: Ex, name: str, args: list[Node], line: int) -> Ex:
         if (name == 'add' or name == 'remove') and len(args) == 1:
@@ -2779,12 +2887,24 @@ class Gen:
         self.emit(bad + ' = icmp eq i64 ' + n + ', 0')
         self.fail_if(bad, 'an empty text cannot be used to ' + name)
 
+    def builtin_call(self, name: str, values: list[Ex], line: int) -> Ex:
+        # a call to a function written in std/builtin.tom, with arguments that are already computed
+        return self.call_helper(self.mod.find(self.mod.resolve(name), line), values)
+
     def text_method(self, obj: Ex, name: str, args: list[Node], line: int) -> Ex:
-        if name == 'find' or name == 'startswith' or name == 'endswith':
+        if name == 'find' and len(args) == 2:
+            a = self.text_args(obj, name, args[:1], 1, line)
+            start = self.want(self.expr(args[1]), 'int', line, 'the start of find')
+            r = self.tmp('found')
+            self.emit(r + ' = call i64 @tomato_str_find_from(ptr ' + obj.reg + ', ptr ' + a[0].reg + ', i64 ' + self.int_raw(start) + ')')
+            self.release(a[0])
+            self.release(obj)
+            return self.tag_small(r)
+        if name == 'find' or name == 'rfind' or name == 'count' or name == 'startswith' or name == 'endswith':
             a = self.text_args(obj, name, args, 1, line)
-            if name == 'find':
+            if name == 'find' or name == 'rfind' or name == 'count':
                 r = self.tmp('found')
-                self.emit(r + ' = call i64 @tomato_str_find(ptr ' + obj.reg + ', ptr ' + a[0].reg + ')')
+                self.emit(r + ' = call i64 @tomato_str_' + name + '(ptr ' + obj.reg + ', ptr ' + a[0].reg + ')')
                 self.release(a[0])
                 self.release(obj)
                 return self.tag_small(r)
@@ -2827,6 +2947,9 @@ class Gen:
             self.emit(r + ' = call ptr @tomato_str_' + name + '(ptr ' + obj.reg + ')')
             self.release(obj)
             return ex(r, 'str')
+        if name in ['isdigit', 'isalpha', 'isspace', 'lstrip', 'rstrip'] and len(args) == 0:
+            # written in Tomato, in std/builtin.tom
+            return self.builtin_call('_str_' + name, [obj], line)
         raise CompileError(self.no_method(name, 'str'), line)
 
     def file_method(self, f: Ex, name: str, args: list[Node], line: int) -> Ex:
@@ -3393,7 +3516,7 @@ class Gen:
             return "'" + name + "' is a variable, not a function, so it cannot be called"
         if name in ['map', 'filter', 'lambda', 'reduce']:
             return "'" + name + "' is not available: Tomato has no function values yet\nuse a for loop instead"
-        if name in ['abs', 'round', 'pow', 'divmod', 'any', 'all', 'chr', 'ord', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'hash', 'format']:
+        if name in ['round', 'pow', 'divmod', 'any', 'all', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'hash', 'format']:
             return "'" + name + "' is not built in"
         near = closest(name, self.visible_names())
         if near != '':
@@ -3404,8 +3527,11 @@ class Gen:
         known: list[str] = []
         word = shown(ty)
         if ty == 'str':
-            known = ['find', 'startswith', 'endswith', 'replace', 'split', 'join', 'upper', 'lower', 'strip']
+            known = ['find', 'rfind', 'count', 'startswith', 'endswith', 'replace', 'split', 'join', 'upper', 'lower', 'strip', 'lstrip', 'rstrip', 'isdigit', 'isalpha', 'isspace']
             word = 'text'
+        elif is_dict(ty):
+            known = ['get', 'keys', 'values', 'items']
+            word = 'a dict'
         elif is_set(ty) or ty == 'set':
             known = ['add', 'remove', 'discard']
         elif ty == 'File':
@@ -4546,6 +4672,13 @@ def declarations(mod: Mod) -> str:
     d += 'declare i32 @tomato_parse_bool(ptr, i32)\n'
     d += 'declare void @tomato_report_uncaught(ptr, i32, i32, i32)\n'
     d += 'declare i64 @tomato_str_find(ptr, ptr)\n'
+    d += 'declare i64 @tomato_str_find_from(ptr, ptr, i64)\n'
+    d += 'declare i64 @tomato_str_rfind(ptr, ptr)\n'
+    d += 'declare i64 @tomato_str_count(ptr, ptr)\n'
+    d += 'declare ptr @tomato_str_chr(i64)\n'
+    d += 'declare i64 @tomato_str_ord(ptr)\n'
+    d += 'declare ptr @tomato_dict_values(ptr, i64, i64, i32)\n'
+    d += 'declare ptr @tomato_dict_items(ptr, i64, i64, i64, i64, i64, i32)\n'
     d += 'declare i32 @tomato_str_startswith(ptr, ptr)\n'
     d += 'declare i32 @tomato_str_endswith(ptr, ptr)\n'
     d += 'declare i32 @tomato_str_contains(ptr, ptr)\n'

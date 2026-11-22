@@ -403,6 +403,56 @@ int64_t tomato_str_find(void *hay, void *needle) {
     return at < 0 ? -1 : byte_to_char(hay, at);
 }
 
+/* find(sub, start): like find, but from character `start` on (a negative start counts from the end, as in Python). */
+int64_t tomato_str_find_from(void *hay, void *needle, int64_t start) {
+    Str *h = hay;
+    if (start < 0) { start += h->chars; if (start < 0) start = 0; }
+    if (start > h->chars) return -1;
+    int64_t at = find_bytes(h, needle, char_offset(h, start));
+    return at < 0 ? -1 : byte_to_char(h, at);
+}
+
+/* The character index of the last match, or -1. */
+int64_t tomato_str_rfind(void *hay, void *needle) {
+    Str *h = hay, *n = needle;
+    for (int64_t i = h->bytes - n->bytes; i >= 0; i--)
+        if (memcmp(h->data + i, n->data, (size_t)n->bytes) == 0) return byte_to_char(h, i);
+    return -1;
+}
+
+/* How many non-overlapping matches there are; the empty text matches between every character. */
+int64_t tomato_str_count(void *hay, void *needle) {
+    Str *h = hay, *n = needle;
+    if (n->bytes == 0) return h->chars + 1;
+    int64_t seen = 0, at = 0;
+    for (;;) {
+        int64_t hit = find_bytes(h, n, at);
+        if (hit < 0) return seen;
+        seen++;
+        at = hit + n->bytes;
+    }
+}
+
+/* chr(n): the text of the one character with code point `cp` (the compiled code checks the range). */
+void *tomato_str_chr(int64_t cp) {
+    char b[4];
+    int n = 0;
+    if (cp < 0x80) { b[n++] = (char)cp; }
+    else if (cp < 0x800) { b[n++] = (char)(0xC0 | (cp >> 6)); b[n++] = (char)(0x80 | (cp & 0x3F)); }
+    else if (cp < 0x10000) { b[n++] = (char)(0xE0 | (cp >> 12)); b[n++] = (char)(0x80 | ((cp >> 6) & 0x3F)); b[n++] = (char)(0x80 | (cp & 0x3F)); }
+    else { b[n++] = (char)(0xF0 | (cp >> 18)); b[n++] = (char)(0x80 | ((cp >> 12) & 0x3F)); b[n++] = (char)(0x80 | ((cp >> 6) & 0x3F)); b[n++] = (char)(0x80 | (cp & 0x3F)); }
+    return str_new(b, n);
+}
+
+/* ord(c): the code point of the first character (the compiled code checks that there is exactly one). */
+int64_t tomato_str_ord(void *s) {
+    const unsigned char *p = (const unsigned char *)((Str *)s)->data;
+    if (p[0] < 0x80) return p[0];
+    if (p[0] < 0xE0) return ((int64_t)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+    if (p[0] < 0xF0) return ((int64_t)(p[0] & 0x0F) << 12) | ((int64_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    return ((int64_t)(p[0] & 0x07) << 18) | ((int64_t)(p[1] & 0x3F) << 12) | ((int64_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+}
+
 int tomato_str_startswith(void *hay, void *p) {
     Str *h = hay, *x = p;
     return x->bytes <= h->bytes && memcmp(h->data, x->data, (size_t)x->bytes) == 0;
@@ -895,6 +945,42 @@ void *tomato_dict_values(void *dp, int64_t list_type, int64_t elem_size, int val
         void *slot = tomato_list_push(l, elem_size);
         memcpy(slot, E_VAL(e), (size_t)elem_size);
         if (val_rc) tomato_retain(*(void **)E_VAL(e));
+    }
+    return l;
+}
+
+/* A new list of (key, value) pairs, each a two-item tuple (D-items). When the values are not text, both items are boxed
+ * as a union (box type codes `key_box`, `val_box`; 0 means no boxing, for text values). A boxed value is 32 bytes:
+ * header, the 8-byte payload, and the kind the printer uses. `val_rc` says a value is a reference-counted pointer. */
+static void *items_box(int64_t code, int64_t payload, int64_t kind) {
+    int64_t *b = tomato_alloc(32, code);
+    b[2] = payload;
+    b[3] = kind;
+    return b;
+}
+
+void *tomato_dict_items(void *dp, int64_t list_type, int64_t tuple_type, int64_t key_box, int64_t val_box, int64_t val_kind, int val_rc) {
+    Dict *d = dp;
+    void *l = tomato_list_new(list_type);
+    for (int64_t i = 0; i < d->used; i++) {
+        char *e = ENTRY(d, i);
+        if (!E_LIVE(e)) continue;
+        int64_t k = E_KEY(e), v;
+        memcpy(&v, E_VAL(e), 8);
+        if (val_rc) tomato_retain((void *)v);
+        tomato_retain((void *)k);
+        void *pair = tomato_list_new(tuple_type);
+        void **a = tomato_list_push(pair, 8);
+        void **b = tomato_list_push(pair, 8);
+        if (key_box == 0) {
+            *a = (void *)k;
+            *b = (void *)v;
+        } else {
+            *a = items_box(key_box, k, 4);
+            *b = items_box(val_box, v, val_kind);
+        }
+        void **slot = tomato_list_push(l, 8);
+        *slot = pair;
     }
     return l;
 }

@@ -16,3 +16,5 @@ an empty text cannot be used to
 there is no more input to read
 the text is not a whole number
 the text is not a number
+chr() takes a number from 0 to 1114111, not a surrogate
+ord() takes a text of exactly one character

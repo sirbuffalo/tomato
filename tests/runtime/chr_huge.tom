@@ -1,0 +1,4 @@
+@main
+def main():
+    n = 10 ** 42
+    print(chr(n))

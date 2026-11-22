@@ -41,6 +41,7 @@ union_len_for
 fstrings
 conditional
 comprehension
+builtins_more
 async_tasks
 compound_ops
 unpacking

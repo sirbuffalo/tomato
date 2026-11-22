@@ -3,4 +3,4 @@ error: text has no method 'upcase'
   |
 4 |     print(word.upcase())
   |                ^^^^^^
-  = help: the methods it has are: find, startswith, endswith, replace, split, join, upper, lower, strip
+  = help: the methods it has are: find, rfind, count, startswith, endswith, replace, split, join, upper, lower, strip, lstrip, rstrip, isdigit, isalpha, isspace

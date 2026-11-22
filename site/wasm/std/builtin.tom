@@ -153,3 +153,58 @@ def _quote(s: str) -> str:
     t = t.replace('\t', '\\t')
     t = t.replace('\r', '\\r')
     return q + t + q
+
+# abs(x) for an int and for a float
+def _abs_int(x: int) -> int:
+    if x < 0:
+        return -x
+    return x
+
+def _abs_float(x: float) -> float:
+    if x < 0.0:
+        return 0.0 - x       # 0.0 - x, so that abs(-0.0) is 0.0 and not -0.0
+    if x == 0.0:
+        return 0.0
+    return x
+
+# str.isdigit(), isalpha(), isspace(): True when the text is not empty and every character is of that kind (ASCII
+# characters only, like upper() and lower()).
+def _str_isdigit(s: str) -> bool:
+    if len(s) == 0:
+        return False
+    for c in s:
+        if '0123456789'.find(c) < 0:
+            return False
+    return True
+
+def _str_isalpha(s: str) -> bool:
+    if len(s) == 0:
+        return False
+    for c in s:
+        if 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.find(c) < 0:
+            return False
+    return True
+
+def _str_isspace(s: str) -> bool:
+    if len(s) == 0:
+        return False
+    for c in s:
+        if not _is_space(c):
+            return False
+    return True
+
+# whitespace is a space, tab, newline or carriage return
+def _is_space(c: str) -> bool:
+    return c == ' ' or c == '\t' or c == '\n' or c == '\r'
+
+def _str_lstrip(s: str) -> str:
+    i = 0
+    while i < len(s) and _is_space(s[i]):
+        i += 1
+    return s[i:]
+
+def _str_rstrip(s: str) -> str:
+    n = len(s)
+    while n > 0 and _is_space(s[n - 1]):
+        n -= 1
+    return s[:n]

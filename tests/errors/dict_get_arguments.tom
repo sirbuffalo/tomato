@@ -1,0 +1,4 @@
+@main
+def main():
+    ages: dict[str, int] = {}
+    print(ages.get("ann"))
