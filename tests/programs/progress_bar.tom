@@ -1,0 +1,18 @@
+from itertools import progress_bar, repeat
+
+@main
+def main():
+    bar = progress_bar(repeat(0, 10), 'work', 10)
+    print(bar.render())
+    bar.count = 3
+    print(bar.render())
+    bar.count = 10
+    print(bar.render())
+    bar.count = 14
+    print(bar.render())
+    plain = progress_bar(repeat(0, 4))
+    plain.count = 1
+    print(plain.render())
+    unknown = progress_bar(repeat(0, 0), 'seen')
+    unknown.count = 7
+    print(unknown.render())

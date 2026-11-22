@@ -1,4 +1,4 @@
-# A small standard-library module of integer helpers (D24a). Import with: from math import abs, gcd
+# A small standard-library module of integer helpers (D24a). Import with: from math import abs, gcd, is_prime
 
 export def abs(n: int) -> int:
     if n < 0:
@@ -31,3 +31,48 @@ export def pow(base: int, exponent: int) -> int:
     for i in range(exponent):
         result = result * base
     return result
+
+def powmod(base: int, exponent: int, modulus: int) -> int:
+    result = 1
+    b = base % modulus
+    e = exponent
+    while e > 0:
+        if e % 2 == 1:
+            result = result * b % modulus
+        b = b * b % modulus
+        e = e // 2
+    return result
+
+# Miller-Rabin primality test. The witnesses 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31 and 37 are a proven
+# deterministic set for every n below 3.3 * 10^24, so the answer is exact for all 64-bit integers.
+# From 2^64 up it uses the first 20 primes (2 to 71) instead, which is a strong probabilistic test, not a proof.
+# Negative numbers, 0 and 1 are not prime.
+export def is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    witnesses = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+    if n >= 18446744073709551616:
+        witnesses = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
+    for p in witnesses:
+        if n == p:
+            return True
+        if n % p == 0:
+            return False
+    d = n - 1
+    r = 0
+    while d % 2 == 0:
+        d = d // 2
+        r = r + 1
+    for a in witnesses:
+        x = powmod(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        composite = True
+        for i in range(r - 1):
+            x = x * x % n
+            if x == n - 1:
+                composite = False
+                break
+        if composite:
+            return False
+    return True

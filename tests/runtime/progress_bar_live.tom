@@ -1,0 +1,9 @@
+from itertools import progress_bar, repeat
+
+@main
+def main():
+    bar = progress_bar(repeat(0, 2), 'live', 4)
+    bar.update()
+    bar.update()
+    bar.close()
+    print(bar.count)

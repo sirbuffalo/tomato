@@ -24,3 +24,6 @@ float_more
 utf8_text
 at_add
 rational_library
+is_prime
+progress_bar
+itertools_lists
