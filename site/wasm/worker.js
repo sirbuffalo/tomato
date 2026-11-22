@@ -2,7 +2,7 @@
 importScripts("wasi.js", "llvm.js", "tomato.js");
 var toolchain = new TomatoWasm("");
 onmessage = function (e) {
-  toolchain.build(e.data.source, { repl: !!e.data.repl, inputs: e.data.inputs || [], timeoutMs: e.data.timeoutMs || 5000 }).then(
+  toolchain.build(e.data.source, { repl: !!e.data.repl, inputs: e.data.inputs || [], stdin: e.data.stdin || "", ask: !!e.data.ask, timeoutMs: e.data.timeoutMs || 5000 }).then(
     function (r) { postMessage({ id: e.data.id, result: r }); },
     function (err) { postMessage({ id: e.data.id, result: { ok: false, stage: "run", error: String(err && err.message || err) } }); });
 };

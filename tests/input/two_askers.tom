@@ -1,0 +1,15 @@
+async def asker(name: str, n: int) -> int yields str:
+    got = 0
+    for i in range(n):
+        yield name + ' asks'
+        line = await input(name + '? ')
+        got = got + int(line)
+    return got
+
+@main
+async def main():
+    a = start asker('A', 2)
+    b = start asker('B', 1)
+    async for s in a:
+        print(s)
+    print('a', await a, 'b', await b)

@@ -1,1 +1,1 @@
-window.TOMATO_VERSION = "0.38";
+window.TOMATO_VERSION = "0.39";

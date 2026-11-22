@@ -506,6 +506,107 @@ void *tomato_file_read(void *f) {
 void tomato_file_write(void *f, void *s) { fwrite(((Str *)s)->data, 1, (size_t)((Str *)s)->bytes, f); }
 void tomato_file_close(void *f) { fclose(f); }
 
+int tomato_input_ask = 0;   /* set by the host (TOMATO_INPUT_ASK in the environment, or by the browser): see tomato_input */
+
+/* input(prompt): shows the prompt, then reads one line from standard input without its line end. Returns NULL when
+ * there is nothing left to read (the compiled code raises EOFError). */
+void *tomato_input(void *prompt) {
+    int c;
+    static int env_checked;
+    if (!env_checked) { env_checked = 1; if (getenv("TOMATO_INPUT_ASK")) tomato_input_ask = 1; }
+    int64_t cap = 128, len = 0;
+    char *out;
+    fwrite(((Str *)prompt)->data, 1, (size_t)((Str *)prompt)->bytes, stdout);
+    fflush(stdout);
+    out = malloc((size_t)cap);
+    if (!out) tomato_fail("out of memory");
+    while ((c = getc(stdin)) != EOF && c != '\n') {
+        if (len + 1 > cap) { cap *= 2; out = realloc(out, (size_t)cap); if (!out) tomato_fail("out of memory"); }
+        out[len++] = (char)c;
+    }
+    if (c == EOF && len == 0) {
+        free(out);
+        /* in the repl and the playground the answers come one at a time: when there are no more, stop with 75 so that the
+         * caller can ask for one and run the program again with it added */
+        if (tomato_input_ask) { fflush(stdout); exit(75); }
+        return NULL;
+    }
+    if (len > 0 && out[len - 1] == '\r') len--;
+    if (tomato_input_ask) { fwrite(out, 1, (size_t)len, stdout); putchar('\n'); }   /* a terminal would show what was typed */
+    void *r = str_new(out, len);
+    free(out);
+    return r;
+}
+
+/* ---- tasks (async). A task is a frame object made by the compiler (see FRAME_FIXED in the compiler): the sixteen-byte
+ * object header, then eight-byte fields. The ones the runtime touches: the tasks waiting for it at byte 40, the text input
+ * hands over at byte 72. The scheduler loop itself is generated code, because the browser runs generated code in an
+ * interpreter and a native function pointer could not reach it; the runtime only keeps the queues. */
+typedef struct { void **items; int64_t n, cap; } PtrVec;
+static PtrVec ready_q; static int64_t ready_head;
+typedef struct { void *frame; void *prompt; } InputWait;
+static InputWait *in_q; static int64_t in_n, in_cap, in_head;
+
+void tomato_q_push(void *f) {
+    tomato_retain(f);
+    if (ready_q.n == ready_q.cap) {
+        if (ready_head > 0) { memmove(ready_q.items, ready_q.items + ready_head, (size_t)(ready_q.n - ready_head) * sizeof(void *)); ready_q.n -= ready_head; ready_head = 0; }
+        if (ready_q.n == ready_q.cap) {
+            ready_q.cap = ready_q.cap ? ready_q.cap * 2 : 16;
+            ready_q.items = realloc(ready_q.items, (size_t)ready_q.cap * sizeof(void *));
+            if (!ready_q.items) tomato_fail("out of memory");
+        }
+    }
+    ready_q.items[ready_q.n++] = f;
+}
+
+void *tomato_q_pop(void) {
+    if (ready_head >= ready_q.n) { ready_head = 0; ready_q.n = 0; return NULL; }
+    return ready_q.items[ready_head++];
+}
+
+void tomato_task_wait(void *h, void *me) {
+    PtrVec *v = *(PtrVec **)((char *)h + 40);
+    if (!v) { v = calloc(1, sizeof *v); if (!v) tomato_fail("out of memory"); *(PtrVec **)((char *)h + 40) = v; }
+    if (v->n == v->cap) {
+        v->cap = v->cap ? v->cap * 2 : 4;
+        v->items = realloc(v->items, (size_t)v->cap * sizeof(void *));
+        if (!v->items) tomato_fail("out of memory");
+    }
+    tomato_retain(me);
+    v->items[v->n++] = me;
+}
+
+void tomato_wake_waiters(void *h) {
+    PtrVec *v = *(PtrVec **)((char *)h + 40);
+    if (!v) return;
+    for (int64_t i = 0; i < v->n; i++) { tomato_q_push(v->items[i]); tomato_release(v->items[i]); }
+    v->n = 0;
+}
+
+void tomato_input_wait(void *frame, void *prompt) {
+    if (in_head >= in_n) { in_head = 0; in_n = 0; }
+    if (in_n == in_cap) {
+        in_cap = in_cap ? in_cap * 2 : 4;
+        in_q = realloc(in_q, (size_t)in_cap * sizeof *in_q);
+        if (!in_q) tomato_fail("out of memory");
+    }
+    tomato_retain(frame); tomato_retain(prompt);
+    in_q[in_n].frame = frame; in_q[in_n].prompt = prompt; in_n++;
+}
+
+/* nothing is ready to run: let the oldest task that asked for a line of input have it. Returns 1 when one was woken. */
+int tomato_sched_idle(void) {
+    if (in_head >= in_n) return 0;
+    InputWait w = in_q[in_head++];
+    void *line = tomato_input(w.prompt);
+    *(void **)((char *)w.frame + 72) = line;       /* NULL at the end of the input: the task raises EOFError */
+    tomato_release(w.prompt);
+    tomato_q_push(w.frame);
+    tomato_release(w.frame);
+    return 1;
+}
+
 void tomato_print_strobj(void *s) { fwrite(((Str *)s)->data, 1, (size_t)((Str *)s)->bytes, stdout); }
 
 void *tomato_str_from_i64(int64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%lld", (long long)v); return str_new(b, n); }
@@ -1410,6 +1511,47 @@ static int64_t int_from_digits(const char *s, int64_t len, int *ok) {
     *ok = 1;
     return w;
 }
+
+/* int(text) and float(text): the text without spaces around it; ok is 0 when it is not a number */
+static void text_trim(void *text, const char **s, int64_t *len) {
+    const char *p = ((Str *)text)->data;
+    int64_t n = ((Str *)text)->bytes;
+    while (n > 0 && isspace((unsigned char)*p)) { p++; n--; }
+    while (n > 0 && isspace((unsigned char)p[n - 1])) n--;
+    *s = p; *len = n;
+}
+
+int32_t tomato_text_int_ok(void *text) {
+    const char *s; int64_t n; text_trim(text, &s, &n);
+    if (n > 0 && s[0] == '+') { s++; n--; if (n > 0 && s[0] == '-') return 0; }
+    int ok;
+    int64_t w = int_from_digits(s, n, &ok);
+    (void)w;
+    return ok;
+}
+
+int64_t tomato_text_int(void *text) {
+    const char *s; int64_t n; text_trim(text, &s, &n);
+    if (n > 0 && s[0] == '+') { s++; n--; }
+    int ok;
+    return int_from_digits(s, n, &ok);
+}
+
+static int text_float(void *text, double *out) {
+    const char *s; int64_t n; text_trim(text, &s, &n);
+    if (n == 0 || n > 200) return 0;
+    char buf[208];
+    memcpy(buf, s, (size_t)n); buf[n] = '\0';
+    for (int64_t i = 0; i < n; i++) if (buf[i] == 'x' || buf[i] == 'X' || buf[i] == 'n' || buf[i] == 'N' || buf[i] == 'i' || buf[i] == 'I') return 0;
+    char *end;
+    double v = strtod(buf, &end);
+    if (*end != '\0' || isnan(v) || isinf(v)) return 0;
+    *out = v;
+    return 1;
+}
+
+int32_t tomato_text_float_ok(void *text) { double v; return text_float(text, &v); }
+double tomato_text_float(void *text) { double v = 0; text_float(text, &v); return v; }
 
 int64_t tomato_int_parse(void *text) {
     int ok;

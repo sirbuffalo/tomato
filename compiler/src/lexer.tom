@@ -44,7 +44,7 @@ def digit_value(c: str) -> int:
 def is_keyword(w: str) -> bool:
     words = ['def', 'class', 'interface', 'implements', 'private', 'const', 'override', 'return', 'if', 'elif',
              'else', 'while', 'for', 'in', 'pass', 'break', 'continue', 'try', 'catch', 'finally', 'raise', 'yield',
-             'import', 'from', 'export', 'as', 'is', 'and', 'or', 'xor', 'not', 'True', 'False']
+             'import', 'from', 'export', 'async', 'await', 'as', 'is', 'and', 'or', 'xor', 'not', 'True', 'False']
     return w in words
 
 def escape_char(e: str, line: int, col: int) -> str:

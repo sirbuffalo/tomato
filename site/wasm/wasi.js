@@ -13,6 +13,9 @@
     this.exitCode = null;
     this.memory = null;
     this.onStdout = options.onStdout || null;
+    this.stdin = options.stdin || new Uint8Array(0);   // what the program reads with input(): all of it, then end of input
+    this.stdinPos = 0;
+    this.env = options.env || [];                     // "NAME=value" strings
   }
   WasiHost.prototype.view = function () { return new DataView(this.memory.buffer); };
   WasiHost.prototype.bytes = function () { return new Uint8Array(this.memory.buffer); };
@@ -47,8 +50,19 @@
         });
         return ERRNO.SUCCESS;
       },
-      environ_sizes_get: function (n, size) { var v = h.view(); v.setUint32(n, 0, true); v.setUint32(size, 0, true); return ERRNO.SUCCESS; },
-      environ_get: function () { return ERRNO.SUCCESS; },
+      environ_sizes_get: function (n, size) {
+        var v = h.view(), total = 0;
+        h.env.forEach(function (a) { total += new TextEncoder().encode(a).length + 1; });
+        v.setUint32(n, h.env.length, true); v.setUint32(size, total, true); return ERRNO.SUCCESS;
+      },
+      environ_get: function (ptrs, buf) {
+        var v = h.view(), b = h.bytes(), p = buf;
+        h.env.forEach(function (a, i) {
+          var e = new TextEncoder().encode(a);
+          v.setUint32(ptrs + i * 4, p, true); b.set(e, p); b[p + e.length] = 0; p += e.length + 1;
+        });
+        return ERRNO.SUCCESS;
+      },
       clock_time_get: function (id, prec, out) { h.view().setBigUint64(out, BigInt(Date.now()) * 1000000n, true); return ERRNO.SUCCESS; },
       random_get: function (buf, len) { crypto.getRandomValues(h.bytes().subarray(buf, buf + len)); return ERRNO.SUCCESS; },
       proc_exit: function (code) { h.exitCode = code; throw { wasiExit: code }; },
@@ -95,6 +109,16 @@
       },
       fd_tell: function (fd, out) { var f = h.fds[fd]; if (!f) return ERRNO.BADF; h.view().setBigUint64(out, BigInt(f.pos), true); return ERRNO.SUCCESS; },
       fd_read: function (fd, iovs, n, out) {
+        if (fd === 0) {
+          var v0 = h.view(), b0 = h.bytes(), total0 = 0;
+          for (var j = 0; j < n; j++) {
+            var p0 = v0.getUint32(iovs + j * 8, true), l0 = v0.getUint32(iovs + j * 8 + 4, true);
+            var k0 = Math.min(l0, h.stdin.length - h.stdinPos);
+            b0.set(h.stdin.subarray(h.stdinPos, h.stdinPos + k0), p0); h.stdinPos += k0; total0 += k0;
+            if (k0 < l0) break;
+          }
+          v0.setUint32(out, total0, true); return ERRNO.SUCCESS;
+        }
         var f = h.fds[fd]; if (!f) return ERRNO.BADF;
         var v = h.view(), b = h.bytes(), total = 0;
         for (var i = 0; i < n; i++) {

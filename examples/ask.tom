@@ -1,0 +1,7 @@
+# Reading input: await input(prompt) gives one line of text; int() and float() read numbers.
+# Run it with: tomato run examples/ask.tom      (or type the answers on the Run page)
+@main
+async def main():
+    name = await input("Your name? ")
+    n = int(await input("A number? "))
+    print("Hello,", name + "!", n, "doubled is", n * 2)

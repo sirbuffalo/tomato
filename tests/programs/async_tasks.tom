@@ -1,0 +1,47 @@
+async def worker(name: str, n: int) -> int yields str:
+    i = 0
+    while i < n:
+        yield name + str(i)
+        i = i + 1
+    return n
+
+async def boom(x: int) -> int:
+    if x > 1:
+        raise Error('too big')
+    return x
+
+async def double(x: int) -> int:
+    return x * 2
+
+async def show(t: task[int, str]):
+    async for s in t:
+        print(s)
+
+@main
+async def main():
+    a = start worker('a', 3)
+    b = start worker('b', 3)
+    sa = start show(a)
+    sb = start show(b)
+    await sa
+    await sb
+    print(await a + await b)
+    print(await double(await double(5)))
+    try:
+        r = await boom(2)
+        print('no', r)
+    catch Error as e:
+        print('caught', e.message)
+    t = start boom(5)
+    try:
+        await t
+    catch Error as e:
+        print('again', e.message)
+    print(await boom(1))
+    ts: list[task[int]] = []
+    for i in range(3):
+        ts.append(start double(i))
+    total = 0
+    for t2 in ts:
+        total = total + await t2
+    print('total', total)

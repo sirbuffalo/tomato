@@ -13,3 +13,6 @@ a negative exponent needs a float
 the float result is infinite or not a number
 a float that is infinite or not a number cannot become an int
 an empty text cannot be used to 
+there is no more input to read
+the text is not a whole number
+the text is not a number

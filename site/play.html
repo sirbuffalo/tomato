@@ -31,7 +31,7 @@ function startWorker() {
   worker.onmessage = function (e) { var p = pending[e.data.id]; if (p) { delete pending[e.data.id]; clearTimeout(p.timer); p.resolve(e.data.result); } };
   worker.onerror = function (e) { Object.keys(pending).forEach(function (k) { pending[k].resolve({ ok: false, stage: "run", error: "the toolchain failed to load: " + e.message }); delete pending[k]; }); };
 }
-function runProgram(source, repl, inputs) {
+function runProgram(source, repl, inputs, stdin) {
   if (!worker) startWorker();
   return new Promise(function (resolve) {
     var id = nextId++;
@@ -41,7 +41,7 @@ function runProgram(source, repl, inputs) {
       resolve({ ok: true, stage: "run", stdout: "", stderr: "", exit: 124, timed_out: true, ms: 8000 });
     }, 15000);
     pending[id] = { resolve: resolve, timer: timer };
-    worker.postMessage({ id: id, source: source, repl: !!repl, inputs: inputs || [], timeoutMs: 5000 });
+    worker.postMessage({ id: id, source: source, repl: !!repl, inputs: inputs || [], stdin: stdin || "", ask: true, timeoutMs: 5000 });
   });
 }
 // syntax highlighting: a coloured copy of the text sits behind the transparent textarea
@@ -69,30 +69,63 @@ fetch("examples.json").then(function (r) { return r.json(); }).then(function (ex
   var sampleInputs = { objects: "4", compiled: "12" };   // examples whose main takes inputs
   sel.onchange = function () { if (ex[sel.value]) { $("src").value = ex[sel.value]; $("inputs").value = sampleInputs[sel.value] || ""; paint(); } };
 }).catch(function () { $("examples").hidden = true; });
-$("run").onclick = function () {
-  $("run").disabled = true; $("status").textContent = "Running…"; $("out").textContent = ""; $("err").textContent = "";
-  runProgram($("src").value, false, $("inputs").value.split(/\s+/).filter(Boolean)).then(function (d) {
-    if (!d.ok) { $("err").textContent = hint(d.error || "failed"); $("status").textContent = "Failed"; return; }
+// A program that asks for input stops with exit code 75 and the page shows a field after what it printed so far; Enter runs the
+// program again from the start with that answer added (earlier answers are replayed, so nothing is asked twice).
+var answers = [];
+function stdinText(list) { return list.length ? list.join("\n") + "\n" : ""; }
+function execute() {
+  $("run").disabled = true; $("status").textContent = "Running…"; $("err").textContent = "";
+  runProgram($("src").value, false, $("inputs").value.split(/\s+/).filter(Boolean), stdinText(answers)).then(function (d) {
+    if (!d.ok) { $("out").textContent = ""; $("err").textContent = hint(d.error || "failed"); $("status").textContent = "Failed"; return; }
     $("out").textContent = d.stdout; var e = d.stderr || "";
+    if (d.exit === 75 && !d.timed_out) {
+      var f = document.createElement("input"); f.className = "stdin-line"; f.setAttribute("aria-label", "Input for the program"); f.autocomplete = "off"; f.spellcheck = false;
+      f.onkeydown = function (ev) { if (ev.key === "Enter") { ev.preventDefault(); answers.push(f.value); execute(); } };
+      $("out").appendChild(f); f.focus(); $("status").textContent = "Waiting for input…"; return;
+    }
     if (d.timed_out) e += "\nStopped: ran longer than 5 seconds.";
     if (d.stopped === "memory") e += "\nStopped: too much memory.";
     if (d.stopped === "output") e += "\nStopped: too much output.";
     $("err").textContent = e.trim(); $("status").textContent = "Done in " + d.ms + " ms";
   }).catch(function (e) { $("err").textContent = "Could not run the program: " + e; $("status").textContent = ""; })
     .then(function () { $("run").disabled = false; });
-};
+}
+$("run").onclick = function () { answers = []; $("out").textContent = ""; execute(); };
 
 // ---- repl: definitions and statements accumulate; the session is re-run and only new output is shown
-var defs = [], stmts = [], shown = "";
+var defs = [], stmts = [], shown = "", replAnswers = [];
+// Run the candidate session. Each time it wants input that has no answer yet, show what it printed so far with a field, read the answer, and run
+// it again with the answer added; the earlier answers are replayed silently, so a line that asked is never asked again.
+function askLine(text) {
+  return new Promise(function (resolve) {
+    var d = document.createElement("div"); d.className = "out"; d.appendChild(document.createTextNode(text));
+    var f = document.createElement("input"); f.className = "stdin-line"; f.setAttribute("aria-label", "Input for the program"); f.autocomplete = "off"; f.spellcheck = false;
+    d.appendChild(f); $("repl-log").appendChild(d); f.focus(); $("repl-log").scrollTop = 1e9;
+    f.onkeydown = function (ev) { if (ev.key === "Enter") { ev.preventDefault(); var v = f.value; d.removeChild(f); d.appendChild(document.createTextNode(v)); resolve(v); } };
+  });
+}
+function runCandidate(src) {
+  var cand = replAnswers.slice();
+  function go() {
+    return runProgram(src, true, [], stdinText(cand)).then(function (d) {
+      if (d.ok && d.exit === 75 && !d.timed_out) {
+        var o = d.stdout, fresh = o.indexOf(shown) === 0 ? o.slice(shown.length) : o;
+        return askLine(fresh).then(function (answer) { cand.push(answer); shown = o + answer + "\n"; return go(); });
+      }
+      d.answers = cand; return d;
+    });
+  }
+  return go();
+}
 function log(cls, text, more) { var d = document.createElement("div"); d.className = cls; if (cls === "in") d.innerHTML = '<span class="tk-p">' + (more ? "... " : "&gt;&gt;&gt; ") + "</span>" + tomatoHighlight(text); else d.textContent = text; $("repl-log").appendChild(d); $("repl-log").scrollTop = 1e9; }
 // error text refers to lines of the generated session program, which the user never typed: drop them (the installed repl does too)
 function plain(msg) { return msg.replace(/ on line \d+/g, "").replace(/\bline \d+: /g, ""); }
 function program(extra) { return defs.concat(stmts, extra || []).join("\n") + "\n"; }
-function isDef(t) { return /^(def|class|interface|from|import|@|export)\b|^!/.test(t) || /^\w+ implements /.test(t); }
+function isDef(t) { return /^(def|class|interface|from|import|@|export|async def)\b|^!/.test(t) || /^\w+ implements /.test(t); }
 function isBlock(t) { return /:\s*$/.test(t.split("\n")[0]); }
 function submit(text, echoed) {
   if (!echoed) log("in", text);
-  if (text === ":reset") { defs = []; stmts = []; shown = ""; log("out", "session cleared"); return Promise.resolve(); }
+  if (text === ":reset") { defs = []; stmts = []; shown = ""; replAnswers = []; log("out", "session cleared"); return Promise.resolve(); }
   if (text === ":program") { log("out", program()); return Promise.resolve(); }
   if (text[0] === ":") { log("e", "commands here: :reset, :program"); return Promise.resolve(); }
   var asExpr = !isDef(text) && !isBlock(text) && !/^\w+(\s*:\s*[\w\[\], |]+)?\s*[-+*\/]?=[^=]/.test(text) && !/^(print|for|while|if|try|raise|return|pass|break|continue)\b/.test(text);
@@ -101,8 +134,10 @@ function submit(text, echoed) {
   function tryOne(k) {
     var t = attempt[k], isD = isDef(t);
     var src = isD ? program().replace(/\n$/, "") + "\n" + t + "\n" : program(t);
-    return runProgram(src, true).then(function (d) {
+    var savedShown = shown;
+    return runCandidate(src).then(function (d) {
       if (!d.ok) {
+        shown = savedShown;
         if (k === 0) firstError = d.error || "failed";
         if (k + 1 < attempt.length) return tryOne(k + 1);
         var msg = d.error || "failed";
@@ -110,9 +145,9 @@ function submit(text, echoed) {
         log("e", plain(/as statements yet/.test(msg) && firstError ? firstError : msg)); return;
       }
       var out = d.stdout, fresh = out.indexOf(shown) === 0 ? out.slice(shown.length) : out;
-      if (d.timed_out) { log("e", "Stopped: ran longer than 5 seconds."); return; }
-      if (d.exit !== 0) { log("e", plain((d.stderr || "error").trim())); return; }
-      (isD ? defs : stmts).push(t); shown = out;
+      if (d.timed_out) { shown = savedShown; log("e", "Stopped: ran longer than 5 seconds."); return; }
+      if (d.exit !== 0) { shown = savedShown; log("e", plain((d.stderr || "error").trim())); return; }
+      (isD ? defs : stmts).push(t); shown = out; replAnswers = d.answers;
       if (fresh) log("out", fresh.replace(/\n$/, ""));
     });
   }

@@ -38,7 +38,8 @@
   TomatoWasm.prototype.run = function (ir, options) {
     var self = this; options = options || {};
     return this.load().then(function () {
-      var host = new WasiHost({ args: ["program"], files: {} });
+      // stdin: the answers given so far, one per line; ask: stop with exit code 75 when the program wants one more (see tomato_input)
+      var host = new WasiHost({ args: ["program"], files: {}, stdin: new TextEncoder().encode(options.stdin || ""), env: options.ask ? ["TOMATO_INPUT_ASK=1"] : [] });
       return WebAssembly.instantiate(self.runtime, host.imports(self.runtime)).then(function (inst) {
         host.memory = inst.exports.memory;
         if (inst.exports._initialize) inst.exports._initialize();
@@ -70,7 +71,7 @@
       var l = lines[i];
       if (!l.trim() || l[0] === " " || l[0] === "\t" || l[0] === "#") { (cur || decl).push([l, i + 1]); continue; }
       var first = l.split(/[ (]/)[0];
-      var isDecl = /^(def|class|interface|from|import|export)$/.test(first) || l[0] === "@" || l[0] === "!" || /^\w+ implements /.test(l);
+      var isDecl = /^(def|class|interface|from|import|export)$/.test(first) || /^async def /.test(l) || l[0] === "@" || l[0] === "!" || /^\w+ implements /.test(l);
       cur = isDecl ? decl : body; cur.push([l, i + 1]);
       if (l[0] === "@" && i + 1 < lines.length) { i++; cur.push([lines[i], i + 1]); }
     }
@@ -79,7 +80,8 @@
     decl.forEach(function (d) { out.push(d[0]); map.push(d[1]); });
     out.push(""); map.push(firstBody);
     out.push("@main"); map.push(firstBody);
-    out.push("def main():"); map.push(firstBody);
+    // the session is async when a statement awaits, starts a task or loops over statuses
+    out.push((body.some(function (b) { return /(^|[^\w])(await|async|start) /.test(b[0]); }) ? "async def" : "def") + " main():"); map.push(firstBody);
     body.forEach(function (b) { out.push(b[0].trim() ? "    " + b[0] : b[0]); map.push(b[1]); });
     return { text: out.join("\n") + "\n", map: map };
   }

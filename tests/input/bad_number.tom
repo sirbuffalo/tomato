@@ -1,0 +1,7 @@
+@main
+async def main():
+    try:
+        n = int(await input('How many? '))
+        print(n)
+    catch RuntimeError as e:
+        print('bad:', e.message)

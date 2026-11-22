@@ -1,0 +1,19 @@
+# Async: start runs a function as a task at the same time; await waits for it; yield gives status.
+async def worker(name: str, n: int) -> int yields str:
+    for i in range(n):
+        yield name + " step " + str(i)
+    return n * 10
+
+async def show(t: task[int, str]):
+    async for status in t:
+        print(status)
+
+@main
+async def main():
+    a = start worker("a", 3)
+    b = start worker("b", 2)
+    first = start show(a)
+    second = start show(b)
+    await first
+    await second
+    print("results", await a, await b)

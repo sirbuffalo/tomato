@@ -1,0 +1,24 @@
+async def ask(q: str) -> str:
+    return await input(q)
+
+async def count(n: int) -> int yields str:
+    i = 0
+    while i < n:
+        yield 'step ' + str(i)
+        i = i + 1
+    return n * 10
+
+@main
+async def main():
+    name = await ask('Name? ')
+    n = int(await input('How many? '))
+    print('hi', name, n * 2)
+    t = start count(n)
+    async for s in t:
+        print('status:', s)
+    print('result', await t)
+    try:
+        while True:
+            print('line:', await input())
+    catch EOFError as e:
+        print('done', e.message)

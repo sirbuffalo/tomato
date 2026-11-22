@@ -154,6 +154,60 @@ def operator_marker_of(op: str) -> str:
         return 'ge'
     return ''
 
+# An async function runs as a frame: a heap object holding its variables and where it stopped. These fields come first, then the variables.
+# 0 resume function, 1 where it stopped, 2 status (0 running, 1 done, 2 failed), 3 the tasks waiting for it, 4 its error, 5 and 6 the error line and kind,
+# 7 text handed in by input, 8 the result, 9 the statuses it yielded, 10 how many of them were read
+const FRAME_FIXED = 11
+
+def is_task(t: str) -> bool:
+    return t.startswith('task[')
+
+def task_result(t: str) -> str:
+    # task[T] and task[T, S] hold T, with 'None' for a function that returns nothing
+    inner = elem_of(t)
+    cut = inner.find(';')
+    if cut >= 0:
+        return inner[0:cut]
+    return inner
+
+def task_status(t: str) -> str:
+    inner = elem_of(t)
+    cut = inner.find(';')
+    if cut >= 0:
+        return inner[cut + 1:len(inner)]
+    return ''
+
+def text_val(s: str) -> Val:
+    v = Val()
+    v.tag = 's'
+    v.text = s
+    return v
+
+def contains_await(n: Node) -> bool:
+    if n.kind == 'Await':
+        return True
+    for f in n.fields:
+        if val_has_await(f):
+            return True
+    return False
+
+def val_has_await(v: Val) -> bool:
+    if v.tag == 'n':
+        return contains_await(val_node(v))
+    if v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            if val_has_await(item):
+                return True
+    return False
+
+def task_type_of(info: FuncInfo) -> str:
+    res = info.ret
+    if res == '':
+        res = 'None'
+    if info.yields != '':
+        return 'task[' + res + ';' + info.yields + ']'
+    return 'task[' + res + ']'
+
 def is_optional(t: str) -> bool:
     return t.endswith('?')
 
@@ -164,10 +218,14 @@ def strip_optional(t: str) -> str:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t)
+    return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t)
 
 def shown(t: str) -> str:
     # a type as the user writes it
+    if is_task(t):
+        if task_status(t) != '':
+            return 'task[' + shown(task_result(t)) + ', ' + shown(task_status(t)) + ']'
+        return 'task[' + shown(task_result(t)) + ']'
     if is_optional(t):
         return shown(strip_optional(t)) + ' | None'
     if is_class(t) or is_iface(t):
@@ -240,6 +298,8 @@ class FuncInfo:
     is_override: bool = False
     is_private: bool = False
     is_gen: bool = False     # the body has a yield: a generator, only usable as what a for loop loops over
+    is_async: bool = False   # async def: calling it makes a task, which await or start runs
+    yields: str = ''        # what an async function yields as status, or ''
     key: str = ''            # the program-wide name of a function (module.name outside the main program)
     module: str = 'main'
 
@@ -274,6 +334,7 @@ class ClassInfo:
     parent: str = ''              # the parent class, or ''
     ifaces: list[str] = []        # the interfaces the class declares it implements
     done: bool = False            # fields and defaults are complete (inherited ones come first)
+    is_frame: bool = False        # the frame of an async function, made by the compiler: no constructor or methods
     line: int = 0
 
 class Binding:
@@ -296,6 +357,7 @@ class Mod:
     codes: list[str] = []         # the heap types the program uses; a type's code is 2 plus its place here
     code_index: dict[str, int] = {}
     classes: list[ClassInfo] = []
+    frames: list[ClassInfo] = []  # the frames of the async functions
     ifaces: list[IfaceInfo] = []
     slots: list[str] = []         # method names, one vtable slot each
     cur: str = 'main'             # the module whose names are being resolved
@@ -595,6 +657,18 @@ class Mod:
             if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped)):
                 return ''
             return wrapped + '?'
+        if name == 'task' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
+            res = self.type_name(t.fields[2])
+            if res == '' and val_node(t.fields[2]).fields[0].text == 'None':
+                res = 'None'
+            if res == '' or is_fixed(res):
+                return ''
+            if t.fields[3].tag == 'n':
+                st = self.type_name(t.fields[3])
+                if st == '' or is_fixed(st):
+                    return ''
+                return 'task[' + res + ';' + st + ']'
+            return 'task[' + res + ']'
         if name == 'set' and t.fields[2].tag == 'n':
             member = self.type_name(t.fields[2])
             if member == 'str' or member == 'int' or member == 'bool':
@@ -697,6 +771,14 @@ class Gen:
     ret: str = ''
     gens: list[GenCtx] = []   # the generators being compiled into for loops, innermost last (only the first gen_n count)
     gen_n: int = 0
+    is_async: bool = False     # compiling an async function: its variables live in a heap frame so it can stop and go on later
+    frame_code: int = 0        # the type code of that frame
+    frame_types: list[str] = []   # the type of each frame field after the fixed ones
+    awaits: int = 0            # the number of places this function can stop at
+    ret_yields: str = ''        # what a yield gives out, for an async function with a status
+    async_ok: bool = False     # the call being compiled is directly under await or start, so it may be an async call
+    fresh_frame: bool = False  # the last call made a new task frame
+    lifted: int = 0            # how many awaits were moved into statements of their own
 
     def tmp(self, hint: str) -> str:
         self.n += 1
@@ -741,27 +823,35 @@ class Gen:
             return self.slots[name]
         return self.new_slot(name, ty)
 
-    def new_slot(self, name: str, ty: str) -> str:
-        self.slot_count += 1
-        reg = '%v.' + name + '.' + str(self.slot_count)
+    def make_slot(self, reg: str, ty: str):
+        # a place for a value: a stack slot, or a field of the frame in an async function. A value that needs releasing starts out null.
+        if self.is_async:
+            self.frame_types.append(ty)
+            self.allocas.append('  ' + reg + ' = getelementptr %class.' + str(self.frame_code) + ', ptr %frame, i32 0, i32 ' + str(len(self.frame_types) - 1 + FRAME_FIXED + 2))
+            if is_rc(ty):
+                self.rc_slots.append(reg)
+            return
         self.allocas.append('  ' + reg + ' = alloca ' + llvm_type(ty))
         if is_rc(ty):
             self.allocas.append('  store ptr null, ptr ' + reg)
             self.rc_slots.append(reg)
+
+    def new_slot(self, name: str, ty: str) -> str:
+        self.slot_count += 1
+        reg = '%v.' + name + '.' + str(self.slot_count)
+        self.make_slot(reg, ty)
         self.slots[name] = reg
         self.types[name] = ty
         return reg
 
     def hidden_slot(self, hint: str) -> str:
         reg = self.tmp(hint)
-        self.allocas.append('  ' + reg + ' = alloca i64')
+        self.make_slot(reg, 'u64')
         return reg
 
     def hidden_rc_slot(self, hint: str) -> str:
         reg = self.tmp(hint)
-        self.allocas.append('  ' + reg + ' = alloca ptr')
-        self.allocas.append('  store ptr null, ptr ' + reg)
-        self.rc_slots.append(reg)
+        self.make_slot(reg, 'str')
         return reg
 
     # ---- reference counting
@@ -1194,12 +1284,37 @@ class Gen:
         self.fail_if(bad, 'the float result is infinite or not a number')
 
     def float_call(self, v: Ex, line: int) -> Ex:
-        # float(x): a whole number or a float as a float
+        # float(x): a whole number or a float as a float, or text written as a number
+        if v.ty == 'str':
+            return self.text_to_float(v)
         if v.ty == 'float':
             return v
         if is_numeric(v.ty):
             return ex(self.to_double(v), 'float')
         raise CompileError('float() takes a number, but this is ' + shown(v.ty), line)
+
+    def text_to_int(self, v: Ex) -> Ex:
+        # int(text): a whole number written in decimal, spaces around it allowed; anything else raises a RuntimeError
+        ok = self.tmp('isint')
+        self.emit(ok + ' = call i32 @tomato_text_int_ok(ptr ' + v.reg + ')')
+        bad = self.tmp('notint')
+        self.emit(bad + ' = icmp eq i32 ' + ok + ', 0')
+        r = self.tmp('parsed')
+        self.emit(r + ' = call i64 @tomato_text_int(ptr ' + v.reg + ')')
+        self.release(v)
+        self.fail_if(bad, 'the text is not a whole number')
+        return ex(r, 'int')
+
+    def text_to_float(self, v: Ex) -> Ex:
+        ok = self.tmp('isfloat')
+        self.emit(ok + ' = call i32 @tomato_text_float_ok(ptr ' + v.reg + ')')
+        bad = self.tmp('notfloat')
+        self.emit(bad + ' = icmp eq i32 ' + ok + ', 0')
+        r = self.tmp('parsed')
+        self.emit(r + ' = call double @tomato_text_float(ptr ' + v.reg + ')')
+        self.release(v)
+        self.fail_if(bad, 'the text is not a number')
+        return ex(r, 'float')
 
     def float_to_int(self, v: Ex, line: int) -> Ex:
         # int(x) on a float: the whole part, towards zero (P58); infinity and NaN stop
@@ -1249,6 +1364,8 @@ class Gen:
 
     def convert_explicit(self, v: Ex, target: str, line: int) -> Ex:
         # int[length=N](x): the same number in another integer type, or a stop when it does not fit (D05p)
+        if v.ty == 'str' and target == 'int':
+            return self.text_to_int(v)
         if not is_numeric(v.ty):
             raise CompileError('this conversion needs an integer, but the value is ' + shown(v.ty), line)
         if target == 'int' or contains(target, v.ty):
@@ -1327,6 +1444,10 @@ class Gen:
     # ---- expressions
     def expr(self, n: Node, expected: str = '') -> Ex:
         k = n.kind
+        if k == 'Await':
+            return self.await_expr(n)
+        if k == 'Start':
+            return self.start_expr(n)
         if k == 'IntLit':
             return self.int_literal(n.fields[0].num, expected, False, n.line)
         if k == 'FloatLit':
@@ -2201,7 +2322,7 @@ class Gen:
         if f.kind != 'Name':
             raise CompileError('only a function name can be called here\ncalling the result of another expression is not supported', n.line)
         name = f.fields[0].text
-        if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int']:
+        if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int', 'input']:
             raise CompileError("'" + name + "' does not take keyword arguments", n.line)
         args = val_nodes(n.fields[1])
         if name == 'print':
@@ -2211,6 +2332,8 @@ class Gen:
             return ex('', '')
         if name == 'open':
             return self.open_call(args, n.line)
+        if name == 'input' and not (name in self.slots) and self.mod.resolve(name) == '':
+            return self.input_call(args, n.line)
         if name == 'len':
             return self.len_call(args, n.line)
         if name == 'str':
@@ -2303,6 +2426,11 @@ class Gen:
         return ex(r, info.ret)
 
     def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
+        if info.is_async:
+            if not self.async_ok:
+                raise CompileError("'" + info.name + "' is async, so it must be awaited or started\nwrite: await " + info.name + "(...)   or   start " + info.name + "(...)", line)
+            self.async_ok = False
+            symbol = '@tomato.async.' + info.key
         if info.is_gen:
             raise CompileError("'" + info.name + "' is a generator (it uses yield), so it can only be used as what a for loop loops over\nwrite: for x in " + info.name + "(...):", line)
         # a function, or a method when `receiver` holds the object; the callee only borrows its arguments
@@ -2373,6 +2501,13 @@ class Gen:
             parts.append(llvm_type(v2.ty) + ' ' + v2.reg)
         text = 'call ' + self.ret_llvm(info) + ' ' + symbol + '(' + ', '.join(parts) + ')'
         result = ex('', '')
+        if info.is_async:
+            fr = self.tmp('frame')
+            self.emit(fr + ' = call ptr ' + symbol + '(' + ', '.join(parts) + ')')
+            for v4 in values:
+                self.release(v4)
+            self.fresh_frame = True
+            return ex(fr, task_type_of(info))
         if info.ret == '':
             self.emit(text)
         else:
@@ -2625,6 +2760,335 @@ class Gen:
         self.fail_with(bad, 'IOError', 'a file could not be opened')
         return ex(r, 'File')
 
+    def input_call(self, args: list[Node], line: int) -> Ex:
+        raise CompileError("input() is async, so it must be awaited\nwrite: await input(prompt)  inside an async def", line)
+        if len(args) > 1:
+            raise CompileError('input() takes an optional prompt as text: input() or input(prompt)', line)
+        prompt = ex(self.mod.intern(''), 'str')
+        if len(args) == 1:
+            prompt = self.expr(args[0])
+            prompt = self.want(prompt, 'str', line, 'the prompt')
+        r = self.tmp('line')
+        self.emit(r + ' = call ptr @tomato_input(ptr ' + prompt.reg + ')')
+        bad = self.tmp('noinput')
+        self.emit(bad + ' = icmp eq ptr ' + r + ', null')
+        self.release(prompt)
+        self.fail_with(bad, 'EOFError', 'there is no more input to read')
+        return ex(r, 'str')
+
+    # ---- async: an async function runs as a frame (see FRAME_FIXED); await and yield are the places it can stop and go on later
+    def frame_field(self, h: str, k: int, ty: str) -> str:
+        # the address of fixed field k of the frame h. Every frame starts with the same fields, so this names them with a type of their own:
+        # the object header, seven whole numbers, three pointers, then the result (the sizes of pointers differ between native and browser code).
+        res = 'i64'
+        if k == 10 and ty != '':
+            res = llvm_type(ty)
+        p = self.tmp('ff')
+        self.emit(p + ' = getelementptr { i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr, ptr, ' + res + ' }, ptr ' + h + ', i32 0, i32 ' + str(k + 2))
+        return p
+
+    def suspend_here(self):
+        # stop this function; it goes on from the next line when something runs the frame again
+        self.awaits += 1
+        k = self.awaits
+        self.emit('store i64 ' + str(k) + ', ptr %state.p')
+        self.br('suspend')
+        self.place('rs.' + str(k))
+
+    def need_async(self, what: str, line: int):
+        if not self.is_async:
+            raise CompileError("'" + what + "' can only be used inside an async function\nwrite async def instead of def", line)
+
+    def await_handle(self, holder: str, result: str) -> Ex:
+        # the task in the slot `holder` (owned): wait until it is done, then take its result, or raise its error
+        chk = self.label('awaiting')
+        wait = self.label('mustwait')
+        take = self.label('finished')
+        bad = self.label('taskfailed')
+        good = self.label('taskdone')
+        self.br(chk)
+        self.place(chk)
+        h = self.tmp('task')
+        self.emit(h + ' = load ptr, ptr ' + holder)
+        st = self.tmp('status')
+        self.emit(st + ' = load i64, ptr ' + self.frame_field(h, 2, 'u64'))
+        done = self.tmp('isdone')
+        self.emit(done + ' = icmp ne i64 ' + st + ', 0')
+        self.cond_br(done, take, wait)
+        self.place(wait)
+        self.emit('call void @tomato_task_wait(ptr ' + h + ', ptr %frame)')
+        self.suspend_here()
+        self.br(chk)
+        self.place(take)
+        failed = self.tmp('failed')
+        self.emit(failed + ' = icmp eq i64 ' + st + ', 2')
+        self.cond_br(failed, bad, good)
+        self.place(bad)
+        self.emit('call void @tomato.task.raise(ptr ' + h + ')')
+        self.emit('call void @tomato_release(ptr ' + h + ')')
+        self.emit('store ptr null, ptr ' + holder)
+        self.br(self.unwind_target())
+        self.place(good)
+        out = ex('', '')
+        if result != '' and result != 'None':
+            rp = self.frame_field(h, 10, result)
+            r = self.tmp('result')
+            self.emit(r + ' = load ' + llvm_type(result) + ', ptr ' + rp)
+            if is_rc(result):
+                self.emit('store ptr null, ptr ' + rp)
+            out = ex(r, result)
+        self.emit('call void @tomato_release(ptr ' + h + ')')
+        self.emit('store ptr null, ptr ' + holder)
+        return out
+
+    def await_expr(self, n: Node) -> Ex:
+        self.need_async('await', n.line)
+        inner = val_node(n.fields[0])
+        if inner.kind == 'Call' and val_node(inner.fields[0]).kind == 'Name':
+            name = val_node(inner.fields[0]).fields[0].text
+            if name == 'input' and not (name in self.slots) and self.mod.resolve(name) == '':
+                return self.await_input(val_nodes(inner.fields[1]), n.line)
+        self.async_ok = True
+        self.fresh_frame = False
+        t = self.expr(inner)
+        self.async_ok = False
+        if not is_task(t.ty):
+            raise CompileError("only a task can be awaited, but this is " + shown(t.ty) + "\nawait an async function call such as await work(), or a task made with start", n.line)
+        fresh = self.fresh_frame
+        self.fresh_frame = False
+        holder = self.hidden_rc_slot('await.task')
+        self.store_owned(holder, t)
+        if fresh:
+            h0 = self.tmp('child')
+            self.emit(h0 + ' = load ptr, ptr ' + holder)
+            self.emit('call void @tomato.sched.step(ptr ' + h0 + ')')      # a child runs at once, up to its first stop
+        return self.await_handle(holder, task_result(t.ty))
+
+    def await_input(self, args: list[Node], line: int) -> Ex:
+        if len(args) > 1:
+            raise CompileError('input() takes an optional prompt as text: await input() or await input(prompt)', line)
+        prompt = ex(self.mod.intern(''), 'str')
+        if len(args) == 1:
+            prompt = self.expr(args[0])
+            prompt = self.want(prompt, 'str', line, 'the prompt')
+        self.emit('call void @tomato_input_wait(ptr %frame, ptr ' + prompt.reg + ')')
+        self.release(prompt)
+        self.suspend_here()
+        ip = self.frame_field('%frame', 7, 'str')
+        r = self.tmp('line')
+        self.emit(r + ' = load ptr, ptr ' + ip)
+        self.emit('store ptr null, ptr ' + ip)
+        bad = self.tmp('noinput')
+        self.emit(bad + ' = icmp eq ptr ' + r + ', null')
+        self.fail_with(bad, 'EOFError', 'there is no more input to read')
+        return ex(r, 'str')
+
+    def start_expr(self, n: Node) -> Ex:
+        self.need_async('start', n.line)
+        inner = val_node(n.fields[0])
+        if inner.kind != 'Call':
+            raise CompileError("'start' needs a call of an async function, such as start work()", n.line)
+        self.async_ok = True
+        self.fresh_frame = False
+        t = self.expr(inner)
+        self.async_ok = False
+        if not is_task(t.ty) or not self.fresh_frame:
+            raise CompileError("'start' needs a call of an async function, such as start work()", n.line)
+        self.fresh_frame = False
+        self.emit('call void @tomato_q_push(ptr ' + t.reg + ')')      # the scheduler holds it too until it has run
+        return t
+
+    def async_for(self, s: Node):
+        # async for x in task: each status the task yields, as it arrives; ends when the task is done
+        self.need_async('async for', s.line)
+        t = self.expr(val_node(s.fields[1]))
+        if not is_task(t.ty) or task_status(t.ty) == '':
+            raise CompileError("async for needs a task that yields statuses, but this is " + shown(t.ty) + "\nthe async function must say what it yields: async def work() -> int yields str:", s.line)
+        elem = task_status(t.ty)
+        holder = self.hidden_rc_slot('asyncfor.task')
+        self.store_owned(holder, t)
+        var = self.slot(s.fields[0].text, elem, s.line)
+        head = self.label('statuses')
+        have = self.label('havestatus')
+        nomore = self.label('nostatus')
+        wait = self.label('waitstatus')
+        end = self.label('endstatuses')
+        self.br(head)
+        self.place(head)
+        h = self.tmp('task')
+        self.emit(h + ' = load ptr, ptr ' + holder)
+        q = self.tmp('queue')
+        self.emit(q + ' = load ptr, ptr ' + self.frame_field(h, 9, 'str'))
+        curp = self.frame_field(h, 6, 'u64')
+        cur = self.tmp('read')
+        self.emit(cur + ' = load i64, ptr ' + curp)
+        lenp = self.tmp('lenp')
+        self.emit(lenp + ' = getelementptr { i64, i64, i64, i64, ptr }, ptr ' + q + ', i32 0, i32 2')
+        ln = self.tmp('len')
+        self.emit(ln + ' = load i64, ptr ' + lenp)
+        more = self.tmp('more')
+        self.emit(more + ' = icmp slt i64 ' + cur + ', ' + ln)
+        self.cond_br(more, have, nomore)
+        self.place(have)
+        addr = self.list_slot(ex(q, 'list[' + elem + ']'), ex(cur, 'int'))
+        item = self.tmp('status')
+        self.emit(item + ' = load ' + llvm_type(elem) + ', ptr ' + addr)
+        e = ex(item, elem)
+        self.retain(e)
+        self.store_owned(var, e)
+        nxt = self.tmp('next')
+        self.emit(nxt + ' = add i64 ' + cur + ', 1')
+        self.emit('store i64 ' + nxt + ', ptr ' + curp)
+        self.push_loop(end, head)
+        self.block(val_nodes(s.fields[2]))
+        self.loop_depth = self.loop_depth - 1
+        if not self.terminated:
+            self.br(head)
+        self.place(nomore)
+        st = self.tmp('status')
+        self.emit(st + ' = load i64, ptr ' + self.frame_field(h, 2, 'u64'))
+        fin = self.tmp('isdone')
+        self.emit(fin + ' = icmp ne i64 ' + st + ', 0')
+        self.cond_br(fin, end, wait)
+        self.place(wait)
+        self.emit('call void @tomato_task_wait(ptr ' + h + ', ptr %frame)')
+        self.suspend_here()
+        self.br(head)
+        self.place(end)
+        o = self.tmp('drop')
+        self.emit(o + ' = load ptr, ptr ' + holder)
+        self.emit('call void @tomato_release(ptr ' + o + ')')
+        self.emit('store ptr null, ptr ' + holder)
+
+    def async_yield(self, s: Node):
+        # yield value in an async function: a status for whoever reads the task; then other tasks get a turn
+        if self.ret_yields == '':
+            raise CompileError("this async function does not say what it yields\nwrite it after the return type: async def work() -> int yields str:", s.line)
+        v = self.expr(val_node(s.fields[0]), self.ret_yields)
+        v = self.want(v, self.ret_yields, s.line, 'the yielded status')
+        q = self.tmp('queue')
+        self.emit(q + ' = load ptr, ptr ' + self.frame_field('%frame', 9, 'str'))
+        slot = self.tmp('slot')
+        self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + q + ', i64 8)')
+        self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
+        self.emit('call void @tomato_wake_waiters(ptr %frame)')
+        self.emit('call void @tomato_q_push(ptr %frame)')
+        self.suspend_here()
+
+    # An await can stop the function, and everything it was in the middle of computing would be lost, so every await is
+    # first moved out of its expression into a statement of its own (x = await f()) whose only unfinished state is in variables.
+    def lift(self, e: Node, out: list[Node], guarded: bool, top: bool) -> Node:
+        if e.kind == 'Await':
+            if guarded:
+                raise CompileError("an await cannot be inside the right side of 'and' or 'or'\nawait first, then use the result: x = await f()", e.line)
+            inner = self.lift(val_node(e.fields[0]), out, False, False)
+            copy = Node()
+            copy.kind = 'Await'
+            copy.line = e.line
+            copy.fields = [vn(inner)]
+            if top:
+                return copy
+            self.lifted += 1
+            name = '_await' + str(self.lifted)
+            target = Node()
+            target.kind = 'Name'
+            target.line = e.line
+            target.fields = [text_val(name)]
+            asg = Node()
+            asg.kind = 'Assign'
+            asg.line = e.line
+            asg.fields = [vn(target), vn(copy)]
+            out.append(asg)
+            use = Node()
+            use.kind = 'Name'
+            use.line = e.line
+            use.fields = [text_val(name)]
+            return use
+        if e.kind == 'Start':
+            return e
+        copy2 = Node()
+        copy2.kind = e.kind
+        copy2.line = e.line
+        copy2.exported = e.exported
+        nf: list[Val] = []
+        k = 0
+        for f in e.fields:
+            nf.append(self.lift_val(f, out, guarded or (e.kind == 'BinOp' and (e.fields[0].text == 'and' or e.fields[0].text == 'or') and k >= 2)))
+            k += 1
+        copy2.fields = nf
+        return copy2
+
+    def lift_val(self, v: Val, out: list[Node], guarded: bool) -> Val:
+        if v.tag == 'n':
+            return vn(self.lift(val_node(v), out, guarded, False))
+        if v.tag == 'l' or v.tag == 't':
+            copy = Val()
+            copy.tag = v.tag
+            ni: list[Val] = []
+            for item in v.items:
+                ni.append(self.lift_val(item, out, guarded))
+            copy.items = ni
+            return copy
+        return v
+
+    def hoist(self, s: Node) -> list[Node]:
+        # the statements that run in place of s: its awaits as statements of their own, then s without them
+        out: list[Node] = []
+        k = s.kind
+        if k == 'Assign' or k == 'Return' or k == 'ExprStmt' or k == 'Declare' or k == 'Raise' or k == 'Yield':
+            copy = Node()
+            copy.kind = k
+            copy.line = s.line
+            cf: list[Val] = []
+            j = 0
+            for f in s.fields:
+                is_top = False
+                if f.tag == 'n':
+                    child = val_node(f)
+                    is_top = child.kind == 'Await' and ((k == 'Assign' and j == 1) or (k == 'Declare' and j == 2) or k == 'Return' or k == 'ExprStmt')
+                    cf.append(vn(self.lift(child, out, False, is_top)))
+                else:
+                    cf.append(f)
+                j += 1
+            copy.fields = cf
+            out.append(copy)
+            return out
+        if k == 'If':
+            branches = s.fields[0].items
+            first = branches[0].items
+            for b in range(1, len(branches)):
+                if contains_await(val_node(branches[b].items[0])):
+                    raise CompileError("an await cannot be in an elif condition\nawait first and keep the result in a variable", s.line)
+            cond = self.lift(val_node(first[0]), out, False, False)
+            copy3 = Node()
+            copy3.kind = 'If'
+            copy3.line = s.line
+            nb = Val()
+            nb.tag = 'l'
+            head = Val()
+            head.tag = 't'
+            head.items = [vn(cond), first[1]]
+            bl: list[Val] = [head]
+            for b in range(1, len(branches)):
+                bl.append(branches[b])
+            nb.items = bl
+            copy3.fields = [nb, s.fields[1]]
+            out.append(copy3)
+            return out
+        if k == 'For' or k == 'AsyncFor':
+            it = self.lift(val_node(s.fields[1]), out, False, False)
+            copy4 = Node()
+            copy4.kind = k
+            copy4.line = s.line
+            copy4.fields = [s.fields[0], vn(it), s.fields[2]]
+            out.append(copy4)
+            return out
+        if k == 'While':
+            if contains_await(val_node(s.fields[0])):
+                raise CompileError("an await cannot be in a while condition\nwrite while True: and await inside the loop, leaving with break", s.line)
+        out.append(s)
+        return out
+
     def ret_llvm(self, info: FuncInfo) -> str:
         if info.ret == '':
             return 'void'
@@ -2777,7 +3241,7 @@ class Gen:
         for seen in self.mod.scope:
             if seen.module == self.mod.cur or seen.module == 'builtin':
                 out.append(seen.name)
-        for b in ['print', 'len', 'str', 'int', 'float', 'open', 'range']:
+        for b in ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'range']:
             out.append(b)
         return out
 
@@ -2823,6 +3287,13 @@ class Gen:
         return text
 
     def stmt(self, s: Node):
+        if self.is_async:
+            for p in self.hoist(s):
+                self.stmt_now(p)
+            return
+        self.stmt_now(s)
+
+    def stmt_now(self, s: Node):
         self.line = s.line
         k = s.kind
         if k == 'ExprStmt':
@@ -2864,6 +3335,10 @@ class Gen:
             v = self.expr(val_node(s.fields[2]), ty)
             v = self.want(v, ty, s.line, 'the value')
             self.store_owned(self.slot(s.fields[0].text, ty, s.line), v)
+        elif k == 'AsyncFor':
+            self.async_for(s)
+        elif k == 'Yield' and self.is_async:
+            self.async_yield(s)
         elif k == 'Yield':
             self.yield_stmt(s)
         elif k == 'Return' and self.gen_n > 0:
@@ -3014,7 +3489,7 @@ class Gen:
         self.place(info.prop_l)
         if info.has_final:
             hold = self.tmp('hold')
-            self.allocas.append('  ' + hold + ' = alloca ptr')
+            self.make_slot(hold, 'File')
             held = self.tmp('pending')
             self.emit(held + ' = load ptr, ptr @tomato_exc')
             self.emit('store ptr ' + held + ', ptr ' + hold)
@@ -3520,6 +3995,128 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
             g.terminated = True
     return finish_function(g, function_symbol(mod, info), sig, info.ret)
 
+def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
+    # an async function becomes a frame (its variables on the heap), a constructor that makes the frame from the arguments,
+    # and a resume function that runs the body from where it last stopped
+    mod.cur = info.module
+    if info.owner != '':
+        raise CompileError('async methods are not supported yet\nmake it a function outside the class', f.line)
+    g = Gen()
+    g.mod = mod
+    g.is_async = True
+    g.ret = info.ret
+    g.ret_yields = info.yields
+    cname = 'async.' + info.key
+    code = mod.code_of('@' + cname)
+    g.frame_code = code
+    g.allocas.append('  %state.p = getelementptr %class.' + str(code) + ', ptr %frame, i32 0, i32 3')
+    params = val_nodes(f.fields[1])
+    names: list[str] = []
+    types: list[str] = []
+    k = 0
+    for p in params:
+        if p.fields[0].text == 'self':
+            raise CompileError("'self' can only be used in methods inside a class", p.line)
+        names.append(p.fields[0].text)
+        types.append(info.ptypes[k])
+        k += 1
+    sig: list[str] = []
+    k = 0
+    for name in names:
+        g.slot(name, types[k], f.line)
+        sig.append(llvm_type(types[k]) + ' %arg.' + name)
+        k += 1
+    g.block(val_nodes(f.fields[3]))
+    if not g.terminated:
+        if info.ret == '':
+            g.br('epilogue')
+        else:
+            g.emit('call void @tomato_fail(ptr ' + mod.intern('the function ended without returning a value') + '.c)')
+            g.emit('unreachable')
+            g.terminated = True
+    # the frame's type: the fixed fields, then one per variable
+    result_ty = info.ret
+    if result_ty == '':
+        result_ty = 'u64'
+    queue_ty = 'File'
+    if info.yields != '':
+        queue_ty = 'list[' + info.yields + ']'
+    fr = ClassInfo()
+    fr.name = cname
+    fr.display = 'task'
+    fr.module = info.module
+    fr.is_frame = True
+    fr.done = True
+    frame_types: list[str] = ['u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'str', '@Error', queue_ty, result_ty]
+    for t in g.frame_types:
+        frame_types.append(t)
+    for ft in frame_types:
+        slot = FieldInfo()
+        slot.name = 'f'
+        slot.ty = ft
+        fr.fields.append(slot)
+    mod.frames.append(fr)
+    cls = '%class.' + str(code)
+    sym = '@tomato.async.' + info.key
+    # the resume function
+    text = 'define void ' + sym + '.resume(ptr %frame) {\nentry:\n'
+    if info.ret != '':
+        text += '  %retval = alloca ' + llvm_type(info.ret) + '\n  store ' + llvm_type(info.ret) + ' ' + zero_of(info.ret) + ', ptr %retval\n'
+    text += '\n'.join(g.allocas) + '\n'
+    text += '  %st.v = load i64, ptr %state.p\n  switch i64 %st.v, label %start ['
+    for i in range(g.awaits):
+        text += ' i64 ' + str(i + 1) + ', label %rs.' + str(i + 1)
+    text += ' ]\nstart:\n'
+    text += '\n'.join(g.lines) + '\n'
+    text += 'epilogue:\n'
+    for reg in g.rc_slots:
+        o = g.tmp('rel')
+        text += '  ' + o + ' = load ptr, ptr ' + reg + '\n  call void @tomato_release(ptr ' + o + ')\n  store ptr null, ptr ' + reg + '\n'
+    text += '  %ex.p = load ptr, ptr @tomato_exc\n  %ex.has = icmp ne ptr %ex.p, null\n  br i1 %ex.has, label %failed, label %succeeded\n'
+    text += 'failed:\n  %e.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 10\n  store ptr %ex.p, ptr %e.p\n'
+    text += '  %el = load i32, ptr @tomato_exc_line\n  %el64 = zext i32 %el to i64\n  %el.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 6\n  store i64 %el64, ptr %el.p\n'
+    text += '  %er = load i32, ptr @tomato_exc_rt\n  %er64 = zext i32 %er to i64\n  %er.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 7\n  store i64 %er64, ptr %er.p\n'
+    text += '  store ptr null, ptr @tomato_exc\n  %s2.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 4\n  store i64 2, ptr %s2.p\n  br label %wake\n'
+    text += 'succeeded:\n'
+    if info.ret != '':
+        text += '  %rv = load ' + llvm_type(info.ret) + ', ptr %retval\n  %rv.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 12\n  store ' + llvm_type(info.ret) + ' %rv, ptr %rv.p\n'
+    text += '  %s1.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 4\n  store i64 1, ptr %s1.p\n  br label %wake\n'
+    text += 'wake:\n  call void @tomato_wake_waiters(ptr %frame)\n  ret void\nsuspend:\n  ret void\n}\n'
+    # the constructor
+    text += 'define ptr ' + sym + '(' + ', '.join(sig) + ') {\nentry:\n'
+    text += '  %size = ptrtoint ptr getelementptr (' + cls + ', ptr null, i32 1) to i64\n'
+    text += '  %f = call ptr @tomato_alloc(i64 %size, i64 ' + str(code) + ')\n'
+    text += '  %rf = getelementptr ' + cls + ', ptr %f, i32 0, i32 2\n  store ptr ' + sym + '.resume, ptr %rf\n'
+    k = 0
+    for name in names:
+        text += '  %pf' + str(k) + ' = getelementptr ' + cls + ', ptr %f, i32 0, i32 ' + str(FRAME_FIXED + k + 2) + '\n'
+        text += '  store ' + llvm_type(types[k]) + ' %arg.' + name + ', ptr %pf' + str(k) + '\n'
+        if is_rc(types[k]):
+            text += '  call void @tomato_retain(ptr %arg.' + name + ')\n'
+        k += 1
+    if info.yields != '':
+        text += '  %q = call ptr @tomato_list_new(i64 ' + str(mod.code_of(queue_ty)) + ')\n'
+        text += '  %qf = getelementptr ' + cls + ', ptr %f, i32 0, i32 11\n  store ptr %q, ptr %qf\n'
+    text += '  ret ptr %f\n}\n'
+    return text
+
+def scheduler_ir(mod: Mod) -> str:
+    # the code that runs tasks: step runs one frame until it stops, run keeps stepping whatever is ready until nothing is left
+    t = 'define void @tomato.sched.step(ptr %f) {\n  %p = getelementptr i8, ptr %f, i64 16\n  %fn = load ptr, ptr %p\n  call void %fn(ptr %f)\n  ret void\n}\n'
+    hdr = '{ i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr, ptr, i64 }'
+    t += 'define void @tomato.task.raise(ptr %h) {\n  %ep = getelementptr ' + hdr + ', ptr %h, i32 0, i32 10\n  %e = load ptr, ptr %ep\n  call void @tomato_retain(ptr %e)\n  store ptr %e, ptr @tomato_exc\n'
+    t += '  %lp = getelementptr ' + hdr + ', ptr %h, i32 0, i32 6\n  %l = load i64, ptr %lp\n  %l32 = trunc i64 %l to i32\n  store i32 %l32, ptr @tomato_exc_line\n'
+    t += '  %rp = getelementptr ' + hdr + ', ptr %h, i32 0, i32 7\n  %r = load i64, ptr %rp\n  %r32 = trunc i64 %r to i32\n  store i32 %r32, ptr @tomato_exc_rt\n  store i32 1, ptr @tomato_exc_seen\n  ret void\n}\n'
+    t += 'define void @tomato.sched.run(ptr %main) {\nentry:\n  call void @tomato_q_push(ptr %main)\n  br label %loop\n'
+    t += 'loop:\n  %f = call ptr @tomato_q_pop()\n  %none = icmp eq ptr %f, null\n  br i1 %none, label %idle, label %go\n'
+    t += 'go:\n  call void @tomato.sched.step(ptr %f)\n  call void @tomato_release(ptr %f)\n  br label %loop\n'
+    t += 'idle:\n  %did = call i32 @tomato_sched_idle()\n  %more = icmp ne i32 %did, 0\n  br i1 %more, label %loop, label %done\n'
+    t += 'done:\n  %sp = getelementptr i8, ptr %main, i64 32\n  %st = load i64, ptr %sp\n  %fin = icmp ne i64 %st, 0\n  br i1 %fin, label %finished, label %stuck\n'
+    t += 'stuck:\n  call void @tomato_fail(ptr ' + mod.intern('every task is waiting for something that can no longer happen') + '.c)\n  unreachable\n'
+    t += 'finished:\n  %bad = icmp eq i64 %st, 2\n  br i1 %bad, label %raise, label %out\n'
+    t += 'raise:\n  call void @tomato.task.raise(ptr %main)\n  br label %out\nout:\n  call void @tomato_release(ptr %main)\n  ret void\n}\n'
+    return t
+
 def compile_constructor(c: ClassInfo, mod: Mod) -> str:
     # allocate, store the declared field defaults, then run @init
     mod.cur = c.module
@@ -3739,6 +4336,17 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_file_read(ptr)\n'
     d += 'declare void @tomato_file_write(ptr, ptr)\n'
     d += 'declare void @tomato_file_close(ptr)\n'
+    d += 'declare ptr @tomato_input(ptr)\n'
+    d += 'declare i32 @tomato_text_int_ok(ptr)\n'
+    d += 'declare i64 @tomato_text_int(ptr)\n'
+    d += 'declare i32 @tomato_text_float_ok(ptr)\n'
+    d += 'declare double @tomato_text_float(ptr)\n'
+    d += 'declare void @tomato_q_push(ptr)\n'
+    d += 'declare ptr @tomato_q_pop()\n'
+    d += 'declare void @tomato_input_wait(ptr, ptr)\n'
+    d += 'declare i32 @tomato_sched_idle()\n'
+    d += 'declare void @tomato_task_wait(ptr, ptr)\n'
+    d += 'declare void @tomato_wake_waiters(ptr)\n'
     d += 'declare ptr @tomato_list_new(i64)\n'
     d += 'declare ptr @tomato_list_push(ptr, i64)\n'
     d += '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
@@ -3824,7 +4432,10 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             args.append('double ' + reg)
         else:
             args.append(llvm_type(t) + ' ' + reg)
-    out += '  call void @tomato.' + info.key + '(' + ', '.join(args) + ')\n'
+    if info.is_async:
+        out += '  %fr = call ptr @tomato.async.' + info.key + '(' + ', '.join(args) + ')\n  call void @tomato.sched.run(ptr %fr)\n'
+    else:
+        out += '  call void @tomato.' + info.key + '(' + ', '.join(args) + ')\n'
     out += '  %ex = load ptr, ptr @tomato_exc\n  %has = icmp ne ptr %ex, null\n  br i1 %has, label %uncaught, label %fine\n'
     out += 'uncaught:\n  %eline = load i32, ptr @tomato_exc_line\n  %ert = load i32, ptr @tomato_exc_rt\n'
     out += '  call void @tomato_report_uncaught(ptr %ex, i32 %eline, i32 %ert, i32 ' + str(mod.mode) + ')\n  unreachable\n'
@@ -3848,7 +4459,12 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info.key = key_of(mod.cur, info.name)
     if len(item.fields) > 6:
         info.is_private = item.fields[4].flag
-        info.is_gen = len(item.fields) > 7 and item.fields[7].flag
+        info.is_async = len(item.fields) > 8 and item.fields[8].flag
+        info.is_gen = len(item.fields) > 7 and item.fields[7].flag and not info.is_async
+        if info.is_async and item.fields[9].tag == 'n':
+            info.yields = mod.type_name(item.fields[9])
+            if info.yields == '':
+                raise CompileError('this yields type is not supported\nan async function can yield int, bool, str, float, a list, a set, a dict or a class', item.line)
         info.is_override = item.fields[5].flag
         info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
         if item.fields[6].tag == 's' and item.fields[6].text != 'init' and is_operator_marker(item.fields[6].text):
@@ -4091,7 +4707,7 @@ def resolve_class(mod: Mod, c: ClassInfo):
         p = mod.find_class(c.parent, node.line)
         resolve_class(mod, p)
         mod.cur = c.module
-        c.fields = c.fields + p.fields
+        c.fields += p.fields
     for fd in val_nodes(node.fields[3]):
         ft = mod.type_name(fd.fields[1])
         if ft == '':
@@ -4289,7 +4905,10 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     bodies = ''
     for k, f in enumerate(funcs):
         if not mod.infos[k].is_gen:          # a generator is compiled where a for loop uses it
-            bodies += compile_function(f, mod, mod.infos[k]) + '\n'
+            if mod.infos[k].is_async:
+                bodies += compile_async_function(f, mod, mod.infos[k]) + '\n'
+            else:
+                bodies += compile_function(f, mod, mod.infos[k]) + '\n'
     # compiling a function can ask for more helper functions, so the list may grow while this runs
     done = 0
     while done < len(mod.extra_funcs):
@@ -4297,6 +4916,10 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         done += 1
     for c in mod.classes:
         bodies += compile_constructor(c, mod) + '\n'
+    for fr in mod.frames:
+        mod.classes.append(fr)
+    if len(mod.frames) > 0:
+        bodies += scheduler_ir(mod)
     mod.cur = 'main'
     wrapper = entry_wrapper(mod.find(entry, 1), mod)
     out = '; written by the Tomato compiler in Tomato (compiler/src/compiler.tom)\n'

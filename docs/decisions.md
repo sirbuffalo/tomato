@@ -1252,6 +1252,45 @@ Source: Davis's Dashboard message:
 - A value libm cannot answer is a `RuntimeError` written in plain words, checked before the call: `sqrt` of a negative number, `log` of zero or less, `asin`/`acos` outside −1 to 1, `acosh` below 1, `atanh` at or beyond ±1, `atan2(0, 0)`, `tan` at a quarter turn; an overflowing result (`exp(1000)`) is “too large to be a float”. This follows D41a (a float result that is infinite or not a number is an error). Chosen over returning infinity or NaN, which Tomato does not allow as float values.
 - The integer-only helpers `abs`, `min`, `max` and `pow` already in `math` are unchanged.
 
+### D50a — reading input: `await input(prompt)`, one line of text: accepted
+
+- Evidence: Davis asked "how should we add input". He chose `input(prompt)` "like Python" (the prompt is optional), end of input raising a catchable `EOFError`, and numbers through the existing conversions rather than new helpers. He rejected a separate `stdin()` / `read_all()` ("no just tomatos input function"); `tomato run` entry points already take inputs from the command line (D28a).
+- `input()` returns the next line of standard input as `str`, without its line end (`\n` or `\r\n`); a last line with no line end is still a line. The prompt, when given, is written to standard output first and flushed.
+- When there is no more input, `input` raises `EOFError` (a class in `std/builtin.tom`, a subclass of `RuntimeError`, so `catch RuntimeError` also catches it); the message is "there is no more input to read".
+- Numbers: `int(text)` and `float(text)` read decimal text with spaces around it allowed (`int(' 5 ')` is 5, `+5` and `-5` work; `float` takes `1.5`, `2e3`, not `nan`/`inf`/hex). Text that is not a number raises a catchable `RuntimeError` ("the text is not a whole number" / "the text is not a number"). Chosen over `input_int`/`input_float` helpers that re-ask by themselves, which would hide a loop.
+- Davis then said input must be async (D51a), so `input()` can only be awaited: calling it without `await` is a compile error with the fix written out.
+
+### D50b — the repl and the playground replay answers: accepted
+
+- Evidence: Davis chose "Remember answers" for the repl, where each line re-runs the whole session, and an interactive playground that pauses at `input()` and shows a prompt field.
+- Both use one mechanism. A program whose answers have run out and that asks for another stops with exit code 75 (the host sets `TOMATO_INPUT_ASK=1` in the environment; the browser host does the same); the host shows what the program printed up to its prompt, reads one line, and runs the program again from the start with all answers so far as its standard input. Answers are replayed silently and the program echoes each answer after its prompt (as a terminal would), so the output of every run starts with the output of the run before, and only the new part is shown. Nothing is asked twice.
+- Repl: each line that asks adds its answers to the session; `:reset` forgets them. A line that fails does not keep its answers. The session `main` becomes `async def` when a statement uses `await`, `async` or `start`. In a script or pipe the answer is the next line of the script.
+- Playground: the Run page shows a field right after the output when the program asks; Enter re-runs with the answer added. Pressing Run again starts over with no answers. The repl tab behaves like the installed repl. The 5 second limit applies to each run.
+- Cost: a program that ran for a long time before asking is run again from the start for each answer, and a program with side effects outside itself repeats them (the same caveat the repl already had).
+
+### D51a — `async def` and `await`: accepted
+
+- Evidence: Davis answered the question "how should async be written" with "`async def` and `await`, like Python", chose "Compile error with a fix hint" for a call that is not awaited, and asked for full concurrency ("Full concurrency now"). This settles the syntax left open by D31a and D31b.
+- `async def f(...) -> T:` declares an async function. Calling it does not run it: it makes a task (D51b). `await expr` waits for a task and gives its result, or raises the error the task raised. `await f(x)` runs `f` at once, up to its first wait, and the caller goes on from there when it is done. `@main` may be async (the scheduler runs it).
+- Only async functions can `await`, `start` or use `async for`. Calling an async function without `await` or `start`, awaiting something that is not a task, and awaiting in the right side of `and`/`or`, in an `elif` condition or in a `while` condition are compile errors with a hint. Any other await in an expression is allowed (`n = int(await input('n? '))`): the compiler moves each await into a statement of its own just before the statement that uses it, in left-to-right order.
+- `await` and `async` are now keywords; `start` is a keyword only in `start name(...)`.
+- `try`/`catch`/`finally`, loops, `break`, `continue` and `return` work across an await like anywhere else. Async methods are not supported yet.
+
+### D51b — `start f()` makes a task that runs at the same time: accepted
+
+- Evidence: Davis wrote "we will have start f() to that gives a object".
+- `start f(args)` begins running an async function and gives a task object of type `task[T]` at once (T is the function's return type, `None` when it returns nothing); the task runs whenever the starting code waits (`await`), so tasks interleave. `await t` gives its result and can be done once or many times; if the task failed, the error is raised again at each `await`. Tasks can be stored in lists, passed and returned (`list[task[int]]`).
+- Scheduling is cooperative on one thread: a task runs until it awaits something that is not ready or yields (D51c); nothing preempts it, so there are no data races. Tasks that are ready run in the order they became ready. When nothing is ready, the oldest task that asked for input gets the next line (so concurrent tasks that all ask for input are served in the order they asked).
+- The program ends when `main` is done and no task is ready to run; a task that is waiting for something that never comes is dropped. If `main` is not done and nothing can run, the program stops with "every task is waiting for something that can no longer happen". An error in a task that nobody awaits is not reported.
+- Implementation: each async function becomes a frame (a heap object holding its variables and where it stopped) and a resume function written as a state machine, so it works the same in the native runtime and in the browser's IR interpreter, which cannot switch stacks. The scheduler is generated code; the runtime only keeps the ready queue and the queue of tasks waiting for input.
+
+### D51c — `yield` in an async function reports status: accepted
+
+- Evidence: Davis wrote "yield is how status is typically given in async functions" and chose: statuses are read with `async for status in t:`, `await t` gives the final result, and a task nobody reads statuses from just runs on (yielding never blocks it).
+- An async function that yields says what it yields after the return type: `async def download(url: str) -> int yields str:`; the task type is then `task[int, str]`. `yield v` appends `v` to the task's list of statuses and then lets other tasks run. `async for s in t:` takes the statuses in order, waiting when there are none yet, and ends when the task is done and every status has been taken (it does not raise; `await t` after the loop gives the result or raises the error). Statuses are kept until read, without a limit.
+- This is different from a generator `yield` (D48a), which is used by `for` and runs inline; in an async function `yield` always means a status.
+- Open: `sleep` and timers, cancelling a task, a task awaited by `async for` from two tasks at once reading the same statuses, async methods and `@iter` async iterators, reporting errors from tasks nobody awaits.
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.

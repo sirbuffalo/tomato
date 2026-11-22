@@ -1,0 +1,4 @@
+@main
+async def main():
+    name = input('Name? ')
+    print(name)

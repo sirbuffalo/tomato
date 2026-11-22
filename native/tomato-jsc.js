@@ -37,6 +37,7 @@ var self = globalThis;
 
 var args = Array.prototype.slice.call(arguments);
 var dir = args[0], mode = args[1], file = args[2];
+var stdinFile = args[3] || "", ask = args[4] === "ask";   // the answers so far, one per line; ask: exit code 75 when the program wants another (the line printed last then ends with a newline jsc added)
 ["wasi.js", "llvm.js", "tomato.js"].forEach(function (f) { load(dir + "/" + f); });
 
 var bin = function (p) { return read(p, "binary"); };
@@ -69,7 +70,7 @@ function finish(code) { printErr("~rc " + code); }
 tw.compile(source, "main", extra).then(function (c) {
   if (mode === "compile") { emit(c.ok ? c.ir : c.error, c.ok ? "out" : "err"); finish(c.ok ? 0 : 1); return; }
   if (!c.ok) { emit(c.error, "err"); finish(1); return; }
-  return tw.run(c.ir, { inputs: [], timeoutMs: 5000 }).then(function (r) {
+  return tw.run(c.ir, { inputs: [], stdin: stdinFile ? new TextDecoder().decode(bin(stdinFile)) : "", ask: ask, timeoutMs: 5000 }).then(function (r) {
     emit(r.stdout, "out"); emit(r.stderr, "err");
     if (r.timedOut) printErr("error: the program ran longer than 5 seconds");
     finish(r.code);

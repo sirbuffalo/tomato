@@ -82,6 +82,38 @@ def main():
         print(n)
     print(len(Countdown(7)), sum(Countdown(4)), list(Countdown(3)))</code></pre>
 <p>A generator says what it yields with <code>-&gt; Type</code> and runs inside the <code>for</code> that uses it, one value at a time, with nothing built up in memory (<code>break</code> and <code>continue</code> work as usual). It can only be used as what a <code>for</code> loops over, not stored or passed around. The markers <code>@len</code>, <code>@get</code> (<code>x[i]</code>), <code>@slice</code> (<code>x[a:b:c]</code>), <code>@contains</code> (<code>v in x</code>) and <code>@reversed</code> make the matching built-ins work on your class, and <code>sum</code>, <code>min</code>, <code>max</code>, <code>sorted</code> and <code>list()</code> accept anything with an <code>@iter</code> method. <code>from itertools import progress_bar</code>: <code>for x in progress_bar(items):</code> draws a bar as it goes. Text loops too: <code>for ch in "abc"</code>.</p>
+<h2>Input</h2>
+<pre><code>@main
+async def main():
+    name = await input("Name? ")          # one line of text, without the line end
+    n = int(await input("How many? "))    # int() and float() read text; bad text raises RuntimeError
+    print("hi", name, n * 2)
+    try:
+        while True:
+            print("line:", await input())
+    catch EOFError:                         # no more input
+        print("done")</code></pre>
+<p><code>input</code> is async (see below), so it is always awaited. <code>tomato run FILE</code> reads standard input, so <code>printf 'Ann\n3\n' | tomato run ask.tom</code> works; <code>input</code> raises <code>EOFError</code> when the input runs out. Inputs for the <code>@main</code> function itself still come from the command line: <code>tomato run FILE main 12</code>. In the repl, a line that asks for input asks once; the answer is remembered and replayed when the session re-runs. On the <a href="play.html">Run page</a> a field appears after the output when the program asks, and Enter runs it again with that answer added.</p>
+<h2>Async and tasks</h2>
+<pre><code>async def count(n: int) -> int yields str:    # returns int, yields str statuses
+    i = 0
+    while i &lt; n:
+        yield "step " + str(i)                  # a status for whoever watches
+        i = i + 1
+    return n * 10
+
+async def double(x: int) -> int:
+    return x * 2
+
+@main
+async def main():
+    print(await double(4))                      # runs double and waits for it: 8
+    t = start count(3)                          # starts it; a task object, running at the same time
+    other = start double(10)
+    async for s in t:                           # each status as it arrives
+        print(s)
+    print(await t, await other)                 # 30 20</code></pre>
+<p><code>async def</code> makes a function that can wait; calling it makes a task, and <code>await</code> runs it and gives the result (or raises the error it raised), so a missing <code>await</code> is a compile error that says what to write. <code>start f(x)</code> gives the task as a value (<code>task[int]</code>, or <code>task[int, str]</code> when it yields statuses) that you can keep in a list and await later. Tasks run on one thread and take turns whenever one waits (for another task, for input) or yields, so they never interrupt each other. The program ends when <code>main</code> is done and nothing is left to run. An await can be inside an expression (<code>int(await input())</code>) but not in the right side of <code>and</code>/<code>or</code> or in a <code>while</code> or <code>elif</code> condition. Not built yet: async methods, <code>sleep</code>, cancelling a task, and reporting errors from tasks nobody awaits.</p>
 <h2>Classes and interfaces</h2>
 <pre><code>interface Shape:
     def area(self) -> int
@@ -121,7 +153,7 @@ def main():
 <h2>Commands</h2>
 <table>
 <caption class="sr">The tomato command</caption>
-<tr><td><code>tomato run FILE [ENTRY [INPUTS…]]</code></td><td>compile, link and run</td></tr>
+<tr><td><code>tomato run FILE [ENTRY [INPUTS…]]</code></td><td>compile, link and run (reads standard input for <code>await input()</code>)</td></tr>
 <tr><td><code>tomato build FILE [-o OUT]</code></td><td>write a native program</td></tr>
 <tr><td><code>tomato compile FILE</code></td><td>print the LLVM IR</td></tr>
 <tr><td><code>tomato explain CODE FILE</code></td><td>decode an error code such as <code>E01:4</code> printed by a program built with <code>--mode normal</code></td></tr>

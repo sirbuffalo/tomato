@@ -9,3 +9,4 @@ shapes main
 primes main
 iteration main
 trig main
+tasks main

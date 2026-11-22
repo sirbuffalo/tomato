@@ -1,0 +1,7 @@
+async def work() -> int:
+    return 1
+
+@main
+async def main():
+    x = work()
+    print(x)

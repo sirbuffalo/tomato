@@ -55,7 +55,7 @@ done
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
 jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
 if [ -x "$jsc" ]; then
-  for name in angles containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol; do
+  for name in angles containers finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks; do
     "$jsc" native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
@@ -135,6 +135,14 @@ check "repl: == is a comparison, = is an assignment" "False
 case "$(printf ':help\n:quit\n' | $t repl 2>&1)" in *":reset"*":quit"*) ok "repl: :help lists every command";; *) bad "repl: :help lists every command";; esac
 r="$(printf 'from nosuch_mod import a\n:quit\n' | $t repl 2>&1)"; case "$r" in *"Could not open"*|*"$TMPDIR"*|*"/tmp/"*|*"/var/folders/"*) bad "repl: a missing module shows no temp path or tool noise" "$r";; *"nosuch_mod"*) ok "repl: a missing module shows no temp path or tool noise";; *) bad "repl: a missing module shows no temp path or tool noise" "$r";; esac
 check "repl: += works" "8" "$(printf 'x = 5\nx += 3\nx\n:quit\n' | $t repl)"
+check "repl: input asks once, then the answer is replayed" "Name? Ann
+hi Ann
+Ann" "$(printf "name = await input('Name? ')\nAnn\nprint('hi', name)\nprint(name)\n:quit\n" | $t repl)"
+check "repl: async functions and start work" "3
+6" "$(printf "async def f(x: int) -> int:\n    return x + 1\n\nprint(await f(2))\nt = start f(5)\nprint(await t)\n:quit\n" | $t repl)"
+check "repl: input works without the fast path too" "Name? Ann
+hi Ann" "$(printf "name = await input('Name? ')\nAnn\nprint('hi', name)\n:quit\n" | TOMATO_JSC=/nonexistent $t repl)"
+check "tomato run reads standard input" "Name? How many? hi Ann 6" "$(printf 'Ann\n3\n' | $t run tests/input/ask_and_status.tom 2>&1 | head -1)"
 check "repl: leave() leaves" "a" "$(printf "print('a')\nleave()\nprint('b')\n" | $t repl)"
 if command -v expect >/dev/null 2>&1; then check "repl: up-arrow recalls a multi-line block as one history entry" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/repl_history.exp 2>&1 | tail -1)"; fi
 # tomato update: a fake release, checksum failures and non-official URLs
@@ -186,6 +194,23 @@ neg union_narrowed_assign "is known to be int inside this check"
 neg tuple_append "a tuple cannot be changed"
 neg tuple_assign "a tuple cannot be changed"
 neg non_bool_condition "a condition has type int, but bool is expected"
+neg sync_input "input() is async, so it must be awaited"
+neg async_call_without_await "'work' is async, so it must be awaited or started"
+neg await_outside_async "'await' can only be used inside an async function"
+neg await_in_and "an await cannot be inside the right side of 'and' or 'or'"
+neg await_non_task "only a task can be awaited, but this is int"
+
+echo "== input (tests/input: the file NAME.in is the standard input, NAME.out the whole output) =="
+for f in tests/input/*.tom; do
+  n="$(basename "$f" .tom)"
+  "$work/c1" "$f" main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" runtime/tomato_rt.c -lm || { bad "input $n" "did not build: $(cat "$work/e")"; continue; }
+  "$work/i" < "tests/input/$n.in" > "$work/o" 2>&1
+  if cmp -s "$work/o" "tests/input/$n.out"; then ok "input $n"; else bad "input $n" "$(diff "$work/o" "tests/input/$n.out" | head -6)"; fi
+  if [ -x "$jsc" ]; then
+    "$jsc" native/tomato-jsc.js -- site/wasm run "$f" "tests/input/$n.in" > "$work/js.out" 2> "$work/js.err"
+    if [ "$(cat "$work/js.out" "$work/js.err" | grep -v '^~rc ')" = "$(cat "tests/input/$n.out")" ]; then ok "wasm input $n"; else bad "wasm input $n" "$(cat "$work/js.out" "$work/js.err" | head -6)"; fi
+  fi
+done
 
 echo "== error messages (tests/errors: the whole text, the one format everywhere) =="
 for f in tests/errors/*.tom; do

@@ -18,6 +18,12 @@ class IOError(RuntimeError):
     def make_io(self, message: str):
         RuntimeError.make(self, message)
 
+# Raised by input() when there is no more input to read.
+class EOFError(RuntimeError):
+    @init
+    def make_eof(self, message: str):
+        RuntimeError.make(self, message)
+
 # range(stop), range(start, stop) and range(start, stop, step) are a value of their own. It keeps only the three numbers, so it
 # takes the same small amount of memory however long it is, and prints as range(0, 100, 1). It is a sequence of ints: `for`,
 # len(), indexing (negative too), slicing (gives another range), `in`, ==, reversed(), sorted(), sum(), min(), max() and

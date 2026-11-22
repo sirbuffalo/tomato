@@ -289,7 +289,7 @@ export class Parser:
             return mk('ConstDef', t.line, [vs(cn.text), vn(cv)])
         if self.is_kw('export'):
             self.adv()
-            if not (self.is_kw('def') or self.is_kw('class') or self.is_kw('interface') or self.is_kw('const') or self.is_op('@')):
+            if not (self.is_def() or self.is_kw('class') or self.is_kw('interface') or self.is_kw('const') or self.is_op('@')):
                 self.err('expected a function, class, interface or constant after export')
             d = self.top_item()
             d.exported = True
@@ -309,10 +309,10 @@ export class Parser:
             if m.text == 'init' or is_operator_marker(m.text):
                 raise ParseError("'@" + m.text + "' marks a method, so it belongs inside a class\nmove this function into a class, or remove the marker", m.line, m.col - 1)
             self.expect('NEWLINE')
-            if not self.is_kw('def'):
+            if not self.is_def():
                 self.err('expected a function after @' + m.text)
             return self.funcdef(False, 'entry:' + m.text, False, True)
-        if self.is_kw('def'):
+        if self.is_def():
             return self.funcdef(False, '', False, True)
         if self.is_kw('class'):
             return self.classdef()
@@ -364,6 +364,14 @@ export class Parser:
             arg = self.type()
             self.expect_op(']')
             return mk('TypeRef', t.line, [vs(t.text), vz(), vn(arg), vz()])
+        if t.text == 'task' and self.is_op('['):
+            self.adv()
+            targ = self.type()
+            tstat = vz()
+            if self.accept_op(','):
+                tstat = vn(self.type())
+            self.expect_op(']')
+            return mk('TypeRef', t.line, [vs('task'), vz(), vn(targ), tstat])
         if t.text == 'dict':
             self.expect_op('[')
             arg = self.type()
@@ -433,7 +441,11 @@ export class Parser:
                 return True
         return False
 
+    def is_def(self) -> bool:
+        return self.is_kw('def') or (self.is_kw('async') and self.peek(1).kind == 'KW' and self.peek(1).text == 'def')
+
     def funcdef(self, in_class: bool, marker: str, is_override: bool, body_required: bool) -> Node:
+        is_async = self.accept_kw('async')
         line = self.expect_kw('def').line
         is_private = self.accept_kw('private')
         name = self.expect('NAME').text
@@ -441,15 +453,19 @@ export class Parser:
         ret = vz()
         if self.accept_op('->'):
             ret = vn(self.type())
+        yt = vz()
+        if is_async and self.cur().kind == 'NAME' and self.cur().text == 'yields':
+            self.adv()
+            yt = vn(self.type())
         if not body_required:
             if self.is_op(':'):
                 raise ParseError('an interface method has no body\nwrite only its signature', line)
             self.expect('NEWLINE')
-            return mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker), vb(False)])
+            return mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker), vb(False), vb(is_async), yt])
         self.expect_op(':')
         before = self.yields
         body = self.block()
-        return mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker), vb(self.yields > before)])
+        return mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker), vb(self.yields > before), vb(is_async), yt])
 
     def block(self) -> list[Node]:
         if self.cur().kind != 'NEWLINE':
@@ -500,7 +516,7 @@ export class Parser:
             marker = m.text
             self.expect('NEWLINE')
         is_override = self.accept_kw('override')
-        if self.is_kw('def'):
+        if self.is_def():
             methods.append(self.funcdef(True, marker, is_override, True))
             return
         if marker != '' or is_override:
@@ -589,7 +605,7 @@ export class Parser:
     # statements
     def statement(self) -> Node:
         t = self.cur()
-        if self.is_kw('def') or self.is_kw('class') or self.is_kw('interface'):
+        if self.is_def() or self.is_kw('class') or self.is_kw('interface'):
             raise ParseError('a function, class or interface cannot be declared inside another block\nmove it to the top level of the file', t.line, t.col)
         if self.is_kw('return'):
             self.adv()
@@ -623,6 +639,16 @@ export class Parser:
             return self.trystmt()
         if self.is_kw('if'):
             return self.ifstmt()
+        if self.is_kw('async'):
+            self.adv()
+            if not self.is_kw('for'):
+                self.err('expected def or for after async')
+            self.adv()
+            an = self.expect('NAME').text
+            self.expect_kw('in')
+            ait = self.expr()
+            self.expect_op(':')
+            return mk('AsyncFor', t.line, [vs(an), vn(ait), vnodes(self.block())])
         if self.is_kw('for'):
             self.adv()
             names: list[str] = [self.expect('NAME').text]
@@ -805,6 +831,9 @@ export class Parser:
         return e
 
     def unary(self) -> Node:
+        if self.is_kw('await'):
+            ln = self.adv().line
+            return mk('Await', ln, [vn(self.unary())])
         if self.is_op('-'):
             ln = self.adv().line
             return mk('UnOp', ln, [vs('-'), vn(self.unary())])
@@ -880,6 +909,9 @@ export class Parser:
         if t.kind == 'KW' and (t.text == 'True' or t.text == 'False'):
             self.adv()
             return mk('BoolLit', t.line, [vb(t.text == 'True')])
+        if t.kind == 'NAME' and t.text == 'start' and (self.peek(1).kind == 'NAME' or (self.peek(1).kind == 'KW' and self.peek(1).text == 'await')):
+            self.adv()
+            return mk('Start', t.line, [vn(self.unary())])
         if t.kind == 'NAME':
             if is_type_with_length(t.text) and self.peek_is(1, 'OP', '['):
                 ty = self.type()

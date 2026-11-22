@@ -24,7 +24,7 @@ wasmdir="${TOMATO_WASM:-}"
 fast=0
 if [ -x "$jsc" ] && [ -f "$wasmdir/tomatoc.wasm" ] && [ -f "$wasmdir/current" ] && [ -f "${TOMATO_JSC_JS:-}" ]; then fast=2   # no new native program per line (see tomato-jsc.js)
 elif [ -x "$tomatoc" ] && [ -f "$runtime" ] && clang -O0 -w -c -o "$S/rt.o" "$runtime" 2>/dev/null; then fast=1; fi
-: > "$S/stmts"; : > "$S/shown"; seq=0
+: > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; seq=0
 
 say() { printf '%s\n' "$*"; }
 err() { printf '%s\n' "$*" >&2; }
@@ -34,7 +34,7 @@ err() { printf '%s\n' "$*" >&2; }
 # belong to it; anything else is a statement.
 split() {
   awk -v D="$1" -v B="$2" '
-    function isdecl(l) { return l ~ /^(def|class|interface|from|import|export)[ (]/ || l ~ /^[@!]/ || l ~ /^[A-Za-z_][A-Za-z_0-9]* implements / }
+    function isdecl(l) { return l ~ /^(def|class|interface|from|import|export)[ (]/ || l ~ /^async def / || l ~ /^[@!]/ || l ~ /^[A-Za-z_][A-Za-z_0-9]* implements / }
     { l = $0 }
     l ~ /^[ \t]/ || l ~ /^[ \t]*$/ || l ~ /^#/ { if (cur == "d") print l >> D; else if (cur == "b") print l >> B; next }
     { if (afterat) { print l >> D; afterat = 0; next }
@@ -45,15 +45,16 @@ split() {
 
 program() {   # the session as one program on stdout
   for f in "$S"/d/*; do [ -f "$f" ] && { cat "$f"; echo; }; done
-  if [ -s "$S/stmts" ]; then
-    echo "@main"; echo "def tomato_repl_main():"; sed 's/^/    /' "$S/stmts"
-  else
-    echo "@main"; echo "def tomato_repl_main():"; echo "    pass"
-  fi
+  echo "@main"; echo "$(main_kw "$S/stmts") tomato_repl_main():"
+  if [ -s "$S/stmts" ]; then sed 's/^/    /' "$S/stmts"; else echo "    pass"; fi
 }
 
-# Run a candidate (declaration text in $1 file, statement text in $2 file) on top of the session.
-try_run() {
+# the session runs inside one function; it must be async when a statement awaits, starts a task or loops over statuses
+main_kw() { if grep -Eq '(^|[^A-Za-z0-9_])(await|async|start) ' "$1"; then echo "async def"; else echo "def"; fi; }
+
+# Run a candidate (declaration text in $1 file, statement text in $2 file) on top of the session, once. RUN_RC is the program's exit code.
+# The answers given to input so far are its standard input (one per line), and TOMATO_INPUT_ASK makes it stop with 75 when it wants one more.
+try_once() {
   cp "$S/stmts" "$S/stmts.try"; cat "$2" >> "$S/stmts.try"
   # where the new piece sits in the generated program, so an error can be shown against what the user typed (see friendly)
   prev=0; for f in "$S"/d/*; do [ -f "$f" ] && prev=$((prev + $(wc -l < "$f") + 1)); done
@@ -62,24 +63,52 @@ try_run() {
   STMT_BASE=$((total + 3 + $(wc -l < "$S/stmts"))); STMT_N=$(wc -l < "$2")
   { for f in "$S"/d/*; do [ -f "$f" ] && { cat "$f"; echo; }; done
     [ -s "$1" ] && { cat "$1"; echo; }
-    echo "@main"; echo "def tomato_repl_main():"
+    echo "@main"; echo "$(main_kw "$S/stmts.try") tomato_repl_main():"
     if [ -s "$S/stmts.try" ]; then sed 's/^/    /' "$S/stmts.try"; else echo "    pass"; fi
   } > "$S/try.tom"
   if [ $fast = 2 ]; then
-    "$jsc" "$TOMATO_JSC_JS" -- "$wasmdir" run "$S/try.tom" > "$S/out" 2> "$S/err"
+    "$jsc" "$TOMATO_JSC_JS" -- "$wasmdir" run "$S/try.tom" "$S/inputs.try" ask > "$S/out" 2> "$S/err"
     rc=$(sed -n 's/^~rc //p' "$S/err" | tail -1); grep -v -e '^~rc ' -e '^Could not open file: ' "$S/err" | sed -e 's/ (raised on line [0-9]*)//' > "$S/err2"; mv "$S/err2" "$S/err"
+    RUN_RC="$rc"
+    if [ "$rc" = 75 ]; then   # jsc added a newline after the prompt
+      sz=$(wc -c < "$S/out" | tr -d ' '); [ "$sz" -gt 0 ] && head -c $((sz - 1)) "$S/out" > "$S/out2" && mv "$S/out2" "$S/out"
+    fi
     [ -n "$rc" ] && [ "$rc" = 0 ]; return
   elif [ $fast = 1 ]; then
     if ! "$tomatoc" "$S/try.tom" main "$std" > "$S/try.ll" 2> "$S/err"; then
       : > "$S/out"; return 1
     fi
     clang -O0 -w -o "$S/try" "$S/try.ll" "$S/rt.o" -lm 2> "$S/err" || return 1
-    "$S/try" > "$S/out" 2> "$S/err"; rc=$?
+    TOMATO_INPUT_ASK=1 "$S/try" < "$S/inputs.try" > "$S/out" 2> "$S/err"; rc=$?
+    RUN_RC=$rc
     sed -e 's/ (raised on line [0-9]*)//' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
     return $rc
   else
-    "$tomato" run "$S/try.tom" > "$S/out" 2> "$S/err"
+    TOMATO_INPUT_ASK=1 "$tomato" run "$S/try.tom" < "$S/inputs.try" > "$S/out" 2> "$S/err"; RUN_RC=$?
+    return $RUN_RC
   fi
+}
+
+# Run the candidate; each time the program wants input there is no answer for, show what it printed so far (ending with its
+# prompt), read the answer and run it again with that answer added (the earlier answers are replayed, so nothing asks twice).
+try_run() {
+  cp "$S/inputs" "$S/inputs.try"; cp "$S/shown" "$S/shown.try"; asked=0
+  while :; do
+    try_once "$1" "$2"; ok=$?
+    if [ "$RUN_RC" = 75 ]; then
+      asked=1
+      have=$(wc -c < "$S/shown.try" | tr -d ' ')
+      if [ "$have" -gt 0 ] && head -c "$have" "$S/out" | cmp -s - "$S/shown.try"; then tail -c +$((have + 1)) "$S/out"; else cat "$S/out"; fi
+      cp "$S/out" "$S/shown.try"
+      if ! readline ""; then echo; : > "$S/err"; cp "$S/shown.try" "$S/shown"; return 1; fi
+      printf '%s\n' "$REPLY_LINE" >> "$S/inputs.try"
+      [ $interactive = 0 ] && say "$REPLY_LINE"
+      printf '%s\n' "$REPLY_LINE" >> "$S/shown.try"
+      continue
+    fi
+    [ $asked = 1 ] && cp "$S/shown.try" "$S/shown"
+    return $ok
+  done
 }
 
 # Show a compiler error against what the user typed. The compiler names a line and column of the generated program; this
@@ -132,13 +161,13 @@ new_output() {  # print the part of $S/out that is not in the previous output
 commit() {   # the candidate worked: keep it
   cat "$S/stmts.try" > "$S/stmts"
   if [ -s "$1" ]; then
-    key=$(head -1 "$1" | sed -E 's/^(def|class|interface)[ ]+([A-Za-z_0-9]+).*/\2/')
-    case "$(head -1 "$1")" in def\ *|class\ *|interface\ *)
+    key=$(head -1 "$1" | sed -E 's/^(async )?(def|class|interface)[ ]+([A-Za-z_0-9]+).*/\3/')
+    case "$(head -1 "$1")" in async\ def\ *|def\ *|class\ *|interface\ *)
       rm -f "$S"/d/*_"$key" 2>/dev/null ;; *) key="x$seq" ;;
     esac
     seq=$((seq + 1)); cp "$1" "$S/d/$(printf '%04d' $seq)_$key"
   fi
-  cp "$S/out" "$S/shown"
+  cp "$S/out" "$S/shown"; cp "$S/inputs.try" "$S/inputs"
 }
 
 submit() {   # one piece of source text in $1
@@ -171,7 +200,7 @@ load_file() {
   text="$(cat "$1")"
   # A file with its own @main would clash with the @main the repl generates (the website's wrapMain also leaves such a
   # program alone): drop the marker and call that function, so loading a program runs it.
-  entry="$(printf '%s\n' "$text" | awk '/^@main[ \t]*$/ { getline; sub(/^def /, ""); sub(/\(.*/, ""); print; exit }')"
+  entry="$(printf '%s\n' "$text" | awk '/^@main[ \t]*$/ { getline; sub(/^(async )?def /, ""); sub(/\(.*/, ""); print; exit }')"
   if [ -n "$entry" ]; then
     text="$(printf '%s\n' "$text" | grep -v '^@main[[:space:]]*$')"
     submit "$text" && submit "$entry()"
@@ -208,7 +237,7 @@ while :; do
     "") continue ;;
     :quit|:q|:exit|"leave()"|"exit()"|"quit()") break ;;
     :help) help; continue ;;
-    :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; say "session cleared"; continue ;;
+    :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; say "session cleared"; continue ;;
     :program) program; continue ;;
     :compile) program > "$S/p.tom"; "$tomato" compile "$S/p.tom"; continue ;;
     :save\ *) program > "${line#:save }" && say "wrote ${line#:save }"; continue ;;
