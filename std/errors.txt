@@ -12,4 +12,4 @@ an error raised by the program
 a negative exponent needs a float
 the float result is infinite or not a number
 a float that is infinite or not a number cannot become an int
-an empty text to 
+an empty text cannot be used to 

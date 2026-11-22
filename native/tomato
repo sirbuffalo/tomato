@@ -114,10 +114,7 @@ fi
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 if ! "$tomatoc" "$file" "$entry" "$std" "$mode" > "$tmp/program.ll" 2> "$tmp/errors"; then
-  sed -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): line \([0-9]*\): /\1 on line \2: /' -e 's/^error: line [0-9]*: uncaught error \([A-Za-z]*\): /\1: /' "$tmp/errors" >&2
-  if grep -q "declarations yet" "$tmp/errors"; then
-    echo "hint: programs have no top-level code (D47a): put them in a function marked @main; only the repl accepts bare statements" >&2
-  fi
+  cat "$tmp/errors" >&2        # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
   exit 1
 fi
 [ "$cmd" = compile ] && { cat "$tmp/program.ll"; exit 0; }

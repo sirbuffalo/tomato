@@ -1,0 +1,5 @@
+@main
+def main():
+    if True:
+        print(1)
+      print(2)

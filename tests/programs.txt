@@ -29,3 +29,7 @@ progress_bar
 itertools_lists
 range_value
 prime_family
+list_print
+list_slice
+list_ops
+list_mixed

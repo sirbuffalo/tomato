@@ -293,6 +293,7 @@ static int64_t char_offset(Str *s, int64_t i) {
 
 void *tomato_str_index(void *a, int64_t i) {
     Str *s = a;
+    if (i < 0) i += s->chars;       /* a negative position counts from the end */
     if (i < 0 || i >= s->chars) return NULL;      /* the compiled code raises the error */
     int64_t from = char_offset(s, i), to = char_offset(s, i + 1);
     return str_new(s->data + from, to - from);
@@ -303,6 +304,46 @@ void *tomato_str_slice(void *a, int64_t lo, int64_t hi) {
     if (lo < 0 || lo > hi || hi > s->chars) return NULL;
     int64_t from = char_offset(s, lo), to = char_offset(s, hi);
     return str_new(s->data + from, to - from);
+}
+
+/* ---- slices with Python's rules: negative positions count from the end, out-of-range ends are clamped, a step may be
+ * negative. flags: 1 the start was written, 2 the stop was written, 4 the step was written. ---- */
+static int64_t slice_plan(int64_t len, int64_t lo, int64_t hi, int64_t step, int flags, int64_t *start) {
+    if (!(flags & 4)) step = 1;
+    if (step == 0) return -1;      /* the compiled code raises the error */
+    int64_t lower = step < 0 ? -1 : 0, upper = step < 0 ? len - 1 : len;
+    int64_t a, b;
+    if (!(flags & 1)) a = step < 0 ? upper : lower;
+    else { a = lo; if (a < 0) { a += len; if (a < lower) a = lower; } else if (a > upper) a = upper; }
+    if (!(flags & 2)) b = step < 0 ? lower : upper;
+    else { b = hi; if (b < 0) { b += len; if (b < lower) b = lower; } else if (b > upper) b = upper; }
+    *start = a;
+    if (step < 0) return b < a ? (a - b - 1) / (-step) + 1 : 0;
+    return a < b ? (b - a - 1) / step + 1 : 0;
+}
+
+void *tomato_str_slice3(void *a, int64_t lo, int64_t hi, int64_t step, int flags) {
+    Str *s = a;
+    int64_t start, n = slice_plan(s->chars, lo, hi, step, flags, &start);
+    if (n < 0) return NULL;
+    if (!(flags & 4)) step = 1;
+    if (step == 1) {
+        if (n == 0) return str_new("", 0);
+        int64_t from = char_offset(s, start), to = char_offset(s, start + n);
+        return str_new(s->data + from, to - from);
+    }
+    char *out = malloc((size_t)s->bytes + 1);
+    if (!out) tomato_fail("out of memory");
+    int64_t at = 0;
+    for (int64_t k = 0; k < n; k++) {
+        int64_t i = start + k * step;
+        int64_t from = char_offset(s, i), to = char_offset(s, i + 1);
+        memcpy(out + at, s->data + from, (size_t)(to - from));
+        at += to - from;
+    }
+    void *r = str_new(out, at);
+    free(out);
+    return r;
 }
 
 /* ---- text searching and splitting (bootstrap, D38a) ---- */
@@ -456,6 +497,61 @@ void *tomato_list_push(void *l, int64_t elem_size) {
         if (!x->data) tomato_fail("out of memory");
     }
     return x->data + (x->len++) * elem_size;
+}
+
+/* a new list (or tuple) of the selected items, with the same rules as for text; `rc` is 1 when the items are heap values */
+void *tomato_list_slice(void *src, int64_t lo, int64_t hi, int64_t step, int flags, int rc) {
+    List *l = src;
+    int64_t start, n = slice_plan(l->len, lo, hi, step, flags, &start);
+    if (n < 0) return NULL;
+    if (!(flags & 4)) step = 1;
+    List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
+    for (int64_t k = 0; k < n; k++) {
+        int64_t item = LIST_SLOT(l, start + k * step, int64_t);
+        *(int64_t *)tomato_list_push(r, 8) = item;
+        if (rc) tomato_retain((void *)(intptr_t)item);
+    }
+    return r;
+}
+
+/* list + list and list * n: a new list of the same type; `rc` is 1 when the items are heap values. A negative n gives an empty list. */
+void *tomato_list_concat(void *a, void *b, int rc) {
+    List *x = a, *y = b;
+    List *r = tomato_list_new(((Hdr *)x)->type & TYPE_MASK);
+    for (int pass = 0; pass < 2; pass++) {
+        List *from = pass ? y : x;
+        for (int64_t i = 0; i < from->len; i++) {
+            int64_t item = LIST_SLOT(from, i, int64_t);
+            *(int64_t *)tomato_list_push(r, 8) = item;
+            if (rc) tomato_retain((void *)(intptr_t)item);
+        }
+    }
+    return r;
+}
+
+void *tomato_list_repeat(void *a, int64_t n, int rc) {
+    List *x = a;
+    List *r = tomato_list_new(((Hdr *)x)->type & TYPE_MASK);
+    if (n > 0 && x->len > 0 && n > (int64_t)1000000000 / x->len) tomato_fail("out of memory");
+    for (int64_t k = 0; k < n; k++)
+        for (int64_t i = 0; i < x->len; i++) {
+            int64_t item = LIST_SLOT(x, i, int64_t);
+            *(int64_t *)tomato_list_push(r, 8) = item;
+            if (rc) tomato_retain((void *)(intptr_t)item);
+        }
+    return r;
+}
+
+void *tomato_str_repeat(void *a, int64_t n) {
+    Str *s = a;
+    if (n <= 0 || s->bytes == 0) return str_new("", 0);
+    if (n > (int64_t)1000000000 / s->bytes) tomato_fail("out of memory");
+    char *out = malloc((size_t)(s->bytes * n) + 1);
+    if (!out) tomato_fail("out of memory");
+    for (int64_t k = 0; k < n; k++) memcpy(out + k * s->bytes, s->data, (size_t)s->bytes);
+    void *r = str_new(out, s->bytes * n);
+    free(out);
+    return r;
 }
 
 /* The items of a list[str] joined with `sep` between them. */
@@ -695,9 +791,12 @@ void tomato_report_uncaught(void *obj, int line, int runtime, int mode) {
     fflush(stdout);
     Str *msg = *(Str **)((char *)obj + 16);
     if (mode == 1) {
-        if (runtime) fprintf(stderr, "error: %.*s\n", (int)msg->bytes, msg->data);
-        else fprintf(stderr, "error: line %d: uncaught error %s: %.*s\n", line, tomato_class_names[((Hdr *)obj)->type & TYPE_MASK],
-                     (int)msg->bytes, msg->data);
+        const char *cls = tomato_class_names[((Hdr *)obj)->type & TYPE_MASK];
+        size_t cl = strlen(cls);
+        /* a Diagnostic is a finished compiler error message (compiler/src/diag.tom): shown as it is */
+        if (!runtime && cl >= 10 && strcmp(cls + cl - 10, "Diagnostic") == 0) fprintf(stderr, "%.*s\n", (int)msg->bytes, msg->data);
+        else if (runtime) fprintf(stderr, "error: %.*s\n", (int)msg->bytes, msg->data);
+        else fprintf(stderr, "error: %s: %.*s (raised on line %d)\n", cls, (int)msg->bytes, msg->data, line);
     } else if (mode == 2) {
         if (runtime) fprintf(stderr, "error %.*s\n", (int)msg->bytes, msg->data);
         else fprintf(stderr, "error E11:%d\n", line);
@@ -1291,9 +1390,9 @@ int64_t tomato_int_parse_cstr(const char *text, int position) {
     return w;
 }
 
-/* & | ^ on small numbers (two's complement); very large numbers are not built yet */
+/* & | ^ on small numbers (two's complement); very large numbers are not supported */
 int64_t tomato_int_bitop(int64_t x, int64_t y, int32_t op) {
-    if (!(int_is_small(x) && int_is_small(y))) tomato_fail("bitwise operators on very large integers are not built yet");
+    if (!(int_is_small(x) && int_is_small(y))) tomato_fail("the bitwise operators & | ^ do not work on very large integers");
     int64_t a = int_small_val(x), b = int_small_val(y);
     return int_mk_small(op == 0 ? (a & b) : (op == 1 ? (a | b) : (a ^ b)));
 }

@@ -86,24 +86,47 @@
     return text.replace(/\bline (\d+)/g, function (m, n) { return "line " + (map[+n] || n); });
   }
   TomatoWasm.wrapMain = wrapMain;
+  TomatoWasm.fixDiag = function (t, w, s) { return fixDiag(t, w, s); };
+  // A compiler error names a line of the generated program; point it at what the user wrote (the line, the column, the shown source).
+  function fixDiag(text, wrapped, source) {
+    var lines = text.split("\n"), gen = wrapped.text.split("\n"), orig = source.split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var m = /^\s*--> ([^:]*):(\d+):(\d+)$/.exec(lines[i]);
+      if (!m) continue;
+      var L = +m[2], C = +m[3], ul = wrapped.map[L] || L, g = gen[L - 1] || "", o = orig[ul - 1];
+      var shift = (o !== undefined && g.length >= o.length && g.slice(g.length - o.length) === o) ? g.length - o.length : 0;
+      var uc = Math.max(1, C - shift), pad = new Array(String(ul).length + 1).join(" ");
+      lines[i] = pad + "--> " + m[1] + ":" + ul + ":" + uc;
+      if (o !== undefined && i + 3 < lines.length) {
+        var car = /\^+/.exec(lines[i + 3]);
+        lines[i + 1] = pad + " |"; lines[i + 2] = ul + " | " + o;
+        lines[i + 3] = pad + " | " + new Array(uc).join(" ") + (car ? car[0] : "^");
+        for (var j = i + 4; j < lines.length; j++) lines[j] = lines[j].replace(/^\s*= help:/, pad + " = help:");
+      }
+      break;
+    }
+    return lines.join("\n");
+  }
 
   TomatoWasm.prototype.build = function (source, options) {   // options.extra: imported modules
     var self = this, t0 = Date.now();
     var wrapped = (options && options.repl) ? wrapMain(source) : { text: source, map: [0].concat(source.split("\n").map(function (_, i) { return i + 1; })) };
     return this.compile(wrapped.text, "main", options && options.extra).then(function (c) {
-      if (!c.ok) return { ok: false, stage: "compile", error: remap(tidy(c.error), wrapped.map), ms: Date.now() - t0 };
+      if (!c.ok) return { ok: false, stage: "compile", error: fixDiag(tidy(c.error), wrapped, source), ms: Date.now() - t0 };
       return self.run(c.ir, options).then(function (r) {
         return { ok: true, stage: "run", stdout: r.stdout, stderr: remap(r.stderr, wrapped.map), exit: r.code, timed_out: r.timedOut, ir: c.ir, ms: Date.now() - t0 };
       });
     });
   };
 
-  // "error: line N: uncaught error Kind: line M: text" -> "Kind on line M: text"
+  // The compiler's error text is already final (docs/errors.md); only the program name differs on this page.
+  // (A stale tomatoc.wasm may still print "error: line N: uncaught error Kind: ..."; that is tidied the old way.)
   function tidy(message) {
     var m = /^error: line \d+: uncaught error (\w+): line (\d+): ([\s\S]*)$/.exec(message);
-    if (m) return m[1] + " on line " + m[2] + ": " + m[3];
+    if (m) return "error: " + m[3] + "\n --> program.tom:" + m[2];
     m = /^error: line \d+: uncaught error (\w+): ([\s\S]*)$/.exec(message);
-    return m ? m[1] + ": " + m[2] : message;
+    if (m) return "error: " + m[2];
+    return message.replace(/--> \/program\.tom:/g, "--> program.tom:");
   }
   self.TomatoWasm = TomatoWasm;
 })();

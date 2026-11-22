@@ -1,0 +1,6 @@
+error: name 'tets' is not defined
+ --> tests/errors/misspelled_name.tom:6:11
+  |
+6 |     print(tets)
+  |           ^^^^
+  = help: did you mean 'test'?

@@ -1,0 +1,6 @@
+error: 'map' is not available: Tomato has no function values yet
+ --> tests/errors/unsupported_map.tom:4:11
+  |
+4 |     print(map(xs))
+  |           ^^^
+  = help: use a for loop instead

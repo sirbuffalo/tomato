@@ -4,7 +4,7 @@
 set -e
 root="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$root/site/docs"
-for f in specification decisions decision-inventory open-questions; do cp "$root/docs/$f.md" "$root/site/docs/$f.md"; done
+for f in specification decisions decision-inventory open-questions errors; do cp "$root/docs/$f.md" "$root/site/docs/$f.md"; done
 sh "$root/site/examples.sh"
 cp "$root/docs/provisional.md" "$root/site/docs/PROVISIONAL.md"
 if [ -f "$root/release/out/latest.json" ]; then cp "$root/release/out/latest.json" "$root/site/latest.json"; fi

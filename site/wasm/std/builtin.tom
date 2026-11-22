@@ -34,3 +34,16 @@ def _range3(start: int, stop: int, step: int) -> list[int]:
         result.append(i)
         i = i + step
     return result
+
+# The text of a string inside a printed list, dict or set, quoted the way Python shows it: 'abc'.
+def _quote(s: str) -> str:
+    q = "'"
+    if s.find("'") >= 0 and s.find('"') < 0:
+        q = '"'
+    t = s.replace('\\', '\\\\')
+    if q == "'":
+        t = t.replace("'", "\\'")
+    t = t.replace('\n', '\\n')
+    t = t.replace('\t', '\\t')
+    t = t.replace('\r', '\\r')
+    return q + t + q

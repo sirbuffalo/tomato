@@ -1,0 +1,6 @@
+error: list[int] has no method 'map'
+ --> tests/errors/unknown_list_method.tom:3:21
+  |
+3 |     print([1, 2, 3].map(1))
+  |                     ^^^
+  = help: the methods it has are: append

@@ -14,7 +14,7 @@ rm -rf "$out"; mkdir -p "$stage/native" "$stage/runtime" "$stage/std" "$stage/co
 cp "$root/VERSION" "$root/install-native.sh" "$stage/"
 cp "$root/native/tomato" "$root/native/tomato-repl" "$root/native/tomato-jsc.js" "$stage/native/"
 mkdir -p "$stage/site/wasm"
-cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/wasm/wasi.js" "$root/site/wasm/llvm.js" "$root/site/wasm/tomato.js" "$stage/site/wasm/"
+cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/wasm/wasi.js" "$root/site/wasm/llvm.js" "$root/site/wasm/tomato.js" "$root/site/wasm/SOURCE.sha256" "$stage/site/wasm/"
 cp "$root/runtime/tomato_rt.c" "$stage/runtime/"
 cp "$root/std/"*.tom "$root/std/errors.txt" "$stage/std/"
 cp "$root/compiler/bootstrap/tomatoc.ll" "$stage/compiler/bootstrap/"

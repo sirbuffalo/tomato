@@ -1,0 +1,6 @@
+error: this text is missing its closing quote "
+ --> tests/errors/unterminated_text.tom:3:11
+  |
+3 |     print("hello)
+  |           ^
+  = help: add " at the end of the text

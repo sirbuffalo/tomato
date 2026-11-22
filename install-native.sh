@@ -20,6 +20,9 @@ for f in tomato tomato-repl; do cp "$root/native/$f" "$home/bin/.$f.new" && chmo
 mkdir -p "$home/wasm/std"
 cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/wasm/wasi.js" "$root/site/wasm/llvm.js" "$root/site/wasm/tomato.js" "$root/native/tomato-jsc.js" "$home/wasm/"
 cp "$root/std/"*.tom "$home/wasm/std/"
+# the website's WebAssembly build is only used by the repl while it matches this compiler (it cannot be rebuilt without the WASI SDK)
+rm -f "$home/wasm/current"
+if [ -f "$root/site/wasm/SOURCE.sha256" ] && [ "$(cat "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" | shasum -a 256 | cut -d' ' -f1)" = "$(sed -n 1p "$root/site/wasm/SOURCE.sha256")" ]; then touch "$home/wasm/current"; fi
 chmod +x "$home/bin/tomato"
 # an existing `tomato` that is not ours is kept as tomato.old rather than overwritten
 old="$bindir/tomato"
