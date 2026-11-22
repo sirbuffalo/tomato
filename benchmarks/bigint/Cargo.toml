@@ -1,0 +1,17 @@
+# The Rust bigint benchmark is built with cargo because it uses the num-bigint crate; benchmarks/run.sh runs
+# `cargo build --release --locked` here. Cargo.lock pins the exact crate versions.
+[package]
+name = "bigint"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "bigint"
+path = "bigint.rs"
+
+[dependencies]
+num-bigint = "=0.4.6"
+
+[profile.release]
+opt-level = 3

@@ -16,13 +16,13 @@ Rust (`.rs`) and Python (`.py`), in `benchmarks/<name>/`. Each takes one number 
 | `strings` | `str(i)`, `join`, `split`, `int(text)` |
 | `sort` | `sorted` on a million integers |
 | `wordcount` | a dict from text to count, f-strings |
-| `bigint` | unlimited-size integers (n!) |
+| `bigint` | unlimited-size integers (n!); Rust uses the num-bigint crate (benchmarks/bigint/Cargo.toml) |
 | `objects` | a million heap objects and method calls |
 
 ## Running
 
 ```sh
-benchmarks/run.sh                 # full inputs, 5 runs each; writes benchmarks/results/results.{json,md}
+benchmarks/run.sh                 # full inputs, 10 runs each in a shuffled order (--seed N, default 1); writes benchmarks/results/results.{json,md}
 benchmarks/run.sh --runs 3 --only fib,sort
 benchmarks/run.sh --smoke         # tiny inputs, only checks the four versions agree (tests/run.sh does this)
 benchmarks/run.sh --site          # also copies the JSON to site/benchmarks.json for the Benchmarks page
