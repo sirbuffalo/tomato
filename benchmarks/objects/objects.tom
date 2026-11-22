@@ -1,0 +1,25 @@
+# Benchmark: objects and method calls. Makes n particles, steps each one 10 times, prints the sum of their positions.
+class Particle:
+    x: int
+    v: int
+
+    @init
+    def make(self, x: int, v: int):
+        self.x = x
+        self.v = v
+
+    def step(self, round: int):
+        self.x = (self.x + self.v * round) % 1000003
+
+@main
+def main(n: int):
+    particles: list[Particle] = []
+    for i in range(n):
+        particles.append(Particle(i, i % 13 + 1))
+    for round in range(1, 11):
+        for p in particles:
+            p.step(round)
+    total = 0
+    for p in particles:
+        total += p.x
+    print(total)

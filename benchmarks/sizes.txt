@@ -1,0 +1,12 @@
+# benchmark  smoke-input  full-input   (the smoke input is what tests/run.sh uses; the full input is what run.sh measures)
+# The full inputs make the fast languages run for about 0.1 s or more, so that machine noise matters less.
+fib          20           38
+sieve        1000         20000000
+matmul       20           400
+mandelbrot   50           1000
+collatz      1000         1000000
+strings      1000         3000000
+sort         1000         3000000
+wordcount    20000        5000000
+bigint       500          40000
+objects      1000         2000000

@@ -1,6 +1,6 @@
 // Shared header and a small Markdown renderer for the documentation pages.
 (function () {
-  var pages = [["index.html", "Home"], ["guide.html", "Guide"], ["docs.html", "Reference"], ["play.html", "Run & Repl"], ["download.html", "Download"]];
+  var pages = [["index.html", "Home"], ["guide.html", "Guide"], ["docs.html", "Reference"], ["play.html", "Run & Repl"], ["benchmarks.html", "Benchmarks"], ["download.html", "Download"]];
   var here = location.pathname.split("/").pop() || "index.html";
   var h = '<a class="skip" href="#main">Skip to content</a><nav aria-label="Site"><a class="brand" href="index.html">🍅 Tomato</a>';
   pages.forEach(function (p) { h += '<a href="' + p[0] + '"' + (p[0] === here ? ' aria-current="page"' : "") + ">" + p[1] + "</a>"; });

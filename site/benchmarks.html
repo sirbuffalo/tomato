@@ -1,0 +1,52 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmarks — Tomato</title><meta name="description" content="How fast Tomato programs run compared with Go, Rust and Python on ten classic benchmarks, with the method, the caveats and the source."><link rel="stylesheet" href="style.css"></head>
+<body><header id="site-header"></header><main class="doc">
+<h1>Benchmarks</h1>
+<p class="lead">Ten small programs, each written four times, with the same algorithm and the same input, in Tomato, Go, Rust and Python. Every version prints the same checksum, so none of the work can be skipped.</p>
+<p class="status" id="meta">Loading the results…</p>
+<noscript><p class="err">This page draws its tables and charts with JavaScript from <a href="benchmarks.json">benchmarks.json</a>.</p></noscript>
+<div class="bench-legend" id="legend"></div>
+
+<h2>Summary</h2>
+<div id="summary"></div>
+
+<h2>Time per benchmark</h2>
+<p>Median wall-clock seconds of the runs; bars are drawn on one scale per benchmark, so a shorter bar is faster. The number is the median and the ratio to Rust.</p>
+<div id="charts"></div>
+
+<h2>Table</h2>
+<div class="table-wrap" id="table"></div>
+
+<h2>Build time, binary size and memory</h2>
+<div class="table-wrap" id="build"></div>
+
+<h2>Method</h2>
+<ul>
+<li><strong>Same work.</strong> Each language implements the same loop-for-loop algorithm (no tricks such as caching that only one language could use) and prints a checksum. <code>benchmarks/run.sh</code> fails the run if any version prints something different from the Tomato version.</li>
+<li><strong>Builds.</strong> Every number below used the command shown here. Tomato is built by this repository's own compiler twice: in <em>release</em> mode (no leak checks, short error codes) and in <em>debug</em> mode (leak checks and full error text), and each is shown separately. Go and Rust use their usual optimized builds, and Python is the CPython interpreter as installed. <ul id="commands"></ul></li>
+<li><strong>Runs.</strong> Each program runs several times back to back; the table shows the median, and the fastest and slowest time are in <a href="benchmarks.json">benchmarks.json</a>. Time is the wall clock of the whole process (including start-up, which is a few milliseconds), and memory is the peak resident size.</li>
+<li><strong>Not tuned.</strong> The programs are written the way a beginner in each language would write them: lists, strings and dicts from the standard library, objects as separate heap allocations (a <code>Box</code> in Rust, a pointer in Go). Nobody hand-tuned any version.</li>
+</ul>
+
+<h2>Caveats</h2>
+<ul>
+<li>One machine, one run of the suite, fixed inputs. About 40% of the timings (mostly the ones near 0.1 s) varied by more than 20% between the fastest and slowest run. Other programs ran on the machine at the same time (the load average is at the top of the page), so small differences are noise; the spread between the fastest and slowest run is in the JSON.</li>
+<li>Tomato is young and its compiler does almost no optimization of its own. The numbers are a snapshot of this version, not a verdict on the language.</li>
+<li>Tomato's <code>int</code> is unlimited in size, with small values held in one tagged word; Go, Rust and (for big values) Python pay different costs for numbers, so the integer benchmarks compare designs as much as compilers. The Go <code>int</code> and Rust <code>u64</code> versions can overflow silently or stop; the checksums are chosen not to.</li>
+<li>The <em>bigint</em> benchmark uses <code>math/big</code> in Go, Python's built-in integers and a hand-written limb array in Rust (Rust's standard library has no big integers).</li>
+<li>The <em>mandelbrot</em> checks use explicit float conversions in Go so that no fused multiply-add changes a result.</li>
+<li>Rust and Go may inline or remove work a language without a heavy optimizer cannot; the checksums prevent removing it entirely, but loops can still be unrolled and vectorized.</li>
+</ul>
+
+<h2>What the numbers suggest for Tomato</h2>
+<p>The list is in <a href="https://github.com/sirbuffalo/tomato/blob/main/docs/performance.md">docs/performance.md</a>.</p>
+<ol>
+<li>Cut reference-count traffic and the cycle collector's bookkeeping on every release (biggest cost in <em>objects</em>, <em>sort</em>, <em>sieve</em>, <em>collatz</em>).</li>
+<li>Inline the small-integer fast path instead of calling the runtime for every <code>+</code>, <code>&lt;</code> and <code>==</code>.</li>
+<li>Compile list indexing to a bounds check and a load, with unboxed <code>list[bool]</code> and <code>list[float]</code>.</li>
+</ol>
+<p class="status">Release mode (<code>clang -O2</code>) and debug mode (<code>-O1</code>) run at nearly the same speed, so the gap is in the generated code and the runtime, not in the C compiler's level.</p>
+
+<h2>Source</h2>
+<p>Everything is in <a href="https://github.com/sirbuffalo/tomato/tree/main/benchmarks">the <code>benchmarks/</code> folder</a>: one folder per benchmark with its four programs, <code>sizes.txt</code> (the inputs), <code>run.sh</code> (the runner), <code>measure.c</code> (the timing helper) and <code>results/</code> (the numbers on this page). Run <code>benchmarks/run.sh</code> yourself; it needs <code>clang</code>, <code>go</code>, <code>rustc</code> and <code>python3</code> and skips any that is missing. The Python programs exist only as a comparison; Tomato's own tooling uses no Python.</p>
+</main><script src="config.js"></script><script src="site.js"></script><script src="benchmarks.js"></script></body></html>

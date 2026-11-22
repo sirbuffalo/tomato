@@ -21,6 +21,8 @@ def main():
 <div class="card"><h3>Self-hosted</h3><p>The compiler is written in Tomato. It builds itself to a byte-for-byte fixed point, and the checked-in IR bootstraps a machine that has only clang.</p></div>
 <div class="card"><h3>Exact where it matters</h3><p>Whole numbers grow without limit or use a fixed width with overflow errors. <code>float</code> is 64-bit; <code>rational</code> (a library module) is exact.</p></div>
 </div>
+<h2>Speed</h2>
+<p>Ten benchmarks, each written in Tomato, Go, Rust and Python and checked to print the same answer, are on the <a href="benchmarks.html">Benchmarks</a> page, with the method and the caveats. Tomato is young: it beats Python on nine of the ten (by 1.2× to 60×), loses to it on big integers, and is 1.5× to 48× slower than Rust.</p>
 <h2>Version</h2>
 <p>The current version is <strong>v<span id="version2"></span></strong>: the compiler written in Tomato, the only implementation. The command is <code>tomato</code>.</p>
 </main><script src="config.js"></script><script src="site.js"></script></body></html>

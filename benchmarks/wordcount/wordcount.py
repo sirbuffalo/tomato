@@ -1,0 +1,12 @@
+# Benchmark: word counting in a dict. Counts n generated words ("w0".."w5002"), then prints a weighted checksum.
+import sys
+
+n = int(sys.argv[1])
+counts = {}
+for i in range(n):
+    word = f'w{i * 7919 % 5003}'
+    counts[word] = counts.get(word, 0) + 1
+checksum = 0
+for k in range(5003):
+    checksum += (k + 1) * counts.get(f'w{k}', 0)
+print(len(counts), checksum)
