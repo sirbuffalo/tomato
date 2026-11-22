@@ -31,7 +31,7 @@
 <h2>Caveats</h2>
 <ul>
 <li>One machine, one run of the suite, fixed inputs. About 40% of the timings (mostly the ones near 0.1 s) varied by more than 20% between the fastest and slowest run. Other programs ran on the machine at the same time (the load average is at the top of the page), so small differences are noise; the spread between the fastest and slowest run is in the JSON.</li>
-<li>Tomato is young and its compiler does almost no optimization of its own. The numbers are a snapshot of this version, not a verdict on the language.</li>
+<li>Tomato is young and its compiler does little optimization of its own (release mode relies on clang and link-time inlining of the runtime). The numbers are a snapshot of this version, not a verdict on the language.</li>
 <li>Tomato's <code>int</code> is unlimited in size, with small values held in one tagged word; Go, Rust and (for big values) Python pay different costs for numbers, so the integer benchmarks compare designs as much as compilers. The Go <code>int</code> and Rust <code>u64</code> versions can overflow silently or stop; the checksums are chosen not to.</li>
 <li>The <em>bigint</em> benchmark uses <code>math/big</code> in Go, Python's built-in integers and a hand-written limb array in Rust (Rust's standard library has no big integers).</li>
 <li>The <em>mandelbrot</em> checks use explicit float conversions in Go so that no fused multiply-add changes a result.</li>
@@ -41,11 +41,11 @@
 <h2>What the numbers suggest for Tomato</h2>
 <p>The list is in <a href="https://github.com/sirbuffalo/tomato/blob/main/docs/performance.md">docs/performance.md</a>.</p>
 <ol>
-<li>Cut reference-count traffic and the cycle collector's bookkeeping on every release (biggest cost in <em>objects</em>, <em>sort</em>, <em>sieve</em>, <em>collatz</em>).</li>
-<li>Inline the small-integer fast path instead of calling the runtime for every <code>+</code>, <code>&lt;</code> and <code>==</code>.</li>
-<li>Compile list indexing to a bounds check and a load, with unboxed <code>list[bool]</code> and <code>list[float]</code>.</li>
+<li>Cut the retain/release pairs the compiler wraps around borrowed reads of a variable (biggest cost left in <em>sort</em>, <em>sieve</em>, <em>matmul</em>, <em>objects</em>).</li>
+<li>Compile <code>range(a, b, step)</code> loops to counted loops, and sort <code>list[int]</code>, <code>list[float]</code> and <code>list[str]</code> natively in the runtime.</li>
+<li>Free big integers when they are no longer used (they are kept until the program ends today).</li>
 </ol>
-<p class="status">Release mode (<code>clang -O2</code>) and debug mode (<code>-O1</code>) run at nearly the same speed, so the gap is in the generated code and the runtime, not in the C compiler's level.</p>
+<p class="status">Since v0.48 release mode links the program and the runtime with link-time optimisation, so it is up to 3x faster than debug mode; the cycle collector skips objects that cannot form cycles, and big-integer multiplication is a single pass.</p>
 
 <h2>Source</h2>
 <p>Everything is in <a href="https://github.com/sirbuffalo/tomato/tree/main/benchmarks">the <code>benchmarks/</code> folder</a>: one folder per benchmark with its four programs, <code>sizes.txt</code> (the inputs), <code>run.sh</code> (the runner), <code>measure.c</code> (the timing helper) and <code>results/</code> (the numbers on this page). Run <code>benchmarks/run.sh</code> yourself; it needs <code>clang</code>, <code>go</code>, <code>rustc</code> and <code>python3</code> and skips any that is missing. The Python programs exist only as a comparison; Tomato's own tooling uses no Python.</p>

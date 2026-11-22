@@ -1,31 +1,58 @@
 # Performance notes
 
-What the benchmarks (`benchmarks/`, results on the website's Benchmarks page) suggest for the compiler and runtime. They
-are hypotheses read from the numbers and the generated IR, not profiles; check each with a profiler before building it.
+What the benchmarks (`benchmarks/`, results on the website's Benchmarks page) say about the compiler and runtime, and
+what has been done about it. Every change below was measured with `benchmarks/run.sh` on the same Apple M1 (release
+mode, median seconds) and kept only when it helped.
 
-Snapshot (Apple M1, v0.46, release mode = `clang -O2`, median seconds): Tomato is 1.5x (mandelbrot) to 48x (objects)
-slower than Rust, beats Python on nine of ten benchmarks, and loses to Python on big integers (1.4 s against 0.65 s).
-Release mode and debug mode (`clang -O1`) run at almost the same speed, so the gap is in the generated code and the
-runtime, not in the C compiler's optimisation level.
+## Snapshot
 
-## Suggested improvements, biggest first
+v0.48 (median of 7 runs, load average about 2.7): Tomato release is 1.4x (mandelbrot) to 15x (sort) slower than Rust,
+beats Rust on big integers, and beats Python on all ten benchmarks. Debug mode (`clang -O1`, no LTO, leak check) is now
+1.0x to 2.9x slower than release.
 
-1. **Reference-count traffic and the cycle collector's bookkeeping** (`objects` 48x, `sort` 26x, `sieve` 13x, `collatz` 12x).
-   Every `tomato_release` that does not free calls `possible_root`, and loops retain and release the same value every
-   iteration. Skip counting for values that provably do not escape a loop, borrow loop variables of `for x in list`,
-   and keep the root buffer work off the hot path (for example only record candidates for classes that can form a cycle).
-2. **Inline the small-integer fast path.** Every `+ - * < ==` on `int` is a call into the runtime (`tomato_int_add`,
-   `tomato_int_cmp`, ...) that tests the tag bit and checks overflow. The compiler could emit the tag test and the
-   overflow-checked add inline (with `llvm.sadd.with.overflow`) and call the runtime only for big numbers. A quick
-   `-flto` experiment only gained about 10-15%, so the calls are not the whole story; inlining is worth doing with item 1.
-3. **Typed lists of small values.** `list[int]` and `list[bool]` hold tagged words and go through runtime calls for
-   index and store (`sieve`, `matmul`). Compile indexing to a bounds check plus a load/store, and consider unboxed
-   `list[bool]` / `list[float]` storage.
-4. **Allocation.** Each object is a separate `calloc` plus a header (`objects`). A free list or size-class allocator
-   in the runtime would cut the cost of making and freeing millions of small objects.
-5. **`sorted`.** Three million integers take 2.1 s against Rust's 0.08 s. Sort tagged small integers directly with a
-   specialised comparison (no per-compare runtime call), or use a radix/merge sort for lists of `int`.
-6. **Big integers** (`bigint` 1.4 s, Go's `math/big` 0.07 s, Python 0.65 s). Multiplying a big number by a small one
-   should be a single pass over the limbs with no allocation of a second number; check `int_mul` for avoidable copies.
-7. **Strings** (`strings` 5x). `str(i)`, `join` and `split` allocate one string per piece; a builder for `join` and
-   in-place parse in `int(piece)` would help.
+| benchmark | v0.46 release | v0.48 release | v0.48 debug | Rust | change |
+| --- | ---: | ---: | ---: | ---: | --- |
+| fib | 0.447 | 0.220 | 0.407 | 0.126 | 2.0x faster |
+| sieve | 0.736 | 0.446 | 0.754 | 0.053 | 1.7x |
+| matmul | 0.779 | 0.370 | 0.777 | 0.064 | 2.1x |
+| mandelbrot | 0.137 | 0.127 | 0.129 | 0.090 | 1.1x |
+| collatz | 1.724 | 0.526 | 1.551 | 0.139 | 3.3x |
+| strings | 0.563 | 0.484 | 0.555 | 0.106 | 1.2x |
+| sort | 2.110 | 1.167 | 1.998 | 0.079 | 1.8x |
+| wordcount | 0.658 | 0.581 | 0.664 | 0.324 | 1.1x |
+| bigint | 1.413 | 0.224 | 0.220 | 0.423 | 6.3x |
+| objects | 2.749 | 0.329 | 0.518 | 0.056 | 8.4x |
+
+## What was done (v0.48)
+
+1. **Release mode optimises.** `--mode release` links the program and the runtime with `clang -O2 -flto
+   -DTOMATO_RELEASE`, so the runtime's small-integer fast paths (`tomato_int_add`, `_cmp`, `_raw`, ...) and
+   retain/release are inlined into the program; release mode skips the leak check at exit. Debug mode is unchanged
+   (`-O1`, separate runtime, leak check). Gains: fib, collatz, matmul, sieve, sort roughly halved.
+2. **Cycle collector.** `possible_root` no longer buffers objects whose class can never be part of a cycle, and the
+   collection threshold grows when a collection frees little. `objects` went from 2.7 s to 0.5 s on its own (0.33 s with
+   LTO): before, the collector rescanned the 2-million-element list again and again.
+3. **Big integers.** Multiplying a big number by a small one is a single pass over the limbs (128-bit products, no
+   scratch array), and big-by-big products are computed straight into their final allocation. `bigint` went from
+   1.41 s to 0.22 s, faster than Rust's hand-written limb array and Python.
+
+## Tried and not kept
+
+- `clang -O3 -flto` alone, before the runtime was restructured for inlining: collatz -15%, objects -6%, nothing on fib,
+  sieve or sort. The gains came once the hot runtime paths were made inlinable.
+- A free-list allocator for small objects was not tried yet; after the collector change `objects` is no longer
+  dominated by allocation.
+
+## Still to do, biggest first
+
+1. **Reference-count traffic in generated code** (`sort` 15x, `sieve` 8x, `objects` 6x, `matmul` 6x). Borrowed reads of a
+   local (`xs[i]`, `self.x`, `for x in xs`) are wrapped in a retain/release pair; elide them when the local cannot
+   change meanwhile. (In progress.)
+2. **`range(a, b, step)` loops** allocate a range object and iterate it through method calls (`sieve`); compile them to a
+   counted loop like `range(a, b)`.
+3. **`sorted`** is a generic sort written in Tomato IR with a runtime comparison per pair; a native sort for
+   `list[int]`/`list[float]`/`list[str]` in the runtime.
+4. **Typed list storage** (`list[bool]` as bytes, unboxed floats) if measurements justify it.
+5. **Big integers are never freed** (placeholder P63): `bigint` reaches about 1.5 GB peak memory and its remaining time is
+   mostly page faults; reference-counting big numbers would fix both.
+6. **Strings** (`strings` 4.6x): `str(i)`, `join` and `split` allocate one string per piece.
