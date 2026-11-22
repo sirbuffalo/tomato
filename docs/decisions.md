@@ -886,6 +886,7 @@ Source: Davis's Dashboard message:
 - A result computed from other numbers (`a * b`, a call's value) moves into its destination without a copy: `product *= i` copies nothing. A parameter that the function never assigns is lent by the caller and not copied. The runtime's arithmetic only reads its operands and returns a new number.
 - Chosen over reference counting big numbers (one shared number and a count, so no copy when it is stored, but a count to keep for every number) and over keeping them until the program ends (P63), which used 1.5 GB for `bigint`. Cost: a big number that is stored in a list or field is copied limb by limb; the small-number paths gained a few bit tests.
 - Debug mode counts live big numbers with the other objects, so the leak report also shows a missed free. Sets of ints compare big numbers by value, not by address.
+- Known gap: an error caught in the middle of an expression drops a fresh big-number temporary without freeing it (`huge() // 0`, `huge() ** -1`, `huge() + int('x')`), the same way object temporaries are dropped. The leak check is quiet after an error for that reason, so `bigint_unwind` cannot show it. Fix: free the pending temporaries on every `fail_if` path in the compiler, then make the check strict after errors again.
 - Open: `&`, `|` and `^` on big numbers; moving the last use of a variable instead of copying it.
 
 ### D17b — strings are UTF-8: accepted
