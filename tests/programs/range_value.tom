@@ -1,0 +1,25 @@
+from itertools import progress_bar
+
+def total(xs: list[int]) -> int:
+    t = 0
+    for x in xs:
+        t = t + x
+    return t
+
+@main
+def main():
+    print(len(range(5)))
+    print(total(range(1, 5)))
+    print(total(range(10, 0, -3)))
+    print(len(range(3, 3)))
+    for i in range(0, 10, 4):
+        print(i)
+    bar = progress_bar(range(1, 4))
+    for i in bar.items:
+        print(i)
+        bar.update()
+    bar.close()
+    try:
+        r = range(1, 5, 0)
+    catch RuntimeError as e:
+        print('caught')

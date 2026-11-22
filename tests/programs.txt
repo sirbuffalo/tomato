@@ -27,4 +27,5 @@ rational_library
 is_prime
 progress_bar
 itertools_lists
+range_value
 prime_family

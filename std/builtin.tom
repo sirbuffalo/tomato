@@ -17,3 +17,20 @@ class IOError(RuntimeError):
     @init
     def make_io(self, message: str):
         RuntimeError.make(self, message)
+
+# range(...) used as a value (not directly in a `for`) is a list of ints, built by these helpers.
+def _range1(stop: int) -> list[int]:
+    return _range3(0, stop, 1)
+
+def _range2(start: int, stop: int) -> list[int]:
+    return _range3(start, stop, 1)
+
+def _range3(start: int, stop: int, step: int) -> list[int]:
+    if step == 0:
+        raise RuntimeError('range step cannot be zero')
+    result: list[int] = []
+    i = start
+    while (step > 0 and i < stop) or (step < 0 and i > stop):
+        result.append(i)
+        i = i + step
+    return result
