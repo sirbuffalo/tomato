@@ -2,12 +2,9 @@ from math import is_prime
 from rational import rational
 
 def fib_mod(n: int, m: int) -> int:
-    a = 0
-    b = 1
+    a, b = 0, 1
     for i in range(n):
-        t = (a + b) % m
-        a = b
-        b = t
+        a, b = b, (a + b) % m
     return a
 
 @main

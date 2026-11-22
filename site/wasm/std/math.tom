@@ -91,7 +91,7 @@ export def next_prime(n: int) -> int:
 # The largest prime less than n. There is none below 3, so n < 3 raises a RuntimeError.
 export def prev_prime(n: int) -> int:
     if n < 3:
-        raise RuntimeError('prev_prime needs n > 2: there is no prime below ' + str(n))
+        raise RuntimeError(f'prev_prime needs n > 2: there is no prime below {n}')
     if n == 3:
         return 2
     c = n - 1
@@ -195,9 +195,7 @@ export def lcm(a: int, b: int) -> int:
 def _f(x: int | float) -> float:
     if x in int:
         return float(x)
-    if x in float:
-        return x
-    return 0.0
+    return x
 
 def _fmt(x: float) -> str:
     s = str(x)

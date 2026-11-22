@@ -3,16 +3,11 @@ from itertools import permutations, combinations, combinations_with_replacement,
 def show(rows: list[list[int]]):
     text = ''
     for row in rows:
-        for x in row:
-            text += str(x)
-        text += ' '
+        text += ''.join([str(x) for x in row]) + ' '
     print(len(rows), text)
 
 def flat(xs: list[int]):
-    text = ''
-    for x in xs:
-        text += str(x) + ','
-    print(text)
+    print(''.join([f'{x},' for x in xs]))
 
 @main
 def main():

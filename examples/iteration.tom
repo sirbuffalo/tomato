@@ -3,13 +3,10 @@
 from itertools import progress_bar
 
 def fib(limit: int) -> int:
-    a = 0
-    b = 1
+    a, b = 0, 1
     while a < limit:
         yield a
-        c = a + b
-        a = b
-        b = c
+        a, b = b, a + b
 
 class Countdown:
     start: int

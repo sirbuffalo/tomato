@@ -37,12 +37,13 @@ export class progress_bar:
         if len(self.label) > 0:
             prefix = self.label + ': '
         if self.total == 0:
-            return prefix + str(self.count) + 'it'
+            return f'{prefix}{self.count}it'
         shown = min(self.count, self.total)
         filled = shown * self.width // self.total
         pct = str(shown * 100 // self.total)
+        pct = ' ' * (3 - len(pct)) + pct          # right-aligned in three places
         bar = '#' * filled + '-' * (self.width - filled)
-        return prefix + ' ' * (3 - len(pct)) + pct + '%|' + bar + '| ' + str(self.count) + '/' + str(self.total)
+        return f'{prefix}{pct}%|{bar}| {self.count}/{self.total}'
 
     def show(self, end: str):
         f = open('/dev/stderr', 'w')
@@ -68,9 +69,7 @@ export class progress_bar:
 
 # Every ordering of r items from `items` (all of them when r is -1), by position, so repeated values repeat.
 export def permutations(items: list[int], r: int = -1) -> list[list[int]]:
-    size = r
-    if size < 0:
-        size = len(items)
+    size = len(items) if r < 0 else r
     result: list[list[int]] = []
     if size > len(items):
         return result
@@ -108,9 +107,7 @@ def _combine_into(items: list[int], r: int, first: int, prefix: list[int], again
         result.append(prefix)
         return
     for i in range(first, len(items)):
-        next_first = i + 1
-        if again:
-            next_first = i
+        next_first = i if again else i + 1
         _combine_into(items, r, next_first, prefix + [items[i]], again, result)
 
 # Every pair (a, b) as a two-item list, first list varying slowest.
@@ -149,19 +146,13 @@ export def chain(a: list[int], b: list[int]) -> list[int]:
 
 # Neighbouring pairs: pairwise([1, 2, 3]) is [[1, 2], [2, 3]].
 export def pairwise(items: list[int]) -> list[list[int]]:
-    out: list[list[int]] = []
-    for i in range(1, len(items)):
-        out.append([items[i - 1], items[i]])
-    return out
+    return [[items[i - 1], items[i]] for i in range(1, len(items))]
 
 # Chunks of n items; the last may be shorter.
 export def batched(items: list[int], n: int) -> list[list[int]]:
     if n < 1:
         raise RuntimeError('batched needs a batch size of at least 1')
-    out: list[list[int]] = []
-    for i in range(0, len(items), n):
-        out.append(items[i:i + n])
-    return out
+    return [items[i:i + n] for i in range(0, len(items), n)]
 
 export def repeat(item: int, times: int) -> list[int]:
     return [item] * times

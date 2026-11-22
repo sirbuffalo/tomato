@@ -28,7 +28,8 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 - `for i in range(n):` / `range(a, b)` / `range(a, b, step)` for counted loops; never a `while` with a counter you step by
   hand. `for i, x in enumerate(items):` when you need the position too.
 - `while` is for loops whose end is not a count: scanning until a condition, Euclid's algorithm, a worklist.
-- A parameter that only needs to be looped over is `Iterable[int]` (add `& Sized` if it also needs `len()`), not `list[int]`, so a range or your own class fits too.
+- A parameter that only needs to be looped over is `Iterable[int]` (add `& Sized` if it also needs `len()`), not
+  `list[int]`, so a range or your own class fits too.
 - A generator (`@iter` method with `yield`) when a class is a sequence, instead of building a list just to loop over it.
 - A variable has one type in the whole function, loop variables included, so give loops over different kinds of
   values different names (`for fld in c.fields:` and `for f in infos:`, not `f` for both).
@@ -37,12 +38,14 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 
 ## Values
 
-- `-x`, not `0 - x`; `x += 1`, not `x = x + 1` (there is no `//=` yet). One exception: on a float that may be zero,
-  `0.0 - x` gives 0.0 where `-x` gives -0.0, which prints as `-0.0`; keep `0.0 - x` there and say why.
+- `-x`, not `0 - x`; `x += 1`, not `x = x + 1` (and `//=`, `**=`, `&=`, `|=`, `^=`). One exception: on a float
+  that may be zero, `0.0 - x` gives 0.0 where `-x` gives -0.0, which prints as `-0.0`; keep `0.0 - x` there and say why.
 - Negative indexes and slices: `items[-1]`, `text[-2:]`, `text[:i]`, not `items[len(items) - 1]`.
 - List literals and operators: `[a, b]`, `xs + [y]`, `[False] * n`, instead of appending item by item.
-- Built-ins before hand-written loops: `min`, `max`, `sum`, `sorted`, `reversed`, `list(range(n))`, `len`, `in`,
-  `str.join`, `str.split`, `str.find`, `str.replace`, `str.startswith`, `str.endswith`, `str.strip`.
+- Built-ins before hand-written loops: `min`, `max`, `sum`, `sorted`, `reversed`, `list(range(n))`, `len`, `in`, `abs`,
+  `chr`, `ord`, `int(text)`, `str.join`, `split`, `find`, `rfind`, `count`, `replace`, `startswith`, `endswith`,
+  `strip`, `isdigit`, `isalpha`, `isspace`.
+- `x not in items`, not `not (x in items)`; `counts.get(word, 0) + 1`, not an `if word in counts` branch.
 - f-strings to build text: `f'{name} has {count} items'`, not a chain of `+` and `str()`. `{{` and `}}` are literal braces.
 - `a if cond else b` for a choice between two values; an `if` statement when each branch does more than produce a value.
 - `[f(x) for x in items if cond]` to build a list from another sequence; a loop when the body does more than add one item.
@@ -51,6 +54,7 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 - `dict[str, V]` to find things by name, instead of a search through a list (or two lists kept side by side).
 - `tuple[T]` for a fixed group of values of one type that will not change.
 - `a, b = b, a` to swap and `low, high = bounds(xs)` to take a tuple apart, not a pile of temporaries or indexes.
+- Narrow a union with `if x in T:`; after `if x in T: return` the rest of the function sees the other members.
 - `T | None` and `is None` / `is not None` for "no value", not a sentinel like `-1` or `''` or a list of zero or one items.
   `and`/`or` stop early, so `x is None or x.size == 0` is safe.
 

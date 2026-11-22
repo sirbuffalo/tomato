@@ -80,18 +80,14 @@ export def distance(a: str, b: str) -> int:
     for i in range(len(a)):
         cur = [i + 1]
         for j in range(len(b)):
-            cost = 1
-            if a[i] == b[j]:
-                cost = 0
+            cost = 0 if a[i] == b[j] else 1
             cur.append(min(prev[j] + cost, prev[j + 1] + 1, cur[j] + 1))
         prev = cur
     return prev[-1]
 
 # the candidate nearest to `name` when it is close enough to be a likely typo, else ''
 export def closest(name: str, candidates: list[str]) -> str:
-    limit = 1
-    if len(name) >= 4:
-        limit = 2
+    limit = 2 if len(name) >= 4 else 1
     if len(name) >= 8:
         limit = 3
     best = ''
@@ -124,10 +120,10 @@ export def format_error(message: str, line: int, col: int, src: str, path: str) 
     parts = message.split('\n')
     head = parts[0]
     helps = parts[1:]
-    out = 'error: ' + head
+    out = f'error: {head}'
     if line < 1:
         for h in helps:
-            out += '\n  = help: ' + h
+            out += f'\n  = help: {h}'
         return out
     lines = src.split('\n')
     ln = min(line, len(lines))
@@ -136,9 +132,7 @@ export def format_error(message: str, line: int, col: int, src: str, path: str) 
     while ln > 1 and len(lines[ln - 1].strip()) == 0:
         ln -= 1
         at = -1
-    text = ''
-    if ln >= 1:
-        text = lines[ln - 1]
+    text = lines[ln - 1] if ln >= 1 else ''
     while text.endswith('\r'):
         text = text[:-1]
     width = 1
@@ -154,10 +148,10 @@ export def format_error(message: str, line: int, col: int, src: str, path: str) 
     where = path
     if where == '':
         where = 'line'
-    out += '\n' + pad + '--> ' + where + ':' + num + ':' + str(at)
-    out += '\n' + pad + ' |'
-    out += '\n' + num + ' | ' + text
+    out += f'\n{pad}--> {where}:{num}:{at}'
+    out += f'\n{pad} |'
+    out += f'\n{num} | {text}'
     out += '\n' + pad + ' | ' + ' ' * (at - 1) + '^' * width
     for h in helps:
-        out += '\n' + pad + ' = help: ' + h
+        out += f'\n{pad} = help: {h}'
     return out

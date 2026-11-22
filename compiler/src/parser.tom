@@ -41,7 +41,7 @@ def path_text(n: Node) -> str:
         inner = path_text(val_node(n.fields[0]))
         if inner == '':
             return ''
-        return inner + '.' + n.fields[1].text
+        return f'{inner}.{n.fields[1].text}'
     return ''
 
 def found_text(t: Token) -> str:
@@ -57,8 +57,8 @@ def found_text(t: Token) -> str:
     if t.kind == 'STR':
         return 'a text'
     if t.kind == 'KW':
-        return "the word '" + t.text + "'"
-    return "'" + t.text + "'"
+        return f"the word '{t.text}'"
+    return f"'{t.text}'"
 
 def kind_text(kind: str) -> str:
     if kind == 'NAME':
@@ -67,7 +67,7 @@ def kind_text(kind: str) -> str:
         return 'the end of the line'
     if kind == 'INDENT':
         return 'an indented block'
-    return 'a ' + kind
+    return f'a {kind}'
 
 export class Val:
     tag: str = 'z'       # n node, s text, i number, b bool, z None, l list, t tuple
@@ -152,16 +152,14 @@ def escape(s: str) -> str:
     return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
 
 def dump_vals(items: list[Val]) -> str:
-    parts: list[str] = []
-    for v in items:
-        parts.append(dump_val(v))
+    parts: list[str] = [dump_val(v) for v in items]
     return ' '.join(parts)
 
 def dump_val(v: Val) -> str:
     if v.tag == 'n':
         return dump(v.node)
     if v.tag == 's':
-        return '"' + escape(v.text) + '"'
+        return f'"{escape(v.text)}"'
     if v.tag == 'i':
         return str(v.num)
     if v.tag == 'b':
@@ -169,18 +167,18 @@ def dump_val(v: Val) -> str:
             return 'True'
         return 'False'
     if v.tag == 'l':
-        return '[' + dump_vals(v.items) + ']'
+        return f'[{dump_vals(v.items)}]'
     if v.tag == 't':
-        return '<' + dump_vals(v.items) + '>'
+        return f'<{dump_vals(v.items)}>'
     return 'None'
 
 export def dump(n: Node) -> str:
-    s = '(' + n.kind + ' ' + str(n.line)
+    s = f'({n.kind} {n.line}'
     if n.exported:
         s += ' exported'
     for v in n.fields:
-        s += ' ' + dump_val(v)
-    return s + ')'
+        s += f' {dump_val(v)}'
+    return f'{s})'
 
 def is_type_with_length(name: str) -> bool:
     return name == 'int' or name == 'uint'
@@ -206,12 +204,12 @@ def set_line(v: Val, line: int):
 def plural_values(n: int) -> str:
     if n == 1:
         return '1 value'
-    return str(n) + ' values'
+    return f'{n} values'
 
 def plural_vars(n: int) -> str:
     if n == 1:
         return '1 variable'
-    return str(n) + ' variables'
+    return f'{n} variables'
 
 # the left side of = and += must be a variable, a field or a list item; t is the first token of the statement
 def check_target(e: Node, t: Token):
@@ -266,21 +264,21 @@ export class Parser:
 
     def err(self, msg: str):
         t = self.cur()
-        raise ParseError(msg + ', but found ' + found_text(t), t.line, t.col)
+        raise ParseError(f'{msg}, but found {found_text(t)}', t.line, t.col)
 
     def expect_op(self, v: str) -> Token:
         if not self.is_op(v):
-            self.err("expected '" + v + "'")
+            self.err(f"expected '{v}'")
         return self.adv()
 
     def expect_kw(self, v: str) -> Token:
         if not self.is_kw(v):
-            self.err("expected '" + v + "'")
+            self.err(f"expected '{v}'")
         return self.adv()
 
     def expect(self, kind: str) -> Token:
         if self.cur().kind != kind:
-            self.err('expected ' + kind_text(kind))
+            self.err(f'expected {kind_text(kind)}')
         return self.adv()
 
     # module
@@ -328,10 +326,10 @@ export class Parser:
             self.adv()
             m = self.expect('NAME')
             if m.text == 'init' or is_operator_marker(m.text):
-                raise ParseError("'@" + m.text + "' marks a method, so it belongs inside a class\nmove this function into a class, or remove the marker", m.line, m.col - 1)
+                raise ParseError(f"'@{m.text}' marks a method, so it belongs inside a class\nmove this function into a class, or remove the marker", m.line, m.col - 1)
             self.expect('NEWLINE')
             if not self.is_def():
-                self.err('expected a function after @' + m.text)
+                self.err(f'expected a function after @{m.text}')
             return self.funcdef(False, 'entry:' + m.text, False, True)
         if self.is_def():
             return self.funcdef(False, '', False, True)
@@ -435,13 +433,13 @@ export class Parser:
                 default = vn(self.expr())
             if star != '':
                 if ty.tag == 'z' or default.tag != 'z':
-                    raise ParseError("'" + star + nm.text + "' needs a type and cannot have a default value", nm.line, nm.col)
+                    raise ParseError(f"'{star}{nm.text}' needs a type and cannot have a default value", nm.line, nm.col)
                 if self.any_star(out, '**') or (star == '*' and self.any_star(out, '')):
                     raise ParseError("'*args' must come before '**kwargs', and both must be last in the parameter list", nm.line, nm.col)
             elif self.any_star(out, ''):
-                raise ParseError("the parameter '" + nm.text + "' cannot come after '*args' or '**kwargs'\nmove it before them", nm.line, nm.col)
+                raise ParseError(f"the parameter '{nm.text}' cannot come after '*args' or '**kwargs'\nmove it before them", nm.line, nm.col)
             elif default.tag == 'z' and self.any_default(out):
-                raise ParseError("the parameter '" + nm.text + "' needs a default value because an earlier parameter has one\ngive it a default such as '" + nm.text + ": int = 0', or move it before the others", nm.line, nm.col)
+                raise ParseError(f"the parameter '{nm.text}' needs a default value because an earlier parameter has one\ngive it a default such as '{nm.text}: int = 0', or move it before the others", nm.line, nm.col)
             out.append(mk('Param', nm.line, [vs(nm.text), ty, default, vopt_text(star)]))
             if not self.accept_op(','):
                 break
@@ -533,7 +531,7 @@ export class Parser:
             self.adv()
             m = self.expect('NAME')
             if m.text != 'init' and not is_operator_marker(m.text):
-                raise ParseError("'@" + m.text + "' is not a method marker\nthe markers are @init, @iter and the operator markers such as @add", m.line, m.col - 1)
+                raise ParseError(f"'@{m.text}' is not a method marker\nthe markers are @init, @iter and the operator markers such as @add", m.line, m.col - 1)
             marker = m.text
             self.expect('NEWLINE')
         is_override = self.accept_kw('override')
@@ -590,24 +588,24 @@ export class Parser:
         for a in args:
             p = path_text(a)
             if p == '':
-                raise ParseError(which + "() in a for loop needs plain variables or fields\nassign the list to a variable first, then loop over that variable", line)
+                raise ParseError(f'{which}() in a for loop needs plain variables or fields\nassign the list to a variable first, then loop over that variable', line)
             paths.append(p)
         if len(it.fields[2].items) > 0:
-            raise ParseError(which + '() takes no keyword arguments', line)
+            raise ParseError(f'{which}() takes no keyword arguments', line)
         text = ''
         if which == 'enumerate':
             if len(args) != 1 or len(names) != 2:
                 raise ParseError('enumerate() takes one list and gives two variables\nwrite for i, x in enumerate(items):', line)
-            text = 'for ' + names[0] + ' in range(len(' + paths[0] + ')):\n    ' + names[1] + ' = ' + paths[0] + '[' + names[0] + ']\n    pass\n'
+            text = f'for {names[0]} in range(len({paths[0]})):\n    {names[1]} = {paths[0]}[{names[0]}]\n    pass\n'
         else:
             if len(args) < 2 or len(args) != len(names):
                 raise ParseError('zip() needs as many variables as lists\nwrite for a, b in zip(xs, ys):', line)
-            idx = '_zip_index' + str(line)
-            text = 'for ' + idx + ' in range(len(' + paths[0] + ')):\n'
+            idx = f'_zip_index{line}'
+            text = f'for {idx} in range(len({paths[0]})):\n'
             for p in paths[1:]:
-                text += '    if ' + idx + ' >= len(' + p + '):\n        break\n'
+                text += f'    if {idx} >= len({p}):\n        break\n'
             for k, p in enumerate(paths):
-                text += '    ' + names[k] + ' = ' + p + '[' + idx + ']\n'
+                text += f'    {names[k]} = {p}[{idx}]\n'
             text += '    pass\n'
         q = Parser()
         q.toks = lex(text)
@@ -737,11 +735,11 @@ export class Parser:
         if literal:
             values = val_nodes(values[0].fields[0])
         self.unpacks += 1
-        stem = '_unpack' + str(t.line) + '_' + str(self.unpacks)
+        stem = f'_unpack{t.line}_{self.unpacks}'
         stmts: list[Node] = []
         if len(values) > 1 or literal:
             if len(values) != count:
-                raise ParseError('cannot unpack ' + plural_values(len(values)) + ' into ' + plural_vars(count) + '\nwrite as many values as there are variables on the left of =', t.line, t.col)
+                raise ParseError(f'cannot unpack {plural_values(len(values))} into {plural_vars(count)}\nwrite as many values as there are variables on the left of =', t.line, t.col)
             for k, v in enumerate(values):
                 if is_none_name(v):
                     continue                # None has no effect to order, and a hidden variable could not be given a type from it
@@ -754,7 +752,7 @@ export class Parser:
             return mk('Multi', t.line, [vnodes(stmts)])
         # one value to take apart: a tuple (or list or text) whose length is only known when the program runs
         stmts.append(mk('Assign', t.line, [vn(mk('Name', t.line, [vs(stem)])), vn(values[0])]))
-        text = 'if len(' + stem + ') != ' + str(count) + ':\n    raise RuntimeError(\'cannot unpack \' + str(len(' + stem + ')) + \' values into ' + plural_vars(count) + '\')\n'
+        text = f"if len({stem}) != {count}:\n    raise RuntimeError('cannot unpack ' + str(len({stem})) + ' values into {plural_vars(count)}')\n"
         q = Parser()
         q.toks = lex(text)
         check = q.statement()
@@ -863,9 +861,7 @@ export class Parser:
         e = self.bit_or()
         if self.is_kw('is'):
             t = self.adv()
-            op = 'is'
-            if self.accept_kw('not'):
-                op = 'is not'
+            op = 'is not' if self.accept_kw('not') else 'is'
             return self.binop(op, t.line, e, self.bit_or())
         if self.is_kw('in'):
             t = self.adv()
@@ -948,7 +944,7 @@ export class Parser:
                         kw = self.adv()
                         self.adv()
                         if kw.text in names:
-                            raise ParseError("the keyword argument '" + kw.text + "' is given twice\npass each argument only once", kw.line, kw.col)
+                            raise ParseError(f"the keyword argument '{kw.text}' is given twice\npass each argument only once", kw.line, kw.col)
                         names.append(kw.text)
                         kwargs.append(vtuple([vs(kw.text), vn(self.expr())]))
                     else:

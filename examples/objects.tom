@@ -16,21 +16,15 @@ class Inventory:
         self.items.append(Item(name, qty))
 
     def total(self) -> int:
-        t = 0
-        for item in self.items:
-            t += item.qty
-        return t
+        return sum([item.qty for item in self.items])
 
     def describe(self) -> str:
-        s = ''
-        for item in self.items:
-            s += item.name + 'x' + str(item.qty) + ' '
-        return s
+        return ''.join([f'{item.name}x{item.qty} ' for item in self.items])
 
 @main
 def main(n: int):
     inv = Inventory()
     for i in range(n):
-        inv.add('item' + str(i), i * 2)
+        inv.add(f'item{i}', i * 2)
     print(inv.describe())
     print('total', inv.total(), 'chars', len(inv.describe()))

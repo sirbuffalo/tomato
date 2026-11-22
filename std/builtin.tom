@@ -176,32 +176,26 @@ def _abs_float(x: float) -> float:
 # str.isdigit(), isalpha(), isspace(): True when the text is not empty and every character is of that kind (ASCII
 # characters only, like upper() and lower()).
 def _str_isdigit(s: str) -> bool:
-    if len(s) == 0:
-        return False
-    for c in s:
-        if '0123456789'.find(c) < 0:
-            return False
-    return True
+    return _all_in(s, '0123456789')
 
 def _str_isalpha(s: str) -> bool:
-    if len(s) == 0:
-        return False
-    for c in s:
-        if 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.find(c) < 0:
-            return False
-    return True
+    return _all_in(s, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
 def _str_isspace(s: str) -> bool:
+    return _all_in(s, ' \t\n\r')
+
+# True when s is not empty and every character of it is one of chars
+def _all_in(s: str, chars: str) -> bool:
     if len(s) == 0:
         return False
     for c in s:
-        if not _is_space(c):
+        if c not in chars:
             return False
     return True
 
 # whitespace is a space, tab, newline or carriage return
 def _is_space(c: str) -> bool:
-    return c == ' ' or c == '\t' or c == '\n' or c == '\r'
+    return c in ' \t\n\r'
 
 def _str_lstrip(s: str) -> str:
     i = 0

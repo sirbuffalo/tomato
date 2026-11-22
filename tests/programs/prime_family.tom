@@ -1,18 +1,10 @@
 from math import next_prime, prev_prime, primes_up_to, nth_prime, prime_factors, factorize, prime_count, totient, is_coprime, lcm
 
 def show(xs: list[int]) -> str:
-    out = '['
-    for i, x in enumerate(xs):
-        if i > 0:
-            out += ' '
-        out += str(x)
-    return out + ']'
+    return '[' + ' '.join([str(x) for x in xs]) + ']'
 
 def show_pairs(xs: list[list[int]]) -> str:
-    out = ''
-    for p in xs:
-        out += str(p[0]) + '^' + str(p[1]) + ' '
-    return '{' + out + '}'
+    return '{' + ''.join([f'{p[0]}^{p[1]} ' for p in xs]) + '}'
 
 @main
 def main():

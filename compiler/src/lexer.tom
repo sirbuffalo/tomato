@@ -196,7 +196,7 @@ def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
             buf += c
         j += 1
     if j >= n:
-        raise LexError('this text is missing its closing quote ' + quote + '\nadd ' + quote + ' at the end of the text', ln, i + 2)
+        raise LexError(f'this text is missing its closing quote {quote}\nadd {quote} at the end of the text', ln, i + 2)
     if buf != '' or first:
         if not first:
             push_op(toks, '+', ln, col)
@@ -243,7 +243,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
                     buf += raw[j]
                 j += 1
             if j >= n:
-                raise LexError('this text is missing its closing quote ' + c + '\nadd ' + c + ' at the end of the text', ln, i + 1)
+                raise LexError(f'this text is missing its closing quote {c}\nadd {c} at the end of the text', ln, i + 1)
             toks.append(make_token('STR', buf, 0, ln))
             i = j + 1
         elif i + 2 < n and raw[i:i + 3] in ['//=', '**=']:
@@ -260,7 +260,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             toks.append(make_token('OP', c, 0, ln))
             i += 1
         else:
-            raise LexError("unexpected character '" + c + "'\nTomato has no such symbol; remove it or put it inside a text", ln, i + 1)
+            raise LexError(f"unexpected character '{c}'\nTomato has no such symbol; remove it or put it inside a text", ln, i + 1)
         if len(toks) > made:
             toks[made].col = start + 1
     return depth
@@ -321,5 +321,5 @@ export def lex(src: str) -> list[Token]:
 
 export def describe(t: Token) -> str:
     if t.kind == 'INT':
-        return 'INT ' + str(t.num) + ' ' + str(t.line)
+        return f'INT {t.num} {t.line}'
     return t.kind + ' ' + t.text.replace('\n', '\\n').replace('\r', '\\r') + ' ' + str(t.line)
