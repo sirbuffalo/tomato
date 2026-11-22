@@ -1884,6 +1884,102 @@ ALWAYS int32_t tomato_int_cmp(int64_t x, int64_t y) {
     return int_cmp_slow(x, y);
 }
 
+
+/* ---- sorted(): a new list with the items of a list[int], list[float] or list[str] in order ----
+ * A stable merge sort (the order of equal items, and the result with NaNs, is what the bottom-up merge in the old
+ * compiler-written helper gave: an item from the right run goes first only when it is strictly smaller). Items are only
+ * moved as whole words, never copied or dropped. A list of small ints (the common case) is radix sorted. */
+#define SORT_RUN 16
+#define DEFINE_MERGESORT(NAME, CMP_LT)                                                             \
+static void NAME(int64_t *a, int64_t *b, int64_t n) {                                              \
+    for (int64_t lo = 0; lo < n; lo += SORT_RUN) {                                                 \
+        int64_t hi = lo + SORT_RUN < n ? lo + SORT_RUN : n;                                        \
+        for (int64_t i = lo + 1; i < hi; i++) {                                                    \
+            int64_t x = a[i], j = i;                                                               \
+            while (j > lo && CMP_LT(x, a[j - 1])) { a[j] = a[j - 1]; j--; }                        \
+            a[j] = x;                                                                              \
+        }                                                                                          \
+    }                                                                                              \
+    int64_t *src = a, *dst = b;                                                                    \
+    for (int64_t width = SORT_RUN; width < n; width *= 2) {                                        \
+        for (int64_t i = 0; i < n; i += 2 * width) {                                               \
+            int64_t mid = i + width < n ? i + width : n, hi = i + 2 * width < n ? i + 2 * width : n; \
+            int64_t l = i, r = mid, k = i;                                                         \
+            while (l < mid && r < hi) {                                                            \
+                if (CMP_LT(src[r], src[l])) dst[k++] = src[r++]; else dst[k++] = src[l++];         \
+            }                                                                                      \
+            while (l < mid) dst[k++] = src[l++];                                                   \
+            while (r < hi) dst[k++] = src[r++];                                                    \
+        }                                                                                          \
+        int64_t *t = src; src = dst; dst = t;                                                      \
+    }                                                                                              \
+    if (src != a) memcpy(a, src, (size_t)n * 8);                                                   \
+}
+
+#define LT_BIGINT(x, y) (tomato_int_cmp((x), (y)) < 0)
+#define LT_SMALLINT(x, y) ((x) < (y))
+#define LT_FLOAT(x, y) (bits_f64(x) < bits_f64(y))
+#define LT_STR(x, y) (tomato_str_cmp((void *)(intptr_t)(x), (void *)(intptr_t)(y)) < 0)
+static double bits_f64(int64_t w) { double d; memcpy(&d, &w, 8); return d; }
+DEFINE_MERGESORT(merge_sort_bigint, LT_BIGINT)
+DEFINE_MERGESORT(merge_sort_small, LT_SMALLINT)
+DEFINE_MERGESORT(merge_sort_float, LT_FLOAT)
+DEFINE_MERGESORT(merge_sort_str, LT_STR)
+
+/* LSD radix sort of tagged small ints; the biased words compare as unsigned in value order, and passes whose digit is the same everywhere are skipped */
+static void radix_sort_small(int64_t *a, int64_t *b, int64_t n) {
+    enum { BITS = 11, BUCKETS = 1 << BITS };
+    uint64_t *src = (uint64_t *)a, *dst = (uint64_t *)b;
+    int64_t *count = calloc(6 * BUCKETS, sizeof(int64_t));
+    if (!count) tomato_fail("out of memory");
+    for (int64_t i = 0; i < n; i++) {
+        src[i] ^= (uint64_t)1 << 63;
+        uint64_t v = src[i];
+        for (int p = 0; p < 6; p++) count[p * BUCKETS + ((v >> (p * BITS)) & (BUCKETS - 1))]++;
+    }
+    /* the low bit is the tag, always 1: bits 0..65 are covered by 6 digits of 11 bits */
+    for (int p = 0; p < 6; p++) {
+        int64_t *c = count + p * BUCKETS;
+        if (c[(src[0] >> (p * BITS)) & (BUCKETS - 1)] == n) continue;
+        int64_t sum = 0;
+        for (int d = 0; d < BUCKETS; d++) { int64_t t = c[d]; c[d] = sum; sum += t; }
+        for (int64_t i = 0; i < n; i++) dst[c[(src[i] >> (p * BITS)) & (BUCKETS - 1)]++] = src[i];
+        uint64_t *t = src; src = dst; dst = t;
+    }
+    for (int64_t i = 0; i < n; i++) src[i] ^= (uint64_t)1 << 63;
+    if (src != (uint64_t *)a) memcpy(a, src, (size_t)n * 8);
+    free(count);
+}
+
+/* kind: 0 = int, 1 = float, 2 = str. The source list is only read; the result is a new list sharing the items (str items are retained;
+ * a big int is copied, since every place owns its own: D05av). */
+void *tomato_list_sorted(void *src, int kind) {
+    List *l = src;
+    int64_t n = l->len;
+    List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
+    if (n == 0) return r;
+    r->data = malloc((size_t)n * 8);
+    int64_t *tmp = n > 1 ? malloc((size_t)n * 8) : NULL;
+    if (!r->data || (n > 1 && !tmp)) tomato_fail("out of memory");
+    r->cap = n;
+    r->len = n;
+    int64_t *a = (int64_t *)r->data;
+    memcpy(a, l->data, (size_t)n * 8);
+    if (kind == 2) for (int64_t i = 0; i < n; i++) tomato_retain((void *)(intptr_t)a[i]);
+    if (n > 1) {
+        if (kind == 0) {
+            int small = 1;
+            for (int64_t i = 0; i < n; i++) small &= (a[i] & 1);
+            if (!small) for (int64_t i = 0; i < n; i++) a[i] = tomato_int_dup(a[i]);
+            if (small && n >= 64) radix_sort_small(a, tmp, n);
+            else if (small) merge_sort_small(a, tmp, n);
+            else merge_sort_bigint(a, tmp, n);
+        } else if (kind == 1) merge_sort_float(a, tmp, n);
+        else merge_sort_str(a, tmp, n);
+    }
+    free(tmp);
+    return r;
+}
 int64_t tomato_int_pow(int64_t base, int64_t exp) {
     /* the exponent is not negative (the caller checked) and small enough to count */
     if (!int_is_small(exp)) tomato_fail("the exponent is too big");

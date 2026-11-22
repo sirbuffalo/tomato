@@ -879,6 +879,15 @@ Source: Davis's Dashboard message:
 - Chosen over a remainder that takes the dividend's sign (as in Go), which Davis did not select.
 - Open: `%` on floats and rationals, whether an integer-quotient operator exists, compile-time rejection of constant zero divisors (as D05ac does for `/`), and error wording.
 
+### D05av — big integers are values: copied when set, freed when overwritten or dropped: accepted (replaces placeholder P63)
+
+- Evidence: asked whether a big integer should be freed or shared, Davis wrote “They should be freed, no, a big int is duplicated when set.” It was a chat answer. I read it as value semantics; he did not say reference counting was ruled out for good, only that the copy is what he wants.
+- A number too big for a tagged word is owned by exactly one place: a variable, a field, a list, tuple or set slot, a table value or a temporary. Assigning, passing, returning or storing it somewhere else makes a copy. The place frees its number when it is overwritten, when its scope or function ends (also when an error unwinds), and when its container is destroyed. No count, no sharing. Small numbers are plain words, so copying and freeing one is a test of one bit.
+- A result computed from other numbers (`a * b`, a call's value) moves into its destination without a copy: `product *= i` copies nothing. A parameter that the function never assigns is lent by the caller and not copied. The runtime's arithmetic only reads its operands and returns a new number.
+- Chosen over reference counting big numbers (one shared number and a count, so no copy when it is stored, but a count to keep for every number) and over keeping them until the program ends (P63), which used 1.5 GB for `bigint`. Cost: a big number that is stored in a list or field is copied limb by limb; the small-number paths gained a few bit tests.
+- Debug mode counts live big numbers with the other objects, so the leak report also shows a missed free. Sets of ints compare big numbers by value, not by address.
+- Open: `&`, `|` and `^` on big numbers; moving the last use of a variable instead of copying it.
+
 ### D17b — strings are UTF-8: accepted
 
 - Evidence: Davis wrote “strings are utf8” in chat. The question that prompted it offered three options (characters, bytes, or raw bytes); his answer chose the encoding but did not say what length and indexing count.
