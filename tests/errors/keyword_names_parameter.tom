@@ -1,0 +1,6 @@
+@main
+def main():
+    print(add(left=1, right="b"))
+
+def add(left: int, right: int) -> int:
+    return left + right

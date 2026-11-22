@@ -118,6 +118,21 @@ function markdown(src) {
     return out + esc(src.slice(last));
   }
   window.tomatoHighlight = highlight;
+  // Error text (docs/errors.md) as HTML: the same layout as the terminal, with a span per part so the style sheet can color it. The words
+  // are the plain text escaped, so copying the output gives what the command line prints.
+  function errors(text) {
+    var kind = "error";
+    return String(text).split("\n").map(function (l) {
+      var m;
+      if ((m = /^(error|warning): (.*)$/.exec(l))) { kind = m[1]; return '<span class="e-label e-' + m[1] + '">' + m[1] + ':</span> <span class="e-msg">' + esc(m[2]) + "</span>"; }
+      if ((m = /^( *)--> (.*)$/.exec(l))) return esc(m[1]) + '<span class="e-arrow">--&gt;</span> <span class="e-loc">' + esc(m[2]) + "</span>";
+      if ((m = /^( *[0-9]* \|)(.*)$/.exec(l))) { var c = /^( *)(\^+)$/.exec(m[2]); return '<span class="e-gutter">' + esc(m[1]) + "</span>" + (c ? esc(c[1]) + '<span class="e-caret e-' + kind + '">' + c[2] + "</span>" : esc(m[2])); }
+      if ((m = /^( *)= help: (.*)$/.exec(l))) return esc(m[1]) + '<span class="e-gutter">=</span> <span class="e-helplabel">help:</span> <span class="e-help">' + esc(m[2]) + "</span>";
+      if (/^ {2}(at |\.\.\. and )/.test(l)) return '<span class="e-trace">' + esc(l) + "</span>";
+      return esc(l);
+    }).join("\n");
+  }
+  window.tomatoErrors = errors;
   document.addEventListener("DOMContentLoaded", function () {
     document.querySelectorAll("pre > code").forEach(function (el) {
       if (el.className.indexOf("no-hl") < 0 && el.parentNode.id !== "out") el.innerHTML = highlight(el.textContent);

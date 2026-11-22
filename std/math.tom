@@ -35,12 +35,12 @@ export def pow(base: int, exponent: int) -> int:
 def powmod(base: int, exponent: int, modulus: int) -> int:
     result = 1
     b = base % modulus
-    e = exponent
-    while e > 0:
-        if e % 2 == 1:
+    remaining = exponent
+    while remaining > 0:
+        if remaining % 2 == 1:
             result = result * b % modulus
         b = b * b % modulus
-        e = e // 2
+        remaining = remaining // 2
     return result
 
 # Miller-Rabin primality test. The witnesses 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31 and 37 are a proven

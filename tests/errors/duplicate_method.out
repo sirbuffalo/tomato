@@ -1,0 +1,6 @@
+error: 'f' is defined twice in class 'A'
+ --> tests/errors/duplicate_method.tom:5:9
+  |
+5 |     def f(self) -> int:
+  |         ^
+  = help: rename one of them

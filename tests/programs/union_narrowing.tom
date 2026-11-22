@@ -26,7 +26,7 @@ def three(x: int | str | float) -> str:
 def either(x: int | str | float) -> str:
     if x in float:
         return 'float'
-    y: int | str | float = x
+    y: int | str | float = x  # allow: unused
     return 'int or str ' + str(x in int)
 
 # else knows the members not tested, and an else that leaves narrows what follows

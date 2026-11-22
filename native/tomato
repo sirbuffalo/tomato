@@ -7,6 +7,8 @@
 #   tomato repl [FILE ...]                                            type Tomato one piece at a time
 #   tomato update                                                     install the newest release
 #   tomato version                                                    print the version (also --version)
+# Options for every command: --color=auto|always|never (red errors on a terminal; also TOMATO_COLOR, and NO_COLOR turns it off),
+# --no-warnings (hide the warnings the compiler gives about code that runs but looks wrong; also TOMATO_WARNINGS=off).
 # After `--`, every word is an input to the program, even one that looks like a flag.
 invoked="$0"
 src="$0"
@@ -21,13 +23,51 @@ runtime="$home/runtime/tomato_rt.c"
 std="$home/std/"
 commands() { awk 'NR > 2 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$src"; }
 usage() { sed -n '2p' "$src" | sed 's/^# \{0,1\}//' >&2; commands >&2; exit 2; }
-die() { echo "error: $*" >&2; exit 1; }
+# does standard error get color? --color=always or never decides; auto asks for a terminal, no NO_COLOR and a TERM that is not dumb
+want_color() {
+  case "${color:-${TOMATO_COLOR:-auto}}" in always) return 0 ;; never) return 1 ;; esac
+  [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ] && [ -t 2 ]
+}
+# paint: error text (docs/errors.md) on standard input, with the colors on standard output: the label bold red (yellow for a
+# warning), the message bold, the location cyan, the gutter blue, the caret under the span red, hints green, traceback dim.
+# The text itself is not changed, so with the color off the output is the same words.
+paint() {
+  awk 'BEGIN { E = sprintf("%c", 27); R = E "[0m"; ccol = "31" }
+    match($0, /^(error|warning): /) { label = substr($0, 1, RLENGTH - 2); ccol = (label == "warning") ? "33" : "31"; print E "[1;" ccol "m" label ":" R " " E "[1m" substr($0, RLENGTH + 1) R; next }
+    /^ *--> / { match($0, /-->/); print substr($0, 1, RSTART - 1) E "[1;34m-->" R " " E "[36m" substr($0, RSTART + 4) R; next }
+    /^ *[0-9]* \|/ { match($0, /\|/); g = substr($0, 1, RSTART); rest = substr($0, RSTART + 1)
+      if (rest ~ /^ *\^+$/) { match(rest, /\^+/); print E "[1;34m" g R substr(rest, 1, RSTART - 1) E "[1;" ccol "m" substr(rest, RSTART) R }
+      else print E "[1;34m" g R rest
+      next }
+    /^ *= help: / { match($0, /=/); print substr($0, 1, RSTART - 1) E "[1;34m=" R " " E "[1;32mhelp:" R " " E "[32m" substr($0, RSTART + 8) R; next }
+    /^  (at |\.\.\. and )/ { print E "[2m" $0 R; next }
+    { print }'
+}
+# shows text on standard error, painted when the color is on
+show_error() { if want_color; then paint >&2; else cat >&2; fi; }
+die() { printf 'error: %s\n' "$*" | show_error; exit 1; }
 # update downloads use https only, including after redirects (file:// only for tests, with the override)
 curl_safe() {
   if [ -n "$TOMATO_UPDATE_ALLOW_ANY_URL" ] || [ -n "$TOMATO_UPDATE_ALLOW_FILE" ]; then curl -fsSL "$@"; else curl -fsSL --proto '=https' --proto-redir '=https' "$@"; fi
 }
 
 cmd="$1"; [ -n "$cmd" ] || usage; shift
+# the options every command takes are read first, from anywhere before a `--`: --color=auto|always|never, --no-warnings
+color=""; warnings="${TOMATO_WARNINGS:-on}"
+n=$#; stop=0
+while [ $n -gt 0 ]; do
+  n=$((n - 1))
+  if [ $stop = 1 ]; then set -- "$@" "$1"; shift; continue; fi
+  case "$1" in
+    --) stop=1; set -- "$@" "$1"; shift ;;
+    --color=*) color="${1#--color=}"; shift ;;
+    --color) [ $# -ge 2 ] || usage; color="$2"; shift 2; n=$((n - 1)) ;;
+    --no-warnings) warnings=off; shift ;;
+    *) set -- "$@" "$1"; shift ;;
+  esac
+done
+case "$color" in ""|auto|always|never) ;; *) die "--color takes auto, always or never, not '$color'" ;; esac
+[ -n "$color" ] && export TOMATO_COLOR="$color"   # the program run by `tomato run` (and the repl) follows it too
 case "$cmd" in
   help|--help|-h) sed -n '2p' "$src" | sed 's/^# \{0,1\}//'; commands; exit 0 ;;
   version|--version|-V) echo "Tomato v$(cat "$home/VERSION" 2>/dev/null || echo 0) (compiler written in Tomato)"; exit 0 ;;
@@ -77,6 +117,7 @@ case "$cmd" in
     if [ -z "$text" ] && [ "$line" -gt "$(wc -l < "$src_file")" ]; then echo "  (line $line is past the end of $src_file: is this the file the program was built from?)"; exit 0; fi
     echo "  line $line: $(printf '%s' "$text" | sed 's/^[ \t]*//')"
     exit 0 ;;
+  paint) paint; exit 0 ;;      # for the repl: `tomato paint` colors error text read from standard input
   repl|shell) TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;
   run|build|compile) ;;
   *) echo "error: unknown command '$cmd'" >&2; echo "run 'tomato help' for the commands" >&2; exit 2 ;;
@@ -124,10 +165,11 @@ opt=-O1; [ "$mode" = release ] && opt=-O2
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 if ! "$tomatoc" "$file" "$entry" "$std" "$mode" > "$tmp/program.ll" 2> "$tmp/errors"; then
-  cat "$tmp/errors" >&2        # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
+  show_error < "$tmp/errors"        # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
   exit 1
 fi
-[ "$cmd" = compile ] && { cat "$tmp/program.ll"; exit 0; }
+[ "$warnings" = off ] || sed -n 's/^;! //p' "$tmp/program.ll" | show_error     # warnings travel as comment lines at the end of the IR
+[ "$cmd" = compile ] && { grep -v '^;! ' "$tmp/program.ll"; exit 0; }
 exe="$tmp/program"
 [ "$cmd" = build ] && exe="${out:-$(basename "${file%.tom}")}"
 link() {   # a function has its own "$@", so the run inputs survive

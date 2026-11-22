@@ -1,5 +1,5 @@
 async def total() -> int:
-    sum = 0
+    sum = 0  # allow: shadow
     try:
         while True:
             line = await input()

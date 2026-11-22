@@ -196,6 +196,8 @@ def main():
     print(n + 5)    # 255
     print(n + 10)   # stops: integer overflow</code></pre>
 <p>Runtime failures (overflow, division by zero, a bad index, a missing key) raise a catchable <code>RuntimeError</code>; a file that cannot be opened raises <code>IOError</code>. An error nobody catches stops the program with exit status 1. Type errors are found at compile time and are never catchable.</p>
+<h2>Reading errors and warnings</h2>
+<p>An error that stops a program shows what is wrong, where (<code>--&gt; program.tom:6:11</code>), the line with a <code>^</code> under the problem and, often, a <code>help:</code> line. A runtime error then lists the calls it passed through, innermost first (<code>at half (line 6)</code>). A <em>warning</em> has the same shape but never stops the program: it points at a variable nothing reads, an unused import, code after a <code>return</code>, a variable that might have no value, a name that hides a built-in, or a list changed inside the loop that is going through it. Silence one on its line with a comment such as <code># allow: unused</code>. In a terminal the command line colors errors red and warnings yellow (<code>--color=auto|always|never</code>, <code>NO_COLOR</code>); the playground colors them too. The words are the same either way; see <a href="docs.html#errors">error messages</a>.</p>
 <h2>Modules and LLVM</h2>
 <p><code>from util import f</code> imports a module's <code>export</code>ed names. <code>!name(a: T) -> R</code> declares a function from LLVM IR you supply with <code>--llvm</code>, and <code>!name(x)</code> calls it.</p>
 <h2>Commands</h2>

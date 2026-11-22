@@ -17,5 +17,5 @@ def main():
     rate2 = rate + rate
     print(rate2)
     # a local variable of the same name hides the constant
-    limit = 99
+    limit = 99  # allow: shadow
     print(limit)

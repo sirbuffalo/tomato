@@ -1,0 +1,6 @@
+warning: 'sqrt' is imported but never used
+ --> tests/errors/unused_import.tom:1:18
+  |
+1 | from math import sqrt, pi
+  |                  ^^^^
+  = help: remove it from the import line

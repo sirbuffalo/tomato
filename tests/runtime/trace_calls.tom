@@ -1,0 +1,10 @@
+@main
+def main():
+    half(0)
+
+class Box:
+    def open(self) -> int:
+        return half(0)
+
+def half(n: int) -> int:
+    return 10 // n

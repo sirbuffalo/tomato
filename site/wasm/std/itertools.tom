@@ -119,7 +119,7 @@ export def product[T](a: list[T], b: list[T]) -> list[list[T]]:
     return result
 
 # Every list of `repeat` items from `items` (the product of items with itself repeat times).
-export def product_repeat[T](items: list[T], repeat: int) -> list[list[T]]:
+export def product_repeat[T](items: list[T], repeat: int) -> list[list[T]]:  # allow: shadow
     result: list[list[T]] = []
     if repeat < 0:
         return result

@@ -1,0 +1,5 @@
+@main
+def main():
+    total = 0  # allow: unused
+    len = 3  # allow: shadow
+    print(len)

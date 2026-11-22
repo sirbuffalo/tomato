@@ -1,0 +1,6 @@
+warning: the variable 'len' has the same name as a function or class, which it hides here
+ --> tests/errors/shadow_builtin.tom:3:5
+  |
+3 |     len = 3
+  |     ^^^
+  = help: choose another name

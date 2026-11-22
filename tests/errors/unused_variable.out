@@ -1,0 +1,6 @@
+warning: the variable 'total' is given a value that is never used
+ --> tests/errors/unused_variable.tom:3:5
+  |
+3 |     total = 0
+  |     ^^^^^
+  = help: remove it, or rename it '_total' to show that this is intended

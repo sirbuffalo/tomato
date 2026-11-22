@@ -1,0 +1,6 @@
+@main
+def main():
+    print(add(1, 2))
+
+def add(n: int, n: int) -> int:
+    return n

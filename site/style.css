@@ -61,3 +61,11 @@ nav a[aria-current] { font-weight:600; }
 
 /* the field where a running program asks for a line of input, inside its output */
 input.stdin-line { font: inherit; color: inherit; background: transparent; border: 0; border-bottom: 1px solid currentColor; outline: none; min-width: 16ch; padding: 0; }
+
+/* Error text (docs/errors.md), colored like the terminal: tomatoErrors in site.js wraps each part in a span */
+:root { --warn:#8a5a00; --info:#2c5aa0; --loc:#0b6b73; --hint:#1b6b3a; }
+@media (prefers-color-scheme: dark) { :root { --warn:#f0c15a; --info:#8fb4ee; --loc:#6fd3dc; --hint:#7bd89a; } }
+.e-label { font-weight:700; } .e-error { color:var(--err); } .e-warning { color:var(--warn); } .e-msg { font-weight:700; color:var(--fg); }
+.e-arrow, .e-gutter { color:var(--info); font-weight:700; } .e-loc { color:var(--loc); }
+.e-caret { font-weight:700; } .e-caret.e-error { color:var(--err); } .e-caret.e-warning { color:var(--warn); }
+.e-helplabel { color:var(--hint); font-weight:700; } .e-help { color:var(--hint); } .e-trace { opacity:.7; }

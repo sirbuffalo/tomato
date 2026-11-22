@@ -1,0 +1,6 @@
+warning: 'label' might not have a value here, because some paths above do not give it one
+ --> tests/errors/maybe_unassigned.tom:6:11
+  |
+6 |     print(label)
+  |           ^^^^^
+  = help: give it a value before the if or loop, or in every branch

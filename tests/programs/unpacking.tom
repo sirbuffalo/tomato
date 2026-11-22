@@ -35,8 +35,8 @@ def main():
         m, n = i, i + 1
         print(m, n)
     try:
-        u, v = min_max([1, 2, 3])
-        u, v, w = min_max([1, 2, 3])
+        u, v = min_max([1, 2, 3])  # allow: unused
+        u, v, w = min_max([1, 2, 3])  # allow: unused
     catch RuntimeError as e:
         print('caught', e.message)
     try:

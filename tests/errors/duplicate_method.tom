@@ -1,0 +1,10 @@
+class A:
+    def f(self) -> int:
+        return 1
+
+    def f(self) -> int:
+        return 2
+
+@main
+def main():
+    print(A().f())

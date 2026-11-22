@@ -27,7 +27,16 @@ elif [ -x "$tomatoc" ] && [ -f "$runtime" ] && clang -O0 -w -c -o "$S/rt.o" "$ru
 : > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; seq=0
 
 say() { printf '%s\n' "$*"; }
-err() { printf '%s\n' "$*" >&2; }
+# red errors when standard error is a terminal (TOMATO_COLOR=always or never, and NO_COLOR, decide too; see `tomato help`); the programs the
+# session runs write plain text, which friendly and err then paint
+repl_color=0
+case "${TOMATO_COLOR:-auto}" in
+  always) repl_color=1 ;;
+  never) ;;
+  *) [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ] && [ -t 2 ] && repl_color=1 ;;
+esac
+export TOMATO_COLOR=never
+err() { if [ $repl_color = 1 ]; then printf '%s\n' "$*" | "$tomato" paint >&2; else printf '%s\n' "$*" >&2; fi; }
 
 # Split text on stdin into declarations (to $1) and statements (to $2): a top-level line starting with def, class,
 # interface, from, import, export, @ or ! (or "X implements Y") starts a declaration, and the lines indented under it
@@ -68,7 +77,7 @@ try_once() {
   } > "$S/try.tom"
   if [ $fast = 2 ]; then
     "$jsc" "$TOMATO_JSC_JS" -- "$wasmdir" run "$S/try.tom" "$S/inputs.try" ask > "$S/out" 2> "$S/err"
-    rc=$(sed -n 's/^~rc //p' "$S/err" | tail -1); grep -v -e '^~rc ' -e '^Could not open file: ' "$S/err" | sed -e 's/ (raised on line [0-9]*)//' > "$S/err2"; mv "$S/err2" "$S/err"
+    rc=$(sed -n 's/^~rc //p' "$S/err" | tail -1); grep -v -e '^~rc ' -e '^Could not open file: ' "$S/err" | sed -e 's/ (raised on line [0-9]*)//' -e '/^  at /d' -e '/^  \.\.\. and /d' > "$S/err2"; mv "$S/err2" "$S/err"
     RUN_RC="$rc"
     if [ "$rc" = 75 ]; then   # jsc added a newline after the prompt
       sz=$(wc -c < "$S/out" | tr -d ' '); [ "$sz" -gt 0 ] && head -c $((sz - 1)) "$S/out" > "$S/out2" && mv "$S/out2" "$S/out"
@@ -81,10 +90,10 @@ try_once() {
     clang -O0 -w -o "$S/try" "$S/try.ll" "$S/rt.o" -lm 2> "$S/err" || return 1
     TOMATO_INPUT_ASK=1 "$S/try" < "$S/inputs.try" > "$S/out" 2> "$S/err"; rc=$?
     RUN_RC=$rc
-    sed -e 's/ (raised on line [0-9]*)//' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
+    sed -e 's/ (raised on line [0-9]*)//' -e '/^  at /d' -e '/^  \.\.\. and /d' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
     return $rc
   else
-    TOMATO_INPUT_ASK=1 "$tomato" run "$S/try.tom" < "$S/inputs.try" > "$S/out" 2> "$S/err"; RUN_RC=$?
+    TOMATO_INPUT_ASK=1 "$tomato" run "$S/try.tom" --no-warnings < "$S/inputs.try" > "$S/out" 2> "$S/err"; RUN_RC=$?
     return $RUN_RC
   fi
 }
@@ -114,7 +123,8 @@ try_run() {
 # Show a compiler error against what the user typed. The compiler names a line and column of the generated program; this
 # maps them back to the piece just entered (its definitions, or its statements, which the session indents four spaces)
 # and shows that piece's own text, in the same format as `tomato run`: error, --> repl:LINE:COL, the source line, a caret.
-friendly() {   # reads $S/err, prints the message on stderr; writes "in-definition" to $S/where when the error is in a definition
+friendly() { if [ $repl_color = 1 ]; then friendly_plain | "$tomato" paint >&2; else friendly_plain >&2; fi; }
+friendly_plain() {   # reads $S/err, prints the message on stderr; writes "in-definition" to $S/where when the error is in a definition
   : > "$S/where"
   sed -e "s#$S/[^ :]*/*##g" "$S/err" | awk -v D0="$DECL_BASE" -v DN="$DECL_N" -v S0="$STMT_BASE" -v SN="$STMT_N" -v DF="$DECL_FILE" -v SF="$STMT_FILE" -v W="$S/where" '
     function digits(n) { return length(n ""); }
@@ -149,7 +159,7 @@ friendly() {   # reads $S/err, prints the message on stderr; writes "in-definiti
         else if (h > 0) sub(/^ *= help:/, "  = help:", x)
         print x
       }
-    }' >&2
+    }'
 }
 
 

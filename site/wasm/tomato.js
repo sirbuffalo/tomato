@@ -29,7 +29,9 @@
         var err = r.stderr.trim();
         if (!self.local && r.code !== 0 && /could not be opened/.test(err) && /^\s*(from|import)\s/m.test(source))
           err += "\n(imports of your own modules are not supported on this page; the installed tomato command supports them)";
-        return { ok: r.code === 0, ir: r.stdout, error: err };
+        // warnings (compiler/src/lint.tom) travel as comment lines at the end of the IR: ";! " then the text
+        var warnings = r.stdout.split("\n").filter(function (l) { return l.indexOf(";! ") === 0; }).map(function (l) { return l.slice(3); }).join("\n");
+        return { ok: r.code === 0, ir: r.stdout, error: err, warnings: warnings };
       });
     });
   };
@@ -117,7 +119,7 @@
     return this.compile(wrapped.text, "main", options && options.extra).then(function (c) {
       if (!c.ok) return { ok: false, stage: "compile", error: fixDiag(tidy(c.error), wrapped, source), ms: Date.now() - t0 };
       return self.run(c.ir, options).then(function (r) {
-        return { ok: true, stage: "run", stdout: r.stdout, stderr: remap(r.stderr, wrapped.map), exit: r.code, timed_out: r.timedOut, ir: c.ir, ms: Date.now() - t0 };
+        return { ok: true, stage: "run", stdout: r.stdout, stderr: remap(r.stderr, wrapped.map), exit: r.code, timed_out: r.timedOut, ir: c.ir, warnings: (options && options.repl) ? "" : tidy(c.warnings), ms: Date.now() - t0 };
       });
     });
   };

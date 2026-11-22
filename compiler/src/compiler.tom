@@ -9,6 +9,7 @@
 from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
 from lexer import LexError
 from diag import Diagnostic, format_error, closest
+from lint import Finding, lint_items, falls_through
 
 class NeedsEarlyCopy(Error):
     # a copy of a generic class is first made after code that loops over every class that fits an Iterable or Sized type was
@@ -335,6 +336,7 @@ def ex(reg: str, ty: str) -> Ex:
 
 class FuncInfo:
     name: str = ''
+    line: int = 0            # the line of the def
     owner: str = ''          # the class a method belongs to, or ''
     ret: str = ''
     ptypes: list[str] = []   # without self
@@ -422,6 +424,8 @@ class Mod:
     func_nodes: list[Node] = []   # the FuncDef of each entry of infos, in the same order
     sources: dict[str, str] = {}  # the source text of each module loaded (for showing an error's line)
     helper_count: int = 0
+    main_path: str = ''           # the file name shown for the main program
+    warnings: list[str] = []      # the finished text of each warning (compiler/src/lint.tom), shown after a program compiles
     tvars: dict[str, str] = {}    # the type parameters in scope and the types they stand for (D60a)
     generics: dict[str, Node] = {}      # the generic classes and functions, by program-wide name
     generic_mods: dict[str, str] = {}   # the module that declared each
@@ -1108,6 +1112,7 @@ class Gen:
     try_depth: int = 0
     slot_count: int = 0
     line: int = 0
+    fname: str = ''           # the function's name as a call trace shows it (Class.method for a method)
     owner: str = ''           # the class whose method is being compiled, or ''
     in_init: bool = False
     ret: str = ''
@@ -1771,6 +1776,14 @@ class Gen:
         amount = self.arith('mul', fix, b)
         return self.arith('add', r, amount)
 
+    def trace(self, first: bool):
+        # debug mode: add this function and the current line to the call trace of the error leaving it (the first frame starts a new trace)
+        if self.mod.mode != 1 or self.fname == '':
+            return
+        if first:
+            self.emit('call void @tomato_trace_clear()')
+        self.emit('call void @tomato_trace(ptr ' + self.mod.intern(self.fname) + f'.c, i32 {self.line})')
+
     def fail_if(self, bad: str, message: str):
         # bad is an i1; when true, a RuntimeError is raised, which a catch can handle (D22a)
         self.fail_with(bad, 'RuntimeError', message)
@@ -1785,6 +1798,7 @@ class Gen:
         self.emit(f'store ptr {err}, ptr @tomato_exc')
         self.emit(f'store i32 {self.line}, ptr @tomato_exc_line')
         self.emit('store i32 1, ptr @tomato_exc_rt')
+        self.trace(True)
         self.emit('store i32 1, ptr @tomato_exc_seen')
         self.br(self.unwind_target())
         self.place(ok)
@@ -2624,7 +2638,10 @@ class Gen:
             b = self.unwrap(b, n.line)
         if (op == 'is' or op == 'is not' or op == '==' or op == '!=') and (a.ty == 'None' or b.ty == 'None'):
             if not is_rc(a.ty) or not is_rc(b.ty):
-                raise CompileError(f'cannot compare {shown(a.ty)} and {shown(b.ty)} with None\nonly a value that can be None may be compared with None', n.line)
+                other = a.ty
+                if a.ty == 'None':
+                    other = b.ty
+                raise CompileError(f'a value of type {shown(other)} is never None, so it cannot be compared with None\nonly a value that can be None (such as T | None) may be compared with None', n.line)
             cc = 'ne' if op == 'is not' or op == '!=' else 'eq'
             c = self.tmp('isnone')
             self.emit(f'{c} = icmp {cc} ptr {a.reg}, {b.reg}')
@@ -2926,7 +2943,6 @@ class Gen:
 
     def llvm_call(self, n: Node, name: str) -> Ex:
         # a call to a declared LLVM function (D27b): the declaration gives the types, the linker the body
-        decl = ex('', '')
         found: list[FuncInfo] = [d for d in self.mod.llvm_decls if d.name == name]
         if len(found) == 0:
             raise CompileError(f"the LLVM function '!{name}' is not declared\nadd a line like '!{name}(a: int) -> int' at the top level of the file", n.line)
@@ -2998,7 +3014,7 @@ class Gen:
         for a in args:
             if k < nfixed:
                 v = self.expr(a, info.ptypes[k])
-                v = self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + " of '" + info.name + "'")
+                v = self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + " of '" + info.name + "' (the parameter '" + info.pnames[k] + "')")
                 slots[k] = v
             else:
                 v = self.expr(a, elem_of(info.ptypes[nfixed]))
@@ -3018,7 +3034,7 @@ class Gen:
                 if slots[at].ty != '':
                     raise CompileError(f"the argument '{kname}' of '{info.name}' is given twice", line)
                 v = self.expr(val_node(kv.items[1]), info.ptypes[at])
-                v = self.want(v, info.ptypes[at], line, 'argument ' + kname + " of '" + info.name + "'")
+                v = self.want(v, info.ptypes[at], line, "argument '" + kname + "' of '" + info.name + "'")
                 slots[at] = v
             elif info.has_kwargs:
                 if kname in extra_names:
@@ -3092,6 +3108,7 @@ class Gen:
         fine = self.label('fine')
         self.cond_br(has, bad, fine)
         self.place(bad)
+        self.trace(False)
         for v in values:
             self.release(v)
         self.br(self.unwind_target())
@@ -3406,19 +3423,6 @@ class Gen:
 
     def input_call(self, args: list[Node], line: int) -> Ex:
         raise CompileError("input() is async, so it must be awaited\nwrite: await input(prompt)  inside an async def", line)
-        if len(args) > 1:
-            raise CompileError('input() takes an optional prompt as text: input() or input(prompt)', line)
-        prompt = ex(self.mod.intern(''), 'str')
-        if len(args) == 1:
-            prompt = self.expr(args[0])
-            prompt = self.want(prompt, 'str', line, 'the prompt')
-        r = self.tmp('line')
-        self.emit(f'{r} = call ptr @tomato_input(ptr {prompt.reg})')
-        bad = self.tmp('noinput')
-        self.emit(f'{bad} = icmp eq ptr {r}, null')
-        self.release(prompt)
-        self.fail_with(bad, 'EOFError', 'there is no more input to read')
-        return ex(r, 'str')
 
     # ---- async: an async function runs as a frame (see FRAME_FIXED); await and yield are the places it can stop and go on later
     def frame_field(self, h: str, k: int, ty: str) -> str:
@@ -3875,6 +3879,8 @@ class Gen:
         result = self.hidden_slot('len.of')
         end = self.label('endlen')
         members = union_members(v.ty)
+        then = ''
+        nxt = ''
         for k, m in enumerate(members):
             if k < len(members) - 1:
                 then = self.label('lenthen')
@@ -4165,6 +4171,7 @@ class Gen:
                 raise CompileError(f'raise needs an error object, but this is {shown(v.ty)}\nwrite raise Error("message") or raise one of your Error subclasses', s.line)
             self.emit('store ptr ' + v.reg + ', ptr @tomato_exc')            # the pending error owns the reference
             self.emit(f'store i32 {s.line}, ptr @tomato_exc_line')
+            self.trace(True)
             self.emit('store i32 0, ptr @tomato_exc_rt')
             self.emit('store i32 1, ptr @tomato_exc_seen')
             self.br(self.unwind_target())
@@ -4262,6 +4269,8 @@ class Gen:
             self.cond_br(hit, match, nxt)
             self.place(match)
             self.emit('store ptr null, ptr @tomato_exc')             # handled: the catch variable takes the reference
+            if self.mod.mode == 1:
+                self.emit('call void @tomato_trace_clear()')
             if h.items[1].tag == 's':
                 var = h.items[1].text
                 reg = ''
@@ -4673,6 +4682,8 @@ class Gen:
         whole = self.tmp('whole')
         self.emit(f'{whole} = load ptr, ptr {self.slots[name]}')
         end = self.label('endunion')
+        then = ''
+        nxt = ''
         for k, m in enumerate(members):
             if k < len(members) - 1:
                 then = self.label('eachof')
@@ -4887,12 +4898,19 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
     text += '\n'.join(g.lines) + '\n}\n'
     return text
 
+def trace_name(info: FuncInfo) -> str:
+    # the function as a call trace shows it: Class.method, or just the name
+    if info.owner == '':
+        return info.name
+    return info.owner.split('.')[-1] + '.' + info.name
+
 def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     mod.cur = info.module
     mod.tvars = info.targs
     g = Gen()
     g.mod = mod
     g.owner = info.owner
+    g.fname = trace_name(info)
     g.in_init = info.is_init
     g.ret = info.ret
     params = val_nodes(f.fields[1])
@@ -4917,6 +4935,8 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         if is_rc(types[k]):
             g.emit('call void @tomato_retain(ptr %arg.' + name + ')')    # the caller only lent it
     g.block(val_nodes(f.fields[3]))
+    if info.ret != '' and falls_through(val_nodes(f.fields[3])):
+        raise CompileError(f"the function '{info.name}' can reach its end without returning a value\nend every path with a return, for example give the last if an else that returns", f.line)
     if not g.terminated:
         if info.ret == '':
             g.br('epilogue')
@@ -4934,6 +4954,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     g = Gen()
     g.mod = mod
     g.owner = info.owner
+    g.fname = trace_name(info)
     g.is_async = True
     g.ret = info.ret
     g.ret_yields = info.yields
@@ -4966,6 +4987,8 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     g.line = f.line
     g.check_cancel()                  # cancelled before it ever ran
     g.block(val_nodes(f.fields[3]))
+    if info.ret != '' and falls_through(val_nodes(f.fields[3])):
+        raise CompileError(f"the function '{info.name}' can reach its end without returning a value\nend every path with a return, for example give the last if an else that returns", f.line)
     if not g.terminated:
         if info.ret == '':
             g.br('epilogue')
@@ -5203,6 +5226,8 @@ def declarations(mod: Mod) -> str:
     d = 'declare i32 @printf(ptr, ...)\n'
     d += 'declare i32 @putchar(i32)\n'
     d += 'declare void @tomato_fail(ptr)\n'
+    d += 'declare void @tomato_trace(ptr, i32)\n'
+    d += 'declare void @tomato_trace_clear()\n'
     d += 'declare void @tomato_leak_check()\n'
     d += 'declare void @tomato_retain(ptr)\n'
     d += 'declare void @tomato_release(ptr)\n'
@@ -5409,6 +5434,7 @@ def key_of(module: str, name: str) -> str:
 def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info = FuncInfo()
     info.name = item.fields[0].text
+    info.line = item.line
     info.owner = owner
     info.module = mod.cur
     info.key = key_of(mod.cur, info.name)
@@ -5432,7 +5458,11 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
         info.ret = mod.type_name(item.fields[2])
         if info.ret == '':
             raise CompileError('this return type is not supported\na function can return int, bool, str, float, a list, a set, a dict or a class', item.line)
+    seen: list[str] = []
     for p in val_nodes(item.fields[1]):
+        if p.fields[0].text in seen:
+            raise CompileError(f"the parameter '{p.fields[0].text}' of '{info.name}' is declared twice\nrename one of them", p.line)
+        seen.append(p.fields[0].text)
         if p.fields[0].text == 'self' and owner != '':
             continue
         if p.fields[2].tag == 'n':
@@ -5505,7 +5535,7 @@ def check_class_shapes(mod: Mod):
         for f in mod.infos:
             if f.owner == c.name:
                 if f.name in names or field_position(c, f.name) >= 0:
-                    raise CompileError(f"'{f.name}' is defined twice in class '{c.display}'", c.line)
+                    raise CompileError(f"'{f.name}' is defined twice in class '{c.display}'\nrename one of them", f.line)
                 names.append(f.name)
                 if f.is_init:
                     inits += 1
@@ -5716,6 +5746,31 @@ def top_item(node: Node, module: str) -> TopItem:
     t.module = module
     return t
 
+def collect_warnings(mod: Mod, own: list[Node], module: str, src: str):
+    # the lint findings of one file as finished warnings, in line order, minus those silenced by an `# allow: KIND` comment on their line
+    found = lint_items(own)
+    lines = src.split('\n')
+    taken = [False] * len(found)
+    ordered: list[Finding] = []
+    for _ in found:
+        best = -1
+        for i, f in enumerate(found):
+            if not taken[i] and (best < 0 or f.line < found[best].line):
+                best = i
+        taken[best] = True
+        ordered.append(found[best])
+    for f in ordered:
+        text = ''
+        if 1 <= f.line and f.line <= len(lines):
+            text = lines[f.line - 1]
+        if f'allow: {f.kind}' not in text:
+            mod.warnings.append(format_error(f.message, f.line, 0, src, warning_path(mod, module), 'warning'))
+
+def warning_path(mod: Mod, module: str) -> str:
+    if module == 'main':
+        return mod.main_path
+    return f'{module}.tom'
+
 def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[TopItem], imports: list[ImportInfo], loaded: list[str]) -> list[Node]:
     # the declarations of src, placed after those of the modules it imports (each module once)
     mod.sources[module] = src
@@ -5741,6 +5796,7 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
         if item.kind != 'Import':
             own.append(item)
             items.append(top_item(item, module))
+    collect_warnings(mod, mine, module, src)
     return own
 
 def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
@@ -5923,6 +5979,7 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
     for attempt in range(40):
         mod = Mod()
         mod.preload = early
+        mod.main_path = path
         try:
             result = compile_with(mod, src, dir, std, entry_name, mode)
         catch NeedsEarlyCopy as again:
@@ -5934,5 +5991,8 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
             raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading, path))
         catch CompileError as e:
             raise Diagnostic(located(mod, e.message, e.line, e.col, mod.cur, path))
+        for warning in mod.warnings:
+            for text_line in warning.split('\n'):
+                result += f';! {text_line}\n'
         return result
     raise Diagnostic('internal compiler error: too many generic copies had to be made early')

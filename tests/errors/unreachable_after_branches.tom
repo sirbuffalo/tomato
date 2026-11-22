@@ -1,0 +1,10 @@
+@main
+def main():
+    print(pick(2))
+
+def pick(x: int) -> int:
+    if x > 0:
+        return 1
+    else:
+        raise Error("no")
+    return 0

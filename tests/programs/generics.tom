@@ -20,7 +20,7 @@ class Pair[A, B]:
     second: B
 
     @init
-    def make(self, first: A, second: B):
+    def make(self, first: A, second: B):  # allow: shadow
         self.first = first
         self.second = second
 

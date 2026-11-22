@@ -8,7 +8,7 @@ Tomato is a statically typed, reference-counted language with indentation syntax
 - **Install:** `./install-native.sh` builds the compiler from the checked-in IR with clang alone and installs `tomato` (`run`, `build`, `compile`, `explain`, `repl`, `update`, `version`, `help`).
 - **Try it:** the website (https://tomato.davismcd.com) compiles and runs programs in the browser, with no install.
 - **Numbers:** `int` has unlimited size (numbers beyond 4.6 quintillion are freed when the program ends, P63); fixed-width integers stop on overflow.
-- **Errors:** compile errors, runtime errors and the repl share one format, described in `docs/errors.md`.
+- **Errors:** compile errors, warnings, runtime errors (with a call trace) and the repl share one format, described in `docs/errors.md`; on a terminal they are colored (`--color=auto|always|never`, `NO_COLOR`), with the same words as plain text.
 - **Update trust:** `tomato update` trusts HTTPS plus the checksum in `site/latest.json`; archives are not signed yet.
 - **Test:** `tests/run.sh` (needs only clang; `jsc` on macOS for the WebAssembly checks, `expect` for the repl history check).
 

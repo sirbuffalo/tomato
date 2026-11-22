@@ -116,11 +116,11 @@ def guess_span(head: str, text: str, at: int) -> tuple[int]:
         indent += 1
     return (indent + 1, max(len(text.strip()), 1))
 
-export def format_error(message: str, line: int, col: int, src: str, path: str) -> str:
+export def format_error(message: str, line: int, col: int, src: str, path: str, label: str = 'error') -> str:
     parts = message.split('\n')
     head = parts[0]
     helps = parts[1:]
-    out = f'error: {head}'
+    out = f'{label}: {head}'
     if line < 1:
         for h in helps:
             out += f'\n  = help: {h}'

@@ -13,7 +13,7 @@ async def after(seconds: int, text: str):
 async def main():
     a = start tick('slow', 0.02, 3)
     b = start tick('fast', 0.01, 3)
-    c = start after(0, 'zero')
+    c = start after(0, 'zero')  # allow: unused
     print('started')
     print(await a + await b)
     await sleep(0)

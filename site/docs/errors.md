@@ -20,13 +20,74 @@ error: name 'tets' is not defined
 - `= help: ...` lines, when present, say how to fix it. A name that is close to a known one gets `did you mean '...'?`.
 - An error with no place in the source (for example, no function marked `@main`) has only the first line and its help.
 
-Only the first problem is reported. The command exits with status 1 and prints the message on standard error.
+Only the first error is reported. The command exits with status 1 and prints the message on standard error.
 
 Messages never mention compiler internals (token names, temporary paths, decision numbers). A limit of the language is
 described as what you cannot do and what to do instead ("`map` is not available: Tomato has no function values yet; use a
-for loop instead").
+for loop instead"). An argument of the wrong type names the function and the parameter: `argument 1 of 'f' (the parameter
+'a') has type str, but int is expected`.
+
+## Warnings
+
+A warning has the same layout with `warning:` in place of `error:`. It is about code that runs but is probably wrong or
+useless, and it never stops the program or changes its exit status. All the warnings of a program are shown (in line order)
+before it runs. The checks are:
+
+| Kind | When | Example message |
+| --- | --- | --- |
+| `unused` | a variable is given a value that nothing reads; an imported name is never used | `the variable 'total' is given a value that is never used` |
+| `unreachable` | a statement follows a `return`, `raise`, `break` or `continue` (or an `if`/`else` or `try` whose branches all leave) | `this code can never run, because the statement before it always leaves` |
+| `unassigned` | a variable is read where some path to it did not give it a value | `'label' might not have a value here, because some paths above do not give it one` |
+| `shadow` | a variable has the name of a built-in, or of a function, class or constant of the same file | `the variable 'len' has the same name as a function or class, which it hides here` |
+| `loop-change` | a list is changed (`append`, `pop`, `remove` ...) inside a `for` loop that goes through it | `'xs' is changed while the loop goes through it` |
+
+To silence one, write `# allow: KIND` as a comment on the line the warning points at (`total = 0  # allow: unused`). A name
+that starts with `_` is meant to be unused, and loop variables, `catch` variables and parameters are never reported as unused.
+`tomato run --no-warnings` (or `TOMATO_WARNINGS=off`) hides them all. The repl never shows warnings.
+
+A warning is silent when a case is unclear, and the compiler, the standard library and the examples compile with none.
+
+One problem of this family is an error, because the program could not work: a function that gives a value must end every
+path with a `return` or `raise` (`the function 'sign' can reach its end without returning a value`). Repeated parameter or
+method names, and a comparison of a value that can never be `None` with `None`, are errors too.
+
+## Color
+
+When standard error is a terminal, `tomato` colors what it prints; the words are exactly the same, only ANSI codes are added:
+
+| Part | Style |
+| --- | --- |
+| `error:` | bold red |
+| `warning:` | bold yellow |
+| the message after it | bold |
+| `-->` and the `|` gutter, `=` | blue |
+| `FILE:LINE:COLUMN` | cyan |
+| the `^` caret row | red (yellow for a warning) |
+| `help:` and its text | green |
+| call-trace lines (`at f (line 4)`) | dim |
+
+Control it with `--color=auto|always|never` on any command (the default is `auto`: color when standard error is a terminal),
+with `TOMATO_COLOR=auto|always|never`, or with `NO_COLOR` (any non-empty value turns it off; `--color=always` wins because it
+was asked for). Programs built with `tomato build` follow `TOMATO_COLOR` and `NO_COLOR` too, for their own runtime errors.
+A terminal that is `dumb` is never colored. When output goes to a pipe or a file the text is plain, which is what the tests
+and the website's copy of the text see. On the website the same text is shown with CSS classes (`e-error`, `e-warning`, `e-loc`,
+`e-caret`, `e-help` ...): the output is the terminal text with the ANSI codes replaced by styles.
 
 ## Errors while a program runs
+
+An error that stops a running program prints `error: MESSAGE`, for example `error: division by zero`, then a call trace: one
+`at FUNCTION (line N)` line for the function where the error was raised and one for each function that called it, innermost
+first (`Class.method` for a method):
+
+```
+error: division by zero
+  at half (line 6)
+  at main (line 3)
+```
+
+An error the program raises itself and nobody catches prints `error: ClassName: message (raised on line N)` and then the same
+trace. A `catch` that handles the error discards its trace. At most 24 lines are kept; further ones are counted
+(`... and 3 more calls`). In `--mode release` there is no trace: the program prints only the short code described next.
 
 An error that stops a running program prints `error: MESSAGE`, for example `error: division by zero`. An error the program
 raises itself and nobody catches prints `error: ClassName: message (raised on line N)`. There are two modes (D34b). `--mode debug`
@@ -40,6 +101,12 @@ line, and links the program with a higher optimisation level (`clang -O2`; debug
 - Raise `CompileError(message, line)` (compiler), `ParseError(message, line, col)` or `LexError(message, line, col)`. Put help
   after a newline in the message: `"'x' is defined twice\nrename one of them"`. Quote names with single quotes: the column is
   found from the first quoted name when it is not given.
-- `compiler/src/diag.tom` formats the message (`format_error`) and suggests names (`closest`). `compile_module` catches the three
-  error classes and raises a `Diagnostic`, whose message is the finished text; the runtime prints a `Diagnostic` as it is.
-- `tests/errors/NAME.tom` with the whole expected text in `NAME.out` is checked by `tests/run.sh`.
+- `compiler/src/diag.tom` formats the message (`format_error`, with `label='warning'` for warnings) and suggests names
+  (`closest`). `compile_module` catches the three error classes and raises a `Diagnostic`, whose message is the finished
+  text; the runtime prints a `Diagnostic` as it is.
+- Warnings come from `compiler/src/lint.tom` (`lint_items` reads the syntax tree of one file and gives `Finding`s). The compiler
+  formats them and appends them to the IR as `;! ` comment lines, which `tomato`, the repl and `site/wasm/tomato.js` take out
+  and show. Add a check there, give it a kind word, keep it quiet when unsure, and make the repo's own code pass it.
+- `tests/errors/NAME.tom` with the whole expected text in `NAME.out` (the error, or the warnings) is checked by `tests/run.sh`.
+- Color is not the compiler's job: `tomato paint` (awk, in `native/tomato`), `use_color` in `runtime/tomato_rt.c` and
+  `tomatoErrors` in `site/site.js` implement the same table.

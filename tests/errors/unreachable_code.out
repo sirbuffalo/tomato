@@ -1,0 +1,6 @@
+warning: this code can never run, because the statement before it always leaves
+ --> tests/errors/unreachable_code.tom:7:5
+  |
+7 |     print("never")
+  |     ^^^^^^^^^^^^^^
+  = help: remove it, or remove the statement that leaves

@@ -1,0 +1,6 @@
+warning: 'xs' is changed while the loop goes through it
+ --> tests/errors/loop_changes_list.tom:4:14
+  |
+4 |     for x in xs:
+  |              ^^
+  = help: loop over a copy, such as: for x in xs[:]:

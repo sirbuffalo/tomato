@@ -51,7 +51,7 @@ def main():
             break
         print(x)
     try:
-        bad = range(1, 5, 0)
+        bad = range(1, 5, 0)  # allow: unused
     catch RuntimeError as e:
         print('caught', e.message)
     try:

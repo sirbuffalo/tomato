@@ -76,7 +76,7 @@ function stdinText(list) { return list.length ? list.join("\n") + "\n" : ""; }
 function execute() {
   $("run").disabled = true; $("status").textContent = "Running…"; $("err").textContent = "";
   runProgram($("src").value, false, $("inputs").value.split(/\s+/).filter(Boolean), stdinText(answers)).then(function (d) {
-    if (!d.ok) { $("out").textContent = ""; $("err").textContent = hint(d.error || "failed"); $("status").textContent = "Failed"; return; }
+    if (!d.ok) { $("out").textContent = ""; $("err").innerHTML = tomatoErrors(hint(d.error || "failed")); $("status").textContent = "Failed"; return; }
     $("out").textContent = d.stdout; var e = d.stderr || "";
     if (d.exit === 75 && !d.timed_out) {
       var f = document.createElement("input"); f.className = "stdin-line"; f.setAttribute("aria-label", "Input for the program"); f.autocomplete = "off"; f.spellcheck = false;
@@ -86,7 +86,7 @@ function execute() {
     if (d.timed_out) e += "\nStopped: ran longer than 5 seconds.";
     if (d.stopped === "memory") e += "\nStopped: too much memory.";
     if (d.stopped === "output") e += "\nStopped: too much output.";
-    $("err").textContent = e.trim(); $("status").textContent = "Done in " + d.ms + " ms";
+    $("err").innerHTML = tomatoErrors(((d.warnings ? d.warnings + "\n" : "") + e).trim()); $("status").textContent = "Done in " + d.ms + " ms";
   }).catch(function (e) { $("err").textContent = "Could not run the program: " + e; $("status").textContent = ""; })
     .then(function () { $("run").disabled = false; });
 }
@@ -117,9 +117,9 @@ function runCandidate(src) {
   }
   return go();
 }
-function log(cls, text, more) { var d = document.createElement("div"); d.className = cls; if (cls === "in") d.innerHTML = '<span class="tk-p">' + (more ? "... " : "&gt;&gt;&gt; ") + "</span>" + tomatoHighlight(text); else d.textContent = text; $("repl-log").appendChild(d); $("repl-log").scrollTop = 1e9; }
+function log(cls, text, more) { var d = document.createElement("div"); d.className = cls; if (cls === "in") d.innerHTML = '<span class="tk-p">' + (more ? "... " : "&gt;&gt;&gt; ") + "</span>" + tomatoHighlight(text); else if (cls === "e") d.innerHTML = tomatoErrors(text); else d.textContent = text; $("repl-log").appendChild(d); $("repl-log").scrollTop = 1e9; }
 // error text refers to lines of the generated session program, which the user never typed: drop them (the installed repl does too)
-function plain(msg) { return msg.replace(/ on line \d+/g, "").replace(/\bline \d+: /g, ""); }
+function plain(msg) { return msg.replace(/^ {2}(at |\.\.\. and ).*\n?/gm, "").replace(/ on line \d+/g, "").replace(/\bline \d+: /g, ""); }
 function program(extra) { return defs.concat(stmts, extra || []).join("\n") + "\n"; }
 function isDef(t) { return /^(def|class|interface|from|import|@|export|async def)\b|^!/.test(t) || /^\w+ implements /.test(t); }
 function isBlock(t) { return /:\s*$/.test(t.split("\n")[0]); }

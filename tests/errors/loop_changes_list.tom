@@ -1,0 +1,7 @@
+@main
+def main():
+    xs = [1, 2, 3]
+    for x in xs:
+        if x == 2:
+            xs.append(4)
+    print(xs)

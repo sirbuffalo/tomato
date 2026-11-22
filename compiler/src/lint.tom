@@ -1,0 +1,384 @@
+# Warnings and one error found by reading the syntax tree of a program, before any code is made (docs/errors.md). Nothing here
+# changes what a program does; a warning is text for the person, and each kind can be silenced on its line with a comment
+# such as `# allow: unused`. The checks are meant to be quiet: when a case is unclear, no warning is given.
+#
+#   unused      a variable is given a value that nothing reads, or an imported name is never used (a name that starts with _ is
+#               meant to be unused)
+#   unreachable a statement follows one that always leaves the block (return, raise, break, continue)
+#   unassigned  a variable is read where some path to it has not given it a value
+#   shadow      a variable has the name of a built-in or of a function or class of the same file
+#   loop-change a list is changed while a for loop goes through it
+from parser import Node, Val, val_node, val_nodes
+
+export class Finding:
+    line: int = 0
+    kind: str = ''
+    message: str = ''
+
+def finding(line: int, kind: str, message: str) -> Finding:
+    f = Finding()
+    f.line = line
+    f.kind = kind
+    f.message = message
+    return f
+
+# the built-in functions and classes whose names a variable should not take
+def builtin_names() -> list[str]:
+    return ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'range', 'min', 'max', 'sum', 'abs', 'chr', 'ord', 'sorted', 'reversed', 'enumerate', 'zip', 'list', 'dict', 'set', 'tuple', 'bool']
+
+# the nodes directly inside a value: a node itself, or the nodes of a list or tuple
+def kids(v: Val) -> list[Node]:
+    out: list[Node] = []
+    if v.tag == 'n':
+        out.append(val_node(v))
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            for k in kids(item):
+                out.append(k)
+    return out
+
+# every name written anywhere under v (a variable, a function, a type, a field), for finding unused imports
+def words(v: Val, out: list[str]):
+    if v.tag == 's':
+        out.append(v.text)
+    elif v.tag == 'n':
+        for f in val_node(v).fields:
+            words(f, out)
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            words(item, out)
+
+# the Name nodes read under v (the target of an assignment is not a read)
+def reads(v: Val, out: list[Node]):
+    if v.tag == 'n':
+        n = val_node(v)
+        if n.kind == 'Name':
+            out.append(n)
+        elif n.kind == 'Assign' and val_node(n.fields[0]).kind == 'Name':
+            reads(n.fields[1], out)
+        else:
+            for f in n.fields:
+                reads(f, out)
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            reads(item, out)
+
+def is_true(n: Node) -> bool:
+    return n.kind == 'BoolLit' and n.fields[0].flag
+
+# the statements under a block that belong to the same loop (not those of a loop inside it) include a break
+def has_break(body: list[Node]) -> bool:
+    for s in body:
+        if s.kind == 'Break':
+            return True
+        if s.kind == 'If':
+            for branch in s.fields[0].items:
+                if has_break(val_nodes(branch.items[1])):
+                    return True
+            if s.fields[1].tag == 'l' and has_break(val_nodes(s.fields[1])):
+                return True
+        elif s.kind == 'Try':
+            if has_break(val_nodes(s.fields[0])):
+                return True
+            for h in s.fields[1].items:
+                if has_break(val_nodes(h.items[2])):
+                    return True
+            if s.fields[2].tag == 'l' and has_break(val_nodes(s.fields[2])):
+                return True
+            if s.fields[3].tag == 'l' and has_break(val_nodes(s.fields[3])):
+                return True
+    return False
+
+# does the statement always leave its block (return, raise, break, continue, or every branch of an if or try does)?
+def exits(s: Node, loose: bool) -> bool:
+    k = s.kind
+    if k == 'Return' or k == 'Raise' or k == 'Break' or k == 'Continue':
+        return True
+    if k == 'If':
+        if s.fields[1].tag != 'l':
+            return False
+        for branch in s.fields[0].items:
+            if not block_exits(val_nodes(branch.items[1]), loose):
+                return False
+        return block_exits(val_nodes(s.fields[1]), loose)
+    if k == 'While':
+        return is_true(val_node(s.fields[0])) and not has_break(val_nodes(s.fields[1]))
+    if k == 'Try':
+        if s.fields[3].tag == 'l' and block_exits(val_nodes(s.fields[3]), loose):
+            return True
+        goes = block_exits(val_nodes(s.fields[0]), loose)
+        if not goes and s.fields[2].tag == 'l':
+            goes = block_exits(val_nodes(s.fields[2]), loose)
+        if not goes:
+            return False
+        for h in s.fields[1].items:
+            if not block_exits(val_nodes(h.items[2]), loose):
+                return False
+        return True
+    return False
+
+# loose: a call that ends a block might never come back (a helper that raises), so it counts as leaving
+def block_exits(body: list[Node], loose: bool) -> bool:
+    for i, s in enumerate(body):
+        if exits(s, loose):
+            return True
+        if loose and i == len(body) - 1 and s.kind == 'ExprStmt' and val_node(s.fields[0]).kind == 'Call':
+            return True
+    return False
+
+# can the function's end be reached? (a function that gives a value must not)
+export def falls_through(body: list[Node]) -> bool:
+    return not block_exits(body, True)
+
+# ---- unreachable code, in every block under the function body
+
+def blocks_of(s: Node) -> list[list[Node]]:
+    out: list[list[Node]] = []
+    k = s.kind
+    if k == 'If':
+        for branch in s.fields[0].items:
+            out.append(val_nodes(branch.items[1]))
+        if s.fields[1].tag == 'l':
+            out.append(val_nodes(s.fields[1]))
+    elif k == 'While':
+        out.append(val_nodes(s.fields[1]))
+    elif k == 'For':
+        out.append(val_nodes(s.fields[2]))
+    elif k == 'AsyncFor':
+        out.append(val_nodes(s.fields[2]))
+    elif k == 'Try':
+        out.append(val_nodes(s.fields[0]))
+        for h in s.fields[1].items:
+            out.append(val_nodes(h.items[2]))
+        if s.fields[2].tag == 'l':
+            out.append(val_nodes(s.fields[2]))
+        if s.fields[3].tag == 'l':
+            out.append(val_nodes(s.fields[3]))
+    return out
+
+def unreachable(body: list[Node], found: list[Finding]):
+    for i, s in enumerate(body):
+        if exits(s, False) and i + 1 < len(body):
+            found.append(finding(body[i + 1].line, 'unreachable', 'this code can never run, because the statement before it always leaves\nremove it, or remove the statement that leaves'))
+            break
+    for s in body:
+        for inner in blocks_of(s):
+            unreachable(inner, found)
+
+# ---- a list changed while a loop goes through it
+
+def changes(name: str, body: list[Node]) -> bool:
+    for s in body:
+        if s.kind == 'ExprStmt':
+            e = val_node(s.fields[0])
+            if e.kind == 'Call':
+                callee = val_node(e.fields[0])
+                if callee.kind == 'Attr' and callee.fields[1].text in ['append', 'insert', 'pop', 'remove', 'clear', 'extend', 'add', 'discard']:
+                    target = val_node(callee.fields[0])
+                    if target.kind == 'Name' and target.fields[0].text == name:
+                        return True
+        for inner in blocks_of(s):
+            if s.kind != 'For' and s.kind != 'While' and changes(name, inner):
+                return True
+    return False
+
+def loop_changes(body: list[Node], found: list[Finding]):
+    for s in body:
+        if s.kind == 'For':
+            it = val_node(s.fields[1])
+            if it.kind == 'Name' and changes(it.fields[0].text, val_nodes(s.fields[2])):
+                name = it.fields[0].text
+                found.append(finding(s.line, 'loop-change', f"'{name}' is changed while the loop goes through it\nloop over a copy, such as: for x in {name}[:]:"))
+        for inner in blocks_of(s):
+            loop_changes(inner, found)
+
+# ---- variables: unused, shadowing, read before a value is given
+
+class Usage:
+    stored: list[str] = []         # the variables a plain assignment or a declaration gives a value, in order of first appearance
+    store_line: dict[str, int] = {}
+    read: list[str] = []
+    other: list[str] = []          # names bound some other way (loop variables, catch variables, parameters)
+
+def note_store(u: Usage, name: str, line: int):
+    if name not in u.store_line:
+        u.store_line[name] = line
+        u.stored.append(name)
+
+def scan(v: Val, u: Usage):
+    if v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            scan(item, u)
+        return
+    if v.tag != 'n':
+        return
+    n = val_node(v)
+    k = n.kind
+    if k == 'Name':
+        u.read.append(n.fields[0].text)
+        return
+    if k == 'Assign':
+        target = val_node(n.fields[0])
+        if target.kind == 'Name':
+            note_store(u, target.fields[0].text, n.line)
+        else:
+            scan(n.fields[0], u)
+        scan(n.fields[1], u)
+        return
+    if k == 'Declare':
+        note_store(u, n.fields[0].text, n.line)
+        scan(n.fields[2], u)
+        return
+    if k == 'For' or k == 'AsyncFor':
+        u.other.append(n.fields[0].text)
+    if k == 'Try':
+        for h in n.fields[1].items:
+            if h.items[1].tag == 's':
+                u.other.append(h.items[1].text)
+    for f in n.fields:
+        scan(f, u)
+
+def check_reads(v: Val, tracked: list[str], assigned: list[str], reported: list[str], found: list[Finding], line: int):
+    names: list[Node] = []
+    reads(v, names)
+    for r in names:
+        name = r.fields[0].text
+        if name in tracked and name not in assigned and name not in reported:
+            reported.append(name)
+            found.append(finding(r.line, 'unassigned', f"'{name}' might not have a value here, because some paths above do not give it one\ngive it a value before the if or loop, or in every branch"))
+
+def both(a: list[str], b: list[str]) -> list[str]:
+    return [x for x in a if x in b]
+
+# Goes through the statements in order with the variables known to have a value so far; gives the variables that have a value after them.
+def flow(body: list[Node], start: list[str], tracked: list[str], reported: list[str], found: list[Finding]) -> list[str]:
+    assigned = [x for x in start]
+    for s in body:
+        assigned = flow_stmt(s, assigned, tracked, reported, found)
+    return assigned
+
+def flow_stmt(s: Node, assigned: list[str], tracked: list[str], reported: list[str], found: list[Finding]) -> list[str]:
+    k = s.kind
+    if k == 'Assign':
+        check_reads(s.fields[1], tracked, assigned, reported, found, s.line)
+        target = val_node(s.fields[0])
+        if target.kind == 'Name':
+            return assigned + [target.fields[0].text]
+        check_reads(s.fields[0], tracked, assigned, reported, found, s.line)
+        return assigned
+    if k == 'Declare':
+        check_reads(s.fields[2], tracked, assigned, reported, found, s.line)
+        return assigned + [s.fields[0].text]
+    if k == 'If':
+        paths: list[list[str]] = []
+        for branch in s.fields[0].items:
+            check_reads(branch.items[0], tracked, assigned, reported, found, s.line)
+            inner = val_nodes(branch.items[1])
+            after = flow(inner, assigned, tracked, reported, found)
+            if not block_exits(inner, False):
+                paths.append(after)
+        if s.fields[1].tag == 'l':
+            inner = val_nodes(s.fields[1])
+            after = flow(inner, assigned, tracked, reported, found)
+            if not block_exits(inner, False):
+                paths.append(after)
+        else:
+            paths.append(assigned)
+        if len(paths) == 0:
+            return tracked          # nothing after it can run: no more reports
+        result = paths[0]
+        for p in paths:
+            result = both(result, p)
+        return result
+    if k == 'Multi':
+        return flow(val_nodes(s.fields[0]), assigned, tracked, reported, found)
+    if k == 'While':
+        check_reads(s.fields[0], tracked, assigned, reported, found, s.line)
+        after = flow(val_nodes(s.fields[1]), assigned, tracked, reported, found)
+        return after            # a loop may run no time, but a value given inside it is taken as given: no report for it
+    if k == 'For':
+        check_reads(s.fields[1], tracked, assigned, reported, found, s.line)
+        after = flow(val_nodes(s.fields[2]), assigned, tracked, reported, found)
+        return after
+    if k == 'Try':
+        body = val_nodes(s.fields[0])
+        paths = []
+        after = flow(body, assigned, tracked, reported, found)
+        if s.fields[2].tag == 'l':
+            after = flow(val_nodes(s.fields[2]), after, tracked, reported, found)
+        if not block_exits(body, False):
+            paths.append(after)
+        for h in s.fields[1].items:
+            inner = val_nodes(h.items[2])
+            hafter = flow(inner, assigned, tracked, reported, found)
+            if not block_exits(inner, False):
+                paths.append(hafter)
+        result = assigned
+        if len(paths) > 0:
+            result = paths[0]
+            for p in paths:
+                result = both(result, p)
+        if s.fields[3].tag == 'l':
+            result = flow(val_nodes(s.fields[3]), result, tracked, reported, found)
+        return result
+    for f in s.fields:
+        check_reads(f, tracked, assigned, reported, found, s.line)
+    return assigned
+
+# the checks for one function: its parameters are names that are bound already
+def lint_function(f: Node, module_names: list[str], found: list[Finding]):
+    if f.fields[3].tag != 'l':
+        return
+    body = val_nodes(f.fields[3])
+    u = Usage()
+    for p in val_nodes(f.fields[1]):
+        u.other.append(p.fields[0].text)
+    for s in body:
+        scan_node(s, u)
+    for name in u.stored:
+        if name not in u.read and not name.startswith('_') and name not in u.other:
+            found.append(finding(u.store_line[name], 'unused', f"the variable '{name}' is given a value that is never used\nremove it, or rename it '_{name}' to show that this is intended"))
+    for name in u.stored + u.other:
+        if name in builtin_names() or name in module_names:
+            line = u.store_line[name] if name in u.store_line else f.line
+            found.append(finding(line, 'shadow', f"the variable '{name}' has the same name as a function or class, which it hides here\nchoose another name"))
+    unreachable(body, found)
+    loop_changes(body, found)
+    tracked: list[str] = []
+    for name in u.stored:
+        if name not in u.other and name not in module_names:
+            tracked.append(name)
+    reported: list[str] = []
+    flow(body, [], tracked, reported, found)
+
+def scan_node(n: Node, u: Usage):
+    v = Val()
+    v.tag = 'n'
+    v.node = n
+    scan(v, u)
+
+# ---- a whole file
+
+# the warnings for the top-level items of one file, in line order
+export def lint_items(items: list[Node]) -> list[Finding]:
+    found: list[Finding] = []
+    names: list[str] = []
+    for item in items:
+        if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'ConstDef':
+            names.append(item.fields[0].text)
+    used: list[str] = []
+    for item in items:
+        if item.kind == 'FuncDef':
+            lint_function(item, names, found)
+        elif item.kind == 'ClassDef':
+            for m in val_nodes(item.fields[4]):
+                lint_function(m, names, found)
+        if item.kind != 'Import':
+            for f in item.fields:
+                words(f, used)
+    for item in items:
+        if item.kind == 'Import' and not item.exported:
+            for nm in item.fields[1].items:
+                if nm.text not in used:
+                    found.append(finding(item.line, 'unused', f"'{nm.text}' is imported but never used\nremove it from the import line"))
+    return found

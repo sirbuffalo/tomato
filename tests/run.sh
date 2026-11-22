@@ -22,10 +22,13 @@ cc "$work/c1" "$work/ir1.ll" && "$work/c1" compiler/src/ctool.tom compile > "$wo
 cmp -s "$work/ir1.ll" "$work/ir2.ll" && ok "stage 2 reproduces itself (fixed point)" || bad "stage 2 reproduces itself (fixed point)"
 cmp -s "$work/ir2.ll" compiler/bootstrap/tomatoc.ll && ok "compiler/bootstrap/tomatoc.ll is current" || bad "compiler/bootstrap/tomatoc.ll is current" "run compiler/bootstrap/refresh.sh"
 
+grep -q '^;! ' "$work/ir1.ll" && bad "the compiler's own source compiles without warnings" "$(grep '^;! ' "$work/ir1.ll" | head -6)" || ok "the compiler's own source compiles without warnings"
+
 echo "== examples =="
 grep -v '^#' tests/examples.txt | while read -r name entry rest; do echo "$name $entry $rest"; done > "$work/list"
 while read -r name entry rest; do
   "$work/c1" "examples/$name.tom" "$entry" std/ > "$work/p.ll" 2> "$work/e" || { echo "FAIL $name $entry: $(cat "$work/e")"; echo x >> "$work/failed"; continue; }
+  grep -q '^;! ' "$work/p.ll" && { echo "FAIL $name $entry: warnings"; grep '^;! ' "$work/p.ll" | head -6 | sed 's/^/     /'; echo x >> "$work/failed"; continue; }
   clang -O1 -w -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm || { echo "FAIL $name $entry: link"; echo x >> "$work/failed"; continue; }
   # shellcheck disable=SC2086
   "$work/p" $rest > "$work/out" 2>&1 < /dev/null
@@ -36,7 +39,9 @@ done < "$work/list"
 
 echo "== decided rules (programs) =="
 grep -v '^#' tests/programs.txt | while read -r name; do
-  "$work/c1" "tests/programs/$name.tom" main std/ > "$work/p.ll" 2> "$work/e" && clang -O1 -w -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm && "$work/p" > "$work/out" 2>&1
+  "$work/c1" "tests/programs/$name.tom" main std/ > "$work/p.ll" 2> "$work/e"
+  if grep -q '^;! ' "$work/p.ll"; then echo "FAIL program $name has warnings"; echo x >> "$work/failed2"; continue; fi
+  [ -s "$work/p.ll" ] && clang -O1 -w -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm && "$work/p" > "$work/out" 2>&1
   if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$work/passed2"; else echo "FAIL program $name"; diff "$work/out" "tests/expected/$name.main.out" | head -5 | sed 's/^/     /'; echo x >> "$work/failed2"; fi
 done
 [ -f "$work/passed2" ] && passes=$((passes + $(wc -l < "$work/passed2")))
@@ -69,7 +74,7 @@ got: $m";; esac; }
   wasm_neg fixed_range "300 does not fit in uint[length=8]"
   wasm_neg private_field "the field 'x' is private to class 'C'"
   wasm_neg bad_return "the returned value has type str, but int is expected"
-  wasm_neg trig_needs_angle "argument 1 of 'sin' has type float, but math.Angle is expected"
+  wasm_neg trig_needs_angle "argument 1 of 'sin' (the parameter 'a') has type float, but math.Angle is expected"
   wasm_rt divide_by_zero "division by zero" 1
   wasm_rt index "index out of range" 1
   wasm_rt overflow "integer overflow" 1
@@ -79,6 +84,8 @@ got: $m";; esac; }
   wasm_rt tan_quarter "tan is not defined at 90 deg" 1
   wasm_rt caught_domain "caught sqrt needs a number that is not negative" 0
   wasm_rt exp_overflow "exp(1000) is too large to be a float" 1
+  wasm_rt trace_calls "at half (line 10)" 1
+  r="$("$jsc" tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"
 else [ -n "$CI" ] && bad "wasm path" "jsc is required in CI (macOS runner)" || echo "skip: jsc is not available on this system"; fi
 
 echo "== command line =="
@@ -89,7 +96,8 @@ printf 'print(1)\n' > "$work/top.tom"
 r="$($t run "$work/top.tom" 2>&1)"; case "$r" in *"put it inside a function marked @main"*) ok "top-level code gives a clear hint";; *) bad "top-level code gives a clear hint" "$r";; esac
 check "version" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
 printf '@main\ndef main():\n    x = 0\n    print(5 // x)\n' > "$work/dz.tom"
-check "mode debug is readable" "error: division by zero" "$($t run "$work/dz.tom" 2>&1)"
+check "mode debug is readable" "error: division by zero
+  at main (line 4)" "$($t run "$work/dz.tom" 2>&1)"
 check "mode release prints a code" "error E01:4" "$($t run "$work/dz.tom" --mode release 2>&1)"
 check "mode normal was renamed to release" "error: the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" "$($t run "$work/dz.tom" --mode normal 2>&1)"
 check "unknown mode is refused" "error: the mode must be debug or release, not 'fast'" "$($t run "$work/dz.tom" --mode fast 2>&1)"
@@ -134,6 +142,41 @@ range(1, 100, 1)
 range(5, 10, 2)" "$($t run "$work/rangeprint.tom" 2>&1)"
 check "tomato run shows the same error text" "error: name 'tets' is not defined
  --> $work/typo.tom:3:11" "$($t run "$work/typo.tom" 2>&1 | head -2)"
+printf '@main\ndef main():\n    half(0)\n\ndef half(n: int) -> int:\n    return 10 // n\n' > "$work/trace.tom"
+check "an uncaught error shows the call trace, innermost first" "error: division by zero
+  at half (line 6)
+  at main (line 3)" "$($t run "$work/trace.tom" 2>&1)"
+printf '@main\ndef main():\n    raise Error("bad")\n' > "$work/raised.tom"
+check "an error the program raises shows where, then the trace" "error: Error: bad (raised on line 3)
+  at main (line 3)" "$($t run "$work/raised.tom" 2>&1)"
+check "--color=always paints a runtime error and its trace" "^[[1;31merror:^[[0m ^[[1mdivision by zero^[[0m
+^[[2m  at half (line 6)^[[0m
+^[[2m  at main (line 3)^[[0m" "$($t run "$work/trace.tom" --color=always 2>&1 | cat -v)"
+check "--color=never keeps the plain words" "error: division by zero
+  at half (line 6)
+  at main (line 3)" "$($t run "$work/trace.tom" --color=never 2>&1 | cat -v)"
+check "TOMATO_COLOR=always works like the flag" "^[[1;31merror:^[[0m ^[[1mdivision by zero^[[0m" "$(TOMATO_COLOR=always $t run "$work/trace.tom" 2>&1 | cat -v | head -1)"
+check "without a terminal the color stays off (and NO_COLOR keeps it off)" "error: division by zero" "$(NO_COLOR=1 $t run "$work/trace.tom" 2>&1 | head -1)"
+check "a bad --color value is refused" "error: --color takes auto, always or never, not 'blue'" "$($t run "$work/trace.tom" --color=blue 2>&1)"
+check "--color=always paints a compile error: label, location, gutter, caret" "^[[1;31merror:^[[0m ^[[1mname 'tets' is not defined^[[0m
+ ^[[1;34m-->^[[0m ^[[36m$work/typo.tom:3:11^[[0m
+^[[1;34m  |^[[0m
+^[[1;34m3 |^[[0m     print(tets)
+^[[1;34m  |^[[0m           ^[[1;31m^^^^^[[0m" "$($t run "$work/typo.tom" --color=always 2>&1 | cat -v)"
+printf '@main\ndef main():\n    unused = 1\n    print(2)\n' > "$work/warn.tom"
+check "a warning is shown, then the program runs" "warning: the variable 'unused' is given a value that is never used
+ --> $work/warn.tom:3:5
+  |
+3 |     unused = 1
+  |     ^^^^^^
+  = help: remove it, or rename it '_unused' to show that this is intended
+2" "$($t run "$work/warn.tom" 2>&1)"
+check "--no-warnings hides warnings" "2" "$($t run "$work/warn.tom" --no-warnings 2>&1)"
+check "a warning is yellow with --color=always" "^[[1;33mwarning:^[[0m ^[[1mthe variable 'unused' is given a value that is never used^[[0m" "$($t run "$work/warn.tom" --color=always 2>&1 | cat -v | head -1)"
+check "compile prints the IR without the warning comments" "0" "$($t compile "$work/warn.tom" 2>/dev/null | grep -c '^;! ')"
+check "repl: warnings are not shown" "3" "$(printf 'unused = 1\nprint(3)\n:quit\n' | $t repl 2>&1)"
+check "repl: --color=always paints the label red" "^[[1;31merror:^[[0m ^[[1mcannot use '+' with int and str^[[0m" "$(printf 'print(1 + "a")\n:quit\n' | $t repl --color=always 2>&1 | cat -v | head -1)"
+check "repl: a runtime error shows no call trace of the generated program" "error: division by zero" "$(printf 'x = 0\nprint(1 // x)\n:quit\n' | $t repl 2>&1)"
 check "repl: == is a comparison, = is an assignment" "False
 3" "$(printf 'x = 3\nx == 4\nx\n:quit\n' | $t repl)"
 case "$(printf ':help\n:quit\n' | $t repl 2>&1)" in *":reset"*":quit"*) ok "repl: :help lists every command";; *) bad "repl: :help lists every command";; esac
@@ -181,9 +224,9 @@ neg fixed_range "300 does not fit in uint[length=8]"
 neg unknown_name "name 'nothing' is not defined"
 neg private_field "the field 'x' is private to class 'C'"
 neg const_field "the const field 'x' cannot be changed after the object is created"
-neg bad_argument "argument 1 of 'f' has type str, but int is expected"
+neg bad_argument "argument 1 of 'f' (the parameter 'a') has type str, but int is expected"
 neg bad_return "the returned value has type str, but int is expected"
-neg trig_needs_angle "argument 1 of 'sin' has type float, but math.Angle is expected"
+neg trig_needs_angle "argument 1 of 'sin' (the parameter 'a') has type float, but math.Angle is expected"
 neg dead_range_literal "300 does not fit in uint[length=8]"
 neg wrong_type_in_branch "the assigned value has type str, but int is expected"
 neg bad_assign "the assigned value has type str, but int is expected"
@@ -204,7 +247,7 @@ neg async_call_without_await "'work' is async, so it must be awaited or started"
 neg await_outside_async "'await' can only be used inside an async function"
 neg generic_no_type "'Box' is generic, so it needs its type arguments: Box[T]"
 neg generic_cannot_infer "cannot tell what T is in this call of 'Stack'"
-neg generic_wrong_item "argument 1 of 'put' has type str, but int is expected"
+neg generic_wrong_item "argument 1 of 'put' (the parameter 'item') has type str, but int is expected"
 neg generic_mixed_items "a list item has type str, but int is expected"
 neg await_non_task "only a task can be awaited, but this is int"
 neg await_in_conditional "an await cannot be in either value of a conditional expression"
@@ -226,7 +269,8 @@ done
 
 echo "== error messages (tests/errors: the whole text, the one format everywhere) =="
 for f in tests/errors/*.tom; do
-  n="$(basename "$f" .tom)"; "$work/c1" "$f" main std/ > /dev/null 2> "$work/err.out"
+  n="$(basename "$f" .tom)"; "$work/c1" "$f" main std/ > "$work/err.ll" 2> "$work/err.out"
+  grep '^;! ' "$work/err.ll" | sed 's/^;! //' >> "$work/err.out"   # warnings travel as comment lines at the end of the IR
   if cmp -s "$work/err.out" "tests/errors/$n.out"; then ok "error text: $n"; else bad "error text: $n" "$(diff "$work/err.out" "tests/errors/$n.out" | head -6)"; fi
 done
 
@@ -260,6 +304,7 @@ rt angle_base "Angle is a base class" 1
 rt chr_range "chr() takes a number from 0 to 1114111, not a surrogate" 1
 rt ord_length "ord() takes a text of exactly one character" 1
 rt chr_huge "chr() takes a number from 0 to 1114111, not a surrogate" 1
+rt trace_calls "at half (line 10)" 1
 
 
 echo "== known gaps (decided behavior the compiler does not have yet) =="
