@@ -1,0 +1,48 @@
+class Pair:
+    left: int = 0
+    right: int = 0
+
+def min_max(xs: list[int]) -> tuple[int]:
+    return (min(xs), max(xs))
+
+@main
+def main():
+    a = 1
+    b = 2
+    a, b = b, a
+    print(a, b)
+    x, y = (10, 20)
+    print(x, y)
+    low, high = min_max([4, 9, 2, 7])
+    print(low, high)
+    first, second, third = 'a', 5, 2.5
+    print(first, second, third)
+    first, second, third = first + '!', second + 1, third * 2.0
+    print(first, second, third)
+    p = Pair()
+    p.left, p.right = 3, 4
+    p.left, p.right = p.right, p.left
+    print(p.left, p.right)
+    items = [1, 2, 3]
+    items[0], items[2] = items[2], items[0]
+    print(items)
+    q, r = [7, 8]
+    c1, c2 = 'hi'
+    print(q, r, c1, c2)
+    only, = (5,)
+    print(only)
+    for i in range(2):
+        m, n = i, i + 1
+        print(m, n)
+    try:
+        u, v = min_max([1, 2, 3])
+        u, v, w = min_max([1, 2, 3])
+    catch RuntimeError as e:
+        print('caught', e.message)
+    try:
+        u, v = items
+    catch RuntimeError as e:
+        print('caught', e.message)
+    holder: Pair | None = Pair()
+    holder, count = None, 1
+    print(holder is None, count)

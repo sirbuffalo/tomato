@@ -190,6 +190,29 @@ export def is_operator_marker(name: str) -> bool:
     return name in ['add', 'sub', 'mul', 'div', 'floordiv', 'mod', 'pow', 'eq', 'lt', 'le', 'gt', 'ge', 'str',
                     'iter', 'len', 'get', 'slice', 'contains', 'reversed']
 
+def is_none_name(n: Node) -> bool:
+    return n.kind == 'Name' and n.fields[0].text == 'None'
+
+# gives a generated tree (made from text) the line of the statement it stands for
+def set_line(v: Val, line: int):
+    if v.tag == 'n' and v.node is not None:
+        v.node.line = line
+        for f in v.node.fields:
+            set_line(f, line)
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            set_line(item, line)
+
+def plural_values(n: int) -> str:
+    if n == 1:
+        return '1 value'
+    return str(n) + ' values'
+
+def plural_vars(n: int) -> str:
+    if n == 1:
+        return '1 variable'
+    return str(n) + ' variables'
+
 # the left side of = and += must be a variable, a field or a list item; t is the first token of the statement
 def check_target(e: Node, t: Token):
     if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
@@ -198,7 +221,8 @@ def check_target(e: Node, t: Token):
 export class Parser:
     toks: list[Token] = []
     p: int = 0
-    yields: int = 0          # how many yield statements have been read so far (a function with any is a generator)
+    unpacks: int = 0        # how many multiple assignments have been read (they name their hidden variables)
+    yields: int = 0         # how many yield statements have been read so far (a function with any is a generator)
 
     def cur(self) -> Token:
         return self.toks[self.p]
@@ -664,6 +688,8 @@ export class Parser:
             self.expect_op(':')
             return mk('While', t.line, [vn(cond), vnodes(self.block())])
         e = self.expr()
+        if self.is_op(','):
+            return self.unpack_stmt(t, e)
         if self.is_op(':') and e.kind == 'Name':
             self.adv()
             ty = self.type()
@@ -687,6 +713,57 @@ export class Parser:
             return mk('Assign', t.line, [vn(e), vn(mk('BinOp', t.line, [vs(op), vn(e), vn(v)]))])
         self.expect('NEWLINE')
         return mk('ExprStmt', t.line, [vn(e)])
+
+    # a, b = b, a and a, b = pair: several targets on the left of =. The right side is evaluated first into hidden
+    # variables, then each target is assigned from them. Written as a Multi node holding the ordinary statements.
+    def unpack_stmt(self, t: Token, first: Node) -> Node:
+        targets: list[Node] = [first]
+        while self.accept_op(','):
+            if self.is_op('='):
+                break
+            targets.append(self.expr())
+        if not self.is_op('='):
+            self.expect_op('=')
+        self.adv()
+        for target in targets:
+            check_target(target, t)
+        values: list[Node] = [self.expr()]
+        while self.accept_op(','):
+            values.append(self.expr())
+        self.expect('NEWLINE')
+        count = len(targets)
+        # a tuple written out, (a, b), has a known length and is taken apart without being built
+        literal = len(values) == 1 and values[0].kind == 'TupleLit'
+        if literal:
+            values = val_nodes(values[0].fields[0])
+        self.unpacks += 1
+        stem = '_unpack' + str(t.line) + '_' + str(self.unpacks)
+        stmts: list[Node] = []
+        if len(values) > 1 or literal:
+            if len(values) != count:
+                raise ParseError('cannot unpack ' + plural_values(len(values)) + ' into ' + plural_vars(count) + '\nwrite as many values as there are variables on the left of =', t.line, t.col)
+            for k, v in enumerate(values):
+                if is_none_name(v):
+                    continue                # None has no effect to order, and a hidden variable could not be given a type from it
+                stmts.append(mk('Assign', t.line, [vn(mk('Name', t.line, [vs(stem + '_' + str(k))])), vn(v)]))
+            for k, target in enumerate(targets):
+                source = values[k]
+                if not is_none_name(source):
+                    source = mk('Name', t.line, [vs(stem + '_' + str(k))])
+                stmts.append(mk('Assign', t.line, [vn(target), vn(source)]))
+            return mk('Multi', t.line, [vnodes(stmts)])
+        # one value to take apart: a tuple (or list or text) whose length is only known when the program runs
+        stmts.append(mk('Assign', t.line, [vn(mk('Name', t.line, [vs(stem)])), vn(values[0])]))
+        text = 'if len(' + stem + ') != ' + str(count) + ':\n    raise RuntimeError(\'cannot unpack \' + str(len(' + stem + ')) + \' values into ' + plural_vars(count) + '\')\n'
+        q = Parser()
+        q.toks = lex(text)
+        check = q.statement()
+        set_line(vn(check), t.line)         # the generated lines are numbered from 1; an error must point at the statement
+        stmts.append(check)
+        for k, target in enumerate(targets):
+            item = mk('Index', t.line, [vn(mk('Name', t.line, [vs(stem)])), vn(mk('IntLit', t.line, [vi(k)]))])
+            stmts.append(mk('Assign', t.line, [vn(target), vn(item)]))
+        return mk('Multi', t.line, [vnodes(stmts)])
 
     def trystmt(self) -> Node:
         line = self.adv().line

@@ -3422,6 +3422,8 @@ class Gen:
             if slot_type == 'None' or slot_type == '':
                 raise CompileError("the type of '" + name + "' cannot be guessed from None\ndeclare it, such as: " + name + ': Item | None = None', s.line)
             self.store_owned(self.slot(name, slot_type, s.line), v)
+        elif k == 'Multi':
+            self.block(val_nodes(s.fields[0]))
         elif k == 'Declare':
             ty = self.mod.type_name(s.fields[1])
             if ty == '':
@@ -3722,27 +3724,13 @@ class Gen:
 
     def swap_scope(self, c: GenCtx):
         # exchange the names in scope with those the context keeps: the caller's loop body and the generator's body each see their own variables
-        t1 = self.slots
-        self.slots = c.slots
-        c.slots = t1
-        t2 = self.types
-        self.types = c.types
-        c.types = t2
-        t3 = self.narrowed
-        self.narrowed = c.narrowed
-        c.narrowed = t3
-        t4 = self.ret
-        self.ret = c.ret
-        c.ret = t4
-        t5 = self.owner
-        self.owner = c.owner
-        c.owner = t5
-        t6 = self.in_init
-        self.in_init = c.in_init
-        c.in_init = t6
-        t7 = self.mod.cur
-        self.mod.cur = c.module
-        c.module = t7
+        self.slots, c.slots = c.slots, self.slots
+        self.types, c.types = c.types, self.types
+        self.narrowed, c.narrowed = c.narrowed, self.narrowed
+        self.ret, c.ret = c.ret, self.ret
+        self.owner, c.owner = c.owner, self.owner
+        self.in_init, c.in_init = c.in_init, self.in_init
+        self.mod.cur, c.module = c.module, self.mod.cur
 
     def gen_args(self, info: FuncInfo, args: list[Node], line: int) -> list[Ex]:
         if info.stars > 0:

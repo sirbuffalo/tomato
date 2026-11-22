@@ -1,0 +1,6 @@
+error: cannot unpack 3 values into 2 variables
+ --> tests/errors/unpack_count.tom:3:5
+  |
+3 |     a, b = 1, 2, 3
+  |     ^
+  = help: write as many values as there are variables on the left of =

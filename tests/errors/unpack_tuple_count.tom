@@ -1,0 +1,4 @@
+@main
+def main():
+    x, y, z = (1, 2)
+    print(x, y, z)

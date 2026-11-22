@@ -49,6 +49,7 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
   where they are a documented result type). Fields with defaults (`count: int = 0`) instead of setting each in `@init`.
 - `dict[str, V]` to find things by name, instead of a search through a list (or two lists kept side by side).
 - `tuple[T]` for a fixed group of values of one type that will not change.
+- `a, b = b, a` to swap and `low, high = bounds(xs)` to take a tuple apart, not a pile of temporaries or indexes.
 - `T | None` and `is None` / `is not None` for "no value", not a sentinel like `-1` or `''` or a list of zero or one items.
   `and`/`or` stop early, so `x is None or x.size == 0` is safe.
 

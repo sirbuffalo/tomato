@@ -1313,6 +1313,13 @@ Source: Davis's Dashboard message:
 - `x not in items` means `not (x in items)`, for everything `in` works on (lists, text, sets, dicts, tuples, ranges, classes with `@contains`, `x in Type`). It compares like `in` and `is not`, so it cannot be chained.
 - `//=`, `**=`, `&=`, `|=` and `^=` join `+= -= *= /= %=`; `x op= v` is `x = x op v`.
 
+### D54a — tuple unpacking and multiple assignment: accepted
+
+- Evidence: Davis asked for `a, b = b, a`, `x, y = some_tuple` and `a, b = f()` where `f` returns a tuple; details followed Python.
+- Several targets (variables, fields or items, separated by commas) can stand left of `=`. With several values on the right (`a, b = b, a`) all values are evaluated first, then assigned left to right, so a swap works and the values may have different types. A different number of values and targets is a compile error (`cannot unpack 3 values into 2 variables`).
+- With one value on the right (a `tuple`, `list` or text, such as the result of a call) its length is only known when the program runs: a wrong length is a `RuntimeError` with the same message. A trailing comma on the left (`only, = pair`) unpacks one item.
+- Open: a starred target (`first, *rest = xs`), nested targets (`(a, b), c = ...`), unpacking in `for` loops (only `enumerate` and `zip` have two variables) and in declarations with types (`a: int, b: int = ...`).
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.
