@@ -97,6 +97,8 @@ check "-- passes flag-like inputs" "[-o][--entry]" "$($t run "$work/echo.tom" --
 check "repl: variables, functions, new output only" "7
 9
 hi" "$(printf 'x = 3\nx + 4\ndef sq(n: int) -> int:\n    return n * n\n\nsq(x)\nprint("hi")\n:quit\n' | $t repl)"
+check "repl: std imports resolve (itertools, math)" "True
+False" "$(printf 'from math import is_prime\nfrom itertools import progress_bar\nis_prime(97)\nis_prime(91)\n:quit\n' | $t repl 2>&1)"
 check "repl: :load runs a program that has its own @main" "$(cat tests/expected/shapes.main.out)" "$(printf ':load examples/shapes.tom\n:quit\n' | $t repl)"
 check "repl: a block, then a failing line, then a good one" "9
 error: x
