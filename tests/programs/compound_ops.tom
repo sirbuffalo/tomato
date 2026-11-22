@@ -1,0 +1,37 @@
+class Bag:
+    items: list[int]
+
+    @init
+    def make(self, items: list[int]):
+        self.items = items
+
+    @contains
+    def has(self, x: int) -> bool:
+        return x in self.items
+
+@main
+def main():
+    a = 17
+    a //= 5
+    print(a)
+    a **= 3
+    print(a)
+    b = 12
+    b &= 10
+    print(b)
+    b |= 5
+    print(b)
+    b ^= 3
+    print(b)
+    xs = [1, 2, 3]
+    print(4 not in xs, 2 not in xs)
+    print('z' not in 'abc', 'a' not in 'abc')
+    s: set[int] = {1, 2}
+    print(3 not in s)
+    d: dict[str, int] = {}
+    d['k'] = 1
+    print('k' not in d, 'q' not in d)
+    bag = Bag([1, 2])
+    print(3 not in bag, 1 not in bag)
+    if 5 not in xs and not 1 not in xs:
+        print('ok')

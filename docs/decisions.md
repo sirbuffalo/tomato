@@ -1290,6 +1290,10 @@ Source: Davis's Dashboard message:
 - An async function that yields says what it yields after the return type: `async def download(url: str) -> int yields str:`; the task type is then `task[int, str]`. `yield v` appends `v` to the task's list of statuses and then lets other tasks run. `async for s in t:` takes the statuses in order, waiting when there are none yet, and ends when the task is done and every status has been taken (it does not raise; `await t` after the loop gives the result or raises the error). Statuses are kept until read, without a limit.
 - This is different from a generator `yield` (D48a), which is used by `for` and runs inline; in an async function `yield` always means a status.
 - Open: `sleep` and timers, cancelling a task, a task awaited by `async for` from two tasks at once reading the same statuses, async methods and `@iter` async iterators, reporting errors from tasks nobody awaits.
+### D52a — `not in` and more compound assignments: accepted (following Python)
+
+- `x not in items` means `not (x in items)`, for everything `in` works on (lists, text, sets, dicts, tuples, ranges, classes with `@contains`, `x in Type`). It compares like `in` and `is not`, so it cannot be chained.
+- `//=`, `**=`, `&=`, `|=` and `^=` join `+= -= *= /= %=`; `x op= v` is `x = x op v`.
 
 ## Pending discussion
 

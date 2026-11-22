@@ -33,7 +33,7 @@ def first_quoted(message: str) -> str:
 # the first run of digits in the message, or ''
 def first_number(message: str) -> str:
     i = 0
-    while i < len(message) and not (message[i] in '0123456789'):
+    while i < len(message) and message[i] not in '0123456789':
         i += 1
     j = i
     while j < len(message) and message[j] in '0123456789':

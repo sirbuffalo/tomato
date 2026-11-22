@@ -394,11 +394,11 @@ class Mod:
         return 'E' + text + ':' + str(line)
 
     def declare(self, text: str):
-        if not (text in self.decls):
+        if text not in self.decls:
             self.decls.append(text)
 
     def intern(self, s: str) -> str:
-        if not (s in self.string_index):
+        if s not in self.string_index:
             self.string_index[s] = len(self.strings)
             self.strings.append(s)
         return '@.str.' + str(self.string_index[s])
@@ -1460,9 +1460,9 @@ class Gen:
             return ex(self.mod.intern(n.fields[0].text), 'str')
         if k == 'Name':
             name = n.fields[0].text
-            if name == 'None' and not (name in self.slots):
+            if name == 'None' and name not in self.slots:
                 return ex('null', 'None')
-            if not (name in self.slots):
+            if name not in self.slots:
                 ck = self.mod.resolve(name)
                 if ck in self.mod.consts:
                     return self.expr(self.mod.consts[ck], expected)
@@ -2349,7 +2349,7 @@ class Gen:
         if key == '' and name in ['sorted', 'reversed', 'sum', 'min', 'max']:
             self.kw = []
             return self.list_builtin(name, args, n.line)
-        if name == 'range' and not (name in self.slots):
+        if name == 'range' and name not in self.slots:
             # range(...) is a value of the builtin class `range` (std/builtin.tom); range(a, b, c) is its constructor
             if len(args) < 1 or len(args) > 3 or len(n.fields[2].items) > 0:
                 raise CompileError('range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', n.line)
@@ -3542,7 +3542,7 @@ class Gen:
             return []
         name = l.fields[0].text
         tt = self.type_operand(val_node(cond.fields[2]))
-        if tt == '' or not (name in self.slots):
+        if tt == '' or name not in self.slots:
             return []
         if not is_union(self.types[name]) or not (tt in union_members(self.types[name])):
             return []
@@ -4517,11 +4517,11 @@ def check_classes(mod: Mod):
                 raise CompileError("'" + f.owner + '.' + f.name + "' is marked 'override' but no parent class has that method", c.line)
             if inherited is not None and not same_signature(f, inherited):
                 raise CompileError("'" + f.owner + '.' + f.name + "' must take and return the same types as the method it overrides", c.line)
-            if not (f.name in mod.slots):
+            if f.name not in mod.slots:
                 mod.slots.append(f.name)
     for ifc in mod.ifaces:
         for r in ifc.reqs:
-            if not (r.name in mod.slots):
+            if r.name not in mod.slots:
                 mod.slots.append(r.name)
     for c in mod.classes:
         for iname in mod.class_ifaces(c.name):
@@ -4770,7 +4770,7 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
             for nm in item.fields[1].items:
                 ii.names.append(nm.text)
             imports.append(ii)
-            if not (wanted in loaded):
+            if wanted not in loaded:
                 mod.cur = module
                 loaded.append(wanted)
                 load_items(mod, dir, std, read_module(dir, std, wanted, item.line), wanted, items, imports, loaded)

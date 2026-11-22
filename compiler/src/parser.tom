@@ -680,9 +680,10 @@ export class Parser:
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Assign', t.line, [vn(e), vn(v)])
-        if self.cur().kind == 'OP' and self.cur().text in ['+=', '-=', '*=', '/=', '%=']:
+        if self.cur().kind == 'OP' and self.cur().text in ['+=', '-=', '*=', '/=', '%=', '//=', '**=', '&=', '|=', '^=']:
             # x += v is x = x + v (compound assignment, like Python)
-            op = self.adv().text[:1]
+            optext = self.adv().text
+            op = optext[:len(optext) - 1]
             check_target(e, t)
             v = self.expr()
             self.expect('NEWLINE')
@@ -788,6 +789,12 @@ export class Parser:
         if self.is_kw('in'):
             t = self.adv()
             return self.binop('in', t.line, e, self.bit_or())
+        if self.is_kw('not') and self.peek_is(1, 'KW', 'in'):
+            # x not in y is not (x in y)
+            t = self.adv()
+            self.adv()
+            inner = self.binop('in', t.line, e, self.bit_or())
+            return mk('UnOp', t.line, [vs('not'), vn(inner)])
         if self.is_cmp_op():
             t = self.adv()
             e = self.binop(t.text, t.line, e, self.bit_or())

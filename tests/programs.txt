@@ -37,3 +37,4 @@ iter_protocol
 angles
 constants
 async_tasks
+compound_ops

@@ -198,6 +198,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 170. D49c is accepted: `math` also has `sqrt`, `cbrt`, `hypot`, `exp`, `log`, the hyperbolic functions and their inverses, calling libm through the runtime (native and WebAssembly); values libm cannot answer are plain-worded `RuntimeError`s.
 171. D50a is accepted: `await input(prompt)` gives one line of text and raises a catchable `EOFError` at the end of input; `int(text)` and `float(text)` read numbers and raise `RuntimeError` on bad text. D50b: the repl and the website replay recorded answers (exit code 75 asks for one more) and show a field where the program asks.
 172. D51a-c are accepted: `async def` and `await`, `start f()` giving a `task[T]` that runs at the same time (cooperative, one thread), and `yield` statuses read with `async for`; a missing `await` is a compile error. Settles the syntax D31a and D31b left open. Async methods, timers, cancelling and errors from unawaited tasks remain open.
+173. D52a is accepted: `x not in items` is `not (x in items)`, and `//=`, `**=`, `&=`, `|=`, `^=` are compound assignments, like Python.
 167. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass
