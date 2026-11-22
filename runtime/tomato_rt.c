@@ -90,6 +90,13 @@ static int64_t live_objects = 0;
 #else
 #define LIVE_ADJUST(d) (live_objects += (d))
 #endif
+/* big numbers are counted apart: they are owned values, so unlike objects they must balance even after an error unwound frames */
+static int64_t live_bigs = 0;
+#ifdef TOMATO_RELEASE
+#define BIG_ADJUST(d) ((void)0)
+#else
+#define BIG_ADJUST(d) (live_bigs += (d))
+#endif
 
 /* The type word also carries the cycle collector's state in its upper bits (the type code is the low 32 bits). */
 #define TYPE_MASK 0xFFFFFFFFLL
@@ -334,6 +341,12 @@ void tomato_leak_check(void) {
     tomato_collect_cycles();     /* cycles are freed automatically (D29d), so only true leaks are left to report */
     /* After an error was raised, temporaries held in the middle of an expression can be dropped without being
      * released, so the check would report false leaks: it stays quiet then. */
+    if (live_bigs != 0) {      /* checked even after an error: unwinding must free every big number */
+        fflush(stdout);
+        char text[160];
+        snprintf(text, sizeof text, "%lld big number(s) were never freed", (long long)live_bigs);
+        print_head("warning", C_YELLOW, text, (int)strlen(text));
+    }
     if (live_objects != 0 && !tomato_exc_seen) {
         fflush(stdout);
         char text[160];
@@ -1596,7 +1609,7 @@ static int64_t int_make(int sign, const uint32_t *d, int64_t n) {
     }
     Big *b = malloc(sizeof(Big) + (size_t)(n ? n : 1) * 4);
     if (!b) tomato_fail("out of memory");
-    LIVE_ADJUST(1);
+    BIG_ADJUST(1);
     b->sign = sign; b->n = n;
     memcpy(b->d, d, (size_t)n * 4);
     return (int64_t)(uintptr_t)b;
@@ -1609,11 +1622,11 @@ NOINLINE static int64_t int_dup_slow(int64_t x) {
     size_t size = sizeof(Big) + (size_t)(b->n ? b->n : 1) * 4;
     Big *c = malloc(size);
     if (!c) tomato_fail("out of memory");
-    LIVE_ADJUST(1);
+    BIG_ADJUST(1);
     memcpy(c, b, size);
     return (int64_t)(uintptr_t)c;
 }
-NOINLINE static void int_free_slow(int64_t x) { if (x == 0) return; free((void *)(uintptr_t)x); LIVE_ADJUST(-1); }
+NOINLINE static void int_free_slow(int64_t x) { if (x == 0) return; free((void *)(uintptr_t)x); BIG_ADJUST(-1); }
 ALWAYS int64_t tomato_int_dup(int64_t x) { return __builtin_expect(x & 1, 1) ? x : int_dup_slow(x); }
 ALWAYS void tomato_int_free(int64_t x) { if (__builtin_expect(!(x & 1), 0)) int_free_slow(x); }
 
@@ -1677,8 +1690,8 @@ static int64_t int_finish(Big *b, int sign, int64_t n) {
         uint64_t m = 0;
         if (n > 0) m = b->d[0];
         if (n > 1) m |= (uint64_t)b->d[1] << 32;
-        if (sign > 0 && m <= (uint64_t)INT_SMALL_MAX) { free(b); LIVE_ADJUST(-1); return int_mk_small((int64_t)m); }
-        if (sign < 0 && m <= ((uint64_t)1 << 62)) { free(b); LIVE_ADJUST(-1); return int_mk_small((int64_t)0 - (int64_t)m); }
+        if (sign > 0 && m <= (uint64_t)INT_SMALL_MAX) { free(b); BIG_ADJUST(-1); return int_mk_small((int64_t)m); }
+        if (sign < 0 && m <= ((uint64_t)1 << 62)) { free(b); BIG_ADJUST(-1); return int_mk_small((int64_t)0 - (int64_t)m); }
     }
     b->sign = sign; b->n = n;
     return (int64_t)(uintptr_t)b;
@@ -1736,7 +1749,7 @@ NOINLINE static int64_t int_mul_slow(int64_t x, int64_t y) {
         int64_t n = big->n, pairs = n / 2;
         Big *r = malloc(sizeof(Big) + (size_t)(n + 2) * 4);
         if (!r) tomato_fail("out of memory");
-        LIVE_ADJUST(1);
+        BIG_ADJUST(1);
         unsigned __int128 carry = 0;
         for (int64_t i = 0; i < pairs; i++) {
             uint64_t w; memcpy(&w, big->d + 2 * i, 8);
@@ -1755,7 +1768,7 @@ NOINLINE static int64_t int_mul_slow(int64_t x, int64_t y) {
     int64_t rn = a.n + b.n;
     Big *res = calloc(1, sizeof(Big) + (size_t)rn * 4);
     if (!res) tomato_fail("out of memory");
-    LIVE_ADJUST(1);
+    BIG_ADJUST(1);
     uint32_t *out = res->d;
     for (int64_t i = 0; i < a.n; i++) {
         uint64_t carry = 0;

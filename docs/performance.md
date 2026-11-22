@@ -20,10 +20,10 @@ beats Rust on big integers, and beats Python on all ten benchmarks. Debug mode (
 | strings | 0.563 | 0.484 | 0.555 | 0.106 | 1.2x |
 | sort | 2.110 | 1.167 | 1.998 | 0.079 | 1.8x |
 | wordcount | 0.658 | 0.581 | 0.664 | 0.324 | 1.1x |
-| bigint | 1.413 | 0.130 | 0.113 | 0.423 | 6.3x |
+| bigint | 1.413 | 0.130 | 0.113 | 0.429 | 0.3x |
 | objects | 2.749 | 0.329 | 0.518 | 0.056 | 8.4x |
 
-## What was done (v0.48)
+## What was done (v0.48; the `bigint` row was remeasured after D05av)
 
 1. **Release mode optimises.** `--mode release` links the program and the runtime with `clang -O2 -flto
    -DTOMATO_RELEASE`, so the runtime's small-integer fast paths (`tomato_int_add`, `_cmp`, `_raw`, ...) and
