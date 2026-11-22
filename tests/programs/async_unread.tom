@@ -1,0 +1,28 @@
+# a failed task that nobody awaits raises its error in the task that started it, at that task's next await (D58a)
+async def boom(x: int) -> int:
+    raise RuntimeError('disk full ' + str(x))
+
+async def one() -> int:
+    return 1
+
+async def starter():
+    start boom(1)
+    u = start one()
+    try:
+        await u
+        print('not here')
+    catch RuntimeError as e:
+        print('caught', e.message)
+    print(await u)
+
+@main
+async def main():
+    await starter()
+    # a task that is awaited later is not dropped, so nothing is raised
+    t = start boom(2)
+    u = start one()
+    print(await u)
+    try:
+        await t
+    catch RuntimeError as e:
+        print('awaited', e.message)

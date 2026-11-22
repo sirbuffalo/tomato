@@ -1,0 +1,63 @@
+# t.cancel() raises CancelledError inside the task at its next wait; t.done() says whether it has finished (D58d)
+async def worker(name: str) -> int:
+    try:
+        await sleep(10)
+        return 1
+    catch CancelledError as e:
+        print(name, 'stopping')
+        raise e
+    finally:
+        print(name, 'cleanup')
+
+async def stubborn() -> int:
+    try:
+        await sleep(10)
+    catch CancelledError:
+        print('stubborn caught it')
+    await sleep(0.01)
+    return 7
+
+async def quick() -> int:
+    return 3
+
+async def waiter(t: task[int]) -> int:
+    return await t
+
+@main
+async def main():
+    t = start worker('w')
+    await sleep(0.01)
+    print(t.done())
+    t.cancel()
+    t.cancel()
+    try:
+        await t
+    catch CancelledError as e:
+        print('cancelled:', e.message)
+    print(t.done())
+    # a task that catches the cancel carries on
+    s = start stubborn()
+    await sleep(0.01)
+    s.cancel()
+    print(await s)
+    # cancelled before it ever ran, and a finished task is not affected
+    n = start worker('never')
+    n.cancel()
+    q = start quick()
+    await sleep(0.01)
+    q.cancel()
+    print(await q)
+    # a task waiting on another task is cancelled, the other task is not
+    inner = start worker('inner')
+    w = start waiter(inner)
+    await sleep(0.01)
+    w.cancel()
+    try:
+        await w
+    catch CancelledError:
+        print('waiter cancelled, inner done:', inner.done())
+    inner.cancel()
+    try:
+        await inner
+    catch RuntimeError:
+        print('inner cancelled too')

@@ -43,6 +43,11 @@ conditional
 comprehension
 builtins_more
 async_tasks
+async_unread
+async_methods
+async_sleep
+async_cancel
+async_conditions
 compound_ops
 unpacking
 iterable_sized

@@ -1,0 +1,11 @@
+class A:
+    async def f(self) -> int:
+        return 1
+
+class B(A):
+    override def f(self) -> int:
+        return 2
+
+@main
+def main():
+    pass

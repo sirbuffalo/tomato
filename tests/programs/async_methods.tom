@@ -1,0 +1,47 @@
+# async methods: virtual dispatch, start on a method, yields, and an async @iter read by async for (D58b)
+class Counter:
+    total: int = 0
+    name: str = ''
+
+    async def add(self, n: int) -> int:
+        self.total += n
+        return self.total
+
+    async def watch(self) -> int yields str:
+        yield self.name + '1'
+        yield self.name + '2'
+        return self.total
+
+class Loud(Counter):
+    override async def add(self, n: int) -> int:
+        self.total += n * 10
+        return self.total
+
+class Ticker:
+    count: int = 0
+
+    @iter
+    async def each(self) yields int:
+        for i in range(self.count):
+            yield i * i
+
+async def run(c: Counter) -> int:
+    return await c.add(1)
+
+@main
+async def main():
+    c = Counter()
+    c.name = 'c'
+    print(await c.add(2))
+    t = start c.add(3)
+    print(await t)
+    w = start c.watch()
+    async for s in w:
+        print(s)
+    print(await w)
+    print(await run(Loud()), await run(c))
+    k = Ticker()
+    k.count = 4
+    async for v in k:
+        print(v)
+    print('done')

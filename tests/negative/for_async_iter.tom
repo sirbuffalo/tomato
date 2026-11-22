@@ -1,0 +1,9 @@
+class T:
+    @iter
+    async def each(self) yields int:
+        yield 1
+
+@main
+async def main():
+    for x in T():
+        print(x)

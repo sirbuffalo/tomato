@@ -1,0 +1,30 @@
+# await in while and elif conditions and in the right side of and/or (D58e)
+async def yes(n: int) -> bool:
+    print('yes', n)
+    return n > 0
+
+async def count(i: int) -> int:
+    return i
+
+@main
+async def main():
+    a = False and await yes(1)
+    b = True and await yes(2)
+    c = True or await yes(3)
+    d = False or await yes(4) and await yes(0)
+    print(a, b, c, d)
+    i = 0
+    while await count(i) < 3:
+        i += 1
+        if i == 1:
+            continue
+        print('loop', i)
+    n = 5
+    if n == 1:
+        print('one')
+    elif await yes(n):
+        print('elif')
+    elif await yes(-1):
+        print('no')
+    else:
+        print('else')

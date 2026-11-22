@@ -1,0 +1,11 @@
+async def boom() -> int:
+    raise RuntimeError('disk full')
+
+async def one() -> int:
+    return 1
+
+@main
+async def main():
+    t = start boom()
+    print(await one())
+    print('end')

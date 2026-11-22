@@ -1,0 +1,21 @@
+# sleep: tasks wake in order of their wake-up time, ties in the order they went to sleep (D58c)
+async def tick(name: str, every: float, times: int) -> int:
+    for i in range(times):
+        await sleep(every)
+        print(name, i)
+    return times
+
+async def after(seconds: int, text: str):
+    await sleep(seconds)
+    print(text)
+
+@main
+async def main():
+    a = start tick('slow', 0.02, 3)
+    b = start tick('fast', 0.01, 3)
+    c = start after(0, 'zero')
+    print('started')
+    print(await a + await b)
+    await sleep(0)
+    await after(0, 'inline')
+    print('done')

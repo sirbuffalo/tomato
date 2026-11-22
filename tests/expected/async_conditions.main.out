@@ -1,0 +1,8 @@
+yes 2
+yes 4
+yes 0
+False True True False
+loop 2
+loop 3
+yes 5
+elif

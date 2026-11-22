@@ -1,0 +1,8 @@
+class A:
+    @init
+    async def make(self):
+        pass
+
+@main
+def main():
+    pass

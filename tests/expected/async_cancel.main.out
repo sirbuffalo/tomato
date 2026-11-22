@@ -1,0 +1,12 @@
+False
+w stopping
+w cleanup
+cancelled: the task was cancelled
+True
+stubborn caught it
+7
+3
+waiter cancelled, inner done: False
+inner stopping
+inner cleanup
+inner cancelled too

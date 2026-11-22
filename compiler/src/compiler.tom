@@ -6,7 +6,7 @@
 # Types are written as short texts: int, str, list[int], @Class, %Interface, U:a;b for a union, str? for str | None, and
 # iN / uN for fixed-width integers. Heap values are reference counted: whoever an expression's value is handed to owns it.
 # A problem with the program is raised as a CompileError and reported by diag.tom.
-from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, val_nodes, vn
+from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
 from lexer import LexError
 from diag import Diagnostic, format_error, closest
 
@@ -175,7 +175,7 @@ def operator_marker_of(op: str) -> str:
 # An async function runs as a frame: a heap object holding its variables and where it stopped. These fields come first, then the variables.
 # 0 resume function, 1 where it stopped, 2 status (0 running, 1 done, 2 failed), 3 the tasks waiting for it, 4 its error, 5 and 6 the error line and kind,
 # 7 text handed in by input, 8 the result, 9 the statuses it yielded, 10 how many of them were read
-const FRAME_FIXED = 11
+const FRAME_FIXED = 13
 
 def is_task(t: str) -> bool:
     return t.startswith('task[')
@@ -483,7 +483,8 @@ class Mod:
         return None
 
     def has_op(self, cls: str, marker: str) -> bool:
-        return self.find_op(cls, marker) is not None
+        found = self.find_op(cls, marker)
+        return found is not None and not found.is_async
 
     def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
         found = self.lookup_method(cls, name)
@@ -2543,7 +2544,7 @@ class Gen:
         if f.kind != 'Name':
             raise CompileError('only a function name can be called here\ncalling the result of another expression is not supported', n.line)
         name = f.fields[0].text
-        if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int', 'input']:
+        if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int', 'input', 'sleep']:
             raise CompileError("'" + name + "' does not take keyword arguments", n.line)
         args = val_nodes(n.fields[1])
         if name == 'print':
@@ -2555,6 +2556,8 @@ class Gen:
             return self.open_call(args, n.line)
         if name == 'input' and not (name in self.slots) and self.mod.resolve(name) == '':
             return self.input_call(args, n.line)
+        if name == 'sleep' and not (name in self.slots) and self.mod.resolve(name) == '':
+            raise CompileError("sleep() is async, so it must be awaited\nwrite: await sleep(seconds)  inside an async def", n.line)
         if name == 'len':
             return self.len_call(args, n.line)
         if name == 'str':
@@ -2696,7 +2699,8 @@ class Gen:
             if not self.async_ok:
                 raise CompileError("'" + info.name + "' is async, so it must be awaited or started\nwrite: await " + info.name + "(...)   or   start " + info.name + "(...)", line)
             self.async_ok = False
-            symbol = '@tomato.async.' + info.key
+            if info.owner == '':
+                symbol = '@tomato.async.' + info.key
         if info.is_gen:
             raise CompileError("'" + info.name + "' is a generator (it uses yield), so it can only be used as what a for loop loops over\nwrite: for x in " + info.name + "(...):", line)
         # a function, or a method when `receiver` holds the object; the callee only borrows its arguments
@@ -2870,7 +2874,7 @@ class Gen:
         obj = self.expr(args[0])
         if not self.mod.subclass(obj.ty, '@' + cls):
             raise CompileError("the first argument must be a '" + cls + "' object", n.line)
-        return self.call_function(info, '@tomato.m.' + str(self.mod.code_of('@' + info.owner)) + '.' + info.name, obj, args[1:], n.line)
+        return self.call_function(info, function_symbol(self.mod, info), obj, args[1:], n.line)
 
     def method_call(self, n: Node, f: Node) -> Ex:
         name = f.fields[1].text
@@ -2888,6 +2892,8 @@ class Gen:
             self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
             self.release(obj)
             return ex('', '')
+        if is_task(obj.ty):
+            return self.task_method(obj, name, args, n.line)
         if is_set(obj.ty):
             return self.set_method(obj, name, args, n.line)
         if is_dict(obj.ty):
@@ -2907,6 +2913,25 @@ class Gen:
                 raise CompileError("the method '" + name + "' is private to class '" + info.owner + "'\nonly its own methods can call it", n.line)
             return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
         raise CompileError(self.no_method(name, obj.ty), n.line)
+
+    def task_method(self, t: Ex, name: str, args: list[Node], line: int) -> Ex:
+        # t.done() says whether the task has finished (in any way) and t.cancel() asks it to stop (D58d); neither waits
+        if len(args) > 0:
+            raise CompileError('a task method takes no arguments: t.' + name + '()', line)
+        if name == 'cancel':
+            self.emit('call void @tomato_task_cancel(ptr ' + t.reg + ')')
+            self.release(t)
+            return ex('', '')
+        if name == 'done':
+            st = self.tmp('status')
+            self.emit(st + ' = load i64, ptr ' + self.frame_field(t.reg, 2, 'u64'))
+            fin = self.tmp('finished')
+            self.emit(fin + ' = icmp ne i64 ' + st + ', 0')
+            w = self.tmp('flag')
+            self.emit(w + ' = zext i1 ' + fin + ' to i64')
+            self.release(t)
+            return ex(w, 'bool')
+        raise CompileError("a task has no method '" + name + "'\nthe methods are done() and cancel()", line)
 
     def dict_method(self, d: Ex, name: str, args: list[Node], line: int) -> Ex:
         vt = dict_value(d.ty)
@@ -3128,10 +3153,10 @@ class Gen:
         # the address of fixed field k of the frame h. Every frame starts with the same fields, so this names them with a type of their own:
         # the object header, seven whole numbers, three pointers, then the result (the sizes of pointers differ between native and browser code).
         res = 'i64'
-        if k == 10 and ty != '':
+        if k == 12 and ty != '':
             res = llvm_type(ty)
         p = self.tmp('ff')
-        self.emit(p + ' = getelementptr { i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr, ptr, ' + res + ' }, ptr ' + h + ', i32 0, i32 ' + str(k + 2))
+        self.emit(p + ' = getelementptr { i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr, ptr, ' + res + ' }, ptr ' + h + ', i32 0, i32 ' + str(k + 2))
         return p
 
     def suspend_here(self):
@@ -3141,10 +3166,34 @@ class Gen:
         self.emit('store i64 ' + str(k) + ', ptr %state.p')
         self.br('suspend')
         self.place('rs.' + str(k))
+        self.check_cancel()
+
+    def check_cancel(self):
+        # a task cancelled with t.cancel() raises CancelledError here, at its next wait (D58d)
+        c = self.tmp('cancel')
+        self.emit(c + ' = call i32 @tomato_task_cancelled(ptr %frame)')
+        bad = self.tmp('wascancelled')
+        self.emit(bad + ' = icmp ne i32 ' + c + ', 0')
+        self.fail_with(bad, 'CancelledError', 'the task was cancelled')
 
     def need_async(self, what: str, line: int):
         if not self.is_async:
             raise CompileError("'" + what + "' can only be used inside an async function\nwrite async def instead of def", line)
+
+    def check_unread(self):
+        # raise here the error of a task this one started that failed and was dropped without being awaited (D58a)
+        e = self.tmp('unread')
+        self.emit(e + ' = call ptr @tomato_pending_pop(ptr %frame, ptr @tomato_exc_line, ptr @tomato_exc_rt)')
+        has = self.tmp('hasunread')
+        self.emit(has + ' = icmp ne ptr ' + e + ', null')
+        bad = self.label('unreaderror')
+        ok = self.label('nounread')
+        self.cond_br(has, bad, ok)
+        self.place(bad)
+        self.emit('store ptr ' + e + ', ptr @tomato_exc')
+        self.emit('store i32 1, ptr @tomato_exc_seen')
+        self.br(self.unwind_target())
+        self.place(ok)
 
     def await_handle(self, holder: str, result: str) -> Ex:
         # the task in the slot `holder` (owned): wait until it is done, then take its result, or raise its error
@@ -3155,6 +3204,7 @@ class Gen:
         good = self.label('taskdone')
         self.br(chk)
         self.place(chk)
+        self.check_unread()
         h = self.tmp('task')
         self.emit(h + ' = load ptr, ptr ' + holder)
         st = self.tmp('status')
@@ -3178,7 +3228,7 @@ class Gen:
         self.place(good)
         out = ex('', '')
         if result != '' and result != 'None':
-            rp = self.frame_field(h, 10, result)
+            rp = self.frame_field(h, 12, result)
             r = self.tmp('result')
             self.emit(r + ' = load ' + llvm_type(result) + ', ptr ' + rp)
             if is_rc(result):
@@ -3195,6 +3245,8 @@ class Gen:
             name = val_node(inner.fields[0]).fields[0].text
             if name == 'input' and not (name in self.slots) and self.mod.resolve(name) == '':
                 return self.await_input(val_nodes(inner.fields[1]), n.line)
+            if name == 'sleep' and not (name in self.slots) and self.mod.resolve(name) == '':
+                return self.await_sleep(val_nodes(inner.fields[1]), n.line)
         self.async_ok = True
         self.fresh_frame = False
         t = self.expr(inner)
@@ -3211,6 +3263,22 @@ class Gen:
             self.emit('call void @tomato.sched.step(ptr ' + h0 + ')')      # a child runs at once, up to its first stop
         return self.await_handle(holder, task_result(t.ty))
 
+    def await_sleep(self, args: list[Node], line: int) -> Ex:
+        # await sleep(seconds): wait that long (D58c); other tasks run meanwhile
+        if len(args) != 1:
+            raise CompileError('sleep() takes the number of seconds to wait: await sleep(1.5)', line)
+        v = self.expr(args[0])
+        if not (v.ty == 'float' or is_numeric(v.ty)):
+            raise CompileError('sleep() takes a number of seconds, but this is ' + shown(v.ty), line)
+        secs = v.reg
+        if v.ty != 'float':
+            secs = self.to_double(v)
+        self.check_unread()
+        self.emit('call void @tomato_sleep_wait(ptr %frame, double ' + secs + ')')
+        self.release(v)
+        self.suspend_here()
+        return ex('', '')
+
     def await_input(self, args: list[Node], line: int) -> Ex:
         if len(args) > 1:
             raise CompileError('input() takes an optional prompt as text: await input() or await input(prompt)', line)
@@ -3218,10 +3286,11 @@ class Gen:
         if len(args) == 1:
             prompt = self.expr(args[0])
             prompt = self.want(prompt, 'str', line, 'the prompt')
+        self.check_unread()
         self.emit('call void @tomato_input_wait(ptr %frame, ptr ' + prompt.reg + ')')
         self.release(prompt)
         self.suspend_here()
-        ip = self.frame_field('%frame', 7, 'str')
+        ip = self.frame_field('%frame', 9, 'str')
         r = self.tmp('line')
         self.emit(r + ' = load ptr, ptr ' + ip)
         self.emit('store ptr null, ptr ' + ip)
@@ -3242,13 +3311,30 @@ class Gen:
         if not is_task(t.ty) or not self.fresh_frame:
             raise CompileError("'start' needs a call of an async function, such as start work()", n.line)
         self.fresh_frame = False
-        self.emit('call void @tomato_q_push(ptr ' + t.reg + ')')      # the scheduler holds it too until it has run
+        self.launch(t)
         return t
+
+    def launch(self, t: Ex):
+        # the task t starts running when this one next waits
+        self.emit('call void @tomato_retain(ptr %frame)')          # the starter gets the error if the task fails unread
+        who = self.tmp('starter')
+        self.emit(who + ' = ptrtoint ptr %frame to i64')
+        self.emit('store i64 ' + who + ', ptr ' + self.frame_field(t.reg, 7, 'u64'))
+        self.emit('call void @tomato_q_push(ptr ' + t.reg + ')')      # the scheduler holds it too until it has run
 
     def async_for(self, s: Node):
         # async for x in task: each status the task yields, as it arrives; ends when the task is done
         self.need_async('async for', s.line)
         t = self.expr(val_node(s.fields[1]))
+        if is_class(t.ty):
+            it = self.mod.find_op(t.ty[1:], 'iter')
+            if it is not None and it.is_async:        # an object whose @iter is async: its task is made and started here
+                self.async_ok = True
+                self.fresh_frame = False
+                t = self.call_function(it, self.dispatch(t, it.name), t, [], s.line)
+                self.async_ok = False
+                self.fresh_frame = False
+                self.launch(t)
         if not is_task(t.ty) or task_status(t.ty) == '':
             raise CompileError("async for needs a task that yields statuses, but this is " + shown(t.ty) + "\nthe async function must say what it yields: async def work() -> int yields str:", s.line)
         elem = task_status(t.ty)
@@ -3262,10 +3348,11 @@ class Gen:
         end = self.label('endstatuses')
         self.br(head)
         self.place(head)
+        self.check_unread()
         h = self.tmp('task')
         self.emit(h + ' = load ptr, ptr ' + holder)
         q = self.tmp('queue')
-        self.emit(q + ' = load ptr, ptr ' + self.frame_field(h, 9, 'str'))
+        self.emit(q + ' = load ptr, ptr ' + self.frame_field(h, 11, 'str'))
         curp = self.frame_field(h, 6, 'u64')
         cur = self.tmp('read')
         self.emit(cur + ' = load i64, ptr ' + curp)
@@ -3312,9 +3399,10 @@ class Gen:
         if self.ret_yields == '':
             raise CompileError("this async function does not say what it yields\nwrite it after the return type: async def work() -> int yields str:", s.line)
         v = self.expr(val_node(s.fields[0]), self.ret_yields)
+        self.check_unread()
         v = self.want(v, self.ret_yields, s.line, 'the yielded status')
         q = self.tmp('queue')
-        self.emit(q + ' = load ptr, ptr ' + self.frame_field('%frame', 9, 'str'))
+        self.emit(q + ' = load ptr, ptr ' + self.frame_field('%frame', 11, 'str'))
         slot = self.tmp('slot')
         self.emit(slot + ' = call ptr @tomato_list_push(ptr ' + q + ', i64 8)')
         self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)
@@ -3324,11 +3412,9 @@ class Gen:
 
     # An await can stop the function, and everything it was in the middle of computing would be lost, so every await is
     # first moved out of its expression into a statement of its own (x = await f()) whose only unfinished state is in variables.
-    def lift(self, e: Node, out: list[Node], guarded: bool, top: bool) -> Node:
+    def lift(self, e: Node, out: list[Node], top: bool) -> Node:
         if e.kind == 'Await':
-            if guarded:
-                raise CompileError("an await cannot be inside the right side of 'and' or 'or'\nawait first, then use the result: x = await f()", e.line)
-            inner = self.lift(val_node(e.fields[0]), out, False, False)
+            inner = self.lift(val_node(e.fields[0]), out, False)
             copy = Node()
             copy.kind = 'Await'
             copy.line = e.line
@@ -3353,6 +3439,10 @@ class Gen:
             return use
         if e.kind == 'Start':
             return e
+        if e.kind == 'BinOp' and (e.fields[0].text == 'and' or e.fields[0].text == 'or') and contains_await(val_node(e.fields[2])):
+            return self.lift_short_circuit(e, out)
+        if e.kind == 'Cond' and (contains_await(val_node(e.fields[1])) or contains_await(val_node(e.fields[2]))):
+            raise CompileError("an await cannot be in either value of a conditional expression\nuse an if statement and await inside it", e.line)
         copy2 = Node()
         copy2.kind = e.kind
         copy2.line = e.line
@@ -3360,20 +3450,36 @@ class Gen:
         nf: list[Val] = []
         k = 0
         for f in e.fields:
-            nf.append(self.lift_val(f, out, guarded or (e.kind == 'BinOp' and (e.fields[0].text == 'and' or e.fields[0].text == 'or') and k >= 2)))
+            nf.append(self.lift_val(f, out))
             k += 1
         copy2.fields = nf
         return copy2
 
-    def lift_val(self, v: Val, out: list[Node], guarded: bool) -> Val:
+    def lift_short_circuit(self, e: Node, out: list[Node]) -> Node:
+        # a and await b()  becomes  _await = a; if _await: (the await) _await = b; so the right side runs only when it is needed.
+        # For or the test is not _await.
+        self.lifted += 1
+        name = '_await' + str(self.lifted)
+        left = self.lift(val_node(e.fields[1]), out, False)
+        out.append(mk('Assign', e.line, [vn(mk('Name', e.line, [vs(name)])), vn(left)]))
+        test = mk('Name', e.line, [vs(name)])
+        if e.fields[0].text == 'or':
+            test = mk('UnOp', e.line, [vs('not'), vn(test)])
+        body: list[Node] = []
+        right = self.lift(val_node(e.fields[2]), body, False)
+        body.append(mk('Assign', e.line, [vn(mk('Name', e.line, [vs(name)])), vn(right)]))
+        out.append(mk('If', e.line, [vlist([vtuple([vn(test), vnodes(body)])]), vz()]))
+        return mk('Name', e.line, [vs(name)])
+
+    def lift_val(self, v: Val, out: list[Node]) -> Val:
         if v.tag == 'n':
-            return vn(self.lift(val_node(v), out, guarded, False))
+            return vn(self.lift(val_node(v), out, False))
         if v.tag == 'l' or v.tag == 't':
             copy = Val()
             copy.tag = v.tag
             ni: list[Val] = []
             for item in v.items:
-                ni.append(self.lift_val(item, out, guarded))
+                ni.append(self.lift_val(item, out))
             copy.items = ni
             return copy
         return v
@@ -3393,7 +3499,7 @@ class Gen:
                 if f.tag == 'n':
                     child = val_node(f)
                     is_top = child.kind == 'Await' and ((k == 'Assign' and j == 1) or (k == 'Declare' and j == 2) or k == 'Return' or k == 'ExprStmt')
-                    cf.append(vn(self.lift(child, out, False, is_top)))
+                    cf.append(vn(self.lift(child, out, is_top)))
                 else:
                     cf.append(f)
                 j += 1
@@ -3403,10 +3509,11 @@ class Gen:
         if k == 'If':
             branches = s.fields[0].items
             first = branches[0].items
+            later = len(branches)          # the first elif whose condition has an await: it and what follows move into the else branch
             for b in range(1, len(branches)):
-                if contains_await(val_node(branches[b].items[0])):
-                    raise CompileError("an await cannot be in an elif condition\nawait first and keep the result in a variable", s.line)
-            cond = self.lift(val_node(first[0]), out, False, False)
+                if later == len(branches) and contains_await(val_node(branches[b].items[0])):
+                    later = b
+            cond = self.lift(val_node(first[0]), out, False)
             copy3 = Node()
             copy3.kind = 'If'
             copy3.line = s.line
@@ -3416,23 +3523,36 @@ class Gen:
             head.tag = 't'
             head.items = [vn(cond), first[1]]
             bl: list[Val] = [head]
-            for b in range(1, len(branches)):
+            for b in range(1, later):
                 bl.append(branches[b])
             nb.items = bl
-            copy3.fields = [nb, s.fields[1]]
+            orelse = s.fields[1]
+            if later < len(branches):
+                rest = Node()
+                rest.kind = 'If'
+                rest.line = s.line
+                rest.fields = [vlist(branches[later:]), s.fields[1]]
+                orelse = vnodes(self.hoist(rest))
+            copy3.fields = [nb, orelse]
             out.append(copy3)
             return out
         if k == 'For' or k == 'AsyncFor':
-            it = self.lift(val_node(s.fields[1]), out, False, False)
+            it = self.lift(val_node(s.fields[1]), out, False)
             copy4 = Node()
             copy4.kind = k
             copy4.line = s.line
             copy4.fields = [s.fields[0], vn(it), s.fields[2]]
             out.append(copy4)
             return out
-        if k == 'While':
-            if contains_await(val_node(s.fields[0])):
-                raise CompileError("an await cannot be in a while condition\nwrite while True: and await inside the loop, leaving with break", s.line)
+        if k == 'While' and contains_await(val_node(s.fields[0])):
+            # while await more(): body  becomes  while True: (the await, then: if not condition: break), body
+            body: list[Node] = []
+            cond2 = self.lift(val_node(s.fields[0]), body, False)
+            body.append(mk('If', s.line, [vlist([vtuple([vn(mk('UnOp', s.line, [vs('not'), vn(cond2)])), vnodes([mk('Break', s.line, [])])])]), vz()]))
+            for st in s.fields[1].items:
+                body.append(val_node(st))
+            out.append(mk('While', s.line, [vn(mk('BoolLit', s.line, [vb(True)])), vnodes(body)]))
+            return out
         out.append(s)
         return out
 
@@ -3652,7 +3772,7 @@ class Gen:
         for seen in self.mod.scope:
             if seen.module == self.mod.cur or seen.module == 'builtin':
                 out.append(seen.name)
-        for b in ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'range']:
+        for b in ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'range']:
             out.append(b)
         return out
 
@@ -4333,6 +4453,10 @@ class Gen:
         if is_dyn(lst.ty):
             self.for_dyn(s, lst)
             return
+        if is_class(lst.ty):
+            ai = self.mod.find_op(lst.ty[1:], 'iter')
+            if ai is not None and ai.is_async:
+                raise CompileError("'" + lst.ty[1:] + "' loops over async statuses, so it needs async for\nwrite: async for " + s.fields[0].text + " in ...:", s.line)
         if is_class(lst.ty) and self.mod.has_op(lst.ty[1:], 'iter'):
             self.inline_gen(s, self.mod.find_op(lst.ty[1:], 'iter'), lst, [], s.line)
             return
@@ -4461,7 +4585,15 @@ class Gen:
         self.br(head)
         self.place(end)
 
+def async_symbol(mod: Mod, info: FuncInfo) -> str:
+    # the constructor of an async function's task; the resume function is this name followed by .resume
+    if info.owner == '':
+        return '@tomato.async.' + info.key
+    return '@tomato.async.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
+
 def function_symbol(mod: Mod, info: FuncInfo) -> str:
+    if info.is_async:
+        return async_symbol(mod, info)
     if info.owner == '':
         return '@tomato.' + info.key
     return '@tomato.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
@@ -4531,14 +4663,15 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     # an async function becomes a frame (its variables on the heap), a constructor that makes the frame from the arguments,
     # and a resume function that runs the body from where it last stopped
     mod.cur = info.module
-    if info.owner != '':
-        raise CompileError('async methods are not supported yet\nmake it a function outside the class', f.line)
     g = Gen()
     g.mod = mod
+    g.owner = info.owner
     g.is_async = True
     g.ret = info.ret
     g.ret_yields = info.yields
     cname = 'async.' + info.key
+    if info.owner != '':
+        cname = 'async.m.' + info.owner + '.' + info.name
     code = mod.code_of('@' + cname)
     g.frame_code = code
     g.allocas.append('  %state.p = getelementptr %class.' + str(code) + ', ptr %frame, i32 0, i32 3')
@@ -4548,16 +4681,22 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     k = 0
     for p in params:
         if p.fields[0].text == 'self':
-            raise CompileError("'self' can only be used in methods inside a class", p.line)
-        names.append(p.fields[0].text)
-        types.append(info.ptypes[k])
-        k += 1
+            if info.owner == '':
+                raise CompileError("'self' can only be used in methods inside a class", p.line)
+            names.append('self')
+            types.append('@' + info.owner)
+        else:
+            names.append(p.fields[0].text)
+            types.append(info.ptypes[k])
+            k += 1
     sig: list[str] = []
     k = 0
     for name in names:
         g.slot(name, types[k], f.line)
         sig.append(llvm_type(types[k]) + ' %arg.' + name)
         k += 1
+    g.line = f.line
+    g.check_cancel()                  # cancelled before it ever ran
     g.block(val_nodes(f.fields[3]))
     if not g.terminated:
         if info.ret == '':
@@ -4579,7 +4718,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     fr.module = info.module
     fr.is_frame = True
     fr.done = True
-    frame_types: list[str] = ['u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'str', '@Error', queue_ty, result_ty]
+    frame_types: list[str] = ['u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'str', '@Error', queue_ty, result_ty]
     for t in g.frame_types:
         frame_types.append(t)
     for ft in frame_types:
@@ -4589,7 +4728,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         fr.fields.append(slot)
     mod.frames.append(fr)
     cls = '%class.' + str(code)
-    sym = '@tomato.async.' + info.key
+    sym = async_symbol(mod, info)
     # the resume function
     text = 'define void ' + sym + '.resume(ptr %frame) {\nentry:\n'
     if info.ret != '':
@@ -4605,13 +4744,14 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         o = g.tmp('rel')
         text += '  ' + o + ' = load ptr, ptr ' + reg + '\n  call void @tomato_release(ptr ' + o + ')\n  store ptr null, ptr ' + reg + '\n'
     text += '  %ex.p = load ptr, ptr @tomato_exc\n  %ex.has = icmp ne ptr %ex.p, null\n  br i1 %ex.has, label %failed, label %succeeded\n'
-    text += 'failed:\n  %e.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 10\n  store ptr %ex.p, ptr %e.p\n'
+    text += 'failed:\n  %e.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 12\n  store ptr %ex.p, ptr %e.p\n'
     text += '  %el = load i32, ptr @tomato_exc_line\n  %el64 = zext i32 %el to i64\n  %el.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 6\n  store i64 %el64, ptr %el.p\n'
     text += '  %er = load i32, ptr @tomato_exc_rt\n  %er64 = zext i32 %er to i64\n  %er.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 7\n  store i64 %er64, ptr %er.p\n'
     text += '  store ptr null, ptr @tomato_exc\n  %s2.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 4\n  store i64 2, ptr %s2.p\n  br label %wake\n'
     text += 'succeeded:\n'
+    text += '  call void @tomato_task_drop_starter(ptr %frame)\n'
     if info.ret != '':
-        text += '  %rv = load ' + llvm_type(info.ret) + ', ptr %retval\n  %rv.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 12\n  store ' + llvm_type(info.ret) + ' %rv, ptr %rv.p\n'
+        text += '  %rv = load ' + llvm_type(info.ret) + ', ptr %retval\n  %rv.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 14\n  store ' + llvm_type(info.ret) + ' %rv, ptr %rv.p\n'
     text += '  %s1.p = getelementptr ' + cls + ', ptr %frame, i32 0, i32 4\n  store i64 1, ptr %s1.p\n  br label %wake\n'
     text += 'wake:\n  call void @tomato_wake_waiters(ptr %frame)\n  ret void\nsuspend:\n  ret void\n}\n'
     # the constructor
@@ -4628,22 +4768,22 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         k += 1
     if info.yields != '':
         text += '  %q = call ptr @tomato_list_new(i64 ' + str(mod.code_of(queue_ty)) + ')\n'
-        text += '  %qf = getelementptr ' + cls + ', ptr %f, i32 0, i32 11\n  store ptr %q, ptr %qf\n'
+        text += '  %qf = getelementptr ' + cls + ', ptr %f, i32 0, i32 13\n  store ptr %q, ptr %qf\n'
     text += '  ret ptr %f\n}\n'
     return text
 
 def scheduler_ir(mod: Mod) -> str:
     # the code that runs tasks: step runs one frame until it stops, run keeps stepping whatever is ready until nothing is left
     t = 'define void @tomato.sched.step(ptr %f) {\n  %p = getelementptr i8, ptr %f, i64 16\n  %fn = load ptr, ptr %p\n  call void %fn(ptr %f)\n  ret void\n}\n'
-    hdr = '{ i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr, ptr, i64 }'
-    t += 'define void @tomato.task.raise(ptr %h) {\n  %ep = getelementptr ' + hdr + ', ptr %h, i32 0, i32 10\n  %e = load ptr, ptr %ep\n  call void @tomato_retain(ptr %e)\n  store ptr %e, ptr @tomato_exc\n'
+    hdr = '{ i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr, ptr, i64 }'
+    t += 'define void @tomato.task.raise(ptr %h) {\n  call void @tomato_task_retrieved(ptr %h)\n  %ep = getelementptr ' + hdr + ', ptr %h, i32 0, i32 12\n  %e = load ptr, ptr %ep\n  call void @tomato_retain(ptr %e)\n  store ptr %e, ptr @tomato_exc\n'
     t += '  %lp = getelementptr ' + hdr + ', ptr %h, i32 0, i32 6\n  %l = load i64, ptr %lp\n  %l32 = trunc i64 %l to i32\n  store i32 %l32, ptr @tomato_exc_line\n'
     t += '  %rp = getelementptr ' + hdr + ', ptr %h, i32 0, i32 7\n  %r = load i64, ptr %rp\n  %r32 = trunc i64 %r to i32\n  store i32 %r32, ptr @tomato_exc_rt\n  store i32 1, ptr @tomato_exc_seen\n  ret void\n}\n'
-    t += 'define void @tomato.sched.run(ptr %main) {\nentry:\n  call void @tomato_q_push(ptr %main)\n  br label %loop\n'
+    t += 'define void @tomato.sched.run(ptr %main) {\nentry:\n  call void @tomato_set_mode(i32 ' + str(mod.mode) + ')\n  call void @tomato_q_push(ptr %main)\n  br label %loop\n'
     t += 'loop:\n  %f = call ptr @tomato_q_pop()\n  %none = icmp eq ptr %f, null\n  br i1 %none, label %idle, label %go\n'
     t += 'go:\n  call void @tomato.sched.step(ptr %f)\n  call void @tomato_release(ptr %f)\n  br label %loop\n'
     t += 'idle:\n  %did = call i32 @tomato_sched_idle()\n  %more = icmp ne i32 %did, 0\n  br i1 %more, label %loop, label %done\n'
-    t += 'done:\n  %sp = getelementptr i8, ptr %main, i64 32\n  %st = load i64, ptr %sp\n  %fin = icmp ne i64 %st, 0\n  br i1 %fin, label %finished, label %stuck\n'
+    t += 'done:\n  call void @tomato_pending_flush()\n  %sp = getelementptr i8, ptr %main, i64 32\n  %st = load i64, ptr %sp\n  %fin = icmp ne i64 %st, 0\n  br i1 %fin, label %finished, label %stuck\n'
     t += 'stuck:\n  call void @tomato_fail(ptr ' + mod.intern('every task is waiting for something that can no longer happen') + '.c)\n  unreachable\n'
     t += 'finished:\n  %bad = icmp eq i64 %st, 2\n  br i1 %bad, label %raise, label %out\n'
     t += 'raise:\n  call void @tomato.task.raise(ptr %main)\n  br label %out\nout:\n  call void @tomato_release(ptr %main)\n  ret void\n}\n'
@@ -4760,6 +4900,8 @@ def runtime_tables(mod: Mod) -> str:
         elif is_class(code):
             c = mod.find_class(code[1:], 0)
             kinds[slot] = 'i32 1'
+            if c.is_frame:
+                kinds[slot] = 'i32 1025'          # bit 10: a task frame, whose dropping may report an unread error
             if c.parent != '':
                 zeros[slot] = 'i64 ' + str(mod.code_of('@' + c.parent))
             offs: list[str] = []
@@ -4885,6 +5027,15 @@ def declarations(mod: Mod) -> str:
     d += 'declare void @tomato_input_wait(ptr, ptr)\n'
     d += 'declare i32 @tomato_sched_idle()\n'
     d += 'declare void @tomato_task_wait(ptr, ptr)\n'
+    d += 'declare void @tomato_task_retrieved(ptr)\n'
+    d += 'declare i32 @tomato_task_cancelled(ptr)\n'
+    d += 'declare void @tomato_task_cancel(ptr)\n'
+    d += 'declare void @tomato_sleep_wait(ptr, double)\n'
+    d += 'declare void @tomato_task_drop_starter(ptr)\n'
+    d += 'declare ptr @tomato_pending_pop(ptr, ptr, ptr)\n'
+    d += 'declare void @tomato_pending_flush()\n'
+    d += 'declare void @tomato_set_mode(i32)\n'
+    d += 'declare i32 @tomato_exit_code()\n'
     d += 'declare void @tomato_wake_waiters(ptr)\n'
     d += 'declare ptr @tomato_list_new(i64)\n'
     d += 'declare ptr @tomato_list_push(ptr, i64)\n'
@@ -4981,7 +5132,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     out += 'fine:\n'
     for reg in owned:
         out += '  call void @tomato_release(ptr ' + reg + ')\n'
-    out += '  call void @tomato_leak_check()\n  ret i32 0\n}\n'
+    out += '  call void @tomato_leak_check()\n  %rc = call i32 @tomato_exit_code()\n  ret i32 %rc\n}\n'
     return out
 
 def key_of(module: str, name: str) -> str:
@@ -5006,8 +5157,12 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
                 raise CompileError('this yields type is not supported\nan async function can yield int, bool, str, float, a list, a set, a dict or a class', item.line)
         info.is_override = item.fields[5].flag
         info.is_init = item.fields[6].tag == 's' and item.fields[6].text == 'init'
+        if info.is_async and info.is_init:
+            raise CompileError("'@init' cannot be async\nmake the setup a separate async method and call it after the object is made", item.line)
         if item.fields[6].tag == 's' and item.fields[6].text != 'init' and is_operator_marker(item.fields[6].text):
             info.op = item.fields[6].text
+            if info.is_async and info.op != 'iter':
+                raise CompileError("an operator or protocol method (" + info.op + ") cannot be async", item.line)
     if item.fields[2].tag != 'z':
         info.ret = mod.type_name(item.fields[2])
         if info.ret == '':
@@ -5035,6 +5190,8 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     return info
 
 def same_signature(a: FuncInfo, b: FuncInfo) -> bool:
+    if a.is_async != b.is_async or a.yields != b.yields:
+        return False
     if a.ret != b.ret or len(a.ptypes) != len(b.ptypes):
         return False
     for k, t in enumerate(a.ptypes):

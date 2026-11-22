@@ -113,7 +113,34 @@ async def main():
     async for s in t:                           # each status as it arrives
         print(s)
     print(await t, await other)                 # 30 20</code></pre>
-<p><code>async def</code> makes a function that can wait; calling it makes a task, and <code>await</code> runs it and gives the result (or raises the error it raised), so a missing <code>await</code> is a compile error that says what to write. <code>start f(x)</code> gives the task as a value (<code>task[int]</code>, or <code>task[int, str]</code> when it yields statuses) that you can keep in a list and await later. Tasks run on one thread and take turns whenever one waits (for another task, for input) or yields, so they never interrupt each other. The program ends when <code>main</code> is done and nothing is left to run. An await can be inside an expression (<code>int(await input())</code>) but not in the right side of <code>and</code>/<code>or</code> or in a <code>while</code> or <code>elif</code> condition. Not built yet: async methods, <code>sleep</code>, cancelling a task, and reporting errors from tasks nobody awaits.</p>
+<pre><code>class Feed:
+    name: str = ''
+
+    async def fetch(self, n: int) -> int:        # an async method: await obj.fetch(1), or start obj.fetch(1)
+        await sleep(0.1)                         # wait 0.1 seconds; other tasks run meanwhile
+        return n
+
+    @iter
+    async def items(self) yields int:            # async for x in feed: reads the statuses
+        yield 1
+        yield 2
+
+async def worker() -> int:
+    try:
+        await sleep(10)
+    catch CancelledError:                        # t.cancel() raises this inside the task at its next wait
+        print('stopping')
+    return 0
+
+@main
+async def main():
+    t = start worker()
+    await sleep(0.1)
+    print(t.done())                              # False: still waiting
+    t.cancel()
+    print(await t, t.done())                     # stopping, then 0 True</code></pre>
+<p><code>async def</code> makes a function that can wait; calling it makes a task, and <code>await</code> runs it and gives the result (or raises the error it raised), so a missing <code>await</code> is a compile error that says what to write. <code>start f(x)</code> gives the task as a value (<code>task[int]</code>, or <code>task[int, str]</code> when it yields statuses) that you can keep in a list and await later. Tasks run on one thread and take turns whenever one waits (for another task, for input) or yields, so they never interrupt each other. The program ends when <code>main</code> is done and nothing is left to run. An await can be inside an expression (<code>int(await input())</code>), in a <code>while</code> or <code>elif</code> condition (run again each time), and in the right side of <code>and</code>/<code>or</code> (run only when needed); the exception is the two values of <code>a if c else b</code>.</p>
+<p>Methods can be <code>async</code> too (the task keeps <code>self</code> alive; overrides must be async as well), and an <code>@iter</code> method can be async so <code>async for x in obj:</code> works. <code>await sleep(seconds)</code> waits: time is a logical clock that moves only when every task is waiting, so output order is the same everywhere; natively the program really waits, in the browser the clock jumps. <code>t.cancel()</code> makes the task raise <code>CancelledError</code> (a <code>RuntimeError</code>) at its next wait, so its <code>finally</code> blocks run; <code>t.done()</code> says whether it has finished. If a task fails and nobody awaits it, its error is raised in the task that started it at that task's next await, where <code>try</code>/<code>catch</code> can catch it; if that task is already finished the error is printed to standard error and the program exits with code 1.</p>
 <h2>Classes and interfaces</h2>
 <pre><code>interface Shape:
     def area(self) -> int

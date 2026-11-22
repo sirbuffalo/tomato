@@ -590,7 +590,7 @@ void *tomato_input(void *prompt) {
 
 /* ---- tasks (async). A task is a frame object made by the compiler (see FRAME_FIXED in the compiler): the sixteen-byte
  * object header, then eight-byte fields. The ones the runtime touches: the tasks waiting for it at byte 40, the text input
- * hands over at byte 72. The scheduler loop itself is generated code, because the browser runs generated code in an
+ * hands over at byte 88, the task that started it at byte 72. The scheduler loop itself is generated code, because the browser runs generated code in an
  * interpreter and a native function pointer could not reach it; the runtime only keeps the queues. */
 typedef struct { void **items; int64_t n, cap; } PtrVec;
 static PtrVec ready_q; static int64_t ready_head;
@@ -625,12 +625,13 @@ void tomato_task_wait(void *h, void *me) {
     }
     tomato_retain(me);
     v->items[v->n++] = me;
+    *(uint64_t *)((char *)me + 80) = (uint64_t)(uintptr_t)h;     /* what it waits for, in case it is cancelled */
 }
 
 void tomato_wake_waiters(void *h) {
     PtrVec *v = *(PtrVec **)((char *)h + 40);
     if (!v) return;
-    for (int64_t i = 0; i < v->n; i++) { tomato_q_push(v->items[i]); tomato_release(v->items[i]); }
+    for (int64_t i = 0; i < v->n; i++) { *(uint64_t *)((char *)v->items[i] + 80) = 0; tomato_q_push(v->items[i]); tomato_release(v->items[i]); }
     v->n = 0;
 }
 
@@ -645,16 +646,118 @@ void tomato_input_wait(void *frame, void *prompt) {
     in_q[in_n].frame = frame; in_q[in_n].prompt = prompt; in_n++;
 }
 
-/* nothing is ready to run: let the oldest task that asked for a line of input have it. Returns 1 when one was woken. */
+/* sleep (D58c). A logical clock that moves only when every task is waiting: a sleeper wakes at its wake-up time on that
+ * clock, the earliest first and ties in the order they went to sleep, so the order of what a program prints does not depend on
+ * how fast the machine is, natively or in the browser. Natively the process also really waits, until the real time since the
+ * first sleep has caught up with the logical clock; in WebAssembly (no blocking sleep) the clock just jumps. */
+typedef struct { void *frame; double wake; int64_t seq; } Sleeper;
+static Sleeper *sl_q; static int64_t sl_n, sl_cap, sl_seq;
+static double sl_now, sl_origin = -1;
+
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+#include <time.h>
+static double real_seconds(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec * 1e-9; }
+static void real_wait_until(double logical) {
+    double left = logical - (real_seconds() - sl_origin);
+    if (left <= 0) return;
+    fflush(stdout);
+    struct timespec t; t.tv_sec = (time_t)left; t.tv_nsec = (long)((left - (double)t.tv_sec) * 1e9);
+    nanosleep(&t, NULL);
+}
+#else
+static double real_seconds(void) { return 0; }
+static void real_wait_until(double logical) { (void)logical; }
+#endif
+
+void tomato_sleep_wait(void *frame, double seconds) {
+    if (sl_origin < 0) sl_origin = real_seconds();
+    if (!(seconds > 0)) seconds = 0;
+    if (sl_n == sl_cap) {
+        sl_cap = sl_cap ? sl_cap * 2 : 4;
+        sl_q = realloc(sl_q, (size_t)sl_cap * sizeof *sl_q);
+        if (!sl_q) tomato_fail("out of memory");
+    }
+    tomato_retain(frame);
+    sl_q[sl_n].frame = frame; sl_q[sl_n].wake = sl_now + seconds; sl_q[sl_n].seq = sl_seq++; sl_n++;
+}
+
+/* the sleeper that wakes first, or -1 */
+static int64_t sleeper_first(void) {
+    int64_t best = -1;
+    for (int64_t i = 0; i < sl_n; i++)
+        if (best < 0 || sl_q[i].wake < sl_q[best].wake || (sl_q[i].wake == sl_q[best].wake && sl_q[i].seq < sl_q[best].seq)) best = i;
+    return best;
+}
+
+static void sleeper_wake(int64_t i) {
+    void *f = sl_q[i].frame;
+    memmove(sl_q + i, sl_q + i + 1, (size_t)(sl_n - i - 1) * sizeof *sl_q);
+    sl_n--;
+    tomato_q_push(f);
+    tomato_release(f);
+}
+
+/* nothing is ready to run: wake a sleeper whose time has come; else let the oldest task that asked for a line of input have
+ * it (time does not pass while there is input to give); else move the clock to the first wake-up. Returns 1 when one was woken. */
 int tomato_sched_idle(void) {
-    if (in_head >= in_n) return 0;
-    InputWait w = in_q[in_head++];
-    void *line = tomato_input(w.prompt);
-    *(void **)((char *)w.frame + 72) = line;       /* NULL at the end of the input: the task raises EOFError */
-    tomato_release(w.prompt);
-    tomato_q_push(w.frame);
-    tomato_release(w.frame);
+    int64_t s = sleeper_first();
+    if (s >= 0 && sl_q[s].wake <= sl_now) { sleeper_wake(s); return 1; }
+    if (in_head < in_n) {
+        InputWait w = in_q[in_head++];
+        void *line = tomato_input(w.prompt);
+        *(void **)((char *)w.frame + 88) = line;       /* NULL at the end of the input: the task raises EOFError */
+        tomato_release(w.prompt);
+        tomato_q_push(w.frame);
+        tomato_release(w.frame);
+        return 1;
+    }
+    if (s >= 0) {
+        sl_now = sl_q[s].wake;
+        real_wait_until(sl_now);
+        sleeper_wake(s);
+        return 1;
+    }
+    return 0;
+}
+
+/* ---- cancelling a task (D58d). The flag is a bit in the frame header; the task raises CancelledError at its next wait
+ * (generated code asks tomato_task_cancelled at the start and after every wait). A task that is waiting is taken out of
+ * whatever it waits in (sleepers, the input queue, the waiters of another task) and made ready, so it raises at once. */
+#define F_CANCEL (1LL << 38)
+
+int32_t tomato_task_cancelled(void *h) {
+    Hdr *x = h;
+    if (!(x->type & F_CANCEL)) return 0;
+    x->type &= ~F_CANCEL;
     return 1;
+}
+
+void tomato_task_cancel(void *h) {
+    if (*(int64_t *)((char *)h + 32) != 0) return;            /* already finished */
+    ((Hdr *)h)->type |= F_CANCEL;
+    int waiting = 0;
+    for (int64_t i = 0; i < sl_n; i++)
+        if (sl_q[i].frame == h) {
+            memmove(sl_q + i, sl_q + i + 1, (size_t)(sl_n - i - 1) * sizeof *sl_q); sl_n--;
+            tomato_release(h); waiting = 1; break;
+        }
+    for (int64_t i = in_head; i < in_n && !waiting; i++)
+        if (in_q[i].frame == h) {
+            tomato_release(in_q[i].prompt);
+            memmove(in_q + i, in_q + i + 1, (size_t)(in_n - i - 1) * sizeof *in_q); in_n--;
+            tomato_release(h); waiting = 1;
+        }
+    void *on = (void *)(uintptr_t)*(uint64_t *)((char *)h + 80);
+    if (on) {
+        PtrVec *v = *(PtrVec **)((char *)on + 40);
+        for (int64_t i = 0; v && i < v->n; i++)
+            if (v->items[i] == h) {
+                memmove(v->items + i, v->items + i + 1, (size_t)(v->n - i - 1) * sizeof(void *)); v->n--;
+                tomato_release(h); waiting = 1; break;
+            }
+        *(uint64_t *)((char *)h + 80) = 0;
+    }
+    if (waiting) tomato_q_push(h);
 }
 
 void tomato_print_strobj(void *s) { fwrite(((Str *)s)->data, 1, (size_t)((Str *)s)->bytes, stdout); }
@@ -1008,7 +1111,7 @@ int tomato_str_contains(void *hay, void *needle) {
 
 /* An error nobody caught reached the entry point (D22a). `runtime` is 1 for a failure the language itself raised,
  * whose message is already in the current error mode's form; mode is 1 debug, 2 normal, 3 release (D34a). */
-void tomato_report_uncaught(void *obj, int line, int runtime, int mode) {
+static void print_uncaught(void *obj, int line, int runtime, int mode, const char *where) {
     fflush(stdout);
     Str *msg = *(Str **)((char *)obj + 16);
     if (mode == 1) {
@@ -1017,11 +1120,15 @@ void tomato_report_uncaught(void *obj, int line, int runtime, int mode) {
         /* a Diagnostic is a finished compiler error message (compiler/src/diag.tom): shown as it is */
         if (!runtime && cl >= 10 && strcmp(cls + cl - 10, "Diagnostic") == 0) fprintf(stderr, "%.*s\n", (int)msg->bytes, msg->data);
         else if (runtime) fprintf(stderr, "error: %.*s\n", (int)msg->bytes, msg->data);
-        else fprintf(stderr, "error: %s: %.*s (raised on line %d)\n", cls, (int)msg->bytes, msg->data, line);
+        else fprintf(stderr, "error: %s: %.*s (raised on line %d)%s\n", cls, (int)msg->bytes, msg->data, line, where);
     } else if (mode == 2) {
         if (runtime) fprintf(stderr, "error %.*s\n", (int)msg->bytes, msg->data);
         else fprintf(stderr, "error E11:%d\n", line);
     }
+}
+
+void tomato_report_uncaught(void *obj, int line, int runtime, int mode) {
+    print_uncaught(obj, line, runtime, mode, "");
     exit(1);
 }
 
@@ -1080,7 +1187,79 @@ static Hdr **pending;
 static int64_t pending_n, pending_cap;
 static int destroying;
 
+/* A failed task that nobody awaited (D58a). Its frame has the task that started it at byte 72 (counted by hand, since the
+ * collector does not see it), and the error, its line and kind where the compiler put them. When the last reference to such
+ * a task goes, the error is handed to the starter if it is still running: it is raised there at the starter's next await. Otherwise
+ * it is reported at once and the program will exit with code 1 at its end. */
+typedef struct { void *starter; void *err; int32_t line, rt; } Unread;
+static Unread *unread_q; static int64_t unread_n, unread_cap;
+static int unread_failed; static int32_t unread_mode = 2;
+#define F_RETRIEVED (1LL << 37)       /* the task's error was taken by an await, or handed to its starter */
+static int collecting;
+
+void tomato_set_mode(int32_t mode) { unread_mode = mode; }
+void tomato_task_retrieved(void *h) { ((Hdr *)h)->type |= F_RETRIEVED; }
+int32_t tomato_exit_code(void) { return unread_failed; }
+static void *frame_starter(Hdr *h) { return (void *)(uintptr_t)*(uint64_t *)((char *)h + 72); }
+
+static void unread_report(void *err, int line, int rt) {
+    print_uncaught(err, line, rt, unread_mode, " in a task nobody awaited");
+    unread_failed = 1;
+}
+
+static void frame_dropped(Hdr *h) {
+    void *starter = frame_starter(h);
+    *(uint64_t *)((char *)h + 72) = 0;
+    if (*(int64_t *)((char *)h + 32) == 2 && !(h->type & F_RETRIEVED) && !collecting) {
+        void *err = *(void **)((char *)h + 88 + sizeof(void *));
+        const char *cname = err ? tomato_class_names[((Hdr *)err)->type & TYPE_MASK] : "";
+        if (cname && strcmp(cname, "CancelledError") == 0) err = NULL;          /* a cancelled task is not an unread error */
+        int line = (int)*(int64_t *)((char *)h + 48), rt = (int)*(int64_t *)((char *)h + 56);
+        if (err && starter && *(int64_t *)((char *)starter + 32) == 0) {
+            if (unread_n == unread_cap) {
+                unread_cap = unread_cap ? unread_cap * 2 : 4;
+                unread_q = realloc(unread_q, (size_t)unread_cap * sizeof *unread_q);
+                if (!unread_q) tomato_fail("out of memory");
+            }
+            tomato_retain(starter); tomato_retain(err);
+            unread_q[unread_n++] = (Unread){ starter, err, line, rt };
+        } else if (err) unread_report(err, line, rt);
+    }
+    if (starter) tomato_release(starter);
+}
+
+/* a task finished without failing: it no longer needs its starter */
+void tomato_task_drop_starter(void *h) {
+    void *starter = frame_starter(h);
+    *(uint64_t *)((char *)h + 72) = 0;
+    if (starter) tomato_release(starter);
+}
+
+/* the error of a dropped task this one started, if there is one; the caller owns it */
+void *tomato_pending_pop(void *frame, int32_t *line, int32_t *rt) {
+    for (int64_t i = 0; i < unread_n; i++) {
+        if (unread_q[i].starter != frame) continue;
+        Unread u = unread_q[i];
+        memmove(unread_q + i, unread_q + i + 1, (size_t)(unread_n - i - 1) * sizeof *unread_q);
+        unread_n--;
+        *line = u.line; *rt = u.rt;
+        tomato_release(u.starter);
+        return u.err;
+    }
+    return NULL;
+}
+
+/* the program is over: errors that were handed to a task that never reached another await are reported now */
+void tomato_pending_flush(void) {
+    for (int64_t i = 0; i < unread_n; i++) {
+        unread_report(unread_q[i].err, unread_q[i].line, unread_q[i].rt);
+        tomato_release(unread_q[i].err); tomato_release(unread_q[i].starter);
+    }
+    unread_n = 0;
+}
+
 static void destroy_one(Hdr *h) {
+    if (tomato_kinds[tcode(h)] & 1024) frame_dropped(h);
     each_child(h, release_visit);
     free_internals(h);
     if (h->type & F_BUFFERED) { h->type |= F_DEAD; return; }   /* the collector still points at it: freed there */
@@ -1107,7 +1286,6 @@ static void destroy_object(Hdr *h) {
 static Hdr **roots;
 static int64_t roots_n, roots_cap;
 static int64_t gc_threshold = 10000;
-static int collecting;
 static int64_t gc_freed, gc_runs;
 
 static Hdr **stack;

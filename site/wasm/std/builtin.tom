@@ -24,6 +24,12 @@ class EOFError(RuntimeError):
     def make_eof(self, message: str):
         RuntimeError.make(self, message)
 
+# Raised inside a task that was cancelled with t.cancel() (at its next wait), and by await on that task.
+class CancelledError(RuntimeError):
+    @init
+    def make_cancelled(self, message: str):
+        RuntimeError.make(self, message)
+
 # range(stop), range(start, stop) and range(start, stop, step) are a value of their own. It keeps only the three numbers, so it
 # takes the same small amount of memory however long it is, and prints as range(0, 100, 1). It is a sequence of ints: `for`,
 # len(), indexing (negative too), slicing (gives another range), `in`, ==, reversed(), sorted(), sum(), min(), max() and

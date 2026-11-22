@@ -1298,16 +1298,16 @@ Source: Davis's Dashboard message:
 
 - Evidence: Davis answered the question "how should async be written" with "`async def` and `await`, like Python", chose "Compile error with a fix hint" for a call that is not awaited, and asked for full concurrency ("Full concurrency now"). This settles the syntax left open by D31a and D31b.
 - `async def f(...) -> T:` declares an async function. Calling it does not run it: it makes a task (D51b). `await expr` waits for a task and gives its result, or raises the error the task raised. `await f(x)` runs `f` at once, up to its first wait, and the caller goes on from there when it is done. `@main` may be async (the scheduler runs it).
-- Only async functions can `await`, `start` or use `async for`. Calling an async function without `await` or `start`, awaiting something that is not a task, and awaiting in the right side of `and`/`or`, in an `elif` condition or in a `while` condition are compile errors with a hint. Any other await in an expression is allowed (`n = int(await input('n? '))`): the compiler moves each await into a statement of its own just before the statement that uses it, in left-to-right order.
+- Only async functions can `await`, `start` or use `async for`. Calling an async function without `await` or `start`, and awaiting something that is not a task are compile errors with a hint. Awaits in `while`/`elif` conditions and in `and`/`or` were refused here; D58e allows them. Any other await in an expression is allowed (`n = int(await input('n? '))`): the compiler moves each await into a statement of its own just before the statement that uses it, in left-to-right order.
 - `await` and `async` are now keywords; `start` is a keyword only in `start name(...)`.
-- `try`/`catch`/`finally`, loops, `break`, `continue` and `return` work across an await like anywhere else. Async methods are not supported yet.
+- `try`/`catch`/`finally`, loops, `break`, `continue` and `return` work across an await like anywhere else. Async methods are D58b.
 
 ### D51b — `start f()` makes a task that runs at the same time: accepted
 
 - Evidence: Davis wrote "we will have start f() to that gives a object".
 - `start f(args)` begins running an async function and gives a task object of type `task[T]` at once (T is the function's return type, `None` when it returns nothing); the task runs whenever the starting code waits (`await`), so tasks interleave. `await t` gives its result and can be done once or many times; if the task failed, the error is raised again at each `await`. Tasks can be stored in lists, passed and returned (`list[task[int]]`).
 - Scheduling is cooperative on one thread: a task runs until it awaits something that is not ready or yields (D51c); nothing preempts it, so there are no data races. Tasks that are ready run in the order they became ready. When nothing is ready, the oldest task that asked for input gets the next line (so concurrent tasks that all ask for input are served in the order they asked).
-- The program ends when `main` is done and no task is ready to run; a task that is waiting for something that never comes is dropped. If `main` is not done and nothing can run, the program stops with "every task is waiting for something that can no longer happen". An error in a task that nobody awaits is not reported.
+- The program ends when `main` is done and no task is ready to run; a task that is waiting for something that never comes is dropped. If `main` is not done and nothing can run, the program stops with "every task is waiting for something that can no longer happen". An error in a task that nobody awaits is reported by D58a.
 - Implementation: each async function becomes a frame (a heap object holding its variables and where it stopped) and a resume function written as a state machine, so it works the same in the native runtime and in the browser's IR interpreter, which cannot switch stacks. The scheduler is generated code; the runtime only keeps the ready queue and the queue of tasks waiting for input.
 
 ### D51c — `yield` in an async function reports status: accepted
@@ -1315,7 +1315,45 @@ Source: Davis's Dashboard message:
 - Evidence: Davis wrote "yield is how status is typically given in async functions" and chose: statuses are read with `async for status in t:`, `await t` gives the final result, and a task nobody reads statuses from just runs on (yielding never blocks it).
 - An async function that yields says what it yields after the return type: `async def download(url: str) -> int yields str:`; the task type is then `task[int, str]`. `yield v` appends `v` to the task's list of statuses and then lets other tasks run. `async for s in t:` takes the statuses in order, waiting when there are none yet, and ends when the task is done and every status has been taken (it does not raise; `await t` after the loop gives the result or raises the error). Statuses are kept until read, without a limit.
 - This is different from a generator `yield` (D48a), which is used by `for` and runs inline; in an async function `yield` always means a status.
-- Open: `sleep` and timers, cancelling a task, a task awaited by `async for` from two tasks at once reading the same statuses, async methods and `@iter` async iterators, reporting errors from tasks nobody awaits.
+- Open: a task awaited by `async for` from two tasks at once reading the same statuses.
+
+### D58a — an error in a task nobody awaits: accepted
+
+- Evidence: Davis chose "report to stderr, and the program exits with code 1 at its end", then said the error should be raised so it can be caught, "at all of the awaits", and confirmed "raised in the task that started it, at its next await".
+- A task is unread when it failed and the last reference to it is dropped without any `await` or `async for` having taken its error (a task that is still held, in a variable or a list, can still be awaited, so it is not unread yet). Its error is then handed to the task that wrote `start f()`: it is raised at that task's next await of any kind (`await`, `await input()`, `async for`, `yield`), where a `try`/`catch` around that await catches it like any other error. Raised once.
+- If the starting task has already finished (or never awaits again), the error is written to standard error in the form of an uncaught error (D22a) followed by "in a task nobody awaited", the program carries on, and exits with code 1 when it ends. A task that was still held when the program ended is reported the same way.
+- The starter is not woken for this: a starter that is waiting on something else sees the error when it next runs.
+- Implementation: a task frame has one more fixed field, the starter; a runtime queue holds errors waiting for their starter. A task frame is recognised by bit 10 in the runtime kind table, so dropping one can look at it.
+
+### D58b — async methods and async `@iter`: accepted
+
+- Evidence: Davis accepted the proposed rules and chose "also allow `@iter` as an async iterator".
+- A class can have `async def` methods (and `override async def`). The task made by calling one keeps `self` alive until the task ends. `await obj.m()`, `start obj.m()` and calls through a parent-typed variable (virtual dispatch: the method table holds the task constructor) work like functions; calling one without `await`/`start` is the same compile error.
+- An override must be async exactly when the method it overrides is, with the same return and `yields` types; otherwise "must take and return the same types". `@init` cannot be async, and neither can an operator or protocol method except `@iter`.
+- `@iter` may be `async def each(self) yields T:` (a return type is allowed too). `async for x in obj:` calls it, starts the task and reads its statuses as for any task (D51c). A plain `for` over such an object is a compile error that says to use `async for`; `list()`, `sum()` and the like do not accept it.
+
+### D58c — `await sleep(seconds)`: accepted
+
+- Evidence: Davis chose "real clock natively, virtual clock in the browser".
+- `await sleep(seconds)` (an int or a float; zero or less just lets the other tasks run) waits that long inside an async function; calling it without `await` is a compile error with the fix written out. It is a built-in like `await input()`.
+- Time is logical: a sleeper wakes at its wake-up time on a clock that moves only when every task is waiting (nothing is ready and no task wants input that is available), the earliest first and ties in the order they went to sleep. So the order of output is the same on every machine, natively and in the browser, and the time a task spends computing does not move the clock. Natively the process also really waits until the real time since the first sleep reaches the logical time; in WebAssembly there is no blocking sleep, so the clock just jumps and a sleep takes no real time (the playground's 5 second limit therefore never counts it).
+- A task that asked for input is served before the clock moves, so waiting for a line never lets time pass. A program stops with the "nothing can run" error only when no task is ready, none is asleep and none wants input.
+
+### D58d — cancelling a task, `t.done()`: accepted
+
+- Evidence: Davis accepted the proposed rules ("Yes, these rules"), including that `CancelledError` is a subclass of `RuntimeError`.
+- `t.cancel()` is an ordinary call (no `await`). The task raises `CancelledError` ("the task was cancelled") at its next wait, or at once if it is waiting now: it is taken out of the queue it waits in (a sleep, an input request, another task it awaits) and made ready, so its `finally` blocks run and it may catch the error and carry on. A task not yet started raises at its first step, before running any of its body. Cancelling a finished task does nothing, cancelling twice is fine, and cancelling a task that waits for another task cancels only the waiter.
+- `await t` on a cancelled task raises `CancelledError` again like any task error. A task that ends with `CancelledError` is not an unread error (D58a).
+- `t.done()` is `True` once the task has finished in any way (result, error or cancelled), without waiting. Any other method name on a task is a compile error that lists these two.
+- Not included: `t.cancelled()`, cancelling many tasks at once, timeouts.
+
+### D58e — `await` in `while`, `elif` and the right side of `and`/`or`: accepted (follows Python; not asked separately)
+
+- Evidence: the task brief listed it as the last item; there is one sensible meaning, Python's. Davis has not been asked about it separately, so veto it at review.
+- `while await more():` runs the await again before every iteration, and `continue` goes back to it. An `elif` condition with an await runs only when the earlier conditions were false. `a and await f()` runs `f` only when `a` is true; `a or await f()` only when `a` is false. This replaces the compile errors of D51a for these three places.
+- Implementation: the compiler rewrites them before compiling: the while becomes `while True:` with the await and an `if not condition: break` at the top; an elif with an await moves it and the branches after it into the else branch; `x and await f()` becomes `t = x` then `if t: t = await f()` (`not t` for `or`).
+- An await in either value of `a if c else b` is now a compile error with the fix (before, it ran whatever the condition said, which was a bug).
+
 ### D52a — `not in` and more compound assignments: accepted (following Python)
 
 - `x not in items` means `not (x in items)`, for everything `in` works on (lists, text, sets, dicts, tuples, ranges, classes with `@contains`, `x in Type`). It compares like `in` and `is not`, so it cannot be chained.

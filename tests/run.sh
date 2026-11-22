@@ -195,10 +195,14 @@ neg tuple_append "a tuple cannot be changed"
 neg tuple_assign "a tuple cannot be changed"
 neg non_bool_condition "a condition has type int, but bool is expected"
 neg sync_input "input() is async, so it must be awaited"
+neg sync_sleep "sleep() is async, so it must be awaited"
 neg async_call_without_await "'work' is async, so it must be awaited or started"
 neg await_outside_async "'await' can only be used inside an async function"
-neg await_in_and "an await cannot be inside the right side of 'and' or 'or'"
 neg await_non_task "only a task can be awaited, but this is int"
+neg await_in_conditional "an await cannot be in either value of a conditional expression"
+neg async_init "cannot be async"
+neg async_override_mismatch "must take and return the same types"
+neg for_async_iter "needs async for"
 
 echo "== input (tests/input: the file NAME.in is the standard input, NAME.out the whole output) =="
 for f in tests/input/*.tom; do
@@ -228,6 +232,7 @@ rt divide_by_zero "division by zero" 1
 rt index "index out of range" 1
 rt overflow "integer overflow" 1
 rt caught "caught boom" 0
+rt async_unread "in a task nobody awaited" 1
 rt dict_missing_key "the key is not there" 1
 rt set_missing "the element is not there" 1
 rt rational_zero "a rational cannot have a zero denominator" 1

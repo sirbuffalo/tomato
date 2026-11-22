@@ -83,7 +83,7 @@ export class Node:
     exported: bool = False
     fields: list[Val] = []
 
-def vs(text: str) -> Val:
+export def vs(text: str) -> Val:
     v = Val()
     v.tag = 's'
     v.text = text
@@ -95,13 +95,13 @@ def vi(n: int) -> Val:
     v.num = n
     return v
 
-def vb(b: bool) -> Val:
+export def vb(b: bool) -> Val:
     v = Val()
     v.tag = 'b'
     v.flag = b
     return v
 
-def vz() -> Val:
+export def vz() -> Val:
     return Val()
 
 export def vn(n: Node) -> Val:
@@ -110,19 +110,19 @@ export def vn(n: Node) -> Val:
     v.node = n
     return v
 
-def vlist(items: list[Val]) -> Val:
+export def vlist(items: list[Val]) -> Val:
     v = Val()
     v.tag = 'l'
     v.items = items
     return v
 
-def vtuple(items: list[Val]) -> Val:
+export def vtuple(items: list[Val]) -> Val:
     v = Val()
     v.tag = 't'
     v.items = items
     return v
 
-def vnodes(nodes: list[Node]) -> Val:
+export def vnodes(nodes: list[Node]) -> Val:
     items: list[Val] = []
     for n in nodes:
         items.append(vn(n))
@@ -139,7 +139,7 @@ def vopt_text(s: str) -> Val:
         return vz()
     return vs(s)
 
-def mk(kind: str, line: int, fields: list[Val]) -> Node:
+export def mk(kind: str, line: int, fields: list[Val]) -> Node:
     n = Node()
     n.kind = kind
     n.line = line

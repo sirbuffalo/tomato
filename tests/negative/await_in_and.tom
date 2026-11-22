@@ -1,8 +1,0 @@
-async def work() -> bool:
-    return True
-
-@main
-async def main():
-    a = False
-    if a and await work():
-        print('yes')
