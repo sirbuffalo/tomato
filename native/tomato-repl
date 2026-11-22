@@ -79,6 +79,23 @@ try_run() {
   fi
 }
 
+# Make a compiler error readable: no temp paths, no line numbers (they refer to the generated program), plain words.
+friendly() {   # reads $S/err, prints the cleaned message on stderr
+  sed -e "s#$S/[^ :]*/*##g" "$S/err" | awk '
+    { l[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        x = l[i]
+        if (x ~ /^error: a file could not be opened/ || x ~ /^Could not open file/) { if (NR > 1) continue; m = x; sub(/.*\//, "", m); sub(/\.tom.*/, "", m); x = "error: could not load an imported module (check its name)" }
+        if (x ~ /^ParseError.*(INDENT|DEDENT|expected an? indent)/) x = "SyntaxError: expected an indented body here (a block needs at least one indented line)"
+        else if (x ~ /^ParseError/) { sub(/^ParseError( on line [0-9]+)?: /, "SyntaxError: ", x) }
+        if (match(x, /^CompileError: module [A-Za-z_0-9.]+ has no /)) { y = x; sub(/^CompileError: module /, "", y); mod = y; sub(/ .*/, "", mod); nm = y; sub(/^[^ ]+ has no /, "", nm); x = mod " has no name " (nm ~ /^\x27/ ? nm : "\x27" nm "\x27") }
+        sub(/^CompileError: /, "", x)
+        print x
+      }
+    }' >&2
+}
+
 new_output() {  # print the part of $S/out that is not in the previous output
   have=$(wc -c < "$S/shown" | tr -d ' ')
   if [ "$have" -gt 0 ] && head -c "$have" "$S/out" | cmp -s - "$S/shown"; then tail -c +$((have + 1)) "$S/out"; else cat "$S/out"; fi
@@ -116,7 +133,7 @@ submit() {   # one piece of source text in $1
   fi
   if try_run "$S/cd" "$S/cb"; then new_output; commit "$S/cd"; else
     new_output          # what the line printed before it failed
-    cat "$S/err" >&2
+    friendly
     grep -q "unknown name" "$S/err" 2>/dev/null && err "hint: functions and classes defined here cannot read repl variables; pass them as arguments"
   fi
 }
@@ -140,8 +157,10 @@ help() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
 for f in "$@"; do load_file "$f"; done
 interactive=0; [ -t 0 ] && interactive=1
 # line editing: read -e gives the arrow keys, and the history (up and down) is kept between sessions
-HISTFILE="${TOMATO_HISTORY:-$HOME/.tomato/repl_history}"; HISTSIZE=1000; HISTFILESIZE=1000
-if [ $interactive = 1 ]; then bind '"\t": "    "' 2>/dev/null; set -o history; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
+HISTFILE="${TOMATO_HISTORY:-$HOME/.tomato/repl_history_v2}"; HISTSIZE=1000; HISTFILESIZE=1000
+# Tab inserts an indent: readline's own file-completion would list the directory. bind in a script is not enough (bash 3.2
+# ignores it), so readline gets a private inputrc. History holds only what the user types (see readline below).
+if [ $interactive = 1 ]; then printf '%s\n' '$include /etc/inputrc' '"\t": "    "' 'set bell-style none' > "$S/inputrc"; export INPUTRC="$S/inputrc"; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
 readline() {   # readline PROMPT [INITIAL TEXT] -> sets $REPLY_LINE
   if [ $interactive = 1 ]; then
     if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then IFS= read -r -e -p "$1" -i "$2" REPLY_LINE || return 1   # macOS ships bash 3.2, which has no -i: there Tab inserts the indent
