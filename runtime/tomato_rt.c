@@ -1349,12 +1349,14 @@ static Hdr **garbage;
 static int64_t garbage_n, garbage_cap;
 
 static void mg_visit(Hdr *c) { if (c->rc > 0) { c->rc--; spush(c); } }
+static int64_t gc_work;
 static void mark_gray(Hdr *s) {
     spush(s);
     while (stack_n) {
         Hdr *h = stack[--stack_n];
         if (hcolor(h) == GRAY) continue;
         set_color(h, GRAY);
+        gc_work++;
         each_child(h, mg_visit);
     }
 }
@@ -1407,6 +1409,7 @@ void tomato_collect_cycles(void) {
     if (collecting) return;
     collecting = 1;
     gc_runs++;
+    gc_work = 0;
     int64_t keep = 0;
     for (int64_t i = 0; i < roots_n; i++) {          /* mark: subtract the counts that come from inside the graph */
         Hdr *s = roots[i];
@@ -1430,13 +1433,22 @@ void tomato_collect_cycles(void) {
         gc_freed++;
     }
     roots_n = 0;
-    gc_threshold = 10000;
+    /* Tracing costs time in proportion to the graph reached, so wait for roots in proportion to it too: a big live
+     * graph is not rescanned every 10000 roots. */
+    gc_threshold = gc_work / 8 > 10000 ? gc_work / 8 : 10000;
     collecting = 0;
     if (getenv("TOMATO_GC_STATS") && gc_freed) fprintf(stderr, "gc: %lld object(s) freed in cycles\n", (long long)gc_freed);
 }
 
 static void possible_root(Hdr *h) {
-    if ((tomato_kinds[tcode(h)] & 15) == 0) return;      /* strings hold no references, so they are never in a cycle */
+    int64_t code = tcode(h);
+    int32_t kind = tomato_kinds[code];
+    switch (kind & 15) {                  /* an object that holds no references can never be in a cycle */
+    case 0: return;                       /* strings */
+    case 1: if (*tomato_offsets[code] < 0) return; break;   /* a class with no heap-valued fields */
+    case 2: if (!(kind & 256)) return; break;                /* a list of numbers */
+    case 3: if (!(kind & 512)) return; break;   /* string keys hold no references; only values can */
+    }
     if (hcolor(h) != PURPLE) {
         set_color(h, PURPLE);
         if (!(h->type & F_BUFFERED)) {

@@ -53,3 +53,4 @@ async_conditions
 compound_ops
 unpacking
 iterable_sized
+gc_cycles

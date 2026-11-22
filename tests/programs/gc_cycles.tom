@@ -1,0 +1,56 @@
+# The cycle collector under pressure: a big live graph, many garbage cycles, and classes that can never be in a cycle.
+class Leaf:
+    x: int
+    y: int
+    @init
+    def make(self, x: int, y: int):
+        self.x = x
+        self.y = y
+
+class Node:
+    other: Node | None
+    leaf: Leaf
+    names: list[str]
+    @init
+    def make(self, k: int):
+        self.other = None
+        self.leaf = Leaf(k, k * 2)
+        self.names = ['n']
+
+class Box:
+    items: list[Box]
+    n: int
+    @init
+    def make(self, n: int):
+        self.items = []
+        self.n = n
+
+@main
+def main():
+    live: list[Node] = []
+    for i in range(30000):
+        a = Node(i)
+        b = Node(i + 1)
+        a.other = b
+        b.other = a
+        live.append(a)
+    total = 0
+    for round in range(5):
+        for i in range(40000):
+            a = Node(i)
+            b = Node(i)
+            a.other = b
+            b.other = a
+            total += a.leaf.y
+        for n in live:
+            total += n.leaf.x
+    boxes: list[Box] = []
+    for i in range(20000):
+        bx = Box(i)
+        bx.items.append(bx)
+        boxes.append(bx)
+        total += bx.n
+    for bx in boxes:
+        total += len(bx.items)
+    print(total)
+    print(len(live))

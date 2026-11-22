@@ -14,3 +14,5 @@
   A for loop with several variables only accepts `enumerate(...)` or `zip(...)` today, so looping over `dict.items()` or a list of tuples needs indexing; found while using the new features across the code.
 - Act on docs/performance.md: cut refcount and cycle-collector bookkeeping, inline the small-int fast path, compile list indexing to a bounds check plus load
   The benchmarks (benchmarks/, site/benchmarks.html) show Tomato 12x to 48x slower than Rust on loops over big lists, sort and objects; docs/performance.md ranks the likely causes. Profile before building each one.
+- Add a size-class free-list allocator for small objects
+  Bypassed under ASan, to cut malloc/free cost in the objects benchmark (about 0.5 s left after the collector fix).
