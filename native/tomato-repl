@@ -160,7 +160,7 @@ interactive=0; [ -t 0 ] && interactive=1
 HISTFILE="${TOMATO_HISTORY:-$HOME/.tomato/repl_history_v2}"; HISTSIZE=1000; HISTFILESIZE=1000
 # Tab inserts an indent: readline's own file-completion would list the directory. bind in a script is not enough (bash 3.2
 # ignores it), so readline gets a private inputrc. History holds only what the user types (see readline below).
-if [ $interactive = 1 ]; then printf '%s\n' '$include /etc/inputrc' '"\t": "    "' 'set bell-style none' > "$S/inputrc"; export INPUTRC="$S/inputrc"; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
+if [ $interactive = 1 ]; then { printf '%s\n' '$include /etc/inputrc'; user="${INPUTRC:-$HOME/.inputrc}"; [ -f "$user" ] && printf '%s\n' "\$include $user"; printf '%s\n' '"\t": "    "' 'set bell-style none'; } > "$S/inputrc"; export INPUTRC="$S/inputrc"; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
 readline() {   # readline PROMPT [INITIAL TEXT] -> sets $REPLY_LINE
   if [ $interactive = 1 ]; then
     if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then IFS= read -r -e -p "$1" -i "$2" REPLY_LINE || return 1   # macOS ships bash 3.2, which has no -i: there Tab inserts the indent
