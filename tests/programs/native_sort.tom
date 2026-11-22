@@ -1,0 +1,72 @@
+# sorted() of list[int], list[float] and list[str] is done by the runtime: the results must be what a stable merge sort gives
+def show_ints(xs: list[int]):
+    print(sorted(xs))
+
+def lcg(n: int, seed: int, mod: int) -> list[int]:
+    out: list[int] = []
+    for i in range(n):
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        out.append(seed % mod - mod // 2)
+    return out
+
+def checksum(xs: list[int]) -> int:
+    total = 0
+    for i in range(len(xs)):
+        total = (total + (i + 1) * xs[i]) % 1000000007
+    return total
+
+def is_sorted(xs: list[int]) -> bool:
+    for i in range(1, len(xs)):
+        if xs[i] < xs[i - 1]:
+            return False
+    return True
+
+@main
+def main():
+    empty: list[int] = []
+    print(sorted(empty))
+    print(sorted([7]))
+    show_ints([3, 1, 2])
+    show_ints([5, 5, 1, 5, 1, 0, -1, -1, 0])
+    show_ints([4611686018427387903, -4611686018427387904, 4611686018427387904, -4611686018427387905, 0, 1, -1])
+    show_ints([2 ** 62, 2 ** 62 - 1, -(2 ** 62), -(2 ** 62) - 1, 2 ** 63, -(2 ** 63), 2 ** 63 - 1, 2 ** 64, -(2 ** 64), 2 ** 100, -(2 ** 100), 7, -7])
+    show_ints([2 ** 100, 2 ** 100, 2 ** 99, -(2 ** 100), 2 ** 100 + 1, 3, 2 ** 100])
+    # more than the insertion-sort run and than the radix threshold, small ints only
+    for n in [15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 1000, 5000]:
+        xs = lcg(n, n, 1000)
+        ys = sorted(xs)
+        print(n, len(ys), is_sorted(ys), checksum(ys), checksum(xs))
+    wide = lcg(3000, 9, 4000000000)
+    wide_sorted = sorted(wide)
+    print(is_sorted(wide_sorted), checksum(wide_sorted), wide_sorted[0], wide_sorted[2999])
+    # the same with big numbers mixed in
+    mixed = lcg(2000, 3, 1000000)
+    for i in range(0, 2000, 37):
+        mixed[i] = mixed[i] * 2 ** 70
+    mixed_sorted = sorted(mixed)
+    print(is_sorted(mixed_sorted), checksum(mixed_sorted), len(mixed_sorted))
+    # the input is not changed
+    orig = [3, 1, 2]
+    s = sorted(orig)
+    s[0] = 99
+    print(orig, s)
+    print(sorted(range(5, 0, -1)))
+    # floats
+    print(sorted([2.5, -1.0, 0.0, -0.0, 3.25, -1e308, 1e308, 1e-300, -1e300]))
+    print(sorted([0.0, -0.0, 0.0, -0.0]))
+    print(sorted([1.5]))
+    fl: list[float] = []
+    for i in range(100):
+        fl.append(float((i * 37) % 101) / 4.0 - 10.0)
+    print(sorted(fl))
+    # text, including non-ASCII, empty and prefixes
+    print(sorted(['pear', 'apple', 'fig', '', 'apple', 'Zebra', 'zebra', 'app', 'applesauce']))
+    print(sorted(['é', 'e', 'z', 'ü', 'ß', '日本', '日', '😀', 'a😀', 'a']))
+    words: list[str] = []
+    for i in range(300):
+        words.append(str((i * 7919) % 1000) + 'x')
+    ws = sorted(words)
+    print(ws[0], ws[1], ws[150], ws[299], len(ws))
+    names = ['b', 'a', 'b', 'c']
+    sn = sorted(names)
+    print(names, sn)

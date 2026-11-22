@@ -57,3 +57,4 @@ iterable_sized
 int_boundary
 gc_cycles
 borrow_elision
+native_sort

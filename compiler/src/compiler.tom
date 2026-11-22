@@ -2135,6 +2135,13 @@ class Gen:
         if not (elem == 'int' or elem == 'float' or (elem == 'str' and name != 'sum')):
             wanted = 'numbers or text' if name != 'sum' else 'numbers'
             raise CompileError(f'{name}() needs a list of {wanted}, but this is {shown(lst.ty)}', line)
+        if name == 'sorted':
+            # the runtime sorts a copy: 0 = int, 1 = float, 2 = str
+            kind = '0' if elem == 'int' else ('1' if elem == 'float' else '2')
+            r = self.tmp('sorted')
+            self.emit(f'{r} = call ptr @tomato_list_sorted(ptr {lst.reg}, i32 {kind})')
+            self.release(lst)
+            return ex(r, lst.ty)
         info = self.mod.helper(name, lst.ty, line)
         return self.call_helper(info, [lst])
 
@@ -5316,6 +5323,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_repeat(ptr, i64)\n'
     d += 'declare ptr @tomato_str_slice3(ptr, i64, i64, i64, i32)\n'
     d += 'declare ptr @tomato_list_slice(ptr, i64, i64, i64, i32, i32)\n'
+    d += 'declare ptr @tomato_list_sorted(ptr, i32)\n'
     d += 'declare ptr @tomato_str_from_i64(i64)\n'
     d += 'declare ptr @tomato_str_from_bool(i32)\n'
     d += 'declare ptr @tomato_str_from_f64(double)\n'
