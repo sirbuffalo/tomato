@@ -33,7 +33,7 @@ class CancelledError(RuntimeError):
 # range(stop), range(start, stop) and range(start, stop, step) are a value of their own. It keeps only the three numbers, so it
 # takes the same small amount of memory however long it is, and prints as range(0, 100, 1). It is a sequence of ints: `for`,
 # len(), indexing (negative too), slicing (gives another range), `in`, ==, reversed(), sorted(), sum(), min(), max() and
-# list() all work, each through the method marked for it. `for i in range(n)` and `range(a, b)` are counted by the compiler
+# list() all work, each through the method marked for it. `for i in range(n)`, `range(a, b)` and `range(a, b, step)` are counted by the compiler
 # directly; everything else about range is written here, in Tomato.
 class range:
     start: int

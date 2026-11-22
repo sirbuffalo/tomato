@@ -490,6 +490,7 @@
     }
     if (name === "llvm.floor.f64") return Math.floor(vals[0]);
     if (name === "llvm.pow.f64") return Math.pow(vals[0], vals[1]);
+    if (name === "llvm.assume") return undefined;
     if (name === "llvm.trap") throw new Error("the program trapped");
     if (name === "printf") return this.printf(vals);
     if (name === "putchar") { this.ex.putchar(Number(vals[0])); return vals[0]; }

@@ -1,0 +1,73 @@
+@main
+def main():
+    # range(a, b, step) in a for loop is counted by the compiler: every sign of step, empty ranges, reassigning the loop variable
+    for i in range(0, 10, 3):
+        print(i)
+    for i in range(10, 0, -3):
+        print(i)
+    for i in range(5, 5, 2):
+        print('never')
+    for i in range(5, 0, 2):
+        print('never')
+    for i in range(0, 5, -1):
+        print('never')
+    for i in range(5, 5, -2):
+        print('never')
+    for i in range(3, -4, -2):
+        print(i)
+    for i in range(-5, 5, 4):
+        print(i)
+    for i in range(0, 3, 100):
+        print(i)
+    # the loop variable can be changed in the body; the next number still comes from the count
+    for i in range(0, 10, 4):
+        print(i)
+        i = 100
+        print(i)
+    # the bounds and the step are worked out once, before the loop
+    n = 9
+    s = 2
+    for i in range(1, n, s):
+        n = 3
+        s = 5
+        print(i)
+    print(n, s)
+    # break, continue, nested, a step from a variable, and the variable after the loop
+    total = 0
+    for i in range(2, 30, 3):
+        if i % 2 == 0:
+            continue
+        if i > 20:
+            break
+        total += i
+    print(total, i)
+    count = 0
+    for i in range(2, 50):
+        for j in range(i * i, 50, i):
+            count += 1
+    print(count)
+    k = -1
+    for k in range(7, 7, 1):
+        print('never')
+    print(k)
+    # a big number as a bound still works as long as the numbers stay machine-sized
+    for i in range(4611686018427387900, 4611686018427387903, 2):
+        print(i)
+    # a zero step is an error that can be caught, as for range() itself
+    z = 0
+    try:
+        for i in range(1, 5, z):
+            print('never')
+    catch RuntimeError as e:
+        print('caught', e.message)
+    # the same numbers as the range value gives
+    ok = True
+    for lo in range(-6, 7, 3):
+        for hi in range(-6, 7, 4):
+            for st in [-3, -1, 1, 2, 5]:
+                seen: list[int] = []
+                for i in range(lo, hi, st):
+                    seen.append(i)
+                if str(seen) != str(list(range(lo, hi, st))):
+                    ok = False
+    print(ok)

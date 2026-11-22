@@ -1520,7 +1520,7 @@ class Gen:
     def tag_small(self, raw: str) -> Ex:
         # a machine number known to be small (a length, a loop counter, a position) as an int
         s = self.tmp('shl')
-        self.emit(f'{s} = shl i64 {raw}, 1')
+        self.emit(f'{s} = shl nsw i64 {raw}, 1')
         t = self.tmp('tag')
         self.emit(f'{t} = or i64 {s}, 1')
         return exs(t, 'int')
@@ -5113,13 +5113,12 @@ class Gen:
         if it.kind != 'Call' or val_node(it.fields[0]).kind != 'Name' or val_node(it.fields[0]).fields[0].text != 'range':
             raise CompileError('a for loop with two variables is not supported here', s.line)
         bounds = val_nodes(it.fields[1])
-        if len(bounds) == 3:
-            self.for_each(s, it)
-            return
-        if len(bounds) != 1 and len(bounds) != 2:
+        if len(bounds) < 1 or len(bounds) > 3:
             raise CompileError('range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', s.line)
         start = '0'
         stop = ''
+        stepv = '1'
+        basev = '0'
         if len(bounds) == 1:
             e = self.expr(bounds[0])
             e = self.want(e, 'int', s.line, 'a range bound')
@@ -5131,15 +5130,54 @@ class Gen:
             b = self.want(b, 'int', s.line, 'a range bound')
             start = self.int_raw(a)
             stop = self.int_raw(b)
+        if len(bounds) == 3:
+            c3 = self.expr(bounds[2])
+            c3 = self.want(c3, 'int', s.line, 'a range bound')
+            stepv = self.int_raw(c3)
+            zero = self.tmp('zerostep')
+            self.emit(f'{zero} = icmp eq i64 {stepv}, 0')
+            self.fail_if(zero, 'range step cannot be zero')
+            # (the raw bounds are 63-bit numbers, so stop - start is at most 2^63 - 1 and cannot overflow)
+            # the number of times round: a division once, so the loop itself is one compare and one add
+            up = self.tmp('up')
+            self.emit(f'{up} = icmp sgt i64 {stepv}, 0')
+            fwd = self.tmp('fwd')
+            self.emit(f'{fwd} = sub i64 {stop}, {start}')
+            back = self.tmp('back')
+            self.emit(f'{back} = sub i64 {start}, {stop}')
+            dist = self.tmp('dist')
+            self.emit(f'{dist} = select i1 {up}, i64 {fwd}, i64 {back}')
+            neg = self.tmp('neg')
+            self.emit(f'{neg} = sub i64 0, {stepv}')
+            width = self.tmp('width')
+            self.emit(f'{width} = select i1 {up}, i64 {stepv}, i64 {neg}')
+            less = self.tmp('less')
+            self.emit(f'{less} = sub i64 {dist}, 1')
+            quo = self.tmp('quo')
+            self.emit(f'{quo} = sdiv i64 {less}, {width}')
+            plus = self.tmp('plus')
+            self.emit(f'{plus} = add i64 {quo}, 1')
+            empty = self.tmp('empty')
+            self.emit(f'{empty} = icmp sle i64 {dist}, 0')
+            cnt = self.tmp('cnt')
+            self.emit(f'{cnt} = select i1 {empty}, i64 0, i64 {plus}')
+            basev = start
+            start = '0'
+            stop = cnt
         var = self.slot(s.fields[0].text, 'int', s.line)
-        old = self.tmp('old')
-        self.emit(f'{old} = load i64, ptr {var}')
-        self.emit(f'call void @tomato_int_free(i64 {old})')           # a number the variable held before the loop; the loop stores small ones
-        self.emit(f'store i64 1, ptr {var}')
+        if len(bounds) < 3:
+            old = self.tmp('old')
+            self.emit(f'{old} = load i64, ptr {var}')
+            self.emit(f'call void @tomato_int_free(i64 {old})')           # a number the variable held before the loop; the loop stores small ones
+            self.emit(f'store i64 1, ptr {var}')
         counter = self.hidden_slot('for.i')
         limit = self.hidden_slot('for.n')
+        stepslot = self.hidden_slot('for.s')
+        baseslot = self.hidden_slot('for.b')
         self.emit(f'store i64 {start}, ptr {counter}')
         self.emit(f'store i64 {stop}, ptr {limit}')
+        self.emit(f'store i64 {stepv}, ptr {stepslot}')
+        self.emit(f'store i64 {basev}, ptr {baseslot}')
         head = self.label('for')
         body = self.label('forbody')
         step = self.label('forstep')
@@ -5154,6 +5192,22 @@ class Gen:
         self.emit(f'{c} = icmp slt i64 {i}, {lim}')
         self.cond_br(c, body, end)
         self.place(body)
+        if len(bounds) == 1 or len(bounds) == 3:         # the count starts at 0, so an index made from it is never negative
+            nonneg = self.tmp('nonneg')
+            self.emit(f'{nonneg} = icmp sge i64 {i}, 0')
+            self.emit(f'call void @llvm.assume(i1 {nonneg})')
+        if len(bounds) == 3:             # an empty loop leaves the variable alone; one the body gave a big number is freed first
+            old = self.tmp('old')
+            self.emit(f'{old} = load i64, ptr {var}')
+            self.emit(f'call void @tomato_int_free(i64 {old})')
+            bv = self.tmp('bv')
+            self.emit(f'{bv} = load i64, ptr {baseslot}')
+            sv = self.tmp('sv')
+            self.emit(f'{sv} = load i64, ptr {stepslot}')
+            off = self.tmp('off')
+            self.emit(f'{off} = mul nsw i64 {i}, {sv}')
+            i = self.tmp('val')
+            self.emit(f'{i} = add nsw i64 {bv}, {off}')
         self.emit(f'store i64 {self.tag_small(i).reg}, ptr {var}')
         self.push_loop(end, step)
         self.block(val_nodes(s.fields[2]))
@@ -5164,7 +5218,7 @@ class Gen:
         cur = self.tmp('cur')
         self.emit(f'{cur} = load i64, ptr {counter}')
         nxt = self.tmp('next')
-        self.emit(f'{nxt} = add i64 {cur}, 1')
+        self.emit(f'{nxt} = add nsw i64 {cur}, 1')
         self.emit(f'store i64 {nxt}, ptr {counter}')
         self.br(head)
         self.place(end)
@@ -5599,6 +5653,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare i32 @tomato_int_cmp_c(i64, i64, i32)\n'
     d += 'declare i64 @tomato_int_raw_c(i64, i32)\n'
     d += 'declare void @tomato_int_free(i64)\n'
+    d += 'declare void @llvm.assume(i1)\n'
     d += 'declare i64 @tomato_int_add(i64, i64)\n'
     d += 'declare i64 @tomato_int_sub(i64, i64)\n'
     d += 'declare i64 @tomato_int_mul(i64, i64)\n'

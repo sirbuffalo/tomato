@@ -60,6 +60,13 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (after v0.49)
+
+1. **`range(a, b, step)` is a counted loop.** It used to build a `range` object and walk it through its `@iter` method (a generator). The compiler now works out the number of rounds once (`(distance - 1) / |step| + 1`, 0 when empty; a zero step raises the same `RuntimeError`), then counts a hidden index from 0 and sets the loop variable to `start + index * step`, so reassigning the variable in the body does not change the walk, an empty loop leaves the variable alone, and the loop itself is one compare and one add whatever the sign of the step. Like `range(a, b)`, a bound too big for a machine word now stops with `the number is too big here` (the generator version took any big number). Test: `range_step_loop`.
+2. **Tighter list indexing in counted loops.** `tag_small` now says the shift cannot overflow (`shl nsw`) and the counter says it does not wrap (`add nsw`, and `llvm.assume(i >= 0)` for loops that count from 0), so LLVM sees through the tag and untag of the loop variable and drops the negative-index wrap (`i < 0 ? i + len : i`) from `xs[i]`; the inner loop of matmul lost 4 instructions per list read.
+   Measured in one session, release mode, load average 10 to 14 (so absolute seconds are inflated; old and new were run alternately, 11 runs, median): sieve 0.345 → 0.247 s, matmul 0.314 → 0.258 s.
+3. **Typed list storage was not done.** In `sieve` the loop is limited by cache misses on a 160 MB list of 8-byte slots (Go uses 1 byte per bool), not by tag arithmetic: 10x the size costs only 13x the time. A byte-sized `list[bool]` would help `sieve` but touches every list operation in the runtime and the IR interpreter; it is a separate task.
+
 ## What was done (strings)
 
 Measured on the same machine in one session, release mode, medians of 7 runs (noise about ±0.02 s; the machine drifted
@@ -129,8 +136,7 @@ size-class allocator task covers.
 
 1. **Sort with compare functions:** the introsort for plain lists is done; a stable Timsort-style merge sort for compare
    and key functions needs function values first.
-2. **`range(a, b, step)` loops** allocate a range object and iterate it through method calls (`sieve`); compile them to a
-   counted loop like `range(a, b)`.
-3. **Typed list storage** (`list[bool]` as bytes, unboxed floats) if measurements justify it.
+2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds, tests the tag of each item (for the big-integer copy) and keeps the list pointers in stack slots across the loop.
+3. **Typed list storage** (`list[bool]` as bytes, unboxed floats): the likely next win for `sieve` (cache footprint 8x smaller), measured as memory-bound, not tag-bound; needs every list operation and the IR interpreter to know the element width.
 4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).
 5. **Debug-mode small-int arithmetic** got slower with the big-integer ownership change (fib 0.41 → 0.60 s); recover it.

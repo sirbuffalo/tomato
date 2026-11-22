@@ -22,3 +22,5 @@
   Needs a compiler change; the remainder of wordcount/strings time is malloc/free (size-class allocator task).
 - Add `memoize(f)` / `@cached` to std/cache once function values land on main
   std/cache.tom has the cache and the injectable `Clock`, but a function cannot be passed as a value yet, so memoising a function waits for the function values task.
+- Typed list storage: `list[bool]` as bytes (and possibly unboxed floats)
+  Shrinks sieve's 160 MB working set; needs the runtime, compiler and site/wasm/llvm.js to know the element width.
