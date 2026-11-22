@@ -1817,70 +1817,87 @@ ALWAYS int32_t tomato_int_cmp(int64_t x, int64_t y) {
 
 
 /* ---- sorted(): a new list with the items of a list[int], list[float] or list[str] in order ----
- * A stable merge sort (the order of equal items, and the result with NaNs, is what the bottom-up merge in the old
- * compiler-written helper gave: an item from the right run goes first only when it is strictly smaller). Items are only
- * moved as whole words, never copied or dropped. A list of small ints (the common case) is radix sorted. */
-#define SORT_RUN 16
-#define DEFINE_MERGESORT(NAME, CMP_LT)                                                             \
-static void NAME(int64_t *a, int64_t *b, int64_t n) {                                              \
-    for (int64_t lo = 0; lo < n; lo += SORT_RUN) {                                                 \
-        int64_t hi = lo + SORT_RUN < n ? lo + SORT_RUN : n;                                        \
-        for (int64_t i = lo + 1; i < hi; i++) {                                                    \
-            int64_t x = a[i], j = i;                                                               \
-            while (j > lo && CMP_LT(x, a[j - 1])) { a[j] = a[j - 1]; j--; }                        \
-            a[j] = x;                                                                              \
-        }                                                                                          \
+ * An introsort per item kind (no callback): median-of-three quicksort, insertion sort for runs of up to SORT_RUN items,
+ * and a heapsort once the recursion is deeper than 2*log2(n), so the worst case stays O(n log n). It is not stable, which
+ * is fine because equal ints, floats and strs cannot be told apart (floats: see below). Items are only moved as whole
+ * words, never copied or dropped.
+ * Floats: NaN cannot exist in Tomato (a float result that is infinite or not a number stops the program, and float()
+ * does not parse "nan"), but the order is made total anyway: each double's bits are mapped to an integer that sorts in
+ * IEEE totalOrder (so -0.0 comes before 0.0, and NaNs would come last), sorted as plain words and mapped back. */
+#define SORT_RUN 20
+#ifndef SORT_DEPTH_MUL
+#define SORT_DEPTH_MUL 2  /* the depth limit is this times log2(n); tests build with 0 to force the heapsort */
+#endif
+#define DEFINE_INTROSORT(NAME, LT)                                                                 \
+static void NAME##_heap_sift(int64_t *a, int64_t start, int64_t n) {                               \
+    int64_t root = start;                                                                          \
+    for (;;) {                                                                                     \
+        int64_t child = 2 * root + 1;                                                              \
+        if (child >= n) return;                                                                    \
+        if (child + 1 < n && LT(a[child], a[child + 1])) child++;                                  \
+        if (!LT(a[root], a[child])) return;                                                        \
+        int64_t t = a[root]; a[root] = a[child]; a[child] = t;                                     \
+        root = child;                                                                              \
     }                                                                                              \
-    int64_t *src = a, *dst = b;                                                                    \
-    for (int64_t width = SORT_RUN; width < n; width *= 2) {                                        \
-        for (int64_t i = 0; i < n; i += 2 * width) {                                               \
-            int64_t mid = i + width < n ? i + width : n, hi = i + 2 * width < n ? i + 2 * width : n; \
-            int64_t l = i, r = mid, k = i;                                                         \
-            while (l < mid && r < hi) {                                                            \
-                if (CMP_LT(src[r], src[l])) dst[k++] = src[r++]; else dst[k++] = src[l++];         \
-            }                                                                                      \
-            while (l < mid) dst[k++] = src[l++];                                                   \
-            while (r < hi) dst[k++] = src[r++];                                                    \
-        }                                                                                          \
-        int64_t *t = src; src = dst; dst = t;                                                      \
+}                                                                                                  \
+static void NAME##_heapsort(int64_t *a, int64_t n) {                                               \
+    for (int64_t i = n / 2 - 1; i >= 0; i--) NAME##_heap_sift(a, i, n);                            \
+    for (int64_t end = n - 1; end > 0; end--) {                                                    \
+        int64_t t = a[0]; a[0] = a[end]; a[end] = t;                                               \
+        NAME##_heap_sift(a, 0, end);                                                               \
     }                                                                                              \
-    if (src != a) memcpy(a, src, (size_t)n * 8);                                                   \
+}                                                                                                  \
+static void NAME##_insertion(int64_t *a, int64_t n) {                                              \
+    for (int64_t i = 1; i < n; i++) {                                                              \
+        int64_t x = a[i], j = i;                                                                   \
+        while (j > 0 && LT(x, a[j - 1])) { a[j] = a[j - 1]; j--; }                                 \
+        a[j] = x;                                                                                  \
+    }                                                                                              \
+}                                                                                                  \
+static void NAME##_rec(int64_t *a, int64_t n, int depth) {                                         \
+    while (n > SORT_RUN) {                                                                         \
+        if (depth-- == 0) { NAME##_heapsort(a, n); return; }                                       \
+        int64_t m = n / 2, t;                                                                      \
+        if (LT(a[m], a[0])) { t = a[m]; a[m] = a[0]; a[0] = t; }                                   \
+        if (LT(a[n - 1], a[m])) {                                                                  \
+            t = a[n - 1]; a[n - 1] = a[m]; a[m] = t;                                               \
+            if (LT(a[m], a[0])) { t = a[m]; a[m] = a[0]; a[0] = t; }                               \
+        }                                                                                          \
+        int64_t p = a[m];                                                                          \
+        int eq = !LT(a[0], p);  /* a[0] <= p: when it is not smaller, expect many items equal to p */ \
+        a[m] = a[n - 1]; a[n - 1] = p;                                                             \
+        int64_t i = 0;  /* branch-free Lomuto: a[0..i) < p, a[i..j) >= p */                        \
+        for (int64_t j = 0; j < n - 1; j++) { int64_t x = a[j], y = a[i]; a[j] = y; a[i] = x; i += LT(x, p); } \
+        a[n - 1] = a[i]; a[i] = p;                                                                 \
+        int64_t hs = i + 1;                                                                        \
+        if (eq) {  /* also move the items equal to p out of the way: a[i..hs) == p */              \
+            int64_t k = hs;                                                                        \
+            for (int64_t j = hs; j < n; j++) { int64_t x = a[j], y = a[k]; a[j] = y; a[k] = x; k += !LT(p, x); } \
+            hs = k;                                                                                \
+        }                                                                                          \
+        int64_t ln = i, rn = n - hs;                                                               \
+        if (ln < rn) { NAME##_rec(a, ln, depth); a += hs; n = rn; }                                \
+        else { NAME##_rec(a + hs, rn, depth); n = ln; }                                            \
+    }                                                                                              \
+    NAME##_insertion(a, n);                                                                        \
+}                                                                                                  \
+static void NAME(int64_t *a, int64_t n) {                                                          \
+    int depth = 0;                                                                                 \
+    for (int64_t k = n; k > 1; k >>= 1) depth += SORT_DEPTH_MUL;                                              \
+    NAME##_rec(a, n, depth);                                                                       \
 }
 
 #define LT_BIGINT(x, y) (tomato_int_cmp((x), (y)) < 0)
-#define LT_SMALLINT(x, y) ((x) < (y))
-#define LT_FLOAT(x, y) (bits_f64(x) < bits_f64(y))
+#define LT_WORD(x, y) ((x) < (y))
+#define LT_SMALL(x, y) (((x) >> 1) < ((y) >> 1))  /* small ints: tagged words, or the untagged word 0 */
 #define LT_STR(x, y) (tomato_str_cmp((void *)(intptr_t)(x), (void *)(intptr_t)(y)) < 0)
-static double bits_f64(int64_t w) { double d; memcpy(&d, &w, 8); return d; }
-DEFINE_MERGESORT(merge_sort_bigint, LT_BIGINT)
-DEFINE_MERGESORT(merge_sort_small, LT_SMALLINT)
-DEFINE_MERGESORT(merge_sort_float, LT_FLOAT)
-DEFINE_MERGESORT(merge_sort_str, LT_STR)
+DEFINE_INTROSORT(sort_bigint, LT_BIGINT)
+DEFINE_INTROSORT(sort_word, LT_WORD)
+DEFINE_INTROSORT(sort_small, LT_SMALL)
+DEFINE_INTROSORT(sort_str, LT_STR)
 
-/* LSD radix sort of tagged small ints; the biased words compare as unsigned in value order, and passes whose digit is the same everywhere are skipped */
-static void radix_sort_small(int64_t *a, int64_t *b, int64_t n) {
-    enum { BITS = 11, BUCKETS = 1 << BITS };
-    uint64_t *src = (uint64_t *)a, *dst = (uint64_t *)b;
-    int64_t *count = calloc(6 * BUCKETS, sizeof(int64_t));
-    if (!count) tomato_fail("out of memory");
-    for (int64_t i = 0; i < n; i++) {
-        src[i] ^= (uint64_t)1 << 63;
-        uint64_t v = src[i];
-        for (int p = 0; p < 6; p++) count[p * BUCKETS + ((v >> (p * BITS)) & (BUCKETS - 1))]++;
-    }
-    /* the low bit is the tag, always 1: bits 0..65 are covered by 6 digits of 11 bits */
-    for (int p = 0; p < 6; p++) {
-        int64_t *c = count + p * BUCKETS;
-        if (c[(src[0] >> (p * BITS)) & (BUCKETS - 1)] == n) continue;
-        int64_t sum = 0;
-        for (int d = 0; d < BUCKETS; d++) { int64_t t = c[d]; c[d] = sum; sum += t; }
-        for (int64_t i = 0; i < n; i++) dst[c[(src[i] >> (p * BITS)) & (BUCKETS - 1)]++] = src[i];
-        uint64_t *t = src; src = dst; dst = t;
-    }
-    for (int64_t i = 0; i < n; i++) src[i] ^= (uint64_t)1 << 63;
-    if (src != (uint64_t *)a) memcpy(a, src, (size_t)n * 8);
-    free(count);
-}
+/* a double's bits as a signed word that orders like IEEE totalOrder; the mapping is its own inverse */
+static inline int64_t f64_order_word(int64_t w) { return w ^ (int64_t)((uint64_t)(w >> 63) >> 1); }
 
 /* kind: 0 = int, 1 = float, 2 = str. The source list is only read; the result is a new list sharing the items (str items are retained). */
 void *tomato_list_sorted(void *src, int kind) {
@@ -1889,8 +1906,7 @@ void *tomato_list_sorted(void *src, int kind) {
     List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
     if (n == 0) return r;
     r->data = malloc((size_t)n * 8);
-    int64_t *tmp = n > 1 ? malloc((size_t)n * 8) : NULL;
-    if (!r->data || (n > 1 && !tmp)) tomato_fail("out of memory");
+    if (!r->data) tomato_fail("out of memory");
     r->cap = n;
     r->len = n;
     int64_t *a = (int64_t *)r->data;
@@ -1899,14 +1915,15 @@ void *tomato_list_sorted(void *src, int kind) {
     if (n > 1) {
         if (kind == 0) {
             int small = 1;
-            for (int64_t i = 0; i < n; i++) small &= (a[i] & 1);
-            if (small && n >= 64) radix_sort_small(a, tmp, n);
-            else if (small) merge_sort_small(a, tmp, n);
-            else merge_sort_bigint(a, tmp, n);
-        } else if (kind == 1) merge_sort_float(a, tmp, n);
-        else merge_sort_str(a, tmp, n);
+            for (int64_t i = 0; i < n; i++) small &= int_is_small(a[i]);
+            /* every item small (tagged, or the word 0): compare the values */
+            if (small) sort_small(a, n); else sort_bigint(a, n);
+        } else if (kind == 1) {
+            for (int64_t i = 0; i < n; i++) a[i] = f64_order_word(a[i]);
+            sort_word(a, n);
+            for (int64_t i = 0; i < n; i++) a[i] = f64_order_word(a[i]);
+        } else sort_str(a, n);
     }
-    free(tmp);
     return r;
 }
 int64_t tomato_int_pow(int64_t base, int64_t exp) {
