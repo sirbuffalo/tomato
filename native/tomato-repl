@@ -165,7 +165,7 @@ readline() {   # readline PROMPT [INITIAL TEXT] -> sets $REPLY_LINE
   if [ $interactive = 1 ]; then
     if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then IFS= read -r -e -p "$1" -i "$2" REPLY_LINE || return 1   # macOS ships bash 3.2, which has no -i: there Tab inserts the indent
     else IFS= read -r -e -p "$1" REPLY_LINE || return 1; fi
-    [ -n "$(printf '%s' "$REPLY_LINE" | tr -d ' ')" ] && history -s -- "$REPLY_LINE"
+    [ -n "$(printf '%s' "$REPLY_LINE" | tr -d ' ')" ] && { history -s -- "$REPLY_LINE"; history -a "$HISTFILE" 2>/dev/null; }  # append now: a Ctrl-C or closed terminal must not lose the session
   else IFS= read -r REPLY_LINE || return 1; fi
 }
 [ $interactive = 1 ] && say "Tomato repl (each line re-runs the whole session, so file writes repeat). :help for commands, :quit or Ctrl-D to leave."

@@ -29,4 +29,10 @@ hist = open(home + "/hist").read() if os.path.exists(home + "/hist") else ""
 if "for i in range(2):" not in hist or "interactive" in hist or "Error" in hist: bad.append("history wrong: " + repr(hist))
 try: os.kill(pid, signal.SIGKILL)
 except OSError: pass
+import re, subprocess
+src = os.path.join(os.path.dirname(__file__), "..", "native", "tomato-repl")
+fn = re.search(r"^friendly\(\) \{.*?^\}", open(src).read(), re.S | re.M).group(0)
+t = subprocess.run(["bash", "-c", 'S=$(mktemp -d); ' + fn + '\nprintf "Could not open file: $S/itertools.tom\\nCompileError: module itertools has no xxx\\n" > $S/err; friendly'],
+    capture_output=True, text=True)
+if t.stderr.strip() != "itertools has no name 'xxx'": bad.append("missing-name message: " + repr(t.stderr))
 print("FAIL: " + "; ".join(bad) if bad else "ok"); sys.exit(1 if bad else 0)
