@@ -380,3 +380,7 @@ CompileError get() takes a key and optionally a default value: get(key) or get(k
 CompileError get(key) gives None for a missing key, but a value of type {} cannot be None
 IOError could not read
 IOError could not write
+CompileError this tuple has {}, but {} has {}
+CompileError index {} is out of range: {} has {}
+CompileError the items of {} have different types, so its index must be a number written out, such as t[0]
+CompileError a tuple item needs a value

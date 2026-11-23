@@ -87,7 +87,7 @@ export class Response:
             raise HTTPError(f'{self.status} {kind} for url: {self.url}', self.status, 'E358')
 
 def _unreserved(c: str) -> bool:
-    return c.isalpha() and ord(c) < 128 or c.isdigit() or c in ['-', '_', '.', '~']
+    return ord(c) < 128 and (c.isalpha() or c.isdigit()) or c in ['-', '_', '.', '~']
 
 def _hex(n: int) -> str:
     digits = '0123456789ABCDEF'

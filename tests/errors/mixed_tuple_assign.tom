@@ -1,0 +1,4 @@
+@main
+def main():
+    pair = ('ann', 31)
+    pair[1] = 32

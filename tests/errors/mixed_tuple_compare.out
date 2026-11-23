@@ -1,0 +1,6 @@
+error[E190]: cannot use '==' with tuple[str, int] and tuple[int, str]
+ --> tests/errors/mixed_tuple_compare.tom:3:23
+  |
+3 |     print(('ann', 31) == (31, 'ann'))
+  |                       ^^
+  = help: tuples are equal only when they have the same type

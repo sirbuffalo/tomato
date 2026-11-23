@@ -1,0 +1,6 @@
+error[E185]: cannot unpack 2 values into 3 variables
+ --> tests/errors/mixed_tuple_unpack.tom:4:5
+  |
+4 |     name, age, city = pair
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+  = help: tuple[str, int] has 2 items

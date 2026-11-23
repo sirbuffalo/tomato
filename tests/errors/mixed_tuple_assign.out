@@ -1,0 +1,5 @@
+error[E231]: only list and dict items can be assigned by index
+ --> tests/errors/mixed_tuple_assign.tom:4:5
+  |
+4 |     pair[1] = 32
+  |     ^^^^^^^^^^^^

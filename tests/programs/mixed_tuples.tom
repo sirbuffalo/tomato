@@ -1,0 +1,95 @@
+# Tuples of mixed item types: tuple[str, int] has a fixed length and an own type per item; d.items() gives tuple[str, V] pairs
+# for every value type, so the pairs can be kept, passed around, indexed and printed.
+class Box:
+    n: int = 3
+
+    @str
+    def text(self) -> str:
+        return f'Box({self.n})'
+
+class Shelf:
+    pairs: list[tuple[str, int]] = []
+
+def pair(name: str, n: int) -> tuple[str, int]:
+    return name, n
+
+def label(p: tuple[str, list[int]]) -> str:
+    return f'{p[0]}={len(p[1])}'
+
+def by_name(p: tuple[str, list[int]]) -> str:
+    return p[0]
+
+def swap(p: tuple[str, int]) -> tuple[int, str]:
+    a, b = p
+    return (b, a)
+
+def first[T](xs: list[T]) -> T:
+    return xs[0]
+
+@main
+def main():
+    # literals: different item types make a mixed tuple, one item type keeps the old tuple[T]
+    t = ('x', 1, 2.5, True)
+    print(t, len(t), t[0], t[1] + 1, t[2] * 2.0, t[3], t[-1], t[-4])
+    a, b, c, e = t
+    print(a, b, c, e)
+    print((1, 2), (1,), ('a', 'b'), (1, 'a') == (1, 'a'), (1, 'a') != (1, 'b'))
+    typed: tuple[str, list[int]] = ('n', [])
+    typed[1].append(4)
+    print(typed, label(typed))
+    p = pair('q', 10 ** 30)
+    print(p, p[1] + 1, swap(p), swap(p)[0] - 1)
+    inner: dict[str, tuple[str, float]] = {'k': ('c', 3.5)}
+    nested = (('a', 1), [('b', 2)], inner)
+    print(nested, nested[0][1], nested[1][0][0], nested[2]['k'][1])
+    print(nested[0] == ('a', 1), nested[1] == [('b', 2)])
+    maybe: tuple[str, int] | None = None
+    print(maybe is None)
+    maybe = ('z', 26)
+    if maybe is not None:
+        print(maybe[1], maybe)
+    u: list[int | str] = [1, 'a']
+    print((u, 3), (Box(), 'b'), f'{t}', str(p))
+
+    # d.items() for every kind of value
+    lists: dict[str, list[int]] = {'b': [2, 3], 'a': [1]}
+    its = lists.items()
+    print(its, len(its), its[0][0], its[0][1], len(its[1][1]))
+    for k, v in its:
+        v.append(7)
+        print(k, v, label((k, v)))
+    print(lists, its == [('b', [2, 3, 7]), ('a', [1, 7])])
+    print(sorted(its, key=by_name), first(its), [k for k, v in its if len(v) > 2], [v for k, v in lists.items()])
+    for i, pr in enumerate(its):
+        print(i, pr[0], pr[1][0])
+    dicts: dict[str, dict[str, int]] = {'outer': {'in': 1}}
+    print(dicts.items(), dicts.items()[0][1]['in'])
+    boxes: dict[str, Box] = {'k': Box()}
+    bi = boxes.items()
+    bi[0][1].n = 9
+    print(bi, boxes['k'].n)
+    ages: dict[str, int] = {'ann': 31, "o'k": 2}
+    print(ages.items(), ages.items()[0][1] + 1, sum([n for _name, n in ages.items()]))
+    floats: dict[str, float] = {'pi': 3.25}
+    flags: dict[str, bool] = {'on': True}
+    texts: dict[str, str] = {'s': 'it\'s'}
+    mixed: dict[str, int | str] = {'i': 1, 's': 'one'}
+    sets: dict[str, set[int]] = {'odd': {1}}
+    print(floats.items(), flags.items(), texts.items(), mixed.items(), sets.items())
+    empty: dict[str, list[int]] = {}
+    print(empty.items(), len(empty.items()))
+    bigs: dict[str, int] = {'big': 2 ** 70}
+    bp = bigs.items()
+    bigs['big'] = 0
+    print(bp, bp[0][1] // 2)
+
+    # tuples as fields and in lists of their own
+    sh = Shelf()
+    sh.pairs.append(('r', 1))
+    sh.pairs.append(pair('s', 2))
+    total = 0
+    for _name, n in sh.pairs:
+        total += n
+    print(sh.pairs, total, sh.pairs[1] == ('s', 2))
+    # names a comprehension's pairs are first given (no warning that they might have no value)
+    print([cnt for word, cnt in ages.items() if word != 'ann'], [w for w, _q in sh.pairs])

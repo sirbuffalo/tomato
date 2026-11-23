@@ -1,0 +1,4 @@
+@main
+def main():
+    pair: tuple[str, int] = ('ann', 31, 'x')
+    print(pair)

@@ -56,12 +56,36 @@ def reads(v: Val, out: list[Node]):
             out.append(n)
         elif n.kind == 'Assign' and val_node(n.fields[0]).kind == 'Name':
             reads(n.fields[1], out)
+        elif n.kind == 'ListComp':
+            # the names a comprehension binds (its loop variable, and the names of `for k, v in ...` that its unpack assigns)
+            # have a value wherever the comprehension reads them
+            inner: list[Node] = []
+            for f in n.fields:
+                reads(f, inner)
+            bound: list[str] = []
+            comp_bound(n.fields[0], bound)
+            for r in inner:
+                if r.fields[0].text not in bound:
+                    out.append(r)
         else:
             for f in n.fields:
                 reads(f, out)
     elif v.tag == 'l' or v.tag == 't':
         for item in v.items:
             reads(item, out)
+
+def comp_bound(v: Val, bound: list[str]):
+    if v.tag == 'n':
+        n = val_node(v)
+        if n.kind == 'For':
+            bound.append(n.fields[0].text)
+        elif n.kind == 'Assign' and val_node(n.fields[0]).kind == 'Name':
+            bound.append(val_node(n.fields[0]).fields[0].text)
+        for f in n.fields:
+            comp_bound(f, bound)
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            comp_bound(item, bound)
 
 def is_true(n: Node) -> bool:
     return n.kind == 'BoolLit' and n.fields[0].flag

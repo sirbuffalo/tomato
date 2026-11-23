@@ -1,0 +1,30 @@
+# str.isalpha() and str.isdigit() know all of Unicode 16.0, as in Python: a letter has the general category Lu, Ll, Lt, Lm or Lo,
+# a digit has a digit value (decimal digits of every script, superscripts and circled digits; not fractions or Roman numerals).
+def show(label: str, words: list[str]):
+    out: list[str] = []
+    for w in words:
+        out.append(f'{w}:{"A" if w.isalpha() else "-"}{"D" if w.isdigit() else "-"}')
+    print(label, ' '.join(out))
+
+@main
+def main():
+    show('ascii', ['abc', 'ABC', 'Az', 'a1', '123', '0', ' ', '_', '@', '[', '`', '{', '/', ':'])
+    show('latin', ['héllo', 'straße', 'Æøå', 'ǅ', 'ĳ', 'ª', 'º', 'µ', '×', '÷', '·'])
+    show('scripts', ['Привет', 'αβγ', 'שלום', 'مرحبا', '日本語', 'ひらがな', 'カタカナ', '한국어', 'ไทย', 'हिन्दी'])
+    show('marks', ['é', 'é', 'ा', '̀', 'ー', 'ʰ', '々'])
+    show('digits', ['٠١٢٣', '۴۵۶', '०१२', '௧௨', '０９', '𝟘𝟙', '²³', '①', '⁰', '₉', '𑁒'])
+    show('numbers', ['½', 'Ⅻ', 'ⅷ', '〇', '十', '⑽', '𐄇', '٫'])
+    show('other', ['', ' ', ' ', ' ', '😀', '✓', '€', '‍', '﻿', 'a b', 'ab!', '12 3'])
+    show('astral', ['𐐨𐐀', '𝔸𝕓', '𠀀', '𰀀', '𞤀'])
+    show('mixed', ['abc١', 'a²', '٣a', 'αβγ1', 'x'])
+    # the checks agree with ASCII-only rules on ASCII text, character by character
+    letters = 0
+    digits = 0
+    for n in range(128):
+        if chr(n).isalpha():
+            letters += 1
+        if chr(n).isdigit():
+            digits += 1
+    print(letters, digits)
+    # every character of a long text is looked at
+    print(('é' * 1000).isalpha(), ('é' * 1000 + '1').isalpha(), ('٣' * 500).isdigit(), ('٣' * 500 + 'x').isdigit())

@@ -107,3 +107,5 @@ small_int_loops
 list_methods
 open_errors
 unicode_case
+unicode_class
+mixed_tuples

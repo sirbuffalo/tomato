@@ -1,0 +1,5 @@
+@main
+def main():
+    pair = ('ann', 31)
+    name, age, city = pair
+    print(name, age, city)

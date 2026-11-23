@@ -207,14 +207,8 @@ def _abs_float(x: float) -> float:
         return 0.0
     return x
 
-# str.isdigit(), isalpha(), isspace(): True when the text is not empty and every character is of that kind (ASCII
-# characters only, like upper() and lower()).
-def _str_isdigit(s: str) -> bool:
-    return _all_in(s, '0123456789')
-
-def _str_isalpha(s: str) -> bool:
-    return _all_in(s, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
-
+# str.isspace(): True when the text is not empty and every character is a space, tab, newline or carriage return (isalpha()
+# and isdigit() know all of Unicode and are in the runtime)
 def _str_isspace(s: str) -> bool:
     return _all_in(s, ' \t\n\r')
 

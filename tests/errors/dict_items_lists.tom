@@ -1,4 +1,0 @@
-@main
-def main():
-    lists: dict[str, list[int]] = {}
-    print(lists.items())

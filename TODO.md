@@ -1,5 +1,3 @@
-- Finish the dict and text built-ins
-  Still missing: Unicode `isalpha`/`isdigit` (needs a decision on the Unicode category tables) and `dict.items()` as a value when the values are lists, dicts or objects (its tuples have one item type, so it needs mixed-type tuples; `for k, v in d.items():` already works for any value type).
 - Move the v0.50 tag to the merge commit
   After merge, move the v0.50 tag to the merge commit (the release was created with --target main before the version bump landed); assets are unaffected.
 - Cut the remaining per-iteration cost of the mandelbrot loop
@@ -12,3 +10,7 @@
   After v0.51 lands: apply the print unwind leak fix (patch in this task's evidence and at ~/.cache/tomato-print-leak-followup.patch), refresh the bootstrap IR and rebuild site/wasm on the Mac. In `print(a, b)`, if `a`'s `@str` raises, `b` leaks; the patch keeps unprinted arguments held and adds two `temp_unwind` cases.
 - Make the Linux test suite fully green
   Investigate the 8 failing checks on this Linux box: the progress-bar output tests (`iteration`, `progress_bar`, `itertools_any`), the native `angles` float rounding (3.0000000000000004 vs 3.0), and the AddressSanitizer symbolizer path (`msgpack_errors`, `bigint_frames`, `bigint_unwind`, `requests_local`).
+- Teach the expression-position type parser the comma form `tuple[A, B]`
+  Mixed-type tuple types parse only in annotations, so `x in tuple[str, int]` (which would narrow a union such as `int | tuple[str, int]`) and explicit generic arguments such as `Box[tuple[str, int]](('a', 1))` fail with `expected ']', but found ','`. Inference from arguments and `Box[tuple[str, int]]` in an annotation already work; see P89 in `docs/provisional.md`.
+- Print mixed tuples (and lists/objects) inside unions properly instead of `<object>`
+  A union member that is a mixed tuple, list or object prints as `<object>` (`[1, <object>]`), because the box only knows how to print numbers, text and bools. Needs a per-member show function in the union box; see P89 in `docs/provisional.md`.

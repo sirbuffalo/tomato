@@ -1,0 +1,5 @@
+error[E384]: index -3 is out of range: tuple[str, int] has 2 items
+ --> tests/errors/mixed_tuple_index_range.tom:4:17
+  |
+4 |     print(pair[-3])
+  |                 ^

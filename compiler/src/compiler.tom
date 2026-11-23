@@ -37,6 +37,44 @@ def is_list(t: str) -> bool:
 def is_dict(t: str) -> bool:
     return t.startswith('dict[')
 
+# a tuple of mixed item types, tuple[str, int]: written 'tup[' and its item types joined by ','. It has a fixed length and is stored
+# like an object with one 8-byte field per item (after the reference count and type code), so the runtime frees and traces it as one
+def is_mtuple(t: str) -> bool:
+    return t.startswith('tup[')
+
+def mtuple_items(t: str) -> list[str]:
+    inner = t[4:-1]
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for k in range(len(inner)):
+        ch = inner[k]
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            parts.append(inner[start:k])
+            start = k + 1
+    parts.append(inner[start:])
+    return parts
+
+# the number of names `a, b = value` or `for a, b in pairs` takes the value apart into, when n is the hidden variable the parser
+# holds the value in (named _unpack..x2 or _pairs..x2); -1 for any other expression
+def unpack_count(n: Node) -> int:
+    if n.kind != 'Name':
+        return -1
+    name = n.fields[0].text
+    if not (name.startswith('_unpack') or name.startswith('_pairs')) or name.rfind('x') < 0:
+        return -1
+    digits = name[name.rfind('x') + 1:]
+    if not digits.isdigit():
+        return -1
+    return int(digits)
+
+def mtuple_type(items: list[str]) -> str:
+    return 'tup[' + ','.join(items) + ']'
+
 def is_set(t: str) -> bool:
     return t.startswith('set[')
 
@@ -140,9 +178,12 @@ def box_kind(member: str) -> int:
     return 6
 
 def digits_value(s: str) -> int:
-    # the number a text of digits writes, or -1 when it is not all digits
-    if not s.isdigit():
+    # the number a text of ASCII digits writes, or -1 when it is not all such digits (isdigit() also takes other scripts' digits)
+    if len(s) == 0:
         return -1
+    for d in s:
+        if d not in '0123456789':
+            return -1
     v = 0
     for c in s:
         v = v * 10 + ord(c) - ord('0')
@@ -290,7 +331,7 @@ def strip_optional(t: str) -> str:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t)
+    return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t) or is_mtuple(t)
 
 def shown_generic(name: str) -> str:
     # a copy of a generic class, as Box[int]: its type arguments are kept in the internal form inside the name
@@ -340,6 +381,9 @@ def shown(t: str) -> str:
         return ' | '.join(parts)
     if t.startswith('tuple['):
         return f'tuple[{shown(elem_of(t))}]'
+    if is_mtuple(t):
+        shown_items: list[str] = [shown(m) for m in mtuple_items(t)]
+        return 'tuple[' + ', '.join(shown_items) + ']'
     if is_list(t):
         return f'list[{shown(elem_of(t))}]'
     if is_dict(t):
@@ -1257,7 +1301,7 @@ class Mod:
             elif members[1].fields[0].text != 'None':
                 return ''
             wrapped = self.type_name(vn(other))
-            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped)):
+            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped) or is_mtuple(wrapped)):
                 return ''
             return f'{wrapped}?'
         if name == 'task' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
@@ -1293,6 +1337,15 @@ class Mod:
             if inner == '' or is_fixed(inner):
                 return ''
             return f'dict[{inner}]'
+        if name == 'tuple' and t.fields[2].tag == 'l':
+            # tuple[str, int]: a fixed number of items, each of its own type
+            item_types: list[str] = []
+            for tv in t.fields[2].items:
+                tit = self.type_name(tv)
+                if tit == '' or is_fixed(tit):
+                    return ''
+                item_types.append(tit)
+            return mtuple_type(item_types)
         if (name == 'list' or name == 'tuple') and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
             inner = self.type_name(t.fields[2])
             if inner == '' or is_fixed(inner):
@@ -2968,6 +3021,8 @@ class Gen:
         t = ''
         first = ex('', '')
         kind = 'tuple' if n.kind == 'TupleLit' else 'list'
+        if kind == 'tuple' and is_mtuple(expected):
+            return self.mtuple_lit(n, expected, [])
         if is_list(expected) and expected.startswith(kind + '['):
             t = expected
         else:
@@ -2977,6 +3032,26 @@ class Gen:
             if first.ty == '':
                 raise CompileError(f'a {kind} item needs a value', n.line)
             t = f'{kind}[{first.ty}]'
+            if kind == 'tuple' and len(items) > 1:
+                # the items are evaluated in order; when one cannot be a first.ty, the tuple has mixed item types: (1, 'a')
+                held_first = len(self.held)
+                done: list[Ex] = [self.owned(first)]
+                self.hold(done[0])
+                mixed = False
+                for k in range(1, len(items)):
+                    v = self.expr(items[k], first.ty)
+                    if v.ty == '' or v.ty == 'None':
+                        raise CompileError(f'a tuple item needs a value', n.line)
+                    if not (v.ty == first.ty or self.mod.assignable(v.ty, first.ty) or (is_numeric(v.ty) and is_numeric(first.ty) and contains(first.ty, v.ty)) or (is_union(first.ty) and not is_union(v.ty) and self.union_member_for(v.ty, first.ty) != '')):
+                        mixed = True
+                    v = self.owned(v)
+                    self.hold(v)
+                    done.append(v)
+                self.drop_held(held_first)
+                if mixed:
+                    types: list[str] = [d.ty for d in done]
+                    return self.mtuple_lit(n, mtuple_type(types), done)
+                return self.tuple_of(t, done, n.line)
         lst = self.tmp('list')
         self.emit(f'{lst} = call ptr @tomato_list_new(i64 {self.mod.code_of(t)})')
         held_before = len(self.held)
@@ -2992,6 +3067,67 @@ class Gen:
             self.push_item(lst, t, v)     # the list takes the reference
         self.drop_held(held_before)
         return ex(lst, t)
+
+    def tuple_of(self, t: str, values: list[Ex], line: int) -> Ex:
+        # a tuple of one item type from values already evaluated and owned
+        lst = self.tmp('list')
+        self.emit(f'{lst} = call ptr @tomato_list_new(i64 {self.mod.code_of(t)})')
+        for v in values:
+            w = self.want(v, elem_of(t), line, 'a tuple item')
+            self.push_item(lst, t, w)
+        return ex(lst, t)
+
+    def mtuple_lit(self, n: Node, t: str, done: list[Ex]) -> Ex:
+        # a tuple of mixed item types: (name, [1, 2]). done holds the items already evaluated (owned); the rest are evaluated here,
+        # each as its own type. The tuple is made once every item is ready, so an item that raises leaves nothing half-built.
+        items = val_nodes(n.fields[0])
+        want_types = mtuple_items(t)
+        if len(items) != len(want_types):
+            raise CompileError(f'this tuple has {plural(len(items), "item")}, but {shown(t)} has {len(want_types)}', n.line)
+        held_before = len(self.held)
+        values: list[Ex] = []
+        for k, item in enumerate(items):
+            v = ex('', '')
+            if k < len(done):
+                v = done[k]
+            else:
+                v = self.expr(item, want_types[k])
+            v = self.owned(self.want(v, want_types[k], n.line, 'a tuple item'))
+            self.hold(v)
+            values.append(v)
+        self.drop_held(held_before)
+        r = self.tmp('tup')
+        self.emit(f'{r} = call ptr @tomato_alloc(i64 {16 + 8 * len(values)}, i64 {self.mod.code_of(t)})')
+        for k, v in enumerate(values):
+            p = self.tmp('itemp')
+            self.emit(f'{p} = getelementptr i8, ptr {r}, i64 {16 + 8 * k}')
+            self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {p}')
+        return ex(r, t)
+
+    def mtuple_item(self, s: Ex, at: int, line: int) -> Ex:
+        # item `at` of a tuple of mixed item types, as a value of its own (the tuple is released)
+        types = mtuple_items(s.ty)
+        k = at
+        if k < 0:
+            k += len(types)
+        if k < 0 or k >= len(types):
+            raise CompileError(f'index {at} is out of range: {shown(s.ty)} has {plural(len(types), "item")}', line)
+        p = self.tmp('itemp')
+        self.emit(f'{p} = getelementptr i8, ptr {s.reg}, i64 {16 + 8 * k}')
+        r = self.tmp('item')
+        self.emit(f'{r} = load {llvm_type(types[k])}, ptr {p}')
+        e = ex(r, types[k])
+        self.retain(e)
+        self.release(s)
+        return e
+
+    def const_index(self, n: Node) -> int:
+        # the position written in t[0] or t[-1] on a tuple of mixed item types; -1000000 when it is not a whole-number literal
+        if n.kind == 'IntLit':
+            return n.fields[0].num
+        if n.kind == 'UnOp' and n.fields[0].text == '-' and val_node(n.fields[1]).kind == 'IntLit':
+            return 0 - val_node(n.fields[1]).fields[0].num
+        return -1000000
 
     def key_word(self, k: Ex) -> str:
         # a key as the 64-bit word the runtime hashes: the number itself, or the text's address
@@ -3192,6 +3328,17 @@ class Gen:
             self.release(k)
             self.release(s)
             return e
+        if is_mtuple(s.ty):
+            self.drop_held(held_before)
+            want_count = unpack_count(base)
+            have = len(mtuple_items(s.ty))
+            if want_count >= 0 and want_count != have:
+                # a, b, c = pair: the tuple's length is known here, so a wrong number of names is found before the program runs
+                raise CompileError(f'cannot unpack {plural(have, "value")} into {plural(want_count, "variable")}\n{shown(s.ty)} has {have} items', n.line)
+            at = self.const_index(val_node(n.fields[1]))
+            if at == -1000000:
+                raise CompileError(f'the items of {shown(s.ty)} have different types, so its index must be a number written out, such as t[0]', n.line)
+            return self.mtuple_item(s, at, n.line)
         if is_class(s.ty):
             g = self.mod.find_op(s.ty[1:], 'get')
             if g is None or len(g.ptypes) != 1 or g.ret == '':
@@ -3543,6 +3690,8 @@ class Gen:
             return self.operator_call(a, b, op, n.line)
         if (op == '==' or op == '!=') and (a.ty.startswith('list[') or b.ty.startswith('list[')):
             return self.list_equal(op, a, b, n.line)
+        if (op == '==' or op == '!=') and (is_mtuple(a.ty) or is_mtuple(b.ty)):
+            return self.mtuple_equal(op, a, b, n.line)
         if (op == '+' or op == '*') and (is_list(a.ty) or is_list(b.ty) or a.ty == 'str' or b.ty == 'str'):
             joined = self.sequence_op(op, a, b, n.line)
             if joined.ty != '':
@@ -3622,9 +3771,25 @@ class Gen:
             return ex(self.arith('xor', r.reg, '1'), 'bool')
         return r
 
+    def mtuple_equal(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # (a, 1) == (b, 2) on two tuples of the same mixed item types: every pair of items equal, compared position by position
+        if a.ty != b.ty:
+            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\ntuples are equal only when they have the same type", line)
+        if not self.list_comparable(a.ty):
+            raise CompileError(f"cannot use '{op}' on {shown(a.ty)}\nits items cannot be compared with ==", line)
+        r = self.call_helper(self.mod.helper('eq', a.ty, line), [a, b])
+        if op == '!=':
+            return ex(self.arith('xor', r.reg, '1'), 'bool')
+        return r
+
     def list_comparable(self, t: str) -> bool:
         if t.startswith('list['):
             return self.list_comparable(elem_of(t))
+        if is_mtuple(t):
+            for m in mtuple_items(t):
+                if not self.list_comparable(m):
+                    return False
+            return True
         return t == 'str' or t == 'bool' or t == 'float' or is_numeric(t) or (is_class(t) and self.mod.has_op(t[1:], 'eq'))
 
     def invert_op(self, n: Node) -> Ex:
@@ -4538,21 +4703,11 @@ class Gen:
             self.release(d)
             return ex(r, t)
         if name == 'items':
-            # each pair is a two-item tuple: a tuple has one item type, so it is str for a dict[str, str] and the union
-            # of str and the value type otherwise (the unions are boxed)
-            item = 'str'
-            key_box = 0
-            val_box = 0
-            if vt != 'str':
-                # a boxed value of kind 6 (a list, class, fixed-width int...) would print as <object>, so refuse it too
-                if is_union(vt) or is_optional(vt) or box_kind(vt) == 6:
-                    raise CompileError(f'items() is not available for a dict whose values are {shown(vt)}\nloop over the keys and index the dict instead', line)
-                item = union_type(['str', vt])
-                key_box = self.mod.code_of('box:str')
-                val_box = self.mod.code_of(f'box:{vt}')
-            t = f'list[tuple[{item}]]'
+            # each pair is a tuple of two item types, tuple[str, V], made by the runtime
+            pt = mtuple_type(['str', vt])
+            t = f'list[{pt}]'
             r = self.tmp('items')
-            self.emit(r + ' = call ptr @tomato_dict_items(ptr ' + d.reg + ', i64 ' + str(self.mod.code_of(t)) + ', i64 ' + str(self.mod.code_of('tuple[' + item + ']')) + ', i64 ' + str(key_box) + ', i64 ' + str(val_box) + ', i64 ' + str(box_kind(vt)) + ', i32 ' + elem_rc(vt) + ')')
+            self.emit(f'{r} = call ptr @tomato_dict_pairs(ptr {d.reg}, i64 {self.mod.code_of(t)}, i64 {self.mod.code_of(pt)}, i32 {elem_rc(vt)})')
             self.release(d)
             return ex(r, t)
         raise CompileError(self.no_method(name, d.ty), line)
@@ -4665,7 +4820,15 @@ class Gen:
         if name in ['strip', 'lstrip', 'rstrip'] and len(args) == 1:
             chars = self.want(self.expr(args[0]), 'str', line, 'the characters to strip')
             return self.builtin_call(f'_str_{name}_chars', [obj, chars], line)
-        if name in ['isdigit', 'isalpha', 'isspace', 'lstrip', 'rstrip'] and len(args) == 0:
+        if (name == 'isalpha' or name == 'isdigit') and len(args) == 0:
+            # Unicode letters and digits, from the runtime's tables (tools/gen_ctype_table.c)
+            c = self.tmp('c')
+            self.emit(f'{c} = call i32 @tomato_str_{name}(ptr {obj.reg})')
+            i1 = self.tmp('flag')
+            self.emit(f'{i1} = icmp ne i32 {c}, 0')
+            self.release(obj)
+            return self.bool_of(i1)
+        if name in ['isspace', 'lstrip', 'rstrip'] and len(args) == 0:
             # written in Tomato, in std/builtin.tom
             return self.builtin_call(f'_str_{name}', [obj], line)
         raise CompileError(self.no_method(name, 'str'), line)
@@ -5218,6 +5381,9 @@ class Gen:
             if f is None or len(f.ptypes) != 0 or f.ret != 'int':
                 raise CompileError("'" + v.ty[1:] + "' objects have no length\nadd a method marked @len that takes no argument and returns int", line)
             return self.marker_call(v, f, [], line)
+        if is_mtuple(v.ty):
+            self.release(v)
+            return exs(str(2 * len(mtuple_items(v.ty)) + 1), 'int')
         r = self.tmp('len')
         if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty):
             lenp = self.tmp('lenp')
@@ -5369,7 +5535,7 @@ class Gen:
             shown_text = self.class_text(v, line)
             self.release(v)
             return shown_text
-        if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty):
+        if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty) or is_mtuple(v.ty):
             return self.show_text(v, line)
         r = self.tmp('text')
         if v.ty == 'int':
@@ -5427,7 +5593,7 @@ class Gen:
                 self.emit(f'{t} = call ptr @tomato_str_from_f64(double {v.reg})')
                 self.emit(f'call void @tomato_print_strobj(ptr {t})')
                 self.emit(f'call void @tomato_release(ptr {t})')
-            elif is_list(v.ty) or is_dict(v.ty) or is_set(v.ty):
+            elif is_list(v.ty) or is_dict(v.ty) or is_set(v.ty) or is_mtuple(v.ty):
                 shown_list = self.show_text(v, self.line)
                 self.emit(f'call void @tomato_print_strobj(ptr {shown_list.reg})')
                 self.emit(f'call void @tomato_release(ptr {shown_list.reg})')
@@ -7024,6 +7190,21 @@ def runtime_tables(mod: Mod) -> str:
             if mod.mode == 1:
                 extra += f'@tomato.name.{slot} = private constant [{str(len(c.display) + 1)} x i8] c"{c.display}\\00"\n'
                 names[slot] = f'ptr @tomato.name.{slot}'
+        elif is_mtuple(code):
+            # a tuple of mixed item types is laid out like an object: its reference-counted items, then its ints, at 16 + 8 * position
+            kinds[slot] = 'i32 1'
+            offs: list[str] = []
+            parts = mtuple_items(code)
+            for pos, it in enumerate(parts):
+                if is_rc(it):
+                    offs.append(f'i32 {16 + 8 * pos}')
+            offs.append('i32 -1')
+            for pos, it in enumerate(parts):
+                if it == 'int':
+                    offs.append(f'i32 {16 + 8 * pos}')
+            offs.append('i32 -1')
+            extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
+            offsets[slot] = f'ptr @tomato.offs.{slot}'
         elif is_set(code):
             kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))      # a set of ints says so in its key kind
         elif is_dict(code):
@@ -7146,10 +7327,12 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_chr(i64)\n'
     d += 'declare i64 @tomato_str_ord(ptr)\n'
     d += 'declare ptr @tomato_dict_values(ptr, i64, i64, i32)\n'
-    d += 'declare ptr @tomato_dict_items(ptr, i64, i64, i64, i64, i64, i32)\n'
     d += 'declare i32 @tomato_str_startswith(ptr, ptr)\n'
     d += 'declare i32 @tomato_str_endswith(ptr, ptr)\n'
     d += 'declare i32 @tomato_str_contains(ptr, ptr)\n'
+    d += 'declare i32 @tomato_str_isalpha(ptr)\n'
+    d += 'declare ptr @tomato_dict_pairs(ptr, i64, i64, i32)\n'
+    d += 'declare i32 @tomato_str_isdigit(ptr)\n'
     d += 'declare ptr @tomato_str_replace(ptr, ptr, ptr)\n'
     d += 'declare ptr @tomato_str_split(ptr, ptr, i64, i64)\n'
     d += 'declare ptr @tomato_str_join(ptr, ptr)\n'
@@ -7426,7 +7609,7 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
     # Tomato source that shows the item `e` of type et inside a printed container
     if et == 'str':
         return f'_quote({e})'
-    if is_list(et) or is_dict(et) or is_set(et):
+    if is_list(et) or is_dict(et) or is_set(et) or is_mtuple(et):
         return mod.helper('show', et, line).name + '(' + e + ')'
     if is_class(et):
         if not mod.has_op(et[1:], 'str'):
@@ -7445,6 +7628,12 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     # the Tomato source of a helper function; parameters are written as int and given their real types by helper_types
     head = f'def {name}(x: int) -> str:\n'
     err = '62' if kind == 'max' else '61'
+    if kind == 'eq':
+        # two tuples of mixed item types, compared item by item
+        same: list[str] = []
+        for k in range(len(mtuple_items(ty))):
+            same.append(f'x[{k}] == y[{k}]')
+        return f'def {name}(x: int, y: int) -> bool:\n    return ' + ' and '.join(same) + '\n'
     if is_class(ty):
         et = iter_elem(mod, ty)
         if kind == 'tolist':
@@ -7460,6 +7649,13 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
         better = '>' if kind == 'max' else '<'
         return f"{head}    first = True\n    best: {shown(et)} = {zero}\n    for v in x:\n        if first or v {better} best:\n            best = v\n            first = False\n    if first:\n        raise ValueError('{kind}() of an empty sequence', 'E{err}')\n    return best\n"
     if kind == 'show':
+        if is_mtuple(ty):
+            # (a, b): each item shown the way a container shows it, at its own position
+            shown_parts: list[str] = []
+            item_types = mtuple_items(ty)
+            for k, et in enumerate(item_types):
+                shown_parts.append(show_item(mod, et, f'x[{k}]', line))
+            return head + "    return '(' + " + " + ', ' + ".join(shown_parts) + " + ')'\n"
         if is_dict(ty):
             body = "    out = '{'\n    first = True\n    for k in x:\n        if not first:\n            out = out + ', '\n        first = False\n"
             body += "        out = out + _quote(k) + ': ' + " + show_item(mod, dict_value(ty), 'x[k]', line) + '\n'
@@ -7502,6 +7698,10 @@ def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):
     if kind == 'show':
         info.ptypes[0] = ty
         info.ret = 'str'
+    elif kind == 'eq':
+        info.ptypes[0] = ty
+        info.ptypes[1] = ty
+        info.ret = 'bool'
     else:
         info.ptypes[0] = ty
         info.ret = elem_of(ty)

@@ -423,6 +423,13 @@ export class Parser:
         if t.text == 'list' or t.text == 'set' or t.text == 'tuple' or (t.text == 'Iterable' and self.is_op('[')):
             self.expect_op('[')
             arg = self.type()
+            if t.text == 'tuple' and self.is_op(','):
+                # tuple[str, int]: a tuple of a fixed length whose items have their own types (its item types are a list)
+                items: list[Node] = [arg]
+                while self.accept_op(','):
+                    items.append(self.type())
+                self.expect_op(']')
+                return mk('TypeRef', t.line, [vs('tuple'), vz(), vnodes(items), vz()])
             self.expect_op(']')
             return mk('TypeRef', t.line, [vs(t.text), vz(), vn(arg), vz()])
         if t.text == 'task' and self.is_op('['):
@@ -661,7 +668,7 @@ export class Parser:
     # values together (so v keeps its own type) and skips the unpack, the first statement of the body.
     def tuple_for(self, line: int, names: list[str], it: Node, body: list[Node]) -> Node:
         self.unpacks += 1
-        stem = f'_pairs{line}_{self.unpacks}'
+        stem = f'_pairs{line}_{self.unpacks}x{len(names)}'     # the number of names after the x (see unpack_count in the compiler)
         # the item is taken apart straight from the loop variable (no second hidden variable: the lint pass sees a comprehension's
         # loop without its statements in order)
         q = Parser()
@@ -738,7 +745,14 @@ export class Parser:
             self.adv()
             rv = vz()
             if self.cur().kind != 'NEWLINE':
-                rv = vn(self.expr())
+                first = self.expr()
+                if self.is_op(','):
+                    # return a, b: a tuple, as (a, b)
+                    parts: list[Node] = [first]
+                    while self.accept_op(','):
+                        parts.append(self.expr())
+                    first = mk('TupleLit', t.line, [vnodes(parts)])
+                rv = vn(first)
             self.expect('NEWLINE')
             return mk('Return', t.line, [rv])
         if self.is_kw('pass'):
@@ -843,7 +857,7 @@ export class Parser:
         if literal:
             values = val_nodes(values[0].fields[0])
         self.unpacks += 1
-        stem = f'_unpack{t.line}_{self.unpacks}'
+        stem = f'_unpack{t.line}_{self.unpacks}x{count}'
         stmts: list[Node] = []
         if len(values) > 1 or literal:
             if len(values) != count:
