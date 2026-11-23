@@ -1,7 +1,3 @@
-- Make open() failures name the file and decide Unicode case mapping for upper/lower
-  The IOError message is the constant 'a file could not be opened', so it never says which file; `str.upper` and `str.lower` only change ASCII letters and the spec does not decide Unicode case mapping.
-- Fix printing and str() of optional values and None
-  Printing a `str | None` value crashes at runtime and `str(None)` fails to compile; found while testing f-strings and conditional expressions.
 - Finish the dict and text built-ins
   Still missing: Unicode `isalpha`/`isdigit` (needs a decision on the Unicode category tables) and `dict.items()` as a value when the values are lists, dicts or objects (its tuples have one item type, so it needs mixed-type tuples; `for k, v in d.items():` already works for any value type).
 - Add `memoize(f)` / `@cached` to std/cache once function values land on main

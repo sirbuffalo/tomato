@@ -27,7 +27,7 @@
       var host = new WasiHost({ args: ["tomatoc", "/program.tom", entry || "main", "/std/"], files: files });
       return host.run(self.compiler).then(function (r) {
         var err = r.stderr.trim();
-        if (!self.local && r.code !== 0 && /could not be opened/.test(err) && /^\s*(from|import)\s/m.test(source))
+        if (!self.local && r.code !== 0 && /could not open /.test(err) && /^\s*(from|import)\s/m.test(source))
           err += "\n(imports of your own modules are not supported on this page; the installed tomato command supports them)";
         // warnings (compiler/src/lint.tom) travel as comment lines at the end of the IR: ";! " then the text
         var warnings = r.stdout.split("\n").filter(function (l) { return l.indexOf(";! ") === 0; }).map(function (l) { return l.slice(3); }).join("\n");

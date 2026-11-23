@@ -13,9 +13,9 @@ null
 encode error
 null
 decode error
-load: a file could not be opened
-dump: a file could not be opened
+load: could not open '/tmp/tomato_no_such_dir/x.json': No such file or directory
+dump: could not open '/tmp/tomato_no_such_dir/x.json': No such file or directory
 True
-toml dump: a file could not be opened
+toml dump: could not open '/tmp/tomato_no_such_dir/x.toml': No such file or directory
 dumps needs a table: a TOML document is a table of keys
 True

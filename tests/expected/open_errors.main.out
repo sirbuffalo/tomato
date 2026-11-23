@@ -1,0 +1,9 @@
+could not open '/nonexistent_dir_for_tomato/missing.txt': No such file or directory
+could not open '/nonexistent_dir_for_tomato/other.txt': No such file or directory
+None
+hi None
+Point(3) None
+[1, 2] None
+None None hi Point(3) None
+None and Point(3)
+x None

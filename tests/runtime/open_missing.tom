@@ -1,0 +1,4 @@
+@main
+def main():
+    f = open('/nonexistent_dir_for_tomato/missing.txt')
+    f.close()

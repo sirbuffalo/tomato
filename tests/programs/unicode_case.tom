@@ -1,0 +1,12 @@
+# str.upper() and str.lower() use Unicode simple case mapping: one letter becomes one letter, so 'ß' stays and the length never changes.
+@main
+def main():
+    print('héllo wörld'.upper())
+    print('ÉCOLE ÀÜ'.lower())
+    print('Привет мир'.upper(), 'ПРИВЕТ МИР'.lower())
+    print('αβγ ΑΒΓ'.upper(), 'αβγ ΑΒΓ'.lower())
+    print('straße'.upper(), 'ǅ'.lower(), 'ǅ'.upper())
+    print('Ａｂｃ'.upper(), '𐐨𐐀'.upper(), '𐐨𐐀'.lower())
+    print('日本語 abc 123 ✓'.upper())
+    print(len("straße".upper()), len("ÀÉ".lower()), "İ".lower(), "ſ".upper(), "K".lower())
+    print('MiXeD 1'.upper(), 'MiXeD 1'.lower(), ''.upper() == '')

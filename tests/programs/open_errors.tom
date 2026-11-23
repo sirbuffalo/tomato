@@ -1,0 +1,47 @@
+# open() failures name the path and the reason; printing and str() of None and optional values (the TODO items).
+class Point:
+    n: int = 0
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @str
+    def text(self) -> str:
+        return f'Point({self.n})'
+
+def maybe_text(b: bool) -> str | None:
+    if b:
+        return 'hi'
+    return None
+
+def maybe_point(b: bool) -> Point | None:
+    if b:
+        return Point(3)
+    return None
+
+def maybe_list(b: bool) -> list[int] | None:
+    if b:
+        return [1, 2]
+    return None
+
+@main
+def main():
+    try:
+        f = open('/nonexistent_dir_for_tomato/missing.txt')
+        f.close()
+    catch IOError as e:
+        print(e.message)
+    try:
+        g = open('/nonexistent_dir_for_tomato/other.txt', 'r')
+        g.close()
+    catch IOError as e:
+        print(e.message)
+    print(None)
+    print(maybe_text(True), maybe_text(False))
+    print(maybe_point(True), maybe_point(False))
+    print(maybe_list(True), maybe_list(False))
+    print(str(None), str(maybe_text(False)), str(maybe_text(True)), str(maybe_point(True)), str(maybe_list(False)))
+    print(f'{maybe_text(False)} and {maybe_point(True)}')
+    shown = 'x' if len('ab') == 2 else None
+    print(shown, 'a' if len('ab') == 3 else None)

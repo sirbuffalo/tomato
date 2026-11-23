@@ -2243,16 +2243,23 @@ class Gen:
         self.place(stop)
         for v in live:
             self.release(v)
+        self.raise_here(cls, self.mod.intern(self.mod.failure_text(message, self.line)), False)
+        self.place(ok)
+
+    def raise_here(self, cls: str, text: str, owned: bool):
+        # raise a runtime failure of class cls with the message text (a text value; owned: released once the error holds it) and
+        # leave the function
         self.release_held()
         err = self.tmp('err')
-        self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(ptr ' + self.mod.intern(self.mod.failure_text(message, self.line)) + ')')
+        self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(ptr ' + text + ')')
+        if owned:
+            self.emit(f'call void @tomato_release(ptr {text})')
         self.emit(f'store ptr {err}, ptr @tomato_exc')
         self.emit(f'store i32 {self.line}, ptr @tomato_exc_line')
         self.emit('store i32 1, ptr @tomato_exc_rt')
         self.trace(True)
         self.emit('store i32 1, ptr @tomato_exc_seen')
         self.br(self.unwind_target())
-        self.place(ok)
 
     # ---- expressions
     def expr(self, n: Node, expected: str = '') -> Ex:
@@ -2319,11 +2326,11 @@ class Gen:
         if k == 'Call':
             return self.call(n, False)
         if k == 'ListLit' or k == 'TupleLit':
-            return self.list_lit(n, expected)
+            return self.list_lit(n, strip_optional(expected))
         if k == 'MapLit':
-            return self.map_lit(n, expected)
+            return self.map_lit(n, strip_optional(expected))
         if k == 'SetLit':
-            return self.set_lit(n, expected)
+            return self.set_lit(n, strip_optional(expected))
         if k == 'Attr':
             return self.field_get(n)
         if k == 'Index':
@@ -4508,9 +4515,24 @@ class Gen:
         self.emit(f'{r} = call ptr @tomato_file_open(ptr {path.reg}, ptr {mode.reg})')
         bad = self.tmp('nofile')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
-        self.release(path)
-        self.release(mode)
-        self.fail_with(bad, 'IOError', 'a file could not be opened')
+        if self.mod.mode == 1:
+            # the message names the path and says why (the runtime kept the reason when fopen failed)
+            stop = self.label('stop')
+            ok = self.label('ok')
+            self.cond_br(bad, stop, ok)
+            self.place(stop)
+            text = self.tmp('why')
+            self.emit(f'{text} = call ptr @tomato_open_error(ptr {path.reg})')
+            self.release(path)
+            self.release(mode)
+            self.raise_here('IOError', text, True)
+            self.place(ok)
+            self.release(path)
+            self.release(mode)
+        else:
+            self.release(path)
+            self.release(mode)
+            self.fail_with(bad, 'IOError', 'could not open ')
         return ex(r, 'File')
 
     def input_call(self, args: list[Node], line: int) -> Ex:
@@ -5131,6 +5153,39 @@ class Gen:
             raise CompileError(f'a function value ({shown(v.ty)}) cannot be converted to text\ncall it and use the result', line)
         if is_dyn(v.ty):
             raise CompileError(f'a value of type {shown(v.ty)} cannot be converted to text\nloop over it and print the items instead', line)
+        return self.text_of(v, line)
+
+    def optional_text(self, v: Ex, line: int) -> Ex:
+        # an optional as text: 'None' when it is None, otherwise the text of the value inside (the argument is released)
+        isnone = self.tmp('isnone')
+        self.emit(f'{isnone} = icmp eq ptr {v.reg}, null')
+        none = self.label('shownone')
+        some = self.label('showsome')
+        end = self.label('showend')
+        res = self.hidden_rc_slot('shown')
+        self.cond_br(isnone, none, some)
+        self.place(none)
+        self.store_owned(res, ex(self.mod.intern('None'), 'str'))
+        self.br(end)
+        self.place(some)
+        inner = self.text_of(ex(v.reg, strip_optional(v.ty)), line)
+        self.store_owned(res, inner)
+        self.br(end)
+        self.place(end)
+        r = self.tmp('text')
+        self.emit(f'{r} = load ptr, ptr {res}')
+        out = ex(r, 'str')
+        self.retain(out)
+        return out
+
+    def text_of(self, v: Ex, line: int) -> Ex:
+        # a value as text, the way print and str() show it (the argument is released)
+        if v.ty == 'str':
+            return v
+        if v.ty == 'None':
+            return ex(self.mod.intern('None'), 'str')
+        if is_optional(v.ty):
+            return self.optional_text(v, line)
         if is_class(v.ty):
             shown_text = self.class_text(v, line)
             self.release(v)
@@ -5167,7 +5222,11 @@ class Gen:
                 raise CompileError(f'a value of type {shown(v.ty)} cannot be printed\nloop over it and print the items instead', self.line)
             values.append(v)
         for k, v in enumerate(values):
-            if v.ty == 'int':
+            if v.ty == 'None' or is_optional(v.ty):
+                shown_opt = self.text_of(v, self.line)
+                self.emit(f'call void @tomato_print_strobj(ptr {shown_opt.reg})')
+                self.emit(f'call void @tomato_release(ptr {shown_opt.reg})')
+            elif v.ty == 'int':
                 t = self.tmp('text')
                 self.emit(f'{t} = call ptr @tomato_int_str(i64 {v.reg})')
                 self.release(v)
@@ -6918,6 +6977,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_lower(ptr)\n'
     d += 'declare ptr @tomato_str_strip(ptr)\n'
     d += 'declare ptr @tomato_file_open(ptr, ptr)\n'
+    d += 'declare ptr @tomato_open_error(ptr)\n'
     d += 'declare ptr @tomato_file_read(ptr)\n'
     d += 'declare void @tomato_file_write(ptr, ptr)\n'
     d += 'declare void @tomato_file_close(ptr)\n'
