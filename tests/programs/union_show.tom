@@ -1,0 +1,87 @@
+# A union member that is a mixed tuple, list, dict, set or object prints the way Python shows it (it was `<object>`): at top
+# level, inside f-strings and str(), and inside printed containers (where text members are quoted).
+class Tag:
+    name: str = ''
+
+    @init
+    def make(self, name: str):
+        self.name = name
+
+    @str
+    def text(self) -> str:
+        return f'Tag({self.name})'
+
+class Bad:
+    @str
+    def text(self) -> str:
+        raise Error('no text for you')
+
+class Plain:
+    n: int = 1
+
+def show_many(items: list[int | tuple[str, int]]):
+    for item in items:
+        print(item)
+
+def choose(flag: bool) -> str | tuple[str, list[int]]:
+    if flag:
+        return 'plain'
+    return ('pair', [1, 2])
+
+@main
+def main():
+    a: int | tuple[str, int] = ('a', 2)
+    print(a)
+    a = 7
+    print(a)
+    print(f'<{a}>', str(a))
+    show_many([1, ('x', 2), 3])
+
+    # inside containers: text is quoted, members are shown by their own type
+    xs: list[int | tuple[str, int]] = [1, ('x', 2)]
+    print(xs)
+    ys: list[str | list[str]] = ['it', ['a', "it's"]]
+    print(ys)
+    d: dict[str, int | list[int]] = {}
+    d['a'] = 1
+    d['b'] = [2, 3]
+    print(d)
+    print(str(xs[1]))
+
+    # nested: a union inside a tuple, and a tuple inside a union inside a list
+    n: tuple[str, int | tuple[str, int]] | None = ('k', ('v', 9))
+    print(n)
+    inner: list[int | tuple[int, str]] = [1, (2, 'two')]
+    w: tuple[str, list[int | tuple[int, str]]] = ('z', inner)
+    print(w)
+    print(choose(True), choose(False))
+
+    # lists, dicts, sets and objects
+    l: int | list[str] = ['p', 'q']
+    print(l)
+    kv: dict[str, int] = {'k': 1}
+    m: str | dict[str, int] = kv
+    print(m)
+    s: int | set[int] = {4}
+    print(s)
+    o: str | Tag = Tag('t')
+    print(o)
+    print([o, 'x'])
+    o = 'text'
+    print(o)
+
+    # an object without @str is still `<object>`
+    p: int | Plain = Plain()
+    print(p)
+
+    # a failing @str inside a union is a normal error, and nothing leaks
+    b: int | Bad = Bad()
+    try:
+        print(b)
+    catch Error as e:
+        print('caught', e.message)
+    for i in range(3):
+        try:
+            print([b, 1])
+        catch Error as e:
+            print('caught again', i)

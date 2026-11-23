@@ -4,8 +4,6 @@
   At counting input 250, Tomato ÷ Go is 1.97 in instructions executed. The hot loop still pays for 3 float checks and the tagged counter `i` (tag tests, overflow-checked add). Removing the counter checks needs range reasoning such as proving that `i + 1` is small when `0 <= i < 100`.
 - Teach the expression-position type parser the comma form `tuple[A, B]`
   Mixed-type tuple types parse only in annotations, so `x in tuple[str, int]` (which would narrow a union such as `int | tuple[str, int]`) and explicit generic arguments such as `Box[tuple[str, int]](('a', 1))` fail with `expected ']', but found ','`. Inference from arguments and `Box[tuple[str, int]]` in an annotation already work; see P89 in `docs/provisional.md`.
-- Print mixed tuples (and lists/objects) inside unions properly instead of `<object>`
-  A union member that is a mixed tuple, list or object prints as `<object>` (`[1, <object>]`), because the box only knows how to print numbers, text and bools. Needs a per-member show function in the union box; see P89 in `docs/provisional.md`.
 - Add a Linux CI job that runs tests/run.sh with LeakSanitizer
   macOS CI cannot detect leaks (LeakSanitizer does not run there), which is how the error-path and task-waiter leaks fixed by the code cleanup went unnoticed. Export `ASAN_SYMBOLIZER_PATH` so a failure shows the real report.
 - Free temporaries on the error path of class-object slicing and big-int range bounds

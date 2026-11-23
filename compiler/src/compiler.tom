@@ -3841,10 +3841,7 @@ class Gen:
         if name == '_repr_box' and len(args) == 1 and name not in self.slots and self.mod.resolve(name) == '':
             # the text of a union value inside a printed container: text is quoted, as Python does
             bv = self.expr(args[0])
-            br = self.tmp('repr')
-            self.emit(f'{br} = call ptr @tomato_box_repr(ptr {bv.reg})')
-            self.release(bv)
-            return ex(br, 'str')
+            return self.union_text(bv, True, n.line)
         if name == 'float' and len(args) == 1:
             return self.float_call(self.expr(args[0]), n.line)
         if name == 'int' and len(args) == 1:
@@ -5345,6 +5342,55 @@ class Gen:
         self.release(v)
         return ex(r, 'str')
 
+    def union_text(self, v: Ex, quoted: bool, line: int) -> Ex:
+        # a union value as text (the argument is released). A whole number, float, text or bool member is shown by the runtime
+        # (quoted inside a container when `quoted`); a list, tuple, set, dict or object member the box cannot show by itself is
+        # found by its member type code and shown by that member's own helper, so `[1, ('a', 2)]` prints as Python does
+        shown_members: list[str] = []
+        for m in union_members(v.ty):
+            if is_showable_member(self.mod, m):
+                shown_members.append(m)
+        r = self.tmp('text')
+        if len(shown_members) == 0:
+            fn = 'tomato_box_str'
+            if quoted:
+                fn = 'tomato_box_repr'
+            self.emit(f'{r} = call ptr @{fn}(ptr {v.reg})')
+            self.release(v)
+            return ex(r, 'str')
+        res = self.hidden_rc_slot('shown')
+        end = self.label('ushownend')
+        held_before = len(self.held)
+        self.hold(v)                           # freed by the error path if a member's text raises (an @str method can)
+        for m in shown_members:
+            yes = self.label('ushow')
+            no = self.label('ushownot')
+            self.cond_br(self.box_is(v, m), yes, no)
+            self.place(yes)
+            inner = self.unbox_value(v, m)
+            if is_class(m):
+                t = self.class_text(inner, line)
+                self.release(inner)
+                self.store_owned(res, t)
+            else:
+                self.store_owned(res, self.show_text(inner, line))
+            self.br(end)
+            self.place(no)
+        self.drop_held(held_before)
+        fn = 'tomato_box_str'
+        if quoted:
+            fn = 'tomato_box_repr'
+        self.emit(f'{r} = call ptr @{fn}(ptr {v.reg})')
+        self.store_owned(res, ex(r, 'str'))
+        self.br(end)
+        self.place(end)
+        self.release(v)
+        out = self.tmp('utext')
+        self.emit(f'{out} = load ptr, ptr {res}')
+        o = ex(out, 'str')
+        self.retain(o)
+        return o
+
     def str_call(self, args: list[Node], line: int) -> Ex:
         if len(args) != 1:
             raise CompileError('str() takes exactly one argument', line)
@@ -5477,8 +5523,7 @@ class Gen:
             else:
                 self.emit(f'{r} = call ptr @tomato_str_from_u64(i64 {self.widen(v, 64)})')
         elif is_union(v.ty):
-            self.emit(f'{r} = call ptr @tomato_box_str(ptr {v.reg})')
-            self.release(v)
+            return self.union_text(v, False, line)
         elif v.ty == 'float':
             self.emit(f'{r} = call ptr @tomato_str_from_f64(double {v.reg})')
         else:
@@ -5540,11 +5585,9 @@ class Gen:
                 self.emit(f'call void @tomato_release(ptr {shown_text.reg})')
                 self.release(v)
             elif is_union(v.ty):
-                t = self.tmp('text')
-                self.emit(f'{t} = call ptr @tomato_box_str(ptr {v.reg})')
-                self.emit(f'call void @tomato_print_strobj(ptr {t})')
-                self.emit(f'call void @tomato_release(ptr {t})')
-                self.release(v)
+                shown_union = self.union_text(v, False, self.line)
+                self.emit(f'call void @tomato_print_strobj(ptr {shown_union.reg})')
+                self.emit(f'call void @tomato_release(ptr {shown_union.reg})')
             else:
                 self.emit(f'call void @tomato_print_strobj(ptr {v.reg})')
                 self.release(v)
@@ -7512,6 +7555,31 @@ def has_init(mod: Mod, c: ClassInfo) -> bool:
         return True
     if c.parent != '':
         return has_init(mod, mod.find_class(c.parent, c.line))
+    return False
+
+def is_showable(mod: Mod, t: str) -> bool:
+    # can a value of this type be shown inside a printed container (what show_item accepts)?
+    if is_numeric(t) or t == 'bool' or t == 'float' or t == 'str' or is_union(t):
+        return True
+    if is_class(t):
+        return mod.has_op(t[1:], 'str')
+    if is_list(t):
+        return is_showable(mod, elem_of(t))
+    if is_set(t):
+        return is_showable(mod, set_elem(t))
+    if is_dict(t):
+        return is_showable(mod, dict_value(t))
+    if is_mtuple(t):
+        for item in mtuple_items(t):
+            if not is_showable(mod, item):
+                return False
+        return True
+    return False
+
+def is_showable_member(mod: Mod, t: str) -> bool:
+    # a union member the box cannot show by itself (the runtime knows only numbers, text and bools) but a helper can
+    if is_class(t) or is_list(t) or is_set(t) or is_dict(t) or is_mtuple(t):
+        return is_showable(mod, t)
     return False
 
 def show_item(mod: Mod, et: str, e: str, line: int) -> str:

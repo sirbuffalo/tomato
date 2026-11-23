@@ -117,4 +117,5 @@ async_loops
 error_path_release
 unicode_class
 mixed_tuples
+union_show
 time_module
