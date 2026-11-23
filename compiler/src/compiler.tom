@@ -418,6 +418,32 @@ def elem_rc(t: str) -> str:
         return '2'
     return '0'
 
+def item_width(t: str) -> int:
+    # the bytes one item takes in the storage of a list of type t. A list whose item type is fixed (bool, i8..i32, u8..u32)
+    # keeps its items at that width, without the 8-byte slot; every other list, and every tuple, keeps 8-byte slots.
+    # A float is already a plain 8-byte double and an int is one tagged 8-byte word (a big number is a pointer in it).
+    if not t.startswith('list['):
+        return 8
+    e = elem_of(t)
+    if e == 'bool':
+        return 1
+    if is_fixed(e):
+        b = bits_of(e)
+        if b == 8 or b == 16 or b == 32:
+            return b // 8
+    return 8
+
+def list_flags(t: str) -> str:
+    # the runtime's copy flag for the items of a list of type t (elem_rc) plus, for compact items, their width in bytes times 4
+    w = item_width(t)
+    if w != 8:
+        return str(w * 4)
+    return elem_rc(elem_of(t))
+
+def item_llvm(w: int) -> str:
+    # the LLVM type of one stored item of width w
+    return 'i' + str(w * 8)
+
 def pure_read(n: Node) -> bool:
     # an expression that only reads variables and fields, so no user code runs while it is evaluated
     if n.kind == 'Name' or n.kind == 'IntLit' or n.kind == 'FloatLit' or n.kind == 'BoolLit' or n.kind == 'StrLit':
@@ -1528,7 +1554,7 @@ class Gen:
             if is_dict(e.ty):
                 keys = 'list[str]'
             snap = self.tmp('keys')
-            self.emit(f'{snap} = call ptr @tomato_dict_keys(ptr {e.reg}, i64 {self.mod.code_of(keys)}, i64 8)')
+            self.emit(f'{snap} = call ptr @tomato_dict_keys(ptr {e.reg}, i64 {self.mod.code_of(keys)}, i64 {item_width(keys)})')
             self.release(e)
             e = ex(snap, keys)
         return self.box_as(e, dyn_seq(), ty)
@@ -2272,15 +2298,13 @@ class Gen:
             v = self.want(self.expr(item, elem_of(ctx.ty)), elem_of(ctx.ty), s.line, 'a list item')
         lst = self.tmp('lst')
         self.emit(f'{lst} = load ptr, ptr {ctx.holder}')
-        slot = self.tmp('slot')
-        self.emit(f'{slot} = call ptr @tomato_list_push(ptr {lst}, i64 8)')
         v = self.owned(v)
-        self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
+        self.push_item(lst, ctx.ty, v)     # the list takes the reference
 
     def sequence_op(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
         # list + list, tuple + tuple, list * n, n * list, text * n and n * text; an empty type when the operands are something else
         if op == '+' and is_list(a.ty) and a.ty == b.ty:
-            rc = elem_rc(elem_of(a.ty))
+            rc = list_flags(a.ty)
             r = self.tmp('joined')
             self.emit(f'{r} = call ptr @tomato_list_concat(ptr {a.reg}, ptr {b.reg}, i32 {rc})')
             self.release(a)
@@ -2298,7 +2322,7 @@ class Gen:
         if seq.ty == 'str':
             self.emit(f'{r} = call ptr @tomato_str_repeat(ptr {seq.reg}, i64 {self.int_raw(n)})')
         else:
-            rc = elem_rc(elem_of(seq.ty))
+            rc = list_flags(seq.ty)
             self.emit(f'{r} = call ptr @tomato_list_repeat(ptr {seq.reg}, i64 {self.int_raw(n)}, i32 {rc})')
         self.release(seq)
         return ex(r, seq.ty)
@@ -2363,7 +2387,7 @@ class Gen:
         if is_class(v.ty) and self.mod.has_op(v.ty[1:], 'iter'):
             return self.call_helper(self.mod.helper('tolist', v.ty, line), [v])
         if is_list(v.ty) and not v.ty.startswith('tuple['):
-            rc = elem_rc(elem_of(v.ty))
+            rc = list_flags(v.ty)
             r = self.tmp('copy')
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {v.reg}, i64 0, i64 0, i64 1, i32 0, i32 {rc})')
             self.release(v)
@@ -2399,7 +2423,7 @@ class Gen:
             raise CompileError(f'{name}() takes a list or a range, but this is {shown(lst.ty)}', line)
         elem = elem_of(lst.ty)
         if name == 'reversed':
-            rc = elem_rc(elem)
+            rc = list_flags(lst.ty)
             r = self.tmp('reversed')
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {lst.reg}, i64 0, i64 0, i64 -1, i32 4, i32 {rc})')
             self.release(lst)
@@ -2462,7 +2486,7 @@ class Gen:
         self.check_error([lst])
         kind = '0' if kt == 'int' else ('1' if kt == 'float' else '2')
         r = self.tmp('sortedby')
-        self.emit(f'{r} = call ptr @tomato_list_sorted_by(ptr {lst.reg}, ptr {keys}, i32 {kind}, i32 {elem_rc(elem)})')
+        self.emit(f'{r} = call ptr @tomato_list_sorted_by(ptr {lst.reg}, ptr {keys}, i32 {kind}, i32 {list_flags(lst.ty)})')
         self.release(ex(keys, f'list[{kt}]'))
         self.release(lst)
         return ex(r, lst.ty)
@@ -2505,8 +2529,40 @@ class Gen:
         data = self.tmp('data')
         self.emit(f'{data} = load ptr, ptr {datap}')
         addr = self.tmp('addr')
-        self.emit(f'{addr} = getelementptr i64, ptr {data}, i64 {i.reg}')
+        w = item_width(lst.ty)
+        unit = item_llvm(w)
+        self.emit(f'{addr} = getelementptr {unit}, ptr {data}, i64 {i.reg}')
         return addr
+
+    def load_item(self, lt: str, addr: str, hint: str) -> str:
+        # the item at addr in a list of type lt, as the register of its Tomato value (a compact item is widened)
+        elem = elem_of(lt)
+        item = self.tmp(hint)
+        w = item_width(lt)
+        if w == 8:
+            self.emit(f'{item} = load {llvm_type(elem)}, ptr {addr}')
+        elif elem == 'bool':
+            raw = self.tmp('raw')
+            self.emit(f'{raw} = load i8, ptr {addr}')
+            self.emit(f'{item} = zext i8 {raw} to i64')
+        else:
+            self.emit(f'{item} = load {llvm_type(elem)}, ptr {addr}')
+        return item
+
+    def store_item(self, lt: str, v: Ex, addr: str):
+        # v (not a heap value) into the slot at addr of a list of type lt
+        if item_width(lt) == 1 and elem_of(lt) == 'bool':
+            raw = self.tmp('raw')
+            self.emit(f'{raw} = trunc i64 {v.reg} to i8')
+            self.emit(f'store i8 {raw}, ptr {addr}')
+        else:
+            self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {addr}')
+
+    def push_item(self, lst: str, lt: str, v: Ex):
+        # append v (already owned) to the list in register lst, whose type is lt
+        slot = self.tmp('slot')
+        self.emit(f'{slot} = call ptr @tomato_list_push(ptr {lst}, i64 {item_width(lt)})')
+        self.store_item(lt, v, slot)
 
     def field_addr(self, obj: Ex, name: str, line: int) -> str:
         if not is_class(obj.ty):
@@ -2596,9 +2652,7 @@ class Gen:
                 v = self.expr(item, elem_of(t))
             v = self.want(v, elem_of(t), n.line, 'a list item')
             v = self.owned(v)
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_list_push(ptr {lst}, i64 8)')
-            self.emit('store ' + llvm_type(v.ty) + ' ' + v.reg + ', ptr ' + slot)     # the list takes the reference
+            self.push_item(lst, t, v)     # the list takes the reference
         return ex(lst, t)
 
     def key_word(self, k: Ex) -> str:
@@ -2800,8 +2854,7 @@ class Gen:
             li = self.want(li, 'int', n.line, 'an index')
             addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li)), 'int'))
             lent = s.reg.startswith('%bl.') and ((lend and elem_of(s.ty) == 'int') or (as_base and is_rc(elem_of(s.ty))))
-            item = self.tmp('bl' if lent else 'item')
-            self.emit(f'{item} = load {llvm_type(elem_of(s.ty))}, ptr {addr}')
+            item = self.load_item(s.ty, addr, 'bl' if lent else 'item')
             e = ex(item, elem_of(s.ty))
             if lent:
                 return e
@@ -2859,7 +2912,7 @@ class Gen:
         if s.ty == 'str':
             self.emit(f'{r} = call ptr @tomato_str_slice3(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags})')
         else:
-            rc = elem_rc(elem_of(s.ty))
+            rc = list_flags(s.ty)
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags}, i32 {rc})')
         bad = self.tmp('zero')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
@@ -2932,8 +2985,7 @@ class Gen:
         self.cond_br(go, body, end)
         self.place(body)
         addr = self.list_slot(lst, ex(i, 'int'))
-        item = self.tmp('item')
-        self.emit(f'{item} = load {llvm_type(elem)}, ptr {addr}')
+        item = self.load_item(lst.ty, addr, 'item')
         hit = self.tmp('hit')
         if elem == 'str':
             c = self.tmp('c')
@@ -3702,9 +3754,7 @@ class Gen:
         self.emit(f'{lst} = call ptr @tomato_list_new(i64 {self.mod.code_of(t)})')
         for it0 in items:
             it = self.owned(it0)
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_list_push(ptr {lst}, i64 8)')
-            self.emit(f'store {llvm_type(it.ty)} {it.reg}, ptr {slot}')
+            self.push_item(lst, t, it)
         return ex(lst, t)
 
     def build_kwargs(self, t: str, names: list[str], items: list[Ex]) -> Ex:
@@ -3809,9 +3859,7 @@ class Gen:
             v = self.expr(args[0], elem_of(obj.ty))
             v = self.want(v, elem_of(obj.ty), n.line, 'the appended item')
             v = self.owned(v)
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_list_push(ptr {obj.reg}, i64 8)')
-            self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {slot}')
+            self.push_item(obj.reg, obj.ty, v)
             self.release(obj)
             return ex('', '')
         if is_task(obj.ty):
@@ -3926,7 +3974,7 @@ class Gen:
         if name == 'values':
             t = f'list[{vt}]'
             r = self.tmp('values')
-            self.emit(f'{r} = call ptr @tomato_dict_values(ptr {d.reg}, i64 {self.mod.code_of(t)}, i64 8, i32 {elem_rc(vt)})')
+            self.emit(f'{r} = call ptr @tomato_dict_values(ptr {d.reg}, i64 {self.mod.code_of(t)}, i64 {item_width(t)}, i32 {elem_rc(vt)})')
             self.release(d)
             return ex(r, t)
         if name == 'items':
@@ -4322,8 +4370,7 @@ class Gen:
         self.cond_br(more, have, nomore)
         self.place(have)
         addr = self.list_slot(ex(q, 'list[' + elem + ']'), ex(cur, 'int'))
-        item = self.tmp('status')
-        self.emit(f'{item} = load {llvm_type(elem)}, ptr {addr}')
+        item = self.load_item('list[' + elem + ']', addr, 'status')
         e = ex(item, elem)
         self.retain(e)
         self.store_owned(var, e)
@@ -4361,9 +4408,7 @@ class Gen:
         v = self.owned(v)
         q = self.tmp('queue')
         self.emit(q + ' = load ptr, ptr ' + self.frame_field('%frame', 11, 'str'))
-        slot = self.tmp('slot')
-        self.emit(f'{slot} = call ptr @tomato_list_push(ptr {q}, i64 8)')
-        self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {slot}')
+        self.push_item(q, 'list[' + v.ty + ']', v)
         self.emit('call void @tomato_wake_waiters(ptr %frame)')
         self.emit('call void @tomato_q_push(ptr %frame)')
         self.suspend_here()
@@ -5048,7 +5093,7 @@ class Gen:
         elif v.ty == 'int':
             self.store_owned(addr, v)
         else:
-            self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {addr}')
+            self.store_item(lst.ty, v, addr)
         self.release(lst)
 
     def narrow_target(self, cond: Node) -> list[str]:
@@ -5448,7 +5493,7 @@ class Gen:
             if is_dict(lst.ty):
                 keys = 'list[str]'
             snap = self.tmp('keys')
-            self.emit(f'{snap} = call ptr @tomato_dict_keys(ptr {lst.reg}, i64 {self.mod.code_of(keys)}, i64 8)')
+            self.emit(f'{snap} = call ptr @tomato_dict_keys(ptr {lst.reg}, i64 {self.mod.code_of(keys)}, i64 {item_width(keys)})')
             self.release(lst)
             lst = ex(snap, keys)
         if lst.ty == 'str':
@@ -5483,8 +5528,7 @@ class Gen:
         self.cond_br(go, body, end)
         self.place(body)
         addr = self.list_slot(ex(l, lst.ty), ex(i, 'int'))
-        item = self.tmp('item')
-        self.emit(f'{item} = load {llvm_type(elem)}, ptr {addr}')
+        item = self.load_item(lst.ty, addr, 'item')
         e = ex(item, elem)
         self.retain(e)
         self.store_owned(var, e)

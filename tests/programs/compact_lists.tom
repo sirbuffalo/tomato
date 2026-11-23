@@ -1,0 +1,74 @@
+# Lists of bool and of the fixed-width integers keep their items in 1, 2 or 4 bytes each; this must not be visible.
+def count_true(xs: list[bool]) -> int:
+    n = 0
+    for x in xs:
+        if x:
+            n += 1
+    return n
+
+def first[T](xs: list[T]) -> T:
+    return xs[0]
+
+@main
+def main():
+    flags = [False] * 10
+    flags[3] = True
+    flags[-1] = True
+    flags.append(True)
+    print(flags)
+    print(len(flags), count_true(flags))
+    print(flags[3], flags[4], flags[-1])
+    print(True in flags, False in [True], True in flags[4:7])
+    print(flags[2:6], flags[::3], flags[::-1])
+    print(flags + [False, True])
+    print([True, False] * 3)
+    print(3 * [True])
+    print([True] * 0, [True] * -1)
+    print(list(flags))
+    print(reversed(flags))
+    print(first(flags))
+    print([i % 3 == 0 for i in range(8)])
+    tf = [True, False, True]
+    for i, f in enumerate(tf):
+        print(i, f)
+    grid = [[False] * 3 for i in range(2)]
+    grid[1][2] = True
+    print(grid)
+    copy = flags[:]
+    copy[0] = True
+    print(flags[0], copy[0])
+    d: dict[str, bool] = {'a': True, 'b': False, 'c': True}
+    print(d.values())
+    try:
+        print(flags[11])
+    catch Error as e:
+        print('caught', e.message)
+
+    s8 = int[length=8](-2)
+    small = [int[length=8](1), s8, int[length=8](3)]
+    small.append(int[length=8](-128))
+    print(small, small[3], small + [int[length=8](5)], small[::-1], small * 2)
+    u = uint[length=16](7)
+    mid = [uint[length=16](65535), uint[length=16](0), u]
+    mid[1] = uint[length=16](300)
+    print(mid, mid[1:])
+    wide = [int[length=32](2000000000), int[length=32](-2000000000)]
+    wide.append(int[length=32](5))
+    print(wide, wide[1], wide[:2])
+    big = [uint[length=32](4000000000), uint[length=32](1)]
+    print(big, [x for x in big])
+    other = [uint[length=8](250)]
+    for k in range(4):
+        other.append(uint[length=8](251 + k))
+    print(other, other[::2], reversed(other))
+    print(sorted(flags, key=b -> 0 if b else 1))
+    print(len(list(other)))
+    # lists whose items are not compact still work
+    print([1.5, 2.5] * 2, [2 ** 70, 1] + [3], ['a', 'b'][::-1])
+    # set keys are snapshotted into a list for iteration
+    seen = {False, True}
+    count = 0
+    for b in seen:
+        print(b)
+        count += 1
+    print(count)

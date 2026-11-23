@@ -1244,6 +1244,15 @@ void *tomato_list_push(void *l, int64_t elem_size) {
     return x->data + (x->len++) * elem_size;
 }
 
+/* Sets the length of an empty list to n items of `w` bytes and returns its data (the caller fills it in). */
+static char *tomato_list_reserve(List *x, int64_t n, int64_t w) {
+    x->data = malloc((size_t)(n * w ? n * w : 1));
+    if (!x->data) tomato_fail("out of memory");
+    x->cap = n;
+    x->len = n;
+    return x->data;
+}
+
 /* what a copy of a list item holds: `rc` is 1 for a reference-counted item (retained, shared), 2 for an int (a big number is duplicated, a small one is the word itself) */
 int64_t tomato_int_dup(int64_t x);
 static int64_t item_copy(int rc, int64_t item) {
@@ -1259,6 +1268,11 @@ void *tomato_list_slice(void *src, int64_t lo, int64_t hi, int64_t step, int fla
     if (n < 0) return NULL;
     if (!(flags & 4)) step = 1;
     List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
+    if (rc >> 2) {      /* compact items (bool, i8..i32): rc >> 2 bytes each, never heap values */
+        int64_t w = rc >> 2;
+        for (int64_t k = 0; k < n; k++) memcpy(tomato_list_push(r, w), l->data + (start + k * step) * w, (size_t)w);
+        return r;
+    }
     for (int64_t k = 0; k < n; k++) {
         int64_t item = LIST_SLOT(l, start + k * step, int64_t);
         *(int64_t *)tomato_list_push(r, 8) = item_copy(rc, item);
@@ -1270,6 +1284,13 @@ void *tomato_list_slice(void *src, int64_t lo, int64_t hi, int64_t step, int fla
 void *tomato_list_concat(void *a, void *b, int rc) {
     List *x = a, *y = b;
     List *r = tomato_list_new(((Hdr *)x)->type & TYPE_MASK);
+    if (rc >> 2) {      /* compact items: rc >> 2 bytes each */
+        int64_t w = rc >> 2;
+        char *d = tomato_list_reserve(r, x->len + y->len, w);
+        if (x->len) memcpy(d, x->data, (size_t)(x->len * w));
+        if (y->len) memcpy(d + x->len * w, y->data, (size_t)(y->len * w));
+        return r;
+    }
     for (int pass = 0; pass < 2; pass++) {
         List *from = pass ? y : x;
         for (int64_t i = 0; i < from->len; i++) {
@@ -1284,6 +1305,14 @@ void *tomato_list_repeat(void *a, int64_t n, int rc) {
     List *x = a;
     List *r = tomato_list_new(((Hdr *)x)->type & TYPE_MASK);
     if (n > 0 && x->len > 0 && n > (int64_t)1000000000 / x->len) tomato_fail("out of memory");
+    if (rc >> 2) {      /* compact items: rc >> 2 bytes each */
+        int64_t w = rc >> 2;
+        if (n <= 0 || x->len == 0) return r;
+        char *d = tomato_list_reserve(r, n * x->len, w);
+        if (x->len == 1 && w == 1) memset(d, x->data[0], (size_t)n);
+        else for (int64_t k = 0; k < n; k++) memcpy(d + k * x->len * w, x->data, (size_t)(x->len * w));
+        return r;
+    }
     for (int64_t k = 0; k < n; k++)
         for (int64_t i = 0; i < x->len; i++) {
             int64_t item = LIST_SLOT(x, i, int64_t);
@@ -2469,6 +2498,10 @@ void *tomato_list_sorted_by(void *src, void *keys, int kind, int rc) {
         else if (kind == 1) msort_word(a, tmp, n);
         else msort_str(a, tmp, n);
     }
+    if (rc >> 2) {      /* compact items */
+        int64_t w = rc >> 2;
+        for (int64_t i = 0; i < n; i++) memcpy(tomato_list_push(r, w), l->data + a[i].pos * w, (size_t)w);
+    } else
     for (int64_t i = 0; i < n; i++)
         *(int64_t *)tomato_list_push(r, 8) = item_copy(rc, LIST_SLOT(l, a[i].pos, int64_t));
     free(a);

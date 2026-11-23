@@ -89,4 +89,5 @@ msgpack_errors
 msgpack_fuzz
 int_shift
 bit_chunks
+compact_lists
 int_fast_paths

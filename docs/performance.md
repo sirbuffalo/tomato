@@ -83,6 +83,27 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (compact list storage, unreleased)
+
+A list whose item type is fixed at compile time keeps its items without the 8-byte slot, and the program cannot tell
+(no syntax, same results). The width comes from the static type (`item_width` in `compiler/src/compiler.tom`): `bool` is
+1 byte, `int[length=8]`/`uint[length=8]` 1 byte, 16 bits 2 bytes, 32 bits 4 bytes; every other list and every tuple keeps
+8-byte slots, and the generic path is untouched. Generic code is compiled once per type, so a `list[bool]` is always byte
+storage: there is no way to meet a list of the wrong width. `float` needed nothing (a float slot already holds the plain
+8-byte double with no tag), and `int` cannot shrink (a small int is one tagged 8-byte word and a big number is a pointer
+in that word, so 8 bytes is the narrowest that holds both). Lists of fixed-width integers can only come from inference
+today, such as `[int[length=8](1)]`, because a declared `list[int[length=8]]` is not accepted yet. The compiler asks for the width in every place it pushes,
+loads or stores an item (`push_item`, `load_item`, `store_item`, `list_slot`: indexing, assignment, append, literals,
+comprehensions, `for`, `in`, the async yield queue); `tomato_list_slice`, `_concat`, `_repeat`, `_sorted_by` and
+`tomato_dict_values` take the width in the copy flag (`flags >> 2`), and `[False] * n` is one `memset`. The IR interpreter
+needed no change (it already loads and stores `i8`, `i16` and `i32`).
+
+Sieve (n = 20,000,000, release mode, median of 9 alternating runs on a loaded machine, load average about 3.7): the list
+shrinks from 160 MB to 20 MB and the time from 0.23 s to 0.076 s. Tomato ÷ Go 1.25 (Go 0.061 s), Tomato ÷ Rust 1.30
+(Rust 0.059 s); the v0.50 ratios were 4.19 and 4.28. The other nine benchmarks, run alternately old against new (median of
+7, `time -p`, 0.01 s resolution), did not change: fib 0.23, matmul 0.17, mandelbrot 0.12, collatz 0.52, strings 0.21,
+sort 0.12, wordcount 0.28, bigint 0.11, objects 0.16 seconds both ways.
+
 ## What was done (collatz and small-int arithmetic)
 
 Profile first (`otool -tV` of the release binary, the emitted IR from `tomato compile`): `collatz` is pure small-int arithmetic, and every operation was already an inlined fast path, but the hot loop was long and tangled:
@@ -113,7 +134,7 @@ Not done: collatz is still 1.5 times Go. Rust is probably branch-free on the `if
 1. **`range(a, b, step)` is a counted loop.** It used to build a `range` object and walk it through its `@iter` method (a generator). The compiler now works out the number of rounds once (`(distance - 1) / |step| + 1`, 0 when empty; a zero step raises the same `RuntimeError`), then counts a hidden index from 0 and sets the loop variable to `start + index * step`, so reassigning the variable in the body does not change the walk, an empty loop leaves the variable alone, and the loop itself is one compare and one add whatever the sign of the step. Like `range(a, b)`, a bound too big for a machine word now stops with `the number is too big here` (the generator version took any big number). Test: `range_step_loop`.
 2. **Tighter list indexing in counted loops.** `tag_small` now says the shift cannot overflow (`shl nsw`) and the counter says it does not wrap (`add nsw`, and `llvm.assume(i >= 0)` for loops that count from 0), so LLVM sees through the tag and untag of the loop variable and drops the negative-index wrap (`i < 0 ? i + len : i`) from `xs[i]`; the inner loop of matmul lost 4 instructions per list read.
    Measured in one session, release mode, load average 10 to 14 (so absolute seconds are inflated; old and new were run alternately, 11 runs, median): sieve 0.345 → 0.247 s, matmul 0.314 → 0.258 s.
-3. **Typed list storage was not done.** In `sieve` the loop is limited by cache misses on a 160 MB list of 8-byte slots (Go uses 1 byte per bool), not by tag arithmetic: 10x the size costs only 13x the time. A byte-sized `list[bool]` would help `sieve` but touches every list operation in the runtime and the IR interpreter; it is a separate task.
+3. **Typed list storage** was done afterwards, see "compact list storage" above (sieve 0.221 s then).
 
 ## What was done (strings)
 
@@ -186,7 +207,7 @@ size-class allocator task covers.
    because every int operation in it goes through the runtime (about 2.3 s for 3,000,000 ints; Rust 0.12 s). Next: inline the
    small-int fast path for comparisons and index arithmetic, or a native merge sort that calls the function directly.
 2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds, tests the tag of each item (for the big-integer copy) and keeps the list pointers in stack slots across the loop.
-3. **Typed list storage** (`list[bool]` as bytes, unboxed floats): the likely next win for `sieve` (cache footprint 8x smaller), measured as memory-bound, not tag-bound; needs every list operation and the IR interpreter to know the element width.
+3. **Typed list storage** is done for `bool` and the fixed-width integers (see above); `int` and `float` lists are already 8 bytes per item and cannot shrink.
 4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).
 5. (done, see the collatz section) Debug-mode small-int arithmetic.
 
