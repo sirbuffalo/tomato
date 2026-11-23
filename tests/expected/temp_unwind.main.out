@@ -20,5 +20,7 @@ chr() takes a number from 0 to 1114111, not a surrogate
 ord() takes a text of exactly one character
 the key is not in the dict
 the element is not there
-22
+division by zero
+division by zero
+24
 True

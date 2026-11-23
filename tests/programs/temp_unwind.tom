@@ -2,6 +2,8 @@
 # the dividend of `huge() // 0`, the left side of `huge() + int('x')`, arguments evaluated before one that raises, items of
 # a literal before a failing item, a fresh base before a failing index. The big-number leak check is strict here (it reports
 # at exit), and the same file runs under AddressSanitizer.
+!tomato_json_quote(text: str, ascii: int) -> str
+
 def huge(n: int) -> int:
     r = 1
     for i in range(1, n + 1):
@@ -19,6 +21,11 @@ class Box:
 
 def make_box(v: int) -> Box:
     return Box(v, 'b' + str(v % 10))
+
+class BadDisplay:
+    @str
+    def display(self) -> str:
+        return str(1 // zero())
 
 def three(a: int, b: int, c: int) -> int:
     return a + b + c
@@ -151,6 +158,16 @@ def main():
     try:
         st: set[str] = {'a'}
         st.remove('b' + str(count))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(huge(21), !tomato_json_quote('dynamic' + str(count), 1 // zero()))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(BadDisplay(), huge(23))
     catch RuntimeError as e:
         count += 1
         print(e.message)
