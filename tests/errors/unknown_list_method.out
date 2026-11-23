@@ -3,4 +3,4 @@ error: list[int] has no method 'map'
   |
 3 |     print([1, 2, 3].map(1))
   |                     ^^^
-  = help: the methods it has are: append
+  = help: the methods it has are: append, pop, insert, extend, sort, reverse

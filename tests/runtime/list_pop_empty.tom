@@ -1,0 +1,4 @@
+@main
+def main():
+    xs: list[int] = []
+    xs.pop()

@@ -92,3 +92,4 @@ int_shift
 bit_chunks
 compact_lists
 int_fast_paths
+list_methods

@@ -1464,6 +1464,8 @@ Source: Davis's Dashboard message:
 - **Speed.** Reading a character of a text with non-ASCII characters is linear in the text, so the parser goes line by line; for an all-ASCII text the runtime now finds a character in constant time (a one-line change in `char_offset`), which also made `for c in text` linear. A 1 MB document loads, dumps and loads again in about 0.6 s. Arrays and inline tables nested more than 500 deep are an error, so a hostile input cannot overflow the stack.
 - Not done: TOML 1.1 additions (`\e`, `\xHH`, optional seconds, newlines in inline tables), a streaming reader, preserving comments on a round trip.
 
+- **List methods and equality (P86).** `pop([i])`, `insert(i, x)`, `extend(ys)`, `sort([key=|cmp=])` and `reverse()` change a list in place; `pop` and `insert` fail with a catchable `RuntimeError` on an empty list or an index out of range (`insert` allows 0 up to `len`, no clamping: Davis chose this over Python's rule), `extend` needs the same list type, and `==` / `!=` compare two lists of the same type item by item. Compact lists (bool, 1/2/4-byte integers) support every method except `sort`, which is limited to `int`, `float` and `str` items as `sorted` is.
+
 ## Pending discussion
 
 The simplicity/performance direction is accepted in D02a–D02b. Other priorities, including correctness, build time, and distribution, remain open.

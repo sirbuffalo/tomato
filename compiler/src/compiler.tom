@@ -2460,6 +2460,11 @@ class Gen:
         if kname != 'key' and kname != 'cmp':
             raise CompileError(f"sorted() has no parameter named '{kname}'\nit takes key= (a function giving what to sort by) or cmp= (a function comparing two items)", line)
         lst = self.list_arg(args[0], 'sorted', line)
+        return self.sorted_keyed(lst, keywords, line)
+
+    # the same on a list that is already evaluated (it is used up): the keyword is key= or cmp=
+    def sorted_keyed(self, lst: Ex, keywords: list[Val], line: int) -> Ex:
+        kname = keywords[0].items[0].text
         elem = elem_of(lst.ty)
         want_fn = 'fn[' + elem + '>?]'
         if kname == 'cmp':
@@ -3195,6 +3200,8 @@ class Gen:
             return self.bool_of(c)
         if is_class(a.ty) and operator_marker_of(op) != '' and (self.mod.has_op(a.ty[1:], operator_marker_of(op)) or not (op == '==' or op == '!=')):
             return self.operator_call(a, b, op, n.line)
+        if (op == '==' or op == '!=') and (a.ty.startswith('list[') or b.ty.startswith('list[')):
+            return self.list_equal(op, a, b, n.line)
         if (op == '+' or op == '*') and (is_list(a.ty) or is_list(b.ty) or a.ty == 'str' or b.ty == 'str'):
             joined = self.sequence_op(op, a, b, n.line)
             if joined.ty != '':
@@ -3250,6 +3257,34 @@ class Gen:
                 return self.icmp('eq', a.reg, b.reg)
             return self.icmp('ne', a.reg, b.reg)
         raise CompileError(f"the operator '{op}' is not supported here", n.line)
+
+    def list_equal(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # xs == ys: the same length and every pair of items equal (items compare by their own ==); both lists must have the same type
+        if a.ty != b.ty:
+            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\nlists are equal only when they have the same type", line)
+        if not self.list_comparable(elem_of(a.ty)):
+            raise CompileError(f"cannot use '{op}' on {shown(a.ty)}\nits items cannot be compared with ==", line)
+        r = ex('', 'bool')
+        if item_width(a.ty) != 8:
+            # compact items (bool, fixed-width integers) are equal exactly when their bytes are
+            c = self.tmp('same')
+            self.emit(f'{c} = call i32 @tomato_list_eq_bytes(ptr {a.reg}, ptr {b.reg}, i64 {item_width(a.ty)})')
+            i1 = self.tmp('flag')
+            self.emit(f'{i1} = icmp ne i32 {c}, 0')
+            self.release(a)
+            self.release(b)
+            r = self.bool_of(i1)
+        else:
+            info = self.mod.instance_func(self.mod.resolve('_list_eq'), [elem_of(a.ty)], line)
+            r = self.call_helper(info, [a, b])
+        if op == '!=':
+            return ex(self.arith('xor', r.reg, '1'), 'bool')
+        return r
+
+    def list_comparable(self, t: str) -> bool:
+        if t.startswith('list['):
+            return self.list_comparable(elem_of(t))
+        return t == 'str' or t == 'bool' or t == 'float' or is_numeric(t) or (is_class(t) and self.mod.has_op(t[1:], 'eq'))
 
     def invert_op(self, n: Node) -> Ex:
         # ~x on an object whose class has a method marked @invert (taking nothing besides self)
@@ -3879,7 +3914,7 @@ class Gen:
             obj = self.unwrap(self.expr_b(recv, args), n.line)
         else:
             obj = self.unwrap(self.expr(recv), n.line)
-        if obj.ty.startswith('tuple[') and name == 'append':
+        if obj.ty.startswith('tuple[') and name in ['append', 'pop', 'insert', 'extend', 'sort', 'reverse']:
             raise CompileError(f"a tuple cannot be changed, so it has no '{name}'\nuse a list if the items must change", n.line)
         if is_list(obj.ty) and name == 'append':
             if len(args) != 1:
@@ -3890,6 +3925,8 @@ class Gen:
             self.push_item(obj.reg, obj.ty, v)
             self.release(obj)
             return ex('', '')
+        if is_list(obj.ty) and obj.ty.startswith('list[') and name in ['pop', 'insert', 'extend', 'sort', 'reverse']:
+            return self.list_method(obj, name, args, n.fields[2].items, n.line)
         if is_task(obj.ty):
             return self.task_method(obj, name, args, n.line)
         if is_set(obj.ty):
@@ -3917,6 +3954,98 @@ class Gen:
                 raise CompileError(f"the method '{name}' is private to class '{info.owner}'\nonly its own methods can call it", n.line)
             return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
         raise CompileError(self.no_method(name, obj.ty), n.line)
+
+    def list_len(self, lst: Ex) -> str:
+        lenp = self.tmp('lenp')
+        self.emit(f'{lenp} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {lst.reg}, i32 0, i32 2')
+        ln = self.tmp('len')
+        self.emit(f'{ln} = load i64, ptr {lenp}')
+        return ln
+
+    def list_method(self, obj: Ex, name: str, args: list[Node], keywords: list[Val], line: int) -> Ex:
+        # pop, insert, extend, sort and reverse change the list in place; items move without copying (the width is that of the list's storage)
+        elem = elem_of(obj.ty)
+        w = item_width(obj.ty)
+        if len(keywords) > 0 and name != 'sort':
+            raise CompileError(f"{name}() does not take keyword arguments", line)
+        if name == 'pop':
+            if len(args) > 1:
+                raise CompileError('pop() takes at most 1 argument: pop() or pop(index)', line)
+            idx = ''
+            if len(args) == 1:
+                li = self.want(self.expr(args[0]), 'int', line, 'the index given to pop()')
+                idx = self.int_raw(li)
+            empty = self.tmp('empty')
+            self.emit(f'{empty} = icmp eq i64 {self.list_len(obj)}, 0')
+            self.fail_if(empty, 'pop from an empty list')
+            if len(args) == 0:
+                idx = self.tmp('last')
+                self.emit(f'{idx} = sub i64 {self.list_len(obj)}, 1')
+            else:
+                idx = self.norm_index(obj, idx)
+            addr = self.list_slot(obj, ex(idx, 'int'))
+            item = self.load_item(obj.ty, addr, 'popped')
+            self.emit(f'call void @tomato_list_remove_at(ptr {obj.reg}, i64 {idx}, i64 {w})')
+            self.release(obj)
+            return ret_ex(item, elem)
+        if name == 'insert':
+            if len(args) != 2:
+                raise CompileError('insert() takes an index and an item: insert(index, item)', line)
+            li = self.want(self.expr(args[0]), 'int', line, 'the index given to insert()')
+            raw = self.int_raw(li)
+            v = self.expr(args[1], elem)
+            v = self.want(v, elem, line, 'the inserted item')
+            v = self.owned(v)
+            # 0 up to the length is allowed (a negative index counts from the end); anything else is out of range
+            idx = self.norm_index(obj, raw)
+            bad = self.tmp('oob')
+            self.emit(f'{bad} = icmp ugt i64 {idx}, {self.list_len(obj)}')
+            self.fail_if(bad, 'index out of range')
+            slot = self.tmp('slot')
+            self.emit(f'{slot} = call ptr @tomato_list_insert_slot(ptr {obj.reg}, i64 {idx}, i64 {w})')
+            self.store_item(obj.ty, v, slot)
+            self.release(obj)
+            return ex('', '')
+        if name == 'extend':
+            if len(args) != 1:
+                raise CompileError('extend() takes one list: extend(other)', line)
+            other = self.unwrap(self.expr(args[0], obj.ty), line)
+            if other.ty != obj.ty:
+                raise CompileError(f'extend() needs a list of the same type, {shown(obj.ty)}, but this is {shown(other.ty)}', line)
+            self.emit(f'call void @tomato_list_extend(ptr {obj.reg}, ptr {other.reg}, i32 {list_flags(obj.ty)})')
+            self.release(other)
+            self.release(obj)
+            return ex('', '')
+        if name == 'reverse':
+            if len(args) > 0:
+                raise CompileError('reverse() takes no arguments', line)
+            self.emit(f'call void @tomato_list_reverse(ptr {obj.reg}, i64 {w})')
+            self.release(obj)
+            return ex('', '')
+        # sort: a sorted copy is made (as sorted() does) and its contents are swapped into the list
+        if len(args) > 0:
+            raise CompileError('sort() takes no positional arguments, only key= or cmp=', line)
+        if len(keywords) > 1:
+            raise CompileError('sort() takes key= or cmp=, not both', line)
+        if not obj.reg.startswith('%bl.') and is_rc(obj.ty):
+            self.emit(f'call void @tomato_retain(ptr {obj.reg})')       # the sorting code uses up its list; this one is kept
+        copy = ex('', '')
+        if len(keywords) == 1:
+            kname = keywords[0].items[0].text
+            if kname != 'key' and kname != 'cmp':
+                raise CompileError(f"sort() has no parameter named '{kname}'\nit takes key= (a function giving what to sort by) or cmp= (a function comparing two items)", line)
+            copy = self.sorted_keyed(obj, keywords, line)
+        else:
+            if not (elem == 'int' or elem == 'float' or elem == 'str'):
+                raise CompileError(f'sort() needs a list of numbers or text, but this is {shown(obj.ty)}\nuse sort(key=...) or sort(cmp=...) for other items', line)
+            kind = '0' if elem == 'int' else ('1' if elem == 'float' else '2')
+            r = self.tmp('sorted')
+            self.emit(f'{r} = call ptr @tomato_list_sorted(ptr {obj.reg}, i32 {kind})')
+            copy = ex(r, obj.ty)
+        self.emit(f'call void @tomato_list_swap(ptr {obj.reg}, ptr {copy.reg})')
+        self.release(copy)
+        self.release(obj)
+        return ex('', '')
 
     def borrowable_receiver(self, ty: str, name: str) -> bool:
         # receivers whose method code only looks at them and releases them at the end: lists, sets, dicts, objects and interfaces
@@ -4849,7 +4978,7 @@ class Gen:
             known = ['read', 'write', 'close']
             word = 'a file'
         elif is_list(ty):
-            known = ['append']
+            known = ['append', 'pop', 'insert', 'extend', 'sort', 'reverse']
         near = closest(name, known)
         text = f"{word} has no method '{name}'"
         if near != '':
@@ -6116,6 +6245,12 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_slice3(ptr, i64, i64, i64, i32)\n'
     d += 'declare ptr @tomato_list_slice(ptr, i64, i64, i64, i32, i32)\n'
     d += 'declare ptr @tomato_list_sorted(ptr, i32)\n'
+    d += 'declare ptr @tomato_list_insert_slot(ptr, i64, i64)\n'
+    d += 'declare void @tomato_list_remove_at(ptr, i64, i64)\n'
+    d += 'declare void @tomato_list_extend(ptr, ptr, i32)\n'
+    d += 'declare void @tomato_list_reverse(ptr, i64)\n'
+    d += 'declare void @tomato_list_swap(ptr, ptr)\n'
+    d += 'declare i32 @tomato_list_eq_bytes(ptr, ptr, i64)\n'
     d += 'declare ptr @tomato_list_sorted_by(ptr, ptr, i32, i32)\n'
     d += 'declare i32 @tomato_callbacks()\n'
     d += 'declare ptr @tomato_list_sorted_cmp(ptr, ptr, ptr, i32)\n'

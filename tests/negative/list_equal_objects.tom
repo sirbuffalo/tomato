@@ -1,0 +1,9 @@
+class Dot:
+    x: int
+    @init
+    def init(self, x: int):
+        self.x = x
+
+@main
+def main():
+    print([Dot(1)] == [Dot(1)])

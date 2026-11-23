@@ -1355,6 +1355,70 @@ void *tomato_str_join(void *sep, void *list) {
 }
 
 
+
+/* insert, pop, extend, reverse and in-place sort; `w` is the item width in bytes (8 unless the list is compact) */
+
+/* Opens a slot at index i (0 <= i <= len, checked by the caller) and returns its address; the caller stores the item. */
+void *tomato_list_insert_slot(void *l, int64_t i, int64_t w) {
+    List *x = l;
+    tomato_list_push(x, w);
+    memmove(x->data + (i + 1) * w, x->data + i * w, (size_t)((x->len - 1 - i) * w));
+    return x->data + i * w;
+}
+
+/* Takes the item at index i (checked by the caller) out of the list without touching it: the caller already read it and owns it now. */
+void tomato_list_remove_at(void *l, int64_t i, int64_t w) {
+    List *x = l;
+    memmove(x->data + i * w, x->data + (i + 1) * w, (size_t)((x->len - 1 - i) * w));
+    x->len--;
+}
+
+/* Adds a copy of every item of src to l (the same list is allowed: only the items there at the start are added). rc as for item_copy, or width * 4 for compact items. */
+void tomato_list_extend(void *l, void *src, int rc) {
+    List *x = l, *y = src;
+    int64_t n = y->len, w = rc >> 2;
+    if (n == 0) return;
+    if (w) {
+        int64_t old = x->len;
+        if (x->cap < old + n) {
+            int64_t cap = x->cap ? x->cap : 4;
+            while (cap < old + n) cap *= 2;
+            x->data = realloc(x->data, (size_t)(cap * w));
+            if (!x->data) tomato_fail("out of memory");
+            x->cap = cap;
+        }
+        memmove(x->data + old * w, y->data, (size_t)(n * w));     /* y == x is fine: its data was only moved by the realloc, and y->data is read after it */
+        x->len = old + n;
+        return;
+    }
+    for (int64_t i = 0; i < n; i++) {
+        int64_t item = item_copy(rc, LIST_SLOT(y, i, int64_t));
+        *(int64_t *)tomato_list_push(x, 8) = item;
+    }
+}
+
+void tomato_list_reverse(void *l, int64_t w) {
+    List *x = l;
+    char tmp[8];
+    for (int64_t i = 0, j = x->len - 1; i < j; i++, j--) {
+        memcpy(tmp, x->data + i * w, (size_t)w);
+        memcpy(x->data + i * w, x->data + j * w, (size_t)w);
+        memcpy(x->data + j * w, tmp, (size_t)w);
+    }
+}
+
+/* Swaps what two lists of the same type hold (sort() sorts a copy and swaps it in; the copy then frees the old items). */
+void tomato_list_swap(void *a, void *b) {
+    List *x = a, *y = b, t = *x;
+    x->len = y->len; x->cap = y->cap; x->data = y->data;
+    y->len = t.len; y->cap = t.cap; y->data = t.data;
+}
+
+/* Are two compact lists (items of w bytes) equal? Their items are equal exactly when their bytes are. */
+int tomato_list_eq_bytes(void *a, void *b, int64_t w) {
+    List *x = a, *y = b;
+    return x->len == y->len && (x->len == 0 || memcmp(x->data, y->data, (size_t)(x->len * w)) == 0);
+}
 void tomato_list_free_data(void *l) { free(((List *)l)->data); }
 
 /* Is an object of class `code` an instance of the class `target` (the class itself or a descendant)? (D12az) */

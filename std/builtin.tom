@@ -338,3 +338,12 @@ def _filter[T](f: fn(T) -> bool, xs: list[T]) -> list[T]:
         if f(x):
             out.append(x)
     return out
+
+# xs == ys on two lists of the same type: the same length and every pair of items equal
+def _list_eq[T](a: list[T], b: list[T]) -> bool:
+    if len(a) != len(b):
+        return False
+    for i in range(len(a)):
+        if a[i] != b[i]:
+            return False
+    return True

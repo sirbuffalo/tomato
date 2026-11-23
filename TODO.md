@@ -1,5 +1,3 @@
-- Add list methods pop, insert, extend, sort and reverse, and list equality (==)
-  Lists only have `append` today; `==` on two lists is not supported.
 - Make open() failures name the file and decide Unicode case mapping for upper/lower
   The IOError message is the constant 'a file could not be opened', so it never says which file; `str.upper` and `str.lower` only change ASCII letters and the spec does not decide Unicode case mapping.
 - Fix printing and str() of optional values and None

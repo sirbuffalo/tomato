@@ -1,0 +1,4 @@
+@main
+def main():
+    t = (1, 2)
+    t.pop()
