@@ -92,5 +92,7 @@ int_shift
 bit_chunks
 compact_lists
 int_fast_paths
+text_dict_methods
+tuple_for
 small_int_loops
 list_methods

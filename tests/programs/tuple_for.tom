@@ -1,0 +1,44 @@
+class Box:
+    n: int = 3
+
+@main
+def main():
+    d: dict[str, int] = {'ann': 31, 'bob': 7}
+    total = 0
+    for k, v in d.items():
+        print(k, v + 1)
+        total += v
+    print(total)
+    e: dict[str, list[int]] = {'a': [1, 2], 'b': []}
+    for name, xs in e.items():
+        xs.append(9)
+        print(name, xs)
+    for name, xs in e.items():
+        print(name, len(xs))
+    w: dict[str, Box] = {'z': Box()}
+    for name, b in w.items():
+        print(name, b.n)
+    pairs: list[tuple[int]] = [(1, 2), (3, 4)]
+    for p, q in pairs:
+        print(p + q)
+    for r, t in [(5, 6)]:
+        print(r * t)
+    names: list[str] = ['xy', 'pq']
+    for c1, c2 in names:
+        print(c1, c2)
+    print([k + str(v) for k, v in d.items()])
+    for k, v in d.items():
+        d['new'] = 1
+        break
+    print(len(d))
+    m: dict[str, int] = {}
+    for k, v in m.items():
+        print('never')
+    # a for loop over items() of an object with its own items() method still unpacks the pairs
+    h = Holder()
+    for key, count in h.items():
+        print(key, count)
+
+class Holder:
+    def items(self) -> list[tuple[int]]:
+        return [(1, 2), (3, 4)]

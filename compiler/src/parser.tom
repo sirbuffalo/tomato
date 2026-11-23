@@ -656,11 +656,41 @@ export class Parser:
         self.adv()
         return mk('InterfaceDef', line, [vs(name), vlist(parents), vnodes(methods)])
 
+    # for a, b in pairs: and for k, v in d.items(): take each item of the loop apart with an unpack (a hidden loop variable holds the item).
+    # Over d.items() the loop also carries the names as a fourth field: when d turns out to be a dict, the compiler walks its keys and
+    # values together (so v keeps its own type) and skips the unpack, the first statement of the body.
+    def tuple_for(self, line: int, names: list[str], it: Node, body: list[Node]) -> Node:
+        self.unpacks += 1
+        stem = f'_pairs{line}_{self.unpacks}'
+        # the item is taken apart straight from the loop variable (no second hidden variable: the lint pass sees a comprehension's
+        # loop without its statements in order)
+        q = Parser()
+        q.toks = lex(f"if len({stem}) != {len(names)}:\n    raise RuntimeError('cannot unpack ' + str(len({stem})) + ' values into {plural_vars(len(names))}')\n")
+        check = q.statement()
+        set_line(vn(check), line)
+        parts: list[Node] = [check]
+        for k, nm in enumerate(names):
+            item = mk('Index', line, [vn(mk('Name', line, [vs(stem)])), vn(mk('IntLit', line, [vi(k)]))])
+            parts.append(mk('Assign', line, [vn(mk('Name', line, [vs(nm)])), vn(item)]))
+        unpack = mk('Multi', line, [vnodes(parts)])
+        stmts: list[Node] = [unpack]
+        for b in body:
+            stmts.append(b)
+        fields: list[Val] = [vs(stem), vn(it), vnodes(stmts)]
+        if it.kind == 'Call' and len(names) == 2 and len(val_nodes(it.fields[1])) == 0 and len(it.fields[2].items) == 0:
+            f = val_node(it.fields[0])
+            if f.kind == 'Attr' and f.fields[1].text == 'items':
+                nms: list[Val] = []
+                for nm in names:
+                    nms.append(vs(nm))
+                fields.append(vlist(nms))
+        return mk('For', line, fields)
+
     def pairs_for(self, line: int, names: list[str], it: Node, body: list[Node]) -> Node:
         # for i, x in enumerate(xs) and for a, b in zip(xs, ys) are written as ordinary index loops
         which = pairing_call(it)
         if which == '':
-            raise ParseError("a for loop with several variables needs enumerate(...) or zip(...)\nwrite for i, x in enumerate(items):", line)
+            return self.tuple_for(line, names, it, body)
         args = val_nodes(it.fields[1])
         paths: list[str] = []
         for a in args:

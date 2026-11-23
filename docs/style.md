@@ -34,6 +34,7 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 - A variable has one type in the whole function, loop variables included, so give loops over different kinds of
   values different names (`for fld in c.fields:` and `for f in infos:`, not `f` for both).
 - `for i, x in enumerate(items):` needs `items` to be a variable or a field; assign a call's result to a variable first.
+- `for k, v in d.items():` and `for a, b in pairs:` take the pairs apart; the targets are plain names.
 - A `while` whose list grows inside the loop (a worklist) is fine; say so in a comment.
 
 ## Values

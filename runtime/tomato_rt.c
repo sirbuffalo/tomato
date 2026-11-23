@@ -580,6 +580,34 @@ int64_t tomato_str_count(void *hay, void *needle) {
     }
 }
 
+/* find, rfind and count with a start and an end character position (Python slice rules: negative positions count from the end,
+ * positions past either end are clamped; an end before the start finds nothing). mode 0 find, 1 rfind, 2 count. */
+int64_t tomato_str_search(void *hay, void *needle, int64_t start, int64_t end, int mode) {
+    Str *h = hay, *n = needle;
+    if (start < 0) { start += h->chars; if (start < 0) start = 0; }
+    if (end < 0) { end += h->chars; if (end < 0) end = 0; }
+    if (end > h->chars) end = h->chars;
+    if (start > end) return mode == 2 ? 0 : -1;
+    int64_t bs = char_offset(h, start), be = char_offset(h, end);
+    if (mode == 2) {
+        if (n->bytes == 0) return end - start + 1;
+        int64_t seen = 0, at = bs;
+        for (;;) {
+            int64_t hit = find_bytes(h, n, at);
+            if (hit < 0 || hit + n->bytes > be) return seen;
+            seen++;
+            at = hit + n->bytes;
+        }
+    }
+    if (mode == 0) {
+        int64_t hit = find_bytes(h, n, bs);
+        return (hit < 0 || hit + n->bytes > be) ? -1 : byte_to_char(h, hit);
+    }
+    for (int64_t i = be - n->bytes; i >= bs; i--)
+        if (memcmp(h->data + i, n->data, (size_t)n->bytes) == 0) return byte_to_char(h, i);
+    return -1;
+}
+
 /* chr(n): the text of the one character with code point `cp` (the compiled code checks the range). */
 void *tomato_str_chr(int64_t cp) {
     char b[4];
@@ -2036,6 +2064,30 @@ void *tomato_box_str(void *b) {
     case 5: return tomato_str_from_bool((int)w[2]);
     default: return tomato_str_from_cstr("<object>");
     }
+}
+
+/* The same inside a printed container: text is quoted the way Python shows it (and the way std/builtin.tom _quote does). */
+void *tomato_box_repr(void *b) {
+    int64_t *w = b;
+    if (w[3] != 4) return tomato_box_str(b);
+    Str *s = (Str *)w[2];
+    int q = (memchr(s->data, '\'', (size_t)s->bytes) && !memchr(s->data, '"', (size_t)s->bytes)) ? '"' : '\'';
+    char *t = malloc((size_t)s->bytes * 2 + 3);
+    if (!t) tomato_fail("out of memory");
+    int64_t n = 0;
+    t[n++] = (char)q;
+    for (int64_t i = 0; i < s->bytes; i++) {
+        char c = s->data[i];
+        if (c == '\\' || (c == q)) { t[n++] = '\\'; t[n++] = c; }
+        else if (c == '\n') { t[n++] = '\\'; t[n++] = 'n'; }
+        else if (c == '\t') { t[n++] = '\\'; t[n++] = 't'; }
+        else if (c == '\r') { t[n++] = '\\'; t[n++] = 'r'; }
+        else t[n++] = c;
+    }
+    t[n++] = (char)q;
+    void *r = str_new(t, n);
+    free(t);
+    return r;
 }
 
 /* ---- unlimited-size integers (D05c) ----

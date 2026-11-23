@@ -3,9 +3,7 @@
 - Fix printing and str() of optional values and None
   Printing a `str | None` value crashes at runtime and `str(None)` fails to compile; found while testing f-strings and conditional expressions.
 - Finish the dict and text built-ins
-  Missing from the first version: `dict.get(key)` with one argument (gives None), `strip(chars)` (and lstrip/rstrip with chars), an end bound for `find`/`rfind`/`count`, Unicode `isalpha`/`isdigit`, `abs` on fixed-width integers, `dict.items()` for list and object values, and Python-style quoting of text inside `items()` output (it prints `(ann, 31)`, not `('ann', 31)`).
-- Allow `for k, v in d.items():` and tuple targets in for loops
-  A for loop with several variables only accepts `enumerate(...)` or `zip(...)` today, so looping over `dict.items()` or a list of tuples needs indexing; found while using the new features across the code.
+  Still missing: Unicode `isalpha`/`isdigit` (needs a decision on the Unicode category tables) and `dict.items()` as a value when the values are lists, dicts or objects (its tuples have one item type, so it needs mixed-type tuples; `for k, v in d.items():` already works for any value type).
 - Act on docs/performance.md: cut refcount and cycle-collector bookkeeping, compile list indexing to a bounds check plus load
   The small-int fast path is inlined already (collatz and cmp-sort work). Still open: the benchmarks (benchmarks/, site/benchmarks.html) show Tomato well above Rust on loops over big lists and objects; docs/performance.md ranks the likely causes. Profile before building each one.
 - Free temporaries on the failure path of compiler checks

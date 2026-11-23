@@ -1,0 +1,6 @@
+error: get(key) gives None for a missing key, but a value of type int cannot be None
+ --> tests/errors/dict_get_int.tom:4:5
+  |
+4 |     print(ages.get("ann"))
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+  = help: write get(key, default), or check 'key in d' first

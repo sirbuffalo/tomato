@@ -1,5 +1,5 @@
-error: get() takes a key and a default value: get(key, default)
+error: get() takes a key and optionally a default value: get(key) or get(key, default)
  --> tests/errors/dict_get_arguments.tom:4:5
   |
-4 |     print(ages.get("ann"))
-  |     ^^^^^^^^^^^^^^^^^^^^^^
+4 |     print(ages.get())
+  |     ^^^^^^^^^^^^^^^^^

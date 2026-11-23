@@ -3449,6 +3449,13 @@ class Gen:
             return self.len_call(args, n.line)
         if name == 'str':
             return self.str_call(args, n.line)
+        if name == '_repr_box' and len(args) == 1 and name not in self.slots and self.mod.resolve(name) == '':
+            # the text of a union value inside a printed container: text is quoted, as Python does
+            bv = self.expr(args[0])
+            br = self.tmp('repr')
+            self.emit(f'{br} = call ptr @tomato_box_repr(ptr {bv.reg})')
+            self.release(bv)
+            return ex(br, 'str')
         if name == 'float' and len(args) == 1:
             return self.float_call(self.expr(args[0]), n.line)
         if name == 'int' and len(args) == 1:
@@ -3588,6 +3595,25 @@ class Gen:
                 return self.builtin_call('_abs_int', [v], line)
             if v.ty == 'float':
                 return self.builtin_call('_abs_float', [v], line)
+            if is_fixed(v.ty):
+                if not is_signed(v.ty):
+                    return v
+                # a fixed-width int: -x with an overflow stop (only the smallest value overflows), kept when x is not negative
+                llt = llvm_type(v.ty)
+                intr = f'llvm.ssub.with.overflow.{llt}'
+                self.mod.declare(f'declare {{{llt}, i1}} @{intr}({llt}, {llt})')
+                pair = self.tmp('pair')
+                self.emit(f'{pair} = call {{{llt}, i1}} @{intr}({llt} 0, {llt} {v.reg})')
+                negated = self.tmp('neg')
+                self.emit(f'{negated} = extractvalue {{{llt}, i1}} {pair}, 0')
+                ov = self.tmp('ov')
+                self.emit(f'{ov} = extractvalue {{{llt}, i1}} {pair}, 1')
+                self.fail_if(ov, 'integer overflow')
+                below = self.tmp('below')
+                self.emit(f'{below} = icmp slt {llt} {v.reg}, 0')
+                r = self.tmp('abs')
+                self.emit(f'{r} = select i1 {below}, {llt} {negated}, {llt} {v.reg}')
+                return ex(r, v.ty)
             raise CompileError(f'abs() takes an int or a float, but this is {shown(v.ty)}', line)
         if name == 'chr':
             v = self.want(v, 'int', line, 'the argument of chr')
@@ -3975,6 +4001,9 @@ class Gen:
             obj = self.unwrap(self.expr_b(recv, args), n.line)
         else:
             obj = self.unwrap(self.expr(recv), n.line)
+        return self.method_on(obj, n, name, args)
+
+    def method_on(self, obj: Ex, n: Node, name: str, args: list[Node]) -> Ex:
         if obj.ty.startswith('tuple[') and name in ['append', 'pop', 'insert', 'extend', 'sort', 'reverse']:
             raise CompileError(f"a tuple cannot be changed, so it has no '{name}'\nuse a list if the items must change", n.line)
         if is_list(obj.ty) and name == 'append':
@@ -4135,9 +4164,33 @@ class Gen:
     def dict_method(self, d: Ex, name: str, args: list[Node], line: int) -> Ex:
         vt = dict_value(d.ty)
         if name == 'get':
-            if len(args) != 2:
-                raise CompileError("get() takes a key and a default value: get(key, default)", line)
+            if len(args) != 1 and len(args) != 2:
+                raise CompileError("get() takes a key and optionally a default value: get(key) or get(key, default)", line)
+            if len(args) == 1 and not (vt == 'str' or is_list(vt) or is_dict(vt) or is_set(vt) or is_class(vt) or is_iface(vt)):
+                raise CompileError(f"get(key) gives None for a missing key, but a value of type {shown(vt)} cannot be None\nwrite get(key, default), or check 'key in d' first", line)
             k = self.want(self.expr(args[0]), 'str', line, 'a dict key')
+            if len(args) == 1:
+                slot1 = self.tmp('slot')
+                self.emit(f'{slot1} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {self.key_word(k)})')
+                gone = self.tmp('missing')
+                self.emit(f'{gone} = icmp eq ptr {slot1}, null')
+                hit1 = self.label('gothit')
+                miss1 = self.label('gotmiss')
+                join1 = self.label('gotjoin')
+                self.cond_br(gone, miss1, hit1)
+                self.place(hit1)
+                found1 = self.tmp('val')
+                self.emit(f'{found1} = load ptr, ptr {slot1}')
+                self.retain(ex(found1, vt))
+                self.br(join1)
+                self.place(miss1)
+                self.br(join1)
+                self.place(join1)
+                r1 = self.tmp('got')
+                self.emit(f'{r1} = phi ptr [{found1}, %{hit1}], [null, %{miss1}]')
+                self.release(k)
+                self.release(d)
+                return ret_ex(r1, vt + '?')
             fallback = self.owned(self.want(self.expr(args[1], vt), vt, line, 'the default of get'))
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {self.key_word(k)})')
@@ -4256,11 +4309,20 @@ class Gen:
         return self.call_helper(self.mod.find(self.mod.resolve(name), line), values)
 
     def text_method(self, obj: Ex, name: str, args: list[Node], line: int) -> Ex:
-        if name == 'find' and len(args) == 2:
+        if (name == 'find' or name == 'rfind' or name == 'count') and (len(args) == 2 or len(args) == 3):
+            # find(sub, start), find(sub, start, end), and the same for rfind and count
             a = self.text_args(obj, name, args[:1], 1, line)
-            start = self.want(self.expr(args[1]), 'int', line, 'the start of find')
+            start = self.want(self.expr(args[1]), 'int', line, 'the start of ' + name)
+            stop = '4611686018427387903'
+            if len(args) == 3:
+                stop = self.int_raw(self.want(self.expr(args[2]), 'int', line, 'the end of ' + name))
+            mode = '0'
+            if name == 'rfind':
+                mode = '1'
+            elif name == 'count':
+                mode = '2'
             r = self.tmp('found')
-            self.emit(f'{r} = call i64 @tomato_str_find_from(ptr {obj.reg}, ptr {a[0].reg}, i64 {self.int_raw(start)})')
+            self.emit(f'{r} = call i64 @tomato_str_search(ptr {obj.reg}, ptr {a[0].reg}, i64 {self.int_raw(start)}, i64 {stop}, i32 {mode})')
             self.release(a[0])
             self.release(obj)
             return self.tag_small(r)
@@ -4311,6 +4373,9 @@ class Gen:
             self.emit(f'{r} = call ptr @tomato_str_{name}(ptr {obj.reg})')
             self.release(obj)
             return ex(r, 'str')
+        if name in ['strip', 'lstrip', 'rstrip'] and len(args) == 1:
+            chars = self.want(self.expr(args[0]), 'str', line, 'the characters to strip')
+            return self.builtin_call(f'_str_{name}_chars', [obj, chars], line)
         if name in ['isdigit', 'isalpha', 'isspace', 'lstrip', 'rstrip'] and len(args) == 0:
             # written in Tomato, in std/builtin.tom
             return self.builtin_call(f'_str_{name}', [obj], line)
@@ -5943,7 +6008,23 @@ class Gen:
         self.br(join)
         self.place(join)
 
-    def for_value(self, s: Node, lst: Ex):
+    # a loop over d.items() of a dict: keys and values are two snapshots walked together, so each variable has its own type
+    def for_items(self, s: Node, it: Node):
+        f = val_node(it.fields[0])
+        obj = self.unwrap(self.expr(val_node(f.fields[0])), s.line)
+        if not is_dict(obj.ty):
+            self.for_value(s, self.method_on(obj, it, 'items', []))        # the unpack is the first statement of the body
+            return
+        vt = dict_value(obj.ty)
+        ks = self.tmp('keys')
+        self.emit(f'{ks} = call ptr @tomato_dict_keys(ptr {obj.reg}, i64 {self.mod.code_of("list[str]")}, i64 {item_width("list[str]")})')
+        vl = f'list[{vt}]'
+        vs_ = self.tmp('values')
+        self.emit(f'{vs_} = call ptr @tomato_dict_values(ptr {obj.reg}, i64 {self.mod.code_of(vl)}, i64 {item_width(vl)}, i32 {elem_rc(vt)})')
+        self.release(obj)
+        self.for_value(s, ex(ks, 'list[str]'), ex(vs_, vl))
+
+    def for_value(self, s: Node, lst: Ex, vals: Ex | None = None):
         if is_dyn(lst.ty):
             self.for_dyn(s, lst)
             return
@@ -5976,6 +6057,15 @@ class Gen:
         counter = self.hidden_slot('for.i')
         self.emit(f'store i64 0, ptr {counter}')
         var = self.slot(s.fields[0].text, elem, s.line)
+        holder2 = ''
+        var2 = ''
+        stmts = val_nodes(s.fields[2])
+        if vals is not None:                     # for k, v in d.items(): the names are the fourth field, and the unpack is not needed
+            holder2 = self.hidden_rc_slot('for.vals')
+            self.store_owned(holder2, vals)
+            var = self.slot(s.fields[3].items[0].text, elem, s.line)
+            var2 = self.slot(s.fields[3].items[1].text, elem_of(vals.ty), s.line)
+            stmts = stmts[1:]
         head = self.label('each')
         body = self.label('eachbody')
         step = self.label('eachstep')
@@ -5999,8 +6089,16 @@ class Gen:
         e = ex(item, elem)
         self.retain(e)
         self.store_owned(var, e)
+        if vals is not None:
+            l2 = self.tmp('lst')
+            self.emit(f'{l2} = load ptr, ptr {holder2}')
+            addr2 = self.list_slot(ex(l2, vals.ty), ex(i, 'int'))
+            item2 = self.load_item(vals.ty, addr2, 'item')
+            e2 = ex(item2, elem_of(vals.ty))
+            self.retain(e2)
+            self.store_owned(var2, e2)
         self.push_loop(end, step)
-        self.block(val_nodes(s.fields[2]))
+        self.block(stmts)
         self.loop_depth -= 1
         if not self.terminated:
             self.br(step)
@@ -6015,6 +6113,9 @@ class Gen:
 
     def for_stmt(self, s: Node):
         it = val_node(s.fields[1])
+        if len(s.fields) > 3:
+            self.for_items(s, it)
+            return
         if it.kind == 'Name' and it.fields[0].text in self.slots and is_union(self.types[it.fields[0].text]):
             self.for_union(s, it.fields[0].text)
             return
@@ -6568,6 +6669,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_from_bool(i32)\n'
     d += 'declare ptr @tomato_str_from_f64(double)\n'
     d += 'declare ptr @tomato_box_str(ptr)\n'
+    d += 'declare ptr @tomato_box_repr(ptr)\n'
     d += 'declare i64 @tomato_int_dup(i64)\n'
 
     for op in ['add', 'sub', 'mul', 'floordiv', 'mod', 'shl', 'shr']:
@@ -6624,6 +6726,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare void @tomato_report_uncaught(ptr, i32, i32, i32)\n'
     d += 'declare i64 @tomato_str_find(ptr, ptr)\n'
     d += 'declare i64 @tomato_str_find_from(ptr, ptr, i64)\n'
+    d += 'declare i64 @tomato_str_search(ptr, ptr, i64, i64, i32)\n'
     d += 'declare i64 @tomato_str_rfind(ptr, ptr)\n'
     d += 'declare i64 @tomato_str_count(ptr, ptr)\n'
     d += 'declare ptr @tomato_str_chr(i64)\n'
@@ -6913,6 +7016,8 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
             raise CompileError("'" + et[1:] + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
     elif not (is_numeric(et) or et == 'bool' or et == 'float' or is_union(et)):
         raise CompileError(f'a list of {shown(et)} cannot be printed\nprint its items one by one instead', line)
+    if is_union(et):
+        return f'_repr_box({e})'
     return f'str({e})'
 
 def iter_elem(mod: Mod, ty: str) -> str:

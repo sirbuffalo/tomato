@@ -339,6 +339,22 @@ def _filter[T](f: fn(T) -> bool, xs: list[T]) -> list[T]:
             out.append(x)
     return out
 
+# s.lstrip(chars), s.rstrip(chars) and s.strip(chars): take off the characters that are in chars (in any order) from the start,
+# the end or both; an empty chars takes nothing off
+def _str_lstrip_chars(s: str, chars: str) -> str:
+    i = 0
+    while i < len(s) and s[i] in chars:
+        i += 1
+    return s[i:]
+
+def _str_rstrip_chars(s: str, chars: str) -> str:
+    n = len(s)
+    while n > 0 and s[n - 1] in chars:
+        n -= 1
+    return s[:n]
+
+def _str_strip_chars(s: str, chars: str) -> str:
+    return _str_rstrip_chars(_str_lstrip_chars(s, chars), chars)
 # xs == ys on two lists of the same type: the same length and every pair of items equal
 def _list_eq[T](a: list[T], b: list[T]) -> bool:
     if len(a) != len(b):

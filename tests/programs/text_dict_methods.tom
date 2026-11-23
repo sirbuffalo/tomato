@@ -1,0 +1,46 @@
+class Box:
+    n: int = 3
+
+@main
+def main():
+    # strip with characters, and find / rfind / count with a start and an end
+    print('  xxhello worldxx  '.strip().strip('x') + '|', '--a-b--'.strip('-'), '--a-b--'.lstrip('-'), '--a-b--'.rstrip('-'), 'abc'.strip(''))
+    print('xyxabcyx'.strip('xy'), '#!x!#'.lstrip('#!'), '#!x!#'.rstrip('#!'), ''.strip('a'), 'aaa'.strip('a') == '')
+    t = 'abcabcabc'
+    print(t.find('b', 2), t.find('b', 2, 4), t.find('b', 2, 3), t.find('c', -3), t.find('', 9), t.find('', 10))
+    print(t.rfind('b'), t.rfind('b', 0, 6), t.rfind('b', 5), t.rfind('abc', 0, 5), t.rfind('x', 1, 2))
+    print(t.count('abc'), t.count('abc', 1), t.count('abc', 0, 6), t.count('', 2, 5), t.count('b', 5, 2), t.count('', 10))
+    print(t.find('a', -100, 100), t.count('b', -4), t.count('b', 0, -4), t.rfind('c', -100, -1))
+    u = 'héllo héllo'
+    print(u.find('l', 4), u.rfind('é', 0, 6), u.count('l', 3, 9))
+    # dict.get(key) gives None for a missing key (values that can be None)
+    d: dict[str, str] = {'a': 'x'}
+    got = d.get('a')
+    if got is not None:
+        print(got)
+    print(d.get('b') is None, d.get('a', 'z'), d.get('b', 'z'))
+    xs: dict[str, list[int]] = {'a': [1]}
+    g = xs.get('a')
+    if g is not None:
+        g.append(2)
+        print(len(g), xs['a'])
+    print(xs.get('zz') is None)
+    bx: dict[str, Box] = {'k': Box()}
+    b = bx.get('k')
+    if b is not None:
+        print(b.n)
+    # items() shows text with quotes, as Python does
+    ages: dict[str, int] = {'ann': 31, "o'k": 2}
+    print(ages.items())
+    mixed: list[int | str] = [1, 'a', "it's", 'tab\t']
+    print(mixed)
+    # abs on fixed-width integers
+    i8: int[length=8] = -100
+    print(abs(i8), abs(i8 + 100), abs(i8 - 27))
+    u8: uint[length=8] = 200
+    print(abs(u8))
+    try:
+        low: int[length=8] = -128
+        print(abs(low))
+    catch RuntimeError as e:
+        print('caught', e.message)
