@@ -1,0 +1,24 @@
+division by zero
+modulo by zero
+a negative exponent needs a float
+the text is not a whole number
+the text is not a whole number
+division by zero
+division by zero
+division by zero
+division by zero
+division by zero
+division by zero
+index out of range
+the key is not there
+index out of range
+slice step cannot be zero
+the number does not fit the integer type
+division by zero
+division by zero
+chr() takes a number from 0 to 1114111, not a surrogate
+ord() takes a text of exactly one character
+the key is not in the dict
+the element is not there
+22
+True

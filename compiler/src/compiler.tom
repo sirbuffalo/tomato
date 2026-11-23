@@ -618,6 +618,7 @@ class Mod:
     instance_count: int = 0
     preload: list[str] = []             # copies of generic classes to make before any body is compiled (see NeedsEarlyCopy)
     dyn_seen: list[str] = []            # the Iterable and Sized types whose loops and lengths are compiled over the classes there are so far
+    flat_cache: dict[str, bool] = {}       # flat_type answers, by type
 
     def code_of(self, t: str) -> int:
         if t in self.code_index:
@@ -907,6 +908,32 @@ class Mod:
             if c.name == name:
                 return c
         raise not_found('class', name, line)
+
+    def flat_type(self, t: str) -> bool:
+        # a value of this static type can never be part of a reference cycle: text, or an object whose class has no
+        # reference-counted fields and no subclass (a subclass could add some). Its release skips the cycle-collector test.
+        if t == 'str':
+            return True
+        if not is_class(t):
+            return False
+        if t in self.flat_cache:
+            return self.flat_cache[t]
+        found = False
+        ans = True
+        for c in self.classes:
+            if c.name == t[1:]:
+                found = True
+                if c.is_frame or not c.done or not c.populated:
+                    return False
+                for f in c.fields:
+                    if is_rc(f.ty):
+                        ans = False
+            if c.parent == t[1:]:
+                ans = False
+        if not found:
+            return False
+        self.flat_cache[t] = ans
+        return ans
 
     def field_index(self, c: ClassInfo, name: str, line: int) -> int:
         k = field_position(c, name)
@@ -1305,6 +1332,8 @@ class Gen:
     lines: list[str] = []
     allocas: list[str] = []
     rc_slots: list[str] = []
+    held: list[Ex] = []           # owned temporaries waiting while the rest of an expression is evaluated: a failing check releases them
+    flat_slots: list[str] = []    # the rc_slots whose type can never be in a cycle (released with tomato_release_flat)
     int_slots: list[str] = []     # the places that own an int (a big number in one is freed with the function)
     assigned: list[str] = []      # the names of variables that are written (a name given to slot()) after the parameters were set up
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
@@ -1391,6 +1420,8 @@ class Gen:
             self.allocas.append(f'  {reg} = getelementptr %class.{self.frame_code}, ptr %frame, i32 0, i32 {str(len(self.frame_types) - 1 + FRAME_FIXED + 2)}')
             if is_rc(ty):
                 self.rc_slots.append(reg)
+                if self.mod.flat_type(ty):
+                    self.flat_slots.append(reg)
             elif ty == 'int':
                 self.int_slots.append(reg)
             return
@@ -1398,6 +1429,8 @@ class Gen:
         if is_rc(ty):
             self.allocas.append(f'  store ptr null, ptr {reg}')
             self.rc_slots.append(reg)
+            if self.mod.flat_type(ty):
+                self.flat_slots.append(reg)
         elif ty == 'int':
             self.allocas.append(f'  store i64 0, ptr {reg}')
             self.int_slots.append(reg)
@@ -1437,10 +1470,20 @@ class Gen:
             e.reg = d
             e.fresh = True
 
+    def slot_release(self, reg: str) -> str:
+        if reg in self.flat_slots:
+            return 'tomato_release_flat'
+        return 'tomato_release'
+
+    def release_fn(self, ty: str) -> str:
+        if self.mod.flat_type(ty):
+            return 'tomato_release_flat'
+        return 'tomato_release'
+
     def release(self, e: Ex):
         # a borrowed read of a local (see expr_b) holds no reference of its own, so there is nothing to release
         if is_rc(e.ty) and not e.reg.startswith('%bl.'):
-            self.emit(f'call void @tomato_release(ptr {e.reg})')
+            self.emit(f'call void @{self.release_fn(e.ty)}(ptr {e.reg})')
         elif e.ty == 'int' and e.fresh and not e.small and not small_text(e.reg):
             self.emit(f'call void @tomato_int_free(i64 {e.reg})')
 
@@ -1483,7 +1526,7 @@ class Gen:
             old = self.tmp('old')
             self.emit(f'{old} = load ptr, ptr {slot}')
             self.emit(f'store ptr {e.reg}, ptr {slot}')
-            self.emit(f'call void @tomato_release(ptr {old})')
+            self.emit(f'call void @{self.slot_release(slot)}(ptr {old})')
         elif e.ty == 'int':
             v = self.owned(e)                 # copied first: it may be the very number the slot is about to drop
             old = self.tmp('old')
@@ -1493,13 +1536,13 @@ class Gen:
         else:
             self.emit(f'store {llvm_type(e.ty)} {e.reg}, ptr {slot}')
 
-    def unwrap(self, e: Ex, line: int) -> Ex:
+    def unwrap(self, e: Ex, line: int, live: list[Ex] = []) -> Ex:
         # an optional used where a value is needed: stop when it is None (D23b)
         if not is_optional(e.ty):
             return e
         bad = self.tmp('isnone')
         self.emit(f'{bad} = icmp eq ptr {e.reg}, null')
-        self.fail_if(bad, 'None where a value is needed')
+        self.fail_if(bad, 'None where a value is needed', live)
         return ex(e.reg, strip_optional(e.ty))
 
     def resize(self, e: Ex, to: str) -> Ex:
@@ -1727,12 +1770,12 @@ class Gen:
         self.emit(f'{r} = call i64 @tomato_int_{name}_c(i64 {x.reg}, i32 {k}, i32 {m})')
         return exf(r, 'int')
 
-    def int_zero_check(self, b: Ex, message: str):
+    def int_zero_check(self, b: Ex, message: str, live: list[Ex] = []):
         sign = self.tmp('sign')
         self.emit(f'{sign} = call i32 @tomato_int_sign(i64 {b.reg})')
         zero = self.tmp('zero')
         self.emit(f'{zero} = icmp eq i32 {sign}, 0')
-        self.fail_if(zero, message)
+        self.fail_if(zero, message, live)
 
     def num_arith(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
         # + - * with an overflow stop, in the type both operands fit
@@ -1833,7 +1876,7 @@ class Gen:
             if k > 0:
                 return self.int_pow2_call('modp2', x, k)
             if not self.nonzero_const(y):
-                self.int_zero_check(y, 'modulo by zero')
+                self.int_zero_check(y, 'modulo by zero', [x, y])
             return self.int_call_c('mod', x, y)
         llt = llvm_type(t)
         zero = self.tmp('zero')
@@ -1869,7 +1912,7 @@ class Gen:
             if k > 0:
                 return self.int_pow2_call('floordivp2', x, k)
             if not self.nonzero_const(y):
-                self.int_zero_check(y, 'division by zero')
+                self.int_zero_check(y, 'division by zero', [x, y])
             return self.int_call_c('floordiv', x, y)
         llt = llvm_type(t)
         zero = self.tmp('zero')
@@ -1952,7 +1995,7 @@ class Gen:
         self.emit(f'{sign} = call i32 @tomato_int_sign(i64 {y.reg})')
         negative = self.tmp('negexp')
         self.emit(f'{negative} = icmp slt i32 {sign}, 0')
-        self.fail_if(negative, 'a negative exponent needs a float')
+        self.fail_if(negative, 'a negative exponent needs a float', [x, y])
         r = self.tmp('pow')
         self.emit(f'{r} = call i64 @tomato_int_pow(i64 {x.reg}, i64 {y.reg})')
         self.release(x)
@@ -2100,11 +2143,11 @@ class Gen:
 
     def num_divide(self, a: Ex, b: Ex, line: int) -> Ex:
         if b.ty == 'int':
-            self.int_zero_check(b, 'division by zero')
+            self.int_zero_check(b, 'division by zero', [a, b])
         else:
             zero = self.tmp('zero')
             self.emit(f'{zero} = icmp eq {llvm_type(b.ty)} {b.reg}, 0')
-            self.fail_if(zero, 'division by zero')
+            self.fail_if(zero, 'division by zero', [a, b])
         q = self.tmp('div')
         self.emit(f'{q} = fdiv double {self.to_double(a)}, {self.to_double(b)}')
         self.check_finite(q)
@@ -2124,7 +2167,7 @@ class Gen:
             self.emit(f'{ok} = call i32 @tomato_int_in_range(i64 {v.reg}, i32 {bits_of(target)}, i32 {sg})')
             bad = self.tmp('bad')
             self.emit(f'{bad} = icmp eq i32 {ok}, 0')
-            self.fail_if(bad, 'the number does not fit the integer type')
+            self.fail_if(bad, 'the number does not fit the integer type', [v])
             low = self.tmp('low')
             self.emit(f'{low} = call i64 @tomato_int_low64(i64 {v.reg})')
             self.release(v)
@@ -2174,15 +2217,33 @@ class Gen:
             self.emit('call void @tomato_trace_clear()')
         self.emit('call void @tomato_trace(ptr ' + self.mod.intern(self.fname) + f'.c, i32 {self.line})')
 
-    def fail_if(self, bad: str, message: str):
-        # bad is an i1; when true, a RuntimeError is raised, which a catch can handle (D22a)
-        self.fail_with(bad, 'RuntimeError', message)
+    def hold(self, e: Ex):
+        # e is an owned temporary that stays alive while another operand is evaluated: if that raises, the error path frees it
+        self.held.append(e)
 
-    def fail_with(self, bad: str, cls: str, message: str):
+    def drop_held(self, n: int):
+        self.held = self.held[:n]
+
+    def release_held(self):
+        # on an error path: free every temporary still waiting in an enclosing expression (newest first)
+        k = len(self.held)
+        while k > 0:
+            k -= 1
+            self.release(self.held[k])
+
+    def fail_if(self, bad: str, message: str, live: list[Ex] = []):
+        # bad is an i1; when true, a RuntimeError is raised, which a catch can handle (D22a). live are the owned operands of the
+        # failing operation itself, which the error path frees together with the temporaries held by the enclosing expressions.
+        self.fail_with(bad, 'RuntimeError', message, live)
+
+    def fail_with(self, bad: str, cls: str, message: str, live: list[Ex] = []):
         stop = self.label('stop')
         ok = self.label('ok')
         self.cond_br(bad, stop, ok)
         self.place(stop)
+        for v in live:
+            self.release(v)
+        self.release_held()
         err = self.tmp('err')
         self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(ptr ' + self.mod.intern(self.mod.failure_text(message, self.line)) + ')')
         self.emit(f'store ptr {err}, ptr @tomato_exc')
@@ -2609,7 +2670,7 @@ class Gen:
             raise CompileError(f'the function given to map() must return a value, but this one returns {shown(res)}', line)
         return self.call_helper(self.mod.instance_func(self.mod.resolve('_map'), [elem, res], line), [fv, lst])
 
-    def list_slot(self, lst: Ex, i: Ex) -> str:
+    def list_slot(self, lst: Ex, i: Ex, live: list[Ex] = []) -> str:
         # the address of item i, after a bounds check
         lenp = self.tmp('lenp')
         self.emit(f'{lenp} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {lst.reg}, i32 0, i32 2')
@@ -2617,7 +2678,7 @@ class Gen:
         self.emit(f'{ln} = load i64, ptr {lenp}')
         bad = self.tmp('oob')
         self.emit(f'{bad} = icmp uge i64 {i.reg}, {ln}')
-        self.fail_if(bad, 'index out of range')
+        self.fail_if(bad, 'index out of range', live)
         datap = self.tmp('datap')
         self.emit(f'{datap} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {lst.reg}, i32 0, i32 4')
         data = self.tmp('data')
@@ -2738,6 +2799,8 @@ class Gen:
             t = f'{kind}[{first.ty}]'
         lst = self.tmp('list')
         self.emit(f'{lst} = call ptr @tomato_list_new(i64 {self.mod.code_of(t)})')
+        held_before = len(self.held)
+        self.hold(ex(lst, t))                 # the items pushed so far are freed with it if a later item raises
         for k, item in enumerate(items):
             v = ex('', '')
             if k == 0 and first.ty != '':
@@ -2747,6 +2810,7 @@ class Gen:
             v = self.want(v, elem_of(t), n.line, 'a list item')
             v = self.owned(v)
             self.push_item(lst, t, v)     # the list takes the reference
+        self.drop_held(held_before)
         return ex(lst, t)
 
     def key_word(self, k: Ex) -> str:
@@ -2775,6 +2839,8 @@ class Gen:
             if not is_set(t) or not (first.ty == 'str' or first.ty == 'int' or first.ty == 'bool'):
                 raise CompileError('a set can hold only int, bool or str values', n.line)
         st = self.new_set(t)
+        held_before = len(self.held)
+        self.hold(st)
         for k, item in enumerate(items):
             v = ex('', '')
             if k == 0 and first.ty != '':
@@ -2785,6 +2851,7 @@ class Gen:
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_insert(ptr {st.reg}, i64 {self.key_word(v)}, i32 0)')
             self.release(v)
+        self.drop_held(held_before)
         return st
 
     def map_lit(self, n: Node, expected: str) -> Ex:
@@ -2796,19 +2863,24 @@ class Gen:
         value_t = dict_value(expected)
         d = self.tmp('dict')
         self.emit(f'{d} = call ptr @tomato_dict_new(i64 {self.mod.code_of(expected)}, i64 8, i32 1)')
+        held_before = len(self.held)
+        self.hold(ex(d, expected))
         for pair in pairs:
             k = self.expr(val_node(pair.items[0]))
             k = self.want(k, 'str', n.line, 'a dict key')
+            self.hold(k)
             v = self.expr(val_node(pair.items[1]), value_t)
+            self.drop_held(held_before + 1)
             v = self.want(v, value_t, n.line, 'a dict value')
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_insert(ptr {d}, i64 {self.key_word(k)}, i32 1)')
             dup = self.tmp('dup')
             self.emit(f'{dup} = icmp eq ptr {slot}, null')
-            self.fail_if(dup, 'duplicate key in a dict literal')
+            self.fail_if(dup, 'duplicate key in a dict literal', [k, v])
             v = self.owned(v)
             self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {slot}')
             self.release(k)
+        self.drop_held(held_before)
         return ex(d, expected)
 
     def int_literal(self, v: int, expected: str, negative: bool, line: int) -> Ex:
@@ -2921,14 +2993,17 @@ class Gen:
             s = self.unwrap(self.lent_base(base), n.line)
         else:
             s = self.unwrap(self.expr_b(base, [val_node(n.fields[1])]), n.line)
+        held_before = len(self.held)
+        self.hold(s)                              # a fresh base is freed by the error path if the index expression raises
         if is_dict(s.ty):
             k = self.expr(val_node(n.fields[1]))
             k = self.want(k, 'str', n.line, 'a dict key')
+            self.drop_held(held_before)
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {s.reg}, i64 {self.key_word(k)})')
             missing = self.tmp('missing')
             self.emit(f'{missing} = icmp eq ptr {slot}, null')
-            self.fail_if(missing, 'the key is not there')
+            self.fail_if(missing, 'the key is not there', [k, s])
             vt = dict_value(s.ty)
             r = self.tmp('val')
             self.emit(f'{r} = load {llvm_type(vt)}, ptr {slot}')
@@ -2942,11 +3017,13 @@ class Gen:
             if g is None or len(g.ptypes) != 1 or g.ret == '':
                 raise CompileError("'" + s.ty[1:] + "' objects cannot be indexed\nadd a method marked @get that takes the index and returns the item", n.line)
             gi = self.want(self.expr(val_node(n.fields[1])), g.ptypes[0], n.line, 'an index')
+            self.drop_held(held_before)
             return self.marker_call(s, g, [gi], n.line)
         if is_list(s.ty):
             li = self.expr(val_node(n.fields[1]))
             li = self.want(li, 'int', n.line, 'an index')
-            addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li)), 'int'))
+            self.drop_held(held_before)
+            addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li)), 'int'), [s])
             lent = s.reg.startswith('%bl.') and ((lend and elem_of(s.ty) == 'int') or (as_base and is_rc(elem_of(s.ty))))
             item = self.load_item(s.ty, addr, 'bl' if lent else 'item')
             e = ex(item, elem_of(s.ty))
@@ -2958,11 +3035,12 @@ class Gen:
         s = self.want(s, 'str', n.line, 'the value being indexed')
         i = self.expr(val_node(n.fields[1]))
         i = self.want(i, 'int', n.line, 'an index')
+        self.drop_held(held_before)
         r = self.tmp('ch')
         self.emit(f'{r} = call ptr @tomato_str_index(ptr {s.reg}, i64 {self.int_raw(i)})')
         bad = self.tmp('oob')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
-        self.fail_if(bad, 'index out of range')
+        self.fail_if(bad, 'index out of range', [s])
         self.release(s)
         return ex(r, 'str')
 
@@ -2990,6 +3068,8 @@ class Gen:
         lo = '0'
         hi = '0'
         step = '1'
+        held_before = len(self.held)
+        self.hold(s)
         if n.fields[1].tag == 'n':
             e = self.want(self.expr(val_node(n.fields[1])), 'int', n.line, 'a slice start')
             lo = self.int_raw(e)
@@ -3002,6 +3082,7 @@ class Gen:
             e3 = self.want(self.expr(val_node(n.fields[3])), 'int', n.line, 'a slice step')
             step = self.int_raw(e3)
             flags += 4
+        self.drop_held(held_before)
         r = self.tmp('part')
         if s.ty == 'str':
             self.emit(f'{r} = call ptr @tomato_str_slice3(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags})')
@@ -3010,7 +3091,7 @@ class Gen:
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags}, i32 {rc})')
         bad = self.tmp('zero')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
-        self.fail_if(bad, 'slice step cannot be zero')
+        self.fail_if(bad, 'slice step cannot be zero', [s])
         self.release(s)
         return ex(r, s.ty)
 
@@ -3227,6 +3308,7 @@ class Gen:
             return self.type_test(left, self.type_operand(right), n.line)
         a = ex('', '')
         b = ex('', '')
+        held_before = len(self.held)
         if (op == '+' or op == '-' or op == '*') and self.literal_only(n) and is_fixed(expected):
             a = self.expr(left, expected)
             b = self.expr(right, expected)
@@ -3240,13 +3322,15 @@ class Gen:
             b = self.expr(right, hint)
         else:
             a = self.operand(left, pure_read(right) or self.plain_num(right))
+            self.hold(a)                       # freed by the error path if the right side raises
             b = self.operand(right, True)
+            self.drop_held(held_before)
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
         if op == 'in':
             return self.membership(a, b, n.line)
         if not ((op == 'is' or op == 'is not' or op == '==' or op == '!=') and (a.ty == 'None' or b.ty == 'None')):
-            a = self.unwrap(a, n.line)
-            b = self.unwrap(b, n.line)
+            a = self.unwrap(a, n.line, [b])
+            b = self.unwrap(b, n.line, [a])
         if (op == 'is' or op == 'is not' or op == '==' or op == '!=') and (a.ty == 'None' or b.ty == 'None'):
             if not is_rc(a.ty) or not is_rc(b.ty):
                 other = a.ty
@@ -3622,7 +3706,7 @@ class Gen:
             self.emit(f'{tagbit} = and i64 {v.reg}, 1')
             huge = self.tmp('huge')
             self.emit(f'{huge} = icmp eq i64 {tagbit}, 0')
-            self.fail_if(huge, 'chr() takes a number from 0 to 1114111, not a surrogate')
+            self.fail_if(huge, 'chr() takes a number from 0 to 1114111, not a surrogate', [v])
             raw = self.int_raw(v)
             high = self.tmp('toobig')
             self.emit(f'{high} = icmp ugt i64 {raw}, 1114111')
@@ -3641,7 +3725,7 @@ class Gen:
         self.emit(f'{n} = call i64 @tomato_str_len(ptr {v.reg})')
         bad = self.tmp('notone')
         self.emit(f'{bad} = icmp ne i64 {n}, 1')
-        self.fail_if(bad, 'ord() takes a text of exactly one character')
+        self.fail_if(bad, 'ord() takes a text of exactly one character', [v])
         r = self.tmp('code')
         self.emit(f'{r} = call i64 @tomato_str_ord(ptr {v.reg})')
         self.release(v)
@@ -3815,8 +3899,10 @@ class Gen:
         if len(args) > nfixed and not info.has_varargs:
             raise CompileError("'" + info.name + "' takes " + plural(nfixed, 'argument') + ', but ' + str(len(args)) + ' given', line)
         values: list[Ex] = []
+        held_before = len(self.held)
         if receiver.ty != '':
             values.append(receiver)
+            self.hold(receiver)               # the argument values below are held too, until the call itself (see check_error)
         slots: list[Ex] = []        # one per fixed parameter: its value, or an empty Ex until a keyword or a default fills it
         for pi in range(nfixed):
             slots.append(ex('', ''))
@@ -3836,10 +3922,12 @@ class Gen:
                     v = self.expr(a, info.ptypes[k])
                 v = self.want(v, info.ptypes[k], line, 'argument ' + str(k + 1) + " of '" + info.name + "' (the parameter '" + info.pnames[k] + "')")
                 slots[k] = v
+                self.hold(v)
             else:
                 v = self.expr(a, elem_of(info.ptypes[nfixed]))
                 v = self.want(v, elem_of(info.ptypes[nfixed]), line, 'an extra argument of ' + info.name)
                 extra.append(v)
+                self.hold(v)
             k += 1
         extra_names: list[str] = []
         extra_values: list[Ex] = []
@@ -3856,6 +3944,7 @@ class Gen:
                 v = self.expr(val_node(kv.items[1]), info.ptypes[at])
                 v = self.want(v, info.ptypes[at], line, "argument '" + kname + "' of '" + info.name + "'")
                 slots[at] = v
+                self.hold(v)
             elif info.has_kwargs:
                 if kname in extra_names:
                     raise CompileError(f"the keyword argument '{kname}' is given twice", line)
@@ -3864,6 +3953,7 @@ class Gen:
                 v = self.want(v, kt, line, 'keyword argument ' + kname + " of '" + info.name + "'")
                 extra_names.append(kname)
                 extra_values.append(v)
+                self.hold(v)
             else:
                 raise CompileError(f"'{info.name}' has no parameter named '{kname}'", line)
         for pi in range(nfixed):               # the caller supplies the defaults it left out (D19c)
@@ -3873,7 +3963,9 @@ class Gen:
                 v = self.expr(info.defaults[pi - required], info.ptypes[pi])
                 v = self.want(v, info.ptypes[pi], line, 'the default of argument ' + str(pi + 1) + " of '" + info.name + "'")
                 slots[pi] = v
+                self.hold(v)
             values.append(slots[pi])
+        self.drop_held(held_before)
         if info.has_varargs:
             values.append(self.build_tuple(info.ptypes[nfixed], extra))
         if info.has_kwargs:
@@ -3931,6 +4023,7 @@ class Gen:
         self.trace(False)
         for v in values:
             self.release(v)
+        self.release_held()
         self.br(self.unwind_target())
         self.place(fine)
 
@@ -4225,7 +4318,7 @@ class Gen:
             self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {kw})')
             missing = self.tmp('missing')
             self.emit(f'{missing} = icmp eq ptr {slot}, null')
-            self.fail_if(missing, 'the key is not in the dict')
+            self.fail_if(missing, 'the key is not in the dict', [k, d])
             old = self.tmp('old')
             self.emit(f'{old} = load {llvm_type(vt)}, ptr {slot}')
             self.release(exf(old, vt))
@@ -4280,7 +4373,7 @@ class Gen:
                 self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {st.reg}, i64 {kw})')
                 missing = self.tmp('missing')
                 self.emit(f'{missing} = icmp eq ptr {slot}, null')
-                self.fail_if(missing, 'the element is not there')
+                self.fail_if(missing, 'the element is not there', [v, st])
                 self.emit(f'call i32 @tomato_dict_delete(ptr {st.reg}, i64 {kw})')
             self.release(v)
             self.release(st)
@@ -5792,12 +5885,16 @@ class Gen:
     def args_with_defaults(self, args: list[Node], ptypes: list[str], defaults: list[Node], line: int, callee: str) -> list[Ex]:
         required = len(ptypes) - len(defaults)
         vals: list[Ex] = []
+        held_before = len(self.held)
         for k, a in enumerate(args):
             v = self.expr(a, ptypes[k])
             vals.append(self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + callee))
+            self.hold(vals[-1])
         for k in range(len(args), len(ptypes)):
             v = self.expr(defaults[k - required], ptypes[k])
             vals.append(self.want(v, ptypes[k], line, 'the default of argument ' + str(k + 1) + ' of ' + callee))
+            self.hold(vals[-1])
+        self.drop_held(held_before)
         return vals
 
     def inline_gen(self, s: Node, info: FuncInfo, recv: Ex, vals: list[Ex], line: int):
@@ -6256,7 +6353,7 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
     for reg in g.rc_slots:
         o = g.tmp('rel')
         g.lines.append(f'  {o} = load ptr, ptr {reg}')
-        g.lines.append(f'  call void @tomato_release(ptr {o})')
+        g.lines.append(f'  call void @{g.slot_release(reg)}(ptr {o})')
     for reg in g.int_slots:
         o = g.tmp('free')
         g.lines.append(f'  {o} = load i64, ptr {reg}')
@@ -6428,7 +6525,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     text += 'epilogue:\n'
     for reg in g.rc_slots:
         o = g.tmp('rel')
-        text += f'  {o} = load ptr, ptr {reg}\n  call void @tomato_release(ptr {o})\n  store ptr null, ptr {reg}\n'
+        text += f'  {o} = load ptr, ptr {reg}\n  call void @{g.slot_release(reg)}(ptr {o})\n  store ptr null, ptr {reg}\n'
     for reg in g.int_slots:
         o = g.tmp('free')
         text += f'  {o} = load i64, ptr {reg}\n  call void @tomato_int_free(i64 {o})\n  store i64 0, ptr {reg}\n'
@@ -6644,6 +6741,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare void @tomato_leak_check()\n'
     d += 'declare void @tomato_retain(ptr)\n'
     d += 'declare void @tomato_release(ptr)\n'
+    d += 'declare void @tomato_release_flat(ptr)\n'
     d += 'declare ptr @tomato_str_concat(ptr, ptr)\n'
     d += 'declare ptr @tomato_str_from_cstr(ptr)\n'
     d += 'declare i64 @tomato_str_len(ptr)\n'

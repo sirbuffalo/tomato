@@ -1,0 +1,158 @@
+# A temporary that is waiting in an expression when a check fails is freed by the error path (no leak, no double free):
+# the dividend of `huge() // 0`, the left side of `huge() + int('x')`, arguments evaluated before one that raises, items of
+# a literal before a failing item, a fresh base before a failing index. The big-number leak check is strict here (it reports
+# at exit), and the same file runs under AddressSanitizer.
+def huge(n: int) -> int:
+    r = 1
+    for i in range(1, n + 1):
+        r *= i
+    return r
+
+class Box:
+    value: int = 0
+    name: str = ''
+
+    @init
+    def make(self, value: int, name: str):
+        self.value = value
+        self.name = name
+
+def make_box(v: int) -> Box:
+    return Box(v, 'b' + str(v % 10))
+
+def three(a: int, b: int, c: int) -> int:
+    return a + b + c
+
+def pair(a: Box, b: int) -> int:
+    return a.value + b
+
+def zero() -> int:
+    return 0
+
+def bad_text() -> str:
+    return 'x'
+
+def fail_deep(a: int) -> int:
+    return a // zero()
+
+@main
+def main():
+    count = 0
+    try:
+        print(huge(25) // zero())
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(huge(25) % zero())
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(huge(25) ** -1)
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(huge(25) + int('x'))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(huge(25) * huge(20) + int(bad_text()))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(three(huge(21), huge(22), 1 // zero()))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(three(huge(21), fail_deep(huge(22)), huge(23)))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(pair(make_box(huge(21)), huge(22) // zero()))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        xs = [huge(21), huge(22), 5 // zero()]
+        print(len(xs))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        ys = [[huge(21)], [make_box(3).value, 1 // zero()]]
+        print(len(ys))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        d: dict[str, int] = {'a': huge(21), 'b': huge(22) // zero()}
+        print(len(d))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print([huge(21), huge(22)][5])
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        dd: dict[str, int] = {'a': huge(21)}
+        print(dd['b'])
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(('ab' + str(count))[40])
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(len(('ab' + str(count))[::zero()]))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(int[length=8](huge(21)))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(huge(21) / float(zero()))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(make_box(huge(21)).value // zero() + huge(22))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(chr(huge(21)))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        print(ord('ab' + str(count)))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        ds: dict[str, int] = {'a': huge(21)}
+        ds.remove('b' + str(count))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    try:
+        st: set[str] = {'a'}
+        st.remove('b' + str(count))
+    catch RuntimeError as e:
+        count += 1
+        print(e.message)
+    print(count)
+    print(huge(20) > 0)

@@ -104,6 +104,24 @@ shrinks from 160 MB to 20 MB and the time from 0.23 s to 0.076 s. Tomato ÷ Go 1
 7, `time -p`, 0.01 s resolution), did not change: fib 0.23, matmul 0.17, mandelbrot 0.12, collatz 0.52, strings 0.21,
 sort 0.12, wordcount 0.28, bigint 0.11, objects 0.16 seconds both ways.
 
+## What was done (refcount bookkeeping, unreleased)
+
+Profile first (callgrind in the Lima VM, release mode, `benchmarks/count.sh` inputs): in `wordcount` and `strings` about 20% of the instructions, and in `objects` about 13%, were `destroy_object`, `free_internals` and `each_child` walking the type tables to free values that own nothing (every temporary string, every object with only number fields), and the inlined `tomato_release` ran the cycle-collector test (colour bits, kind table, offsets table) on every release that did not reach zero. The collector itself never ran in these three.
+
+1. **Destroy fast paths** (runtime): a string, or a list of plain numbers, is freed at once; an object is destroyed in one pass over its offsets table (references, then the int fields) and a list of references in one loop, without the indirect `release_visit` call.
+2. **`tomato_release_flat`**: the compiler picks it when the static type can never be part of a cycle (`str`, or a class with no reference-counted fields and no subclass; `Mod.flat_type`). It only decrements and destroys at zero, with no table lookups. It is used for `release`, for stores into a variable of such a type, and in the function epilogue.
+
+| benchmark | before (M instr) | after | after ÷ before |
+| --- | ---: | ---: | ---: |
+| objects | 116.3 | 95.8 | 0.82 |
+| wordcount | 191.8 | 157.3 | 0.82 |
+| strings | 140.4 | 117.1 | 0.83 |
+| matmul | 131.5 | 131.5 | 1.00 |
+
+Not done, with the profile's reason: **list indexing** is already a bounds check plus a load in matmul's inner loop (about 28 instructions per iteration, none of them reference counting; the rest is tag tests, the overflow check on `+`/`*` and two bounds checks), so there is nothing refcount-related left there. The loop item of `for x in xs` is still retained and released (about 13 of the 35 instructions per item in `objects`): dropping it needs proof that the body cannot remove the item from the list, which a method call can do through an alias.
+
+Also in this change: a failing check now frees the temporaries waiting in its expression (see D05av in `docs/decisions.md` and the `temp_unwind` test), and the big-number leak check is strict after errors again.
+
 ## What was done (collatz and small-int arithmetic)
 
 Profile first (`otool -tV` of the release binary, the emitted IR from `tomato compile`): `collatz` is pure small-int arithmetic, and every operation was already an inlined fast path, but the hot loop was long and tangled:
@@ -226,7 +244,7 @@ size-class allocator task covers.
 ## Still to do, biggest first
 
 1. **Sort with compare functions** is done on native builds (see "function values and sort"); the browser still runs the Tomato merge sort, whose every compare is an interpreted call. The native loop takes 0.42 of the cycles of the Tomato merge sort. **Small-int fast paths** are already inlined everywhere in both modes (the collatz section); what remains in the generated code is the tagged-word untag and retag around each operation and the `dup`/`free` pairs on ints passed to calls.
-2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds, tests the tag of each item (for the big-integer copy) and keeps the list pointers in stack slots across the loop.
+2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds and tests the tag of each item (for the big-integer copy); no reference counting is left in that loop (see the refcount section).
 3. **Typed list storage** is done for `bool` and the fixed-width integers (see above); `int` and `float` lists are already 8 bytes per item and cannot shrink.
 4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).
 5. (done, see the collatz section) Debug-mode small-int arithmetic.

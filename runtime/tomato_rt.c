@@ -396,11 +396,9 @@ void tomato_leak_check(void) {
     return;                      /* release: no leak report, and no collection at exit (nothing observes what is left) */
 #endif
     tomato_collect_cycles();     /* cycles are freed automatically (D29d), so only true leaks are left to report */
-    /* After an error was raised, temporaries held in the middle of an expression can be dropped without being
-     * released, so the check would report false leaks: it stays quiet then. */
-    /* quiet after an error, like objects: a fresh big number held in the middle of an expression (the dividend of `huge() // 0`)
-     * is dropped by the failing check without being freed. Fixing that needs every fail_if to free the pending temporaries. */
-    if (live_bigs != 0 && !tomato_exc_seen) {
+    /* Big numbers are owned values and every failing check frees the temporaries waiting in its expression, so they must balance even
+     * after an error. Objects stay quiet after an error: an unwound frame can leave a cycle or a task frame behind. */
+    if (live_bigs != 0) {
         fflush(stdout);
         char text[160];
         snprintf(text, sizeof text, "%lld big number(s) were never freed", (long long)live_bigs);
@@ -1888,15 +1886,37 @@ void tomato_pending_flush(void) {
 }
 
 static void destroy_one(Hdr *h) {
-    if (tomato_kinds[tcode(h)] & 1024) frame_dropped(h);
-    each_child(h, release_visit);
-    free_internals(h);
+    int64_t code = tcode(h);
+    int32_t full = tomato_kinds[code];
+    if (full & 1024) frame_dropped(h);
+    if ((full & 15) == 1) {
+        /* an object: release the reference fields, then free the big numbers of the int fields (the same two tables
+         * each_child and free_internals walk, in one pass and without the indirect call) */
+        const int32_t *o = tomato_offsets[code];
+        for (; *o >= 0; o++) { Hdr *c = *(Hdr **)((char *)h + *o); if (c) tomato_release(c); }
+        for (o++; *o >= 0; o++) tomato_int_free(*(int64_t *)((char *)h + *o));
+    } else if ((full & (15 | 256)) == (2 | 256)) {
+        List *l = (List *)h;
+        for (int64_t i = 0; i < l->len; i++) { Hdr *c = LIST_SLOT(l, i, Hdr *); if (c) tomato_release(c); }
+        free_internals(h);
+    } else {
+        each_child(h, release_visit);
+        free_internals(h);
+    }
     if (h->type & F_BUFFERED) { h->type |= F_DEAD; return; }   /* the collector still points at it: freed there */
     obj_free(h);
     LIVE_ADJUST(-1);
 }
 
 static void destroy_object(Hdr *h) {
+    /* The common cases need no walk of children: a string, or a list of plain numbers, owns nothing but its own memory,
+     * so it is freed at once (even while another object is being destroyed: it cannot recurse). */
+    int32_t full = tomato_kinds[tcode(h)];
+    if ((full & (15 | 1024)) == 0) { obj_free(h); LIVE_ADJUST(-1); return; }
+    if ((full & (15 | 256 | 1024 | 2048)) == 2 && !(h->type & F_BUFFERED)) {
+        free(((List *)h)->data); ((List *)h)->data = NULL;
+        obj_free(h); LIVE_ADJUST(-1); return;
+    }
     if (destroying) {
         if (pending_n == pending_cap) {
             pending_cap = pending_cap ? pending_cap * 2 : 64;
@@ -1969,6 +1989,15 @@ static void scan(Hdr *s) {
 }
 
 static void cw_visit(Hdr *c) { spush(c); }
+/* release of a value whose static type can never be part of a cycle (text, a class with no reference-counted fields and no
+ * subclasses): the compiler picks this one, so a count that stays above zero costs no table lookups. */
+ALWAYS void tomato_release_flat(void *p) {
+    if (!p) return;
+    Hdr *h = p;
+    if (h->rc <= 0) return;
+    if (--h->rc == 0) destroy_object(h);
+}
+
 static void collect_white(Hdr *s) {
     spush(s);
     while (stack_n) {
