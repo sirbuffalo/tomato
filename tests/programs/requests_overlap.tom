@@ -1,0 +1,14 @@
+import requests
+
+async def get(base: str) -> int:
+    r = await requests.get(base + "/slow/1000")
+    return r.status
+
+@main
+async def main(base: str):
+    ts: list[task[int]] = []
+    for i in range(5):
+        ts.append(start get(base))
+    for t in ts:
+        await t
+    print("done")

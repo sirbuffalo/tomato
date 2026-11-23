@@ -180,7 +180,7 @@ link() {   # a function has its own "$@", so the run inputs survive; $1 holds th
   OLDIFS="$IFS"; IFS="$nl"
   for f in $llvm; do set -- "$@" "$f"; done
   IFS="$OLDIFS"
-  "$@" "$runtime" -lm
+  "$@" "$runtime" -lm $([ "$(uname)" = Linux ] && echo -ldl)   # -ldl: the runtime loads libcurl with dlopen (older glibc keeps it in libdl)
 }
 if [ -n "$ltoflags" ]; then link "$ltoflags" 2>/dev/null || link "-DTOMATO_RELEASE" || exit 1; else link "" || exit 1; fi
 [ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }

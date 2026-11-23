@@ -98,7 +98,7 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 62. ~~A standard library~~ exists (D24a). Open: its contents, its names, and where `range` lives (D18a).
 63. Input and output: `open` exists (D26a). Open: reading input, command line, environment, line-by-line reading, file modes.
 64. Web servers: how a Tomato program listens, routes and answers requests (R09); and concurrency, which web servers need.
-65. Functions as values: lambdas, closures, passing functions. Function values, named functions and non-capturing lambdas are decided (D62a). Open: closures (capturing variables), bound methods as values, generic functions as values, optional function values, comparing functions.
+65. Functions as values: lambdas, closures, passing functions. Function values, named functions and non-capturing lambdas are decided (D63a). Open: closures (capturing variables), bound methods as values, generic functions as values, optional function values, comparing functions.
 66. ~~Other data kinds~~: classes model data (D21a). Open: enums and variants later if wanted, type aliases.
 67. String formatting and interpolation; multi-line string literals.
 68. ~~`break`, `continue`~~ exist (D25a). Open: `match`/`switch`, the `if` expression form, loop `else`.

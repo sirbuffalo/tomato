@@ -359,6 +359,12 @@ def scan_node(n: Node, u: Usage):
 
 # ---- a whole file
 
+def any_starts(names: list[str], prefix: str) -> bool:
+    for w in names:
+        if w.startswith(prefix):
+            return True
+    return False
+
 # the warnings for the top-level items of one file, in line order
 export def lint_items(items: list[Node]) -> list[Finding]:
     found: list[Finding] = []
@@ -379,6 +385,10 @@ export def lint_items(items: list[Node]) -> list[Finding]:
     for item in items:
         if item.kind == 'Import' and not item.exported:
             for nm in item.fields[1].items:
-                if nm.text not in used:
+                if nm.text == '*':
+                    prefix = item.fields[0].text + '.'
+                    if not any_starts(used, prefix):
+                        found.append(finding(item.line, 'unused', f"the module '{item.fields[0].text}' is imported but never used\nremove the import line"))
+                elif nm.text not in used:
                     found.append(finding(item.line, 'unused', f"'{nm.text}' is imported but never used\nremove it from the import line"))
     return found

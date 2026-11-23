@@ -1,0 +1,24 @@
+# An HTTP client: fetch pages with the requests library. Needs a network connection and libcurl (macOS has it; on Linux
+# install the libcurl package). Run it with: tomato run examples/http_get.tom main https://example.com
+import requests
+
+async def size_of(url: str) -> int:
+    r = await requests.get(url, timeout=10.0)
+    return len(r.text)
+
+@main
+async def main(url: str = 'https://example.com'):
+    try:
+        r = await requests.get(url, timeout=10.0)
+        print(r.status, r.headers['content-type'])
+        print(r.text[:200])
+        r.raise_for_status()
+    catch requests.HTTPError as e:
+        print('the server said no:', e.message)
+    catch requests.RequestError as e:
+        print('could not fetch', url + ':', e.message)
+
+    # requests started together run at the same time
+    tasks = [start size_of(url), start size_of(url + '/')]
+    for t in tasks:
+        print('length', await t)

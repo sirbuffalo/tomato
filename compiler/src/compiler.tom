@@ -3187,6 +3187,8 @@ class Gen:
             return ex(c, 'float')
         if name == 'sleep' and name not in self.slots and self.mod.resolve(name) == '':
             raise CompileError("sleep() is async, so it must be awaited\nwrite: await sleep(seconds)  inside an async def", n.line)
+        if name == '_http_wait' and name not in self.slots and self.mod.resolve(name) == '':
+            raise CompileError("_http_wait() is async, so it must be awaited\nwrite: await _http_wait(handle)  inside an async def", n.line)
         if name == 'len':
             return self.len_call(args, n.line)
         if name == 'str':
@@ -4099,6 +4101,8 @@ class Gen:
                 return self.await_input(val_nodes(inner.fields[1]), n.line)
             if name == 'sleep' and name not in self.slots and self.mod.resolve(name) == '':
                 return self.await_sleep(val_nodes(inner.fields[1]), n.line)
+            if name == '_http_wait' and name not in self.slots and self.mod.resolve(name) == '':
+                return self.await_http(val_nodes(inner.fields[1]), n.line)
         self.async_ok = True
         self.fresh_frame = False
         t = self.expr(inner)
@@ -4127,6 +4131,19 @@ class Gen:
             secs = self.to_double(v)
         self.check_unread()
         self.emit(f'call void @tomato_sleep_wait(ptr %frame, double {secs})')
+        self.release(v)
+        self.suspend_here()
+        return ex('', '')
+
+    def await_http(self, args: list[Node], line: int) -> Ex:
+        # await _http_wait(handle): the library std/requests uses this to wait for a request; other tasks run meanwhile
+        if len(args) != 1:
+            raise CompileError('_http_wait() takes the request handle: await _http_wait(handle)', line)
+        v = self.expr(args[0])
+        v = self.want(v, 'int', line, 'the request handle')
+        raw = self.int_raw(v)
+        self.check_unread()
+        self.emit(f'call void @tomato_http_wait(ptr %frame, i64 {raw})')
         self.release(v)
         self.suspend_here()
         return ex('', '')
@@ -6019,6 +6036,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare i32 @tomato_task_cancelled(ptr)\n'
     d += 'declare void @tomato_task_cancel(ptr)\n'
     d += 'declare void @tomato_sleep_wait(ptr, double)\n'
+    d += 'declare void @tomato_http_wait(ptr, i64)\n'
     d += 'declare void @tomato_task_drop_starter(ptr)\n'
     d += 'declare ptr @tomato_pending_pop(ptr, ptr, ptr)\n'
     d += 'declare void @tomato_pending_flush()\n'
@@ -6496,6 +6514,13 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
             name = item.fields[0].text
             mod.declare_name(top.module, name, key_of(top.module, name), item.exported, item.line)
     for ii in imports:
+        if len(ii.names) == 1 and ii.names[0] == '*':
+            # import module: every exported name of the module, written module.name
+            for top in items:
+                item = top.node
+                if top.module == ii.module and item.exported and (item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'ConstDef'):
+                    mod.declare_name(ii.importer, ii.module + '.' + item.fields[0].text, key_of(top.module, item.fields[0].text), False, ii.line)
+            continue
         for nm in ii.names:
             mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
 

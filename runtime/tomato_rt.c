@@ -846,11 +846,290 @@ static void sleeper_wake(int64_t i) {
     tomato_release(f);
 }
 
+/* ---- HTTP requests (std/requests.tom). Natively the runtime loads libcurl when the first request starts (dlopen, so no
+ * header and no link flag are needed, and a machine without libcurl only fails the programs that make requests). Requests
+ * are driven by curl's multi interface from the scheduler: a task that waits for one is parked here, and tomato_sched_idle
+ * lets the network make progress when nothing else can run, so requests overlap with each other and with other tasks.
+ * The browser has no sockets, so there every request fails at once with a message that says so. */
+enum { HK_NONE = 0, HK_CONNECTION = 1, HK_TIMEOUT = 2, HK_URL = 3, HK_REDIRECTS = 4, HK_OTHER = 5 };
+typedef struct {
+    int used, done, kind, status;
+    void *frame;                    /* the task waiting for it (retained), or NULL */
+    char *body; int64_t body_n, body_cap;
+    char *head; int64_t head_n, head_cap;
+    char *err, *final_url, *post;
+    void *easy, *slist;
+} HttpReq;
+static HttpReq **http_t; static int64_t http_n;      /* by handle: index + 1 */
+static int64_t http_active;                          /* requests added to curl and not finished */
+
+static HttpReq *http_get(int64_t id) { return (id >= 1 && id <= http_n) ? http_t[id - 1] : NULL; }
+static char *http_dup(const char *s) { size_t n = strlen(s); char *p = malloc(n + 1); if (!p) tomato_fail("out of memory"); memcpy(p, s, n + 1); return p; }
+static void http_fail(HttpReq *r, int kind, const char *msg) { char *copy = http_dup(msg); r->done = 1; r->kind = kind; free(r->err); r->err = copy; }
+
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+#include <dlfcn.h>
+typedef struct { int msg; void *easy; union { void *p; int result; } data; } CurlMsg;
+static struct {
+    int tried;
+    void *multi;
+    void *(*easy_init)(void); void (*easy_cleanup)(void *); int (*easy_setopt)(void *, int, ...); int (*easy_getinfo)(void *, int, ...);
+    const char *(*strerror)(int);
+    void *(*slist_append)(void *, const char *); void (*slist_free_all)(void *);
+    void *(*multi_init)(void); int (*multi_add)(void *, void *); int (*multi_remove)(void *, void *); int (*multi_perform)(void *, int *);
+    int (*multi_poll)(void *, void *, unsigned, int, int *); CurlMsg *(*multi_info_read)(void *, int *);
+    char why[160];
+} cu;
+
+static void *cu_sym(void *lib, const char *name) { return dlsym(lib, name); }
+static int curl_load(void) {
+    if (cu.tried) return cu.multi != NULL;
+    cu.tried = 1;
+    const char *names[] = { "libcurl.4.dylib", "libcurl.so.4", "libcurl.dylib", "libcurl.so", "/usr/lib/libcurl.4.dylib", NULL };
+    void *lib = NULL;
+    for (int i = 0; names[i] && !lib; i++) lib = dlopen(names[i], RTLD_NOW);
+    if (!lib) { snprintf(cu.why, sizeof cu.why, "requests needs libcurl, and it was not found on this machine (install the libcurl package)"); return 0; }
+    int (*global_init)(long) = cu_sym(lib, "curl_global_init");
+    cu.easy_init = cu_sym(lib, "curl_easy_init"); cu.easy_cleanup = cu_sym(lib, "curl_easy_cleanup");
+    cu.easy_setopt = cu_sym(lib, "curl_easy_setopt"); cu.easy_getinfo = cu_sym(lib, "curl_easy_getinfo");
+    cu.strerror = cu_sym(lib, "curl_easy_strerror");
+    cu.slist_append = cu_sym(lib, "curl_slist_append"); cu.slist_free_all = cu_sym(lib, "curl_slist_free_all");
+    cu.multi_init = cu_sym(lib, "curl_multi_init"); cu.multi_add = cu_sym(lib, "curl_multi_add_handle");
+    cu.multi_remove = cu_sym(lib, "curl_multi_remove_handle"); cu.multi_perform = cu_sym(lib, "curl_multi_perform");
+    cu.multi_poll = cu_sym(lib, "curl_multi_poll"); if (!cu.multi_poll) cu.multi_poll = cu_sym(lib, "curl_multi_wait");
+    cu.multi_info_read = cu_sym(lib, "curl_multi_info_read");
+    if (!global_init || !cu.easy_init || !cu.easy_cleanup || !cu.easy_setopt || !cu.easy_getinfo || !cu.strerror || !cu.slist_append ||
+        !cu.slist_free_all || !cu.multi_init || !cu.multi_add || !cu.multi_remove || !cu.multi_perform || !cu.multi_poll || !cu.multi_info_read) {
+        snprintf(cu.why, sizeof cu.why, "requests needs libcurl, and the one on this machine is too old or incomplete");
+        return 0;
+    }
+    global_init(3);
+    cu.multi = cu.multi_init();
+    if (!cu.multi) snprintf(cu.why, sizeof cu.why, "requests could not start libcurl");
+    return cu.multi != NULL;
+}
+
+#define CURLOPT_WRITEDATA 10001
+#define CURLOPT_URL 10002
+#define CURLOPT_POSTFIELDS 10015
+#define CURLOPT_USERAGENT 10018
+#define CURLOPT_HTTPHEADER 10023
+#define CURLOPT_HEADERDATA 10029
+#define CURLOPT_CUSTOMREQUEST 10036
+#define CURLOPT_ERRORBUFFER 10010
+#define CURLOPT_POSTFIELDSIZE 60
+#define CURLOPT_NOBODY 44
+#define CURLOPT_FOLLOWLOCATION 52
+#define CURLOPT_REDIR_PROTOCOLS 182
+#define CURLOPT_MAXREDIRS 68
+#define CURLOPT_NOSIGNAL 99
+#define CURLOPT_PRIVATE 10103
+#define CURLOPT_ACCEPT_ENCODING 10102
+#define CURLOPT_WRITEFUNCTION 20011
+#define CURLOPT_HEADERFUNCTION 20079
+#define CURLOPT_TIMEOUT_MS 155
+#define CURLOPT_CONNECTTIMEOUT_MS 156
+#define CURLINFO_EFFECTIVE_URL 1048577
+#define CURLINFO_RESPONSE_CODE 2097154
+#define CURLINFO_PRIVATE 1048597
+
+static void http_append(char **buf, int64_t *n, int64_t *cap, const char *p, size_t len) {
+    if (*n + (int64_t)len + 1 > *cap) {
+        int64_t c = *cap ? *cap : 4096;
+        while (*n + (int64_t)len + 1 > c) c *= 2;
+        char *nb = realloc(*buf, (size_t)c);
+        if (!nb) tomato_fail("out of memory");
+        *buf = nb; *cap = c;
+    }
+    memcpy(*buf + *n, p, len); *n += (int64_t)len; (*buf)[*n] = 0;
+}
+static size_t http_on_body(char *p, size_t size, size_t nmemb, void *user) {
+    HttpReq *r = user; size_t len = size * nmemb;
+    if (r->body_n + (int64_t)len > ((int64_t)1 << 30)) return 0;      /* more than 1 GiB: stop the transfer */
+    http_append(&r->body, &r->body_n, &r->body_cap, p, len); return len;
+}
+static size_t http_on_head(char *p, size_t size, size_t nmemb, void *user) {
+    HttpReq *r = user; size_t len = size * nmemb;
+    if (len >= 5 && memcmp(p, "HTTP/", 5) == 0) r->head_n = 0;      /* a new response (after a redirect): keep only the last one's headers */
+    http_append(&r->head, &r->head_n, &r->head_cap, p, len); return len;
+}
+
+static void http_finish(HttpReq *r, int code) {
+    if (code == 0) {
+        long st = 0; char *u = NULL;
+        cu.easy_getinfo(r->easy, CURLINFO_RESPONSE_CODE, &st);
+        cu.easy_getinfo(r->easy, CURLINFO_EFFECTIVE_URL, &u);
+        r->status = (int)st; r->done = 1; r->kind = HK_NONE;
+        if (u) r->final_url = http_dup(u);
+        return;
+    }
+    int kind = (code == 28) ? HK_TIMEOUT : (code == 3 || code == 1) ? HK_URL : code == 47 ? HK_REDIRECTS : (code == 23 || code == 61 || code == 62) ? HK_OTHER : HK_CONNECTION;
+    const char *detail = r->err && r->err[0] ? r->err : cu.strerror(code);
+    http_fail(r, kind, detail);
+}
+
+/* let curl work without waiting, and finish the requests that are done. Returns how many finished. It runs only when the
+ * scheduler has nothing else ready (tomato_sched_idle): tasks are cooperative (D51b), so a task that never awaits delays
+ * every other task, and the network along with them. */
+
+static int http_step(void) {
+    int running = 0, finished = 0, left = 0;
+    cu.multi_perform(cu.multi, &running);
+    CurlMsg *m;
+    while ((m = cu.multi_info_read(cu.multi, &left))) {
+        if (m->msg != 1) continue;
+        char *priv = NULL;
+        cu.easy_getinfo(m->easy, CURLINFO_PRIVATE, &priv);
+        HttpReq *r = (HttpReq *)priv;
+        cu.multi_remove(cu.multi, m->easy);
+        http_active--;
+        char *errcopy = r->err; if (errcopy && errcopy[0] == 0) { free(errcopy); r->err = NULL; }
+        http_finish(r, m->data.result);
+        cu.easy_cleanup(r->easy); r->easy = NULL;
+        cu.slist_free_all(r->slist); r->slist = NULL;
+        if (r->frame) { void *f = r->frame; r->frame = NULL; tomato_q_push(f); tomato_release(f); }
+        finished++;
+    }
+    return finished;
+}
+
+static void http_block(int ms) { int n; if (ms < 0) ms = 0; cu.multi_poll(cu.multi, NULL, 0, ms, &n); }
+#else
+static int http_step(void) { return 0; }
+static void http_block(int ms) { (void)ms; }
+#endif
+
+/* start a request; always returns a handle (a failure to start shows up when its result is read). headers is "Name: value"
+ * lines; body_mode 0 means no body, 1 a body (possibly empty). timeout is in seconds (0 or less: none). */
+int64_t tomato_http_start(void *method, void *url, void *headers, void *body, int64_t body_mode, double timeout, int64_t follow, int64_t max_redirects) {
+    HttpReq *r = calloc(1, sizeof *r);
+    if (!r) tomato_fail("out of memory");
+    int64_t slot = -1;
+    for (int64_t i = 0; i < http_n; i++) if (!http_t[i]) { slot = i; break; }
+    if (slot < 0) {
+        http_t = realloc(http_t, (size_t)(http_n + 1) * sizeof *http_t);
+        if (!http_t) tomato_fail("out of memory");
+        slot = http_n++;
+    }
+    http_t[slot] = r; r->used = 1;
+#if defined(TOMATO_WASM) || defined(__wasi__)
+    (void)method; (void)url; (void)headers; (void)body; (void)body_mode; (void)timeout; (void)follow; (void)max_redirects;
+    http_fail(r, HK_CONNECTION, "requests is not available in the browser playground (it has no network access from here); run the program with 'tomato run'");
+#else
+    Str *m = method, *u = url, *h = headers, *b = body;
+    if (!curl_load()) { http_fail(r, HK_CONNECTION, cu.why); return slot + 1; }
+    if (!((u->bytes >= 7 && memcmp(u->data, "http://", 7) == 0) || (u->bytes >= 8 && memcmp(u->data, "https://", 8) == 0)) || memchr(u->data, 0, (size_t)u->bytes)) {
+        http_fail(r, HK_URL, "the url must start with http:// or https://"); return slot + 1;
+    }
+    char *cu_url = malloc((size_t)u->bytes + 1), *cm = malloc((size_t)m->bytes + 1);
+    if (!cu_url || !cm) tomato_fail("out of memory");
+    memcpy(cu_url, u->data, (size_t)u->bytes); cu_url[u->bytes] = 0;
+    memcpy(cm, m->data, (size_t)m->bytes); cm[m->bytes] = 0;
+    void *e = cu.easy_init();
+    r->easy = e;
+    r->err = calloc(1, 256);
+    if (!e || !r->err) tomato_fail("out of memory");
+    cu.easy_setopt(e, CURLOPT_URL, cu_url);                 /* curl copies strings given to these options */
+    cu.easy_setopt(e, CURLOPT_NOSIGNAL, 1L);
+    cu.easy_setopt(e, CURLOPT_ERRORBUFFER, r->err);
+    cu.easy_setopt(e, CURLOPT_WRITEFUNCTION, http_on_body); cu.easy_setopt(e, CURLOPT_WRITEDATA, r);
+    cu.easy_setopt(e, CURLOPT_HEADERFUNCTION, http_on_head); cu.easy_setopt(e, CURLOPT_HEADERDATA, r);
+    cu.easy_setopt(e, CURLOPT_PRIVATE, r);
+    cu.easy_setopt(e, CURLOPT_ACCEPT_ENCODING, "");           /* every encoding curl supports; it decodes for us */
+    cu.easy_setopt(e, CURLOPT_FOLLOWLOCATION, follow ? 1L : 0L);
+    cu.easy_setopt(e, CURLOPT_MAXREDIRS, (long)max_redirects);
+    cu.easy_setopt(e, CURLOPT_REDIR_PROTOCOLS, 3L);          /* a redirect may only lead to http or https (CURLPROTO_HTTP | CURLPROTO_HTTPS) */
+    if (timeout > 0) cu.easy_setopt(e, CURLOPT_TIMEOUT_MS, (long)(timeout * 1000.0 + 0.5));
+    if (strcmp(cm, "HEAD") == 0) cu.easy_setopt(e, CURLOPT_NOBODY, 1L);
+    else if (strcmp(cm, "GET") != 0 && strcmp(cm, "POST") != 0) cu.easy_setopt(e, CURLOPT_CUSTOMREQUEST, cm);
+    if (strcmp(cm, "POST") == 0) body_mode = 1;
+    /* curl does not copy POSTFIELDS, so the request keeps its own copy of the body for the whole transfer */
+    if (body_mode) {
+        char *copy = malloc((size_t)b->bytes + 1); if (!copy) tomato_fail("out of memory");
+        memcpy(copy, b->data, (size_t)b->bytes); copy[b->bytes] = 0; r->post = copy;
+        cu.easy_setopt(e, CURLOPT_POSTFIELDSIZE, (long)b->bytes); cu.easy_setopt(e, CURLOPT_POSTFIELDS, copy);
+    }
+    void *sl = NULL;
+    for (int64_t i = 0; i < h->bytes;) {
+        int64_t j = i; while (j < h->bytes && h->data[j] != '\n') j++;
+        if (j > i) { char *line = malloc((size_t)(j - i) + 1); if (!line) tomato_fail("out of memory"); memcpy(line, h->data + i, (size_t)(j - i)); line[j - i] = 0; sl = cu.slist_append(sl, line); free(line); }
+        i = j + 1;
+    }
+    r->slist = sl;
+    if (sl) cu.easy_setopt(e, CURLOPT_HTTPHEADER, sl);
+    free(cu_url); free(cm);
+    cu.multi_add(cu.multi, e);
+    http_active++;
+#endif
+    return slot + 1;
+}
+
+/* the task waits for request id (compiled code suspends right after this call) */
+void tomato_http_wait(void *frame, int64_t id) {
+    HttpReq *r = http_get(id);
+    tomato_retain(frame);
+    if (!r || r->done) { tomato_q_push(frame); tomato_release(frame); return; }
+    r->frame = frame;
+}
+
+/* a cancelled task stops waiting: true when it was waiting for a request (its reference to the task is given back) */
+static int http_cancel_frame(void *frame) {
+    for (int64_t i = 0; i < http_n; i++) {
+        HttpReq *r = http_t[i];
+        if (r && r->frame == frame) { r->frame = NULL; tomato_release(frame); return 1; }
+    }
+    return 0;
+}
+
+int64_t tomato_http_status(int64_t id) { HttpReq *r = http_get(id); return r ? r->status : 0; }
+int64_t tomato_http_error_kind(int64_t id) { HttpReq *r = http_get(id); return r ? r->kind : HK_OTHER; }
+void *tomato_http_error_text(int64_t id) { HttpReq *r = http_get(id); return tomato_str_from_cstr(r && r->kind && r->err ? r->err : ""); }
+int64_t tomato_http_body_len(int64_t id) { HttpReq *r = http_get(id); return r ? r->body_n : 0; }
+int64_t tomato_http_body_byte(int64_t id, int64_t i) { HttpReq *r = http_get(id); return (r && i >= 0 && i < r->body_n) ? (unsigned char)r->body[i] : 0; }
+void *tomato_http_url(int64_t id) { HttpReq *r = http_get(id); return tomato_str_from_cstr(r && r->final_url ? r->final_url : ""); }
+void *tomato_http_headers(int64_t id) { HttpReq *r = http_get(id); return r && r->head ? str_new(r->head, r->head_n) : tomato_str_from_cstr(""); }
+
+/* the body as text: bytes that are not valid UTF-8 become U+FFFD, so the result is always valid text */
+void *tomato_http_text(int64_t id) {
+    HttpReq *r = http_get(id);
+    if (!r || !r->body) return tomato_str_from_cstr("");
+    const unsigned char *s = (const unsigned char *)r->body; int64_t n = r->body_n, o = 0;
+    char *out = malloc((size_t)n * 3 + 1);
+    if (!out) tomato_fail("out of memory");
+    for (int64_t i = 0; i < n;) {
+        unsigned char c = s[i]; int len = c < 0x80 ? 1 : (c >= 0xC2 && c <= 0xDF) ? 2 : (c >= 0xE0 && c <= 0xEF) ? 3 : (c >= 0xF0 && c <= 0xF4) ? 4 : 0;
+        int ok = len > 0 && i + len <= n;
+        for (int k = 1; ok && k < len; k++) if ((s[i + k] & 0xC0) != 0x80) ok = 0;
+        if (ok && len == 3 && ((c == 0xE0 && s[i + 1] < 0xA0) || (c == 0xED && s[i + 1] >= 0xA0))) ok = 0;
+        if (ok && len == 4 && ((c == 0xF0 && s[i + 1] < 0x90) || (c == 0xF4 && s[i + 1] >= 0x90))) ok = 0;
+        if (ok) { memcpy(out + o, s + i, (size_t)len); o += len; i += len; }
+        else { out[o++] = (char)0xEF; out[o++] = (char)0xBF; out[o++] = (char)0xBD; i++; }
+    }
+    void *res = str_new(out, o);
+    free(out);
+    return res;
+}
+
+/* forget a request (the library calls this once it has read the result); a request still running is stopped */
+void tomato_http_free(int64_t id) {
+    HttpReq *r = http_get(id);
+    if (!r) return;
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+    if (r->easy) { cu.multi_remove(cu.multi, r->easy); http_active--; cu.easy_cleanup(r->easy); }
+    if (r->slist) cu.slist_free_all(r->slist);
+#endif
+    if (r->frame) tomato_release(r->frame);
+    free(r->body); free(r->head); free(r->err);
+    free(r->final_url); free(r->post);
+    free(r); http_t[id - 1] = NULL;
+}
+
 /* nothing is ready to run: wake a sleeper whose time has come; else let the oldest task that asked for a line of input have
  * it (time does not pass while there is input to give); else move the clock to the first wake-up. Returns 1 when one was woken. */
 int tomato_sched_idle(void) {
     int64_t s = sleeper_first();
     if (s >= 0 && sl_q[s].wake <= sl_now) { sleeper_wake(s); return 1; }
+    if (http_active > 0 && http_step() > 0) return 1;      /* a request finished */
     if (in_head < in_n) {
         InputWait w = in_q[in_head++];
         void *line = tomato_input(w.prompt);
@@ -859,6 +1138,20 @@ int tomato_sched_idle(void) {
         tomato_q_push(w.frame);
         tomato_release(w.frame);
         return 1;
+    }
+    if (http_active > 0) {        /* nothing else can run: wait for the network, but not past the first wake-up */
+        for (;;) {
+            int ms = 1000;
+            if (s >= 0) {
+                double left = sl_q[s].wake - (real_seconds() - sl_origin);
+                if (left <= 0) break;
+                ms = left >= 1.0 ? 1000 : (int)(left * 1000.0) + 1;
+            }
+            fflush(stdout);
+            http_block(ms);
+            if (http_step() > 0) return 1;
+            if (http_active <= 0) break;
+        }
     }
     if (s >= 0) {
         sl_now = sl_q[s].wake;
@@ -896,6 +1189,7 @@ void tomato_task_cancel(void *h) {
             memmove(in_q + i, in_q + i + 1, (size_t)(in_n - i - 1) * sizeof *in_q); in_n--;
             tomato_release(h); waiting = 1;
         }
+    if (!waiting && http_cancel_frame(h)) waiting = 1;
     void *on = (void *)(uintptr_t)*(uint64_t *)((char *)h + 80);
     if (on) {
         PtrVec *v = *(PtrVec **)((char *)on + 40);

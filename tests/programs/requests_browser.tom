@@ -1,0 +1,12 @@
+# In the browser playground there is no network: every request raises ConnectionError, which can be caught.
+import requests
+
+@main
+async def main():
+    try:
+        r = await requests.get('https://example.com')
+        print(r.status)
+    catch requests.ConnectionError as e:
+        print('no network:', e.message.startswith('requests is not available in the browser'))
+    catch requests.RequestError as e:
+        print('other', e.message)

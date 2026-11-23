@@ -1,0 +1,125 @@
+# The requests library against a local test server (tests/run.sh starts tests/http_server.c and passes its address).
+import requests
+
+async def fetch(base: str, path: str) -> int:
+    r = await requests.get(base + path)
+    return r.status
+
+@main
+async def main(base: str):
+    r = await requests.get(base + '/hello')
+    print('get', r.status, r.ok, r.text, r.headers['content-type'], r.headers['x-tag'], len(r.content))
+    print('url', r.url == base + '/hello')
+
+    r = await requests.get(base + '/status/404')
+    print('404', r.status, r.ok, r.text)
+    try:
+        r.raise_for_status()
+    catch requests.HTTPError as e:
+        print('http error', e.status, e.message == f'404 Client Error for url: {base}/status/404')
+    r = await requests.get(base + '/status/503')
+    try:
+        r.raise_for_status()
+    catch requests.RequestError as e:
+        print('server error', e.message.startswith('503 Server Error'))
+
+    r = await requests.get(base + '/redirect/3')
+    print('redirect', r.status, r.text, r.url == base + '/hello')
+    r = await requests.get(base + '/redirect/3', follow_redirects=False)
+    print('no follow', r.status)
+    try:
+        r = await requests.get(base + '/redirect/5', max_redirects=2)
+    catch requests.TooManyRedirects as e:
+        print('too many', 'redirect' in e.message.lower())
+    try:
+        r = await requests.get(base + '/loop')
+    catch requests.RequestError as e:
+        print('loop', e.message.lower().count('redirect') > 0)
+
+    r = await requests.post(base + '/echo', data='plain body')
+    print(r.text)
+    r = await requests.post(base + '/echo', form={'name': 'Ann Lee', 'q': 'a&b=c'})
+    print(r.text)
+    r = await requests.post(base + '/echo', json='{"a": 1}', headers={'X-Custom': 'yes'})
+    print(r.text)
+    r = await requests.put(base + '/echo', data='put body')
+    print(r.text)
+    r = await requests.delete(base + '/echo')
+    print(r.text)
+    r = await requests.get(base + '/echo', params={'k': 'v w', 'é': '1'})
+    print(r.text)
+    r = await requests.head(base + '/hello')
+    print('head', r.status, len(r.text), r.headers['content-length'])
+    r = await requests.post(base + '/redirect-post', data='x')
+    print('303', r.status, r.text.split('\n')[0])
+
+    r = await requests.get(base + '/chunked')
+    print('chunked', r.text)
+    r = await requests.get(base + '/binary')
+    total = 0
+    for b in r.content:
+        total += b
+    print('binary', len(r.content), r.content[0], r.content[255], total)
+    r = await requests.get(base + '/big')
+    print('big', len(r.text), len(r.content))
+    r = await requests.get(base + '/badutf8')
+    print('badutf8', len(r.content), len(r.text))
+    r = await requests.get(base + '/empty')
+    print('empty', r.status, len(r.text), len(r.content))
+
+    try:
+        await requests.get(base + '/slow/2000', timeout=0.2)
+    catch requests.TimeoutError as e:
+        print('timeout', 'timed out' in e.message.lower())
+    try:
+        await requests.get(base + '/drop')
+    catch requests.ConnectionError as e:
+        print('drop')
+    try:
+        await requests.get('http://127.0.0.1:1/')
+    catch requests.ConnectionError as e:
+        print('refused')
+    try:
+        await requests.get('http://no-such-host.invalid/')
+    catch requests.ConnectionError as e:
+        print('dns')
+    try:
+        await requests.get(base.replace('http://', 'https://') + '/hello')
+    catch requests.ConnectionError as e:
+        print('tls')
+    try:
+        await requests.get('ftp://example.com/')
+    catch requests.InvalidURL as e:
+        print('bad scheme', e.message)
+    try:
+        await requests.get('not a url')
+    catch requests.InvalidURL as e:
+        print('bad url')
+    try:
+        await requests.get(base + '/hello', headers={'Bad\nName': 'x'})
+    catch requests.InvalidURL as e:
+        print('bad header')
+
+    # requests overlap: five 300 ms requests take about 300 ms, not 1500 ms
+    tasks: list[task[int]] = []
+    for i in range(5):
+        tasks.append(start fetch(base, '/slow/300'))
+    codes = 0
+    for t in tasks:
+        codes += await t
+    print('concurrent', codes)
+    # a failing request in a task is raised at its await
+    bad = start fetch('http://127.0.0.1:1', '/')
+    try:
+        await bad
+    catch requests.ConnectionError as e:
+        print('task error')
+    # a cancelled request frees everything
+    slow = start fetch(base, '/slow/3000')
+    await sleep(0.05)
+    slow.cancel()
+    try:
+        await slow
+    catch CancelledError as e:
+        print('cancelled')
+    print(requests.quote('a b/ü€'))

@@ -208,11 +208,8 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 180. D57a is accepted: `Iterable[T]`, `Sized` and `Iterable[T] & Sized` are built-in interfaces that any list, tuple, set, dict, text, range or class with `@iter` / `@len` satisfies without `implements`; a function can loop over an `Iterable[T]` and call `len()` on a `Sized`; `progress_bar` uses `Iterable[int] & Sized`.
 181. D60a is accepted: generic classes and functions, written `class Box[T]:` and `def first[T](items: list[T]) -> T:`, with the type arguments found from the call's arguments (an `Iterable[T]` parameter takes T from a list, range, text, dict or class with `@iter`) or written out (`Stack[str]()`), compiled as one copy per set of types; `progress_bar` and the `itertools` helpers take any item type. Generic interfaces, generic methods and bounds are not built.
 182. D61a is accepted: colored errors (`--color`, `NO_COLOR`), warnings silenced with `# allow: KIND`, a compile error for a function that can end without a value, and a call trace for uncaught runtime errors.
-<<<<<<< HEAD
-183. D62a is accepted: function values `fn(int) -> int` (named functions by name, non-capturing lambdas `x -> expr`, no closures, no bound methods, not comparable or printable), stable `sorted(xs, key=f)` and `sorted(xs, cmp=f)`, and `map` and `filter` giving lists.
-=======
-183. D62a is accepted: the `clock()` built-in (monotonic seconds as a float), `dict.remove(key)`, and `std/cache.tom` with `Cache[V](capacity, ttl, timer)`: an O(1) least-recently-used cache with text keys, `get(key, default)`, `c[key]` raising `CacheMiss`, per-cache and per-entry TTL on an injectable `Clock`, and hit/miss/eviction statistics. Memoising functions, byte-size limits, a disk cache and an HTTP request cache are not built.
->>>>>>> main
+183. D62a is accepted: the `requests` HTTP client library (`import requests`, `await requests.get(url)`) over the system libcurl loaded at run time, concurrent, Python-style errors, native only; `import module` was added for it.
+184. D63a is accepted: function values `fn(int) -> int` (named functions by name, non-capturing lambdas `x -> expr`, no closures, no bound methods, not comparable or printable), stable `sorted(xs, key=f)` and `sorted(xs, cmp=f)`, and `map` and `filter` giving lists.
 167. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass

@@ -61,6 +61,28 @@ echo "== sort: the heapsort fallback gives the same results =="
 "$work/c1" tests/programs/native_sort.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -DSORT_DEPTH_MUL=0 -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm && "$work/p" > "$work/out" 2>&1
 check "sort with the depth limit forced to 0" "$(cat tests/expected/native_sort.main.out)" "$(cat "$work/out")"
 
+echo "== requests (tests/http_server.c is a local server: no internet needed) =="
+if clang -O1 -w -o "$work/httpd" tests/http_server.c 2>/dev/null; then
+  "$work/httpd" > "$work/httpd.port" & httpd_pid=$!
+  sleep 1; port="$(cat "$work/httpd.port")"
+  "$work/c1" tests/programs/requests_local.tom main std/ > "$work/rq.ll" 2> "$work/e"
+  if grep -q '^;! ' "$work/rq.ll"; then bad "requests_local has warnings" "$(grep '^;! ' "$work/rq.ll" | head -4)"; fi
+  if clang -O1 -w -o "$work/rq" "$work/rq.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+    check "requests against the local server" "$(cat tests/expected/requests_local.main.out)" "$("$work/rq" "http://127.0.0.1:$port" 2>&1)"
+    if clang -O1 -w -g -fsanitize=address -o "$work/rq_asan" "$work/rq.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+      out="$("$work/rq_asan" "http://127.0.0.1:$port" 2>&1 >/dev/null | head -3)"
+      [ -z "$out" ] && ok "asan requests_local" || bad "asan requests_local" "$out"
+    else bad "asan requests_local" "this clang cannot build with -fsanitize=address"; fi
+    # five requests that each take 1 s must overlap: the whole run is far below 5 s
+    cp tests/programs/requests_overlap.tom "$work/overlap.tom"
+    "$work/c1" "$work/overlap.tom" main std/ > "$work/ov.ll" 2>/dev/null && clang -O1 -w -o "$work/ov" "$work/ov.ll" runtime/tomato_rt.c -lm
+    t0="$(date +%s)"; ovo="$("$work/ov" "http://127.0.0.1:$port" 2>&1)"; t1="$(date +%s)"
+    [ "$ovo" = done ] && [ $((t1 - t0)) -lt 4 ] && ok "requests overlap (5 x 1 s took $((t1 - t0)) s)" || bad "requests overlap" "output '$ovo' after $((t1 - t0)) s"
+  else bad "requests against the local server" "did not build: $(cat "$work/e")"; fi
+  kill "$httpd_pid" 2>/dev/null
+else bad "requests test server" "tests/http_server.c did not build"; fi
+"$work/c1" examples/http_get.tom main std/ > "$work/hg.ll" 2> "$work/e" && clang -O1 -w -o "$work/hg" "$work/hg.ll" runtime/tomato_rt.c -lm && ok "examples/http_get.tom builds" || bad "examples/http_get.tom builds" "$(cat "$work/e")"
+
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
 jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
 if [ -x "$jsc" ]; then
@@ -74,6 +96,7 @@ if [ -x "$jsc" ]; then
 got: $m";; esac; }
   wasm_rt() { m="$("$jsc" native/tomato-jsc.js -- site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
 got: $m";; esac; }
+  r="$("$jsc" native/tomato-jsc.js -- site/wasm run tests/programs/requests_browser.tom 2>&1 | grep "no network")"; check "wasm requests raise ConnectionError" "no network: True" "$r"
   wasm_neg type_mismatch "cannot use '+' with int and str"
   wasm_neg fixed_range "300 does not fit in uint[length=8]"
   wasm_neg private_field "the field 'x' is private to class 'C'"

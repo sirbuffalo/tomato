@@ -24,3 +24,5 @@
   Shrinks sieve's 160 MB working set; needs the runtime, compiler and site/wasm/llvm.js to know the element width.
 - Speed up cmp= sort (inline small-int fast paths for comparison and index arithmetic, or a native merge sort calling the function directly on native builds)
   `sorted(xs, cmp=f)` is a merge sort written in Tomato (std/builtin.tom) and takes about 2.3 s for 3,000,000 ints (Rust 0.12 s) because every int operation calls the runtime; see docs/performance.md.
+- Add `r.json()` to requests and let `json=` take a Json value
+  `loads(self.text)` once the json library is on main; its task has fixed the API as `from json import loads, dumps, Json`.

@@ -184,6 +184,23 @@ def main():
     b: Box[str] = Box('typed')
     s = Stack[str]()                         # write the type out when no argument has it</code></pre>
 <p>A class or function can take type parameters in brackets after its name (<code>class Pair[A, B]</code>, up to two). Each call works out the types from its arguments, and the compiler makes one copy of the declaration per set of types, so nothing is slower at run time. An <code>Iterable[T]</code> parameter takes <code>T</code> from the items of a list, tuple, set, dict, text, range or object with <code>@iter</code>. That is how <code>progress_bar</code> and the <code>itertools</code> helpers (<code>permutations</code>, <code>combinations</code>, <code>product</code>, <code>chain</code>, <code>pairwise</code>, <code>batched</code>, <code>repeat</code>) work with any item type: <code>for name in progress_bar(['a', 'b']):</code> gives text, <code>progress_bar(range(10))</code> gives ints. Generic interfaces, generic methods and bounds on <code>T</code> are not built yet.</p>
+<h2>HTTP requests</h2>
+<pre><code>import requests
+
+async def main_demo():
+    r = await requests.get('https://example.com', timeout=10.0)
+    print(r.status, r.ok, r.headers['content-type'])
+    print(r.text)
+    r2 = await requests.post('https://example.com/api', form={'name': 'Ann'}, headers={'X-Key': 'abc'})
+    try:
+        r2.raise_for_status()
+    catch requests.HTTPError as e:
+        print(e.status)
+    catch requests.TimeoutError as e:
+        print('slow')
+    catch requests.RequestError as e:
+        print(e.message)</code></pre>
+<p><code>import requests</code> makes the library's names available as <code>requests.get</code> and so on (<code>from requests import get</code> works too). Every call is <code>async</code> and awaited, like <code>input()</code>, and requests started with <code>start</code> really run at the same time. <code>get</code>, <code>post</code>, <code>put</code>, <code>patch</code>, <code>delete</code>, <code>head</code> and <code>request(method, url)</code> take the keyword arguments <code>params</code> (a dict added to the query), <code>data</code> (a text body), <code>form</code> (a dict sent as an HTML form), <code>json</code> (JSON text), <code>headers</code>, <code>timeout</code> (a float in seconds), <code>follow_redirects</code> and <code>max_redirects</code>. A <code>Response</code> has <code>status</code>, <code>ok</code>, <code>url</code> (after redirects), <code>text</code>, <code>content</code> (a list of byte values), <code>headers</code> (lower-case names) and <code>raise_for_status()</code>. A 404 or 500 does not raise by itself. Failures raise <code>requests.ConnectionError</code> (name not found, refused, TLS failure), <code>requests.TimeoutError</code>, <code>requests.InvalidURL</code> or <code>requests.TooManyRedirects</code>; all are a <code>requests.RequestError</code>. It needs the system libcurl (on macOS it is there; on Linux install the libcurl package) and works with <code>tomato run</code>, not in the browser playground, where a request raises <code>ConnectionError</code>. <code>r.json()</code> will come with the JSON library. See <code>examples/http_get.tom</code>.</p>
 <h2>Caches and the clock</h2>
 <pre><code>from cache import Cache, CacheMiss
 
@@ -221,7 +238,7 @@ def main():
 <h2>Reading errors and warnings</h2>
 <p>An error that stops a program shows what is wrong, where (<code>--&gt; program.tom:6:11</code>), the line with a <code>^</code> under the problem and, often, a <code>help:</code> line. A runtime error then lists the calls it passed through, innermost first (<code>at half (line 6)</code>). A <em>warning</em> has the same shape but never stops the program: it points at a variable nothing reads, an unused import, code after a <code>return</code>, a variable that might have no value, a name that hides a built-in, or a list changed inside the loop that is going through it. Silence one on its line with a comment such as <code># allow: unused</code>. In a terminal the command line colors errors red and warnings yellow (<code>--color=auto|always|never</code>, <code>NO_COLOR</code>); the playground colors them too. The words are the same either way; see <a href="docs.html#errors">error messages</a>.</p>
 <h2>Modules and LLVM</h2>
-<p><code>from util import f</code> imports a module's <code>export</code>ed names. <code>!name(a: T) -> R</code> declares a function from LLVM IR you supply with <code>--llvm</code>, and <code>!name(x)</code> calls it.</p>
+<p><code>from util import f</code> imports a module's <code>export</code>ed names; <code>import util</code> lets you write <code>util.f</code> instead. <code>!name(a: T) -> R</code> declares a function from LLVM IR you supply with <code>--llvm</code>, and <code>!name(x)</code> calls it.</p>
 <h2>Commands</h2>
 <table>
 <caption class="sr">The tomato command</caption>

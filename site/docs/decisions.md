@@ -1466,6 +1466,16 @@ Current queue: class details (initialization/defaults, other modifier placement 
 
 The earlier public decision page, its password-protected chat and the chat bridge are retired and their code (`site/`, `static/`) has been removed from the repository. They are not to be restarted or redeployed. Decisions are read from these Markdown files; the local Python playground in `web/` is separate and holds no chat.
 
+### D62a — the `requests` library: HTTP over the system libcurl, awaited and concurrent: accepted
+
+- Evidence: Davis asked for a `requests`-style HTTP client and answered five design questions: load libcurl at run time, really concurrent requests, a response with fields for data and methods for work, Python-style error classes with no raise on 4xx/5xx, and native only with a clear error in the browser. (`import module` and `module.name` were added for it, following D24b.)
+- `import requests` then `r = await requests.get(url)`; also `post`, `put`, `patch`, `delete`, `head` and the general `request(method, url, ...)`, all `async`. Keyword arguments: `params` (dict added to the query), `data` (text body), `form` (dict sent as an HTML form), `json` (JSON text for now; `r.json()` waits for the json library), `headers`, `timeout` (a float in seconds, 0 means none), `follow_redirects` (default True except `head`) and `max_redirects` (20).
+- `Response` has the fields `status`, `ok`, `url` (after redirects), `text` (bytes that are not UTF-8 become U+FFFD), `content` (a list of byte values) and `headers` (lower-case names, a repeated header joins its values with `, `), and the method `raise_for_status()`.
+- Errors: `RequestError` (an `IOError`) is the base; `ConnectionError` (DNS, refused, dropped, TLS), `TimeoutError`, `InvalidURL`, `TooManyRedirects`, and `HTTPError` (only from `raise_for_status()`, with `.status`). A 404 or 500 does not raise by itself. The names are written `requests.TimeoutError` and so on.
+- Implementation: the C runtime loads libcurl with `dlopen` when the first request starts (no header, no link flag; a missing libcurl raises `ConnectionError` saying so, and other programs are unaffected) and drives curl's multi interface from the scheduler: a task waits with the compiler's hidden `await _http_wait(handle)`, and when nothing else can run the scheduler waits for the network (up to the first sleeper's wake-up), so requests overlap with each other and with other tasks. HTTPS, gzip and chunked encoding come from libcurl. A request body is text.
+- `import module`: after `import m`, `m.name` names an exported name of `m` (the parser joins the tokens into one name); the module's names are not brought in bare. `from m import a` is unchanged.
+- The browser playground has no sockets: every request raises `ConnectionError` ("requests is not available in the browser playground"). Open: browser support through the page's own networking, a binary request body, cookies and sessions, and `r.json()`.
+
 ## Template for subsequent decisions
 
 - ID and title:
@@ -1479,7 +1489,7 @@ The earlier public decision page, its password-protected chat and the chat bridg
 - Remaining questions:
 - Supersedes / superseded by:
 
-### D62a — function values, lambdas, `sorted(key=, cmp=)`, `map` and `filter`: accepted (Davis chose each point below)
+### D63a — function values, lambdas, `sorted(key=, cmp=)`, `map` and `filter`: accepted (Davis chose each point below)
 
 - Evidence: TODO.md and open question 65 ("functions as values: lambdas, closures, passing functions"); `map` and `filter` waited on them, and `sorted` with a compare or key function needed a callback. Davis answered one question per point.
 - Type: a function value has the type `fn(int, int) -> int`; with no `->` it returns nothing (`fn(str)`). It can be a local, parameter, return value, list item or class field, and is called like a function: `f(1, 2)`, `self.op(a, b)`, `fs[1](4)`. A call checks the argument count and types with the usual messages ("the function value 'f' takes 1 argument, but 2 given"). Function types must match exactly (no conversions). Keyword arguments and defaults do not apply to a function value.

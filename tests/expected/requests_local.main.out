@@ -1,0 +1,55 @@
+get 200 True hello text/plain one, two 5
+url True
+404 404 False status 404
+http error 404 True
+server error True
+redirect 200 hello True
+no follow 302
+too many True
+loop True
+POST /echo HTTP/1.1
+content-length: 10
+content-type: application/x-www-form-urlencoded
+--
+plain body
+POST /echo HTTP/1.1
+content-type: application/x-www-form-urlencoded
+content-length: 26
+--
+name=Ann%20Lee&q=a%26b%3Dc
+POST /echo HTTP/1.1
+x-custom: yes
+content-type: application/json
+content-length: 8
+--
+{"a": 1}
+PUT /echo HTTP/1.1
+content-length: 8
+content-type: application/x-www-form-urlencoded
+--
+put body
+DELETE /echo HTTP/1.1
+--
+
+GET /echo?k=v%20w&%C3%A9=1 HTTP/1.1
+--
+
+head 200 0 5
+303 200 GET /echo HTTP/1.1
+chunked alpha-beta-gamma
+binary 256 0 255 32640
+big 4194304 4194304
+badutf8 5 5
+empty 200 0 0
+timeout True
+drop
+refused
+dns
+tls
+bad scheme the url must start with http:// or https://
+bad url
+bad header
+concurrent 1000
+task error
+cancelled
+a%20b%2F%C3%BC%E2%82%AC

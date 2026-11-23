@@ -9,7 +9,7 @@ root="$(cd "$(dirname "$0")" && pwd)"
 command -v clang >/dev/null || { echo "clang is required (on a Mac: xcode-select --install)" >&2; exit 1; }
 mkdir -p "$home/bin" "$home/runtime" "$home/std" "$bindir"
 echo "building the Tomato compiler from compiler/bootstrap/tomatoc.ll ..."
-clang -O1 -Wno-override-module -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm
+clang -O1 -Wno-override-module -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm $([ "$(uname)" = Linux ] && echo -ldl)
 cp "$root/runtime/tomato_rt.c" "$home/runtime/"
 rm -rf "$home/std"; mkdir -p "$home/std"; cp "$root/std/"*.tom "$root/std/errors.txt" "$home/std/"
 rm -rf "$home/examples"; cp -R "$root/examples" "$home/examples"

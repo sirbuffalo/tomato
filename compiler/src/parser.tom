@@ -228,6 +228,28 @@ export class Parser:
     def peek(self, k: int) -> Token:
         return self.toks[min(self.p + k, len(self.toks) - 1)]
 
+    def qualify(self, mod: str):
+        # from here on, the tokens NAME(mod) OP(.) NAME(x) become one NAME 'mod.x'
+        out: list[Token] = []
+        i = 0
+        toks = self.toks
+        while i < len(toks):
+            tk = toks[i]
+            joined = (i >= self.p and tk.kind == 'NAME' and tk.text == mod and i + 2 < len(toks) and toks[i + 1].kind == 'OP'
+                      and toks[i + 1].text == '.' and toks[i + 2].kind == 'NAME' and not (i > 0 and toks[i - 1].kind == 'OP' and toks[i - 1].text == '.'))
+            if joined:
+                tk2 = Token()
+                tk2.kind = 'NAME'
+                tk2.text = mod + '.' + toks[i + 2].text
+                tk2.line = tk.line
+                tk2.col = tk.col
+                out.append(tk2)
+                i += 3
+            else:
+                out.append(tk)
+                i += 1
+        self.toks = out
+
     def adv(self) -> Token:
         t = self.toks[self.p]
         self.p += 1
@@ -321,7 +343,13 @@ export class Parser:
             self.expect('NEWLINE')
             return mk('Import', t.line, [vs(mod), vlist(names)])
         if self.is_kw('import'):
-            raise ParseError("'import module' is not supported\nwrite 'from module import name' instead", t.line, t.col)
+            # import module: afterwards `module.name` stands for the exported name (a NAME token written 'module.name'), so
+            # the module's names are reached without bringing them in bare (D24b, D24c)
+            self.adv()
+            mod = self.expect('NAME').text
+            self.expect('NEWLINE')
+            self.qualify(mod)
+            return mk('Import', t.line, [vs(mod), vlist([vs('*')])])
         if self.is_op('@'):
             self.adv()
             m = self.expect('NAME')
