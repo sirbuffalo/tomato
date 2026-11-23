@@ -1,4 +1,4 @@
-error: argument 1 of 'total' (the parameter 'items') has type int, but Iterable[int] is expected
+error[E324]: argument 1 of 'total' (the parameter 'items') has type int, but Iterable[int] is expected
  --> tests/errors/iterable_not_a_loop.tom:6:11
   |
 6 |     print(total(5))

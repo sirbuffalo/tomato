@@ -111,12 +111,24 @@ static int64_t tcode(Hdr *h) { return h->type & TYPE_MASK; }
 NOINLINE static void possible_root(Hdr *h);
 NOINLINE static void destroy_object(Hdr *h);
 
-void tomato_fail(const char *message) {
+/* These IDs are line numbers in std/errors.txt. Line zero means there is no available source location. */
+_Noreturn void tomato_fail_id(int kind, const char *message) {
     fflush(stdout);
-    print_head("error", C_RED, message, (int)strlen(message));
+#ifdef TOMATO_RELEASE
+    (void)message;
+    fprintf(stderr, "error E%02d:0\n", kind);
+#else
+    char label[32];
+    snprintf(label, sizeof label, "error[E%02d]", kind);
+    print_head(label, C_RED, message, (int)strlen(message));
     print_trace();
+#endif
     exit(1);
 }
+
+/* Kept for older bootstrap IR. */
+void tomato_fail(const char *message) { tomato_fail_id(371, message); }
+static _Noreturn void out_of_memory(void) { tomato_fail_id(349, "out of memory"); }
 
 /* Release mode (D34b): a short code that `tomato explain` decodes with the source. Printed as E<kind>:<line>. */
 void tomato_fail_code(int kind, int line) {
@@ -133,8 +145,13 @@ static void on_fault(int sig, siginfo_t *info, void *ctx) {
     (void)ctx;
     char *at = (char *)info->si_addr;
     if (at >= stack_low - 65536 && at <= stack_top) {
-        static const char msg[] = "error: stack overflow: a function calls itself too deeply\n";
-        static const char colored[] = "\033[1;31merror:\033[0m \033[1mstack overflow: a function calls itself too deeply\033[0m\n";
+#ifdef TOMATO_RELEASE
+        static const char msg[] = "error E350:0\n";
+        static const char colored[] = "error E350:0\n";
+#else
+        static const char msg[] = "error[E350]: stack overflow: a function calls itself too deeply\n";
+        static const char colored[] = "\033[1;31merror[E350]:\033[0m \033[1mstack overflow: a function calls itself too deeply\033[0m\n";
+#endif
         fflush(stdout);
         if (use_color() ? write(2, colored, sizeof colored - 1) < 0 : write(2, msg, sizeof msg - 1) < 0) { /* nothing more to do */ }
         _exit(1);
@@ -211,13 +228,13 @@ void tomato_print_f64(double v) {
 static void bad_input(int position, const char *what, const char *text) {
     char msg[256];
     snprintf(msg, sizeof msg, "input %d must be %s, found '%s'", position, what, text);
-    tomato_fail(msg);
+    tomato_fail_id(351, msg);
 }
 
 void tomato_usage(int expected, int got) {
     char msg[128];
     snprintf(msg, sizeof msg, "the entry point takes %d input(s), got %d", expected, got);
-    tomato_fail(msg);
+    tomato_fail_id(352, msg);
 }
 
 int64_t tomato_parse_i64(const char *text, int position) {
@@ -272,7 +289,7 @@ void tomato_fit_signed(int64_t v, int bits, int position) {
     if (v < -((int64_t)1 << (bits - 1)) || v >= ((int64_t)1 << (bits - 1))) {
         char msg[128];
         snprintf(msg, sizeof msg, "input %d (%lld) does not fit int[length=%d]", position, (long long)v, bits);
-        tomato_fail(msg);
+        tomato_fail_id(353, msg);
     }
 }
 
@@ -280,7 +297,7 @@ void tomato_fit_unsigned(uint64_t v, int bits, int position) {
     if (v >= ((uint64_t)1 << bits)) {
         char msg[128];
         snprintf(msg, sizeof msg, "input %d (%llu) does not fit uint[length=%d]", position, (unsigned long long)v, bits);
-        tomato_fail(msg);
+        tomato_fail_id(353, msg);
     }
 }
 
@@ -311,7 +328,7 @@ NOINLINE static void *pool_refill(int64_t cls) {
     size_t need = (size_t)cls * 16;
     if ((size_t)(pool_end - pool_cur) < need) {
         char *c = malloc(POOL_CHUNK);
-        if (!c) tomato_fail("out of memory");
+        if (!c) out_of_memory();
         pool_cur = c; pool_end = c + POOL_CHUNK;
     }
     void *p = pool_cur;
@@ -343,7 +360,7 @@ void *tomato_alloc(int64_t size, int64_t type) {
 #endif
     {
         h = calloc(1, (size_t)size);
-        if (!h) tomato_fail("out of memory");
+        if (!h) out_of_memory();
     }
     h->rc = 1;
     h->type = type;
@@ -571,7 +588,7 @@ void *tomato_str_slice3(void *a, int64_t lo, int64_t hi, int64_t step, int flags
         return str_new(s->data + from, to - from);
     }
     char *out = malloc((size_t)s->bytes + 1);
-    if (!out) tomato_fail("out of memory");
+    if (!out) out_of_memory();
     int64_t at = 0;
     for (int64_t k = 0; k < n; k++) {
         int64_t i = start + k * step;
@@ -705,12 +722,12 @@ void *tomato_str_replace(void *src, void *a, void *b) {
     Str *s = src, *x = a, *y = b;
     int64_t cap = s->bytes + 1, len = 0, at = 0;
     char *out = malloc((size_t)cap);
-    if (!out) tomato_fail("out of memory");
+    if (!out) out_of_memory();
     while (at <= s->bytes) {
         int64_t hit = find_bytes(s, x, at);
         int64_t upto = hit < 0 ? s->bytes : hit;
         int64_t need = len + (upto - at) + (hit < 0 ? 0 : y->bytes) + 1;
-        if (need > cap) { cap = need * 2; out = realloc(out, (size_t)cap); if (!out) tomato_fail("out of memory"); }
+        if (need > cap) { cap = need * 2; out = realloc(out, (size_t)cap); if (!out) out_of_memory(); }
         memcpy(out + len, s->data + at, (size_t)(upto - at));
         len += upto - at;
         if (hit < 0) break;
@@ -1140,7 +1157,7 @@ static int32_t case_map(const int32_t (*rows)[4], int n, int32_t cp) {
 static void *change_case(void *src, int upper) {
     Str *s = src;
     char *t = malloc((size_t)s->bytes * 3 + 1);   /* a mapped letter never grows by more than 2 bytes */
-    if (!t) tomato_fail("out of memory");
+    if (!t) out_of_memory();
     int64_t i = 0, o = 0;
     const unsigned char *p = (const unsigned char *)s->data;
     while (i < s->bytes) {
@@ -1199,7 +1216,7 @@ void *tomato_open_error(void *path) {
     const char *why = open_errno ? strerror(open_errno) : "unknown error";
     size_t n = (size_t)p->bytes + strlen(why) + 32;
     char *t = malloc(n);
-    if (!t) tomato_fail("out of memory");
+    if (!t) out_of_memory();
     int len = snprintf(t, n, "could not open '%s': %s", p->data, why);
     void *r = str_new(t, len);
     free(t);
@@ -1211,9 +1228,9 @@ void *tomato_file_read(void *f) {
     int64_t cap = 4096, len = 0;
     char *out = malloc((size_t)cap);
     size_t got;
-    if (!out) tomato_fail("out of memory");
+    if (!out) out_of_memory();
     while ((got = fread(buf, 1, sizeof buf, f)) > 0) {
-        if (len + (int64_t)got > cap) { cap = (len + (int64_t)got) * 2; out = realloc(out, (size_t)cap); if (!out) tomato_fail("out of memory"); }
+        if (len + (int64_t)got > cap) { cap = (len + (int64_t)got) * 2; out = realloc(out, (size_t)cap); if (!out) out_of_memory(); }
         memcpy(out + len, buf, got);
         len += (int64_t)got;
     }
@@ -1238,9 +1255,9 @@ void *tomato_input(void *prompt) {
     fwrite(((Str *)prompt)->data, 1, (size_t)((Str *)prompt)->bytes, stdout);
     fflush(stdout);
     out = malloc((size_t)cap);
-    if (!out) tomato_fail("out of memory");
+    if (!out) out_of_memory();
     while ((c = getc(stdin)) != EOF && c != '\n') {
-        if (len + 1 > cap) { cap *= 2; out = realloc(out, (size_t)cap); if (!out) tomato_fail("out of memory"); }
+        if (len + 1 > cap) { cap *= 2; out = realloc(out, (size_t)cap); if (!out) out_of_memory(); }
         out[len++] = (char)c;
     }
     if (c == EOF && len == 0) {
@@ -1273,7 +1290,7 @@ void tomato_q_push(void *f) {
         if (ready_q.n == ready_q.cap) {
             ready_q.cap = ready_q.cap ? ready_q.cap * 2 : 16;
             ready_q.items = realloc(ready_q.items, (size_t)ready_q.cap * sizeof(void *));
-            if (!ready_q.items) tomato_fail("out of memory");
+            if (!ready_q.items) out_of_memory();
         }
     }
     ready_q.items[ready_q.n++] = f;
@@ -1286,11 +1303,11 @@ void *tomato_q_pop(void) {
 
 void tomato_task_wait(void *h, void *me) {
     PtrVec *v = *(PtrVec **)((char *)h + 40);
-    if (!v) { v = calloc(1, sizeof *v); if (!v) tomato_fail("out of memory"); *(PtrVec **)((char *)h + 40) = v; }
+    if (!v) { v = calloc(1, sizeof *v); if (!v) out_of_memory(); *(PtrVec **)((char *)h + 40) = v; }
     if (v->n == v->cap) {
         v->cap = v->cap ? v->cap * 2 : 4;
         v->items = realloc(v->items, (size_t)v->cap * sizeof(void *));
-        if (!v->items) tomato_fail("out of memory");
+        if (!v->items) out_of_memory();
     }
     tomato_retain(me);
     v->items[v->n++] = me;
@@ -1309,7 +1326,7 @@ void tomato_input_wait(void *frame, void *prompt) {
     if (in_n == in_cap) {
         in_cap = in_cap ? in_cap * 2 : 4;
         in_q = realloc(in_q, (size_t)in_cap * sizeof *in_q);
-        if (!in_q) tomato_fail("out of memory");
+        if (!in_q) out_of_memory();
     }
     tomato_retain(frame); tomato_retain(prompt);
     in_q[in_n].frame = frame; in_q[in_n].prompt = prompt; in_n++;
@@ -1348,7 +1365,7 @@ void tomato_sleep_wait(void *frame, double seconds) {
     if (sl_n == sl_cap) {
         sl_cap = sl_cap ? sl_cap * 2 : 4;
         sl_q = realloc(sl_q, (size_t)sl_cap * sizeof *sl_q);
-        if (!sl_q) tomato_fail("out of memory");
+        if (!sl_q) out_of_memory();
     }
     tomato_retain(frame);
     sl_q[sl_n].frame = frame; sl_q[sl_n].wake = sl_now + seconds; sl_q[sl_n].seq = sl_seq++; sl_n++;
@@ -1388,7 +1405,7 @@ static HttpReq **http_t; static int64_t http_n;      /* by handle: index + 1 */
 static int64_t http_active;                          /* requests added to curl and not finished */
 
 static HttpReq *http_get(int64_t id) { return (id >= 1 && id <= http_n) ? http_t[id - 1] : NULL; }
-static char *http_dup(const char *s) { size_t n = strlen(s); char *p = malloc(n + 1); if (!p) tomato_fail("out of memory"); memcpy(p, s, n + 1); return p; }
+static char *http_dup(const char *s) { size_t n = strlen(s); char *p = malloc(n + 1); if (!p) out_of_memory(); memcpy(p, s, n + 1); return p; }
 static void http_fail(HttpReq *r, int kind, const char *msg) { char *copy = http_dup(msg); r->done = 1; r->kind = kind; free(r->err); r->err = copy; }
 
 #if !defined(TOMATO_WASM) && !defined(__wasi__)
@@ -1462,7 +1479,7 @@ static void http_append(char **buf, int64_t *n, int64_t *cap, const char *p, siz
         int64_t c = *cap ? *cap : 4096;
         while (*n + (int64_t)len + 1 > c) c *= 2;
         char *nb = realloc(*buf, (size_t)c);
-        if (!nb) tomato_fail("out of memory");
+        if (!nb) out_of_memory();
         *buf = nb; *cap = c;
     }
     memcpy(*buf + *n, p, len); *n += (int64_t)len; (*buf)[*n] = 0;
@@ -1527,12 +1544,12 @@ static void http_block(int ms) { (void)ms; }
  * lines; body_mode 0 means no body, 1 a body (possibly empty). timeout is in seconds (0 or less: none). */
 int64_t tomato_http_start(void *method, void *url, void *headers, void *body, int64_t body_mode, double timeout, int64_t follow, int64_t max_redirects) {
     HttpReq *r = calloc(1, sizeof *r);
-    if (!r) tomato_fail("out of memory");
+    if (!r) out_of_memory();
     int64_t slot = -1;
     for (int64_t i = 0; i < http_n; i++) if (!http_t[i]) { slot = i; break; }
     if (slot < 0) {
         http_t = realloc(http_t, (size_t)(http_n + 1) * sizeof *http_t);
-        if (!http_t) tomato_fail("out of memory");
+        if (!http_t) out_of_memory();
         slot = http_n++;
     }
     http_t[slot] = r; r->used = 1;
@@ -1546,13 +1563,13 @@ int64_t tomato_http_start(void *method, void *url, void *headers, void *body, in
         http_fail(r, HK_URL, "the url must start with http:// or https://"); return slot + 1;
     }
     char *cu_url = malloc((size_t)u->bytes + 1), *cm = malloc((size_t)m->bytes + 1);
-    if (!cu_url || !cm) tomato_fail("out of memory");
+    if (!cu_url || !cm) out_of_memory();
     memcpy(cu_url, u->data, (size_t)u->bytes); cu_url[u->bytes] = 0;
     memcpy(cm, m->data, (size_t)m->bytes); cm[m->bytes] = 0;
     void *e = cu.easy_init();
     r->easy = e;
     r->err = calloc(1, 256);
-    if (!e || !r->err) tomato_fail("out of memory");
+    if (!e || !r->err) out_of_memory();
     cu.easy_setopt(e, CURLOPT_URL, cu_url);                 /* curl copies strings given to these options */
     cu.easy_setopt(e, CURLOPT_NOSIGNAL, 1L);
     cu.easy_setopt(e, CURLOPT_ERRORBUFFER, r->err);
@@ -1569,14 +1586,14 @@ int64_t tomato_http_start(void *method, void *url, void *headers, void *body, in
     if (strcmp(cm, "POST") == 0) body_mode = 1;
     /* curl does not copy POSTFIELDS, so the request keeps its own copy of the body for the whole transfer */
     if (body_mode) {
-        char *copy = malloc((size_t)b->bytes + 1); if (!copy) tomato_fail("out of memory");
+        char *copy = malloc((size_t)b->bytes + 1); if (!copy) out_of_memory();
         memcpy(copy, b->data, (size_t)b->bytes); copy[b->bytes] = 0; r->post = copy;
         cu.easy_setopt(e, CURLOPT_POSTFIELDSIZE, (long)b->bytes); cu.easy_setopt(e, CURLOPT_POSTFIELDS, copy);
     }
     void *sl = NULL;
     for (int64_t i = 0; i < h->bytes;) {
         int64_t j = i; while (j < h->bytes && h->data[j] != '\n') j++;
-        if (j > i) { char *line = malloc((size_t)(j - i) + 1); if (!line) tomato_fail("out of memory"); memcpy(line, h->data + i, (size_t)(j - i)); line[j - i] = 0; sl = cu.slist_append(sl, line); free(line); }
+        if (j > i) { char *line = malloc((size_t)(j - i) + 1); if (!line) out_of_memory(); memcpy(line, h->data + i, (size_t)(j - i)); line[j - i] = 0; sl = cu.slist_append(sl, line); free(line); }
         i = j + 1;
     }
     r->slist = sl;
@@ -1619,7 +1636,7 @@ void *tomato_http_text(int64_t id) {
     if (!r || !r->body) return tomato_str_from_cstr("");
     const unsigned char *s = (const unsigned char *)r->body; int64_t n = r->body_n, o = 0;
     char *out = malloc((size_t)n * 3 + 1);
-    if (!out) tomato_fail("out of memory");
+    if (!out) out_of_memory();
     for (int64_t i = 0; i < n;) {
         unsigned char c = s[i]; int len = c < 0x80 ? 1 : (c >= 0xC2 && c <= 0xDF) ? 2 : (c >= 0xE0 && c <= 0xEF) ? 3 : (c >= 0xF0 && c <= 0xF4) ? 4 : 0;
         int ok = len > 0 && i + len <= n;
@@ -1761,7 +1778,7 @@ void *tomato_list_push(void *l, int64_t elem_size) {
     if (x->len == x->cap) {
         x->cap = x->cap ? x->cap * 2 : 4;
         x->data = realloc(x->data, (size_t)(x->cap * elem_size));
-        if (!x->data) tomato_fail("out of memory");
+        if (!x->data) out_of_memory();
     }
     return x->data + (x->len++) * elem_size;
 }
@@ -1769,7 +1786,7 @@ void *tomato_list_push(void *l, int64_t elem_size) {
 /* Sets the length of an empty list to n items of `w` bytes and returns its data (the caller fills it in). */
 static char *tomato_list_reserve(List *x, int64_t n, int64_t w) {
     x->data = malloc((size_t)(n * w ? n * w : 1));
-    if (!x->data) tomato_fail("out of memory");
+    if (!x->data) out_of_memory();
     x->cap = n;
     x->len = n;
     return x->data;
@@ -1826,7 +1843,7 @@ void *tomato_list_concat(void *a, void *b, int rc) {
 void *tomato_list_repeat(void *a, int64_t n, int rc) {
     List *x = a;
     List *r = tomato_list_new(((Hdr *)x)->type & TYPE_MASK);
-    if (n > 0 && x->len > 0 && n > (int64_t)1000000000 / x->len) tomato_fail("out of memory");
+    if (n > 0 && x->len > 0 && n > (int64_t)1000000000 / x->len) out_of_memory();
     if (rc >> 2) {      /* compact items: rc >> 2 bytes each */
         int64_t w = rc >> 2;
         if (n <= 0 || x->len == 0) return r;
@@ -1846,9 +1863,9 @@ void *tomato_list_repeat(void *a, int64_t n, int rc) {
 void *tomato_str_repeat(void *a, int64_t n) {
     Str *s = a;
     if (n <= 0 || s->bytes == 0) return str_new("", 0);
-    if (n > (int64_t)1000000000 / s->bytes) tomato_fail("out of memory");
+    if (n > (int64_t)1000000000 / s->bytes) out_of_memory();
     char *out = malloc((size_t)(s->bytes * n) + 1);
-    if (!out) tomato_fail("out of memory");
+    if (!out) out_of_memory();
     for (int64_t k = 0; k < n; k++) memcpy(out + k * s->bytes, s->data, (size_t)s->bytes);
     void *r = str_new(out, s->bytes * n);
     free(out);
@@ -1906,7 +1923,7 @@ void tomato_list_extend(void *l, void *src, int rc) {
             int64_t cap = x->cap ? x->cap : 4;
             while (cap < old + n) cap *= 2;
             x->data = realloc(x->data, (size_t)(cap * w));
-            if (!x->data) tomato_fail("out of memory");
+            if (!x->data) out_of_memory();
             x->cap = cap;
         }
         memmove(x->data + old * w, y->data, (size_t)(n * w));     /* y == x is fine: its data was only moved by the realloc, and y->data is read after it */
@@ -2017,7 +2034,7 @@ static void rebuild_index(Dict *d, int64_t index_cap) {
     free(d->index);
     d->index_cap = index_cap;
     d->index = malloc((size_t)index_cap * sizeof(int32_t));
-    if (!d->index) tomato_fail("out of memory");
+    if (!d->index) out_of_memory();
     for (int64_t i = 0; i < index_cap; i++) d->index[i] = -1;
     for (int64_t i = 0; i < d->used; i++) {
         char *e = ENTRY(d, i);
@@ -2073,7 +2090,7 @@ void *tomato_dict_insert(void *dp, int64_t key, int only_new) {
             compacted = 1;
         } else {
             d->entries = realloc(d->entries, (size_t)(cap * d->stride));
-            if (!d->entries) tomato_fail("out of memory");
+            if (!d->entries) out_of_memory();
             d->cap = cap;
         }
     }
@@ -2205,27 +2222,39 @@ int tomato_str_contains(void *hay, void *needle) {
     return 0;
 }
 
-/* An error nobody caught reached the entry point (D22a). `runtime` is 1 for a failure the language itself raised,
- * whose message is already in the current error mode's form; mode is 1 debug, 2 release (D34b). */
+/* An error nobody caught reached the entry point (D22a). `runtime` is 1 for an implicit check emitted by the
+ * compiler. Mode is 1 debug, 2 release (D34b). */
 static void print_uncaught(void *obj, int line, int runtime, int mode, const char *where) {
     fflush(stdout);
-    Str *msg = *(Str **)((char *)obj + 16);
+    /* The prefix of Error and its subclasses in std/builtin.tom. Pointers are 32-bit on wasm. */
+    typedef struct { Hdr header; Str *message; Str *id; } ErrorFields;
+    ErrorFields *error = obj;
+    Str *msg = error->message;
+    Str *id = error->id;
+    int coded = id && id->bytes >= 3 && id->bytes < 16 && id->data[0] == 'E';
+    for (int i = 1; coded && i < id->bytes; ++i) coded = id->data[i] >= '0' && id->data[i] <= '9';
     if (mode == 1) {
+        char label[32] = "error";
+        if (coded) snprintf(label, sizeof label, "error[%.*s]", (int)id->bytes, id->data);
         const char *cls = tomato_class_names[((Hdr *)obj)->type & TYPE_MASK];
         size_t cl = strlen(cls);
         /* a Diagnostic is a finished compiler error message (compiler/src/diag.tom): shown as it is */
         if (!runtime && cl >= 10 && strcmp(cls + cl - 10, "Diagnostic") == 0) fprintf(stderr, "%.*s\n", (int)msg->bytes, msg->data);
-        else if (runtime) { print_head("error", C_RED, msg->data, (int)msg->bytes); print_trace(); }
+        else if (runtime) {
+            print_head(label, C_RED, msg->data, (int)msg->bytes);
+            print_trace();
+        }
         else {
             size_t room = (size_t)msg->bytes + strlen(cls) + strlen(where) + 48;
             char *text = malloc(room);
+            if (!text) out_of_memory();
             snprintf(text, room, "%s: %.*s (raised on line %d)%s", cls, (int)msg->bytes, msg->data, line, where);
-            print_head("error", C_RED, text, (int)strlen(text));
+            print_head(label, C_RED, text, (int)strlen(text));
             free(text);
             print_trace();
         }
     } else if (mode == 2) {
-        if (runtime) fprintf(stderr, "error %.*s\n", (int)msg->bytes, msg->data);
+        if (coded) fprintf(stderr, "error %.*s:%d\n", (int)id->bytes, id->data, line);
         else fprintf(stderr, "error E11:%d\n", line);
     }
 }
@@ -2342,7 +2371,7 @@ static void frame_dropped(Hdr *h) {
             if (unread_n == unread_cap) {
                 unread_cap = unread_cap ? unread_cap * 2 : 4;
                 unread_q = realloc(unread_q, (size_t)unread_cap * sizeof *unread_q);
-                if (!unread_q) tomato_fail("out of memory");
+                if (!unread_q) out_of_memory();
             }
             tomato_retain(starter); tomato_retain(err);
             unread_q[unread_n++] = (Unread){ starter, err, line, rt };
@@ -2417,7 +2446,7 @@ static void destroy_object(Hdr *h) {
         if (pending_n == pending_cap) {
             pending_cap = pending_cap ? pending_cap * 2 : 64;
             pending = realloc(pending, (size_t)pending_cap * sizeof(Hdr *));
-            if (!pending) tomato_fail("out of memory");
+            if (!pending) out_of_memory();
         }
         pending[pending_n++] = h;
         return;
@@ -2436,7 +2465,7 @@ static void spush(Hdr *h) {
     if (stack_n == stack_cap) {
         stack_cap = stack_cap ? stack_cap * 2 : 256;
         stack = realloc(stack, (size_t)stack_cap * sizeof(Hdr *));
-        if (!stack) tomato_fail("out of memory");
+        if (!stack) out_of_memory();
     }
     stack[stack_n++] = h;
 }
@@ -2504,7 +2533,7 @@ static void collect_white(Hdr *s) {
         if (garbage_n == garbage_cap) {
             garbage_cap = garbage_cap ? garbage_cap * 2 : 256;
             garbage = realloc(garbage, (size_t)garbage_cap * sizeof(Hdr *));
-            if (!garbage) tomato_fail("out of memory");
+            if (!garbage) out_of_memory();
         }
         garbage[garbage_n++] = h;
     }
@@ -2554,7 +2583,7 @@ static void possible_root(Hdr *h) {
             if (roots_n == roots_cap) {
                 roots_cap = roots_cap ? roots_cap * 2 : 1024;
                 roots = realloc(roots, (size_t)roots_cap * sizeof(Hdr *));
-                if (!roots) tomato_fail("out of memory");
+                if (!roots) out_of_memory();
             }
             roots[roots_n++] = h;
         }
@@ -2598,7 +2627,7 @@ void *tomato_box_repr(void *b) {
     Str *s = (Str *)w[2];
     int q = (memchr(s->data, '\'', (size_t)s->bytes) && !memchr(s->data, '"', (size_t)s->bytes)) ? '"' : '\'';
     char *t = malloc((size_t)s->bytes * 2 + 3);
-    if (!t) tomato_fail("out of memory");
+    if (!t) out_of_memory();
     int64_t n = 0;
     t[n++] = (char)q;
     for (int64_t i = 0; i < s->bytes; i++) {
@@ -2658,7 +2687,7 @@ static int64_t int_make(int sign, const uint32_t *d, int64_t n) {
         if (sign < 0 && m <= ((uint64_t)1 << 62)) return int_mk_small((int64_t)0 - (int64_t)m);
     }
     Big *b = malloc(sizeof(Big) + (size_t)(n ? n : 1) * 4);
-    if (!b) tomato_fail("out of memory");
+    if (!b) out_of_memory();
     BIG_ADJUST(1);
     b->sign = sign; b->n = n;
     memcpy(b->d, d, (size_t)n * 4);
@@ -2671,7 +2700,7 @@ COLD static int64_t int_dup_slow(int64_t x) {
     Big *b = (Big *)(uintptr_t)x;
     size_t size = sizeof(Big) + (size_t)(b->n ? b->n : 1) * 4;
     Big *c = malloc(size);
-    if (!c) tomato_fail("out of memory");
+    if (!c) out_of_memory();
     BIG_ADJUST(1);
     memcpy(c, b, size);
     return (int64_t)(uintptr_t)c;
@@ -2719,7 +2748,7 @@ static int64_t mag_sub(const uint32_t *a, int64_t an, const uint32_t *b, int64_t
 
 static int64_t int_add_signed(int sa, const uint32_t *a, int64_t an, int sb, const uint32_t *b, int64_t bn) {
     uint32_t *out = malloc(((size_t)(an > bn ? an : bn) + 2) * 4);
-    if (!out) tomato_fail("out of memory");
+    if (!out) out_of_memory();
     int64_t r; int sign;
     if (sa == sb) { r = mag_add(a, an, b, bn, out); sign = sa; }
     else {
@@ -2795,7 +2824,7 @@ COLD static int64_t int_mul_slow(int64_t x, int64_t y) {
         uint64_t m = (uint64_t)sm->d[0] | (sm->n > 1 ? (uint64_t)sm->d[1] << 32 : 0);
         int64_t n = big->n, pairs = n / 2;
         Big *r = malloc(sizeof(Big) + (size_t)(n + 2) * 4);
-        if (!r) tomato_fail("out of memory");
+        if (!r) out_of_memory();
         BIG_ADJUST(1);
         unsigned __int128 carry = 0;
         for (int64_t i = 0; i < pairs; i++) {
@@ -2814,7 +2843,7 @@ COLD static int64_t int_mul_slow(int64_t x, int64_t y) {
     }
     int64_t rn = a.n + b.n;
     Big *res = calloc(1, sizeof(Big) + (size_t)rn * 4);
-    if (!res) tomato_fail("out of memory");
+    if (!res) out_of_memory();
     BIG_ADJUST(1);
     uint32_t *out = res->d;
     for (int64_t i = 0; i < a.n; i++) {
@@ -2848,7 +2877,7 @@ static void mag_divmod(const uint32_t *u, int64_t un, const uint32_t *v, int64_t
     }
     int s = __builtin_clz(v[vn - 1]);
     uint32_t *vn_ = malloc((size_t)vn * 4), *un_ = malloc((size_t)(un + 1) * 4);
-    if (!vn_ || !un_) tomato_fail("out of memory");
+    if (!vn_ || !un_) out_of_memory();
     for (int64_t i = vn - 1; i > 0; i--) vn_[i] = s ? (v[i] << s) | (v[i - 1] >> (32 - s)) : v[i];
     vn_[0] = v[0] << s;
     un_[un] = s ? u[un - 1] >> (32 - s) : 0;
@@ -2894,7 +2923,7 @@ static void int_floordivmod(int64_t x, int64_t y, int64_t *quot, int64_t *rem) {
     }
     IntView a, b; int_view(x, &a); int_view(y, &b);
     uint32_t *q = malloc((size_t)(a.n + 1) * 4), *r = malloc((size_t)(b.n + 1) * 4);
-    if (!q || !r) tomato_fail("out of memory");
+    if (!q || !r) out_of_memory();
     mag_divmod(a.d, a.n, b.d, b.n, q, r);
     int64_t qn = a.n, rn = b.n;
     int differ = a.sign != b.sign;
@@ -2903,7 +2932,7 @@ static void int_floordivmod(int64_t x, int64_t y, int64_t *quot, int64_t *rem) {
     if (differ && rn > 0) {
         uint32_t *q1 = malloc((size_t)(qn + 2) * 4), one[1] = {1};
         uint32_t *r1 = malloc((size_t)(b.n + 1) * 4);
-        if (!q1 || !r1) tomato_fail("out of memory");
+        if (!q1 || !r1) out_of_memory();
         int64_t q1n = mag_add(q, qn, one, 1, q1);
         int64_t r1n = mag_sub(b.d, b.n, r, rn, r1);
         qw = int_make(-1, q1, q1n); rw = int_make(b.sign, r1, r1n);
@@ -3061,7 +3090,7 @@ void *tomato_list_sorted(void *src, int kind) {
     List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
     if (n == 0) return r;
     r->data = malloc((size_t)n * 8);
-    if (!r->data) tomato_fail("out of memory");
+    if (!r->data) out_of_memory();
     r->cap = n;
     r->len = n;
     int64_t *a = (int64_t *)r->data;
@@ -3126,7 +3155,7 @@ void *tomato_list_sorted_by(void *src, void *keys, int kind, int rc) {
     List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
     if (n == 0) return r;
     KeyPos *a = malloc((size_t)n * 2 * sizeof(KeyPos));
-    if (!a) tomato_fail("out of memory");
+    if (!a) out_of_memory();
     KeyPos *tmp = a + n;
     int small = 1;
     for (int64_t i = 0; i < n; i++) {
@@ -3187,7 +3216,7 @@ void *tomato_list_sorted_cmp(void *src, void *fn, void **exc, int rc) {
     List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
     if (n == 0) return r;
     int64_t *a = malloc((size_t)n * 8), *tmp = malloc((size_t)n * 8);
-    if (!a || !tmp) tomato_fail("out of memory");
+    if (!a || !tmp) out_of_memory();
     for (int64_t i = 0; i < n; i++) a[i] = item_copy(rc, LIST_SLOT(l, i, int64_t));
     const int64_t BLOCK = 16;
     int64_t *s = a, *d = tmp;
@@ -3240,7 +3269,7 @@ failed:
 
 int64_t tomato_int_pow(int64_t base, int64_t exp) {
     /* the exponent is not negative (the caller checked) and small enough to count */
-    if (!int_is_small(exp)) tomato_fail("the exponent is too big");
+    if (!int_is_small(exp)) tomato_fail_id(344, "the exponent is too big");
     int64_t e = int_small_val(exp), result = int_mk_small(1), b = base;
     int own_b = 0;                                    /* b is the caller's base until it is squared for the first time */
     while (e > 0) {
@@ -3256,10 +3285,10 @@ int64_t tomato_int_pow(int64_t base, int64_t exp) {
  * small whole number, not negative. The _c forms free an operand that the caller owns, like the arithmetic ones. */
 #define INT_MAX_SHIFT ((int64_t)1 << 31)
 static int64_t int_shift_count(int64_t n) {
-    if (!int_is_small(n)) tomato_fail("the shift count is too big");
+    if (!int_is_small(n)) tomato_fail_id(345, "the shift count is too big");
     int64_t c = int_small_val(n);
-    if (c < 0) tomato_fail("negative shift count");
-    if (c >= INT_MAX_SHIFT) tomato_fail("the shift count is too big");
+    if (c < 0) tomato_fail_id(346, "negative shift count");
+    if (c >= INT_MAX_SHIFT) tomato_fail_id(345, "the shift count is too big");
     return c;
 }
 COLD static int64_t int_shl_slow_c(int64_t x, int64_t n, int32_t m) {
@@ -3344,7 +3373,7 @@ int32_t tomato_int_in_range(int64_t x, int32_t bits, int32_t is_signed) {
 COLD static int64_t int_raw_slow(int64_t x) {
     IntView a; int_view(x, &a);
     if (a.n <= 2 && tomato_int_in_range(x, 64, 1)) return tomato_int_low64(x);
-    tomato_fail("the number is too big here");
+    tomato_fail_id(347, "the number is too big here");
     return 0;
 }
 
@@ -3372,7 +3401,7 @@ void *tomato_int_str(int64_t x) {
     IntView a; int_view(x, &a);
     uint32_t *t = malloc((size_t)a.n * 4);
     char *buf = malloc((size_t)a.n * 10 + 3);
-    if (!t || !buf) tomato_fail("out of memory");
+    if (!t || !buf) out_of_memory();
     memcpy(t, a.d, (size_t)a.n * 4);
     int64_t n = a.n, len = 0;
     while (n > 0) {
@@ -3444,7 +3473,7 @@ static int64_t int_from_digits(const char *s, int64_t len, int *ok) {
     }
     int64_t cap = len / 9 + 2;
     uint32_t *d = calloc((size_t)cap, 4);
-    if (!d) tomato_fail("out of memory");
+    if (!d) out_of_memory();
     int64_t n = 0;
     for (; i < len; i++) {
         if (s[i] < '0' || s[i] > '9') { free(d); *ok = 0; return 0; }
@@ -3514,7 +3543,7 @@ int64_t tomato_int_parse_cstr(const char *text, int position) {
 
 /* & | ^ on small numbers (two's complement); very large numbers are not supported */
 int64_t tomato_int_bitop(int64_t x, int64_t y, int32_t op) {
-    if (!(int_is_small(x) && int_is_small(y))) tomato_fail("the bitwise operators & | ^ do not work on very large integers");
+    if (!(int_is_small(x) && int_is_small(y))) tomato_fail_id(348, "the bitwise operators & | ^ do not work on very large integers");
     int64_t a = int_small_val(x), b = int_small_val(y);
     return int_mk_small(op == 0 ? (a & b) : (op == 1 ? (a | b) : (a ^ b)));
 }
@@ -3636,7 +3665,7 @@ static int jstring(JScan *j, int64_t *ip) {
     if (!esc) jstr_push(j, s + start + 1, i - start - 1);
     else {                                      /* pass 2: decode (the text is valid now); the result is never longer than the source */
         char *buf = malloc((size_t)(i - start));
-        if (!buf) tomato_fail("out of memory");
+        if (!buf) out_of_memory();
         int64_t o = 0;
         for (int64_t k = start + 1; k < i;) {
             char c = s[k];
@@ -3693,7 +3722,7 @@ static int jnumber(JScan *j, int64_t *ip) {
     } else {
         char small[64]; int64_t len = i - st;
         char *buf = len < 64 ? small : malloc((size_t)len + 1);
-        if (!buf) tomato_fail("out of memory");
+        if (!buf) out_of_memory();
         memcpy(buf, s + st, (size_t)len); buf[len] = 0;
         double d = strtod(buf, NULL);
         if (buf != small) free(buf);
@@ -3791,7 +3820,7 @@ void *tomato_json_quote(void *text, int64_t ascii) {
         return r;
     }
     char *out = malloc((size_t)t->bytes * 6 + 8);    /* the worst case is a control character, 1 byte to 6 */
-    if (!out) tomato_fail("out of memory");
+    if (!out) out_of_memory();
     int64_t o = 0;
     static const char hex[] = "0123456789abcdef";
     out[o++] = '"';
@@ -4002,7 +4031,7 @@ static int mvalue(JScan *j, int64_t *ip, int depth) {
 static unsigned char *mbytes(void *list, int64_t *bad) {
     List *l = list;
     unsigned char *buf = malloc((size_t)l->len + 1);
-    if (!buf) tomato_fail("out of memory");
+    if (!buf) out_of_memory();
     for (int64_t k = 0; k < l->len; k++) {
         int64_t w = LIST_SLOT(l, k, int64_t);
         int64_t v = w == 0 ? 0 : (w & 1) ? (w >> 1) : -1;
@@ -4052,7 +4081,7 @@ void tomato_mp_str(void *out, void *text) {
         int64_t cap = l->cap ? l->cap : 4;
         while (cap < l->len + n) cap *= 2;
         l->data = realloc(l->data, (size_t)(cap * 8));
-        if (!l->data) tomato_fail("out of memory");
+        if (!l->data) out_of_memory();
         l->cap = cap;
     }
     for (int64_t k = 0; k < n; k++) LIST_SLOT(l, l->len + k, int64_t) = int_mk_small((unsigned char)t->data[k]);

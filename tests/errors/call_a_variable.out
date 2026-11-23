@@ -1,4 +1,4 @@
-error: 'x' is a variable, not a function, so it cannot be called
+error[E337]: 'x' is a variable, not a function, so it cannot be called
  --> tests/errors/call_a_variable.tom:4:5
   |
 4 |     x(3)

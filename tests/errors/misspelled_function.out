@@ -1,4 +1,4 @@
-error: the function 'totl' is not defined
+error[E340]: the function 'totl' is not defined
  --> tests/errors/misspelled_function.tom:6:11
   |
 6 |     print(totl(1, 2))

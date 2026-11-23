@@ -629,19 +629,66 @@ class Mod:
         self.code_index[t] = code
         return code
 
-    def failure_text(self, message: str, line: int) -> str:
-        # what a failure the language raises says in this build mode (D34b): the message, or a short code
-        if self.mode == 1:
-            return message
-        kind = 99
+    def error_kind(self, message: str) -> int:
+        # compiler-emitted runtime failures use the longest matching runtime prefix in std/errors.txt
+        best = 0
+        best_len = 0
         for k, known in enumerate(self.errors):
-            if known != '' and message.startswith(known):
-                kind = k + 1
-                break
-        text = str(kind)
+            at = known.find(' ')
+            if at < 0 or known.startswith('CompileError '):
+                continue
+            text = known[at + 1:]
+            if len(text) > best_len and message.startswith(text):
+                best = k + 1
+                best_len = len(text)
+        return best
+
+    def compile_error_kind(self, message: str) -> int:
+        # Ids are found by matching the message text, not attached at the 244 raise sites: a new message needs one line in std/errors.txt
+        # (tests/run.sh checks every template in the compiler has one), and the template with the most fixed text wins, so a general
+        # template such as "{} has no method '{}'" only applies when no more specific one fits.
+        # the id of a compile-time error: the CompileError entry of std/errors.txt whose template ({} stands for any text) fits the
+        # first line of the message, the one with the most fixed text; 0 if none
+        head = message.split('\n')[0]
+        best = 0
+        best_len = 0
+        for k, known in enumerate(self.errors):
+            if not known.startswith('CompileError '):
+                continue
+            pieces = known[13:].split('{}')
+            fixed = len(known) - 13 - 2 * (len(pieces) - 1)
+            if fixed <= best_len or not head.startswith(pieces[0]):
+                continue
+            if len(pieces) == 1 and head != pieces[0]:
+                continue
+            at = len(pieces[0])
+            fits = True
+            for p in range(1, len(pieces) - 1):
+                found = head[at:].find(pieces[p])
+                if found < 0:
+                    fits = False
+                    break
+                at += found + len(pieces[p])
+            if len(pieces) > 1:
+                tail = pieces[len(pieces) - 1]
+                fits = fits and head[at:].endswith(tail)
+            if fits:
+                best = k + 1
+                best_len = fixed
+        return best
+
+    def error_id(self, kind: int) -> str:
+        if kind == 0:
+            return ''
         if kind < 10:
-            text = f'0{text}'
-        return f'E{text}:{line}'
+            return f'E0{kind}'
+        return f'E{kind}'
+
+    def error_class(self, kind: int) -> str:
+        if kind == 0:
+            return 'RuntimeError'
+        known = self.errors[kind - 1]
+        return known[:known.find(' ')]
 
     def declare(self, text: str):
         if text not in self.decls:
@@ -1740,8 +1787,25 @@ class Gen:
             self.emit(f'{r} = call i64 @tomato_int_from_u64(i64 {raw})')
         return exf(r, 'int')
 
-    def int_raw(self, e: Ex) -> str:
-        # the machine number for places that need one (an index, a range bound); stops when the int is too big. The int is used up.
+    def int_raw(self, e: Ex, live: list[Ex] = []) -> str:
+        # the machine number for places that need one (an index, a range bound). The int is used up.
+        if not e.small and not small_text(e.reg):
+            # Keep the extra range test off the tagged small-integer path.
+            tagged = self.tmp('rawtag')
+            small = self.tmp('rawsmall')
+            check = self.label('rawcheck')
+            ready = self.label('rawready')
+            self.emit(f'{tagged} = and i64 {e.reg}, 1')
+            self.emit(f'{small} = icmp ne i64 {tagged}, 0')
+            self.cond_br(small, ready, check)
+            self.place(check)
+            fits = self.tmp('rawfits')
+            large = self.tmp('rawlarge')
+            self.emit(f'{fits} = call i32 @tomato_int_in_range(i64 {e.reg}, i32 64, i32 1)')
+            self.emit(f'{large} = icmp eq i32 {fits}, 0')
+            self.fail_if(large, 'the number is too big here', live + [e])
+            self.br(ready)
+            self.place(ready)
         r = self.tmp('raw')
         if self.consumable(e):
             self.emit(f'{r} = call i64 @tomato_int_raw_c(i64 {e.reg}, i32 1)')
@@ -1961,6 +2025,14 @@ class Gen:
         x = self.resize(a, t)
         y = self.resize(b, t)
         if t == 'int':
+            if not ((x.small or small_text(x.reg)) and (y.small or small_text(y.reg))):
+                both = self.tmp('bittags')
+                tag = self.tmp('bittag')
+                large = self.tmp('bitlarge')
+                self.emit(f'{both} = and i64 {x.reg}, {y.reg}')
+                self.emit(f'{tag} = and i64 {both}, 1')
+                self.emit(f'{large} = icmp eq i64 {tag}, 0')
+                self.fail_if(large, 'the bitwise operators & | ^ do not work on very large integers', [x, y])
             code = '0'
             if op == '|':
                 code = '1'
@@ -1985,6 +2057,19 @@ class Gen:
         # negative. A fixed-width result is range-checked like the other arithmetic.
         x = self.resize(a, 'int')
         y = self.resize(b, 'int')
+        tag = self.tmp('shifttag')
+        big = self.tmp('shiftbig')
+        long = self.tmp('shiftlong')
+        large = self.tmp('shiftlarge')
+        negative = self.tmp('shiftnegative')
+        self.emit(f'{tag} = and i64 {y.reg}, 1')
+        self.emit(f'{big} = icmp eq i64 {tag}, 0')
+        # The runtime accepts a count below 2**31. A small integer is encoded as 2*n+1.
+        self.emit(f'{long} = icmp sge i64 {y.reg}, 4294967297')
+        self.emit(f'{large} = or i1 {big}, {long}')
+        self.fail_if(large, 'the shift count is too big', [x, y])
+        self.emit(f'{negative} = icmp slt i64 {y.reg}, 0')
+        self.fail_if(negative, 'negative shift count', [x, y])
         name = 'shl' if op == '<<' else 'shr'
         r = self.int_call_c(name, x, y)
         if a.ty != 'int':
@@ -2002,6 +2087,12 @@ class Gen:
         negative = self.tmp('negexp')
         self.emit(f'{negative} = icmp slt i32 {sign}, 0')
         self.fail_if(negative, 'a negative exponent needs a float', [x, y])
+        if not y.small and not small_text(y.reg):
+            tag = self.tmp('exptag')
+            large = self.tmp('explarge')
+            self.emit(f'{tag} = and i64 {y.reg}, 1')
+            self.emit(f'{large} = icmp eq i64 {tag}, 0')
+            self.fail_if(large, 'the exponent is too big', [x, y])
         r = self.tmp('pow')
         self.emit(f'{r} = call i64 @tomato_int_pow(i64 {x.reg}, i64 {y.reg})')
         self.release(x)
@@ -2238,9 +2329,9 @@ class Gen:
             self.release(self.held[k])
 
     def fail_if(self, bad: str, message: str, live: list[Ex] = []):
-        # bad is an i1; when true, a RuntimeError is raised, which a catch can handle (D22a). live are the owned operands of the
+        # bad is an i1; when true, raise the specific RuntimeError subclass (D22a). live are the owned operands of the
         # failing operation itself, which the error path frees together with the temporaries held by the enclosing expressions.
-        self.fail_with(bad, 'RuntimeError', message, live)
+        self.fail_with(bad, self.mod.error_class(self.mod.error_kind(message)), message, live)
 
     def fail_with(self, bad: str, cls: str, message: str, live: list[Ex] = []):
         stop = self.label('stop')
@@ -2249,15 +2340,18 @@ class Gen:
         self.place(stop)
         for v in live:
             self.release(v)
-        self.raise_here(cls, self.mod.intern(self.mod.failure_text(message, self.line)), False)
+        self.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)))
         self.place(ok)
 
-    def raise_here(self, cls: str, text: str, owned: bool):
+    def raise_here(self, cls: str, text: str, owned: bool, id: str):
         # raise a runtime failure of class cls with the message text (a text value; owned: released once the error holds it) and
         # leave the function
         self.release_held()
         err = self.tmp('err')
-        self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(ptr ' + text + ')')
+        args = 'ptr ' + text
+        if self.mod.has_class(cls) and len(self.mod.find_method(cls, self.mod.find_class(cls, self.line).init, self.line).ptypes) == 2:
+            args += ', ptr ' + self.mod.intern(id if id != '' else 'E371')
+        self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(' + args + ')')
         if owned:
             self.emit(f'call void @tomato_release(ptr {text})')
         self.emit(f'store ptr {err}, ptr @tomato_exc')
@@ -2455,10 +2549,10 @@ class Gen:
         n = self.want(count, 'int', line, 'the repeat count')
         r = self.tmp('repeated')
         if seq.ty == 'str':
-            self.emit(f'{r} = call ptr @tomato_str_repeat(ptr {seq.reg}, i64 {self.int_raw(n)})')
+            self.emit(f'{r} = call ptr @tomato_str_repeat(ptr {seq.reg}, i64 {self.int_raw(n, [seq])})')
         else:
             rc = list_flags(seq.ty)
-            self.emit(f'{r} = call ptr @tomato_list_repeat(ptr {seq.reg}, i64 {self.int_raw(n)}, i32 {rc})')
+            self.emit(f'{r} = call ptr @tomato_list_repeat(ptr {seq.reg}, i64 {self.int_raw(n, [seq])}, i32 {rc})')
         self.release(seq)
         return ex(r, seq.ty)
 
@@ -3036,7 +3130,7 @@ class Gen:
             li = self.expr(val_node(n.fields[1]))
             li = self.want(li, 'int', n.line, 'an index')
             self.drop_held(held_before)
-            addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li)), 'int'), [s])
+            addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li, [s])), 'int'), [s])
             lent = s.reg.startswith('%bl.') and ((lend and elem_of(s.ty) == 'int') or (as_base and is_rc(elem_of(s.ty))))
             item = self.load_item(s.ty, addr, 'bl' if lent else 'item')
             e = ex(item, elem_of(s.ty))
@@ -3050,7 +3144,7 @@ class Gen:
         i = self.want(i, 'int', n.line, 'an index')
         self.drop_held(held_before)
         r = self.tmp('ch')
-        self.emit(f'{r} = call ptr @tomato_str_index(ptr {s.reg}, i64 {self.int_raw(i)})')
+        self.emit(f'{r} = call ptr @tomato_str_index(ptr {s.reg}, i64 {self.int_raw(i, [s])})')
         bad = self.tmp('oob')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
         self.fail_if(bad, 'index out of range', [s])
@@ -3770,13 +3864,13 @@ class Gen:
         for k, a in enumerate(args):
             v = self.expr(a, info.ptypes[k])
             v = self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of !' + name)
-            held.append(v)
             reg = v.reg
             if v.ty == 'bool':
                 reg = self.tmp('bit')
                 self.emit(f'{reg} = trunc i64 {v.reg} to i1')
             elif v.ty == 'int':
-                reg = self.int_raw(v)
+                reg = self.int_raw(v, held)
+            held.append(v)
             parts.append(f'{self.llvm_type_of(v.ty)} {reg}')
             types.append(self.llvm_type_of(v.ty))
         ret = self.llvm_type_of(info.ret) if info.ret != '' else 'void'
@@ -4175,7 +4269,7 @@ class Gen:
             idx = ''
             if len(args) == 1:
                 li = self.want(self.expr(args[0]), 'int', line, 'the index given to pop()')
-                idx = self.int_raw(li)
+                idx = self.int_raw(li, [obj])
             empty = self.tmp('empty')
             self.emit(f'{empty} = icmp eq i64 {self.list_len(obj)}, 0')
             self.fail_if(empty, 'pop from an empty list')
@@ -4193,7 +4287,7 @@ class Gen:
             if len(args) != 2:
                 raise CompileError('insert() takes an index and an item: insert(index, item)', line)
             li = self.want(self.expr(args[0]), 'int', line, 'the index given to insert()')
-            raw = self.int_raw(li)
+            raw = self.int_raw(li, [obj])
             v = self.expr(args[1], elem)
             v = self.want(v, elem, line, 'the inserted item')
             v = self.owned(v)
@@ -4426,14 +4520,14 @@ class Gen:
             start = self.want(self.expr(args[1]), 'int', line, 'the start of ' + name)
             stop = '4611686018427387903'
             if len(args) == 3:
-                stop = self.int_raw(self.want(self.expr(args[2]), 'int', line, 'the end of ' + name))
+                stop = self.int_raw(self.want(self.expr(args[2]), 'int', line, 'the end of ' + name), [obj, a[0], start])
             mode = '0'
             if name == 'rfind':
                 mode = '1'
             elif name == 'count':
                 mode = '2'
             r = self.tmp('found')
-            self.emit(f'{r} = call i64 @tomato_str_search(ptr {obj.reg}, ptr {a[0].reg}, i64 {self.int_raw(start)}, i64 {stop}, i32 {mode})')
+            self.emit(f'{r} = call i64 @tomato_str_search(ptr {obj.reg}, ptr {a[0].reg}, i64 {self.int_raw(start, [obj, a[0]])}, i64 {stop}, i32 {mode})')
             self.release(a[0])
             self.release(obj)
             return self.tag_small(r)
@@ -4521,24 +4615,19 @@ class Gen:
         self.emit(f'{r} = call ptr @tomato_file_open(ptr {path.reg}, ptr {mode.reg})')
         bad = self.tmp('nofile')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
-        if self.mod.mode == 1:
-            # the message names the path and says why (the runtime kept the reason when fopen failed)
-            stop = self.label('stop')
-            ok = self.label('ok')
-            self.cond_br(bad, stop, ok)
-            self.place(stop)
-            text = self.tmp('why')
-            self.emit(f'{text} = call ptr @tomato_open_error(ptr {path.reg})')
-            self.release(path)
-            self.release(mode)
-            self.raise_here('IOError', text, True)
-            self.place(ok)
-            self.release(path)
-            self.release(mode)
-        else:
-            self.release(path)
-            self.release(mode)
-            self.fail_with(bad, 'IOError', 'could not open ')
+        # Caught errors retain the path and reason in both debug and release modes.
+        stop = self.label('stop')
+        ok = self.label('ok')
+        self.cond_br(bad, stop, ok)
+        self.place(stop)
+        text = self.tmp('why')
+        self.emit(f'{text} = call ptr @tomato_open_error(ptr {path.reg})')
+        self.release(path)
+        self.release(mode)
+        self.raise_here('IOError', text, True, 'E25')
+        self.place(ok)
+        self.release(path)
+        self.release(mode)
         return ex(r, 'File')
 
     def input_call(self, args: list[Node], line: int) -> Ex:
@@ -5613,7 +5702,7 @@ class Gen:
             raise CompileError('only list and dict items can be assigned by index', s.line)
         i = self.expr(val_node(target.fields[1]))
         i = self.want(i, 'int', s.line, 'an index')
-        i = ex(self.norm_index(lst, self.int_raw(i)), 'int')
+        i = ex(self.norm_index(lst, self.int_raw(i, [lst])), 'int')
         v = self.expr(val_node(s.fields[1]), elem_of(lst.ty))
         v = self.want(v, elem_of(lst.ty), s.line, 'the assigned item')
         addr = self.list_slot(lst, i)
@@ -6576,7 +6665,7 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         if info.ret == '':
             g.br('epilogue')
         else:
-            g.emit('call void @tomato_fail(ptr ' + mod.intern('the function ended without returning a value') + '.c)')
+            g.emit('call void @tomato_fail_id(i32 354, ptr ' + mod.intern('the function ended without returning a value') + '.c)')
             g.emit('unreachable')
             g.terminated = True
     return finish_function(g, function_symbol(mod, info), sig, info.ret)
@@ -6628,7 +6717,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
         if info.ret == '':
             g.br('epilogue')
         else:
-            g.emit('call void @tomato_fail(ptr ' + mod.intern('the function ended without returning a value') + '.c)')
+            g.emit('call void @tomato_fail_id(i32 354, ptr ' + mod.intern('the function ended without returning a value') + '.c)')
             g.emit('unreachable')
             g.terminated = True
     # the frame's type: the fixed fields, then one per variable
@@ -6714,7 +6803,7 @@ def scheduler_ir(mod: Mod) -> str:
     t += 'go:\n  call void @tomato.sched.step(ptr %f)\n  call void @tomato_release(ptr %f)\n  br label %loop\n'
     t += 'idle:\n  %did = call i32 @tomato_sched_idle()\n  %more = icmp ne i32 %did, 0\n  br i1 %more, label %loop, label %done\n'
     t += 'done:\n  call void @tomato_pending_flush()\n  %sp = getelementptr i8, ptr %main, i64 32\n  %st = load i64, ptr %sp\n  %fin = icmp ne i64 %st, 0\n  br i1 %fin, label %finished, label %stuck\n'
-    t += 'stuck:\n  call void @tomato_fail(ptr ' + mod.intern('every task is waiting for something that can no longer happen') + '.c)\n  unreachable\n'
+    t += 'stuck:\n  call void @tomato_fail_id(i32 355, ptr ' + mod.intern('every task is waiting for something that can no longer happen') + '.c)\n  unreachable\n'
     t += 'finished:\n  %bad = icmp eq i64 %st, 2\n  br i1 %bad, label %raise, label %out\n'
     t += 'raise:\n  call void @tomato.task.raise(ptr %main)\n  br label %out\nout:\n  call void @tomato_release(ptr %main)\n  ret void\n}\n'
     return t
@@ -6848,8 +6937,9 @@ def runtime_tables(mod: Mod) -> str:
             offs.append('i32 -1')
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
-            extra += f'@tomato.name.{slot} = private constant [{str(len(c.display) + 1)} x i8] c"{c.display}\\00"\n'
-            names[slot] = f'ptr @tomato.name.{slot}'
+            if mod.mode == 1:
+                extra += f'@tomato.name.{slot} = private constant [{str(len(c.display) + 1)} x i8] c"{c.display}\\00"\n'
+                names[slot] = f'ptr @tomato.name.{slot}'
         elif is_set(code):
             kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))      # a set of ints says so in its key kind
         elif is_dict(code):
@@ -6876,7 +6966,7 @@ def runtime_tables(mod: Mod) -> str:
 def declarations(mod: Mod) -> str:
     d = 'declare i32 @printf(ptr, ...)\n'
     d += 'declare i32 @putchar(i32)\n'
-    d += 'declare void @tomato_fail(ptr)\n'
+    d += 'declare void @tomato_fail_id(i32, ptr)\n'
     d += 'declare void @tomato_trace(ptr, i32)\n'
     d += 'declare void @tomato_trace_clear()\n'
     d += 'declare void @tomato_leak_check()\n'
@@ -7270,6 +7360,7 @@ def iter_elem(mod: Mod, ty: str) -> str:
 def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     # the Tomato source of a helper function; parameters are written as int and given their real types by helper_types
     head = f'def {name}(x: int) -> str:\n'
+    err = '62' if kind == 'max' else '61'
     if is_class(ty):
         et = iter_elem(mod, ty)
         if kind == 'tolist':
@@ -7283,7 +7374,7 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
         if kind == 'sum':
             return f'{head}    total: {shown(et)} = {zero}\n    for v in x:\n        total = total + v\n    return total\n'
         better = '>' if kind == 'max' else '<'
-        return f"{head}    first = True\n    best: {shown(et)} = {zero}\n    for v in x:\n        if first or v {better} best:\n            best = v\n            first = False\n    if first:\n        raise RuntimeError('{kind}() of an empty sequence')\n    return best\n"
+        return f"{head}    first = True\n    best: {shown(et)} = {zero}\n    for v in x:\n        if first or v {better} best:\n            best = v\n            first = False\n    if first:\n        raise ValueError('{kind}() of an empty sequence', 'E{err}')\n    return best\n"
     if kind == 'show':
         if is_dict(ty):
             body = "    out = '{'\n    first = True\n    for k in x:\n        if not first:\n            out = out + ', '\n        first = False\n"
@@ -7312,7 +7403,7 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
         return f'{head}    total: {shown(elem_of(ty))} = {zero}\n    for v in x:\n        total = total + v\n    return total\n'
     if kind == 'min' or kind == 'max':
         better = '>' if kind == 'max' else '<'
-        return f"{head}    if len(x) == 0:\n        raise RuntimeError('{kind}() of an empty list')\n    best = x[0]\n    for v in x:\n        if v {better} best:\n            best = v\n    return best\n"
+        return f"{head}    if len(x) == 0:\n        raise ValueError('{kind}() of an empty list', 'E{err}')\n    best = x[0]\n    for v in x:\n        if v {better} best:\n            best = v\n    return best\n"
     raise CompileError(f'internal compiler error: no helper of kind {kind}', line)
 
 def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):
@@ -7539,11 +7630,11 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
             mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
 
 def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: str) -> str:
+    table = open(f'{std}errors.txt')
+    mod.errors = table.read().split('\n')
+    table.close()
     if mode == 'release':
         mod.mode = 2
-        table = open(f'{std}errors.txt')
-        mod.errors = table.read().split('\n')
-        table.close()
     elif mode == 'normal':
         raise CompileError("the mode 'normal' was renamed to 'release': use --mode release (the old release mode, which printed nothing, is gone)", 0)
     elif mode != 'debug':
@@ -7690,14 +7781,20 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     out += wrapper
     return out
 
+def error_label(mod: Mod, message: str) -> str:
+    kind = mod.compile_error_kind(message)
+    if kind == 0:
+        kind = 368
+    return 'error[' + mod.error_id(kind) + ']'
+
 def located(mod: Mod, message: str, line: int, col: int, module: str, path: str) -> str:
     # the error as the user sees it: the message, then the place and the source line of the module it is in
     if module in mod.sources:
         where = path
         if module != 'main':
             where = f'{module}.tom'
-        return format_error(message, line, col, mod.sources[module], where)
-    return format_error(message, 0, 0, '', '')
+        return format_error(message, line, col, mod.sources[module], where, error_label(mod, message))
+    return format_error(message, 0, 0, '', '', error_label(mod, message))
 
 export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '') -> str:
     # LLVM IR for the program, or a Diagnostic whose message is the finished error text
@@ -7723,4 +7820,4 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
             for text_line in warning.split('\n'):
                 result += f';! {text_line}\n'
         return result
-    raise Diagnostic('internal compiler error: too many generic copies had to be made early')
+    raise Diagnostic('error[E367]: internal compiler error: too many generic copies had to be made early')

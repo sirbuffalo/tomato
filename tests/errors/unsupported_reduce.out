@@ -1,4 +1,4 @@
-error: 'reduce' is not available
+error[E343]: 'reduce' is not available
  --> tests/errors/unsupported_reduce.tom:4:11
   |
 4 |     print(reduce(xs))

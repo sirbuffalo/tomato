@@ -89,11 +89,11 @@ An error the program raises itself and nobody catches prints `error: ClassName: 
 trace. A `catch` that handles the error discards its trace. At most 24 lines are kept; further ones are counted
 (`... and 3 more calls`). In `--mode release` there is no trace: the program prints only the short code described next.
 
-An error that stops a running program prints `error: MESSAGE`, for example `error: division by zero`. An error the program
-raises itself and nobody catches prints `error: ClassName: message (raised on line N)`. There are two modes (D34b). `--mode debug`
+An error that stops a running program prints its diagnostic ID, for example `error[E01]: division by zero`. An error the program
+raises itself without an ID and nobody catches prints `error: ClassName: message (raised on line N)`. There are two modes (D34b). `--mode debug`
 (the default) prints the readable text above and reports objects that were never freed. `--mode release` prints a short code
-such as `error E01:4` (message kind 1, source line 4) that `tomato explain CODE FILE` turns back into the message and the source
-line, and links the program with a higher optimisation level (`clang -O2` with link-time optimisation, so the runtime is inlined into the program, and no leak report or exit-time cycle collection; debug uses `-O1`). `tomato run`, `build` and
+such as `error E01:4` (error id E01, source line 4) that `tomato explain CODE FILE` turns back into the class, the message and the source
+line (with a caret, like a compiler error), and links the program with a higher optimisation level (`clang -O2` with link-time optimisation, so the runtime is inlined into the program, and no leak report or exit-time cycle collection; debug uses `-O1`). `tomato run`, `build` and
 `compile` all take `--mode`; `--mode normal` is an error that says it was renamed to `release`.
 
 ## For compiler authors
@@ -110,3 +110,31 @@ line, and links the program with a higher optimisation level (`clang -O2` with l
 - `tests/errors/NAME.tom` with the whole expected text in `NAME.out` (the error, or the warnings) is checked by `tests/run.sh`.
 - Color is not the compiler's job: `tomato paint` (awk, in `native/tomato`), `use_color` in `runtime/tomato_rt.c` and
   `tomatoErrors` in `site/site.js` implement the same table.
+
+## Error classes and ids
+
+Built-in errors have an ID formed from `E` and their line number in `std/errors.txt` (`E04` is `IndexError`, `index out of range`). The table
+only grows, so an id never changes meaning. A compile error shows its id in the label (`error[E227]: name 'tets' is not defined`) and an
+uncaught runtime error does too (`error[E04]: index out of range`). A program that catches an error can read `e.id` and `e.message`.
+
+The language raises these classes, all of them a `RuntimeError` (so `catch RuntimeError` catches any of them):
+
+| Class | Raised for |
+| --- | --- |
+| `IndexError` | a list, text or range index or slice out of range; `pop()` from an empty list |
+| `KeyError` | a dict key or set element that is not there |
+| `ValueError` | `int("abc")`, `float("x")`, `chr`/`ord` with a bad argument, a step of 0, a negative shift count, a math domain error such as `sqrt(-1)` |
+| `ZeroDivisionError` | `/`, `//` or `%` by zero |
+| `OverflowError` | integer overflow, a number that does not fit its type, a float result that is infinite |
+| `IOError`, `EOFError`, `CancelledError` | files, the end of input, a cancelled task |
+
+Write your own with `class MyError(RuntimeError)`. To accept a message, give the class an `@init` method that calls
+`RuntimeError.make(self, message)`. The `message` and `id` fields default to `""`. Release builds print `error E04:12` with the ID and the line
+where the error was raised. `tomato explain E04:12 prog.tom` shows the diagnostic and line from the supplied file. `tomato explain E04`
+shows the class and message without a file. A line of zero means the runtime has no source location, for example when startup
+input is invalid or the machine runs out of memory. These process failures and stack exhaustion report an ID and terminate.
+
+To add an error, append a line in the form `Class text` to `std/errors.txt` and keep the existing line numbers. Pass that ID when
+raising an error in the standard library. For a compiler-emitted runtime check, the table text is a prefix of the message.
+For a compile diagnostic, use `CompileError template`, with `{}` for dynamic parts of the first line. The compiler uses the
+most specific matching template and falls back to E368 for unrecognized messages.

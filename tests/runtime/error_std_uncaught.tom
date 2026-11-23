@@ -1,0 +1,5 @@
+from math import sqrt
+
+@main
+def main():
+    print(sqrt(-4.0))

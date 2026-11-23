@@ -1,4 +1,4 @@
-error: a value of type int is never None, so it cannot be compared with None
+error[E169]: a value of type int is never None, so it cannot be compared with None
  --> tests/errors/compare_with_none.tom:4:5
   |
 4 |     if x is None:

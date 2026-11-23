@@ -26,7 +26,7 @@ export def gcd(a: int, b: int) -> int:
 
 export def pow(base: int, exponent: int) -> int:
     if exponent < 0:
-        raise RuntimeError('pow needs a non-negative exponent')
+        raise ValueError('pow needs a non-negative exponent', 'E41')
     result = 1
     for i in range(exponent):
         result *= base
@@ -91,7 +91,7 @@ export def next_prime(n: int) -> int:
 # The largest prime less than n. There is none below 3, so n < 3 raises a RuntimeError.
 export def prev_prime(n: int) -> int:
     if n < 3:
-        raise RuntimeError(f'prev_prime needs n > 2: there is no prime below {n}')
+        raise ValueError(f'prev_prime needs n > 2: there is no prime below {n}', 'E42')
     if n == 3:
         return 2
     c = n - 1
@@ -117,7 +117,7 @@ export def primes_up_to(n: int) -> list[int]:
 # The k-th prime, counting from 1: nth_prime(1) is 2. k < 1 raises a RuntimeError.
 export def nth_prime(k: int) -> int:
     if k < 1:
-        raise RuntimeError('nth_prime needs k >= 1')
+        raise ValueError('nth_prime needs k >= 1', 'E43')
     p = 2
     for i in range(k - 1):
         p = next_prime(p)
@@ -207,7 +207,7 @@ def _fmt(x: float) -> str:
 def _call1(op: int, x: float, what: str) -> float:
     r = !tomato_math1(op, x)
     if !tomato_is_finite(r) == 0:
-        raise RuntimeError(what + ' is too large to be a float')
+        raise OverflowError(what + ' is too large to be a float', 'E44')
     return r
 
 # constants, not functions: write pi, not pi(). (Literals here have at most 16 digits, so these are the nearest floats to the true values.)
@@ -224,7 +224,7 @@ export class Angle:
 
     # how many of this unit make a full turn: 360 for degrees, 6.283185307179586 for radians, 1 for turns, 400 for gradians
     def per_turn(self) -> float:
-        raise RuntimeError('Angle is a base class: make an angle with deg(), rad(), turn() or grad()')
+        raise RuntimeError('Angle is a base class: make an angle with deg(), rad(), turn() or grad()', 'E45')
 
     # the unit's short name, as printed after the number
     def unit(self) -> str:
@@ -232,7 +232,7 @@ export class Angle:
 
     # a new angle in the same unit as this one, holding v
     def like(self, v: float) -> Angle:
-        raise RuntimeError('Angle is a base class: make an angle with deg(), rad(), turn() or grad()')
+        raise RuntimeError('Angle is a base class: make an angle with deg(), rad(), turn() or grad()', 'E45')
 
     # the angle as a plain float in each unit
     def turn(self) -> float:
@@ -311,7 +311,7 @@ export class Angle:
     def over(self, k: int | float) -> Angle:
         d = _f(k)
         if d == 0.0:
-            raise RuntimeError('an angle cannot be divided by zero')
+            raise ZeroDivisionError('an angle cannot be divided by zero', 'E46')
         return self.like(self.value / d)
 
     @eq
@@ -475,20 +475,20 @@ export def tan(a: Angle) -> float:
     if k % 2 == 0:
         return !tomato_math1(7, x)
     if x == 0.0:
-        raise RuntimeError(f'tan is not defined at {a}: the cosine is zero there')
+        raise ValueError(f'tan is not defined at {a}: the cosine is zero there', 'E47')
     return 0.0 - !tomato_math1(6, x) / !tomato_math1(5, x)
 
 # the inverses give an angle in radians: asin and atan between -pi/2 and pi/2, acos between 0 and pi
 export def asin(x: int | float) -> Angle:
     v = _f(x)
     if v < -1.0 or v > 1.0:
-        raise RuntimeError(f'asin needs a number from -1 to 1, but got {v}')
+        raise ValueError(f'asin needs a number from -1 to 1, but got {v}', 'E48')
     return Radians(!tomato_math1(8, v))
 
 export def acos(x: int | float) -> Angle:
     v = _f(x)
     if v < -1.0 or v > 1.0:
-        raise RuntimeError(f'acos needs a number from -1 to 1, but got {v}')
+        raise ValueError(f'acos needs a number from -1 to 1, but got {v}', 'E49')
     return Radians(!tomato_math1(9, v))
 
 export def atan(x: int | float) -> Angle:
@@ -500,13 +500,13 @@ export def atan2(y: int | float, x: int | float) -> Angle:
     a = _f(y)
     b = _f(x)
     if a == 0.0 and b == 0.0:
-        raise RuntimeError('atan2(0, 0) has no angle: the point is the origin')
+        raise ValueError('atan2(0, 0) has no angle: the point is the origin', 'E50')
     return Radians(!tomato_math2(0, b, a))
 
 export def sqrt(x: int | float) -> float:
     v = _f(x)
     if v < 0.0:
-        raise RuntimeError(f'sqrt needs a number that is not negative, but got {v}')
+        raise ValueError(f'sqrt needs a number that is not negative, but got {v}', 'E51')
     return !tomato_math1(0, v)
 
 export def cbrt(x: int | float) -> float:
@@ -515,7 +515,7 @@ export def cbrt(x: int | float) -> float:
 export def hypot(x: int | float, y: int | float) -> float:
     r = !tomato_math2(1, _f(x), _f(y))
     if !tomato_is_finite(r) == 0:
-        raise RuntimeError('hypot is too large to be a float')
+        raise OverflowError('hypot is too large to be a float', 'E52')
     return r
 
 export def exp(x: int | float) -> float:
@@ -528,35 +528,35 @@ export def expm1(x: int | float) -> float:
 export def log(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
-        raise RuntimeError(f'log needs a positive number, but got {v}')
+        raise ValueError(f'log needs a positive number, but got {v}', 'E53')
     return !tomato_math1(2, v)
 
 # the logarithm to a base, which must be positive and not 1 (a separate function so that a base of 0 is an error, not "no base")
 export def log_base(x: int | float, base: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
-        raise RuntimeError(f'log_base needs a positive number, but got {v}')
+        raise ValueError(f'log_base needs a positive number, but got {v}', 'E54')
     b = _f(base)
     if b <= 0.0 or b == 1.0:
-        raise RuntimeError(f'a logarithm base must be positive and not 1, but got {b}')
+        raise ValueError(f'a logarithm base must be positive and not 1, but got {b}', 'E55')
     return !tomato_math1(2, v) / !tomato_math1(2, b)
 
 export def log2(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
-        raise RuntimeError(f'log2 needs a positive number, but got {v}')
+        raise ValueError(f'log2 needs a positive number, but got {v}', 'E56')
     return !tomato_math1(3, v)
 
 export def log10(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
-        raise RuntimeError(f'log10 needs a positive number, but got {v}')
+        raise ValueError(f'log10 needs a positive number, but got {v}', 'E57')
     return !tomato_math1(4, v)
 
 export def log1p(x: int | float) -> float:
     v = _f(x)
     if v <= -1.0:
-        raise RuntimeError(f'log1p needs a number above -1, but got {v}')
+        raise ValueError(f'log1p needs a number above -1, but got {v}', 'E58')
     return !tomato_math1(18, v)
 
 # hyperbolic functions take and give plain numbers (the argument is not an angle)
@@ -575,11 +575,11 @@ export def asinh(x: int | float) -> float:
 export def acosh(x: int | float) -> float:
     v = _f(x)
     if v < 1.0:
-        raise RuntimeError(f'acosh needs a number of at least 1, but got {v}')
+        raise ValueError(f'acosh needs a number of at least 1, but got {v}', 'E59')
     return !tomato_math1(15, v)
 
 export def atanh(x: int | float) -> float:
     v = _f(x)
     if v <= -1.0 or v >= 1.0:
-        raise RuntimeError(f'atanh needs a number between -1 and 1, but got {v}')
+        raise ValueError(f'atanh needs a number between -1 and 1, but got {v}', 'E60')
     return !tomato_math1(16, v)

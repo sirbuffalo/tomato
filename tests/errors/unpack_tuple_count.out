@@ -1,4 +1,4 @@
-error: cannot unpack 2 values into 3 variables
+error[E185]: cannot unpack 2 values into 3 variables
  --> tests/errors/unpack_tuple_count.tom:3:5
   |
 3 |     x, y, z = (1, 2)

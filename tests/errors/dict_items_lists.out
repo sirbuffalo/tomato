@@ -1,4 +1,4 @@
-error: items() is not available for a dict whose values are list[int]
+error[E216]: items() is not available for a dict whose values are list[int]
  --> tests/errors/dict_items_lists.tom:4:5
   |
 4 |     print(lists.items())

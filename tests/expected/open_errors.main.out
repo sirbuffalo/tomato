@@ -1,4 +1,5 @@
 could not open '/nonexistent_dir_for_tomato/missing.txt': No such file or directory
+E25
 could not open '/nonexistent_dir_for_tomato/other.txt': No such file or directory
 None
 hi None

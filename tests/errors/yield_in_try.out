@@ -1,4 +1,4 @@
-error: 'yield' cannot be used inside a try block
+error[E108]: 'yield' cannot be used inside a try block
  --> tests/errors/yield_in_try.tom:3:9
   |
 3 |         yield n

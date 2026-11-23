@@ -48,7 +48,7 @@ done
 [ -f "$work/failed2" ] && fails=$((fails + $(wc -l < "$work/failed2")))
 
 echo "== memory (AddressSanitizer and the runtime's leak check) =="
-for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:" "tests/programs/json_files:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/tuple_for:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/list_methods:"; do
+for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:" "tests/programs/json_files:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/runtime/error_classes:"; do
   path="${spec%%:*}"; name="$(basename "$path")"; arg="${spec#*:}"
   "$work/c1" "$path.tom" main std/ > "$work/p.ll" 2>/dev/null
   if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
@@ -104,11 +104,13 @@ got: $m";; esac; }
   wasm_neg trig_needs_angle "argument 1 of 'sin' (the parameter 'a') has type float, but math.Angle is expected"
   wasm_rt divide_by_zero "division by zero" 1
   wasm_rt index "index out of range" 1
+  wasm_rt error_classes "$(cat tests/runtime/error_classes.out)" 0
+  wasm_rt error_class_uncaught "error[E04]: index out of range" 1
+  wasm_rt error_std_uncaught "error[E51]:" 1
   wasm_rt list_pop_empty "pop from an empty list" 1
   wasm_rt overflow "integer overflow" 1
   wasm_rt dict_missing_key "the key is not there" 1
   wasm_rt caught "caught boom" 0
-  wasm_rt open_missing "could not open '/nonexistent_dir_for_tomato/missing.txt'" 1
   wasm_rt stack_overflow "stack overflow" 1
   wasm_rt tan_quarter "tan is not defined at 90 deg" 1
   wasm_rt caught_domain "caught sqrt needs a number that is not negative" 0
@@ -125,25 +127,40 @@ printf 'print(1)\n' > "$work/top.tom"
 r="$($t run "$work/top.tom" 2>&1)"; case "$r" in *"put it inside a function marked @main"*) ok "top-level code gives a clear hint";; *) bad "top-level code gives a clear hint" "$r";; esac
 check "version" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
 printf '@main\ndef main():\n    x = 0\n    print(5 // x)\n' > "$work/dz.tom"
-check "mode debug is readable" "error: division by zero
+check "mode debug is readable" "error[E01]: division by zero
   at main (line 4)" "$($t run "$work/dz.tom" 2>&1)"
 check "mode release prints a code" "error E01:4" "$($t run "$work/dz.tom" --mode release 2>&1)"
-check "mode normal was renamed to release" "error: the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" "$($t run "$work/dz.tom" --mode normal 2>&1)"
-check "unknown mode is refused" "error: the mode must be debug or release, not 'fast'" "$($t run "$work/dz.tom" --mode fast 2>&1)"
+check "release keeps caught messages and IDs" "$(cat tests/runtime/error_classes.out)" "$($t run tests/runtime/error_classes.tom --mode release 2>&1)"
+check "open error keeps its message and ID in release" "$(cat tests/expected/open_errors.main.out)" "$($t run tests/programs/open_errors.tom --mode release 2>&1)"
+check "uncaught open error has its debug ID" "error[E25]: could not open '/nonexistent_dir_for_tomato/missing.txt': No such file or directory
+  at main (line 3)" "$($t run tests/runtime/open_missing.tom 2>&1)"
+check "uncaught open error has its release ID" "error E25:3" "$($t run tests/runtime/open_missing.tom --mode release 2>&1)"
+r="$($t run tests/runtime/error_std_uncaught.tom --mode release 2>&1)"
+case "$r" in "error E51:"[1-9]*) ok "release prints a library error ID and line";; *) bad "release prints a library error ID and line" "$r";; esac
+check "mode normal was renamed to release" "error[E281]: the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" "$($t run "$work/dz.tom" --mode normal 2>&1)"
+check "unknown mode is refused" "error[E282]: the mode must be debug or release, not 'fast'" "$($t run "$work/dz.tom" --mode fast 2>&1)"
 $t build "$work/dz.tom" -o "$work/dz_rel" --mode release > /dev/null 2>&1; check "build --mode release makes a release binary" "error E01:4" "$("$work/dz_rel" 2>&1)"
-check "compile --mode release works" "tomato_report_uncaught" "$($t compile "$work/dz.tom" --mode release 2>&1 | grep -o tomato_report_uncaught | head -1)"
+$t compile "$work/dz.tom" --mode release > "$work/dz_rel.ll" 2>&1
+grep -q tomato_report_uncaught "$work/dz_rel.ll" && ok "compile --mode release works" || bad "compile --mode release works" "$(head -3 "$work/dz_rel.ll")"
+if grep -q '^@tomato.name\.' "$work/dz_rel.ll"; then bad "release omits class name metadata"; else ok "release omits class name metadata"; fi
 # release links with LTO and an inlined runtime: the same programs must print exactly what debug mode prints
 for name in int_boundary big_numbers bitwise floor_divide_power containers cycle list_ops compound_ops fixed_width numbers_rules; do
   check "release mode runs $name like debug" "$(cat "tests/expected/$name.main.out")" "$($t run "tests/programs/$name.tom" --mode release 2>&1)"
 done
 $t build tests/programs/cycle.tom -o "$work/cyc_rel" --mode release > /dev/null 2>&1; check "release mode does not print a leak report" "$(cat tests/expected/cycle.main.out)" "$("$work/cyc_rel" 2>&1)"
-check "explain decodes a release code" "error: division by zero" "$($t explain E01:4 "$work/dz.tom" 2>&1 | head -1)"
-check "explain decodes a code" "error: division by zero
-  line 4: print(5 // x)" "$($t explain E01:4 "$work/dz.tom")"
+check "explain decodes a release code" "error[E01]: ZeroDivisionError: division by zero" "$($t explain E01:4 "$work/dz.tom" 2>&1 | head -1)"
+check "explain shows the source line like a compile error" "error[E01]: ZeroDivisionError: division by zero
+ --> $work/dz.tom:4
+  |
+4 |     print(5 // x)
+  |     ^^^^^^^^^^^^^" "$($t explain E01:4 "$work/dz.tom")"
+check "explain decodes an id without a file" "error[E04]: IndexError: index out of range" "$($t explain E04)"
+check "explain accepts an ID with no source location" "error[E350]: RuntimeError: stack overflow: a function calls itself too deeply" "$($t explain E350:0 "$work/dz.tom")"
+check "explain rejects a malformed source line" "1" "$($t explain 'E04:4abc' "$work/dz.tom" >/dev/null 2>&1; echo $?)"
 check "run with inputs" "17 True" "$($t run examples/args.tom prime 17)"
 check "--version is version" "$($t version)" "$($t --version)"
 case "$($t help)" in *"tomato explain"*"tomato version"*) ok "help lists every command";; *) bad "help lists every command" "$($t help)";; esac
-check "explain says when the line is not in the file" "error: division by zero
+check "explain says when the line is not in the file" "error[E01]: ZeroDivisionError: division by zero
   (line 999 is past the end of $work/dz.tom: is this the file the program was built from?)" "$($t explain E01:999 "$work/dz.tom")"
 check "unknown command exits 2" "2" "$($t wghwrltghs >/dev/null 2>&1; echo $?)"
 printf '@main\ndef main():\n    print(tets)\n' > "$work/typo.tom"
@@ -157,9 +174,9 @@ check "repl: std imports resolve (itertools, math)" "True
 False" "$(printf 'from math import is_prime\nfrom itertools import progress_bar\nis_prime(97)\nis_prime(91)\n:quit\n' | $t repl 2>&1)"
 check "repl: :load runs a program that has its own @main" "$(cat tests/expected/shapes.main.out)" "$(printf ':load examples/shapes.tom\n:quit\n' | $t repl)"
 check "repl: a block, then a failing line, then a good one" "9
-error: cannot use '+' with int and str
-5" "$(printf 'def sq(n: int) -> int:\n    return n * n\n\nsq(3)\nprint(1 + "a")\nsq(2) + 1\n:quit\n' | $t repl 2>&1 | grep -E '^(9|5|error:)')"
-check "repl: a misspelled name says so, with the line and a suggestion" "error: name 'tets' is not defined
+error[E190]: cannot use '+' with int and str
+5" "$(printf 'def sq(n: int) -> int:\n    return n * n\n\nsq(3)\nprint(1 + "a")\nsq(2) + 1\n:quit\n' | $t repl 2>&1 | grep -E '^(9|5|error\[)')"
+check "repl: a misspelled name says so, with the line and a suggestion" "error[E227]: name 'tets' is not defined
  --> repl:1:1
   |
 1 | tets
@@ -174,25 +191,25 @@ printf '@main\ndef main():\n    print(range(100))\n    print(range(1, 100))\n   
 check "tomato run prints a range as range(start, stop, step)" "range(0, 100, 1)
 range(1, 100, 1)
 range(5, 10, 2)" "$($t run "$work/rangeprint.tom" 2>&1)"
-check "tomato run shows the same error text" "error: name 'tets' is not defined
+check "tomato run shows the same error text" "error[E227]: name 'tets' is not defined
  --> $work/typo.tom:3:11" "$($t run "$work/typo.tom" 2>&1 | head -2)"
 printf '@main\ndef main():\n    half(0)\n\ndef half(n: int) -> int:\n    return 10 // n\n' > "$work/trace.tom"
-check "an uncaught error shows the call trace, innermost first" "error: division by zero
+check "an uncaught error shows the call trace, innermost first" "error[E01]: division by zero
   at half (line 6)
   at main (line 3)" "$($t run "$work/trace.tom" 2>&1)"
 printf '@main\ndef main():\n    raise Error("bad")\n' > "$work/raised.tom"
 check "an error the program raises shows where, then the trace" "error: Error: bad (raised on line 3)
   at main (line 3)" "$($t run "$work/raised.tom" 2>&1)"
-check "--color=always paints a runtime error and its trace" "^[[1;31merror:^[[0m ^[[1mdivision by zero^[[0m
+check "--color=always paints a runtime error and its trace" "^[[1;31merror[E01]:^[[0m ^[[1mdivision by zero^[[0m
 ^[[2m  at half (line 6)^[[0m
 ^[[2m  at main (line 3)^[[0m" "$($t run "$work/trace.tom" --color=always 2>&1 | cat -v)"
-check "--color=never keeps the plain words" "error: division by zero
+check "--color=never keeps the plain words" "error[E01]: division by zero
   at half (line 6)
   at main (line 3)" "$($t run "$work/trace.tom" --color=never 2>&1 | cat -v)"
-check "TOMATO_COLOR=always works like the flag" "^[[1;31merror:^[[0m ^[[1mdivision by zero^[[0m" "$(TOMATO_COLOR=always $t run "$work/trace.tom" 2>&1 | cat -v | head -1)"
-check "without a terminal the color stays off (and NO_COLOR keeps it off)" "error: division by zero" "$(NO_COLOR=1 $t run "$work/trace.tom" 2>&1 | head -1)"
+check "TOMATO_COLOR=always works like the flag" "^[[1;31merror[E01]:^[[0m ^[[1mdivision by zero^[[0m" "$(TOMATO_COLOR=always $t run "$work/trace.tom" 2>&1 | cat -v | head -1)"
+check "without a terminal the color stays off (and NO_COLOR keeps it off)" "error[E01]: division by zero" "$(NO_COLOR=1 $t run "$work/trace.tom" 2>&1 | head -1)"
 check "a bad --color value is refused" "error: --color takes auto, always or never, not 'blue'" "$($t run "$work/trace.tom" --color=blue 2>&1)"
-check "--color=always paints a compile error: label, location, gutter, caret" "^[[1;31merror:^[[0m ^[[1mname 'tets' is not defined^[[0m
+check "--color=always paints a compile error: label, location, gutter, caret" "^[[1;31merror[E227]:^[[0m ^[[1mname 'tets' is not defined^[[0m
  ^[[1;34m-->^[[0m ^[[36m$work/typo.tom:3:11^[[0m
 ^[[1;34m  |^[[0m
 ^[[1;34m3 |^[[0m     print(tets)
@@ -209,8 +226,8 @@ check "--no-warnings hides warnings" "2" "$($t run "$work/warn.tom" --no-warning
 check "a warning is yellow with --color=always" "^[[1;33mwarning:^[[0m ^[[1mthe variable 'unused' is given a value that is never used^[[0m" "$($t run "$work/warn.tom" --color=always 2>&1 | cat -v | head -1)"
 check "compile prints the IR without the warning comments" "0" "$($t compile "$work/warn.tom" 2>/dev/null | grep -c '^;! ')"
 check "repl: warnings are not shown" "3" "$(printf 'unused = 1\nprint(3)\n:quit\n' | $t repl 2>&1)"
-check "repl: --color=always paints the label red" "^[[1;31merror:^[[0m ^[[1mcannot use '+' with int and str^[[0m" "$(printf 'print(1 + "a")\n:quit\n' | $t repl --color=always 2>&1 | cat -v | head -1)"
-check "repl: a runtime error shows no call trace of the generated program" "error: division by zero" "$(printf 'x = 0\nprint(1 // x)\n:quit\n' | $t repl 2>&1)"
+check "repl: --color=always paints the label red" "^[[1;31merror[E190]:^[[0m ^[[1mcannot use '+' with int and str^[[0m" "$(printf 'print(1 + "a")\n:quit\n' | $t repl --color=always 2>&1 | cat -v | head -1)"
+check "repl: a runtime error shows no call trace of the generated program" "error[E01]: division by zero" "$(printf 'x = 0\nprint(1 // x)\n:quit\n' | $t repl 2>&1)"
 check "repl: == is a comparison, = is an assignment" "False
 3" "$(printf 'x = 3\nx == 4\nx\n:quit\n' | $t repl)"
 case "$(printf ':help\n:quit\n' | $t repl 2>&1)" in *":reset"*":quit"*) ok "repl: :help lists every command";; *) bad "repl: :help lists every command";; esac
@@ -322,6 +339,23 @@ for f in tests/input/*.tom; do
   fi
 done
 
+echo "== error ids =="
+tests/error_templates.sh | awk '{ l=$0; gsub(/\{\}/,"",l); if (length(l) >= 12) print }' > "$work/templates"
+missing=""
+while IFS= read -r tpl; do grep -qxF "CompileError $tpl" std/errors.txt || missing="$missing
+  $tpl"; done < "$work/templates"
+[ -z "$missing" ] && ok "every extracted compile error template has an id in std/errors.txt" || bad "every extracted compile error template has an id in std/errors.txt" "add these lines (CompileError TEMPLATE):$missing"
+missing="$(awk '
+  NR == FNR { classes[NR] = $1; next }
+  /raise [[:alnum:]_]+\(/ && !/^ *#/ {
+    line = $0
+    sub(/^.*raise /, "", line)
+    sub(/\(.*/, "", line)
+    if (!match($0, /\047E[0-9]+\047\)$/) || classes[substr($0, RSTART + 2, RLENGTH - 4) + 0] != line)
+      print FILENAME ":" FNR ": " $0
+  }' std/errors.txt std/*.tom)"
+[ -z "$missing" ] && ok "standard-library raises have IDs for their classes" || bad "standard-library raises have IDs for their classes" "$missing"
+
 echo "== error messages (tests/errors: the whole text, the one format everywhere) =="
 for f in tests/errors/*.tom; do
   n="$(basename "$f" .tom)"; "$work/c1" "$f" main std/ > "$work/err.ll" 2> "$work/err.out"
@@ -343,7 +377,6 @@ rt shift_negative "negative shift count" 1
 rt shift_huge "the shift count is too big" 1
 rt shift_overflow "does not fit" 1
 rt caught "caught boom" 0
-rt open_missing "could not open '/nonexistent_dir_for_tomato/missing.txt': No such file or directory" 1
 rt async_unread "in a task nobody awaited" 1
 rt dict_missing_key "the key is not there" 1
 rt set_missing "the element is not there" 1
@@ -366,6 +399,9 @@ rt ord_length "ord() takes a text of exactly one character" 1
 rt chr_huge "chr() takes a number from 0 to 1114111, not a surrogate" 1
 rt trace_calls "at half (line 10)" 1
 rt list_pop_empty "pop from an empty list" 1
+rt error_classes "$(cat tests/runtime/error_classes.out)" 0
+rt error_class_uncaught "error[E04]: index out of range" 1
+rt error_std_uncaught "error[E51]:" 1
 
 
 echo "== known gaps (decided behavior the compiler does not have yet) =="

@@ -56,7 +56,7 @@ def _bits32(words: list[int], p: int) -> int:
     return (((w0 & (_FULL >> s)) << s) | (_chunk(words, q + 1) >> (32 - s)))
 
 def _fail_range():
-    raise RuntimeError('the bit index is out of range')
+    raise IndexError('the bit index is out of range', 'E28')
 
 def _hex_digit(c: str) -> int:
     o = ord(c)
@@ -66,7 +66,7 @@ def _hex_digit(c: str) -> int:
         return o - 87
     if o >= 65 and o <= 70:
         return o - 55
-    raise RuntimeError('a hex text holds only the digits 0 to 9 and a to f')
+    raise ValueError('a hex text holds only the digits 0 to 9 and a to f', 'E29')
 
 export class bitarray:
     words: list[int] = []
@@ -80,7 +80,7 @@ export class bitarray:
             self.n = value.n
         elif value in int:
             if value < 0:
-                raise RuntimeError('a bitarray cannot be made from a negative number')
+                raise ValueError('a bitarray cannot be made from a negative number', 'E30')
             # the digits: whole chunks of 32 bits, then the bits of the top chunk
             top = value
             chunks = 0
@@ -94,7 +94,7 @@ export class bitarray:
                 top = top >> 1
             if width > 0:
                 if digits > width:
-                    raise RuntimeError('the number does not fit the width of the bitarray')
+                    raise OverflowError('the number does not fit the width of the bitarray', 'E31')
                 digits = width
             # the number moved up so that its last digit ends a chunk, then cut into chunks from the low end
             count = (digits + 31) >> 5
@@ -111,7 +111,7 @@ export class bitarray:
                 elif ch == '1':
                     self.append(True)
                 else:
-                    raise RuntimeError('a bitarray text holds only 0 and 1')
+                    raise ValueError('a bitarray text holds only 0 and 1', 'E32')
         else:
             for bit in value:
                 self.append(bit)
@@ -119,7 +119,7 @@ export class bitarray:
     @static
     def zeros(self, count: int) -> bitarray:
         if count < 0:
-            raise RuntimeError('a bitarray cannot have a negative length')
+            raise ValueError('a bitarray cannot have a negative length', 'E33')
         a = bitarray('')
         a.words = [0] * ((count + 31) >> 5)
         a.n = count
@@ -143,14 +143,14 @@ export class bitarray:
         if nbits < 0:
             nbits = total
         if nbits > total:
-            raise RuntimeError('there are fewer bits in the list than asked for')
+            raise ValueError('there are fewer bits in the list than asked for', 'E34')
         a = bitarray('')
         a.words = [0] * ((nbits + 31) >> 5)
         a.n = nbits
         for k in range(len(items)):
             b = items[k]
             if b < 0 or b > 255:
-                raise RuntimeError('a packed byte must be from 0 to 255')
+                raise ValueError('a packed byte must be from 0 to 255', 'E35')
             if k * 8 < nbits:
                 a.words[k >> 2] = a.words[k >> 2] | (b << (24 - (k & 3) * 8))
         a.clean()
@@ -233,7 +233,7 @@ export class bitarray:
         if flags & 4 != 0:
             step = st
         if step == 0:
-            raise RuntimeError('a slice step cannot be 0')
+            raise ValueError('a slice step cannot be 0', 'E27')
         n = self.n
         if step > 0:
             a = 0
@@ -293,7 +293,7 @@ export class bitarray:
 
     def need_same_length(self, other: bitarray):
         if self.n != other.n:
-            raise RuntimeError('the two bitarrays must have the same length')
+            raise ValueError('the two bitarrays must have the same length', 'E36')
 
     @bitand
     def both(self, other: bitarray) -> bitarray:

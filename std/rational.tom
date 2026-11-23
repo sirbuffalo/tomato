@@ -9,7 +9,7 @@ export class rational:
     @init
     def make(self, n: int, d: int = 1):
         if d == 0:
-            raise RuntimeError('a rational cannot have a zero denominator')
+            raise ZeroDivisionError('a rational cannot have a zero denominator', 'E40')
         if d < 0:
             n = -n
             d = -d

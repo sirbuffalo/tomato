@@ -28,8 +28,8 @@ export class TOMLDecodeError(RuntimeError):
     pos: int = 0
 
     @init
-    def make_decode(self, reason: str, line: int, column: int, pos: int):
-        RuntimeError.make(self, f'{reason}: line {line} column {column} (char {pos})')
+    def make_decode(self, reason: str, line: int, column: int, pos: int, id: str = ''):
+        RuntimeError.make(self, f'{reason}: line {line} column {column} (char {pos})', id)
         self.reason = reason
         self.line = line
         self.column = column
@@ -120,7 +120,7 @@ export class Toml:
 
     def expect(self, kind: str, what: str):
         if self.kind != kind:
-            raise RuntimeError(f'expected {what}, found {self.describe()}')
+            raise ValueError(f'expected {what}, found {self.describe()}', 'E65')
 
     def as_str(self) -> str:
         self.expect('string', 'a string')
@@ -135,7 +135,7 @@ export class Toml:
             return float(self.num)
         self.expect('float', 'a float')
         if self.special != '':
-            raise RuntimeError(f'the float is {self.special}, which a float variable cannot hold: check `special`')
+            raise ValueError(f'the float is {self.special}, which a float variable cannot hold: check `special`', 'E66')
         return self.real
 
     def as_bool(self) -> bool:
@@ -144,7 +144,7 @@ export class Toml:
 
     def as_moment(self) -> Moment:
         if self.moment is None:
-            raise RuntimeError(f'expected a date or time, found {self.describe()}')
+            raise ValueError(f'expected a date or time, found {self.describe()}', 'E64')
         m: Moment = self.moment
         return m
 
@@ -159,7 +159,7 @@ export class Toml:
     def lookup(self, key: str) -> Toml:
         self.expect('table', 'a table')
         if key not in self.fields:
-            raise RuntimeError(f'the key {key} is not in the table')
+            raise KeyError(f'the key {key} is not in the table', 'E67')
         return self.fields[key]
 
     @contains
@@ -172,7 +172,7 @@ export class Toml:
             return len(self.order)
         if self.kind == 'array':
             return len(self.items)
-        raise RuntimeError(f'{self.describe()} has no length')
+        raise RuntimeError(f'{self.describe()} has no length', 'E357')
 
     def keys(self) -> list[str]:
         self.expect('table', 'a table')
@@ -193,7 +193,7 @@ export class Toml:
         if i < 0:
             i += len(self.items)
         if i < 0 or i >= len(self.items):
-            raise RuntimeError('the array index is out of range')
+            raise IndexError('the array index is out of range', 'E68')
         return self.items[i]
 
     def append(self, value: Toml):
@@ -371,7 +371,7 @@ class _Parser:
         pos = 0
         for k in range(ln):
             pos += len(self.lines[k]) + 1
-        raise TOMLDecodeError(reason, ln + 1, i + 1, pos + i)
+        raise TOMLDecodeError(reason, ln + 1, i + 1, pos + i, 'E356')
 
     def fail(self, reason: str):
         self.fail_at(reason, self.ln, self.i)
@@ -1049,7 +1049,7 @@ def _inline(v: Toml) -> str:
             parts.append(_key_text(k) + ' = ' + _inline(v.fields[k]))
         return '{ ' + ', '.join(parts) + ' }'
     if v.moment is None:
-        raise RuntimeError('a date or time value has no moment')
+        raise ValueError('a date or time value has no moment', 'E69')
     m: Moment = v.moment
     return str(m)
 
@@ -1100,7 +1100,7 @@ export def dumps_value(v: Toml) -> str:
 
 export def dumps(value: Toml) -> str:
     if value.kind != 'table':
-        raise RuntimeError('dumps needs a table: a TOML document is a table of keys')
+        raise ValueError('dumps needs a table: a TOML document is a table of keys', 'E70')
     return dumps_value(value)
 
 # dump(value, path) writes dumps(value) to the file at path (replacing it), the counterpart of load(path). An unwritable

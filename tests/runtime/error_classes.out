@@ -1,0 +1,14 @@
+caught index out of range E04
+caught the key is not there E06
+caught the text is not a whole number E17
+caught division by zero E01
+caught exp(1000) is too large to be a float E44
+caught pop from an empty list E21
+caught negative shift count E346
+caught the shift count is too big E345
+caught the exponent is too big E344
+caught the bitwise operators & | ^ do not work on very large integers E348
+caught the number is too big here E347
+caught slice the number is too big here E347
+caught mine []
+caught empty True True

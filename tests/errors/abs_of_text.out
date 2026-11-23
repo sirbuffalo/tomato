@@ -1,4 +1,4 @@
-error: abs() takes an int or a float, but this is str
+error[E171]: abs() takes an int or a float, but this is str
  --> tests/errors/abs_of_text.tom:3:5
   |
 3 |     print(abs("seven"))

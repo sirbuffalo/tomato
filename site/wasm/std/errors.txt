@@ -1,0 +1,380 @@
+ZeroDivisionError division by zero
+ZeroDivisionError modulo by zero
+OverflowError integer overflow
+IndexError index out of range
+IndexError slice out of range
+KeyError the key is not there
+KeyError the element is not there
+ValueError duplicate key in a dict literal
+OverflowError the number does not fit the integer type
+RuntimeError None where a value is needed
+RuntimeError an error raised by the program
+ValueError a negative exponent needs a float
+OverflowError the float result is infinite or not a number
+OverflowError a float that is infinite or not a number cannot become an int
+ValueError an empty text cannot be used to
+EOFError there is no more input to read
+ValueError the text is not a whole number
+ValueError the text is not a number
+ValueError chr() takes a number from 0 to 1114111, not a surrogate
+ValueError ord() takes a text of exactly one character
+IndexError pop from an empty list
+KeyError the key is not in the dict
+ValueError range step cannot be zero
+ValueError slice step cannot be zero
+IOError could not open
+CancelledError the task was cancelled
+ValueError a slice step cannot be 0
+IndexError the bit index is out of range
+ValueError a hex text holds only the digits
+ValueError a bitarray cannot be made from a negative number
+OverflowError the number does not fit the width of the bitarray
+ValueError a bitarray text holds only 0 and 1
+ValueError a bitarray cannot have a negative length
+ValueError there are fewer bits in the list than asked for
+ValueError a packed byte must be from 0 to 255
+ValueError the two bitarrays must have the same length
+ValueError a cache capacity cannot be negative
+ValueError a progress bar width must be at least 1
+ValueError batched needs a batch size of at least 1
+ZeroDivisionError a rational cannot have a zero denominator
+ValueError pow needs a non-negative exponent
+ValueError prev_prime needs n > 2
+ValueError nth_prime needs k >= 1
+OverflowError a libm result is too large to be a float
+RuntimeError Angle is a base class
+ZeroDivisionError an angle cannot be divided by zero
+ValueError tan is not defined at
+ValueError asin needs a number from -1 to 1
+ValueError acos needs a number from -1 to 1
+ValueError atan2(0, 0) has no angle
+ValueError sqrt needs a number that is not negative
+OverflowError hypot is too large to be a float
+ValueError log needs a positive number
+ValueError log_base needs a positive number
+ValueError a logarithm base must be positive and not 1
+ValueError log2 needs a positive number
+ValueError log10 needs a positive number
+ValueError log1p needs a number above -1
+ValueError acosh needs a number of at least 1
+ValueError atanh needs a number between -1 and 1
+ValueError min() of an empty
+ValueError max() of an empty
+ValueError cannot unpack {} values into {}
+ValueError expected a date or time
+ValueError expected {}, found {}
+ValueError the float is {}, which a float variable cannot hold
+KeyError the key {} is not in the table
+IndexError the array index is out of range
+ValueError a date or time value has no moment
+ValueError dumps needs a table
+JSONTypeError expected {}, but this is {}
+JSONTypeError a list needs an int index
+JSONTypeError index {} is out of range for a list of {}
+JSONTypeError a dict needs a text key
+JSONTypeError the key {} is not in this dict
+JSONEncodeError nesting is deeper than 512 levels
+JSONEncodeError a bin value cannot be written as JSON text
+JSONEncodeError an ext value cannot be written as JSON text
+JSONEncodeError a timestamp cannot be written as JSON text
+JSONEncodeError indent cannot be negative
+JSONEncodeError the float {} is not valid JSON
+MsgpackError nesting is deeper than 512 levels
+MsgpackError a byte must be an int from 0 to 255
+MsgpackError timestamp nanoseconds must be from 0 to 999999999
+MsgpackError the timestamp seconds are out of range
+MsgpackError the integer {} does not fit in 64 bits
+MsgpackError the ext type {} must be from -128 to 127 and not -1
+JSONDecodeError the text is not valid JSON
+MsgpackError the bytes are not valid MessagePack
+CacheMiss a key is not in the cache
+CompileError '**{}' needs a dict type, such as dict[int]
+CompileError '*args' must come before '**kwargs', and both must be last in the parameter list
+CompileError '*{}' needs a tuple type, such as tuple[int]
+CompileError '@init' cannot be async
+CompileError '@{}' is not a method marker
+CompileError '@{}' marks a method, so it belongs inside a class
+CompileError 'break' can only be used inside a loop
+CompileError 'catch' needs an error class, but '{}' is not one
+CompileError 'continue' can only be used inside a loop
+CompileError 'else' after 'try' needs a 'catch' block before it
+CompileError 'in' can search only lists of int, bool or str
+CompileError 'in' does not work with '{}
+CompileError 'in' does not work with {}
+CompileError 'self' can only be used in methods inside a class
+CompileError 'start' needs a call of an async function, such as start work()
+CompileError 'try' needs a 'catch' or a 'finally' block after it
+CompileError 'yield' can only be used in a generator, that is a function or method that a for loop loops over
+CompileError 'yield' cannot be used inside a try block
+CompileError '{}' can only be used inside an async function
+CompileError '{}' cannot be used as a value: an async function, a generator and a function with *args or **kwargs have no function type
+CompileError '{}' does not take keyword arguments
+CompileError '{}' does not work on floats
+CompileError '{}' does not work on text
+CompileError '{}' has no field '{}'
+CompileError '{}' has no method '{}'
+CompileError '{}' has no parameter named '{}'
+CompileError '{}' is a generator (it uses yield), so it can only be used as what a for loop loops over
+CompileError '{}' is async, so it must be awaited or started
+CompileError '{}' is defined twice in class '{}'
+CompileError '{}' is defined twice in module '{}'
+CompileError '{}' is generic, so it cannot be used as a value yet
+CompileError '{}' is generic, so it needs its type arguments: {}[{}]
+CompileError '{}' is known to be {} after the check above, so it cannot be assigned here
+CompileError '{}' is known to be {} inside this check, so it cannot be assigned here
+CompileError '{}' needs a value for '{}'
+CompileError '{}' takes exactly one argument
+CompileError '{}' takes no arguments
+CompileError '{}' takes {}, but {} given
+CompileError '{}.{}' is marked 'override' but no parent class has that method
+CompileError '{}.{}' must take and return exactly the types that interface '{}' declares
+CompileError '{}.{}' must take and return the same types as the method it overrides
+CompileError '{}.{}' needs an object as its first argument
+CompileError '{}.{}' replaces a method of the parent class
+CompileError '{}{}' needs a type and cannot have a default value
+CompileError _http_wait() is async, so it must be awaited
+CompileError _http_wait() takes the request handle: await _http_wait(handle)
+CompileError a bracket is opened here but never closed
+CompileError a class can inherit from only one parent class
+CompileError a class or function takes at most two type parameters
+CompileError a for loop can loop over a range(), a list, a tuple, a set, a dict, text or an object with an @iter method, but this is {}
+CompileError a for loop cannot loop over a '{}
+CompileError a for loop cannot loop over a value of type Sized
+CompileError a for loop over '{}' needs the same item type in every member of {}, but the items are {} and {}
+CompileError a for loop with several variables needs enumerate(...) or zip(...)
+CompileError a for loop with two variables is not supported here
+CompileError a function value ({}) cannot be converted to text
+CompileError a function value ({}) cannot be printed
+CompileError a function value does not take keyword arguments
+CompileError a function, class or interface cannot be declared inside another block
+CompileError a generator cannot return a value
+CompileError a lambda cannot use the variable '{}' from the function around it
+CompileError a lambda needs to know its parameter types
+CompileError a list of {} cannot be printed
+CompileError a number cannot be followed by letters, an underscore or a dot: {}
+CompileError a number cannot be followed by letters: {}
+CompileError a positional argument cannot follow a keyword argument
+CompileError a program input (a parameter of the @main function) must be an int, bool or str
+CompileError a program input cannot have a float default
+CompileError a replacement field in an f-string has no format options
+CompileError a set can hold only int, bool or str values
+CompileError a tab cannot be used for indentation
+CompileError a task has no method '{}'
+CompileError a task method takes no arguments: t.{}()
+CompileError a tuple cannot be changed, so it has no '{}'
+CompileError a tuple cannot be changed, so its items cannot be assigned
+CompileError a value of type {} cannot be converted to text
+CompileError a value of type {} cannot be printed
+CompileError a value of type {} has no fields
+CompileError a value of type {} is never None, so it cannot be compared with None
+CompileError a {} item needs a value
+CompileError abs() takes an int or a float, but this is {}
+CompileError an LLVM function can only take int, bool, float, text and list values, and return int, bool, float and text
+CompileError an LLVM function cannot take keyword arguments
+CompileError an await cannot be in either value of a conditional expression
+CompileError an entry point (a function marked with @main or similar) cannot return a value
+CompileError an entry point input default must be a plain number, True or False
+CompileError an interface method has no body
+CompileError an operator or protocol method ({}) cannot be async
+CompileError append() takes 1 argument, but {} given
+CompileError async for needs a task that yields statuses, but this is {}
+CompileError bool values cannot be ordered with < or >
+CompileError cannot assign to this expression
+CompileError cannot find the module '{}'
+CompileError cannot tell what {} is in this call of '{}'
+CompileError cannot unpack {} into {}
+CompileError cannot use '-' on an unsigned number
+CompileError cannot use '-' on {}
+CompileError cannot use '{}
+CompileError cannot use '{}' on {}
+CompileError cannot use '{}' with {} and {}
+CompileError cannot use '~' on '{}
+CompileError cannot use '~' on {}
+CompileError class '{}' has more than one @init method
+CompileError class '{}' has no @init method, but the field '{}' has no starting value
+CompileError class '{}' inherits from itself, directly or through its parents
+CompileError class '{}' is missing the method '{}' that interface '{}' requires
+CompileError clock() takes no arguments
+CompileError cmp= needs a function of two {} items that returns an int, but this is {}
+CompileError comparisons cannot be chained like a < b < c
+CompileError division by zero: the divisor is the constant 0
+CompileError enumerate() takes one list and gives two variables
+CompileError extend() needs a list of the same type, {}, but this is {}
+CompileError extend() takes one list: extend(other)
+CompileError float() takes a number, but this is {}
+CompileError generators are nested too deeply here
+CompileError get() takes a key and a default value: get(key, default)
+CompileError input() is async, so it must be awaited
+CompileError input() takes an optional prompt as text: await input() or await input(prompt)
+CompileError insert() takes an index and an item: insert(index, item)
+CompileError integer types take only length=, as in int[length=32]
+CompileError internal compiler error: a missing syntax node
+CompileError internal compiler error: class {} has no declaration
+CompileError internal compiler error: no definition for '{}'
+CompileError internal compiler error: no helper of kind {}
+CompileError internal compiler error: no method table slot for {}
+CompileError items() is not available for a dict whose values are {}
+CompileError join() takes exactly one list[str]
+CompileError key= needs a function of one {} item, but this is {}
+CompileError keyword arguments are not supported when creating an object
+CompileError len() needs a value with a length, but this is {}
+CompileError len() needs every member of {} to have a length, but {} does not
+CompileError len() takes exactly one argument
+CompileError list() takes a list or something that can be looped over (a range, or an object with an @iter method), but this is {}
+CompileError list() takes exactly one argument: a list or a range
+CompileError module '{}' does not export '{}'
+CompileError module '{}' has no '{}'
+CompileError name '{}' is not defined{}
+CompileError no function is marked @{}
+CompileError only a function name can be called here
+CompileError only a task can be awaited, but this is {}
+CompileError only list and dict items can be assigned by index
+CompileError only text, lists, tuples and ranges can be sliced, but this is {}
+CompileError open() takes a path, and optionally a mode, both as text: open(path) or open(path, mode)
+CompileError pop() takes at most 1 argument: pop() or pop(index)
+CompileError print() gives no value, so it cannot be used inside an expression
+CompileError raise needs an error object, but this is {}
+CompileError range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)
+CompileError remove() takes a key: remove(key)
+CompileError reverse() takes no arguments
+CompileError sleep() is async, so it must be awaited
+CompileError sleep() takes a number of seconds, but this is {}
+CompileError sleep() takes the number of seconds to wait: await sleep(1.5)
+CompileError sort() has no parameter named '{}'
+CompileError sort() needs a list of numbers or text, but this is {}
+CompileError sort() takes key= or cmp=, not both
+CompileError sort() takes no positional arguments, only key= or cmp=
+CompileError sorted() has no parameter named '{}'
+CompileError sorted() takes key= or cmp=, not both
+CompileError sorted() takes one list, and then key= or cmp=
+CompileError str() takes exactly one argument
+CompileError the @bitarray method '{}' must take nothing besides self and return a bitarray
+CompileError the @str method '{}' must take no argument besides self and return str
+CompileError the @{} method '{}' must return bool
+CompileError the @{} method '{}' must take exactly one argument besides self
+CompileError the LLVM function '!{}
+CompileError the LLVM function '!{}' is not declared
+CompileError the argument '{}' of '{}' is given twice
+CompileError the body of a block goes on its own indented line
+CompileError the body of this lambda gives no value
+CompileError the const field '{}' cannot be changed after the object is created
+CompileError the constant '{}' must be a number, text or True or False written out
+CompileError the constant {} does not fit in {}
+CompileError the default of a text input must be a plain text such as "abc"
+CompileError the default of an entry point input must be a whole number below 2 ** 61
+CompileError the field '{}' is already defined by a parent class
+CompileError the field '{}' is defined twice
+CompileError the field '{}' is private to class '{}'
+CompileError the first argument must be a '{}' object
+CompileError the first argument of {}() must be a function, but this is {}
+CompileError the function '{}' can reach its end without returning a value
+CompileError the function '{}' does not exist
+CompileError the function given to filter() must return a bool, but this one returns {}
+CompileError the function given to map() must return a value, but this one returns {}
+CompileError the generator '{}' cannot take *args or **kwargs
+CompileError the generator '{}' must say what it yields
+CompileError the interface '{}
+CompileError the items of this list comprehension have no type
+CompileError the key function must return an int, a float or text, but this one returns {}
+CompileError the keyword argument '{}' is given twice
+CompileError the method '{}' is private to class '{}'
+CompileError the mode 'normal' was renamed to 'release': use --mode release (the old release mode, which printed nothing, is gone)
+CompileError the mode must be debug or release, not '{}'
+CompileError the operator '{}' is not supported here
+CompileError the parameter '{}' cannot come after '*args' or '**kwargs'
+CompileError the parameter '{}' needs a default value because an earlier parameter has one
+CompileError the parameter '{}' of '{}' is declared twice
+CompileError the two values of this conditional expression have different types: {} and {}
+CompileError the type of '{}' cannot be guessed from None
+CompileError the type of an empty {} cannot be guessed
+CompileError the type of the items of this list comprehension cannot be guessed
+CompileError the type parameter '{}' is declared twice
+CompileError the variable '{}' already has type {}, so it cannot be redeclared as {}
+CompileError these integer types have no common type: {} and {}
+CompileError this async function does not say what it yields
+CompileError this conversion is not supported
+CompileError this conversion needs an integer, but the value is {}
+CompileError this f-string has a '{' that is never closed
+CompileError this f-string has a single '}'
+CompileError this f-string has an empty '{}'
+CompileError this field type is not supported
+CompileError this function is declared to return nothing, so it cannot return a value
+CompileError this function must return a value of type {}
+CompileError this is not a type
+CompileError this is {}, not a function, so it cannot be called
+CompileError this kind of expression ({}) is not supported
+CompileError this kind of statement ({}) is not supported here
+CompileError this lambda takes {}
+CompileError this line ends with ':' but no indented block follows
+CompileError this line is indented differently from the block it belongs to
+CompileError this number has too large an exponent for a float
+CompileError this number has too many digits for a float
+CompileError this number is too large or too precise for a float
+CompileError this parameter type is not supported
+CompileError this return type is not supported
+CompileError this text has an unknown escape '{}'
+CompileError this text is missing its closing quote {}
+CompileError this type is not supported here
+CompileError this variable cannot be given a type automatically
+CompileError this yields type is not supported
+CompileError unexpected character '{}'
+CompileError write 'private const', not 'const private'
+CompileError zip() needs as many variables as lists
+CompileError {} does not fit in {}
+CompileError {} has type {}, but {} is expected
+CompileError {}() does not take keyword arguments
+CompileError {}() in a for loop needs plain variables or fields
+CompileError {}() needs a function of one {} item, but this is {}
+CompileError {}() needs a list of {}, but this is {}
+CompileError {}() needs something that gives numbers{}, but {} gives {}
+CompileError {}() takes a function and a list: {}(f, xs)
+CompileError {}() takes a list or a range, but this is {}
+CompileError {}() takes a list or an object with a method marked @iter, but this is {}
+CompileError {}() takes no keyword arguments
+CompileError {}() takes one list
+CompileError {}, but found {}
+CompileError {}= needs a function, but this is {}
+CompileError '{}' is a variable, not a function, so it cannot be called
+CompileError {} has no method '{}'
+CompileError the class '{}' does not exist
+CompileError the function '{}' is not defined
+CompileError '{}' objects have no length
+CompileError this statement is outside any function
+CompileError '{}' is not available
+OverflowError the exponent is too big
+OverflowError the shift count is too big
+ValueError negative shift count
+OverflowError the number is too big here
+OverflowError the bitwise operators & | ^ do not work on very large integers
+RuntimeError out of memory
+RuntimeError stack overflow: a function calls itself too deeply
+ValueError input {} must be {}, found '{}'
+ValueError the entry point takes {} input(s), got {}
+OverflowError input {} ({}) does not fit the integer type
+RuntimeError the function ended without returning a value
+RuntimeError every task is waiting for something that can no longer happen
+TOMLDecodeError the text is not valid TOML
+RuntimeError a value has no length
+HTTPError the server returned an HTTP error status
+InvalidURL the header name has a line break or a colon
+TimeoutError the request took longer than its timeout
+InvalidURL the request could not be sent because its URL or parameters are invalid
+TooManyRedirects the server sent too many redirects
+RequestError the request could not be sent
+ConnectionError the server could not be reached
+JSONTypeError the JSON value cannot be indexed
+JSONTypeError the JSON value has no length
+CompileError internal compiler error: too many generic copies had to be made early
+CompileError the compiler could not complete compilation
+RuntimeError the program ran longer than 5 seconds
+RuntimeError the WebAssembly interpreter could not run the program
+RuntimeError an internal runtime failure occurred
+CompileError '{}' objects cannot be indexed
+CompileError '{}' objects cannot be sliced
+CompileError '{}' objects cannot be assigned by index
+CompileError '{}' objects cannot be printed or converted to text
+CompileError '{}' loops over async statuses, so it needs async for
+CompileError a for loop cannot loop over a '{}' object
+CompileError {} takes {}, but {} given
+CompileError get() takes a key and optionally a default value: get(key) or get(key, default)
+CompileError get(key) gives None for a missing key, but a value of type {} cannot be None

@@ -28,40 +28,40 @@ from json import loads, dumps, Json
 # Everything this library raises is a RequestError, so `catch RequestError` handles any failure of a request.
 export class RequestError(IOError):
     @init
-    def make_request_error(self, message: str):
-        IOError.make_io(self, message)
+    def make_request_error(self, message: str, id: str = ''):
+        IOError.make_io(self, message, id)
 
 # The server could not be reached: its name was not found, it refused, the connection dropped, or the TLS handshake failed.
 export class ConnectionError(RequestError):
     @init
-    def make_connection_error(self, message: str):
-        RequestError.make_request_error(self, message)
+    def make_connection_error(self, message: str, id: str = ''):
+        RequestError.make_request_error(self, message, id)
 
 # The request took longer than its timeout.
 export class TimeoutError(RequestError):
     @init
-    def make_timeout_error(self, message: str):
-        RequestError.make_request_error(self, message)
+    def make_timeout_error(self, message: str, id: str = ''):
+        RequestError.make_request_error(self, message, id)
 
 # The url is not an http:// or https:// address, or another part of the request cannot be sent.
 export class InvalidURL(RequestError):
     @init
-    def make_invalid_url(self, message: str):
-        RequestError.make_request_error(self, message)
+    def make_invalid_url(self, message: str, id: str = ''):
+        RequestError.make_request_error(self, message, id)
 
 # The server sent too many redirects (more than max_redirects, or a loop).
 export class TooManyRedirects(RequestError):
     @init
-    def make_too_many_redirects(self, message: str):
-        RequestError.make_request_error(self, message)
+    def make_too_many_redirects(self, message: str, id: str = ''):
+        RequestError.make_request_error(self, message, id)
 
 # Raised by raise_for_status() for a 4xx or 5xx answer; status holds the code.
 export class HTTPError(RequestError):
     status: int = 0
 
     @init
-    def make_http_error(self, message: str, status: int):
-        RequestError.make_request_error(self, message)
+    def make_http_error(self, message: str, status: int, id: str = ''):
+        RequestError.make_request_error(self, message, id)
         self.status = status
 
 # What the server answered. status is the code (200, 404, ...), ok is True below 400, text is the body as text (bytes that are
@@ -84,7 +84,7 @@ export class Response:
             kind = 'Client Error'
             if self.status >= 500:
                 kind = 'Server Error'
-            raise HTTPError(f'{self.status} {kind} for url: {self.url}', self.status)
+            raise HTTPError(f'{self.status} {kind} for url: {self.url}', self.status, 'E358')
 
 def _unreserved(c: str) -> bool:
     return c.isalpha() and ord(c) < 128 or c.isdigit() or c in ['-', '_', '.', '~']
@@ -122,7 +122,7 @@ def _header_lines(headers: dict[str, str]) -> str:
     for k in headers.keys():
         v = headers[k]
         if '\n' in k or '\r' in k or '\n' in v or '\r' in v or ':' in k:
-            raise InvalidURL(f"the header '{k}' has a line break or a colon in its name")
+            raise InvalidURL(f"the header '{k}' has a line break or a colon in its name", 'E359')
         out += k + ': ' + v + '\n'
     return out
 
@@ -199,14 +199,14 @@ export async def request(method: str, url: str, params: dict[str, str] = {}, dat
         if kind != 0:
             message = !tomato_http_error_text(id)
             if kind == 2:
-                raise TimeoutError(message)
+                raise TimeoutError(message, 'E360')
             if kind == 3:
-                raise InvalidURL(message)
+                raise InvalidURL(message, 'E361')
             if kind == 4:
-                raise TooManyRedirects(message)
+                raise TooManyRedirects(message, 'E362')
             if kind == 5:
-                raise RequestError(message)
-            raise ConnectionError(message)
+                raise RequestError(message, 'E363')
+            raise ConnectionError(message, 'E364')
         r = Response()
         r.status = !tomato_http_status(id)
         r.ok = r.status < 400

@@ -1,4 +1,4 @@
-error: get(key) gives None for a missing key, but a value of type int cannot be None
+error[E380]: get(key) gives None for a missing key, but a value of type int cannot be None
  --> tests/errors/dict_get_int.tom:4:5
   |
 4 |     print(ages.get("ann"))

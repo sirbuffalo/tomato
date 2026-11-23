@@ -3,7 +3,7 @@
 #   tomato run FILE [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]   compile, link and run (MODE: debug or release; debug is the default)
 #   tomato build FILE [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]   write a native program (--mode release for the optimised build)
 #   tomato compile FILE [--entry NAME] [--mode MODE]                  print the LLVM IR
-#   tomato explain CODE FILE                                          decode an error code such as E01:4 printed by a release build
+#   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato repl [FILE ...]                                            type Tomato one piece at a time
 #   tomato update                                                     install the newest release
 #   tomato version                                                    print the version (also --version)
@@ -33,7 +33,7 @@ want_color() {
 # The text itself is not changed, so with the color off the output is the same words.
 paint() {
   awk 'BEGIN { E = sprintf("%c", 27); R = E "[0m"; ccol = "31" }
-    match($0, /^(error|warning): /) { label = substr($0, 1, RLENGTH - 2); ccol = (label == "warning") ? "33" : "31"; print E "[1;" ccol "m" label ":" R " " E "[1m" substr($0, RLENGTH + 1) R; next }
+    match($0, /^(error|warning)(\[E[0-9]+\])?: /) { label = substr($0, 1, RLENGTH - 2); ccol = (label ~ /^warning/) ? "33" : "31"; print E "[1;" ccol "m" label ":" R " " E "[1m" substr($0, RLENGTH + 1) R; next }
     /^ *--> / { match($0, /-->/); print substr($0, 1, RSTART - 1) E "[1;34m-->" R " " E "[36m" substr($0, RSTART + 4) R; next }
     /^ *[0-9]* \|/ { match($0, /\|/); g = substr($0, 1, RSTART); rest = substr($0, RSTART + 1)
       if (rest ~ /^ *\^+$/) { match(rest, /\^+/); print E "[1;34m" g R substr(rest, 1, RSTART - 1) E "[1;" ccol "m" substr(rest, RSTART) R }
@@ -46,6 +46,7 @@ paint() {
 # shows text on standard error, painted when the color is on
 show_error() { if want_color; then paint >&2; else cat >&2; fi; }
 die() { printf 'error: %s\n' "$*" | show_error; exit 1; }
+die_id() { id="$1"; shift; printf 'error[%s]: %s\n' "$id" "$*" | show_error; exit 1; }
 # update downloads use https only, including after redirects (file:// only for tests, with the override)
 curl_safe() {
   if [ -n "$TOMATO_UPDATE_ALLOW_ANY_URL" ] || [ -n "$TOMATO_UPDATE_ALLOW_FILE" ]; then curl -fsSL "$@"; else curl -fsSL --proto '=https' --proto-redir '=https' "$@"; fi
@@ -103,19 +104,41 @@ case "$cmd" in
     TOMATO_HOME="${home%/native}" TOMATO_BIN="$bindir_for_update" "$work"/tomato-*/install-native.sh || die "the installer failed"
     exit 0 ;;
   explain)
-    # tomato explain CODE FILE: a code printed by a program built with --mode release, as the readable error and the source line
-    [ $# -eq 2 ] || usage
-    code="$1"; src_file="$2"
+    # tomato explain CODE [FILE]: an error id such as E04 (or E04:12 with the source line, as a release build prints it): the
+    # class and message of the error kind, and with a FILE and a line the source line, laid out like a compiler error
+    [ $# -ge 1 ] && [ $# -le 2 ] || usage
+    code="$1"; src_file="${2:-}"
+    invalid_code() { die "$code is not an error id (they look like E04 or E04:12)"; }
+    digits="${code%%:*}"
+    case "$digits" in E[0-9][0-9]*) digits="${digits#E}" ;; *) invalid_code ;; esac
+    case "$digits" in *[!0-9]*) invalid_code ;; esac
+    kind="$(printf '%s' "$digits" | sed 's/^0*//')"
+    [ -n "$kind" ] || invalid_code
+    line=""
+    case "$code" in
+      *:*) line="${code#*:}"; case "$line" in ""|*[!0-9]*) invalid_code ;; esac ;;
+    esac
+    entry="$(awk -v kind="$kind" 'NR == kind { print; exit }' "$home/std/errors.txt")"
+    id="E$kind"; [ "${#kind}" -eq 1 ] && id="E0$kind"
+    if [ -z "$entry" ]; then echo "error[$id]: an error the table does not list"; else
+      cls="${entry%% *}"; msg="${entry#* }"
+      echo "error[$id]: $cls: $msg"
+    fi
+    [ -n "$src_file" ] && [ -n "$line" ] || exit 0
+    line="$(printf '%s' "$line" | sed 's/^0*//')"
+    [ -n "$line" ] || exit 0                         # line zero means the runtime had no source location
     [ -f "$src_file" ] || die "cannot read $src_file"
-    case "$code" in E[0-9][0-9]:[0-9]*) ;; *) die "$code is not an error code (they look like E01:4)" ;; esac
-    kind="$(printf '%s' "$code" | sed 's/^E\([0-9][0-9]\):.*/\1/' | sed 's/^0//')"
-    line="$(printf '%s' "$code" | sed 's/^E[0-9][0-9]://')"
-    msg="$(sed -n "${kind}p" "$home/std/errors.txt" 2>/dev/null)"
-    [ -n "$msg" ] || msg="an error the table does not list (code $kind)"
-    echo "error: $msg"
-    text="$(sed -n "${line}p" "$src_file")"
-    if [ -z "$text" ] && [ "$line" -gt "$(wc -l < "$src_file")" ]; then echo "  (line $line is past the end of $src_file: is this the file the program was built from?)"; exit 0; fi
-    echo "  line $line: $(printf '%s' "$text" | sed 's/^[ \t]*//')"
+    if ! text="$(awk -v line="$line" 'NR == line { print; found = 1; exit } END { if (!found) exit 1 }' "$src_file")"; then
+      echo "  (line $line is past the end of $src_file: is this the file the program was built from?)"
+      exit 0
+    fi
+    trimmed="$(printf '%s' "$text" | sed 's/^[ \t]*//')"
+    indent=$(( ${#text} - ${#trimmed} ))
+    pad="$(printf '%*s' "${#line}" '')"
+    echo " --> $src_file:$line"
+    echo "$pad |"
+    echo "$line | $text"
+    printf '%s | %*s%s\n' "$pad" "$indent" '' "$(printf '%s' "$trimmed" | sed 's/./^/g')"
     exit 0 ;;
   paint) paint; exit 0 ;;      # for the repl: `tomato paint` colors error text read from standard input
   repl|shell) TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;
@@ -157,8 +180,8 @@ fi
 
 case "$mode" in
   debug|release) ;;
-  normal) die "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" ;;
-  *) die "the mode must be debug or release, not '$mode'" ;;
+  normal) die_id E281 "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" ;;
+  *) die_id E282 "the mode must be debug or release, not '$mode'" ;;
 esac
 # debug links at -O1 and keeps readable errors and the leak report; release links at -O2 (and prints short error codes, without the
 # leak report). Both use link-time optimisation, so the runtime's small-number and reference-count fast paths are inlined into the

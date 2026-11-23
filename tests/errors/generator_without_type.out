@@ -1,4 +1,4 @@
-error: the generator 'squares' must say what it yields
+error[E275]: the generator 'squares' must say what it yields
  --> tests/errors/generator_without_type.tom:7:14
   |
 7 |     for x in squares(3):

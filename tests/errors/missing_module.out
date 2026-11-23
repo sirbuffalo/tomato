@@ -1,4 +1,4 @@
-error: cannot find the module 'nosuchmodule'
+error[E183]: cannot find the module 'nosuchmodule'
  --> tests/errors/missing_module.tom:1:6
   |
 1 | from nosuchmodule import thing

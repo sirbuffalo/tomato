@@ -1,4 +1,4 @@
-error: the function 'first_even' can reach its end without returning a value
+error[E270]: the function 'first_even' can reach its end without returning a value
  --> tests/errors/missing_return_loop.tom:5:5
   |
 5 | def first_even(items: list[int]) -> int:

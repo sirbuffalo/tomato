@@ -10,11 +10,12 @@
     this.ready = Promise.all([
       get("tomatoc.wasm").then(function (r) { return r.arrayBuffer(); }).then(WebAssembly.compile),
       get("runtime.wasm").then(function (r) { return r.arrayBuffer(); }).then(WebAssembly.compile),
-      Promise.all(TomatoWasm.STD.map(function (n) { return get("std/" + n + ".tom").then(function (r) { return r.arrayBuffer(); }); }))
+      Promise.all(TomatoWasm.STD.map(function (n) { return get("std/" + TomatoWasm.file(n)).then(function (r) { return r.arrayBuffer(); }); }))
     ]).then(function (x) { self.compiler = x[0]; self.runtime = x[1]; self.std = x[2]; return self; });
     return this.ready;
   };
-  TomatoWasm.STD = ["builtin", "math", "itertools", "rational", "cache", "requests", "toml", "bitarray", "json"];   // the standard library modules (std/NAME.tom)
+  TomatoWasm.STD = ["builtin", "math", "itertools", "rational", "cache", "requests", "toml", "bitarray", "json", "errors"];   // the standard library modules (std/NAME.tom) and the error table (std/errors.txt)
+  TomatoWasm.file = function (n) { return n === "errors" ? "errors.txt" : n + ".tom"; };
   var enc = function (s) { return new TextEncoder().encode(s); };
 
   // extra: optional { "/name.tom": Uint8Array } for the modules the program imports (the command-line repl supplies them;
@@ -23,11 +24,11 @@
     var self = this;
     return this.load().then(function () {
       var files = Object.assign({}, extra || {}, { "/program.tom": enc(source) });
-      TomatoWasm.STD.forEach(function (n, i) { files["/std/" + n + ".tom"] = new Uint8Array(self.std[i]); });
+      TomatoWasm.STD.forEach(function (n, i) { files["/std/" + TomatoWasm.file(n)] = new Uint8Array(self.std[i]); });
       var host = new WasiHost({ args: ["tomatoc", "/program.tom", entry || "main", "/std/"], files: files });
       return host.run(self.compiler).then(function (r) {
         var err = r.stderr.trim();
-        if (!self.local && r.code !== 0 && /could not open /.test(err) && /^\s*(from|import)\s/m.test(source))
+        if (!self.local && r.code !== 0 && /could not be opened/.test(err) && /^\s*(from|import)\s/m.test(source))
           err += "\n(imports of your own modules are not supported on this page; the installed tomato command supports them)";
         // warnings (compiler/src/lint.tom) travel as comment lines at the end of the IR: ";! " then the text
         var warnings = r.stdout.split("\n").filter(function (l) { return l.indexOf(";! ") === 0; }).map(function (l) { return l.slice(3); }).join("\n");
@@ -53,10 +54,10 @@
         } catch (e) {
           if (e && e.wasiExit !== undefined) code = e.wasiExit;
           else if (e && e.timeout) { timedOut = true; code = 124; }
-          else if (e instanceof RangeError && /call stack/i.test(e.message)) { failure = "stack overflow: a function calls itself too deeply"; code = 1; }   // the native runtime says the same
-          else { failure = String(e && e.message || e); code = 1; }
+          else if (e instanceof RangeError && /call stack/i.test(e.message)) { failure = "error[E350]: stack overflow: a function calls itself too deeply"; code = 1; }
+          else { failure = "error[E370]: " + String(e && e.message || e); code = 1; }
         }
-        return { stdout: host.text("out"), stderr: host.text("err") + (failure ? "error: " + failure + "\n" : ""), code: code, timedOut: timedOut };
+        return { stdout: host.text("out"), stderr: host.text("err") + (failure ? failure + "\n" : ""), code: code, timedOut: timedOut };
       });
     });
   };

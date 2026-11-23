@@ -1,4 +1,4 @@
-error: the parameter 'n' of 'add' is declared twice
+error[E286]: the parameter 'n' of 'add' is declared twice
  --> tests/errors/duplicate_parameter.tom:5:9
   |
 5 | def add(n: int, n: int) -> int:

@@ -45,7 +45,7 @@ var tw = new TomatoWasm("");
 tw.compiler = new WebAssembly.Module(bin(dir + "/tomatoc.wasm"));
 tw.runtime = new WebAssembly.Module(bin(dir + "/runtime.wasm"));
 tw.local = true;   // not the website: the "own modules are not supported on this page" hint does not apply
-tw.std = TomatoWasm.STD.map(function (n) { return bin(dir + "/std/" + n + ".tom"); }).map(function (u) { return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); });
+tw.std = TomatoWasm.STD.map(function (n) { return bin(dir + "/std/" + TomatoWasm.file(n)); }).map(function (u) { return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); });
 tw.ready = Promise.resolve(tw);
 
 var source = new TextDecoder().decode(bin(file));
@@ -72,7 +72,7 @@ tw.compile(source, "main", extra).then(function (c) {
   if (!c.ok) { emit(c.error, "err"); finish(1); return; }
   return tw.run(c.ir, { inputs: [], stdin: stdinFile ? new TextDecoder().decode(bin(stdinFile)) : "", ask: ask, timeoutMs: 5000 }).then(function (r) {
     emit(r.stdout, "out"); emit(r.stderr, "err");
-    if (r.timedOut) printErr("error: the program ran longer than 5 seconds");
+    if (r.timedOut) printErr("error[E369]: the program ran longer than 5 seconds");
     finish(r.code);
   });
-}).catch(function (e) { printErr("error: " + (e && e.message || e)); finish(1); });
+}).catch(function (e) { printErr("error[E370]: " + (e && e.message || e)); finish(1); });

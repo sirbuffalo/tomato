@@ -1,4 +1,4 @@
-error: this statement is outside any function
+error[E342]: this statement is outside any function
  --> tests/errors/top_level_code.tom:1:1
   |
 1 | print(1)

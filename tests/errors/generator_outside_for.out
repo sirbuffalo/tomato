@@ -1,4 +1,4 @@
-error: 'squares' is a generator (it uses yield), so it can only be used as what a for loop loops over
+error[E117]: 'squares' is a generator (it uses yield), so it can only be used as what a for loop loops over
  --> tests/errors/generator_outside_for.tom:7:10
   |
 7 |     xs = squares(3)

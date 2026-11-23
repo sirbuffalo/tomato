@@ -32,6 +32,7 @@ def main():
         f.close()
     catch IOError as e:
         print(e.message)
+        print(e.id)
     try:
         g = open('/nonexistent_dir_for_tomato/other.txt', 'r')
         g.close()

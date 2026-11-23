@@ -1,0 +1,6 @@
+error[E265]: the field 'id' is already defined by a parent class
+ --> tests/errors/error_field_id.tom:1:1
+  |
+1 | class MyError(RuntimeError):
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: use a different name

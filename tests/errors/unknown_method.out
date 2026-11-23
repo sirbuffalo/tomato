@@ -1,4 +1,4 @@
-error: text has no method 'upcase'
+error[E338]: text has no method 'upcase'
  --> tests/errors/unknown_method.tom:4:16
   |
 4 |     print(word.upcase())

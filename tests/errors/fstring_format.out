@@ -1,4 +1,4 @@
-error: a replacement field in an f-string has no format options
+error[E159]: a replacement field in an f-string has no format options
  --> tests/errors/fstring_format.tom:4:15
   |
 4 |     print(f'{n:5}')

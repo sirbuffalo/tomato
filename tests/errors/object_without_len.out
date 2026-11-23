@@ -1,4 +1,4 @@
-error: 'Box' objects have no length
+error[E341]: 'Box' objects have no length
  --> tests/errors/object_without_len.tom:7:5
   |
 7 |     print(len(b))

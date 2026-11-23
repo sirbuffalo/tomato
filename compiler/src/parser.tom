@@ -665,7 +665,7 @@ export class Parser:
         # the item is taken apart straight from the loop variable (no second hidden variable: the lint pass sees a comprehension's
         # loop without its statements in order)
         q = Parser()
-        q.toks = lex(f"if len({stem}) != {len(names)}:\n    raise RuntimeError('cannot unpack ' + str(len({stem})) + ' values into {plural_vars(len(names))}')\n")
+        q.toks = lex(f"if len({stem}) != {len(names)}:\n    raise ValueError('cannot unpack ' + str(len({stem})) + ' values into {plural_vars(len(names))}', 'E63')\n")
         check = q.statement()
         set_line(vn(check), line)
         parts: list[Node] = [check]
@@ -860,7 +860,7 @@ export class Parser:
             return mk('Multi', t.line, [vnodes(stmts)])
         # one value to take apart: a tuple (or list or text) whose length is only known when the program runs
         stmts.append(mk('Assign', t.line, [vn(mk('Name', t.line, [vs(stem)])), vn(values[0])]))
-        text = f"if len({stem}) != {count}:\n    raise RuntimeError('cannot unpack ' + str(len({stem})) + ' values into {plural_vars(count)}')\n"
+        text = f"if len({stem}) != {count}:\n    raise ValueError('cannot unpack ' + str(len({stem})) + ' values into {plural_vars(count)}', 'E63')\n"
         q = Parser()
         q.toks = lex(text)
         check = q.statement()

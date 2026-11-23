@@ -1,4 +1,4 @@
-error: a bracket is opened here but never closed
+error[E137]: a bracket is opened here but never closed
  --> tests/errors/unclosed_bracket.tom:3:9
   |
 3 |     x = (1 +

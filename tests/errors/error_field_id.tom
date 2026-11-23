@@ -1,0 +1,14 @@
+class MyError(RuntimeError):
+    id: int = 0
+
+    @init
+    def make_my(self, message: str, id: int):
+        RuntimeError.make(self, message)
+        self.id = id
+
+@main
+def main():
+    try:
+        raise MyError("boom", 7)
+    catch MyError as e:
+        print(e.message, e.id)

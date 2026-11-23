@@ -1,4 +1,4 @@
-error: 'add' needs a value for 'b'
+error[E125]: 'add' needs a value for 'b'
  --> tests/errors/too_few_arguments.tom:6:11
   |
 6 |     print(add(1))

@@ -1,4 +1,4 @@
-error: the function 'sign' can reach its end without returning a value
+error[E270]: the function 'sign' can reach its end without returning a value
  --> tests/errors/missing_return.tom:5:5
   |
 5 | def sign(x: int) -> int:

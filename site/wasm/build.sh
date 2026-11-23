@@ -16,7 +16,7 @@ $cc -O1 -Wno-override-module -x ir "$tmp/tomatoc.ll" -x c "$rt" -lm \
   -Wl,--stack-first -Wl,-z,stack-size=8388608 -Wl,--initial-memory=67108864 -Wl,--max-memory=1073741824 -o "$out/tomatoc.wasm"
 $cc -O1 -DTOMATO_WASM -mexec-model=reactor "$rt" -lm \
   -Wl,--export-all -Wl,--no-entry -Wl,--initial-memory=33554432 -Wl,--max-memory=1073741824 -o "$out/runtime.wasm"
-mkdir -p "$out/std"; cp "$root/std/"*.tom "$out/std/"
+mkdir -p "$out/std"; cp "$root/std/"*.tom "$root/std/errors.txt" "$out/std/"
 { cat "$root/compiler/bootstrap/tomatoc.ll" "$rt" | shasum -a 256 | cut -d" " -f1
   shasum -a 256 "$out/tomatoc.wasm" "$out/runtime.wasm" | cut -d" " -f1; } > "$out/SOURCE.sha256"   # source hash, then the two wasm files   # tests/run.sh checks the wasm files are not stale
 echo "built $out/tomatoc.wasm and $out/runtime.wasm"

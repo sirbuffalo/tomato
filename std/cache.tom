@@ -29,8 +29,8 @@
 
 export class CacheMiss(RuntimeError):
     @init
-    def make_miss(self, message: str):
-        RuntimeError.make(self, message)
+    def make_miss(self, message: str, id: str = ''):
+        RuntimeError.make(self, message, id)
 
 export class Clock:
     def now(self) -> float:
@@ -64,7 +64,7 @@ export class Cache[V]:
     @init
     def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
         if capacity < 0:
-            raise RuntimeError('a cache capacity cannot be negative')
+            raise ValueError('a cache capacity cannot be negative', 'E37')
         self.capacity = capacity
         self.ttl = ttl
         if timer is None:
@@ -134,7 +134,7 @@ export class Cache[V]:
     def at(self, key: str) -> V:
         if not self.live(key):
             self.misses += 1
-            raise CacheMiss(f'{key} is not in the cache')
+            raise CacheMiss(f'{key} is not in the cache', 'E90')
         e = self.items[key]
         self.hits += 1
         self.unlink(e)

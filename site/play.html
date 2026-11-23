@@ -83,7 +83,7 @@ function execute() {
       f.onkeydown = function (ev) { if (ev.key === "Enter") { ev.preventDefault(); answers.push(f.value); execute(); } };
       $("out").appendChild(f); f.focus(); $("status").textContent = "Waiting for input…"; return;
     }
-    if (d.timed_out) e += "\nStopped: ran longer than 5 seconds.";
+    if (d.timed_out) e += "\nerror[E369]: Stopped: ran longer than 5 seconds.";
     if (d.stopped === "memory") e += "\nStopped: too much memory.";
     if (d.stopped === "output") e += "\nStopped: too much output.";
     $("err").innerHTML = tomatoErrors(((d.warnings ? d.warnings + "\n" : "") + e).trim()); $("status").textContent = "Done in " + d.ms + " ms";
@@ -145,7 +145,7 @@ function submit(text, echoed) {
         log("e", plain(/as statements yet/.test(msg) && firstError ? firstError : msg)); return;
       }
       var out = d.stdout, fresh = out.indexOf(shown) === 0 ? out.slice(shown.length) : out;
-      if (d.timed_out) { shown = savedShown; log("e", "Stopped: ran longer than 5 seconds."); return; }
+      if (d.timed_out) { shown = savedShown; log("e", "error[E369]: Stopped: ran longer than 5 seconds."); return; }
       if (d.exit !== 0) { shown = savedShown; log("e", plain((d.stderr || "error").trim())); return; }
       (isD ? defs : stmts).push(t); shown = out; replAnswers = d.answers;
       if (fresh) log("out", fresh.replace(/\n$/, ""));

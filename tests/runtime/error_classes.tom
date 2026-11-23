@@ -1,0 +1,73 @@
+from math import exp
+
+class EmptyError(IndexError):
+    pass
+
+class MyError(RuntimeError):
+    @init
+    def make_mine(self, message: str):
+        RuntimeError.make(self, message)
+
+@main
+def main():
+    try:
+        xs = [1, 2, 3]
+        print(xs[5])
+    catch IndexError as e:
+        print("caught", e.message, e.id)
+    try:
+        d: dict[str, int] = {}
+        print(d["a"])
+    catch KeyError as e:
+        print("caught", e.message, e.id)
+    try:
+        print(int("abc"))
+    catch ValueError as e:
+        print("caught", e.message, e.id)
+    try:
+        n = int("0")
+        print(1 // n)
+    catch ZeroDivisionError as e:
+        print("caught", e.message, e.id)
+    try:
+        print(exp(1000))
+    catch OverflowError as e:
+        print("caught", e.message, e.id)
+    try:
+        ys: list[int] = []
+        ys.pop()
+    catch RuntimeError as e:
+        print("caught", e.message, e.id)
+    huge = 10 ** 30
+    try:
+        print(1 << -1)
+    catch ValueError as e:
+        print("caught", e.message, e.id)
+    try:
+        print(1 >> huge)
+    catch OverflowError as e:
+        print("caught", e.message, e.id)
+    try:
+        print(2 ** huge)
+    catch OverflowError as e:
+        print("caught", e.message, e.id)
+    try:
+        print(huge & 1)
+    catch OverflowError as e:
+        print("caught", e.message, e.id)
+    try:
+        print([1][huge])
+    catch OverflowError as e:
+        print("caught", e.message, e.id)
+    try:
+        print([1][:huge])
+    catch OverflowError as e:
+        print("caught slice", e.message, e.id)
+    try:
+        raise MyError("mine")
+    catch MyError as e:
+        print("caught", e.message, "[" + e.id + "]")
+    try:
+        raise EmptyError()
+    catch IndexError as e:
+        print("caught empty", e.message == "", e.id == "")

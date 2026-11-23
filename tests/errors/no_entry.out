@@ -1,2 +1,2 @@
-error: no function is marked @main
+error[E228]: no function is marked @main
   = help: write @main on the line above the function that should start the program

@@ -1,4 +1,4 @@
-error: a dict has no method 'push'
+error[E338]: a dict has no method 'push'
  --> tests/errors/dict_unknown_method.tom:4:16
   |
 4 |     print(ages.push(1))

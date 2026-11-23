@@ -1,4 +1,4 @@
-error: this line is indented differently from the block it belongs to
+error[E309]: this line is indented differently from the block it belongs to
  --> tests/errors/bad_indent.tom:5:7
   |
 5 |       print(2)

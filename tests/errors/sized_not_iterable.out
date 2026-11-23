@@ -1,4 +1,4 @@
-error: a for loop cannot loop over a value of type Sized
+error[E142]: a for loop cannot loop over a value of type Sized
  --> tests/errors/sized_not_iterable.tom:2:5
   |
 2 |     for x in thing:

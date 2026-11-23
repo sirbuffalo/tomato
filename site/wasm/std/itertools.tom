@@ -26,7 +26,7 @@ export class progress_bar[T]:
     @init
     def make(self, items: Iterable[T] & Sized, label: str = '', width: int = 30):
         if width < 1:
-            raise RuntimeError('a progress bar width must be at least 1')
+            raise ValueError('a progress bar width must be at least 1', 'E38')
         self.items = items
         self.total = len(items)
         self.label = label
@@ -151,7 +151,7 @@ export def pairwise[T](items: list[T]) -> list[list[T]]:
 # Chunks of n items; the last may be shorter.
 export def batched[T](items: list[T], n: int) -> list[list[T]]:
     if n < 1:
-        raise RuntimeError('batched needs a batch size of at least 1')
+        raise ValueError('batched needs a batch size of at least 1', 'E39')
     return [items[i:i + n] for i in range(0, len(items), n)]
 
 export def repeat[T](item: T, times: int) -> list[T]:

@@ -1,4 +1,4 @@
-error: the two values of this conditional expression have different types: int and str
+error[E287]: the two values of this conditional expression have different types: int and str
  --> tests/errors/conditional_types.tom:4:5
   |
 4 |     print(n if n > 1 else 'small')

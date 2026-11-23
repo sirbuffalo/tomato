@@ -1,4 +1,4 @@
-error: this line ends with ':' but no indented block follows
+error[E308]: this line ends with ':' but no indented block follows
  --> tests/errors/missing_block.tom:4:14
   |
 4 |     if x > 0:

@@ -1,4 +1,4 @@
-error: a number cannot be followed by letters, an underscore or a dot: 12abc
+error[E154]: a number cannot be followed by letters, an underscore or a dot: 12abc
  --> tests/errors/number_then_letters.tom:3:9
   |
 3 |     x = 12abc

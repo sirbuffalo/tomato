@@ -1,4 +1,4 @@
-error: a for loop over 'x' needs the same item type in every member of list[int] | str, but the items are int and str
+error[E143]: a for loop over 'x' needs the same item type in every member of list[int] | str, but the items are int and str
  --> tests/errors/for_over_union_of_mixed_items.tom:2:17
   |
 2 |     for item in x:

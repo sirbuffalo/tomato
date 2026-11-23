@@ -1,4 +1,4 @@
-error: this f-string has a '{' that is never closed
+error[E297]: this f-string has a '{' that is never closed
  --> tests/errors/fstring_unclosed.tom:4:19
   |
 4 |     print(f'value {n')

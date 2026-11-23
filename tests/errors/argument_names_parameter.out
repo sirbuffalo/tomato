@@ -1,4 +1,4 @@
-error: argument 1 of 'add' (the parameter 'left') has type str, but int is expected
+error[E324]: argument 1 of 'add' (the parameter 'left') has type str, but int is expected
  --> tests/errors/argument_names_parameter.tom:3:11
   |
 3 |     print(add("a", 2))

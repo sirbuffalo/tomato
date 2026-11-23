@@ -1,4 +1,4 @@
-error: generators are nested too deeply here
+error[E205]: generators are nested too deeply here
  --> tests/errors/generator_recursion.tom:2:5
   |
 2 |     for x in forever(n):

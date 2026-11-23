@@ -1,34 +1,68 @@
 # Names every Tomato file can use without importing them (D22a).
 
+# The runtime reads these two fields in this order (print_uncaught in runtime/tomato_rt.c).
 class Error:
-    message: str
+    message: str = ''
+    # the id of the kind of failure, such as "E04" (the line of std/errors.txt); "" for an error a program makes up itself
+    id: str = ''
 
     @init
-    def start(self, message: str):
+    def start(self, message: str, id: str = ""):
         self.message = message
+        self.id = id
 
 # Failures the language itself raises: division by zero, an index out of range, a missing key, bad text for int().
 class RuntimeError(Error):
     @init
-    def make(self, message: str):
-        Error.start(self, message)
+    def make(self, message: str, id: str = ""):
+        Error.start(self, message, id)
+
+# A list, text or range index (or a slice) that is out of range, and pop() from an empty list.
+class IndexError(RuntimeError):
+    @init
+    def make_index(self, message: str, id: str = ""):
+        RuntimeError.make(self, message, id)
+
+# A key that a dict, set or table does not hold.
+class KeyError(RuntimeError):
+    @init
+    def make_key(self, message: str, id: str = ""):
+        RuntimeError.make(self, message, id)
+
+# A value of the right type that the operation cannot use: int("abc"), chr(-1), a step of 0, sqrt(-1).
+class ValueError(RuntimeError):
+    @init
+    def make_value(self, message: str, id: str = ""):
+        RuntimeError.make(self, message, id)
+
+# /, // or % by zero.
+class ZeroDivisionError(RuntimeError):
+    @init
+    def make_zero(self, message: str, id: str = ""):
+        RuntimeError.make(self, message, id)
+
+# A number too big for its type, or a float result that is infinite.
+class OverflowError(RuntimeError):
+    @init
+    def make_overflow(self, message: str, id: str = ""):
+        RuntimeError.make(self, message, id)
 
 class IOError(RuntimeError):
     @init
-    def make_io(self, message: str):
-        RuntimeError.make(self, message)
+    def make_io(self, message: str, id: str = ""):
+        RuntimeError.make(self, message, id)
 
 # Raised by input() when there is no more input to read.
 class EOFError(RuntimeError):
     @init
-    def make_eof(self, message: str):
-        RuntimeError.make(self, message)
+    def make_eof(self, message: str, id: str = ""):
+        RuntimeError.make(self, message, id)
 
 # Raised inside a task that was cancelled with t.cancel() (at its next wait), and by await on that task.
 class CancelledError(RuntimeError):
     @init
-    def make_cancelled(self, message: str):
-        RuntimeError.make(self, message)
+    def make_cancelled(self, message: str, id: str = ""):
+        RuntimeError.make(self, message, id)
 
 # range(stop), range(start, stop) and range(start, stop, step) are a value of their own. It keeps only the three numbers, so it
 # takes the same small amount of memory however long it is, and prints as range(0, 100, 1). It is a sequence of ints: `for`,
@@ -43,7 +77,7 @@ class range:
     @init
     def make(self, start: int, stop: int, step: int):
         if step == 0:
-            raise RuntimeError('range step cannot be zero')
+            raise ValueError('range step cannot be zero', 'E23')
         self.start = start
         self.stop = stop
         self.step = step
@@ -80,7 +114,7 @@ class range:
         if i < 0:
             i += n
         if i < 0 or i >= n:
-            raise RuntimeError('index out of range')
+            raise IndexError('index out of range', 'E04')
         return self.start + i * self.step
 
     @contains
@@ -97,7 +131,7 @@ class range:
         if flags & 4 != 0:
             k = st
         if k == 0:
-            raise RuntimeError('slice step cannot be zero')
+            raise ValueError('slice step cannot be zero', 'E24')
         # a forward slice runs over positions 0..n, a backward one over -1..n-1 (so it can stop before position 0)
         low = 0
         high = n
