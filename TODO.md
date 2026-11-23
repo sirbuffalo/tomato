@@ -4,11 +4,11 @@
   After merge, move the v0.50 tag to the merge commit (the release was created with --target main before the version bump landed); assets are unaffected.
 - Cut the remaining per-iteration cost of the mandelbrot loop
   At counting input 250, Tomato ÷ Go is 1.97 in instructions executed. The hot loop still pays for 3 float checks and the tagged counter `i` (tag tests, overflow-checked add). Removing the counter checks needs range reasoning such as proving that `i + 1` is small when `0 <= i < 100`.
-- Fix the 10 Linux x86-64 test failures so the Linux release gate can pass
-  Found by `release/release.sh` on biggie: LeakSanitizer leaks in 5 asan tests (msgpack_errors, bigint_frames, bigint_unwind, toml_invalid, requests_local), progress-bar output (iteration main, progress_bar, itertools_any), `angles` libm rounding (3.0000000000000004 vs 3.0) and the REPL missing-module message test. Until fixed, a release needs `--ignore-linux-failures`.
 - Make tests use unique temp paths instead of fixed `/tmp/tomato_*` names
   `toml_api` fails on this machine because another user account owns `/tmp/tomato_toml_api_test.toml`, and parallel suite runs can collide. The new msgpack tests follow the same existing pattern as `json_files`.
 - Run the wasm program checks on Linux
   `tests/run.sh` runs them only when macOS jsc exists. A 15-line Node shim (defining `load`, `read`, `print`, `printErr` and `self`) runs `native/tomato-jsc.js` unchanged.
 - Fix the false 'might not have a value' warning for lambda parameters
   A lambda parameter with the same name as a local assigned only in one branch is warned about, e.g. `if c: b = 1` then `sorted(xs, key=b -> -b)`.
+- Fix the print unwind leak after v0.51 lands
+  After v0.51 lands: apply the print unwind leak fix (patch in this task's evidence and at ~/.cache/tomato-print-leak-followup.patch), refresh the bootstrap IR and rebuild site/wasm on the Mac. In `print(a, b)`, if `a`'s `@str` raises, `b` leaks; the patch keeps unprinted arguments held and adds two `temp_unwind` cases.

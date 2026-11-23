@@ -3,8 +3,9 @@ from json import loads_msgpack, loads, load, dump, dumps, JsonNull, JSONDecodeEr
 import toml
 
 @main
-def main():
-    path = '/tmp/tomato_json_files_test.json'
+def main(dir: str = '/tmp'):
+    # tests/run.sh passes its own temporary folder: a fixed name in a shared /tmp can belong to another user
+    path = dir + '/tomato_json_files_test.json'
     j = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3, "é": null}')
     dump(j, path)
     f = open(path, 'r')
@@ -43,7 +44,7 @@ def main():
     catch IOError as e:
         print('dump:', e.message)
     # toml
-    tpath = '/tmp/tomato_json_files_test.toml'
+    tpath = dir + '/tomato_json_files_test.toml'
     t = toml.loads('a = 1\n[b]\nc = "x"\n')
     toml.dump(t, tpath)
     print(toml.dumps(toml.load(tpath)) == toml.dumps(t))

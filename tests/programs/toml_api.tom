@@ -2,7 +2,8 @@
 from toml import loads, load, dumps, table, array, string, integer, real, boolean, moment, Moment, Toml, TOMLDecodeError
 
 @main
-def main():
+def main(dir: str = '/tmp'):
+    # tests/run.sh passes its own temporary folder: a fixed name in a shared /tmp can belong to another user
     doc = loads('title = "demo"\nported = true\n[server]\nport = 8080\nratio = 0.25\nhosts = ["a", "b"]\n[[user]]\nname = "x"\n[[user]]\nname = "y"\n')
     print(doc['title'].as_str(), doc['ported'].as_bool())
     print(doc['server']['port'].as_int(), doc['server']['ratio'].as_float(), doc['server']['port'].as_float())
@@ -79,10 +80,10 @@ def main():
     print(back == d)
     print(dumps(table()) == '')
     # load(path)
-    f2 = open('/tmp/tomato_toml_api_test.toml', 'w')
+    f2 = open(dir + '/tomato_toml_api_test.toml', 'w')
     f2.write(out)
     f2.close()
-    print(load('/tmp/tomato_toml_api_test.toml') == d)
+    print(load(dir + '/tomato_toml_api_test.toml') == d)
     try:
         dumps(integer(1))
     catch RuntimeError as e:
