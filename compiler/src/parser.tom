@@ -80,6 +80,7 @@ export class Val:
 export class Node:
     kind: str = ''
     line: int = 0
+    mark: int = 0            # the compiler numbers the statements of a small-int loop here while it compiles that loop
     exported: bool = False
     fields: list[Val] = []
 

@@ -454,6 +454,36 @@ def pure_read(n: Node) -> bool:
         return pure_read(val_node(n.fields[1]))
     return False
 
+def self_update_leaves(name: str, n: Node) -> int:
+    # for `name = <n>`: how many times the variable is read in n, or -1 when n is not an arithmetic tree that can hand the old
+    # number to an operation. Only + - * and a division or modulo by a non-zero constant (they cannot stop the program after
+    # the old number is used up); every other leaf is a literal or a variable.
+    if n.kind == 'IntLit':
+        return 0
+    if n.kind == 'Name':
+        if n.fields[0].text == name:
+            return 1
+        return 0
+    if n.kind != 'BinOp':
+        return -1
+    op = n.fields[0].text
+    left = val_node(n.fields[1])
+    right = val_node(n.fields[2])
+    if op == '//' or op == '%':
+        if right.kind != 'IntLit' or right.fields[0].num == 0:
+            return -1
+    elif op != '+' and op != '-' and op != '*':
+        return -1
+    a = self_update_leaves(name, left)
+    b = self_update_leaves(name, right)
+    if a < 0 or b < 0:
+        return -1
+    return a + b
+
+def self_update(name: str, n: Node) -> bool:
+    # `x = 3 * x + 1`, `x = x // 2`, `x = x + 1`: x is read once and the right side is built from + - * and constant divisors
+    return n.kind == 'BinOp' and self_update_leaves(name, n) == 1
+
 # the names a lambda body reads
 def names_read(n: Node, out: list[str]):
     if n.kind == 'Name':
@@ -1279,6 +1309,9 @@ class Gen:
     assigned: list[str] = []      # the names of variables that are written (a name given to slot()) after the parameters were set up
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
+    take_name: str = ''           # `x = x + 1`: the int local whose one read in the right side hands its number over to the operation
+    mark_prefix: str = ''        # inside a small-int loop: the prefix of the labels its fast copy jumps back to (see small_loop)
+    taken: Ex = ex('', '')        # that read (fresh while an operation has not used it up)
     settled: list[str] = []       # the narrowed variables whose narrowing lasts to the end of the block (after an if that left)
     after: list[list[str]] = []   # for each of those: its name, slot and type before, put back when the block ends
     slots: dict[str, str] = {}
@@ -1721,7 +1754,31 @@ class Gen:
         self.fail_if(ov, 'integer overflow')
         return ex(r, t)
 
+    def int_equal_const(self, op: str, x: Ex, k: Ex) -> Ex:
+        # x == 3 and x != 0: a big number is never equal to a small constant (a big number is always outside the small range), so
+        # comparing the words is enough: no tag test, no call. The word 0 (a slot nobody has written) is the number 0 too.
+        c = self.tmp('cmp')
+        cc = 'eq'
+        if op == '!=':
+            cc = 'ne'
+        if k.reg == '1':
+            if op == '==':
+                self.emit(f'{c} = icmp ult i64 {x.reg}, 2')
+            else:
+                self.emit(f'{c} = icmp ugt i64 {x.reg}, 1')
+        else:
+            self.emit(f'{c} = icmp {cc} i64 {x.reg}, {k.reg}')
+        if self.consumable(x):
+            self.emit(f'call void @tomato_int_free(i64 {x.reg})')
+            x.fresh = False
+        return self.bool_of(c)
+
     def int_compare(self, op: str, x: Ex, y: Ex) -> Ex:
+        if op == '==' or op == '!=':
+            if small_text(y.reg) and y.reg[0].isdigit() and not small_text(x.reg):
+                return self.int_equal_const(op, x, y)
+            if small_text(x.reg) and x.reg[0].isdigit() and not small_text(y.reg):
+                return self.int_equal_const(op, y, x)
         c = self.tmp('icmp')
         m = self.consume_mask(x, y)
         if m == 0:
@@ -2170,6 +2227,10 @@ class Gen:
             e = ex(r, ty)
             if ty != 'int':
                 self.retain(e)         # an int is lent: whoever keeps it copies it (see owned)
+            elif self.take_name == name:
+                e.fresh = True         # `x = x + 1`: the operation frees this number itself if it is big, so the store need not
+                self.taken = e
+                self.take_name = ''
             return e
         if k == 'UnOp':
             op = n.fields[0].text
@@ -4996,6 +5057,10 @@ class Gen:
 
     def stmt_now(self, s: Node):
         self.line = s.line
+        if s.mark > 0 and self.mark_prefix != '':
+            lbl = f'{self.mark_prefix}_{s.mark}'
+            self.br(lbl)
+            self.place(lbl)
         k = s.kind
         if k == 'ExprStmt':
             e = val_node(s.fields[0])
@@ -5021,7 +5086,18 @@ class Gen:
             if name in self.narrowed:
                 raise CompileError(f"'{name}' is known to be {shown(self.types[name])} inside this check, so it cannot be assigned here\nassign to it outside the check", s.line)
             expected = self.types[name] if name in self.slots else ''
+            if name in self.slots and self.types[name] == 'int' and self_update(name, val_node(s.fields[1])):
+                self.take_name = name
+                self.taken = ex('', '')
             v = self.expr(val_node(s.fields[1]), expected)
+            self.take_name = ''
+            if self.taken.reg != '' and not self.taken.fresh and v.ty == 'int' and v.fresh:
+                # the operation used the old number up (freeing it if it was big), so the slot takes the result and frees nothing
+                self.taken = ex('', '')
+                var = self.slot(name, 'int', s.line)
+                self.emit(f'store i64 {v.reg}, ptr {var}')
+                return
+            self.taken = ex('', '')
             slot_type = v.ty
             if name in self.slots:
                 v = self.want(v, self.types[name], s.line, 'the assigned value')
@@ -5370,7 +5446,241 @@ class Gen:
             if len(keep) < len(members):
                 self.settle_narrow(var, keep)
 
+    # ---- small-integer loops. A `while` whose body is only int arithmetic on local variables (assignments built from + - * and
+    # // % by a power of two, if/elif/else on comparisons) is compiled twice. The fast copy assumes every int variable it uses holds a
+    # small number (checked once when the loop is entered, and again each time the general copy comes back to the loop head): it has no
+    # tag tests, no big-number calls and no frees, and an operation that would leave the small range jumps to the start of the same
+    # statement in the general copy (nothing of that statement has been stored yet), which carries on with big numbers as before.
+    def fast_expr_ok(self, n: Node, names: list[str]) -> bool:
+        if n.kind == 'IntLit':
+            return n.fields[0].num < 2 ** 60
+        if n.kind == 'UnOp':
+            inner = val_node(n.fields[1])
+            return n.fields[0].text == '-' and inner.kind == 'IntLit' and inner.fields[0].num < 2 ** 60
+        if n.kind == 'Name':
+            name = n.fields[0].text
+            if name not in self.slots or self.types[name] != 'int' or name in self.narrowed or name in self.settled:
+                return False
+            if name not in names:
+                names.append(name)
+            return True
+        if n.kind != 'BinOp':
+            return False
+        op = n.fields[0].text
+        left = val_node(n.fields[1])
+        right = val_node(n.fields[2])
+        if op == '//' or op == '%':
+            if right.kind != 'IntLit' or not self.is_pow2_literal(right.fields[0].num):
+                return False
+        elif op != '+' and op != '-' and op != '*':
+            return False
+        return self.fast_expr_ok(left, names) and self.fast_expr_ok(right, names)
+
+    def is_pow2_literal(self, v: int) -> bool:
+        # 2, 4, 8, ... up to 2**60
+        if v < 2 or v > 2 ** 60:
+            return False
+        while v > 1:
+            if v % 2 != 0:
+                return False
+            v = v // 2
+        return True
+
+    def fast_cond_ok(self, n: Node, names: list[str]) -> bool:
+        if n.kind != 'BinOp':
+            return False
+        op = n.fields[0].text
+        if not (op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='):
+            return False
+        return self.fast_expr_ok(val_node(n.fields[1]), names) and self.fast_expr_ok(val_node(n.fields[2]), names)
+
+    def fast_stmts_ok(self, body: list[Node], names: list[str], counter: list[int]) -> bool:
+        # also numbers the statements (Node.mark) that the fast copy may jump back to
+        for s in body:
+            if s.kind == 'Pass':
+                continue
+            if s.kind == 'Assign':
+                t = val_node(s.fields[0])
+                if t.kind != 'Name' or t.fields[0].text not in self.slots or self.types[t.fields[0].text] != 'int' or t.fields[0].text in self.narrowed or t.fields[0].text in self.settled:
+                    return False
+                if t.fields[0].text not in names:
+                    names.append(t.fields[0].text)
+                if not self.fast_expr_ok(val_node(s.fields[1]), names):
+                    return False
+                counter[0] += 1
+                s.mark = counter[0]
+            elif s.kind == 'If':
+                counter[0] += 1
+                s.mark = counter[0]
+                for branch in s.fields[0].items:
+                    if not self.fast_cond_ok(val_node(branch.items[0]), names):
+                        return False
+                    if not self.fast_stmts_ok(val_nodes(branch.items[1]), names, counter):
+                        return False
+                if s.fields[1].tag == 'l' and not self.fast_stmts_ok(val_nodes(s.fields[1]), names, counter):
+                    return False
+            else:
+                return False
+        return True
+
+    def clear_marks(self, body: list[Node]):
+        for s in body:
+            s.mark = 0
+            if s.kind == 'If':
+                for branch in s.fields[0].items:
+                    self.clear_marks(val_nodes(branch.items[1]))
+                if s.fields[1].tag == 'l':
+                    self.clear_marks(val_nodes(s.fields[1]))
+
+    def fast_checked(self, intr: str, a: str, b: str, bail: str) -> str:
+        # a 64-bit operation on tagged words whose overflow means "the result is outside the small range" (see tomato_int_add_c)
+        name = f'llvm.{intr}.with.overflow.i64'
+        self.mod.declare(f'declare {{i64, i1}} @{name}(i64, i64)')
+        pair = self.tmp('pair')
+        self.emit(f'{pair} = call {{i64, i1}} @{name}(i64 {a}, i64 {b})')
+        r = self.tmp('r')
+        self.emit(f'{r} = extractvalue {{i64, i1}} {pair}, 0')
+        ov = self.tmp('ov')
+        self.emit(f'{ov} = extractvalue {{i64, i1}} {pair}, 1')
+        ok = self.label('fastok')
+        self.cond_br(ov, bail, ok)
+        self.place(ok)
+        return r
+
+    def fast_expr(self, n: Node, bail: str) -> str:
+        if n.kind == 'IntLit':
+            return str(n.fields[0].num * 2 + 1)
+        if n.kind == 'UnOp':
+            return str(1 - val_node(n.fields[1]).fields[0].num * 2)
+        if n.kind == 'Name':
+            r = self.tmp('fl')
+            self.emit(f'{r} = load i64, ptr {self.slots[n.fields[0].text]}')
+            return r
+        op = n.fields[0].text
+        a = self.fast_expr(val_node(n.fields[1]), bail)
+        if op == '//' or op == '%':
+            v = val_node(n.fields[2]).fields[0].num
+            k = 0
+            while v > 1:
+                v = v // 2
+                k += 1
+            if op == '//':
+                s = self.arith('ashr', a, str(k))
+                return self.arith('or', s, '1')
+            m = self.arith('and', a, str(2 ** (k + 1) - 2))
+            return self.arith('or', m, '1')
+        b = self.fast_expr(val_node(n.fields[2]), bail)
+        if op == '+':
+            return self.fast_checked('sadd', a, self.arith('sub', b, '1'), bail)
+        if op == '-':
+            return self.fast_checked('ssub', a, self.arith('sub', b, '1'), bail)
+        am = self.arith('sub', a, '1')
+        bm = self.arith('ashr', b, '1')
+        p = self.fast_checked('smul', am, bm, bail)
+        return self.arith('or', p, '1')
+
+    def fast_cond(self, n: Node, bail: str) -> str:
+        op = n.fields[0].text
+        a = self.fast_expr(val_node(n.fields[1]), bail)
+        b = self.fast_expr(val_node(n.fields[2]), bail)
+        cc = 'eq'
+        if op == '!=':
+            cc = 'ne'
+        elif op == '<':
+            cc = 'slt'
+        elif op == '<=':
+            cc = 'sle'
+        elif op == '>':
+            cc = 'sgt'
+        elif op == '>=':
+            cc = 'sge'
+        c = self.tmp('fc')
+        self.emit(f'{c} = icmp {cc} i64 {a}, {b}')
+        return c
+
+    def fast_block(self, body: list[Node], prefix: str):
+        for s in body:
+            if s.kind == 'Pass':
+                continue
+            bail = f'{prefix}_{s.mark}'
+            if s.kind == 'Assign':
+                v = self.fast_expr(val_node(s.fields[1]), bail)
+                self.emit(f'store i64 {v}, ptr {self.slots[val_node(s.fields[0]).fields[0].text]}')
+                continue
+            end = self.label('fendif')
+            for branch in s.fields[0].items:
+                c = self.fast_cond(val_node(branch.items[0]), bail)
+                then = self.label('fthen')
+                nxt = self.label('fnext')
+                self.cond_br(c, then, nxt)
+                self.place(then)
+                self.fast_block(val_nodes(branch.items[1]), prefix)
+                self.br(end)
+                self.place(nxt)
+            if s.fields[1].tag == 'l':
+                self.fast_block(val_nodes(s.fields[1]), prefix)
+            self.br(end)
+            self.place(end)
+
+    def small_loop(self, s: Node) -> bool:
+        # compile `while` as the fast copy plus the general copy when its body qualifies; False means nothing was emitted
+        if self.is_async or self.gen_n > 0:
+            return False
+        names: list[str] = []
+        counter = [0]
+        cond = val_node(s.fields[0])
+        body = val_nodes(s.fields[1])
+        ok = len(body) > 0 and self.fast_cond_ok(cond, names) and self.fast_stmts_ok(body, names, counter)
+        if not ok:
+            self.clear_marks(body)
+            return False
+        prefix = self.label('rb')
+        saved_prefix = self.mark_prefix
+        self.mark_prefix = prefix
+        fhead = self.label('fwhile')
+        fbody = self.label('fbody')
+        ghead = self.label('while')
+        gcond = self.label('gcond')
+        gbody = self.label('body')
+        end = self.label('endwhile')
+        self.br(ghead)
+        # the general loop head: every variable small (bit 0 of the AND of the words is set) -> the fast copy
+        self.place(ghead)
+        acc = ''
+        for name in names:
+            w = self.tmp('sm')
+            self.emit(f'{w} = load i64, ptr {self.slots[name]}')
+            if acc == '':
+                acc = w
+            else:
+                acc = self.arith('and', acc, w)
+        bit = self.arith('and', acc, '1')
+        small = self.tmp('small')
+        self.emit(f'{small} = icmp ne i64 {bit}, 0')
+        self.cond_br(small, fhead, gcond)
+        self.place(fhead)
+        fc = self.fast_cond(cond, gcond)
+        self.cond_br(fc, fbody, end)
+        self.place(fbody)
+        self.fast_block(body, prefix)
+        self.br(fhead)
+        self.place(gcond)
+        c = self.truth(self.expr(cond), s.line)
+        self.cond_br(c, gbody, end)
+        self.place(gbody)
+        self.push_loop(end, ghead)
+        self.block(body)
+        self.loop_depth -= 1
+        if not self.terminated:
+            self.br(ghead)
+        self.place(end)
+        self.mark_prefix = saved_prefix
+        self.clear_marks(body)
+        return True
+
     def while_stmt(self, s: Node):
+        if self.small_loop(s):
+            return
         head = self.label('while')
         body = self.label('body')
         end = self.label('endwhile')

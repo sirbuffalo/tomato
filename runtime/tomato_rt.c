@@ -2369,7 +2369,9 @@ ALWAYS int64_t tomato_int_floordivp2_c(int64_t x, int32_t k, int32_t m) {
 }
 ALWAYS int64_t tomato_int_modp2_c(int64_t x, int32_t k, int32_t m) {
     if (__builtin_expect(x & 1, 1)) return (x & (((int64_t)1 << (k + 1)) - 2)) | 1;
-    return int_modp2_slow_c(x, k, m);
+    int64_t r = int_modp2_slow_c(x, k, m);
+    __builtin_assume(r & 1);               /* the remainder of a division by 2^k always fits the small form */
+    return r;
 }
 ALWAYS int64_t tomato_int_floordiv(int64_t x, int64_t y) { return tomato_int_floordiv_c(x, y, 0); }
 ALWAYS int64_t tomato_int_mod(int64_t x, int64_t y) { return tomato_int_mod_c(x, y, 0); }

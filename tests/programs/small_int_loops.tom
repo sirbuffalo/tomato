@@ -1,0 +1,212 @@
+# Loops of small-integer arithmetic run in a fast copy that has no big-number code; an operation that leaves the small range hands
+# the statement to the general copy, which carries on with big numbers (and may come back to the fast copy when they are small
+# again). Every loop here is also written with a call in its body (which keeps it out of the fast copy), and the results must agree.
+def nothing():
+    pass
+
+def collatz_fast(start: int) -> int:
+    x = start
+    steps = 0
+    while x != 1:
+        if x % 2 == 0:
+            x //= 2
+        else:
+            x = 3 * x + 1
+        steps += 1
+    return steps
+
+def collatz_slow(start: int) -> int:
+    x = start
+    steps = 0
+    while x != 1:
+        nothing()
+        if x % 2 == 0:
+            x //= 2
+        else:
+            x = 3 * x + 1
+        steps += 1
+    return steps
+
+# grows past 2^62 in the middle of the loop, then shrinks again
+def swing_fast(start: int, rounds: int) -> int:
+    x = start
+    n = 0
+    total = 0
+    while n < rounds:
+        if n % 3 == 2:
+            x = x // 4
+        elif n % 3 == 1:
+            x = x * 5 - 7
+        else:
+            x = x * 3 + 1
+        total = total + x % 8
+        n += 1
+    print(x, total)
+    return n
+
+def swing_slow(start: int, rounds: int) -> int:
+    x = start
+    n = 0
+    total = 0
+    while n < rounds:
+        nothing()
+        if n % 3 == 2:
+            x = x // 4
+        elif n % 3 == 1:
+            x = x * 5 - 7
+        else:
+            x = x * 3 + 1
+        total = total + x % 8
+        n += 1
+    print(x, total)
+    return n
+
+# every comparison, with negative numbers
+def compare_fast(a: int, b: int) -> int:
+    r = 0
+    i = 0
+    while i < 3:
+        if a < b:
+            r += 1
+        if a <= b:
+            r += 10
+        if a > b:
+            r += 100
+        if a >= b:
+            r += 1000
+        if a == b:
+            r += 10000
+        if a != b:
+            r += 100000
+        a = a - 1
+        i += 1
+    return r
+
+def compare_slow(a: int, b: int) -> int:
+    r = 0
+    i = 0
+    while i < 3:
+        nothing()
+        if a < b:
+            r += 1
+        if a <= b:
+            r += 10
+        if a > b:
+            r += 100
+        if a >= b:
+            r += 1000
+        if a == b:
+            r += 10000
+        if a != b:
+            r += 100000
+        a = a - 1
+        i += 1
+    return r
+
+# floor division and modulo by powers of two on negative numbers, and negative literals
+def floor_fast(x: int) -> int:
+    i = 0
+    acc = 0
+    while i < 6:
+        acc = acc * 31 + x // 4 - x % 8 + x // 2 * -3
+        x = x - 5
+        i += 1
+    return acc
+
+def floor_slow(x: int) -> int:
+    i = 0
+    acc = 0
+    while i < 6:
+        nothing()
+        acc = acc * 31 + x // 4 - x % 8 + x // 2 * -3
+        x = x - 5
+        i += 1
+    return acc
+
+# a big number lent by the caller: the fast copy is skipped until it is small
+def shrink_fast(x: int) -> int:
+    steps = 0
+    while x > 5:
+        x = x // 2
+        steps += 1
+    return steps * 1000 + x
+
+def shrink_slow(x: int) -> int:
+    steps = 0
+    while x > 5:
+        nothing()
+        x = x // 2
+        steps += 1
+    return steps * 1000 + x
+
+# the variable is a big number that the statement replaces by itself (nothing may be freed twice or leak)
+def big_updates(x: int) -> int:
+    i = 0
+    while i < 4:
+        x = x + 1
+        x = 3 * x + 1
+        x = x - 2
+        x = x // 2
+        i += 1
+    return x
+
+def big_updates_calls(x: int) -> int:
+    i = 0
+    while i < 4:
+        nothing()
+        x = x + 1
+        x = 3 * x + 1
+        x = x - 2
+        x = x // 2
+        x = x * 7 % 1024 + x
+        i += 1
+    return x
+
+@main
+def main():
+    edge = 1 << 62
+    same = 0
+    for s in [1, 2, 3, 7, 27, 97, 871, 6171, 77031, 837799, 1 << 40, (1 << 61) + 1, 3 * (1 << 58) + 1, edge - 1]:
+        if collatz_fast(s) == collatz_slow(s):
+            same += 1
+        else:
+            print('collatz differs', s)
+    print('collatz same', same)
+    print(collatz_fast(27), collatz_fast(97), collatz_fast(837799))
+    print(collatz_fast((1 << 61) + 1))
+
+    for start in [1, 5, 1 << 59, 1 << 60, edge - 3, edge, 1 << 100, -(1 << 100), -5, 0]:
+        a = swing_fast(start, 40)
+        b = swing_slow(start, 40)
+        if a != b:
+            print('swing differs', start)
+
+    ok = 0
+    for a in [-5, -1, 0, 1, 5, edge - 1, -edge]:
+        for b in [-5, -1, 0, 1, 5, edge - 1, -edge]:
+            if compare_fast(a, b) == compare_slow(a, b):
+                ok += 1
+            else:
+                print('compare differs', a, b)
+    print('compare same', ok)
+
+    ok = 0
+    for x in [0, 1, -1, 7, -7, 100, -100, edge - 1, -edge, edge // 2, 1 << 70, -(1 << 70)]:
+        if floor_fast(x) == floor_slow(x):
+            ok += 1
+        else:
+            print('floor differs', x)
+    print('floor same', ok)
+    print(floor_fast(-9), floor_fast(9))
+
+    ok = 0
+    for x in [0, 3, 5, 6, 1 << 20, edge - 1, edge, 1 << 100, (1 << 200) + 12345]:
+        if shrink_fast(x) == shrink_slow(x):
+            ok += 1
+        else:
+            print('shrink differs', x)
+    print('shrink same', ok)
+    print(shrink_fast(1 << 100))
+
+    print(big_updates(5), big_updates(1 << 100), big_updates(-(1 << 100)), big_updates(edge - 1))
+    print(big_updates_calls(5), big_updates_calls(1 << 100), big_updates_calls(-(1 << 100)), big_updates_calls(edge - 1))
