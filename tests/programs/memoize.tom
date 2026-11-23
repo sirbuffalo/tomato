@@ -1,0 +1,55 @@
+# std/cache.tom memoize / Memo: results are remembered, counted, evicted, expired; errors pass through; text keys.
+# The functions print when they really run (a function value cannot capture a list yet).
+from cache import Clock, Memo, memoize
+
+class FakeClock(Clock):
+    t: float = 0.0
+
+    override def now(self) -> float:
+        return self.t
+
+def square(x: int) -> int:
+    print('run', x)
+    return x * x
+
+def shout(s: str) -> str:
+    return s + '!'
+
+def fail(x: int) -> int:
+    print('try', x)
+    if x < 0:
+        raise RuntimeError('negative')
+    return x + 1
+
+@main
+def main():
+    m = memoize(square, 2)
+    print(m.call(3), m.call(3), m.call(4))
+    print(m.results.hits, m.results.misses)
+    # capacity 2: 5 evicts 3 (least recently used), so 3 runs again
+    print(m.call(5), m.call(3), m.results.evictions)
+    m.clear()
+    print(m.call(4))
+    # text arguments
+    u = memoize(shout, 3)
+    print(u.call('a'), u.call('a'), u.results.hits)
+    # errors are not remembered
+    f = memoize(fail, 4)
+    try:
+        f.call(-1)
+    catch RuntimeError as e:
+        print('caught', e.message)
+    try:
+        f.call(-1)
+    catch RuntimeError as e:
+        print('caught again')
+    print(f.call(1), f.call(1), len(f.results))
+    # expiry with a fake clock
+    clk = FakeClock()
+    t = Memo(square, 4, 10.0, clk)
+    print(t.call(2), t.call(2))
+    clk.t = 11.0
+    print(t.call(2), t.results.expirations)
+    # capacity 0 remembers nothing
+    z = memoize(square, 0)
+    print(z.call(2), z.call(2))

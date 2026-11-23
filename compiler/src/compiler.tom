@@ -615,6 +615,7 @@ class Mod:
     instance_funcs: dict[str, str] = {} # the copies of generic functions made so far: name and type arguments to key
     pending: list[ClassInfo] = []       # copies of generic classes whose methods are not in infos yet
     late: bool = False                  # the bodies are being compiled: a new copy is complete at once
+    populating: bool = False            # populate_pending is running: a copy made meanwhile waits for its loop
     instance_count: int = 0
     preload: list[str] = []             # copies of generic classes to make before any body is compiled (see NeedsEarlyCopy)
     dyn_seen: list[str] = []            # the Iterable and Sized types whose loops and lengths are compiled over the classes there are so far
@@ -1015,12 +1016,15 @@ class Mod:
         self.cur = saved
         self.classes.append(c)
         self.pending.append(c)
-        if self.late:
+        if self.late and not self.populating:
             self.populate_pending()
         return key
 
     # give the copies made so far their methods (they are compiled with the program like any other function)
     def populate_pending(self):
+        if self.populating:
+            return
+        self.populating = True
         while len(self.pending) > 0:
             c = self.pending[0]
             self.pending = self.pending[1:]
@@ -1045,7 +1049,9 @@ class Mod:
                 check_class_shapes(self)
                 for d in self.dyn_seen:
                     if self.dyn_accepts('@' + c.name, d):
+                        self.populating = False
                         raise NeedsEarlyCopy(c.generic + '\n' + '\n'.join(self.class_args(c)))
+        self.populating = False
 
     # the copy of a generic function for these type arguments
     def instance_func(self, gkey: str, args: list[str], line: int) -> FuncInfo:
@@ -7210,6 +7216,8 @@ def check_class_shapes(mod: Mod):
     # one @init per class (D12aj); a class with no @init anywhere needs every field to have a value (D12af);
     # a method name is declared once; no class inherits from itself
     for c in mod.classes:
+        if not c.populated:
+            continue
         inits = 0
         names: list[str] = []
         for f in mod.infos:

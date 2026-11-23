@@ -20,6 +20,8 @@
 #         override def now(self) -> float:
 #             return self.t
 #
+# `memoize(f, capacity)` remembers a function's results (see `Memo` at the end of this file).
+#
 # `c.hits`, `c.misses`, `c.evictions` and `c.expirations` count what happened, and `c.hit_rate()` is hits / (hits + misses).
 #
 # A cache belongs to one program and the language runs one thing at a time: tasks switch only at `await`, and no cache
@@ -211,3 +213,41 @@ export class Cache[V]:
         if total == 0:
             return 0.0
         return self.hits / total
+
+# Memoising a function. There are no closures yet, so `memoize` cannot return a function: it returns a `Memo`, and the
+# function is called through it, `m.call(x)`. The results live in an LRU `Cache`, keyed by the text of the argument
+# (`str(x)`), so use an int or text argument: two different values with the same `str` (a float and a text, say) would share one result; the function should
+# return the same result for the same argument. A function that raises is not remembered: the error passes through.
+#
+#     def slow(n: int) -> int: ...
+#     m = memoize(slow, 100)            # remember the results of the last 100 different arguments
+#     m.call(7)                         # runs slow(7)
+#     m.call(7)                         # remembered
+#     m.results.hits, m.results.misses  # the cache's statistics
+#
+# `Memo(slow, 100, 60.0)` gives each result 60 seconds. A top-level `@cached` marker cannot exist: `@name` before a
+# function already means an entry point, and `@name` before a method a role.
+export class Memo[K, V]:
+    f: fn(K) -> V
+    results: Cache[V]
+
+    @init
+    def make_memo(self, f: fn(K) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        self.f = f
+        self.results = Cache[V](capacity, ttl, timer)
+
+    def call(self, arg: K) -> V:
+        key = str(arg)
+        if key in self.results:
+            return self.results[key]
+        self.results.misses += 1          # `in` does not count, so a miss is counted here
+        v = self.f(arg)
+        self.results.set(key, v)
+        return v
+
+    # forget every remembered result
+    def clear(self):
+        self.results.clear()
+
+export def memoize[K, V](f: fn(K) -> V, capacity: int) -> Memo[K, V]:
+    return Memo(f, capacity)

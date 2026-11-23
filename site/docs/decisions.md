@@ -1430,7 +1430,8 @@ Source: Davis's Dashboard message:
 - TTL: a cache-wide `ttl` (0 or less means none) and a per-entry `ttl` on `set`; an expired entry is dropped when next looked at and counts as a miss (`expirations`). Time comes from a `Clock` object (`now()` returns `clock()`); a test passes a subclass whose `now()` it controls. Chosen because functions are not values yet.
 - Statistics: `hits`, `misses`, `evictions`, `expirations`, `hit_rate()`.
 - Concurrency: the runtime runs one thing at a time and tasks switch only at `await`; no cache method awaits, so nothing is locked.
-- Not built: memoising a function (`memoize(f)` or `@cached`; needs function values), a size limit in bytes, a disk-backed cache, a request cache for the HTTP client, a wall-clock `time()`. Keyword arguments cannot be used when creating an object, so `ttl` and `timer` are positional in `Cache[int](100, 60.0)`; they work as keywords on methods (`set('a', 1, ttl=5.0)`).
+- Memoising (added later): `memoize(f, capacity)` returns a `Memo[K, V]` (also `Memo(f, capacity, ttl, timer)`), used as `m.call(x)`, because there are no closures to return a function. Results sit in a `Cache` keyed by `str(x)` and are counted in `m.results`; an error is not remembered. `@cached` cannot exist (Davis): `@name` before a function is an entry point (P21) and before a method a role marker. Building it also fixed the compiler: a generic class with a function-typed field and a generic-class field failed with a false "no @init method" error.
+- Not built: `@cached`, a size limit in bytes, a disk-backed cache, a request cache for the HTTP client, a wall-clock `time()`. Keyword arguments cannot be used when creating an object, so `ttl` and `timer` are positional in `Cache[int](100, 60.0)`; they work as keywords on methods (`set('a', 1, ttl=5.0)`).
 
 ### D61a — readable errors: color, warnings, call traces: accepted (the task asked for them; the choices below are the agent's)
 

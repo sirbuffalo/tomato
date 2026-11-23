@@ -76,6 +76,7 @@ sort_cmp_native
 alloc_pool
 str_fast
 cache_lru
+memoize
 bit_types
 bit_names
 json_strict
