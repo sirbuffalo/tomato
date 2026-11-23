@@ -1,0 +1,4 @@
+@main
+def main():
+    n = 1 << 40
+    print(1 << n)

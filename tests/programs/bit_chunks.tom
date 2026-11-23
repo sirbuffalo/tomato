@@ -1,0 +1,84 @@
+# the chunk-at-a-time bitarray operations against a bit-by-bit reference, at lengths and offsets around the 32-bit chunk edges
+
+def build(n: int, seed: int) -> bitarray:
+    a = bitarray.zeros(n)
+    x = seed
+    for i in range(n):
+        x = (x * 1103515245 + 12345) % 2147483648
+        if (x >> 16) & 1 == 1:
+            a[i] = True
+    return a
+
+def ref_shift(a: bitarray, count: int) -> list[bool]:
+    # count > 0 moves the bits towards the start
+    out: list[bool] = []
+    n = len(a)
+    for j in range(n):
+        k = j + count
+        if k >= 0 and k < n:
+            out.append(a[k])
+        else:
+            out.append(False)
+    return out
+
+def same(a: bitarray, ref: list[bool]) -> bool:
+    if len(a) != len(ref):
+        return False
+    for i in range(len(ref)):
+        if a[i] != ref[i]:
+            return False
+    return True
+
+@main
+def main():
+    bad = 0
+    lengths = [0, 1, 5, 31, 32, 33, 63, 64, 65, 100]
+    counts = [0, 1, 7, 31, 32, 33, 64, 70, 99, 100, 150]
+    for n in lengths:
+        a = build(n, n + 1)
+        for c in counts:
+            if not same(a.shift_left(c), ref_shift(a, c)):
+                bad += 1
+                print('shift_left', n, c)
+            if not same(a.shift_right(c), ref_shift(a, -c)):
+                bad += 1
+                print('shift_right', n, c)
+            if not same(a.shift_left(-c), ref_shift(a, -c)):
+                bad += 1
+                print('shift_left negative', n, c)
+        for lo in [0, 1, 3, 31, 32, 33, 64]:
+            for hi in [0, 1, 32, 33, 65, 99, 100]:
+                s = a[lo:hi]
+                want: list[bool] = []
+                for i in range(lo, min(hi, n)):
+                    want.append(a[i])
+                if not same(s, want):
+                    bad += 1
+                    print('slice', n, lo, hi)
+        for m in lengths:
+            b = build(m, m + 7)
+            d = a.copy()
+            d.extend(b)
+            want = a.to_list() + b.to_list()
+            if not same(d, want):
+                bad += 1
+                print('extend', n, m)
+        t = a.copy()
+        t.extend(t)
+        if not same(t, a.to_list() + a.to_list()):
+            bad += 1
+            print('extend self', n)
+        if bitarray.from_hex(a.to_hex()).to_hex() != a.to_hex():
+            bad += 1
+            print('hex', n)
+        if bitarray.from_ints(a.to_ints(), n) != a:
+            bad += 1
+            print('ints', n)
+        if n > 0 and bitarray(a.to_int(), n) != a:
+            bad += 1
+            print('int', n)
+    big = bitarray(1 << 100)
+    print(len(big), big.count(), big.to_int() == 1 << 100)
+    wide = bitarray(5, 70)
+    print(len(wide), wide.to_int(), wide.count())
+    print(bad)

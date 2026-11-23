@@ -1,0 +1,4 @@
+@main
+def main():
+    c: uint[length=8] = uint[length=8](200)
+    print(c << 1)

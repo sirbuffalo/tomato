@@ -778,7 +778,7 @@ export class Parser:
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Assign', t.line, [vn(e), vn(v)])
-        if self.cur().kind == 'OP' and self.cur().text in ['+=', '-=', '*=', '/=', '%=', '//=', '**=', '&=', '|=', '^=']:
+        if self.cur().kind == 'OP' and self.cur().text in ['+=', '-=', '*=', '/=', '%=', '//=', '**=', '&=', '|=', '^=', '<<=', '>>=']:
             # x += v is x = x + v (compound assignment, like Python)
             optext = self.adv().text
             op = optext[:len(optext) - 1]
@@ -1006,10 +1006,17 @@ export class Parser:
         return e
 
     def bit_and(self) -> Node:
-        e = self.add()
+        e = self.shift()
         while self.is_op('&'):
             t = self.adv()
-            e = self.binop('&', t.line, e, self.add())
+            e = self.binop('&', t.line, e, self.shift())
+        return e
+
+    def shift(self) -> Node:
+        e = self.add()
+        while self.is_op('<<') or self.is_op('>>'):
+            t = self.adv()
+            e = self.binop(t.text, t.line, e, self.add())
         return e
 
     def add(self) -> Node:

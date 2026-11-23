@@ -2482,6 +2482,57 @@ int64_t tomato_int_pow(int64_t base, int64_t exp) {
     return result;
 }
 
+/* x << n, x >> n and ~x on an int of any size (Python's rules: >> rounds towards minus infinity, ~x is -x-1). The count must be a
+ * small whole number, not negative. The _c forms free an operand that the caller owns, like the arithmetic ones. */
+#define INT_MAX_SHIFT ((int64_t)1 << 31)
+static int64_t int_shift_count(int64_t n) {
+    if (!int_is_small(n)) tomato_fail("the shift count is too big");
+    int64_t c = int_small_val(n);
+    if (c < 0) tomato_fail("negative shift count");
+    if (c >= INT_MAX_SHIFT) tomato_fail("the shift count is too big");
+    return c;
+}
+NOINLINE static int64_t int_shl_slow_c(int64_t x, int64_t n, int32_t m) {
+    int64_t c = int_shift_count(n);
+    int64_t p = tomato_int_pow(int_mk_small(2), int_mk_small(c));
+    int64_t r = tomato_int_mul(x, p);
+    tomato_int_free(p);
+    INT_CONSUME(m, x, n);
+    return r;
+}
+ALWAYS int64_t tomato_int_shl_c(int64_t x, int64_t n, int32_t m) {
+    if ((x & n & 1) && int_small_val(n) >= 0 && int_small_val(n) < 62) {
+        int64_t v = int_small_val(x), c = int_small_val(n);
+        int64_t r = (int64_t)((uint64_t)v << c);
+        if ((r >> c) == v && r >= INT_SMALL_MIN && r <= INT_SMALL_MAX) return int_mk_small(r);
+    }
+    return int_shl_slow_c(x, n, m);
+}
+NOINLINE static int64_t int_shr_slow_c(int64_t x, int64_t n, int32_t m) {
+    int64_t c = int_shift_count(n);
+    int64_t p = tomato_int_pow(int_mk_small(2), int_mk_small(c));
+    int64_t r = tomato_int_floordiv(x, p);
+    tomato_int_free(p);
+    INT_CONSUME(m, x, n);
+    return r;
+}
+ALWAYS int64_t tomato_int_shr_c(int64_t x, int64_t n, int32_t m) {
+    if ((x & n & 1) && int_small_val(n) >= 0) {
+        int64_t v = int_small_val(x), c = int_small_val(n);
+        return int_mk_small(c >= 63 ? (v < 0 ? -1 : 0) : (v >> c));
+    }
+    return int_shr_slow_c(x, n, m);
+}
+ALWAYS int64_t tomato_int_shl(int64_t x, int64_t n) { return tomato_int_shl_c(x, n, 0); }
+ALWAYS int64_t tomato_int_shr(int64_t x, int64_t n) { return tomato_int_shr_c(x, n, 0); }
+ALWAYS int64_t tomato_int_not(int64_t x) {
+    if (x & 1) {
+        int64_t r = -1 - int_small_val(x);
+        if (r >= INT_SMALL_MIN && r <= INT_SMALL_MAX) return int_mk_small(r);
+    }
+    return tomato_int_sub(int_mk_small(-1), x);
+}
+
 int64_t tomato_int_from_i64(int64_t v) {
     if (v >= INT_SMALL_MIN && v <= INT_SMALL_MAX) return int_mk_small(v);
     uint64_t m = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;

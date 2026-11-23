@@ -48,7 +48,7 @@ done
 [ -f "$work/failed2" ] && fails=$((fails + $(wc -l < "$work/failed2")))
 
 echo "== memory (AddressSanitizer and the runtime's leak check) =="
-for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/cache_lru:" "tests/programs/bit_types:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:" "tests/programs/toml_big:"; do
+for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/cache_lru:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:" "tests/programs/toml_big:"; do
   path="${spec%%:*}"; name="$(basename "$path")"; arg="${spec#*:}"
   "$work/c1" "$path.tom" main std/ > "$work/p.ll" 2>/dev/null
   if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
@@ -286,7 +286,7 @@ neg generic_mixed_items "a list item has type str, but int is expected"
 neg await_non_task "only a task can be awaited, but this is int"
 neg await_in_conditional "an await cannot be in either value of a conditional expression"
 neg async_init "cannot be async"
-neg invert_on_int "cannot use '~' on int"
+neg invert_on_text "cannot use '~' on str"
 neg set_item_without_marker "objects cannot be assigned by index"
 neg frozen_item_assign "'bitarray.frozenbitarray' objects cannot be assigned by index"
 neg mixed_bit_types "the right operand of & has type bitarray.frozenbitarray"
@@ -332,6 +332,9 @@ rt divide_by_zero "division by zero" 1
 rt dict_remove_missing "the key is not in the dict" 1
 rt index "index out of range" 1
 rt overflow "integer overflow" 1
+rt shift_negative "negative shift count" 1
+rt shift_huge "the shift count is too big" 1
+rt shift_overflow "does not fit" 1
 rt caught "caught boom" 0
 rt async_unread "in a task nobody awaited" 1
 rt dict_missing_key "the key is not there" 1

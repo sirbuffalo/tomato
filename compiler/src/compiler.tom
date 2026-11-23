@@ -1814,6 +1814,17 @@ class Gen:
         self.emit(f'{r} = {ins} {llvm_type(t)} {x.reg}, {y.reg}')
         return ex(r, t)
 
+    def num_shift(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # << and >> on whole numbers: the result has the type of the left operand; the count is any whole number that is not
+        # negative. A fixed-width result is range-checked like the other arithmetic.
+        x = self.resize(a, 'int')
+        y = self.resize(b, 'int')
+        name = 'shl' if op == '<<' else 'shr'
+        r = self.int_call_c(name, x, y)
+        if a.ty != 'int':
+            return self.convert_explicit(r, a.ty, line)
+        return r
+
     def num_power(self, a: Ex, b: Ex, line: int) -> Ex:
         # ** on integers: whole-number powers that stop on overflow or a negative exponent; the result type is the
         # common type, converted back with a range check when it is a fixed width
@@ -3116,6 +3127,8 @@ class Gen:
                 return self.num_power(a, b, n.line)
             if op == '&' or op == '|' or op == '^':
                 return self.num_bitwise(op, a, b, n.line)
+            if op == '<<' or op == '>>':
+                return self.num_shift(op, a, b, n.line)
             if is_compare:
                 return self.num_compare(op, a, b, n.line)
         elif is_compare:
@@ -3127,8 +3140,17 @@ class Gen:
     def invert_op(self, n: Node) -> Ex:
         # ~x on an object whose class has a method marked @invert (taking nothing besides self)
         v = self.unwrap(self.expr(val_node(n.fields[1])), n.line)
+        if v.ty == 'int':
+            r = self.tmp('not')
+            self.emit(f'{r} = call i64 @tomato_int_not(i64 {v.reg})')
+            self.release(v)
+            return exf(r, 'int')
+        if is_fixed(v.ty):
+            r = self.tmp('not')
+            self.emit(f'{r} = xor {llvm_type(v.ty)} {v.reg}, -1')
+            return ex(r, v.ty)
         if not is_class(v.ty):
-            raise CompileError(f"cannot use '~' on {shown(v.ty)}\nit works on objects whose class has a method marked @invert", n.line)
+            raise CompileError(f"cannot use '~' on {shown(v.ty)}\nit works on whole numbers and on objects whose class has a method marked @invert", n.line)
         f = self.mod.find_op(v.ty[1:], 'invert')
         if f is None or len(f.ptypes) != 0 or f.ret == '':
             raise CompileError("cannot use '~' on '" + v.ty[1:] + "' objects\nadd a method marked @invert that takes nothing and returns the result", n.line)
@@ -5995,7 +6017,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_box_str(ptr)\n'
     d += 'declare i64 @tomato_int_dup(i64)\n'
 
-    for op in ['add', 'sub', 'mul', 'floordiv', 'mod']:
+    for op in ['add', 'sub', 'mul', 'floordiv', 'mod', 'shl', 'shr']:
         d += f'declare i64 @tomato_int_{op}_c(i64, i64, i32)\n'
     d += 'declare i32 @tomato_int_cmp_c(i64, i64, i32)\n'
     d += 'declare i64 @tomato_int_raw_c(i64, i32)\n'
@@ -6006,6 +6028,8 @@ def declarations(mod: Mod) -> str:
     d += 'declare i64 @tomato_int_mul(i64, i64)\n'
     d += 'declare i64 @tomato_int_floordiv(i64, i64)\n'
     d += 'declare i64 @tomato_int_mod(i64, i64)\n'
+    d += 'declare i64 @tomato_int_shl(i64, i64)\n'
+    d += 'declare i64 @tomato_int_shr(i64, i64)\n'
     d += 'declare i64 @tomato_int_pow(i64, i64)\n'
     d += 'declare i32 @tomato_int_cmp(i64, i64)\n'
     d += 'declare i32 @tomato_int_sign(i64)\n'
@@ -6020,6 +6044,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare i64 @tomato_int_parse(ptr)\n'
     d += 'declare i64 @tomato_int_parse_cstr(ptr, i32)\n'
     d += 'declare i64 @tomato_int_bitop(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_int_not(i64)\n'
     d += 'declare i64 @tomato_f64_to_int(double)\n'
     d += 'declare double @tomato_parse_f64(ptr, i32)\n'
     d += 'declare i32 @tomato_ipow_check(i64, i64)\n'

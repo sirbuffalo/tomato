@@ -1,4 +1,4 @@
 @main
 def main():
-    x = 5
+    x = 'a'
     print(~x)
