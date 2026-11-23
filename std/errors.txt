@@ -378,3 +378,5 @@ CompileError a for loop cannot loop over a '{}' object
 CompileError {} takes {}, but {} given
 CompileError get() takes a key and optionally a default value: get(key) or get(key, default)
 CompileError get(key) gives None for a missing key, but a value of type {} cannot be None
+IOError could not read
+IOError could not write

@@ -1211,17 +1211,8 @@ void *tomato_file_open(void *path, void *mode) {
 }
 
 /* the message of the IOError open() raises: which path failed and why (the reason the last open gave) */
-void *tomato_open_error(void *path) {
-    Str *p = path;
-    const char *why = open_errno ? strerror(open_errno) : "unknown error";
-    size_t n = (size_t)p->bytes + strlen(why) + 32;
-    char *t = malloc(n);
-    if (!t) out_of_memory();
-    int len = snprintf(t, n, "could not open '%s': %s", p->data, why);
-    void *r = str_new(t, len);
-    free(t);
-    return r;
-}
+void *tomato_file_error(void *path, int64_t code);
+void *tomato_open_error(void *path) { return tomato_file_error(path, 1); }
 
 void *tomato_file_read(void *f) {
     char buf[4096];
@@ -4129,6 +4120,66 @@ void tomato_mp_ts(void *out, int64_t secs, int64_t nanos) {
     if (nanos == 0 && secs >= 0 && secs < ((int64_t)1 << 32)) { mput(out, 0xd6); mput(out, 0xff); mput_be(out, (uint64_t)secs, 4); }
     else if (secs >= 0 && secs < ((int64_t)1 << 34)) { mput(out, 0xd7); mput(out, 0xff); mput_be(out, ((uint64_t)nanos << 34) | (uint64_t)secs, 8); }
     else { mput(out, 0xc7); mput(out, 12); mput(out, 0xff); mput_be(out, (uint64_t)nanos, 4); mput_be(out, (uint64_t)secs, 8); }
+}
+
+/* ---- whole files as bytes, for load_msgpack and dump_msgpack in std/json.tom (open() is text only). Both return 0,
+ * or a code for tomato_file_error: 1 the file cannot be opened, 2 it cannot be read (a directory, say), 3 it cannot be
+ * written (the disk is full, say), 4 an item of data is not an int from 0 to 255. The reason is kept like open()'s. */
+int64_t tomato_file_read_bytes(void *path, void *out) {
+    FILE *f = fopen(((Str *)path)->data, "rb");
+    if (!f) { open_errno = errno; return 1; }
+    List *l = out;
+    unsigned char buf[4096];
+    size_t got;
+    errno = 0;
+    while ((got = fread(buf, 1, sizeof buf, f)) > 0) {
+        if (l->len + (int64_t)got > l->cap) {
+            int64_t cap = l->cap ? l->cap : 4096;
+            while (cap < l->len + (int64_t)got) cap *= 2;
+            l->data = realloc(l->data, (size_t)(cap * 8));
+            if (!l->data) out_of_memory();
+            l->cap = cap;
+        }
+        for (size_t k = 0; k < got; k++) LIST_SLOT(l, l->len + (int64_t)k, int64_t) = int_mk_small(buf[k]);
+        l->len += (int64_t)got;
+    }
+    int failed = ferror(f), why = errno;
+    fclose(f);
+    if (failed) { open_errno = why ? why : EIO; return 2; }
+    return 0;
+}
+
+/* Writes data to the file at path, replacing it. A list that is not all bytes is refused before the file is opened. */
+int64_t tomato_file_write_bytes(void *path, void *data) {
+    int64_t bad = 0;
+    unsigned char *b = mbytes(data, &bad);
+    if (!b) return 4;
+    FILE *f = fopen(((Str *)path)->data, "wb");
+    if (!f) { open_errno = errno; free(b); return 1; }
+    size_t n = (size_t)((List *)data)->len;
+    int why = 0;
+    errno = 0;
+    if (fwrite(b, 1, n, f) != n) why = errno ? errno : EIO;
+    errno = 0;
+    if (fclose(f) != 0 && !why) why = errno ? errno : EIO;
+    free(b);
+    if (why) { open_errno = why; return 3; }
+    return 0;
+}
+
+/* the message of the IOError for a code above: which path failed, at which step, and why */
+void *tomato_file_error(void *path, int64_t code) {
+    Str *p = path;
+    if (code == 4) return str_new("a byte must be an int from 0 to 255", 35);
+    const char *verb = code == 2 ? "read" : code == 3 ? "write" : "open";
+    const char *why = open_errno ? strerror(open_errno) : "unknown error";
+    size_t n = (size_t)p->bytes + strlen(why) + 32;
+    char *t = malloc(n);
+    if (!t) out_of_memory();
+    int len = snprintf(t, n, "could not %s '%s': %s", verb, p->data, why);
+    void *r = str_new(t, len);
+    free(t);
+    return r;
 }
 
 /* ---- libm for the standard library's math module (std/math.tom). One entry point per arity keeps the list the

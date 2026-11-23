@@ -1,6 +1,7 @@
 # JSON (RFC 8259) and MessagePack, written in Tomato with a small C scanner for speed.
 #
 #     from json import loads, load, dump, dumps, Json
+#     from json import loads_msgpack, dumps_msgpack, load_msgpack, dump_msgpack
 #
 #     j = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3}')
 #     print(j['name'].as_str(), j['tags'][1].as_str(), j['n'].as_int())     # tomato round 3
@@ -31,6 +32,9 @@
 !tomato_mp_u64(out: list[int], hi: int, lo: int)
 !tomato_mp_blob(out: list[int], code: int, isext: int, data: list[int]) -> int
 !tomato_mp_ts(out: list[int], secs: int, nanos: int)
+!tomato_file_read_bytes(path: str, out: list[int]) -> int
+!tomato_file_write_bytes(path: str, data: list[int]) -> int
+!tomato_file_error(path: str, code: int) -> str
 
 export class JSONDecodeError(RuntimeError):
     reason: str = ''
@@ -569,3 +573,26 @@ export def dump(value: Json, path: str, indent: int = 0, sort_keys: bool = False
     f = open(path, 'w')
     f.write(text)
     f.close()
+
+# File counterparts of loads_msgpack and dumps_msgpack (binary files): load_msgpack(path) reads the whole file as bytes and
+# decodes it; dump_msgpack(value, path) writes dumps_msgpack(value) to it, replacing it. A path that cannot be opened raises
+# IOError with the same text as open() (could not open 'PATH': REASON); a file that opens but cannot be read (a directory)
+# or written (a full disk) raises IOError (could not read / could not write 'PATH': REASON). Bad bytes in the file raise
+# MsgpackError as loads_msgpack does, and the bytes are made before the file is opened, so a value MessagePack cannot
+# hold (MsgpackError) leaves the file alone.
+export def load_msgpack(path: str) -> Json:
+    data: list[int] = []
+    r = !tomato_file_read_bytes(path, data)
+    if r == 1:
+        raise IOError(!tomato_file_error(path, r), 'E25')
+    if r != 0:
+        raise IOError(!tomato_file_error(path, r), 'E381')
+    return loads_msgpack(data)
+
+export def dump_msgpack(value: Json, path: str):
+    data = dumps_msgpack(value)
+    r = !tomato_file_write_bytes(path, data)
+    if r == 1:
+        raise IOError(!tomato_file_error(path, r), 'E25')
+    if r != 0:
+        raise IOError(!tomato_file_error(path, r), 'E382')

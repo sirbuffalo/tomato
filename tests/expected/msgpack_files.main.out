@@ -1,0 +1,49 @@
+-- round trips
+every kind True dict
+tomato é ✓ 🍅 18446744073709551615 [0, 1, 127, 128, 255] 5 123456789 -1
+nan -inf
+top level True null
+top level True bool
+top level True int
+top level True float
+top level True str
+top level True bin
+top level True list
+top level True dict
+9301a161c0
+True
+7
+too big for 64 bits MsgpackError E86 the integer 123456789012345678901 does not fit in 64 bits
+True {"name":"tomato","tags":["red","round"],"n":3,"f":0.25}
+path with a space and é True dict
+-- large values
+200000 ints True list
+200000 1583292081
+5 MB str True str
+3500000
+300000-byte bin True bin
+True
+20000-key dict True dict
+19999
+512 levels True list
+-- values MessagePack cannot hold leave the file alone
+513 levels MsgpackError E82 nesting is deeper than 512 levels
+65-bit int MsgpackError E86 the integer 36893488147419103232 does not fit in 64 bits
+bad byte MsgpackError E83 a byte must be an int from 0 to 255
+bad ext type MsgpackError E87 the ext type -1 must be from -128 to 127 and not -1
+bad nanos MsgpackError E84 timestamp nanoseconds must be from 0 to 999999999
+still loaded "kept"
+-- bad bytes in the file
+empty file MsgpackError E89 0 Unexpected end of data: byte 0
+extra data MsgpackError E89 1 Extra data: byte 1
+truncated array MsgpackError E89 1 Unexpected end of data: byte 1
+JSON text MsgpackError E89 1 Extra data: byte 1
+one fixint loaded 123
+-- paths that cannot be used
+open(): E25 could not open '/tmp/tomato_no_such_dir/x.msgpack': No such file or directory
+load missing dir IOError E25 could not open '/tmp/tomato_no_such_dir/x.msgpack': No such file or directory
+load missing file IOError E25 could not open '/tmp/tomato_msgpack_files_never_written.msgpack': No such file or directory
+dump missing dir IOError E25 could not open '/tmp/tomato_no_such_dir/x.msgpack': No such file or directory
+load a directory IOError E381 could not read '/tmp': Is a directory
+dump a directory IOError E25 could not open '/tmp': Is a directory
+a RuntimeError too: E25

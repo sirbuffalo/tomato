@@ -1,0 +1,5 @@
+from json import load_msgpack
+
+@main
+def main():
+    print(load_msgpack('/nonexistent_dir_for_tomato/missing.msgpack'))

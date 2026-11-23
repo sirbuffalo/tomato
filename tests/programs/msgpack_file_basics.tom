@@ -1,0 +1,41 @@
+# load_msgpack / dump_msgpack, small enough for the WebAssembly path too (tests/run.sh runs it natively and in the browser
+# runtime, whose files live in memory): a round trip, the exact bytes, replacing a file, bad bytes and a missing file.
+from json import loads, dumps, dumps_msgpack, load_msgpack, dump_msgpack, MsgpackError, JsonBin, JsonExt, JsonTimestamp, JsonInt, JsonStr, JsonDict
+
+@main
+def main():
+    path = '/tmp/tomato_msgpack_file_basics.msgpack'
+    j = loads('{"name": "tomato", "tags": ["red", "round"], "n": -3, "big": 18446744073709551615, "f": 0.25, "ok": true, "none": null}')
+    dump_msgpack(j, path)
+    print(dumps(load_msgpack(path)))
+    print(dumps_msgpack(load_msgpack(path)) == dumps_msgpack(j))
+    special = JsonDict({'bin': JsonBin([0, 255, 128]), 'ext': JsonExt(9, [1, 2]), 'ts': JsonTimestamp(1700000000, 5), 'text': JsonStr('é🍅')})
+    dump_msgpack(special, path)
+    back = load_msgpack(path)
+    print(back['bin'].as_bytes(), back['ext'].ext_type(), back['ext'].as_bytes(), back['ts'].seconds(), back['ts'].nanos(), back['text'].as_str())
+    # a bin of 150 a's is c4 96 61 61 ..., which is also UTF-8 text, so open() can check the bytes in the file
+    dump_msgpack(JsonBin([97] * 150), path)
+    f = open(path, 'r')
+    print(f.read() == chr(278) + 'a' * 150)
+    f.close()
+    # a shorter value replaces the file
+    dump_msgpack(JsonInt(7), path)
+    print(dumps(load_msgpack(path)))
+    # a value MessagePack cannot hold leaves the file alone
+    try:
+        dump_msgpack(JsonInt(18446744073709551616), path)
+    catch MsgpackError as e:
+        print(e.id, e.message)
+    print(dumps(load_msgpack(path)))
+    # bad bytes: '{"' is the fixint 123 and then extra data
+    f = open(path, 'w')
+    f.write('{"')
+    f.close()
+    try:
+        load_msgpack(path)
+    catch MsgpackError as e:
+        print(e.id, e.pos, e.message)
+    try:
+        load_msgpack('/tmp/tomato_msgpack_file_basics_missing.msgpack')
+    catch IOError as e:
+        print(e.id, e.message)
