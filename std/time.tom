@@ -1,0 +1,307 @@
+# Time, modelled on Python's `time` module: `from time import time, monotonic, gmtime, strftime`.
+#
+#     start = monotonic()               # seconds on a clock that never goes back; only differences mean anything
+#     ...
+#     print(f'took {format_duration(monotonic() - start)}')
+#
+#     now = time()                      # wall clock: seconds since 1970-01-01 00:00:00 UTC, as a float
+#     print(isoformat(now))             # 2024-03-09T16:00:00Z
+#     t = gmtime(1710000000.0)          # t.year, t.month, t.day, t.hour, t.minute, t.second, t.weekday, t.yearday
+#     print(strftime('%Y-%m-%d %H:%M:%S', t))
+#
+# What is here, with the Python name where there is one:
+#   time() / time_ns()                 the wall clock, as float seconds / int nanoseconds since the epoch
+#   monotonic() / monotonic_ns()       a clock that never goes back (the built-in `clock()` is the same clock)
+#   gmtime(seconds) -> Time            the parts of a moment (`struct_time`); fractions of a second are dropped, rounding down
+#   mktime(t) / timegm(year, ...)      the seconds since the epoch of a `Time` / of a date, the inverse of `gmtime`
+#   strftime(fmt, t), asctime(t), ctime(seconds), isoformat(seconds)    a moment as text
+#   format_duration(seconds)           a length of time for people, e.g. '2m 05s'
+#   Stopwatch                          a stopwatch on the monotonic clock
+#
+# Everything is UTC: the language has no time zones, so there is no `localtime` and `%Z` is always `UTC`. Dates use the
+# proleptic Gregorian calendar. `strftime` takes a `Time` or the seconds since the epoch, and knows %Y %y %m %d %e %H
+# %I %M %S %p %j %a %A %b %B %w %u %Z %z %F %T %R %D %c %x %X %n %t %%; any other directive is written as it is.
+# `strptime` is not here, and neither is `sleep`: waiting is the language's own `await sleep(seconds)`, which lets
+# other tasks run (a blocking sleep would stop them).
+
+!tomato_time() -> float
+!tomato_time_ns() -> int
+!tomato_clock_ns() -> int
+
+# the names for %a %A %b %B (the language has no top-level values, so they are split out of a text; weekday 0 is Monday)
+def _day_name(weekday: int) -> str:
+    return 'Monday Tuesday Wednesday Thursday Friday Saturday Sunday'.split(' ')[weekday]
+
+def _month_name(month: int) -> str:
+    return 'January February March April May June July August September October November December'.split(' ')[month - 1]
+
+# seconds since 1970-01-01 00:00:00 UTC (the wall clock: it can jump when the system clock is set)
+export def time() -> float:
+    return !tomato_time()
+
+# nanoseconds since 1970-01-01 00:00:00 UTC, as an exact int (a float has no room for them)
+export def time_ns() -> int:
+    return !tomato_time_ns()
+
+# seconds on a monotonic clock (it never goes back, so it is the one to time things with)
+export def monotonic() -> float:
+    return clock()
+
+# nanoseconds on the monotonic clock, as an exact int
+export def monotonic_ns() -> int:
+    return !tomato_clock_ns()
+
+# A moment broken into its parts (Python's `struct_time`): weekday 0 is Monday, yearday 1 is January 1st. Making one
+# checks that every part is in range (a ValueError otherwise), so keep them in range if you assign to the fields.
+export class Time:
+    year: int = 1970
+    month: int = 1
+    day: int = 1
+    hour: int = 0
+    minute: int = 0
+    second: int = 0
+    weekday: int = 3
+    yearday: int = 1
+
+    @init
+    def make(self, year: int, month: int, day: int, hour: int, minute: int, second: int, weekday: int, yearday: int):
+        if month < 1 or month > 12 or day < 1 or day > 31 or hour < 0 or hour > 23 or minute < 0 or minute > 59 or second < 0 or second > 60 or weekday < 0 or weekday > 6 or yearday < 1 or yearday > 366:
+            raise ValueError(f'a Time needs month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60, weekday 0-6 and yearday 1-366, but got month {month}, day {day}, hour {hour}, minute {minute}, second {second}, weekday {weekday}, yearday {yearday}', 'E388')
+        self.year = year
+        self.month = month
+        self.day = day
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+        self.weekday = weekday
+        self.yearday = yearday
+
+    @str
+    def show(self) -> str:
+        return f'Time({self.year}, {self.month}, {self.day}, {self.hour}, {self.minute}, {self.second})'
+
+# Times an interval: `w = Stopwatch()`, then `w.elapsed()` is the seconds since it was made or last restarted.
+export class Stopwatch:
+    began: float = 0.0
+
+    @init
+    def start(self):
+        self.began = monotonic()
+
+    def elapsed(self) -> float:
+        return monotonic() - self.began
+
+    # the seconds since the start, and the stopwatch starts again from now
+    def restart(self) -> float:
+        now = monotonic()
+        seconds = now - self.began
+        self.began = now
+        return seconds
+
+# days since 1970-01-01 of a calendar date (Howard Hinnant's days_from_civil: years run from March, so the leap day
+# is the last day of a year)
+def _days_from_civil(year: int, month: int, day: int) -> int:
+    y = year
+    if month <= 2:
+        y -= 1
+    era = y // 400
+    yoe = y - era * 400
+    shifted = month - 3
+    if month <= 2:
+        shifted = month + 9
+    doy = (153 * shifted + 2) // 5 + day - 1
+    doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
+
+# the seconds since 1970-01-01 00:00:00 UTC of a calendar date and time of day (no range checks: 13 months or 70
+# seconds simply carry over for the time of day, and `day` counts from 1)
+export def timegm(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0) -> int:
+    return _days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second
+
+# the seconds since the epoch of a `Time` (Python's `mktime`, which in this UTC-only module is `timegm` of its parts)
+export def mktime(t: Time) -> int:
+    return timegm(t.year, t.month, t.day, t.hour, t.minute, t.second)
+
+# the parts of a moment given as seconds since the epoch, an int or a float (the fraction of a second is dropped,
+# rounding down); a ValueError when `seconds` is more than about 292 billion years from the epoch
+export def gmtime(seconds: int | float) -> Time:
+    if seconds in int:
+        if seconds > 9000000000000000000 or seconds < -9000000000000000000:
+            raise ValueError(f'gmtime needs seconds within about 292 billion years of 1970, but got {seconds}', 'E387')
+        return _parts(seconds)
+    if seconds > 9.0e18 or seconds < -9.0e18:
+        raise ValueError(f'gmtime needs seconds within about 292 billion years of 1970, but got {seconds}', 'E387')
+    whole = int(seconds)
+    if float(whole) > seconds:
+        whole -= 1
+    return _parts(whole)
+
+def _float_of(n: int | float) -> float:
+    if n in int:
+        return float(n)
+    return n
+
+# the parts of a moment given as whole seconds since the epoch
+def _parts(whole: int) -> Time:
+    days = whole // 86400
+    rest = whole - days * 86400
+    # civil_from_days (Hinnant): the inverse of _days_from_civil
+    z = days + 719468
+    era = z // 146097
+    doe = z - era * 146097
+    yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+    mp = (5 * doy + 2) // 153
+    day = doy - (153 * mp + 2) // 5 + 1
+    month = mp + 3
+    if mp >= 10:
+        month = mp - 9
+    year = yoe + era * 400
+    if month <= 2:
+        year += 1
+    yearday = days - _days_from_civil(year, 1, 1) + 1
+    return Time(year, month, day, rest // 3600, rest % 3600 // 60, rest % 60, (days + 3) % 7, yearday)
+
+def _two(n: int) -> str:
+    if n < 10:
+        return '0' + str(n)
+    return str(n)
+
+# the text of one strftime directive character, or '' when it is not one
+def _directive(c: str, t: Time) -> str:
+    if c == 'Y':
+        return str(t.year)
+    if c == 'y':
+        return _two(t.year % 100)
+    if c == 'm':
+        return _two(t.month)
+    if c == 'd':
+        return _two(t.day)
+    if c == 'e':
+        if t.day < 10:
+            return ' ' + str(t.day)
+        return str(t.day)
+    if c == 'H':
+        return _two(t.hour)
+    if c == 'I':
+        return _two((t.hour + 11) % 12 + 1)
+    if c == 'M':
+        return _two(t.minute)
+    if c == 'S':
+        return _two(t.second)
+    if c == 'p':
+        if t.hour < 12:
+            return 'AM'
+        return 'PM'
+    if c == 'j':
+        if t.yearday < 10:
+            return '00' + str(t.yearday)
+        if t.yearday < 100:
+            return '0' + str(t.yearday)
+        return str(t.yearday)
+    if c == 'a':
+        return _day_name(t.weekday)[:3]
+    if c == 'A':
+        return _day_name(t.weekday)
+    if c == 'b':
+        return _month_name(t.month)[:3]
+    if c == 'B':
+        return _month_name(t.month)
+    if c == 'w':
+        return str((t.weekday + 1) % 7)
+    if c == 'u':
+        return str(t.weekday + 1)
+    if c == 'Z':
+        return 'UTC'
+    if c == 'z':
+        return '+0000'
+    if c == 'F':
+        return _format('%Y-%m-%d', t)
+    if c == 'T' or c == 'X':
+        return _format('%H:%M:%S', t)
+    if c == 'R':
+        return _format('%H:%M', t)
+    if c == 'D' or c == 'x':
+        return _format('%m/%d/%y', t)
+    if c == 'c':
+        return _format('%a %b %e %H:%M:%S %Y', t)
+    if c == 'n':
+        return '\n'
+    if c == 't':
+        return '\t'
+    if c == '%':
+        return '%'
+    return ''
+
+def _format(fmt: str, t: Time) -> str:
+    out = ''
+    i = 0
+    while i < len(fmt):
+        c = fmt[i]
+        if c == '%' and i + 1 < len(fmt):
+            text = _directive(fmt[i + 1], t)
+            if text == '':
+                out += fmt[i:i + 2]
+            else:
+                out += text
+            i += 2
+        else:
+            out += c
+            i += 1
+    return out
+
+# the moment as text by the directives of `fmt` (see the top of this file); `moment` is a `Time` or seconds since the epoch
+export def strftime(fmt: str, moment: Time | int | float) -> str:
+    if moment in Time:
+        return _format(fmt, moment)
+    return _format(fmt, gmtime(moment))
+
+# 'Sat Mar  9 16:00:00 2024' (Python's `asctime`)
+export def asctime(t: Time) -> str:
+    return _format('%a %b %e %H:%M:%S %Y', t)
+
+# the same for seconds since the epoch (Python's `ctime`; the local time is UTC here)
+export def ctime(seconds: int | float) -> str:
+    return asctime(gmtime(seconds))
+
+# 2024-03-09T16:00:00Z (the year has at least four digits; before the year 1 it is written -0001, -0002, ...)
+export def isoformat(seconds: int | float) -> str:
+    t = gmtime(seconds)
+    year = str(abs(t.year))
+    while len(year) < 4:
+        year = '0' + year
+    if t.year < 0:
+        year = '-' + year
+    return year + _format('-%m-%dT%H:%M:%SZ', t)
+
+# a length of time for people: 0.25 -> '250ms', 12.5 -> '12.5s', 125 -> '2m 05s', 7384 -> '2h 03m 04s'.
+# Under a minute it is rounded to a millisecond (59.9996 is '1m 00s'); from a minute up, the seconds are cut off, not
+# rounded. There is no limit: an int of any size is split exactly, but a float above 2**53 seconds has no exact
+# seconds to show.
+export def format_duration(length: int | float) -> str:
+    if length in int:
+        if length < 0:
+            return '-' + format_duration(-length)
+        if length >= 60:
+            return _hours_minutes_seconds(length)
+    seconds = _float_of(length)
+    if seconds < 0.0:
+        return '-' + format_duration(-seconds)
+    whole = int(seconds)
+    if seconds < 60.0:
+        millis = int(seconds * 1000.0 + 0.5)
+        if millis < 1000:
+            return f'{millis}ms'
+        if millis < 60000:
+            return f'{float(millis) / 1000.0}s'
+        whole = 60
+    return _hours_minutes_seconds(whole)
+
+# '2m 05s' or '2h 03m 04s' for whole seconds
+def _hours_minutes_seconds(whole: int) -> str:
+    hours = whole // 3600
+    minutes = whole % 3600 // 60
+    secs = whole % 60
+    if hours > 0:
+        return f'{hours}h {_two(minutes)}m {_two(secs)}s'
+    return f'{minutes}m {_two(secs)}s'

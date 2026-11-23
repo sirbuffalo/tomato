@@ -384,3 +384,5 @@ CompileError this tuple has {}, but {} has {}
 CompileError index {} is out of range: {} has {}
 CompileError the items of {} have different types, so its index must be a number written out, such as t[0]
 CompileError a tuple item needs a value
+ValueError gmtime needs seconds within about 292 billion years of 1970, but got {}
+ValueError a Time needs month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60, weekday 0-6 and yearday 1-366, but got month {}, day {}, hour {}, minute {}, second {}, weekday {}, yearday {}

@@ -238,6 +238,22 @@ def main():
     t.set('token', 'abc', ttl=5.0)     # this one after 5</code></pre>
 <p><code>from cache import Cache</code> is a least-recently-used cache written in Tomato. <code>get</code>, <code>c[key]</code> and <code>set</code> count as a use; <code>in</code>, <code>peek</code> and <code>keys()</code> do not. Every operation takes constant time (a dict plus a doubly linked list). Capacity 0 stores nothing. <code>delete(key)</code>, <code>clear()</code> and <code>len(c)</code> work as expected, and <code>hits</code>, <code>misses</code>, <code>evictions</code>, <code>expirations</code> and <code>hit_rate()</code> count what happened. An expired entry is dropped when it is next looked at. Time comes from the built-in <code>clock()</code>, the seconds on a monotonic clock as a <code>float</code> (take two readings and subtract); a test gives the cache its own <code>Clock</code> subclass, <code>Cache[int](100, 60.0, fake)</code>, whose <code>now()</code> it controls. Object creation takes no keyword arguments, so <code>ttl</code> and the clock are positional there. The cache has no locking because tasks only switch at <code>await</code>. Memoising a function, a disk-backed cache and a request cache for HTTP are not built yet. <code>d.remove(key)</code> deletes an entry from any dict.</p>
 
+<h2>Time</h2>
+<pre><code>from time import time, monotonic, gmtime, strftime, isoformat, format_duration, Stopwatch
+
+@main
+def main():
+    start = monotonic()                           # a clock that never goes back: only differences mean anything
+    print(isoformat(1710000000))                  # 2024-03-09T16:00:00Z
+    t = gmtime(1710000000)
+    print(t.year, t.month, t.day, t.weekday, t.yearday)   # 2024 3 9 5 69 (weekday 0 is Monday)
+    print(strftime('%a %b %e %H:%M:%S %Y', t))    # Sat Mar  9 16:00:00 2024
+    print(format_duration(7384.0))                # 2h 03m 04s
+    w = Stopwatch()
+    print(time() > 0.0, w.elapsed() &lt; 5.0)         # time() is seconds since 1970-01-01 00:00:00 UTC
+    print(format_duration(monotonic() - start))</code></pre>
+<p><code>from time import ...</code> is modelled on Python's <code>time</code>, written in Tomato. <code>time()</code> and <code>time_ns()</code> are the wall clock (a <code>float</code> of seconds, an exact <code>int</code> of nanoseconds, since 1970-01-01 UTC; they can jump when the system clock is set); <code>monotonic()</code> and <code>monotonic_ns()</code> are the clock to time things with, the same clock as the built-in <code>clock()</code>. <code>gmtime(seconds)</code> breaks a moment into a <code>Time</code> (<code>year</code>, <code>month</code>, <code>day</code>, <code>hour</code>, <code>minute</code>, <code>second</code>, <code>weekday</code> with Monday as 0, <code>yearday</code> with January 1st as 1); <code>timegm(year, month, day, hour, minute, second)</code> and <code>mktime(t)</code> go the other way. <code>strftime(fmt, t)</code> takes a <code>Time</code> or the seconds, and knows <code>%Y %y %m %d %e %H %I %M %S %p %j %a %A %b %B %w %u %Z %z %F %T %R %D %c %x %X %n %t %%</code>; <code>asctime(t)</code>, <code>ctime(seconds)</code> and <code>isoformat(seconds)</code> are ready-made formats, and <code>format_duration(seconds)</code> writes a length of time for people (<code>250ms</code>, <code>12.5s</code>, <code>2m 05s</code>). Everything is UTC, because the language has no time zones (so there is no <code>localtime</code>, and <code>%Z</code> is <code>UTC</code>); dates use the proleptic Gregorian calendar, and <code>gmtime</code> raises a <code>ValueError</code> for a moment more than about 292 billion years from 1970. There is no <code>time.sleep</code> and no <code>strptime</code>: waiting is the built-in <code>await sleep(seconds)</code>, which lets other tasks run.</p>
+
 <h2>JSON and MessagePack</h2>
 <pre><code>from json import loads, dumps, JsonDict, JsonInt, JsonStr, JSONDecodeError
 

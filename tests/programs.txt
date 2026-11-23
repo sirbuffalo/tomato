@@ -116,3 +116,4 @@ async_loops
 error_path_release
 unicode_class
 mixed_tuples
+time_module

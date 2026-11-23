@@ -1,0 +1,96 @@
+# The std/time.tom module: calendar maths on fixed moments (the clocks are only checked for sanity, since they cannot be exact).
+from time import time, time_ns, monotonic, monotonic_ns, gmtime, timegm, mktime, strftime, asctime, ctime, isoformat, format_duration, Stopwatch, Time
+
+def show_error(seconds: float):
+    try:
+        print(gmtime(seconds))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+
+# a Time made by hand: the fields are checked, so strftime never meets a month or weekday it has no name for
+def show_made(month: int, weekday: int):
+    try:
+        print(strftime('%B %A', Time(2000, month, 1, 0, 0, 0, weekday, 1)))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+
+@main
+def main():
+    # the epoch, a leap day, the end of a century that is not a leap year, a negative time and a fraction
+    print(isoformat(0.0))
+    print(isoformat(1709164800.0))
+    print(isoformat(951782400.0))
+    print(isoformat(-1.0))
+    print(isoformat(1710000000.9))
+    print(isoformat(-0.5))
+    print(isoformat(4107542400.0), isoformat(-62135596800.0), isoformat(253402300799.0))
+    t = gmtime(1710000000.0)
+    print(t, t.weekday, t.yearday)
+    print(gmtime(951782400.0).yearday, gmtime(1709164800.0).weekday)
+    # the year 1900 is not a leap year, 2000 and 2100 are decided the same way by their century
+    print(isoformat(timegm(1900, 3, 1) - 86400), isoformat(timegm(2100, 3, 1) - 86400), isoformat(timegm(2000, 3, 1) - 86400))
+    print(gmtime(timegm(2023, 12, 31)).yearday, gmtime(timegm(2024, 12, 31)).yearday)
+    # strftime: every directive, from a Time and from seconds
+    print(strftime('%a %A %b %B %d/%m/%Y %y %H:%M:%S day %j|%e|%%|%Q|%', 1710000000.0))
+    print(strftime('%e %j', 86400.0 * 4))
+    print(strftime('%I %p|%I %p|%I %p|%I %p|%I %p', 0.0), strftime('%I %p', 12.0 * 3600.0), strftime('%I %p', 13.0 * 3600.0), strftime('%I %p', 23.0 * 3600.0), strftime('%I %p', 3600.0))
+    print(strftime('%w %u', 1710000000.0), strftime('%w %u', 1710000000.0 + 86400.0), strftime('%w %u', 1710000000.0 - 86400.0 * 5))
+    print(strftime('%F %T %R %D|%x %X|%c|%Z %z', t))
+    print(strftime('a%nb%tc', t) == 'a\nb\tc')
+    print(strftime('no directives', t), strftime('', t) == '', strftime('%Y', -62135596800.0))
+    print(strftime('%Y-%m-%d', t), strftime('%Y-%m-%d', 1710000000.0))
+    made = Time(2000, 1, 1, 0, 0, 0, 5, 1)
+    print(made, strftime('%A %j %I%p', made), mktime(made))
+    print(asctime(t), '|', ctime(0.0), '|', ctime(1709164800.0))
+    # timegm and mktime are the inverse of gmtime
+    print(timegm(2024, 3, 9, 16, 0, 0), timegm(1970, 1, 1), timegm(1969, 12, 31, 23, 59, 59), timegm(2000, 2, 29), mktime(t))
+    print(timegm(2024, 14, 1) == timegm(2025, 2, 1), timegm(2024, 1, 1, 0, 0, 86400) == timegm(2024, 1, 2), timegm(2024, 1, 1, 25) == timegm(2024, 1, 2, 1))
+    ok = True
+    for seconds in [0, 86399, 86400, 1709164800, 4107542400, -86400 * 365 * 100, -62135596800, 253402300799]:
+        p = gmtime(float(seconds))
+        ok = ok and timegm(p.year, p.month, p.day, p.hour, p.minute, p.second) == seconds and mktime(p) == seconds
+    print(ok)
+    # every 97th day from 1970 to 2100 comes back as the same date, with the weekday that many days on (a step the website's
+    # interpreter can run in its time limit; the same loop over every day was checked natively)
+    days_ok = True
+    weekday = gmtime(0.0).weekday
+    for day in range(0, 47500, 97):
+        p = gmtime(float(day * 86400 + 43200))
+        if timegm(p.year, p.month, p.day) != day * 86400 or p.weekday != (weekday + day) % 7 or p.hour != 12:
+            days_ok = False
+    print(days_ok)
+    # the errors: not a number, and too far from the epoch
+    show_error(1.0e19)
+    show_error(-1.0e19)
+    print(gmtime(9000000000000000000).year, gmtime(-9000000000000000000).year)
+    print(strftime('%Y', 4107542400), isoformat(86400 * 365), ctime(0), format_duration(90), gmtime(5).second)
+    try:
+        print(gmtime(9000000000000000001))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    # format_duration
+    print(format_duration(0.0), format_duration(0.25), format_duration(0.0004), format_duration(0.9996), format_duration(1.0), format_duration(12.5))
+    print(format_duration(59.9), format_duration(60.0), format_duration(125.0), format_duration(3599.0), format_duration(3600.0), format_duration(7384.0), format_duration(-3.0), format_duration(-0.25))
+    print(format_duration(12.3456), format_duration(100000.0), format_duration(59.9996), format_duration(59.9994))
+    print(format_duration(10 ** 30), format_duration(-(10 ** 30)), format_duration(59), format_duration(60), format_duration(-125), format_duration(0), format_duration(86400 * 365))
+    # years before 1 and the check on a hand-made Time
+    print(isoformat(-62167219201), isoformat(-62135596801), isoformat(-1.0e12), isoformat(-62198755200))
+    show_made(1, 6)
+    show_made(0, 6)
+    show_made(13, 6)
+    show_made(1, 7)
+    show_made(12, 0)
+    # the clocks: wall time is after 2020 and agrees with its nanoseconds, the monotonic clock never goes back
+    print(time() > 1577836800.0, time_ns() > 1577836800000000000)
+    a = time()
+    b = float(time_ns()) / 1.0e9
+    c = time()
+    print(a - 1.0 <= b and b <= c + 1.0)
+    m = monotonic()
+    n = monotonic_ns()
+    m2 = monotonic()
+    print(m2 >= m, monotonic_ns() >= n, float(n) / 1.0e9 >= m - 1.0 and float(n) / 1.0e9 <= m2 + 1.0)
+    w = Stopwatch()
+    x = monotonic()
+    print(x >= m, w.elapsed() >= 0.0, w.restart() >= 0.0, w.elapsed() < 5.0)
+    print(clock() >= m)

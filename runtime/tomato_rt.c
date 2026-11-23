@@ -2161,6 +2161,11 @@ static double sl_now, sl_origin = -1;
 
 /* clock(): seconds on a monotonic clock, as a float; only differences mean anything. Real time, not the logical sleep clock. */
 double tomato_clock(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec * 1e-9; }
+/* time() and time_ns() of std/time.tom: the wall clock, seconds (float) or nanoseconds (int) since 1970-01-01 00:00:00 UTC. */
+double tomato_time(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (double)t.tv_sec + (double)t.tv_nsec * 1e-9; }
+int64_t tomato_time_ns(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (int64_t)t.tv_sec * 1000000000 + (int64_t)t.tv_nsec; }
+/* monotonic_ns() of std/time.tom: the monotonic clock of clock(), in whole nanoseconds. */
+int64_t tomato_clock_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000000000 + (int64_t)t.tv_nsec; }
 
 #if !defined(TOMATO_WASM) && !defined(__wasi__)
 static double real_seconds(void) { return tomato_clock(); }

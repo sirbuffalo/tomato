@@ -14,7 +14,7 @@
     ]).then(function (x) { self.compiler = x[0]; self.runtime = x[1]; self.std = x[2]; return self; });
     return this.ready;
   };
-  TomatoWasm.STD = ["builtin", "math", "itertools", "rational", "cache", "requests", "toml", "bitarray", "json", "errors"];   // the standard library modules (std/NAME.tom) and the error table (std/errors.txt)
+  TomatoWasm.STD = ["builtin", "math", "itertools", "rational", "cache", "requests", "toml", "bitarray", "json", "time", "errors"];   // the standard library modules (std/NAME.tom) and the error table (std/errors.txt)
   TomatoWasm.file = function (n) { return n === "errors" ? "errors.txt" : n + ".tom"; };
   var enc = function (s) { return new TextEncoder().encode(s); };
 

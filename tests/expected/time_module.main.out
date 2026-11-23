@@ -1,0 +1,45 @@
+1970-01-01T00:00:00Z
+2024-02-29T00:00:00Z
+2000-02-29T00:00:00Z
+1969-12-31T23:59:59Z
+2024-03-09T16:00:00Z
+1969-12-31T23:59:59Z
+2100-03-01T00:00:00Z 0001-01-01T00:00:00Z 9999-12-31T23:59:59Z
+Time(2024, 3, 9, 16, 0, 0) 5 69
+60 3
+1900-02-28T00:00:00Z 2100-02-28T00:00:00Z 2000-02-29T00:00:00Z
+365 366
+Sat Saturday Mar March 09/03/2024 24 16:00:00 day 069| 9|%|%Q|%
+ 5 005
+12 AM|12 AM|12 AM|12 AM|12 AM 12 PM 01 PM 11 PM 01 AM
+6 6 0 7 1 1
+2024-03-09 16:00:00 16:00 03/09/24|03/09/24 16:00:00|Sat Mar  9 16:00:00 2024|UTC +0000
+True
+no directives True 1
+2024-03-09 2024-03-09
+Time(2000, 1, 1, 0, 0, 0) Saturday 001 12AM 946684800
+Sat Mar  9 16:00:00 2024 | Thu Jan  1 00:00:00 1970 | Thu Feb 29 00:00:00 2024
+1710000000 0 -1 951782400 1710000000
+True True True
+True
+True
+ValueError: gmtime needs seconds within about 292 billion years of 1970, but got 1e+19 E387
+ValueError: gmtime needs seconds within about 292 billion years of 1970, but got -1e+19 E387
+285198648531 -285198644592
+2100 1971-01-01T00:00:00Z Thu Jan  1 00:00:00 1970 1m 30s 5
+ValueError: gmtime needs seconds within about 292 billion years of 1970, but got 9000000000000000001 E387
+0ms 250ms 0ms 1.0s 1.0s 12.5s
+59.9s 1m 00s 2m 05s 59m 59s 1h 00m 00s 2h 03m 04s -3.0s -250ms
+12.346s 27h 46m 40s 1m 00s 59.999s
+277777777777777777777777777h 46m 40s -277777777777777777777777777h 46m 40s 59.0s 1m 00s -2m 05s 0ms 8760h 00m 00s
+-0001-12-31T23:59:59Z 0000-12-31T23:59:59Z -29719-04-05T22:13:20Z -0001-01-01T00:00:00Z
+January Sunday
+ValueError: a Time needs month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60, weekday 0-6 and yearday 1-366, but got month 0, day 1, hour 0, minute 0, second 0, weekday 6, yearday 1 E388
+ValueError: a Time needs month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60, weekday 0-6 and yearday 1-366, but got month 13, day 1, hour 0, minute 0, second 0, weekday 6, yearday 1 E388
+ValueError: a Time needs month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60, weekday 0-6 and yearday 1-366, but got month 1, day 1, hour 0, minute 0, second 0, weekday 7, yearday 1 E388
+December Monday
+True True
+True
+True True True
+True True True True
+True
