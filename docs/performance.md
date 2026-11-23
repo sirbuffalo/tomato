@@ -110,6 +110,17 @@ shrinks from 160 MB to 20 MB and the time from 0.23 s to 0.076 s. Tomato ÷ Go 1
 7, `time -p`, 0.01 s resolution), did not change: fib 0.23, matmul 0.17, mandelbrot 0.12, collatz 0.52, strings 0.21,
 sort 0.12, wordcount 0.28, bigint 0.11, objects 0.16 seconds both ways.
 
+**Linux x86-64 check** (at `0d6208f`, 128 cores, load average about 78 from other work; clang 21, Valgrind 3.26). The
+baseline is the same compiler with `item_width` returning 8 for every list, so the two differ only in the storage width.
+In release mode, only the sieve binary differs: the other nine benchmarks build to byte-identical programs. Instructions
+executed (callgrind, whole process): sieve at the counting input (1,000,000) 67.25 → 49.04 million (× 0.73), at
+20,000,000 1,394.0 → 1,013.7 million (× 0.73); matmul (150) 158.83 and mandelbrot (250) 79.67 million both ways. Sieve
+at 20,000,000, 15 alternating runs: peak memory 160.5 → 21.0 MB, median wall time 3.58 → 1.50 s (user 3.18 → 1.45 s).
+This machine is memory-starved under that load (Rust's sieve takes 1.2 to 1.6 s on it), so only the ratio means anything;
+matmul (0.28/0.29 s) and mandelbrot (0.10 s fastest both ways) wall times moved only by noise. Test: `compact_fuzz` (1,000
+random `list[bool]` operations whose output was checked against CPython; it also runs under AddressSanitizer and through
+`site/wasm`, which gave the same output via Node on Linux) and `compact_lists`.
+
 ## What was done (mandelbrot, unreleased)
 
 The baseline release binary from `dd719982` executed 102.44 M instructions at input 250 on Linux arm64. Callgrind (`--dump-instr=yes --collect-jumps=yes`) attributed 101.68 M (99.26%) to `tomato.main` itself. Matching the instruction addresses to `objdump -d --disassemble=tomato.main` put 99.61 M (97.24%) in the inner `while` condition and body (`0x15a4` through `0x1670` in that binary). The ten `fsub` / `fcmp` / branch sequences in that loop accounted for 57.37 M (56.01% of the whole run). These are self costs that count each executed instruction once. The emitted LLVM IR and disassembly also show unboxed `double` locals in registers, with no per-operation allocation or reference counting.

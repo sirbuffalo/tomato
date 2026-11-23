@@ -1,0 +1,104 @@
+# A list[bool] keeps one byte per item (compact storage); 1,000 random steps of every operation that moves items
+# (append, pop, insert, extend, reverse, item assignment, slices with any step, +, *, comprehensions, ==, in, sorted,
+# reversed, list) must give what Python gives for the same steps (the expected output was checked against CPython).
+# The second part puts the smallest and largest value of each fixed width (1, 2 and 4 bytes) through the same paths.
+class Rng:
+    seed: int
+    @init
+    def init(self, seed: int):
+        self.seed = seed
+    def next(self, n: int) -> int:
+        self.seed = (self.seed * 1103515245 + 12345) % 2147483648
+        return (self.seed // 65536) % n
+
+def check(xs: list[bool]) -> int:
+    # a position-weighted count of the True items, so a moved or lost item changes it
+    n = 0
+    for i in range(len(xs)):
+        if xs[i]:
+            n += i + 1
+    return n
+
+def total(xs: list[bool]) -> int:
+    t = 0
+    for x in xs:
+        if x:
+            t += 1
+    return t
+
+def fuzz():
+    r = Rng(7)
+    xs: list[bool] = []
+    for step in range(1000):
+        op = r.next(14)
+        if op == 0 or op == 1:
+            xs.append(r.next(2) == 1)
+        elif op == 2 and len(xs) > 0:
+            print('pop', xs.pop())
+        elif op == 3 and len(xs) > 0:
+            i = r.next(len(xs) * 2) - len(xs)
+            print('popi', i, xs.pop(i))
+        elif op == 4:
+            i = r.next(len(xs) * 2 + 1) - len(xs)
+            xs.insert(i, r.next(3) == 0)
+        elif op == 5 and len(xs) < 300:
+            a = r.next(len(xs) + 1)
+            b = r.next(len(xs) + 1)
+            xs.extend(xs[a:b])
+        elif op == 6:
+            xs.reverse()
+        elif op == 7 and len(xs) > 0:
+            i = r.next(len(xs) * 2) - len(xs)
+            xs[i] = not xs[i]
+        elif op == 8:
+            a = r.next(len(xs) + 3) - 1
+            b = r.next(len(xs) + 3) - 1
+            s = r.next(7) - 3
+            if s != 0:
+                print('slice', a, b, s, xs[a:b:s])
+        elif op == 9 and len(xs) < 200:
+            xs = xs + [True, False] * r.next(3)
+        elif op == 10:
+            ys = [x for x in xs if x]
+            zs = [not x for x in xs]
+            print('comp', len(ys), check(zs), xs == xs[:], ys == zs, True in xs, False in xs)
+        elif op == 11 and len(xs) > 150:
+            xs = xs[r.next(50):]
+        elif op == 12:
+            print('sorted', check(sorted(xs, key=f -> 1 if f else 0)), check(reversed(xs)), check(list(xs)))
+        else:
+            print('state', len(xs), check(xs))
+    print(xs)
+
+def widths():
+    u8 = [uint[length=8](255), uint[length=8](128), uint[length=8](0)]
+    u8.insert(1, uint[length=8](200))
+    print(u8, u8[0] > u8[3], u8.pop(1), u8 + u8[::-1], [int(v) + 1 for v in u8])
+    i8 = [int[length=8](-128), int[length=8](127)]
+    i8.extend(i8 * 2)
+    print(i8, i8[-1] + int[length=8](0), i8 == i8[:], i8[1::2])
+    u16 = [uint[length=16](65535), uint[length=16](40000)]
+    i16 = [int[length=16](-32768), int[length=16](32767)]
+    print(u16, u16[::-1], i16.pop(0), i16, i16 + [int[length=16](-1)])
+    u32 = [uint[length=32](4294967295), uint[length=32](2147483648)]
+    i32 = [int[length=32](-2147483648), int[length=32](2147483647)]
+    u32.reverse()
+    print(u32, i32, [int(w) * 2 for w in u32], u32 == [uint[length=32](2147483648), uint[length=32](4294967295)])
+    db: dict[str, bool] = {'x': True, 'y': False}
+    print(db.values(), total(db.values()))
+    big = [False] * 2003
+    big[2002] = True
+    big[0] = True
+    print(total(big), total(big[1:]), total(big * 3), len(big + big), total(big[::-7]))
+    e: list[bool] = []
+    print(e, e * 5, e + e, e[::-1], e == e[:], len(e))
+    nested = [[True], [False, True]]
+    nested[0].append(True)
+    print(nested, nested[1][1], nested[0] + nested[1])
+    t = (True, False)
+    print(t, [x for x in t])
+
+@main
+def main():
+    fuzz()
+    widths()
