@@ -38,3 +38,9 @@ compiler improvements they suggest are in `docs/performance.md`.
 `benchmarks/json/jsonbench.tom` (not part of `run.sh`; no other language is compared): `tomato build` it, then
 `jsonbench gen FILE N` writes a document of N records, and `jsonbench loads|dumps|pretty FILE` parses it (and writes it
 back). Results are in docs/performance.md.
+
+## count.sh: instructions executed, not time
+
+`benchmarks/count.sh` runs the same programs under Valgrind in a Linux arm64 VM (Lima) and reports instructions executed,
+which do not depend on machine load. `benchmarks/count.sh --setup` once, then `benchmarks/count.sh`. It reports instructions,
+not cycles. Details and results: docs/performance.md.

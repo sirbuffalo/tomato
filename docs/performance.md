@@ -227,3 +227,54 @@ document for the parsed tree. The parse is a single C pass (`tomato_json_scan`: 
 decoding) into a token tape, then Tomato builds the objects; writing is Tomato appending pieces to a list and joining once.
 Text indexing (`s[i]`) is a linear scan today, which is why the parser lives in the runtime; a pure Tomato parser took
 57 s to walk a 300,000 character string. Writing is the slower half: one small string per token, then the join.
+
+## Instruction counts (deterministic, in an emulated Linux arm64 target)
+
+Wall-clock times on the Mac swing with load, clock speed and background work (our Go and Rust runs show 100-300% spreads),
+and real cycle counters on macOS need root and Instruments. `benchmarks/count.sh` instead counts **instructions executed**
+by each program under Valgrind (callgrind) inside a Linux arm64 virtual machine on the Mac.
+
+**What it measures, and what it does not.** The number is instructions executed by the whole process, startup included
+(Go about 0.7 million, Python tens of millions). It is not cycles: Valgrind has no pipeline model, so it cannot say how many
+M1 cycles anything takes, and a program that executes more instructions can still run faster (better instruction-level
+parallelism, fewer cache misses). Use it for "did this change make Tomato do less work", not for "how long does it take".
+
+**Why this setup.** QEMU user mode does not exist on macOS, and a VM cannot expose hardware counters (Apple's
+Virtualization framework gives the guest no PMU), so `perf stat` is out. Valgrind inside a Lima VM (Ubuntu 24.04 arm64,
+Apple Virtualization, 4 cores, 6 GB) needs nothing from the host except Lima. gem5 was not needed. Tomato is built
+inside the VM with its own `tomato build` (it only needs clang), so there is no cross-compiling. Go (1.27.4, the Mac's
+version) is linked externally, because a plain static Go binary crashes under Valgrind at startup; Rust is 1.100.0 via
+rustup; Python is the VM's 3.12.3 (the Mac has 3.9.6, so Python counts are not the same interpreter).
+
+**Setup, once:** `benchmarks/count.sh --setup` (installs Lima with Homebrew, creates the VM `tomato-count`, installs
+valgrind, clang, gcc, Go, Rust and Python in it). **Run:** `benchmarks/count.sh [--runs N] [--only a,b] [--smoke]`; it copies
+this checkout into the VM, builds every program there, runs each N times (default 2) and writes
+`benchmarks/results/instructions.md`. The inputs are about 1/20 of the full ones (column 4 of `benchmarks/sizes.txt`),
+because Valgrind is about 50 times slower; the whole run takes roughly 15 minutes. Python's hash seed is fixed and Go
+runs with `GOMAXPROCS=1`.
+
+**Reproducibility.** Two runs of every program: Tomato, Rust (except wordcount, 0.007%) and Python agree to the exact
+instruction; Go differs by 0.003-0.16% (runtime threads). At the tiny smoke inputs Go's difference is up to 12%, because the
+runtime's fixed work dominates, so only the counting inputs are meaningful.
+
+Tomato v0.50 (release), instructions executed, millions, and Tomato's count divided by the other's (below 1.0 Tomato
+executes fewer instructions):
+
+| benchmark | input | tomato | go | rust | python | ÷ go | ÷ rust | ÷ python |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fib | 32 | 127.0 | 110.0 | 58.8 | 3621.1 | 1.15 | 2.16 | 0.04 |
+| sieve | 1000000 | 42.6 | 23.2 | 25.5 | 2706.1 | 1.84 | 1.67 | 0.02 |
+| matmul | 150 | 131.5 | 52.4 | 55.2 | 6299.2 | 2.51 | 2.38 | 0.02 |
+| mandelbrot | 250 | 106.7 | 28.7 | 25.9 | 7349.7 | 3.72 | 4.13 | 0.01 |
+| collatz | 50000 | 123.5 | 36.5 | 36.0 | 8697.6 | 3.39 | 3.43 | 0.01 |
+| strings | 150000 | 140.4 | 98.9 | 87.8 | 725.6 | 1.42 | 1.60 | 0.19 |
+| sort | 150000 | 55.2 | 48.5 | 27.0 | 1178.3 | 1.14 | 2.05 | 0.05 |
+| wordcount | 250000 | 191.8 | 189.1 | 244.6 | 1004.8 | 1.01 | 0.78 | 0.19 |
+| bigint | 10000 | 83.2 | 41.1 | 87.6 | 214.7 | 2.02 | 0.95 | 0.39 |
+| objects | 100000 | 116.3 | 79.3 | 50.5 | 2283.6 | 1.47 | 2.30 | 0.05 |
+
+Measured on this branch after merging `main` (which includes the compact list storage; sieve fell from 70.5 to 42.6 million
+instructions with it). Tomato's counts are 1.7-4.1 times Go's and Rust's on the numeric loops (sieve, matmul, mandelbrot,
+collatz), where the generated code executes the most extra instructions. Instruction counts
+alone do not say how those instructions perform, so compare them with the wall-clock table only as a second opinion.
+Full output: `benchmarks/results/instructions.md`.
