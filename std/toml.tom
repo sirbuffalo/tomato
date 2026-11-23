@@ -1,4 +1,4 @@
-# TOML v1.0.0, written in Tomato: `from toml import loads, load, dumps`.
+# TOML v1.0.0, written in Tomato: `from toml import loads, load, dump, dumps`.
 #
 #     doc = loads('title = "demo"\n[server]\nport = 8080\n')
 #     print(doc['title'].as_str(), doc['server']['port'].as_int())
@@ -1102,3 +1102,11 @@ export def dumps(value: Toml) -> str:
     if value.kind != 'table':
         raise RuntimeError('dumps needs a table: a TOML document is a table of keys')
     return dumps_value(value)
+
+# dump(value, path) writes dumps(value) to the file at path (replacing it), the counterpart of load(path). An unwritable
+# path raises IOError; a value that is not a table raises RuntimeError before the file is touched.
+export def dump(value: Toml, path: str):
+    text = dumps(value)
+    f = open(path, 'w')
+    f.write(text)
+    f.close()

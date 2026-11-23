@@ -8,7 +8,7 @@
   std/cache.tom has the cache and the injectable `Clock`, but a function cannot be passed as a value yet, so memoising a function waits for the function values task.
 - Typed list storage: `list[bool]` as bytes (and possibly unboxed floats)
   Shrinks sieve's 160 MB working set; needs the runtime, compiler and site/wasm/llvm.js to know the element width.
-- Add `r.json()` to requests and let `json=` take a Json value
-  `loads(self.text)` once the json library is on main; its task has fixed the API as `from json import loads, dumps, Json`.
+- Add msgpack file functions (`load_msgpack(path)`, `dump_msgpack(value, path)`)
+  `open` is text-only, so this needs byte-level file functions in the runtime (native and wasm); `json.load`/`dump` and `toml.dump` exist.
 - Move the v0.50 tag to the merge commit
   After merge, move the v0.50 tag to the merge commit (the release was created with --target main before the version bump landed); assets are unaffected.

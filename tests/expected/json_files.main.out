@@ -1,0 +1,21 @@
+{"name":"tomato","tags":["red","round"],"n":3,"é":null}
+True
+{
+  "n": 3,
+  "name": "tomato",
+  "tags": [
+    "red",
+    "round"
+  ],
+  "\u00e9": null
+}
+null
+encode error
+null
+decode error
+load: a file could not be opened
+dump: a file could not be opened
+True
+toml dump: a file could not be opened
+dumps needs a table: a TOML document is a table of keys
+True

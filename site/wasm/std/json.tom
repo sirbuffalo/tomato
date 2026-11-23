@@ -1,6 +1,6 @@
 # JSON (RFC 8259) and MessagePack, written in Tomato with a small C scanner for speed.
 #
-#     from json import loads, dumps, Json
+#     from json import loads, load, dump, dumps, Json
 #
 #     j = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3}')
 #     print(j['name'].as_str(), j['tags'][1].as_str(), j['n'].as_int())     # tomato round 3
@@ -554,3 +554,18 @@ export def dumps_msgpack(value: Json) -> list[int]:
     out: list[int] = []
     value.pack_to(out, 0)
     return out
+
+# File counterparts of loads and dumps (text files, UTF-8): load(path) reads and parses the file; dump(value, path, ...)
+# writes dumps(value, ...) to it, replacing it. An unreadable or unwritable path raises IOError, and the text is made
+# before the file is opened, so a value JSON cannot hold (JSONEncodeError) leaves the file alone.
+export def load(path: str) -> Json:
+    f = open(path, 'r')
+    text = f.read()
+    f.close()
+    return loads(text)
+
+export def dump(value: Json, path: str, indent: int = 0, sort_keys: bool = False, ensure_ascii: bool = False):
+    text = dumps(value, indent=indent, sort_keys=sort_keys, ensure_ascii=ensure_ascii)
+    f = open(path, 'w')
+    f.write(text)
+    f.close()

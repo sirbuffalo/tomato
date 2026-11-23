@@ -92,6 +92,7 @@ int_shift
 bit_chunks
 compact_lists
 int_fast_paths
+json_files
 text_index
 fstring_fuse
 temp_unwind

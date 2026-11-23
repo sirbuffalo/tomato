@@ -3,6 +3,7 @@
  * connection (a child process each, so slow requests overlap). Routes:
  *   /hello            200 "hello", with Content-Type text/plain and a duplicated X-Tag header
  *   /echo             200, the request line, headers (names lower-cased) and body as text, in that order
+ *   /json             200, the JSON text {"ok": true, "items": [1, 2, 3]}, Content-Type application/json
  *   /status/N         status N with the body "status N"
  *   /redirect/N       N redirects (302) that end at /hello;  /loop redirects to itself
  *   /redirect-post    303 to /echo
@@ -55,6 +56,7 @@ static void handle(int fd) {
     char method[16] = "", path[512] = "";
     sscanf(req, "%15s %511s", method, path);
     if (strcmp(path, "/hello") == 0) reply(fd, 200, "Content-Type: text/plain\r\nX-Tag: one\r\nX-Tag: two\r\n", "hello", 5);
+    else if (strcmp(path, "/json") == 0) reply(fd, 200, "Content-Type: application/json\r\n", "{\"ok\": true, \"items\": [1, 2, 3]}", 32);
     else if (strcmp(path, "/echo") == 0 || strncmp(path, "/echo?", 6) == 0) {
         char out[70000]; size_t o = 0;
         char *line_end = strstr(req, "\r\n");

@@ -11,6 +11,8 @@
 #
 # A 404 or 500 is not an error by itself: r.status says what happened, and r.raise_for_status() raises HTTPError when you want that.
 
+from json import loads, dumps, Json
+
 # the runtime's request functions (runtime/tomato_rt.c); a request is a number, and await _http_wait(n) waits for it
 !tomato_http_start(method: str, url: str, headers: str, body: str, body_mode: int, timeout: float, follow: int, max_redirects: int) -> int
 !tomato_http_status(id: int) -> int
@@ -73,14 +75,16 @@ export class Response:
     headers: dict[str, str] = {}
     content: list[int] = []
 
+    # the body parsed as JSON; JSONDecodeError when it is not JSON
+    def json(self) -> Json:
+        return loads(self.text)
+
     def raise_for_status(self):
         if self.status >= 400:
             kind = 'Client Error'
             if self.status >= 500:
                 kind = 'Server Error'
             raise HTTPError(f'{self.status} {kind} for url: {self.url}', self.status)
-
-# The body as JSON is r.json() once the json library exists; until then parse r.text yourself.
 
 def _unreserved(c: str) -> bool:
     return c.isalpha() and ord(c) < 128 or c.isdigit() or c in ['-', '_', '.', '~']
@@ -147,12 +151,12 @@ def _parse_headers(raw: str) -> dict[str, str]:
 #   params   added to the url as ?name=value&...
 #   data     the body as text, sent as it is
 #   form     the body as an HTML form made from a dict (application/x-www-form-urlencoded)
-#   json     the body as JSON text (Content-Type: application/json)
+#   json     the body as JSON (Content-Type: application/json): a Json value (sent as dumps(value)) or ready-made JSON text
 #   headers  extra request headers
 #   timeout  seconds for the whole request (0 means no limit); TimeoutError when it runs out
 #   follow_redirects, max_redirects   follow 3xx answers (the default), at most that many times
 export async def request(method: str, url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {},
-                         json: str = '', headers: dict[str, str] = {}, timeout: float = 0.0,
+                         json: str | Json = '', headers: dict[str, str] = {}, timeout: float = 0.0,
                          follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     hdr: dict[str, str] = {}
     for k in headers.keys():
@@ -165,8 +169,15 @@ export async def request(method: str, url: str, params: dict[str, str] = {}, dat
         full = url + sep + _form(params)
     body = ''
     has_body = 0
-    if json != '':
-        body = json
+    json_given = False
+    if json in str:
+        if json != '':
+            json_given = True
+            body = json
+    else:
+        json_given = True
+        body = dumps(json)
+    if json_given:
         has_body = 1
         if not _has_header(hdr, 'content-type'):
             hdr['Content-Type'] = 'application/json'
@@ -224,14 +235,14 @@ export async def delete(url: str, params: dict[str, str] = {}, headers: dict[str
                         follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('DELETE', url, params=params, headers=headers, timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)
 
-export async def post(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {}, json: str = '',
+export async def post(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {}, json: str | Json = '',
                       headers: dict[str, str] = {}, timeout: float = 0.0, follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('POST', url, params=params, data=data, form=form, json=json, headers=headers, timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)
 
-export async def put(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {}, json: str = '',
+export async def put(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {}, json: str | Json = '',
                      headers: dict[str, str] = {}, timeout: float = 0.0, follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('PUT', url, params=params, data=data, form=form, json=json, headers=headers, timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)
 
-export async def patch(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {}, json: str = '',
+export async def patch(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {}, json: str | Json = '',
                        headers: dict[str, str] = {}, timeout: float = 0.0, follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('PATCH', url, params=params, data=data, form=form, json=json, headers=headers, timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)

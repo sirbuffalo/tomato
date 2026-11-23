@@ -53,3 +53,15 @@ concurrent 1000
 task error
 cancelled
 a%20b%2F%C3%BC%E2%82%AC
+True 3 3
+not json
+POST /echo HTTP/1.1
+content-type: application/json
+content-length: 18
+--
+{"k":[1,null,"x"]}
+PATCH /echo HTTP/1.1
+content-type: application/json
+content-length: 4
+--
+null

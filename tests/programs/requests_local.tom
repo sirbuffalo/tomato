@@ -1,5 +1,6 @@
 # The requests library against a local test server (tests/run.sh starts tests/http_server.c and passes its address).
 import requests
+from json import loads, JSONDecodeError
 
 async def fetch(base: str, path: str) -> int:
     r = await requests.get(base + path)
@@ -123,3 +124,15 @@ async def main(base: str):
     catch CancelledError as e:
         print('cancelled')
     print(requests.quote('a b/ü€'))
+    # r.json() and a Json value for json=
+    r = await requests.get(base + '/json')
+    j = r.json()
+    print(j['ok'].as_bool(), len(j['items']), j['items'][2].as_int())
+    try:
+        (await requests.get(base + '/hello')).json()
+    catch JSONDecodeError as e:
+        print('not json')
+    r = await requests.post(base + '/echo', json=loads('{"k": [1, null, "x"]}'))
+    print(r.text)
+    r = await requests.patch(base + '/echo', json=loads('null'))
+    print(r.text)
