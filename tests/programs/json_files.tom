@@ -36,11 +36,11 @@ def main(dir: str = '/tmp'):
     catch JSONDecodeError as e:
         print('decode error')
     try:
-        load('/tmp/tomato_no_such_dir/x.json')
+        load('/nonexistent_dir_for_tomato/x.json')
     catch IOError as e:
         print('load:', e.message)
     try:
-        dump(j, '/tmp/tomato_no_such_dir/x.json')
+        dump(j, '/nonexistent_dir_for_tomato/x.json')
     catch IOError as e:
         print('dump:', e.message)
     # toml
@@ -49,7 +49,7 @@ def main(dir: str = '/tmp'):
     toml.dump(t, tpath)
     print(toml.dumps(toml.load(tpath)) == toml.dumps(t))
     try:
-        toml.dump(t, '/tmp/tomato_no_such_dir/x.toml')
+        toml.dump(t, '/nonexistent_dir_for_tomato/x.toml')
     catch IOError as e:
         print('toml dump:', e.message)
     try:

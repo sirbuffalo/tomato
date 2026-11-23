@@ -20,22 +20,23 @@ def write_text(path: str, text: str):
     f.write(text)
     f.close()
 
-def try_load(label: str, path: str):
+# the IOError text names the file: the run's own folder is shown as <dir>, so the output is the same on every run
+def try_load(label: str, path: str, dir: str):
     try:
         print(label, 'loaded', dumps(load_msgpack(path)))
     catch MsgpackError as e:
         print(label, 'MsgpackError', e.id, e.pos, e.message)
     catch IOError as e:
-        print(label, 'IOError', e.id, e.message)
+        print(label, 'IOError', e.id, e.message.replace(dir, '<dir>'))
 
-def try_dump(label: str, j: Json, path: str):
+def try_dump(label: str, j: Json, path: str, dir: str):
     try:
         dump_msgpack(j, path)
         print(label, 'written')
     catch MsgpackError as e:
         print(label, 'MsgpackError', e.id, e.message)
     catch IOError as e:
-        print(label, 'IOError', e.id, e.message)
+        print(label, 'IOError', e.id, e.message.replace(dir, '<dir>'))
 
 def nested(depth: int) -> Json:
     j: Json = JsonInt(1)
@@ -44,8 +45,9 @@ def nested(depth: int) -> Json:
     return j
 
 @main
-def main():
-    path = '/tmp/tomato_msgpack_files_test.msgpack'
+def main(dir: str = '/tmp'):
+    # tests/run.sh passes its own temporary folder: a fixed name in a shared /tmp can belong to another user
+    path = dir + '/tomato_msgpack_files_test.msgpack'
     print('-- round trips')
     every = JsonDict({
         'null': JsonNull(), 'yes': JsonBool(True), 'no': JsonBool(False),
@@ -76,11 +78,11 @@ def main():
     print(dumps(load_msgpack(path)))
     # the same Json as loads gives for a JSON document
     doc = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3, "big": 123456789012345678901, "f": 0.25}')
-    try_dump('too big for 64 bits', doc, path)
+    try_dump('too big for 64 bits', doc, path, dir)
     doc = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3, "f": 0.25}')
     dump_msgpack(doc, path)
     print(dumps(load_msgpack(path)) == dumps(doc), dumps(load_msgpack(path)))
-    odd = '/tmp/tomato msgpack é test.msgpack'
+    odd = dir + '/tomato msgpack é test.msgpack'
     round_trip('path with a space and é', doc, odd)
 
     print('-- large values')
@@ -105,38 +107,38 @@ def main():
 
     print('-- values MessagePack cannot hold leave the file alone')
     dump_msgpack(JsonStr('kept'), path)
-    try_dump('513 levels', nested(513), path)
-    try_dump('65-bit int', JsonInt(36893488147419103232), path)
-    try_dump('bad byte', JsonBin([1, 256]), path)
-    try_dump('bad ext type', JsonExt(-1, [1]), path)
-    try_dump('bad nanos', JsonTimestamp(0, 1000000000), path)
-    try_load('still', path)
+    try_dump('513 levels', nested(513), path, dir)
+    try_dump('65-bit int', JsonInt(36893488147419103232), path, dir)
+    try_dump('bad byte', JsonBin([1, 256]), path, dir)
+    try_dump('bad ext type', JsonExt(-1, [1]), path, dir)
+    try_dump('bad nanos', JsonTimestamp(0, 1000000000), path, dir)
+    try_load('still', path, dir)
 
     print('-- bad bytes in the file')
-    bad = '/tmp/tomato_msgpack_files_bad.msgpack'
+    bad = dir + '/tomato_msgpack_files_bad.msgpack'
     write_text(bad, '')
-    try_load('empty file', bad)
+    try_load('empty file', bad, dir)
     write_text(bad, 'abc')
-    try_load('extra data', bad)
+    try_load('extra data', bad, dir)
     write_text(bad, chr(1808))
-    try_load('truncated array', bad)
+    try_load('truncated array', bad, dir)
     write_text(bad, '{"a": 1}')
-    try_load('JSON text', bad)
+    try_load('JSON text', bad, dir)
     write_text(bad, '{')
-    try_load('one fixint', bad)
+    try_load('one fixint', bad, dir)
 
     print('-- paths that cannot be used')
-    missing = '/tmp/tomato_no_such_dir/x.msgpack'
+    missing = '/nonexistent_dir_for_tomato/x.msgpack'
     try:
         f = open(missing, 'r')
         f.close()
     catch IOError as e:
         print('open():', e.id, e.message)
-    try_load('load missing dir', missing)
-    try_load('load missing file', '/tmp/tomato_msgpack_files_never_written.msgpack')
-    try_dump('dump missing dir', JsonNull(), missing)
-    try_load('load a directory', '/tmp')
-    try_dump('dump a directory', JsonNull(), '/tmp')
+    try_load('load missing dir', missing, dir)
+    try_load('load missing file', dir + '/tomato_msgpack_files_never_written.msgpack', dir)
+    try_dump('dump missing dir', JsonNull(), missing, dir)
+    try_load('load a directory', dir, dir)
+    try_dump('dump a directory', JsonNull(), dir, dir)
     try:
         load_msgpack(missing)
     catch RuntimeError as e:

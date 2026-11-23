@@ -3,8 +3,9 @@
 from json import loads, dumps, dumps_msgpack, load_msgpack, dump_msgpack, MsgpackError, JsonBin, JsonExt, JsonTimestamp, JsonInt, JsonStr, JsonDict
 
 @main
-def main():
-    path = '/tmp/tomato_msgpack_file_basics.msgpack'
+def main(dir: str = '/tmp'):
+    # tests/run.sh passes its own temporary folder (the browser run uses the default: its files live in memory)
+    path = dir + '/tomato_msgpack_file_basics.msgpack'
     j = loads('{"name": "tomato", "tags": ["red", "round"], "n": -3, "big": 18446744073709551615, "f": 0.25, "ok": true, "none": null}')
     dump_msgpack(j, path)
     print(dumps(load_msgpack(path)))
@@ -36,6 +37,6 @@ def main():
     catch MsgpackError as e:
         print(e.id, e.pos, e.message)
     try:
-        load_msgpack('/tmp/tomato_msgpack_file_basics_missing.msgpack')
+        load_msgpack(dir + '/tomato_msgpack_file_basics_missing.msgpack')
     catch IOError as e:
-        print(e.id, e.message)
+        print(e.id, e.message.replace(dir, '<dir>'))

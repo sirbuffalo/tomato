@@ -40,10 +40,10 @@ truncated array MsgpackError E89 1 Unexpected end of data: byte 1
 JSON text MsgpackError E89 1 Extra data: byte 1
 one fixint loaded 123
 -- paths that cannot be used
-open(): E25 could not open '/tmp/tomato_no_such_dir/x.msgpack': No such file or directory
-load missing dir IOError E25 could not open '/tmp/tomato_no_such_dir/x.msgpack': No such file or directory
-load missing file IOError E25 could not open '/tmp/tomato_msgpack_files_never_written.msgpack': No such file or directory
-dump missing dir IOError E25 could not open '/tmp/tomato_no_such_dir/x.msgpack': No such file or directory
-load a directory IOError E381 could not read '/tmp': Is a directory
-dump a directory IOError E25 could not open '/tmp': Is a directory
+open(): E25 could not open '/nonexistent_dir_for_tomato/x.msgpack': No such file or directory
+load missing dir IOError E25 could not open '/nonexistent_dir_for_tomato/x.msgpack': No such file or directory
+load missing file IOError E25 could not open '<dir>/tomato_msgpack_files_never_written.msgpack': No such file or directory
+dump missing dir IOError E25 could not open '/nonexistent_dir_for_tomato/x.msgpack': No such file or directory
+load a directory IOError E381 could not read '<dir>': Is a directory
+dump a directory IOError E25 could not open '<dir>': Is a directory
 a RuntimeError too: E25

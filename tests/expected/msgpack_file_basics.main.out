@@ -6,4 +6,4 @@ True
 E86 the integer 18446744073709551616 does not fit in 64 bits
 7
 E89 1 Extra data: byte 1
-E25 could not open '/tmp/tomato_msgpack_file_basics_missing.msgpack': No such file or directory
+E25 could not open '<dir>/tomato_msgpack_file_basics_missing.msgpack': No such file or directory

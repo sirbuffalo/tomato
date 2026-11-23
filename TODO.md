@@ -2,8 +2,6 @@
   After merge, move the v0.50 tag to the merge commit (the release was created with --target main before the version bump landed); assets are unaffected.
 - Cut the remaining per-iteration cost of the mandelbrot loop
   At counting input 250, Tomato ÷ Go is 1.97 in instructions executed. The hot loop still pays for 3 float checks and the tagged counter `i` (tag tests, overflow-checked add). Removing the counter checks needs range reasoning such as proving that `i + 1` is small when `0 <= i < 100`.
-- Make tests use unique temp paths instead of fixed `/tmp/tomato_*` names
-  `toml_api` fails on this machine because another user account owns `/tmp/tomato_toml_api_test.toml`, and parallel suite runs can collide. The new msgpack tests follow the same existing pattern as `json_files`.
 - Teach the expression-position type parser the comma form `tuple[A, B]`
   Mixed-type tuple types parse only in annotations, so `x in tuple[str, int]` (which would narrow a union such as `int | tuple[str, int]`) and explicit generic arguments such as `Box[tuple[str, int]](('a', 1))` fail with `expected ']', but found ','`. Inference from arguments and `Box[tuple[str, int]]` in an annotation already work; see P89 in `docs/provisional.md`.
 - Print mixed tuples (and lists/objects) inside unions properly instead of `<object>`
