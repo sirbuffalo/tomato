@@ -10,7 +10,7 @@ Tomato is a statically typed, reference-counted language with indentation syntax
 - **Numbers:** `int` has unlimited size (a number beyond 4.6 quintillion is a heap number that its variable, field or container owns, copies on assignment and frees when overwritten or dropped, D05av); fixed-width integers stop on overflow.
 - **Errors:** compile errors, warnings, runtime errors (with a call trace) and the repl share one format, described in `docs/errors.md`; on a terminal they are colored (`--color=auto|always|never`, `NO_COLOR`), with the same words as plain text.
 - **Update trust:** `tomato update` trusts HTTPS plus the checksum in `site/latest.json`; archives are not signed yet.
-- **Test:** `tests/run.sh` (needs only clang; `jsc` on macOS for the WebAssembly checks, `expect` for the repl history check).
+- **Test:** `tests/run.sh` (needs only clang. The WebAssembly checks run in `jsc` on macOS or in `node` on Linux, via `native/jsc-on-node.js`, and are skipped when neither exists. `expect` is for the repl history check).
 
 ## Layout
 

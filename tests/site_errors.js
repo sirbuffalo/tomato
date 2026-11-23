@@ -1,6 +1,6 @@
 // Checks site/site.js's tomatoErrors (the playground's colored errors) in JavaScriptCore: the words are the plain text, escaped, so the
 // text of the HTML (tags removed, entities decoded) equals the input, and the colors come from classes. Prints "ok" or what is wrong.
-//   jsc tests/site_errors.js
+//   jsc tests/site_errors.js   (or on Linux: node native/jsc-on-node.js tests/site_errors.js)
 var window = globalThis, location = { pathname: "x.html" };
 var el = function () { return { appendChild: function () {}, addEventListener: function () {} }; };
 var document = { querySelector: function () { return null; }, getElementById: function () { return null; }, querySelectorAll: function () { return []; }, addEventListener: function () {}, createElement: el, head: el() };

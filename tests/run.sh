@@ -86,19 +86,22 @@ else bad "requests test server" "tests/http_server.c did not build"; fi
 "$work/c1" examples/http_get.tom main std/ > "$work/hg.ll" 2> "$work/e" && clang -O1 -w -o "$work/hg" "$work/hg.ll" runtime/tomato_rt.c -lm && ok "examples/http_get.tom builds" || bad "examples/http_get.tom builds" "$(cat "$work/e")"
 
 echo "== the same programs through WebAssembly (site/wasm, the website and repl path) =="
-jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
-if [ -x "$jsc" ]; then
+# a JavaScript shell: jsc on macOS, else Node running the same script through native/jsc-on-node.js (the script is not changed)
+jsc_mac=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc; have_js=""
+if [ -x "$jsc_mac" ]; then have_js=1; jsc() { "$jsc_mac" "$@"; }
+elif command -v node > /dev/null 2>&1; then have_js=1; jsc() { node "$root/native/jsc-on-node.js" "$@"; }; fi
+if [ -n "$have_js" ]; then
   for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru memoize bit_types bit_names text_dict_methods tuple_for; do
-    "$jsc" native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
+    jsc native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
   done
   # rejected programs and runtime errors through the same path (the messages and failures must agree with native)
-  wasm_neg() { m="$("$jsc" native/tomato-jsc.js -- site/wasm run "tests/negative/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc 1"*) ok "wasm rejects $1";; *) bad "wasm rejects $1" "wanted: $2
+  wasm_neg() { m="$(jsc native/tomato-jsc.js -- site/wasm run "tests/negative/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc 1"*) ok "wasm rejects $1";; *) bad "wasm rejects $1" "wanted: $2
 got: $m";; esac; }
-  wasm_rt() { m="$("$jsc" native/tomato-jsc.js -- site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
+  wasm_rt() { m="$(jsc native/tomato-jsc.js -- site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
 got: $m";; esac; }
-  r="$("$jsc" native/tomato-jsc.js -- site/wasm run tests/programs/requests_browser.tom 2>&1 | grep "no network")"; check "wasm requests raise ConnectionError" "no network: True" "$r"
+  r="$(jsc native/tomato-jsc.js -- site/wasm run tests/programs/requests_browser.tom 2>&1 | grep "no network")"; check "wasm requests raise ConnectionError" "no network: True" "$r"
   wasm_neg type_mismatch "cannot use '+' with int and str"
   wasm_neg fixed_range "300 does not fit in uint[length=8]"
   wasm_neg private_field "the field 'x' is private to class 'C'"
@@ -118,8 +121,8 @@ got: $m";; esac; }
   wasm_rt caught_domain "caught sqrt needs a number that is not negative" 0
   wasm_rt exp_overflow "exp(1000) is too large to be a float" 1
   wasm_rt trace_calls "at half (line 10)" 1
-  r="$("$jsc" tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"
-else [ -n "$CI" ] && bad "wasm path" "jsc is required in CI (macOS runner)" || echo "skip: jsc is not available on this system"; fi
+  r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"
+else [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; fi
 
 echo "== command line =="
 home="$work/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"
@@ -337,8 +340,8 @@ for f in tests/input/*.tom; do
   "$work/c1" "$f" main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" runtime/tomato_rt.c -lm || { bad "input $n" "did not build: $(cat "$work/e")"; continue; }
   "$work/i" < "tests/input/$n.in" > "$work/o" 2>&1
   if cmp -s "$work/o" "tests/input/$n.out"; then ok "input $n"; else bad "input $n" "$(diff "$work/o" "tests/input/$n.out" | head -6)"; fi
-  if [ -x "$jsc" ]; then
-    "$jsc" native/tomato-jsc.js -- site/wasm run "$f" "tests/input/$n.in" > "$work/js.out" 2> "$work/js.err"
+  if [ -n "$have_js" ]; then
+    jsc native/tomato-jsc.js -- site/wasm run "$f" "tests/input/$n.in" > "$work/js.out" 2> "$work/js.err"
     if [ "$(cat "$work/js.out" "$work/js.err" | grep -v '^~rc ')" = "$(cat "tests/input/$n.out")" ]; then ok "wasm input $n"; else bad "wasm input $n" "$(cat "$work/js.out" "$work/js.err" | head -6)"; fi
   fi
 done

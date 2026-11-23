@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
-    # macOS has jsc (JavaScriptCore), which tests/run.sh uses to check the WebAssembly path the website and repl run
+    # macOS has jsc (JavaScriptCore), which tests/run.sh uses to check the WebAssembly path the website and repl run (Linux uses node and native/jsc-on-node.js)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

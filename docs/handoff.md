@@ -4,7 +4,7 @@
 
 **State (repo `sirbuffalo/tomato`, public; the version is in `VERSION`):**
 - The compiler written in Tomato (`compiler/src`) is the **only** implementation; it compiles itself (fixed point). `compiler/bootstrap/tomatoc.ll` is its own IR (regenerate with `compiler/bootstrap/refresh.sh`). Do not add Python.
-- `runtime/` is the C runtime, `std/` the standard library, `native/` the `tomato` command and repl (shell), `site/` the website (tomato.davismcd.com, GitHub Pages; compiles and runs in the browser with WebAssembly: `site/wasm`, an LLVM IR interpreter in `site/wasm/llvm.js`), `editors/vscode` the grammar, `release/build.sh` builds release archives, `tests/run.sh` is the whole test suite (clang only; macOS jsc for the wasm path, expect for the repl history check), `tests/known_gaps/` is where a program per decided rule not built yet goes.
+- `runtime/` is the C runtime, `std/` the standard library, `native/` the `tomato` command and repl (shell), `site/` the website (tomato.davismcd.com, GitHub Pages; compiles and runs in the browser with WebAssembly: `site/wasm`, an LLVM IR interpreter in `site/wasm/llvm.js`), `editors/vscode` the grammar, `release/build.sh` builds release archives, `tests/run.sh` is the whole test suite (clang only; jsc on macOS or node elsewhere (through `native/jsc-on-node.js`) for the wasm path, expect for the repl history check), `tests/known_gaps/` is where a program per decided rule not built yet goes.
 - Releases are GitHub releases `vN` with `tomato-N.tar.gz` and `latest.json`; `tomato update` reads it. The status table in `docs/specification.md` is authoritative about what is built.
 
 **How to work here:**
