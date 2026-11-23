@@ -8,7 +8,9 @@
   macOS CI cannot detect leaks (LeakSanitizer does not run there), which is how the error-path and task-waiter leaks fixed by the code cleanup went unnoticed. Export `ASAN_SYMBOLIZER_PATH` so a failure shows the real report.
 - Free temporaries on the error path of class-object slicing and big-int range bounds
   The last two known error-path leaks: `obj[a:b]` on a class object when it raises, and a big int in a range bound when a later bound fails its check. The other cases are covered by `tests/programs/error_path_release.tom`.
-- Add a `time` module (wall clock, gmtime/strftime/isoformat, Stopwatch)
-  The code cleanup task's tooling reviewer wrote a draft, kept at `~/.cache/tomato-time-module-draft/` on the build server (`std/time.tom` with `time()`, `monotonic()`, `Stopwatch`, `gmtime`, `timegm`, `strftime`, `isoformat`, `format_duration`, UTC only, plus a `tomato_time` runtime function); it was left out as a new feature and needs a decision on the API first.
 - Make `site/wasm` builds byte-identical across Linux and macOS
   The Linux and macOS builds of WASI SDK 24 produce different `tomatoc.wasm`/`runtime.wasm` bytes from the same source, so wasm rebuilt and committed on biggie fails the Mac release gate ("wasm files rebuild identically"). Either make the build host-independent, or have tasks on Linux skip the rebuild comparison and leave the canonical rebuild to the Mac (macOS arm64 WASI SDK 24, as `docs/releasing.md` says).
+- Build Wave 1 of the next-features plan as Sonnet tasks
+  See `docs/next-features.md`, section 6. Everyday built-ins, text methods and math additions (item 1); `random`/`secrets`/`uuid` (4); `urllib.parse`, `html` and `base64` (5); the `csv`/`textwrap`/`statistics` pack (7); `datetime` (11). Each starts only after Davis approves its API sheet.
+- Assign a stronger agent to the async toolkit, then the scheduler fd-waiter and `socket` module
+  Items 8 and 9 of `docs/next-features.md`: `gather`, timeouts and `Queue` first, then a scheduler wait on file descriptors plus a `socket` module, so the HTTP server (item 10) can follow. The scheduler is hand-written C with reference-counted frames, so use Opus or have Davis review it.
