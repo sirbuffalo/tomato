@@ -83,6 +83,26 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (collatz and small-int arithmetic)
+
+Profile first (`otool -tV` of the release binary, the emitted IR from `tomato compile`): `collatz` is pure small-int arithmetic, and every operation was already an inlined fast path, but the hot loop was long and tangled:
+
+- the slow (big-integer) calls were ordinary `noinline` functions, so the optimiser laid the cold calls out between the hot instructions and kept values live across them;
+- `x % 2 == 0` and `x // 2` went through the general floor-divide-and-fix-the-sign code, with a `tomato_int_sign` zero check of the (constant) divisor;
+- `+`, `-`, `*` untagged both operands, did the operation, then range-checked and re-tagged; comparisons also tested for the word 0 (a zeroed slot) before comparing;
+- in **debug mode** the runtime is a separate compilation unit (no LTO), so every add, compare, `dup` and `free` was a real call (collatz 1.60 s against 0.50 s in release). That is the "debug-mode small-int regression": the big-integer ownership code added a `dup`/`free` per assignment, which only hurts when each is a call.
+
+Changes (language semantics unchanged: an overflow still becomes a big integer):
+
+1. The slow paths are `cold` (`COLD` in the runtime): the hot loop is now straight-line code and the big-number calls sit out of line. collatz 0.50 → 0.45 s alone.
+2. `x // 2^k` and `x % 2^k` with a constant power-of-two divisor compile to `tomato_int_floordivp2_c` / `tomato_int_modp2_c`: on a tagged word `(w >> k) | 1` and `(w & mask) | 1` (the floor modulo of a power of two is never negative, so no sign fix). A constant non-zero divisor no longer emits the zero check.
+3. `+ - *` work on the tagged words and use the overflow flag of the 64-bit operation as the range check (`x + (y - 1)`, `x - (y - 1)`, `(x - 1) * (y >> 1)`): for a tagged word 2v+1 the 64-bit overflow is exactly "the result leaves -2^62 .. 2^62 - 1". Comparisons of two odd words compare the words.
+4. **Debug mode links with `-flto` too** (still `-O1`, still the leak check and full error text), so the runtime fast paths inline into the program in both modes; it falls back to a plain link when clang has no LTO. Debug compile and link time did not grow (0.6 s → 0.4 s on collatz).
+
+Measured on a loaded machine (load average 2.5 to 3), alternating runs, medians of 11 (user seconds): collatz release 0.51 → 0.28 s (Tomato ÷ Go 2.7 → 1.47, Tomato ÷ Rust 3.9 → 2.15 against the Go 0.19 s and Rust 0.13 s of the same session), collatz debug 1.60 → 0.27 s, fib debug 0.60 → 0.15 s, sieve debug 0.24 → 0.21 s; release fib 0.23 → 0.15 s, matmul 0.17 → 0.14 s, sieve unchanged (memory-bound). Test: `int_fast_paths` (constant and variable divisors agree on negative numbers, 0 and the 2^62 edge; `+ - *` across the edge; comparisons).
+
+Not done: collatz is still 1.5 times Go. Rust is probably branch-free on the `if x % 2 == 0` (not checked); Tomato keeps the branch, which is unpredictable on this input. Keeping untagged machine words across the loop when the type analysis proves no overflow is the next step and needs range reasoning the compiler does not have; the `<<`, `>>` operators do not help here (`x // 2` already is one shift).
+
 ## What was done (function values and sort, unreleased)
 
 - `sorted(xs, key=f)`: the keys are worked out once per item in Tomato, then the runtime (`tomato_list_sorted_by`) stable-merge-sorts (key, position) pairs and gathers the items. 3,000,000 ints with `key=`: about 0.3 s for the sort (whole program 0.54 s; Python `sorted(key=lambda)` about 2.3 s, Rust `sort_by_key` 0.14 s on this loaded machine). Plain `sorted(xs)` is untouched (native introsort, same 0.17 s program as before).
@@ -168,7 +188,7 @@ size-class allocator task covers.
 2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds, tests the tag of each item (for the big-integer copy) and keeps the list pointers in stack slots across the loop.
 3. **Typed list storage** (`list[bool]` as bytes, unboxed floats): the likely next win for `sieve` (cache footprint 8x smaller), measured as memory-bound, not tag-bound; needs every list operation and the IR interpreter to know the element width.
 4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).
-5. **Debug-mode small-int arithmetic** got slower with the big-integer ownership change (fib 0.41 → 0.60 s); recover it.
+5. (done, see the collatz section) Debug-mode small-int arithmetic.
 
 ## JSON and MessagePack (std/json.tom)
 

@@ -160,10 +160,10 @@ case "$mode" in
   normal) die "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" ;;
   *) die "the mode must be debug or release, not '$mode'" ;;
 esac
-# debug links at -O1 and keeps readable errors and the leak report; release links at -O2 with link-time optimisation (so the
-# runtime's small-number and reference-count fast paths are inlined into the program), without the leak report, and prints
-# short error codes. If this clang cannot do LTO, release falls back to a plain -O2 link.
-opt=-O1; ltoflags=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; }
+# debug links at -O1 and keeps readable errors and the leak report; release links at -O2 (and prints short error codes, without the
+# leak report). Both use link-time optimisation, so the runtime's small-number and reference-count fast paths are inlined into the
+# program (without it, debug mode made a call for every integer operation). If this clang cannot do LTO, both fall back to a plain link.
+opt=-O1; ltoflags="-flto"; nolto=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; nolto="-DTOMATO_RELEASE"; }
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 if ! "$tomatoc" "$file" "$entry" "$std" "$mode" > "$tmp/program.ll" 2> "$tmp/errors"; then
@@ -182,6 +182,6 @@ link() {   # a function has its own "$@", so the run inputs survive; $1 holds th
   IFS="$OLDIFS"
   "$@" "$runtime" -lm $([ "$(uname)" = Linux ] && echo -ldl)   # -ldl: the runtime loads libcurl with dlopen (older glibc keeps it in libdl)
 }
-if [ -n "$ltoflags" ]; then link "$ltoflags" 2>/dev/null || link "-DTOMATO_RELEASE" || exit 1; else link "" || exit 1; fi
+link "$ltoflags" 2>/dev/null || link "$nolto" || exit 1
 [ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }
 "$exe" "$@"

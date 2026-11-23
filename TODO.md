@@ -12,8 +12,6 @@
   The benchmarks (benchmarks/, site/benchmarks.html) show Tomato 12x to 48x slower than Rust on loops over big lists, sort and objects; docs/performance.md ranks the likely causes. Profile before building each one.
 - Free temporaries on the failure path of compiler checks
   An error caught in the middle of an expression drops a fresh big-number (and object) temporary without freeing it (`huge() // 0`, `huge() ** -1`, `huge() + int('x')`). Free the pending temporaries on the failure path of `fail_if` checks (`int_zero_check`, the pow negative-exponent check, failing `int()` conversions), then make the big-number leak check strict after errors again and add those shapes to `bigint_unwind`.
-- Recover the debug-mode small-int arithmetic regression from the big-integer ownership change
-  Debug-mode fib went from 0.41 s to 0.60 s (sieve 0.32 to 0.38 s, collatz 1.54 to 1.61 s) when big integers started owning their limbs; release mode lost about 7% on fib. Find which check or copy now sits on the small-int path (benchmarks/run.sh --only fib,sieve,collatz) and take it off.
 - Fuse f-string chains ('w' + str(x)) into one buffer
   Needs a compiler change; the remainder of wordcount/strings time is malloc/free (size-class allocator task).
 - Add `memoize(f)` / `@cached` to std/cache once function values land on main

@@ -1,0 +1,63 @@
+# Small-integer fast paths: // and % by a constant power of two, and + - * and comparisons next to the 2^62 edge of the
+# small form. Each constant-divisor result is checked against the same operation with the divisor in a variable (the
+# general path), and the edge cases print their values.
+def check(x: int) -> int:
+    two = 2
+    four = 4
+    big = 1 << 40
+    bad = 0
+    if x // 2 != x // two:
+        bad += 1
+    if x % 2 != x % two:
+        bad += 1
+    if x // 4 != x // four:
+        bad += 1
+    if x % 4 != x % four:
+        bad += 1
+    if x // 1099511627776 != x // big:
+        bad += 1
+    if x % 1099511627776 != x % big:
+        bad += 1
+    if (x // 8) * 8 + x % 8 != x:
+        bad += 1
+    return bad
+
+@main
+def main():
+    edge = 1 << 62
+    values = [0, 1, -1, 2, -2, 3, -3, 7, -7, 8, -8, 1000001, -1000001, edge - 1, edge, edge + 1, -edge, -edge - 1, -edge + 1, 1 << 100, -(1 << 100), (1 << 100) + 1, -(1 << 100) - 1, (1 << 64) - 1]
+    bad = 0
+    for v in values:
+        bad += check(v)
+    print('mismatches', bad)
+    print(-7 // 2, -7 % 2, 7 // 2, 7 % 2, -8 // 4, -8 % 4)
+    print(edge // 2, edge % 2, (edge - 1) // 2, (edge - 1) % 2)
+    print((-edge) // 2, (-edge) % 2, (-edge - 1) // 2, (-edge - 1) % 2)
+    print((1 << 100) // 2, ((1 << 100) + 1) % 2, (-(1 << 100) - 1) // 4, (-(1 << 100) - 1) % 4)
+    print((1 << 200) % (1 << 64), (1 << 200) // (1 << 190))
+    # + - * across the edge of the small form turn into big numbers and come back
+    a = edge - 1
+    print(a + 1, a + 2, a - -1, -a - 2, -a - 3)
+    b = -edge
+    print(b - 1, b + (-1), b - 0, b + 0)
+    print(a * 2, a * -2, b * 2, b * -1, b * -2, 3 * (edge // 3))
+    print((edge // 2) * 2, (edge // 2) * 3, (edge // 2) * -2, (-edge // 2) * 2, (-edge // 2) * -2)
+    print(2147483648 * 2147483648, 4294967296 * 4294967296, 3037000500 * 3037000500)
+    print((a + 1) - 1 == a, (a + 1) - 1 < a + 1, (b - 1) + 1 == b, a + 1 > a, b - 1 < b)
+    print(a + 1 == edge, a == edge, edge > -edge, -edge - 1 < -edge, (1 << 100) > edge, -(1 << 100) < -edge)
+    # a long Collatz walk crosses the shifts, the multiply and the compare many times
+    x = 27
+    steps = 0
+    while x != 1:
+        if x % 2 == 0:
+            x //= 2
+        else:
+            x = 3 * x + 1
+        steps += 1
+    print(steps)
+    y = 3 * (1 << 61) + 1
+    n = 0
+    while n < 4:
+        y = 3 * y + 1
+        n += 1
+    print(y, y % 2, y // 2 // 2 // 2)

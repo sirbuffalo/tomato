@@ -1642,6 +1642,32 @@ class Gen:
         self.emit(f'{r} = call i64 @tomato_int_raw(i64 {e.reg})')
         return r
 
+    def pow2_shift(self, y: Ex) -> int:
+        # a constant divisor that is a power of two (2, 4, 8, ...): the shift count, else -1
+        if not small_text(y.reg):
+            return -1
+        v = (int(y.reg) - 1) // 2
+        if v < 2:
+            return -1
+        k = 0
+        while v > 1:
+            if v % 2 != 0:
+                return -1
+            v = v // 2
+            k += 1
+        return k
+
+    def nonzero_const(self, y: Ex) -> bool:
+        # a constant divisor that is certainly not zero (no check is needed)
+        return small_text(y.reg) and int(y.reg) != 1 and int(y.reg) != 0
+
+    def int_pow2_call(self, name: str, x: Ex, k: int) -> Ex:
+        # x // 2**k and x % 2**k on a small number are a shift and a mask; a big number takes the general path
+        m = self.consume_mask(x, ex('0', 'int'))
+        r = self.tmp('int')
+        self.emit(f'{r} = call i64 @tomato_int_{name}_c(i64 {x.reg}, i32 {k}, i32 {m})')
+        return exf(r, 'int')
+
     def int_zero_check(self, b: Ex, message: str):
         sign = self.tmp('sign')
         self.emit(f'{sign} = call i32 @tomato_int_sign(i64 {b.reg})')
@@ -1720,7 +1746,11 @@ class Gen:
         x = self.resize(a, t)
         y = self.resize(b, t)
         if t == 'int':
-            self.int_zero_check(y, 'modulo by zero')
+            k = self.pow2_shift(y)
+            if k > 0:
+                return self.int_pow2_call('modp2', x, k)
+            if not self.nonzero_const(y):
+                self.int_zero_check(y, 'modulo by zero')
             return self.int_call_c('mod', x, y)
         llt = llvm_type(t)
         zero = self.tmp('zero')
@@ -1752,7 +1782,11 @@ class Gen:
         x = self.resize(a, t)
         y = self.resize(b, t)
         if t == 'int':
-            self.int_zero_check(y, 'division by zero')
+            k = self.pow2_shift(y)
+            if k > 0:
+                return self.int_pow2_call('floordivp2', x, k)
+            if not self.nonzero_const(y):
+                self.int_zero_check(y, 'division by zero')
             return self.int_call_c('floordiv', x, y)
         llt = llvm_type(t)
         zero = self.tmp('zero')
@@ -6019,6 +6053,8 @@ def declarations(mod: Mod) -> str:
 
     for op in ['add', 'sub', 'mul', 'floordiv', 'mod', 'shl', 'shr']:
         d += f'declare i64 @tomato_int_{op}_c(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_int_floordivp2_c(i64, i32, i32)\n'
+    d += 'declare i64 @tomato_int_modp2_c(i64, i32, i32)\n'
     d += 'declare i32 @tomato_int_cmp_c(i64, i64, i32)\n'
     d += 'declare i64 @tomato_int_raw_c(i64, i32)\n'
     d += 'declare void @tomato_int_free(i64)\n'
