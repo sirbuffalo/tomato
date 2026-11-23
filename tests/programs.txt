@@ -93,6 +93,7 @@ int_shift
 bit_chunks
 compact_lists
 int_fast_paths
+float_chains
 json_files
 text_index
 fstring_fuse

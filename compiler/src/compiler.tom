@@ -381,6 +381,7 @@ class Ex:
     ty: str = ''
     fresh: bool = False       # an int that the code holding it owns (it frees it or moves it into a place that keeps it), not one borrowed from a variable
     small: bool = False       # an int known to be in the small form, which owns nothing
+    unchecked: str = ''     # a float result of + - * whose finite check is left to the operator that uses it (the check on that one covers it)
 
 def ex(reg: str, ty: str) -> Ex:
     e = Ex()
@@ -1421,6 +1422,7 @@ class Gen:
     async_ok: bool = False     # the call being compiled is directly under await or start, so it may be an async call
     fresh_frame: bool = False  # the last call made a new task frame
     lifted: int = 0            # how many awaits were moved into statements of their own
+    defer_float: bool = False  # the binop about to be compiled is an operand of a float + - *, so it may leave its finite check to that operator
 
     def tmp(self, hint: str) -> str:
         self.n += 1
@@ -1892,12 +1894,7 @@ class Gen:
                 return self.int_equal_const(op, x, y)
             if small_text(x.reg) and x.reg[0].isdigit() and not small_text(y.reg):
                 return self.int_equal_const(op, y, x)
-        c = self.tmp('icmp')
-        m = self.consume_mask(x, y)
-        if m == 0:
-            self.emit(f'{c} = call i32 @tomato_int_cmp(i64 {x.reg}, i64 {y.reg})')
-        else:
-            self.emit(f'{c} = call i32 @tomato_int_cmp_c(i64 {x.reg}, i64 {y.reg}, i32 {m})')
+        # Small ints (odd words) order like the numbers they hold. The runtime handles other representations.
         cc = 'eq'
         if op == '!=':
             cc = 'ne'
@@ -1909,8 +1906,42 @@ class Gen:
             cc = 'sgt'
         elif op == '>=':
             cc = 'sge'
+        m = self.consume_mask(x, y)
+        both = ''
+        if (small_text(x.reg) or x.small) and (small_text(y.reg) or y.small):
+            both = ''
+        elif (small_text(x.reg) or x.small):
+            both = y.reg
+        elif (small_text(y.reg) or y.small):
+            both = x.reg
+        else:
+            both = self.tmp('both')
+            self.emit(f'{both} = and i64 {x.reg}, {y.reg}')
+        if both == '':
+            r = self.tmp('cmp')
+            self.emit(f'{r} = icmp {cc} i64 {x.reg}, {y.reg}')
+            return self.bool_of(r)
+        bit = self.tmp('smallbit')
+        self.emit(f'{bit} = and i64 {both}, 1')
+        small = self.tmp('small')
+        self.emit(f'{small} = icmp ne i64 {bit}, 0')
+        fast = self.label('cmpfast')
+        slow = self.label('cmpslow')
+        join = self.label('cmpjoin')
+        self.cond_br(small, fast, slow)
+        self.place(fast)
+        fr = self.tmp('cmp')
+        self.emit(f'{fr} = icmp {cc} i64 {x.reg}, {y.reg}')
+        self.br(join)
+        self.place(slow)
+        c = self.tmp('icmp')
+        self.emit(f'{c} = call i32 @tomato_int_cmp_c(i64 {x.reg}, i64 {y.reg}, i32 {m})')
+        sr = self.tmp('cmp')
+        self.emit(f'{sr} = icmp {cc} i32 {c}, 0')
+        self.br(join)
+        self.place(join)
         r = self.tmp('cmp')
-        self.emit(f'{r} = icmp {cc} i32 {c}, 0')
+        self.emit(f'{r} = phi i1 [ {fr}, %{fast} ], [ {sr}, %{slow} ]')
         return self.bool_of(r)
 
     def num_compare(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
@@ -2106,7 +2137,7 @@ class Gen:
             return e.reg
         return self.to_double(e)
 
-    def float_op(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+    def float_op(self, op: str, a: Ex, b: Ex, line: int, defer: bool = False) -> Ex:
         # arithmetic and comparison when either side is a float: the other side is converted to a float
         if not (a.ty == 'float' or is_numeric(a.ty)) or not (b.ty == 'float' or is_numeric(b.ty)):
             raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", line)
@@ -2120,8 +2151,13 @@ class Gen:
                 ins = 'fmul'
             r = self.tmp('f')
             self.emit(f'{r} = {ins} double {x}, {y}')
-            self.check_finite(r)
-            return ex(r, 'float')
+            # inf and NaN never become finite again under + - *, so one check on the last result of a chain covers the whole chain
+            result = ex(r, 'float')
+            if defer:
+                result.unchecked = r
+            else:
+                self.check_finite(r)
+            return result
         if op == '/' or op == '//' or op == '%':
             zero = self.tmp('fzero')
             self.emit(f'{zero} = fcmp oeq double {y}, 0.0')
@@ -2161,6 +2197,43 @@ class Gen:
         c = self.tmp('fcmp')
         self.emit(f'{c} = fcmp {cc} double {x}, {y}')
         return self.bool_of(c)
+
+    def flush_unchecked(self, e: Ex):
+        if e.unchecked != '':
+            self.check_finite(e.unchecked)
+            e.unchecked = ''
+
+    def float_chain(self, n: Node) -> bool:
+        # a + - * expression, whose finite check may be left to the + - * that uses it
+        if n.kind != 'BinOp':
+            return False
+        op = n.fields[0].text
+        return op == '+' or op == '-' or op == '*'
+
+    def float_pure(self, n: Node) -> int:
+        # 2: a float read or float arithmetic that can fail only with infinity or NaN; 1: an integer read or literal;
+        # 0: anything else. A class operand can call a custom operator, and an optional operand can fail when unwrapped.
+        # (An int operand is converted with tomato_int_to_f64, which never stops: a huge int becomes infinity, and the postponed
+        # check then reports the same error at the same line.)
+        k = n.kind
+        if k == 'FloatLit':
+            return 2
+        if k == 'IntLit':
+            return 1
+        if k == 'Name':
+            name = n.fields[0].text
+            if name not in self.slots:
+                return 0
+            ty = self.types[name]
+            if ty == 'float':
+                return 2
+            return 1 if is_numeric(ty) else 0
+        if k == 'BinOp' and self.float_chain(n):
+            x = self.float_pure(val_node(n.fields[1]))
+            y = self.float_pure(val_node(n.fields[2]))
+            if x > 0 and y > 0 and (x == 2 or y == 2):
+                return 2
+        return 0
 
     def check_finite(self, r: str):
         # a float result that is infinite or not a number stops the program (P58)
@@ -3398,6 +3471,8 @@ class Gen:
 
     def binop(self, n: Node, expected: str) -> Ex:
         op = n.fields[0].text
+        defer = self.defer_float
+        self.defer_float = False
         if op == 'and' or op == 'or':
             return self.logic(n, op)
         if op == '+':
@@ -3433,10 +3508,19 @@ class Gen:
             hint = a.ty if is_fixed(a.ty) else ''
             b = self.expr(right, hint)
         else:
+            can_defer = op == '+' or op == '-' or op == '*'
+            self.defer_float = can_defer and self.float_chain(left) and self.float_pure(right) > 0
             a = self.operand(left, pure_read(right) or self.plain_num(right))
             self.hold(a)                       # freed by the error path if the right side raises
+            # A custom operator or an optional left operand cannot absorb the right operand's check.
+            self.defer_float = can_defer and (a.ty == 'float' or is_numeric(a.ty)) and self.float_chain(right)
             b = self.operand(right, True)
-            self.drop_held(held_before)
+            self.defer_float = False
+        covered = a.unchecked != '' or b.unchecked != ''
+        if covered and not ((op == '+' or op == '-' or op == '*') and (a.ty == 'float' or b.ty == 'float') and (a.ty == 'float' or is_numeric(a.ty)) and (b.ty == 'float' or is_numeric(b.ty))):
+            self.flush_unchecked(a)
+            self.flush_unchecked(b)
+        self.drop_held(held_before)
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
         if op == 'in':
             return self.membership(a, b, n.line)
@@ -3482,7 +3566,7 @@ class Gen:
             b = self.want(b, 'bool', n.line, 'the right side of ' + op)
             return ex(self.arith(op, a.reg, b.reg), 'bool')
         if a.ty == 'float' or b.ty == 'float':
-            return self.float_op(op, a, b, n.line)
+            return self.float_op(op, a, b, n.line, defer)
         if is_compare and a.ty == 'bool' and b.ty == 'bool':
             if op != '==' and op != '!=':
                 raise CompileError('bool values cannot be ordered with < or >\nuse == or != to compare them', n.line)

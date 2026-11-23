@@ -1,0 +1,72 @@
+# A chain of float + - * is checked for infinity and NaN once, at its end: the result and the error must be what they were
+# when every operation was checked.
+def big(x: float) -> float:
+    return x * 1e200
+
+def mix(a: float, b: float, c: float) -> float:
+    return a * b - b * c + a * c * 2.0 - c
+
+class Number:
+    value: int = 0
+
+    @init
+    def make(self, value: int):
+        self.value = value
+
+    @add
+    def plus(self, other: float) -> float:
+        print("custom addition ran")
+        return other
+
+def try_chain(name: str, a: float, b: float, c: float):
+    try:
+        print(name, a * b + c)
+        print(name, a * b - c * b)
+        print(name, c - a * b * c)
+        print(name, (a + b) * (b - c) + a)
+    catch RuntimeError as e:
+        print(name, "stopped:", e.message)
+
+@main
+def main():
+    print(mix(1.5, 2.25, -0.125))
+    print(mix(0.1, 0.2, 0.3))
+    try_chain("fine", 1.5, 2.5, 3.5)
+    try_chain("overflow", 1e200, 1e200, 1.0)
+    try_chain("tail", 1.0, 1.0, 1e308)
+    x = 1e200
+    try:
+        y = x * x - x * x
+        print("not reached", y)
+    catch RuntimeError as e:
+        print("stopped in the first product:", e.message)
+    z = 1e308
+    try:
+        w = z + z - z
+        print("not reached", w)
+    catch RuntimeError as e:
+        print("stopped in the sum:", e.message)
+    # the error comes from the multiply, not from the division on its right
+    d = 0.0
+    try:
+        v = x * x + 1.0 / d
+        print("not reached", v)
+    catch RuntimeError as e:
+        print(e.message)
+    # The overflow must stop evaluation before a custom operator on the right runs.
+    number = Number(18446744073709551616)
+    try:
+        print(x * x + (number + 1.0))
+    catch RuntimeError as e:
+        print("before custom addition:", e.message)
+    # An overflow on the right must also release the owned left operand.
+    try:
+        print(number + (x * x))
+    catch RuntimeError as e:
+        print("on the right of custom addition:", e.message)
+    total = 0.0
+    i = 0
+    while i < 5:
+        total = total * 0.5 + i * 1.25 - 0.1
+        i += 1
+    print(total)
