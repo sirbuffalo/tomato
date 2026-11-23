@@ -4,7 +4,30 @@ What the benchmarks (`benchmarks/`, results on the website's Benchmarks page) sa
 what has been done about it. Every change below was measured with `benchmarks/run.sh` on the same Apple M1 (release
 mode, median seconds) and kept only when it helped.
 
-## Snapshot
+## v0.50 snapshot
+
+v0.50, median of 10 runs per program (Python too), all runs in one shuffled order (seed 1), Apple M1, load average about
+1.84 (1 minute) before and 1.60 after, with a 15-minute load of 2.93 before the run (iCloud sync and background indexing), so Go and Rust show wide spreads and their ratios may be somewhat inflated. Full tables in `benchmarks/results/results.md`. Seconds
+(release mode): fib 0.236, sieve 0.221, matmul 0.172, mandelbrot 0.124, collatz 0.515, strings 0.227, sort 0.119,
+wordcount 0.285, bigint 0.111, objects 0.162. Since v0.49 the size-class allocator, in-place string paths and counted
+step ranges made strings (0.487 to 0.227), wordcount (0.585 to 0.285), sieve and matmul faster.
+
+Tomato's time divided by each language's time (below 1.0 Tomato is faster, above 1.0 it is slower):
+
+| benchmark | Tomato ÷ Go | Tomato ÷ Rust | Tomato ÷ Python |
+| --- | ---: | ---: | ---: |
+| fib | 1.74 | 1.90 | 0.03 |
+| sieve | 4.19 | 4.28 | 0.05 |
+| matmul | 2.91 | 2.71 | 0.02 |
+| mandelbrot | 1.34 | 1.40 | 0.01 |
+| collatz | 2.63 | 3.78 | 0.03 |
+| strings | 1.74 | 2.16 | 0.24 |
+| sort | 0.49 | 1.52 | 0.05 |
+| wordcount | 1.23 | 0.88 | 0.19 |
+| bigint | 1.69 | 1.03 | 0.17 |
+| objects | 1.68 | 2.82 | 0.02 |
+
+## v0.49 snapshot (earlier)
 
 v0.49, median of 10 runs per program (Python too), all runs in one shuffled order (seed 1), Apple M1, load average about
 2 throughout (iCloud sync and background indexing, so the spread is wide: see benchmarks/results/results.md). An

@@ -14,8 +14,6 @@
   An error caught in the middle of an expression drops a fresh big-number (and object) temporary without freeing it (`huge() // 0`, `huge() ** -1`, `huge() + int('x')`). Free the pending temporaries on the failure path of `fail_if` checks (`int_zero_check`, the pow negative-exponent check, failing `int()` conversions), then make the big-number leak check strict after errors again and add those shapes to `bigint_unwind`.
 - Recover the debug-mode small-int arithmetic regression from the big-integer ownership change
   Debug-mode fib went from 0.41 s to 0.60 s (sieve 0.32 to 0.38 s, collatz 1.54 to 1.61 s) when big integers started owning their limbs; release mode lost about 7% on fib. Find which check or copy now sits on the small-int path (benchmarks/run.sh --only fib,sieve,collatz) and take it off.
-- Create a Developer ID Application certificate and notarize the pkg
-  Davis: create it on the MacBook (Xcode > Settings > Accounts > Manage Certificates > + > Developer ID Application). Then run the flow in docs/releasing.md on v0.49, upload with `gh release upload --clobber`, update site/latest.json pkg_sha256, and drop the unsigned note on the Download page.
 - Fuse f-string chains ('w' + str(x)) into one buffer
   Needs a compiler change; the remainder of wordcount/strings time is malloc/free (size-class allocator task).
 - Add `memoize(f)` / `@cached` to std/cache once function values land on main
@@ -28,3 +26,5 @@
   `loads(self.text)` once the json library is on main; its task has fixed the API as `from json import loads, dumps, Json`.
 - Make `s[i]` O(1) for ASCII text (and a chunked index for other text, D17c)
   Indexing text is a linear scan today (`char_offset` in runtime/tomato_rt.c), so a character loop over a 300,000 character string takes about 57 s; std/json uses a C scanner because of it.
+- Move the v0.50 tag to the merge commit
+  After merge, move the v0.50 tag to the merge commit (the release was created with --target main before the version bump landed); assets are unaffected.
