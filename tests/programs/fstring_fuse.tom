@@ -1,0 +1,30 @@
+# f-strings and chains of + with str(): fused into one buffer; results as ever
+@main
+def main():
+    n = 42
+    big = 12345678901234567890123456789
+    neg = -7
+    b: int[length=32] = -5
+    u: int[length=8] = 100
+    f = 2.5
+    name = 'é日'
+    print('w' + str(n) + '-' + str(neg))
+    print(f'{n}')
+    print(f'x{n}y{neg}z{name}')
+    print(f'{big} and {-big}')
+    print(f'{b}|{u}|{f}|{True}|{None is None}')
+    print('a' + str(0) + str(-0) + 'b' + str(9223372036854775807) + str(4611686018427387904) + str(-4611686018427387905))
+    print(len(f'{name}{name}'), len('é' + str(n) + '日'))
+    items = [1, 2, 3]
+    print(f'{items} {name.upper()} {len(items)}')
+    s = ''
+    for i in range(5):
+        s = s + 'k' + str(i) + ','
+    print(s)
+    d: dict[str, int] = {}
+    for i in range(6):
+        d[f'w{i * 7 % 4}'] = i
+    print(d)
+    parts = 'a' + 'b' + 'c' + 'd' + 'e' + 'f' + 'g' + 'h' + 'i' + 'j' + 'k' + 'l' + 'm' + 'n' + 'o' + 'p' + 'q' + str(1) + 'r'
+    print(parts, len(parts))
+    print(f'{1}{2}{3}{4}{5}{6}{7}{8}{9}{10}{11}{12}{13}{14}{15}{16}{17}{18}')

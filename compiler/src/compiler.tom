@@ -3293,6 +3293,11 @@ class Gen:
         op = n.fields[0].text
         if op == 'and' or op == 'or':
             return self.logic(n, op)
+        if op == '+':
+            chain: list[Node] = []
+            self.concat_parts(n, chain)
+            if len(chain) <= 16 and (self.is_text_part(chain[0]) or self.is_text_part(chain[1])):
+                return self.fused_concat(chain, n.line)
         left = val_node(n.fields[1])
         right = val_node(n.fields[2])
         if (op == '/' or op == '//' or op == '%') and self.is_zero_literal(right):
@@ -5048,7 +5053,78 @@ class Gen:
     def str_call(self, args: list[Node], line: int) -> Ex:
         if len(args) != 1:
             raise CompileError('str() takes exactly one argument', line)
-        v = self.expr(args[0])
+        return self.str_of(self.expr(args[0]), line)
+
+    def is_text_part(self, n: Node) -> bool:
+        # a text literal or a str(...) call: the parts an f-string is made of
+        if n.kind == 'StrLit':
+            return True
+        if n.kind == 'Call' and len(val_nodes(n.fields[1])) == 1 and len(n.fields[2].items) == 0:
+            f = val_node(n.fields[0])
+            return f.kind == 'Name' and f.fields[0].text == 'str' and 'str' not in self.slots and self.mod.resolve('str') == ''
+        return False
+
+    def concat_parts(self, n: Node, out: list[Node]):
+        # the operands of a left-leaning chain a + b + c ...
+        if n.kind == 'BinOp' and n.fields[0].text == '+':
+            self.concat_parts(val_node(n.fields[1]), out)
+            out.append(val_node(n.fields[2]))
+        else:
+            out.append(n)
+
+    def fused_concat(self, parts: list[Node], line: int) -> Ex:
+        # 'w' + str(i) + '-' ...: every part is evaluated in order, then one runtime call builds the result in one allocation
+        # (an int inside str() is written as digits straight into it)
+        values: list[Ex] = []
+        kinds: list[str] = []
+        for p in parts:
+            kind = '0'
+            if p.kind == 'Call' and self.is_text_part(p):
+                v = self.expr(val_nodes(p.fields[1])[0])
+                if v.ty == 'int':
+                    kind = '1'
+                elif is_numeric(v.ty) and is_signed(v.ty):
+                    kind = '2'
+                else:
+                    v = self.str_of(v, line)
+            else:
+                v = self.expr(p)
+            seen = v.ty
+            if kind != '0':
+                seen = 'str'
+            if len(values) == 1:
+                left = 'str'
+                if kinds[0] == '0':
+                    left = values[0].ty
+                if left != seen:
+                    raise CompileError(f"cannot use '+' with {shown(left)} and {shown(seen)}", line)
+            if len(values) >= 2 and seen != 'str':
+                raise CompileError(f"cannot use '+' with {shown('str')} and {shown(seen)}", line)
+            values.append(v)
+            kinds.append(kind)
+        arr = self.tmp('parts')
+        self.allocas.append(f'  {arr} = alloca [{2 * len(values)} x i64]')
+        for i in range(len(values)):
+            v = values[i]
+            slot = self.tmp('pslot')
+            self.emit(f'{slot} = getelementptr i64, ptr {arr}, i64 {2 * i}')
+            self.emit(f'store i64 {kinds[i]}, ptr {slot}')
+            word = v.reg
+            if kinds[i] == '0':
+                word = self.tmp('pword')
+                self.emit(f'{word} = ptrtoint ptr {v.reg} to i64')
+            elif kinds[i] == '2':
+                word = self.widen(v, 64)
+            slot2 = self.tmp('pslot')
+            self.emit(f'{slot2} = getelementptr i64, ptr {arr}, i64 {2 * i + 1}')
+            self.emit(f'store i64 {word}, ptr {slot2}')
+        r = self.tmp('cat')
+        self.emit(f'{r} = call ptr @tomato_str_cat(i64 {len(values)}, ptr {arr})')
+        for v in values:
+            self.release(v)
+        return ex(r, 'str')
+
+    def str_of(self, v: Ex, line: int) -> Ex:
         if v.ty == 'str':
             return v
         if is_fn(v.ty):
@@ -6743,6 +6819,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare void @tomato_release(ptr)\n'
     d += 'declare void @tomato_release_flat(ptr)\n'
     d += 'declare ptr @tomato_str_concat(ptr, ptr)\n'
+    d += 'declare ptr @tomato_str_cat(i64, ptr)\n'
     d += 'declare ptr @tomato_str_from_cstr(ptr)\n'
     d += 'declare i64 @tomato_str_len(ptr)\n'
     d += 'declare i32 @tomato_str_cmp(ptr, ptr)\n'

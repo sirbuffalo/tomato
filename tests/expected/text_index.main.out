@@ -1,0 +1,13 @@
+ascii 1000 0
+latin 1000 0
+mixed 1500 0
+short 100 0
+edge 256 0
+edge2 255 0
+chunk 64 0
+chunk2 65 0
+chunk3 257 0
+rotation 0
+index error
+100 é True
+True bb 1

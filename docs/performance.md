@@ -83,6 +83,12 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (text indexing and fused f-strings, unreleased)
+
+**`s[i]`.** ASCII text was already indexed directly (the character number is the byte offset), but each `s[i]` allocated a one-character string, and text with any non-ASCII character was scanned from the start on every index (quadratic loops). Now: (1) `s[i]` on an ASCII character returns one of 128 shared immortal one-character strings (no allocation, no release work); (2) a string of 256 or more characters that is not all ASCII gets a chunked index (D17c) on its first indexed use: the byte offset of every 64th character, so an index scans at most 63 characters. The index lives in a side table of 4 strings (`chunk_cache` in the runtime, oldest dropped first), not in the string object, so the string layout, string constants and the wasm interpreter are unchanged; the table holds a reference to each indexed string (strings are immutable, so the address cannot be reused) and it is released before the debug-mode leak check. Slices, `find` from a position and extended slices use the same offsets. More than 4 long non-ASCII strings in use at once fall back to the plain scan. Measured with a loop reading every character of a 100,000 character non-ASCII text next to an ASCII one (release mode, user time, machine load average about 35 to 55 from other work): old 27.2 s, new 0.01 s; 300,000 characters take 0.05 s.
+
+**f-strings.** `f'w{i}'` is `'w' + str(i)`, and every `+` and every `str()` made its own string. A chain of `+` whose first two operands include a text literal or a `str(...)` call (at most 16 operands) is compiled to one `tomato_str_cat` call: the parts are evaluated in order, then one allocation is filled, and an int inside `str()` is written as digits straight into it. Error messages for a wrong operand type are unchanged. `benchmarks/count.sh` (instructions executed under Valgrind, whole process): wordcount 191.76 M to 159.70 M (Tomato ÷ old Tomato 0.83; Tomato ÷ Go 1.01 to 0.84, ÷ Rust 0.78 to 0.65); strings is unchanged at 140.44 M (it uses `join` and `split`, not `s[i]` or f-strings). Wall clock, wordcount with n = 5,000,000, release mode, 7 alternating runs, user seconds, load average about 35: old median 0.79 s, new 0.66 s (ratio 0.84, the same as the instruction count).
+
 ## What was done (compact list storage, unreleased)
 
 A list whose item type is fixed at compile time keeps its items without the 8-byte slot, and the program cannot tell
@@ -263,7 +269,7 @@ build, one run, `/usr/bin/time -l`; the file is read inside the timed run):
 Time and memory grow in proportion to the size (no quadratic string building): about 15 bytes of memory per byte of
 document for the parsed tree. The parse is a single C pass (`tomato_json_scan`: strict checking, numbers, string
 decoding) into a token tape, then Tomato builds the objects; writing is Tomato appending pieces to a list and joining once.
-Text indexing (`s[i]`) is a linear scan today, which is why the parser lives in the runtime; a pure Tomato parser took
+Text indexing (`s[i]`) was a linear scan for non-ASCII text when the parser was written, which is why it lives in the runtime; a pure Tomato parser took
 57 s to walk a 300,000 character string. Writing is the slower half: one small string per token, then the join.
 
 ## Instruction counts (deterministic, in an emulated Linux arm64 target)

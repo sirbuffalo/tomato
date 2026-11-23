@@ -1,0 +1,53 @@
+# s[i] on ASCII and non-ASCII text: results must match a list of the characters, for short text, long text (chunked index),
+# several long strings at once (more than the index keeps), slices, negative positions and the end of the text
+def chars_of(pieces: list[str], n: int) -> list[str]:
+    out: list[str] = []
+    for i in range(n):
+        out.append(pieces[i % len(pieces)])
+    return out
+
+def check(name: str, pieces: list[str], n: int):
+    chars = chars_of(pieces, n)
+    s = ''.join(chars)
+    bad = 0
+    for i in range(n):
+        if s[i] != chars[i]:
+            bad += 1
+        if s[i - n] != chars[i]:
+            bad += 1
+    for i in range(0, n, 7):
+        if s[i:i + 5] != ''.join(chars[i:i + 5]):
+            bad += 1
+    print(name, len(s), bad)
+
+@main
+def main():
+    check('ascii', ['a', 'b', 'c'], 1000)
+    check('latin', ['a', 'é', 'z'], 1000)
+    check('mixed', ['a', 'é', '日', '😀', 'b'], 1500)
+    check('short', ['é', '日'], 100)
+    check('edge', ['日'], 256)
+    check('edge2', ['日'], 255)
+    check('chunk', ['é'], 64)
+    check('chunk2', ['é'], 65)
+    check('chunk3', ['é', 'a'], 257)
+    # more long non-ASCII strings alive at once than the index keeps, used in turn
+    texts: list[str] = []
+    for k in range(7):
+        texts.append(('é日' * 200) + str(k) + '😀')
+    bad = 0
+    for r in range(3):
+        for k in range(7):
+            t = texts[k]
+            if t[400] != str(k) or t[401] != '😀' or t[-1] != '😀' or t[0] != 'é' or t[1] != '日' or t[399] != '日':
+                bad += 1
+    print('rotation', bad)
+    t = 'é' * 300
+    try:
+        print(t[300])
+    catch RuntimeError:
+        print('index error')
+    print(len(t[100:200]), t[299], t[-300] == 'é')
+    one = 'x'
+    two = 'xyz'[0]
+    print(one == two, 'abc'[1] + 'abc'[1], len('abc'[2]))

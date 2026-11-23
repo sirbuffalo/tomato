@@ -391,10 +391,13 @@ extern const char *tomato_class_names[];
 
 void tomato_collect_cycles(void);
 
+void tomato_str_index_free(void);
+
 void tomato_leak_check(void) {
 #ifdef TOMATO_RELEASE
     return;                      /* release: no leak report, and no collection at exit (nothing observes what is left) */
 #endif
+    tomato_str_index_free();     /* the text index holds references to a few long strings */
     tomato_collect_cycles();     /* cycles are freed automatically (D29d), so only true leaks are left to report */
     /* Big numbers are owned values and every failing check frees the temporaries waiting in its expression, so they must balance even
      * after an error. Objects stay quiet after an error: an unwound frame can leave a cycle or a task frame behind. */
@@ -452,11 +455,58 @@ int tomato_str_cmp(void *a, void *b) {
     return x->bytes < y->bytes ? -1 : x->bytes > y->bytes ? 1 : 0;
 }
 
-/* The byte offset of character number i (0 <= i <= chars). The scan is linear; a chunked index is later work (D17c). */
+/* Chunked character index (D17c) for long text that is not all ASCII: the byte offset of every CHUNK-th character. The
+ * strings are immutable and the table keeps a reference to each indexed string, so an address is never reused while it is
+ * listed. A few strings are kept (the oldest is dropped first); more than that at once falls back to the plain scan. */
+#define CHUNK 64
+#define CHUNK_MIN_CHARS 256
+#define CHUNK_SLOTS 4
+static struct { Str *s; int64_t *offsets; } chunk_cache[CHUNK_SLOTS];
+static int chunk_next;
+
+static int64_t *chunk_index_of(Str *s) {
+    for (int k = 0; k < CHUNK_SLOTS; k++) if (chunk_cache[k].s == s) return chunk_cache[k].offsets;
+    int64_t n = s->chars / CHUNK + 1;
+    int64_t *offsets = malloc((size_t)n * sizeof(int64_t));
+    if (!offsets) return NULL;
+    int64_t seen = 0, at = 0;
+    for (int64_t k = 0; k < s->bytes; k++) {
+        if (((unsigned char)s->data[k] & 0xC0) != 0x80) {
+            if (seen % CHUNK == 0) offsets[at++] = k;
+            seen++;
+        }
+    }
+    Str *old = chunk_cache[chunk_next].s;
+    free(chunk_cache[chunk_next].offsets);
+    chunk_cache[chunk_next].s = s;
+    chunk_cache[chunk_next].offsets = offsets;
+    tomato_retain(s);
+    if (old) tomato_release(old);
+    chunk_next = (chunk_next + 1) % CHUNK_SLOTS;
+    return offsets;
+}
+
+void tomato_str_index_free(void) {
+    for (int k = 0; k < CHUNK_SLOTS; k++) {
+        Str *old = chunk_cache[k].s;
+        chunk_cache[k].s = NULL;
+        free(chunk_cache[k].offsets);
+        chunk_cache[k].offsets = NULL;
+        if (old) tomato_release(old);
+    }
+}
+
+/* The byte offset of character number i (0 <= i <= chars). All ASCII: the offset is the number. Long non-ASCII text starts
+ * from the nearest indexed chunk; short text is scanned. */
 static int64_t char_offset(Str *s, int64_t i) {
     if (s->bytes == s->chars) return i < s->bytes ? i : s->bytes;   /* all ASCII: the character number is the byte offset */
-    int64_t seen = 0;
-    for (int64_t k = 0; k < s->bytes; k++) {
+    int64_t seen = 0, from = 0;
+    if (s->chars >= CHUNK_MIN_CHARS) {
+        if (i >= s->chars) return s->bytes;
+        int64_t *offsets = chunk_index_of(s);
+        if (offsets) { seen = i / CHUNK * CHUNK; from = offsets[i / CHUNK]; }
+    }
+    for (int64_t k = from; k < s->bytes; k++) {
         if (((unsigned char)s->data[k] & 0xC0) != 0x80) {
             if (seen == i) return k;
             seen++;
@@ -469,8 +519,22 @@ void *tomato_str_index(void *a, int64_t i) {
     Str *s = a;
     if (i < 0) i += s->chars;       /* a negative position counts from the end */
     if (i < 0 || i >= s->chars) return NULL;      /* the compiled code raises the error */
-    int64_t from = char_offset(s, i), to = char_offset(s, i + 1);
-    return str_new(s->data + from, to - from);
+    int64_t from = char_offset(s, i);
+    unsigned char lead = (unsigned char)s->data[from];
+    if (lead < 0x80) {      /* one ASCII character: a shared immortal string, no allocation */
+        static Str *ascii[128];
+        Str *c = ascii[lead];
+        if (!c) {
+            c = tomato_alloc((int64_t)sizeof(Str) + 2, 1);
+            c->data[0] = (char)lead; c->bytes = 1; c->chars = 1;
+            c->h.rc = -1;       /* immortal, like a string constant */
+            LIVE_ADJUST(-1);
+            ascii[lead] = c;
+        }
+        return c;
+    }
+    int64_t n = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : 2;
+    return str_new(s->data + from, n);
 }
 
 void *tomato_str_slice(void *a, int64_t lo, int64_t hi) {
@@ -2890,6 +2954,45 @@ void *tomato_int_str(int64_t x) {
     void *s = str_new(buf, len);
     free(t); free(buf);
     return s;
+}
+
+/* A fused chain of text joins and str() calls, such as 'w' + str(i) + '-' (an f-string): one allocation, no intermediate
+ * strings. p holds n pairs {kind, word}: kind 0 a text object, 1 an int (a small number or a big one), 2 a signed machine
+ * integer. n is at most 16. The parts stay owned by the caller. */
+void *tomato_str_cat(int64_t n, const int64_t *p) {
+    char nb[16][24];
+    const char *src[16];
+    int64_t len[16], chars[16];
+    void *tmp[16];
+    int64_t total = 0, nchars = 0;
+    for (int64_t k = 0; k < n; k++) {
+        int64_t kind = p[2 * k], w = p[2 * k + 1];
+        tmp[k] = NULL;
+        if (kind == 1 && !int_is_small(w)) { tmp[k] = tomato_int_str(w); kind = 0; w = (int64_t)(intptr_t)tmp[k]; }
+        if (kind == 0) {
+            Str *s = (Str *)(intptr_t)w;
+            src[k] = s->data; len[k] = s->bytes; chars[k] = s->chars;
+        } else {
+            int64_t v = kind == 1 ? int_small_val(w) : w;
+            char *e = nb[k] + 24, *q = e;
+            uint64_t m = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
+            do { *--q = (char)('0' + m % 10); m /= 10; } while (m);
+            if (v < 0) *--q = '-';
+            src[k] = q; len[k] = e - q; chars[k] = len[k];
+        }
+        total += len[k];
+        nchars += chars[k];
+    }
+    Str *r = tomato_alloc((int64_t)sizeof(Str) + total + 1, 1);
+    char *out = r->data;
+    for (int64_t k = 0; k < n; k++) {
+        memcpy(out, src[k], (size_t)len[k]);
+        out += len[k];
+        if (tmp[k]) tomato_release(tmp[k]);
+    }
+    r->bytes = total;
+    r->chars = nchars;
+    return r;
 }
 
 /* decimal text, optionally with a leading minus (the compiler writes big literals this way; entry inputs use the checked form) */

@@ -92,6 +92,8 @@ int_shift
 bit_chunks
 compact_lists
 int_fast_paths
+text_index
+fstring_fuse
 temp_unwind
 text_dict_methods
 tuple_for
