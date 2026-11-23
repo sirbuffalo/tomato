@@ -102,6 +102,7 @@ text_index
 fstring_fuse
 temp_unwind
 text_dict_methods
+dict_literal_inference
 tuple_for
 small_int_loops
 list_methods

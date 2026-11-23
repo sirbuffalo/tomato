@@ -1,0 +1,5 @@
+error[E324]: a dict value has type float, but int is expected
+ --> tests/errors/dict_literal_mixed_values.tom:3:5
+  |
+3 |     prices = {'apple': 1, 'pear': 2.5}
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

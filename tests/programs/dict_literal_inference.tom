@@ -1,0 +1,63 @@
+class Box:
+    n: int = 3
+
+def total(d: dict[str, int]) -> int:
+    t = 0
+    for k in d:
+        t += d[k]
+    return t
+
+def fail_in_value(d: dict[str, int]) -> int:
+    # a value that raises, after earlier values were built (the earlier ones must be freed)
+    return d['missing']
+
+@main
+def main():
+    # a dict literal with no annotation takes its value type from the first value, as a list literal does
+    ages = {'ann': 31, 'bob': 7}
+    print(ages, len(ages), ages['ann'] + ages['bob'])
+    ages['cy'] = 40
+    print(total(ages), 'cy' in ages)
+
+    words = {'a': 'x', 'b': 'yy'}
+    print(words['b'] + words['a'])
+
+    lists = {'odd': [1, 3], 'none': [], 'one': [1]}
+    lists['odd'].append(5)
+    print(lists, len(lists['none']))
+
+    nested = {'outer': {'inner': 1}}
+    nested['outer']['more'] = 2
+    print(nested)
+
+    boxes = {'k': Box()}
+    boxes['k'].n = 9
+    print(boxes['k'].n)
+
+    floats = {'pi': 3.5, 'e': 2.25}
+    print(floats['pi'] + floats['e'])
+
+    # a computed key and value, and a literal where nothing declares the type
+    key = 'a' + 'b'
+    computed = {key: len(key) * 2}
+    print(computed, total({'x': 1, 'y': 2}), {'q': 5}.get('q', 0), {'q': 5}.get('z', 0))
+    for k in {'one': 1, 'two': 2}:
+        print(k)
+    print(len({'p': True, 'q': False}))
+
+    # the same value is assigned to a declared dict of the same type
+    declared: dict[str, int] = ages
+    declared["dd"] = 1
+    print(len(ages), len(declared))
+
+    # an error in a later value frees what was built so far
+    try:
+        bad = {'a': 'x' * 3, 'b': str(fail_in_value({'z': 1}))}
+        print(bad)
+    catch KeyError as e:
+        print('caught', e.message)
+    try:
+        dup = {'a': [1], 'a': [2]}
+        print(dup)
+    catch RuntimeError as e:
+        print('caught', e.message)

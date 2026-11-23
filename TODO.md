@@ -8,8 +8,6 @@
   A union member that is a mixed tuple, list or object prints as `<object>` (`[1, <object>]`), because the box only knows how to print numbers, text and bools. Needs a per-member show function in the union box; see P89 in `docs/provisional.md`.
 - Add a Linux CI job that runs tests/run.sh with LeakSanitizer
   macOS CI cannot detect leaks (LeakSanitizer does not run there), which is how the error-path and task-waiter leaks fixed by the code cleanup went unnoticed. Export `ASAN_SYMBOLIZER_PATH` so a failure shows the real report.
-- Decide whether `d = {'a': 1}` without a type annotation should infer `dict[str, int]`
-  Today it is rejected with E289 ("the type of an empty {} cannot be guessed"), which is wrong wording for a non-empty dict; either infer the type (a language decision) or give a better message.
 - Free temporaries on the error path of class-object slicing and big-int range bounds
   The last two known error-path leaks: `obj[a:b]` on a class object when it raises, and a big int in a range bound when a later bound fails its check. The other cases are covered by `tests/programs/error_path_release.tom`.
 - Make the `angles` test tolerant of libm differences

@@ -1,0 +1,4 @@
+@main
+def main():
+    prices = {'apple': 1, 'pear': 2.5}
+    print(prices)

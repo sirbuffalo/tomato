@@ -3119,18 +3119,38 @@ class Gen:
         pairs = n.fields[0].items
         if is_set(expected) and len(pairs) == 0:
             return self.new_set(expected)
-        if not is_dict(expected):
+        if len(pairs) == 0 and not is_dict(expected):
             raise CompileError('the type of an empty {} cannot be guessed\ndeclare it, such as: m: dict[str, int] = {}', n.line)
-        value_t = dict_value(expected)
+        # without a dict type to take from the context, the value type is the first value's, as for a list literal (the keys are text)
+        first_k = ex('', '')
+        first_v = ex('', '')
+        t = expected
+        if not is_dict(expected):
+            before = len(self.held)
+            first_k = self.want(self.expr(val_node(pairs[0].items[0])), 'str', n.line, 'a dict key')
+            self.hold(first_k)
+            first_v = self.expr(val_node(pairs[0].items[1]))
+            self.drop_held(before)
+            if first_v.ty == '' or first_v.ty == 'None':
+                raise CompileError('a dict value needs a value that is not None\ndeclare the type, such as: m: dict[str, int] = {...}', n.line)
+            t = f'dict[{first_v.ty}]'
+        value_t = dict_value(t)
         d = self.tmp('dict')
-        self.emit(f'{d} = call ptr @tomato_dict_new(i64 {self.mod.code_of(expected)}, i64 8, i32 1)')
+        self.emit(f'{d} = call ptr @tomato_dict_new(i64 {self.mod.code_of(t)}, i64 8, i32 1)')
         held_before = len(self.held)
-        self.hold(ex(d, expected))
-        for pair in pairs:
-            k = self.expr(val_node(pair.items[0]))
-            k = self.want(k, 'str', n.line, 'a dict key')
+        self.hold(ex(d, t))
+        for j, pair in enumerate(pairs):
+            k = ex('', '')
+            if j == 0 and first_k.ty != '':
+                k = first_k
+            else:
+                k = self.want(self.expr(val_node(pair.items[0])), 'str', n.line, 'a dict key')
             self.hold(k)
-            v = self.expr(val_node(pair.items[1]), value_t)
+            v = ex('', '')
+            if j == 0 and first_v.ty != '':
+                v = first_v
+            else:
+                v = self.expr(val_node(pair.items[1]), value_t)
             self.drop_held(held_before + 1)
             v = self.want(v, value_t, n.line, 'a dict value')
             slot = self.tmp('slot')
@@ -3142,7 +3162,7 @@ class Gen:
             self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {slot}')
             self.release(k)
         self.drop_held(held_before)
-        return ex(d, expected)
+        return ex(d, t)
 
     def int_literal(self, v: int, expected: str, negative: bool, line: int) -> Ex:
         # a whole-number literal takes the integer type its context wants (D05s-w), else int
