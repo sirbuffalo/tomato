@@ -1,0 +1,6 @@
+
+@main
+def main():
+    a = bitarray('101')
+    f = frozenbitarray('101')
+    print(a & f)

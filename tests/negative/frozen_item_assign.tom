@@ -1,0 +1,6 @@
+from bitarray import frozenbitarray
+
+@main
+def main():
+    f = frozenbitarray('101')
+    f[0] = False

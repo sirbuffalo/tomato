@@ -75,6 +75,8 @@ sort_key_cmp
 alloc_pool
 str_fast
 cache_lru
+bit_types
+bit_names
 json_strict
 json_accept
 json_dumps

@@ -1,0 +1,3 @@
+# a library module that uses bitarray without importing it (the program that imports it never mentions the name)
+export def ones_in(text: str) -> int:
+    return bitarray(text).count()

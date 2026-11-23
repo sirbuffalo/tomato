@@ -1,0 +1,517 @@
+# Packed bit sequences, written in Tomato. `bitarray` and `frozenbitarray` need no import: any file that uses either name gets
+# this module (`from bitarray import bitarray, frozenbitarray` also works).
+#
+#     a = bitarray('1011')              # from text of 0 and 1 (also bitarray([True, False]) from a list of bool)
+#     b = bitarray(8)                   # from a whole number, in binary: 1000
+#     c = bitarray(8, 8)                # the same with a width: 00001000 (an error if the number needs more bits)
+#     z = bitarray.zeros(5)             # five 0 bits
+#     h = bitarray.from_hex('A2')       # 10100010, four bits per hex digit
+#
+# Bit 0 is the leftmost bit, the one written first in the text: bitarray('100')[0] is True. A bitarray is mutable:
+# a[i] = True, a.append(bit), a.extend(other). len(a) counts bits. Indexing counts from the end when negative, slices
+# follow the rules of lists (a[1:3], a[::-1]), `for bit in a` yields bool, `True in a` asks whether a bit is set, == compares
+# the bits, and a & b, a | b, a ^ b and ~a work on whole arrays (a & b, a | b and a ^ b need equal lengths). The text of
+# an array is its bits: str(a) is '1011'.
+#
+# A class can say how to become a bitarray: a method marked @bitarray, taking nothing and returning a bitarray, makes its
+# objects usable wherever a bitarray is wanted (bitarray(obj), a & obj, a function parameter typed bitarray).
+#
+# Conversions: to_ints() packs the bits eight to a byte as a list of whole numbers from 0 to 255, first bit in the top
+# of the first byte, the last byte padded with 0 bits (bitarray.from_ints(xs) reads them back, from_ints(xs, nbits) keeps
+# only the first nbits); to_hex() and from_hex() do the same with four bits to a digit; to_int() reads the bits as a
+# binary number; to_list() gives a list[bool].
+#
+# frozenbitarray is the same value that cannot change, so it can be passed around and compared without copies: it has
+# every method above that does not change the array, plus hash(), key() (the text, a dict key) and thaw() (a bitarray
+# copy). a.freeze() makes one from a bitarray, and frozenbitarray(a) does too. The two types do not mix in operators.
+#
+# Storage: 32 bits to a whole-number chunk in a list (a chunk is always a small, unboxed number), counted with the C
+# runtime's popcount; whole-array operations work a chunk at a time.
+
+!tomato_popcount(x: int) -> int
+!tomato_bit_mask(r: int) -> int
+
+const _CHUNK = 32
+const _FULL = 4294967295
+
+# the chunk with only bit `r` set, counting from the left (bit 0 is the top of the 32)
+def _mask(r: int) -> int:
+    return !tomato_bit_mask(r)
+
+# the chunk with only the first `r` bits (counting from the left) kept
+def _head(r: int) -> int:
+    if r == 0:
+        return 0
+    return _FULL - (_mask(r - 1) - 1)
+
+def _fail_range():
+    raise RuntimeError('the bit index is out of range')
+
+def _hex_digit(c: str) -> int:
+    k = '0123456789abcdef'.find(c.lower())
+    if k < 0 or len(c) != 1:
+        raise RuntimeError('a hex text holds only the digits 0 to 9 and a to f')
+    return k
+
+export class bitarray:
+    words: list[int] = []
+    n: int = 0
+
+    @init
+    def make(self, value: int | str | list[bool] | bitarray = 0, width: int = 0):
+        if value in bitarray:
+            for w in value.words:
+                self.words.append(w)
+            self.n = value.n
+        elif value in int:
+            if value < 0:
+                raise RuntimeError('a bitarray cannot be made from a negative number')
+            digits = 1
+            rest = value // 2
+            while rest > 0:
+                digits += 1
+                rest = rest // 2
+            if width > 0:
+                if digits > width:
+                    raise RuntimeError('the number does not fit the width of the bitarray')
+                digits = width
+            self.words = [0] * ((digits + 31) // 32)
+            self.n = digits
+            rest = value
+            i = digits - 1
+            while i >= 0:
+                if rest % 2 == 1:
+                    self.words[i // 32] = self.words[i // 32] + _mask(i % 32)
+                rest = rest // 2
+                i -= 1
+        elif value in str:
+            for ch in value:
+                if ch == '0':
+                    self.append(False)
+                elif ch == '1':
+                    self.append(True)
+                else:
+                    raise RuntimeError('a bitarray text holds only 0 and 1')
+        else:
+            for bit in value:
+                self.append(bit)
+
+    @static
+    def zeros(self, count: int) -> bitarray:
+        if count < 0:
+            raise RuntimeError('a bitarray cannot have a negative length')
+        a = bitarray('')
+        a.words = [0] * ((count + 31) // 32)
+        a.n = count
+        return a
+
+    @static
+    def from_hex(self, text: str) -> bitarray:
+        a = bitarray('')
+        a.words = [0] * ((len(text) * 4 + 31) // 32)
+        a.n = len(text) * 4
+        i = 0
+        for ch in text:
+            d = _hex_digit(ch)
+            a.words[i // 32] = a.words[i // 32] + d * (_mask(i % 32) // 8)
+            i += 4
+        return a
+
+    @static
+    def from_ints(self, items: list[int], nbits: int = -1) -> bitarray:
+        total = len(items) * 8
+        if nbits < 0:
+            nbits = total
+        if nbits > total:
+            raise RuntimeError('there are fewer bits in the list than asked for')
+        a = bitarray('')
+        a.words = [0] * ((nbits + 31) // 32)
+        a.n = nbits
+        for k in range(len(items)):
+            b = items[k]
+            if b < 0 or b > 255:
+                raise RuntimeError('a packed byte must be from 0 to 255')
+            if k * 8 < nbits:
+                a.words[k // 4] = a.words[k // 4] + b * (_mask((k % 4) * 8 + 7))
+        a.clean()
+        return a
+
+    # clears the unused bits of the last chunk, which every whole-array operation relies on being 0
+    def clean(self):
+        if self.n % 32 != 0:
+            last = len(self.words) - 1
+            self.words[last] = self.words[last] & _head(self.n % 32)
+
+    def at_index(self, i: int) -> int:
+        if i < 0:
+            i += self.n
+        if i < 0 or i >= self.n:
+            _fail_range()
+        return i
+
+    @len
+    def size(self) -> int:
+        return self.n
+
+    @get
+    def at(self, i: int) -> bool:
+        k = self.at_index(i)
+        return self.words[k // 32] & _mask(k % 32) != 0
+
+    @set
+    def put(self, i: int, bit: bool):
+        k = self.at_index(i)
+        w = k // 32
+        m = _mask(k % 32)
+        if bit:
+            self.words[w] = self.words[w] | m
+        else:
+            self.words[w] = self.words[w] & (_FULL - m)
+
+    def append(self, bit: bool):
+        if self.n % 32 == 0:
+            self.words.append(0)
+        self.n += 1
+        if bit:
+            w = (self.n - 1) // 32
+            self.words[w] = self.words[w] | _mask((self.n - 1) % 32)
+
+    def extend(self, other: bitarray):
+        # a.extend(a) must see the length and chunks as they were before the first bit is added
+        count = other.n
+        if self.n % 32 == 0:
+            for k in range(len(other.words)):
+                self.words.append(other.words[k])
+            self.n += count
+        else:
+            for i in range(count):
+                self.append(other.words[i // 32] & _mask(i % 32) != 0)
+
+    @iter
+    def each(self) -> bool:
+        for i in range(self.n):
+            yield self.words[i // 32] & _mask(i % 32) != 0
+
+    @contains
+    def has(self, bit: bool) -> bool:
+        return self.find(bit) >= 0
+
+    @slice
+    def part(self, lo: int, hi: int, st: int, flags: int) -> bitarray:
+        step = 1
+        if flags & 4 != 0:
+            step = st
+        if step == 0:
+            raise RuntimeError('a slice step cannot be 0')
+        n = self.n
+        if step > 0:
+            a = 0
+            b = n
+            if flags & 1 != 0:
+                a = lo
+                if a < 0:
+                    a = max(a + n, 0)
+                a = min(a, n)
+            if flags & 2 != 0:
+                b = hi
+                if b < 0:
+                    b = max(b + n, 0)
+                b = min(b, n)
+        else:
+            a = n - 1
+            b = -1
+            if flags & 1 != 0:
+                a = lo
+                if a < 0:
+                    a = max(a + n, -1)
+                a = min(a, n - 1)
+            if flags & 2 != 0:
+                b = hi
+                if b < 0:
+                    b = max(b + n, -1)
+                b = min(b, n - 1)
+        r = bitarray('')
+        r.words = []
+        r.n = 0
+        i = a
+        if step > 0:
+            while i < b:
+                r.append(self.words[i // 32] & _mask(i % 32) != 0)
+                i += step
+        else:
+            while i > b:
+                r.append(self.words[i // 32] & _mask(i % 32) != 0)
+                i += step
+        return r
+
+    @eq
+    def same(self, other: bitarray) -> bool:
+        if self.n != other.n:
+            return False
+        for k in range(len(self.words)):
+            if self.words[k] != other.words[k]:
+                return False
+        return True
+
+    def need_same_length(self, other: bitarray):
+        if self.n != other.n:
+            raise RuntimeError('the two bitarrays must have the same length')
+
+    @bitand
+    def both(self, other: bitarray) -> bitarray:
+        self.need_same_length(other)
+        r = bitarray('')
+        r.n = self.n
+        for k in range(len(self.words)):
+            r.words.append(self.words[k] & other.words[k])
+        return r
+
+    @bitor
+    def either(self, other: bitarray) -> bitarray:
+        self.need_same_length(other)
+        r = bitarray('')
+        r.n = self.n
+        for k in range(len(self.words)):
+            r.words.append(self.words[k] | other.words[k])
+        return r
+
+    @bitxor
+    def differ(self, other: bitarray) -> bitarray:
+        self.need_same_length(other)
+        r = bitarray('')
+        r.n = self.n
+        for k in range(len(self.words)):
+            r.words.append(self.words[k] ^ other.words[k])
+        return r
+
+    @invert
+    def flipped(self) -> bitarray:
+        r = bitarray('')
+        r.n = self.n
+        for k in range(len(self.words)):
+            r.words.append(self.words[k] ^ _FULL)
+        r.clean()
+        return r
+
+    # the same bits moved `count` places towards the end (shift_right) or the start (shift_left), the length unchanged and
+    # the places left open filled with 0
+    def shift_left(self, count: int) -> bitarray:
+        if count < 0:
+            return self.shift_right(-count)
+        r = bitarray.zeros(self.n)
+        for i in range(count, self.n):
+            if self.words[i // 32] & _mask(i % 32) != 0:
+                j = i - count
+                r.words[j // 32] = r.words[j // 32] | _mask(j % 32)
+        return r
+
+    def shift_right(self, count: int) -> bitarray:
+        if count < 0:
+            return self.shift_left(-count)
+        r = bitarray.zeros(self.n)
+        for i in range(0, self.n - count):
+            if self.words[i // 32] & _mask(i % 32) != 0:
+                j = i + count
+                r.words[j // 32] = r.words[j // 32] | _mask(j % 32)
+        return r
+
+    def count(self) -> int:
+        total = 0
+        for w in self.words:
+            total += !tomato_popcount(w)
+        return total
+
+    def any(self) -> bool:
+        for w in self.words:
+            if w != 0:
+                return True
+        return False
+
+    def all(self) -> bool:
+        return self.count() == self.n
+
+    # the index of the first bit equal to `bit` at or after `start`, or -1
+    def find(self, bit: bool, start: int = 0) -> int:
+        i = start
+        if i < 0:
+            i = max(i + self.n, 0)
+        while i < self.n:
+            w = self.words[i // 32]
+            if i % 32 == 0:
+                if bit and w == 0:
+                    i += 32
+                    continue
+                if not bit and w == _FULL:
+                    i += 32
+                    continue
+            if (w & _mask(i % 32) != 0) == bit:
+                return i
+            i += 1
+        return -1
+
+    def copy(self) -> bitarray:
+        r = bitarray('')
+        r.n = self.n
+        for w in self.words:
+            r.words.append(w)
+        return r
+
+    def freeze(self) -> frozenbitarray:
+        return frozenbitarray(self)
+
+    def to_list(self) -> list[bool]:
+        out: list[bool] = []
+        for i in range(self.n):
+            out.append(self.words[i // 32] & _mask(i % 32) != 0)
+        return out
+
+    def to_ints(self) -> list[int]:
+        out: list[int] = []
+        nbytes = (self.n + 7) // 8
+        for k in range(nbytes):
+            w = self.words[k // 4]
+            out.append((w // (_mask((k % 4) * 8 + 7))) % 256)
+        return out
+
+    def to_hex(self) -> str:
+        digits = '0123456789abcdef'
+        out = ''
+        i = 0
+        while i < self.n:
+            w = self.words[i // 32]
+            out += digits[(w // (_mask(i % 32) // 8)) % 16]
+            i += 4
+        return out
+
+    def to_int(self) -> int:
+        v = 0
+        for i in range(self.n):
+            v = v * 2
+            if self.words[i // 32] & _mask(i % 32) != 0:
+                v += 1
+        return v
+
+    @str
+    def text(self) -> str:
+        parts: list[str] = []
+        for i in range(self.n):
+            if self.words[i // 32] & _mask(i % 32) != 0:
+                parts.append('1')
+            else:
+                parts.append('0')
+        return ''.join(parts)
+
+export class frozenbitarray:
+    private bits: bitarray = bitarray('')
+
+    @init
+    def make(self, value: int | str | list[bool] | bitarray = 0, width: int = 0):
+        if value in bitarray:
+            self.bits = value.copy()
+        elif value in int:
+            self.bits = bitarray(value, width)
+        elif value in str:
+            self.bits = bitarray(value)
+        else:
+            self.bits = bitarray(value)
+
+    @static
+    def zeros(self, count: int) -> frozenbitarray:
+        return frozenbitarray(bitarray.zeros(count))
+
+    @static
+    def from_hex(self, text: str) -> frozenbitarray:
+        return frozenbitarray(bitarray.from_hex(text))
+
+    @static
+    def from_ints(self, items: list[int], nbits: int = -1) -> frozenbitarray:
+        return frozenbitarray(bitarray.from_ints(items, nbits))
+
+    @len
+    def size(self) -> int:
+        return self.bits.n
+
+    @get
+    def at(self, i: int) -> bool:
+        return self.bits[i]
+
+    @iter
+    def each(self) -> bool:
+        for bit in self.bits:
+            yield bit
+
+    @contains
+    def has(self, bit: bool) -> bool:
+        return self.bits.find(bit) >= 0
+
+    @slice
+    def part(self, lo: int, hi: int, st: int, flags: int) -> frozenbitarray:
+        return frozenbitarray(self.bits.part(lo, hi, st, flags))
+
+    @eq
+    def same(self, other: frozenbitarray) -> bool:
+        return self.bits == other.bits
+
+    @bitand
+    def both(self, other: frozenbitarray) -> frozenbitarray:
+        return frozenbitarray(self.bits & other.bits)
+
+    @bitor
+    def either(self, other: frozenbitarray) -> frozenbitarray:
+        return frozenbitarray(self.bits | other.bits)
+
+    @bitxor
+    def differ(self, other: frozenbitarray) -> frozenbitarray:
+        return frozenbitarray(self.bits ^ other.bits)
+
+    @invert
+    def flipped(self) -> frozenbitarray:
+        return frozenbitarray(~self.bits)
+
+    def shift_left(self, count: int) -> frozenbitarray:
+        return frozenbitarray(self.bits.shift_left(count))
+
+    def shift_right(self, count: int) -> frozenbitarray:
+        return frozenbitarray(self.bits.shift_right(count))
+
+    def count(self) -> int:
+        return self.bits.count()
+
+    def any(self) -> bool:
+        return self.bits.any()
+
+    def all(self) -> bool:
+        return self.bits.all()
+
+    def find(self, bit: bool, start: int = 0) -> int:
+        return self.bits.find(bit, start)
+
+    def thaw(self) -> bitarray:
+        return self.bits.copy()
+
+    def to_list(self) -> list[bool]:
+        return self.bits.to_list()
+
+    def to_ints(self) -> list[int]:
+        return self.bits.to_ints()
+
+    def to_hex(self) -> str:
+        return self.bits.to_hex()
+
+    def to_int(self) -> int:
+        return self.bits.to_int()
+
+    # a number that is the same for equal arrays (a frozenbitarray never changes, so it can be kept)
+    def hash(self) -> int:
+        h = self.bits.n
+        for w in self.bits.words:
+            h = (h * 1000003 + w) % 2305843009213693951
+        return h
+
+    # the bits as text: equal arrays have equal keys, so this is what a dict key or a set member uses
+    def key(self) -> str:
+        return str(self.bits)
+
+    @str
+    def text(self) -> str:
+        return str(self.bits)

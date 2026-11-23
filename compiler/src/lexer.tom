@@ -252,7 +252,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
         elif i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '//', '**']:
             toks.append(make_token('OP', raw[i:i + 2], 0, ln))
             i += 2
-        elif c in '+-*/%<>=()[]{}:,.@!|&^':
+        elif c in '+-*/%<>=()[]{}:,.@!|&^~':
             if c in '([{':
                 depth += 1
             elif c in ')]}':

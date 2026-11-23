@@ -1,0 +1,14 @@
+# a program may declare its own `bitarray`; the built-in one is only bound in files that do not declare the name
+from bit_lib import ones_in
+
+class bitarray:
+    n: int = 0
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+@main
+def main():
+    mine = bitarray(3)
+    print(mine.n, ones_in('1101'))

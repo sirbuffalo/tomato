@@ -1,0 +1,4 @@
+@main
+def main():
+    f = frozenbitarray('10')
+    f.bits.append(True)

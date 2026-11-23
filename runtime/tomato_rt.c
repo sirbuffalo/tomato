@@ -3279,3 +3279,7 @@ double tomato_math2(int64_t op, double x, double y) {
 }
 /* 1 when x is neither infinite nor not-a-number */
 int64_t tomato_is_finite(double x) { return isfinite(x) ? 1 : 0; }
+/* the number of 1 bits in a 32-bit chunk of a bitarray (std/bitarray.tom) */
+/* the 32-bit chunk with only bit r set, bit 0 being the leftmost (most significant) */
+int64_t tomato_bit_mask(int64_t r) { return (int64_t)1 << (31 - r); }
+int64_t tomato_popcount(int64_t x) { return (int64_t)__builtin_popcountll((unsigned long long)x); }

@@ -218,6 +218,12 @@ def operator_marker_of(op: str) -> str:
         return 'gt'
     if op == '>=':
         return 'ge'
+    if op == '&':
+        return 'bitand'
+    if op == '|':
+        return 'bitor'
+    if op == '^':
+        return 'bitxor'
     return ''
 
 # An async function runs as a frame: a heap object holding its variables and where it stopped. These fields come first, then the variables.
@@ -1456,6 +1462,12 @@ class Gen:
 
     def want(self, e: Ex, ty: str, line: int, what: str) -> Ex:
         # check that e fits the type ty and return it as that type (a number is widened, an optional unwrapped)
+        if is_class(e.ty) and e.ty != '@bitarray.bitarray' and (ty == '@bitarray.bitarray' or (is_union(ty) and '@bitarray.bitarray' in union_members(ty))) and self.mod.has_op(e.ty[1:], 'bitarray'):
+            # an object whose class has a method marked @bitarray is used as the bitarray that method returns
+            conv = self.mod.find_op(e.ty[1:], 'bitarray')
+            if len(conv.ptypes) != 0 or conv.ret != '@bitarray.bitarray':
+                raise CompileError(f"the @bitarray method '{conv.name}' must take nothing besides self and return a bitarray", line)
+            e = self.marker_call(e, conv, [], line)
         if is_optional(e.ty) and not is_optional(ty) and ty != 'None' and self.mod.assignable(strip_optional(e.ty), ty):
             self.unwrap(e, line)
             return ex(e.reg, strip_optional(e.ty))
@@ -2092,6 +2104,8 @@ class Gen:
             op = n.fields[0].text
             if op == '-' and val_node(n.fields[1]).kind == 'IntLit':
                 return self.int_literal(val_node(n.fields[1]).fields[0].num, expected, True, n.line)
+            if op == '~':
+                return self.invert_op(n)
             v = self.expr(val_node(n.fields[1]), expected)
             if op == '-' and v.ty == 'float':
                 negated = self.tmp('fneg')
@@ -3110,6 +3124,16 @@ class Gen:
             return self.icmp('ne', a.reg, b.reg)
         raise CompileError(f"the operator '{op}' is not supported here", n.line)
 
+    def invert_op(self, n: Node) -> Ex:
+        # ~x on an object whose class has a method marked @invert (taking nothing besides self)
+        v = self.unwrap(self.expr(val_node(n.fields[1])), n.line)
+        if not is_class(v.ty):
+            raise CompileError(f"cannot use '~' on {shown(v.ty)}\nit works on objects whose class has a method marked @invert", n.line)
+        f = self.mod.find_op(v.ty[1:], 'invert')
+        if f is None or len(f.ptypes) != 0 or f.ret == '':
+            raise CompileError("cannot use '~' on '" + v.ty[1:] + "' objects\nadd a method marked @invert that takes nothing and returns the result", n.line)
+        return self.marker_call(v, f, [], n.line)
+
     def operator_call(self, a: Ex, b: Ex, op: str, line: int) -> Ex:
         # a + b on a class whose method is marked @add (and the same for the other operators): the method of the left
         # operand runs with the right operand as its one argument (D12l)
@@ -3698,6 +3722,14 @@ class Gen:
         if info.is_private and self.owner != info.owner:
             raise CompileError(f"the method '{info.name}' is private to class '{info.owner}'\nonly its own methods can call it", n.line)
         args = val_nodes(n.fields[1])
+        if info.op == 'static':
+            # a method marked @static is called on the class itself (bitarray.from_hex('A2')): it runs on a fresh object made by the class's @init with no arguments
+            made = mk('Call', n.line, [vn(val_node(f.fields[0])), vnodes([]), vlist([])])
+            kw = self.kw
+            self.kw = []
+            fresh = self.expr(made)
+            self.kw = kw
+            return self.call_function(info, function_symbol(self.mod, info), fresh, args, n.line)
         if len(args) == 0:
             raise CompileError(f"'{cls}.{info.name}' needs an object as its first argument", n.line)
         obj = self.expr(args[0])
@@ -4934,6 +4966,15 @@ class Gen:
             self.store_owned(slot, dv)
             self.release(k)
             self.release(lst)
+            return
+        if is_class(lst.ty):
+            f = self.mod.find_op(lst.ty[1:], 'set')
+            if f is None or len(f.ptypes) != 2 or f.ret != '':
+                raise CompileError("'" + lst.ty[1:] + "' objects cannot be assigned by index\nadd a method marked @set that takes the index and the new item", s.line)
+            si = self.want(self.expr(val_node(target.fields[1])), f.ptypes[0], s.line, 'an index')
+            sv = self.expr(val_node(s.fields[1]), f.ptypes[1])
+            sv = self.want(sv, f.ptypes[1], s.line, 'the assigned item')
+            self.marker_call(lst, f, [si, sv], s.line)
             return
         if not is_list(lst.ty):
             raise CompileError('only list and dict items can be assigned by index', s.line)
@@ -6478,15 +6519,49 @@ def warning_path(mod: Mod, module: str) -> str:
         return mod.main_path
     return f'{module}.tom'
 
+# does any declaration use the name bitarray or frozenbitarray (as a value or as a type)?
+# does the module declare something called bitarray or frozenbitarray itself? (then the names are its own, not the library's)
+def declares_bit_name(items: list[Node]) -> bool:
+    for n in items:
+        if (n.kind == 'ClassDef' or n.kind == 'FuncDef' or n.kind == 'ConstDef') and (n.fields[0].text == 'bitarray' or n.fields[0].text == 'frozenbitarray'):
+            return True
+    return False
+
+def mentions_bit_types(items: list[Node]) -> bool:
+    for n in items:
+        if mentions_bit_node(n):
+            return True
+    return False
+
+def mentions_bit_node(n: Node) -> bool:
+    if (n.kind == 'Name' or n.kind == 'TypeRef') and (n.fields[0].text == 'bitarray' or n.fields[0].text == 'frozenbitarray'):
+        return True
+    for f in n.fields:
+        if mentions_bit_val(f):
+            return True
+    return False
+
+def mentions_bit_val(v: Val) -> bool:
+    if v.tag == 'n':
+        return mentions_bit_node(val_node(v))
+    if v.tag == 'l' or v.tag == 't':
+        for it in v.items:
+            if mentions_bit_val(it):
+                return True
+    return False
+
 def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[TopItem], imports: list[ImportInfo], loaded: list[str]) -> list[Node]:
     # the declarations of src, placed after those of the modules it imports (each module once)
     mod.sources[module] = src
     mod.loading = module
     mine = val_nodes(parse(src).fields[0])
     mod.loading = ''
+    bits_imported = False
     for item in mine:
         if item.kind == 'Import':
             wanted = item.fields[0].text
+            if wanted == 'bitarray':
+                bits_imported = True
             ii = ImportInfo()
             ii.importer = module
             ii.module = wanted
@@ -6498,6 +6573,17 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
                 mod.cur = module
                 loaded.append(wanted)
                 load_items(mod, dir, std, read_module(dir, std, wanted, item.line), wanted, items, imports, loaded)
+    if module != 'bitarray' and not bits_imported and not declares_bit_name(mine) and mentions_bit_types(mine):
+        # bitarray and frozenbitarray need no import: a module that uses either gets `from bitarray import bitarray, frozenbitarray`
+        ib = ImportInfo()
+        ib.importer = module
+        ib.module = 'bitarray'
+        ib.names = ['bitarray', 'frozenbitarray']
+        imports.append(ib)
+        if 'bitarray' not in loaded:
+            mod.cur = module
+            loaded.append('bitarray')
+            load_items(mod, dir, std, read_module(dir, std, 'bitarray', 0), 'bitarray', items, imports, loaded)
     own: list[Node] = []
     for item in mine:
         if item.kind != 'Import':
