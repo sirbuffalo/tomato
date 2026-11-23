@@ -24,11 +24,10 @@ def first_quoted(message: str) -> str:
     a = message.find("'")
     if a < 0:
         return ''
-    rest = message[a + 1:]
-    b = rest.find("'")
+    b = message.find("'", a + 1)
     if b < 0:
         return ''
-    return rest[:b]
+    return message[a + 1:b]
 
 # the first run of digits in the message, or ''
 def first_number(message: str) -> str:
@@ -46,10 +45,9 @@ def find_word(text: str, word: str) -> int:
         return -1
     start = 0
     while start + len(word) <= len(text):
-        at = text[start:].find(word)
-        if at < 0:
+        i = text.find(word, start)
+        if i < 0:
             return -1
-        i = start + at
         before_ok = i == 0 or not is_word_char(text[i - 1]) or not is_word_char(word[0])
         after = i + len(word)
         after_ok = after >= len(text) or not is_word_char(text[after]) or not is_word_char(word[-1])
@@ -69,9 +67,9 @@ def token_width(text: str, at: int) -> int:
             n += 1
         return n
     if c == "'" or c == '"':
-        end = text[at + 1:].find(c)
+        end = text.find(c, at + 1)
         if end >= 0:
-            return end + 2
+            return end - at + 1
     return 1
 
 # the edit distance between two names, for did-you-mean
@@ -111,9 +109,7 @@ def guess_span(head: str, text: str, at: int) -> tuple[int]:
     found = find_word(text, q)
     if found >= 0:
         return (found + 1, len(q))
-    indent = 0
-    while indent < len(text) and text[indent] == ' ':
-        indent += 1
+    indent = len(text) - len(text.lstrip(' '))
     return (indent + 1, max(len(text.strip()), 1))
 
 export def format_error(message: str, line: int, col: int, src: str, path: str, label: str = 'error') -> str:
@@ -132,22 +128,16 @@ export def format_error(message: str, line: int, col: int, src: str, path: str, 
     while ln > 1 and len(lines[ln - 1].strip()) == 0:
         ln -= 1
         at = -1
-    text = lines[ln - 1] if ln >= 1 else ''
-    while text.endswith('\r'):
-        text = text[:-1]
+    text = lines[ln - 1].rstrip('\r')
     width = 1
     if at <= 0:
-        span = guess_span(head, text, at)
-        at = span[0]
-        width = span[1]
+        at, width = guess_span(head, text, at)
     else:
         width = token_width(text, at - 1)
     at = min(at, len(text) + 1)
     num = str(ln)
     pad = ' ' * len(num)
-    where = path
-    if where == '':
-        where = 'line'
+    where = path if path != '' else 'line'
     out += f'\n{pad}--> {where}:{num}:{at}'
     out += f'\n{pad} |'
     out += f'\n{num} | {text}'

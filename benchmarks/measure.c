@@ -18,17 +18,18 @@ int main(int argc, char **argv) {
     struct timeval start, end;
     gettimeofday(&start, NULL);
     pid_t pid = fork();
+    if (pid < 0) { perror("measure: fork"); return 2; }
     if (pid == 0) {
         int fd = open(argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (fd < 0) _exit(126);
-        dup2(fd, 1);
+        if (dup2(fd, 1) < 0) _exit(126);
         close(fd);
         execv(argv[2], argv + 2);
         _exit(127);
     }
     int status = 0;
     struct rusage usage;
-    wait4(pid, &status, 0, &usage);
+    if (wait4(pid, &status, 0, &usage) < 0) { perror("measure: wait4"); return 2; }
     gettimeofday(&end, NULL);
     double maxrss = (double)usage.ru_maxrss;
 #ifndef __APPLE__

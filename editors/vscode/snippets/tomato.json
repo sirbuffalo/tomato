@@ -5,8 +5,13 @@
   "Interface": { "prefix": "interface", "body": ["interface ${1:Name}:", "\tdef ${2:method}(self) -> ${3:int}"], "description": "An interface" },
   "If": { "prefix": "if", "body": ["if ${1:condition}:", "\t${0:pass}"] },
   "For range": { "prefix": "for", "body": ["for ${1:i} in range(${2:n}):", "\t${0:pass}"] },
+  "For enumerate": { "prefix": "fore", "body": ["for ${1:i}, ${2:x} in enumerate(${3:xs}):", "\t${0:pass}"] },
+  "For items": { "prefix": "fori", "body": ["for ${1:k}, ${2:v} in ${3:d}.items():", "\t${0:pass}"] },
   "While": { "prefix": "while", "body": ["while ${1:condition}:", "\t${0:pass}"] },
   "Try": { "prefix": "try", "body": ["try:", "\t${1:pass}", "catch ${2:RuntimeError} as ${3:e}:", "\t${0:print(e.message)}"] },
+  "Async function": { "prefix": "async", "body": ["async def ${1:name}(${2:x: int}) -> ${3:int}:", "\t${0:return x}"], "description": "An async function" },
+  "Lambda": { "prefix": "lambda", "body": ["${1:x} -> ${0:x}"], "description": "A lambda: x -> expression" },
+  "Print f-string": { "prefix": "printf", "body": ["print(f'${1:text} {${0:x}}')"], "description": "print with an f-string" },
   "LLVM function": { "prefix": "llvm", "body": ["!${1:name}(${2:a: int}) -> ${3:int}"], "description": "Declare an LLVM function" },
   "Fixed int": { "prefix": "fixed", "body": ["${1:x}: ${2|int,uint|}[length=${3:8}] = ${0:0}"] }
 }

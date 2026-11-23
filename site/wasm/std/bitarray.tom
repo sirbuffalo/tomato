@@ -205,9 +205,7 @@ export class bitarray:
             self.n += count
         else:
             # the chunks of other are cut in two: the top part ends the last chunk of self, the rest starts a new one
-            src: list[int] = []
-            for w in other.words:
-                src.append(w)
+            src = other.words[:]
             s = self.n & 31
             total = self.n + count
             last = len(self.words) - 1

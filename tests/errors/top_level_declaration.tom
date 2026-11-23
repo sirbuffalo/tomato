@@ -1,0 +1,5 @@
+limit: int = 10
+
+@main
+def main():
+    print(limit)

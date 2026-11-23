@@ -3,7 +3,8 @@
 # The runtime reads these two fields in this order (print_uncaught in runtime/tomato_rt.c).
 class Error:
     message: str = ''
-    # the id of the kind of failure, such as "E04" (the line of std/errors.txt); "" for an error a program makes up itself
+    # the id of the kind of failure, such as "E04" (the line of std/errors.txt); "" for an error a program makes up
+    # itself
     id: str = ''
 
     @init
@@ -64,11 +65,12 @@ class CancelledError(RuntimeError):
     def make_cancelled(self, message: str, id: str = ""):
         RuntimeError.make(self, message, id)
 
-# range(stop), range(start, stop) and range(start, stop, step) are a value of their own. It keeps only the three numbers, so it
-# takes the same small amount of memory however long it is, and prints as range(0, 100, 1). It is a sequence of ints: `for`,
-# len(), indexing (negative too), slicing (gives another range), `in`, ==, reversed(), sorted(), sum(), min(), max() and
-# list() all work, each through the method marked for it. `for i in range(n)`, `range(a, b)` and `range(a, b, step)` are counted by the compiler
-# directly; everything else about range is written here, in Tomato.
+# range(stop), range(start, stop) and range(start, stop, step) are a value of their own. It keeps only the three
+# numbers, so it takes the same small amount of memory however long it is, and prints as range(0, 100, 1). It is a
+# sequence of ints: `for`, len(), indexing (negative too), slicing (gives another range), `in`, ==, reversed(),
+# sorted(), sum(), min(), max() and list() all work, each through the method marked for it. `for i in range(n)`,
+# `range(a, b)` and `range(a, b, step)` are counted by the compiler directly; everything else about range is written
+# here, in Tomato.
 class range:
     start: int
     stop: int
@@ -165,7 +167,8 @@ class range:
             return False
         return n == 1 or self.step == other.step
 
-# A written slice bound as a position in a sequence of n items: negative counts from the end, then it is kept in low..high.
+# A written slice bound as a position in a sequence of n items: negative counts from the end, then it is kept in
+# low..high.
 def _slice_bound(i: int, n: int, low: int, high: int) -> int:
     if i < 0:
         i += n
@@ -183,9 +186,7 @@ def _range2(start: int, stop: int) -> range:
 
 # The text of a string inside a printed list, dict or set, quoted the way Python shows it: 'abc'.
 def _quote(s: str) -> str:
-    q = "'"
-    if s.find("'") >= 0 and s.find('"') < 0:
-        q = '"'
+    q = '"' if "'" in s and '"' not in s else "'"
     t = s.replace('\\', '\\\\')
     if q == "'":
         t = t.replace("'", "\\'")
@@ -214,36 +215,28 @@ def _str_isspace(s: str) -> bool:
 
 # True when s is not empty and every character of it is one of chars
 def _all_in(s: str, chars: str) -> bool:
-    if len(s) == 0:
+    if s == '':
         return False
     for c in s:
         if c not in chars:
             return False
     return True
 
-# whitespace is a space, tab, newline or carriage return
-def _is_space(c: str) -> bool:
-    return c in ' \t\n\r'
-
+# s.lstrip() and s.rstrip(): whitespace is a space, tab, newline or carriage return
 def _str_lstrip(s: str) -> str:
-    i = 0
-    while i < len(s) and _is_space(s[i]):
-        i += 1
-    return s[i:]
+    return _str_lstrip_chars(s, ' \t\n\r')
 
 def _str_rstrip(s: str) -> str:
-    n = len(s)
-    while n > 0 and _is_space(s[n - 1]):
-        n -= 1
-    return s[:n]
+    return _str_rstrip_chars(s, ' \t\n\r')
 
-# sorted(xs, key=f), sorted(xs, cmp=f), map(f, xs) and filter(f, xs) are these, written in Tomato (so they run the same natively and in
-# the browser). The sorts are stable: a merge sort that finds the runs already in order (a strictly descending run is reversed), extends
-# short runs to a minimum length with binary insertion, and merges neighbouring runs; neighbours already in order are not merged.
-# The key version works out the keys here (each once) and the runtime (tomato_list_sorted_by) sorts them and gathers the items; the
-# cmp version sorts a copy of the items here, since it must call the function on pairs. Native builds do not use it for items that are ints or pointers:
-# the compiler calls tomato_list_sorted_cmp (runtime/tomato_rt.c, the same algorithm in C). This one runs in the browser and for float, bool and
-# fixed-width items.
+# sorted(xs, key=f), sorted(xs, cmp=f), map(f, xs) and filter(f, xs) are these, written in Tomato (so they run the same
+# natively and in the browser). The sorts are stable: a merge sort that finds the runs already in order (a strictly
+# descending run is reversed), extends short runs to a minimum length with binary insertion, and merges neighbouring
+# runs; neighbours already in order are not merged. The key version works out the keys here (each once) and the runtime
+# (tomato_list_sorted_by) sorts them and gathers the items; the cmp version sorts a copy of the items here, since it
+# must call the function on pairs. Native builds do not use it for items that are ints or pointers: the compiler calls
+# tomato_list_sorted_cmp (runtime/tomato_rt.c, the same algorithm in C). This one runs in the browser and for float,
+# bool and fixed-width items.
 def _min_run(n: int) -> int:
     minrun = n
     extra = 0
@@ -271,9 +264,7 @@ def _sorted_cmp[T](xs: list[T], cmp: fn(T, T) -> int) -> list[T]:
                 i = lo
                 j = hi - 1
                 while i < j:
-                    t = a[i]
-                    a[i] = a[j]
-                    a[j] = t
+                    a[i], a[j] = a[j], a[i]
                     i += 1
                     j -= 1
             else:
@@ -343,32 +334,20 @@ def _sorted_cmp[T](xs: list[T], cmp: fn(T, T) -> int) -> list[T]:
             next_starts.append(s)
         next_starts.append(n)
         starts = next_starts
-        t2 = a
-        a = b
-        b = t2
+        a, b = b, a
     return a
 
 def _keys[T, K](xs: list[T], key: fn(T) -> K) -> list[K]:
-    keys: list[K] = []
-    for x in xs:
-        keys.append(key(x))
-    return keys
+    return [key(x) for x in xs]
 
 def _map[T, R](f: fn(T) -> R, xs: list[T]) -> list[R]:
-    out: list[R] = []
-    for x in xs:
-        out.append(f(x))
-    return out
+    return [f(x) for x in xs]
 
 def _filter[T](f: fn(T) -> bool, xs: list[T]) -> list[T]:
-    out: list[T] = []
-    for x in xs:
-        if f(x):
-            out.append(x)
-    return out
+    return [x for x in xs if f(x)]
 
-# s.lstrip(chars), s.rstrip(chars) and s.strip(chars): take off the characters that are in chars (in any order) from the start,
-# the end or both; an empty chars takes nothing off
+# s.lstrip(chars), s.rstrip(chars) and s.strip(chars): take off the characters that are in chars (in any order) from the
+# start, the end or both; an empty chars takes nothing off
 def _str_lstrip_chars(s: str, chars: str) -> str:
     i = 0
     while i < len(s) and s[i] in chars:
@@ -383,11 +362,12 @@ def _str_rstrip_chars(s: str, chars: str) -> str:
 
 def _str_strip_chars(s: str, chars: str) -> str:
     return _str_rstrip_chars(_str_lstrip_chars(s, chars), chars)
+
 # xs == ys on two lists of the same type: the same length and every pair of items equal
 def _list_eq[T](a: list[T], b: list[T]) -> bool:
     if len(a) != len(b):
         return False
-    for i in range(len(a)):
-        if a[i] != b[i]:
+    for x, y in zip(a, b):
+        if x != y:
             return False
     return True

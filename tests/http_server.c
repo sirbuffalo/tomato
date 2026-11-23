@@ -43,10 +43,9 @@ static void handle(int fd) {
     char *end = NULL;
     while (have < sizeof req - 1 && (k = read(fd, req + have, sizeof req - 1 - have)) > 0) {
         have += (size_t)k; req[have] = 0;
-        if ((unsigned char)req[0] == 0x16) return;
+        if ((unsigned char)req[0] == 0x16) return;      /* a TLS handshake: this server only speaks plain HTTP, so hang up */
         if ((end = strstr(req, "\r\n\r\n"))) break;
     }
-    if (have > 0 && (unsigned char)req[0] == 0x16) return;      /* a TLS handshake: this server only speaks plain HTTP, so hang up */
     if (!end) return;
     size_t head_len = (size_t)(end - req) + 4;
     long clen = 0;

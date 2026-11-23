@@ -33,7 +33,8 @@ def main(path: str = ''):
             doc = load(path)
         print('service', doc['name'].as_str(), 'debug', doc['debug'].as_bool())
         server = doc['server']
-        print('listening on', server['host'].as_str() + ':' + str(server['port'].as_int()), 'timeout', server['timeout'].as_float())
+        print(f"listening on {server['host'].as_str()}:{server['port'].as_int()}",
+              'timeout', server['timeout'].as_float())
         total = 0
         for b in doc['backend'].items:
             total += b['weight'].as_int()

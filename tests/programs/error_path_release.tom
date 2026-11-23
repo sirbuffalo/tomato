@@ -1,0 +1,102 @@
+# When an error is raised partway through an expression or statement, the values it already made are freed: every case
+# here raises after making some text, catches the error, and goes on (tests/run.sh runs it under AddressSanitizer too)
+!tomato_json_quote(text: str, ascii: int) -> str
+
+class Shelf:
+    items: list[str] = ['x']
+    table: dict[str, str] = {}
+
+class Loud:
+    word: str = 'loud'
+
+    @str
+    def show(self) -> str:
+        if self.word == 'loud':
+            raise ValueError('cannot show it')
+        return self.word
+
+def g() -> int:
+    raise ValueError('boom')
+
+def name(k: int) -> str:
+    return f'n{k}'
+
+def join_two(a: str, b: str) -> str:
+    return a + b
+
+# the error leaves this function: its caller catches it
+def leave(s: str) -> str:
+    return s[0:2] + str(g())
+
+def leave_print(s: str):
+    print(s[0:2], g())
+
+async def quoted(method: str) -> int:
+    n = len(!tomato_json_quote(method.upper(), g()))
+    await sleep(0)
+    return n
+
+def caught(what: str, xs: list[int]):
+    shelf = Shelf()
+    words = ['a']
+    try:
+        if what == 'print':
+            print(what[0:2], g())
+        elif what == 'print later':
+            print(name(1), Loud(), name(2))
+        elif what == 'concat':
+            print(what[0:2] + str(g()))
+        elif what == 'fstring':
+            print(f'{name(1)} and {xs[7]}')
+        elif what == 'value':
+            f: fn(str, str) -> str = join_two
+            print(f(name(1), name(xs[9])))
+        elif what == 'max':
+            print(max(name(1), name(2), name(xs[9])))
+        elif what == 'replace':
+            print(name(1).replace(name(2), name(xs[9])))
+        elif what == 'empty':
+            print(name(1).replace('', name(2)))
+        elif what == 'split':
+            print(name(1).split(''))
+        elif what == 'find':
+            print(name(1).rfind(name(2), 0, xs[9]))
+        elif what == 'join':
+            print(name(1).join([name(xs[9])]))
+        elif what == 'strip':
+            print(name(1).strip(name(xs[9])))
+        elif what == 'open':
+            print(open(name(1), name(xs[9])).read())
+        elif what == 'insert':
+            words.insert(9, name(1))
+        elif what == 'insert field':
+            shelf.items.insert(9, name(1))
+        elif what == 'item':
+            words[5] = name(1)
+        elif what == 'key':
+            shelf.table[name(1)] = name(xs[9])
+        elif what == 'get':
+            print(shelf.table.get(name(1), name(xs[9])))
+        elif what == 'extern':
+            print(!tomato_json_quote(what.upper(), g()))
+    catch RuntimeError as e:
+        print(f'{what}: {e.message}')
+
+@main
+async def main():
+    xs = [1, 2, 3]
+    for what in ['print', 'print later', 'concat', 'fstring', 'value', 'max', 'replace', 'empty', 'split', 'find', 'join',
+                 'strip', 'open', 'insert', 'insert field', 'item', 'key', 'get', 'extern']:
+        caught(what, xs)
+    try:
+        print(await quoted('get'))
+    catch ValueError as e:
+        print(f'async extern: {e.message}')
+    try:
+        print(leave('abcd'))
+    catch ValueError as e:
+        print(f'left: {e.message}')
+    try:
+        leave_print('abcd')
+    catch ValueError as e:
+        print(f'left print: {e.message}')

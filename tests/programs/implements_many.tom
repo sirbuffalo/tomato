@@ -1,0 +1,41 @@
+# `Class implements A, B` on its own line declares both interfaces at once (D12f, D19b)
+interface Named:
+    def name(self) -> str
+
+interface Measured:
+    def size(self) -> int
+
+class Box:
+    items: list[int] = []
+
+    def name(self) -> str:
+        return 'box'
+
+    def size(self) -> int:
+        return len(self.items)
+
+class Bag:
+    count: int = 0
+
+    def name(self) -> str:
+        return 'bag'
+
+    def size(self) -> int:
+        return self.count
+
+Box implements Named, Measured
+Bag implements Named
+Bag implements Measured
+
+def describe(x: Named, y: Measured) -> str:
+    return f'{x.name()} of {y.size()}'
+
+@main
+def main():
+    b = Box()
+    b.items = [1, 2, 3]
+    print(describe(b, b))
+    g = Bag()
+    g.count = 7
+    print(describe(g, g))
+    print(describe(b, g))

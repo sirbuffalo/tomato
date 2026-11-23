@@ -10,6 +10,7 @@ out="$root/site/wasm"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 cc="$WASI_SDK/bin/clang --target=wasm32-wasi --sysroot=$WASI_SDK/share/wasi-sysroot"
 rt="$root/runtime/tomato_rt.c"
+sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }   # macOS has shasum, some Linux systems only sha256sum
 # the WASI C library starts programs at __main_argc_argv, so the compiler's own main is renamed for this build only
 sed 's/^define i32 @main(i32/define i32 @__main_argc_argv(i32/' "$root/compiler/bootstrap/tomatoc.ll" > "$tmp/tomatoc.ll"
 $cc -O1 -Wno-override-module -x ir "$tmp/tomatoc.ll" -x c "$rt" -lm \
@@ -17,6 +18,6 @@ $cc -O1 -Wno-override-module -x ir "$tmp/tomatoc.ll" -x c "$rt" -lm \
 $cc -O1 -DTOMATO_WASM -mexec-model=reactor "$rt" -lm \
   -Wl,--export-all -Wl,--no-entry -Wl,--initial-memory=33554432 -Wl,--max-memory=1073741824 -o "$out/runtime.wasm"
 mkdir -p "$out/std"; cp "$root/std/"*.tom "$root/std/errors.txt" "$out/std/"
-{ cat "$root/compiler/bootstrap/tomatoc.ll" "$rt" | shasum -a 256 | cut -d" " -f1
-  shasum -a 256 "$out/tomatoc.wasm" "$out/runtime.wasm" | cut -d" " -f1; } > "$out/SOURCE.sha256"   # source hash, then the two wasm files   # tests/run.sh checks the wasm files are not stale
+{ cat "$root/compiler/bootstrap/tomatoc.ll" "$rt" | sha256 | cut -d" " -f1
+  sha256 "$out/tomatoc.wasm" "$out/runtime.wasm" | cut -d" " -f1; } > "$out/SOURCE.sha256"   # source hash, then the two wasm files   # tests/run.sh checks the wasm files are not stale
 echo "built $out/tomatoc.wasm and $out/runtime.wasm"

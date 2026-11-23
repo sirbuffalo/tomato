@@ -45,8 +45,14 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 - List literals and operators: `[a, b]`, `xs + [y]`, `[False] * n`, instead of appending item by item.
 - Built-ins before hand-written loops: `min`, `max`, `sum`, `sorted`, `reversed`, `list(range(n))`, `len`, `in`, `abs`,
   `chr`, `ord`, `int(text)`, `str.join`, `split`, `find`, `rfind`, `count`, `replace`, `startswith`, `endswith`,
-  `strip`, `isdigit`, `isalpha`, `isspace`.
-- `x not in items`, not `not (x in items)`; `counts.get(word, 0) + 1`, not an `if word in counts` branch.
+  `strip`, `isdigit`, `isalpha`, `isspace`. `find`, `rfind` and `count` take a start and an end (`s.find(',', i)`), and
+  `strip`, `lstrip` and `rstrip` take the characters to remove (`digits.rstrip('0')`).
+- List methods change a list in place: `xs.pop()` (or `xs.pop(i)`) to take an item out, not `xs[-1]` followed by
+  `xs = xs[:-1]`; `xs.insert(i, x)`, `xs.extend(ys)`, `xs.sort()` and `xs.reverse()` instead of rebuilding the list.
+- Functions as values for the small decisions: `sorted(xs, key=p -> p.age)`, `map(f, xs)`, `filter(f, xs)`, instead of
+  a hand-written sort or a loop that only applies one call.
+- `x not in items`, not `not (x in items)`; `counts.get(word, 0) + 1`, not an `if word in counts` branch; `d.get(key)`
+  gives `None` for a missing key when the value is text, a list, a dict, a set or an object.
 - f-strings to build text: `f'{name} has {count} items'`, not a chain of `+` and `str()`. `{{` and `}}` are literal braces.
 - `a if cond else b` for a choice between two values; an `if` statement when each branch does more than produce a value.
 - `[f(x) for x in items if cond]` to build a list from another sequence; a loop when the body does more than add one item.

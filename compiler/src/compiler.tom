@@ -9,7 +9,7 @@
 from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
 from lexer import LexError
 from diag import Diagnostic, format_error, closest
-from lint import Finding, lint_items, falls_through
+from lint import lint_items, falls_through
 
 class NeedsEarlyCopy(Error):
     # a copy of a generic class is first made after code that loops over every class that fits an Iterable or Sized type was
@@ -124,16 +124,14 @@ def fn_arrow(t: str) -> int:
 def fn_result(t: str) -> str:
     return t[fn_arrow(t) + 1:-1]
 
-# the parameter types of a function type
-def fn_params(t: str) -> list[str]:
-    inner = t[3:fn_arrow(t)]
+# the types in a comma-separated list of types, splitting only at the commas outside brackets ('' gives none)
+def split_types(inner: str) -> list[str]:
     parts: list[str] = []
     if inner == '':
         return parts
     depth = 0
     start = 0
-    for k in range(len(inner)):
-        ch = inner[k]
+    for k, ch in enumerate(inner):
         if ch == '[':
             depth += 1
         elif ch == ']':
@@ -143,6 +141,10 @@ def fn_params(t: str) -> list[str]:
             start = k + 1
     parts.append(inner[start:])
     return parts
+
+# the parameter types of a function type
+def fn_params(t: str) -> list[str]:
+    return split_types(t[3:fn_arrow(t)])
 
 # The built-in interfaces (D50a): 'I:T' is Iterable[T], 'Z' is Sized and 'IZ:T' is Iterable[T] & Sized. A value of one of these types
 # is a box like a union's, holding whatever concrete value was passed (a list, text, a range, an object with @iter or @len).
@@ -267,6 +269,20 @@ def operator_marker_of(op: str) -> str:
         return 'bitxor'
     return ''
 
+def signed_cc(op: str) -> str:
+    # the icmp condition of a comparison operator on signed numbers (or on the result of a three-way compare against 0)
+    if op == '!=':
+        return 'ne'
+    if op == '<':
+        return 'slt'
+    if op == '<=':
+        return 'sle'
+    if op == '>':
+        return 'sgt'
+    if op == '>=':
+        return 'sge'
+    return 'eq'
+
 # An async function runs as a frame: a heap object holding its variables and where it stopped. These fields come first, then the variables.
 # 0 resume function, 1 where it stopped, 2 status (0 running, 1 done, 2 failed), 3 the tasks waiting for it, 4 its error, 5 and 6 the error line and kind,
 # 7 text handed in by input, 8 the result, 9 the statuses it yielded, 10 how many of them were read
@@ -280,21 +296,15 @@ def task_result(t: str) -> str:
     inner = elem_of(t)
     cut = inner.find(';')
     if cut >= 0:
-        return inner[0:cut]
+        return inner[:cut]
     return inner
 
 def task_status(t: str) -> str:
     inner = elem_of(t)
     cut = inner.find(';')
     if cut >= 0:
-        return inner[cut + 1:len(inner)]
+        return inner[cut + 1:]
     return ''
-
-def text_val(s: str) -> Val:
-    v = Val()
-    v.tag = 's'
-    v.text = s
-    return v
 
 def contains_await(n: Node) -> bool:
     if n.kind == 'Await':
@@ -336,20 +346,7 @@ def is_rc(t: str) -> bool:
 def shown_generic(name: str) -> str:
     # a copy of a generic class, as Box[int]: its type arguments are kept in the internal form inside the name
     at = name.find('[')
-    inner = name[at + 1:-1]
-    parts: list[str] = []
-    depth = 0
-    start = 0
-    for k in range(len(inner)):
-        ch = inner[k]
-        if ch == '[':
-            depth += 1
-        elif ch == ']':
-            depth -= 1
-        elif ch == ',' and depth == 0:
-            parts.append(shown(inner[start:k]))
-            start = k + 1
-    parts.append(shown(inner[start:]))
+    parts: list[str] = [shown(p) for p in split_types(name[at + 1:-1])]
     return name[:at] + '[' + ', '.join(parts) + ']'
 
 def shown(t: str) -> str:
@@ -689,11 +686,11 @@ class Mod:
         return best
 
     def compile_error_kind(self, message: str) -> int:
-        # Ids are found by matching the message text, not attached at the 244 raise sites: a new message needs one line in std/errors.txt
-        # (tests/run.sh checks every template in the compiler has one), and the template with the most fixed text wins, so a general
-        # template such as "{} has no method '{}'" only applies when no more specific one fits.
-        # the id of a compile-time error: the CompileError entry of std/errors.txt whose template ({} stands for any text) fits the
-        # first line of the message, the one with the most fixed text; 0 if none
+        # the id of a compile-time error: the CompileError entry of std/errors.txt whose template ({} is any text)
+        # fits the first line of the message, the one with the most fixed text; 0 if none. Ids are found by matching
+        # the text, not attached at the raise sites: a new message needs one line in std/errors.txt (tests/run.sh checks
+        # every template in the compiler has one), and a general template such as "{} has no method '{}'" only applies
+        # when no more specific one fits.
         head = message.split('\n')[0]
         best = 0
         best_len = 0
@@ -708,15 +705,14 @@ class Mod:
                 continue
             at = len(pieces[0])
             fits = True
-            for p in range(1, len(pieces) - 1):
-                found = head[at:].find(pieces[p])
+            for piece in pieces[1:-1]:
+                found = head.find(piece, at)
                 if found < 0:
                     fits = False
                     break
-                at += found + len(pieces[p])
+                at = found + len(piece)
             if len(pieces) > 1:
-                tail = pieces[len(pieces) - 1]
-                fits = fits and head[at:].endswith(tail)
+                fits = fits and head[at:].endswith(pieces[-1])
             if fits:
                 best = k + 1
                 best_len = fixed
@@ -1035,24 +1031,19 @@ class Mod:
         raise CompileError(f"'{c.name}' has no field '{name}'", line)
 
     def has_none_member(self, members: list[Node]) -> bool:
-        found = False
         for m in members:
             if m.fields[0].text == 'None':
-                found = True
-        return found
+                return True
+        return False
 
     def union_of(self, members: list[Node]) -> str:
         # a union of several types (D23g): each member is a type the compiler knows, none repeated
         names: list[str] = []
-        inner = ''
-        parts: list[str] = []
         for m in members:
             inner = self.type_name(vn(m))
             if inner == '' or is_fixed(inner) or is_optional(inner):
                 return ''
-            parts = [inner]
-            if is_union(inner):
-                parts = union_members(inner)
+            parts = union_members(inner) if is_union(inner) else [inner]
             for x in parts:
                 if x in names:
                     return ''
@@ -1066,16 +1057,10 @@ class Mod:
 
     def type_params_of(self, key: str) -> list[str]:
         node = self.generics[key]
-        out: list[str] = []
-        for tp in node.fields[len(node.fields) - 1].items:
-            out.append(tp.text)
-        return out
+        return [tp.text for tp in node.fields[-1].items]
 
     def class_args(self, c: ClassInfo) -> list[str]:
-        out: list[str] = []
-        for tp in self.type_params_of(c.generic):
-            out.append(c.targs[tp])
-        return out
+        return [c.targs[tp] for tp in self.type_params_of(c.generic)]
 
     def arg_key(self, args: list[str]) -> str:
         return ','.join(args)
@@ -1118,8 +1103,7 @@ class Mod:
             return
         self.populating = True
         while len(self.pending) > 0:
-            c = self.pending[0]
-            self.pending = self.pending[1:]
+            c = self.pending.pop(0)
             saved = self.cur
             saved_vars = self.tvars
             resolve_class(self, c)
@@ -1176,16 +1160,16 @@ class Mod:
     # are these types patterns, with a $T standing for a type still to be found?
     def pattern_mode(self, targs: list[str]) -> bool:
         for ta in targs:
-            if ta.find('$') >= 0:
+            if '$' in ta:
                 return True
         return False
 
     def type_delim(self, c: str) -> bool:
-        return c == ']' or c == '[' or c == ',' or c == '>' or c == ';' or c == '?' or c == '|' or c == ':'
+        return c in '[],>;?|:'
 
     # does the real type act fit the pattern pat, whose $T parts stand for types still to be found? Records them in binds.
     def unify(self, pat: str, act: str, binds: dict[str, str]) -> bool:
-        if (pat.startswith('I:') or pat.startswith('IZ:')) and pat.find('$') >= 0:
+        if (pat.startswith('I:') or pat.startswith('IZ:')) and '$' in pat:
             item = ''
             if is_dyn(act):
                 if dyn_iterable(act):
@@ -1204,9 +1188,7 @@ class Mod:
                 while end < len(pat) and not self.type_delim(pat[end]):
                     end += 1
                 name = pat[i + 1:end]
-                stop = ''
-                if end < len(pat):
-                    stop = pat[end]
+                stop = pat[end] if end < len(pat) else ''
                 k = j
                 depth = 0
                 while k < len(act):
@@ -1358,9 +1340,8 @@ class Mod:
             targs: list[str] = [self.type_name(t.fields[2])]
             if t.fields[3].tag == 'n':
                 targs.append(self.type_name(t.fields[3]))
-            for ta in targs:
-                if ta == '':
-                    return ''
+            if '' in targs:
+                return ''
             if self.pattern_mode(targs):
                 return f'@{gkey}[{self.arg_key(targs)}]'
             return '@' + self.instance_class(gkey, targs, t.line)
@@ -1594,7 +1575,6 @@ class Gen:
             self.emit(f'call void @{self.release_fn(e.ty)}(ptr {e.reg})')
         elif e.ty == 'int' and e.fresh and not e.small and not small_text(e.reg):
             self.emit(f'call void @tomato_int_free(i64 {e.reg})')
-
 
     def owned(self, e: Ex) -> Ex:
         # e as a value the caller may keep: an int borrowed from a variable is copied, everything else is already owned
@@ -1880,7 +1860,7 @@ class Gen:
         while v > 1:
             if v % 2 != 0:
                 return -1
-            v = v // 2
+            v //= 2
             k += 1
         return k
 
@@ -1948,17 +1928,7 @@ class Gen:
             if small_text(x.reg) and x.reg[0].isdigit() and not small_text(y.reg):
                 return self.int_equal_const(op, y, x)
         # Small ints (odd words) order like the numbers they hold. The runtime handles other representations.
-        cc = 'eq'
-        if op == '!=':
-            cc = 'ne'
-        elif op == '<':
-            cc = 'slt'
-        elif op == '<=':
-            cc = 'sle'
-        elif op == '>':
-            cc = 'sgt'
-        elif op == '>=':
-            cc = 'sge'
+        cc = signed_cc(op)
         m = self.consume_mask(x, y)
         both = ''
         if (small_text(x.reg) or x.small) and (small_text(y.reg) or y.small):
@@ -2003,19 +1973,9 @@ class Gen:
         y = self.resize(b, t)
         if t == 'int':
             return self.int_compare(op, x, y)
-        cc = 'eq'
-        if op == '!=':
-            cc = 'ne'
-        elif op != '==':
-            sg = 's' if is_signed(t) else 'u'
-            if op == '<':
-                cc = f'{sg}lt'
-            elif op == '<=':
-                cc = f'{sg}le'
-            elif op == '>':
-                cc = f'{sg}gt'
-            else:
-                cc = f'{sg}ge'
+        cc = signed_cc(op)
+        if cc.startswith('s') and not is_signed(t):
+            cc = 'u' + cc[1:]
         c = self.tmp('cmp')
         self.emit(f'{c} = icmp {cc} {llvm_type(t)} {x.reg}, {y.reg}')
         return self.bool_of(c)
@@ -2422,16 +2382,6 @@ class Gen:
         self.emit(f'{r} = {op} {llvm_type(v.ty)} {v.reg} to i{width}')
         return r
 
-    def modulo(self, a: str, b: str) -> str:
-        # Python-style: the result has the sign of the divisor (D05au); a zero divisor is not checked yet (P53)
-        r = self.arith('srem', a, b)
-        x = self.arith('xor', r, b)
-        differ = self.icmp('slt', x, '0')
-        nonzero = self.icmp('ne', r, '0')
-        fix = self.arith('and', differ.reg, nonzero.reg)
-        amount = self.arith('mul', fix, b)
-        return self.arith('add', r, amount)
-
     def trace(self, first: bool):
         # debug mode: add this function and the current line to the call trace of the error leaving it (the first frame starts a new trace)
         if self.mod.mode != 1 or self.fname == '':
@@ -2449,10 +2399,8 @@ class Gen:
 
     def release_held(self):
         # on an error path: free every temporary still waiting in an enclosing expression (newest first)
-        k = len(self.held)
-        while k > 0:
-            k -= 1
-            self.release(self.held[k])
+        for e in reversed(self.held):
+            self.release(e)
 
     def fail_if(self, bad: str, message: str, live: list[Ex] = []):
         # bad is an i1; when true, raise the specific RuntimeError subclass (D22a). live are the owned operands of the
@@ -2629,7 +2577,7 @@ class Gen:
         at = len(self.lines) - 1
         self.comps.append(ctx)
         self.for_stmt(val_node(n.fields[0]))
-        self.comps = self.comps[:-1]
+        self.comps.pop()
         if ctx.ty == '':
             raise CompileError('the items of this list comprehension have no type', n.line)
         old = self.tmp('old')
@@ -2642,7 +2590,7 @@ class Gen:
         return v
 
     def comp_append(self, s: Node):
-        ctx = self.comps[len(self.comps) - 1]
+        ctx = self.comps[-1]
         item = val_node(s.fields[0])
         if ctx.ty == '':
             v = self.expr(item)
@@ -2705,9 +2653,7 @@ class Gen:
             r = self.tmp('mark')
             self.emit(f'{r} = {text}')
             result = ret_ex(r, info.ret)
-        values: list[Ex] = [a]
-        for b2 in args:
-            values.append(b2)
+        values = [a] + args
         self.check_error(values)
         for v in values:
             self.release(v)
@@ -2753,11 +2699,14 @@ class Gen:
         # sorted, reversed, sum, min and max of a list
         lst = ex('', '')
         if (name == 'min' or name == 'max') and len(args) >= 2:
-            items: list[Ex] = []
+            held_before = len(self.held)
             first = self.expr(args[0])
-            items.append(first)
+            items: list[Ex] = [first]
+            self.hold(first)                    # the values so far are freed by the error path if a later one raises
             for a in args[1:]:
                 items.append(self.want(self.expr(a), first.ty, line, 'every value given to ' + name + '()'))
+                self.hold(items[-1])
+            self.drop_held(held_before)
             lst = self.build_tuple(f'list[{first.ty}]', items)
         else:
             if len(args) != 1:
@@ -2828,8 +2777,7 @@ class Gen:
         if not is_fn(fv.ty):
             raise CompileError(f'{kname}= needs a function, but this is {shown(fv.ty)}', line)
         if kname == 'cmp':
-            want_ty = 'fn[' + elem + ',' + elem + '>int]'
-            if fv.ty != want_ty:
+            if fv.ty != want_fn:
                 raise CompileError(f'cmp= needs a function of two {shown(elem)} items that returns an int, but this is {shown(fv.ty)}\nit returns a negative number, zero or a positive number', line)
             info = self.mod.instance_func(self.mod.resolve('_sorted_cmp'), [elem], line)
             et = llvm_type(elem)
@@ -2926,10 +2874,7 @@ class Gen:
         # the item at addr in a list of type lt, as the register of its Tomato value (a compact item is widened)
         elem = elem_of(lt)
         item = self.tmp(hint)
-        w = item_width(lt)
-        if w == 8:
-            self.emit(f'{item} = load {llvm_type(elem)}, ptr {addr}')
-        elif elem == 'bool':
+        if elem == 'bool' and item_width(lt) == 1:
             raw = self.tmp('raw')
             self.emit(f'{raw} = load i8, ptr {addr}')
             self.emit(f'{item} = zext i8 {raw} to i64')
@@ -3438,17 +3383,8 @@ class Gen:
             self.release(a)
             self.release(b)
             return self.bool_of(i1)
-        if is_set(b.ty):
-            a = self.want(a, set_elem(b.ty), line, 'the left side of in')
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {b.reg}, i64 {self.key_word(a)})')
-            i1 = self.tmp('flag')
-            self.emit(f'{i1} = icmp ne ptr {slot}, null')
-            self.release(a)
-            self.release(b)
-            return self.bool_of(i1)
-        if is_dict(b.ty):
-            a = self.want(a, 'str', line, 'the left side of in')
+        if is_set(b.ty) or is_dict(b.ty):
+            a = self.want(a, set_elem(b.ty) if is_set(b.ty) else 'str', line, 'the left side of in')
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {b.reg}, i64 {self.key_word(a)})')
             i1 = self.tmp('flag')
@@ -3523,17 +3459,7 @@ class Gen:
     def compare_text(self, op: str, a: Ex, b: Ex) -> Ex:
         c = self.tmp('cmp32')
         self.emit(f'{c} = call i32 @tomato_str_cmp(ptr {a.reg}, ptr {b.reg})')
-        cc = 'eq'
-        if op == '!=':
-            cc = 'ne'
-        elif op == '<':
-            cc = 'slt'
-        elif op == '<=':
-            cc = 'sle'
-        elif op == '>':
-            cc = 'sgt'
-        elif op == '>=':
-            cc = 'sge'
+        cc = signed_cc(op)
         r = self.tmp('c')
         self.emit(f'{r} = icmp {cc} i32 {c}, 0')
         self.release(a)
@@ -3708,8 +3634,6 @@ class Gen:
             if is_compare:
                 return self.compare_text(op, a, b)
             raise CompileError(f"'{op}' does not work on text\nit works with numbers; use + to join text", n.line)
-        if op == 'in':
-            return self.membership(a, b, n.line)
         if op == 'xor':
             a = self.want(a, 'bool', n.line, 'the left side of ' + op)
             b = self.want(b, 'bool', n.line, 'the right side of ' + op)
@@ -3962,14 +3886,12 @@ class Gen:
         for tp in tparams:
             pattern[tp] = '$' + tp
         self.mod.tvars = pattern
-        patterns: list[str] = []
-        for p in params:
-            patterns.append(self.mod.type_name(p.fields[1]))
+        patterns = [self.mod.type_name(p.fields[1]) for p in params]
         self.mod.cur = saved
         self.mod.tvars = saved_vars
         binds: dict[str, str] = {}
         for k, a in enumerate(args):
-            if k < len(patterns) and patterns[k].find('$') >= 0:
+            if k < len(patterns) and '$' in patterns[k]:
                 self.mod.unify(patterns[k], self.arg_type(a), binds)
         out: list[str] = []
         for tp in tparams:
@@ -3981,11 +3903,7 @@ class Gen:
     def generic_class_init(self, gkey: str) -> list[Node]:
         for m in val_nodes(self.mod.generics[gkey].fields[4]):
             if m.fields[6].tag == 's' and m.fields[6].text == 'init':
-                out: list[Node] = []
-                for p in val_nodes(m.fields[1]):
-                    if p.fields[0].text != 'self':
-                        out.append(p)
-                return out
+                return [p for p in val_nodes(m.fields[1]) if p.fields[0].text != 'self']
         return []
 
     # a type written as an expression, such as the `str` in Stack[str]() or the `list[int]` in Box[list[int]](...), as a type node
@@ -4110,6 +4028,7 @@ class Gen:
         parts: list[str] = []
         types: list[str] = []
         held: list[Ex] = []
+        held_before = len(self.held)
         for k, a in enumerate(args):
             v = self.expr(a, info.ptypes[k])
             v = self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of !' + name)
@@ -4118,10 +4037,12 @@ class Gen:
                 reg = self.tmp('bit')
                 self.emit(f'{reg} = trunc i64 {v.reg} to i1')
             elif v.ty == 'int':
-                reg = self.int_raw(v, held)
+                reg = self.int_raw(v)          # the arguments before it are held, so a failure here frees them too
             held.append(v)
+            self.hold(v)                        # freed by the error path if a later argument raises
             parts.append(f'{self.llvm_type_of(v.ty)} {reg}')
             types.append(self.llvm_type_of(v.ty))
+        self.drop_held(held_before)
         ret = self.llvm_type_of(info.ret) if info.ret != '' else 'void'
         self.mod.declare('declare ' + ret + ' @' + name + '(' + ', '.join(types) + ')')
         text = 'call ' + ret + ' @' + name + '(' + ', '.join(parts) + ')'
@@ -4226,9 +4147,12 @@ class Gen:
         if len(args) != len(ptypes):
             raise CompileError(what + ' takes ' + plural(len(ptypes), 'argument') + ', but ' + str(len(args)) + ' given', line)
         values: list[Ex] = []
+        held_before = len(self.held)
         for k, a in enumerate(args):
             v = self.expr(a, ptypes[k])
             values.append(self.want(v, ptypes[k], line, 'argument ' + str(k + 1) + ' of ' + what))
+            self.hold(values[-1])
+        self.drop_held(held_before)
         parts: list[str] = [f'{llvm_type(v2.ty)} {v2.reg}' for v2 in values]
         callee = fv.reg
         result = ex('', '')
@@ -4463,8 +4387,11 @@ class Gen:
         if is_list(obj.ty) and name == 'append':
             if len(args) != 1:
                 raise CompileError(f'append() takes 1 argument, but {len(args)} given', n.line)
+            held_before = len(self.held)
+            self.hold(obj)
             v = self.expr(args[0], elem_of(obj.ty))
             v = self.want(v, elem_of(obj.ty), n.line, 'the appended item')
+            self.drop_held(held_before)
             v = self.owned(v)
             self.push_item(obj.reg, obj.ty, v)
             self.release(obj)
@@ -4521,13 +4448,13 @@ class Gen:
                 idx = self.int_raw(li, [obj])
             empty = self.tmp('empty')
             self.emit(f'{empty} = icmp eq i64 {self.list_len(obj)}, 0')
-            self.fail_if(empty, 'pop from an empty list')
+            self.fail_if(empty, 'pop from an empty list', [obj])
             if len(args) == 0:
                 idx = self.tmp('last')
                 self.emit(f'{idx} = sub i64 {self.list_len(obj)}, 1')
             else:
                 idx = self.norm_index(obj, idx)
-            addr = self.list_slot(obj, ex(idx, 'int'))
+            addr = self.list_slot(obj, ex(idx, 'int'), [obj])
             item = self.load_item(obj.ty, addr, 'popped')
             self.emit(f'call void @tomato_list_remove_at(ptr {obj.reg}, i64 {idx}, i64 {w})')
             self.release(obj)
@@ -4537,14 +4464,17 @@ class Gen:
                 raise CompileError('insert() takes an index and an item: insert(index, item)', line)
             li = self.want(self.expr(args[0]), 'int', line, 'the index given to insert()')
             raw = self.int_raw(li, [obj])
+            held_before = len(self.held)
+            self.hold(obj)
             v = self.expr(args[1], elem)
             v = self.want(v, elem, line, 'the inserted item')
+            self.drop_held(held_before)
             v = self.owned(v)
             # 0 up to the length is allowed (a negative index counts from the end); anything else is out of range
             idx = self.norm_index(obj, raw)
             bad = self.tmp('oob')
             self.emit(f'{bad} = icmp ugt i64 {idx}, {self.list_len(obj)}')
-            self.fail_if(bad, 'index out of range')
+            self.fail_if(bad, 'index out of range', [v, obj])
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_list_insert_slot(ptr {obj.reg}, i64 {idx}, i64 {w})')
             self.store_item(obj.ty, v, slot)
@@ -4622,7 +4552,14 @@ class Gen:
                 raise CompileError("get() takes a key and optionally a default value: get(key) or get(key, default)", line)
             if len(args) == 1 and not (vt == 'str' or is_list(vt) or is_dict(vt) or is_set(vt) or is_class(vt) or is_iface(vt)):
                 raise CompileError(f"get(key) gives None for a missing key, but a value of type {shown(vt)} cannot be None\nwrite get(key, default), or check 'key in d' first", line)
+            held_before = len(self.held)
+            self.hold(d)                        # freed by the error path if the key or the default raises
             k = self.want(self.expr(args[0]), 'str', line, 'a dict key')
+            self.hold(k)
+            fallback = ex('', '')
+            if len(args) == 2:
+                fallback = self.owned(self.want(self.expr(args[1], vt), vt, line, 'the default of get'))
+            self.drop_held(held_before)
             if len(args) == 1:
                 slot1 = self.tmp('slot')
                 self.emit(f'{slot1} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {self.key_word(k)})')
@@ -4645,7 +4582,6 @@ class Gen:
                 self.release(k)
                 self.release(d)
                 return ret_ex(r1, vt + '?')
-            fallback = self.owned(self.want(self.expr(args[1], vt), vt, line, 'the default of get'))
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {self.key_word(k)})')
             missing = self.tmp('missing')
@@ -4673,7 +4609,10 @@ class Gen:
             # d.remove(key) takes an entry out, releasing its value; the key must be there (check with 'key in d')
             if len(args) != 1:
                 raise CompileError('remove() takes a key: remove(key)', line)
+            held_before = len(self.held)
+            self.hold(d)
             k = self.want(self.expr(args[0]), 'str', line, 'a dict key')
+            self.drop_held(held_before)
             kw = self.key_word(k)
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {kw})')
@@ -4714,8 +4653,11 @@ class Gen:
 
     def set_method(self, st: Ex, name: str, args: list[Node], line: int) -> Ex:
         if (name == 'add' or name == 'remove') and len(args) == 1:
+            held_before = len(self.held)
+            self.hold(st)
             v = self.expr(args[0], set_elem(st.ty))
             v = self.want(v, set_elem(st.ty), line, 'the set element')
+            self.drop_held(held_before)
             kw = self.key_word(v)
             if name == 'add':
                 self.emit(f'call ptr @tomato_dict_insert(ptr {st.reg}, i64 {kw}, i32 0)')
@@ -4731,22 +4673,39 @@ class Gen:
             return ex('', '')
         raise CompileError(self.no_method(name, 'set'), line)
 
+    # the text arguments of a method of the text obj; while each is evaluated, obj and the ones before it are freed by
+    # the error path if it raises
     def text_args(self, obj: Ex, name: str, args: list[Node], count: int, line: int) -> list[Ex]:
         if len(args) != count:
             raise CompileError("'" + name + "' takes " + plural(count, 'argument') + ', but ' + str(len(args)) + ' given', line)
+        held_before = len(self.held)
+        self.hold(obj)
         out: list[Ex] = []
         for a in args:
             v = self.expr(a)
             v = self.want(v, 'str', line, 'the argument of ' + name)
             out.append(v)
+            self.hold(v)
+        self.drop_held(held_before)
         return out
 
-    def not_empty(self, v: Ex, name: str):
+    def not_empty(self, v: Ex, name: str, live: list[Ex]):
         n = self.tmp('alen')
         self.emit(f'{n} = call i64 @tomato_str_len(ptr {v.reg})')
         bad = self.tmp('empty')
         self.emit(f'{bad} = icmp eq i64 {n}, 0')
-        self.fail_if(bad, 'an empty text cannot be used to ' + name)
+        self.fail_if(bad, 'an empty text cannot be used to ' + name, live)
+
+    # an argument of a method of the text obj, evaluated while obj and the values in `also` are freed by the error path
+    # if it raises
+    def text_method_arg(self, obj: Ex, also: list[Ex], a: Node, ty: str, line: int, what: str) -> Ex:
+        held_before = len(self.held)
+        self.hold(obj)
+        for e in also:
+            self.hold(e)
+        v = self.want(self.expr(a), ty, line, what)
+        self.drop_held(held_before)
+        return v
 
     def builtin_call(self, name: str, values: list[Ex], line: int) -> Ex:
         # a call to a function written in std/builtin.tom, with arguments that are already computed
@@ -4756,10 +4715,11 @@ class Gen:
         if (name == 'find' or name == 'rfind' or name == 'count') and (len(args) == 2 or len(args) == 3):
             # find(sub, start), find(sub, start, end), and the same for rfind and count
             a = self.text_args(obj, name, args[:1], 1, line)
-            start = self.want(self.expr(args[1]), 'int', line, 'the start of ' + name)
+            start = self.text_method_arg(obj, a, args[1], 'int', line, 'the start of ' + name)
             stop = '4611686018427387903'
             if len(args) == 3:
-                stop = self.int_raw(self.want(self.expr(args[2]), 'int', line, 'the end of ' + name), [obj, a[0], start])
+                end = self.text_method_arg(obj, [a[0], start], args[2], 'int', line, 'the end of ' + name)
+                stop = self.int_raw(end, [obj, a[0], start])
             mode = '0'
             if name == 'rfind':
                 mode = '1'
@@ -4787,7 +4747,7 @@ class Gen:
             return self.bool_of(i1)
         if name == 'replace':
             a = self.text_args(obj, name, args, 2, line)
-            self.not_empty(a[0], 'replace')
+            self.not_empty(a[0], 'replace', [obj, a[0], a[1]])
             r = self.tmp('replaced')
             self.emit(f'{r} = call ptr @tomato_str_replace(ptr {obj.reg}, ptr {a[0].reg}, ptr {a[1].reg})')
             self.release(a[0])
@@ -4796,7 +4756,7 @@ class Gen:
             return ex(r, 'str')
         if name == 'split':
             a = self.text_args(obj, name, args, 1, line)
-            self.not_empty(a[0], 'split')
+            self.not_empty(a[0], 'split', [obj, a[0]])
             r = self.tmp('pieces')
             self.emit(r + ' = call ptr @tomato_str_split(ptr ' + obj.reg + ', ptr ' + a[0].reg + ', i64 ' + str(self.mod.code_of('list[str]')) + ', i64 8)')
             self.release(a[0])
@@ -4805,8 +4765,7 @@ class Gen:
         if name == 'join':
             if len(args) != 1:
                 raise CompileError("join() takes exactly one list[str]", line)
-            lst = self.expr(args[0])
-            lst = self.want(lst, 'list[str]', line, 'the argument of join')
+            lst = self.text_method_arg(obj, [], args[0], 'list[str]', line, 'the argument of join')
             r = self.tmp('joined')
             self.emit(f'{r} = call ptr @tomato_str_join(ptr {obj.reg}, ptr {lst.reg})')
             self.release(lst)
@@ -4818,7 +4777,7 @@ class Gen:
             self.release(obj)
             return ex(r, 'str')
         if name in ['strip', 'lstrip', 'rstrip'] and len(args) == 1:
-            chars = self.want(self.expr(args[0]), 'str', line, 'the characters to strip')
+            chars = self.text_method_arg(obj, [], args[0], 'str', line, 'the characters to strip')
             return self.builtin_call(f'_str_{name}_chars', [obj, chars], line)
         if (name == 'isalpha' or name == 'isdigit') and len(args) == 0:
             # Unicode letters and digits, from the runtime's tables (tools/gen_ctype_table.c)
@@ -4856,8 +4815,11 @@ class Gen:
         path = self.want(path, 'str', line, 'the path')
         mode = ex(self.mod.intern('r'), 'str')
         if len(args) == 2:
+            held_before = len(self.held)
+            self.hold(path)
             mode = self.expr(args[1])
             mode = self.want(mode, 'str', line, 'the mode')
+            self.drop_held(held_before)
         r = self.tmp('file')
         self.emit(f'{r} = call ptr @tomato_file_open(ptr {path.reg}, ptr {mode.reg})')
         bad = self.tmp('nofile')
@@ -5124,7 +5086,7 @@ class Gen:
         self.emit(f'store i64 {nxt}, ptr {curp}')
         self.push_loop(end, head)
         self.block(val_nodes(s.fields[2]))
-        self.loop_depth = self.loop_depth - 1
+        self.loop_depth -= 1
         if not self.terminated:
             self.br(head)
         self.place(nomore)
@@ -5162,45 +5124,21 @@ class Gen:
     # first moved out of its expression into a statement of its own (x = await f()) whose only unfinished state is in variables.
     def lift(self, e: Node, out: list[Node], top: bool) -> Node:
         if e.kind == 'Await':
-            inner = self.lift(val_node(e.fields[0]), out, False)
-            copy = Node()
-            copy.kind = 'Await'
-            copy.line = e.line
-            copy.fields = [vn(inner)]
+            copy = mk('Await', e.line, [vn(self.lift(val_node(e.fields[0]), out, False))])
             if top:
                 return copy
             self.lifted += 1
             name = f'_await{self.lifted}'
-            target = Node()
-            target.kind = 'Name'
-            target.line = e.line
-            target.fields = [text_val(name)]
-            asg = Node()
-            asg.kind = 'Assign'
-            asg.line = e.line
-            asg.fields = [vn(target), vn(copy)]
-            out.append(asg)
-            use = Node()
-            use.kind = 'Name'
-            use.line = e.line
-            use.fields = [text_val(name)]
-            return use
+            out.append(mk('Assign', e.line, [vn(mk('Name', e.line, [vs(name)])), vn(copy)]))
+            return mk('Name', e.line, [vs(name)])
         if e.kind == 'Start':
             return e
         if e.kind == 'BinOp' and (e.fields[0].text == 'and' or e.fields[0].text == 'or') and contains_await(val_node(e.fields[2])):
             return self.lift_short_circuit(e, out)
         if e.kind == 'Cond' and (contains_await(val_node(e.fields[1])) or contains_await(val_node(e.fields[2]))):
             raise CompileError("an await cannot be in either value of a conditional expression\nuse an if statement and await inside it", e.line)
-        copy2 = Node()
-        copy2.kind = e.kind
-        copy2.line = e.line
+        copy2 = mk(e.kind, e.line, [self.lift_val(f, out) for f in e.fields])
         copy2.exported = e.exported
-        nf: list[Val] = []
-        k = 0
-        for f in e.fields:
-            nf.append(self.lift_val(f, out))
-            k += 1
-        copy2.fields = nf
         return copy2
 
     def lift_short_circuit(self, e: Node, out: list[Node]) -> Node:
@@ -5222,14 +5160,10 @@ class Gen:
     def lift_val(self, v: Val, out: list[Node]) -> Val:
         if v.tag == 'n':
             return vn(self.lift(val_node(v), out, False))
-        if v.tag == 'l' or v.tag == 't':
-            copy = Val()
-            copy.tag = v.tag
-            ni: list[Val] = []
-            for item in v.items:
-                ni.append(self.lift_val(item, out))
-            copy.items = ni
-            return copy
+        if v.tag == 'l':
+            return vlist([self.lift_val(item, out) for item in v.items])
+        if v.tag == 't':
+            return vtuple([self.lift_val(item, out) for item in v.items])
         return v
 
     def hoist(self, s: Node) -> list[Node]:
@@ -5237,22 +5171,15 @@ class Gen:
         out: list[Node] = []
         k = s.kind
         if k == 'Assign' or k == 'Return' or k == 'ExprStmt' or k == 'Declare' or k == 'Raise' or k == 'Yield':
-            copy = Node()
-            copy.kind = k
-            copy.line = s.line
             cf: list[Val] = []
-            j = 0
-            for f in s.fields:
-                is_top = False
+            for j, f in enumerate(s.fields):
                 if f.tag == 'n':
                     child = val_node(f)
                     is_top = child.kind == 'Await' and ((k == 'Assign' and j == 1) or (k == 'Declare' and j == 2) or k == 'Return' or k == 'ExprStmt')
                     cf.append(vn(self.lift(child, out, is_top)))
                 else:
                     cf.append(f)
-                j += 1
-            copy.fields = cf
-            out.append(copy)
+            out.append(mk(k, s.line, cf))
             return out
         if k == 'If':
             branches = s.fields[0].items
@@ -5262,35 +5189,16 @@ class Gen:
                 if later == len(branches) and contains_await(val_node(branches[b].items[0])):
                     later = b
             cond = self.lift(val_node(first[0]), out, False)
-            copy3 = Node()
-            copy3.kind = 'If'
-            copy3.line = s.line
-            nb = Val()
-            nb.tag = 'l'
-            head = Val()
-            head.tag = 't'
-            head.items = [vn(cond), first[1]]
-            bl: list[Val] = [head]
-            for b in range(1, later):
-                bl.append(branches[b])
-            nb.items = bl
+            kept = [vtuple([vn(cond), first[1]])] + branches[1:later]
             orelse = s.fields[1]
             if later < len(branches):
-                rest = Node()
-                rest.kind = 'If'
-                rest.line = s.line
-                rest.fields = [vlist(branches[later:]), s.fields[1]]
-                orelse = vnodes(self.hoist(rest))
-            copy3.fields = [nb, orelse]
-            out.append(copy3)
+                orelse = vnodes(self.hoist(mk('If', s.line, [vlist(branches[later:]), s.fields[1]])))
+            out.append(mk('If', s.line, [vlist(kept), orelse]))
             return out
         if k == 'For' or k == 'AsyncFor':
             it = self.lift(val_node(s.fields[1]), out, False)
-            copy4 = Node()
-            copy4.kind = k
-            copy4.line = s.line
-            copy4.fields = [s.fields[0], vn(it), s.fields[2]]
-            out.append(copy4)
+            # the fields after the iterable stay as they are (for k, v in d.items() keeps its names in field 3)
+            out.append(mk(k, s.line, [s.fields[0], vn(it)] + s.fields[2:]))
             return out
         if k == 'While' and contains_await(val_node(s.fields[0])):
             # while await more(): body  becomes  while True: (the await, then: if not condition: break), body
@@ -5444,6 +5352,7 @@ class Gen:
         # (an int inside str() is written as digits straight into it)
         values: list[Ex] = []
         kinds: list[str] = []
+        held_before = len(self.held)
         for p in parts:
             kind = '0'
             if p.kind == 'Call' and self.is_text_part(p):
@@ -5469,10 +5378,11 @@ class Gen:
                 raise CompileError(f"cannot use '+' with {shown('str')} and {shown(seen)}", line)
             values.append(v)
             kinds.append(kind)
+            self.hold(v)                        # freed by the error path if a later part raises
+        self.drop_held(held_before)
         arr = self.tmp('parts')
         self.allocas.append(f'  {arr} = alloca [{2 * len(values)} x i64]')
-        for i in range(len(values)):
-            v = values[i]
+        for i, v in enumerate(values):
             slot = self.tmp('pslot')
             self.emit(f'{slot} = getelementptr i64, ptr {arr}, i64 {2 * i}')
             self.emit(f'store i64 {kinds[i]}, ptr {slot}')
@@ -5559,6 +5469,7 @@ class Gen:
 
     def print_call(self, args: list[Node]):
         values: list[Ex] = []
+        held_before = len(self.held)
         for a in args:
             v = self.expr(a)                   # every argument is evaluated before anything is printed
             if is_fn(v.ty):
@@ -5566,7 +5477,12 @@ class Gen:
             if is_dyn(v.ty):
                 raise CompileError(f'a value of type {shown(v.ty)} cannot be printed\nloop over it and print the items instead', self.line)
             values.append(v)
+            self.hold(v)                       # freed by the error path if a later argument raises
         for k, v in enumerate(values):
+            # turning a value into text can raise (an @str method): the values not printed yet are freed then
+            self.drop_held(held_before)
+            for later in values[k + 1:]:
+                self.hold(later)
             if v.ty == 'None' or is_optional(v.ty):
                 shown_opt = self.text_of(v, self.line)
                 self.emit(f'call void @tomato_print_strobj(ptr {shown_opt.reg})')
@@ -5614,6 +5530,7 @@ class Gen:
                 self.release(v)
             if k < len(values) - 1:
                 self.emit('call i32 @putchar(i32 32)')
+        self.drop_held(held_before)
         self.emit('call i32 @putchar(i32 10)')
 
     # ---- statements
@@ -5638,8 +5555,7 @@ class Gen:
         for seen in self.mod.scope:
             if seen.module == self.mod.cur or seen.module == 'builtin':
                 out.append(seen.name)
-        for b in ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range']:
-            out.append(b)
+        out.extend(['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range'])
         return out
 
     def name_hint(self, name: str) -> str:
@@ -5928,11 +5844,16 @@ class Gen:
         lst = self.unwrap(self.expr_b(val_node(target.fields[0]), [val_node(target.fields[1]), val_node(s.fields[1])]), s.line)
         if lst.ty.startswith('tuple['):
             raise CompileError('a tuple cannot be changed, so its items cannot be assigned\nuse a list if the items must change', s.line)
+        # the object (unless it is a lent local) and the key or index are freed by the error path if a later part raises
         if is_dict(lst.ty):
+            held_dict = len(self.held)
+            self.hold(lst)
             k = self.expr(val_node(target.fields[1]))
             k = self.want(k, 'str', s.line, 'a dict key')
+            self.hold(k)
             dv = self.expr(val_node(s.fields[1]), dict_value(lst.ty))
             dv = self.want(dv, dict_value(lst.ty), s.line, 'the assigned value')
+            self.drop_held(held_dict)
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_dict_insert(ptr {lst.reg}, i64 {self.key_word(k)}, i32 0)')
             self.store_owned(slot, dv)
@@ -5943,19 +5864,28 @@ class Gen:
             f = self.mod.find_op(lst.ty[1:], 'set')
             if f is None or len(f.ptypes) != 2 or f.ret != '':
                 raise CompileError("'" + lst.ty[1:] + "' objects cannot be assigned by index\nadd a method marked @set that takes the index and the new item", s.line)
+            held_before = len(self.held)
+            self.hold(lst)
             si = self.want(self.expr(val_node(target.fields[1])), f.ptypes[0], s.line, 'an index')
+            self.hold(si)
             sv = self.expr(val_node(s.fields[1]), f.ptypes[1])
             sv = self.want(sv, f.ptypes[1], s.line, 'the assigned item')
+            self.drop_held(held_before)
             self.marker_call(lst, f, [si, sv], s.line)
             return
         if not is_list(lst.ty):
             raise CompileError('only list and dict items can be assigned by index', s.line)
+        held_before = len(self.held)
+        self.hold(lst)
         i = self.expr(val_node(target.fields[1]))
         i = self.want(i, 'int', s.line, 'an index')
+        self.drop_held(held_before)
         i = ex(self.norm_index(lst, self.int_raw(i, [lst])), 'int')
+        self.hold(lst)
         v = self.expr(val_node(s.fields[1]), elem_of(lst.ty))
         v = self.want(v, elem_of(lst.ty), s.line, 'the assigned item')
-        addr = self.list_slot(lst, i)
+        self.drop_held(held_before)
+        addr = self.list_slot(lst, i, [v, lst])
         if is_rc(v.ty):
             old = self.tmp('old')
             self.emit(f'{old} = load ptr, ptr {addr}')
@@ -6001,7 +5931,7 @@ class Gen:
     def leave_narrow(self, name: str, saved: list[str]):
         self.slots[name] = saved[0]
         self.types[name] = saved[1]
-        self.narrowed = self.narrowed[:-1]
+        self.narrowed.pop()
 
     def narrow_to(self, name: str, keep: list[str]) -> list[str]:
         # the members `keep` of a union variable (one member gives that type, several a smaller union)
@@ -6017,9 +5947,8 @@ class Gen:
 
     def end_block_narrowing(self, depth: int):
         while len(self.after) > depth:
-            entry = self.after[len(self.after) - 1]
-            self.after = self.after[:-1]
-            self.settled = self.settled[:-1]
+            entry = self.after.pop()
+            self.settled.pop()
             self.leave_narrow(entry[0], [entry[1], entry[2]])
 
     def if_stmt(self, s: Node):
@@ -6060,8 +5989,7 @@ class Gen:
                 elif var != '':
                     kept = kept + left
             if var != '' and len(target) > 0 and target[0] == var:
-                rest: list[str] = [m for m in left if m != target[1]]
-                left = rest
+                left = [m for m in left if m != target[1]]
             self.place(nxt)
         if s.fields[1].tag == 'l':
             # `else:` knows the variable is one of the members no condition above matched
@@ -6121,7 +6049,7 @@ class Gen:
         while v > 1:
             if v % 2 != 0:
                 return False
-            v = v // 2
+            v //= 2
         return True
 
     def fast_cond_ok(self, n: Node, names: list[str]) -> bool:
@@ -6200,7 +6128,7 @@ class Gen:
             v = val_node(n.fields[2]).fields[0].num
             k = 0
             while v > 1:
-                v = v // 2
+                v //= 2
                 k += 1
             if op == '//':
                 s = self.arith('ashr', a, str(k))
@@ -6221,19 +6149,8 @@ class Gen:
         op = n.fields[0].text
         a = self.fast_expr(val_node(n.fields[1]), bail)
         b = self.fast_expr(val_node(n.fields[2]), bail)
-        cc = 'eq'
-        if op == '!=':
-            cc = 'ne'
-        elif op == '<':
-            cc = 'slt'
-        elif op == '<=':
-            cc = 'sle'
-        elif op == '>':
-            cc = 'sgt'
-        elif op == '>=':
-            cc = 'sge'
         c = self.tmp('fc')
-        self.emit(f'{c} = icmp {cc} i64 {a}, {b}')
+        self.emit(f'{c} = icmp {signed_cc(op)} i64 {a}, {b}')
         return c
 
     def fast_block(self, body: list[Node], prefix: str):
@@ -6701,8 +6618,6 @@ class Gen:
         if not (it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'range'):
             self.for_each(s, it)
             return
-        if it.kind != 'Call' or val_node(it.fields[0]).kind != 'Name' or val_node(it.fields[0]).fields[0].text != 'range':
-            raise CompileError('a for loop with two variables is not supported here', s.line)
         bounds = val_nodes(it.fields[1])
         if len(bounds) < 1 or len(bounds) > 3:
             raise CompileError('range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', s.line)
@@ -6715,11 +6630,14 @@ class Gen:
             e = self.want(e, 'int', s.line, 'a range bound')
             stop = self.int_raw(e)
         else:
+            held_before = len(self.held)
             a = self.expr(bounds[0])
+            self.hold(a)                        # a big start is freed by the error path if the stop raises
             b = self.expr(bounds[1])
+            self.drop_held(held_before)
             a = self.want(a, 'int', s.line, 'a range bound')
             b = self.want(b, 'int', s.line, 'a range bound')
-            start = self.int_raw(a)
+            start = self.int_raw(a, [b])
             stop = self.int_raw(b)
         if len(bounds) == 3:
             c3 = self.expr(bounds[2])
@@ -6869,20 +6787,8 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     g.fname = trace_name(info)
     g.in_init = info.is_init
     g.ret = info.ret
-    params = val_nodes(f.fields[1])
-    names: list[str] = []
-    types: list[str] = []
-    k = 0
-    for p in params:
-        if p.fields[0].text == 'self':
-            if info.owner == '':
-                raise CompileError("'self' can only be used in methods inside a class", p.line)
-            names.append('self')
-            types.append(f'@{info.owner}')
-        else:
-            names.append(p.fields[0].text)
-            types.append(info.ptypes[k])
-            k += 1
+    names = param_names(f)
+    types = param_types(f, info)
     sig: list[str] = []
     lent: list[list[str]] = []          # per rc or int parameter: its name, its slot, and the line index of its retain (of its copy, for an int)
     for k, name in enumerate(names):
@@ -6909,16 +6815,41 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
                 # the slot holds the caller's number: no copy, and nothing to free
                 g.lines[int(pl[2]) + 1] = '  store i64 %arg.' + pl[0] + ', ptr ' + pl[1]
                 g.int_slots = [r for r in g.int_slots if r != pl[1]]
+    end_body(g, f, info)
+    return finish_function(g, function_symbol(mod, info), sig, info.ret)
+
+# the name of each parameter of the definition f, in order (self included)
+def param_names(f: Node) -> list[str]:
+    return [p.fields[0].text for p in val_nodes(f.fields[1])]
+
+# the type of each parameter of the definition f, in order: self is an object of the method's class
+def param_types(f: Node, info: FuncInfo) -> list[str]:
+    types: list[str] = []
+    k = 0
+    for p in val_nodes(f.fields[1]):
+        if p.fields[0].text == 'self':
+            if info.owner == '':
+                raise CompileError("'self' can only be used in methods inside a class", p.line)
+            types.append(f'@{info.owner}')
+        else:
+            types.append(info.ptypes[k])
+            k += 1
+    return types
+
+# after the body: a function that gives a value must not reach its end (if the check cannot tell, reaching it stops the
+# program); one that gives nothing returns from there
+def end_body(g: Gen, f: Node, info: FuncInfo):
     if info.ret != '' and falls_through(val_nodes(f.fields[3])):
         raise CompileError(f"the function '{info.name}' can reach its end without returning a value\nend every path with a return, for example give the last if an else that returns", f.line)
-    if not g.terminated:
-        if info.ret == '':
-            g.br('epilogue')
-        else:
-            g.emit('call void @tomato_fail_id(i32 354, ptr ' + mod.intern('the function ended without returning a value') + '.c)')
-            g.emit('unreachable')
-            g.terminated = True
-    return finish_function(g, function_symbol(mod, info), sig, info.ret)
+    if g.terminated:
+        return
+    if info.ret == '':
+        g.br('epilogue')
+        return
+    text = g.mod.intern('the function ended without returning a value')
+    g.emit(f'call void @tomato_fail_id(i32 354, ptr {text}.c)')
+    g.emit('unreachable')
+    g.terminated = True
 
 def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     # an async function becomes a frame (its variables on the heap), a constructor that makes the frame from the arguments,
@@ -6938,42 +6869,18 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     code = mod.code_of(f'@{cname}')
     g.frame_code = code
     g.allocas.append(f'  %state.p = getelementptr %class.{code}, ptr %frame, i32 0, i32 3')
-    params = val_nodes(f.fields[1])
-    names: list[str] = []
-    types: list[str] = []
-    k = 0
-    for p in params:
-        if p.fields[0].text == 'self':
-            if info.owner == '':
-                raise CompileError("'self' can only be used in methods inside a class", p.line)
-            names.append('self')
-            types.append(f'@{info.owner}')
-        else:
-            names.append(p.fields[0].text)
-            types.append(info.ptypes[k])
-            k += 1
+    names = param_names(f)
+    types = param_types(f, info)
     sig: list[str] = []
-    k = 0
-    for name in names:
+    for k, name in enumerate(names):
         g.slot(name, types[k], f.line)
         sig.append(f'{llvm_type(types[k])} %arg.{name}')
-        k += 1
     g.line = f.line
     g.check_cancel()                  # cancelled before it ever ran
     g.block(val_nodes(f.fields[3]))
-    if info.ret != '' and falls_through(val_nodes(f.fields[3])):
-        raise CompileError(f"the function '{info.name}' can reach its end without returning a value\nend every path with a return, for example give the last if an else that returns", f.line)
-    if not g.terminated:
-        if info.ret == '':
-            g.br('epilogue')
-        else:
-            g.emit('call void @tomato_fail_id(i32 354, ptr ' + mod.intern('the function ended without returning a value') + '.c)')
-            g.emit('unreachable')
-            g.terminated = True
+    end_body(g, f, info)
     # the frame's type: the fixed fields, then one per variable
-    result_ty = info.ret
-    if result_ty == '':
-        result_ty = 'u64'
+    result_ty = info.ret if info.ret != '' else 'u64'
     queue_ty = f'list[{info.yields}]' if info.yields != '' else 'File'
     fr = ClassInfo()
     fr.name = cname
@@ -6981,9 +6888,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     fr.module = info.module
     fr.is_frame = True
     fr.done = True
-    frame_types: list[str] = ['u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'u64', 'str', '@Error', queue_ty, result_ty]
-    for t in g.frame_types:
-        frame_types.append(t)
+    frame_types = ['u64'] * 9 + ['str', '@Error', queue_ty, result_ty] + g.frame_types
     for ft in frame_types:
         slot = FieldInfo()
         slot.name = 'f'
@@ -7025,8 +6930,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     text += f'  %size = ptrtoint ptr getelementptr ({cls}, ptr null, i32 1) to i64\n'
     text += f'  %f = call ptr @tomato_alloc(i64 %size, i64 {code})\n'
     text += f'  %rf = getelementptr {cls}, ptr %f, i32 0, i32 2\n  store ptr {sym}.resume, ptr %rf\n'
-    k = 0
-    for name in names:
+    for k, name in enumerate(names):
         text += f'  %pf{k} = getelementptr {cls}, ptr %f, i32 0, i32 {str(FRAME_FIXED + k + 2)}\n'
         if types[k] == 'int':
             text += f'  %arg.{name}.own = call i64 @tomato_int_dup(i64 %arg.{name})\n  store i64 %arg.{name}.own, ptr %pf{k}\n'
@@ -7034,7 +6938,6 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
             text += f'  store {llvm_type(types[k])} %arg.{name}, ptr %pf{k}\n'
         if is_rc(types[k]):
             text += f'  call void @tomato_retain(ptr %arg.{name})\n'
-        k += 1
     if info.yields != '':
         text += f'  %q = call ptr @tomato_list_new(i64 {mod.code_of(queue_ty)})\n'
         text += f'  %qf = getelementptr {cls}, ptr %f, i32 0, i32 13\n  store ptr %q, ptr %qf\n'
@@ -7107,12 +7010,8 @@ def class_types(mod: Mod) -> str:
     # one struct type per class: the reference count and type code, then the fields
     t = ''
     for c in mod.classes:
-        parts: list[str] = []
-        parts.append('i64')
-        parts.append('i64')
-        for fld in c.fields:
-            parts.append(llvm_type(fld.ty))
-        t += '%class.' + str(mod.code_of('@' + c.name)) + ' = type { ' + ', '.join(parts) + ' }\n'
+        parts = ['i64', 'i64'] + [llvm_type(fld.ty) for fld in c.fields]
+        t +='%class.' + str(mod.code_of('@' + c.name)) + ' = type { ' + ', '.join(parts) + ' }\n'
     return t
 
 def vtables(mod: Mod) -> str:
@@ -7144,16 +7043,11 @@ def int_of_bool(b: bool) -> int:
 
 def runtime_tables(mod: Mod) -> str:
     n = len(mod.codes) + 2
-    names: list[str] = []
-    zeros: list[str] = []
-    kinds: list[str] = []
-    offsets: list[str] = []
+    names = ['ptr null'] * n
+    zeros = ['i64 0'] * n
+    kinds = ['i32 0'] * n
+    offsets = ['ptr null'] * n
     extra = ''
-    for k in range(n):
-        names.append('ptr null')
-        zeros.append('i64 0')
-        offsets.append('ptr null')
-        kinds.append('i32 0')
     k = 0
     for code in mod.codes:
         slot = k + 2
@@ -7530,12 +7424,7 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
 def same_signature(a: FuncInfo, b: FuncInfo) -> bool:
     if a.is_async != b.is_async or a.yields != b.yields:
         return False
-    if a.ret != b.ret or len(a.ptypes) != len(b.ptypes):
-        return False
-    for k, t in enumerate(a.ptypes):
-        if t != b.ptypes[k]:
-            return False
-    return True
+    return a.ret == b.ret and a.ptypes == b.ptypes
 
 def check_classes(mod: Mod):
     # overrides name a parent method of the same types, and a class has every method its interfaces require (D12g, D12bg)
@@ -7687,23 +7576,17 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     raise CompileError(f'internal compiler error: no helper of kind {kind}', line)
 
 def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):
-    # give the stub parameter its real type
+    # give the stub parameter its real type, and the result the type the helper gives
+    info.ptypes[0] = ty
     if is_class(ty):
-        info.ptypes[0] = ty
-        if kind == 'tolist':
-            info.ret = f'list[{iter_elem(mod, ty)}]'
-        else:
-            info.ret = iter_elem(mod, ty)
-        return
-    if kind == 'show':
-        info.ptypes[0] = ty
+        info.ret = f'list[{iter_elem(mod, ty)}]' if kind == 'tolist' else iter_elem(mod, ty)
+    elif kind == 'show':
         info.ret = 'str'
     elif kind == 'eq':
         info.ptypes[0] = ty
         info.ptypes[1] = ty
         info.ret = 'bool'
     else:
-        info.ptypes[0] = ty
         info.ret = elem_of(ty)
 
 def plural(n: int, word: str) -> str:
@@ -7712,7 +7595,9 @@ def plural(n: int, word: str) -> str:
     return f'{n} {word}s'
 
 def top_level_message(item: Node) -> str:
-    if item.kind == 'ExprStmt' or item.kind == 'Assign' or item.kind == 'AugAssign' or item.kind == 'Return' or item.kind == 'If' or item.kind == 'While' or item.kind == 'For' or item.kind == 'Pass':
+    statements = ['ExprStmt', 'Assign', 'Declare', 'Multi', 'Return', 'If', 'While', 'For', 'AsyncFor', 'Try', 'Raise',
+                  'Yield', 'Break', 'Continue', 'Pass']
+    if item.kind in statements:
         return 'this statement is outside any function\nprograms have no top-level code: put it inside a function marked @main (only the repl accepts bare statements)'
     return f'this kind of declaration ({item.kind}) is not supported'
 
@@ -7799,30 +7684,20 @@ def top_item(node: Node, module: str) -> TopItem:
 
 def collect_warnings(mod: Mod, own: list[Node], module: str, src: str):
     # the lint findings of one file as finished warnings, in line order, minus those silenced by an `# allow: KIND` comment on their line
-    found = lint_items(own)
     lines = src.split('\n')
-    taken = [False] * len(found)
-    ordered: list[Finding] = []
-    for _ in found:
-        best = -1
-        for i, f in enumerate(found):
-            if not taken[i] and (best < 0 or f.line < found[best].line):
-                best = i
-        taken[best] = True
-        ordered.append(found[best])
-    for f in ordered:
+    for f in sorted(lint_items(own), key=found -> found.line):
         text = ''
         if 1 <= f.line and f.line <= len(lines):
             text = lines[f.line - 1]
         if f'allow: {f.kind}' not in text:
-            mod.warnings.append(format_error(f.message, f.line, 0, src, warning_path(mod, module), 'warning'))
+            mod.warnings.append(format_error(f.message, f.line, 0, src, source_path(mod, module), 'warning'))
 
-def warning_path(mod: Mod, module: str) -> str:
+def source_path(mod: Mod, module: str) -> str:
+    # the file name an error or warning in the module shows
     if module == 'main':
         return mod.main_path
     return f'{module}.tom'
 
-# does any declaration use the name bitarray or frozenbitarray (as a value or as a type)?
 # does the module declare something called bitarray or frozenbitarray itself? (then the names are its own, not the library's)
 def declares_bit_name(items: list[Node]) -> bool:
     for n in items:
@@ -7830,6 +7705,7 @@ def declares_bit_name(items: list[Node]) -> bool:
             return True
     return False
 
+# does any declaration use the name bitarray or frozenbitarray (as a value or as a type)?
 def mentions_bit_types(items: list[Node]) -> bool:
     for n in items:
         if mentions_bit_node(n):
@@ -7869,8 +7745,7 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
             ii.importer = module
             ii.module = wanted
             ii.line = item.line
-            for nm in item.fields[1].items:
-                ii.names.append(nm.text)
+            ii.names = [nm.text for nm in item.fields[1].items]
             imports.append(ii)
             if wanted not in loaded:
                 mod.cur = module
@@ -8021,8 +7896,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             mod.llvm_decls.append(decl)
         else:
             raise CompileError(top_level_message(item), item.line)
-    for entry in mod.preload:
-        parts = entry.split('\n')
+    for copy in mod.preload:
+        parts = copy.split('\n')
         mod.instance_class(parts[0], parts[1:], 0)
     mod.populate_pending()
     check_classes(mod)
@@ -8071,12 +7946,10 @@ def error_label(mod: Mod, message: str) -> str:
         kind = 368
     return 'error[' + mod.error_id(kind) + ']'
 
-def located(mod: Mod, message: str, line: int, col: int, module: str, path: str) -> str:
+def located(mod: Mod, message: str, line: int, col: int, module: str) -> str:
     # the error as the user sees it: the message, then the place and the source line of the module it is in
     if module in mod.sources:
-        where = path
-        if module != 'main':
-            where = f'{module}.tom'
+        where = source_path(mod, module)
         return format_error(message, line, col, mod.sources[module], where, error_label(mod, message))
     return format_error(message, 0, 0, '', '', error_label(mod, message))
 
@@ -8085,7 +7958,7 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
     mod = Mod()
     result = ''
     early: list[str] = []
-    for attempt in range(40):
+    for _ in range(40):
         mod = Mod()
         mod.preload = early
         mod.main_path = path
@@ -8095,11 +7968,11 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
             early.append(again.message)
             continue
         catch LexError as e:
-            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading, path))
+            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading))
         catch ParseError as e:
-            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading, path))
+            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading))
         catch CompileError as e:
-            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.cur, path))
+            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.cur))
         for warning in mod.warnings:
             for text_line in warning.split('\n'):
                 result += f';! {text_line}\n'

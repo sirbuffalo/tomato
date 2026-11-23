@@ -1,0 +1,22 @@
+print: boom
+n1 print later: cannot show it
+concat: boom
+fstring: index out of range
+value: index out of range
+max: index out of range
+replace: index out of range
+empty: an empty text cannot be used to replace
+split: an empty text cannot be used to split
+find: index out of range
+join: index out of range
+strip: index out of range
+open: index out of range
+insert: index out of range
+insert field: index out of range
+item: index out of range
+key: index out of range
+get: index out of range
+extern: boom
+async extern: boom
+left: boom
+left print: boom

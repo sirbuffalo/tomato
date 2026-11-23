@@ -1,0 +1,6 @@
+error[E342]: this statement is outside any function
+ --> tests/errors/top_level_declaration.tom:1:1
+  |
+1 | limit: int = 10
+  | ^^^^^^^^^^^^^^^
+  = help: programs have no top-level code: put it inside a function marked @main (only the repl accepts bare statements)

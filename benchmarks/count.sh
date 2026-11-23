@@ -14,7 +14,7 @@
 # Tomato is built inside the VM from this checkout with its own `tomato build` (it needs only clang), so no cross-compiling happens.
 # Go is linked externally (needs gcc) because a plain static Go binary crashes under Valgrind. Python needs only the VM's python3.
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(dirname "$here")"
-vm=tomato-count; runs=2; only=""; smoke=0; out="$here/results/instructions.md"; guest=0; setup=0
+argc=$#; vm=tomato-count; runs=2; only=""; smoke=0; out="$here/results/instructions.md"; guest=0; setup=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --setup) setup=1; shift ;;
@@ -43,7 +43,7 @@ if [ $guest = 0 ]; then
       /usr/local/go/bin/go version 2>/dev/null | grep -q go1.27.4 || {
         curl -fsSL -o /tmp/go.tgz https://go.dev/dl/go1.27.4.linux-arm64.tar.gz
         sudo rm -rf /usr/local/go; sudo tar -C /usr/local -xzf /tmp/go.tgz; }' || exit 1
-    echo "VM $vm is ready"; [ $# -eq 0 ] && exit 0
+    echo "VM $vm is ready"; [ "$argc" -eq 1 ] && exit 0   # --setup alone just sets up
   fi
   command -v limactl >/dev/null 2>&1 || { echo "limactl not found: run benchmarks/count.sh --setup (see docs/performance.md)" >&2; exit 1; }
   limactl list -q 2>/dev/null | grep -qx "$vm" || { echo "no VM named $vm: run benchmarks/count.sh --setup" >&2; exit 1; }

@@ -1,7 +1,7 @@
 #!/bin/sh
 # The benchmark runner: builds every benchmark in Tomato, Go, Rust and Python, runs each several times, and writes the
 # median and fastest time, peak memory, build time and binary size as JSON and a Markdown table.
-#   benchmarks/run.sh [--runs N] [--seed N] [--smoke] [--only a,b,c] [--out DIR] [--site]
+#   benchmarks/run.sh [--runs N] [--python-runs N] [--seed N] [--smoke] [--only a,b,c] [--out DIR] [--site]
 #     --runs N     runs per program (default 10; the median is reported); Python runs --python-runs times (default 10)
 #     --seed N     the seed for the random order of the runs (default 1): every (benchmark, language, run) job is shuffled
 #                  and run in that order, so throttling and background load fall evenly on every row; the seed is recorded
@@ -11,8 +11,7 @@
 #     --site       also copy results.json to site/benchmarks.json for the website's Benchmarks page
 # Tomato is built from this checkout (compiler/bootstrap/tomatoc.ll), so the numbers always describe the source tree.
 # Tomato is built twice: "tomato" in release mode (what Davis calls the real thing: no leak checks, short error codes) and
-# "tomato-debug" in debug mode (leak checks and full error text). Before the modes were renamed, release mode was called
-# "normal"; the runner uses whichever name this checkout's `tomato` command accepts.
+# "tomato-debug" in debug mode (leak checks and full error text).
 # Needs: clang (for Tomato and the timing helper), go, rustc with cargo (bigint uses the num-bigint crate, fetched once) and python3. A missing toolchain is skipped and noted.
 # The Python programs exist only to be compared with; the repository's own tooling does not use Python.
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(dirname "$here")"
@@ -26,10 +25,10 @@ while [ $# -gt 0 ]; do
     --only) only="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --site) site=1; shift ;;
-    *) echo "usage: run.sh [--runs N] [--smoke] [--only a,b] [--out DIR] [--site]" >&2; exit 2 ;;
+    *) echo "usage: run.sh [--runs N] [--python-runs N] [--seed N] [--smoke] [--only a,b] [--out DIR] [--site]" >&2; exit 2 ;;
   esac
 done
-release_mode=release; grep -q "MODE: debug, normal or release" "$root/native/tomato" && release_mode=normal
+release_mode=release
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 mkdir -p "$out"
 say() { echo "$*" >&2; }

@@ -60,9 +60,7 @@ export class Moment:
         s = _pad(self.hour, 2) + ':' + _pad(self.minute, 2) + ':' + _pad(self.second, 2)
         if self.nano != 0:
             frac = _pad(self.nano, 9)
-            while frac[len(frac) - 1] == '0':
-                frac = frac[:len(frac) - 1]
-            s += '.' + frac
+            s += '.' + frac.rstrip('0')
         return s
 
     @str
@@ -362,8 +360,8 @@ class _Parser:
             self.n = 0
             return
         s = self.lines[ln]
-        if len(s) > 0 and s[len(s) - 1] == '\r':
-            s = s[:len(s) - 1]
+        if s.endswith('\r'):
+            s = s[:-1]
         self.line = s
         self.n = len(s)
 
@@ -877,7 +875,7 @@ class _Parser:
                 nx.origin = 'dotted'
                 t.put(p, nx)
                 t = nx
-        last = parts[len(parts) - 1]
+        last = parts[-1]
         if last in t.fields:
             self.fail_at(f'Duplicate key {last}', key_ln, key_i)
         t.put(last, self.parse_value())
@@ -895,7 +893,7 @@ class _Parser:
                 self.fail_at(f'Cannot add to {p}: it is an inline table', ln, col)
             return nx
         if nx.kind == 'array' and nx.origin == 'aot':
-            return nx.items[len(nx.items) - 1]
+            return nx.items[-1]
         self.fail_at(f'Cannot add to {p}: it is not a table', ln, col)
         return nx
 
@@ -919,7 +917,7 @@ class _Parser:
         t = self.root
         for k in range(len(parts) - 1):
             t = self.descend(t, parts[k], ln, col)
-        last = parts[len(parts) - 1]
+        last = parts[-1]
         if aot:
             if last not in t.fields:
                 a = array()

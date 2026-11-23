@@ -205,14 +205,14 @@ export class JsonInt(Json):
         v = self.v
         if v >= 0 and v < 128:
             out.append(v)
-        elif v >= 0 - 32 and v < 0:
+        elif v >= -32 and v < 0:
             out.append(256 + v)
-        elif v >= 0 - 9223372036854775808 and v < 9223372036854775808:
+        elif v >= -9223372036854775808 and v < 9223372036854775808:
             !tomato_mp_i64(out, v)
         elif v >= 9223372036854775808 and v < 18446744073709551616:
             !tomato_mp_u64(out, v // 4294967296, v % 4294967296)
         else:
-            raise MsgpackError(f'the integer {v} does not fit in 64 bits', 0 - 1, 'E86')
+            raise MsgpackError(f'the integer {v} does not fit in 64 bits', -1, 'E86')
 
 export class JsonFloat(Json):
     v: float = 0.0
@@ -275,7 +275,7 @@ export class JsonList(Json):
     override def at(self, key: int | str) -> Json:
         if key in str:
             raise JSONTypeError(f'a list needs an int index, but got the text {key}', 'E72')
-        if key >= len(self.items) or key < 0 - len(self.items):
+        if key >= len(self.items) or key < -len(self.items):
             raise JSONTypeError(f'index {key} is out of range for a list of {len(self.items)}', 'E73')
         return self.items[key]
 
@@ -306,7 +306,7 @@ export class JsonList(Json):
 
     override def pack_to(self, out: list[int], depth: int):
         if depth >= 512:
-            raise MsgpackError('nesting is deeper than 512 levels', 0 - 1, 'E82')
+            raise MsgpackError('nesting is deeper than 512 levels', -1, 'E82')
         !tomato_mp_head(out, 0, len(self.items))
         for item in self.items:
             item.pack_to(out, depth + 1)
@@ -374,7 +374,7 @@ export class JsonDict(Json):
 
     override def pack_to(self, out: list[int], depth: int):
         if depth >= 512:
-            raise MsgpackError('nesting is deeper than 512 levels', 0 - 1, 'E82')
+            raise MsgpackError('nesting is deeper than 512 levels', -1, 'E82')
         !tomato_mp_head(out, 1, len(self.fields))
         for key in self.fields:
             !tomato_mp_str(out, key)
@@ -403,7 +403,7 @@ export class JsonBin(Json):
 
     override def pack_to(self, out: list[int], depth: int):
         if !tomato_mp_blob(out, 0, 0, self.data) != 0:
-            raise MsgpackError('a byte must be an int from 0 to 255', 0 - 1, 'E83')
+            raise MsgpackError('a byte must be an int from 0 to 255', -1, 'E83')
 
 # A MessagePack extension value: a type code from -128 to 127 (not -1, which is a timestamp) and bytes.
 export class JsonExt(Json):
@@ -432,10 +432,10 @@ export class JsonExt(Json):
         raise JSONEncodeError('an ext value cannot be written as JSON text (use dumps_msgpack)', 'E78')
 
     override def pack_to(self, out: list[int], depth: int):
-        if self.code < 0 - 128 or self.code > 127 or self.code == 0 - 1:
-            raise MsgpackError(f'the ext type {self.code} must be from -128 to 127 and not -1', 0 - 1, 'E87')
+        if self.code < -128 or self.code > 127 or self.code == -1:
+            raise MsgpackError(f'the ext type {self.code} must be from -128 to 127 and not -1', -1, 'E87')
         if !tomato_mp_blob(out, self.code, 1, self.data) != 0:
-            raise MsgpackError('a byte must be an int from 0 to 255', 0 - 1, 'E83')
+            raise MsgpackError('a byte must be an int from 0 to 255', -1, 'E83')
 
 # The MessagePack timestamp (ext type -1): whole seconds since 1970-01-01 UTC and nanoseconds 0 to 999999999.
 export class JsonTimestamp(Json):
@@ -461,9 +461,9 @@ export class JsonTimestamp(Json):
 
     override def pack_to(self, out: list[int], depth: int):
         if self.ns < 0 or self.ns > 999999999:
-            raise MsgpackError('timestamp nanoseconds must be from 0 to 999999999', 0 - 1, 'E84')
-        if self.secs < 0 - 4611686018427387904 or self.secs > 4611686018427387903:
-            raise MsgpackError('the timestamp seconds are out of range', 0 - 1, 'E85')
+            raise MsgpackError('timestamp nanoseconds must be from 0 to 999999999', -1, 'E84')
+        if self.secs < -4611686018427387904 or self.secs > 4611686018427387903:
+            raise MsgpackError('the timestamp seconds are out of range', -1, 'E85')
         !tomato_mp_ts(out, self.secs, self.ns)
 
 # Turns the scanner's tape back into a Json tree.
@@ -530,7 +530,7 @@ export def loads(text: str) -> Json:
     b = Builder()
     if !tomato_json_scan(text, b.tape, b.strs, b.nums) != 0:
         e = len(b.tape)
-        raise JSONDecodeError(b.strs[len(b.strs) - 1], b.tape[e - 3], b.tape[e - 2], b.tape[e - 1], 'E88')
+        raise JSONDecodeError(b.strs[-1], b.tape[e - 3], b.tape[e - 2], b.tape[e - 1], 'E88')
     return b.build()
 
 export def dumps(value: Json, indent: int = 0, sort_keys: bool = False, ensure_ascii: bool = False) -> str:
@@ -544,14 +544,14 @@ export def dumps(value: Json, indent: int = 0, sort_keys: bool = False, ensure_a
     return ''.join(w.out)
 
 # MessagePack. The bytes are a list of ints from 0 to 255. Decoding gives the same Json values as loads, plus JsonBin,
-# JsonExt and JsonTimestamp; map keys must be text; NaN and infinite floats are kept (JSON text refuses them); an invalid UTF-8 str, a byte 0xc1,
-# truncated or trailing data and more than 512 levels of nesting are a MsgpackError. Encoding writes each int in its
-# shortest form (up to 64 bits, signed or unsigned), floats as float64, text as str, a JsonBin as bin, a JsonExt as
-# ext and a JsonTimestamp as the shortest timestamp.
+# JsonExt and JsonTimestamp; map keys must be text; NaN and infinite floats are kept (JSON text refuses them); an
+# invalid UTF-8 str, a byte 0xc1, truncated or trailing data and more than 512 levels of nesting are a MsgpackError.
+# Encoding writes each int in its shortest form (up to 64 bits, signed or unsigned), floats as float64, text as str, a
+# JsonBin as bin, a JsonExt as ext and a JsonTimestamp as the shortest timestamp.
 export def loads_msgpack(data: list[int]) -> Json:
     b = Builder()
     if !tomato_msgpack_scan(data, b.tape, b.strs, b.nums) != 0:
-        raise MsgpackError(b.strs[len(b.strs) - 1], b.tape[len(b.tape) - 1], 'E89')
+        raise MsgpackError(b.strs[-1], b.tape[-1], 'E89')
     return b.build()
 
 export def dumps_msgpack(value: Json) -> list[int]:

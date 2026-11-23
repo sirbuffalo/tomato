@@ -1,0 +1,15 @@
+# open('/dev/stdout') and open('/dev/stderr') write to the program's own output, as a copy of its descriptor: output that
+# goes to a file (prog > log 2>&1) is neither truncated nor written over, on Linux as on macOS.
+@main
+def main():
+    out = open('/dev/stdout', 'w')
+    out.write('one\n')
+    out.close()
+    err = open('/dev/stderr', 'w')
+    err.write('two\n')
+    err.close()
+    print('three')                      # print's own buffer reaches the file last, when the program ends
+    try:
+        open('/dev/stdnothing', 'r')
+    catch IOError as e:
+        print(e.message)

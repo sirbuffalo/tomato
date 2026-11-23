@@ -106,8 +106,7 @@ try_run() {
     try_once "$1" "$2"; ok=$?
     if [ "$RUN_RC" = 75 ]; then
       asked=1
-      have=$(wc -c < "$S/shown.try" | tr -d ' ')
-      if [ "$have" -gt 0 ] && head -c "$have" "$S/out" | cmp -s - "$S/shown.try"; then tail -c +$((have + 1)) "$S/out"; else cat "$S/out"; fi
+      new_output "$S/shown.try"
       cp "$S/out" "$S/shown.try"
       if ! readline ""; then echo; : > "$S/err"; cp "$S/shown.try" "$S/shown"; return 1; fi
       printf '%s\n' "$REPLY_LINE" >> "$S/inputs.try"
@@ -163,9 +162,10 @@ friendly_plain() {   # reads $S/err, prints the message on stderr; writes "in-de
 }
 
 
-new_output() {  # print the part of $S/out that is not in the previous output
-  have=$(wc -c < "$S/shown" | tr -d ' ')
-  if [ "$have" -gt 0 ] && head -c "$have" "$S/out" | cmp -s - "$S/shown"; then tail -c +$((have + 1)) "$S/out"; else cat "$S/out"; fi
+new_output() {  # print the part of $S/out that is not in the previous output ($1, default $S/shown)
+  prev_out="${1:-$S/shown}"
+  have=$(wc -c < "$prev_out" | tr -d ' ')
+  if [ "$have" -gt 0 ] && head -c "$have" "$S/out" | cmp -s - "$prev_out"; then tail -c +$((have + 1)) "$S/out"; else cat "$S/out"; fi
 }
 
 commit() {   # the candidate worked: keep it

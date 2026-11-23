@@ -7,10 +7,10 @@
   ],
   "surroundingPairs": [["(", ")"], ["[", "]"], ["{", "}"], ["\"", "\""], ["'", "'"]],
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(def|class|interface|if|elif|else|while|for|try|catch|finally)\\b.*:\\s*(#.*)?$",
+    "increaseIndentPattern": "^\\s*(async|def|class|interface|if|elif|else|while|for|try|catch|finally)\\b.*:\\s*(#.*)?$",
     "decreaseIndentPattern": "^\\s*(elif|else|catch|finally)\\b.*:\\s*(#.*)?$"
   },
   "onEnterRules": [
-    { "beforeText": "^\\s*(?:def|class|interface|if|elif|else|while|for|try|catch|finally)\\b.*:\\s*(#.*)?$", "action": { "indent": "indent" } }
+    { "beforeText": "^\\s*(?:async|def|class|interface|if|elif|else|while|for|try|catch|finally)\\b.*:\\s*(#.*)?$", "action": { "indent": "indent" } }
   ]
 }

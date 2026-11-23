@@ -1,5 +1,7 @@
-# JSON (std/json.tom): read a document, look inside it, build a new one and write it out, with the errors a bad document gives.
-from json import loads, dumps, Json, JsonDict, JsonList, JsonInt, JsonFloat, JsonStr, JsonBool, JsonNull, JSONDecodeError, JSONTypeError
+# JSON (std/json.tom): read a document, look inside it, build a new one and write it out, with the errors a bad
+# document gives.
+from json import loads, dumps, Json, JsonDict, JsonList, JsonInt, JsonFloat, JsonStr, JsonBool, JsonNull
+from json import JSONDecodeError, JSONTypeError
 
 def summarize(doc: Json) -> int:
     total = 0
@@ -10,14 +12,16 @@ def summarize(doc: Json) -> int:
 
 @main
 def main():
-    text = '{"customer": "Ada", "vip": true, "orders": [{"id": 1, "lines": [{"qty": 2, "cents": 250}, {"qty": 1, "cents": 1999}]}, {"id": 2, "lines": []}], "note": null}'
+    text = ('{"customer": "Ada", "vip": true, "orders": [' +
+            '{"id": 1, "lines": [{"qty": 2, "cents": 250}, {"qty": 1, "cents": 1999}]}, ' +
+            '{"id": 2, "lines": []}], "note": null}')
     doc = loads(text)
     print(doc['customer'].as_str(), len(doc['orders']), summarize(doc))   # Ada 2 2499
 
     # missing keys and optional fields
     print('vip' in doc, 'coupon' in doc)
     coupon = doc.get('coupon')
-    if coupon in None:
+    if coupon is None:
         print('no coupon')
     print(doc['note'].is_null())
 

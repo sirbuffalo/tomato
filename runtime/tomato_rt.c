@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if !defined(TOMATO_WASM) && !defined(__wasi__)
 #define TOMATO_STACK_GUARD   /* native programs only: WebAssembly has no signals */
 #include <signal.h>
@@ -126,16 +127,7 @@ _Noreturn void tomato_fail_id(int kind, const char *message) {
     exit(1);
 }
 
-/* Kept for older bootstrap IR. */
-void tomato_fail(const char *message) { tomato_fail_id(371, message); }
 static _Noreturn void out_of_memory(void) { tomato_fail_id(349, "out of memory"); }
-
-/* Release mode (D34b): a short code that `tomato explain` decodes with the source. Printed as E<kind>:<line>. */
-void tomato_fail_code(int kind, int line) {
-    fflush(stdout);
-    fprintf(stderr, "error E%02d:%d\n", kind, line);
-    exit(1);
-}
 
 #ifdef TOMATO_STACK_GUARD
 /* A function that calls itself without end used to die with a bare segmentation fault. A fault just below the stack
@@ -173,10 +165,6 @@ __attribute__((constructor)) static void install_stack_guard(void) {
 
 void tomato_print_i64(int64_t v) { printf("%lld", (long long)v); }
 void tomato_print_u64(uint64_t v) { printf("%llu", (unsigned long long)v); }
-void tomato_print_bool(int v) { fputs(v ? "True" : "False", stdout); }
-void tomato_print_str(const char *s) { fputs(s, stdout); }
-void tomato_print_space(void) { putchar(' '); }
-void tomato_print_newline(void) { putchar('\n'); }
 
 /* The shortest text that reads back as the same double, laid out like the interpreter prints it: fixed notation
  * when the exponent is from -4 to 15 (with ".0" kept on whole numbers), otherwise d.ddde+XX. */
@@ -217,12 +205,6 @@ static int format_f64(double v, char *out) {
     }
     out[len] = '\0';
     return len;
-}
-
-void tomato_print_f64(double v) {
-    char out[96];
-    format_f64(v, out);
-    fputs(out, stdout);
 }
 
 static void bad_input(int position, const char *what, const char *text) {
@@ -550,8 +532,11 @@ void *tomato_str_index(void *a, int64_t i) {
         }
         return c;
     }
-    int64_t n = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : 2;
-    return str_new(s->data + from, n);
+    /* the lead byte and the continuation bytes after it, as count_chars counts a character: text read from a file may be
+     * cut short or not UTF-8 at all, and the lead byte alone must not decide how far to read */
+    int64_t to = from + 1;
+    while (to < s->bytes && ((unsigned char)s->data[to] & 0xC0) == 0x80) to++;
+    return str_new(s->data + from, to - from);
 }
 
 void *tomato_str_slice(void *a, int64_t lo, int64_t hi) {
@@ -573,7 +558,7 @@ static int64_t slice_plan(int64_t len, int64_t lo, int64_t hi, int64_t step, int
     if (!(flags & 2)) b = step < 0 ? lower : upper;
     else { b = hi; if (b < 0) { b += len; if (b < lower) b = lower; } else if (b > upper) b = upper; }
     *start = a;
-    if (step < 0) return b < a ? (a - b - 1) / (-step) + 1 : 0;
+    if (step < 0) return b < a ? (int64_t)((uint64_t)(a - b - 1) / ((uint64_t)0 - (uint64_t)step)) + 1 : 0;   /* -INT64_MIN overflows */
     return a < b ? (b - a - 1) / step + 1 : 0;
 }
 
@@ -698,12 +683,16 @@ void *tomato_str_chr(int64_t cp) {
     return str_new(b, n);
 }
 
-/* ord(c): the code point of the first character (the compiled code checks that there is exactly one). */
+/* ord(c): the code point of the first character (the compiled code checks that there is exactly one). A character that is
+ * not valid UTF-8 (text read from a file can hold any bytes) gives U+FFFD, the replacement character. */
 int64_t tomato_str_ord(void *s) {
-    const unsigned char *p = (const unsigned char *)((Str *)s)->data;
+    Str *t = s;
+    const unsigned char *p = (const unsigned char *)t->data;
     if (p[0] < 0x80) return p[0];
-    if (p[0] < 0xE0) return ((int64_t)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
-    if (p[0] < 0xF0) return ((int64_t)(p[0] & 0x0F) << 12) | ((int64_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    int64_t n = p[0] >= 0xF0 ? 4 : p[0] >= 0xE0 ? 3 : 2;
+    if (p[0] < 0xC0 || p[0] > 0xF7 || t->bytes < n) return 0xFFFD;
+    if (n == 2) return ((int64_t)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+    if (n == 3) return ((int64_t)(p[0] & 0x0F) << 12) | ((int64_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
     return ((int64_t)(p[0] & 0x07) << 18) | ((int64_t)(p[1] & 0x3F) << 12) | ((int64_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
 }
 
@@ -2019,8 +2008,32 @@ void *tomato_str_strip(void *src) {
 /* ---- files (bootstrap, D38a): a FILE* the program opens and closes itself ---- */
 static int open_errno;
 
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+/* The standard streams by name. macOS opens /dev/stdout as a copy of descriptor 1, but Linux opens the file it points to
+ * anew: with 'w' that truncates a file that `prog > log 2>&1` is writing, and the copy does not share its offset. A copy of
+ * the descriptor behaves the same everywhere. Returns -1 for any other path. */
+static int std_stream_fd(const char *path) {
+    if (strncmp(path, "/dev/std", 8) != 0) return -1;
+    if (strcmp(path + 8, "in") == 0) return 0;
+    if (strcmp(path + 8, "out") == 0) return 1;
+    if (strcmp(path + 8, "err") == 0) return 2;
+    return -1;
+}
+#endif
+
 void *tomato_file_open(void *path, void *mode) {
-    FILE *f = fopen(((Str *)path)->data, ((Str *)mode)->data);
+    const char *p = ((Str *)path)->data, *m = ((Str *)mode)->data;
+    FILE *f;
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+    int fd = std_stream_fd(p);
+    if (fd >= 0) {
+        int copy = dup(fd);
+        f = copy < 0 ? NULL : fdopen(copy, m);
+        if (!f) { open_errno = errno; if (copy >= 0) close(copy); }
+        return f;
+    }
+#endif
+    f = fopen(p, m);
     if (!f) open_errno = errno;
     return f;
 }
@@ -2146,9 +2159,11 @@ typedef struct { void *frame; double wake; int64_t seq; } Sleeper;
 static Sleeper *sl_q; static int64_t sl_n, sl_cap, sl_seq;
 static double sl_now, sl_origin = -1;
 
+/* clock(): seconds on a monotonic clock, as a float; only differences mean anything. Real time, not the logical sleep clock. */
+double tomato_clock(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec * 1e-9; }
+
 #if !defined(TOMATO_WASM) && !defined(__wasi__)
-#include <time.h>
-static double real_seconds(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec * 1e-9; }
+static double real_seconds(void) { return tomato_clock(); }
 static void real_wait_until(double logical) {
     double left = logical - (real_seconds() - sl_origin);
     if (left <= 0) return;
@@ -2160,10 +2175,6 @@ static void real_wait_until(double logical) {
 static double real_seconds(void) { return 0; }
 static void real_wait_until(double logical) { (void)logical; }
 #endif
-
-/* clock(): seconds on a monotonic clock, as a float; only differences mean anything. Real time, not the logical sleep clock. */
-#include <time.h>
-double tomato_clock(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec * 1e-9; }
 
 void tomato_sleep_wait(void *frame, double seconds) {
     if (sl_origin < 0) sl_origin = real_seconds();
@@ -2259,7 +2270,6 @@ static int curl_load(void) {
 #define CURLOPT_WRITEDATA 10001
 #define CURLOPT_URL 10002
 #define CURLOPT_POSTFIELDS 10015
-#define CURLOPT_USERAGENT 10018
 #define CURLOPT_HTTPHEADER 10023
 #define CURLOPT_HEADERDATA 10029
 #define CURLOPT_CUSTOMREQUEST 10036
@@ -2275,7 +2285,6 @@ static int curl_load(void) {
 #define CURLOPT_WRITEFUNCTION 20011
 #define CURLOPT_HEADERFUNCTION 20079
 #define CURLOPT_TIMEOUT_MS 155
-#define CURLOPT_CONNECTTIMEOUT_MS 156
 #define CURLINFO_EFFECTIVE_URL 1048577
 #define CURLINFO_RESPONSE_CODE 2097154
 #define CURLINFO_PRIVATE 1048597
@@ -2328,10 +2337,11 @@ static int http_step(void) {
         char *priv = NULL;
         cu.easy_getinfo(m->easy, CURLINFO_PRIVATE, &priv);
         HttpReq *r = (HttpReq *)priv;
+        int result = m->data.result;      /* read first: the message does not survive the removal of its handle */
         cu.multi_remove(cu.multi, m->easy);
         http_active--;
         char *errcopy = r->err; if (errcopy && errcopy[0] == 0) { free(errcopy); r->err = NULL; }
-        http_finish(r, m->data.result);
+        http_finish(r, result);
         cu.easy_cleanup(r->easy); r->easy = NULL;
         cu.slist_free_all(r->slist); r->slist = NULL;
         if (r->frame) { void *f = r->frame; r->frame = NULL; tomato_q_push(f); tomato_release(f); }
@@ -2386,7 +2396,7 @@ int64_t tomato_http_start(void *method, void *url, void *headers, void *body, in
     cu.easy_setopt(e, CURLOPT_FOLLOWLOCATION, follow ? 1L : 0L);
     cu.easy_setopt(e, CURLOPT_MAXREDIRS, (long)max_redirects);
     cu.easy_setopt(e, CURLOPT_REDIR_PROTOCOLS, 3L);          /* a redirect may only lead to http or https (CURLPROTO_HTTP | CURLPROTO_HTTPS) */
-    if (timeout > 0) cu.easy_setopt(e, CURLOPT_TIMEOUT_MS, (long)(timeout * 1000.0 + 0.5));
+    if (timeout > 0 && timeout < 1e9) cu.easy_setopt(e, CURLOPT_TIMEOUT_MS, (long)(timeout * 1000.0 + 0.5));   /* longer: none */
     if (strcmp(cm, "HEAD") == 0) cu.easy_setopt(e, CURLOPT_NOBODY, 1L);
     else if (strcmp(cm, "GET") != 0 && strcmp(cm, "POST") != 0) cu.easy_setopt(e, CURLOPT_CUSTOMREQUEST, cm);
     if (strcmp(cm, "POST") == 0) body_mode = 1;
@@ -2764,7 +2774,6 @@ int tomato_list_eq_bytes(void *a, void *b, int64_t w) {
     List *x = a, *y = b;
     return x->len == y->len && (x->len == 0 || memcmp(x->data, y->data, (size_t)(x->len * w)) == 0);
 }
-void tomato_list_free_data(void *l) { free(((List *)l)->data); }
 
 /* Is an object of class `code` an instance of the class `target` (the class itself or a descendant)? (D12az) */
 int tomato_is_subclass(int64_t code, int64_t target) {
@@ -2992,26 +3001,7 @@ void *tomato_dict_pairs(void *dp, int64_t list_type, int64_t pair_type, int val_
     return l;
 }
 
-void tomato_dict_destroy(void *dp, int key_rc, int val_rc) {
-    Dict *d = dp;
-    for (int64_t i = 0; i < d->used; i++) {
-        char *e = ENTRY(d, i);
-        if (!E_LIVE(e)) continue;
-        if (key_rc) tomato_release((void *)E_KEY(e));
-        if (val_rc) tomato_release(*(void **)E_VAL(e));
-    }
-    free(d->entries);
-    free(d->index);
-}
-
-int tomato_str_contains(void *hay, void *needle) {
-    Str *h = hay, *n = needle;
-    if (n->bytes == 0) return 1;
-    if (n->bytes > h->bytes) return 0;
-    for (int64_t i = 0; i + n->bytes <= h->bytes; i++)
-        if (memcmp(h->data + i, n->data, (size_t)n->bytes) == 0) return 1;
-    return 0;
-}
+int tomato_str_contains(void *hay, void *needle) { return find_bytes(hay, needle, 0) >= 0; }
 
 /* An error nobody caught reached the entry point (D22a). `runtime` is 1 for an implicit check emitted by the
  * compiler. Mode is 1 debug, 2 release (D34b). */
@@ -3150,7 +3140,24 @@ static void unread_report(void *err, int line, int rt) {
     unread_failed = 1;
 }
 
+/* A task frame's list of the tasks waiting for it (byte 40) belongs to the runtime: tomato_task_wait makes it, and it is kept
+ * across wake-ups (a task that yields wakes its waiters many times), so it goes when the frame does. A waiter still listed
+ * holds a reference that the frame gives back. */
+static void frame_free_waiters(Hdr *h) {
+    PtrVec *v = *(PtrVec **)((char *)h + 40);
+    if (!v) return;
+    *(PtrVec **)((char *)h + 40) = NULL;
+    for (int64_t i = 0; i < v->n; i++) {
+        uint64_t *on = (uint64_t *)((char *)v->items[i] + 80);    /* what it waits for: a cancel must not look at this frame */
+        if (*on == (uint64_t)(uintptr_t)h) *on = 0;
+        tomato_release(v->items[i]);
+    }
+    free(v->items);
+    free(v);
+}
+
 static void frame_dropped(Hdr *h) {
+    frame_free_waiters(h);
     void *starter = frame_starter(h);
     *(uint64_t *)((char *)h + 72) = 0;
     if (*(int64_t *)((char *)h + 32) == 2 && !(h->type & F_RETRIEVED) && !collecting) {
@@ -3351,6 +3358,10 @@ void tomato_collect_cycles(void) {
     for (int64_t i = 0; i < roots_n; i++) roots[i]->type &= ~F_BUFFERED;
     garbage_n = 0;
     for (int64_t i = 0; i < roots_n; i++) collect_white(roots[i]);   /* collect: what is left white is a cycle */
+    /* A task frame's waiters are references the tracing does not see, so a listed waiter kept its count and is black: giving
+     * it back can only free black objects, never one in the garbage list (releasing an object whose count is 0 does nothing). */
+    for (int64_t i = 0; i < garbage_n; i++)
+        if (tomato_kinds[tcode(garbage[i])] & 1024) frame_free_waiters(garbage[i]);
     for (int64_t i = 0; i < garbage_n; i++) {
         free_internals(garbage[i]);
         obj_free(garbage[i]);
@@ -3380,12 +3391,6 @@ static void possible_root(Hdr *h) {
         }
     }
     if (roots_n >= gc_threshold && !collecting) tomato_collect_cycles();
-}
-
-/* Equality where either side may be None (D23b): None equals only None. */
-int tomato_str_eq_opt(void *a, void *b) {
-    if (!a || !b) return a == b;
-    return tomato_str_cmp(a, b) == 0;
 }
 
 /* ---- ** and // helpers (the compiler declares these; see compiler.tom num_power and float_op) */
@@ -4625,9 +4630,15 @@ void *tomato_json_quote(void *text, int64_t ascii) {
                          default: out[o++] = 'u'; out[o++] = '0'; out[o++] = '0'; out[o++] = hex[c >> 4]; out[o++] = hex[c & 15]; }
             k++;
         } else if (c >= 0x80 && ascii) {
-            int L = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : 2;
+            /* text read from a file may not be UTF-8: a broken character (its lead byte and the continuation bytes after it,
+             * as count_chars counts one) becomes U+FFFD */
+            int64_t L = jutf8((const unsigned char *)t->data + k, t->bytes - k);
             int cp = L == 2 ? (c & 0x1F) : L == 3 ? (c & 0x0F) : (c & 0x07);
             for (int m = 1; m < L; m++) cp = (cp << 6) | ((unsigned char)t->data[k + m] & 0x3F);
+            if (!L) {
+                cp = 0xFFFD;
+                for (L = 1; k + L < t->bytes && ((unsigned char)t->data[k + L] & 0xC0) == 0x80;) L++;
+            }
             k += L;
             int units[2], nu = 1;
             if (cp >= 0x10000) { cp -= 0x10000; units[0] = 0xD800 + (cp >> 10); units[1] = 0xDC00 + (cp & 0x3FF); nu = 2; }
@@ -4707,7 +4718,7 @@ static int mstring(JScan *j, int64_t *ip, int64_t len) {
     *ip = i + len;
     return 1;
 }
-/* the length of a str header at s[*ip] (a map key), or -1 when the byte is not a str header */
+/* a map key at s[*ip], which must be a str: pushes it like any text; 0 (with the error set) when it is not one or is cut short */
 static int mkey(JScan *j, int64_t *ip) {
     const unsigned char *p = (const unsigned char *)j->s;
     int64_t i = *ip, len;
@@ -4836,14 +4847,13 @@ int64_t tomato_msgpack_scan(void *data, void *tape, void *strs, void *nums) {
     int64_t bad = 0;
     unsigned char *buf = mbytes(data, &bad);
     JScan j = { (const char *)buf, ((List *)data)->len, tape, strs, nums, NULL, 0 };
-    int ok, i = 0;
+    int ok;
     int64_t at = 0;
     if (!buf) { j.s = ""; j.n = 0; ok = jerr(&j, bad, "A byte must be an int from 0 to 255"); }
     else {
         ok = mvalue(&j, &at, 0);
         if (ok && at != j.n) ok = jerr(&j, at, "Extra data");
     }
-    (void)i;
     if (!ok) {
         jtape(&j, j.at);
         jstr_push(&j, j.msg, (int64_t)strlen(j.msg));
@@ -4897,7 +4907,7 @@ void tomato_mp_i64(void *out, int64_t v) {
 }
 /* a whole number from 2^63 to 2^64 - 1, given as its two 32-bit halves */
 void tomato_mp_u64(void *out, int64_t hi, int64_t lo) { mput(out, 0xcf); mput_be(out, ((uint64_t)hi << 32) | (uint64_t)lo, 8); }
-/* bin (code 0 < 0 means a plain bin) or ext with this type code; returns 1 when an item of data is not a byte */
+/* a bin (isext 0) or an ext with type `code` (isext 1) holding the bytes of data; returns 1 when an item of data is not a byte */
 int64_t tomato_mp_blob(void *out, int64_t code, int64_t isext, void *data) {
     int64_t bad;
     unsigned char *b = mbytes(data, &bad);
@@ -5020,6 +5030,4 @@ double tomato_math2(int64_t op, double x, double y) {
 /* 1 when x is neither infinite nor not-a-number */
 int64_t tomato_is_finite(double x) { return isfinite(x) ? 1 : 0; }
 /* the number of 1 bits in a 32-bit chunk of a bitarray (std/bitarray.tom) */
-/* the 32-bit chunk with only bit r set, bit 0 being the leftmost (most significant) */
-int64_t tomato_bit_mask(int64_t r) { return (int64_t)1 << (31 - r); }
 int64_t tomato_popcount(int64_t x) { return (int64_t)__builtin_popcountll((unsigned long long)x); }

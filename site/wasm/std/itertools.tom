@@ -1,7 +1,7 @@
 # Loop helpers, written in Tomato: `from itertools import progress_bar`, a small progress bar.
 # There is no clock in the language yet, so the bar shows a count and a percentage but no speed or time left.
 #
-#     for x in progress_bar(items, 'copying'):     # items: any iterable with a length (list, range, text, your own class)
+#     for x in progress_bar(items, 'copying'):     # items: any iterable with a length (list, range, text, a class)
 #         ...
 #
 # or by hand:
@@ -33,9 +33,7 @@ export class progress_bar[T]:
         self.width = width
 
     def render(self) -> str:
-        prefix = ''
-        if len(self.label) > 0:
-            prefix = self.label + ': '
+        prefix = f'{self.label}: ' if self.label != '' else ''
         if self.total == 0:
             return f'{prefix}{self.count}it'
         shown = min(self.count, self.total)
@@ -47,7 +45,7 @@ export class progress_bar[T]:
 
     def show(self, end: str):
         f = open('/dev/stderr', 'w')
-        f.write('\r' + self.render() + end)
+        f.write(f'\r{self.render()}{end}')
         f.close()
 
     def update(self, n: int = 1):

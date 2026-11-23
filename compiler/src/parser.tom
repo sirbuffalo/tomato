@@ -3,7 +3,7 @@
 # Every node is one class: a kind, a line and an ordered list of field values (a Val holds a name, number, bool,
 # None, node, list or tuple), in the order the language grammar lists them. `dump` writes the tree as text so
 # the tree can be inspected.
-from lexer import Token, lex
+from lexer import Token, lex, make_token
 
 export class ParseError(Error):
     line: int = 0
@@ -124,15 +124,7 @@ export def vtuple(items: list[Val]) -> Val:
     return v
 
 export def vnodes(nodes: list[Node]) -> Val:
-    items: list[Val] = []
-    for n in nodes:
-        items.append(vn(n))
-    return vlist(items)
-
-def vopt(n: Node | None) -> Val:
-    if n is None:
-        return vz()
-    return vn(n)
+    return vlist([vn(n) for n in nodes])
 
 def vopt_text(s: str) -> Val:
     # `None` is written as the empty text, which is never a real name
@@ -239,12 +231,7 @@ export class Parser:
             joined = (i >= self.p and tk.kind == 'NAME' and tk.text == mod and i + 2 < len(toks) and toks[i + 1].kind == 'OP'
                       and toks[i + 1].text == '.' and toks[i + 2].kind == 'NAME' and not (i > 0 and toks[i - 1].kind == 'OP' and toks[i - 1].text == '.'))
             if joined:
-                tk2 = Token()
-                tk2.kind = 'NAME'
-                tk2.text = mod + '.' + toks[i + 2].text
-                tk2.line = tk.line
-                tk2.col = tk.col
-                out.append(tk2)
+                out.append(make_token('NAME', mod + '.' + toks[i + 2].text, 0, tk.line, tk.col))
                 i += 3
             else:
                 out.append(tk)
@@ -278,12 +265,16 @@ export class Parser:
             return True
         return False
 
-    # one or more names separated by commas, as text values
-    def name_list(self) -> list[Val]:
-        names = [vs(self.expect('NAME').text)]
+    # one or more names separated by commas
+    def name_texts(self) -> list[str]:
+        names = [self.expect('NAME').text]
         while self.accept_op(','):
-            names.append(vs(self.expect('NAME').text))
+            names.append(self.expect('NAME').text)
         return names
+
+    # the same, as text values
+    def name_list(self) -> list[Val]:
+        return [vs(name) for name in self.name_texts()]
 
     def err(self, msg: str):
         t = self.cur()
@@ -308,7 +299,11 @@ export class Parser:
     def module(self) -> Node:
         body: list[Node] = []
         while self.cur().kind != 'EOF':
-            body.append(self.top_item())
+            item = self.top_item()
+            if item.kind == 'Module':
+                body.extend(val_nodes(item.fields[0]))     # `C implements A, B`: one Implements per interface
+            else:
+                body.append(item)
         return mk('Module', 1, [vnodes(body)])
 
     def top_item(self) -> Node:
@@ -680,17 +675,11 @@ export class Parser:
             item = mk('Index', line, [vn(mk('Name', line, [vs(stem)])), vn(mk('IntLit', line, [vi(k)]))])
             parts.append(mk('Assign', line, [vn(mk('Name', line, [vs(nm)])), vn(item)]))
         unpack = mk('Multi', line, [vnodes(parts)])
-        stmts: list[Node] = [unpack]
-        for b in body:
-            stmts.append(b)
-        fields: list[Val] = [vs(stem), vn(it), vnodes(stmts)]
+        fields: list[Val] = [vs(stem), vn(it), vnodes([unpack] + body)]
         if it.kind == 'Call' and len(names) == 2 and len(val_nodes(it.fields[1])) == 0 and len(it.fields[2].items) == 0:
             f = val_node(it.fields[0])
             if f.kind == 'Attr' and f.fields[1].text == 'items':
-                nms: list[Val] = []
-                for nm in names:
-                    nms.append(vs(nm))
-                fields.append(vlist(nms))
+                fields.append(vlist([vs(nm) for nm in names]))
         return mk('For', line, fields)
 
     def pairs_for(self, line: int, names: list[str], it: Node, body: list[Node]) -> Node:
@@ -725,16 +714,10 @@ export class Parser:
         q = Parser()
         q.toks = lex(text)
         loop = q.statement()
-        made = val_nodes(loop.fields[2])
-        stmts: list[Node] = []
-        for m in made:
-            if m.kind != 'Pass':
-                m.line = line
-                stmts.append(m)
-        for b in body:
-            stmts.append(b)
-        loop.line = line
-        return mk('For', line, [loop.fields[0], loop.fields[1], vnodes(stmts)])
+        stmts = [m for m in val_nodes(loop.fields[2]) if m.kind != 'Pass']
+        for m in stmts:
+            m.line = line
+        return mk('For', line, [loop.fields[0], loop.fields[1], vnodes(stmts + body)])
 
     # statements
     def statement(self) -> Node:
@@ -792,9 +775,7 @@ export class Parser:
             return mk('AsyncFor', t.line, [vs(an), vn(ait), vnodes(self.block())])
         if self.is_kw('for'):
             self.adv()
-            names: list[str] = [self.expect('NAME').text]
-            while self.accept_op(','):
-                names.append(self.expect('NAME').text)
+            names = self.name_texts()
             self.expect_kw('in')
             it = self.expr()
             self.expect_op(':')
@@ -825,8 +806,7 @@ export class Parser:
             return mk('Assign', t.line, [vn(e), vn(v)])
         if self.cur().kind == 'OP' and self.cur().text in ['+=', '-=', '*=', '/=', '%=', '//=', '**=', '&=', '|=', '^=', '<<=', '>>=']:
             # x += v is x = x + v (compound assignment, like Python)
-            optext = self.adv().text
-            op = optext[:len(optext) - 1]
+            op = self.adv().text[:-1]
             check_target(e, t)
             v = self.expr()
             self.expect('NEWLINE')
@@ -1150,9 +1130,7 @@ export class Parser:
     # to the list being built (a CompAppend statement), inside an If for the condition
     def comprehension(self, line: int, item: Node) -> Node:
         self.expect_kw('for')
-        names: list[str] = [self.expect('NAME').text]
-        while self.accept_op(','):
-            names.append(self.expect('NAME').text)
+        names = self.name_texts()
         self.expect_kw('in')
         it = self.or_()
         body: list[Node] = [mk('CompAppend', line, [vn(item)])]

@@ -1,0 +1,28 @@
+# Loops inside an async function: async for with a variable first given a value in its body (no warning), and
+# for k, v in d.items(), whose v keeps the dict's value type as it does outside an async function
+async def steps() -> int yields str:
+    yield 'load'
+    yield 'run'
+    return 2
+
+async def total(prices: dict[str, int]) -> int:
+    sum_of = 0
+    for name, price in prices.items():
+        await sleep(0)
+        sum_of += price * 2
+        print(name, price + 1)
+    return sum_of
+
+@main
+async def main():
+    async for status in start steps():
+        shown = status.upper() + '!'
+        print(shown)
+    prices: dict[str, int] = {'tea': 3, 'cake': 5}
+    for item, cost in prices.items():
+        doubled = cost * 2
+        print(item, doubled)
+    print(await total(prices))
+    lists: dict[str, list[int]] = {'a': [1, 2], 'b': [3]}
+    for key, values in lists.items():
+        print(key, len(values), values[-1])

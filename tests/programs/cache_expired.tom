@@ -1,0 +1,31 @@
+# std/cache.tom: peek, delete, in and set on an entry that has expired but was not looked at yet.
+from cache import Cache, Clock
+
+class FakeClock(Clock):
+    t: float = 0.0
+
+    override def now(self) -> float:
+        return self.t
+
+@main
+def main():
+    clk = FakeClock()
+    c = Cache[int](5, 10.0, clk)
+    c.set('a', 1)
+    c.set('b', 2)
+    c.set('c', 3)
+    c.set('d', 4)
+    clk.t = 10.0
+    # peek drops the expired entry and does not count a hit or a miss
+    print(c.peek('a', -1), c.hits, c.misses, c.expirations, len(c))
+    # an expired entry is already gone for delete, and delete counts it as an expiration
+    print(c.delete('b'), c.expirations, len(c))
+    # `in` finds nothing either
+    print('c' in c, c.expirations, len(c))
+    # set over an expired key just replaces it and gives it a new life
+    c.set('d', 5)
+    print(c.get('d', -1), c.expirations, c.keys())
+    clk.t = 19.9
+    print(c.peek('d', -1))
+    clk.t = 20.0
+    print(c.peek('d', -1), len(c), c.expirations)

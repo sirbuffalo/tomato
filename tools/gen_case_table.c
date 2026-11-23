@@ -1,4 +1,4 @@
-/* Generates the case tables inside runtime/tomato_rt.c (tomato_case_upper / tomato_case_lower) from the C library's Unicode
+/* Generates the case tables inside runtime/tomato_rt.c (case_upper_rows / case_lower_rows) from the C library's Unicode
  * simple case mapping: clang -o gen tools/gen_case_table.c && ./gen > table.txt, then paste the two arrays into the runtime.
  * Each row is {first, last, delta, step}: code points first, first+step, ... up to last map to code point + delta. */
 #include <locale.h>
@@ -19,17 +19,18 @@ static wint_t lower_fixed(wint_t c) {
     return towlower(c);
 }
 
+static int delta(wint_t (*f)(wint_t), int cp) { return (int)f((wint_t)cp) - cp; }
+
 static void emit(const char *name, wint_t (*f)(wint_t)) {
     printf("static const int32_t %s[][4] = {\n", name);
-    int n = 0;
     for (int cp = 0x80; cp < 0x20000;) {
-        int d = (int)f((wint_t)cp) - cp;
+        int d = delta(f, cp);
         if (d == 0) { cp++; continue; }
-        int step = 1, last = cp;
-        if ((int)f((wint_t)(cp + 1)) - (cp + 1) != d && (int)f((wint_t)(cp + 2)) - (cp + 2) == d) step = 2;
-        while ((int)f((wint_t)(last + step)) - (last + step) == d) last += step;
+        /* a row with step 2 (capital and small letters taking turns) leaves the code points in between unchanged, so it
+         * may only cover them when they really map to themselves */
+        int step = delta(f, cp + 1) == 0 && delta(f, cp + 2) == d ? 2 : 1, last = cp;
+        while (delta(f, last + step) == d && (step == 1 || delta(f, last + 1) == 0)) last += step;
         printf("    {0x%X, 0x%X, %d, %d},\n", cp, last, d, step);
-        n++;
         cp = last + 1;
     }
     printf("};\n");

@@ -117,8 +117,7 @@ def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
     return j
 
 def push_op(toks: list[Token], op: str, ln: int, col: int):
-    t = make_token('OP', op, 0, ln, col)
-    toks.append(t)
+    toks.append(make_token('OP', op, 0, ln, col))
 
 def push_text(toks: list[Token], text: str, ln: int, col: int):
     toks.append(make_token('STR', text, 0, ln, col))
@@ -225,10 +224,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             while j < n and is_name_char(raw[j]):
                 j += 1
             w = raw[i:j]
-            if is_keyword(w):
-                toks.append(make_token('KW', w, 0, ln))
-            else:
-                toks.append(make_token('NAME', w, 0, ln))
+            toks.append(make_token('KW' if is_keyword(w) else 'NAME', w, 0, ln))
             i = j
         elif c == '"' or c == "'":
             j = i + 1
@@ -255,8 +251,8 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
         elif c in '+-*/%<>=()[]{}:,.@!|&^~':
             if c in '([{':
                 depth += 1
-            elif c in ')]}':
-                depth -= 1
+            elif c in ')]}' and depth > 0:
+                depth -= 1              # a closing bracket with nothing open is left for the parser to report
             toks.append(make_token('OP', c, 0, ln))
             i += 1
         else:
@@ -289,9 +285,7 @@ export def lex(src: str) -> list[Token]:
         ln = index + 1
         n = len(raw)
         if depth == 0:
-            width = 0
-            while width < n and raw[width] == ' ':
-                width += 1
+            width = n - len(raw.lstrip(' '))
             if width < n and raw[width] == '\t':
                 raise LexError('a tab cannot be used for indentation\nindent with spaces instead', ln, width + 1)
             if width >= n or raw[width] == '#':
@@ -300,7 +294,7 @@ export def lex(src: str) -> list[Token]:
                 indents.append(width)
                 toks.append(make_token('INDENT', '', 0, ln, width + 1))
             while width < indents[-1]:
-                indents = indents[:-1]
+                indents.pop()
                 toks.append(make_token('DEDENT', '', 0, ln, width + 1))
                 if width > indents[-1]:
                     raise LexError('this line is indented differently from the block it belongs to\nindent it by the same number of spaces as the lines above it, or as an outer line', ln, width + 1)

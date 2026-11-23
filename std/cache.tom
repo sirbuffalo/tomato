@@ -22,7 +22,8 @@
 #
 # `memoize(f, capacity)` remembers a function's results (see `Memo` at the end of this file).
 #
-# `c.hits`, `c.misses`, `c.evictions` and `c.expirations` count what happened, and `c.hit_rate()` is hits / (hits + misses).
+# `c.hits`, `c.misses`, `c.evictions` and `c.expirations` count what happened, and `c.hit_rate()` is hits / (hits +
+# misses).
 #
 # A cache belongs to one program and the language runs one thing at a time: tasks switch only at `await`, and no cache
 # method awaits, so a cache can be shared by async tasks without a lock.
@@ -67,10 +68,7 @@ export class Cache[V]:
             raise ValueError('a cache capacity cannot be negative', 'E37')
         self.capacity = capacity
         self.ttl = ttl
-        if timer is None:
-            self.timer = Clock()
-        else:
-            self.timer = timer
+        self.timer = Clock() if timer is None else timer
 
     # counts entries that expired but have not been looked at yet: expiry is lazy (constant time), so an expired
     # entry is dropped when it is read, deleted, reaches the end of the use order, or is replaced
@@ -109,47 +107,50 @@ export class Cache[V]:
     def expired(self, e: Entry[V]) -> bool:
         return e.expires > 0.0 and self.timer.now() >= e.expires
 
-    # the live entry for key, or nothing; an expired one is dropped on the way
-    def live(self, key: str) -> bool:
-        if key not in self.items:
-            return False
-        e = self.items[key]
+    # the live entry for key, or None; an expired one is dropped on the way
+    def find(self, key: str) -> Entry[V] | None:
+        e = self.items.get(key)
+        if e is None:
+            return None
         if self.expired(e):
             self.remove(e)
             self.expirations += 1
-            return False
-        return True
+            return None
+        return e
 
-    def get(self, key: str, default: V) -> V:
-        if not self.live(key):
-            self.misses += 1
-            return default
-        e = self.items[key]
+    # a hit: count it and make the entry the most recently used
+    def touch(self, e: Entry[V]):
         self.hits += 1
         self.unlink(e)
         self.push_front(e)
+
+    def get(self, key: str, default: V) -> V:
+        e = self.find(key)
+        if e is None:
+            self.misses += 1
+            return default
+        self.touch(e)
         return e.value
 
     @get
     def at(self, key: str) -> V:
-        if not self.live(key):
+        e = self.find(key)
+        if e is None:
             self.misses += 1
             raise CacheMiss(f'{key} is not in the cache', 'E90')
-        e = self.items[key]
-        self.hits += 1
-        self.unlink(e)
-        self.push_front(e)
+        self.touch(e)
         return e.value
 
     # like get, but does not refresh the entry and does not count
     def peek(self, key: str, default: V) -> V:
-        if not self.live(key):
+        e = self.find(key)
+        if e is None:
             return default
-        return self.items[key].value
+        return e.value
 
     @contains
     def contains(self, key: str) -> bool:
-        return self.live(key)
+        return self.find(key) is not None
 
     def set(self, key: str, value: V, ttl: float = 0.0):
         if self.capacity == 0:
@@ -160,18 +161,18 @@ export class Cache[V]:
         expires = 0.0
         if life > 0.0:
             expires = self.timer.now() + life
-        if key in self.items:
-            e = self.items[key]
-            e.value = value
-            e.expires = expires
-            self.unlink(e)
-            self.push_front(e)
+        old = self.items.get(key)
+        if old is not None:
+            old.value = value
+            old.expires = expires
+            self.unlink(old)
+            self.push_front(old)
             return
         if len(self.items) >= self.capacity:
             self.evict()
-        e2 = Entry[V](key, value, expires)
-        self.items[key] = e2
-        self.push_front(e2)
+        e = Entry[V](key, value, expires)
+        self.items[key] = e
+        self.push_front(e)
 
     # make room: drop the least recently used entry (an expired one at the end counts as expired, not evicted)
     def evict(self):
@@ -186,9 +187,10 @@ export class Cache[V]:
 
     # true when the key was there (and live)
     def delete(self, key: str) -> bool:
-        if not self.live(key):
+        e = self.find(key)
+        if e is None:
             return False
-        self.remove(self.items[key])
+        self.remove(e)
         return True
 
     def clear(self):
@@ -216,8 +218,9 @@ export class Cache[V]:
 
 # Memoising a function. There are no closures yet, so `memoize` cannot return a function: it returns a `Memo`, and the
 # function is called through it, `m.call(x)`. The results live in an LRU `Cache`, keyed by the text of the argument
-# (`str(x)`), so use an int or text argument: two different values with the same `str` (a float and a text, say) would share one result; the function should
-# return the same result for the same argument. A function that raises is not remembered: the error passes through.
+# (`str(x)`), so use an int or text argument: two different values with the same `str` (a float and a text, say) would
+# share one result; the function should return the same result for the same argument. A function that raises is not
+# remembered: the error passes through.
 #
 #     def slow(n: int) -> int: ...
 #     m = memoize(slow, 100)            # remember the results of the last 100 different arguments

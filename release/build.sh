@@ -4,6 +4,7 @@
 # latest.json to the release too (tomato update falls back to it); site/build.sh copies it into site/. Usage: release/build.sh [ARCHIVE_URL]
 set -e
 root="$(cd "$(dirname "$0")/.." && pwd)"
+sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }   # macOS has shasum, some Linux systems only sha256sum
 version="$(cat "$root/VERSION")"
 repo="${TOMATO_REPO:-sirbuffalo/tomato}"
 url="${1:-https://github.com/$repo/releases/download/v$version/tomato-$version.tar.gz}"
@@ -21,6 +22,6 @@ cp "$root/compiler/bootstrap/tomatoc.ll" "$stage/compiler/bootstrap/"
 cp -R "$root/examples" "$stage/examples"
 tar -czf "$out/tomato-$version.tar.gz" -C "$out" "tomato-$version"
 rm -rf "$stage"
-sum="$(shasum -a 256 "$out/tomato-$version.tar.gz" | cut -d' ' -f1)"
+sum="$(sha256 "$out/tomato-$version.tar.gz" | cut -d' ' -f1)"
 printf '{\n  "version": "%s",\n  "url": "%s",\n  "sha256": "%s"\n}\n' "$version" "$url" "$sum" > "$out/latest.json"
 echo "built $out/tomato-$version.tar.gz and $out/latest.json"

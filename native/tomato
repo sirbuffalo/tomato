@@ -90,12 +90,13 @@ case "$cmd" in
     work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
     want="$(printf '%s' "$manifest" | sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' | head -1)"
     # fail closed: the manifest is the only integrity anchor, so it must carry a checksum and name an official download
-    case "$want" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) die "the manifest has no valid sha256: not updating" ;; esac
+    if [ "${#want}" -ne 64 ] || [ -n "$(printf '%s' "$want" | tr -d '0-9a-f')" ]; then die "the manifest has no valid sha256: not updating"; fi
     if [ -z "$TOMATO_UPDATE_ALLOW_ANY_URL" ]; then
       case "$archive" in https://github.com/sirbuffalo/tomato/releases/download/*) ;; *) die "the download is not an official release URL: not updating" ;; esac
     fi
     curl_safe "$archive" -o "$work/tomato.tar.gz" || die "cannot download $archive"
-    got="$(shasum -a 256 "$work/tomato.tar.gz" | cut -d' ' -f1)"
+    if command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$work/tomato.tar.gz")"; else got="$(sha256sum "$work/tomato.tar.gz")"; fi   # macOS has shasum, some Linux systems only sha256sum
+    got="${got%% *}"
     [ "$got" = "$want" ] || die "the download does not match its checksum"
     tar -xzf "$work/tomato.tar.gz" -C "$work" || die "the download is not a valid archive"
     # the link directory: where this command was reached through a symlink, else the default (never the real bin folder)
@@ -132,7 +133,7 @@ case "$cmd" in
       echo "  (line $line is past the end of $src_file: is this the file the program was built from?)"
       exit 0
     fi
-    trimmed="$(printf '%s' "$text" | sed 's/^[ \t]*//')"
+    trimmed="$(printf '%s' "$text" | sed 's/^ *//')"      # (a tab cannot indent Tomato; BSD sed would read \t in [] as a backslash and a t)
     indent=$(( ${#text} - ${#trimmed} ))
     pad="$(printf '%*s' "${#line}" '')"
     echo " --> $src_file:$line"

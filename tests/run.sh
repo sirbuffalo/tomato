@@ -6,6 +6,7 @@
 #   3. checks the command line (tomato run/build/compile/repl/update/version/help)
 cd "$(dirname "$0")/.." || exit 1
 root="$(pwd)"; work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }   # macOS has shasum, some Linux systems only sha256sum
 fails=0; passes=0
 ok() { passes=$((passes + 1)); echo "ok   $1"; }
 bad() { fails=$((fails + 1)); echo "FAIL $1"; [ -n "$2" ] && echo "$2" | sed 's/^/     /'; }
@@ -44,13 +45,13 @@ grep -v '^#' tests/programs.txt | while read -r name; do
   arg=""; case "$name" in toml_api|json_files) arg="$work" ;; esac   # they write files: into this run's own folder, not a shared /tmp
   # shellcheck disable=SC2086
   [ -s "$work/p.ll" ] && clang -O1 -w -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm && "$work/p" $arg > "$work/out" 2>&1
-  if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$work/passed2"; else echo "FAIL program $name"; diff "$work/out" "tests/expected/$name.main.out" | head -5 | sed 's/^/     /'; echo x >> "$work/failed2"; fi
+  if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$work/passed2"; else echo "FAIL program $name"; { head -3 "$work/e"; diff "$work/out" "tests/expected/$name.main.out" | head -5; } | sed 's/^/     /'; echo x >> "$work/failed2"; fi
 done
 [ -f "$work/passed2" ] && passes=$((passes + $(wc -l < "$work/passed2")))
 [ -f "$work/failed2" ] && fails=$((fails + $(wc -l < "$work/failed2")))
 
 echo "== memory (AddressSanitizer and the runtime's leak check) =="
-for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:$work" "tests/programs/json_files:$work" "tests/programs/msgpack_files:" "tests/programs/msgpack_file_basics:" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/runtime/error_classes:"; do
+for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:$work" "tests/programs/json_files:$work" "tests/programs/msgpack_files:" "tests/programs/msgpack_file_basics:" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/programs/utf8_invalid:" "tests/programs/async_tasks:" "tests/programs/async_cancel:" "tests/programs/async_sleep:" "tests/programs/error_path_release:" "tests/runtime/error_classes:"; do
   path="${spec%%:*}"; name="$(basename "$path")"; arg="${spec#*:}"
   "$work/c1" "$path.tom" main std/ > "$work/p.ll" 2>/dev/null
   if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
@@ -238,7 +239,7 @@ check "repl: a runtime error shows no call trace of the generated program" "erro
 check "repl: == is a comparison, = is an assignment" "False
 3" "$(printf 'x = 3\nx == 4\nx\n:quit\n' | $t repl)"
 case "$(printf ':help\n:quit\n' | $t repl 2>&1)" in *":reset"*":quit"*) ok "repl: :help lists every command";; *) bad "repl: :help lists every command";; esac
-r="$(printf 'from nosuch_mod import a\n:quit\n' | $t repl 2>&1)"; case "$r" in *"Could not open"*|*"$TMPDIR"*|*"/tmp/"*|*"/var/folders/"*) bad "repl: a missing module shows no temp path or tool noise" "$r";; *"nosuch_mod"*) ok "repl: a missing module shows no temp path or tool noise";; *) bad "repl: a missing module shows no temp path or tool noise" "$r";; esac
+r="$(printf 'from nosuch_mod import a\n:quit\n' | $t repl 2>&1)"; case "$r" in *"Could not open"*|*"${TMPDIR:-/tmp}/"*|*"/var/folders/"*) bad "repl: a missing module shows no temp path or tool noise" "$r";; *"nosuch_mod"*) ok "repl: a missing module shows no temp path or tool noise";; *) bad "repl: a missing module shows no temp path or tool noise" "$r";; esac
 check "repl: += works" "8" "$(printf 'x = 5\nx += 3\nx\n:quit\n' | $t repl)"
 check "repl: input asks once, then the answer is replayed" "Name? Ann
 hi Ann
@@ -253,7 +254,7 @@ if command -v expect >/dev/null 2>&1; then check "repl: up-arrow recalls a multi
 # tomato update: a fake release, checksum failures and non-official URLs
 fake="$work/fake"; mkdir -p "$fake"; cp VERSION "$fake/VERSION.old"
 TOMATO_RELEASE_OUT="$fake/out" sh release/build.sh "file://$fake/t.tar.gz" > /dev/null && cp "$fake"/out/tomato-*.tar.gz "$fake/t.tar.gz"
-want="$(shasum -a 256 "$fake/t.tar.gz" | cut -d' ' -f1)"
+want="$(sha256 "$fake/t.tar.gz" | cut -d' ' -f1)"
 echo 0.0 > "$home/native/VERSION"
 printf '{"version":"%s","url":"file://%s/t.tar.gz","sha256":"%s"}' "$(cat VERSION)" "$fake" "$want" > "$fake/ok.json"
 printf '{"version":"%s","url":"file://%s/t.tar.gz"}' "$(cat VERSION)" "$fake" > "$fake/nosum.json"
@@ -268,7 +269,7 @@ check "update installs a verified release" "Tomato v$(cat VERSION) (compiler wri
 printf '{"version":"0.0.1","url":"file://%s/t.tar.gz","sha256":"%s"}' "$fake" "$want" > "$fake/old.json"
 r="$(TOMATO_UPDATE_URL=file://$fake/old.json TOMATO_UPDATE_ALLOW_ANY_URL=1 $t update 2>&1)"; case "$r" in *"is the latest"*) ok "update never downgrades";; *) bad "update never downgrades" "$r";; esac
 manifest_sum="$(sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' "$fake/out/latest.json")"
-check "release manifest names its own archive's checksum" "$(shasum -a 256 "$fake/out/tomato-$(cat VERSION).tar.gz" | cut -d' ' -f1)" "$manifest_sum"
+check "release manifest names its own archive's checksum" "$(sha256 "$fake/out/tomato-$(cat VERSION).tar.gz" | cut -d' ' -f1)" "$manifest_sum"
 check "compile writes IR" "yes" "$($t compile examples/shapes.tom | grep -q 'define i32 @main' && echo yes)"
 
 echo "== rejected programs =="
@@ -454,8 +455,8 @@ if [ $rc -eq 0 ]; then ok "benchmarks: the Tomato, Go, Rust and Python versions 
 cmp -s docs/provisional.md site/docs/PROVISIONAL.md && ok "site/docs/PROVISIONAL.md is in sync" || bad "site/docs/PROVISIONAL.md is in sync" "run site/build.sh"
 check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
 check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
-check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | shasum -a 256 | cut -d' ' -f1)" "$(sed -n 1p site/wasm/SOURCE.sha256 2>/dev/null)"
-check "the checked-in wasm files are the ones that were built" "$(sed -n 2,3p site/wasm/SOURCE.sha256)" "$(shasum -a 256 site/wasm/tomatoc.wasm site/wasm/runtime.wasm | cut -d' ' -f1)"
+check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | sha256 | cut -d' ' -f1)" "$(sed -n 1p site/wasm/SOURCE.sha256 2>/dev/null)"
+check "the checked-in wasm files are the ones that were built" "$(sed -n 2,3p site/wasm/SOURCE.sha256)" "$(sha256 site/wasm/tomatoc.wasm site/wasm/runtime.wasm | cut -d' ' -f1)"
 if [ -n "$WASI_SDK" ]; then   # with the toolchain, rebuild and compare byte for byte
   cp -R site/wasm "$work/wasm_orig"; WASI_SDK="$WASI_SDK" sh site/wasm/build.sh > /dev/null 2>&1
   cmp -s site/wasm/tomatoc.wasm "$work/wasm_orig/tomatoc.wasm" && cmp -s site/wasm/runtime.wasm "$work/wasm_orig/runtime.wasm" && ok "wasm files rebuild identically" || bad "wasm files rebuild identically" "run site/wasm/build.sh and commit"

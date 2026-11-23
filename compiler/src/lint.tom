@@ -8,7 +8,7 @@
 #   unassigned  a variable is read where some path to it has not given it a value
 #   shadow      a variable has the name of a built-in or of a function or class of the same file
 #   loop-change a list is changed while a for loop goes through it
-from parser import Node, Val, val_node, val_nodes
+from parser import Node, Val, val_node, val_nodes, vn
 
 export class Finding:
     line: int = 0
@@ -25,17 +25,6 @@ def finding(line: int, kind: str, message: str) -> Finding:
 # the built-in functions and classes whose names a variable should not take
 def builtin_names() -> list[str]:
     return ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range', 'min', 'max', 'sum', 'abs', 'chr', 'ord', 'sorted', 'map', 'filter', 'reversed', 'enumerate', 'zip', 'list', 'dict', 'set', 'tuple', 'bool']
-
-# the nodes directly inside a value: a node itself, or the nodes of a list or tuple
-def kids(v: Val) -> list[Node]:
-    out: list[Node] = []
-    if v.tag == 'n':
-        out.append(val_node(v))
-    elif v.tag == 'l' or v.tag == 't':
-        for item in v.items:
-            for k in kids(item):
-                out.append(k)
-    return out
 
 # every name written anywhere under v (a variable, a function, a type, a field), for finding unused imports
 def words(v: Val, out: list[str]):
@@ -166,9 +155,7 @@ def blocks_of(s: Node) -> list[list[Node]]:
             out.append(val_nodes(s.fields[1]))
     elif k == 'While':
         out.append(val_nodes(s.fields[1]))
-    elif k == 'For':
-        out.append(val_nodes(s.fields[2]))
-    elif k == 'AsyncFor':
+    elif k == 'For' or k == 'AsyncFor':
         out.append(val_nodes(s.fields[2]))
     elif k == 'Try':
         out.append(val_nodes(s.fields[0]))
@@ -262,7 +249,7 @@ def scan(v: Val, u: Usage):
     for f in n.fields:
         scan(f, u)
 
-def check_reads(v: Val, tracked: list[str], assigned: list[str], reported: list[str], found: list[Finding], line: int):
+def check_reads(v: Val, tracked: list[str], assigned: list[str], reported: list[str], found: list[Finding]):
     names: list[Node] = []
     reads(v, names)
     for r in names:
@@ -276,7 +263,7 @@ def both(a: list[str], b: list[str]) -> list[str]:
 
 # Goes through the statements in order with the variables known to have a value so far; gives the variables that have a value after them.
 def flow(body: list[Node], start: list[str], tracked: list[str], reported: list[str], found: list[Finding]) -> list[str]:
-    assigned = [x for x in start]
+    assigned = start[:]
     for s in body:
         assigned = flow_stmt(s, assigned, tracked, reported, found)
     return assigned
@@ -284,19 +271,19 @@ def flow(body: list[Node], start: list[str], tracked: list[str], reported: list[
 def flow_stmt(s: Node, assigned: list[str], tracked: list[str], reported: list[str], found: list[Finding]) -> list[str]:
     k = s.kind
     if k == 'Assign':
-        check_reads(s.fields[1], tracked, assigned, reported, found, s.line)
+        check_reads(s.fields[1], tracked, assigned, reported, found)
         target = val_node(s.fields[0])
         if target.kind == 'Name':
             return assigned + [target.fields[0].text]
-        check_reads(s.fields[0], tracked, assigned, reported, found, s.line)
+        check_reads(s.fields[0], tracked, assigned, reported, found)
         return assigned
     if k == 'Declare':
-        check_reads(s.fields[2], tracked, assigned, reported, found, s.line)
+        check_reads(s.fields[2], tracked, assigned, reported, found)
         return assigned + [s.fields[0].text]
     if k == 'If':
         paths: list[list[str]] = []
         for branch in s.fields[0].items:
-            check_reads(branch.items[0], tracked, assigned, reported, found, s.line)
+            check_reads(branch.items[0], tracked, assigned, reported, found)
             inner = val_nodes(branch.items[1])
             after = flow(inner, assigned, tracked, reported, found)
             if not block_exits(inner, False):
@@ -317,13 +304,12 @@ def flow_stmt(s: Node, assigned: list[str], tracked: list[str], reported: list[s
     if k == 'Multi':
         return flow(val_nodes(s.fields[0]), assigned, tracked, reported, found)
     if k == 'While':
-        check_reads(s.fields[0], tracked, assigned, reported, found, s.line)
+        check_reads(s.fields[0], tracked, assigned, reported, found)
         after = flow(val_nodes(s.fields[1]), assigned, tracked, reported, found)
         return after            # a loop may run no time, but a value given inside it is taken as given: no report for it
-    if k == 'For':
-        check_reads(s.fields[1], tracked, assigned, reported, found, s.line)
-        after = flow(val_nodes(s.fields[2]), assigned, tracked, reported, found)
-        return after
+    if k == 'For' or k == 'AsyncFor':
+        check_reads(s.fields[1], tracked, assigned, reported, found)
+        return flow(val_nodes(s.fields[2]), assigned, tracked, reported, found)
     if k == 'Try':
         body = val_nodes(s.fields[0])
         paths = []
@@ -346,7 +332,7 @@ def flow_stmt(s: Node, assigned: list[str], tracked: list[str], reported: list[s
             result = flow(val_nodes(s.fields[3]), result, tracked, reported, found)
         return result
     for f in s.fields:
-        check_reads(f, tracked, assigned, reported, found, s.line)
+        check_reads(f, tracked, assigned, reported, found)
     return assigned
 
 # the checks for one function: its parameters are names that are bound already
@@ -364,22 +350,16 @@ def lint_function(f: Node, module_names: list[str], found: list[Finding]):
             found.append(finding(u.store_line[name], 'unused', f"the variable '{name}' is given a value that is never used\nremove it, or rename it '_{name}' to show that this is intended"))
     for name in u.stored + u.other:
         if name in builtin_names() or name in module_names:
-            line = u.store_line[name] if name in u.store_line else f.line
+            line = u.store_line.get(name, f.line)
             found.append(finding(line, 'shadow', f"the variable '{name}' has the same name as a function or class, which it hides here\nchoose another name"))
     unreachable(body, found)
     loop_changes(body, found)
-    tracked: list[str] = []
-    for name in u.stored:
-        if name not in u.other and name not in module_names:
-            tracked.append(name)
+    tracked = [name for name in u.stored if name not in u.other and name not in module_names]
     reported: list[str] = []
     flow(body, [], tracked, reported, found)
 
 def scan_node(n: Node, u: Usage):
-    v = Val()
-    v.tag = 'n'
-    v.node = n
-    scan(v, u)
+    scan(vn(n), u)
 
 # ---- a whole file
 

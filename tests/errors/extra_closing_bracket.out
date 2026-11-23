@@ -1,0 +1,5 @@
+error[E335]: expected the end of the line, but found ')'
+ --> tests/errors/extra_closing_bracket.tom:3:23
+  |
+3 |     print(len([1, 2])))
+  |                       ^

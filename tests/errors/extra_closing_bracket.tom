@@ -1,0 +1,5 @@
+@main
+def main():
+    print(len([1, 2])))
+    x = 3
+    print(x)

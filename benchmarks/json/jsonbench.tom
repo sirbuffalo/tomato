@@ -15,7 +15,11 @@ def main(mode: str, path: str, n: int = 0):
     if mode == 'gen':
         parts: list[str] = []
         for i in range(n):
-            parts.append('{"id":' + str(i) + ',"name":"user ' + str(i) + ' \\u00e9 \\"quoted\\"","active":' + ('true' if i % 2 == 0 else 'false') + ',"score":' + str(i) + '.25,"tags":["alpha","beta","gamma"],"address":{"street":"' + str(i) + ' Main St","city":"Springfield","geo":[40.7128,-74.006]},"note":null}')
+            active = 'true' if i % 2 == 0 else 'false'
+            name = f'user {i} \\u00e9 \\"quoted\\"'
+            address = f'{{"street":"{i} Main St","city":"Springfield","geo":[40.7128,-74.006]}}'
+            parts.append(f'{{"id":{i},"name":"{name}","active":{active},"score":{i}.25,' +
+                         f'"tags":["alpha","beta","gamma"],"address":{address},"note":null}}')
         f = open(path, 'w')
         f.write('[' + ','.join(parts) + ']')
         f.close()

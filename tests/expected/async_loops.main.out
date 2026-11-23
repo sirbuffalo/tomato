@@ -1,0 +1,9 @@
+LOAD!
+RUN!
+tea 6
+cake 10
+tea 4
+cake 6
+16
+a 2 2
+b 1 3
