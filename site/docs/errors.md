@@ -46,6 +46,7 @@ that starts with `_` is meant to be unused, and loop variables, `catch` variable
 `tomato run --no-warnings` (or `TOMATO_WARNINGS=off`) hides them all. The repl never shows warnings.
 
 A warning is silent when a case is unclear, and the compiler, the standard library and the examples compile with none.
+A lambda's parameters are its own names: `key=b -> -b` does not read a variable `b` of the function around it, so it never gives `unassigned`.
 
 One problem of this family is an error, because the program could not work: a function that gives a value must end every
 path with a `return` or `raise` (`the function 'sign' can reach its end without returning a value`). Repeated parameter or

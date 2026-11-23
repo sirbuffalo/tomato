@@ -45,6 +45,17 @@ def reads(v: Val, out: list[Node]):
             out.append(n)
         elif n.kind == 'Assign' and val_node(n.fields[0]).kind == 'Name':
             reads(n.fields[1], out)
+        elif n.kind == 'Lambda':
+            # a lambda's parameters hide variables of the same name: only the other names in its body are reads
+            lam_reads: list[Node] = []
+            reads(n.fields[1], lam_reads)
+            for r in lam_reads:
+                is_param = False
+                for p in n.fields[0].items:
+                    if p.text == r.fields[0].text:
+                        is_param = True
+                if not is_param:
+                    out.append(r)
         elif n.kind == 'ListComp':
             # the names a comprehension binds (its loop variable, and the names of `for k, v in ...` that its unpack assigns)
             # have a value wherever the comprehension reads them

@@ -1,0 +1,8 @@
+@main
+def main():
+    xs = [3, 1, 2]
+    n = len(xs)
+    if n > 5:
+        b = 1
+    print(sorted(xs, key=b -> -b))
+    print(sorted(xs, cmp=(b, c) -> c - b))

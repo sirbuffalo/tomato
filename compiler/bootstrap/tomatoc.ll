@@ -46946,31 +46946,42 @@ entry:
   %v.n.3 = alloca ptr
   store ptr null, ptr %v.n.3
   %logic.37 = alloca i64
-  %v.inner.4 = alloca ptr
-  store ptr null, ptr %v.inner.4
-  %for.list.112 = alloca ptr
-  store ptr null, ptr %for.list.112
-  %for.i.114 = alloca i64
-  %v.f.5 = alloca ptr
-  store ptr null, ptr %v.f.5
-  %v.bound.6 = alloca ptr
-  store ptr null, ptr %v.bound.6
-  %for.list.170 = alloca ptr
-  store ptr null, ptr %for.list.170
-  %for.i.172 = alloca i64
-  %v.r.7 = alloca ptr
-  store ptr null, ptr %v.r.7
-  %in.found.216 = alloca i64
-  %in.i.217 = alloca i64
-  %for.list.256 = alloca ptr
-  store ptr null, ptr %for.list.256
-  %for.i.258 = alloca i64
-  %logic.293 = alloca i64
-  %for.list.310 = alloca ptr
-  store ptr null, ptr %for.list.310
-  %for.i.312 = alloca i64
-  %v.item.8 = alloca ptr
-  store ptr null, ptr %v.item.8
+  %v.lam_reads.4 = alloca ptr
+  store ptr null, ptr %v.lam_reads.4
+  %for.list.134 = alloca ptr
+  store ptr null, ptr %for.list.134
+  %for.i.136 = alloca i64
+  %v.r.5 = alloca ptr
+  store ptr null, ptr %v.r.5
+  %v.is_param.6 = alloca i64
+  %for.list.178 = alloca ptr
+  store ptr null, ptr %for.list.178
+  %for.i.180 = alloca i64
+  %v.p.7 = alloca ptr
+  store ptr null, ptr %v.p.7
+  %v.inner.8 = alloca ptr
+  store ptr null, ptr %v.inner.8
+  %for.list.259 = alloca ptr
+  store ptr null, ptr %for.list.259
+  %for.i.261 = alloca i64
+  %v.f.9 = alloca ptr
+  store ptr null, ptr %v.f.9
+  %v.bound.10 = alloca ptr
+  store ptr null, ptr %v.bound.10
+  %for.list.317 = alloca ptr
+  store ptr null, ptr %for.list.317
+  %for.i.319 = alloca i64
+  %in.found.363 = alloca i64
+  %in.i.364 = alloca i64
+  %for.list.403 = alloca ptr
+  store ptr null, ptr %for.list.403
+  %for.i.405 = alloca i64
+  %logic.440 = alloca i64
+  %for.list.457 = alloca ptr
+  store ptr null, ptr %for.list.457
+  %for.i.459 = alloca i64
+  %v.item.11 = alloca ptr
+  store ptr null, ptr %v.item.11
   store ptr %arg.v, ptr %v.v.1
   ; the parameter v is only lent
   store ptr %arg.out, ptr %v.out.2
@@ -47136,427 +47147,679 @@ next.73:
   %fld.99 = getelementptr %class.21, ptr %bl.98, i32 0, i32 2
   %f.100 = load ptr, ptr %fld.99
   call void @tomato_retain(ptr %f.100)
-  %cmp32.101 = call i32 @tomato_str_cmp(ptr %f.100, ptr @.str.453)
+  %cmp32.101 = call i32 @tomato_str_cmp(ptr %f.100, ptr @.str.421)
   %c.102 = icmp eq i32 %cmp32.101, 0
   call void @tomato_release_flat(ptr %f.100)
-  call void @tomato_release_flat(ptr @.str.453)
+  call void @tomato_release_flat(ptr @.str.421)
   %b.103 = zext i1 %c.102 to i64
   %cond.104 = icmp ne i64 %b.103, 0
   br i1 %cond.104, label %then.105, label %next.106
 then.105:
   %list.107 = call ptr @tomato_list_new(i64 20)
-  %old.108 = load ptr, ptr %v.inner.4
-  store ptr %list.107, ptr %v.inner.4
+  %old.108 = load ptr, ptr %v.lam_reads.4
+  store ptr %list.107, ptr %v.lam_reads.4
   call void @tomato_release(ptr %old.108)
   %bl.109 = load ptr, ptr %v.n.3
   %fld.110 = getelementptr %class.21, ptr %bl.109, i32 0, i32 6
   %f.111 = load ptr, ptr %fld.110
   call void @tomato_retain(ptr %f.111)
-  %old.113 = load ptr, ptr %for.list.112
-  store ptr %f.111, ptr %for.list.112
-  call void @tomato_release_flat(ptr %old.113)
-  store i64 0, ptr %for.i.114
-  br label %each.115
-each.115:
-  %lst.119 = load ptr, ptr %for.list.112
-  %i.120 = load i64, ptr %for.i.114
-  %lenp.121 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.119, i32 0, i32 2
-  %n.122 = load i64, ptr %lenp.121
-  %go.123 = icmp slt i64 %i.120, %n.122
-  br i1 %go.123, label %eachbody.116, label %endeach.118
-eachbody.116:
-  %lenp.124 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.119, i32 0, i32 2
-  %len.125 = load i64, ptr %lenp.124
-  %oob.126 = icmp uge i64 %i.120, %len.125
-  br i1 %oob.126, label %stop.127, label %ok.128
-stop.127:
-  %err.129 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
-  store ptr %err.129, ptr @tomato_exc
+  %raw.112 = call i64 @tomato_int_raw(i64 3)
+  %lenp.113 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.111, i32 0, i32 2
+  %len.114 = load i64, ptr %lenp.113
+  %neg.115 = icmp slt i64 %raw.112, 0
+  %shifted.116 = add i64 %raw.112, %len.114
+  %pos.117 = select i1 %neg.115, i64 %shifted.116, i64 %raw.112
+  %lenp.118 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.111, i32 0, i32 2
+  %len.119 = load i64, ptr %lenp.118
+  %oob.120 = icmp uge i64 %pos.117, %len.119
+  br i1 %oob.120, label %stop.121, label %ok.122
+stop.121:
+  call void @tomato_release(ptr %f.111)
+  %err.123 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.123, ptr @tomato_exc
+  store i32 51, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 51)
+  store i32 1, ptr @tomato_exc_seen
+  br label %epilogue
+ok.122:
+  %datap.124 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.111, i32 0, i32 4
+  %data.125 = load ptr, ptr %datap.124
+  %addr.126 = getelementptr i64, ptr %data.125, i64 %pos.117
+  %item.127 = load ptr, ptr %addr.126
+  call void @tomato_retain(ptr %item.127)
+  call void @tomato_release(ptr %f.111)
+  %bl.128 = load ptr, ptr %v.lam_reads.4
+  call void @tomato.lint.reads(ptr %item.127, ptr %bl.128)
+  %ex.129 = load ptr, ptr @tomato_exc
+  %has.130 = icmp ne ptr %ex.129, null
+  br i1 %has.130, label %raised.131, label %fine.132
+raised.131:
+  call void @tomato_trace(ptr @.str.505.c, i32 51)
+  call void @tomato_release(ptr %item.127)
+  br label %epilogue
+fine.132:
+  call void @tomato_release(ptr %item.127)
+  %l.133 = load ptr, ptr %v.lam_reads.4
+  call void @tomato_retain(ptr %l.133)
+  %old.135 = load ptr, ptr %for.list.134
+  store ptr %l.133, ptr %for.list.134
+  call void @tomato_release_flat(ptr %old.135)
+  store i64 0, ptr %for.i.136
+  br label %each.137
+each.137:
+  %lst.141 = load ptr, ptr %for.list.134
+  %i.142 = load i64, ptr %for.i.136
+  %lenp.143 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.141, i32 0, i32 2
+  %n.144 = load i64, ptr %lenp.143
+  %go.145 = icmp slt i64 %i.142, %n.144
+  br i1 %go.145, label %eachbody.138, label %endeach.140
+eachbody.138:
+  %lenp.146 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.141, i32 0, i32 2
+  %len.147 = load i64, ptr %lenp.146
+  %oob.148 = icmp uge i64 %i.142, %len.147
+  br i1 %oob.148, label %stop.149, label %ok.150
+stop.149:
+  %err.151 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.151, ptr @tomato_exc
   store i32 52, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
   call void @tomato_trace(ptr @.str.505.c, i32 52)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
-ok.128:
-  %datap.130 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.119, i32 0, i32 4
-  %data.131 = load ptr, ptr %datap.130
-  %addr.132 = getelementptr i64, ptr %data.131, i64 %i.120
-  %item.133 = load ptr, ptr %addr.132
-  call void @tomato_retain(ptr %item.133)
-  %old.134 = load ptr, ptr %v.f.5
-  store ptr %item.133, ptr %v.f.5
-  call void @tomato_release(ptr %old.134)
-  %bl.135 = load ptr, ptr %v.f.5
-  %bl.136 = load ptr, ptr %v.inner.4
-  call void @tomato.lint.reads(ptr %bl.135, ptr %bl.136)
-  %ex.137 = load ptr, ptr @tomato_exc
-  %has.138 = icmp ne ptr %ex.137, null
-  br i1 %has.138, label %raised.139, label %fine.140
-raised.139:
-  call void @tomato_trace(ptr @.str.505.c, i32 53)
+ok.150:
+  %datap.152 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.141, i32 0, i32 4
+  %data.153 = load ptr, ptr %datap.152
+  %addr.154 = getelementptr i64, ptr %data.153, i64 %i.142
+  %item.155 = load ptr, ptr %addr.154
+  call void @tomato_retain(ptr %item.155)
+  %old.156 = load ptr, ptr %v.r.5
+  store ptr %item.155, ptr %v.r.5
+  call void @tomato_release(ptr %old.156)
+  store i64 0, ptr %v.is_param.6
+  %bl.157 = load ptr, ptr %v.n.3
+  %fld.158 = getelementptr %class.21, ptr %bl.157, i32 0, i32 6
+  %f.159 = load ptr, ptr %fld.158
+  call void @tomato_retain(ptr %f.159)
+  %raw.160 = call i64 @tomato_int_raw(i64 1)
+  %lenp.161 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.159, i32 0, i32 2
+  %len.162 = load i64, ptr %lenp.161
+  %neg.163 = icmp slt i64 %raw.160, 0
+  %shifted.164 = add i64 %raw.160, %len.162
+  %pos.165 = select i1 %neg.163, i64 %shifted.164, i64 %raw.160
+  %lenp.166 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.159, i32 0, i32 2
+  %len.167 = load i64, ptr %lenp.166
+  %oob.168 = icmp uge i64 %pos.165, %len.167
+  br i1 %oob.168, label %stop.169, label %ok.170
+stop.169:
+  call void @tomato_release(ptr %f.159)
+  %err.171 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.171, ptr @tomato_exc
+  store i32 54, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 54)
+  store i32 1, ptr @tomato_exc_seen
   br label %epilogue
-fine.140:
-  br label %eachstep.117
-eachstep.117:
-  %cur.141 = load i64, ptr %for.i.114
-  %next.142 = add i64 %cur.141, 1
-  store i64 %next.142, ptr %for.i.114
-  br label %each.115
-endeach.118:
-  %list.143 = call ptr @tomato_list_new(i64 15)
-  %old.144 = load ptr, ptr %v.bound.6
-  store ptr %list.143, ptr %v.bound.6
-  call void @tomato_release(ptr %old.144)
-  %bl.145 = load ptr, ptr %v.n.3
-  %fld.146 = getelementptr %class.21, ptr %bl.145, i32 0, i32 6
-  %f.147 = load ptr, ptr %fld.146
-  call void @tomato_retain(ptr %f.147)
-  %raw.148 = call i64 @tomato_int_raw(i64 1)
-  %lenp.149 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.147, i32 0, i32 2
-  %len.150 = load i64, ptr %lenp.149
-  %neg.151 = icmp slt i64 %raw.148, 0
-  %shifted.152 = add i64 %raw.148, %len.150
-  %pos.153 = select i1 %neg.151, i64 %shifted.152, i64 %raw.148
-  %lenp.154 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.147, i32 0, i32 2
-  %len.155 = load i64, ptr %lenp.154
-  %oob.156 = icmp uge i64 %pos.153, %len.155
-  br i1 %oob.156, label %stop.157, label %ok.158
-stop.157:
-  call void @tomato_release(ptr %f.147)
-  %err.159 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
-  store ptr %err.159, ptr @tomato_exc
+ok.170:
+  %datap.172 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.159, i32 0, i32 4
+  %data.173 = load ptr, ptr %datap.172
+  %addr.174 = getelementptr i64, ptr %data.173, i64 %pos.165
+  %item.175 = load ptr, ptr %addr.174
+  call void @tomato_retain(ptr %item.175)
+  call void @tomato_release(ptr %f.159)
+  %fld.176 = getelementptr %class.19, ptr %item.175, i32 0, i32 7
+  %f.177 = load ptr, ptr %fld.176
+  call void @tomato_retain(ptr %f.177)
+  call void @tomato_release(ptr %item.175)
+  %old.179 = load ptr, ptr %for.list.178
+  store ptr %f.177, ptr %for.list.178
+  call void @tomato_release_flat(ptr %old.179)
+  store i64 0, ptr %for.i.180
+  br label %each.181
+each.181:
+  %lst.185 = load ptr, ptr %for.list.178
+  %i.186 = load i64, ptr %for.i.180
+  %lenp.187 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.185, i32 0, i32 2
+  %n.188 = load i64, ptr %lenp.187
+  %go.189 = icmp slt i64 %i.186, %n.188
+  br i1 %go.189, label %eachbody.182, label %endeach.184
+eachbody.182:
+  %lenp.190 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.185, i32 0, i32 2
+  %len.191 = load i64, ptr %lenp.190
+  %oob.192 = icmp uge i64 %i.186, %len.191
+  br i1 %oob.192, label %stop.193, label %ok.194
+stop.193:
+  %err.195 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.195, ptr @tomato_exc
+  store i32 54, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 54)
+  store i32 1, ptr @tomato_exc_seen
+  br label %epilogue
+ok.194:
+  %datap.196 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.185, i32 0, i32 4
+  %data.197 = load ptr, ptr %datap.196
+  %addr.198 = getelementptr i64, ptr %data.197, i64 %i.186
+  %item.199 = load ptr, ptr %addr.198
+  call void @tomato_retain(ptr %item.199)
+  %old.200 = load ptr, ptr %v.p.7
+  store ptr %item.199, ptr %v.p.7
+  call void @tomato_release(ptr %old.200)
+  %bl.202 = load ptr, ptr %v.p.7
+  %fld.203 = getelementptr %class.19, ptr %bl.202, i32 0, i32 3
+  %f.204 = load ptr, ptr %fld.203
+  call void @tomato_retain(ptr %f.204)
+  %bl.205 = load ptr, ptr %v.r.5
+  %fld.206 = getelementptr %class.21, ptr %bl.205, i32 0, i32 6
+  %bl.207 = load ptr, ptr %fld.206
+  %raw.208 = call i64 @tomato_int_raw(i64 1)
+  %lenp.209 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.207, i32 0, i32 2
+  %len.210 = load i64, ptr %lenp.209
+  %neg.211 = icmp slt i64 %raw.208, 0
+  %shifted.212 = add i64 %raw.208, %len.210
+  %pos.213 = select i1 %neg.211, i64 %shifted.212, i64 %raw.208
+  %lenp.214 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.207, i32 0, i32 2
+  %len.215 = load i64, ptr %lenp.214
+  %oob.216 = icmp uge i64 %pos.213, %len.215
+  br i1 %oob.216, label %stop.217, label %ok.218
+stop.217:
+  call void @tomato_release_flat(ptr %f.204)
+  %err.219 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.219, ptr @tomato_exc
   store i32 55, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
   call void @tomato_trace(ptr @.str.505.c, i32 55)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
-ok.158:
-  %datap.160 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.147, i32 0, i32 4
-  %data.161 = load ptr, ptr %datap.160
-  %addr.162 = getelementptr i64, ptr %data.161, i64 %pos.153
-  %item.163 = load ptr, ptr %addr.162
-  call void @tomato_retain(ptr %item.163)
-  call void @tomato_release(ptr %f.147)
-  %bl.164 = load ptr, ptr %v.bound.6
-  call void @tomato.lint.comp_bound(ptr %item.163, ptr %bl.164)
-  %ex.165 = load ptr, ptr @tomato_exc
-  %has.166 = icmp ne ptr %ex.165, null
-  br i1 %has.166, label %raised.167, label %fine.168
-raised.167:
-  call void @tomato_trace(ptr @.str.505.c, i32 55)
-  call void @tomato_release(ptr %item.163)
-  br label %epilogue
-fine.168:
-  call void @tomato_release(ptr %item.163)
-  %l.169 = load ptr, ptr %v.inner.4
-  call void @tomato_retain(ptr %l.169)
-  %old.171 = load ptr, ptr %for.list.170
-  store ptr %l.169, ptr %for.list.170
-  call void @tomato_release_flat(ptr %old.171)
-  store i64 0, ptr %for.i.172
-  br label %each.173
-each.173:
-  %lst.177 = load ptr, ptr %for.list.170
-  %i.178 = load i64, ptr %for.i.172
-  %lenp.179 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.177, i32 0, i32 2
-  %n.180 = load i64, ptr %lenp.179
-  %go.181 = icmp slt i64 %i.178, %n.180
-  br i1 %go.181, label %eachbody.174, label %endeach.176
-eachbody.174:
-  %lenp.182 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.177, i32 0, i32 2
-  %len.183 = load i64, ptr %lenp.182
-  %oob.184 = icmp uge i64 %i.178, %len.183
-  br i1 %oob.184, label %stop.185, label %ok.186
-stop.185:
-  %err.187 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
-  store ptr %err.187, ptr @tomato_exc
-  store i32 56, ptr @tomato_exc_line
-  store i32 1, ptr @tomato_exc_rt
-  call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.505.c, i32 56)
-  store i32 1, ptr @tomato_exc_seen
-  br label %epilogue
-ok.186:
-  %datap.188 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.177, i32 0, i32 4
-  %data.189 = load ptr, ptr %datap.188
-  %addr.190 = getelementptr i64, ptr %data.189, i64 %i.178
-  %item.191 = load ptr, ptr %addr.190
-  call void @tomato_retain(ptr %item.191)
-  %old.192 = load ptr, ptr %v.r.7
-  store ptr %item.191, ptr %v.r.7
-  call void @tomato_release(ptr %old.192)
-  %bl.194 = load ptr, ptr %v.r.7
-  %fld.195 = getelementptr %class.21, ptr %bl.194, i32 0, i32 6
-  %bl.196 = load ptr, ptr %fld.195
-  %raw.197 = call i64 @tomato_int_raw(i64 1)
-  %lenp.198 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.196, i32 0, i32 2
-  %len.199 = load i64, ptr %lenp.198
-  %neg.200 = icmp slt i64 %raw.197, 0
-  %shifted.201 = add i64 %raw.197, %len.199
-  %pos.202 = select i1 %neg.200, i64 %shifted.201, i64 %raw.197
-  %lenp.203 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.196, i32 0, i32 2
-  %len.204 = load i64, ptr %lenp.203
-  %oob.205 = icmp uge i64 %pos.202, %len.204
-  br i1 %oob.205, label %stop.206, label %ok.207
-stop.206:
-  %err.208 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
-  store ptr %err.208, ptr @tomato_exc
-  store i32 57, ptr @tomato_exc_line
-  store i32 1, ptr @tomato_exc_rt
-  call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.505.c, i32 57)
-  store i32 1, ptr @tomato_exc_seen
-  br label %epilogue
-ok.207:
-  %datap.209 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.196, i32 0, i32 4
-  %data.210 = load ptr, ptr %datap.209
-  %addr.211 = getelementptr i64, ptr %data.210, i64 %pos.202
-  %bl.212 = load ptr, ptr %addr.211
-  %fld.213 = getelementptr %class.19, ptr %bl.212, i32 0, i32 3
-  %f.214 = load ptr, ptr %fld.213
-  call void @tomato_retain(ptr %f.214)
-  %l.215 = load ptr, ptr %v.bound.6
-  call void @tomato_retain(ptr %l.215)
-  store i64 0, ptr %in.found.216
-  store i64 0, ptr %in.i.217
-  br label %inhead.218
-inhead.218:
-  %i.222 = load i64, ptr %in.i.217
-  %lenp.223 = getelementptr { i64, i64, i64, i64, ptr }, ptr %l.215, i32 0, i32 2
-  %n.224 = load i64, ptr %lenp.223
-  %go.225 = icmp slt i64 %i.222, %n.224
-  br i1 %go.225, label %inbody.219, label %inend.221
-inbody.219:
-  %lenp.226 = getelementptr { i64, i64, i64, i64, ptr }, ptr %l.215, i32 0, i32 2
-  %len.227 = load i64, ptr %lenp.226
-  %oob.228 = icmp uge i64 %i.222, %len.227
-  br i1 %oob.228, label %stop.229, label %ok.230
-stop.229:
-  %err.231 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
-  store ptr %err.231, ptr @tomato_exc
-  store i32 57, ptr @tomato_exc_line
-  store i32 1, ptr @tomato_exc_rt
-  call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.505.c, i32 57)
-  store i32 1, ptr @tomato_exc_seen
-  br label %epilogue
-ok.230:
-  %datap.232 = getelementptr { i64, i64, i64, i64, ptr }, ptr %l.215, i32 0, i32 4
-  %data.233 = load ptr, ptr %datap.232
-  %addr.234 = getelementptr i64, ptr %data.233, i64 %i.222
-  %item.235 = load ptr, ptr %addr.234
-  %c.237 = call i32 @tomato_str_cmp(ptr %item.235, ptr %f.214)
-  %hit.236 = icmp eq i32 %c.237, 0
-  br i1 %hit.236, label %inhit.238, label %instep.220
-inhit.238:
-  store i64 1, ptr %in.found.216
-  br label %inend.221
-instep.220:
-  %cur.239 = load i64, ptr %in.i.217
-  %next.240 = add i64 %cur.239, 1
-  store i64 %next.240, ptr %in.i.217
-  br label %inhead.218
-inend.221:
-  %found.241 = load i64, ptr %in.found.216
-  %flag.242 = icmp ne i64 %found.241, 0
-  call void @tomato_release_flat(ptr %f.214)
-  call void @tomato_release(ptr %l.215)
-  %b.243 = zext i1 %flag.242 to i64
-  %t.244 = xor i64 %b.243, 1
-  %cond.245 = icmp ne i64 %t.244, 0
-  br i1 %cond.245, label %then.246, label %next.247
-then.246:
-  %bl.248 = load ptr, ptr %v.out.2
-  %l.249 = load ptr, ptr %v.r.7
-  call void @tomato_retain(ptr %l.249)
-  %slot.250 = call ptr @tomato_list_push(ptr %bl.248, i64 8)
-  store ptr %l.249, ptr %slot.250
-  br label %endif.193
-next.247:
-  br label %endif.193
-endif.193:
-  br label %eachstep.175
-eachstep.175:
-  %cur.251 = load i64, ptr %for.i.172
-  %next.252 = add i64 %cur.251, 1
-  store i64 %next.252, ptr %for.i.172
-  br label %each.173
-endeach.176:
+ok.218:
+  %datap.220 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.207, i32 0, i32 4
+  %data.221 = load ptr, ptr %datap.220
+  %addr.222 = getelementptr i64, ptr %data.221, i64 %pos.213
+  %bl.223 = load ptr, ptr %addr.222
+  %fld.224 = getelementptr %class.19, ptr %bl.223, i32 0, i32 3
+  %f.225 = load ptr, ptr %fld.224
+  call void @tomato_retain(ptr %f.225)
+  %cmp32.226 = call i32 @tomato_str_cmp(ptr %f.204, ptr %f.225)
+  %c.227 = icmp eq i32 %cmp32.226, 0
+  call void @tomato_release_flat(ptr %f.204)
+  call void @tomato_release_flat(ptr %f.225)
+  %b.228 = zext i1 %c.227 to i64
+  %cond.229 = icmp ne i64 %b.228, 0
+  br i1 %cond.229, label %then.230, label %next.231
+then.230:
+  store i64 1, ptr %v.is_param.6
+  br label %endif.201
+next.231:
+  br label %endif.201
+endif.201:
+  br label %eachstep.183
+eachstep.183:
+  %cur.232 = load i64, ptr %for.i.180
+  %next.233 = add i64 %cur.232, 1
+  store i64 %next.233, ptr %for.i.180
+  br label %each.181
+endeach.184:
+  %l.235 = load i64, ptr %v.is_param.6
+  %t.236 = xor i64 %l.235, 1
+  %cond.237 = icmp ne i64 %t.236, 0
+  br i1 %cond.237, label %then.238, label %next.239
+then.238:
+  %bl.240 = load ptr, ptr %v.out.2
+  %l.241 = load ptr, ptr %v.r.5
+  call void @tomato_retain(ptr %l.241)
+  %slot.242 = call ptr @tomato_list_push(ptr %bl.240, i64 8)
+  store ptr %l.241, ptr %slot.242
+  br label %endif.234
+next.239:
+  br label %endif.234
+endif.234:
+  br label %eachstep.139
+eachstep.139:
+  %cur.243 = load i64, ptr %for.i.136
+  %next.244 = add i64 %cur.243, 1
+  store i64 %next.244, ptr %for.i.136
+  br label %each.137
+endeach.140:
   br label %endif.18
 next.106:
-  %bl.253 = load ptr, ptr %v.n.3
-  %fld.254 = getelementptr %class.21, ptr %bl.253, i32 0, i32 6
-  %f.255 = load ptr, ptr %fld.254
-  call void @tomato_retain(ptr %f.255)
-  %old.257 = load ptr, ptr %for.list.256
-  store ptr %f.255, ptr %for.list.256
-  call void @tomato_release_flat(ptr %old.257)
-  store i64 0, ptr %for.i.258
-  br label %each.259
-each.259:
-  %lst.263 = load ptr, ptr %for.list.256
-  %i.264 = load i64, ptr %for.i.258
-  %lenp.265 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.263, i32 0, i32 2
-  %n.266 = load i64, ptr %lenp.265
-  %go.267 = icmp slt i64 %i.264, %n.266
-  br i1 %go.267, label %eachbody.260, label %endeach.262
-eachbody.260:
-  %lenp.268 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.263, i32 0, i32 2
-  %len.269 = load i64, ptr %lenp.268
-  %oob.270 = icmp uge i64 %i.264, %len.269
-  br i1 %oob.270, label %stop.271, label %ok.272
-stop.271:
-  %err.273 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
-  store ptr %err.273, ptr @tomato_exc
-  store i32 60, ptr @tomato_exc_line
-  store i32 1, ptr @tomato_exc_rt
-  call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.505.c, i32 60)
-  store i32 1, ptr @tomato_exc_seen
-  br label %epilogue
-ok.272:
-  %datap.274 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.263, i32 0, i32 4
-  %data.275 = load ptr, ptr %datap.274
-  %addr.276 = getelementptr i64, ptr %data.275, i64 %i.264
-  %item.277 = load ptr, ptr %addr.276
-  call void @tomato_retain(ptr %item.277)
-  %old.278 = load ptr, ptr %v.f.5
-  store ptr %item.277, ptr %v.f.5
-  call void @tomato_release(ptr %old.278)
-  %bl.279 = load ptr, ptr %v.f.5
-  %bl.280 = load ptr, ptr %v.out.2
-  call void @tomato.lint.reads(ptr %bl.279, ptr %bl.280)
-  %ex.281 = load ptr, ptr @tomato_exc
-  %has.282 = icmp ne ptr %ex.281, null
-  br i1 %has.282, label %raised.283, label %fine.284
-raised.283:
-  call void @tomato_trace(ptr @.str.505.c, i32 61)
-  br label %epilogue
-fine.284:
-  br label %eachstep.261
-eachstep.261:
-  %cur.285 = load i64, ptr %for.i.258
-  %next.286 = add i64 %cur.285, 1
-  store i64 %next.286, ptr %for.i.258
-  br label %each.259
-endeach.262:
-  br label %endif.18
-endif.18:
-  br label %endif.1
-next.10:
-  %bl.287 = load ptr, ptr %v.v.1
-  %fld.288 = getelementptr %class.19, ptr %bl.287, i32 0, i32 2
-  %f.289 = load ptr, ptr %fld.288
-  call void @tomato_retain(ptr %f.289)
-  %cmp32.290 = call i32 @tomato_str_cmp(ptr %f.289, ptr @.str.223)
-  %c.291 = icmp eq i32 %cmp32.290, 0
-  call void @tomato_release_flat(ptr %f.289)
-  call void @tomato_release_flat(ptr @.str.223)
-  %b.292 = zext i1 %c.291 to i64
-  store i64 %b.292, ptr %logic.293
-  %cond.294 = icmp ne i64 %b.292, 0
-  br i1 %cond.294, label %endlogic.296, label %rhs.295
-rhs.295:
-  %bl.297 = load ptr, ptr %v.v.1
-  %fld.298 = getelementptr %class.19, ptr %bl.297, i32 0, i32 2
-  %f.299 = load ptr, ptr %fld.298
-  call void @tomato_retain(ptr %f.299)
-  %cmp32.300 = call i32 @tomato_str_cmp(ptr %f.299, ptr @.str.103)
-  %c.301 = icmp eq i32 %cmp32.300, 0
-  call void @tomato_release_flat(ptr %f.299)
-  call void @tomato_release_flat(ptr @.str.103)
-  %b.302 = zext i1 %c.301 to i64
-  store i64 %b.302, ptr %logic.293
-  br label %endlogic.296
-endlogic.296:
-  %logic.303 = load i64, ptr %logic.293
-  %cond.304 = icmp ne i64 %logic.303, 0
-  br i1 %cond.304, label %then.305, label %next.306
-then.305:
-  %bl.307 = load ptr, ptr %v.v.1
-  %fld.308 = getelementptr %class.19, ptr %bl.307, i32 0, i32 7
-  %f.309 = load ptr, ptr %fld.308
-  call void @tomato_retain(ptr %f.309)
-  %old.311 = load ptr, ptr %for.list.310
-  store ptr %f.309, ptr %for.list.310
-  call void @tomato_release_flat(ptr %old.311)
-  store i64 0, ptr %for.i.312
-  br label %each.313
-each.313:
-  %lst.317 = load ptr, ptr %for.list.310
-  %i.318 = load i64, ptr %for.i.312
-  %lenp.319 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.317, i32 0, i32 2
-  %n.320 = load i64, ptr %lenp.319
-  %go.321 = icmp slt i64 %i.318, %n.320
-  br i1 %go.321, label %eachbody.314, label %endeach.316
-eachbody.314:
-  %lenp.322 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.317, i32 0, i32 2
-  %len.323 = load i64, ptr %lenp.322
-  %oob.324 = icmp uge i64 %i.318, %len.323
-  br i1 %oob.324, label %stop.325, label %ok.326
-stop.325:
-  %err.327 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
-  store ptr %err.327, ptr @tomato_exc
+  %bl.245 = load ptr, ptr %v.n.3
+  %fld.246 = getelementptr %class.21, ptr %bl.245, i32 0, i32 2
+  %f.247 = load ptr, ptr %fld.246
+  call void @tomato_retain(ptr %f.247)
+  %cmp32.248 = call i32 @tomato_str_cmp(ptr %f.247, ptr @.str.453)
+  %c.249 = icmp eq i32 %cmp32.248, 0
+  call void @tomato_release_flat(ptr %f.247)
+  call void @tomato_release_flat(ptr @.str.453)
+  %b.250 = zext i1 %c.249 to i64
+  %cond.251 = icmp ne i64 %b.250, 0
+  br i1 %cond.251, label %then.252, label %next.253
+then.252:
+  %list.254 = call ptr @tomato_list_new(i64 20)
+  %old.255 = load ptr, ptr %v.inner.8
+  store ptr %list.254, ptr %v.inner.8
+  call void @tomato_release(ptr %old.255)
+  %bl.256 = load ptr, ptr %v.n.3
+  %fld.257 = getelementptr %class.21, ptr %bl.256, i32 0, i32 6
+  %f.258 = load ptr, ptr %fld.257
+  call void @tomato_retain(ptr %f.258)
+  %old.260 = load ptr, ptr %for.list.259
+  store ptr %f.258, ptr %for.list.259
+  call void @tomato_release_flat(ptr %old.260)
+  store i64 0, ptr %for.i.261
+  br label %each.262
+each.262:
+  %lst.266 = load ptr, ptr %for.list.259
+  %i.267 = load i64, ptr %for.i.261
+  %lenp.268 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.266, i32 0, i32 2
+  %n.269 = load i64, ptr %lenp.268
+  %go.270 = icmp slt i64 %i.267, %n.269
+  br i1 %go.270, label %eachbody.263, label %endeach.265
+eachbody.263:
+  %lenp.271 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.266, i32 0, i32 2
+  %len.272 = load i64, ptr %lenp.271
+  %oob.273 = icmp uge i64 %i.267, %len.272
+  br i1 %oob.273, label %stop.274, label %ok.275
+stop.274:
+  %err.276 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.276, ptr @tomato_exc
   store i32 63, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
   call void @tomato_trace(ptr @.str.505.c, i32 63)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
-ok.326:
-  %datap.328 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.317, i32 0, i32 4
-  %data.329 = load ptr, ptr %datap.328
-  %addr.330 = getelementptr i64, ptr %data.329, i64 %i.318
-  %item.331 = load ptr, ptr %addr.330
-  call void @tomato_retain(ptr %item.331)
-  %old.332 = load ptr, ptr %v.item.8
-  store ptr %item.331, ptr %v.item.8
-  call void @tomato_release(ptr %old.332)
-  %bl.333 = load ptr, ptr %v.item.8
-  %bl.334 = load ptr, ptr %v.out.2
-  call void @tomato.lint.reads(ptr %bl.333, ptr %bl.334)
-  %ex.335 = load ptr, ptr @tomato_exc
-  %has.336 = icmp ne ptr %ex.335, null
-  br i1 %has.336, label %raised.337, label %fine.338
-raised.337:
+ok.275:
+  %datap.277 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.266, i32 0, i32 4
+  %data.278 = load ptr, ptr %datap.277
+  %addr.279 = getelementptr i64, ptr %data.278, i64 %i.267
+  %item.280 = load ptr, ptr %addr.279
+  call void @tomato_retain(ptr %item.280)
+  %old.281 = load ptr, ptr %v.f.9
+  store ptr %item.280, ptr %v.f.9
+  call void @tomato_release(ptr %old.281)
+  %bl.282 = load ptr, ptr %v.f.9
+  %bl.283 = load ptr, ptr %v.inner.8
+  call void @tomato.lint.reads(ptr %bl.282, ptr %bl.283)
+  %ex.284 = load ptr, ptr @tomato_exc
+  %has.285 = icmp ne ptr %ex.284, null
+  br i1 %has.285, label %raised.286, label %fine.287
+raised.286:
   call void @tomato_trace(ptr @.str.505.c, i32 64)
   br label %epilogue
-fine.338:
-  br label %eachstep.315
-eachstep.315:
-  %cur.339 = load i64, ptr %for.i.312
-  %next.340 = add i64 %cur.339, 1
-  store i64 %next.340, ptr %for.i.312
-  br label %each.313
-endeach.316:
+fine.287:
+  br label %eachstep.264
+eachstep.264:
+  %cur.288 = load i64, ptr %for.i.261
+  %next.289 = add i64 %cur.288, 1
+  store i64 %next.289, ptr %for.i.261
+  br label %each.262
+endeach.265:
+  %list.290 = call ptr @tomato_list_new(i64 15)
+  %old.291 = load ptr, ptr %v.bound.10
+  store ptr %list.290, ptr %v.bound.10
+  call void @tomato_release(ptr %old.291)
+  %bl.292 = load ptr, ptr %v.n.3
+  %fld.293 = getelementptr %class.21, ptr %bl.292, i32 0, i32 6
+  %f.294 = load ptr, ptr %fld.293
+  call void @tomato_retain(ptr %f.294)
+  %raw.295 = call i64 @tomato_int_raw(i64 1)
+  %lenp.296 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.294, i32 0, i32 2
+  %len.297 = load i64, ptr %lenp.296
+  %neg.298 = icmp slt i64 %raw.295, 0
+  %shifted.299 = add i64 %raw.295, %len.297
+  %pos.300 = select i1 %neg.298, i64 %shifted.299, i64 %raw.295
+  %lenp.301 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.294, i32 0, i32 2
+  %len.302 = load i64, ptr %lenp.301
+  %oob.303 = icmp uge i64 %pos.300, %len.302
+  br i1 %oob.303, label %stop.304, label %ok.305
+stop.304:
+  call void @tomato_release(ptr %f.294)
+  %err.306 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.306, ptr @tomato_exc
+  store i32 66, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 66)
+  store i32 1, ptr @tomato_exc_seen
+  br label %epilogue
+ok.305:
+  %datap.307 = getelementptr { i64, i64, i64, i64, ptr }, ptr %f.294, i32 0, i32 4
+  %data.308 = load ptr, ptr %datap.307
+  %addr.309 = getelementptr i64, ptr %data.308, i64 %pos.300
+  %item.310 = load ptr, ptr %addr.309
+  call void @tomato_retain(ptr %item.310)
+  call void @tomato_release(ptr %f.294)
+  %bl.311 = load ptr, ptr %v.bound.10
+  call void @tomato.lint.comp_bound(ptr %item.310, ptr %bl.311)
+  %ex.312 = load ptr, ptr @tomato_exc
+  %has.313 = icmp ne ptr %ex.312, null
+  br i1 %has.313, label %raised.314, label %fine.315
+raised.314:
+  call void @tomato_trace(ptr @.str.505.c, i32 66)
+  call void @tomato_release(ptr %item.310)
+  br label %epilogue
+fine.315:
+  call void @tomato_release(ptr %item.310)
+  %l.316 = load ptr, ptr %v.inner.8
+  call void @tomato_retain(ptr %l.316)
+  %old.318 = load ptr, ptr %for.list.317
+  store ptr %l.316, ptr %for.list.317
+  call void @tomato_release_flat(ptr %old.318)
+  store i64 0, ptr %for.i.319
+  br label %each.320
+each.320:
+  %lst.324 = load ptr, ptr %for.list.317
+  %i.325 = load i64, ptr %for.i.319
+  %lenp.326 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.324, i32 0, i32 2
+  %n.327 = load i64, ptr %lenp.326
+  %go.328 = icmp slt i64 %i.325, %n.327
+  br i1 %go.328, label %eachbody.321, label %endeach.323
+eachbody.321:
+  %lenp.329 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.324, i32 0, i32 2
+  %len.330 = load i64, ptr %lenp.329
+  %oob.331 = icmp uge i64 %i.325, %len.330
+  br i1 %oob.331, label %stop.332, label %ok.333
+stop.332:
+  %err.334 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.334, ptr @tomato_exc
+  store i32 67, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 67)
+  store i32 1, ptr @tomato_exc_seen
+  br label %epilogue
+ok.333:
+  %datap.335 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.324, i32 0, i32 4
+  %data.336 = load ptr, ptr %datap.335
+  %addr.337 = getelementptr i64, ptr %data.336, i64 %i.325
+  %item.338 = load ptr, ptr %addr.337
+  call void @tomato_retain(ptr %item.338)
+  %old.339 = load ptr, ptr %v.r.5
+  store ptr %item.338, ptr %v.r.5
+  call void @tomato_release(ptr %old.339)
+  %bl.341 = load ptr, ptr %v.r.5
+  %fld.342 = getelementptr %class.21, ptr %bl.341, i32 0, i32 6
+  %bl.343 = load ptr, ptr %fld.342
+  %raw.344 = call i64 @tomato_int_raw(i64 1)
+  %lenp.345 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.343, i32 0, i32 2
+  %len.346 = load i64, ptr %lenp.345
+  %neg.347 = icmp slt i64 %raw.344, 0
+  %shifted.348 = add i64 %raw.344, %len.346
+  %pos.349 = select i1 %neg.347, i64 %shifted.348, i64 %raw.344
+  %lenp.350 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.343, i32 0, i32 2
+  %len.351 = load i64, ptr %lenp.350
+  %oob.352 = icmp uge i64 %pos.349, %len.351
+  br i1 %oob.352, label %stop.353, label %ok.354
+stop.353:
+  %err.355 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.355, ptr @tomato_exc
+  store i32 68, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 68)
+  store i32 1, ptr @tomato_exc_seen
+  br label %epilogue
+ok.354:
+  %datap.356 = getelementptr { i64, i64, i64, i64, ptr }, ptr %bl.343, i32 0, i32 4
+  %data.357 = load ptr, ptr %datap.356
+  %addr.358 = getelementptr i64, ptr %data.357, i64 %pos.349
+  %bl.359 = load ptr, ptr %addr.358
+  %fld.360 = getelementptr %class.19, ptr %bl.359, i32 0, i32 3
+  %f.361 = load ptr, ptr %fld.360
+  call void @tomato_retain(ptr %f.361)
+  %l.362 = load ptr, ptr %v.bound.10
+  call void @tomato_retain(ptr %l.362)
+  store i64 0, ptr %in.found.363
+  store i64 0, ptr %in.i.364
+  br label %inhead.365
+inhead.365:
+  %i.369 = load i64, ptr %in.i.364
+  %lenp.370 = getelementptr { i64, i64, i64, i64, ptr }, ptr %l.362, i32 0, i32 2
+  %n.371 = load i64, ptr %lenp.370
+  %go.372 = icmp slt i64 %i.369, %n.371
+  br i1 %go.372, label %inbody.366, label %inend.368
+inbody.366:
+  %lenp.373 = getelementptr { i64, i64, i64, i64, ptr }, ptr %l.362, i32 0, i32 2
+  %len.374 = load i64, ptr %lenp.373
+  %oob.375 = icmp uge i64 %i.369, %len.374
+  br i1 %oob.375, label %stop.376, label %ok.377
+stop.376:
+  %err.378 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.378, ptr @tomato_exc
+  store i32 68, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 68)
+  store i32 1, ptr @tomato_exc_seen
+  br label %epilogue
+ok.377:
+  %datap.379 = getelementptr { i64, i64, i64, i64, ptr }, ptr %l.362, i32 0, i32 4
+  %data.380 = load ptr, ptr %datap.379
+  %addr.381 = getelementptr i64, ptr %data.380, i64 %i.369
+  %item.382 = load ptr, ptr %addr.381
+  %c.384 = call i32 @tomato_str_cmp(ptr %item.382, ptr %f.361)
+  %hit.383 = icmp eq i32 %c.384, 0
+  br i1 %hit.383, label %inhit.385, label %instep.367
+inhit.385:
+  store i64 1, ptr %in.found.363
+  br label %inend.368
+instep.367:
+  %cur.386 = load i64, ptr %in.i.364
+  %next.387 = add i64 %cur.386, 1
+  store i64 %next.387, ptr %in.i.364
+  br label %inhead.365
+inend.368:
+  %found.388 = load i64, ptr %in.found.363
+  %flag.389 = icmp ne i64 %found.388, 0
+  call void @tomato_release_flat(ptr %f.361)
+  call void @tomato_release(ptr %l.362)
+  %b.390 = zext i1 %flag.389 to i64
+  %t.391 = xor i64 %b.390, 1
+  %cond.392 = icmp ne i64 %t.391, 0
+  br i1 %cond.392, label %then.393, label %next.394
+then.393:
+  %bl.395 = load ptr, ptr %v.out.2
+  %l.396 = load ptr, ptr %v.r.5
+  call void @tomato_retain(ptr %l.396)
+  %slot.397 = call ptr @tomato_list_push(ptr %bl.395, i64 8)
+  store ptr %l.396, ptr %slot.397
+  br label %endif.340
+next.394:
+  br label %endif.340
+endif.340:
+  br label %eachstep.322
+eachstep.322:
+  %cur.398 = load i64, ptr %for.i.319
+  %next.399 = add i64 %cur.398, 1
+  store i64 %next.399, ptr %for.i.319
+  br label %each.320
+endeach.323:
+  br label %endif.18
+next.253:
+  %bl.400 = load ptr, ptr %v.n.3
+  %fld.401 = getelementptr %class.21, ptr %bl.400, i32 0, i32 6
+  %f.402 = load ptr, ptr %fld.401
+  call void @tomato_retain(ptr %f.402)
+  %old.404 = load ptr, ptr %for.list.403
+  store ptr %f.402, ptr %for.list.403
+  call void @tomato_release_flat(ptr %old.404)
+  store i64 0, ptr %for.i.405
+  br label %each.406
+each.406:
+  %lst.410 = load ptr, ptr %for.list.403
+  %i.411 = load i64, ptr %for.i.405
+  %lenp.412 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.410, i32 0, i32 2
+  %n.413 = load i64, ptr %lenp.412
+  %go.414 = icmp slt i64 %i.411, %n.413
+  br i1 %go.414, label %eachbody.407, label %endeach.409
+eachbody.407:
+  %lenp.415 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.410, i32 0, i32 2
+  %len.416 = load i64, ptr %lenp.415
+  %oob.417 = icmp uge i64 %i.411, %len.416
+  br i1 %oob.417, label %stop.418, label %ok.419
+stop.418:
+  %err.420 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.420, ptr @tomato_exc
+  store i32 71, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 71)
+  store i32 1, ptr @tomato_exc_seen
+  br label %epilogue
+ok.419:
+  %datap.421 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.410, i32 0, i32 4
+  %data.422 = load ptr, ptr %datap.421
+  %addr.423 = getelementptr i64, ptr %data.422, i64 %i.411
+  %item.424 = load ptr, ptr %addr.423
+  call void @tomato_retain(ptr %item.424)
+  %old.425 = load ptr, ptr %v.f.9
+  store ptr %item.424, ptr %v.f.9
+  call void @tomato_release(ptr %old.425)
+  %bl.426 = load ptr, ptr %v.f.9
+  %bl.427 = load ptr, ptr %v.out.2
+  call void @tomato.lint.reads(ptr %bl.426, ptr %bl.427)
+  %ex.428 = load ptr, ptr @tomato_exc
+  %has.429 = icmp ne ptr %ex.428, null
+  br i1 %has.429, label %raised.430, label %fine.431
+raised.430:
+  call void @tomato_trace(ptr @.str.505.c, i32 72)
+  br label %epilogue
+fine.431:
+  br label %eachstep.408
+eachstep.408:
+  %cur.432 = load i64, ptr %for.i.405
+  %next.433 = add i64 %cur.432, 1
+  store i64 %next.433, ptr %for.i.405
+  br label %each.406
+endeach.409:
+  br label %endif.18
+endif.18:
   br label %endif.1
-next.306:
+next.10:
+  %bl.434 = load ptr, ptr %v.v.1
+  %fld.435 = getelementptr %class.19, ptr %bl.434, i32 0, i32 2
+  %f.436 = load ptr, ptr %fld.435
+  call void @tomato_retain(ptr %f.436)
+  %cmp32.437 = call i32 @tomato_str_cmp(ptr %f.436, ptr @.str.223)
+  %c.438 = icmp eq i32 %cmp32.437, 0
+  call void @tomato_release_flat(ptr %f.436)
+  call void @tomato_release_flat(ptr @.str.223)
+  %b.439 = zext i1 %c.438 to i64
+  store i64 %b.439, ptr %logic.440
+  %cond.441 = icmp ne i64 %b.439, 0
+  br i1 %cond.441, label %endlogic.443, label %rhs.442
+rhs.442:
+  %bl.444 = load ptr, ptr %v.v.1
+  %fld.445 = getelementptr %class.19, ptr %bl.444, i32 0, i32 2
+  %f.446 = load ptr, ptr %fld.445
+  call void @tomato_retain(ptr %f.446)
+  %cmp32.447 = call i32 @tomato_str_cmp(ptr %f.446, ptr @.str.103)
+  %c.448 = icmp eq i32 %cmp32.447, 0
+  call void @tomato_release_flat(ptr %f.446)
+  call void @tomato_release_flat(ptr @.str.103)
+  %b.449 = zext i1 %c.448 to i64
+  store i64 %b.449, ptr %logic.440
+  br label %endlogic.443
+endlogic.443:
+  %logic.450 = load i64, ptr %logic.440
+  %cond.451 = icmp ne i64 %logic.450, 0
+  br i1 %cond.451, label %then.452, label %next.453
+then.452:
+  %bl.454 = load ptr, ptr %v.v.1
+  %fld.455 = getelementptr %class.19, ptr %bl.454, i32 0, i32 7
+  %f.456 = load ptr, ptr %fld.455
+  call void @tomato_retain(ptr %f.456)
+  %old.458 = load ptr, ptr %for.list.457
+  store ptr %f.456, ptr %for.list.457
+  call void @tomato_release_flat(ptr %old.458)
+  store i64 0, ptr %for.i.459
+  br label %each.460
+each.460:
+  %lst.464 = load ptr, ptr %for.list.457
+  %i.465 = load i64, ptr %for.i.459
+  %lenp.466 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.464, i32 0, i32 2
+  %n.467 = load i64, ptr %lenp.466
+  %go.468 = icmp slt i64 %i.465, %n.467
+  br i1 %go.468, label %eachbody.461, label %endeach.463
+eachbody.461:
+  %lenp.469 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.464, i32 0, i32 2
+  %len.470 = load i64, ptr %lenp.469
+  %oob.471 = icmp uge i64 %i.465, %len.470
+  br i1 %oob.471, label %stop.472, label %ok.473
+stop.472:
+  %err.474 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
+  store ptr %err.474, ptr @tomato_exc
+  store i32 74, ptr @tomato_exc_line
+  store i32 1, ptr @tomato_exc_rt
+  call void @tomato_trace_clear()
+  call void @tomato_trace(ptr @.str.505.c, i32 74)
+  store i32 1, ptr @tomato_exc_seen
+  br label %epilogue
+ok.473:
+  %datap.475 = getelementptr { i64, i64, i64, i64, ptr }, ptr %lst.464, i32 0, i32 4
+  %data.476 = load ptr, ptr %datap.475
+  %addr.477 = getelementptr i64, ptr %data.476, i64 %i.465
+  %item.478 = load ptr, ptr %addr.477
+  call void @tomato_retain(ptr %item.478)
+  %old.479 = load ptr, ptr %v.item.11
+  store ptr %item.478, ptr %v.item.11
+  call void @tomato_release(ptr %old.479)
+  %bl.480 = load ptr, ptr %v.item.11
+  %bl.481 = load ptr, ptr %v.out.2
+  call void @tomato.lint.reads(ptr %bl.480, ptr %bl.481)
+  %ex.482 = load ptr, ptr @tomato_exc
+  %has.483 = icmp ne ptr %ex.482, null
+  br i1 %has.483, label %raised.484, label %fine.485
+raised.484:
+  call void @tomato_trace(ptr @.str.505.c, i32 75)
+  br label %epilogue
+fine.485:
+  br label %eachstep.462
+eachstep.462:
+  %cur.486 = load i64, ptr %for.i.459
+  %next.487 = add i64 %cur.486, 1
+  store i64 %next.487, ptr %for.i.459
+  br label %each.460
+endeach.463:
+  br label %endif.1
+next.453:
   br label %endif.1
 endif.1:
   br label %epilogue
 epilogue:
-  %rel.341 = load ptr, ptr %v.n.3
-  call void @tomato_release(ptr %rel.341)
-  %rel.342 = load ptr, ptr %v.inner.4
-  call void @tomato_release(ptr %rel.342)
-  %rel.343 = load ptr, ptr %for.list.112
-  call void @tomato_release_flat(ptr %rel.343)
-  %rel.344 = load ptr, ptr %v.f.5
-  call void @tomato_release(ptr %rel.344)
-  %rel.345 = load ptr, ptr %v.bound.6
-  call void @tomato_release(ptr %rel.345)
-  %rel.346 = load ptr, ptr %for.list.170
-  call void @tomato_release_flat(ptr %rel.346)
-  %rel.347 = load ptr, ptr %v.r.7
-  call void @tomato_release(ptr %rel.347)
-  %rel.348 = load ptr, ptr %for.list.256
-  call void @tomato_release_flat(ptr %rel.348)
-  %rel.349 = load ptr, ptr %for.list.310
-  call void @tomato_release_flat(ptr %rel.349)
-  %rel.350 = load ptr, ptr %v.item.8
-  call void @tomato_release(ptr %rel.350)
+  %rel.488 = load ptr, ptr %v.n.3
+  call void @tomato_release(ptr %rel.488)
+  %rel.489 = load ptr, ptr %v.lam_reads.4
+  call void @tomato_release(ptr %rel.489)
+  %rel.490 = load ptr, ptr %for.list.134
+  call void @tomato_release_flat(ptr %rel.490)
+  %rel.491 = load ptr, ptr %v.r.5
+  call void @tomato_release(ptr %rel.491)
+  %rel.492 = load ptr, ptr %for.list.178
+  call void @tomato_release_flat(ptr %rel.492)
+  %rel.493 = load ptr, ptr %v.p.7
+  call void @tomato_release(ptr %rel.493)
+  %rel.494 = load ptr, ptr %v.inner.8
+  call void @tomato_release(ptr %rel.494)
+  %rel.495 = load ptr, ptr %for.list.259
+  call void @tomato_release_flat(ptr %rel.495)
+  %rel.496 = load ptr, ptr %v.f.9
+  call void @tomato_release(ptr %rel.496)
+  %rel.497 = load ptr, ptr %v.bound.10
+  call void @tomato_release(ptr %rel.497)
+  %rel.498 = load ptr, ptr %for.list.317
+  call void @tomato_release_flat(ptr %rel.498)
+  %rel.499 = load ptr, ptr %for.list.403
+  call void @tomato_release_flat(ptr %rel.499)
+  %rel.500 = load ptr, ptr %for.list.457
+  call void @tomato_release_flat(ptr %rel.500)
+  %rel.501 = load ptr, ptr %v.item.11
+  call void @tomato_release(ptr %rel.501)
   ret void
 }
 
@@ -47602,7 +47865,7 @@ then.9:
   %has.14 = icmp ne ptr %ex.13, null
   br i1 %has.14, label %raised.15, label %fine.16
 raised.15:
-  call void @tomato_trace(ptr @.str.506.c, i32 68)
+  call void @tomato_trace(ptr @.str.506.c, i32 79)
   br label %epilogue
 fine.16:
   %old.17 = load ptr, ptr %v.n.3
@@ -47639,10 +47902,10 @@ stop.41:
   call void @tomato_release(ptr %f.31)
   %err.43 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.43, ptr @tomato_exc
-  store i32 70, ptr @tomato_exc_line
+  store i32 81, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.506.c, i32 70)
+  call void @tomato_trace(ptr @.str.506.c, i32 81)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.42:
@@ -47691,10 +47954,10 @@ stop.73:
   call void @tomato_release(ptr %f.63)
   %err.75 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.75, ptr @tomato_exc
-  store i32 70, ptr @tomato_exc_line
+  store i32 81, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.506.c, i32 70)
+  call void @tomato_trace(ptr @.str.506.c, i32 81)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.74:
@@ -47709,7 +47972,7 @@ ok.74:
   %has.82 = icmp ne ptr %ex.81, null
   br i1 %has.82, label %raised.83, label %fine.84
 raised.83:
-  call void @tomato_trace(ptr @.str.506.c, i32 70)
+  call void @tomato_trace(ptr @.str.506.c, i32 81)
   call void @tomato_release(ptr %item.79)
   br label %epilogue
 fine.84:
@@ -47749,10 +48012,10 @@ stop.107:
   call void @tomato_release(ptr %f.97)
   %err.109 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.109, ptr @tomato_exc
-  store i32 72, ptr @tomato_exc_line
+  store i32 83, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.506.c, i32 72)
+  call void @tomato_trace(ptr @.str.506.c, i32 83)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.108:
@@ -47767,7 +48030,7 @@ ok.108:
   %has.116 = icmp ne ptr %ex.115, null
   br i1 %has.116, label %raised.117, label %fine.118
 raised.117:
-  call void @tomato_trace(ptr @.str.506.c, i32 72)
+  call void @tomato_trace(ptr @.str.506.c, i32 83)
   call void @tomato_release(ptr %item.113)
   br label %epilogue
 fine.118:
@@ -47790,10 +48053,10 @@ stop.130:
   call void @tomato_release(ptr %f.120)
   %err.132 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.132, ptr @tomato_exc
-  store i32 72, ptr @tomato_exc_line
+  store i32 83, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.506.c, i32 72)
+  call void @tomato_trace(ptr @.str.506.c, i32 83)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.131:
@@ -47837,10 +48100,10 @@ eachbody.147:
 stop.158:
   %err.160 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.160, ptr @tomato_exc
-  store i32 73, ptr @tomato_exc_line
+  store i32 84, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.506.c, i32 73)
+  call void @tomato_trace(ptr @.str.506.c, i32 84)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.159:
@@ -47859,7 +48122,7 @@ ok.159:
   %has.169 = icmp ne ptr %ex.168, null
   br i1 %has.169, label %raised.170, label %fine.171
 raised.170:
-  call void @tomato_trace(ptr @.str.506.c, i32 74)
+  call void @tomato_trace(ptr @.str.506.c, i32 85)
   br label %epilogue
 fine.171:
   br label %eachstep.148
@@ -47924,10 +48187,10 @@ eachbody.201:
 stop.212:
   %err.214 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.214, ptr @tomato_exc
-  store i32 76, ptr @tomato_exc_line
+  store i32 87, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.506.c, i32 76)
+  call void @tomato_trace(ptr @.str.506.c, i32 87)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.213:
@@ -47946,7 +48209,7 @@ ok.213:
   %has.223 = icmp ne ptr %ex.222, null
   br i1 %has.223, label %raised.224, label %fine.225
 raised.224:
-  call void @tomato_trace(ptr @.str.506.c, i32 77)
+  call void @tomato_trace(ptr @.str.506.c, i32 88)
   br label %epilogue
 fine.225:
   br label %eachstep.202
@@ -48015,10 +48278,10 @@ stop.23:
   call void @tomato_release(ptr %f.13)
   %err.25 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.25, ptr @tomato_exc
-  store i32 80, ptr @tomato_exc_line
+  store i32 91, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.507.c, i32 80)
+  call void @tomato_trace(ptr @.str.507.c, i32 91)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.24:
@@ -48090,10 +48353,10 @@ eachbody.6:
 stop.17:
   %err.19 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.19, ptr @tomato_exc
-  store i32 84, ptr @tomato_exc_line
+  store i32 95, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 84)
+  call void @tomato_trace(ptr @.str.508.c, i32 95)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.18:
@@ -48152,10 +48415,10 @@ stop.57:
   call void @tomato_release(ptr %f.47)
   %err.59 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.59, ptr @tomato_exc
-  store i32 88, ptr @tomato_exc_line
+  store i32 99, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 88)
+  call void @tomato_trace(ptr @.str.508.c, i32 99)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.58:
@@ -48189,10 +48452,10 @@ eachbody.70:
 stop.81:
   %err.83 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.83, ptr @tomato_exc
-  store i32 88, ptr @tomato_exc_line
+  store i32 99, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 88)
+  call void @tomato_trace(ptr @.str.508.c, i32 99)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.82:
@@ -48222,10 +48485,10 @@ stop.102:
   call void @tomato_release(ptr %f.92)
   %err.104 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.104, ptr @tomato_exc
-  store i32 89, ptr @tomato_exc_line
+  store i32 100, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 89)
+  call void @tomato_trace(ptr @.str.508.c, i32 100)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.103:
@@ -48240,7 +48503,7 @@ ok.103:
   %has.111 = icmp ne ptr %ex.110, null
   br i1 %has.111, label %raised.112, label %fine.113
 raised.112:
-  call void @tomato_trace(ptr @.str.508.c, i32 89)
+  call void @tomato_trace(ptr @.str.508.c, i32 100)
   call void @tomato_release(ptr %item.108)
   br label %epilogue
 fine.113:
@@ -48250,7 +48513,7 @@ fine.113:
   %has.116 = icmp ne ptr %ex.115, null
   br i1 %has.116, label %raised.117, label %fine.118
 raised.117:
-  call void @tomato_trace(ptr @.str.508.c, i32 89)
+  call void @tomato_trace(ptr @.str.508.c, i32 100)
   call void @tomato_release(ptr %call.109)
   br label %epilogue
 fine.118:
@@ -48286,10 +48549,10 @@ endeach.72:
 stop.137:
   %err.139 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.139, ptr @tomato_exc
-  store i32 91, ptr @tomato_exc_line
+  store i32 102, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 91)
+  call void @tomato_trace(ptr @.str.508.c, i32 102)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.138:
@@ -48327,10 +48590,10 @@ stop.165:
   call void @tomato_release(ptr %f.155)
   %err.167 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.167, ptr @tomato_exc
-  store i32 91, ptr @tomato_exc_line
+  store i32 102, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 91)
+  call void @tomato_trace(ptr @.str.508.c, i32 102)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.166:
@@ -48345,7 +48608,7 @@ ok.166:
   %has.174 = icmp ne ptr %ex.173, null
   br i1 %has.174, label %raised.175, label %fine.176
 raised.175:
-  call void @tomato_trace(ptr @.str.508.c, i32 91)
+  call void @tomato_trace(ptr @.str.508.c, i32 102)
   call void @tomato_release(ptr %item.171)
   br label %epilogue
 fine.176:
@@ -48355,7 +48618,7 @@ fine.176:
   %has.179 = icmp ne ptr %ex.178, null
   br i1 %has.179, label %raised.180, label %fine.181
 raised.180:
-  call void @tomato_trace(ptr @.str.508.c, i32 91)
+  call void @tomato_trace(ptr @.str.508.c, i32 102)
   call void @tomato_release(ptr %call.172)
   br label %epilogue
 fine.181:
@@ -48404,10 +48667,10 @@ stop.208:
   call void @tomato_release(ptr %f.198)
   %err.210 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.210, ptr @tomato_exc
-  store i32 94, ptr @tomato_exc_line
+  store i32 105, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 94)
+  call void @tomato_trace(ptr @.str.508.c, i32 105)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.209:
@@ -48422,7 +48685,7 @@ ok.209:
   %has.217 = icmp ne ptr %ex.216, null
   br i1 %has.217, label %raised.218, label %fine.219
 raised.218:
-  call void @tomato_trace(ptr @.str.508.c, i32 94)
+  call void @tomato_trace(ptr @.str.508.c, i32 105)
   call void @tomato_release(ptr %item.214)
   br label %epilogue
 fine.219:
@@ -48432,7 +48695,7 @@ fine.219:
   %has.222 = icmp ne ptr %ex.221, null
   br i1 %has.222, label %raised.223, label %fine.224
 raised.223:
-  call void @tomato_trace(ptr @.str.508.c, i32 94)
+  call void @tomato_trace(ptr @.str.508.c, i32 105)
   call void @tomato_release(ptr %call.215)
   br label %epilogue
 fine.224:
@@ -48463,10 +48726,10 @@ stop.240:
   call void @tomato_release(ptr %f.230)
   %err.242 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.242, ptr @tomato_exc
-  store i32 96, ptr @tomato_exc_line
+  store i32 107, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 96)
+  call void @tomato_trace(ptr @.str.508.c, i32 107)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.241:
@@ -48500,10 +48763,10 @@ eachbody.253:
 stop.264:
   %err.266 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.266, ptr @tomato_exc
-  store i32 96, ptr @tomato_exc_line
+  store i32 107, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 96)
+  call void @tomato_trace(ptr @.str.508.c, i32 107)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.265:
@@ -48533,10 +48796,10 @@ stop.285:
   call void @tomato_release(ptr %f.275)
   %err.287 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.287, ptr @tomato_exc
-  store i32 97, ptr @tomato_exc_line
+  store i32 108, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 97)
+  call void @tomato_trace(ptr @.str.508.c, i32 108)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.286:
@@ -48551,7 +48814,7 @@ ok.286:
   %has.294 = icmp ne ptr %ex.293, null
   br i1 %has.294, label %raised.295, label %fine.296
 raised.295:
-  call void @tomato_trace(ptr @.str.508.c, i32 97)
+  call void @tomato_trace(ptr @.str.508.c, i32 108)
   call void @tomato_release(ptr %item.291)
   br label %epilogue
 fine.296:
@@ -48561,7 +48824,7 @@ fine.296:
   %has.299 = icmp ne ptr %ex.298, null
   br i1 %has.299, label %raised.300, label %fine.301
 raised.300:
-  call void @tomato_trace(ptr @.str.508.c, i32 97)
+  call void @tomato_trace(ptr @.str.508.c, i32 108)
   call void @tomato_release(ptr %call.292)
   br label %epilogue
 fine.301:
@@ -48597,10 +48860,10 @@ endeach.255:
 stop.320:
   %err.322 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.322, ptr @tomato_exc
-  store i32 99, ptr @tomato_exc_line
+  store i32 110, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 99)
+  call void @tomato_trace(ptr @.str.508.c, i32 110)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.321:
@@ -48638,10 +48901,10 @@ stop.348:
   call void @tomato_release(ptr %f.338)
   %err.350 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.350, ptr @tomato_exc
-  store i32 99, ptr @tomato_exc_line
+  store i32 110, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 99)
+  call void @tomato_trace(ptr @.str.508.c, i32 110)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.349:
@@ -48656,7 +48919,7 @@ ok.349:
   %has.357 = icmp ne ptr %ex.356, null
   br i1 %has.357, label %raised.358, label %fine.359
 raised.358:
-  call void @tomato_trace(ptr @.str.508.c, i32 99)
+  call void @tomato_trace(ptr @.str.508.c, i32 110)
   call void @tomato_release(ptr %item.354)
   br label %epilogue
 fine.359:
@@ -48666,7 +48929,7 @@ fine.359:
   %has.362 = icmp ne ptr %ex.361, null
   br i1 %has.362, label %raised.363, label %fine.364
 raised.363:
-  call void @tomato_trace(ptr @.str.508.c, i32 99)
+  call void @tomato_trace(ptr @.str.508.c, i32 110)
   call void @tomato_release(ptr %call.355)
   br label %epilogue
 fine.364:
@@ -48699,10 +48962,10 @@ endif.307:
 stop.382:
   %err.384 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.384, ptr @tomato_exc
-  store i32 101, ptr @tomato_exc_line
+  store i32 112, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 101)
+  call void @tomato_trace(ptr @.str.508.c, i32 112)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.383:
@@ -48740,10 +49003,10 @@ stop.410:
   call void @tomato_release(ptr %f.400)
   %err.412 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.412, ptr @tomato_exc
-  store i32 101, ptr @tomato_exc_line
+  store i32 112, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.508.c, i32 101)
+  call void @tomato_trace(ptr @.str.508.c, i32 112)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.411:
@@ -48758,7 +49021,7 @@ ok.411:
   %has.419 = icmp ne ptr %ex.418, null
   br i1 %has.419, label %raised.420, label %fine.421
 raised.420:
-  call void @tomato_trace(ptr @.str.508.c, i32 101)
+  call void @tomato_trace(ptr @.str.508.c, i32 112)
   call void @tomato_release(ptr %item.416)
   br label %epilogue
 fine.421:
@@ -48768,7 +49031,7 @@ fine.421:
   %has.424 = icmp ne ptr %ex.423, null
   br i1 %has.424, label %raised.425, label %fine.426
 raised.425:
-  call void @tomato_trace(ptr @.str.508.c, i32 101)
+  call void @tomato_trace(ptr @.str.508.c, i32 112)
   call void @tomato_release(ptr %call.417)
   br label %epilogue
 fine.426:
@@ -48937,10 +49200,10 @@ then.46:
 stop.61:
   %err.63 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.63, ptr @tomato_exc
-  store i32 111, ptr @tomato_exc_line
+  store i32 122, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 111)
+  call void @tomato_trace(ptr @.str.509.c, i32 122)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.62:
@@ -48982,10 +49245,10 @@ stop.88:
   call void @tomato_release(ptr %f.78)
   %err.90 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.90, ptr @tomato_exc
-  store i32 113, ptr @tomato_exc_line
+  store i32 124, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 113)
+  call void @tomato_trace(ptr @.str.509.c, i32 124)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.89:
@@ -49019,10 +49282,10 @@ eachbody.101:
 stop.112:
   %err.114 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.114, ptr @tomato_exc
-  store i32 113, ptr @tomato_exc_line
+  store i32 124, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 113)
+  call void @tomato_trace(ptr @.str.509.c, i32 124)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.113:
@@ -49052,10 +49315,10 @@ stop.133:
   call void @tomato_release(ptr %f.123)
   %err.135 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.135, ptr @tomato_exc
-  store i32 114, ptr @tomato_exc_line
+  store i32 125, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 114)
+  call void @tomato_trace(ptr @.str.509.c, i32 125)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.134:
@@ -49070,7 +49333,7 @@ ok.134:
   %has.142 = icmp ne ptr %ex.141, null
   br i1 %has.142, label %raised.143, label %fine.144
 raised.143:
-  call void @tomato_trace(ptr @.str.509.c, i32 114)
+  call void @tomato_trace(ptr @.str.509.c, i32 125)
   call void @tomato_release(ptr %item.139)
   br label %epilogue
 fine.144:
@@ -49081,7 +49344,7 @@ fine.144:
   %has.148 = icmp ne ptr %ex.147, null
   br i1 %has.148, label %raised.149, label %fine.150
 raised.149:
-  call void @tomato_trace(ptr @.str.509.c, i32 114)
+  call void @tomato_trace(ptr @.str.509.c, i32 125)
   call void @tomato_release(ptr %call.140)
   br label %epilogue
 fine.150:
@@ -49120,10 +49383,10 @@ stop.169:
   call void @tomato_release(ptr %f.159)
   %err.171 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.171, ptr @tomato_exc
-  store i32 116, ptr @tomato_exc_line
+  store i32 127, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 116)
+  call void @tomato_trace(ptr @.str.509.c, i32 127)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.170:
@@ -49138,7 +49401,7 @@ ok.170:
   %has.178 = icmp ne ptr %ex.177, null
   br i1 %has.178, label %raised.179, label %fine.180
 raised.179:
-  call void @tomato_trace(ptr @.str.509.c, i32 116)
+  call void @tomato_trace(ptr @.str.509.c, i32 127)
   call void @tomato_release(ptr %item.175)
   br label %epilogue
 fine.180:
@@ -49149,7 +49412,7 @@ fine.180:
   %has.184 = icmp ne ptr %ex.183, null
   br i1 %has.184, label %raised.185, label %fine.186
 raised.185:
-  call void @tomato_trace(ptr @.str.509.c, i32 116)
+  call void @tomato_trace(ptr @.str.509.c, i32 127)
   call void @tomato_release(ptr %call.176)
   br label %epilogue
 fine.186:
@@ -49187,10 +49450,10 @@ stop.207:
   call void @tomato_release(ptr %f.197)
   %err.209 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.209, ptr @tomato_exc
-  store i32 118, ptr @tomato_exc_line
+  store i32 129, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 118)
+  call void @tomato_trace(ptr @.str.509.c, i32 129)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.208:
@@ -49205,7 +49468,7 @@ ok.208:
   %has.216 = icmp ne ptr %ex.215, null
   br i1 %has.216, label %raised.217, label %fine.218
 raised.217:
-  call void @tomato_trace(ptr @.str.509.c, i32 118)
+  call void @tomato_trace(ptr @.str.509.c, i32 129)
   call void @tomato_release(ptr %item.213)
   br label %epilogue
 fine.218:
@@ -49215,7 +49478,7 @@ fine.218:
   %has.221 = icmp ne ptr %ex.220, null
   br i1 %has.221, label %raised.222, label %fine.223
 raised.222:
-  call void @tomato_trace(ptr @.str.509.c, i32 118)
+  call void @tomato_trace(ptr @.str.509.c, i32 129)
   call void @tomato_release(ptr %call.214)
   br label %epilogue
 fine.223:
@@ -49242,10 +49505,10 @@ stop.240:
   call void @tomato_release(ptr %f.230)
   %err.242 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.242, ptr @tomato_exc
-  store i32 118, ptr @tomato_exc_line
+  store i32 129, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 118)
+  call void @tomato_trace(ptr @.str.509.c, i32 129)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.241:
@@ -49260,7 +49523,7 @@ ok.241:
   %has.249 = icmp ne ptr %ex.248, null
   br i1 %has.249, label %raised.250, label %fine.251
 raised.250:
-  call void @tomato_trace(ptr @.str.509.c, i32 118)
+  call void @tomato_trace(ptr @.str.509.c, i32 129)
   call void @tomato_release(ptr %item.246)
   br label %epilogue
 fine.251:
@@ -49270,7 +49533,7 @@ fine.251:
   %has.254 = icmp ne ptr %ex.253, null
   br i1 %has.254, label %raised.255, label %fine.256
 raised.255:
-  call void @tomato_trace(ptr @.str.509.c, i32 118)
+  call void @tomato_trace(ptr @.str.509.c, i32 129)
   call void @tomato_release(ptr %call.247)
   br label %epilogue
 fine.256:
@@ -49311,10 +49574,10 @@ then.265:
 stop.280:
   %err.282 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.282, ptr @tomato_exc
-  store i32 120, ptr @tomato_exc_line
+  store i32 131, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 120)
+  call void @tomato_trace(ptr @.str.509.c, i32 131)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.281:
@@ -49352,10 +49615,10 @@ stop.308:
   call void @tomato_release(ptr %f.298)
   %err.310 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.310, ptr @tomato_exc
-  store i32 120, ptr @tomato_exc_line
+  store i32 131, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 120)
+  call void @tomato_trace(ptr @.str.509.c, i32 131)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.309:
@@ -49370,7 +49633,7 @@ ok.309:
   %has.317 = icmp ne ptr %ex.316, null
   br i1 %has.317, label %raised.318, label %fine.319
 raised.318:
-  call void @tomato_trace(ptr @.str.509.c, i32 120)
+  call void @tomato_trace(ptr @.str.509.c, i32 131)
   call void @tomato_release(ptr %item.314)
   br label %epilogue
 fine.319:
@@ -49381,7 +49644,7 @@ fine.319:
   %has.323 = icmp ne ptr %ex.322, null
   br i1 %has.323, label %raised.324, label %fine.325
 raised.324:
-  call void @tomato_trace(ptr @.str.509.c, i32 120)
+  call void @tomato_trace(ptr @.str.509.c, i32 131)
   call void @tomato_release(ptr %call.315)
   br label %epilogue
 fine.325:
@@ -49416,10 +49679,10 @@ stop.342:
   call void @tomato_release(ptr %f.332)
   %err.344 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.344, ptr @tomato_exc
-  store i32 122, ptr @tomato_exc_line
+  store i32 133, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 122)
+  call void @tomato_trace(ptr @.str.509.c, i32 133)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.343:
@@ -49434,7 +49697,7 @@ ok.343:
   %has.351 = icmp ne ptr %ex.350, null
   br i1 %has.351, label %raised.352, label %fine.353
 raised.352:
-  call void @tomato_trace(ptr @.str.509.c, i32 122)
+  call void @tomato_trace(ptr @.str.509.c, i32 133)
   call void @tomato_release(ptr %item.348)
   br label %epilogue
 fine.353:
@@ -49445,7 +49708,7 @@ fine.353:
   %has.357 = icmp ne ptr %ex.356, null
   br i1 %has.357, label %raised.358, label %fine.359
 raised.358:
-  call void @tomato_trace(ptr @.str.509.c, i32 122)
+  call void @tomato_trace(ptr @.str.509.c, i32 133)
   call void @tomato_release(ptr %call.349)
   br label %epilogue
 fine.359:
@@ -49473,10 +49736,10 @@ rhs.365:
 stop.379:
   %err.381 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.381, ptr @tomato_exc
-  store i32 123, ptr @tomato_exc_line
+  store i32 134, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 123)
+  call void @tomato_trace(ptr @.str.509.c, i32 134)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.380:
@@ -49517,10 +49780,10 @@ stop.407:
   call void @tomato_release(ptr %f.397)
   %err.409 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.409, ptr @tomato_exc
-  store i32 124, ptr @tomato_exc_line
+  store i32 135, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 124)
+  call void @tomato_trace(ptr @.str.509.c, i32 135)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.408:
@@ -49535,7 +49798,7 @@ ok.408:
   %has.416 = icmp ne ptr %ex.415, null
   br i1 %has.416, label %raised.417, label %fine.418
 raised.417:
-  call void @tomato_trace(ptr @.str.509.c, i32 124)
+  call void @tomato_trace(ptr @.str.509.c, i32 135)
   call void @tomato_release(ptr %item.413)
   br label %epilogue
 fine.418:
@@ -49546,7 +49809,7 @@ fine.418:
   %has.422 = icmp ne ptr %ex.421, null
   br i1 %has.422, label %raised.423, label %fine.424
 raised.423:
-  call void @tomato_trace(ptr @.str.509.c, i32 124)
+  call void @tomato_trace(ptr @.str.509.c, i32 135)
   call void @tomato_release(ptr %call.414)
   br label %epilogue
 fine.424:
@@ -49584,10 +49847,10 @@ stop.443:
   call void @tomato_release(ptr %f.433)
   %err.445 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.445, ptr @tomato_exc
-  store i32 127, ptr @tomato_exc_line
+  store i32 138, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 127)
+  call void @tomato_trace(ptr @.str.509.c, i32 138)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.444:
@@ -49621,10 +49884,10 @@ eachbody.456:
 stop.467:
   %err.469 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.469, ptr @tomato_exc
-  store i32 127, ptr @tomato_exc_line
+  store i32 138, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 127)
+  call void @tomato_trace(ptr @.str.509.c, i32 138)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.468:
@@ -49654,10 +49917,10 @@ stop.488:
   call void @tomato_release(ptr %f.478)
   %err.490 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.490, ptr @tomato_exc
-  store i32 128, ptr @tomato_exc_line
+  store i32 139, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.509.c, i32 128)
+  call void @tomato_trace(ptr @.str.509.c, i32 139)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.489:
@@ -49672,7 +49935,7 @@ ok.489:
   %has.497 = icmp ne ptr %ex.496, null
   br i1 %has.497, label %raised.498, label %fine.499
 raised.498:
-  call void @tomato_trace(ptr @.str.509.c, i32 128)
+  call void @tomato_trace(ptr @.str.509.c, i32 139)
   call void @tomato_release(ptr %item.494)
   br label %epilogue
 fine.499:
@@ -49683,7 +49946,7 @@ fine.499:
   %has.503 = icmp ne ptr %ex.502, null
   br i1 %has.503, label %raised.504, label %fine.505
 raised.504:
-  call void @tomato_trace(ptr @.str.509.c, i32 128)
+  call void @tomato_trace(ptr @.str.509.c, i32 139)
   call void @tomato_release(ptr %call.495)
   br label %epilogue
 fine.505:
@@ -49784,10 +50047,10 @@ rawcheck.26:
 stop.30:
   %err.32 = call ptr @tomato.new.8(ptr @.str.55, ptr @.str.56)
   store ptr %err.32, ptr @tomato_exc
-  store i32 135, ptr @tomato_exc_line
+  store i32 146, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.510.c, i32 135)
+  call void @tomato_trace(ptr @.str.510.c, i32 146)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.31:
@@ -49806,10 +50069,10 @@ rawready.27:
 stop.42:
   %err.44 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.44, ptr @tomato_exc
-  store i32 135, ptr @tomato_exc_line
+  store i32 146, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.510.c, i32 135)
+  call void @tomato_trace(ptr @.str.510.c, i32 146)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.43:
@@ -49828,7 +50091,7 @@ ok.43:
   %has.55 = icmp ne ptr %ex.54, null
   br i1 %has.55, label %raised.56, label %fine.57
 raised.56:
-  call void @tomato_trace(ptr @.str.510.c, i32 136)
+  call void @tomato_trace(ptr @.str.510.c, i32 147)
   br label %epilogue
 fine.57:
   %cond.58 = icmp ne i64 %call.53, 0
@@ -49908,10 +50171,10 @@ stop.113:
   call void @tomato_release(ptr %f.103)
   %err.115 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.115, ptr @tomato_exc
-  store i32 138, ptr @tomato_exc_line
+  store i32 149, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.510.c, i32 138)
+  call void @tomato_trace(ptr @.str.510.c, i32 149)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.114:
@@ -49926,7 +50189,7 @@ ok.114:
   %has.122 = icmp ne ptr %ex.121, null
   br i1 %has.122, label %raised.123, label %fine.124
 raised.123:
-  call void @tomato_trace(ptr @.str.510.c, i32 138)
+  call void @tomato_trace(ptr @.str.510.c, i32 149)
   call void @tomato_release(ptr %item.119)
   br label %epilogue
 fine.124:
@@ -49984,7 +50247,7 @@ entry:
   %has.4 = icmp ne ptr %ex.3, null
   br i1 %has.4, label %raised.5, label %fine.6
 raised.5:
-  call void @tomato_trace(ptr @.str.511.c, i32 144)
+  call void @tomato_trace(ptr @.str.511.c, i32 155)
   br label %epilogue
 fine.6:
   %t.7 = xor i64 %call.2, 1
@@ -50057,10 +50320,10 @@ stop.27:
   call void @tomato_release(ptr %f.17)
   %err.29 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.29, ptr @tomato_exc
-  store i32 152, ptr @tomato_exc_line
+  store i32 163, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 152)
+  call void @tomato_trace(ptr @.str.512.c, i32 163)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.28:
@@ -50094,10 +50357,10 @@ eachbody.40:
 stop.51:
   %err.53 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.53, ptr @tomato_exc
-  store i32 152, ptr @tomato_exc_line
+  store i32 163, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 152)
+  call void @tomato_trace(ptr @.str.512.c, i32 163)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.52:
@@ -50128,10 +50391,10 @@ stop.72:
   call void @tomato_release(ptr %f.62)
   %err.74 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.74, ptr @tomato_exc
-  store i32 153, ptr @tomato_exc_line
+  store i32 164, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 153)
+  call void @tomato_trace(ptr @.str.512.c, i32 164)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.73:
@@ -50146,7 +50409,7 @@ ok.73:
   %has.81 = icmp ne ptr %ex.80, null
   br i1 %has.81, label %raised.82, label %fine.83
 raised.82:
-  call void @tomato_trace(ptr @.str.512.c, i32 153)
+  call void @tomato_trace(ptr @.str.512.c, i32 164)
   call void @tomato_release(ptr %item.78)
   br label %epilogue
 fine.83:
@@ -50176,10 +50439,10 @@ endeach.42:
 stop.100:
   %err.102 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.102, ptr @tomato_exc
-  store i32 154, ptr @tomato_exc_line
+  store i32 165, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 154)
+  call void @tomato_trace(ptr @.str.512.c, i32 165)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.101:
@@ -50217,10 +50480,10 @@ stop.128:
   call void @tomato_release(ptr %f.118)
   %err.130 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.130, ptr @tomato_exc
-  store i32 155, ptr @tomato_exc_line
+  store i32 166, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 155)
+  call void @tomato_trace(ptr @.str.512.c, i32 166)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.129:
@@ -50235,7 +50498,7 @@ ok.129:
   %has.137 = icmp ne ptr %ex.136, null
   br i1 %has.137, label %raised.138, label %fine.139
 raised.138:
-  call void @tomato_trace(ptr @.str.512.c, i32 155)
+  call void @tomato_trace(ptr @.str.512.c, i32 166)
   call void @tomato_release(ptr %item.134)
   br label %epilogue
 fine.139:
@@ -50277,10 +50540,10 @@ stop.161:
   call void @tomato_release(ptr %f.151)
   %err.163 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.163, ptr @tomato_exc
-  store i32 157, ptr @tomato_exc_line
+  store i32 168, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 157)
+  call void @tomato_trace(ptr @.str.512.c, i32 168)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.162:
@@ -50295,7 +50558,7 @@ ok.162:
   %has.170 = icmp ne ptr %ex.169, null
   br i1 %has.170, label %raised.171, label %fine.172
 raised.171:
-  call void @tomato_trace(ptr @.str.512.c, i32 157)
+  call void @tomato_trace(ptr @.str.512.c, i32 168)
   call void @tomato_release(ptr %item.167)
   br label %epilogue
 fine.172:
@@ -50348,10 +50611,10 @@ stop.203:
   call void @tomato_release(ptr %f.193)
   %err.205 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.205, ptr @tomato_exc
-  store i32 159, ptr @tomato_exc_line
+  store i32 170, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 159)
+  call void @tomato_trace(ptr @.str.512.c, i32 170)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.204:
@@ -50366,7 +50629,7 @@ ok.204:
   %has.212 = icmp ne ptr %ex.211, null
   br i1 %has.212, label %raised.213, label %fine.214
 raised.213:
-  call void @tomato_trace(ptr @.str.512.c, i32 159)
+  call void @tomato_trace(ptr @.str.512.c, i32 170)
   call void @tomato_release(ptr %item.209)
   br label %epilogue
 fine.214:
@@ -50404,10 +50667,10 @@ stop.236:
   call void @tomato_release(ptr %f.226)
   %err.238 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.238, ptr @tomato_exc
-  store i32 161, ptr @tomato_exc_line
+  store i32 172, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 161)
+  call void @tomato_trace(ptr @.str.512.c, i32 172)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.237:
@@ -50422,7 +50685,7 @@ ok.237:
   %has.245 = icmp ne ptr %ex.244, null
   br i1 %has.245, label %raised.246, label %fine.247
 raised.246:
-  call void @tomato_trace(ptr @.str.512.c, i32 161)
+  call void @tomato_trace(ptr @.str.512.c, i32 172)
   call void @tomato_release(ptr %item.242)
   br label %epilogue
 fine.247:
@@ -50447,10 +50710,10 @@ stop.261:
   call void @tomato_release(ptr %f.251)
   %err.263 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.263, ptr @tomato_exc
-  store i32 162, ptr @tomato_exc_line
+  store i32 173, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 162)
+  call void @tomato_trace(ptr @.str.512.c, i32 173)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.262:
@@ -50484,10 +50747,10 @@ eachbody.274:
 stop.285:
   %err.287 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.287, ptr @tomato_exc
-  store i32 162, ptr @tomato_exc_line
+  store i32 173, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 162)
+  call void @tomato_trace(ptr @.str.512.c, i32 173)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.286:
@@ -50518,10 +50781,10 @@ stop.306:
   call void @tomato_release(ptr %f.296)
   %err.308 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.308, ptr @tomato_exc
-  store i32 163, ptr @tomato_exc_line
+  store i32 174, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 163)
+  call void @tomato_trace(ptr @.str.512.c, i32 174)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.307:
@@ -50536,7 +50799,7 @@ ok.307:
   %has.315 = icmp ne ptr %ex.314, null
   br i1 %has.315, label %raised.316, label %fine.317
 raised.316:
-  call void @tomato_trace(ptr @.str.512.c, i32 163)
+  call void @tomato_trace(ptr @.str.512.c, i32 174)
   call void @tomato_release(ptr %item.312)
   br label %epilogue
 fine.317:
@@ -50566,10 +50829,10 @@ endeach.276:
 stop.334:
   %err.336 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.336, ptr @tomato_exc
-  store i32 164, ptr @tomato_exc_line
+  store i32 175, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 164)
+  call void @tomato_trace(ptr @.str.512.c, i32 175)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.335:
@@ -50607,10 +50870,10 @@ stop.362:
   call void @tomato_release(ptr %f.352)
   %err.364 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.364, ptr @tomato_exc
-  store i32 165, ptr @tomato_exc_line
+  store i32 176, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 165)
+  call void @tomato_trace(ptr @.str.512.c, i32 176)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.363:
@@ -50625,7 +50888,7 @@ ok.363:
   %has.371 = icmp ne ptr %ex.370, null
   br i1 %has.371, label %raised.372, label %fine.373
 raised.372:
-  call void @tomato_trace(ptr @.str.512.c, i32 165)
+  call void @tomato_trace(ptr @.str.512.c, i32 176)
   call void @tomato_release(ptr %item.368)
   br label %epilogue
 fine.373:
@@ -50652,10 +50915,10 @@ endif.321:
 stop.388:
   %err.390 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.390, ptr @tomato_exc
-  store i32 166, ptr @tomato_exc_line
+  store i32 177, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 166)
+  call void @tomato_trace(ptr @.str.512.c, i32 177)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.389:
@@ -50693,10 +50956,10 @@ stop.416:
   call void @tomato_release(ptr %f.406)
   %err.418 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.418, ptr @tomato_exc
-  store i32 167, ptr @tomato_exc_line
+  store i32 178, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.512.c, i32 167)
+  call void @tomato_trace(ptr @.str.512.c, i32 178)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.417:
@@ -50711,7 +50974,7 @@ ok.417:
   %has.425 = icmp ne ptr %ex.424, null
   br i1 %has.425, label %raised.426, label %fine.427
 raised.426:
-  call void @tomato_trace(ptr @.str.512.c, i32 167)
+  call void @tomato_trace(ptr @.str.512.c, i32 178)
   call void @tomato_release(ptr %item.422)
   br label %epilogue
 fine.427:
@@ -50811,10 +51074,10 @@ rawcheck.26:
 stop.30:
   %err.32 = call ptr @tomato.new.8(ptr @.str.55, ptr @.str.56)
   store ptr %err.32, ptr @tomato_exc
-  store i32 171, ptr @tomato_exc_line
+  store i32 182, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.513.c, i32 171)
+  call void @tomato_trace(ptr @.str.513.c, i32 182)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.31:
@@ -50833,10 +51096,10 @@ rawready.27:
 stop.42:
   %err.44 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.44, ptr @tomato_exc
-  store i32 171, ptr @tomato_exc_line
+  store i32 182, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.513.c, i32 171)
+  call void @tomato_trace(ptr @.str.513.c, i32 182)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.43:
@@ -50854,7 +51117,7 @@ ok.43:
   %has.54 = icmp ne ptr %ex.53, null
   br i1 %has.54, label %raised.55, label %fine.56
 raised.55:
-  call void @tomato_trace(ptr @.str.513.c, i32 172)
+  call void @tomato_trace(ptr @.str.513.c, i32 183)
   br label %epilogue
 fine.56:
   store i64 %call.52, ptr %logic.57
@@ -50903,10 +51166,10 @@ stop.92:
   call void @tomato_int_free(i64 %int.85)
   %err.94 = call ptr @tomato.new.8(ptr @.str.55, ptr @.str.56)
   store ptr %err.94, ptr @tomato_exc
-  store i32 173, ptr @tomato_exc_line
+  store i32 184, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.513.c, i32 173)
+  call void @tomato_trace(ptr @.str.513.c, i32 184)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.93:
@@ -50925,10 +51188,10 @@ rawready.89:
 stop.104:
   %err.106 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.106, ptr @tomato_exc
-  store i32 173, ptr @tomato_exc_line
+  store i32 184, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.513.c, i32 173)
+  call void @tomato_trace(ptr @.str.513.c, i32 184)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.105:
@@ -50946,7 +51209,7 @@ ok.105:
   %has.116 = icmp ne ptr %ex.115, null
   br i1 %has.116, label %raised.117, label %fine.118
 raised.117:
-  call void @tomato_trace(ptr @.str.513.c, i32 173)
+  call void @tomato_trace(ptr @.str.513.c, i32 184)
   call void @tomato_int_free(i64 %dup.113)
   call void @tomato_release_flat(ptr @.str.513)
   call void @tomato_release_flat(ptr @.str.514)
@@ -50990,10 +51253,10 @@ eachbody.127:
 stop.138:
   %err.140 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.140, ptr @tomato_exc
-  store i32 175, ptr @tomato_exc_line
+  store i32 186, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.513.c, i32 175)
+  call void @tomato_trace(ptr @.str.513.c, i32 186)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.139:
@@ -51011,7 +51274,7 @@ ok.139:
   %has.149 = icmp ne ptr %ex.148, null
   br i1 %has.149, label %raised.150, label %fine.151
 raised.150:
-  call void @tomato_trace(ptr @.str.513.c, i32 176)
+  call void @tomato_trace(ptr @.str.513.c, i32 187)
   br label %epilogue
 fine.151:
   %old.153 = load ptr, ptr %for.list.152
@@ -51034,10 +51297,10 @@ eachbody.156:
 stop.167:
   %err.169 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.169, ptr @tomato_exc
-  store i32 176, ptr @tomato_exc_line
+  store i32 187, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.513.c, i32 176)
+  call void @tomato_trace(ptr @.str.513.c, i32 187)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.168:
@@ -51056,7 +51319,7 @@ ok.168:
   %has.178 = icmp ne ptr %ex.177, null
   br i1 %has.178, label %raised.179, label %fine.180
 raised.179:
-  call void @tomato_trace(ptr @.str.513.c, i32 177)
+  call void @tomato_trace(ptr @.str.513.c, i32 188)
   br label %epilogue
 fine.180:
   br label %eachstep.157
@@ -51144,10 +51407,10 @@ eachbody.6:
 stop.17:
   %err.19 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.19, ptr @tomato_exc
-  store i32 182, ptr @tomato_exc_line
+  store i32 193, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.515.c, i32 182)
+  call void @tomato_trace(ptr @.str.515.c, i32 193)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.18:
@@ -51189,10 +51452,10 @@ stop.47:
   call void @tomato_release(ptr %f.37)
   %err.49 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.49, ptr @tomato_exc
-  store i32 184, ptr @tomato_exc_line
+  store i32 195, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.515.c, i32 184)
+  call void @tomato_trace(ptr @.str.515.c, i32 195)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.48:
@@ -51207,7 +51470,7 @@ ok.48:
   %has.56 = icmp ne ptr %ex.55, null
   br i1 %has.56, label %raised.57, label %fine.58
 raised.57:
-  call void @tomato_trace(ptr @.str.515.c, i32 184)
+  call void @tomato_trace(ptr @.str.515.c, i32 195)
   call void @tomato_release(ptr %item.53)
   br label %epilogue
 fine.58:
@@ -51245,10 +51508,10 @@ stop.82:
   call void @tomato_release(ptr %f.72)
   %err.84 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.84, ptr @tomato_exc
-  store i32 186, ptr @tomato_exc_line
+  store i32 197, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.515.c, i32 186)
+  call void @tomato_trace(ptr @.str.515.c, i32 197)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.83:
@@ -51263,7 +51526,7 @@ ok.83:
   %has.91 = icmp ne ptr %ex.90, null
   br i1 %has.91, label %raised.92, label %fine.93
 raised.92:
-  call void @tomato_trace(ptr @.str.515.c, i32 186)
+  call void @tomato_trace(ptr @.str.515.c, i32 197)
   call void @tomato_release(ptr %item.88)
   br label %epilogue
 fine.93:
@@ -51302,10 +51565,10 @@ stop.118:
   call void @tomato_release(ptr %f.108)
   %err.120 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.120, ptr @tomato_exc
-  store i32 187, ptr @tomato_exc_line
+  store i32 198, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.515.c, i32 187)
+  call void @tomato_trace(ptr @.str.515.c, i32 198)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.119:
@@ -51353,10 +51616,10 @@ inbody.139:
 stop.149:
   %err.151 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.151, ptr @tomato_exc
-  store i32 187, ptr @tomato_exc_line
+  store i32 198, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.515.c, i32 187)
+  call void @tomato_trace(ptr @.str.515.c, i32 198)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.150:
@@ -51406,10 +51669,10 @@ stop.180:
   call void @tomato_release(ptr %f.170)
   %err.182 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.182, ptr @tomato_exc
-  store i32 188, ptr @tomato_exc_line
+  store i32 199, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.515.c, i32 188)
+  call void @tomato_trace(ptr @.str.515.c, i32 199)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.181:
@@ -51424,7 +51687,7 @@ ok.181:
   %has.189 = icmp ne ptr %ex.188, null
   br i1 %has.189, label %raised.190, label %fine.191
 raised.190:
-  call void @tomato_trace(ptr @.str.515.c, i32 188)
+  call void @tomato_trace(ptr @.str.515.c, i32 199)
   call void @tomato_release(ptr %item.186)
   br label %epilogue
 fine.191:
@@ -51461,10 +51724,10 @@ rhs.202:
 stop.216:
   %err.218 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.218, ptr @tomato_exc
-  store i32 189, ptr @tomato_exc_line
+  store i32 200, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.515.c, i32 189)
+  call void @tomato_trace(ptr @.str.515.c, i32 200)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.217:
@@ -51512,7 +51775,7 @@ endif.25:
   %has.236 = icmp ne ptr %ex.235, null
   br i1 %has.236, label %raised.237, label %fine.238
 raised.237:
-  call void @tomato_trace(ptr @.str.515.c, i32 191)
+  call void @tomato_trace(ptr @.str.515.c, i32 202)
   br label %epilogue
 fine.238:
   %old.240 = load ptr, ptr %for.list.239
@@ -51535,10 +51798,10 @@ eachbody.243:
 stop.254:
   %err.256 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.256, ptr @tomato_exc
-  store i32 191, ptr @tomato_exc_line
+  store i32 202, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.515.c, i32 191)
+  call void @tomato_trace(ptr @.str.515.c, i32 202)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.255:
@@ -51587,7 +51850,7 @@ rhs.282:
   %has.288 = icmp ne ptr %ex.287, null
   br i1 %has.288, label %raised.289, label %fine.290
 raised.289:
-  call void @tomato_trace(ptr @.str.515.c, i32 192)
+  call void @tomato_trace(ptr @.str.515.c, i32 203)
   br label %epilogue
 fine.290:
   store i64 %call.286, ptr %logic.280
@@ -51685,10 +51948,10 @@ eachbody.6:
 stop.17:
   %err.19 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.19, ptr @tomato_exc
-  store i32 197, ptr @tomato_exc_line
+  store i32 208, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.523.c, i32 197)
+  call void @tomato_trace(ptr @.str.523.c, i32 208)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.18:
@@ -51730,10 +51993,10 @@ stop.47:
   call void @tomato_release(ptr %f.37)
   %err.49 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.49, ptr @tomato_exc
-  store i32 199, ptr @tomato_exc_line
+  store i32 210, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.523.c, i32 199)
+  call void @tomato_trace(ptr @.str.523.c, i32 210)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.48:
@@ -51748,7 +52011,7 @@ ok.48:
   %has.56 = icmp ne ptr %ex.55, null
   br i1 %has.56, label %raised.57, label %fine.58
 raised.57:
-  call void @tomato_trace(ptr @.str.523.c, i32 199)
+  call void @tomato_trace(ptr @.str.523.c, i32 210)
   call void @tomato_release(ptr %item.53)
   br label %epilogue
 fine.58:
@@ -51787,10 +52050,10 @@ stop.83:
   call void @tomato_release(ptr %f.73)
   %err.85 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.85, ptr @tomato_exc
-  store i32 200, ptr @tomato_exc_line
+  store i32 211, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.523.c, i32 200)
+  call void @tomato_trace(ptr @.str.523.c, i32 211)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.84:
@@ -51823,10 +52086,10 @@ stop.104:
   call void @tomato_release_flat(ptr %f.91)
   %err.106 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.106, ptr @tomato_exc
-  store i32 200, ptr @tomato_exc_line
+  store i32 211, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.523.c, i32 200)
+  call void @tomato_trace(ptr @.str.523.c, i32 211)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.105:
@@ -51841,7 +52104,7 @@ ok.105:
   %has.113 = icmp ne ptr %ex.112, null
   br i1 %has.113, label %raised.114, label %fine.115
 raised.114:
-  call void @tomato_trace(ptr @.str.523.c, i32 200)
+  call void @tomato_trace(ptr @.str.523.c, i32 211)
   call void @tomato_release(ptr %item.110)
   call void @tomato_release_flat(ptr %f.91)
   br label %epilogue
@@ -51852,7 +52115,7 @@ fine.115:
   %has.118 = icmp ne ptr %ex.117, null
   br i1 %has.118, label %raised.119, label %fine.120
 raised.119:
-  call void @tomato_trace(ptr @.str.523.c, i32 200)
+  call void @tomato_trace(ptr @.str.523.c, i32 211)
   call void @tomato_release_flat(ptr %f.91)
   call void @tomato_release(ptr %call.111)
   br label %epilogue
@@ -51884,10 +52147,10 @@ stop.137:
   call void @tomato_release(ptr %f.127)
   %err.139 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.139, ptr @tomato_exc
-  store i32 201, ptr @tomato_exc_line
+  store i32 212, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.523.c, i32 201)
+  call void @tomato_trace(ptr @.str.523.c, i32 212)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.138:
@@ -51949,7 +52212,7 @@ ok.138:
   %has.173 = icmp ne ptr %ex.172, null
   br i1 %has.173, label %raised.174, label %fine.175
 raised.174:
-  call void @tomato_trace(ptr @.str.523.c, i32 202)
+  call void @tomato_trace(ptr @.str.523.c, i32 213)
   call void @tomato_int_free(i64 %dup.151)
   call void @tomato_release_flat(ptr @.str.524)
   call void @tomato_release_flat(ptr %cat.170)
@@ -51974,7 +52237,7 @@ endif.25:
   %has.180 = icmp ne ptr %ex.179, null
   br i1 %has.180, label %raised.181, label %fine.182
 raised.181:
-  call void @tomato_trace(ptr @.str.523.c, i32 203)
+  call void @tomato_trace(ptr @.str.523.c, i32 214)
   br label %epilogue
 fine.182:
   %old.184 = load ptr, ptr %for.list.183
@@ -51997,10 +52260,10 @@ eachbody.187:
 stop.198:
   %err.200 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.200, ptr @tomato_exc
-  store i32 203, ptr @tomato_exc_line
+  store i32 214, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.523.c, i32 203)
+  call void @tomato_trace(ptr @.str.523.c, i32 214)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.199:
@@ -52019,7 +52282,7 @@ ok.199:
   %has.209 = icmp ne ptr %ex.208, null
   br i1 %has.209, label %raised.210, label %fine.211
 raised.210:
-  call void @tomato_trace(ptr @.str.523.c, i32 204)
+  call void @tomato_trace(ptr @.str.523.c, i32 215)
   br label %epilogue
 fine.211:
   br label %eachstep.188
@@ -52202,10 +52465,10 @@ eachbody.29:
 stop.40:
   %err.42 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.42, ptr @tomato_exc
-  store i32 221, ptr @tomato_exc_line
+  store i32 232, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 221)
+  call void @tomato_trace(ptr @.str.527.c, i32 232)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.41:
@@ -52224,7 +52487,7 @@ ok.41:
   %has.51 = icmp ne ptr %ex.50, null
   br i1 %has.51, label %raised.52, label %fine.53
 raised.52:
-  call void @tomato_trace(ptr @.str.527.c, i32 222)
+  call void @tomato_trace(ptr @.str.527.c, i32 233)
   br label %epilogue
 fine.53:
   br label %eachstep.30
@@ -52260,7 +52523,7 @@ endif.56:
   %has.69 = icmp ne ptr %ex.68, null
   br i1 %has.69, label %raised.70, label %fine.71
 raised.70:
-  call void @tomato_trace(ptr @.str.527.c, i32 226)
+  call void @tomato_trace(ptr @.str.527.c, i32 237)
   br label %epilogue
 fine.71:
   %old.72 = load ptr, ptr %v.n.4
@@ -52306,10 +52569,10 @@ stop.100:
   call void @tomato_release(ptr %f.87)
   %err.102 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.102, ptr @tomato_exc
-  store i32 229, ptr @tomato_exc_line
+  store i32 240, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 229)
+  call void @tomato_trace(ptr @.str.527.c, i32 240)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.101:
@@ -52358,10 +52621,10 @@ stop.130:
   call void @tomato_release(ptr %f.120)
   %err.132 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.132, ptr @tomato_exc
-  store i32 232, ptr @tomato_exc_line
+  store i32 243, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 232)
+  call void @tomato_trace(ptr @.str.527.c, i32 243)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.131:
@@ -52376,7 +52639,7 @@ ok.131:
   %has.139 = icmp ne ptr %ex.138, null
   br i1 %has.139, label %raised.140, label %fine.141
 raised.140:
-  call void @tomato_trace(ptr @.str.527.c, i32 232)
+  call void @tomato_trace(ptr @.str.527.c, i32 243)
   call void @tomato_release(ptr %item.136)
   br label %epilogue
 fine.141:
@@ -52415,10 +52678,10 @@ stop.166:
   call void @tomato_release(ptr %f.156)
   %err.168 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.168, ptr @tomato_exc
-  store i32 234, ptr @tomato_exc_line
+  store i32 245, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 234)
+  call void @tomato_trace(ptr @.str.527.c, i32 245)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.167:
@@ -52441,7 +52704,7 @@ ok.167:
   %has.180 = icmp ne ptr %ex.179, null
   br i1 %has.180, label %raised.181, label %fine.182
 raised.181:
-  call void @tomato_trace(ptr @.str.527.c, i32 234)
+  call void @tomato_trace(ptr @.str.527.c, i32 245)
   call void @tomato_release_flat(ptr %f.174)
   call void @tomato_int_free(i64 %dup.178)
   br label %epilogue
@@ -52468,10 +52731,10 @@ stop.195:
   call void @tomato_release(ptr %f.185)
   %err.197 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.197, ptr @tomato_exc
-  store i32 236, ptr @tomato_exc_line
+  store i32 247, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 236)
+  call void @tomato_trace(ptr @.str.527.c, i32 247)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.196:
@@ -52487,7 +52750,7 @@ ok.196:
   %has.204 = icmp ne ptr %ex.203, null
   br i1 %has.204, label %raised.205, label %fine.206
 raised.205:
-  call void @tomato_trace(ptr @.str.527.c, i32 236)
+  call void @tomato_trace(ptr @.str.527.c, i32 247)
   call void @tomato_release(ptr %item.201)
   br label %epilogue
 fine.206:
@@ -52512,10 +52775,10 @@ stop.219:
   call void @tomato_release(ptr %f.209)
   %err.221 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.221, ptr @tomato_exc
-  store i32 237, ptr @tomato_exc_line
+  store i32 248, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 237)
+  call void @tomato_trace(ptr @.str.527.c, i32 248)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.220:
@@ -52531,7 +52794,7 @@ ok.220:
   %has.228 = icmp ne ptr %ex.227, null
   br i1 %has.228, label %raised.229, label %fine.230
 raised.229:
-  call void @tomato_trace(ptr @.str.527.c, i32 237)
+  call void @tomato_trace(ptr @.str.527.c, i32 248)
   call void @tomato_release(ptr %item.225)
   br label %epilogue
 fine.230:
@@ -52569,10 +52832,10 @@ stop.252:
   call void @tomato_release(ptr %f.242)
   %err.254 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.254, ptr @tomato_exc
-  store i32 240, ptr @tomato_exc_line
+  store i32 251, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 240)
+  call void @tomato_trace(ptr @.str.527.c, i32 251)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.253:
@@ -52595,7 +52858,7 @@ ok.253:
   %has.266 = icmp ne ptr %ex.265, null
   br i1 %has.266, label %raised.267, label %fine.268
 raised.267:
-  call void @tomato_trace(ptr @.str.527.c, i32 240)
+  call void @tomato_trace(ptr @.str.527.c, i32 251)
   call void @tomato_release_flat(ptr %f.260)
   call void @tomato_int_free(i64 %dup.264)
   br label %epilogue
@@ -52620,10 +52883,10 @@ stop.281:
   call void @tomato_release(ptr %f.271)
   %err.283 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.283, ptr @tomato_exc
-  store i32 241, ptr @tomato_exc_line
+  store i32 252, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 241)
+  call void @tomato_trace(ptr @.str.527.c, i32 252)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.282:
@@ -52639,7 +52902,7 @@ ok.282:
   %has.290 = icmp ne ptr %ex.289, null
   br i1 %has.290, label %raised.291, label %fine.292
 raised.291:
-  call void @tomato_trace(ptr @.str.527.c, i32 241)
+  call void @tomato_trace(ptr @.str.527.c, i32 252)
   call void @tomato_release(ptr %item.287)
   br label %epilogue
 fine.292:
@@ -52696,10 +52959,10 @@ stop.325:
   call void @tomato_release(ptr %f.312)
   %err.327 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.327, ptr @tomato_exc
-  store i32 244, ptr @tomato_exc_line
+  store i32 255, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 244)
+  call void @tomato_trace(ptr @.str.527.c, i32 255)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.326:
@@ -52748,10 +53011,10 @@ stop.355:
   call void @tomato_release(ptr %f.345)
   %err.357 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.357, ptr @tomato_exc
-  store i32 246, ptr @tomato_exc_line
+  store i32 257, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 246)
+  call void @tomato_trace(ptr @.str.527.c, i32 257)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.356:
@@ -52785,10 +53048,10 @@ eachbody.368:
 stop.379:
   %err.381 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.381, ptr @tomato_exc
-  store i32 246, ptr @tomato_exc_line
+  store i32 257, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 246)
+  call void @tomato_trace(ptr @.str.527.c, i32 257)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.380:
@@ -52816,10 +53079,10 @@ ok.380:
 stop.400:
   %err.402 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.402, ptr @tomato_exc
-  store i32 247, ptr @tomato_exc_line
+  store i32 258, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 247)
+  call void @tomato_trace(ptr @.str.527.c, i32 258)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.401:
@@ -52861,10 +53124,10 @@ stop.430:
   call void @tomato_release(ptr %f.417)
   %err.432 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.432, ptr @tomato_exc
-  store i32 248, ptr @tomato_exc_line
+  store i32 259, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 248)
+  call void @tomato_trace(ptr @.str.527.c, i32 259)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.431:
@@ -52920,10 +53183,10 @@ eachbody.449:
 stop.460:
   %err.462 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.462, ptr @tomato_exc
-  store i32 249, ptr @tomato_exc_line
+  store i32 260, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.527.c, i32 249)
+  call void @tomato_trace(ptr @.str.527.c, i32 260)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.461:
@@ -52942,7 +53205,7 @@ ok.461:
   %has.471 = icmp ne ptr %ex.470, null
   br i1 %has.471, label %raised.472, label %fine.473
 raised.472:
-  call void @tomato_trace(ptr @.str.527.c, i32 250)
+  call void @tomato_trace(ptr @.str.527.c, i32 261)
   br label %epilogue
 fine.473:
   br label %eachstep.450
@@ -53026,7 +53289,7 @@ entry:
   %has.6 = icmp ne ptr %ex.5, null
   br i1 %has.6, label %raised.7, label %fine.8
 raised.7:
-  call void @tomato_trace(ptr @.str.528.c, i32 254)
+  call void @tomato_trace(ptr @.str.528.c, i32 265)
   br label %epilogue
 fine.8:
   %l.9 = load ptr, ptr %v.names.6
@@ -53051,10 +53314,10 @@ eachbody.14:
 stop.25:
   %err.27 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.27, ptr @tomato_exc
-  store i32 255, ptr @tomato_exc_line
+  store i32 266, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.528.c, i32 255)
+  call void @tomato_trace(ptr @.str.528.c, i32 266)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.26:
@@ -53084,10 +53347,10 @@ stop.45:
   call void @tomato_release(ptr %f.35)
   %err.47 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.47, ptr @tomato_exc
-  store i32 256, ptr @tomato_exc_line
+  store i32 267, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.528.c, i32 256)
+  call void @tomato_trace(ptr @.str.528.c, i32 267)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.46:
@@ -53125,10 +53388,10 @@ inbody.61:
 stop.71:
   %err.73 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.73, ptr @tomato_exc
-  store i32 257, ptr @tomato_exc_line
+  store i32 268, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.528.c, i32 257)
+  call void @tomato_trace(ptr @.str.528.c, i32 268)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.72:
@@ -53178,10 +53441,10 @@ inbody.95:
 stop.105:
   %err.107 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.107, ptr @tomato_exc
-  store i32 257, ptr @tomato_exc_line
+  store i32 268, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.528.c, i32 257)
+  call void @tomato_trace(ptr @.str.528.c, i32 268)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.106:
@@ -53236,10 +53499,10 @@ inbody.131:
 stop.141:
   %err.143 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.143, ptr @tomato_exc
-  store i32 257, ptr @tomato_exc_line
+  store i32 268, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.528.c, i32 257)
+  call void @tomato_trace(ptr @.str.528.c, i32 268)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.142:
@@ -53308,7 +53571,7 @@ then.159:
   %has.183 = icmp ne ptr %ex.182, null
   br i1 %has.183, label %raised.184, label %fine.185
 raised.184:
-  call void @tomato_trace(ptr @.str.528.c, i32 259)
+  call void @tomato_trace(ptr @.str.528.c, i32 270)
   call void @tomato_int_free(i64 %dup.168)
   call void @tomato_release_flat(ptr @.str.529)
   call void @tomato_release_flat(ptr %cat.180)
@@ -53390,10 +53653,10 @@ eachbody.7:
 stop.18:
   %err.20 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.20, ptr @tomato_exc
-  store i32 262, ptr @tomato_exc_line
+  store i32 273, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.531.c, i32 262)
+  call void @tomato_trace(ptr @.str.531.c, i32 273)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.19:
@@ -53426,10 +53689,10 @@ inbody.32:
 stop.42:
   %err.44 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.44, ptr @tomato_exc
-  store i32 262, ptr @tomato_exc_line
+  store i32 273, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.531.c, i32 262)
+  call void @tomato_trace(ptr @.str.531.c, i32 273)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.43:
@@ -53528,10 +53791,10 @@ stop.4:
   call void @tomato_release(ptr %l.1)
   %err.6 = call ptr @tomato.new.6(ptr @.str.27, ptr @.str.28)
   store ptr %err.6, ptr @tomato_exc
-  store i32 266, ptr @tomato_exc_line
+  store i32 277, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.532.c, i32 266)
+  call void @tomato_trace(ptr @.str.532.c, i32 277)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.5:
@@ -53561,10 +53824,10 @@ eachbody.13:
 stop.24:
   %err.26 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.26, ptr @tomato_exc
-  store i32 267, ptr @tomato_exc_line
+  store i32 278, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.532.c, i32 267)
+  call void @tomato_trace(ptr @.str.532.c, i32 278)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.25:
@@ -53586,7 +53849,7 @@ ok.25:
   %has.39 = icmp ne ptr %ex.38, null
   br i1 %has.39, label %raised.40, label %fine.41
 raised.40:
-  call void @tomato_trace(ptr @.str.532.c, i32 268)
+  call void @tomato_trace(ptr @.str.532.c, i32 279)
   br label %epilogue
 fine.41:
   %old.42 = load ptr, ptr %v.assigned.6
@@ -53713,10 +53976,10 @@ stop.25:
   call void @tomato_release(ptr %f.15)
   %err.27 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.27, ptr @tomato_exc
-  store i32 274, ptr @tomato_exc_line
+  store i32 285, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 274)
+  call void @tomato_trace(ptr @.str.533.c, i32 285)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.26:
@@ -53735,7 +53998,7 @@ ok.26:
   %has.37 = icmp ne ptr %ex.36, null
   br i1 %has.37, label %raised.38, label %fine.39
 raised.38:
-  call void @tomato_trace(ptr @.str.533.c, i32 274)
+  call void @tomato_trace(ptr @.str.533.c, i32 285)
   call void @tomato_release(ptr %item.31)
   br label %epilogue
 fine.39:
@@ -53758,10 +54021,10 @@ stop.52:
   call void @tomato_release(ptr %f.42)
   %err.54 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.54, ptr @tomato_exc
-  store i32 275, ptr @tomato_exc_line
+  store i32 286, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 275)
+  call void @tomato_trace(ptr @.str.533.c, i32 286)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.53:
@@ -53776,7 +54039,7 @@ ok.53:
   %has.61 = icmp ne ptr %ex.60, null
   br i1 %has.61, label %raised.62, label %fine.63
 raised.62:
-  call void @tomato_trace(ptr @.str.533.c, i32 275)
+  call void @tomato_trace(ptr @.str.533.c, i32 286)
   call void @tomato_release(ptr %item.58)
   br label %epilogue
 fine.63:
@@ -53817,10 +54080,10 @@ stop.88:
   call void @tomato_release(ptr %l.75)
   %err.90 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.90, ptr @tomato_exc
-  store i32 277, ptr @tomato_exc_line
+  store i32 288, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 277)
+  call void @tomato_trace(ptr @.str.533.c, i32 288)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.89:
@@ -53863,10 +54126,10 @@ stop.112:
   call void @tomato_release(ptr %f.102)
   %err.114 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.114, ptr @tomato_exc
-  store i32 278, ptr @tomato_exc_line
+  store i32 289, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 278)
+  call void @tomato_trace(ptr @.str.533.c, i32 289)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.113:
@@ -53885,7 +54148,7 @@ ok.113:
   %has.124 = icmp ne ptr %ex.123, null
   br i1 %has.124, label %raised.125, label %fine.126
 raised.125:
-  call void @tomato_trace(ptr @.str.533.c, i32 278)
+  call void @tomato_trace(ptr @.str.533.c, i32 289)
   call void @tomato_release(ptr %item.118)
   br label %epilogue
 fine.126:
@@ -53925,10 +54188,10 @@ stop.148:
   call void @tomato_release(ptr %f.138)
   %err.150 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.150, ptr @tomato_exc
-  store i32 281, ptr @tomato_exc_line
+  store i32 292, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 281)
+  call void @tomato_trace(ptr @.str.533.c, i32 292)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.149:
@@ -53947,7 +54210,7 @@ ok.149:
   %has.160 = icmp ne ptr %ex.159, null
   br i1 %has.160, label %raised.161, label %fine.162
 raised.161:
-  call void @tomato_trace(ptr @.str.533.c, i32 281)
+  call void @tomato_trace(ptr @.str.533.c, i32 292)
   call void @tomato_release(ptr %item.154)
   br label %epilogue
 fine.162:
@@ -53973,10 +54236,10 @@ stop.176:
   call void @tomato_release(ptr %l.163)
   %err.178 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.178, ptr @tomato_exc
-  store i32 282, ptr @tomato_exc_line
+  store i32 293, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 282)
+  call void @tomato_trace(ptr @.str.533.c, i32 293)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.177:
@@ -54033,10 +54296,10 @@ stop.210:
   call void @tomato_release(ptr %f.200)
   %err.212 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.212, ptr @tomato_exc
-  store i32 285, ptr @tomato_exc_line
+  store i32 296, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 285)
+  call void @tomato_trace(ptr @.str.533.c, i32 296)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.211:
@@ -54070,10 +54333,10 @@ eachbody.223:
 stop.234:
   %err.236 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.236, ptr @tomato_exc
-  store i32 285, ptr @tomato_exc_line
+  store i32 296, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 285)
+  call void @tomato_trace(ptr @.str.533.c, i32 296)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.235:
@@ -54103,10 +54366,10 @@ stop.254:
   call void @tomato_release(ptr %f.244)
   %err.256 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.256, ptr @tomato_exc
-  store i32 286, ptr @tomato_exc_line
+  store i32 297, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 286)
+  call void @tomato_trace(ptr @.str.533.c, i32 297)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.255:
@@ -54125,7 +54388,7 @@ ok.255:
   %has.266 = icmp ne ptr %ex.265, null
   br i1 %has.266, label %raised.267, label %fine.268
 raised.267:
-  call void @tomato_trace(ptr @.str.533.c, i32 286)
+  call void @tomato_trace(ptr @.str.533.c, i32 297)
   call void @tomato_release(ptr %item.260)
   br label %epilogue
 fine.268:
@@ -54148,10 +54411,10 @@ stop.281:
   call void @tomato_release(ptr %f.271)
   %err.283 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.283, ptr @tomato_exc
-  store i32 287, ptr @tomato_exc_line
+  store i32 298, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 287)
+  call void @tomato_trace(ptr @.str.533.c, i32 298)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.282:
@@ -54166,7 +54429,7 @@ ok.282:
   %has.290 = icmp ne ptr %ex.289, null
   br i1 %has.290, label %raised.291, label %fine.292
 raised.291:
-  call void @tomato_trace(ptr @.str.533.c, i32 287)
+  call void @tomato_trace(ptr @.str.533.c, i32 298)
   call void @tomato_release(ptr %item.287)
   br label %epilogue
 fine.292:
@@ -54184,7 +54447,7 @@ fine.292:
   %has.301 = icmp ne ptr %ex.300, null
   br i1 %has.301, label %raised.302, label %fine.303
 raised.302:
-  call void @tomato_trace(ptr @.str.533.c, i32 288)
+  call void @tomato_trace(ptr @.str.533.c, i32 299)
   br label %epilogue
 fine.303:
   %old.304 = load ptr, ptr %v.after.11
@@ -54196,7 +54459,7 @@ fine.303:
   %has.309 = icmp ne ptr %ex.308, null
   br i1 %has.309, label %raised.310, label %fine.311
 raised.310:
-  call void @tomato_trace(ptr @.str.533.c, i32 289)
+  call void @tomato_trace(ptr @.str.533.c, i32 300)
   br label %epilogue
 fine.311:
   %t.312 = xor i64 %call.307, 1
@@ -54235,10 +54498,10 @@ endeach.225:
 stop.334:
   %err.336 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.336, ptr @tomato_exc
-  store i32 291, ptr @tomato_exc_line
+  store i32 302, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 291)
+  call void @tomato_trace(ptr @.str.533.c, i32 302)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.335:
@@ -54275,10 +54538,10 @@ stop.361:
   call void @tomato_release(ptr %f.351)
   %err.363 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.363, ptr @tomato_exc
-  store i32 292, ptr @tomato_exc_line
+  store i32 303, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 292)
+  call void @tomato_trace(ptr @.str.533.c, i32 303)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.362:
@@ -54293,7 +54556,7 @@ ok.362:
   %has.370 = icmp ne ptr %ex.369, null
   br i1 %has.370, label %raised.371, label %fine.372
 raised.371:
-  call void @tomato_trace(ptr @.str.533.c, i32 292)
+  call void @tomato_trace(ptr @.str.533.c, i32 303)
   call void @tomato_release(ptr %item.367)
   br label %epilogue
 fine.372:
@@ -54311,7 +54574,7 @@ fine.372:
   %has.381 = icmp ne ptr %ex.380, null
   br i1 %has.381, label %raised.382, label %fine.383
 raised.382:
-  call void @tomato_trace(ptr @.str.533.c, i32 293)
+  call void @tomato_trace(ptr @.str.533.c, i32 304)
   br label %epilogue
 fine.383:
   %old.384 = load ptr, ptr %v.after.11
@@ -54323,7 +54586,7 @@ fine.383:
   %has.389 = icmp ne ptr %ex.388, null
   br i1 %has.389, label %raised.390, label %fine.391
 raised.390:
-  call void @tomato_trace(ptr @.str.533.c, i32 294)
+  call void @tomato_trace(ptr @.str.533.c, i32 305)
   br label %epilogue
 fine.391:
   %t.392 = xor i64 %call.387, 1
@@ -54379,10 +54642,10 @@ endif.402:
 stop.424:
   %err.426 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.426, ptr @tomato_exc
-  store i32 300, ptr @tomato_exc_line
+  store i32 311, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 300)
+  call void @tomato_trace(ptr @.str.533.c, i32 311)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.425:
@@ -54416,10 +54679,10 @@ eachbody.437:
 stop.448:
   %err.450 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.450, ptr @tomato_exc
-  store i32 301, ptr @tomato_exc_line
+  store i32 312, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 301)
+  call void @tomato_trace(ptr @.str.533.c, i32 312)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.449:
@@ -54438,7 +54701,7 @@ ok.449:
   %has.460 = icmp ne ptr %ex.459, null
   br i1 %has.460, label %raised.461, label %fine.462
 raised.461:
-  call void @tomato_trace(ptr @.str.533.c, i32 302)
+  call void @tomato_trace(ptr @.str.533.c, i32 313)
   br label %epilogue
 fine.462:
   %old.463 = load ptr, ptr %v.result.12
@@ -54486,10 +54749,10 @@ stop.487:
   call void @tomato_release(ptr %f.477)
   %err.489 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.489, ptr @tomato_exc
-  store i32 305, ptr @tomato_exc_line
+  store i32 316, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 305)
+  call void @tomato_trace(ptr @.str.533.c, i32 316)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.488:
@@ -54504,7 +54767,7 @@ ok.488:
   %has.496 = icmp ne ptr %ex.495, null
   br i1 %has.496, label %raised.497, label %fine.498
 raised.497:
-  call void @tomato_trace(ptr @.str.533.c, i32 305)
+  call void @tomato_trace(ptr @.str.533.c, i32 316)
   call void @tomato_release(ptr %item.493)
   br label %epilogue
 fine.498:
@@ -54518,7 +54781,7 @@ fine.498:
   %has.505 = icmp ne ptr %ex.504, null
   br i1 %has.505, label %raised.506, label %fine.507
 raised.506:
-  call void @tomato_trace(ptr @.str.533.c, i32 305)
+  call void @tomato_trace(ptr @.str.533.c, i32 316)
   call void @tomato_release(ptr %call.494)
   br label %epilogue
 fine.507:
@@ -54556,10 +54819,10 @@ stop.528:
   call void @tomato_release(ptr %f.518)
   %err.530 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.530, ptr @tomato_exc
-  store i32 307, ptr @tomato_exc_line
+  store i32 318, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 307)
+  call void @tomato_trace(ptr @.str.533.c, i32 318)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.529:
@@ -54578,7 +54841,7 @@ ok.529:
   %has.540 = icmp ne ptr %ex.539, null
   br i1 %has.540, label %raised.541, label %fine.542
 raised.541:
-  call void @tomato_trace(ptr @.str.533.c, i32 307)
+  call void @tomato_trace(ptr @.str.533.c, i32 318)
   call void @tomato_release(ptr %item.534)
   br label %epilogue
 fine.542:
@@ -54601,10 +54864,10 @@ stop.555:
   call void @tomato_release(ptr %f.545)
   %err.557 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.557, ptr @tomato_exc
-  store i32 308, ptr @tomato_exc_line
+  store i32 319, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 308)
+  call void @tomato_trace(ptr @.str.533.c, i32 319)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.556:
@@ -54619,7 +54882,7 @@ ok.556:
   %has.564 = icmp ne ptr %ex.563, null
   br i1 %has.564, label %raised.565, label %fine.566
 raised.565:
-  call void @tomato_trace(ptr @.str.533.c, i32 308)
+  call void @tomato_trace(ptr @.str.533.c, i32 319)
   call void @tomato_release(ptr %item.561)
   br label %epilogue
 fine.566:
@@ -54633,7 +54896,7 @@ fine.566:
   %has.573 = icmp ne ptr %ex.572, null
   br i1 %has.573, label %raised.574, label %fine.575
 raised.574:
-  call void @tomato_trace(ptr @.str.533.c, i32 308)
+  call void @tomato_trace(ptr @.str.533.c, i32 319)
   call void @tomato_release(ptr %call.562)
   br label %epilogue
 fine.575:
@@ -54691,10 +54954,10 @@ stop.607:
   call void @tomato_release(ptr %f.597)
   %err.609 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.609, ptr @tomato_exc
-  store i32 311, ptr @tomato_exc_line
+  store i32 322, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 311)
+  call void @tomato_trace(ptr @.str.533.c, i32 322)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.608:
@@ -54713,7 +54976,7 @@ ok.608:
   %has.619 = icmp ne ptr %ex.618, null
   br i1 %has.619, label %raised.620, label %fine.621
 raised.620:
-  call void @tomato_trace(ptr @.str.533.c, i32 311)
+  call void @tomato_trace(ptr @.str.533.c, i32 322)
   call void @tomato_release(ptr %item.613)
   br label %epilogue
 fine.621:
@@ -54736,10 +54999,10 @@ stop.634:
   call void @tomato_release(ptr %f.624)
   %err.636 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.636, ptr @tomato_exc
-  store i32 312, ptr @tomato_exc_line
+  store i32 323, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 312)
+  call void @tomato_trace(ptr @.str.533.c, i32 323)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.635:
@@ -54754,7 +55017,7 @@ ok.635:
   %has.643 = icmp ne ptr %ex.642, null
   br i1 %has.643, label %raised.644, label %fine.645
 raised.644:
-  call void @tomato_trace(ptr @.str.533.c, i32 312)
+  call void @tomato_trace(ptr @.str.533.c, i32 323)
   call void @tomato_release(ptr %item.640)
   br label %epilogue
 fine.645:
@@ -54768,7 +55031,7 @@ fine.645:
   %has.652 = icmp ne ptr %ex.651, null
   br i1 %has.652, label %raised.653, label %fine.654
 raised.653:
-  call void @tomato_trace(ptr @.str.533.c, i32 312)
+  call void @tomato_trace(ptr @.str.533.c, i32 323)
   call void @tomato_release(ptr %call.641)
   br label %epilogue
 fine.654:
@@ -54806,10 +55069,10 @@ stop.675:
   call void @tomato_release(ptr %f.665)
   %err.677 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.677, ptr @tomato_exc
-  store i32 314, ptr @tomato_exc_line
+  store i32 325, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 314)
+  call void @tomato_trace(ptr @.str.533.c, i32 325)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.676:
@@ -54824,7 +55087,7 @@ ok.676:
   %has.684 = icmp ne ptr %ex.683, null
   br i1 %has.684, label %raised.685, label %fine.686
 raised.685:
-  call void @tomato_trace(ptr @.str.533.c, i32 314)
+  call void @tomato_trace(ptr @.str.533.c, i32 325)
   call void @tomato_release(ptr %item.681)
   br label %epilogue
 fine.686:
@@ -54846,7 +55109,7 @@ fine.686:
   %has.697 = icmp ne ptr %ex.696, null
   br i1 %has.697, label %raised.698, label %fine.699
 raised.698:
-  call void @tomato_trace(ptr @.str.533.c, i32 316)
+  call void @tomato_trace(ptr @.str.533.c, i32 327)
   br label %epilogue
 fine.699:
   %old.700 = load ptr, ptr %v.after.11
@@ -54868,10 +55131,10 @@ fine.699:
 stop.714:
   %err.716 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.716, ptr @tomato_exc
-  store i32 317, ptr @tomato_exc_line
+  store i32 328, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 317)
+  call void @tomato_trace(ptr @.str.533.c, i32 328)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.715:
@@ -54908,10 +55171,10 @@ stop.741:
   call void @tomato_release(ptr %f.731)
   %err.743 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.743, ptr @tomato_exc
-  store i32 318, ptr @tomato_exc_line
+  store i32 329, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 318)
+  call void @tomato_trace(ptr @.str.533.c, i32 329)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.742:
@@ -54926,7 +55189,7 @@ ok.742:
   %has.750 = icmp ne ptr %ex.749, null
   br i1 %has.750, label %raised.751, label %fine.752
 raised.751:
-  call void @tomato_trace(ptr @.str.533.c, i32 318)
+  call void @tomato_trace(ptr @.str.533.c, i32 329)
   call void @tomato_release(ptr %item.747)
   br label %epilogue
 fine.752:
@@ -54940,7 +55203,7 @@ fine.752:
   %has.759 = icmp ne ptr %ex.758, null
   br i1 %has.759, label %raised.760, label %fine.761
 raised.760:
-  call void @tomato_trace(ptr @.str.533.c, i32 318)
+  call void @tomato_trace(ptr @.str.533.c, i32 329)
   call void @tomato_release(ptr %call.748)
   br label %epilogue
 fine.761:
@@ -54958,7 +55221,7 @@ endif.701:
   %has.767 = icmp ne ptr %ex.766, null
   br i1 %has.767, label %raised.768, label %fine.769
 raised.768:
-  call void @tomato_trace(ptr @.str.533.c, i32 319)
+  call void @tomato_trace(ptr @.str.533.c, i32 330)
   br label %epilogue
 fine.769:
   %t.770 = xor i64 %call.765, 1
@@ -54992,10 +55255,10 @@ stop.789:
   call void @tomato_release(ptr %f.779)
   %err.791 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.791, ptr @tomato_exc
-  store i32 321, ptr @tomato_exc_line
+  store i32 332, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 321)
+  call void @tomato_trace(ptr @.str.533.c, i32 332)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.790:
@@ -55029,10 +55292,10 @@ eachbody.802:
 stop.813:
   %err.815 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.815, ptr @tomato_exc
-  store i32 321, ptr @tomato_exc_line
+  store i32 332, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 321)
+  call void @tomato_trace(ptr @.str.533.c, i32 332)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.814:
@@ -55062,10 +55325,10 @@ stop.833:
   call void @tomato_release(ptr %f.823)
   %err.835 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.835, ptr @tomato_exc
-  store i32 322, ptr @tomato_exc_line
+  store i32 333, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 322)
+  call void @tomato_trace(ptr @.str.533.c, i32 333)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.834:
@@ -55080,7 +55343,7 @@ ok.834:
   %has.842 = icmp ne ptr %ex.841, null
   br i1 %has.842, label %raised.843, label %fine.844
 raised.843:
-  call void @tomato_trace(ptr @.str.533.c, i32 322)
+  call void @tomato_trace(ptr @.str.533.c, i32 333)
   call void @tomato_release(ptr %item.839)
   br label %epilogue
 fine.844:
@@ -55098,7 +55361,7 @@ fine.844:
   %has.853 = icmp ne ptr %ex.852, null
   br i1 %has.853, label %raised.854, label %fine.855
 raised.854:
-  call void @tomato_trace(ptr @.str.533.c, i32 323)
+  call void @tomato_trace(ptr @.str.533.c, i32 334)
   br label %epilogue
 fine.855:
   %old.856 = load ptr, ptr %v.hafter.16
@@ -55110,7 +55373,7 @@ fine.855:
   %has.861 = icmp ne ptr %ex.860, null
   br i1 %has.861, label %raised.862, label %fine.863
 raised.862:
-  call void @tomato_trace(ptr @.str.533.c, i32 324)
+  call void @tomato_trace(ptr @.str.533.c, i32 335)
   br label %epilogue
 fine.863:
   %t.864 = xor i64 %call.859, 1
@@ -55162,10 +55425,10 @@ then.884:
 stop.896:
   %err.898 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.898, ptr @tomato_exc
-  store i32 328, ptr @tomato_exc_line
+  store i32 339, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 328)
+  call void @tomato_trace(ptr @.str.533.c, i32 339)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.897:
@@ -55199,10 +55462,10 @@ eachbody.909:
 stop.920:
   %err.922 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.922, ptr @tomato_exc
-  store i32 329, ptr @tomato_exc_line
+  store i32 340, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 329)
+  call void @tomato_trace(ptr @.str.533.c, i32 340)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.921:
@@ -55221,7 +55484,7 @@ ok.921:
   %has.932 = icmp ne ptr %ex.931, null
   br i1 %has.932, label %raised.933, label %fine.934
 raised.933:
-  call void @tomato_trace(ptr @.str.533.c, i32 330)
+  call void @tomato_trace(ptr @.str.533.c, i32 341)
   br label %epilogue
 fine.934:
   %old.935 = load ptr, ptr %v.result.12
@@ -55254,10 +55517,10 @@ endif.875:
 stop.951:
   %err.953 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.953, ptr @tomato_exc
-  store i32 331, ptr @tomato_exc_line
+  store i32 342, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 331)
+  call void @tomato_trace(ptr @.str.533.c, i32 342)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.952:
@@ -55294,10 +55557,10 @@ stop.978:
   call void @tomato_release(ptr %f.968)
   %err.980 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.980, ptr @tomato_exc
-  store i32 332, ptr @tomato_exc_line
+  store i32 343, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 332)
+  call void @tomato_trace(ptr @.str.533.c, i32 343)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.979:
@@ -55312,7 +55575,7 @@ ok.979:
   %has.987 = icmp ne ptr %ex.986, null
   br i1 %has.987, label %raised.988, label %fine.989
 raised.988:
-  call void @tomato_trace(ptr @.str.533.c, i32 332)
+  call void @tomato_trace(ptr @.str.533.c, i32 343)
   call void @tomato_release(ptr %item.984)
   br label %epilogue
 fine.989:
@@ -55326,7 +55589,7 @@ fine.989:
   %has.996 = icmp ne ptr %ex.995, null
   br i1 %has.996, label %raised.997, label %fine.998
 raised.997:
-  call void @tomato_trace(ptr @.str.533.c, i32 332)
+  call void @tomato_trace(ptr @.str.533.c, i32 343)
   call void @tomato_release(ptr %call.985)
   br label %epilogue
 fine.998:
@@ -55369,10 +55632,10 @@ eachbody.1008:
 stop.1019:
   %err.1021 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.1021, ptr @tomato_exc
-  store i32 334, ptr @tomato_exc_line
+  store i32 345, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.533.c, i32 334)
+  call void @tomato_trace(ptr @.str.533.c, i32 345)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.1020:
@@ -55394,7 +55657,7 @@ ok.1020:
   %has.1033 = icmp ne ptr %ex.1032, null
   br i1 %has.1033, label %raised.1034, label %fine.1035
 raised.1034:
-  call void @tomato_trace(ptr @.str.533.c, i32 335)
+  call void @tomato_trace(ptr @.str.533.c, i32 346)
   br label %epilogue
 fine.1035:
   br label %eachstep.1009
@@ -55528,10 +55791,10 @@ entry:
 stop.14:
   %err.16 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.16, ptr @tomato_exc
-  store i32 340, ptr @tomato_exc_line
+  store i32 351, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 340)
+  call void @tomato_trace(ptr @.str.534.c, i32 351)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.15:
@@ -55572,10 +55835,10 @@ stop.41:
   call void @tomato_release(ptr %f.31)
   %err.43 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.43, ptr @tomato_exc
-  store i32 342, ptr @tomato_exc_line
+  store i32 353, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 342)
+  call void @tomato_trace(ptr @.str.534.c, i32 353)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.42:
@@ -55590,7 +55853,7 @@ ok.42:
   %has.50 = icmp ne ptr %ex.49, null
   br i1 %has.50, label %raised.51, label %fine.52
 raised.51:
-  call void @tomato_trace(ptr @.str.534.c, i32 342)
+  call void @tomato_trace(ptr @.str.534.c, i32 353)
   call void @tomato_release(ptr %item.47)
   br label %epilogue
 fine.52:
@@ -55603,7 +55866,7 @@ fine.52:
   %has.56 = icmp ne ptr %ex.55, null
   br i1 %has.56, label %raised.57, label %fine.58
 raised.57:
-  call void @tomato_trace(ptr @.str.534.c, i32 343)
+  call void @tomato_trace(ptr @.str.534.c, i32 354)
   br label %epilogue
 fine.58:
   %old.59 = load ptr, ptr %v.u.5
@@ -55627,10 +55890,10 @@ stop.72:
   call void @tomato_release(ptr %f.62)
   %err.74 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.74, ptr @tomato_exc
-  store i32 344, ptr @tomato_exc_line
+  store i32 355, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 344)
+  call void @tomato_trace(ptr @.str.534.c, i32 355)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.73:
@@ -55645,7 +55908,7 @@ ok.73:
   %has.81 = icmp ne ptr %ex.80, null
   br i1 %has.81, label %raised.82, label %fine.83
 raised.82:
-  call void @tomato_trace(ptr @.str.534.c, i32 344)
+  call void @tomato_trace(ptr @.str.534.c, i32 355)
   call void @tomato_release(ptr %item.78)
   br label %epilogue
 fine.83:
@@ -55670,10 +55933,10 @@ eachbody.88:
 stop.99:
   %err.101 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.101, ptr @tomato_exc
-  store i32 344, ptr @tomato_exc_line
+  store i32 355, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 344)
+  call void @tomato_trace(ptr @.str.534.c, i32 355)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.100:
@@ -55708,10 +55971,10 @@ stop.122:
   call void @tomato_release(ptr %f.109)
   %err.124 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.124, ptr @tomato_exc
-  store i32 345, ptr @tomato_exc_line
+  store i32 356, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 345)
+  call void @tomato_trace(ptr @.str.534.c, i32 356)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.123:
@@ -55757,10 +56020,10 @@ eachbody.139:
 stop.150:
   %err.152 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.152, ptr @tomato_exc
-  store i32 346, ptr @tomato_exc_line
+  store i32 357, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 346)
+  call void @tomato_trace(ptr @.str.534.c, i32 357)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.151:
@@ -55779,7 +56042,7 @@ ok.151:
   %has.161 = icmp ne ptr %ex.160, null
   br i1 %has.161, label %raised.162, label %fine.163
 raised.162:
-  call void @tomato_trace(ptr @.str.534.c, i32 347)
+  call void @tomato_trace(ptr @.str.534.c, i32 358)
   br label %epilogue
 fine.163:
   br label %eachstep.140
@@ -55813,10 +56076,10 @@ eachbody.173:
 stop.184:
   %err.186 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.186, ptr @tomato_exc
-  store i32 348, ptr @tomato_exc_line
+  store i32 359, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 348)
+  call void @tomato_trace(ptr @.str.534.c, i32 359)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.185:
@@ -55851,10 +56114,10 @@ inbody.200:
 stop.210:
   %err.212 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.212, ptr @tomato_exc
-  store i32 349, ptr @tomato_exc_line
+  store i32 360, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 349)
+  call void @tomato_trace(ptr @.str.534.c, i32 360)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.211:
@@ -55923,10 +56186,10 @@ inbody.247:
 stop.257:
   %err.259 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.259, ptr @tomato_exc
-  store i32 349, ptr @tomato_exc_line
+  store i32 360, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 349)
+  call void @tomato_trace(ptr @.str.534.c, i32 360)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.258:
@@ -55975,10 +56238,10 @@ stop.285:
   call void @tomato_release(ptr %f.280)
   %err.287 = call ptr @tomato.new.5(ptr @.str.535, ptr @.str.536)
   store ptr %err.287, ptr @tomato_exc
-  store i32 350, ptr @tomato_exc_line
+  store i32 361, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 350)
+  call void @tomato_trace(ptr @.str.534.c, i32 361)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.286:
@@ -56026,7 +56289,7 @@ ok.286:
   %has.311 = icmp ne ptr %ex.310, null
   br i1 %has.311, label %raised.312, label %fine.313
 raised.312:
-  call void @tomato_trace(ptr @.str.534.c, i32 350)
+  call void @tomato_trace(ptr @.str.534.c, i32 361)
   call void @tomato_int_free(i64 %dup.289)
   call void @tomato_release_flat(ptr @.str.537)
   call void @tomato_release_flat(ptr %cat.308)
@@ -56079,10 +56342,10 @@ eachbody.328:
 stop.339:
   %err.341 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.341, ptr @tomato_exc
-  store i32 351, ptr @tomato_exc_line
+  store i32 362, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 351)
+  call void @tomato_trace(ptr @.str.534.c, i32 362)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.340:
@@ -56101,7 +56364,7 @@ ok.340:
   %has.351 = icmp ne ptr %ex.350, null
   br i1 %has.351, label %raised.352, label %fine.353
 raised.352:
-  call void @tomato_trace(ptr @.str.534.c, i32 352)
+  call void @tomato_trace(ptr @.str.534.c, i32 363)
   call void @tomato_release_flat(ptr %l.348)
   br label %epilogue
 fine.353:
@@ -56122,10 +56385,10 @@ inbody.357:
 stop.367:
   %err.369 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.369, ptr @tomato_exc
-  store i32 352, ptr @tomato_exc_line
+  store i32 363, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 352)
+  call void @tomato_trace(ptr @.str.534.c, i32 363)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.368:
@@ -56175,10 +56438,10 @@ inbody.391:
 stop.401:
   %err.403 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.403, ptr @tomato_exc
-  store i32 352, ptr @tomato_exc_line
+  store i32 363, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 352)
+  call void @tomato_trace(ptr @.str.534.c, i32 363)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.402:
@@ -56266,7 +56529,7 @@ gotjoin.433:
   %has.454 = icmp ne ptr %ex.453, null
   br i1 %has.454, label %raised.455, label %fine.456
 raised.455:
-  call void @tomato_trace(ptr @.str.534.c, i32 354)
+  call void @tomato_trace(ptr @.str.534.c, i32 365)
   call void @tomato_release_flat(ptr @.str.541)
   call void @tomato_release_flat(ptr %cat.451)
   br label %epilogue
@@ -56293,7 +56556,7 @@ endeach.330:
   %has.463 = icmp ne ptr %ex.462, null
   br i1 %has.463, label %raised.464, label %fine.465
 raised.464:
-  call void @tomato_trace(ptr @.str.534.c, i32 355)
+  call void @tomato_trace(ptr @.str.534.c, i32 366)
   br label %epilogue
 fine.465:
   %bl.466 = load ptr, ptr %v.body.4
@@ -56303,7 +56566,7 @@ fine.465:
   %has.469 = icmp ne ptr %ex.468, null
   br i1 %has.469, label %raised.470, label %fine.471
 raised.470:
-  call void @tomato_trace(ptr @.str.534.c, i32 356)
+  call void @tomato_trace(ptr @.str.534.c, i32 367)
   br label %epilogue
 fine.471:
   %list.578 = call ptr @tomato_list_new(i64 15)
@@ -56334,10 +56597,10 @@ eachbody.480:
 stop.491:
   %err.493 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.493, ptr @tomato_exc
-  store i32 357, ptr @tomato_exc_line
+  store i32 368, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 357)
+  call void @tomato_trace(ptr @.str.534.c, i32 368)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.492:
@@ -56372,10 +56635,10 @@ inbody.507:
 stop.517:
   %err.519 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.519, ptr @tomato_exc
-  store i32 357, ptr @tomato_exc_line
+  store i32 368, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 357)
+  call void @tomato_trace(ptr @.str.534.c, i32 368)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.518:
@@ -56426,10 +56689,10 @@ inbody.542:
 stop.552:
   %err.554 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.554, ptr @tomato_exc
-  store i32 357, ptr @tomato_exc_line
+  store i32 368, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.534.c, i32 357)
+  call void @tomato_trace(ptr @.str.534.c, i32 368)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.553:
@@ -56497,7 +56760,7 @@ endeach.482:
   %has.590 = icmp ne ptr %ex.589, null
   br i1 %has.590, label %raised.591, label %fine.592
 raised.591:
-  call void @tomato_trace(ptr @.str.534.c, i32 359)
+  call void @tomato_trace(ptr @.str.534.c, i32 370)
   call void @tomato_release(ptr %list.584)
   br label %epilogue
 fine.592:
@@ -56552,7 +56815,7 @@ entry:
   %has.4 = icmp ne ptr %ex.3, null
   br i1 %has.4, label %raised.5, label %fine.6
 raised.5:
-  call void @tomato_trace(ptr @.str.543.c, i32 362)
+  call void @tomato_trace(ptr @.str.543.c, i32 373)
   br label %epilogue
 fine.6:
   %bl.7 = load ptr, ptr %v.u.2
@@ -56561,7 +56824,7 @@ fine.6:
   %has.9 = icmp ne ptr %ex.8, null
   br i1 %has.9, label %raised.10, label %fine.11
 raised.10:
-  call void @tomato_trace(ptr @.str.543.c, i32 362)
+  call void @tomato_trace(ptr @.str.543.c, i32 373)
   call void @tomato_release(ptr %call.2)
   br label %epilogue
 fine.11:
@@ -56610,10 +56873,10 @@ eachbody.6:
 stop.17:
   %err.19 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.19, ptr @tomato_exc
-  store i32 367, ptr @tomato_exc_line
+  store i32 378, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.544.c, i32 367)
+  call void @tomato_trace(ptr @.str.544.c, i32 378)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.18:
@@ -56740,10 +57003,10 @@ eachbody.10:
 stop.21:
   %err.23 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.23, ptr @tomato_exc
-  store i32 376, ptr @tomato_exc_line
+  store i32 387, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 376)
+  call void @tomato_trace(ptr @.str.545.c, i32 387)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.22:
@@ -56820,10 +57083,10 @@ stop.74:
   call void @tomato_release(ptr %f.64)
   %err.76 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.76, ptr @tomato_exc
-  store i32 378, ptr @tomato_exc_line
+  store i32 389, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 378)
+  call void @tomato_trace(ptr @.str.545.c, i32 389)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.75:
@@ -56876,10 +57139,10 @@ eachbody.93:
 stop.104:
   %err.106 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.106, ptr @tomato_exc
-  store i32 380, ptr @tomato_exc_line
+  store i32 391, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 380)
+  call void @tomato_trace(ptr @.str.545.c, i32 391)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.105:
@@ -56911,7 +57174,7 @@ then.120:
   %has.126 = icmp ne ptr %ex.125, null
   br i1 %has.126, label %raised.127, label %fine.128
 raised.127:
-  call void @tomato_trace(ptr @.str.545.c, i32 382)
+  call void @tomato_trace(ptr @.str.545.c, i32 393)
   br label %epilogue
 fine.128:
   br label %endif.112
@@ -56946,10 +57209,10 @@ stop.150:
   call void @tomato_release(ptr %f.140)
   %err.152 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.152, ptr @tomato_exc
-  store i32 384, ptr @tomato_exc_line
+  store i32 395, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 384)
+  call void @tomato_trace(ptr @.str.545.c, i32 395)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.151:
@@ -56964,7 +57227,7 @@ ok.151:
   %has.159 = icmp ne ptr %ex.158, null
   br i1 %has.159, label %raised.160, label %fine.161
 raised.160:
-  call void @tomato_trace(ptr @.str.545.c, i32 384)
+  call void @tomato_trace(ptr @.str.545.c, i32 395)
   call void @tomato_release(ptr %item.156)
   br label %epilogue
 fine.161:
@@ -56989,10 +57252,10 @@ eachbody.166:
 stop.177:
   %err.179 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.179, ptr @tomato_exc
-  store i32 384, ptr @tomato_exc_line
+  store i32 395, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 384)
+  call void @tomato_trace(ptr @.str.545.c, i32 395)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.178:
@@ -57012,7 +57275,7 @@ ok.178:
   %has.189 = icmp ne ptr %ex.188, null
   br i1 %has.189, label %raised.190, label %fine.191
 raised.190:
-  call void @tomato_trace(ptr @.str.545.c, i32 385)
+  call void @tomato_trace(ptr @.str.545.c, i32 396)
   br label %epilogue
 fine.191:
   br label %eachstep.167
@@ -57062,10 +57325,10 @@ eachbody.211:
 stop.222:
   %err.224 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.224, ptr @tomato_exc
-  store i32 387, ptr @tomato_exc_line
+  store i32 398, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 387)
+  call void @tomato_trace(ptr @.str.545.c, i32 398)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.223:
@@ -57084,7 +57347,7 @@ ok.223:
   %has.233 = icmp ne ptr %ex.232, null
   br i1 %has.233, label %raised.234, label %fine.235
 raised.234:
-  call void @tomato_trace(ptr @.str.545.c, i32 388)
+  call void @tomato_trace(ptr @.str.545.c, i32 399)
   br label %epilogue
 fine.235:
   br label %eachstep.212
@@ -57127,10 +57390,10 @@ eachbody.245:
 stop.256:
   %err.258 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.258, ptr @tomato_exc
-  store i32 389, ptr @tomato_exc_line
+  store i32 400, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 389)
+  call void @tomato_trace(ptr @.str.545.c, i32 400)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.257:
@@ -57184,10 +57447,10 @@ stop.295:
   call void @tomato_release(ptr %f.285)
   %err.297 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.297, ptr @tomato_exc
-  store i32 391, ptr @tomato_exc_line
+  store i32 402, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 391)
+  call void @tomato_trace(ptr @.str.545.c, i32 402)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.296:
@@ -57221,10 +57484,10 @@ eachbody.308:
 stop.319:
   %err.321 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.321, ptr @tomato_exc
-  store i32 391, ptr @tomato_exc_line
+  store i32 402, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 391)
+  call void @tomato_trace(ptr @.str.545.c, i32 402)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.320:
@@ -57266,10 +57529,10 @@ stop.349:
   call void @tomato_release(ptr %f.339)
   %err.351 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.351, ptr @tomato_exc
-  store i32 393, ptr @tomato_exc_line
+  store i32 404, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 393)
+  call void @tomato_trace(ptr @.str.545.c, i32 404)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.350:
@@ -57306,7 +57569,7 @@ ok.350:
   %has.372 = icmp ne ptr %ex.371, null
   br i1 %has.372, label %raised.373, label %fine.374
 raised.373:
-  call void @tomato_trace(ptr @.str.545.c, i32 394)
+  call void @tomato_trace(ptr @.str.545.c, i32 405)
   br label %epilogue
 fine.374:
   %t.375 = xor i64 %call.370, 1
@@ -57339,10 +57602,10 @@ stop.396:
   call void @tomato_int_free(i64 %dup.383)
   %err.398 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.398, ptr @tomato_exc
-  store i32 395, ptr @tomato_exc_line
+  store i32 406, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 395)
+  call void @tomato_trace(ptr @.str.545.c, i32 406)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.397:
@@ -57380,7 +57643,7 @@ ok.397:
   %has.418 = icmp ne ptr %ex.417, null
   br i1 %has.418, label %raised.419, label %fine.420
 raised.419:
-  call void @tomato_trace(ptr @.str.545.c, i32 395)
+  call void @tomato_trace(ptr @.str.545.c, i32 406)
   call void @tomato_int_free(i64 %dup.383)
   call void @tomato_release_flat(ptr @.str.537)
   call void @tomato_release_flat(ptr %cat.415)
@@ -57420,10 +57683,10 @@ inbody.429:
 stop.439:
   %err.441 = call ptr @tomato.new.4(ptr @.str.19, ptr @.str.20)
   store ptr %err.441, ptr @tomato_exc
-  store i32 395, ptr @tomato_exc_line
+  store i32 406, ptr @tomato_exc_line
   store i32 1, ptr @tomato_exc_rt
   call void @tomato_trace_clear()
-  call void @tomato_trace(ptr @.str.545.c, i32 395)
+  call void @tomato_trace(ptr @.str.545.c, i32 406)
   store i32 1, ptr @tomato_exc_seen
   br label %epilogue
 ok.440:
@@ -57485,7 +57748,7 @@ then.456:
   %has.479 = icmp ne ptr %ex.478, null
   br i1 %has.479, label %raised.480, label %fine.481
 raised.480:
-  call void @tomato_trace(ptr @.str.545.c, i32 397)
+  call void @tomato_trace(ptr @.str.545.c, i32 408)
   call void @tomato_int_free(i64 %dup.462)
   call void @tomato_release_flat(ptr @.str.537)
   call void @tomato_release_flat(ptr %cat.476)
