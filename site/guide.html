@@ -238,6 +238,36 @@ def main():
     t.set('token', 'abc', ttl=5.0)     # this one after 5</code></pre>
 <p><code>from cache import Cache</code> is a least-recently-used cache written in Tomato. <code>get</code>, <code>c[key]</code> and <code>set</code> count as a use; <code>in</code>, <code>peek</code> and <code>keys()</code> do not. Every operation takes constant time (a dict plus a doubly linked list). Capacity 0 stores nothing. <code>delete(key)</code>, <code>clear()</code> and <code>len(c)</code> work as expected, and <code>hits</code>, <code>misses</code>, <code>evictions</code>, <code>expirations</code> and <code>hit_rate()</code> count what happened. An expired entry is dropped when it is next looked at. Time comes from the built-in <code>clock()</code>, the seconds on a monotonic clock as a <code>float</code> (take two readings and subtract); a test gives the cache its own <code>Clock</code> subclass, <code>Cache[int](100, 60.0, fake)</code>, whose <code>now()</code> it controls. Object creation takes no keyword arguments, so <code>ttl</code> and the clock are positional there. The cache has no locking because tasks only switch at <code>await</code>. Memoising a function, a disk-backed cache and a request cache for HTTP are not built yet. <code>d.remove(key)</code> deletes an entry from any dict.</p>
 
+<h2>JSON and MessagePack</h2>
+<pre><code>from json import loads, dumps, JsonDict, JsonInt, JsonStr, JSONDecodeError
+
+@main
+def main():
+    doc = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3, "pi": 3.14}')
+    print(doc['name'].as_str(), doc['tags'][1].as_str(), doc['n'].as_int())   # tomato round 3
+    print(len(doc), 'n' in doc, doc['pi'].kind())                              # 4 True float
+    extra = doc.get('missing')                    # None when the key is absent
+    print(extra in None)                          # True
+
+    out = JsonDict({'ok': JsonInt(1), 'who': JsonStr('Ada')})
+    print(dumps(out))                             # {"ok":1,"who":"Ada"}
+    print(dumps(out, indent=2, sort_keys=True))
+    try:
+        loads('[1, 2,]')
+    catch JSONDecodeError as e:
+        print(e.message, e.line, e.column)        # Expecting value: line 1 column 7 (char 6) 1 7</code></pre>
+<p><code>from json import loads, dumps</code>. <code>loads(text)</code> returns a <code>Json</code>: a <code>JsonNull</code>, <code>JsonBool</code>, <code>JsonInt</code>, <code>JsonFloat</code>, <code>JsonStr</code>, <code>JsonList</code> or <code>JsonDict</code>. Because Tomato is typed, you say what you expect when you read a value: <code>j['a']</code> and <code>j[0]</code> go into objects and lists, <code>as_int()</code>, <code>as_float()</code> (an int is accepted), <code>as_str()</code>, <code>as_bool()</code>, <code>as_list()</code> and <code>as_dict()</code> take the value out, and <code>kind()</code> (<code>'null'</code>, <code>'bool'</code>, <code>'int'</code>, <code>'float'</code>, <code>'str'</code>, <code>'list'</code>, <code>'dict'</code>) says what it is. Reading it as the wrong kind, a missing key or an index out of range raises <code>JSONTypeError</code>. <code>len(j)</code>, <code>'a' in j</code> and <code>j.get('a')</code> (<code>None</code> when missing) work on objects. Build values with the constructors (<code>JsonInt(3)</code>, <code>JsonList([...])</code>, <code>JsonDict({...})</code>); <code>print(j)</code> writes compact JSON.</p>
+<p>A number with no fraction or exponent is an exact <code>int</code> of any size; any other number is a <code>float</code> (<code>1e999</code> is an error, not infinity). Objects keep the order of the document and a repeated key keeps its last value. The parser follows RFC 8259 strictly: no trailing commas, comments, leading zeros, <code>NaN</code>, single quotes, raw control characters in strings, lone surrogate escapes or invalid UTF-8, and no more than 512 levels of nesting. A mistake raises <code>JSONDecodeError</code>, whose message reads <code>Expecting ',' delimiter: line 3 column 5 (char 42)</code> and which carries <code>reason</code>, <code>line</code>, <code>column</code> and <code>pos</code>. <code>dumps(value, indent=0, sort_keys=False, ensure_ascii=False)</code> is compact unless <code>indent</code> is a positive number of spaces; floats come out the way Python prints them (<code>1500.0</code>), and non-ASCII text is written as UTF-8 unless <code>ensure_ascii=True</code>. A parser written in Tomato itself would be slow because indexing text is a linear scan, so the checking and number reading are in the C runtime: an 8 MB document loads in about 0.15 s.</p>
+<pre><code>from json import loads_msgpack, dumps_msgpack, JsonBin, JsonTimestamp, JsonDict
+
+@main
+def main():
+    packed = dumps_msgpack(JsonDict({'id': JsonBin([1, 2, 255]), 'at': JsonTimestamp(1700000000)}))
+    print(packed[0:6])                            # [130, 162, 105, 100, 196, 3]
+    back = loads_msgpack(packed)
+    print(back['id'].as_bytes(), back['at'].seconds())</code></pre>
+<p>The same module reads and writes MessagePack. Bytes are lists of ints from 0 to 255 (<code>loads_msgpack(data)</code>, <code>dumps_msgpack(value)</code>); there is no byte string type. A MessagePack <code>bin</code> becomes a <code>JsonBin</code> (<code>as_bytes()</code>), other extension values a <code>JsonExt</code> (<code>ext_type()</code>, <code>as_bytes()</code>) and timestamps (extension -1, all three sizes) a <code>JsonTimestamp</code> (<code>seconds()</code>, <code>nanos()</code>). Map keys must be text. Ints are written in their shortest form (up to 64 bits, signed or unsigned), floats as float64. Bad data raises <code>MsgpackError</code> with the byte offset; <code>dumps</code> of a bin, ext or timestamp is a <code>JSONEncodeError</code> because JSON text has no such values.</p>
+
 <h2>Errors</h2>
 <pre><code>@main
 def main():

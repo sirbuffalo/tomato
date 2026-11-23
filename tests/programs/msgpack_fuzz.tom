@@ -1,0 +1,40 @@
+# Mutates and truncates MessagePack data thousands of times: loads_msgpack must answer or raise MsgpackError, never crash
+from json import loads, loads_msgpack, dumps_msgpack, MsgpackError, JsonBin, JsonExt, JsonTimestamp
+
+@main
+def main():
+    doc = loads('{"a": [1, -2500, true, false, null, 1.5, "x\\ny\\u00e9\\ud83d\\ude00"], "b": {"c": {}, "d": [], "e": 18446744073709551615}, "f": "日本語"}')
+    doc.as_dict()['bin'] = JsonBin([1, 2, 3])
+    doc.as_dict()['ext'] = JsonExt(7, [1, 2, 3, 4])
+    doc.as_dict()['ts'] = JsonTimestamp(1700000000, 42)
+    base = dumps_msgpack(doc)
+    seed = 4242
+    ok = 0
+    bad = 0
+    for round in range(8000):
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        data: list[int] = [x for x in base]
+        for k in range(1 + seed % 3):
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            pos = seed % len(data)
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            what = seed % 3
+            if what == 0:
+                data = data[0:pos]
+            elif what == 1:
+                data[pos] = seed % 256
+            else:
+                data = data[0:pos] + [seed % 256] + data[pos:len(data)]
+            if len(data) == 0:
+                data = [192]
+        try:
+            j = loads_msgpack(data)
+            again = loads_msgpack(dumps_msgpack(j))
+            if len(dumps_msgpack(again)) != len(dumps_msgpack(j)):
+                print('round trip failed')
+            ok += 1
+        catch MsgpackError as e:
+            if e.pos < 0 or e.pos > len(data):
+                print('bad position')
+            bad += 1
+    print('accepted', ok, 'rejected', bad)

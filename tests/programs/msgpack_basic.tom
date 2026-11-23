@@ -1,0 +1,151 @@
+# MessagePack: exact encodings (checked against the specification's tables), decoding every format, round trips
+from json import loads, dumps, loads_msgpack, dumps_msgpack, JSONEncodeError, Json, JsonBin, JsonExt, JsonTimestamp, JsonInt, JsonFloat, JsonStr, JsonList, JsonDict, JsonNull, JsonBool
+
+def hexs(b: list[int]) -> str:
+    digits = '0123456789abcdef'
+    out: list[str] = []
+    for x in b:
+        out.append(digits[x // 16] + digits[x % 16])
+    return ''.join(out)
+
+def nib(c: str) -> int:
+    n = ord(c)
+    if n >= 97:
+        return n - 87
+    return n - 48
+
+def unhex(s: str) -> list[int]:
+    out: list[int] = []
+    for i in range(len(s) // 2):
+        out.append(nib(s[2 * i]) * 16 + nib(s[2 * i + 1]))
+    return out
+
+def enc(j: Json):
+    print(hexs(dumps_msgpack(j)))
+
+def dec(h: str):
+    print(h[0:24], '->', dumps(loads_msgpack(unhex(h))))
+
+@main
+def main():
+    print('-- encodings')
+    enc(JsonNull())
+    enc(JsonBool(True))
+    enc(JsonBool(False))
+    for n in [0, 1, 127, 128, 255, 256, 65535, 65536, 4294967295, 4294967296, 9223372036854775807, 9223372036854775808, 18446744073709551615]:
+        enc(JsonInt(n))
+    for n in [-1, -32, -33, -128, -129, -32768, -32769, -2147483648, -2147483649, -9223372036854775808]:
+        enc(JsonInt(n))
+    enc(JsonFloat(1.5))
+    enc(JsonFloat(-0.1))
+    enc(JsonFloat(0.0))
+    enc(JsonStr(''))
+    enc(JsonStr('a'))
+    enc(JsonStr('é€😀'))
+    enc(JsonStr('x' * 31))
+    print(hexs(dumps_msgpack(JsonStr('x' * 32)))[0:8], len(dumps_msgpack(JsonStr('x' * 32))))
+    print(hexs(dumps_msgpack(JsonStr('x' * 255)))[0:8], len(dumps_msgpack(JsonStr('x' * 255))))
+    print(hexs(dumps_msgpack(JsonStr('x' * 256)))[0:8], len(dumps_msgpack(JsonStr('x' * 256))))
+    print(hexs(dumps_msgpack(JsonStr('x' * 65536)))[0:10], len(dumps_msgpack(JsonStr('x' * 65536))))
+    enc(JsonList([]))
+    enc(JsonList([JsonInt(1), JsonInt(2), JsonInt(3)]))
+    big: list[Json] = []
+    for i in range(15):
+        big.append(JsonNull())
+    print(hexs(dumps_msgpack(JsonList(big)))[0:4])
+    big.append(JsonNull())
+    print(hexs(dumps_msgpack(JsonList(big)))[0:8])
+    enc(JsonDict({}))
+    enc(JsonDict({'a': JsonInt(1), 'b': JsonList([JsonBool(True)])}))
+    wide: dict[str, Json] = {}
+    for i in range(16):
+        wide['k' + str(i)] = JsonNull()
+    print(hexs(dumps_msgpack(JsonDict(wide)))[0:8])
+    enc(JsonBin([]))
+    enc(JsonBin([1, 2, 255]))
+    print(hexs(dumps_msgpack(JsonBin([7] * 256)))[0:8])
+    enc(JsonExt(5, [1]))
+    enc(JsonExt(5, [1, 2]))
+    enc(JsonExt(-5, [1, 2, 3, 4]))
+    enc(JsonExt(1, [1, 2, 3]))
+    enc(JsonExt(127, [0] * 8))
+    enc(JsonExt(-128, [0] * 16))
+    enc(JsonExt(9, [0] * 3))
+    enc(JsonTimestamp(0))
+    enc(JsonTimestamp(4294967295))
+    enc(JsonTimestamp(1, 500))
+    enc(JsonTimestamp(17179869183, 999999999))
+    enc(JsonTimestamp(17179869184))
+    enc(JsonTimestamp(-1))
+    enc(JsonTimestamp(-62135596800, 7))
+    print('-- decoding')
+    dec('c0')
+    dec('c2')
+    dec('c3')
+    dec('7f')
+    dec('ff')
+    dec('e0')
+    dec('cc80')
+    dec('cd0100')
+    dec('ce00010000')
+    dec('cf0000000100000000')
+    dec('cfffffffffffffffff')
+    dec('d0df')
+    dec('d18000')
+    dec('d280000000')
+    dec('d38000000000000000')
+    dec('d3ffffffffffffffff')
+    dec('d37fffffffffffffff')
+    dec('d34000000000000000')
+    dec('cf4000000000000000')
+    dec('cf3fffffffffffffff')
+    dec('ca3fc00000')
+    dec('ca00000001')
+    dec('cb3ff8000000000000')
+    dec('cbc00c000000000000')
+    dec('a0')
+    dec('a3616263')
+    dec('d9026162')
+    dec('da00026162')
+    dec('db000000026162')
+    dec('a3e282ac')
+    dec('90')
+    dec('93010203')
+    dec('dc0003010203')
+    dec('dd00000003010203')
+    dec('80')
+    dec('81a16101')
+    dec('de0001a16101')
+    dec('df00000001a16101')
+    dec('82a16101a16102')
+    print('-- decoded kinds')
+    for h in ['c4020aff', 'd40501', 'd5050102', 'c703050102' + '03', 'c80003050102' + '03', 'd6ff00000001', 'd7ff0000000100000002', 'c70cff0000000100000000000000ff', 'ca3fc00000', 'cb3ff8000000000000']:
+        j = loads_msgpack(unhex(h))
+        print(h, j.kind())
+    t = loads_msgpack(unhex('d7ff000007d000000001'))
+    print(t.seconds(), t.nanos())
+    t = loads_msgpack(unhex('c70cff3b9ac9ffffffffffffffffff'))
+    print(t.seconds(), t.nanos())
+    e = loads_msgpack(unhex('d5fb0102'))
+    print(e.ext_type(), e.as_bytes())
+    print(loads_msgpack(unhex('c4020aff')).as_bytes())
+    print('-- round trips')
+    doc = loads('{"name":"tomato","tags":["red","round"],"n":3,"f":1500.5,"big":123456789012345678901234567890123,"nested":{"a":[true,false,null,-7]},"u":"日本語 😀"}')
+    # the big integer does not fit in 64 bits, so take it out first
+    fields = doc.as_dict()
+    fields['big'] = JsonInt(-9223372036854775808)
+    back = loads_msgpack(dumps_msgpack(doc))
+    print(dumps(back) == dumps(doc), dumps(back))
+    print(hexs(dumps_msgpack(back)) == hexs(dumps_msgpack(doc)))
+    bytes_doc = JsonDict({'bin': JsonBin([0, 1, 2, 254, 255]), 'ext': JsonExt(42, [9, 8, 7]), 'ts': JsonTimestamp(1700000000, 123456789), 'list': JsonList([JsonBin([]), JsonTimestamp(-5)])})
+    b2 = loads_msgpack(dumps_msgpack(bytes_doc))
+    print(b2['bin'].as_bytes(), b2['ext'].ext_type(), b2['ext'].as_bytes(), b2['ts'].seconds(), b2['ts'].nanos(), b2['list'][0].kind(), b2['list'][1].seconds())
+    print(hexs(dumps_msgpack(b2)) == hexs(dumps_msgpack(bytes_doc)))
+    print('-- NaN and infinity: valid MessagePack, kept as floats, and refused by JSON text')
+    for h in ['cb7ff8000000000000', 'cbfff0000000000000', 'ca7f800000']:
+        f = loads_msgpack(unhex(h))
+        print(f.kind(), hexs(dumps_msgpack(f)))
+        try:
+            print(dumps(f))
+        catch JSONEncodeError as e:
+            print(e.message)

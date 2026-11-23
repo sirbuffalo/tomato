@@ -19,7 +19,7 @@ Tomato is a statically typed, reference-counted language with indentation syntax
 | `compiler/src/` | the lexer, parser, error reporting and compiler, written in Tomato |
 | `compiler/bootstrap/` | `tomatoc.ll`, the compiler's own IR, so a machine with only clang can build it; `refresh.sh` regenerates it |
 | `runtime/` | the C runtime every program links with |
-| `std/` | the standard library, written in Tomato (`itertools`, `math`, `rational`, `toml`) |
+| `std/` | the standard library, written in Tomato: `math`, `rational`, `itertools`, `cache`, `json` (JSON and MessagePack), `toml` |
 | `native/` | the `tomato` command and the repl (shell scripts) |
 | `site/` | the website for tomato.davismcd.com; `site/wasm/` is the compiler, runtime and IR interpreter that run in the browser |
 | `editors/` | the VS Code extension: TextMate grammar, snippets, language configuration |

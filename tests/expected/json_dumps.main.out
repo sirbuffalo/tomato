@@ -1,0 +1,60 @@
+{"b":[1,2.5,{"z":null,"y":[]}],"a":{"k":"v","e":{}},"c":true}
+{
+  "b": [
+    1,
+    2.5,
+    {
+      "z": null,
+      "y": []
+    }
+  ],
+  "a": {
+    "k": "v",
+    "e": {}
+  },
+  "c": true
+}
+{
+ "b": [
+  1,
+  2.5,
+  {
+   "z": null,
+   "y": []
+  }
+ ],
+ "a": {
+  "k": "v",
+  "e": {}
+ },
+ "c": true
+}
+{"b":[1,2.5,{"z":null,"y":[]}],"a":{"k":"v","e":{}},"c":true}
+{"a":{"e":{},"k":"v"},"b":[1,2.5,{"y":[],"z":null}],"c":true}
+{
+    "a": {
+        "e": {},
+        "k": "v"
+    },
+    "b": [
+        1,
+        2.5,
+        {
+            "y": [],
+            "z": null
+        }
+    ],
+    "c": true
+}
+"quote \" slash \\ solidus / tab \t nl \n cr \r bell \u0007 del  é € 😀"
+"quote \" slash \\ solidus / tab \t nl \n cr \r bell \u0007 del  \u00e9 \u20ac \ud83d\ude00"
+""
+{"\u00e9":1,"\ud83d\ude00":2}
+{"A":4,"e":2,"z":3,"é":1}
+{"ok":true,"ids":[1,null,0.5],"big":1267650600228229401496703205376}
+[] {} []
+True
+True
+error: indent cannot be negative
+1024
+error: nesting is deeper than 512 levels

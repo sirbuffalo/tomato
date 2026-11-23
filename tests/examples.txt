@@ -12,3 +12,4 @@ trig main
 tasks main
 config main
 lru_cache main
+json_tool main

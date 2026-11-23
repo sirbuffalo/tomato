@@ -146,3 +146,20 @@ size-class allocator task covers.
 3. **Typed list storage** (`list[bool]` as bytes, unboxed floats): the likely next win for `sieve` (cache footprint 8x smaller), measured as memory-bound, not tag-bound; needs every list operation and the IR interpreter to know the element width.
 4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).
 5. **Debug-mode small-int arithmetic** got slower with the big-integer ownership change (fib 0.41 → 0.60 s); recover it.
+
+## JSON and MessagePack (std/json.tom)
+
+`benchmarks/json/jsonbench.tom` writes a document of N records (nested objects, lists, strings with escapes, ints, floats,
+booleans, null; about 207 bytes each), then times `loads`, compact `dumps` and `dumps(indent=2)` (Apple M1, release
+build, one run, `/usr/bin/time -l`; the file is read inside the timed run):
+
+| document | `loads` | `dumps` (includes `loads`) | `dumps(indent=2)` (includes `loads`) |
+| --- | ---: | ---: | ---: |
+| 40,000 records, 8.3 MB | 0.14 s, 124 MB | 0.47 s, 185 MB | 0.53 s, 218 MB |
+| 400,000 records, 84.6 MB | 1.7 s, 1.0 GB | 5.0 s, 1.6 GB | not run |
+
+Time and memory grow in proportion to the size (no quadratic string building): about 15 bytes of memory per byte of
+document for the parsed tree. The parse is a single C pass (`tomato_json_scan`: strict checking, numbers, string
+decoding) into a token tape, then Tomato builds the objects; writing is Tomato appending pieces to a list and joining once.
+Text indexing (`s[i]`) is a linear scan today, which is why the parser lives in the runtime; a pure Tomato parser took
+57 s to walk a 300,000 character string. Writing is the slower half: one small string per token, then the join.

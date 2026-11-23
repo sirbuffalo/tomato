@@ -1,0 +1,45 @@
+# dumps: compact and indented output, sort_keys, ensure_ascii, builders, and what cannot be written
+from json import loads, dumps, Json, JsonStr, JsonDict, JsonInt, JsonBool, JsonList, JsonFloat, JsonNull, JSONEncodeError
+
+def fails(j: Json):
+    try:
+        print(dumps(j))
+    catch JSONEncodeError as e:
+        print('error:', e.message)
+
+@main
+def main():
+    doc = loads('{"b": [1, 2.5, {"z": null, "y": []}], "a": {"k": "v", "e": {}}, "c": true}')
+    print(dumps(doc))
+    print(dumps(doc, indent=2))
+    print(dumps(doc, indent=1))
+    print(dumps(doc, indent=0))
+    print(dumps(doc, sort_keys=True))
+    print(dumps(doc, indent=4, sort_keys=True))
+    # strings: escapes, non-ASCII, ensure_ascii
+    s = JsonStr('quote " slash \\ solidus / tab \t nl \n cr \r bell ' + chr(7) + ' del ' + chr(127) + ' é € 😀')
+    print(dumps(s))
+    print(dumps(s, ensure_ascii=True))
+    print(dumps(JsonStr('')))
+    print(dumps(JsonDict({'é': JsonInt(1), '😀': JsonInt(2)}), ensure_ascii=True))
+    print(dumps(JsonDict({'é': JsonInt(1), 'e': JsonInt(2), 'z': JsonInt(3), 'A': JsonInt(4)}), sort_keys=True))
+    # builders
+    built = JsonDict({'ok': JsonBool(True), 'ids': JsonList([JsonInt(1), JsonNull(), JsonFloat(0.5)]), 'big': JsonInt(2 ** 100)})
+    print(dumps(built))
+    print(dumps(JsonList([])), dumps(JsonDict({})), dumps(JsonList([]), indent=2))
+    # round trips
+    text = '{"name":"tomato","tags":["red","round"],"n":3,"f":1500.0,"nested":{"a":[true,false,null]}}'
+    print(dumps(loads(text)) == text)
+    print(dumps(loads(dumps(doc, indent=3))) == dumps(doc))
+    # a negative indent is an error
+    try:
+        dumps(doc, indent=-1)
+    catch JSONEncodeError as e:
+        print('error:', e.message)
+    # nesting: 512 levels can be written, 513 cannot
+    deep = JsonList([])
+    for i in range(511):
+        deep = JsonList([deep])
+    print(len(dumps(deep)))
+    deeper = JsonList([deep])
+    fails(deeper)

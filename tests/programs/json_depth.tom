@@ -1,0 +1,32 @@
+# nesting limit: 512 levels are allowed, 513 are a JSONDecodeError (not a crash); and a large document
+from json import loads, dumps, JSONDecodeError
+
+def depth_of(open_c: str, close_c: str, n: int) -> str:
+    return open_c * n + close_c * n
+
+def try_load(label: str, text: str):
+    try:
+        j = loads(text)
+        print(label, 'ok', len(dumps(j)))
+    catch JSONDecodeError as e:
+        print(label, e.message)
+
+@main
+def main():
+    try_load('arrays 511:', depth_of('[', ']', 511))
+    try_load('arrays 512:', depth_of('[', ']', 512))
+    try_load('arrays 513:', depth_of('[', ']', 513))
+    try_load('arrays 100000:', depth_of('[', ']', 100000))
+    try_load('objects 512:', '{"a":' * 511 + '{}' + '}' * 511)
+    try_load('objects 513:', '{"a":' * 512 + '{}' + '}' * 512)
+    try_load('mixed 513:', '[{"a":' * 256 + '[]' + '}]' * 256 + '[]')
+    try_load('unclosed 600:', '[' * 600)
+    # a wide document: 100000 numbers, 20000 objects, 20000 strings
+    parts: list[str] = []
+    for i in range(20000):
+        parts.append('{"id":' + str(i) + ',"name":"item ' + str(i) + '","tags":["a","b"],"score":' + str(i) + '.5}')
+    wide = '[' + ','.join(parts) + ']'
+    j = loads(wide)
+    print(len(wide), len(j), j[19999]['id'].as_int(), j[12345]['name'].as_str(), j[7]['score'].as_float())
+    print(dumps(j) == wide)
+    print(dumps(loads(dumps(j, indent=2))) == wide)

@@ -1,0 +1,106 @@
+# MessagePack data that must be rejected, and values that cannot be encoded
+from json import loads_msgpack, dumps_msgpack, Json, JsonInt, JsonExt, JsonBin, JsonTimestamp, JsonList, JsonDict, dumps, MsgpackError, JSONEncodeError
+
+def nib(c: str) -> int:
+    n = ord(c)
+    if n >= 97:
+        return n - 87
+    return n - 48
+
+def unhex(s: str) -> list[int]:
+    out: list[int] = []
+    for i in range(len(s) // 2):
+        out.append(nib(s[2 * i]) * 16 + nib(s[2 * i + 1]))
+    return out
+
+def bad(h: str):
+    try:
+        print('ACCEPTED', h, dumps(loads_msgpack(unhex(h))))
+    catch MsgpackError as e:
+        print(h[0:20], e.message, e.pos)
+
+def cannot(j: Json):
+    try:
+        print('ENCODED', dumps_msgpack(j))
+    catch MsgpackError as e:
+        print(e.message)
+
+@main
+def main():
+    print('-- decoding')
+    bad('')
+    bad('c1')
+    bad('cd01')
+    bad('cf000000000000')
+    bad('a3616')
+    bad('a36162')
+    bad('d9')
+    bad('d90261')
+    bad('c40361')
+    bad('c7')
+    bad('d4')
+    bad('d40a')
+    bad('93010203' + '04')
+    bad('c0c0')
+    bad('92c0')
+    bad('dd00000005c0c0')
+    bad('dd7fffffffc0')
+    bad('81c001')
+    bad('8101' + '01')
+    bad('81a16181')
+    bad('a1ff')
+    bad('a2c328')
+    bad('a1e2')
+    bad('a3eda080')
+    bad('a2c080')
+    bad('d6ff00000000' + '00')
+    bad('d5ff0000')
+    bad('c70dff' + '00' * 13)
+    bad('c70cff3b9aca00' + '00' * 8)
+    bad('c70cff00000000' + '7fffffffffffffff')
+    bad('d7ff' + 'ffffffffffffffff')
+    bad('92' + '01')
+    print('-- nesting')
+    d = ''
+    for i in range(512):
+        d += '91'
+    print(len(dumps(loads_msgpack(unhex(d + 'c0')))))
+    bad('91' + d + 'c0')
+    print('-- encoding')
+    cannot(JsonInt(18446744073709551616))
+    cannot(JsonInt(-9223372036854775809))
+    cannot(JsonInt(10 ** 40))
+    cannot(JsonExt(-1, [1]))
+    cannot(JsonExt(128, [1]))
+    cannot(JsonExt(-129, [1]))
+    cannot(JsonExt(1, [256]))
+    cannot(JsonBin([1, -1]))
+    cannot(JsonTimestamp(1, 1000000000))
+    cannot(JsonTimestamp(1, -1))
+    cannot(JsonTimestamp(4611686018427387904))
+    deep = JsonList([])
+    for i in range(511):
+        deep = JsonList([deep])
+    print(len(dumps_msgpack(deep)))
+    cannot(JsonList([deep]))
+    cannot(JsonDict({'a': JsonList([deep])}))
+    print('-- bytes that are not bytes')
+    try:
+        loads_msgpack([1, 2, 300])
+    catch MsgpackError as e:
+        print(e.message, e.pos)
+    try:
+        loads_msgpack([0 - 1])
+    catch MsgpackError as e:
+        print(e.message, e.pos)
+    try:
+        loads_msgpack([10 ** 30])
+    catch MsgpackError as e:
+        print(e.message, e.pos)
+    print('-- JSON text cannot hold these')
+    items: list[Json] = [JsonBin([1]), JsonExt(3, [1]), JsonTimestamp(5)]
+    for j in items:
+        try:
+            print(dumps(j))
+        catch JSONEncodeError as e:
+            print(e.message)

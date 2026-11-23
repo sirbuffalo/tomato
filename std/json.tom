@@ -1,0 +1,556 @@
+# JSON (RFC 8259) and MessagePack, written in Tomato with a small C scanner for speed.
+#
+#     from json import loads, dumps, Json
+#
+#     j = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3}')
+#     print(j['name'].as_str(), j['tags'][1].as_str(), j['n'].as_int())     # tomato round 3
+#     print(dumps(j))                                                      # {"name":"tomato","tags":["red","round"],"n":3}
+#     print(dumps(j, indent=2))
+#
+#     built = JsonDict({'ok': JsonBool(True), 'ids': JsonList([JsonInt(1), JsonNull(), JsonFloat(0.5)])})
+#
+# loads(text) returns a Json: one of JsonNull, JsonBool, JsonInt, JsonFloat, JsonStr, JsonList, JsonDict. A number with no
+# fraction and no exponent is an int of any size, any other number is a float (a literal too big for a float is an error).
+# Objects keep the order of the document; a repeated key keeps its first place and its last value. The parser is strict:
+# no trailing commas, comments, leading zeros, NaN or Infinity, single quotes, raw control characters in strings, lone
+# surrogate escapes or invalid UTF-8, and at most 512 levels of nesting. A mistake raises JSONDecodeError.
+#
+# dumps(value, indent=0, sort_keys=False, ensure_ascii=False): compact text by default; indent=N puts each item on its own
+# line indented by N spaces per level (an empty list or object stays `[]` or `{}`); sort_keys orders keys by code point;
+# ensure_ascii writes every non-ASCII character as \uXXXX. A float that is nan or infinite cannot be JSON: JSONEncodeError.
+
+!tomato_json_scan(text: str, tape: list[int], strs: list[str], nums: list[float]) -> int
+!tomato_json_quote(text: str, ascii: int) -> str
+!tomato_json_float(x: float) -> str
+!tomato_is_finite(x: float) -> int
+!tomato_msgpack_scan(data: list[int], tape: list[int], strs: list[str], nums: list[float]) -> int
+!tomato_mp_head(out: list[int], kind: int, n: int)
+!tomato_mp_str(out: list[int], text: str)
+!tomato_mp_f64(out: list[int], x: float)
+!tomato_mp_i64(out: list[int], v: int)
+!tomato_mp_u64(out: list[int], hi: int, lo: int)
+!tomato_mp_blob(out: list[int], code: int, isext: int, data: list[int]) -> int
+!tomato_mp_ts(out: list[int], secs: int, nanos: int)
+
+export class JSONDecodeError(RuntimeError):
+    reason: str = ''
+    line: int = 0
+    column: int = 0
+    pos: int = 0
+
+    @init
+    def make_decode(self, reason: str, pos: int, line: int, column: int):
+        RuntimeError.make(self, f'{reason}: line {line} column {column} (char {pos})')
+        self.reason = reason
+        self.pos = pos
+        self.line = line
+        self.column = column
+
+export class JSONEncodeError(RuntimeError):
+    @init
+    def make_encode(self, message: str):
+        RuntimeError.make(self, message)
+
+# Raised when a Json is used as the wrong kind: j['a'] on a list, as_int() on text, a missing key or an index out of range.
+export class JSONTypeError(RuntimeError):
+    @init
+    def make_type(self, message: str):
+        RuntimeError.make(self, message)
+
+# Raised by loads_msgpack on bad data (pos is the byte offset) and by dumps_msgpack on a value MessagePack cannot hold.
+export class MsgpackError(RuntimeError):
+    pos: int = 0
+
+    @init
+    def make_msgpack(self, message: str, pos: int):
+        RuntimeError.make(self, message if pos < 0 else f'{message}: byte {pos}')
+        self.pos = pos
+
+class Writer:
+    out: list[str] = []
+    indent: int = 0
+    sort_keys: bool = False
+    ascii: int = 0
+
+    def newline(self, depth: int) -> str:
+        return '\n' + ' ' * (self.indent * depth)
+
+export class Json:
+    def kind(self) -> str:
+        return 'json'
+
+    def what(self) -> str:
+        k = self.kind()
+        return 'an int' if k == 'int' else 'a ' + k
+
+    def is_null(self) -> bool:
+        return False
+
+    def as_bool(self) -> bool:
+        raise JSONTypeError(f'expected a bool, but this is {self.what()}')
+
+    def as_int(self) -> int:
+        raise JSONTypeError(f'expected an int, but this is {self.what()}')
+
+    def as_float(self) -> float:
+        raise JSONTypeError(f'expected a number, but this is {self.what()}')
+
+    def as_str(self) -> str:
+        raise JSONTypeError(f'expected a str, but this is {self.what()}')
+
+    def as_list(self) -> list[Json]:
+        raise JSONTypeError(f'expected a list, but this is {self.what()}')
+
+    def as_dict(self) -> dict[str, Json]:
+        raise JSONTypeError(f'expected a dict, but this is {self.what()}')
+
+    # j['name'] on an object, j[0] on a list
+    @get
+    def at(self, key: int | str) -> Json:
+        raise JSONTypeError(f'{self.what()} cannot be indexed')
+
+    # the value of a key of an object, or None when the key is missing
+    def get(self, key: str) -> Json | None:
+        raise JSONTypeError(f'expected a dict, but this is {self.what()}')
+
+    @len
+    def length(self) -> int:
+        raise JSONTypeError(f'{self.what()} has no length')
+
+    # 'name' in j: whether an object has the key
+    @contains
+    def has(self, key: str) -> bool:
+        raise JSONTypeError(f'expected a dict, but this is {self.what()}')
+
+    # print(j) and str(j) give the JSON text
+    @str
+    def text(self) -> str:
+        return dumps(self)
+
+    # MessagePack values (loads_msgpack makes them): a byte string, an extension value, a timestamp
+    def as_bytes(self) -> list[int]:
+        raise JSONTypeError(f'expected a bin or ext, but this is {self.what()}')
+
+    def ext_type(self) -> int:
+        raise JSONTypeError(f'expected an ext, but this is {self.what()}')
+
+    def seconds(self) -> int:
+        raise JSONTypeError(f'expected a timestamp, but this is {self.what()}')
+
+    def nanos(self) -> int:
+        raise JSONTypeError(f'expected a timestamp, but this is {self.what()}')
+
+    def dump_to(self, w: Writer, depth: int):
+        pass
+
+    def pack_to(self, out: list[int], depth: int):
+        pass
+
+export class JsonNull(Json):
+    override def kind(self) -> str:
+        return 'null'
+
+    override def is_null(self) -> bool:
+        return True
+
+    override def dump_to(self, w: Writer, depth: int):
+        w.out.append('null')
+
+    override def pack_to(self, out: list[int], depth: int):
+        out.append(192)
+
+export class JsonBool(Json):
+    v: bool = False
+
+    @init
+    def make_bool(self, v: bool):
+        self.v = v
+
+    override def kind(self) -> str:
+        return 'bool'
+
+    override def as_bool(self) -> bool:
+        return self.v
+
+    override def dump_to(self, w: Writer, depth: int):
+        w.out.append('true' if self.v else 'false')
+
+    override def pack_to(self, out: list[int], depth: int):
+        out.append(195 if self.v else 194)
+
+export class JsonInt(Json):
+    v: int = 0
+
+    @init
+    def make_int(self, v: int):
+        self.v = v
+
+    override def kind(self) -> str:
+        return 'int'
+
+    override def as_int(self) -> int:
+        return self.v
+
+    override def as_float(self) -> float:
+        return float(self.v)
+
+    override def dump_to(self, w: Writer, depth: int):
+        w.out.append(str(self.v))
+
+    override def pack_to(self, out: list[int], depth: int):
+        v = self.v
+        if v >= 0 and v < 128:
+            out.append(v)
+        elif v >= 0 - 32 and v < 0:
+            out.append(256 + v)
+        elif v >= 0 - 9223372036854775808 and v < 9223372036854775808:
+            !tomato_mp_i64(out, v)
+        elif v >= 9223372036854775808 and v < 18446744073709551616:
+            !tomato_mp_u64(out, v // 4294967296, v % 4294967296)
+        else:
+            raise MsgpackError(f'the integer {v} does not fit in 64 bits', 0 - 1)
+
+export class JsonFloat(Json):
+    v: float = 0.0
+
+    @init
+    def make_float(self, v: float):
+        self.v = v
+
+    override def kind(self) -> str:
+        return 'float'
+
+    override def as_float(self) -> float:
+        return self.v
+
+    override def dump_to(self, w: Writer, depth: int):
+        if !tomato_is_finite(self.v) == 0:
+            raise JSONEncodeError(f'the float {self.v} is not valid JSON')
+        w.out.append(!tomato_json_float(self.v))
+
+    override def pack_to(self, out: list[int], depth: int):
+        !tomato_mp_f64(out, self.v)
+
+export class JsonStr(Json):
+    v: str = ''
+
+    @init
+    def make_str(self, v: str):
+        self.v = v
+
+    override def kind(self) -> str:
+        return 'str'
+
+    override def as_str(self) -> str:
+        return self.v
+
+    @len
+    override def length(self) -> int:
+        return len(self.v)
+
+    override def dump_to(self, w: Writer, depth: int):
+        w.out.append(!tomato_json_quote(self.v, w.ascii))
+
+    override def pack_to(self, out: list[int], depth: int):
+        !tomato_mp_str(out, self.v)
+
+export class JsonList(Json):
+    items: list[Json] = []
+
+    @init
+    def make_list(self, items: list[Json]):
+        self.items = items
+
+    override def kind(self) -> str:
+        return 'list'
+
+    override def as_list(self) -> list[Json]:
+        return self.items
+
+    @get
+    override def at(self, key: int | str) -> Json:
+        if key in str:
+            raise JSONTypeError(f'a list needs an int index, but got the text {key}')
+        if key >= len(self.items) or key < 0 - len(self.items):
+            raise JSONTypeError(f'index {key} is out of range for a list of {len(self.items)}')
+        return self.items[key]
+
+    @len
+    override def length(self) -> int:
+        return len(self.items)
+
+    override def dump_to(self, w: Writer, depth: int):
+        if depth >= 512:
+            raise JSONEncodeError('nesting is deeper than 512 levels')
+        if len(self.items) == 0:
+            w.out.append('[]')
+            return
+        w.out.append('[')
+        pretty = w.indent > 0
+        inner = w.newline(depth + 1)
+        first = True
+        for item in self.items:
+            if not first:
+                w.out.append(',')
+            first = False
+            if pretty:
+                w.out.append(inner)
+            item.dump_to(w, depth + 1)
+        if pretty:
+            w.out.append(w.newline(depth))
+        w.out.append(']')
+
+    override def pack_to(self, out: list[int], depth: int):
+        if depth >= 512:
+            raise MsgpackError('nesting is deeper than 512 levels', 0 - 1)
+        !tomato_mp_head(out, 0, len(self.items))
+        for item in self.items:
+            item.pack_to(out, depth + 1)
+
+export class JsonDict(Json):
+    fields: dict[str, Json] = {}
+
+    @init
+    def make_dict(self, fields: dict[str, Json]):
+        self.fields = fields
+
+    override def kind(self) -> str:
+        return 'dict'
+
+    override def as_dict(self) -> dict[str, Json]:
+        return self.fields
+
+    @get
+    override def at(self, key: int | str) -> Json:
+        if key in int:
+            raise JSONTypeError(f'a dict needs a text key, but got the int {key}')
+        if key not in self.fields:
+            raise JSONTypeError(f'the key {key} is not in this dict')
+        return self.fields[key]
+
+    override def get(self, key: str) -> Json | None:
+        if key not in self.fields:
+            return None
+        return self.fields[key]
+
+    @len
+    override def length(self) -> int:
+        return len(self.fields)
+
+    @contains
+    override def has(self, key: str) -> bool:
+        return key in self.fields
+
+    override def dump_to(self, w: Writer, depth: int):
+        if depth >= 512:
+            raise JSONEncodeError('nesting is deeper than 512 levels')
+        if len(self.fields) == 0:
+            w.out.append('{}')
+            return
+        w.out.append('{')
+        pretty = w.indent > 0
+        inner = w.newline(depth + 1)
+        colon = ': ' if pretty else ':'
+        keys: list[str] = list(self.fields.keys())
+        if w.sort_keys:
+            keys = sorted(keys)
+        first = True
+        for key in keys:
+            if not first:
+                w.out.append(',')
+            first = False
+            if pretty:
+                w.out.append(inner)
+            w.out.append(!tomato_json_quote(key, w.ascii))
+            w.out.append(colon)
+            self.fields[key].dump_to(w, depth + 1)
+        if pretty:
+            w.out.append(w.newline(depth))
+        w.out.append('}')
+
+    override def pack_to(self, out: list[int], depth: int):
+        if depth >= 512:
+            raise MsgpackError('nesting is deeper than 512 levels', 0 - 1)
+        !tomato_mp_head(out, 1, len(self.fields))
+        for key in self.fields:
+            !tomato_mp_str(out, key)
+            self.fields[key].pack_to(out, depth + 1)
+
+# A MessagePack bin: a byte string, as a list of ints from 0 to 255.
+export class JsonBin(Json):
+    data: list[int] = []
+
+    @init
+    def make_bin(self, data: list[int]):
+        self.data = data
+
+    override def kind(self) -> str:
+        return 'bin'
+
+    override def as_bytes(self) -> list[int]:
+        return self.data
+
+    @len
+    override def length(self) -> int:
+        return len(self.data)
+
+    override def dump_to(self, w: Writer, depth: int):
+        raise JSONEncodeError('a bin value cannot be written as JSON text (use dumps_msgpack)')
+
+    override def pack_to(self, out: list[int], depth: int):
+        if !tomato_mp_blob(out, 0, 0, self.data) != 0:
+            raise MsgpackError('a byte must be an int from 0 to 255', 0 - 1)
+
+# A MessagePack extension value: a type code from -128 to 127 (not -1, which is a timestamp) and bytes.
+export class JsonExt(Json):
+    code: int = 0
+    data: list[int] = []
+
+    @init
+    def make_ext(self, code: int, data: list[int]):
+        self.code = code
+        self.data = data
+
+    override def kind(self) -> str:
+        return 'ext'
+
+    override def as_bytes(self) -> list[int]:
+        return self.data
+
+    override def ext_type(self) -> int:
+        return self.code
+
+    @len
+    override def length(self) -> int:
+        return len(self.data)
+
+    override def dump_to(self, w: Writer, depth: int):
+        raise JSONEncodeError('an ext value cannot be written as JSON text (use dumps_msgpack)')
+
+    override def pack_to(self, out: list[int], depth: int):
+        if self.code < 0 - 128 or self.code > 127 or self.code == 0 - 1:
+            raise MsgpackError(f'the ext type {self.code} must be from -128 to 127 and not -1', 0 - 1)
+        if !tomato_mp_blob(out, self.code, 1, self.data) != 0:
+            raise MsgpackError('a byte must be an int from 0 to 255', 0 - 1)
+
+# The MessagePack timestamp (ext type -1): whole seconds since 1970-01-01 UTC and nanoseconds 0 to 999999999.
+export class JsonTimestamp(Json):
+    secs: int = 0
+    ns: int = 0
+
+    @init
+    def make_timestamp(self, secs: int, ns: int = 0):
+        self.secs = secs
+        self.ns = ns
+
+    override def kind(self) -> str:
+        return 'timestamp'
+
+    override def seconds(self) -> int:
+        return self.secs
+
+    override def nanos(self) -> int:
+        return self.ns
+
+    override def dump_to(self, w: Writer, depth: int):
+        raise JSONEncodeError('a timestamp cannot be written as JSON text (use dumps_msgpack)')
+
+    override def pack_to(self, out: list[int], depth: int):
+        if self.ns < 0 or self.ns > 999999999:
+            raise MsgpackError('timestamp nanoseconds must be from 0 to 999999999', 0 - 1)
+        if self.secs < 0 - 4611686018427387904 or self.secs > 4611686018427387903:
+            raise MsgpackError('the timestamp seconds are out of range', 0 - 1)
+        !tomato_mp_ts(out, self.secs, self.ns)
+
+# Turns the scanner's tape back into a Json tree.
+class Builder:
+    tape: list[int] = []
+    strs: list[str] = []
+    nums: list[float] = []
+    t: int = 0
+    s: int = 0
+    n: int = 0
+    null_v: Json = JsonNull()
+    true_v: Json = JsonBool(True)
+    false_v: Json = JsonBool(False)
+
+    def build(self) -> Json:
+        k = self.tape[self.t]
+        self.t += 1
+        if k == 6:
+            self.s += 1
+            return JsonStr(self.strs[self.s - 1])
+        if k == 3:
+            self.t += 1
+            return JsonInt(self.tape[self.t - 1])
+        if k == 7:
+            items: list[Json] = []
+            while self.tape[self.t] != 8:
+                items.append(self.build())
+            self.t += 1
+            return JsonList(items)
+        if k == 9:
+            fields: dict[str, Json] = {}
+            while self.tape[self.t] != 10:
+                self.t += 1
+                self.s += 1
+                key = self.strs[self.s - 1]
+                fields[key] = self.build()
+            self.t += 1
+            return JsonDict(fields)
+        if k == 5:
+            self.n += 1
+            return JsonFloat(self.nums[self.n - 1])
+        if k == 11:
+            size = self.tape[self.t]
+            self.t += 1 + size
+            return JsonBin(self.tape[self.t - size:self.t])
+        if k == 12:
+            code = self.tape[self.t]
+            size = self.tape[self.t + 1]
+            self.t += 2 + size
+            return JsonExt(code, self.tape[self.t - size:self.t])
+        if k == 13:
+            self.t += 2
+            return JsonTimestamp(self.tape[self.t - 2], self.tape[self.t - 1])
+        if k == 0:
+            return self.null_v
+        if k == 1:
+            return self.true_v
+        if k == 2:
+            return self.false_v
+        self.s += 1
+        return JsonInt(int(self.strs[self.s - 1]))
+
+export def loads(text: str) -> Json:
+    b = Builder()
+    if !tomato_json_scan(text, b.tape, b.strs, b.nums) != 0:
+        e = len(b.tape)
+        raise JSONDecodeError(b.strs[len(b.strs) - 1], b.tape[e - 3], b.tape[e - 2], b.tape[e - 1])
+    return b.build()
+
+export def dumps(value: Json, indent: int = 0, sort_keys: bool = False, ensure_ascii: bool = False) -> str:
+    if indent < 0:
+        raise JSONEncodeError('indent cannot be negative')
+    w = Writer()
+    w.indent = indent
+    w.sort_keys = sort_keys
+    w.ascii = 1 if ensure_ascii else 0
+    value.dump_to(w, 0)
+    return ''.join(w.out)
+
+# MessagePack. The bytes are a list of ints from 0 to 255. Decoding gives the same Json values as loads, plus JsonBin,
+# JsonExt and JsonTimestamp; map keys must be text; NaN and infinite floats are kept (JSON text refuses them); an invalid UTF-8 str, a byte 0xc1,
+# truncated or trailing data and more than 512 levels of nesting are a MsgpackError. Encoding writes each int in its
+# shortest form (up to 64 bits, signed or unsigned), floats as float64, text as str, a JsonBin as bin, a JsonExt as
+# ext and a JsonTimestamp as the shortest timestamp.
+export def loads_msgpack(data: list[int]) -> Json:
+    b = Builder()
+    if !tomato_msgpack_scan(data, b.tape, b.strs, b.nums) != 0:
+        raise MsgpackError(b.strs[len(b.strs) - 1], b.tape[len(b.tape) - 1])
+    return b.build()
+
+export def dumps_msgpack(value: Json) -> list[int]:
+    out: list[int] = []
+    value.pack_to(out, 0)
+    return out

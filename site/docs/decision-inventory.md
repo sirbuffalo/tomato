@@ -210,6 +210,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 182. D61a is accepted: colored errors (`--color`, `NO_COLOR`), warnings silenced with `# allow: KIND`, a compile error for a function that can end without a value, and a call trace for uncaught runtime errors.
 183. D62a is accepted: the `requests` HTTP client library (`import requests`, `await requests.get(url)`) over the system libcurl loaded at run time, concurrent, Python-style errors, native only; `import module` was added for it.
 184. D63a is accepted: function values `fn(int) -> int` (named functions by name, non-capturing lambdas `x -> expr`, no closures, no bound methods, not comparable or printable), stable `sorted(xs, key=f)` and `sorted(xs, cmp=f)`, and `map` and `filter` giving lists.
+185. D66a is accepted: `std/json.tom` (JSON and MessagePack): `loads`, `dumps(value, indent, sort_keys, ensure_ascii)`, a `Json` class with accessors, a strict RFC 8259 parser raising `JSONDecodeError` with line and column, and `loads_msgpack`/`dumps_msgpack` with bytes as `list[int]`; a C scanner does the parsing.
 167. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass

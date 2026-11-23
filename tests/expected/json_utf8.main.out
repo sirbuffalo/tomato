@@ -1,0 +1,5 @@
+bad_ff Invalid UTF-8: line 1 column 5 (char 4)
+bad_surrogate Invalid UTF-8: line 1 column 3 (char 2)
+bad_overlong Invalid UTF-8: line 1 column 3 (char 2)
+bad_truncated Invalid UTF-8: line 1 column 3 (char 2)
+good_emoji ["😀 ok"]

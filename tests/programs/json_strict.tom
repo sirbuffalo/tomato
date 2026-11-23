@@ -1,0 +1,93 @@
+# JSON strictness: each document below must be rejected, with the position of the mistake
+from json import loads, JSONDecodeError
+
+def check(text: str):
+    try:
+        loads(text)
+        print('ACCEPTED', text)
+    catch JSONDecodeError as e:
+        print(e.message)
+
+@main
+def main():
+    # empty and whitespace only
+    check('')
+    check('   \n')
+    # trailing commas, missing parts
+    check('[1,]')
+    check('[,1]')
+    check('[1 2]')
+    check('{"a":1,}')
+    check('{,}')
+    check('{"a" 1}')
+    check('{"a":}')
+    check('{a:1}')
+    check("{'a':1}")
+    check('["a" "b"]')
+    check('[')
+    check('{')
+    check('[1')
+    check('{"a":1')
+    check(']')
+    check('}')
+    # comments
+    check('// no\n1')
+    check('[1 /* no */]')
+    check('# no\n1')
+    # numbers
+    check('01')
+    check('[00]')
+    check('-01')
+    check('+1')
+    check('.5')
+    check('1.')
+    check('-')
+    check('-.5')
+    check('1e')
+    check('1e+')
+    check('1.5e')
+    check('0x10')
+    check('1_000')
+    check('NaN')
+    check('Infinity')
+    check('-Infinity')
+    check('[1e999]')
+    check('-1e999')
+    # literals
+    check('True')
+    check('nul')
+    check('nulll')
+    check('tru')
+    check('[truefalse]')
+    check('undefined')
+    # strings
+    check('"abc')
+    check('"abc\\')
+    check('"a\nb"')
+    check('"a\tb"')
+    check('"\\x41"')
+    check('"\\a"')
+    check('"\\u12"')
+    check('"\\u12G4"')
+    check('"\\uD800"')
+    check('"\\uD800x"')
+    check('"\\uD800\\u0041"')
+    check('"\\uDC00"')
+    check('"\\uDE00\\uD83D"')
+    check('{"a\nb":1}')
+    # extra data
+    check('1 2')
+    check('{} {}')
+    check('[]x')
+    check('truefalse')
+    check('"a""b"')
+    # whitespace that is not JSON whitespace
+    check(chr(160) + ' 1')
+    check(chr(11) + '1')
+    check(chr(12) + '1')
+    check(' []')
+    check(chr(8195) + '[]')
+    check(chr(65279) + '[]')
+    check('[\n  1,\n  2,\n  ]')
+    check('{"é": 1,\n "ü": x}')
+    check('["日本語", @]')

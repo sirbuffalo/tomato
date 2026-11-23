@@ -26,3 +26,5 @@
   `sorted(xs, cmp=f)` is a merge sort written in Tomato (std/builtin.tom) and takes about 2.3 s for 3,000,000 ints (Rust 0.12 s) because every int operation calls the runtime; see docs/performance.md.
 - Add `r.json()` to requests and let `json=` take a Json value
   `loads(self.text)` once the json library is on main; its task has fixed the API as `from json import loads, dumps, Json`.
+- Make `s[i]` O(1) for ASCII text (and a chunked index for other text, D17c)
+  Indexing text is a linear scan today (`char_offset` in runtime/tomato_rt.c), so a character loop over a 300,000 character string takes about 57 s; std/json uses a C scanner because of it.

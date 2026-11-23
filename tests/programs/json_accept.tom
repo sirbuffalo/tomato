@@ -1,0 +1,46 @@
+# JSON documents that must be accepted, checked by writing them back out
+from json import loads, dumps
+
+def show(text: str):
+    print(dumps(loads(text)))
+
+@main
+def main():
+    # scalars at the top level, with every kind of allowed whitespace around them
+    show('null')
+    show('true')
+    show('false')
+    show(' \t\r\n 0 \t\r\n ')
+    show('"text"')
+    # numbers
+    show('[0, -0, 1, -1, 12345678901234567, 123456789012345678, 1234567890123456789, 4611686018427387903, 4611686018427387904, -4611686018427387904, -4611686018427387905]')
+    show('[99999999999999999999999999999999999999999999999, -99999999999999999999999999999999999999999999999]')
+    show('[0.0, -0.0, 0.5, 1.0, 1e2, 1E2, 1e+2, 1e-2, 1.5E+3, 123456.789e-3]')
+    show('[1e-400, 5e-324, 1.7976931348623157e308, 0.1, 0.30000000000000004, 100000000000000000000.0]')
+    # nested empties
+    show('[]')
+    show('{}')
+    show('[[]]')
+    show('[{}]')
+    show('{"a":{}}')
+    show('{"a":[]}')
+    show('[[],[[]],[[],[]]]')
+    show('{"":{"":{}}}')
+    show('[ [ ] , { } ]')
+    show('{ "a" : [ 1 , 2 ] , "b" : { } }')
+    # escapes
+    show('"\\" \\\\ \\/ \\b \\f \\n \\r \\t"')
+    show('"\\u0041\\u00e9\\u20ac\\u0000\\u001f\\u007f"')
+    show('"\\uD83D\\uDE00 \\ud83d\\ude00 \\uD834\\uDD1E"')
+    show('"\\uFFFF\\uE000\\ud7ff"')
+    show('{"\\u0061\\n":1}')
+    show('"日本語 é 😀"')
+    # keys: order is kept, a repeated key keeps its first place and its last value
+    show('{"b":1,"a":2,"c":3}')
+    show('{"a":1,"b":2,"a":3}')
+    show('{"a":{"x":1},"a":{"y":2}}')
+    show('{"":1,"  ":2}')
+    # literals are case sensitive and exact
+    show('[true,false,null,true]')
+    # deep but allowed
+    show('[[[[[[[[[[1]]]]]]]]]]')

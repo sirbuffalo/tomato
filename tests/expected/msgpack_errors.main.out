@@ -1,0 +1,59 @@
+-- decoding
+ Unexpected end of data: byte 0 0
+c1 Invalid byte 0xc1 (never used): byte 0 0
+cd01 Unexpected end of data: byte 1 1
+cf000000000000 Unexpected end of data: byte 1 1
+a3616 Unexpected end of data: byte 1 1
+a36162 Unexpected end of data: byte 1 1
+d9 Unexpected end of data: byte 1 1
+d90261 Unexpected end of data: byte 2 2
+c40361 Unexpected end of data: byte 2 2
+c7 Unexpected end of data: byte 1 1
+d4 Unexpected end of data: byte 1 1
+d40a Unexpected end of data: byte 1 1
+9301020304 Extra data: byte 4 4
+c0c0 Extra data: byte 1 1
+92c0 Unexpected end of data: byte 2 2
+dd00000005c0c0 Unexpected end of data: byte 7 7
+dd7fffffffc0 Unexpected end of data: byte 6 6
+81c001 Map keys must be strings: byte 1 1
+810101 Map keys must be strings: byte 1 1
+81a16181 Unexpected end of data: byte 4 4
+a1ff Invalid UTF-8: byte 1 1
+a2c328 Invalid UTF-8: byte 1 1
+a1e2 Invalid UTF-8: byte 1 1
+a3eda080 Invalid UTF-8: byte 1 1
+a2c080 Invalid UTF-8: byte 1 1
+d6ff0000000000 Extra data: byte 6 6
+d5ff0000 Invalid timestamp length: byte 0 0
+c70dff00000000000000 Invalid timestamp length: byte 0 0
+c70cff3b9aca00000000 Invalid timestamp nanoseconds: byte 0 0
+c70cff000000007fffff Timestamp out of range: byte 0 0
+d7ffffffffffffffffff Invalid timestamp nanoseconds: byte 0 0
+9201 Unexpected end of data: byte 2 2
+-- nesting
+1028
+91919191919191919191 Nesting is deeper than 512 levels: byte 512 512
+-- encoding
+the integer 18446744073709551616 does not fit in 64 bits
+the integer -9223372036854775809 does not fit in 64 bits
+the integer 10000000000000000000000000000000000000000 does not fit in 64 bits
+the ext type -1 must be from -128 to 127 and not -1
+the ext type 128 must be from -128 to 127 and not -1
+the ext type -129 must be from -128 to 127 and not -1
+a byte must be an int from 0 to 255
+a byte must be an int from 0 to 255
+timestamp nanoseconds must be from 0 to 999999999
+timestamp nanoseconds must be from 0 to 999999999
+the timestamp seconds are out of range
+512
+nesting is deeper than 512 levels
+nesting is deeper than 512 levels
+-- bytes that are not bytes
+A byte must be an int from 0 to 255: byte 2 2
+A byte must be an int from 0 to 255: byte 0 0
+A byte must be an int from 0 to 255: byte 0 0
+-- JSON text cannot hold these
+a bin value cannot be written as JSON text (use dumps_msgpack)
+an ext value cannot be written as JSON text (use dumps_msgpack)
+a timestamp cannot be written as JSON text (use dumps_msgpack)

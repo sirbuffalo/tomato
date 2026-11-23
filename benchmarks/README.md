@@ -32,3 +32,9 @@ It needs `clang` (it builds Tomato from this checkout and `measure.c`, the timin
 a missing language is skipped. Inputs are in `sizes.txt`. Go is built with `go build`, Rust with `rustc -O`, Tomato with
 `tomato build`, Python is run as installed. The results and caveats are on the website's Benchmarks page, and the
 compiler improvements they suggest are in `docs/performance.md`.
+
+## json
+
+`benchmarks/json/jsonbench.tom` (not part of `run.sh`; no other language is compared): `tomato build` it, then
+`jsonbench gen FILE N` writes a document of N records, and `jsonbench loads|dumps|pretty FILE` parses it (and writes it
+back). Results are in docs/performance.md.

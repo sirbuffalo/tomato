@@ -1,0 +1,43 @@
+# JSON (std/json.tom): read a document, look inside it, build a new one and write it out, with the errors a bad document gives.
+from json import loads, dumps, Json, JsonDict, JsonList, JsonInt, JsonFloat, JsonStr, JsonBool, JsonNull, JSONDecodeError, JSONTypeError
+
+def summarize(doc: Json) -> int:
+    total = 0
+    for order in doc['orders'].as_list():
+        for line in order['lines'].as_list():
+            total += line['qty'].as_int() * line['cents'].as_int()
+    return total
+
+@main
+def main():
+    text = '{"customer": "Ada", "vip": true, "orders": [{"id": 1, "lines": [{"qty": 2, "cents": 250}, {"qty": 1, "cents": 1999}]}, {"id": 2, "lines": []}], "note": null}'
+    doc = loads(text)
+    print(doc['customer'].as_str(), len(doc['orders']), summarize(doc))   # Ada 2 2499
+
+    # missing keys and optional fields
+    print('vip' in doc, 'coupon' in doc)
+    coupon = doc.get('coupon')
+    if coupon in None:
+        print('no coupon')
+    print(doc['note'].is_null())
+
+    # build a new document from plain values
+    out = JsonDict({
+        'customer': doc['customer'],
+        'total_cents': JsonInt(summarize(doc)),
+        'average': JsonFloat(summarize(doc) / 3.0),
+        'tags': JsonList([JsonStr('repeat'), JsonBool(True), JsonNull()]),
+    })
+    print(dumps(out))
+    print(dumps(out, indent=2, sort_keys=True))
+
+    # errors say where the mistake is
+    for bad in ['{"a": 1,}', '[1, 2', '{"a": 01}', '"tab\there"']:
+        try:
+            loads(bad)
+        catch JSONDecodeError as e:
+            print(e.message)
+    try:
+        print(doc['customer'].as_int())
+    catch JSONTypeError as e:
+        print(e.message)

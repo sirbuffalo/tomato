@@ -75,3 +75,13 @@ sort_key_cmp
 alloc_pool
 str_fast
 cache_lru
+json_strict
+json_accept
+json_dumps
+json_access
+json_depth
+json_utf8
+json_fuzz
+msgpack_basic
+msgpack_errors
+msgpack_fuzz

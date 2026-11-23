@@ -1,0 +1,29 @@
+# JSON benchmark: tomato run benchmarks/json/jsonbench.tom main gen FILE N     writes a document of N records
+#                 tomato run benchmarks/json/jsonbench.tom main loads FILE     parses it
+#                 tomato run benchmarks/json/jsonbench.tom main dumps FILE     parses, writes compact text
+#                 tomato run benchmarks/json/jsonbench.tom main pretty FILE    parses, writes with indent=2
+from json import loads, dumps
+
+def slurp(path: str) -> str:
+    f = open(path, 'r')
+    text = f.read()
+    f.close()
+    return text
+
+@main
+def main(mode: str, path: str, n: int = 0):
+    if mode == 'gen':
+        parts: list[str] = []
+        for i in range(n):
+            parts.append('{"id":' + str(i) + ',"name":"user ' + str(i) + ' \\u00e9 \\"quoted\\"","active":' + ('true' if i % 2 == 0 else 'false') + ',"score":' + str(i) + '.25,"tags":["alpha","beta","gamma"],"address":{"street":"' + str(i) + ' Main St","city":"Springfield","geo":[40.7128,-74.006]},"note":null}')
+        f = open(path, 'w')
+        f.write('[' + ','.join(parts) + ']')
+        f.close()
+        return
+    j = loads(slurp(path))
+    if mode == 'loads':
+        print(len(j))
+    elif mode == 'dumps':
+        print(len(dumps(j)))
+    else:
+        print(len(dumps(j, indent=2)))

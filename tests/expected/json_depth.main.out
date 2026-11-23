@@ -1,0 +1,11 @@
+arrays 511: ok 1022
+arrays 512: ok 1024
+arrays 513: Nesting is deeper than 512 levels: line 1 column 513 (char 512)
+arrays 100000: Nesting is deeper than 512 levels: line 1 column 513 (char 512)
+objects 512: ok 3068
+objects 513: Nesting is deeper than 512 levels: line 1 column 2561 (char 2560)
+mixed 513: Nesting is deeper than 512 levels: line 1 column 1537 (char 1536)
+unclosed 600: Nesting is deeper than 512 levels: line 1 column 513 (char 512)
+1286671 20000 19999 item 12345 7.5
+True
+True

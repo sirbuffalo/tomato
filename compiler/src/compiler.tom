@@ -6627,8 +6627,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         elif item.kind == 'LlvmDecl':
             decl = function_info(item, mod, '')
             for pt in decl.ptypes:
-                if pt == 'File' or (is_rc(pt) and pt != 'str'):
-                    raise CompileError('an LLVM function can only take and return int, bool and float values', item.line)
+                if pt == 'File' or (is_rc(pt) and pt != 'str' and not pt.startswith('list[')):
+                    raise CompileError('an LLVM function can only take int, bool, float, text and list values, and return int, bool, float and text', item.line)
             mod.llvm_decls.append(decl)
         else:
             raise CompileError(top_level_message(item), item.line)

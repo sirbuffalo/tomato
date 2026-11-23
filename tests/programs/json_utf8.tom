@@ -1,0 +1,16 @@
+# invalid UTF-8 read from a file is a JSONDecodeError, never a crash; valid UTF-8 is accepted
+from json import loads, JSONDecodeError
+
+def load_file(name: str):
+    f = open('tests/json_data/' + name + '.json', 'r')
+    text = f.read()
+    f.close()
+    try:
+        print(name, loads(text))
+    catch JSONDecodeError as e:
+        print(name, e.message)
+
+@main
+def main():
+    for name in ['bad_ff', 'bad_surrogate', 'bad_overlong', 'bad_truncated', 'good_emoji']:
+        load_file(name)

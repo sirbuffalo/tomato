@@ -2677,6 +2677,571 @@ int64_t tomato_f64_to_int(double d) {
 int64_t tomato_str_nbytes(void *s) { return ((Str *)s)->bytes; }
 int64_t tomato_str_byte(void *s, int64_t i) { return (unsigned char)((Str *)s)->data[i]; }
 
+/* ---- JSON (std/json.tom): a strict RFC 8259 scanner that writes a token tape, and string/float output helpers ----
+ * tomato_json_scan checks the whole document and appends what it finds to three lists made by the caller:
+ *   tape: whole numbers (tagged small ints), one token kind each (JT_*), followed by the value of an int
+ *   strs: the decoded text of every string (keys too) and of every integer too big for a small int, in document order
+ *   nums: the floats, in document order
+ * It returns 0 when the document is valid. Otherwise it returns 1 and ends tape with pos, line, column (counted in
+ * characters, 1-based line and column) and strs with the reason, so the caller can raise JSONDecodeError. */
+enum { JT_NULL, JT_TRUE, JT_FALSE, JT_INT, JT_BIGINT, JT_FLOAT, JT_STR, JT_ARR, JT_ARR_END, JT_OBJ, JT_OBJ_END };
+#define JSON_MAX_DEPTH 512
+
+typedef struct { const char *s; int64_t n; void *tape, *strs, *nums; const char *msg; int64_t at; } JScan;
+
+static void jtape(JScan *j, int64_t v) { *(int64_t *)tomato_list_push(j->tape, 8) = int_mk_small(v); }
+static void jstr_push(JScan *j, const char *bytes, int64_t n) {
+    Str *t = str_new(bytes, n);
+    *(int64_t *)tomato_list_push(j->strs, 8) = (int64_t)(intptr_t)t;
+}
+static int jerr(JScan *j, int64_t at, const char *msg) { j->at = at; j->msg = msg; return 0; }
+static int64_t jws(JScan *j, int64_t i) {
+    while (i < j->n) { char c = j->s[i]; if (c == ' ' || c == '\n' || c == '\r' || c == '\t') i++; else break; }
+    return i;
+}
+/* the length of the valid UTF-8 sequence at p, or 0 */
+static int jutf8(const unsigned char *p, int64_t left) {
+    unsigned char c = p[0];
+    if (c >= 0xC2 && c <= 0xDF) return left >= 2 && (p[1] & 0xC0) == 0x80 ? 2 : 0;
+    if (c >= 0xE0 && c <= 0xEF) {
+        if (left < 3 || (p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80) return 0;
+        if (c == 0xE0 && p[1] < 0xA0) return 0;
+        if (c == 0xED && p[1] >= 0xA0) return 0;
+        return 3;
+    }
+    if (c >= 0xF0 && c <= 0xF4) {
+        if (left < 4 || (p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80 || (p[3] & 0xC0) != 0x80) return 0;
+        if (c == 0xF0 && p[1] < 0x90) return 0;
+        if (c == 0xF4 && p[1] >= 0x90) return 0;
+        return 4;
+    }
+    return 0;
+}
+static int jhex4(const char *p, int64_t left, int *out) {
+    if (left < 4) return 0;
+    int v = 0;
+    for (int k = 0; k < 4; k++) {
+        char c = p[k]; int d;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else return 0;
+        v = v * 16 + d;
+    }
+    *out = v;
+    return 1;
+}
+static int jput_utf8(char *o, int cp) {
+    if (cp < 0x80) { o[0] = (char)cp; return 1; }
+    if (cp < 0x800) { o[0] = (char)(0xC0 | (cp >> 6)); o[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp < 0x10000) { o[0] = (char)(0xE0 | (cp >> 12)); o[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); o[2] = (char)(0x80 | (cp & 0x3F)); return 3; }
+    o[0] = (char)(0xF0 | (cp >> 18)); o[1] = (char)(0x80 | ((cp >> 12) & 0x3F)); o[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); o[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
+/* a string starting at the opening quote s[*ip]; pushes its decoded text to strs */
+static int jstring(JScan *j, int64_t *ip) {
+    const char *s = j->s; int64_t n = j->n, start = *ip, i = start + 1; int esc = 0;
+    for (;;) {                                  /* pass 1: find the end and check everything */
+        if (i >= n) return jerr(j, start, "Unterminated string starting at");
+        unsigned char c = (unsigned char)s[i];
+        if (c == '"') break;
+        if (c < 0x20) return jerr(j, i, "Invalid control character at");
+        if (c == '\\') {
+            esc = 1;
+            if (i + 1 >= n) return jerr(j, start, "Unterminated string starting at");
+            char e = s[i + 1];
+            if (e == 'u') {
+                int cp;
+                if (!jhex4(s + i + 2, n - i - 2, &cp)) return jerr(j, i, "Invalid \\uXXXX escape");
+                if (cp >= 0xD800 && cp <= 0xDBFF) {
+                    int lo;
+                    if (!(i + 7 < n && s[i + 6] == '\\' && s[i + 7] == 'u' && jhex4(s + i + 8, n - i - 8, &lo) && lo >= 0xDC00 && lo <= 0xDFFF))
+                        return jerr(j, i, "Unpaired surrogate in \\u escape");
+                    i += 12;
+                } else if (cp >= 0xDC00 && cp <= 0xDFFF) return jerr(j, i, "Unpaired surrogate in \\u escape");
+                else i += 6;
+            } else if (e == '"' || e == '\\' || e == '/' || e == 'b' || e == 'f' || e == 'n' || e == 'r' || e == 't') i += 2;
+            else return jerr(j, i, "Invalid \\escape");
+            continue;
+        }
+        if (c >= 0x80) {
+            int L = jutf8((const unsigned char *)s + i, n - i);
+            if (!L) return jerr(j, i, "Invalid UTF-8");
+            i += L;
+            continue;
+        }
+        i++;
+    }
+    if (!esc) jstr_push(j, s + start + 1, i - start - 1);
+    else {                                      /* pass 2: decode (the text is valid now); the result is never longer than the source */
+        char *buf = malloc((size_t)(i - start));
+        if (!buf) tomato_fail("out of memory");
+        int64_t o = 0;
+        for (int64_t k = start + 1; k < i;) {
+            char c = s[k];
+            if (c != '\\') { buf[o++] = c; k++; continue; }
+            char e = s[k + 1];
+            if (e == 'u') {
+                int cp, lo;
+                jhex4(s + k + 2, 4, &cp);
+                if (cp >= 0xD800 && cp <= 0xDBFF) { jhex4(s + k + 8, 4, &lo); cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00); k += 12; }
+                else k += 6;
+                o += jput_utf8(buf + o, cp);
+                continue;
+            }
+            k += 2;
+            switch (e) { case 'b': buf[o++] = '\b'; break; case 'f': buf[o++] = '\f'; break; case 'n': buf[o++] = '\n'; break;
+                         case 'r': buf[o++] = '\r'; break; case 't': buf[o++] = '\t'; break; default: buf[o++] = e; }
+        }
+        jstr_push(j, buf, o);
+        free(buf);
+    }
+    *ip = i + 1;
+    return 1;
+}
+
+static int jnumber(JScan *j, int64_t *ip) {
+    const char *s = j->s; int64_t n = j->n, st = *ip, i = st;
+#define JDIGIT(k) ((k) < n && s[k] >= '0' && s[k] <= '9')
+    if (s[i] == '-') i++;
+    if (!JDIGIT(i)) return jerr(j, i, "Expecting digits");
+    if (s[i] == '0') { i++; if (JDIGIT(i)) return jerr(j, i, "Leading zeros are not allowed"); }
+    else while (JDIGIT(i)) i++;
+    int64_t intend = i; int isf = 0;
+    if (i < n && s[i] == '.') {
+        i++;
+        if (!JDIGIT(i)) return jerr(j, i, "Expecting digits after the decimal point");
+        while (JDIGIT(i)) i++;
+        isf = 1;
+    }
+    if (i < n && (s[i] == 'e' || s[i] == 'E')) {
+        i++;
+        if (i < n && (s[i] == '+' || s[i] == '-')) i++;
+        if (!JDIGIT(i)) return jerr(j, i, "Expecting digits in the exponent");
+        while (JDIGIT(i)) i++;
+        isf = 1;
+    }
+    if (!isf) {
+        int neg = s[st] == '-';
+        int64_t digits = intend - st - neg;
+        if (digits <= 18) {
+            int64_t v = 0;
+            for (int64_t k = st + neg; k < intend; k++) v = v * 10 + (s[k] - '0');
+            jtape(j, JT_INT); jtape(j, neg ? -v : v);
+        } else { jtape(j, JT_BIGINT); jstr_push(j, s + st, intend - st); }
+    } else {
+        char small[64]; int64_t len = i - st;
+        char *buf = len < 64 ? small : malloc((size_t)len + 1);
+        if (!buf) tomato_fail("out of memory");
+        memcpy(buf, s + st, (size_t)len); buf[len] = 0;
+        double d = strtod(buf, NULL);
+        if (buf != small) free(buf);
+        if (isinf(d)) return jerr(j, st, "Number out of range");
+        jtape(j, JT_FLOAT);
+        *(double *)tomato_list_push(j->nums, 8) = d;
+    }
+    *ip = i;
+    return 1;
+#undef JDIGIT
+}
+
+static int jvalue(JScan *j, int64_t *ip, int depth) {
+    const char *s = j->s; int64_t n = j->n, i = *ip;
+    if (i >= n) return jerr(j, i, "Expecting value");
+    char c = s[i];
+    if (c == '"') { jtape(j, JT_STR); if (!jstring(j, &i)) return 0; }
+    else if (c == '{') {
+        if (depth >= JSON_MAX_DEPTH) return jerr(j, i, "Nesting is deeper than 512 levels");
+        jtape(j, JT_OBJ); i = jws(j, i + 1);
+        if (i < n && s[i] == '}') i++;
+        else for (;;) {
+            if (i >= n || s[i] != '"') return jerr(j, i, "Expecting property name enclosed in double quotes");
+            jtape(j, JT_STR);
+            if (!jstring(j, &i)) return 0;
+            i = jws(j, i);
+            if (i >= n || s[i] != ':') return jerr(j, i, "Expecting ':' delimiter");
+            i = jws(j, i + 1);
+            if (!jvalue(j, &i, depth + 1)) return 0;
+            i = jws(j, i);
+            if (i < n && s[i] == ',') { i = jws(j, i + 1); continue; }
+            if (i < n && s[i] == '}') { i++; break; }
+            return jerr(j, i, "Expecting ',' delimiter");
+        }
+        jtape(j, JT_OBJ_END);
+    } else if (c == '[') {
+        if (depth >= JSON_MAX_DEPTH) return jerr(j, i, "Nesting is deeper than 512 levels");
+        jtape(j, JT_ARR); i = jws(j, i + 1);
+        if (i < n && s[i] == ']') i++;
+        else for (;;) {
+            if (!jvalue(j, &i, depth + 1)) return 0;
+            i = jws(j, i);
+            if (i < n && s[i] == ',') { i = jws(j, i + 1); continue; }
+            if (i < n && s[i] == ']') { i++; break; }
+            return jerr(j, i, "Expecting ',' delimiter");
+        }
+        jtape(j, JT_ARR_END);
+    } else if (c == 't' && i + 4 <= n && memcmp(s + i, "true", 4) == 0) { jtape(j, JT_TRUE); i += 4; }
+    else if (c == 'f' && i + 5 <= n && memcmp(s + i, "false", 5) == 0) { jtape(j, JT_FALSE); i += 5; }
+    else if (c == 'n' && i + 4 <= n && memcmp(s + i, "null", 4) == 0) { jtape(j, JT_NULL); i += 4; }
+    else if (c == '-' || (c >= '0' && c <= '9')) { if (!jnumber(j, &i)) return 0; }
+    else return jerr(j, i, "Expecting value");
+    *ip = i;
+    return 1;
+}
+
+int64_t tomato_json_scan(void *text, void *tape, void *strs, void *nums) {
+    Str *t = text;
+    JScan j = { t->data, t->bytes, tape, strs, nums, NULL, 0 };
+    int64_t i = 0;
+    int ok;
+    if (j.n >= 3 && (unsigned char)j.s[0] == 0xEF && (unsigned char)j.s[1] == 0xBB && (unsigned char)j.s[2] == 0xBF)
+        ok = jerr(&j, 0, "Unexpected UTF-8 BOM (remove it first)");
+    else {
+        i = jws(&j, 0);
+        ok = jvalue(&j, &i, 0);
+        if (ok) { i = jws(&j, i); if (i != j.n) ok = jerr(&j, i, "Extra data"); }
+    }
+    if (ok) return 0;
+    int64_t line = 1, last = -1;
+    for (int64_t k = 0; k < j.at; k++) if (j.s[k] == '\n') { line++; last = k; }
+    jtape(&j, count_chars(j.s, j.at));
+    jtape(&j, line);
+    jtape(&j, count_chars(j.s + last + 1, j.at - last - 1) + 1);
+    jstr_push(&j, j.msg, (int64_t)strlen(j.msg));
+    return 1;
+}
+
+/* the text as a JSON string literal with quotes; ascii != 0 writes every character above 0x7E as \uXXXX */
+void *tomato_json_quote(void *text, int64_t ascii) {
+    Str *t = text;
+    int64_t extra = 0;
+    for (int64_t k = 0; k < t->bytes; k++) {
+        unsigned char c = (unsigned char)t->data[k];
+        if (c == '"' || c == '\\' || c < 0x20) extra += c < 0x20 && c != '\b' && c != '\f' && c != '\n' && c != '\r' && c != '\t' ? 5 : 1;
+        else if (ascii && c >= 0x80) extra += 6;
+    }
+    if (extra == 0) {
+        Str *r = tomato_alloc((int64_t)sizeof(Str) + t->bytes + 3, 1);
+        r->data[0] = '"';
+        memcpy(r->data + 1, t->data, (size_t)t->bytes);
+        r->data[t->bytes + 1] = '"';
+        r->bytes = t->bytes + 2;
+        r->chars = t->chars + 2;
+        return r;
+    }
+    char *out = malloc((size_t)t->bytes * 6 + 8);    /* the worst case is a control character, 1 byte to 6 */
+    if (!out) tomato_fail("out of memory");
+    int64_t o = 0;
+    static const char hex[] = "0123456789abcdef";
+    out[o++] = '"';
+    for (int64_t k = 0; k < t->bytes;) {
+        unsigned char c = (unsigned char)t->data[k];
+        if (c == '"' || c == '\\') { out[o++] = '\\'; out[o++] = (char)c; k++; }
+        else if (c < 0x20) {
+            out[o++] = '\\';
+            switch (c) { case '\b': out[o++] = 'b'; break; case '\f': out[o++] = 'f'; break; case '\n': out[o++] = 'n'; break;
+                         case '\r': out[o++] = 'r'; break; case '\t': out[o++] = 't'; break;
+                         default: out[o++] = 'u'; out[o++] = '0'; out[o++] = '0'; out[o++] = hex[c >> 4]; out[o++] = hex[c & 15]; }
+            k++;
+        } else if (c >= 0x80 && ascii) {
+            int L = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : 2;
+            int cp = L == 2 ? (c & 0x1F) : L == 3 ? (c & 0x0F) : (c & 0x07);
+            for (int m = 1; m < L; m++) cp = (cp << 6) | ((unsigned char)t->data[k + m] & 0x3F);
+            k += L;
+            int units[2], nu = 1;
+            if (cp >= 0x10000) { cp -= 0x10000; units[0] = 0xD800 + (cp >> 10); units[1] = 0xDC00 + (cp & 0x3FF); nu = 2; }
+            else units[0] = cp;
+            for (int u = 0; u < nu; u++) {
+                out[o++] = '\\'; out[o++] = 'u';
+                out[o++] = hex[(units[u] >> 12) & 15]; out[o++] = hex[(units[u] >> 8) & 15]; out[o++] = hex[(units[u] >> 4) & 15]; out[o++] = hex[units[u] & 15];
+            }
+        } else { out[o++] = (char)c; k++; }
+    }
+    out[o++] = '"';
+    void *r = str_new(out, o);
+    free(out);
+    return r;
+}
+
+/* a finite float as the shortest text that reads back as the same float, written as Python's repr does: 1500.0, 0.0001, 1e-05, 1.5e+22 */
+void *tomato_json_float(double x) {
+    char e[40], b[64];
+    int p;
+    for (p = 1; p <= 17; p++) {
+        snprintf(e, sizeof e, "%.*e", p - 1, x);
+        if (strtod(e, NULL) == x) break;
+    }
+    /* e is [-]d[.ddd]e[+-]XX */
+    char digits[24]; int nd = 0, neg = 0, k = 0;
+    if (e[k] == '-') { neg = 1; k++; }
+    for (; e[k] && e[k] != 'e'; k++) if (e[k] != '.') digits[nd++] = e[k];
+    int ex = atoi(e + k + 1);
+    int o = 0;
+    if (neg) b[o++] = '-';
+    if (ex >= -4 && ex < 16) {
+        if (ex < 0) { b[o++] = '0'; b[o++] = '.'; for (int z = 0; z < -ex - 1; z++) b[o++] = '0'; for (int d = 0; d < nd; d++) b[o++] = digits[d]; }
+        else {
+            for (int d = 0; d <= ex; d++) b[o++] = d < nd ? digits[d] : '0';
+            b[o++] = '.';
+            if (nd > ex + 1) for (int d = ex + 1; d < nd; d++) b[o++] = digits[d]; else b[o++] = '0';
+        }
+    } else {
+        b[o++] = digits[0];
+        if (nd > 1) { b[o++] = '.'; for (int d = 1; d < nd; d++) b[o++] = digits[d]; }
+        o += snprintf(b + o, 12, "e%c%02d", ex < 0 ? '-' : '+', ex < 0 ? -ex : ex);
+    }
+    return str_new(b, o);
+}
+
+/* ---- MessagePack (std/json.tom): a decoder with the same tape as the JSON scanner, and encoding helpers ----
+ * Extra tape tokens: JT_BIN len bytes..., JT_EXT type len bytes..., JT_TS seconds nanos. Maps must have text keys.
+ * tomato_msgpack_scan(data, tape, strs, nums): data is a list of ints 0..255. Returns 0, or 1 with pos at the end of
+ * tape and the reason at the end of strs. Positions are byte offsets. */
+enum { JT_BIN = 11, JT_EXT = 12, JT_TS = 13 };
+
+static int mneed(JScan *j, int64_t i, int64_t k) { return k >= 0 && i + k <= j->n ? 1 : jerr(j, i, "Unexpected end of data"); }
+static uint64_t mrd(const unsigned char *p, int k) { uint64_t v = 0; for (int m = 0; m < k; m++) v = (v << 8) | p[m]; return v; }
+static int mpush_u64(JScan *j, uint64_t v) {
+    if (v <= (uint64_t)INT_SMALL_MAX) { jtape(j, JT_INT); jtape(j, (int64_t)v); }
+    else { char b[24]; snprintf(b, sizeof b, "%llu", (unsigned long long)v); jtape(j, JT_BIGINT); jstr_push(j, b, (int64_t)strlen(b)); }
+    return 1;
+}
+static int mpush_i64(JScan *j, int64_t v) {
+    if (v >= INT_SMALL_MIN && v <= INT_SMALL_MAX) { jtape(j, JT_INT); jtape(j, v); }
+    else { char b[24]; snprintf(b, sizeof b, "%lld", (long long)v); jtape(j, JT_BIGINT); jstr_push(j, b, (int64_t)strlen(b)); }
+    return 1;
+}
+static int mvalue(JScan *j, int64_t *ip, int depth);
+static int mstring(JScan *j, int64_t *ip, int64_t len) {
+    int64_t i = *ip;
+    if (!mneed(j, i, len)) return 0;
+    const unsigned char *p = (const unsigned char *)j->s;
+    for (int64_t k = i; k < i + len;) {
+        if (p[k] < 0x80) { k++; continue; }
+        int L = jutf8(p + k, i + len - k);
+        if (!L) return jerr(j, k, "Invalid UTF-8");
+        k += L;
+    }
+    jstr_push(j, j->s + i, len);
+    *ip = i + len;
+    return 1;
+}
+/* the length of a str header at s[*ip] (a map key), or -1 when the byte is not a str header */
+static int mkey(JScan *j, int64_t *ip) {
+    const unsigned char *p = (const unsigned char *)j->s;
+    int64_t i = *ip, len;
+    unsigned char b = p[i];
+    if (b >= 0xa0 && b <= 0xbf) { len = b & 31; i += 1; }
+    else if (b == 0xd9) { if (!mneed(j, i, 2)) return 0; len = (int64_t)mrd(p + i + 1, 1); i += 2; }
+    else if (b == 0xda) { if (!mneed(j, i, 3)) return 0; len = (int64_t)mrd(p + i + 1, 2); i += 3; }
+    else if (b == 0xdb) { if (!mneed(j, i, 5)) return 0; len = (int64_t)mrd(p + i + 1, 4); i += 5; }
+    else return jerr(j, i, "Map keys must be strings");
+    jtape(j, JT_STR);
+    if (!mstring(j, &i, len)) return 0;
+    *ip = i;
+    return 1;
+}
+static int mcontainer(JScan *j, int64_t *ip, int depth, int map, int64_t count) {
+    int64_t i = *ip;
+    if (depth >= JSON_MAX_DEPTH) return jerr(j, i - 1, "Nesting is deeper than 512 levels");
+    jtape(j, map ? JT_OBJ : JT_ARR);
+    for (int64_t k = 0; k < count; k++) {
+        if (map) {
+            if (!mneed(j, i, 1)) return 0;
+            if (!mkey(j, &i)) return 0;
+        }
+        if (!mvalue(j, &i, depth + 1)) return 0;
+    }
+    jtape(j, map ? JT_OBJ_END : JT_ARR_END);
+    *ip = i;
+    return 1;
+}
+static int mvalue(JScan *j, int64_t *ip, int depth) {
+    const unsigned char *p = (const unsigned char *)j->s;
+    int64_t i = *ip, start = i;
+    if (!mneed(j, i, 1)) return 0;
+    unsigned char b = p[i++];
+    if (b <= 0x7f) { jtape(j, JT_INT); jtape(j, b); }
+    else if (b >= 0xe0) { jtape(j, JT_INT); jtape(j, (int64_t)b - 256); }
+    else if (b >= 0x80 && b <= 0x8f) { if (!mcontainer(j, &i, depth, 1, b & 15)) return 0; }
+    else if (b >= 0x90 && b <= 0x9f) { if (!mcontainer(j, &i, depth, 0, b & 15)) return 0; }
+    else if (b >= 0xa0 && b <= 0xbf) { jtape(j, JT_STR); if (!mstring(j, &i, b & 31)) return 0; }
+    else switch (b) {
+    case 0xc0: jtape(j, JT_NULL); break;
+    case 0xc2: jtape(j, JT_FALSE); break;
+    case 0xc3: jtape(j, JT_TRUE); break;
+    case 0xc4: case 0xc5: case 0xc6: {                           /* bin 8/16/32 */
+        int w = b == 0xc4 ? 1 : b == 0xc5 ? 2 : 4;
+        if (!mneed(j, i, w)) return 0;
+        int64_t len = (int64_t)mrd(p + i, w); i += w;
+        if (!mneed(j, i, len)) return 0;
+        jtape(j, JT_BIN); jtape(j, len);
+        for (int64_t k = 0; k < len; k++) jtape(j, p[i + k]);
+        i += len; break; }
+    case 0xc7: case 0xc8: case 0xc9: case 0xd4: case 0xd5: case 0xd6: case 0xd7: case 0xd8: {   /* ext 8/16/32 and fixext */
+        int64_t len;
+        if (b >= 0xd4) { len = (int64_t)1 << (b - 0xd4); }
+        else { int w = b == 0xc7 ? 1 : b == 0xc8 ? 2 : 4; if (!mneed(j, i, w)) return 0; len = (int64_t)mrd(p + i, w); i += w; }
+        if (!mneed(j, i, 1 + len)) return 0;
+        int type = (signed char)p[i]; i++;
+        if (type == -1) {
+            int64_t secs; uint64_t nanos;
+            if (len == 4) { secs = (int64_t)mrd(p + i, 4); nanos = 0; }
+            else if (len == 8) { uint64_t v = mrd(p + i, 8); nanos = v >> 34; secs = (int64_t)(v & (((uint64_t)1 << 34) - 1)); }
+            else if (len == 12) { nanos = mrd(p + i, 4); uint64_t s = mrd(p + i + 4, 8); secs = (int64_t)s;
+                if (secs < INT_SMALL_MIN || secs > INT_SMALL_MAX) return jerr(j, start, "Timestamp out of range"); }
+            else return jerr(j, start, "Invalid timestamp length");
+            if (nanos > 999999999) return jerr(j, start, "Invalid timestamp nanoseconds");
+            jtape(j, JT_TS); jtape(j, secs); jtape(j, (int64_t)nanos);
+        } else {
+            jtape(j, JT_EXT); jtape(j, type); jtape(j, len);
+            for (int64_t k = 0; k < len; k++) jtape(j, p[i + k]);
+        }
+        i += len; break; }
+    case 0xca: case 0xcb: {
+        int w = b == 0xca ? 4 : 8;
+        if (!mneed(j, i, w)) return 0;
+        double d;
+        if (w == 4) { uint32_t u = (uint32_t)mrd(p + i, 4); float f; memcpy(&f, &u, 4); d = f; }
+        else { uint64_t u = mrd(p + i, 8); memcpy(&d, &u, 8); }
+        i += w;
+        jtape(j, JT_FLOAT);
+        *(double *)tomato_list_push(j->nums, 8) = d;
+        break; }
+    case 0xcc: case 0xcd: case 0xce: case 0xcf: {
+        int w = 1 << (b - 0xcc);
+        if (!mneed(j, i, w)) return 0;
+        mpush_u64(j, mrd(p + i, w)); i += w; break; }
+    case 0xd0: case 0xd1: case 0xd2: case 0xd3: {
+        int w = 1 << (b - 0xd0);
+        if (!mneed(j, i, w)) return 0;
+        uint64_t u = mrd(p + i, w);
+        int64_t v = w == 1 ? (int8_t)u : w == 2 ? (int16_t)u : w == 4 ? (int32_t)u : (int64_t)u;
+        mpush_i64(j, v); i += w; break; }
+    case 0xd9: case 0xda: case 0xdb: {
+        int w = b == 0xd9 ? 1 : b == 0xda ? 2 : 4;
+        if (!mneed(j, i, w)) return 0;
+        int64_t len = (int64_t)mrd(p + i, w); i += w;
+        jtape(j, JT_STR);
+        if (!mstring(j, &i, len)) return 0;
+        break; }
+    case 0xdc: case 0xdd: case 0xde: case 0xdf: {
+        int w = (b == 0xdc || b == 0xde) ? 2 : 4;
+        if (!mneed(j, i, w)) return 0;
+        int64_t count = (int64_t)mrd(p + i, w); i += w;
+        if (!mcontainer(j, &i, depth, b >= 0xde, count)) return 0;
+        break; }
+    default: return jerr(j, start, "Invalid byte 0xc1 (never used)");
+    }
+    *ip = i;
+    return 1;
+}
+
+/* the bytes of a list of ints, or NULL when an item is not 0..255 (bad = its index) */
+static unsigned char *mbytes(void *list, int64_t *bad) {
+    List *l = list;
+    unsigned char *buf = malloc((size_t)l->len + 1);
+    if (!buf) tomato_fail("out of memory");
+    for (int64_t k = 0; k < l->len; k++) {
+        int64_t w = LIST_SLOT(l, k, int64_t);
+        int64_t v = w == 0 ? 0 : (w & 1) ? (w >> 1) : -1;
+        if (v < 0 || v > 255) { *bad = k; free(buf); return NULL; }
+        buf[k] = (unsigned char)v;
+    }
+    return buf;
+}
+
+int64_t tomato_msgpack_scan(void *data, void *tape, void *strs, void *nums) {
+    int64_t bad = 0;
+    unsigned char *buf = mbytes(data, &bad);
+    JScan j = { (const char *)buf, ((List *)data)->len, tape, strs, nums, NULL, 0 };
+    int ok, i = 0;
+    int64_t at = 0;
+    if (!buf) { j.s = ""; j.n = 0; ok = jerr(&j, bad, "A byte must be an int from 0 to 255"); }
+    else {
+        ok = mvalue(&j, &at, 0);
+        if (ok && at != j.n) ok = jerr(&j, at, "Extra data");
+    }
+    (void)i;
+    if (!ok) {
+        jtape(&j, j.at);
+        jstr_push(&j, j.msg, (int64_t)strlen(j.msg));
+    }
+    free(buf);
+    return ok ? 0 : 1;
+}
+
+static void mput(void *out, int64_t b) { *(int64_t *)tomato_list_push(out, 8) = int_mk_small(b & 255); }
+static void mput_be(void *out, uint64_t v, int w) { for (int k = w - 1; k >= 0; k--) mput(out, (int64_t)(v >> (8 * k))); }
+
+/* header of an array (kind 0), map (1) or bin (2) with n items/bytes */
+void tomato_mp_head(void *out, int64_t kind, int64_t n) {
+    if (kind == 0) { if (n < 16) mput(out, 0x90 | n); else if (n < 65536) { mput(out, 0xdc); mput_be(out, (uint64_t)n, 2); } else { mput(out, 0xdd); mput_be(out, (uint64_t)n, 4); } }
+    else if (kind == 1) { if (n < 16) mput(out, 0x80 | n); else if (n < 65536) { mput(out, 0xde); mput_be(out, (uint64_t)n, 2); } else { mput(out, 0xdf); mput_be(out, (uint64_t)n, 4); } }
+    else { if (n < 256) { mput(out, 0xc4); mput(out, n); } else if (n < 65536) { mput(out, 0xc5); mput_be(out, (uint64_t)n, 2); } else { mput(out, 0xc6); mput_be(out, (uint64_t)n, 4); } }
+}
+void tomato_mp_str(void *out, void *text) {
+    Str *t = text; int64_t n = t->bytes;
+    if (n < 32) mput(out, 0xa0 | n);
+    else if (n < 256) { mput(out, 0xd9); mput(out, n); }
+    else if (n < 65536) { mput(out, 0xda); mput_be(out, (uint64_t)n, 2); }
+    else { mput(out, 0xdb); mput_be(out, (uint64_t)n, 4); }
+    List *l = out;
+    if (l->len + n > l->cap) {                      /* grow once for the whole text */
+        int64_t cap = l->cap ? l->cap : 4;
+        while (cap < l->len + n) cap *= 2;
+        l->data = realloc(l->data, (size_t)(cap * 8));
+        if (!l->data) tomato_fail("out of memory");
+        l->cap = cap;
+    }
+    for (int64_t k = 0; k < n; k++) LIST_SLOT(l, l->len + k, int64_t) = int_mk_small((unsigned char)t->data[k]);
+    l->len += n;
+}
+void tomato_mp_f64(void *out, double x) { uint64_t u; memcpy(&u, &x, 8); mput(out, 0xcb); mput_be(out, u, 8); }
+/* the shortest form of a whole number that fits a signed 64-bit word */
+void tomato_mp_i64(void *out, int64_t v) {
+    if (v >= 0) {
+        if (v < 128) mput(out, v);
+        else if (v < 256) { mput(out, 0xcc); mput(out, v); }
+        else if (v < 65536) { mput(out, 0xcd); mput_be(out, (uint64_t)v, 2); }
+        else if (v < ((int64_t)1 << 32)) { mput(out, 0xce); mput_be(out, (uint64_t)v, 4); }
+        else { mput(out, 0xcf); mput_be(out, (uint64_t)v, 8); }
+    } else {
+        if (v >= -32) mput(out, v);
+        else if (v >= -128) { mput(out, 0xd0); mput(out, v); }
+        else if (v >= -32768) { mput(out, 0xd1); mput_be(out, (uint64_t)v, 2); }
+        else if (v >= -((int64_t)1 << 31)) { mput(out, 0xd2); mput_be(out, (uint64_t)v, 4); }
+        else { mput(out, 0xd3); mput_be(out, (uint64_t)v, 8); }
+    }
+}
+/* a whole number from 2^63 to 2^64 - 1, given as its two 32-bit halves */
+void tomato_mp_u64(void *out, int64_t hi, int64_t lo) { mput(out, 0xcf); mput_be(out, ((uint64_t)hi << 32) | (uint64_t)lo, 8); }
+/* bin (code 0 < 0 means a plain bin) or ext with this type code; returns 1 when an item of data is not a byte */
+int64_t tomato_mp_blob(void *out, int64_t code, int64_t isext, void *data) {
+    int64_t bad;
+    unsigned char *b = mbytes(data, &bad);
+    if (!b) return 1;
+    int64_t n = ((List *)data)->len;
+    if (!isext) tomato_mp_head(out, 2, n);
+    else {
+        if (n == 1 || n == 2 || n == 4 || n == 8 || n == 16) mput(out, 0xd4 + (n == 1 ? 0 : n == 2 ? 1 : n == 4 ? 2 : n == 8 ? 3 : 4));
+        else if (n < 256) { mput(out, 0xc7); mput(out, n); }
+        else if (n < 65536) { mput(out, 0xc8); mput_be(out, (uint64_t)n, 2); }
+        else { mput(out, 0xc9); mput_be(out, (uint64_t)n, 4); }
+        mput(out, code);
+    }
+    for (int64_t k = 0; k < n; k++) mput(out, b[k]);
+    free(b);
+    return 0;
+}
+/* a timestamp in the shortest of the three formats */
+void tomato_mp_ts(void *out, int64_t secs, int64_t nanos) {
+    if (nanos == 0 && secs >= 0 && secs < ((int64_t)1 << 32)) { mput(out, 0xd6); mput(out, 0xff); mput_be(out, (uint64_t)secs, 4); }
+    else if (secs >= 0 && secs < ((int64_t)1 << 34)) { mput(out, 0xd7); mput(out, 0xff); mput_be(out, ((uint64_t)nanos << 34) | (uint64_t)secs, 8); }
+    else { mput(out, 0xc7); mput(out, 12); mput(out, 0xff); mput_be(out, (uint64_t)nanos, 4); mput_be(out, (uint64_t)secs, 8); }
+}
+
 /* ---- libm for the standard library's math module (std/math.tom). One entry point per arity keeps the list the
  * browser build must export short; std/math.tom checks every domain first, so these never see a value libm rejects.
  * The WASI C library has libm, so the same code serves the WebAssembly build. */

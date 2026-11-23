@@ -1,0 +1,39 @@
+# Mutates and truncates a document thousands of times: loads must answer (accept or JSONDecodeError) and never crash.
+# Run under AddressSanitizer by tests/run.sh, which is where this test earns its keep.
+from json import loads, dumps, JSONDecodeError
+
+@main
+def main():
+    base = '{"a": [1, -2.5e3, true, false, null, "x\\ny\\u00e9\\ud83d\\ude00"], "b": {"c": {}, "d": [], "e": 123456789012345678901234567890}, "f": "日本語"}'
+    marks = ['"', '\\', '{', '}', '[', ']', ',', ':', '-', '.', 'e', '0', '1', 'u', 'n', 't', ' ', '\n', 'x', 'é', '😀', '/']
+    seed = 12345
+    ok = 0
+    bad = 0
+    for round in range(6000):
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        text = base
+        for k in range(1 + seed % 3):
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            pos = seed % len(text)
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            what = seed % 4
+            if what == 0:
+                text = text[0:pos]
+            elif what == 1:
+                text = text[0:pos] + marks[seed % len(marks)] + text[pos + 1:len(text)]
+            elif what == 2:
+                text = text[0:pos] + marks[seed % len(marks)] + text[pos:len(text)]
+            else:
+                text = text[0:pos] + text[pos + 1:len(text)]
+            if len(text) == 0:
+                text = ' '
+        try:
+            j = loads(text)
+            if loads(dumps(j)).kind() != j.kind() or dumps(loads(dumps(j))) != dumps(j):
+                print('round trip failed for', text)
+            ok += 1
+        catch JSONDecodeError as e:
+            if e.pos < 0 or e.pos > len(text) or e.line < 1 or e.column < 1:
+                print('bad position for', text)
+            bad += 1
+    print('accepted', ok, 'rejected', bad)

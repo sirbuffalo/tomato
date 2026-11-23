@@ -1,0 +1,89 @@
+# the Json accessors: indexing, kinds, conversions and the errors for using a value as the wrong kind
+from json import loads, Json, JsonDict, JsonList, JsonInt, JsonStr, JSONTypeError, JSONDecodeError
+
+def attempt(label: str, j: Json):
+    try:
+        print(label, j.as_int())
+    catch JSONTypeError as e:
+        print(label, 'error:', e.message)
+
+@main
+def main():
+    j = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3, "f": 1.5, "ok": true, "none": null, "nested": {"a": [10, 20, {"b": 30}]}}')
+    print(j.kind(), len(j), 'name' in j, 'zzz' in j)
+    print(j['name'].as_str(), j['tags'][1].as_str(), j['tags'][-1].as_str(), j['n'].as_int(), j['f'].as_float(), j['ok'].as_bool())
+    print(j['nested']['a'][2]['b'].as_int(), j['n'].as_float(), len(j['tags']), len(j['name']))
+    print(j['none'].is_null(), j['n'].is_null(), j['none'].kind(), j['f'].kind(), j['ok'].kind(), j['tags'].kind(), j['name'].kind())
+    # get gives None for a missing key
+    g = j.get('missing')
+    print(g in None)
+    h = j.get('n')
+    if h in None:
+        print('no')
+    else:
+        print(h.as_int())
+    # the underlying list and dict
+    for item in j['tags'].as_list():
+        print(item.as_str())
+    for key in j.as_dict():
+        print(key, j[key].kind())
+    # building by hand and using the same accessors
+    made = JsonDict({'xs': JsonList([JsonInt(1), JsonInt(2)]), 's': JsonStr('hi')})
+    print(made['xs'][0].as_int() + made['xs'][1].as_int(), made['s'].as_str())
+    # wrong kind
+    attempt('as_int on text:', j['name'])
+    attempt('as_int on float:', j['f'])
+    attempt('as_int on null:', j['none'])
+    attempt('as_int on list:', j['tags'])
+    attempt('as_int on dict:', j)
+    attempt('as_int ok:', j['n'])
+    for bad in range(8):
+        try:
+            if bad == 0:
+                print(j['missing'].kind())
+            elif bad == 1:
+                print(j['tags'][2].kind())
+            elif bad == 2:
+                print(j['tags'][-3].kind())
+            elif bad == 3:
+                print(j['tags']['x'].kind())
+            elif bad == 4:
+                print(j[0].kind())
+            elif bad == 5:
+                print(j['n'][0].kind())
+            elif bad == 6:
+                print(len(j['n']))
+            else:
+                print('x' in j['tags'])
+        catch JSONTypeError as e:
+            print(bad, 'error:', e.message)
+    try:
+        print(j['n'].as_str())
+    catch JSONTypeError as e:
+        print('error:', e.message)
+    try:
+        print(j['n'].as_list())
+    catch JSONTypeError as e:
+        print('error:', e.message)
+    try:
+        print(j['n'].as_dict())
+    catch JSONTypeError as e:
+        print('error:', e.message)
+    try:
+        print(j['n'].as_bool())
+    catch JSONTypeError as e:
+        print('error:', e.message)
+    try:
+        g2 = j['n'].get('a')
+        print(g2 in None)
+    catch JSONTypeError as e:
+        print('error:', e.message)
+    # a JSONDecodeError carries its parts and is a RuntimeError
+    try:
+        loads('{"a": 1,\n "b": }')
+    catch RuntimeError as e:
+        print(e.message)
+    try:
+        loads('[1, 2')
+    catch JSONDecodeError as e:
+        print(e.reason, e.line, e.column, e.pos)
