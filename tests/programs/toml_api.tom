@@ -1,0 +1,92 @@
+# The toml library's API: accessors, builders, dumps layout, load(path), date/time values and errors.
+from toml import loads, load, dumps, table, array, string, integer, real, boolean, moment, Moment, Toml, TOMLDecodeError
+
+@main
+def main():
+    doc = loads('title = "demo"\nported = true\n[server]\nport = 8080\nratio = 0.25\nhosts = ["a", "b"]\n[[user]]\nname = "x"\n[[user]]\nname = "y"\n')
+    print(doc['title'].as_str(), doc['ported'].as_bool())
+    print(doc['server']['port'].as_int(), doc['server']['ratio'].as_float(), doc['server']['port'].as_float())
+    print(len(doc), len(doc['server']['hosts']), doc['server']['hosts'].at(1).as_str(), doc['server']['hosts'].at(-1).as_str())
+    print('server' in doc, 'nope' in doc, 'port' in doc['server'])
+    print(doc['server'].keys())
+    for u in doc['user'].items:
+        print(u['name'].as_str())
+    # wrong kinds and missing keys are ordinary errors
+    try:
+        doc['title'].as_int()
+    catch RuntimeError as e:
+        print(e.message)
+    try:
+        print(doc['nope'])
+    catch RuntimeError as e:
+        print(e.message)
+    try:
+        doc['server']['hosts'].at(5)
+    catch RuntimeError as e:
+        print(e.message)
+    # the error carries its position
+    try:
+        loads('a = 1\nb = [1,\n  2,\nc = 3')
+    catch TOMLDecodeError as e:
+        print(e.line, e.column, e.pos, e.reason)
+        print(e.message)
+    # dates and times
+    t = loads('a = 1979-05-27T07:32:00.5-07:00\nb = 1979-05-27\nc = 07:32:00')
+    m = t['a'].as_moment()
+    print(m.kind, m.year, m.month, m.day, m.hour, m.minute, m.second, m.nano, m.offset)
+    print(t['b'].as_moment().kind, t['c'].as_moment().kind, t['b'].kind, t['c'].kind)
+    print(m)
+    print(m == loads('x = 1979-05-27T07:32:00.5-07:00')['x'].as_moment())
+    # inf and nan are kept as text, since a Tomato float cannot hold them
+    f = loads('a = inf\nb = -inf\nc = nan\nd = 2.5')
+    print(f['a'].special, f['b'].special, f['c'].special, repr_f(f['d']))
+    # building a document and dumping it
+    d = table()
+    d.put('name', string('he said "hi"\n\tand left \\ é'))
+    d.put('count', integer(12345678901234))
+    d.put('pi', real(3.25))
+    d.put('on', boolean(True))
+    mo = Moment()
+    mo.kind = 'local-date'
+    mo.year = 2024
+    mo.month = 2
+    mo.day = 29
+    d.put('when', moment(mo))
+    d.put('empty list', array())
+    nums = array()
+    nums.append(integer(1))
+    nums.append(string('mixed'))
+    inner = array()
+    inner.append(integer(2))
+    nums.append(inner)
+    d.put('nums', nums)
+    owner = table()
+    owner.put('first', string('A'))
+    owner.put('a.b', integer(1))
+    d.put('owner', owner)
+    sub = table()
+    sub.put('deep', boolean(False))
+    owner.put('sub', sub)
+    items = array()
+    for k in range(2):
+        it = table()
+        it.put('id', integer(k))
+        items.append(it)
+    d.put('item', items)
+    out = dumps(d)
+    print(out)
+    back = loads(out)
+    print(back == d)
+    print(dumps(table()) == '')
+    # load(path)
+    f2 = open('/tmp/tomato_toml_api_test.toml', 'w')
+    f2.write(out)
+    f2.close()
+    print(load('/tmp/tomato_toml_api_test.toml') == d)
+    try:
+        dumps(integer(1))
+    catch RuntimeError as e:
+        print(e.message)
+
+def repr_f(v: Toml) -> str:
+    return str(v.as_float())

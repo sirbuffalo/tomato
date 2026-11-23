@@ -1,0 +1,35 @@
+aot {p: [{n: int(1), sub: {k: int(1)}}, {n: int(2)}, {n: int(3), q: [{r: int(1)}]}]}
+arrays {a: [int(1), int(2), int(3)], b: [str(a), str(b)], c: [int(1), str(a), [int(2), int(3)], {x: int(1)}], d: [int(1), int(2)], e: []}
+basic {a: int(1), b: str(x), c: str(y), d: bool(True), e: float(1.5)}
+bom {a: int(1)}
+comments {a: int(1)}
+crlf {a: int(1), b: str(x)}
+dates {a: datetime(1979-05-27T07:32:00Z), b: datetime(1979-05-27T00:32:00-07:00), c: datetime(1979-05-27T00:32:00.999999-07:00), d: local-datetime(1979-05-27T07:32:00), e: local-date(1979-05-27), f: local-time(07:32:00), g: local-time(00:32:00.999999), h: datetime(1979-05-27T07:32:00Z)}
+dotted-sub-ok {fruit: {apple: {color: str(red), texture: {smooth: bool(True)}}}}
+empty {}
+esc-all {a: str(	
+"\)}
+float-exact {a: float(0.30000000000000004), b: float(5e-324), c: float(1.7976931348623157e+308), d: float(123456789.12345678)}
+f10 {a: float(0.0), b: float(-inf), c: float(nan), d: float(1000.0)}
+f12 {a: float(10000000000.0)}
+f3 {a: int(10)}
+f6 {a: float(1000.0)}
+floats {a: float(3.14), b: float(-0.01), c: float(5e+22), d: float(1000000.0), e: float(-0.02), f: float(6.626e-34), g: float(224617.445991228), h: float(inf), i: float(-inf), j: float(nan), k: float(inf), l: float(-0.0)}
+frac-local {a: local-datetime(1979-05-27T07:32:00.5)}
+hdr-comment {a: {x: int(1)}, b: {y: int(2)}}
+implicit-then-header {a: {b: {}, x: int(1)}}
+inline {a: {b: int(1), c: {d: int(2)}, e: {f: [int(1), int(2)]}}, g: {}}
+ints {a: int(99), b: int(-17), c: int(1000), d: int(3735928559), e: int(493), f: int(13), g: int(0), h: int(0), i: int(9223372036854775807), j: int(-9223372036854775808)}
+ml-arr {a: [{x: int(1)}, [int(1), int(2)]], b: int(1)}
+ml-crlf {a: str(x
+y)}
+ml-lit-quotes {a: str(x'), b: str(y'')}
+quotedkeys {a b: int(1), c.d: int(2), e: {f g: {h: int(3)}}, : int(4)}
+strings {a: str(tab	here é 😀 q" b\), b: str(C:\path\n), c: str(line1
+line2 continued
+q"" end), d: str(raw \n
+'), e: str(é日本)}
+tab-ok {a: str(x	y), b: [int(1), int(2)]}
+table-array-sub-order {a: [{b: {x: int(1)}}, {b: {x: int(2)}}]}
+tables {a: {x: int(1), b: {y: int(2)}}, c: {z: {w: int(3), v: int(4)}}, d: {e: {f: {q: int(1)}}}}
+ws-dots {a: {b: {c: int(1)}}, x: {y: {z: int(2)}}}

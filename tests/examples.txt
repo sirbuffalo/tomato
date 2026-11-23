@@ -10,4 +10,5 @@ primes main
 iteration main
 trig main
 tasks main
+config main
 lru_cache main

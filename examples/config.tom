@@ -1,0 +1,47 @@
+# Reading a configuration file in TOML: `from toml import loads, load, dumps`.
+# `tomato run examples/config.tom main app.toml` reads that file; with no argument it uses the text below.
+from toml import loads, load, dumps, string, integer, TOMLDecodeError
+
+def sample() -> str:
+    lines = [
+        '# a web service',
+        'name = "weather"',
+        'debug = false',
+        '',
+        '[server]',
+        'host = "127.0.0.1"',
+        'port = 8080',
+        'timeout = 2.5          # seconds',
+        '',
+        '[[backend]]',
+        'url = "http://a.example"',
+        'weight = 3',
+        '',
+        '[[backend]]',
+        'url = "http://b.example"',
+        'weight = 1',
+        'since = 2024-03-01',
+    ]
+    return '\n'.join(lines) + '\n'
+
+@main
+def main(path: str = ''):
+    try:
+        if path == '':
+            doc = loads(sample())
+        else:
+            doc = load(path)
+        print('service', doc['name'].as_str(), 'debug', doc['debug'].as_bool())
+        server = doc['server']
+        print('listening on', server['host'].as_str() + ':' + str(server['port'].as_int()), 'timeout', server['timeout'].as_float())
+        total = 0
+        for b in doc['backend'].items:
+            total += b['weight'].as_int()
+        for b in doc['backend'].items:
+            print(b['url'].as_str(), b['weight'].as_int() * 100 // total, 'percent')
+        # change a value and write the document back out
+        server.put('port', integer(9090))
+        doc.put('owner', string('ops'))
+        print(dumps(doc))
+    catch TOMLDecodeError as e:
+        print('bad config:', e.message)

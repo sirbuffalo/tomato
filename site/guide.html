@@ -184,6 +184,21 @@ def main():
     b: Box[str] = Box('typed')
     s = Stack[str]()                         # write the type out when no argument has it</code></pre>
 <p>A class or function can take type parameters in brackets after its name (<code>class Pair[A, B]</code>, up to two). Each call works out the types from its arguments, and the compiler makes one copy of the declaration per set of types, so nothing is slower at run time. An <code>Iterable[T]</code> parameter takes <code>T</code> from the items of a list, tuple, set, dict, text, range or object with <code>@iter</code>. That is how <code>progress_bar</code> and the <code>itertools</code> helpers (<code>permutations</code>, <code>combinations</code>, <code>product</code>, <code>chain</code>, <code>pairwise</code>, <code>batched</code>, <code>repeat</code>) work with any item type: <code>for name in progress_bar(['a', 'b']):</code> gives text, <code>progress_bar(range(10))</code> gives ints. Generic interfaces, generic methods and bounds on <code>T</code> are not built yet.</p>
+<h2>Reading and writing TOML</h2>
+<p><code>toml</code> is a library written in Tomato (TOML v1.0.0): <code>from toml import loads, load, dumps</code>. <code>loads(text)</code> and <code>load(path)</code> give a <code>Toml</code>, one class for every kind of value; <code>doc['key']</code> reads a table and <code>.as_str()</code>, <code>.as_int()</code>, <code>.as_float()</code>, <code>.as_bool()</code> read a value (a different kind raises a <code>RuntimeError</code> that says what was found). An array's elements are <code>.items</code> or <code>.at(i)</code>, <code>'key' in doc</code> and <code>len(doc)</code> work, and <code>.kind</code> tells the type (<code>table</code>, <code>array</code>, <code>string</code>, <code>integer</code>, <code>float</code>, <code>boolean</code>, <code>datetime</code>, <code>local-datetime</code>, <code>local-date</code>, <code>local-time</code>). The date and time values are a small <code>Moment</code> class (<code>.as_moment()</code>). <code>dumps(doc)</code> writes the document back: plain values first, then <code>[tables]</code>, then <code>[[arrays of tables]]</code>.</p>
+<pre><code>from toml import loads, dumps, integer, TOMLDecodeError
+
+@main
+def main():
+    try:
+        doc = loads('name = "demo"\n[server]\nport = 8080\n[[user]]\nid = 1\n[[user]]\nid = 2\n')
+        print(doc['name'].as_str(), doc['server']['port'].as_int(), len(doc['user']))
+        doc['server'].put('port', integer(9090))
+        print(dumps(doc))
+        loads('a = 1\na = 2')
+    catch TOMLDecodeError as e:
+        print(e.message, e.line, e.column)</code></pre>
+<p>An error in the text raises <code>TOMLDecodeError</code> (a <code>RuntimeError</code>) with <code>line</code>, <code>column</code> and <code>pos</code>. Integers must fit in 64 bits as TOML says. <code>inf</code> and <code>nan</code> cannot be Tomato floats, so such a value has <code>kind</code> <code>float</code> and <code>special</code> set to <code>inf</code>, <code>-inf</code> or <code>nan</code>. See <code>examples/config.tom</code> and decision D62a.</p>
 <h2>HTTP requests</h2>
 <pre><code>import requests
 

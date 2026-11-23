@@ -1,0 +1,1104 @@
+# TOML v1.0.0, written in Tomato: `from toml import loads, load, dumps`.
+#
+#     doc = loads('title = "demo"\n[server]\nport = 8080\n')
+#     print(doc['title'].as_str(), doc['server']['port'].as_int())
+#     print(dumps(doc))
+#
+# A decoded document is a `Toml`: one class for every kind of value, because a Tomato class field cannot hold a union
+# (nor a dict of unions). `kind` says which of the other fields is in use:
+#
+#     'table'     fields (key -> Toml) and order (the keys, in the order they were written)
+#     'array'     items (list of Toml, of any kinds, as TOML 1.0 allows)
+#     'string'    text
+#     'integer'   num (an unlimited int, but loads accepts only the 64-bit range TOML requires)
+#     'float'     real; for inf and nan, which a Tomato float cannot hold, `special` is 'inf', '-inf' or 'nan'
+#     'boolean'   flag
+#     'datetime'  moment (an offset date-time), 'local-datetime', 'local-date' and 'local-time' likewise
+#
+# `doc['key']` reads a table; `doc['key'] = ...` is not available, use put(). Errors in the text raise TOMLDecodeError with
+# the position (line and column count from 1, pos is the character offset from 0).
+
+# ---------------------------------------------------------------------------------------------------------------------
+# errors and date/time values
+
+export class TOMLDecodeError(RuntimeError):
+    reason: str = ''
+    line: int = 0
+    column: int = 0
+    pos: int = 0
+
+    @init
+    def make_decode(self, reason: str, line: int, column: int, pos: int):
+        RuntimeError.make(self, f'{reason}: line {line} column {column} (char {pos})')
+        self.reason = reason
+        self.line = line
+        self.column = column
+        self.pos = pos
+
+def _pad(n: int, width: int) -> str:
+    s = str(n)
+    return '0' * (width - len(s)) + s
+
+# One of the four TOML date and time types. `kind` is 'datetime' (date, time and offset), 'local-datetime', 'local-date'
+# or 'local-time'; the fields that the kind does not have stay 0. `offset` is minutes east of UTC. `nano` is the
+# fraction of a second in nanoseconds (digits beyond the ninth are dropped).
+export class Moment:
+    kind: str = 'local-date'
+    year: int = 0
+    month: int = 0
+    day: int = 0
+    hour: int = 0
+    minute: int = 0
+    second: int = 0
+    nano: int = 0
+    offset: int = 0
+
+    def date_text(self) -> str:
+        return _pad(self.year, 4) + '-' + _pad(self.month, 2) + '-' + _pad(self.day, 2)
+
+    def time_text(self) -> str:
+        s = _pad(self.hour, 2) + ':' + _pad(self.minute, 2) + ':' + _pad(self.second, 2)
+        if self.nano != 0:
+            frac = _pad(self.nano, 9)
+            while frac[len(frac) - 1] == '0':
+                frac = frac[:len(frac) - 1]
+            s += '.' + frac
+        return s
+
+    @str
+    def text(self) -> str:
+        if self.kind == 'local-date':
+            return self.date_text()
+        if self.kind == 'local-time':
+            return self.time_text()
+        s = self.date_text() + 'T' + self.time_text()
+        if self.kind == 'datetime':
+            if self.offset == 0:
+                return s + 'Z'
+            a = self.offset
+            sign = '+'
+            if a < 0:
+                a = -a
+                sign = '-'
+            return s + sign + _pad(a // 60, 2) + ':' + _pad(a % 60, 2)
+        return s
+
+    @eq
+    def same(self, other: Moment) -> bool:
+        return self.kind == other.kind and self.year == other.year and self.month == other.month and self.day == other.day and self.hour == other.hour and self.minute == other.minute and self.second == other.second and self.nano == other.nano and self.offset == other.offset
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the value
+
+export class Toml:
+    kind: str = 'table'
+    text: str = ''
+    num: int = 0
+    real: float = 0.0
+    special: str = ''
+    flag: bool = False
+    moment: Moment | None = None
+    items: list[Toml] = []
+    fields: dict[str, Toml] = {}
+    order: list[str] = []
+    origin: str = ''          # parser bookkeeping: how a table or array came to be (header, implicit, dotted, inline, aot, static)
+
+    def describe(self) -> str:
+        if self.kind == 'table':
+            return 'a table'
+        if self.kind == 'array':
+            return 'an array'
+        if self.kind == 'string':
+            return 'a string'
+        if self.kind == 'integer':
+            return 'an integer'
+        if self.kind == 'float':
+            return 'a float'
+        if self.kind == 'boolean':
+            return 'a boolean'
+        return 'a date or time'
+
+    def expect(self, kind: str, what: str):
+        if self.kind != kind:
+            raise RuntimeError(f'expected {what}, found {self.describe()}')
+
+    def as_str(self) -> str:
+        self.expect('string', 'a string')
+        return self.text
+
+    def as_int(self) -> int:
+        self.expect('integer', 'an integer')
+        return self.num
+
+    def as_float(self) -> float:
+        if self.kind == 'integer':
+            return float(self.num)
+        self.expect('float', 'a float')
+        if self.special != '':
+            raise RuntimeError(f'the float is {self.special}, which a float variable cannot hold: check `special`')
+        return self.real
+
+    def as_bool(self) -> bool:
+        self.expect('boolean', 'a boolean')
+        return self.flag
+
+    def as_moment(self) -> Moment:
+        if self.moment is None:
+            raise RuntimeError(f'expected a date or time, found {self.describe()}')
+        m: Moment = self.moment
+        return m
+
+    def is_table(self) -> bool:
+        return self.kind == 'table'
+
+    def is_array(self) -> bool:
+        return self.kind == 'array'
+
+    # table access ---------------------------------------------------------------------------------------------------
+    @get
+    def lookup(self, key: str) -> Toml:
+        self.expect('table', 'a table')
+        if key not in self.fields:
+            raise RuntimeError(f'the key {key} is not in the table')
+        return self.fields[key]
+
+    @contains
+    def has(self, key: str) -> bool:
+        return self.kind == 'table' and key in self.fields
+
+    @len
+    def size(self) -> int:
+        if self.kind == 'table':
+            return len(self.order)
+        if self.kind == 'array':
+            return len(self.items)
+        raise RuntimeError(f'{self.describe()} has no length')
+
+    def keys(self) -> list[str]:
+        self.expect('table', 'a table')
+        out: list[str] = []
+        for k in self.order:
+            out.append(k)
+        return out
+
+    def put(self, key: str, value: Toml):
+        self.expect('table', 'a table')
+        if key not in self.fields:
+            self.order.append(key)
+        self.fields[key] = value
+
+    # array access ---------------------------------------------------------------------------------------------------
+    def at(self, i: int) -> Toml:
+        self.expect('array', 'an array')
+        if i < 0:
+            i += len(self.items)
+        if i < 0 or i >= len(self.items):
+            raise RuntimeError('the array index is out of range')
+        return self.items[i]
+
+    def append(self, value: Toml):
+        self.expect('array', 'an array')
+        self.items.append(value)
+
+    @eq
+    def same(self, other: Toml) -> bool:
+        if self.kind != other.kind:
+            return False
+        if self.kind == 'string':
+            return self.text == other.text
+        if self.kind == 'integer':
+            return self.num == other.num
+        if self.kind == 'float':
+            return self.special == other.special and self.real == other.real
+        if self.kind == 'boolean':
+            return self.flag == other.flag
+        if self.kind == 'array':
+            if len(self.items) != len(other.items):
+                return False
+            for i in range(len(self.items)):
+                if not self.items[i].same(other.items[i]):
+                    return False
+            return True
+        if self.kind == 'table':
+            if len(self.order) != len(other.order):
+                return False
+            for k in self.order:
+                if k not in other.fields:
+                    return False
+                if not self.fields[k].same(other.fields[k]):
+                    return False
+            return True
+        if self.moment is None or other.moment is None:
+            return False
+        a: Moment = self.moment
+        b: Moment = other.moment
+        return a.same(b)
+
+    @str
+    def show(self) -> str:
+        return dumps_value(self)
+
+# Builders, for making a document to dump.
+export def table() -> Toml:
+    t = Toml()
+    t.kind = 'table'
+    return t
+
+export def array() -> Toml:
+    t = Toml()
+    t.kind = 'array'
+    return t
+
+export def string(s: str) -> Toml:
+    t = Toml()
+    t.kind = 'string'
+    t.text = s
+    return t
+
+export def integer(n: int) -> Toml:
+    t = Toml()
+    t.kind = 'integer'
+    t.num = n
+    return t
+
+export def real(x: float) -> Toml:
+    t = Toml()
+    t.kind = 'float'
+    t.real = x
+    return t
+
+export def boolean(b: bool) -> Toml:
+    t = Toml()
+    t.kind = 'boolean'
+    t.flag = b
+    return t
+
+export def moment(m: Moment) -> Toml:
+    t = Toml()
+    t.kind = m.kind
+    t.moment = m
+    return t
+
+# ---------------------------------------------------------------------------------------------------------------------
+# character helpers (a character is a one-character text; '' is the end of a line)
+
+def _is_digit(c: str) -> bool:
+    return len(c) == 1 and c in '0123456789'
+
+def _is_hex(c: str) -> bool:
+    return len(c) == 1 and c in '0123456789abcdefABCDEF'
+
+def _is_bare(c: str) -> bool:
+    return len(c) == 1 and c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'
+
+def _is_space(c: str) -> bool:
+    return len(c) == 1 and (c == ' ' or c == '\t')
+
+# a control character that may not appear in a string or comment (a tab may)
+def _is_control(c: str) -> bool:
+    o = ord(c)
+    return (o < 32 and o != 9) or o == 127
+
+
+def _digit_value(c: str) -> int:
+    if c in '0123456789':
+        return ord(c) - 48
+    if c in 'abcdef':
+        return ord(c) - 87
+    return ord(c) - 55
+
+def _leap(y: int) -> bool:
+    return (y % 4 == 0 and y % 100 != 0) or y % 400 == 0
+
+def _days_in(y: int, m: int) -> int:
+    if m == 2:
+        if _leap(y):
+            return 29
+        return 28
+    if m == 4 or m == 6 or m == 9 or m == 11:
+        return 30
+    return 31
+
+# the value of s[a:b] when it is all digits, else -1
+def _digits(s: str, a: int, b: int) -> int:
+    if b > len(s) or a >= b:
+        return -1
+    n = 0
+    for i in range(a, b):
+        c = s[i]
+        if not _is_digit(c):
+            return -1
+        n = n * 10 + ord(c) - 48
+    return n
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the parser: it walks the text line by line, so reading a character of a line costs at most the length of that line
+
+class _Parser:
+    lines: list[str] = []
+    ln: int = 0               # the current line, from 0
+    line: str = ''            # its text, without the line end
+    n: int = 0
+    i: int = 0
+    root: Toml = Toml()
+    cur: Toml = Toml()
+    depth: int = 0
+
+    @init
+    def make_parser(self, text: str):
+        if len(text) > 0 and text[0] == chr(65279):
+            text = text[1:]
+        self.lines = text.split('\n')
+        self.root = table()
+        self.root.origin = 'root'
+        self.cur = self.root
+        self.load(0)
+
+    def load(self, ln: int):
+        self.ln = ln
+        self.i = 0
+        if ln >= len(self.lines):
+            self.line = ''
+            self.n = 0
+            return
+        s = self.lines[ln]
+        if len(s) > 0 and s[len(s) - 1] == '\r':
+            s = s[:len(s) - 1]
+        self.line = s
+        self.n = len(s)
+
+    def fail_at(self, reason: str, ln: int, i: int):
+        pos = 0
+        for k in range(ln):
+            pos += len(self.lines[k]) + 1
+        raise TOMLDecodeError(reason, ln + 1, i + 1, pos + i)
+
+    def fail(self, reason: str):
+        self.fail_at(reason, self.ln, self.i)
+
+    def ch(self) -> str:
+        if self.i >= self.n:
+            return ''
+        return self.line[self.i]
+
+    def at(self, k: int) -> str:
+        if self.i + k >= self.n:
+            return ''
+        return self.line[self.i + k]
+
+    def starts(self, s: str) -> bool:
+        return self.line[self.i:self.i + len(s)] == s
+
+    def skip_ws(self):
+        while self.i < self.n and _is_space(self.line[self.i]):
+            self.i += 1
+
+    # a comment runs to the end of the line; control characters are not allowed in it
+    def skip_comment(self):
+        if self.ch() == '#':
+            j = self.i + 1
+            while j < self.n:
+                if _is_control(self.line[j]):
+                    self.fail_at('Invalid control character in a comment', self.ln, j)
+                j += 1
+            self.i = self.n
+
+    # inside an array: spaces, comments and line ends
+    def skip_ws_nl(self):
+        while True:
+            self.skip_ws()
+            self.skip_comment()
+            if self.i < self.n:
+                return
+            if self.ln + 1 >= len(self.lines):
+                self.fail('Unterminated array')
+            self.load(self.ln + 1)
+
+    # ---- keys ----
+    def parse_key(self) -> list[str]:
+        parts: list[str] = []
+        while True:
+            self.skip_ws()
+            c = self.ch()
+            if c == '"':
+                parts.append(self.basic_string())
+            elif c == "'":
+                parts.append(self.literal_string())
+            elif _is_bare(c):
+                j = self.i
+                while j < self.n and _is_bare(self.line[j]):
+                    j += 1
+                parts.append(self.line[self.i:j])
+                self.i = j
+            else:
+                self.fail('Invalid key')
+            self.skip_ws()
+            if self.ch() == '.':
+                self.i += 1
+            else:
+                return parts
+
+    # ---- strings ----
+    def escape(self) -> str:
+        # the backslash is at self.i
+        c = self.at(1)
+        self.i += 2
+        if c == 'n':
+            return '\n'
+        if c == 't':
+            return '\t'
+        if c == '"':
+            return '"'
+        if c == '\\':
+            return '\\'
+        if c == 'r':
+            return '\r'
+        if c == 'b':
+            return chr(8)
+        if c == 'f':
+            return chr(12)
+        if c == 'u' or c == 'U':
+            count = 4
+            if c == 'U':
+                count = 8
+            if self.i + count > self.n:
+                self.fail('Invalid unicode escape')
+            v = 0
+            for k in range(count):
+                h = self.line[self.i + k]
+                if not _is_hex(h):
+                    self.fail_at('Invalid unicode escape', self.ln, self.i + k)
+                v = v * 16 + _digit_value(h)
+            if v > 1114111 or (v >= 55296 and v <= 57343):
+                self.fail('Invalid unicode escape: not a unicode scalar value')
+            self.i += count
+            return chr(v)
+        self.i -= 2
+        self.fail('Invalid escape sequence')
+        return ''
+
+    # "..." on one line; self.i is at the opening quote
+    def basic_string(self) -> str:
+        self.i += 1
+        out: list[str] = []
+        start = self.i
+        while True:
+            if self.i >= self.n:
+                self.fail('Unterminated string')
+            c = self.line[self.i]
+            if c == '"':
+                out.append(self.line[start:self.i])
+                self.i += 1
+                return ''.join(out)
+            if c == '\\':
+                out.append(self.line[start:self.i])
+                out.append(self.escape())
+                start = self.i
+            elif _is_control(c):
+                self.fail('Invalid control character in a string')
+            else:
+                self.i += 1
+
+    # '...' on one line
+    def literal_string(self) -> str:
+        self.i += 1
+        start = self.i
+        while True:
+            if self.i >= self.n:
+                self.fail('Unterminated string')
+            c = self.line[self.i]
+            if c == "'":
+                s = self.line[start:self.i]
+                self.i += 1
+                return s
+            if _is_control(c):
+                self.fail('Invalid control character in a string')
+            self.i += 1
+
+    # """...""" or '''...''' over several lines; self.i is at the opening quotes
+    def multiline_string(self, q: str, escapes: bool) -> str:
+        start_ln = self.ln
+        start_i = self.i
+        self.i += 3
+        out: list[str] = []
+        if self.i >= self.n:               # a newline right after the opening quotes is dropped
+            if self.ln + 1 >= len(self.lines):
+                self.fail_at('Unterminated string', start_ln, start_i)
+            self.load(self.ln + 1)
+        seg = self.i
+        while True:
+            if self.i >= self.n:
+                out.append(self.line[seg:self.n])
+                out.append('\n')
+                if self.ln + 1 >= len(self.lines):
+                    self.fail_at('Unterminated string', start_ln, start_i)
+                self.load(self.ln + 1)
+                seg = 0
+                continue
+            c = self.line[self.i]
+            if c == q:
+                run = 0
+                while self.i + run < self.n and self.line[self.i + run] == q:
+                    run += 1
+                if run >= 3:
+                    if run > 5:
+                        self.fail_at('Too many quotes in a multi-line string', self.ln, self.i + 5)
+                    out.append(self.line[seg:self.i])
+                    out.append(q * (run - 3))
+                    self.i += run
+                    return ''.join(out)
+                self.i += run
+            elif c == '\\' and escapes:
+                out.append(self.line[seg:self.i])
+                # a backslash that ends the line takes the whitespace and line ends that follow it
+                j = self.i + 1
+                while j < self.n and _is_space(self.line[j]):
+                    j += 1
+                if j >= self.n:
+                    while True:
+                        if self.ln + 1 >= len(self.lines):
+                            self.fail_at('Unterminated string', start_ln, start_i)
+                        self.load(self.ln + 1)
+                        while self.i < self.n and _is_space(self.line[self.i]):
+                            self.i += 1
+                        if self.i < self.n:
+                            break
+                else:
+                    out.append(self.escape())
+                seg = self.i
+            elif _is_control(c):
+                self.fail('Invalid control character in a string')
+            else:
+                self.i += 1
+
+    # ---- numbers and dates: a token is a run of characters that can belong to one ----
+    def token(self) -> str:
+        j = self.i
+        while j < self.n:
+            c = self.line[j]
+            if _is_bare(c) or c == '+' or c == '.' or c == ':':
+                j += 1
+            else:
+                break
+        t = self.line[self.i:j]
+        self.i = j
+        return t
+
+    def digits_only(self, s: str, start: int, base: str, what: str, at: int) -> str:
+        # s[start:] is digits of the base with single underscores between digits; the digits without underscores
+        if start >= len(s):
+            self.fail_at(f'Invalid {what}', self.ln, at)
+        out: list[str] = []
+        prev = '_'
+        for k in range(start, len(s)):
+            c = s[k]
+            if c == '_':
+                if prev == '_':
+                    self.fail_at(f'Invalid {what}: misplaced underscore', self.ln, at)
+            elif c in base:
+                out.append(c)
+            else:
+                self.fail_at(f'Invalid {what}', self.ln, at)
+            prev = c
+        if prev == '_':
+            self.fail_at(f'Invalid {what}: misplaced underscore', self.ln, at)
+        return ''.join(out)
+
+    def parse_number(self, tok: str, at: int) -> Toml:
+        v = Toml()
+        sign = ''
+        body = tok
+        if body.startswith('+') or body.startswith('-'):
+            sign = body[:1]
+            body = body[1:]
+        if body == 'inf' or body == 'nan':
+            v.kind = 'float'
+            if body == 'nan':
+                v.special = 'nan'
+            elif sign == '-':
+                v.special = '-inf'
+            else:
+                v.special = 'inf'
+            return v
+        if sign == '' and len(body) > 2 and body[0] == '0' and body[1] in 'xob':
+            base = '01234567'
+            mult = 8
+            if body[1] == 'x':
+                base = '0123456789abcdefABCDEF'
+                mult = 16
+            elif body[1] == 'b':
+                base = '01'
+                mult = 2
+            digits = self.digits_only(body, 2, base, 'integer', at)
+            n = 0
+            for c in digits:
+                n = n * mult + _digit_value(c)
+            if n >= 9223372036854775808 * 2:
+                self.fail_at('Integer is out of the 64-bit range', self.ln, at)
+            if n >= 9223372036854775808:
+                self.fail_at('Integer is out of the 64-bit range', self.ln, at)
+            v.kind = 'integer'
+            v.num = n
+            return v
+        # decimal: int part, then optional fraction and exponent
+        is_float = False
+        k = 0
+        n = len(body)
+        while k < n and body[k] != '.' and body[k] != 'e' and body[k] != 'E':
+            k += 1
+        int_part = self.digits_only(body[:k], 0, '0123456789', 'number', at)
+        if len(int_part) > 1 and int_part[0] == '0':
+            self.fail_at('Invalid number: leading zeros are not allowed', self.ln, at)
+        clean = int_part
+        if k < n and body[k] == '.':
+            is_float = True
+            j = k + 1
+            while j < n and body[j] != 'e' and body[j] != 'E':
+                j += 1
+            clean += '.' + self.digits_only(body[k + 1:j], 0, '0123456789', 'number', at)
+            k = j
+        if k < n:
+            is_float = True
+            rest = body[k + 1:]
+            esign = ''
+            if rest.startswith('+') or rest.startswith('-'):
+                esign = rest[:1]
+                rest = rest[1:]
+            clean += 'e' + esign + self.digits_only(rest, 0, '0123456789', 'number', at)
+        if is_float:
+            v.kind = 'float'
+            try:
+                v.real = float(sign + clean)
+            catch RuntimeError as e:
+                self.fail_at('Float is out of range', self.ln, at)
+            return v
+        x = int(sign + clean)
+        if x > 9223372036854775807 or x < -9223372036854775808:
+            self.fail_at('Integer is out of the 64-bit range', self.ln, at)
+        v.kind = 'integer'
+        v.num = x
+        return v
+
+    # YYYY-MM-DD at s[a:a+10]
+    def parse_date(self, s: str, a: int, m: Moment, at: int):
+        if a + 10 > len(s) or s[a + 4] != '-' or s[a + 7] != '-':
+            self.fail_at('Invalid date', self.ln, at)
+        y = _digits(s, a, a + 4)
+        mo = _digits(s, a + 5, a + 7)
+        d = _digits(s, a + 8, a + 10)
+        if y < 0 or mo < 0 or d < 0:
+            self.fail_at('Invalid date', self.ln, at)
+        if mo < 1 or mo > 12:
+            self.fail_at('Invalid date: the month is out of range', self.ln, at)
+        if d < 1 or d > _days_in(y, mo):
+            self.fail_at('Invalid date: the day is out of range', self.ln, at)
+        m.year = y
+        m.month = mo
+        m.day = d
+
+    # HH:MM:SS[.frac] at s[a:], up to a Z or offset; returns the index after the time
+    def parse_time(self, s: str, a: int, m: Moment, at: int) -> int:
+        if a + 8 > len(s) or s[a + 2] != ':' or s[a + 5] != ':':
+            self.fail_at('Invalid time', self.ln, at)
+        h = _digits(s, a, a + 2)
+        mi = _digits(s, a + 3, a + 5)
+        sec = _digits(s, a + 6, a + 8)
+        if h < 0 or mi < 0 or sec < 0:
+            self.fail_at('Invalid time', self.ln, at)
+        if h > 23 or mi > 59 or sec > 60:
+            self.fail_at('Invalid time: a part is out of range', self.ln, at)
+        m.hour = h
+        m.minute = mi
+        m.second = sec
+        j = a + 8
+        if j < len(s) and s[j] == '.':
+            j += 1
+            k = j
+            while k < len(s) and _is_digit(s[k]):
+                k += 1
+            if k == j:
+                self.fail_at('Invalid time: no digits after the decimal point', self.ln, at)
+            frac = s[j:k]
+            if len(frac) > 9:
+                frac = frac[:9]
+            frac += '0' * (9 - len(frac))
+            m.nano = int(frac)
+            j = k
+        return j
+
+    def parse_datetime(self, tok: str, at: int) -> Toml:
+        m = Moment()
+        if len(tok) >= 3 and tok[2] == ':':
+            m.kind = 'local-time'
+            j = self.parse_time(tok, 0, m, at)
+            if j != len(tok):
+                self.fail_at('Invalid time', self.ln, at)
+            return moment(m)
+        self.parse_date(tok, 0, m, at)
+        if len(tok) == 10:
+            m.kind = 'local-date'
+            return moment(m)
+        if tok[10] != 'T' and tok[10] != 't':
+            self.fail_at('Invalid date-time', self.ln, at)
+        j = self.parse_time(tok, 11, m, at)
+        m.kind = 'local-datetime'
+        if j == len(tok):
+            return moment(m)
+        m.kind = 'datetime'
+        if tok[j] == 'Z' or tok[j] == 'z':
+            if j + 1 != len(tok):
+                self.fail_at('Invalid date-time', self.ln, at)
+            return moment(m)
+        if (tok[j] == '+' or tok[j] == '-') and len(tok) == j + 6 and tok[j + 3] == ':':
+            oh = _digits(tok, j + 1, j + 3)
+            om = _digits(tok, j + 4, j + 6)
+            if oh < 0 or om < 0 or oh > 23 or om > 59:
+                self.fail_at('Invalid date-time: the offset is out of range', self.ln, at)
+            m.offset = oh * 60 + om
+            if tok[j] == '-':
+                m.offset = -m.offset
+            return moment(m)
+        self.fail_at('Invalid date-time', self.ln, at)
+        return moment(m)
+
+    # ---- values ----
+    def parse_value(self) -> Toml:
+        c = self.ch()
+        if c == '':
+            self.fail('Expected a value')
+        v = Toml()
+        if c == '"':
+            v.kind = 'string'
+            if self.starts('"""'):
+                v.text = self.multiline_string('"', True)
+            else:
+                v.text = self.basic_string()
+            return v
+        if c == "'":
+            v.kind = 'string'
+            if self.starts("'''"):
+                v.text = self.multiline_string("'", False)
+            else:
+                v.text = self.literal_string()
+            return v
+        if c == '[':
+            return self.parse_array()
+        if c == '{':
+            return self.parse_inline_table()
+        at = self.i
+        tok = self.token()
+        if tok == '':
+            self.fail_at('Invalid value', self.ln, at)
+        if tok == 'true' or tok == 'false':
+            v.kind = 'boolean'
+            v.flag = tok == 'true'
+            return v
+        # a date and a time written with a space between them are one value
+        if len(tok) == 10 and tok[4] == '-' and self.ch() == ' ' and _is_digit(self.at(1)):
+            self.i += 1
+            tok += 'T' + self.token()
+        if len(tok) >= 10 and tok[4] == '-' and _is_digit(tok[0]) or (len(tok) >= 3 and tok[2] == ':'):
+            return self.parse_datetime(tok, at)
+        return self.parse_number(tok, at)
+
+    def enter(self):
+        self.depth += 1
+        if self.depth > 500:
+            self.fail('Arrays and inline tables are nested too deeply')
+
+    def parse_array(self) -> Toml:
+        a = array()
+        a.origin = 'static'
+        self.enter()
+        self.i += 1
+        while True:
+            self.skip_ws_nl()
+            if self.ch() == ']':
+                self.i += 1
+                self.depth -= 1
+                return a
+            a.items.append(self.parse_value())
+            self.skip_ws_nl()
+            c = self.ch()
+            if c == ',':
+                self.i += 1
+            elif c == ']':
+                self.i += 1
+                self.depth -= 1
+                return a
+            else:
+                self.fail('Expected a comma or the closing bracket of an array')
+
+    def parse_inline_table(self) -> Toml:
+        t = table()
+        t.origin = 'root'
+        self.enter()
+        self.i += 1
+        self.skip_ws()
+        if self.ch() == '}':
+            self.i += 1
+            self.depth -= 1
+            t.origin = 'inline'
+            return t
+        while True:
+            self.skip_ws()
+            self.parse_keyval(t)
+            self.skip_ws()
+            c = self.ch()
+            if c == ',':
+                self.i += 1
+            elif c == '}':
+                self.i += 1
+                self.depth -= 1
+                t.origin = 'inline'
+                return t
+            else:
+                self.fail('Expected a comma or the closing brace of an inline table')
+
+    # ---- key/value pairs and headers ----
+    def parse_keyval(self, owner: Toml):
+        key_ln = self.ln
+        key_i = self.i
+        parts = self.parse_key()
+        if self.ch() != '=':
+            self.fail("Expected '=' after a key")
+        self.i += 1
+        self.skip_ws()
+        t = owner
+        for k in range(len(parts) - 1):
+            p = parts[k]
+            if p in t.fields:
+                nx = t.fields[p]
+                if nx.kind != 'table' or nx.origin != 'dotted':
+                    self.fail_at(f'Cannot add to {p}: it is already defined', key_ln, key_i)
+                t = nx
+            else:
+                nx = table()
+                nx.origin = 'dotted'
+                t.put(p, nx)
+                t = nx
+        last = parts[len(parts) - 1]
+        if last in t.fields:
+            self.fail_at(f'Duplicate key {last}', key_ln, key_i)
+        t.put(last, self.parse_value())
+
+    # walk one step of a header path: create an implicit table, or enter the last element of an array of tables
+    def descend(self, t: Toml, p: str, ln: int, col: int) -> Toml:
+        if p not in t.fields:
+            nx = table()
+            nx.origin = 'implicit'
+            t.put(p, nx)
+            return nx
+        nx = t.fields[p]
+        if nx.kind == 'table':
+            if nx.origin == 'inline':
+                self.fail_at(f'Cannot add to {p}: it is an inline table', ln, col)
+            return nx
+        if nx.kind == 'array' and nx.origin == 'aot':
+            return nx.items[len(nx.items) - 1]
+        self.fail_at(f'Cannot add to {p}: it is not a table', ln, col)
+        return nx
+
+    def parse_header(self):
+        ln = self.ln
+        col = self.i
+        aot = self.starts('[[')
+        if aot:
+            self.i += 2
+        else:
+            self.i += 1
+        parts = self.parse_key()
+        if aot:
+            if not self.starts(']]'):
+                self.fail("Expected ']]' to close the array of tables header")
+            self.i += 2
+        else:
+            if self.ch() != ']':
+                self.fail("Expected ']' to close the table header")
+            self.i += 1
+        t = self.root
+        for k in range(len(parts) - 1):
+            t = self.descend(t, parts[k], ln, col)
+        last = parts[len(parts) - 1]
+        if aot:
+            if last not in t.fields:
+                a = array()
+                a.origin = 'aot'
+                t.put(last, a)
+            a = t.fields[last]
+            if a.kind != 'array' or a.origin != 'aot':
+                self.fail_at(f'Cannot redefine {last} as an array of tables', ln, col)
+            nt = table()
+            nt.origin = 'header'
+            a.items.append(nt)
+            self.cur = nt
+            return
+        if last not in t.fields:
+            nt = table()
+            nt.origin = 'header'
+            t.put(last, nt)
+            self.cur = nt
+            return
+        nx = t.fields[last]
+        if nx.kind == 'table' and nx.origin == 'implicit':
+            nx.origin = 'header'
+            self.cur = nx
+            return
+        self.fail_at(f'Cannot redefine the table {last}', ln, col)
+
+    def parse(self) -> Toml:
+        while self.ln < len(self.lines):
+            self.skip_ws()
+            c = self.ch()
+            if c == '[':
+                self.parse_header()
+            elif c != '' and c != '#':
+                self.parse_keyval(self.cur)
+            if c != '':
+                self.skip_ws()
+                self.skip_comment()
+                if self.i < self.n:
+                    self.fail('Expected a newline or the end of the document after a statement')
+            elif c == '#':
+                self.skip_comment()
+            self.load(self.ln + 1)
+        return self.root
+
+export def loads(text: str) -> Toml:
+    p = _Parser(text)
+    return p.parse()
+
+export def load(path: str) -> Toml:
+    f = open(path, 'r')
+    text = f.read()
+    f.close()
+    return loads(text)
+
+# ---------------------------------------------------------------------------------------------------------------------
+# dumps
+
+def _escape(s: str) -> str:
+    out: list[str] = []
+    for c in s:
+        o = ord(c)
+        if c == '"':
+            out.append('\\"')
+        elif c == '\\':
+            out.append('\\\\')
+        elif c == '\n':
+            out.append('\\n')
+        elif c == '\t':
+            out.append('\\t')
+        elif c == '\r':
+            out.append('\\r')
+        elif o == 8:
+            out.append('\\b')
+        elif o == 12:
+            out.append('\\f')
+        elif o < 32 or o == 127:
+            h = '0123456789abcdef'
+            out.append('\\u00' + h[o // 16] + h[o % 16])
+        else:
+            out.append(c)
+    return '"' + ''.join(out) + '"'
+
+def _key_text(k: str) -> str:
+    if len(k) == 0:
+        return '""'
+    for c in k:
+        if not _is_bare(c):
+            return _escape(k)
+    return k
+
+def _path_text(path: list[str]) -> str:
+    parts: list[str] = []
+    for p in path:
+        parts.append(_key_text(p))
+    return '.'.join(parts)
+
+def _float_text(v: Toml) -> str:
+    if v.special != '':
+        return v.special
+    s = str(v.real)
+    if '.' not in s and 'e' not in s and 'E' not in s:
+        s += '.0'
+    return s
+
+# a value written on one line
+def _inline(v: Toml) -> str:
+    if v.kind == 'string':
+        return _escape(v.text)
+    if v.kind == 'integer':
+        return str(v.num)
+    if v.kind == 'float':
+        return _float_text(v)
+    if v.kind == 'boolean':
+        if v.flag:
+            return 'true'
+        return 'false'
+    if v.kind == 'array':
+        parts: list[str] = []
+        for x in v.items:
+            parts.append(_inline(x))
+        return '[' + ', '.join(parts) + ']'
+    if v.kind == 'table':
+        if len(v.order) == 0:
+            return '{}'
+        parts: list[str] = []
+        for k in v.order:
+            parts.append(_key_text(k) + ' = ' + _inline(v.fields[k]))
+        return '{ ' + ', '.join(parts) + ' }'
+    if v.moment is None:
+        raise RuntimeError('a date or time value has no moment')
+    m: Moment = v.moment
+    return str(m)
+
+# an array that is written as [[name]] sections: not empty, and every item a table
+def _is_table_array(v: Toml) -> bool:
+    if v.kind != 'array' or len(v.items) == 0:
+        return False
+    for x in v.items:
+        if x.kind != 'table':
+            return False
+    return True
+
+def _dump_table(t: Toml, path: list[str], out: list[str]):
+    for k in t.order:
+        v = t.fields[k]
+        if v.kind != 'table' and not _is_table_array(v):
+            out.append(_key_text(k) + ' = ' + _inline(v))
+    for k in t.order:
+        v = t.fields[k]
+        if v.kind == 'table':
+            sub = path + [k]
+            plain = False
+            for k2 in v.order:
+                v2 = v.fields[k2]
+                if v2.kind != 'table' and not _is_table_array(v2):
+                    plain = True
+            if plain or len(v.order) == 0:
+                if len(out) > 0:
+                    out.append('')
+                out.append('[' + _path_text(sub) + ']')
+            _dump_table(v, sub, out)
+        elif _is_table_array(v):
+            sub = path + [k]
+            for x in v.items:
+                if len(out) > 0:
+                    out.append('')
+                out.append('[[' + _path_text(sub) + ']]')
+                _dump_table(x, sub, out)
+
+export def dumps_value(v: Toml) -> str:
+    if v.kind == 'table':
+        out: list[str] = []
+        _dump_table(v, [], out)
+        if len(out) == 0:
+            return ''
+        return '\n'.join(out) + '\n'
+    return _inline(v)
+
+export def dumps(value: Toml) -> str:
+    if value.kind != 'table':
+        raise RuntimeError('dumps needs a table: a TOML document is a table of keys')
+    return dumps_value(value)

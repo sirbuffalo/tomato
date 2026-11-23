@@ -63,6 +63,10 @@ bigint_frames
 bigint_unwind
 bigint_ops
 native_sort
+toml_valid
+toml_invalid
+toml_api
+toml_big
 function_values
 lambdas
 sort_stable

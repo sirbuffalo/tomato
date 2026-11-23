@@ -1,0 +1,37 @@
+# Helpers for the toml tests: a compact one-line rendering of a decoded document, and a runner that decodes, prints the
+# rendering (or the error), and checks that dumps then loads gives back an equal document.
+from toml import loads, dumps, Toml, TOMLDecodeError
+
+export def show(v: Toml) -> str:
+    if v.kind == 'table':
+        parts: list[str] = []
+        for k in v.keys():
+            parts.append(k + ': ' + show(v[k]))
+        return '{' + ', '.join(parts) + '}'
+    if v.kind == 'array':
+        parts: list[str] = []
+        for x in v.items:
+            parts.append(show(x))
+        return '[' + ', '.join(parts) + ']'
+    if v.kind == 'string':
+        return 'str(' + v.text + ')'
+    if v.kind == 'integer':
+        return 'int(' + str(v.num) + ')'
+    if v.kind == 'float':
+        if v.special != '':
+            return 'float(' + v.special + ')'
+        return 'float(' + str(v.real) + ')'
+    if v.kind == 'boolean':
+        return 'bool(' + str(v.flag) + ')'
+    return v.kind + '(' + str(v.as_moment()) + ')'
+
+export def run(name: str, lines: list[str]):
+    text = '\n'.join(lines)
+    try:
+        v = loads(text)
+        print(name, show(v))
+        back = loads(dumps(v))
+        if not (back == v):
+            print('  ROUND TRIP FAILED', dumps(v))
+    catch TOMLDecodeError as e:
+        print(name, 'ERROR', e.message)

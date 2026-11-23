@@ -1,0 +1,22 @@
+service weather debug False
+listening on 127.0.0.1:8080 timeout 2.5
+http://a.example 75 percent
+http://b.example 25 percent
+name = "weather"
+debug = false
+owner = "ops"
+
+[server]
+host = "127.0.0.1"
+port = 9090
+timeout = 2.5
+
+[[backend]]
+url = "http://a.example"
+weight = 3
+
+[[backend]]
+url = "http://b.example"
+weight = 1
+since = 2024-03-01
+

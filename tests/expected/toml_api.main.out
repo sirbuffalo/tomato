@@ -1,0 +1,42 @@
+demo True
+8080 0.25 8080.0
+4 2 b b
+True False True
+['port', 'ratio', 'hosts']
+x
+y
+expected an integer, found a string
+the key nope is not in the table
+the array index is out of range
+4 1 19 Invalid number
+Invalid number: line 4 column 1 (char 19)
+datetime 1979 5 27 7 32 0 500000000 -420
+local-date local-time local-date local-time
+1979-05-27T07:32:00.5-07:00
+True
+inf -inf nan 2.5
+name = "he said \"hi\"\n\tand left \\ é"
+count = 12345678901234
+pi = 3.25
+on = true
+when = 2024-02-29
+"empty list" = []
+nums = [1, "mixed", [2]]
+
+[owner]
+first = "A"
+"a.b" = 1
+
+[owner.sub]
+deep = false
+
+[[item]]
+id = 0
+
+[[item]]
+id = 1
+
+True
+True
+True
+dumps needs a table: a TOML document is a table of keys

@@ -1,0 +1,44 @@
+# A document of about 1 MB (7000 array-of-tables entries): loads, dumps, loads again, and a nesting limit.
+from toml import loads, dumps
+
+def build(n: int) -> str:
+    out: list[str] = []
+    for i in range(n):
+        out.append(f'[[server]]')
+        out.append(f'name = "host-{i}"  # comment {i}')
+        out.append(f'port = {8000 + i}')
+        out.append(f'weight = {i}.5')
+        out.append(f'tags = ["a", "b", "c{i}"]')
+        out.append(f'[server.limits]')
+        out.append(f'cpu = {i % 64}')
+        out.append(f'when = 1979-05-27T07:32:00Z')
+    return '\n'.join(out) + '\n'
+
+@main
+def main():
+    text = build(7000)
+    print(len(text) > 1000000)
+    doc = loads(text)
+    print(len(doc['server']))
+    out = dumps(doc)
+    print(len(out))
+    doc2 = loads(out)
+    print(doc2 == doc)
+    unicode_check()
+    deep = '[' * 100000 + ']' * 100000
+    try:
+        loads('a = ' + deep)
+        print('deep ok')
+    catch RuntimeError as e:
+        print('deep error', e.message)
+
+# many short lines with non-ASCII text: reading a character of such a line is linear in the line, so the total stays linear
+def unicode_doc(n: int) -> str:
+    out: list[str] = []
+    for i in range(n):
+        out.append(f'"clé {i}" = "naïve ☃ {i}"')
+    return '\n'.join(out) + '\n'
+
+def unicode_check():
+    doc = loads(unicode_doc(20000))
+    print(len(doc), doc['clé 19999'].as_str())

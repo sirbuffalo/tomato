@@ -455,6 +455,7 @@ int tomato_str_cmp(void *a, void *b) {
 
 /* The byte offset of character number i (0 <= i <= chars). The scan is linear; a chunked index is later work (D17c). */
 static int64_t char_offset(Str *s, int64_t i) {
+    if (s->bytes == s->chars) return i < s->bytes ? i : s->bytes;   /* all ASCII: the character number is the byte offset */
     int64_t seen = 0;
     for (int64_t k = 0; k < s->bytes; k++) {
         if (((unsigned char)s->data[k] & 0xC0) != 0x80) {
