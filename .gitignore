@@ -1,2 +1,4 @@
 build/
 release/out/
+release/release.conf
+release/*.bak

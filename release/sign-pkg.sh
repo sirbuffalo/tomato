@@ -9,6 +9,7 @@
 #                          Apple notarization rejects unsigned Mach-O files, so every one in the payload (tomatoc) is re-signed with the
 #                          hardened runtime and a secure timestamp before the package itself is signed. This needs a Developer ID *Application*
 #                          certificate, a different certificate from the Installer one.
+#   TOMATO_SKIP_NOTARIZE   testing only: sign but do not notarize or staple (the result is not distributable; release.sh allows it only with --dry-run)
 #   TOMATO_LATEST_JSON     optional: a latest.json whose pkg_sha256 is rewritten to the signed package's hash
 # Prints the SHA-256 of OUT.pkg. On a notarization rejection it prints Apple's log and exits non-zero.
 set -e
@@ -43,6 +44,9 @@ bad="$(printf '%s\n' "$listing" | awk -F'\t' '$2 != "root" || $3 != "wheel" {pri
 tmp="$work/final.pkg"   # OUT appears only once notarized, stapled and validated
 productsign --sign "$sign" "$work/app-signed.pkg" "$tmp"
 pkgutil --check-signature "$tmp"
+if [ -n "$TOMATO_SKIP_NOTARIZE" ]; then   # testing only (release/release.sh --dry-run --skip-notarize): signed but NOT notarized, so not distributable
+  mv "$tmp" "$out"; echo "signed $out, NOT notarized ($(shasum -a 256 "$out" | cut -d' ' -f1))"; exit 0
+fi
 log="$work/notary.plist"
 if ! xcrun notarytool submit "$tmp" --keychain-profile "$profile" --wait --output-format plist >"$log" 2>&1; then cat "$log" >&2; echo "error: notarytool submit failed" >&2; exit 1; fi
 status="$(/usr/libexec/PlistBuddy -c 'Print :status' "$log" 2>/dev/null || true)"

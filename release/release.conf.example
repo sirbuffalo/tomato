@@ -1,0 +1,8 @@
+# Copy to release/release.conf (git-ignored). key=value lines; nothing secret belongs here.
+# host=davis@other-mac.local      run over ssh on another Mac (default: this machine, no ssh)
+# branch=main
+# origin=git@github.com:sirbuffalo/tomato.git
+# work_dir=/Users/davis/.tomato-release   # the private clone, state and logs
+# wasi_sdk=/Users/davis/wasi-sdk-24.0-arm64-macos
+# max_load=2.0
+# wait_quiet=900
