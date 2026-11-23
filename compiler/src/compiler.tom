@@ -2472,7 +2472,35 @@ class Gen:
             if fv.ty != want_ty:
                 raise CompileError(f'cmp= needs a function of two {shown(elem)} items that returns an int, but this is {shown(fv.ty)}\nit returns a negative number, zero or a positive number', line)
             info = self.mod.instance_func(self.mod.resolve('_sorted_cmp'), [elem], line)
-            return self.call_helper(info, [lst, fv])
+            et = llvm_type(elem)
+            if item_width(lst.ty) != 8 or (et != 'i64' and et != 'ptr'):
+                return self.call_helper(info, [lst, fv])
+            # native builds: the runtime merge sort calls the function directly; where it cannot (the browser's interpreter), the sort
+            # written in Tomato (_sorted_cmp) runs instead. Both are the same stable merge sort.
+            res = self.hidden_slot('cmpsorted')
+            can = self.tmp('callbacks')
+            self.emit(f'{can} = call i32 @tomato_callbacks()')
+            use = self.tmp('native')
+            self.emit(f'{use} = icmp ne i32 {can}, 0')
+            nat = self.label('natsort')
+            slow = self.label('tomsort')
+            done = self.label('sortdone')
+            self.cond_br(use, nat, slow)
+            self.place(nat)
+            rn = self.tmp('natsorted')
+            self.emit(f'{rn} = call ptr @tomato_list_sorted_cmp(ptr {lst.reg}, ptr {fv.reg}, ptr @tomato_exc, i32 {list_flags(lst.ty)})')
+            self.check_error([lst])
+            self.release(lst)
+            self.emit(f'store ptr {rn}, ptr {res}')
+            self.br(done)
+            self.place(slow)
+            rs = self.call_helper(info, [lst, fv])
+            self.emit(f'store ptr {rs.reg}, ptr {res}')
+            self.br(done)
+            self.place(done)
+            r2 = self.tmp('sorted')
+            self.emit(f'{r2} = load ptr, ptr {res}')
+            return ex(r2, lst.ty)
         params = fn_params(fv.ty)
         if len(params) != 1 or params[0] != elem:
             raise CompileError(f'key= needs a function of one {shown(elem)} item, but this is {shown(fv.ty)}', line)
@@ -6089,6 +6117,8 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_list_slice(ptr, i64, i64, i64, i32, i32)\n'
     d += 'declare ptr @tomato_list_sorted(ptr, i32)\n'
     d += 'declare ptr @tomato_list_sorted_by(ptr, ptr, i32, i32)\n'
+    d += 'declare i32 @tomato_callbacks()\n'
+    d += 'declare ptr @tomato_list_sorted_cmp(ptr, ptr, ptr, i32)\n'
     d += 'declare ptr @tomato_str_from_i64(i64)\n'
     d += 'declare ptr @tomato_str_from_bool(i32)\n'
     d += 'declare ptr @tomato_str_from_f64(double)\n'

@@ -1,0 +1,105 @@
+# sorted(xs, cmp=f): the native runtime merge sort (and the sort written in Tomato where the runtime cannot call back, in the browser)
+# must agree with plain sorted() and be stable, with small and big ints, text and objects, and an error raised in the middle.
+class Rec:
+    key: int
+    tag: int
+
+    @init
+    def make(self, key: int, tag: int):
+        self.key = key
+        self.tag = tag
+
+def up(a: int, b: int) -> int:
+    return a - b
+
+def down(a: int, b: int) -> int:
+    return b - a
+
+def huge_up(a: int, b: int) -> int:
+    return (a - b) * 100000000000000000000000
+
+def by_len(a: str, b: str) -> int:
+    return len(a) - len(b)
+
+def by_key(a: Rec, b: Rec) -> int:
+    return a.key - b.key
+
+def boom(a: int, b: int) -> int:
+    if a + b == 777:
+        raise RuntimeError('boom')
+    return a - b
+
+def boom_rec(a: Rec, b: Rec) -> int:
+    if a.key + b.key == 17:
+        raise RuntimeError('boom rec')
+    return a.key - b.key
+
+def sizes_agree(n: int) -> bool:
+    xs: list[int] = []
+    seed = 12345 + n
+    for i in range(n):
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        xs.append(seed % 1000 - 500)
+    plain = sorted(xs)
+    a = sorted(xs, cmp=up)
+    b = sorted(xs, cmp=down)
+    c = sorted(xs, cmp=huge_up)
+    for i in range(n):
+        if a[i] != plain[i] or c[i] != plain[i] or b[n - 1 - i] != plain[i]:
+            return False
+    return len(a) == n
+
+@main
+def main():
+    for n in [0, 1, 2, 3, 15, 16, 17, 31, 32, 33, 100, 1000, 5000]:
+        print(n, sizes_agree(n))
+    # already sorted and reversed input
+    asc = list(range(300))
+    sa = sorted(asc, cmp=up)
+    same = True
+    for i in range(300):
+        if sa[i] != asc[i]:
+            same = False
+    print(same)
+    print(sorted(asc, cmp=down)[0], sorted(asc, cmp=down)[299])
+    # big ints (above 2**62) as items
+    bigs: list[int] = []
+    for i in range(40):
+        bigs.append(((i * 7919) % 41 - 20) * 10 ** 25)
+    sb = sorted(bigs, cmp=up)
+    ok = True
+    for i in range(39):
+        if sb[i] > sb[i + 1]:
+            ok = False
+    print(ok, sb[0] // 10 ** 25, sb[39] // 10 ** 25)
+    print(bigs[0] // 10 ** 25)
+    # text, and stability (equal lengths keep their order)
+    words = ['ccc', 'a', 'bb', 'dd', 'e', 'fff', 'g', 'hh', 'iii', 'j']
+    print(sorted(words, cmp=by_len))
+    # objects: stable by key
+    recs: list[Rec] = []
+    for i in range(200):
+        recs.append(Rec((i * 37) % 10, i))
+    sr = sorted(recs, cmp=by_key)
+    stable = True
+    for i in range(199):
+        if sr[i].key > sr[i + 1].key or (sr[i].key == sr[i + 1].key and sr[i].tag > sr[i + 1].tag):
+            stable = False
+    print(stable, sr[0].key, sr[0].tag, sr[199].key, sr[199].tag)
+    print(recs[1].tag)
+    # an error in the middle: the list and its items stay intact
+    nums: list[int] = []
+    for i in range(500):
+        nums.append((i * 211) % 997)
+    try:
+        sorted(nums, cmp=boom)
+        print('no error')
+    catch RuntimeError as e:
+        print('failed:', e.message)
+    print(len(nums), nums[0], nums[499])
+    try:
+        sorted(recs, cmp=boom_rec)
+        print('no error')
+    catch RuntimeError as e:
+        print('failed:', e.message)
+    print(len(recs))

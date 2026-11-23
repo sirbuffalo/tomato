@@ -2507,6 +2507,94 @@ void *tomato_list_sorted_by(void *src, void *keys, int kind, int rc) {
     free(a);
     return r;
 }
+/* ---- sorted(xs, cmp=f) on native builds: the same stable merge sort as std/builtin.tom, calling f directly ----
+ * The browser's IR interpreter cannot be called back from C (and a WebAssembly function pointer is a table index), so there
+ * tomato_callbacks() is 0 and the compiler uses the sort written in Tomato instead. Items are 8-byte slots (int or pointer; the
+ * compiler checks). f only borrows its two arguments, like any Tomato function, so the sort passes its own words without a copy.
+ * `exc` is the program's pending-error word (@tomato_exc): when f raises, the sort stops, gives the items back and returns NULL. */
+int32_t tomato_callbacks(void) {
+#if defined(TOMATO_WASM) || defined(__wasi__)
+    return 0;
+#else
+    return 1;
+#endif
+}
+
+typedef int64_t (*CmpFn)(int64_t, int64_t);
+/* f(x, y) < 0, or -1 when f raised */
+static inline int cmp_lt(CmpFn f, void **exc, int64_t x, int64_t y) {
+    int64_t r = f(x, y);
+    if (__builtin_expect(*exc != NULL, 0)) return -1;
+    if (__builtin_expect(r & 1, 1)) return r < 0;
+    int lt = tomato_int_cmp(r, int_mk_small(0)) < 0;
+    tomato_int_free(r);
+    return lt;
+}
+static void cmp_drop(int rc, int64_t *a, int64_t n) {
+    for (int64_t i = 0; i < n; i++) {
+        if (rc == 1) tomato_release((void *)(intptr_t)a[i]);
+        else if (rc == 2) tomato_int_free(a[i]);
+    }
+}
+
+void *tomato_list_sorted_cmp(void *src, void *fn, void **exc, int rc) {
+    List *l = src;
+    CmpFn f = (CmpFn)fn;
+    int64_t n = l->len;
+    List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
+    if (n == 0) return r;
+    int64_t *a = malloc((size_t)n * 8), *tmp = malloc((size_t)n * 8);
+    if (!a || !tmp) tomato_fail("out of memory");
+    for (int64_t i = 0; i < n; i++) a[i] = item_copy(rc, LIST_SLOT(l, i, int64_t));
+    const int64_t BLOCK = 16;
+    int64_t *s = a, *d = tmp;
+    /* binary insertion sort of each block (every call of f comes before any item moves, so an error leaves `a` whole) */
+    for (int64_t lo = 0; lo < n; lo += BLOCK) {
+        int64_t hi = lo + BLOCK < n ? lo + BLOCK : n;
+        for (int64_t i = lo + 1; i < hi; i++) {
+            int64_t x = a[i], left = lo, right = i;
+            while (left < right) {
+                int64_t mid = (left + right) >> 1;
+                int c = cmp_lt(f, exc, x, a[mid]);
+                if (c < 0) goto failed;
+                if (c) right = mid; else left = mid + 1;
+            }
+            for (int64_t q = i; q > left; q--) a[q] = a[q - 1];
+            a[left] = x;
+        }
+    }
+    for (int64_t w = BLOCK; w < n; w *= 2) {
+        for (int64_t lo = 0; lo < n; lo += 2 * w) {
+            int64_t mid = lo + w < n ? lo + w : n, hi = lo + 2 * w < n ? lo + 2 * w : n;
+            int64_t i = lo, j = mid, o = lo;
+            int c = mid < hi ? cmp_lt(f, exc, s[mid], s[mid - 1]) : 0;   /* neighbours already in order are copied, not merged */
+            if (c < 0) goto failed;
+            if (c) {
+                while (i < mid && j < hi) {
+                    int t = cmp_lt(f, exc, s[j], s[i]);
+                    if (t < 0) goto failed;
+                    d[o++] = t ? s[j++] : s[i++];
+                }
+            }
+            while (i < mid) d[o++] = s[i++];
+            while (j < hi) d[o++] = s[j++];
+        }
+        int64_t *t = s; s = d; d = t;
+    }
+    if (s != a) memcpy(a, s, (size_t)n * 8);
+    free(tmp);
+    r->data = (char *)a;
+    r->cap = n;
+    r->len = n;
+    return r;
+failed:
+    cmp_drop(rc, s, n);   /* `s` holds every item once: the block sort moves items only after all of their calls, and a merge writes to the other buffer */
+    free(a);
+    free(tmp);
+    tomato_release(r);
+    return NULL;
+}
+
 int64_t tomato_int_pow(int64_t base, int64_t exp) {
     /* the exponent is not negative (the caller checked) and small enough to count */
     if (!int_is_small(exp)) tomato_fail("the exponent is too big");

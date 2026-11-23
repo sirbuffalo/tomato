@@ -72,6 +72,7 @@ lambdas
 sort_stable
 sort_errors
 sort_key_cmp
+sort_cmp_native
 alloc_pool
 str_fast
 cache_lru

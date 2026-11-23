@@ -213,7 +213,9 @@ def _str_rstrip(s: str) -> str:
 # the browser). The sorts are stable: a merge sort that finds the runs already in order (a strictly descending run is reversed), extends
 # short runs to a minimum length with binary insertion, and merges neighbouring runs; neighbours already in order are not merged.
 # The key version works out the keys here (each once) and the runtime (tomato_list_sorted_by) sorts them and gathers the items; the
-# cmp version sorts a copy of the items here, since it must call the function on pairs.
+# cmp version sorts a copy of the items here, since it must call the function on pairs. Native builds do not use it for items that are ints or pointers:
+# the compiler calls tomato_list_sorted_cmp (runtime/tomato_rt.c, the same algorithm in C). This one runs in the browser and for float, bool and
+# fixed-width items.
 def _min_run(n: int) -> int:
     minrun = n
     extra = 0
