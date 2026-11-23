@@ -19,9 +19,10 @@
 #   snapshot   release/perf-snapshot.sh: the docs/performance.md section (Mac and Linux columns)
 #   build      release/build.sh and release/pkg.sh
 #   sign       release/sign-pkg.sh: sign every Mach-O (Application identity), sign the package (Installer identity), notarize,
-#              staple; then stapler validate, spctl, pkgutil, codesign and install-layout checks of the result
-#   commit     site/build.sh (site/latest.json with the new version and pkg_sha256) and ONE local commit of the release files
-#   publish    push the tag, create the GitHub release, upload the package, tarball and latest.json, download them again and
+#              staple; then stapler validate, spctl, pkgutil, codesign and install-layout checks of the result. Then release/dmg.sh:
+#              the signed package in a disk image, itself signed (Application identity), notarized, stapled and checked mounted
+#   commit     site/build.sh (site/latest.json with the new version, pkg_sha256 and dmg_sha256) and ONE local commit of the release files
+#   publish    push the tag, create the GitHub release, upload the package, disk image, tarball and latest.json, download them again and
 #              compare sha256 (the public URL too)
 #   push       push the release commit to main (the site only changes now, after the assets are live)
 #   summary    version, benchmark ratios, notarization result, sha256, release URL
@@ -47,7 +48,8 @@
 #   --skip-notarize      with --dry-run only: sign but do not notarize (for a Mac that has no notary profile)
 #   --no-linux           skip the Linux step; --linux-host H (default biggie.davismcd.com), --linux-tools DIR (installed by release/linux-setup.sh),
 #                        --linux-max-load N (default 32) and --linux-wait SEC (300): wait for biggie's load, then go on with a warning
-#   --ignore-linux-failures   release even though the Linux tests failed (the summary says so loudly)
+#   --ignore-linux-failures   release even though the Linux tests failed or did not run (publish otherwise requires a recorded passing
+#                        Linux run; needs explicit approval; the summary says so loudly)
 #   --no-sign            with --dry-run only: neither sign nor notarize (for a Mac whose keychain cannot sign yet); tests everything else
 #   --unlock-keychain    first run `security unlock-keychain` on the signing Mac, asking for its login password on your terminal
 #                        (codesign over ssh needs the login keychain unlocked; the password is never stored or passed on)
@@ -216,7 +218,7 @@ step_preflight() {
   prob() { problems="$problems
   - $*"; }
   have() { command -v "$1" >/dev/null 2>&1; }
-  for t in git clang shasum codesign productsign pkgutil pkgbuild productbuild lipo spctl xcrun curl; do have "$t" || prob "$t not found: install the Xcode command line tools (xcode-select --install)"; done
+  for t in git clang shasum codesign productsign pkgutil pkgbuild productbuild lipo spctl hdiutil xcrun curl; do have "$t" || prob "$t not found: install the Xcode command line tools (xcode-select --install)"; done
   if have xcrun; then
     xcrun --find notarytool >/dev/null 2>&1 || prob "xcrun notarytool is missing: install Xcode 13+ or the current command line tools"
     xcrun --find stapler >/dev/null 2>&1 || prob "xcrun stapler is missing: install the Xcode command line tools"
@@ -395,6 +397,7 @@ step_linux() {
   # back to what is committed: a skipped or failed step keeps the previous release's Linux results, and a resume drops this run's earlier ones
   if [ -n "$(git ls-tree HEAD -- "$lo")" ]; then git checkout -q HEAD -- "$lo"; fi   # nothing committed yet (the first release): nothing to restore
   git clean -fdq -- "$lo" || true
+  st_set linux_passed ""   # set again below only by a run whose tests exited 0 with a " 0 failed" summary; publish requires it
   if [ "$no_linux" = 1 ]; then note "skipped (--no-linux)"; st_set linux "skipped (--no-linux)"; st_set linux_tests "skipped (--no-linux)"; return 0; fi
   sshopt="-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10"
   warn() { printf 'WARNING: %s\n' "$*" >&2; st_set linux "NOT RUN: $*"; st_set linux_tests "not run"; }
@@ -445,6 +448,7 @@ step_linux() {
     if [ "$ignore_linux" = 1 ]; then printf 'WARNING: the Linux tests FAILED, continuing because of --ignore-linux-failures (log: %s)\n' "$logs/linux-tests.log" >&2
     else die "the Linux x86-64 tests FAILED on $linux_host (log: $logs/linux-tests.log). Fix them, or release anyway with --resume --ignore-linux-failures"; fi
   fi
+  if [ "$(mk TESTS_RC)" = 0 ]; then case "$(mk TESTS_SUMMARY)" in *" passed, 0 failed") st_set linux_passed "$v" ;; esac; fi
 }
 
 step_snapshot() {
@@ -493,20 +497,41 @@ step_sign() {
   [ -f "$o/tomato-$v.pkg" ] || die "$o/tomato-$v.pkg is missing; run the build step"
   if [ "$no_sign" = 1 ]; then   # dry run on a Mac that cannot sign yet: everything after this still gets exercised
     note "--no-sign: the package stays UNSIGNED"; sum="$(shasum -a 256 "$o/tomato-$v.pkg" | cut -d' ' -f1)"
-    st_set pkg_sha256 "$sum"; st_set tar_sha256 "$(shasum -a 256 "$o/tomato-$v.tar.gz" | cut -d' ' -f1)"; st_set notarization "NOT signed or notarized (dry run with --no-sign)"; return 0
+    TOMATO_NO_SIGN=1 TOMATO_LATEST_JSON="$o/latest.json" tee_run "$logs/dmg.log" sh release/dmg.sh "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" || die "building the disk image failed (see $logs/dmg.log)"
+    st_set pkg_sha256 "$sum"; st_set dmg_sha256 "$(shasum -a 256 "$o/tomato-$v.dmg" | cut -d' ' -f1)"; st_set tar_sha256 "$(shasum -a 256 "$o/tomato-$v.tar.gz" | cut -d' ' -f1)"; st_set notarization "NOT signed or notarized (dry run with --no-sign)"; return 0
   fi
-  rm -f "$o/tomato-$v.signed.pkg"
   [ "$skip_notarize" = 1 ] && export TOMATO_SKIP_NOTARIZE=1
+  # a resume after a disk-image failure keeps the package signed and checked by this run: re-signing would repack it (a new
+  # hash) and cost another notarization; a rebuilt (unsigned) package has another hash, so it is signed again
+  psig="$(st_get pkg_signed_sha256)"
+  if [ -n "$psig" ] && [ "$(shasum -a 256 "$o/tomato-$v.pkg" | cut -d' ' -f1)" = "$psig" ]; then
+    note "the package was already signed, notarized and checked in this release run (sha256 $psig): only the disk image is redone"
+  else
+  rm -f "$o/tomato-$v.signed.pkg"
   TOMATO_APP_SIGN="$app_sign" TOMATO_PKG_SIGN="$pkg_sign" TOMATO_NOTARY_PROFILE="$profile" TOMATO_LATEST_JSON="$o/latest.json" \
     tee_run "$logs/sign.log" sh release/sign-pkg.sh "$o/tomato-$v.pkg" "$o/tomato-$v.signed.pkg" || die "signing or notarizing failed (see $logs/sign.log; Apple's log is printed above on a rejection)"
   mv "$o/tomato-$v.signed.pkg" "$o/tomato-$v.pkg"
   check_pkg "$o/tomato-$v.pkg" "$v"
+  st_set pkg_signed_sha256 "$(shasum -a 256 "$o/tomato-$v.pkg" | cut -d' ' -f1)"
+  fi
   sum="$(shasum -a 256 "$o/tomato-$v.pkg" | cut -d' ' -f1)"
   grep -q "\"pkg_sha256\": \"$sum\"" "$o/latest.json" || die "latest.json's pkg_sha256 is not the signed package's hash $sum"
   tsum="$(shasum -a 256 "$o/tomato-$v.tar.gz" | cut -d' ' -f1)"; grep -q "\"sha256\": \"$tsum\"" "$o/latest.json" || die "latest.json's sha256 is not the tarball's hash"
-  st_set pkg_sha256 "$sum"; st_set tar_sha256 "$tsum"
-  st_set notarization "$(if [ "$skip_notarize" = 1 ]; then echo 'NOT notarized (dry run with --skip-notarize)'; else sed -n 's/^notarized (\(.*\))$/Accepted, \1/p' "$logs/sign.log" | tail -1; fi)"
-  note "signed package sha256 $sum"
+  # the disk image: the finished package inside, the image itself signed, notarized and stapled; dmg.sh checks it mounted
+  rm -f "$o/tomato-$v.dmg"
+  TOMATO_APP_SIGN="$app_sign" TOMATO_NOTARY_PROFILE="$profile" TOMATO_LATEST_JSON="$o/latest.json" \
+    tee_run "$logs/dmg.log" sh release/dmg.sh "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" || die "building, signing or notarizing the disk image failed (see $logs/dmg.log)"
+  dsum="$(shasum -a 256 "$o/tomato-$v.dmg" | cut -d' ' -f1)"
+  grep -q "\"dmg_sha256\": \"$dsum\"" "$o/latest.json" || die "latest.json's dmg_sha256 is not the disk image's hash $dsum"
+  grep -q "\"pkg_sha256\": \"$sum\"" "$o/latest.json" || die "latest.json lost the package's hash while adding the disk image"
+  codesign -dv --verbose=4 "$o/tomato-$v.dmg" 2>&1 | grep -q "Authority=$app_sign" || die "the disk image is not signed by '$app_sign'"
+  if [ "$skip_notarize" = 0 ]; then
+    xcrun stapler validate "$o/tomato-$v.dmg" || die "stapler validate failed on the disk image"
+    spctl --assess --type open --context context:primary-signature "$o/tomato-$v.dmg" > /dev/null 2>&1 || die "spctl rejects the disk image"
+  fi
+  st_set pkg_sha256 "$sum"; st_set dmg_sha256 "$dsum"; st_set tar_sha256 "$tsum"
+  st_set notarization "$(if [ "$skip_notarize" = 1 ]; then echo 'NOT notarized (dry run with --skip-notarize)'; else echo "package: $(sed -n 's/^notarized (\(.*\))$/Accepted, \1/p' "$logs/sign.log" | tail -1); disk image: $(sed -n 's/^notarized dmg (\(.*\))$/Accepted, \1/p' "$logs/dmg.log" | tail -1)"; fi)"
+  note "signed package sha256 $sum"; note "signed disk image sha256 $dsum"
 }
 
 step_commit() {
@@ -518,6 +543,9 @@ step_commit() {
   [ "$(cat VERSION)" = "$v" ] || die "VERSION is not $v"
   [ "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)" = "$v" ] || die "site/latest.json is not version $v"
   [ "$(sed -n 's/.*"pkg_sha256" *: *"\([^"]*\)".*/\1/p' site/latest.json)" = "$sum" ] || die "site/latest.json pkg_sha256 is not $sum"
+  dsum="$(st_get dmg_sha256)"; [ -n "$dsum" ] || die "no disk image yet (the sign step has not finished)"
+  [ "$(shasum -a 256 "release/out/tomato-$v.dmg" | cut -d' ' -f1)" = "$dsum" ] || die "release/out/tomato-$v.dmg is not the disk image that was signed"
+  [ "$(sed -n 's/.*"dmg_sha256" *: *"\([^"]*\)".*/\1/p' site/latest.json)" = "$dsum" ] || die "site/latest.json dmg_sha256 is not $dsum"
   [ "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)" = "$v" ] || die "site/config.js is not $v"
   bad="$(git status --porcelain | sed 's/^...//' | grep -v -e '^VERSION$' -e '^site/' -e '^benchmarks/results/' -e '^docs/performance.md$' || true)"
   [ -z "$bad" ] || die "unexpected changed files, not committing: $(echo "$bad" | head -5 | tr '\n' ' ')"
@@ -527,7 +555,7 @@ step_commit() {
   fi
   if [ -n "$(git status --porcelain)" ]; then
     git add -A VERSION site benchmarks/results docs/performance.md
-    git commit -q -m "Release Tomato $v" -m "Signed and notarized package sha256 $sum." || die "git commit failed"
+    git commit -q -m "Release Tomato $v" -m "Signed and notarized package sha256 $sum, disk image sha256 $dsum." || die "git commit failed"
   fi
   [ "$(git rev-parse HEAD)" != "$(st_get base_sha)" ] || die "nothing was committed"
   st_set commit_sha "$(git rev-parse HEAD)"; note "committed $(git rev-parse --short HEAD) \"Release Tomato $v\" in $clone (not pushed)"
@@ -535,33 +563,46 @@ step_commit() {
 
 step_publish() {
   banner publish "tag, GitHub release, assets, verification"
-  in_clone; v="$(st_get version)"; sum="$(st_get pkg_sha256)"; tsum="$(st_get tar_sha256)"; o=release/out; tag="v$v"; c="$(st_get commit_sha)"
+  in_clone; v="$(st_get version)"; sum="$(st_get pkg_sha256)"; tsum="$(st_get tar_sha256)"; dsum="$(st_get dmg_sha256)"; o=release/out; tag="v$v"; c="$(st_get commit_sha)"
   [ -n "$c" ] && [ "$(git rev-parse HEAD)" = "$c" ] || die "HEAD is not the release commit; run the commit step"
+  # the Linux gate: a real release needs a recorded passing Linux run; a skipped, unreachable or failed one needs the explicit
+  # override. It is checked before the dry-run exit too, so a dry run shows what a real one would do.
+  lt="$(st_get linux_tests)"
+  if [ "$(st_get linux_passed)" != "$v" ] && [ "$ignore_linux" != 1 ] && [ "$(st_get ignore_linux)" != 1 ]; then
+    gate="no passing Linux x86-64 test run is recorded (linux tests: ${lt:-none}). Run the linux step (--from linux), or publish anyway only with explicit approval: --resume --ignore-linux-failures"
+    if [ "$dry" = 1 ]; then say "DRY RUN: a real release would STOP here: $gate"; else die "$gate"; fi
+  elif [ "$(st_get linux_passed)" = "$v" ]; then note "Linux gate: passed ($lt)"
+  else note "Linux gate: OVERRIDDEN by --ignore-linux-failures (linux tests: ${lt:-none})"; fi
   if [ "$dry" = 1 ]; then
     say "DRY RUN: would push tag $tag ($(git rev-parse --short HEAD)), create the GitHub release $tag on $slug with"
-    ls -l "$o/tomato-$v.pkg" "$o/tomato-$v.tar.gz" "$o/latest.json" | awk '{ print "   " $NF " (" $5 " bytes)" }'
-    say "and then download them and compare sha256 $sum."; return 0
+    ls -l "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" "$o/tomato-$v.tar.gz" "$o/latest.json" | awk '{ print "   " $NF " (" $5 " bytes)" }'
+    say "and then download them and compare sha256 $sum (package), $dsum (disk image)."; return 0
   fi
   [ -n "$slug" ] || die "origin is not a GitHub repository"
+  [ -n "$dsum" ] && [ -f "$o/tomato-$v.dmg" ] && [ "$(shasum -a 256 "$o/tomato-$v.dmg" | cut -d" " -f1)" = "$dsum" ] || die "the signed disk image $o/tomato-$v.dmg is missing or changed; nothing is published without it"
   if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then [ "$(git rev-parse "$tag^{commit}")" = "$c" ] || die "tag $tag exists locally on another commit"; else git tag "$tag" "$c"; fi
   git push -q origin "refs/tags/$tag" || die "pushing the tag failed"
   if gh release view "$tag" --repo "$slug" > /dev/null 2>&1; then
     note "release $tag exists (resuming): uploading the assets again"
-    gh release upload "$tag" "$o/tomato-$v.tar.gz" "$o/tomato-$v.pkg" "$o/latest.json" --clobber --repo "$slug" || die "gh release upload failed"
+    gh release upload "$tag" "$o/tomato-$v.tar.gz" "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" "$o/latest.json" --clobber --repo "$slug" || die "gh release upload failed"
   else
-    gh release create "$tag" "$o/tomato-$v.tar.gz" "$o/tomato-$v.pkg" "$o/latest.json" --verify-tag --title "Tomato $v" --generate-notes --repo "$slug" || die "gh release create failed. Nothing is on the site yet; to undo a half-made release: gh release delete $tag --cleanup-tag -y --repo $slug"
+    gh release create "$tag" "$o/tomato-$v.tar.gz" "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" "$o/latest.json" --verify-tag --title "Tomato $v" --generate-notes --repo "$slug" || die "gh release create failed. Nothing is on the site yet; to undo a half-made release: gh release delete $tag --cleanup-tag -y --repo $slug"
   fi
   st_set published yes
   d="$(mktemp -d)"
-  gh release download "$tag" --repo "$slug" --dir "$d" --pattern "tomato-$v.pkg" --pattern "tomato-$v.tar.gz" --pattern latest.json || die "cannot download the published assets"
+  gh release download "$tag" --repo "$slug" --dir "$d" --pattern "tomato-$v.pkg" --pattern "tomato-$v.dmg" --pattern "tomato-$v.tar.gz" --pattern latest.json || die "cannot download the published assets"
   [ "$(shasum -a 256 "$d/tomato-$v.pkg" | cut -d' ' -f1)" = "$sum" ] || die "the PUBLISHED package's sha256 differs from $sum. The site is not updated (main is not pushed). Delete the release: gh release delete $tag --cleanup-tag -y --repo $slug"
   [ "$(shasum -a 256 "$d/tomato-$v.tar.gz" | cut -d' ' -f1)" = "$tsum" ] || die "the PUBLISHED tarball's sha256 differs from $tsum (main is not pushed)"
+  [ "$(shasum -a 256 "$d/tomato-$v.dmg" | cut -d' ' -f1)" = "$dsum" ] || die "the PUBLISHED disk image's sha256 differs from $dsum (main is not pushed)"
   cmp -s "$d/latest.json" site/latest.json || die "the published latest.json differs from site/latest.json (main is not pushed)"
   url="$(sed -n 's/.*"pkg_url" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
   curl -fsSL -o "$d/public.pkg" "$url" || die "cannot download $url"
   [ "$(shasum -a 256 "$d/public.pkg" | cut -d' ' -f1)" = "$sum" ] || die "$url serves a different file than the signed package"
+  durl="$(sed -n 's/.*"dmg_url" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
+  curl -fsSL -o "$d/public.dmg" "$durl" || die "cannot download $durl"
+  [ "$(shasum -a 256 "$d/public.dmg" | cut -d' ' -f1)" = "$dsum" ] || die "$durl serves a different file than the signed disk image"
   rm -rf "$d"; st_set release_url "https://github.com/$slug/releases/tag/$tag"
-  note "published and verified: sha256 $sum, $url"
+  note "published and verified: sha256 $sum, $url; disk image sha256 $dsum, $durl"
 }
 
 step_push() {
@@ -591,6 +632,7 @@ step_summary() {
   say ""
   say "notarization:   $(st_get notarization)"
   say "package sha256: $(st_get pkg_sha256)"
+  say "disk image sha256: $(st_get dmg_sha256)"
   say "tarball sha256: $(st_get tar_sha256)"
   if [ "$dry" = 1 ]; then say "release URL:    (not published: dry run)"; else say "release URL:    $(st_get release_url)"; fi
   say "release commit: $(st_get commit_sha) in $clone  (pushed: $(if [ "$dry" = 1 ]; then echo 'no, dry run'; else st_get pushed; fi))"

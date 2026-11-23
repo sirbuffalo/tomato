@@ -43,7 +43,7 @@ def main():
     print(near(atan2(4, 3).deg(), 53.130102354), atan2(5, 5) == atan2(1, 1), atan2(-0.5, 2) < deg(0))
     print(near(atan2(sin(deg(100)), cos(deg(100))).deg(), 100.0), near(atan2(sin(deg(-100)), cos(deg(-100))).deg(), -100.0))
     # roots, powers and logarithms
-    print(sqrt(2) == sqrt(2.0), sqrt(0), sqrt(16), sqrt(2.25), hypot(3, 4), hypot(5, 12), hypot(-3, 4), hypot(0, 0), cbrt(27), cbrt(-8))
+    print(sqrt(2) == sqrt(2.0), sqrt(0), sqrt(16), sqrt(2.25), hypot(3, 4), hypot(5, 12), hypot(-3, 4), hypot(0, 0), near(cbrt(27), 3.0), near(cbrt(-8), -2.0))
     print(exp(0), near(exp(1), e), near(exp(-1), 1.0 / e), log(1), near(log(e), 1.0), near(log_base(100, 10), 2.0), log2(8), log10(1000), near(log_base(8, 2), 3.0), near(log(2.5), 0.91629073187))
     # hyperbolic functions take and give plain numbers
     print(sinh(0), cosh(0), tanh(0), asinh(0), acosh(1), atanh(0))

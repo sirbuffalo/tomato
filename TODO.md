@@ -10,7 +10,5 @@
   macOS CI cannot detect leaks (LeakSanitizer does not run there), which is how the error-path and task-waiter leaks fixed by the code cleanup went unnoticed. Export `ASAN_SYMBOLIZER_PATH` so a failure shows the real report.
 - Free temporaries on the error path of class-object slicing and big-int range bounds
   The last two known error-path leaks: `obj[a:b]` on a class object when it raises, and a big int in a range bound when a later bound fails its check. The other cases are covered by `tests/programs/error_path_release.tom`.
-- Make the `angles` test tolerant of libm differences
-  glibc's `cbrt(27)` gives 3.0000000000000004 where macOS gives 3.0, so `program angles` fails on Linux; compare with a tolerance (or print a rounded value) so the suite is clean there (it is the only check that fails on Linux).
 - Add a `time` module (wall clock, gmtime/strftime/isoformat, Stopwatch)
   The code cleanup task's tooling reviewer wrote a draft, kept at `~/.cache/tomato-time-module-draft/` on the build server (`std/time.tom` with `time()`, `monotonic()`, `Stopwatch`, `gmtime`, `timegm`, `strftime`, `isoformat`, `format_duration`, UTC only, plus a `tomato_time` runtime function); it was left out as a new feature and needs a decision on the API first.

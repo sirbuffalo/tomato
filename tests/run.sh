@@ -448,6 +448,19 @@ if [ "$(uname)" = Darwin ] && command -v pkgbuild >/dev/null 2>&1; then   # the 
     check "pkg: a reinstall (tomato update) works with a root-owned bin folder" "0" "$rc"
   fi
   else bad "pkg: builds and expands"; fi
+  # the disk image around the package, unsigned (a release signs, notarizes and staples it); run twice, as a resumed release would
+  if [ -n "$pkg" ]; then
+    lj="$fake/out/latest.json"; tsum="$(shasum -a 256 "$fake"/out/tomato-*.tar.gz | cut -d' ' -f1)"
+    if TOMATO_NO_SIGN=1 TOMATO_LATEST_JSON="$lj" sh release/dmg.sh "$pkg" "$work/t.dmg" > "$work/dmg.log" 2>&1 &&
+       TOMATO_NO_SIGN=1 TOMATO_LATEST_JSON="$lj" sh release/dmg.sh "$pkg" "$work/t.dmg" > "$work/dmg.log" 2>&1; then
+      ok "dmg: builds, and holds exactly the package (dmg.sh mounts it and compares)"
+      check "dmg: latest.json records the image's sha256" "$(shasum -a 256 "$work/t.dmg" | cut -d' ' -f1)" "$(sed -n 's/.*"dmg_sha256" *: *"\([^"]*\)".*/\1/p' "$lj")"
+      plutil -convert xml1 -o /dev/null "$lj" 2>/dev/null && ok "dmg: latest.json is still valid JSON" || bad "dmg: latest.json is still valid JSON" "$(cat "$lj")"
+      check "dmg: latest.json keeps all seven keys" "7" "$(grep -c -E '^  "(version|url|sha256|pkg_url|pkg_sha256|dmg_url|dmg_sha256)":' "$lj")"
+      # tomato update reads "url" and "sha256" with these same patterns (native/tomato): the new keys must not shadow them
+      check "dmg: tomato update still reads the tarball's sha256" "$tsum" "$(sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' "$lj" | head -1)"
+    else bad "dmg: builds, and holds exactly the package" "$(tail -3 "$work/dmg.log")"; fi
+  fi
 fi
 echo "== benchmarks (tiny inputs only; the real run is benchmarks/run.sh) =="
 r="$(sh benchmarks/run.sh --smoke 2>&1 | grep -v -e " done$" -e " built$" -e " runs$" | tail -20)"; rc=$?; [ -n "${r##ok:*}" ] && rc=1
