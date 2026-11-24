@@ -87,9 +87,10 @@ function markdown(src) {
 
 // ---- syntax highlighting for <pre><code> blocks (same token classes as editors/vscode/syntaxes/tomato.tmLanguage.json)
 (function () {
-  var KW = /^(def|class|interface|implements|private|const|override|return|if|elif|else|while|for|in|pass|break|continue|try|catch|finally|raise|yield|import|from|export|as|is|and|or|xor|not)$/;
-  var TY = /^(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IOError)$/;
-  var BI = /^(print|len|str|int|float|rational|range|open)$/;
+  var KW = /^(def|class|interface|implements|private|const|override|return|if|elif|else|while|for|in|pass|break|continue|try|catch|finally|raise|yield|import|from|export|async|await|as|is|and|or|xor|not)$/;
+  var MOD = /^(asyncio|base64|cache|csv|datetime|hex|html|itertools|json|math|random|rational|requests|secrets|socket|statistics|textwrap|time|toml|urlparse|uuid)$/;
+  var TY = /^(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IOError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|EOFError|CancelledError|Sized|bitarray|frozenbitarray)$/;
+  var BI = /^(print|len|str|int|float|rational|range|open|input|sleep|clock|min|max|sum|abs|chr|ord|round|divmod|any|all|sorted|reversed|enumerate|zip|map|filter|list|dict|set|tuple|bool)$/;
   var TOKEN = /(#[^\n]*)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(!?[A-Za-z_]\w*)|(->|\*\*|\/\/|==|!=|<=|>=|[-+*\/%<>=&|^])|(@\w+)/g;
   function highlight(src) {
     var out = "", last = 0, m;
@@ -104,7 +105,9 @@ function markdown(src) {
         var after = src.charAt(m.index + t.length), word = t.replace(/^!/, "");
         if (t.charAt(0) === "!") cls = "tk-l";
         else if (/^(True|False|None)$/.test(t)) cls = "tk-k2";
-        else if (KW.test(t)) cls = "tk-k";
+        else if (KW.test(t) || t === "self") cls = "tk-k";
+        else if ((t === "start" || t === "yields") && /^\s+(?!(?:in|is|and|or|xor|not|if|else|for|as)\b)[A-Za-z_]/.test(src.slice(m.index + t.length, m.index + t.length + 40))) cls = "tk-k";
+        else if (MOD.test(t) && /\b(?:import|from)\s+$/.test(src.slice(Math.max(0, m.index - 20), m.index))) cls = "tk-t";
         else if (BI.test(t) && after === "(") cls = "tk-b";
         else if (TY.test(t)) cls = "tk-t";
         else if (/\s*\(/.test(src.slice(m.index + t.length, m.index + t.length + 2)) || after === "(") cls = "tk-f";

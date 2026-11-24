@@ -293,6 +293,7 @@ wasm_rt() { spawn t_wasm_rt "$@"; }
 t_wasm_browser() { r="$(tjsc site/wasm run tests/programs/requests_browser.tom 2>&1 | grep "no network")"; check "wasm requests raise ConnectionError" "no network: True" "$r"; }
 t_wasm_sockets() { r="$(jsc native/tomato-jsc.js -- site/wasm run tests/programs/socket_browser.tom 2>&1 | grep "no sockets")"; check "wasm sockets raise SocketError" "no sockets: True E446" "$r"; }
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
+t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ] && ok "highlighters know every lexer keyword and built-in" || bad "highlighters" "$r"; }
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
@@ -339,6 +340,8 @@ if [ -n "$have_js" ]; then
   spawn t_wasm_site_errors
   spawn t_wasm_site_editor
 else spawn t_wasm_missing; fi
+
+spawn t_highlighter_lists
 
 # ---- command line -------------------------------------------------------------------------------------------------------
 need_install() { # waits (up to 10 minutes) for t_install; a job whose install never reported fails instead of waiting for ever
