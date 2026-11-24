@@ -1,0 +1,298 @@
+# TCP sockets, async like the rest of the waits: `import socket`.
+#
+#     conn = await socket.connect('example.com', 80)     # tries every address the name has (IPv4 and IPv6)
+#     await conn.send_text('GET / HTTP/1.0\r\nHost: example.com\r\n\r\n')
+#     status = await conn.recv_line()                     # 'HTTP/1.0 200 OK\r\n'
+#     rest = await conn.recv(4096)                        # up to 4096 bytes as list[int]; [] once the other side closed
+#     conn.close()
+#
+#     server = await socket.listen('127.0.0.1', 8080)     # port 0 picks a free port: server.port says which
+#     while True:
+#         c = await server.accept()                       # c.peer_host, c.peer_port
+#         start handle(c)
+#
+# Bytes are list[int] (each 0-255), as in requests' Response.content; send_text and recv_line cover text protocols
+# (UTF-8, and bytes that are not valid UTF-8 come back as U+FFFD). send waits until everything is sent. Every wait lets
+# other tasks run, and nothing polls: the scheduler waits on the descriptors together with sleeps and requests.
+# Timeouts come from asyncio: `await asyncio.wait_for(start conn.recv(100), 5)` cancels the recv when time runs out.
+# Cancelling the wait_for itself leaves that started recv running (it takes the next bytes): cancel it too.
+# Let one task at a time send on a socket: the pieces of two large sends at once can mix.
+#
+# Errors are SocketError (an IOError), or one of its kinds: ConnectionRefusedError, ConnectionResetError (also a broken
+# pipe: writing to a closed connection never stops the program) and AddressError (a name that cannot be found). Using a
+# closed socket is a SocketError.
+#
+# A task waiting on a socket keeps the program running even after main is done: close the socket to let it end.
+#
+# Waiting for a line of input (await input()) stops every other task, sockets and timeouts included, until it comes.
+#
+# Limits: looking a name up (getaddrinfo) blocks every task while it runs; there is no TLS and no UDP yet; there are no
+# destructors, so close() what you open (a socket nobody closes stays open until the program ends). The browser
+# playground has no sockets: there every call raises SocketError.
+
+# the runtime's socket functions (runtime/tomato_rt.c); a socket is its descriptor number, and await _fd_wait(fd, mode)
+# waits until it can be read (1) or written (2)
+!tomato_sock_err_kind() -> int
+!tomato_sock_err_text() -> str
+!tomato_sock_resolve(host: str, port: int, passive: int) -> int
+!tomato_sock_addr_count(id: int) -> int
+!tomato_sock_resolve_free(id: int)
+!tomato_sock_open(id: int, i: int) -> int
+!tomato_sock_connected(fd: int) -> int
+!tomato_sock_bind(id: int, i: int, backlog: int) -> int
+!tomato_sock_accept(fd: int) -> int
+!tomato_sock_send(fd: int, data: list[int], start: int) -> int
+!tomato_sock_text_size(text: str) -> int
+!tomato_sock_send_text(fd: int, text: str, start: int) -> int
+!tomato_sock_recv(fd: int, out: list[int], n: int) -> int
+!tomato_sock_decode(data: list[int], start: int, stop: int) -> str
+!tomato_sock_find(data: list[int], start: int, byte: int) -> int
+!tomato_sock_close(fd: int)
+!tomato_sock_port(fd: int) -> int
+!tomato_sock_peer_host(fd: int) -> str
+!tomato_sock_peer_port(fd: int) -> int
+
+# Everything this library raises is a SocketError, so `catch SocketError` handles any failure of a socket.
+export class SocketError(IOError):
+    @init
+    def make_socket_error(self, message: str, id: str = ''):
+        IOError.make_io(self, message, id)
+
+# Nothing listens at that address and port.
+export class ConnectionRefusedError(SocketError):
+    @init
+    def make_refused(self, message: str, id: str = ''):
+        SocketError.make_socket_error(self, message, id)
+
+# The other side dropped the connection (or it was closed while this side was still writing).
+export class ConnectionResetError(SocketError):
+    @init
+    def make_reset(self, message: str, id: str = ''):
+        SocketError.make_socket_error(self, message, id)
+
+# The host name cannot be found, or the address or port is not usable.
+export class AddressError(SocketError):
+    @init
+    def make_address(self, message: str, id: str = ''):
+        SocketError.make_socket_error(self, message, id)
+
+# raise the error of the runtime call that just failed, with what was being done in front of it
+def _fail(doing: str):
+    kind = !tomato_sock_err_kind()
+    text = !tomato_sock_err_text()
+    if doing != '':
+        text = f'{doing}: {text}'
+    if kind == 1:
+        raise ConnectionRefusedError(text, 'E442')
+    if kind == 2:
+        raise ConnectionResetError(text, 'E443')
+    if kind == 3:
+        raise AddressError(text, 'E444')
+    if kind == 6:
+        raise SocketError(text, 'E446')
+    raise SocketError(text, 'E441')
+
+def _would_block() -> bool:
+    return !tomato_sock_err_kind() == 5
+
+# A call that does not need to wait still lets the other tasks and timers run once in this many calls on a socket, so a peer
+# that is always ready cannot keep them waiting.
+const _turns = 16
+
+# A connection: what connect() and Server.accept() give.
+export class Socket:
+    fd: int = -1                 # the descriptor; -1 once closed
+    peer_host: str = ''          # the address of the other side, as text ('127.0.0.1', '::1')
+    peer_port: int = 0
+    private buffer: list[int] = []      # bytes received but not yet given out (recv_line reads ahead)
+    private busy: int = 0               # calls since this socket last let other tasks run (see _turns)
+    private taken: int = 0              # how often bytes were taken out of it, by any task
+
+    @init
+    def make(self, fd: int):
+        self.fd = fd
+        self.peer_host = !tomato_sock_peer_host(fd)
+        self.peer_port = !tomato_sock_peer_port(fd)
+
+    # send every byte of data (each an int from 0 to 255), waiting while the connection cannot take more
+    async def send(self, data: list[int]):
+        if self.fd < 0:
+            raise SocketError('the socket is closed', 'E445')
+        done = 0
+        while done < len(data):
+            self.busy += 1
+            if self.busy >= _turns:
+                self.busy = 0
+                await sleep(0)
+            if self.fd < 0:
+                raise SocketError('the socket is closed', 'E445')
+            n = !tomato_sock_send(self.fd, data, done)
+            if n < 0:
+                if not _would_block():
+                    _fail('')
+                await _fd_wait(self.fd, 2)
+            else:
+                done += n
+
+    # send text as UTF-8
+    async def send_text(self, text: str):
+        if self.fd < 0:
+            raise SocketError('the socket is closed', 'E445')
+        size = !tomato_sock_text_size(text)
+        done = 0
+        while done < size:
+            self.busy += 1
+            if self.busy >= _turns:
+                self.busy = 0
+                await sleep(0)
+            if self.fd < 0:
+                raise SocketError('the socket is closed', 'E445')
+            n = !tomato_sock_send_text(self.fd, text, done)
+            if n < 0:
+                if not _would_block():
+                    _fail('')
+                await _fd_wait(self.fd, 2)
+            else:
+                done += n
+
+    # fill the buffer with what arrives next: False when the other side has closed
+    async def _fill(self, n: int) -> bool:
+        while True:
+            if self.fd < 0:
+                raise SocketError('the socket is closed', 'E445')
+            got = !tomato_sock_recv(self.fd, self.buffer, n)
+            if got >= 0:
+                return got > 0
+            if not _would_block():
+                _fail('')
+            await _fd_wait(self.fd, 1)
+
+    # up to n bytes, as soon as there are any; [] once the other side has closed the connection
+    async def recv(self, n: int = 4096) -> list[int]:
+        if n <= 0:
+            return []
+        self.busy += 1
+        if self.busy >= _turns:
+            self.busy = 0
+            await sleep(0)
+        while len(self.buffer) == 0:         # again when another task took what arrived
+            if not await self._fill(n) and len(self.buffer) == 0:
+                return []
+        out = self.buffer[:n]
+        self.buffer = self.buffer[n:]
+        self.taken += 1
+        return out
+
+    # the next line as text, with its '\n' (and '\r' before it, if any); at the end of the connection what is left (a last
+    # line without '\n'), then ''
+    async def recv_line(self) -> str:
+        self.busy += 1
+        if self.busy >= _turns:
+            self.busy = 0
+            await sleep(0)
+        looked = 0
+        taken = self.taken
+        ended = False
+        while True:
+            if taken != self.taken:          # another task took bytes: what was searched is gone
+                looked = 0
+                taken = self.taken
+            at = !tomato_sock_find(self.buffer, looked, 10)
+            if at >= 0:
+                line = !tomato_sock_decode(self.buffer, 0, at + 1)
+                self.buffer = self.buffer[at + 1:]
+                self.taken += 1
+                return line
+            if ended:
+                line = !tomato_sock_decode(self.buffer, 0, len(self.buffer))
+                self.buffer = []
+                self.taken += 1
+                return line
+            looked = len(self.buffer)
+            if not await self._fill(4096):
+                ended = True                 # look once more: another task may have received bytes meanwhile
+
+    # close the connection (closing twice is fine)
+    def close(self):
+        if self.fd >= 0:
+            !tomato_sock_close(self.fd)
+            self.fd = -1
+
+# A listening socket: what listen() gives.
+export class Server:
+    fd: int = -1
+    host: str = ''
+    private busy: int = 0
+    port: int = 0                # the port it listens on (the one picked, when listen was given 0)
+
+    @init
+    def make(self, fd: int, host: str):
+        self.fd = fd
+        self.host = host
+        self.port = !tomato_sock_port(fd)
+
+    # the next connection, waiting until one comes
+    async def accept(self) -> Socket:
+        self.busy += 1
+        if self.busy >= _turns:
+            self.busy = 0
+            await sleep(0)
+        while True:
+            if self.fd < 0:
+                raise SocketError('the socket is closed', 'E445')
+            c = !tomato_sock_accept(self.fd)
+            if c >= 0:
+                return Socket(c)
+            if not _would_block():
+                _fail('')
+            await _fd_wait(self.fd, 1)
+
+    def close(self):
+        if self.fd >= 0:
+            !tomato_sock_close(self.fd)
+            self.fd = -1
+
+# connect to host:port over TCP, trying each address the name has in turn
+export async def connect(host: str, port: int) -> Socket:
+    r = !tomato_sock_resolve(host, port, 0)
+    if r == 0:
+        _fail('')
+    try:
+        count = !tomato_sock_addr_count(r)
+        last = SocketError(f'could not connect to {host}:{port}', 'E441')
+        for i in range(count):
+            fd = !tomato_sock_open(r, i)
+            try:
+                if fd < 0:
+                    _fail(f'{host}:{port}')
+                while True:
+                    await _fd_wait(fd, 2)
+                    if !tomato_sock_connected(fd) == 0:
+                        return Socket(fd)
+                    if not _would_block():
+                        _fail(f'{host}:{port}')
+            catch SocketError as e:
+                !tomato_sock_close(fd)
+                last = e
+            catch Error as e:
+                !tomato_sock_close(fd)         # cancelled (a timeout) while connecting
+                raise e
+        raise last
+    finally:
+        !tomato_sock_resolve_free(r)
+
+# listen for connections on the first address of host:port that can be used ('' or '0.0.0.0' for every address of this machine; port 0 picks a free one)
+export async def listen(host: str, port: int, backlog: int = 128) -> Server:
+    r = !tomato_sock_resolve(host, port, 1)
+    if r == 0:
+        _fail('')
+    try:
+        count = !tomato_sock_addr_count(r)
+        for i in range(count):
+            fd = !tomato_sock_bind(r, i, backlog)
+            if fd >= 0:
+                return Server(fd, host)
+        _fail(f'{host}:{port}')                  # the reason the last address could not be used
+        return Server(-1, host)
+    finally:
+        !tomato_sock_resolve_free(r)

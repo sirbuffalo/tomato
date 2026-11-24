@@ -1,0 +1,23 @@
+# tasks left waiting on a queue nobody will fill are dropped when main ends, and freed: the leak check stays quiet (it
+# only speaks when no error was raised during the run, so this program raises none)
+import asyncio
+
+async def forever(q: asyncio.Queue[int]):
+    await q.get()
+    print('never printed')
+
+async def waits_for(t: task[None]):
+    await t
+    print('never printed either')
+
+@main
+async def main():
+    q = asyncio.Queue[int]()
+    direct = start q.get()  # allow: unused
+    s = start forever(q)
+    w = start waits_for(s)  # allow: unused
+    full = asyncio.Queue[str](1)
+    await full.put('x')
+    p = start full.put('y')  # allow: unused
+    await sleep(0.01)
+    print('main done', q.qsize(), full.qsize())

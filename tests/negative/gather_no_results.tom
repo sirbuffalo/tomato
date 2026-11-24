@@ -1,0 +1,8 @@
+import asyncio
+
+async def job():
+    await sleep(0)
+
+@main
+async def main():
+    await asyncio.gather([start job(), start job()])

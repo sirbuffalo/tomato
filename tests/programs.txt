@@ -52,6 +52,11 @@ async_methods
 async_sleep
 async_cancel
 async_conditions
+async_toolkit
+async_queue_drop
+async_gc_release
+socket_local
+socket_fair
 compound_ops
 unpacking
 iterable_sized

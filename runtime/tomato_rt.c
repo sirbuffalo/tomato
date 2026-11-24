@@ -2175,6 +2175,11 @@ static PtrVec ready_q; static int64_t ready_head;
 typedef struct { void *frame; void *prompt; } InputWait;
 static InputWait *in_q; static int64_t in_n, in_cap, in_head;
 
+#define F_CANCEL (1LL << 38)     /* cancelled: CancelledError is raised at the task's next wait */
+#define F_PARKED (1LL << 39)     /* parked by await _park (std/asyncio) */
+#define F_INLINE (1LL << 40)     /* made by await f(...): only the awaiting task waits on it, nobody else can hold it */
+void tomato_task_cancel(void *h);
+
 void tomato_q_push(void *f) {
     tomato_retain(f);
     if (ready_q.n == ready_q.cap) {
@@ -2193,7 +2198,19 @@ void *tomato_q_pop(void) {
     return ready_q.items[ready_head++];
 }
 
+/* a task about to wait that was cancelled while it ran does not wait: it is made ready, so it raises at once */
+static int cancelled_before_wait(void *me) {
+    if (!(((Hdr *)me)->type & F_CANCEL)) return 0;
+    tomato_q_push(me);
+    return 1;
+}
+
 void tomato_task_wait(void *h, void *me) {
+    int pass_on = 0;
+    if (((Hdr *)me)->type & F_CANCEL) {
+        if (((Hdr *)h)->type & F_INLINE) { ((Hdr *)me)->type &= ~F_CANCEL; pass_on = 1; }    /* D76b: into the call it awaits */
+        else { tomato_q_push(me); return; }
+    }
     PtrVec *v = *(PtrVec **)((char *)h + 40);
     if (!v) { v = calloc(1, sizeof *v); if (!v) out_of_memory(); *(PtrVec **)((char *)h + 40) = v; }
     if (v->n == v->cap) {
@@ -2204,16 +2221,25 @@ void tomato_task_wait(void *h, void *me) {
     tomato_retain(me);
     v->items[v->n++] = me;
     *(uint64_t *)((char *)me + 80) = (uint64_t)(uintptr_t)h;     /* what it waits for, in case it is cancelled */
+    if (pass_on) tomato_task_cancel(h);
 }
 
 void tomato_wake_waiters(void *h) {
     PtrVec *v = *(PtrVec **)((char *)h + 40);
     if (!v) return;
+    Hdr *x = h;
+    if (x->type & F_INLINE) {
+        /* a status nobody can read: the awaiting task waits for the end only, and stays linked so that a cancel finds this task */
+        if (*(int64_t *)((char *)h + 32) == 0) return;
+        /* cancelled, but it ended without another wait: the awaiting task raises at its own next wait */
+        if (x->type & F_CANCEL) { x->type &= ~F_CANCEL; for (int64_t i = 0; i < v->n; i++) ((Hdr *)v->items[i])->type |= F_CANCEL; }
+    }
     for (int64_t i = 0; i < v->n; i++) { *(uint64_t *)((char *)v->items[i] + 80) = 0; tomato_q_push(v->items[i]); tomato_release(v->items[i]); }
     v->n = 0;
 }
 
 void tomato_input_wait(void *frame, void *prompt) {
+    if (cancelled_before_wait(frame)) return;
     if (in_head >= in_n) { in_head = 0; in_n = 0; }
     if (in_n == in_cap) {
         in_cap = in_cap ? in_cap * 2 : 4;
@@ -2228,7 +2254,7 @@ void tomato_input_wait(void *frame, void *prompt) {
  * clock, the earliest first and ties in the order they went to sleep, so the order of what a program prints does not depend on
  * how fast the machine is, natively or in the browser. Natively the process also really waits, until the real time since the
  * first sleep has caught up with the logical clock; in WebAssembly (no blocking sleep) the clock just jumps. */
-typedef struct { void *frame; double wake; int64_t seq; } Sleeper;
+typedef struct { void *frame; double wake, start, seconds; int64_t seq; } Sleeper;   /* start: real time, for net_wait_begins */
 static Sleeper *sl_q; static int64_t sl_n, sl_cap, sl_seq;
 static double sl_now, sl_origin = -1;
 
@@ -2243,18 +2269,40 @@ int64_t tomato_clock_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC
 #if !defined(TOMATO_WASM) && !defined(__wasi__)
 static double real_seconds(void) { return tomato_clock(); }
 static void real_wait_until(double logical) {
-    double left = logical - (real_seconds() - sl_origin);
-    if (left <= 0) return;
-    fflush(stdout);
-    struct timespec t; t.tv_sec = (time_t)left; t.tv_nsec = (long)((left - (double)t.tv_sec) * 1e9);
-    nanosleep(&t, NULL);
+    for (;;) {
+        double left = logical - (real_seconds() - sl_origin);
+        if (!(left > 0)) return;
+        if (left > 86400) left = 86400;       /* a piece at a time: time_t cannot hold every float */
+        fflush(stdout);
+        struct timespec t; t.tv_sec = (time_t)left; t.tv_nsec = (long)((left - (double)t.tv_sec) * 1e9);
+        nanosleep(&t, NULL);
+    }
 }
 #else
 static double real_seconds(void) { return 0; }
 static void real_wait_until(double logical) { (void)logical; }
 #endif
 
+/* A program that has waited for the network (D58c, the exception): from then on the clock follows real time, computing included,
+ * so a timeout is neither early after a long computation nor late while traffic keeps the program busy. */
+static int net_used;
+static void net_wait_begins(void) {
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+    if (net_used) return;
+    net_used = 1;
+    sl_origin = real_seconds() - sl_now;
+    for (int64_t i = 0; i < sl_n; i++) {         /* a sleep that is under way counts real time from when it started, too */
+        sl_q[i].wake = sl_q[i].start + sl_q[i].seconds - sl_origin;      /* one that is overdue keeps its place among them */
+    }
+#endif
+}
+static double clock_now(void) {
+    double real = net_used ? real_seconds() - sl_origin : sl_now;
+    return real > sl_now ? real : sl_now;
+}
+
 void tomato_sleep_wait(void *frame, double seconds) {
+    if (cancelled_before_wait(frame)) return;
     if (sl_origin < 0) sl_origin = real_seconds();
     if (!(seconds > 0)) seconds = 0;
     if (sl_n == sl_cap) {
@@ -2263,7 +2311,7 @@ void tomato_sleep_wait(void *frame, double seconds) {
         if (!sl_q) out_of_memory();
     }
     tomato_retain(frame);
-    sl_q[sl_n].frame = frame; sl_q[sl_n].wake = sl_now + seconds; sl_q[sl_n].seq = sl_seq++; sl_n++;
+    sl_q[sl_n].frame = frame; sl_q[sl_n].wake = clock_now() + seconds; sl_q[sl_n].start = real_seconds(); sl_q[sl_n].seconds = seconds; sl_q[sl_n].seq = sl_seq++; sl_n++;
 }
 
 /* the sleeper that wakes first, or -1 */
@@ -2305,6 +2353,7 @@ static void http_fail(HttpReq *r, int kind, const char *msg) { char *copy = http
 
 #if !defined(TOMATO_WASM) && !defined(__wasi__)
 #include <dlfcn.h>
+#include <fcntl.h>
 typedef struct { int msg; void *easy; union { void *p; int result; } data; } CurlMsg;
 static struct {
     int tried;
@@ -2501,6 +2550,8 @@ int64_t tomato_http_start(void *method, void *url, void *headers, void *body, in
 
 /* the task waits for request id (compiled code suspends right after this call) */
 void tomato_http_wait(void *frame, int64_t id) {
+    net_wait_begins();
+    if (cancelled_before_wait(frame)) return;
     HttpReq *r = http_get(id);
     tomato_retain(frame);
     if (!r || r->done) { tomato_q_push(frame); tomato_release(frame); return; }
@@ -2524,11 +2575,9 @@ int64_t tomato_http_body_byte(int64_t id, int64_t i) { HttpReq *r = http_get(id)
 void *tomato_http_url(int64_t id) { HttpReq *r = http_get(id); return tomato_str_from_cstr(r && r->final_url ? r->final_url : ""); }
 void *tomato_http_headers(int64_t id) { HttpReq *r = http_get(id); return r && r->head ? str_new(r->head, r->head_n) : tomato_str_from_cstr(""); }
 
-/* the body as text: bytes that are not valid UTF-8 become U+FFFD, so the result is always valid text */
-void *tomato_http_text(int64_t id) {
-    HttpReq *r = http_get(id);
-    if (!r || !r->body) return tomato_str_from_cstr("");
-    const unsigned char *s = (const unsigned char *)r->body; int64_t n = r->body_n, o = 0;
+/* bytes as text: bytes that are not valid UTF-8 become U+FFFD, so the result is always valid text */
+static void *utf8_lossy(const unsigned char *s, int64_t n) {
+    int64_t o = 0;
     char *out = malloc((size_t)n * 3 + 1);
     if (!out) out_of_memory();
     for (int64_t i = 0; i < n;) {
@@ -2545,6 +2594,13 @@ void *tomato_http_text(int64_t id) {
     return res;
 }
 
+/* the body as text (see utf8_lossy) */
+void *tomato_http_text(int64_t id) {
+    HttpReq *r = http_get(id);
+    if (!r || !r->body) return tomato_str_from_cstr("");
+    return utf8_lossy((const unsigned char *)r->body, r->body_n);
+}
+
 /* forget a request (the library calls this once it has read the result); a request still running is stopped */
 void tomato_http_free(int64_t id) {
     HttpReq *r = http_get(id);
@@ -2559,12 +2615,136 @@ void tomato_http_free(int64_t id) {
     free(r); http_t[id - 1] = NULL;
 }
 
+/* ---- descriptor waits (std/socket.tom): await _fd_wait(fd, mode) parks the task until the descriptor can be read (mode 1) or
+ * written (mode 2). The descriptors are checked with poll when nothing else can run, in the same wait as libcurl's (its
+ * curl_multi_poll takes extra descriptors), so sockets, requests and sleeps all overlap. */
+typedef struct { void *frame; int64_t fd; int mode; } FdWait;
+static FdWait *fd_q; static int64_t fd_n, fd_cap;
+
+void tomato_fd_wait(void *frame, int64_t fd, int64_t mode) {
+    net_wait_begins();
+    if (cancelled_before_wait(frame)) return;
+    tomato_retain(frame);
+#if defined(TOMATO_WASM) || defined(__wasi__)
+    (void)fd; (void)mode;
+    tomato_q_push(frame); tomato_release(frame);         /* no sockets here: the library fails before it ever waits */
+#else
+    if (fd < 0 || fd > INT32_MAX || (fd > 1 << 20 && fcntl((int)fd, F_GETFD) < 0)) { tomato_q_push(frame); tomato_release(frame); return; }     /* not a descriptor: the call that waits reports it */
+    if (fd_n == fd_cap) {
+        fd_cap = fd_cap ? fd_cap * 2 : 8;
+        fd_q = realloc(fd_q, (size_t)fd_cap * sizeof *fd_q);
+        if (!fd_q) out_of_memory();
+    }
+    fd_q[fd_n].frame = frame; fd_q[fd_n].fd = fd; fd_q[fd_n].mode = (int)mode; fd_n++;
+#endif
+}
+
+/* a cancelled task stops waiting for its descriptor (its reference is given back) */
+static int fd_cancel_frame(void *frame) {
+    for (int64_t i = 0; i < fd_n; i++)
+        if (fd_q[i].frame == frame) {
+            memmove(fd_q + i, fd_q + i + 1, (size_t)(fd_n - i - 1) * sizeof *fd_q); fd_n--;
+            tomato_release(frame);
+            return 1;
+        }
+    return 0;
+}
+
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+#include <poll.h>
+/* one pollfd per distinct descriptor (many tasks may wait on one, such as a server's accept), so there are never more than
+ * the process can have open (poll refuses more than RLIMIT_NOFILE); slot[i] says which pollfd wait i uses */
+static int64_t fd_poll_set(struct pollfd **out, int64_t **slot) {
+    static int64_t *of; static int64_t of_n;      /* by descriptor: its pollfd + 1 in this set, or 0 (all 0 between calls) */
+    struct pollfd *p = malloc((size_t)fd_n * sizeof *p);
+    int64_t *at = malloc((size_t)fd_n * sizeof *at);
+    if (!p || !at) out_of_memory();
+    int64_t m = 0;
+    for (int64_t i = 0; i < fd_n; i++) {
+        int64_t fd = fd_q[i].fd;
+        if (fd >= of_n) {
+            int64_t n = of_n ? of_n : 64;
+            while (n <= fd) n *= 2;
+            of = realloc(of, (size_t)n * sizeof *of);
+            if (!of) out_of_memory();
+            memset(of + of_n, 0, (size_t)(n - of_n) * sizeof *of);
+            of_n = n;
+        }
+        if (!of[fd]) { p[m].fd = (int)fd; p[m].events = 0; p[m].revents = 0; of[fd] = ++m; }
+        p[of[fd] - 1].events |= fd_q[i].mode == 2 ? POLLOUT : POLLIN;
+        at[i] = of[fd] - 1;
+    }
+    for (int64_t j = 0; j < m; j++) of[p[j].fd] = 0;
+    *out = p; *slot = at;
+    return m;
+}
+
+/* wait up to ms for a listed descriptor (and for libcurl when requests are running) */
+static void io_block(int ms) {
+    if (ms < 0) ms = 0;
+    if (fd_n == 0) { http_block(ms); return; }
+    struct pollfd *p; int64_t *at;
+    int64_t m = fd_poll_set(&p, &at);
+    if (http_active > 0) {
+        struct { int fd; short events, revents; } *w = malloc((size_t)m * sizeof *w);    /* struct curl_waitfd */
+        if (!w) out_of_memory();
+        for (int64_t j = 0; j < m; j++) { w[j].fd = p[j].fd; w[j].events = (short)(((p[j].events & POLLIN) ? 1 : 0) | ((p[j].events & POLLOUT) ? 4 : 0)); w[j].revents = 0; }   /* CURL_WAIT_POLLIN, _POLLOUT */
+        int n; cu.multi_poll(cu.multi, w, (unsigned)m, ms, &n);
+        free(w);
+    } else poll(p, (nfds_t)m, ms);
+    free(p); free(at);
+}
+
+/* make ready every task whose descriptor can be used now (an error or a hang-up counts: the call it retries reports it) */
+static int fd_step(void) {
+    if (fd_n == 0) return 0;
+    struct pollfd *p; int64_t *at;
+    int64_t m = fd_poll_set(&p, &at);
+    int woke = 0;
+    if (poll(p, (nfds_t)m, 0) > 0) {
+        int64_t keep = 0, n = fd_n;
+        for (int64_t i = 0; i < n; i++) {
+            short want = fd_q[i].mode == 2 ? POLLOUT : POLLIN, got = p[at[i]].revents;
+            if (got & (want | POLLERR | POLLHUP | POLLNVAL)) { tomato_q_push(fd_q[i].frame); tomato_release(fd_q[i].frame); woke++; }
+            else fd_q[keep++] = fd_q[i];
+        }
+        fd_n = keep;
+    }
+    free(p); free(at);
+    return woke;
+}
+#else
+static void io_block(int ms) { (void)ms; }
+static int fd_step(void) { return 0; }
+#endif
+
+/* once the network is used, the clock catches up with real time, but not past the first sleeper (it wakes there) */
+static void clock_catch_up(int64_t first) {
+    if (!net_used) return;
+    double now = clock_now();
+    if (first >= 0 && now > sl_q[first].wake) now = sl_q[first].wake;
+    if (now > sl_now) sl_now = now;
+}
+
 /* nothing is ready to run: wake a sleeper whose time has come; else let the oldest task that asked for a line of input have
  * it (time does not pass while there is input to give); else move the clock to the first wake-up. Returns 1 when one was woken. */
 int tomato_sched_idle(void) {
     int64_t s = sleeper_first();
-    if (s >= 0 && sl_q[s].wake <= sl_now) { sleeper_wake(s); return 1; }
+    clock_catch_up(s);
+    if (s >= 0 && sl_q[s].wake <= sl_now) {
+        sleeper_wake(s);
+        /* in a program that uses the network, all that are due, so the traffic made ready below does not run between them */
+        while (net_used && (s = sleeper_first()) >= 0) {
+            clock_catch_up(s);
+            if (sl_q[s].wake > sl_now) break;
+            sleeper_wake(s);
+        }
+        if (http_active > 0) http_step();
+        if (fd_n > 0) fd_step();          /* a task that keeps sleeping 0 seconds must not starve the sockets */
+        return 1;
+    }
     if (http_active > 0 && http_step() > 0) return 1;      /* a request finished */
+    if (fd_n > 0 && fd_step() > 0) return 1;               /* a socket can be used */
     if (in_head < in_n) {
         InputWait w = in_q[in_head++];
         void *line = tomato_input(w.prompt);
@@ -2574,7 +2754,7 @@ int tomato_sched_idle(void) {
         tomato_release(w.frame);
         return 1;
     }
-    if (http_active > 0) {        /* nothing else can run: wait for the network, but not past the first wake-up */
+    if (http_active > 0 || fd_n > 0) {    /* nothing else can run: wait for the network, but not past the first wake-up */
         for (;;) {
             int ms = 1000;
             if (s >= 0) {
@@ -2583,9 +2763,13 @@ int tomato_sched_idle(void) {
                 ms = left >= 1.0 ? 1000 : (int)(left * 1000.0) + 1;
             }
             fflush(stdout);
-            http_block(ms);
-            if (http_step() > 0) return 1;
-            if (http_active <= 0) break;
+            io_block(ms);
+            clock_catch_up(s);
+            int woke = 0;
+            if (http_active > 0) woke += http_step();
+            woke += fd_step();
+            if (woke > 0) return 1;
+            if (http_active <= 0 && fd_n <= 0) break;
         }
     }
     if (s >= 0) {
@@ -2600,7 +2784,7 @@ int tomato_sched_idle(void) {
 /* ---- cancelling a task (D58d). The flag is a bit in the frame header; the task raises CancelledError at its next wait
  * (generated code asks tomato_task_cancelled at the start and after every wait). A task that is waiting is taken out of
  * whatever it waits in (sleepers, the input queue, the waiters of another task) and made ready, so it raises at once. */
-#define F_CANCEL (1LL << 38)
+
 
 int32_t tomato_task_cancelled(void *h) {
     Hdr *x = h;
@@ -2609,8 +2793,20 @@ int32_t tomato_task_cancelled(void *h) {
     return 1;
 }
 
+/* a new task that nothing has run or started yet */
+int32_t tomato_task_unstarted(void *h) {
+    char *f = h;
+    return *(int64_t *)(f + 24) == 0 && *(int64_t *)(f + 32) == 0 && *(int64_t *)(f + 72) == 0;
+}
+void tomato_task_inline(void *h) { ((Hdr *)h)->type |= F_INLINE; }
+
 void tomato_task_cancel(void *h) {
     if (*(int64_t *)((char *)h + 32) != 0) return;            /* already finished */
+    /* a task waiting in await f(...) is cancelled where it really waits, inside f (and so on down): CancelledError starts at the
+     * innermost wait and comes back out through each await, as one error. Waiting on a task made with start, only the waiter is
+     * cancelled (D58d), since others may hold that task. */
+    void *child = (void *)(uintptr_t)*(uint64_t *)((char *)h + 80);
+    if (child && (((Hdr *)child)->type & F_INLINE) && *(int64_t *)((char *)child + 32) == 0) { tomato_task_cancel(child); return; }
     ((Hdr *)h)->type |= F_CANCEL;
     int waiting = 0;
     for (int64_t i = 0; i < sl_n; i++)
@@ -2625,7 +2821,9 @@ void tomato_task_cancel(void *h) {
             tomato_release(h); waiting = 1;
         }
     if (!waiting && http_cancel_frame(h)) waiting = 1;
-    void *on = (void *)(uintptr_t)*(uint64_t *)((char *)h + 80);
+    if (!waiting && (((Hdr *)h)->type & F_PARKED)) { ((Hdr *)h)->type &= ~F_PARKED; waiting = 1; }
+    if (!waiting && fd_cancel_frame(h)) waiting = 1;
+    void *on = waiting ? NULL : (void *)(uintptr_t)*(uint64_t *)((char *)h + 80);
     if (on) {
         PtrVec *v = *(PtrVec **)((char *)on + 40);
         for (int64_t i = 0; v && i < v->n; i++)
@@ -2677,6 +2875,281 @@ ALWAYS void *tomato_list_push(void *l, int64_t elem_size) {
     if (__builtin_expect(x->len == x->cap, 0)) list_grow(x, elem_size);
     return x->data + (x->len++) * elem_size;
 }
+
+/* await _park(waiters) (std/asyncio's Queue): the task goes at the end of the list waiters, which holds a reference to it, and
+ * stops until another task gives it to tomato_unpark. The runtime keeps no reference of its own, so a parked task that nobody
+ * can reach any more is freed with the list by the cycle collector (D51b). A cancelled task stays in the list until the library
+ * takes it out; tomato_unpark refuses it meanwhile. */
+void tomato_park(void *frame, void *list) {
+    tomato_retain(frame);
+    *(int64_t *)tomato_list_push(list, 8) = (int64_t)(uintptr_t)frame;
+    if (cancelled_before_wait(frame)) return;
+    ((Hdr *)frame)->type |= F_PARKED;
+}
+
+/* make a parked task ready again (the caller has taken it out of its list); 0 when it is not parked */
+int32_t tomato_unpark(void *frame) {
+    Hdr *h = frame;
+    if (!(h->type & F_PARKED)) return 0;
+    h->type &= ~F_PARKED;
+    tomato_q_push(frame);
+    return 1;
+}
+
+static int64_t int_mk_small(int64_t v);
+
+/* ---- sockets (std/socket.tom): TCP over non-blocking descriptors. Every call returns at once; when it would block it
+ * fails with kind SK_AGAIN and the library waits with await _fd_wait(fd, mode), then calls it again. A failing call sets
+ * the kind and text that tomato_sock_err_kind/_text give. The browser has no sockets: there every call fails with SK_BROWSER. */
+enum { SK_NONE = 0, SK_REFUSED = 1, SK_RESET = 2, SK_ADDRESS = 3, SK_OTHER = 4, SK_AGAIN = 5, SK_BROWSER = 6 };
+static int sk_kind; static char sk_text[256];
+static int64_t sk_fail(int kind, const char *text) { sk_kind = kind; snprintf(sk_text, sizeof sk_text, "%s", text); return -1; }
+int64_t tomato_sock_err_kind(void) { return sk_kind; }
+void *tomato_sock_err_text(void) { return tomato_str_from_cstr(sk_text); }
+
+int64_t tomato_sock_text_size(void *text) { return ((Str *)text)->bytes; }
+
+/* the bytes of list[int] items from..to-1, or NULL when one is not 0-255 */
+static unsigned char *sock_bytes(List *l, int64_t from, int64_t to) {
+    unsigned char *b = malloc((size_t)(to - from) + 1);
+    if (!b) out_of_memory();
+    for (int64_t k = from; k < to; k++) {
+        int64_t w = LIST_SLOT(l, k, int64_t);
+        int64_t v = w == 0 ? 0 : (w & 1) ? (w >> 1) : -1;
+        if (v < 0 || v > 255) { free(b); return NULL; }
+        b[k - from] = (unsigned char)v;
+    }
+    return b;
+}
+
+/* bytes from..to-1 of a list[int] as text (bad UTF-8 becomes U+FFFD); the library decodes received lines with it */
+void *tomato_sock_decode(void *list, int64_t from, int64_t to) {
+    List *l = list;
+    if (from < 0) from = 0;
+    if (to > l->len) to = l->len;
+    if (to <= from) return tomato_str_from_cstr("");
+    unsigned char *b = malloc((size_t)(to - from) + 1);
+    if (!b) out_of_memory();
+    for (int64_t k = from; k < to; k++) { int64_t w = LIST_SLOT(l, k, int64_t); b[k - from] = (w & 1) ? (unsigned char)(w >> 1) : 0; }
+    void *r = utf8_lossy(b, to - from);
+    free(b);
+    return r;
+}
+
+/* the first item at or after from that equals byte, or -1 */
+int64_t tomato_sock_find(void *list, int64_t from, int64_t byte) {
+    List *l = list;
+    int64_t want = int_mk_small(byte);
+    for (int64_t k = from < 0 ? 0 : from; k < l->len; k++) if (LIST_SLOT(l, k, int64_t) == want) return k;
+    return -1;
+}
+
+#if defined(TOMATO_WASM) || defined(__wasi__)
+static int64_t sk_browser(void) { return sk_fail(SK_BROWSER, "sockets are not available in the browser playground (it has no network access from here); run the program with 'tomato run'"); }
+int64_t tomato_sock_resolve(void *host, int64_t port, int64_t passive) { (void)host; (void)port; (void)passive; sk_browser(); return 0; }
+int64_t tomato_sock_addr_count(int64_t id) { (void)id; return 0; }
+void tomato_sock_resolve_free(int64_t id) { (void)id; }
+int64_t tomato_sock_open(int64_t id, int64_t i) { (void)id; (void)i; return sk_browser(); }
+int64_t tomato_sock_bind(int64_t id, int64_t i, int64_t backlog) { (void)id; (void)i; (void)backlog; return sk_browser(); }
+int64_t tomato_sock_connected(int64_t fd) { (void)fd; return sk_browser(); }
+int64_t tomato_sock_accept(int64_t fd) { (void)fd; return sk_browser(); }
+int64_t tomato_sock_send(int64_t fd, void *data, int64_t from) { (void)fd; (void)data; (void)from; return sk_browser(); }
+int64_t tomato_sock_send_text(int64_t fd, void *text, int64_t from) { (void)fd; (void)text; (void)from; return sk_browser(); }
+int64_t tomato_sock_recv(int64_t fd, void *out, int64_t n) { (void)fd; (void)out; (void)n; return sk_browser(); }
+void tomato_sock_close(int64_t fd) { (void)fd; }
+int64_t tomato_sock_port(int64_t fd) { (void)fd; return 0; }
+void *tomato_sock_peer_host(int64_t fd) { (void)fd; return tomato_str_from_cstr(""); }
+int64_t tomato_sock_peer_port(int64_t fd) { (void)fd; return 0; }
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+
+static int64_t sk_errno(int e, const char *what) {
+    int kind = e == ECONNREFUSED ? SK_REFUSED : (e == ECONNRESET || e == EPIPE || e == ECONNABORTED || e == ENOTCONN) ? SK_RESET :
+               (e == EAGAIN || e == EWOULDBLOCK || e == EINPROGRESS || e == EINTR) ? SK_AGAIN : SK_OTHER;
+    char t[200]; snprintf(t, sizeof t, "%s: %s", what, strerror(e));
+    return sk_fail(kind, t);
+}
+
+/* name lookups, by handle (index + 1); the lookup itself blocks every task while it runs */
+static struct addrinfo **sk_res; static int64_t sk_res_n;
+int64_t tomato_sock_resolve(void *host, int64_t port, int64_t passive) {
+    Str *h = host;
+    if (port < 0 || port > 65535) { sk_fail(SK_ADDRESS, "the port must be from 0 to 65535"); return 0; }
+    if (memchr(h->data, 0, (size_t)h->bytes)) { sk_fail(SK_ADDRESS, "the host name holds a zero character"); return 0; }
+    struct addrinfo hints; memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
+    if (passive) hints.ai_flags = AI_PASSIVE;
+    char ps[8]; snprintf(ps, sizeof ps, "%d", (int)port);
+    struct addrinfo *res = NULL;
+    fflush(stdout);
+    int r = getaddrinfo(h->bytes ? h->data : NULL, ps, &hints, &res);
+    if (r != 0 || !res) {
+        char t[220]; snprintf(t, sizeof t, "could not find the address of '%.100s': %s", h->data, gai_strerror(r));
+        sk_fail(SK_ADDRESS, t); return 0;
+    }
+    int64_t slot = -1;
+    for (int64_t i = 0; i < sk_res_n; i++) if (!sk_res[i]) { slot = i; break; }
+    if (slot < 0) {
+        sk_res = realloc(sk_res, (size_t)(sk_res_n + 1) * sizeof *sk_res);
+        if (!sk_res) out_of_memory();
+        slot = sk_res_n++;
+    }
+    sk_res[slot] = res;
+    return slot + 1;
+}
+static struct addrinfo *sk_addr(int64_t id, int64_t i) {
+    if (id < 1 || id > sk_res_n || !sk_res[id - 1]) return NULL;
+    struct addrinfo *a = sk_res[id - 1];
+    while (a && i-- > 0) a = a->ai_next;
+    return a;
+}
+int64_t tomato_sock_addr_count(int64_t id) { int64_t n = 0; for (struct addrinfo *a = sk_addr(id, 0); a; a = a->ai_next) n++; return n; }
+void tomato_sock_resolve_free(int64_t id) {
+    if (id < 1 || id > sk_res_n || !sk_res[id - 1]) return;
+    freeaddrinfo(sk_res[id - 1]); sk_res[id - 1] = NULL;
+}
+
+/* a non-blocking socket that never raises SIGPIPE (MSG_NOSIGNAL on Linux, SO_NOSIGPIPE on macOS) */
+static int sk_socket(struct addrinfo *a) {
+    int fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+    if (fd < 0) return -1;
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+    fcntl(fd, F_SETFD, FD_CLOEXEC);
+#ifdef SO_NOSIGPIPE
+    int one = 1; setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+    return fd;
+}
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
+/* start connecting to address i of a lookup: the descriptor (the connection may still be on its way: wait until it can be
+ * written, then ask tomato_sock_connected), or -1 */
+int64_t tomato_sock_open(int64_t id, int64_t i) {
+    net_wait_begins();
+    struct addrinfo *a = sk_addr(id, i);
+    if (!a) return sk_fail(SK_ADDRESS, "no such address");
+    int fd = sk_socket(a);
+    if (fd < 0) return sk_errno(errno, "could not make a socket");
+    if (connect(fd, a->ai_addr, a->ai_addrlen) != 0 && errno != EINPROGRESS && errno != EINTR) {
+        int e = errno; close(fd); return sk_errno(e, "could not connect");
+    }
+    int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    return fd;
+}
+
+/* 0 once the connection started by tomato_sock_open is made, else -1 */
+int64_t tomato_sock_connected(int64_t fd) {
+    int e = 0; socklen_t n = sizeof e;
+    if (getsockopt((int)fd, SOL_SOCKET, SO_ERROR, &e, &n) != 0) e = errno;
+    if (e == EINPROGRESS || e == EALREADY) return sk_fail(SK_AGAIN, "still connecting");
+    if (e != 0) return sk_errno(e, "could not connect");
+    return 0;
+}
+
+/* listen on address i of a lookup (SO_REUSEADDR, so a restarted server can use its port again at once) */
+int64_t tomato_sock_bind(int64_t id, int64_t i, int64_t backlog) {
+    net_wait_begins();
+    struct addrinfo *a = sk_addr(id, i);
+    if (!a) return sk_fail(SK_ADDRESS, "no such address");
+    int fd = sk_socket(a);
+    if (fd < 0) return sk_errno(errno, "could not make a socket");
+    int one = 1; setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    if (bind(fd, a->ai_addr, a->ai_addrlen) != 0) { int e = errno; close(fd); return sk_errno(e, "could not listen"); }
+    if (listen(fd, backlog > 0 ? (int)backlog : 128) != 0) { int e = errno; close(fd); return sk_errno(e, "could not listen"); }
+    return fd;
+}
+
+int64_t tomato_sock_accept(int64_t fd) {
+    int c = accept((int)fd, NULL, NULL);
+    if (c < 0 && errno == ECONNABORTED) return sk_fail(SK_AGAIN, "the connection was dropped before it was accepted");
+    if (c < 0) return sk_errno(errno, "could not accept a connection");
+    fcntl(c, F_SETFL, fcntl(c, F_GETFL, 0) | O_NONBLOCK);
+    fcntl(c, F_SETFD, FD_CLOEXEC);
+    int one = 1;
+#ifdef SO_NOSIGPIPE
+    setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+    setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    return c;
+}
+
+static int64_t sk_send(int64_t fd, const unsigned char *b, int64_t n) {
+    ssize_t r = send((int)fd, b, (size_t)n, MSG_NOSIGNAL);
+    if (r < 0) return sk_errno(errno, "could not send");
+    return r;
+}
+/* send items from.. of a list[int]: how many bytes went, or -1 */
+int64_t tomato_sock_send(int64_t fd, void *data, int64_t from) {
+    List *l = data;
+    if (from >= l->len) return 0;
+    int64_t to = l->len - from > 262144 ? from + 262144 : l->len;     /* a piece at a time: a big list is not converted again per call */
+    unsigned char *b = sock_bytes(l, from, to);
+    if (!b) return sk_fail(SK_OTHER, "a byte must be an int from 0 to 255");
+    int64_t r = sk_send(fd, b, to - from);
+    free(b);
+    return r;
+}
+/* send the UTF-8 bytes from.. of a text */
+int64_t tomato_sock_send_text(int64_t fd, void *text, int64_t from) {
+    Str *t = text;
+    if (from >= t->bytes) return 0;
+    return sk_send(fd, (const unsigned char *)t->data + from, t->bytes - from);
+}
+
+/* receive up to n bytes onto the end of out: how many (0 when the other side closed), or -1 */
+int64_t tomato_sock_recv(int64_t fd, void *out, int64_t n) {
+    if (n <= 0) return 0;
+    if (n > 1 << 20) n = 1 << 20;
+    unsigned char *b = malloc((size_t)n);
+    if (!b) out_of_memory();
+    ssize_t r = recv((int)fd, b, (size_t)n, 0);
+    if (r < 0) { int e = errno; free(b); return sk_errno(e, "could not receive"); }
+    List *l = out;
+    if (l->len + r > l->cap) {
+        l->cap = l->len + r;
+        l->data = realloc(l->data, (size_t)(l->cap * 8));
+        if (!l->data) out_of_memory();
+    }
+    for (ssize_t k = 0; k < r; k++) LIST_SLOT(l, l->len + k, int64_t) = int_mk_small(b[k]);
+    l->len += r;
+    free(b);
+    return r;
+}
+
+/* close a descriptor; tasks still waiting on it are made ready first (the library sees the socket is closed), so none is
+ * left waiting on a number the next socket may reuse */
+void tomato_sock_close(int64_t fd) {
+    if (fd < 0) return;
+    int64_t keep = 0, n = fd_n;
+    for (int64_t i = 0; i < n; i++) {
+        if (fd_q[i].fd == fd) { tomato_q_push(fd_q[i].frame); tomato_release(fd_q[i].frame); }
+        else fd_q[keep++] = fd_q[i];
+    }
+    fd_n = keep;
+    close((int)fd);
+}
+
+static int sk_name(int64_t fd, int peer, char *host, size_t hn, int *port) {
+    struct sockaddr_storage ss; socklen_t n = sizeof ss;
+    int r = peer ? getpeername((int)fd, (struct sockaddr *)&ss, &n) : getsockname((int)fd, (struct sockaddr *)&ss, &n);
+    if (r != 0) return 0;
+    char ps[16];
+    if (getnameinfo((struct sockaddr *)&ss, n, host, (socklen_t)hn, ps, sizeof ps, NI_NUMERICHOST | NI_NUMERICSERV) != 0) return 0;
+    *port = atoi(ps);
+    return 1;
+}
+int64_t tomato_sock_port(int64_t fd) { char h[64]; int p = 0; return sk_name(fd, 0, h, sizeof h, &p) ? p : 0; }
+void *tomato_sock_peer_host(int64_t fd) { char h[64]; int p = 0; return tomato_str_from_cstr(sk_name(fd, 1, h, sizeof h, &p) ? h : ""); }
+int64_t tomato_sock_peer_port(int64_t fd) { char h[64]; int p = 0; return sk_name(fd, 1, h, sizeof h, &p) ? p : 0; }
+#endif
 
 /* Sets the length of an empty list to n items of `w` bytes and returns its data (the caller fills it in). */
 static char *tomato_list_reserve(List *x, int64_t n, int64_t w) {
@@ -3145,6 +3618,15 @@ static void each_child(Hdr *h, Visit f) {
             Hdr *c = *(Hdr **)((char *)h + *o);
             if (c) f(c);
         }
+        if (kind & 1024) {
+            /* a task frame also holds the tasks waiting for it (byte 40) and the task that started it (byte 72), by hand: the
+             * collector follows them too, so tasks that wait for each other with nothing else able to wake them (a task
+             * waiting for one parked in a queue nobody can reach) are found as a cycle and freed */
+            PtrVec *v = *(PtrVec **)((char *)h + 40);
+            for (int64_t i = 0; v && i < v->n; i++) f((Hdr *)v->items[i]);
+            Hdr *st = (Hdr *)(uintptr_t)*(uint64_t *)((char *)h + 72);
+            if (st) f(st);
+        }
         break;
     }
     case 2:
@@ -3238,6 +3720,29 @@ static void frame_free_waiters(Hdr *h) {
     }
     free(v->items);
     free(v);
+}
+
+/* a task frame the cycle collector frees: its waiters and starter were counted by the tracing, so they are not released */
+static void frame_forget_traced(Hdr *h) {
+    PtrVec *v = *(PtrVec **)((char *)h + 40);
+    *(PtrVec **)((char *)h + 40) = NULL;
+    for (int64_t i = 0; v && i < v->n; i++) {
+        uint64_t *on = (uint64_t *)((char *)v->items[i] + 80);
+        if (*on == (uint64_t)(uintptr_t)h) *on = 0;
+    }
+    if (v) { free(v->items); free(v); }
+    *(uint64_t *)((char *)h + 72) = 0;
+}
+
+/* a failed task in a cycle that is being freed, whose error nobody took (D58a): its starter may be garbage as well, so the error
+ * is reported here rather than handed over */
+static void frame_report_unread(Hdr *h) {
+    if (*(int64_t *)((char *)h + 32) != 2 || (h->type & F_RETRIEVED)) return;
+    void *err = *(void **)((char *)h + 88 + sizeof(void *));
+    const char *cname = err ? tomato_class_names[((Hdr *)err)->type & TYPE_MASK] : "";
+    if (!err || (cname && strcmp(cname, "CancelledError") == 0)) return;
+    h->type |= F_RETRIEVED;
+    unread_report(err, (int)*(int64_t *)((char *)h + 48), (int)*(int64_t *)((char *)h + 56));
 }
 
 static void frame_dropped(Hdr *h) {
@@ -3370,9 +3875,10 @@ static void mark_gray(Hdr *s) {
 
 static void sb_visit(Hdr *c) { if (c->rc >= 0) { c->rc++; if (hcolor(c) != BLACK) spush(c); } }
 static void scan_black(Hdr *s) {
+    int64_t base = stack_n;          /* what scan still has to look at stays: it is not reached from s */
     set_color(s, BLACK);
     each_child(s, sb_visit);
-    while (stack_n) {
+    while (stack_n > base) {
         Hdr *h = stack[--stack_n];
         if (hcolor(h) == BLACK) continue;
         set_color(h, BLACK);
@@ -3442,10 +3948,13 @@ void tomato_collect_cycles(void) {
     for (int64_t i = 0; i < roots_n; i++) roots[i]->type &= ~F_BUFFERED;
     garbage_n = 0;
     for (int64_t i = 0; i < roots_n; i++) collect_white(roots[i]);   /* collect: what is left white is a cycle */
-    /* A task frame's waiters are references the tracing does not see, so a listed waiter kept its count and is black: giving
-     * it back can only free black objects, never one in the garbage list (releasing an object whose count is 0 does nothing). */
+    /* A task frame's waiters and starter are traced (each_child), so like any other reference from the garbage their counts
+     * were already taken off: the frame lets go of them without releasing. */
     for (int64_t i = 0; i < garbage_n; i++)
-        if (tomato_kinds[tcode(garbage[i])] & 1024) frame_free_waiters(garbage[i]);
+        if (tomato_kinds[tcode(garbage[i])] & 1024) {
+            frame_report_unread(garbage[i]);
+            frame_forget_traced(garbage[i]);
+        }
     for (int64_t i = 0; i < garbage_n; i++) {
         free_internals(garbage[i]);
         obj_free(garbage[i]);

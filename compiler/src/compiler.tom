@@ -1778,6 +1778,8 @@ class Mod:
     def instance_func(self, gkey: str, args: list[str], line: int) -> FuncInfo:
         tparams = self.type_params_of(gkey)
         node = self.generics[gkey]
+        if gkey == 'asyncio.gather' and args == ['None']:
+            raise CompileError('gather() gives the results of the tasks, but these tasks give none\nwait for them with: await asyncio.wait_all(tasks)', line)
         if len(args) != len(tparams):
             raise CompileError(f"'{node.fields[0].text}' takes {plural(len(tparams), 'type argument')}, but {len(args)} given", line)
         name = f'{gkey}[{self.arg_key(args)}]'
@@ -2121,6 +2123,7 @@ class Gen:
     ret_yields: str = ''        # what a yield gives out, for an async function with a status
     async_ok: bool = False     # the call being compiled is directly under await or start, so it may be an async call
     fresh_frame: bool = False  # the last call made a new task frame
+    fresh_reg: str = ''        # the register that frame is in
     lifted: int = 0            # how many awaits were moved into statements of their own
     defer_float: bool = False  # the binop about to be compiled is an operand of a float + - *, so it may leave its finite check to that operator
     facts: Facts = facts_new()      # the integer ranges known at the point being compiled (see range_of)
@@ -5225,6 +5228,10 @@ class Gen:
             raise CompileError("sleep() is async, so it must be awaited\nwrite: await sleep(seconds)  inside an async def", n.line)
         if name == '_http_wait' and name not in self.slots and self.mod.resolve(name) == '':
             raise CompileError("_http_wait() is async, so it must be awaited\nwrite: await _http_wait(handle)  inside an async def", n.line)
+        if (name == '_settle' or name == '_park' or name == '_fd_wait') and name not in self.slots and self.mod.resolve(name) == '':
+            raise CompileError(f"{name}() is async, so it must be awaited\nwrite: await {name}(...)  inside an async def", n.line)
+        if name == '_unpark' and name not in self.slots and self.mod.resolve(name) == '':
+            return self.unpark_call(args, n.line)
         if name == 'len':
             return self.len_call(args, n.line)
         if name == 'str':
@@ -5292,10 +5299,20 @@ class Gen:
     def arg_type(self, a: Node) -> str:
         mark = len(self.lines)
         ty = ''
+        # an argument is not directly under await or start, even when its call is (await wait_for(f(), 1) must say f is async)
+        outer_ok = self.async_ok
+        outer_fresh = self.fresh_frame
+        awaits = self.awaits
+        self.async_ok = False
         try:
             ty = self.expr(a).ty
-        catch CompileError:
+        catch CompileError as e:
+            if 'so it must be awaited or started' in e.message:
+                raise e      # the real mistake, rather than "cannot tell what T is"
             ty = ''          # such as an empty list, whose type only the other arguments settle
+        self.async_ok = outer_ok
+        self.fresh_frame = outer_fresh
+        self.awaits = awaits             # the places it stopped at go with the lines
         self.lines = self.lines[:mark]
         self.terminated = False
         return ty
@@ -5681,6 +5698,17 @@ class Gen:
 
     def call_function(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
         if info.is_async:
+            return self.call_info(info, symbol, receiver, args, line)
+        # the arguments of a plain function are not directly under await or start, but what the call is part of may be: in
+        # await pick().send(1) the call of send is
+        outer_ok = self.async_ok
+        self.async_ok = False
+        r = self.call_info(info, symbol, receiver, args, line)
+        self.async_ok = outer_ok
+        return r
+
+    def call_info(self, info: FuncInfo, symbol: str, receiver: Ex, args: list[Node], line: int) -> Ex:
+        if info.is_async:
             if not self.async_ok:
                 raise CompileError(f"'{info.name}' is async, so it must be awaited or started\nwrite: await {info.name}(...)   or   start {info.name}(...)", line)
             self.async_ok = False
@@ -5783,6 +5811,7 @@ class Gen:
             for v4 in values:
                 self.release(v4)
             self.fresh_frame = True
+            self.fresh_reg = fr
             return ex(fr, task_type_of(info))
         if info.ret == '':
             self.emit(text)
@@ -6155,8 +6184,8 @@ class Gen:
             self.fail_if(missing, 'the key is not in the dict', [k, d])
             old = self.tmp('old')
             self.emit(f'{old} = load {llvm_type(vt)}, ptr {slot}')
-            self.release(exf(old, vt))
             self.emit(f'call i32 @tomato_dict_delete(ptr {d.reg}, i64 {kw})')
+            self.release(exf(old, vt))       # last: it can start a collection, which must not find the value in the dict
             self.release(k)
             self.release(d)
             return ex('', '')
@@ -6387,14 +6416,15 @@ class Gen:
         self.emit(f'{p} = getelementptr {{ i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr, ptr, {res} }}, ptr {h}, i32 0, i32 {str(k + 2)}')
         return p
 
-    def suspend_here(self):
+    def suspend_here(self, cancellable: bool = True):
         # stop this function; it goes on from the next line when something runs the frame again
         self.awaits += 1
         k = self.awaits
         self.emit(f'store i64 {k}, ptr %state.p')
         self.br('suspend')
         self.place(f'rs.{k}')
-        self.check_cancel()
+        if cancellable:
+            self.check_cancel()
 
     def check_cancel(self):
         # a task cancelled with t.cancel() raises CancelledError here, at its next wait (D58d)
@@ -6423,8 +6453,10 @@ class Gen:
         self.br(self.unwind_target())
         self.place(ok)
 
-    def await_handle(self, holder: str, result: str) -> Ex:
-        # the task in the slot `holder` (owned): wait until it is done, then take its result, or raise its error
+    def await_handle(self, holder: str, result: str, inline: bool) -> Ex:
+        # the task in the slot `holder` (owned): wait until it is done, then take its result, or raise its error. When only this
+        # task waits on it (await f(...)), a cancel reaches that call itself (D76b); one that comes after it finished must not
+        # throw its result away, so it is raised at the next wait instead
         chk = self.label('awaiting')
         wait = self.label('mustwait')
         take = self.label('finished')
@@ -6432,7 +6464,8 @@ class Gen:
         good = self.label('taskdone')
         self.br(chk)
         self.place(chk)
-        self.check_unread()
+        if not inline:
+            self.check_unread()
         h = self.tmp('task')
         self.emit(f'{h} = load ptr, ptr {holder}')
         st = self.tmp('status')
@@ -6442,7 +6475,7 @@ class Gen:
         self.cond_br(done, take, wait)
         self.place(wait)
         self.emit(f'call void @tomato_task_wait(ptr {h}, ptr %frame)')
-        self.suspend_here()
+        self.suspend_here(not inline)
         self.br(chk)
         self.place(take)
         failed = self.tmp('failed')
@@ -6450,25 +6483,21 @@ class Gen:
         self.cond_br(failed, bad, good)
         self.place(bad)
         self.emit(f'call void @tomato.task.raise(ptr {h})')
+        self.emit(f'store ptr null, ptr {holder}')       # first: the release can start a collection, which follows the slot
         self.emit(f'call void @tomato_release(ptr {h})')
-        self.emit(f'store ptr null, ptr {holder}')
         self.br(self.unwind_target())
         self.place(good)
         out = ex('', '')
         if result != '' and result != 'None':
+            # the task keeps its result, since it can be awaited again (D51b): the awaiting code gets its own reference
+            # (or its own copy of a big number)
             rp = self.frame_field(h, 12, result)
             r = self.tmp('result')
             self.emit(f'{r} = load {llvm_type(result)}, ptr {rp}')
-            if is_rc(result):
-                self.emit(f'store ptr null, ptr {rp}')
-                out = ex(r, result)
-            elif result == 'int':
-                self.emit(f'store i64 0, ptr {rp}')         # the awaiting code owns the number now
-                out = exf(r, result)
-            else:
-                out = ex(r, result)
+            out = ex(r, result)
+            self.retain(out)
+        self.emit(f'store ptr null, ptr {holder}')       # first: the release can start a collection, which follows the slot
         self.emit(f'call void @tomato_release(ptr {h})')
-        self.emit(f'store ptr null, ptr {holder}')
         return out
 
     def await_expr(self, n: Node) -> Ex:
@@ -6482,21 +6511,46 @@ class Gen:
                 return self.await_sleep(val_nodes(inner.fields[1]), n.line)
             if name == '_http_wait' and name not in self.slots and self.mod.resolve(name) == '':
                 return self.await_http(val_nodes(inner.fields[1]), n.line)
+            if name == '_settle' and name not in self.slots and self.mod.resolve(name) == '':
+                return self.await_settle(val_nodes(inner.fields[1]), n.line)
+            if name == '_fd_wait' and name not in self.slots and self.mod.resolve(name) == '':
+                return self.await_fd(val_nodes(inner.fields[1]), n.line)
+            if name == '_park' and name not in self.slots and self.mod.resolve(name) == '':
+                return self.await_park(val_nodes(inner.fields[1]), n.line)
+        # an error waiting for this task (D58a) is raised before the call is made: raised later it would throw away what the call
+        # did, or leave it running with nobody to wait for it
+        self.check_unread()
         self.async_ok = True
         self.fresh_frame = False
         t = self.expr(inner)
         self.async_ok = False
         if not is_task(t.ty):
             raise CompileError(f'only a task can be awaited, but this is {shown(t.ty)}\nawait an async function call such as await work(), or a task made with start', n.line)
-        fresh = self.fresh_frame
+        fresh = self.fresh_frame and t.reg == self.fresh_reg
+        hidden = self.fresh_frame and not fresh      # the new task came through something else: await [f()][0]
         self.fresh_frame = False
         holder = self.hidden_rc_slot('await.task')
         self.store_owned(holder, t)
         if fresh:
             h0 = self.tmp('child')
             self.emit(f'{h0} = load ptr, ptr {holder}')
+            self.emit(f'call void @tomato_task_inline(ptr {h0})')         # only this task waits on it: a cancel reaches into it
             self.emit('call void @tomato.sched.step(ptr ' + h0 + ')')      # a child runs at once, up to its first stop
-        return self.await_handle(holder, task_result(t.ty))
+        if hidden:
+            h1 = self.tmp('child')
+            self.emit(f'{h1} = load ptr, ptr {holder}')
+            un = self.tmp('unstarted')
+            self.emit(f'{un} = call i32 @tomato_task_unstarted(ptr {h1})')
+            isun = self.tmp('isunstarted')
+            self.emit(f'{isun} = icmp ne i32 {un}, 0')
+            run = self.label('runchild')
+            on = self.label('childruns')
+            self.cond_br(isun, run, on)
+            self.place(run)
+            self.emit('call void @tomato.sched.step(ptr ' + h1 + ')')
+            self.br(on)
+            self.place(on)
+        return self.await_handle(holder, task_result(t.ty), fresh)
 
     def await_sleep(self, args: list[Node], line: int) -> Ex:
         # await sleep(seconds): wait that long (D58c); other tasks run meanwhile
@@ -6527,6 +6581,82 @@ class Gen:
         self.suspend_here()
         return ex('', '')
 
+    # Three waits for std/asyncio, which builds gather, wait_for and Queue on them (they are not meant for programs):
+    #   await _settle(t)       waits until the task t has finished, in any way, without taking its result or its error, so an
+    #                          error raised here is this task's own (it was cancelled); `await t` afterwards does not wait
+    #   await _park(waiters)   puts this task at the end of the list waiters (a list[task[None]]) and stops it until another task
+    #                          gives it to _unpark; a cancelled task raises and is still in the list
+    #   _unpark(t)             makes the parked task t ready again; False (and nothing happens) when t is not parked
+    def await_settle(self, args: list[Node], line: int) -> Ex:
+        if len(args) != 1:
+            raise CompileError('_settle() takes one task: await _settle(t)', line)
+        t = self.expr(args[0])
+        if not is_task(t.ty):
+            raise CompileError(f'_settle() takes a task, but this is {shown(t.ty)}', line)
+        holder = self.hidden_rc_slot('settle.task')
+        self.store_owned(holder, t)
+        chk = self.label('settling')
+        wait = self.label('settlewait')
+        end = self.label('settled')
+        self.br(chk)
+        self.place(chk)
+        self.check_unread()
+        h = self.tmp('task')
+        self.emit(f'{h} = load ptr, ptr {holder}')
+        st = self.tmp('status')
+        self.emit(st + ' = load i64, ptr ' + self.frame_field(h, 2, 'u64'))
+        done = self.tmp('isdone')
+        self.emit(f'{done} = icmp ne i64 {st}, 0')
+        self.cond_br(done, end, wait)
+        self.place(wait)
+        self.emit(f'call void @tomato_task_wait(ptr {h}, ptr %frame)')
+        self.suspend_here()
+        self.br(chk)
+        self.place(end)
+        self.emit(f'store ptr null, ptr {holder}')       # first: the release can start a collection, which follows the slot
+        self.emit(f'call void @tomato_release(ptr {h})')
+        return ex('', '')
+
+    def await_park(self, args: list[Node], line: int) -> Ex:
+        if len(args) != 1:
+            raise CompileError('_park() takes the list of parked tasks: await _park(waiters)', line)
+        self.check_unread()                   # first, so an error raised here leaves nothing to release
+        v = self.expr(args[0])
+        if v.ty != 'list[task[None]]':
+            raise CompileError(f'_park() takes a list[task[None]], but this is {shown(v.ty)}', line)
+        self.emit(f'call void @tomato_park(ptr %frame, ptr {v.reg})')
+        self.release(v)
+        self.suspend_here()
+        return ex('', '')
+
+    def unpark_call(self, args: list[Node], line: int) -> Ex:
+        if len(args) != 1:
+            raise CompileError('_unpark() takes one task: _unpark(t)', line)
+        t = self.expr(args[0])
+        if not is_task(t.ty):
+            raise CompileError(f'_unpark() takes a task, but this is {shown(t.ty)}', line)
+        r = self.tmp('unparked')
+        self.emit(f'{r} = call i32 @tomato_unpark(ptr {t.reg})')
+        w = self.tmp('flag')
+        self.emit(f'{w} = zext i32 {r} to i64')
+        self.release(t)
+        return ex(w, 'bool')
+
+    def await_fd(self, args: list[Node], line: int) -> Ex:
+        # await _fd_wait(fd, mode): std/socket waits until a descriptor can be read (mode 1) or written (mode 2)
+        if len(args) != 2:
+            raise CompileError('_fd_wait() takes a descriptor and a mode: await _fd_wait(fd, 1)', line)
+        v = self.want(self.expr(args[0]), 'int', line, 'the descriptor')
+        raw = self.int_raw(v)
+        m = self.want(self.expr(args[1]), 'int', line, 'the mode')
+        rawm = self.int_raw(m)
+        self.check_unread()
+        self.emit(f'call void @tomato_fd_wait(ptr %frame, i64 {raw}, i64 {rawm})')
+        self.release(v)
+        self.release(m)
+        self.suspend_here()
+        return ex('', '')
+
     def await_input(self, args: list[Node], line: int) -> Ex:
         if len(args) > 1:
             raise CompileError('input() takes an optional prompt as text: await input() or await input(prompt)', line)
@@ -6552,11 +6682,14 @@ class Gen:
         inner = val_node(n.fields[0])
         if inner.kind != 'Call':
             raise CompileError("'start' needs a call of an async function, such as start work()", n.line)
+        # a start can be an argument of the call an await or start is about to make (await gather([start f()])), so the
+        # permission of that call is given back afterwards
+        outer_ok = self.async_ok
         self.async_ok = True
         self.fresh_frame = False
         t = self.expr(inner)
-        self.async_ok = False
-        if not is_task(t.ty) or not self.fresh_frame:
+        self.async_ok = outer_ok
+        if not is_task(t.ty) or not self.fresh_frame or t.reg != self.fresh_reg:
             raise CompileError("'start' needs a call of an async function, such as start work()", n.line)
         self.fresh_frame = False
         self.launch(t)
@@ -6638,8 +6771,8 @@ class Gen:
         self.place(end)
         o = self.tmp('drop')
         self.emit(f'{o} = load ptr, ptr {holder}')
+        self.emit(f'store ptr null, ptr {holder}')       # first: the release can start a collection, which follows the slot
         self.emit(f'call void @tomato_release(ptr {o})')
-        self.emit(f'store ptr null, ptr {holder}')
 
     def async_yield(self, s: Node):
         # yield value in an async function: a status for whoever reads the task; then other tasks get a turn
@@ -6667,8 +6800,23 @@ class Gen:
             name = f'_await{self.lifted}'
             out.append(mk('Assign', e.line, [vn(mk('Name', e.line, [vs(name)])), vn(copy)]))
             return mk('Name', e.line, [vs(name)])
+        if e.kind == 'ListComp':
+            # the awaits in its items and filter run once for each item, so they stay in its loop (hoist moves them within it); those
+            # in what it loops over run once, before it
+            loop = val_node(e.fields[0])
+            it = self.lift(val_node(loop.fields[1]), out, False)
+            comp = mk('ListComp', e.line, [vn(mk('For', loop.line, [loop.fields[0], vn(it)] + loop.fields[2:]))] + e.fields[1:])
+            comp.exported = e.exported
+            if top or not val_has_await(loop.fields[2]):
+                return comp
+            # the loop stops and goes on, so the list is built in a statement of its own, with nothing half computed around it
+            self.lifted += 1
+            cname = f'_await{self.lifted}'
+            out.append(mk('Assign', e.line, [vn(mk('Name', e.line, [vs(cname)])), vn(comp)]))
+            return mk('Name', e.line, [vs(cname)])
         if e.kind == 'Start':
-            return e
+            # start f(await g()): the awaits among its arguments are moved out like any other
+            return mk('Start', e.line, [vn(self.lift(val_node(e.fields[0]), out, False))])
         if e.kind == 'BinOp' and (e.fields[0].text == 'and' or e.fields[0].text == 'or') and contains_await(val_node(e.fields[2])):
             return self.lift_short_circuit(e, out)
         if e.kind == 'Cond' and (contains_await(val_node(e.fields[1])) or contains_await(val_node(e.fields[2]))):
@@ -6706,12 +6854,12 @@ class Gen:
         # the statements that run in place of s: its awaits as statements of their own, then s without them
         out: list[Node] = []
         k = s.kind
-        if k == 'Assign' or k == 'Return' or k == 'ExprStmt' or k == 'Declare' or k == 'Raise' or k == 'Yield':
+        if k == 'Assign' or k == 'Return' or k == 'ExprStmt' or k == 'Declare' or k == 'Raise' or k == 'Yield' or k == 'CompAppend':
             cf: list[Val] = []
             for j, f in enumerate(s.fields):
                 if f.tag == 'n':
                     child = val_node(f)
-                    is_top = child.kind == 'Await' and ((k == 'Assign' and j == 1) or (k == 'Declare' and j == 2) or k == 'Return' or k == 'ExprStmt')
+                    is_top = (child.kind == 'Await' or child.kind == 'ListComp') and ((k == 'Assign' and j == 1 and val_node(s.fields[0]).kind == 'Name') or (k == 'Declare' and j == 2) or k == 'Return' or k == 'ExprStmt')
                     cf.append(vn(self.lift(child, out, is_top)))
                 else:
                     cf.append(f)
@@ -7695,9 +7843,14 @@ class Gen:
                 if self.ret == '':
                     raise CompileError('this function is declared to return nothing, so it cannot return a value\nremove the value, or add -> Type to the def', s.line)
                 v = self.expr(val_node(s.fields[0]), self.ret)
+                if v.ty == '' and self.ret == 'None':
+                    v = ex('null', 'None')        # a generic function whose T is None returns what gives nothing: return await t
                 v = self.want(v, self.ret, s.line, 'the returned value')
                 v = self.owned(v)
-                self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr %retval')
+                if self.is_async:
+                    self.store_owned('%retval', v)        # a finally can wait, and can return again
+                else:
+                    self.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr %retval')
             self.run_finallies(self.try_depth)
             self.br('epilogue')
         elif k == 'Raise':
@@ -9848,7 +10001,8 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     # the resume function
     text = f'define void {sym}.resume(ptr %frame) {{\nentry:\n'
     if info.ret != '':
-        text += f'  %retval = alloca {llvm_type(info.ret)}\n  store {llvm_type(info.ret)} {zero_of(info.ret)}, ptr %retval\n'
+        # in the frame, not on the stack: a finally that runs after the return can wait, and the value must still be there
+        text += f'  %retval = getelementptr {cls}, ptr %frame, i32 0, i32 14\n'
     text += '\n'.join(g.allocas) + '\n'
     text += '  %st.v = load i64, ptr %state.p\n  switch i64 %st.v, label %start ['
     for i in range(g.awaits):
@@ -9858,7 +10012,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     text += 'epilogue:\n'
     for reg in g.rc_slots:
         o = g.tmp('rel')
-        text += f'  {o} = load ptr, ptr {reg}\n  call void @{g.slot_release(reg)}(ptr {o})\n  store ptr null, ptr {reg}\n'
+        text += f'  {o} = load ptr, ptr {reg}\n  store ptr null, ptr {reg}\n  call void @{g.slot_release(reg)}(ptr {o})\n'
     for reg in g.int_slots:
         o = g.tmp('free')
         text += f'  {o} = load i64, ptr {reg}\n  call void @tomato_int_free(i64 {o})\n  store i64 0, ptr {reg}\n'
@@ -9869,8 +10023,6 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     text += f'  store ptr null, ptr @tomato_exc\n  %s2.p = getelementptr {cls}, ptr %frame, i32 0, i32 4\n  store i64 2, ptr %s2.p\n  br label %wake\n'
     text += 'succeeded:\n'
     text += '  call void @tomato_task_drop_starter(ptr %frame)\n'
-    if info.ret != '':
-        text += f'  %rv = load {llvm_type(info.ret)}, ptr %retval\n  %rv.p = getelementptr {cls}, ptr %frame, i32 0, i32 14\n  store {llvm_type(info.ret)} %rv, ptr %rv.p\n'
     text += f'  %s1.p = getelementptr {cls}, ptr %frame, i32 0, i32 4\n  store i64 1, ptr %s1.p\n  br label %wake\n'
     text += 'wake:\n  call void @tomato_wake_waiters(ptr %frame)\n  ret void\nsuspend:\n  ret void\n}\n'
     # the constructor
@@ -10207,6 +10359,11 @@ def declarations(mod: Mod) -> str:
     d += 'declare void @tomato_task_cancel(ptr)\n'
     d += 'declare void @tomato_sleep_wait(ptr, double)\n'
     d += 'declare void @tomato_http_wait(ptr, i64)\n'
+    d += 'declare void @tomato_park(ptr, ptr)\n'
+    d += 'declare void @tomato_task_inline(ptr)\n'
+    d += 'declare i32 @tomato_task_unstarted(ptr)\n'
+    d += 'declare void @tomato_fd_wait(ptr, i64, i64)\n'
+    d += 'declare i32 @tomato_unpark(ptr)\n'
     d += 'declare void @tomato_task_drop_starter(ptr)\n'
     d += 'declare ptr @tomato_pending_pop(ptr, ptr, ptr)\n'
     d += 'declare void @tomato_pending_flush()\n'
@@ -10921,8 +11078,11 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     # compiling a function can ask for more helper functions, so the list may grow while this runs
     done = 0
     while done < len(mod.extra_funcs):
-        if not mod.infos[len(funcs) + done].is_gen:
-            compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done])
+        extra = mod.infos[len(funcs) + done]
+        if extra.is_async:                   # a copy of a generic async function or of an async method of a generic class
+            bodies.append(f'{compile_async_function(mod.extra_funcs[done], mod, extra)}\n')
+        elif not extra.is_gen:
+            compile_function(mod.extra_funcs[done], mod, extra)
         done += 1
     for c in mod.classes:
         compile_constructor(c, mod)

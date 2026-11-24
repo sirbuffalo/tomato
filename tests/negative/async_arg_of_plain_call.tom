@@ -1,0 +1,10 @@
+async def f() -> int:
+    return 1
+
+def pick(a: task[int], b: task[int]) -> task[int]:
+    return b
+
+@main
+async def main():
+    t = start f()
+    print(await pick(f(), t))

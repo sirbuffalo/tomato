@@ -1,0 +1,8 @@
+import asyncio
+
+async def f() -> int:
+    return 1
+
+@main
+async def main():
+    print(await asyncio.wait_for(f(), 1))

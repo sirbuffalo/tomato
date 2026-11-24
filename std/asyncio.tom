@@ -1,0 +1,184 @@
+# Helpers for tasks, modelled on Python's asyncio: `import asyncio`.
+#
+#     results = await asyncio.gather([start fetch(a), start fetch(b)])     # every result, in the order given
+#     page = await asyncio.wait_for(start fetch(url), 5)                    # TimeoutError after 5 seconds
+#     q = asyncio.Queue[str](10)                                            # tasks hand each other values (at most 10 waiting)
+#     await q.put('job')
+#     job = await q.get()
+#
+# gather(tasks) waits for every task in the list and gives their results in the same order. When some fail, it still
+#   waits for all of them, then raises the error of the first one in the list that failed (the others' errors are taken
+#   too, so they are not reported as unread). Cancelling the gather stops only the gather; the tasks run on.
+# wait_all(tasks) is gather for tasks whose results are not wanted, such as tasks that give none (gather needs a result to
+#   collect): it waits for every task and raises the first failure in the list the same way, and gives nothing.
+# wait_for(t, seconds) gives the result of t, or raises its error, when t finishes within that many seconds of the
+#   scheduler's clock (the clock of `await sleep`). Otherwise it cancels t, waits until t has finished (its `finally`
+#   blocks have run), and raises asyncio.TimeoutError. Zero or less seconds: t must already be finished. Cancelling the
+#   wait_for stops only the wait_for; t runs on.
+# Cancelling a task that waits in one of these (await asyncio.gather(...), await q.get(), ...) cancels the call it waits
+#   in: a q.get() that is cancelled leaves the queue, so it never takes a value.
+# Queue[T](maxsize=0) is first in, first out (maxsize is given by position: a constructor takes no keyword arguments).
+#   `await q.put(x)` waits while the queue is full, `await q.get()` while it is empty. Tasks are served in the order they
+#   started waiting: a value put while a task waits is promised to that task, so a later get waits for the next one even
+#   while qsize() still counts it. qsize(), empty() and full() do not wait. A maxsize of 0 means no limit; a negative
+#   one is a ValueError, and it cannot be changed later. A wait_for that runs out of time drops a value its get had already received.
+#
+# The waits use three internal waits of the language (`_settle`, `_park`, `_unpark`; see await_settle in the compiler),
+# so a waiting task costs nothing while it waits: nothing polls.
+
+# A wait_for ran out of time.
+export class TimeoutError(RuntimeError):
+    @init
+    def make_timeout_error(self, message: str, id: str = ''):
+        RuntimeError.make(self, message, id)
+
+export async def gather[T](given: list[task[T]]) -> list[T]:
+    tasks = given[:]                     # its own list: the caller may change the one it gave
+    for t in tasks:
+        await _settle(t)                 # an error here is the gather's own (it was cancelled): it stops at once
+    results: list[T] = []
+    first = -1
+    for i in range(len(tasks)):          # every task has finished, so these awaits do not wait
+        try:
+            results.append(await tasks[i])
+        catch Error:
+            if first < 0:
+                first = i
+    if first >= 0:
+        await tasks[first]               # raises that task's error again
+    return results
+
+export async def wait_all[T](given: list[task[T]]):
+    tasks = given[:]
+    for t in tasks:
+        await _settle(t)                 # an error here is the wait_all's own (it was cancelled): it stops at once
+    first = -1
+    for i in range(len(tasks)):
+        try:
+            await tasks[i]
+        catch Error:
+            if first < 0:
+                first = i
+    if first >= 0:
+        await tasks[first]               # raises that task's error again
+
+# what a wait_for's alarm did: fired is True once it cancelled the task because time ran out
+class _Alarm:
+    fired: bool = False
+
+async def _ring[T](t: task[T], seconds: float, alarm: _Alarm):
+    await sleep(seconds)
+    if not t.done():
+        alarm.fired = True
+        t.cancel()
+
+def _seconds(seconds: int | float) -> float:
+    if seconds in int:
+        return float(seconds)
+    return seconds
+
+export async def wait_for[T](t: task[T], seconds: int | float) -> T:
+    secs = _seconds(seconds)
+    if secs <= 0.0:
+        if not t.done():
+            t.cancel()
+            await _settle(t)             # its cleanup runs to the end (no alarm to cancel it a second time)
+            try:
+                await t
+            catch Error:
+                pass
+            raise TimeoutError(f'the task took longer than {seconds} seconds', 'E438')
+        return await t
+    alarm = _Alarm()
+    ring = start _ring(t, secs, alarm)
+    try:
+        await _settle(t)                 # an error here is the wait_for's own (it was cancelled); t runs on
+    finally:
+        ring.cancel()
+    if alarm.fired:
+        try:
+            await t                      # t has finished: take its error (usually CancelledError) so it is not reported
+        catch Error:
+            pass
+        raise TimeoutError(f'the task took longer than {seconds} seconds', 'E438')
+    return await t
+
+# The tasks waiting on one side of a queue, in the order they started waiting. A task that is woken holds a claim on one value
+# (or one free place) until it runs, so no later task can take it first.
+class _Line:
+    tasks: list[task[None]] = []
+    tickets: list[int] = []      # one per task, in the same order
+    claims: set[int] = {}   # the tickets of the tasks that were woken and have not run yet
+    next: int = 0
+
+    # wait for a turn: gives the claim, which the caller gives back (claims.remove) as it takes what it was woken for
+    async def wait(self) -> int:
+        ticket = self.next
+        self.next += 1
+        self.tickets.append(ticket)
+        try:
+            await _park(self.tasks)
+        catch Error as e:
+            if ticket in self.claims:         # woken, then cancelled before it ran: the turn goes to the next in line
+                self.claims.remove(ticket)
+                self.wake()
+            else:
+                for i in range(len(self.tickets)):
+                    if self.tickets[i] == ticket:
+                        self.tickets.pop(i)
+                        self.tasks.pop(i)
+                        break
+            raise e
+        return ticket
+
+    # wake the first task in line, if there is one
+    def wake(self):
+        while len(self.tasks) > 0:
+            t = self.tasks.pop(0)
+            ticket = self.tickets.pop(0)
+            if _unpark(t):                    # False when it was cancelled and has not run yet
+                self.claims.add(ticket)
+                return
+
+export class Queue[T]:
+    # the values, oldest first: those in `front` from its end to its start, then those in `back`
+    private front: list[T] = []
+    private back: list[T] = []
+    const maxsize: int
+    private getters: _Line = _Line()
+    private putters: _Line = _Line()
+
+    @init
+    def make(self, maxsize: int = 0):
+        if maxsize < 0:
+            raise ValueError(f'a Queue maxsize cannot be negative, but got {maxsize}', 'E439')
+        self.maxsize = maxsize
+
+    def qsize(self) -> int:
+        return len(self.front) + len(self.back)
+
+    def empty(self) -> bool:
+        return self.qsize() == 0
+
+    def full(self) -> bool:
+        return self.maxsize > 0 and self.qsize() >= self.maxsize
+
+    async def put(self, item: T):
+        if self.maxsize > 0 and self.qsize() + len(self.putters.claims) >= self.maxsize:
+            self.putters.claims.remove(await self.putters.wait())
+        self.back.append(item)
+        self.getters.wake()
+
+    async def get(self) -> T:
+        promised = len(self.getters.claims)          # the first values are for tasks that were woken and have not run yet
+        if self.qsize() <= promised:
+            self.getters.claims.remove(await self.getters.wait())
+            promised = 0
+        if promised >= len(self.front):              # move the values put since into the list that gives them out
+            self.back.reverse()
+            self.back.extend(self.front)
+            self.front = self.back
+            self.back = []
+        item = self.front.pop(len(self.front) - 1 - promised)
+        self.putters.wake()
+        return item

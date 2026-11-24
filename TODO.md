@@ -1,5 +1,3 @@
-- Assign a stronger agent to the async toolkit, then the scheduler fd-waiter and `socket` module
-  Items 8 and 9 of `docs/next-features.md`: `gather`, timeouts and `Queue` first, then a scheduler wait on file descriptors plus a `socket` module, so the HTTP server (item 10) can follow. The scheduler is hand-written C with reference-counted frames, so use Opus or have Davis review it.
 - Rebuild `site/wasm` on the Mac before the next release
   macOS arm64, WASI SDK 24: the error-path temporaries task landed a Linux-built `tomatoc.wasm`. It was built with the host-independent `site/wasm/build.sh`, so the Mac rebuild should give the same bytes ("wasm files rebuild identically").
 - Build the approved Wave 2 packs as Sonnet tasks
@@ -50,3 +48,11 @@
   Needs a whole-program check of which functions change lists; about 8 of the instructions per item in `objects`.
 - Divide big integers 64 bits at a time
   Division still works 32 bits at a time; a fuzz program with very large numbers took 70 s against Python's 3 s.
+- Use `epoll`/`kqueue` for descriptor waits
+  With 4,000 idle sockets a round trip takes about 20 ms, because `poll` itself is slow.
+- Let sockets, requests and timeouts run while a task waits for input
+  Today `await input()` stops everything until a line comes.
+- Add UDP and a public `getaddrinfo` to `socket`
+  Also do name lookup without blocking every task.
+- Fix small async bugs found in the sockets reviews
+  An error raised in a `finally` that replaces another leaks the first one; un-started async calls are accepted in some positions and never run; a generator cannot be used in an async function; a task that calls `wait_for` on itself deadlocks.

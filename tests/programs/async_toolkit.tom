@@ -1,0 +1,479 @@
+# std/asyncio: gather, wait_for and Queue, and awaiting a finished task again (D51b)
+import asyncio
+
+async def after(seconds: float, v: int) -> int:
+    await sleep(seconds)
+    return v
+
+async def word(seconds: float, w: str) -> str:
+    await sleep(seconds)
+    return w
+
+async def big(seconds: float) -> int:
+    await sleep(seconds)
+    return 10 ** 30
+
+async def fail_after(seconds: float, message: str) -> int:
+    await sleep(seconds)
+    raise ValueError(message)
+
+async def nothing(seconds: float):
+    await sleep(seconds)
+
+async def careful(seconds: float, name: str) -> int:
+    try:
+        await sleep(seconds)
+        return 1
+    finally:
+        print(name, 'cleaned up')
+
+async def stubborn(seconds: float) -> int:
+    try:
+        await sleep(seconds)
+    catch CancelledError:
+        print('stubborn ignores the cancel')
+    return 9
+
+async def gather_ints(tasks: list[task[int]]) -> list[int]:
+    return await asyncio.gather(tasks)
+
+async def wait_quietly(t: task[int], seconds: float) -> int:
+    return await asyncio.wait_for(t, seconds)
+
+async def consumer(name: str, q: asyncio.Queue[str], n: int):
+    for i in range(n):
+        item = await q.get()
+        print(name, 'got', item)
+
+async def producer(q: asyncio.Queue[int], n: int):
+    for i in range(n):
+        await q.put(i)
+        print('put', i)
+    print('producer done')
+
+async def worker(name: str, q: asyncio.Queue[str]):
+    try:
+        while True:
+            item = await q.get()
+            print(name, 'did', item)
+    catch CancelledError:
+        print(name, 'stopped')
+
+async def inner_step(name: str):
+    try:
+        await sleep(1.0)
+    finally:
+        print(name, 'inner cleanup')
+
+async def outer_step(name: str) -> str:
+    try:
+        await inner_step(name)
+        return 'not reached'
+    catch CancelledError:
+        print(name, 'outer saw the cancel')
+        return 'outer carried on'
+
+async def job(n: int):
+    await sleep(0.01 * float(n))
+    print('job', n)
+
+async def bad_job(n: int):
+    await sleep(0.01 * float(n))
+    raise ValueError(f'job {n} failed')
+
+async def slow_cleanup() -> int:
+    try:
+        await sleep(1.0)
+        return 0
+    finally:
+        print('cleanup start')
+        await sleep(0.02)
+        print('cleanup done')
+
+async def named_get(name: str, q: asyncio.Queue[int]):
+    v = await q.get()
+    print(name, 'got', v)
+
+async def keeps(q: asyncio.Queue[str]):
+    print('keeper got', await q.get())
+    await sleep(0.01)
+    print('not reached')
+
+async def cancels(t: task[None]):
+    t.cancel()
+
+class Holder:
+    tasks: list[task[None]] = []
+
+async def cancels_its_caller(h: Holder):
+    await sleep(0.01)
+    h.tasks[0].cancel()
+
+async def outer_waits(h: Holder):
+    await cancels_its_caller(h)
+    print('outer goes on to its next wait')
+    await sleep(0.01)
+    print('not reached')
+
+async def steps() -> int yields int:
+    try:
+        for i in range(5):
+            yield i
+        print('not reached')
+        return 1
+    finally:
+        print('steps finally')
+
+async def awaits_steps():
+    await steps()
+
+async def cancels_after_a_yield(t: task[None]) yields int:
+    yield 0
+    t.cancel()
+
+class Chan:
+    sent: list[int] = []
+
+    def me(self) -> Chan:
+        return self
+
+    async def send(self, n: int) -> int:
+        await sleep(0)
+        self.sent.append(n)
+        return n
+
+def pick(c: Chan) -> Chan:
+    return c
+
+def zero() -> int:
+    return 0
+
+async def fails_soon():
+    raise ValueError('nobody awaited me')
+
+async def returns_text(x: str) -> str:
+    try:
+        return x + '!'
+    finally:
+        await sleep(0)               # the value is still there after the wait
+
+async def returns_big() -> int:
+    try:
+        return 10 ** 25
+    finally:
+        await sleep(0)
+
+async def total(xs: list[int]) -> int:
+    await sleep(0)
+    return sum(xs)
+
+async def unread_then_get(q: asyncio.Queue[int]):
+    start fails_soon()
+    await sleep(0)
+    try:
+        print('got', await q.get())
+    catch ValueError as e:
+        print('raised before the get:', e.message, 'qsize', q.qsize())
+    print('then got', await q.get())
+
+async def call_tests():
+    print('-- calls inside an awaited expression')
+    c = Chan()
+    cs = [c]
+    print(await pick(c).send(1), await cs[zero()].send(2), await c.me().send(3))
+    t = start pick(c).send(4)
+    print(await t, await [c.send(5)][0], c.sent)
+    print(await returns_text('kept'), await returns_big())
+    print(await asyncio.gather([start after(0.01, await after(0.0, 6)), start after(0.0, 7)]))
+    tens = [start after(0.0, await after(0.0, n * 10)) for n in [1, 2, 3] if n > 1]      # for each item, in the loop
+    print(await asyncio.gather(tens))
+    n = 9
+    print(await asyncio.gather([start after(0.0, await after(0.0, n * 10)) for n in [1, 2]]))
+    print([await after(0.0, n * 10) for n in [1, 2, 3] if await after(0.0, n) != 2], len([await after(0.0, n) for n in [4, 5]]))
+    add = start total([await after(0.0, n * 10) for n in [1, 2, 3]])
+    print(await add, await (start total([n for n in [1, 2, 3] if await after(0.0, n) > 1])))
+    print([[await after(0.0, n * m) for m in [1, 2]] for n in [3, 4]])
+    c.sent = [await after(0.0, n) for n in [7, 8]]              # into a field, a dict and a list
+    d: dict[str, int] = {}
+    d['k'] = await after(0.0, 5)
+    c.sent[0] = await after(0.0, 6)
+    print(c.sent, d['k'])
+    q = asyncio.Queue[int]()
+    await q.put(1)
+    await q.put(2)
+    await unread_then_get(q)
+
+async def forever(q: asyncio.Queue[int]):
+    await q.get()
+    print('never printed')
+
+async def repeat_await():
+    # a finished task can be awaited again and again: the result stays in the task (D51b)
+    t = start word(0.01, 'tomato')
+    print(await t, await t)
+    b = start big(0.01)
+    print(await b == await b)
+    l = start gather_ints([start after(0.01, 1)])
+    print(await l, await l)
+    f = start fail_after(0.01, 'twice')
+    for i in range(2):
+        try:
+            await f
+        catch ValueError as e:
+            print('again:', e.message)
+
+async def gather_tests():
+    print('-- gather')
+    a = start after(0.03, 1)
+    b = start after(0.01, 2)
+    print(await asyncio.gather([a, b, a]))                # input order, and a task can be listed twice
+    print(await asyncio.gather([start word(0.02, 'x'), start word(0.01, 'y')]))
+    print(await asyncio.gather([start big(0.01), start big(0.02)]))
+    empty: list[task[int]] = []
+    print(await asyncio.gather(empty))
+    # the first failure in the list wins, after every task has finished; the other failure is taken, not reported
+    slow = start after(0.05, 3)
+    try:
+        await asyncio.gather([start after(0.01, 0), start fail_after(0.03, 'second'), start fail_after(0.02, 'first'), slow])
+    catch ValueError as e:
+        print('gather raised', e.message, '- slow done:', slow.done())
+    # cancelling a gather stops it at once; its tasks run on
+    c = start after(0.05, 4)
+    g = start gather_ints([c])
+    await sleep(0.01)
+    g.cancel()
+    try:
+        await g
+    catch CancelledError:
+        print('gather cancelled; task done:', c.done())
+    print('task result', await c)
+
+async def wait_for_tests():
+    print('-- wait_for')
+    print(await asyncio.wait_for(start after(0.01, 5), 1))
+    print(await asyncio.wait_for(start after(0.01, 6), 0.5))
+    t = start careful(1.0, 'slow task')
+    try:
+        await asyncio.wait_for(t, 0.02)
+    catch asyncio.TimeoutError as e:
+        print('timed out:', e.message, '- task done:', t.done())
+    try:
+        await asyncio.wait_for(start fail_after(0.01, 'inner failure'), 1)
+    catch ValueError as e:
+        print('failure passed through:', e.message)
+    # the task ignores the cancel and finishes: it is still a timeout
+    try:
+        await asyncio.wait_for(start stubborn(1.0), 0.01)
+    catch asyncio.TimeoutError:
+        print('stubborn timed out')
+    # zero seconds: only a finished task gives its result
+    done = start after(0.0, 7)
+    await sleep(0.01)
+    print(await asyncio.wait_for(done, 0))
+    try:
+        await asyncio.wait_for(start after(0.01, 8), 0)
+    catch asyncio.TimeoutError:
+        print('zero seconds timed out')
+    # zero seconds on a running task: one cancel, and its cleanup (which waits) runs to the end
+    sc = start slow_cleanup()
+    await sleep(0.01)
+    try:
+        await asyncio.wait_for(sc, 0)
+    catch asyncio.TimeoutError:
+        print('zero seconds: timed out after the cleanup')
+    # the task can be awaited again after wait_for took its result
+    r = start after(0.01, 10)
+    print(await asyncio.wait_for(r, 1), await r)
+    # cancelling the wait_for stops only the wait_for
+    long = start after(0.05, 11)
+    w = start wait_quietly(long, 1.0)
+    await sleep(0.01)
+    w.cancel()
+    try:
+        await w
+    catch CancelledError:
+        print('wait_for cancelled; task done:', long.done())
+    print('task result', await long)
+    # a task cancelled by someone else is a CancelledError, not a timeout
+    other = start after(1.0, 12)
+    w2 = start wait_quietly(other, 2.0)
+    await sleep(0.01)
+    other.cancel()
+    try:
+        await w2
+    catch asyncio.TimeoutError:
+        print('wrong: timeout')
+    catch CancelledError:
+        print('cancelled by someone else')
+    # an int works as the number of seconds, and None tasks work too
+    await asyncio.wait_for(start nothing(0.01), 1)
+    print('None task done')
+
+async def cancel_tests():
+    print('-- cancel reaches the awaited call')
+    # the cancel starts at the innermost wait (inner_step's sleep) and comes out through each await as one error
+    t = start outer_step('a')
+    await sleep(0.01)
+    t.cancel()
+    print(await t)
+    # a task waiting on a task made with start: only the waiter is cancelled (D58d)
+    shared = start after(0.03, 13)
+    w = start wait_quietly(shared, 1.0)
+    await sleep(0.01)
+    w.cancel()
+    try:
+        await w
+    catch CancelledError:
+        print('waiter cancelled; shared task done:', shared.done())
+    print('shared result', await shared)
+
+async def wait_all_tests():
+    print('-- wait_all')
+    await asyncio.wait_all([start job(2), start job(1)])
+    print('all jobs done')
+    try:
+        await asyncio.wait_all([start job(1), start bad_job(3), start bad_job(2)])
+    catch ValueError as e:
+        print('wait_all raised', e.message)
+    await asyncio.wait_all([start after(0.01, 1)])      # tasks with results work too
+    none: list[task[None]] = []
+    await asyncio.wait_all(none)
+    print('empty wait_all done')
+
+async def queue_tests():
+    print('-- Queue')
+    q = asyncio.Queue[int](2)
+    print(q.qsize(), q.empty(), q.full(), q.maxsize)
+    p = start producer(q, 5)
+    await sleep(0.01)
+    print('queue full:', q.full(), q.qsize())
+    for i in range(5):
+        print('got', await q.get())
+    await p
+    print(q.qsize(), q.empty(), q.full())
+    # getters are served in the order they started waiting
+    words = asyncio.Queue[str]()
+    c1 = start consumer('c1', words, 2)
+    c2 = start consumer('c2', words, 2)
+    await sleep(0.01)
+    for w in ['a', 'b', 'c', 'd']:
+        await words.put(w)
+    await c1
+    await c2
+    # a get cancelled while it waits leaves the line, so the next value goes to the next getter
+    g1 = start words.get()
+    g2 = start words.get()
+    await sleep(0.01)
+    g1.cancel()
+    await sleep(0.01)
+    await words.put('for g2')
+    print('g2 got', await g2)
+    try:
+        await g1
+    catch CancelledError:
+        print('g1 cancelled')
+    # a get that was woken but cancelled before it ran passes its value on
+    g3 = start words.get()
+    g4 = start words.get()
+    await sleep(0.01)
+    await words.put('passed on')
+    g3.cancel()
+    print('g4 got', await g4)
+    try:
+        await g3
+    catch CancelledError:
+        print('g3 cancelled')
+    # the same for a put that waits for room
+    small = asyncio.Queue[int](1)
+    await small.put(0)
+    p1 = start small.put(1)
+    p2 = start small.put(2)
+    await sleep(0.01)
+    print('got', await small.get())
+    p1.cancel()
+    await sleep(0.01)
+    try:
+        await p1
+    catch CancelledError:
+        print('p1 cancelled')
+    await p2
+    print('got', await small.get(), 'left', small.qsize())
+    # cancelling a task that waits in await q.get() cancels that get too, so the next value goes to a worker still there
+    w1 = start worker('w1', words)
+    w2 = start worker('w2', words)
+    await sleep(0.01)
+    w1.cancel()
+    await sleep(0.01)
+    await words.put('job 1')
+    await words.put('job 2')
+    await sleep(0.01)
+    w2.cancel()
+    await w1
+    await w2
+    print('left in the queue:', words.qsize())
+    # a value is promised to the task that has waited longest: a later get (main's) does not take it first
+    nums = asyncio.Queue[int]()
+    first = start named_get('first', nums)
+    await sleep(0)
+    second = start named_get('second', nums)
+    await sleep(0)
+    await nums.put(1)
+    await nums.put(2)
+    late = start named_get('late', nums)
+    await nums.put(3)
+    await asyncio.wait_all([first, second, late])
+    # a worker cancelled after its get already finished still gets the value (no value is lost); it raises at its next wait
+    box = asyncio.Queue[str]()
+    keeper = start keeps(box)
+    await sleep(0)
+    await box.put('precious')
+    k = start cancels(keeper)
+    await k
+    try:
+        await keeper
+    catch CancelledError:
+        print('keeper cancelled at its next wait')
+    # a cancel made from inside the awaited call is not lost either
+    h = Holder()
+    h.tasks.append(start outer_waits(h))
+    try:
+        await h.tasks[0]
+    catch CancelledError:
+        print('cancelled from inside')
+    # a yielding call is cancelled between its statuses too
+    y = start awaits_steps()
+    z = start cancels_after_a_yield(y)
+    try:
+        await y
+    catch CancelledError:
+        print('steps cancelled')
+    await z
+    # values the queue holds are shared, not copied
+    lists = asyncio.Queue[list[int]]()
+    xs = [1, 2]
+    await lists.put(xs)
+    ys = await lists.get()
+    ys.append(3)
+    print(xs)
+    bigs = asyncio.Queue[int]()
+    await bigs.put(10 ** 25)
+    print(await bigs.get())
+    try:
+        bad = asyncio.Queue[int](-1)  # allow: unused
+    catch ValueError as e:
+        print(e.message, e.id)
+
+@main
+async def main():
+    await repeat_await()
+    await gather_tests()
+    await wait_for_tests()
+    await cancel_tests()
+    await wait_all_tests()
+    await queue_tests()
+    await call_tests()
+    # a task that waits on a queue nobody fills is dropped when main ends
+    stuck = asyncio.Queue[int]()
+    s = start forever(stuck)  # allow: unused
+    await sleep(0.01)
+    print('main done')

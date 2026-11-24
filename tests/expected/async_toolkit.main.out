@@ -1,0 +1,101 @@
+tomato tomato
+True
+[1] [1]
+again: twice
+again: twice
+-- gather
+[1, 2, 1]
+['x', 'y']
+[1000000000000000000000000000000, 1000000000000000000000000000000]
+[]
+gather raised second - slow done: True
+gather cancelled; task done: False
+task result 4
+-- wait_for
+5
+6
+slow task cleaned up
+timed out: the task took longer than 0.02 seconds - task done: True
+failure passed through: inner failure
+stubborn ignores the cancel
+stubborn timed out
+7
+zero seconds timed out
+cleanup start
+cleanup done
+zero seconds: timed out after the cleanup
+10 10
+wait_for cancelled; task done: False
+task result 11
+cancelled by someone else
+None task done
+-- cancel reaches the awaited call
+a inner cleanup
+a outer saw the cancel
+outer carried on
+waiter cancelled; shared task done: False
+shared result 13
+-- wait_all
+job 1
+job 2
+all jobs done
+job 1
+wait_all raised job 3 failed
+empty wait_all done
+-- Queue
+0 True False 2
+put 0
+put 1
+queue full: True 2
+got 0
+got 1
+put 2
+put 3
+got 2
+got 3
+put 4
+producer done
+got 4
+0 True False
+c1 got a
+c1 got c
+c2 got b
+c2 got d
+g2 got for g2
+g1 cancelled
+g4 got passed on
+g3 cancelled
+got 0
+p1 cancelled
+got 2 left 0
+w1 stopped
+w2 did job 1
+w2 did job 2
+w2 stopped
+left in the queue: 0
+late got 3
+first got 1
+second got 2
+keeper got precious
+keeper cancelled at its next wait
+outer goes on to its next wait
+cancelled from inside
+steps finally
+steps cancelled
+[1, 2, 3]
+10000000000000000000000000
+a Queue maxsize cannot be negative, but got -1 E439
+-- calls inside an awaited expression
+1 2 3
+4 5 [1, 2, 3, 4, 5]
+kept! 10000000000000000000000000
+[6, 7]
+[20, 30]
+[10, 20]
+[10, 30] 2
+60 5
+[[3, 6], [4, 8]]
+[6, 8] 5
+raised before the get: nobody awaited me qsize 2
+then got 1
+main done

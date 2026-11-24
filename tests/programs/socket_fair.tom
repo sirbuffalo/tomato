@@ -1,0 +1,150 @@
+# a socket is served while another task keeps sleeping 0 seconds (the scheduler must not starve descriptors)
+import asyncio
+import socket
+
+async def echo(c: socket.Socket):
+    try:
+        while True:
+            d = await c.recv(100)
+            if len(d) == 0:
+                return
+            await c.send(d)
+    catch socket.SocketError:
+        return                # the other side closed with bytes unread
+
+async def ping(c: socket.Socket, t0: float):
+    while clock() - t0 < 8.0:
+        await c.send([1])
+        await c.recv(100)
+
+async def waits(seconds: float):
+    await sleep(seconds)
+
+# every call has something to do, so none of them waits
+async def never_waits(c: socket.Socket, d: socket.Socket, t0: float):
+    while clock() - t0 < 8.0:
+        await c.send([1])
+        await d.recv(10)
+
+class Sent:
+    n: int = 0
+
+async def one(c: socket.Socket, i: int, sent: Sent):
+    try:
+        await c.send_text(f'm{i}\n')
+        sent.n += 1
+    catch CancelledError:
+        return                # not sent
+
+class Rounds:
+    n: int = 0
+    first: int = -1
+    last: int = 0
+
+async def count_rounds(c: socket.Socket, r: Rounds):
+    try:
+        while r.n >= 0:
+            await c.send([1])
+            await c.recv(100)
+            r.n += 1
+    catch socket.SocketError:
+        return
+
+async def due(r: Rounds):
+    await sleep(0.2)
+    if r.first < 0:
+        r.first = r.n
+    r.last = r.n
+
+class Stop:
+    on: bool = False
+
+async def spin(stop: Stop) -> int:
+    for i in range(200000):
+        if stop.on:
+            return 1
+        await sleep(0)
+    return 0
+
+async def prints(seconds: float):
+    await sleep(seconds)
+    print('slept', seconds)
+
+@main
+async def main():
+    # sleeps that are overdue when the network is first used still wake in order
+    long = start prints(0.2)
+    short = start prints(0.1)
+    await sleep(0)
+    t1 = clock()
+    while clock() - t1 < 0.4:
+        pass
+    server = await socket.listen('127.0.0.1', 0)
+    await long
+    await short
+    a = await socket.connect('127.0.0.1', server.port)
+    b = await server.accept()
+    stop = Stop()
+    s = start spin(stop)
+    r = start b.recv(10)
+    await sleep(0)
+    await a.send([1])
+    print(await r)
+    stop.on = True
+    print('socket served while another task spins:', await s == 1)
+    # a timeout fires while two tasks keep the sockets busy
+    e = start echo(b)
+    t0 = clock()
+    try:
+        await asyncio.wait_for(start ping(a, t0), 0.3)
+    catch asyncio.TimeoutError:
+        print('timeout under traffic:', clock() - t0 < 4.0)
+    # and is not early after a long computation
+    t0 = clock()
+    while clock() - t0 < 1.0:
+        pass
+    t0 = clock()
+    try:
+        await asyncio.wait_for(start waits(60.0), 0.5)
+    catch asyncio.TimeoutError:
+        print('not early:', clock() - t0 >= 0.49)
+    # a timeout fires though the task it stops never has to wait
+    s2 = await socket.listen('127.0.0.1', 0)
+    f = await socket.connect('127.0.0.1', s2.port)
+    g = await s2.accept()
+    t0 = clock()
+    try:
+        await asyncio.wait_for(start never_waits(f, g, t0), 0.3)
+    catch asyncio.TimeoutError:
+        print('timeout of a task that never waits:', clock() - t0 < 4.0)
+    f.close()
+    g.close()
+    s2.close()
+    # a send that is reported as cancelled was not sent
+    s3 = await socket.listen('127.0.0.1', 0)
+    u = await socket.connect('127.0.0.1', s3.port)
+    v = await s3.accept()
+    sent = Sent()
+    for i in range(60):
+        o = start one(u, i, sent)
+        await sleep(0)
+        if not o.done():
+            o.cancel()
+        await o
+    u.close()
+    came = 0
+    while await v.recv_line() != '':
+        came += 1
+    print('sends and lines agree:', came == sent.n, sent.n < 60)
+    v.close()
+    s3.close()
+    # timers due at the same moment all run before more traffic does
+    r2 = Rounds()
+    e2 = start count_rounds(a, r2)
+    await asyncio.wait_all([start due(r2) for i in range(200)])
+    print('timers together:', r2.last - r2.first < 60)
+    a.close()
+    await e2
+    await e
+    b.close()
+    server.close()

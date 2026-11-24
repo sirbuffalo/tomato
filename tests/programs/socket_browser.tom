@@ -1,0 +1,15 @@
+# In the browser playground there are no sockets: every call raises SocketError, which can be caught.
+import socket
+
+@main
+async def main():
+    try:
+        s = await socket.connect('example.com', 80)
+        s.close()
+    catch socket.SocketError as e:
+        print('no sockets:', e.message.startswith('sockets are not available in the browser'), e.id)
+    try:
+        server = await socket.listen('127.0.0.1', 0)
+        server.close()
+    catch socket.SocketError as e:
+        print('no listening:', e.id)

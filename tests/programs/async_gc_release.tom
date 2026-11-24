@@ -1,0 +1,27 @@
+# a collection that starts while a finished task lets go of its variables must not follow a variable already released
+class S:
+    nxt: S | None = None
+class Y:
+    sh: S = S()
+class X:
+    y: Y = Y()
+    x: X | None = None
+async def gb(i: int) -> int:
+    x = X()
+    s = x.y.sh  # allow: unused
+    o = x  # allow: unused
+    await sleep(0)
+    o = X()
+    p = o.y.sh  # allow: unused
+    return 1
+def noise(k: int):
+    for j in range(k):
+        s = S()
+        t = [s]  # allow: unused
+@main
+async def main():
+    tot = 0
+    for i in range(60000):
+        noise(i * 7919 % 13)
+        tot += await gb(i)
+    print('done', tot)

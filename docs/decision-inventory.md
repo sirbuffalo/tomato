@@ -222,7 +222,10 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 194. D75b is accepted: the text methods `splitlines`, `partition`, `rpartition`, `rsplit`, `zfill`, `ljust`, `rjust`, `center`, `title`, `capitalize`, `isalnum`, `removeprefix` and `removesuffix`, as Python with Tomato's Unicode tables (documented limits); an empty partition separator or a fill that is not one character is a `ValueError`.
 195. D75c is accepted: f-string format specs `{x:[[fill]align][sign][0][width][,][.precision][type]}` with the types `s`, `d`, `f`, `e`, `g`, matching Python for that subset; malformed specs and spec/type mismatches are compile errors; replaces the "format options are not built" part of D53a.
 196. D75d is accepted: `math.floor`, `ceil`, `trunc`, `isnan`, `isinf`, `isfinite`, `copysign`, `factorial`, `comb`, `perm`, `isqrt`, `fsum` and `prod`.
-197. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+197. D76a is accepted: `std/asyncio.tom` (`import asyncio`): `gather(tasks)` (results in list order, first failure in list order raised after all finish), `wait_all(tasks)` (the same for tasks whose results are not wanted), `wait_for(t, seconds)` raising `asyncio.TimeoutError` after cancelling t and waiting for it, and `Queue[T](maxsize)` with async `put`/`get`; awaiting a finished task again gives its result (D51b, fixed).
+198. D76b is accepted: cancelling a task waiting in `await f(...)` cancels the call it awaits, down to the innermost wait (as in Python); a task made with `start` and awaited with `await t` keeps D58d (only the waiter is cancelled).
+199. D76c is accepted: `std/socket.tom` (`import socket`): TCP `connect`, `listen`/`accept`, `send(list[int])`, `send_text`, `recv(n)`, `recv_line`, `close`, a `SocketError` family; descriptor waits in the scheduler shared with libcurl; native only. UDP and `getaddrinfo` later.
+200. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass
 

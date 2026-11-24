@@ -1,0 +1,28 @@
+# more tasks wait on one descriptor than the process may have open: tests/run.sh runs this with ulimit -n 64
+import socket
+
+async def take(server: socket.Server) -> int:
+    try:
+        c = await server.accept()
+        c.close()
+        return 1
+    catch socket.SocketError:
+        return 0
+
+@main
+async def main():
+    server = await socket.listen('127.0.0.1', 0)
+    tasks: list[task[int]] = [start take(server) for i in range(300)]
+    await sleep(0)
+    a = await socket.connect('127.0.0.1', server.port)
+    while True:
+        await sleep(0.01)
+        n = 0
+        for t in tasks:
+            if t.done():
+                n += 1
+        if n > 0:
+            break
+    print('accepted by', n)
+    a.close()
+    server.close()

@@ -1,0 +1,175 @@
+# std/socket: a server and its clients in one program, over 127.0.0.1 (no network needed)
+import asyncio
+import socket
+
+# echo every line back in upper case until the client says bye
+async def echo(c: socket.Socket):
+    while True:
+        line = await c.recv_line()
+        if line == '' or line == 'bye\n':
+            break
+        await c.send_text(line.upper())
+    c.close()
+
+async def serve(server: socket.Server, n: int):
+    for i in range(n):
+        c = await server.accept()
+        start echo(c)
+
+# take everything until the other side closes
+async def drain(c: socket.Socket) -> int:
+    total = 0
+    while True:
+        chunk = await c.recv(65536)
+        if len(chunk) == 0:
+            break
+        total += len(chunk)
+    c.close()
+    return total
+
+async def sink(server: socket.Server) -> int:
+    c = await server.accept()
+    return await drain(c)
+
+async def silent(server: socket.Server):
+    c = await server.accept()
+    await sleep(0.2)
+    c.close()
+
+async def reader(c: socket.Socket):
+    try:
+        print('reader got', await c.recv(10))
+    catch socket.SocketError as e:
+        print('reader:', e.message)
+
+async def lines(c: socket.Socket, out: list[str]):
+    while True:
+        line = await c.recv_line()
+        if line == '':
+            return
+        out.append(line[:-1])
+
+async def hang_up(server: socket.Server):
+    c = await server.accept()
+    c.close()
+
+@main
+async def main():
+    server = await socket.listen('127.0.0.1', 0)
+    print('listening:', server.port > 0)
+    s = start serve(server, 2)
+    a = await socket.connect('127.0.0.1', server.port)
+    b = await socket.connect('localhost', server.port)
+    print('peer:', a.peer_host, a.peer_port == server.port)
+    await a.send_text('hello\nwor')
+    await b.send_text('from b\n')
+    print((await b.recv_line())[:-1])
+    await a.send_text('ld\n')
+    print((await a.recv_line())[:-1])
+    print((await a.recv_line())[:-1])               # 'wor' and 'ld' came in two sends: one line
+    await a.send([104, 105, 10])                   # 'hi\n' as bytes
+    print(await a.recv(100))
+    await a.send_text('café\n')
+    print((await a.recv_line())[:-1])
+    await a.send_text('bye\n')
+    print('after bye:', await a.recv(10), len(await a.recv_line()))
+    a.close()
+    a.close()
+    try:
+        await a.send_text('x')
+    catch socket.SocketError as e:
+        print('closed:', e.message)
+    for empty in ['text', 'bytes']:
+        try:
+            if empty == 'text':
+                await a.send_text('')
+            else:
+                await a.send([])
+            print('wrong: sent on a closed socket')
+        catch socket.SocketError:
+            print('closed, even for empty', empty)
+    await b.send_text('bye\n')
+    print('b ends:', len(await b.recv_line()))
+    b.close()
+    await s
+    # a megabyte in one send: it goes out in pieces while the reader takes them
+    t = start sink(server)
+    c = await socket.connect('127.0.0.1', server.port)
+    data: list[int] = [i % 256 for i in range(1048576)]
+    await c.send(data)
+    c.close()
+    print('received', await t, 'bytes')
+    # a timeout on a read: the read is cancelled cleanly and the connection still works
+    q = start silent(server)
+    d = await socket.connect('127.0.0.1', server.port)
+    try:
+        await asyncio.wait_for(start d.recv(10), 0.05)
+    catch asyncio.TimeoutError:
+        print('read timed out')
+    print('then:', await d.recv(10))
+    try:
+        await d.send([1, 256])
+    catch socket.SocketError as e:
+        print(e.message)
+    d.close()
+    await q
+    # writing to a connection the other side has closed: a ConnectionResetError, not a crash (SIGPIPE)
+    h = start hang_up(server)
+    x = await socket.connect('127.0.0.1', server.port)
+    await h
+    print('peer closed, recv gives', await x.recv(10))
+    try:
+        for i in range(100):
+            await x.send([0] * 65536)
+        print('wrong: every send went through')
+    catch socket.ConnectionResetError:
+        print('write after close: ConnectionResetError')
+    x.close()
+    # closing a socket another task waits on wakes that task, even when the next socket reuses the descriptor number
+    y = await socket.connect('127.0.0.1', server.port)
+    yc = await server.accept()
+    r = start reader(y)
+    await sleep(0)
+    old = y.fd
+    y.close()
+    other = await socket.listen('127.0.0.1', 0)
+    print('descriptor reused:', other.fd == old)
+    await asyncio.wait_for(r, 2)
+    other.close()
+    yc.close()
+    # two tasks read lines from one connection: still one line at a time at its end
+    g = await socket.connect('127.0.0.1', server.port)
+    gc = await server.accept()
+    got: list[str] = []
+    l1 = start lines(g, got)
+    l2 = start lines(g, got)
+    await sleep(0.02)
+    await gc.send_text('a\nb\nc\nd\n')
+    gc.close()
+    await l1
+    await l2
+    print('lines', sorted(got))
+    g.close()
+    # cancelling an accept that waits
+    w = start server.accept()
+    await sleep(0.01)
+    w.cancel()
+    try:
+        await w
+    catch CancelledError:
+        print('accept cancelled')
+    port = server.port
+    server.close()
+    try:
+        await server.accept()
+    catch socket.SocketError as e:
+        print('server closed:', e.message)
+    # nothing listens there any more
+    try:
+        await socket.connect('127.0.0.1', port)
+    catch socket.ConnectionRefusedError as e:
+        print('refused:', e.id)
+    try:
+        await socket.connect('127.0.0.1', 70000)
+    catch socket.AddressError as e:
+        print('bad port:', e.message)

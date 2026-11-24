@@ -1,0 +1,9 @@
+slept 0.1
+slept 0.2
+[1]
+socket served while another task spins: True
+timeout under traffic: True
+not early: True
+timeout of a task that never waits: True
+sends and lines agree: True True
+timers together: True

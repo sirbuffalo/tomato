@@ -1,0 +1,25 @@
+listening: True
+peer: 127.0.0.1 True
+FROM B
+HELLO
+WORLD
+[72, 73, 10]
+CAFÉ
+after bye: [] 0
+closed: the socket is closed
+closed, even for empty text
+closed, even for empty bytes
+b ends: 0
+received 1048576 bytes
+read timed out
+then: []
+a byte must be an int from 0 to 255
+peer closed, recv gives []
+write after close: ConnectionResetError
+descriptor reused: True
+reader: the socket is closed
+lines ['a', 'b', 'c', 'd']
+accept cancelled
+server closed: the socket is closed
+refused: E442
+bad port: the port must be from 0 to 65535

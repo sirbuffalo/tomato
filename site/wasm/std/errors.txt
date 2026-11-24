@@ -435,3 +435,20 @@ CompileError the format type 's' is for text, but this value is {}
 CompileError this width or precision in a format spec is too large
 OverflowError an int is too large to be a float
 CompileError '{}' does not take several types here
+TimeoutError the task took longer than its timeout
+ValueError a Queue maxsize cannot be negative
+CompileError gather() gives the results of the tasks, but these tasks give none
+SocketError a socket error
+ConnectionRefusedError could not connect
+ConnectionResetError the connection was reset
+AddressError could not find the address
+SocketError the socket is closed
+SocketError sockets are not available in the browser playground
+CompileError _fd_wait() takes a descriptor and a mode: await _fd_wait(fd, 1)
+CompileError {}() is async, so it must be awaited
+CompileError _park() takes a list[task[None]], but this is {}
+CompileError _park() takes the list of parked tasks: await _park(waiters)
+CompileError _settle() takes a task, but this is {}
+CompileError _settle() takes one task: await _settle(t)
+CompileError _unpark() takes a task, but this is {}
+CompileError _unpark() takes one task: _unpark(t)
