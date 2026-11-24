@@ -209,6 +209,15 @@ for spec in "tests/programs/round_divmod_any_all:" "tests/programs/text_methods_
   spawn t_asan "$spec"
 done
 
+t_bigfloat() { # floats of any size, at the C level: fixed cases, then random ones against an exact reference (tests/bigfloat.c)
+  if clang -O1 -w -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -o "$work/bigfloat" tests/bigfloat.c -lm 2> "$work/e"; then
+    out="$("$work/bigfloat" 1500 2>&1 | head -14)"
+    [ "$out" = ok ] && ok "floats of any size (asan and ubsan, against an exact reference)" || bad "floats of any size" "$out"
+  else bad "floats of any size" "tests/bigfloat.c does not build: $(head -3 "$work/e")"; fi
+}
+section "== memory: floats of any size (the C runtime; the compiler does not use them yet) =="
+spawn t_bigfloat
+
 t_sort_fallback() {
   "$c1" tests/programs/native_sort.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -DSORT_DEPTH_MUL=0 -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm && "$work/p" > "$work/out" 2>&1
   check "sort with the depth limit forced to 0" "$(cat tests/expected/native_sort.main.out)" "$(cat "$work/out")"

@@ -5955,3 +5955,909 @@ int64_t tomato_entropy(void *out, int64_t n) {
     return 0;
 #endif
 }
+
+/* ---- floats of any size (docs/bigfloat-runtime.md, docs/bigfloat-design.md) ----
+ * A float is one 64-bit word. Nearly always it is the bits of a finite double (a "plain" float). A value that is not
+ * exactly a double is "boxed": the word is a quiet NaN whose low 51 bits are the address of a BigFloat, the value m * 2^e
+ * with 1 <= |m| < 2 and e an int of any size. The form is canonical: whatever is exactly a double, subnormals included, is
+ * plain. There is no infinity and no NaN, so a NaN pattern is free to mark a box.
+ *
+ * A box has one owner, like a Big: tomato_bf_dup copies, tomato_bf_free frees. The operations borrow their operands, and
+ * free those the caller gives up (the mask m: bit 0 for x, bit 1 for y, as for ints); results are always fresh. All but
+ * the functions marked otherwise round the exact result once to 53 bits, nearest, ties to even. The compiler does not
+ * call these yet (stage 3 of the plan does). */
+typedef struct { double m; int64_t e; } BigFloat;
+#define BF_BOX 0x7FF8000000000000LL
+#define BF_NONE 0x7FF0000000000000LL     /* infinity: no float has these bits, so tomato_bf_text gives it for text that is not a number */
+
+static inline int bf_boxed(int64_t w) { return (w & BF_BOX) == BF_BOX; }
+static inline BigFloat *bf_ptr(int64_t w) { return (BigFloat *)(uintptr_t)(w & ~BF_BOX); }
+static inline int64_t bf_bits(double d) { int64_t w; memcpy(&w, &d, 8); return w; }
+static inline double bf_double(int64_t w) { double d; memcpy(&d, &w, 8); return d; }
+
+/* a new box; e becomes its own */
+static int64_t bf_box(double m, int64_t e) {
+    BigFloat *b = malloc(sizeof *b);
+    if (!b) out_of_memory();
+    BIG_ADJUST(1);
+    b->m = m; b->e = e;
+    return BF_BOX | (int64_t)(uintptr_t)b;
+}
+int32_t tomato_bf_is_boxed(int64_t x) { return bf_boxed(x); }
+int64_t tomato_bf_dup(int64_t x) { return bf_boxed(x) ? bf_box(bf_ptr(x)->m, tomato_int_dup(bf_ptr(x)->e)) : x; }
+void tomato_bf_free(int64_t x) {
+    if (!bf_boxed(x)) return;
+    tomato_int_free(bf_ptr(x)->e);
+    free(bf_ptr(x)); BIG_ADJUST(-1);
+}
+#define BF_CONSUME(m, x, y) do { if ((m) & 1) tomato_bf_free(x); if ((m) & 2) tomato_bf_free(y); } while (0)
+
+/* A float taken apart: m * 2^e, with e borrowed. m is 0 (with its sign) for a zero. */
+static BigFloat bf_open(int64_t w) {
+    if (bf_boxed(w)) return *bf_ptr(w);
+    BigFloat b; int k = 1;
+    b.m = frexp(bf_double(w), &k) * 2;
+    b.e = int_mk_small(b.m == 0 ? 0 : k - 1);
+    return b;
+}
+
+static int64_t bi(int64_t v) { return int_mk_small(v); }
+/* int helpers that give up their operands (words of small numbers own nothing) */
+static int64_t bi_add(int64_t x, int64_t y) { return tomato_int_add_c(x, y, 3); }
+static int64_t bi_sub(int64_t x, int64_t y) { return tomato_int_sub_c(x, y, 3); }
+static int64_t bi_mul(int64_t x, int64_t y) { return tomato_int_mul_c(x, y, 3); }
+static int64_t bi_div(int64_t x, int64_t y) { return tomato_int_floordiv_c(x, y, 3); }
+static int bi_zero(int64_t x) { return int_is_small(x) && int_small_val(x) == 0; }
+
+/* the number of bits of the magnitude */
+static int64_t bi_bits(int64_t x) {
+    IntView a; int_view(x, &a);
+    return a.n == 0 ? 0 : a.n * 32 - __builtin_clz(a.d[a.n - 1]);
+}
+
+/* x * 2^k, cut towards zero; gives up x */
+static int64_t bi_shift(int64_t x, int64_t k) {
+    IntView a; int_view(x, &a);
+    if (a.n == 0 || k == 0) return x;
+    int64_t w = (k < 0 ? -k : k) / 32, n = k < 0 ? a.n - w : a.n + w + 1;
+    int b = (int)((k < 0 ? -k : k) % 32);
+    if (n <= 0) { tomato_int_free(x); return bi(0); }
+    if ((uint64_t)n > SIZE_MAX / 8) out_of_memory();
+    Big *r = malloc(sizeof(Big) + (size_t)n * 4);
+    if (!r) out_of_memory();
+    BIG_ADJUST(1);
+    if (k > 0) {
+        memset(r->d, 0, (size_t)w * 4);
+        r->d[n - 1] = 0;
+        for (int64_t i = 0; i < a.n; i++) r->d[i + w] = a.d[i] << b | (b && i ? a.d[i - 1] >> (32 - b) : 0);
+        if (b) r->d[n - 1] = a.d[a.n - 1] >> (32 - b);
+    } else {
+        for (int64_t i = 0; i < n; i++) r->d[i] = a.d[i + w] >> b | (b && i + w + 1 < a.n ? a.d[i + w + 1] << (32 - b) : 0);
+    }
+    int sign = a.sign;
+    int64_t res = int_finish(r, sign, n);
+    tomato_int_free(x);
+    return res;
+}
+static int64_t bi_one(int64_t k) { return bi_shift(bi(1), k); }                 /* 2^k */
+static int64_t bi_floor_shift(int64_t x, int64_t k) {                                   /* floor(x / 2^k); gives up x */
+    if (tomato_int_sign(x) >= 0) return bi_shift(x, -k);
+    int64_t q = bi_shift(tomato_int_dup(x), -k), back = bi_shift(tomato_int_dup(q), k), up = tomato_int_cmp(back, x);
+    tomato_int_free(back); tomato_int_free(x);
+    return up ? bi_sub(q, bi(1)) : q;
+}
+
+/* a size or bit count, as a machine integer: more than 2^31 (the largest shift of an int) is out of memory */
+static int64_t bf_count(int64_t x) {
+    if (!int_is_small(x) || int_small_val(x) > INT_MAX_SHIFT || int_small_val(x) < -INT_MAX_SHIFT) out_of_memory();
+    return int_small_val(x);
+}
+
+/* the float m * 2^e; m is any finite double but zero, not subnormal. Gives up e. */
+static int64_t bf_make(double m, int64_t e) {
+    int k;
+    m = frexp(m, &k) * 2;
+    e = bi_add(e, bi(k - 1));
+    if (int_is_small(e)) {
+        int64_t v = int_small_val(e);
+        if (v >= -1074 && v <= 1023) {
+            double d = ldexp(m, (int)v);
+            if (v >= -1022 || ldexp(d, (int)-v) == m) return bf_bits(d);
+        }
+    }
+    return bf_box(m, e);
+}
+
+/* |x|'s top 64 bits with the top one set (x is not 0), and whether any bit below them is set */
+static uint64_t bi_top64(int64_t x, int *sticky) {
+    IntView a; int_view(x, &a);
+    uint64_t lo = a.n > 2 ? a.d[a.n - 3] : 0, hi = (uint64_t)a.d[a.n - 1] << 32 | (a.n > 1 ? a.d[a.n - 2] : 0);
+    int s = __builtin_clzll(hi);
+    *sticky = (uint32_t)(lo << s) != 0;                      /* (s < 32) */
+    for (int64_t i = 0; i < a.n - 3 && !*sticky; i++) *sticky = a.d[i] != 0;
+    return s ? hi << s | lo >> (32 - s) : hi;
+}
+
+/* the float nearest to x * 2^e, or to a value just beyond x (in magnitude) when more is set. Gives up x and e; e is an int. */
+static int64_t bf_round(int64_t x, int64_t e, int more) {
+    if (bi_zero(x)) { tomato_int_free(e); return 0; }
+    int sticky;
+    uint64_t t = bi_top64(x, &sticky);
+    double m = (double)(t | (uint64_t)(sticky || more));      /* round to odd, then once to nearest */
+    e = bi_add(e, bi(bi_bits(x) - 64));
+    if (tomato_int_sign(x) < 0) m = -m;
+    tomato_int_free(x);
+    return bf_make(m, e);
+}
+
+/* num / den * 2^e rounded once; den is positive. Gives up all three. */
+static int64_t bf_ratio(int64_t num, int64_t den, int64_t e) {
+    int neg = tomato_int_sign(num) < 0;
+    if (neg) num = bi_mul(num, bi(-1));
+    int64_t s = 66 - (bi_bits(num) - bi_bits(den)), q, r;
+    if (s > 0) num = bi_shift(num, s); else den = bi_shift(den, -s);
+    int_floordivmod(num, den, &q, &r);
+    int more = !bi_zero(r);
+    tomato_int_free(num); tomato_int_free(den); tomato_int_free(r);
+    if (neg) q = bi_mul(q, bi(-1));
+    return bf_round(q, bi_sub(e, bi(s)), more);
+}
+
+/* ---- conversions and comparison ---- */
+int64_t tomato_bf_from_f64(double d) { return bf_bits(d); }                              /* d is finite */
+/* 1 when the float rounds to a finite double: a float that is too large does not, a tiny one becomes a subnormal or zero */
+int32_t tomato_bf_fits_f64(int64_t x) { return !bf_boxed(x) || tomato_int_sign(bf_ptr(x)->e) < 0; }
+/* the nearest double (infinity when it does not fit: ask tomato_bf_fits_f64 first) */
+double tomato_bf_to_f64(int64_t x) {
+    if (!bf_boxed(x)) return bf_double(x);
+    BigFloat b = *bf_ptr(x);
+    if (tomato_int_sign(b.e) > 0) return copysign(INFINITY, b.m);
+    return int_is_small(b.e) && int_small_val(b.e) >= -1100 ? ldexp(b.m, (int)int_small_val(b.e)) : copysign(0.0, b.m);
+}
+
+int64_t tomato_bf_from_int(int64_t n, int32_t m) {
+    if (int_is_small(n) && llabs(int_small_val(n)) <= (1LL << 53)) return bf_bits((double)int_small_val(n));
+    return bf_round(m & 1 ? n : tomato_int_dup(n), bi(0), 0);
+}
+
+/* the whole part towards zero, exactly */
+int64_t tomato_bf_to_int(int64_t x, int32_t m) {
+    if (!bf_boxed(x)) return tomato_f64_to_int(bf_double(x));
+    BigFloat b = *bf_ptr(x);
+    int64_t r = bi(0);
+    if (tomato_int_sign(b.e) > 0) r = bi_shift(bi((int64_t)ldexp(b.m, 52)), bf_count(b.e) - 52);
+    BF_CONSUME(m, x, 0);
+    return r;
+}
+
+/* int / int: the exact quotient, rounded once. y is not zero (the caller checked). 0 / -5 is -0.0 (D05ai). */
+int64_t tomato_bf_int_div(int64_t x, int64_t y, int32_t m) {
+    int neg = tomato_int_sign(y) < 0;
+    int64_t r;
+    if (bi_zero(x)) r = bf_bits(neg ? -0.0 : 0.0);
+    else r = neg ? bf_ratio(tomato_int_neg(x), tomato_int_neg(y), bi(0)) : bf_ratio(tomato_int_dup(x), tomato_int_dup(y), bi(0));
+    INT_CONSUME(m, x, y);
+    return r;
+}
+
+static int bf_sign_of(double m) { return (m > 0) - (m < 0); }
+/* -1, 0 or 1 */
+int32_t tomato_bf_cmp(int64_t x, int64_t y, int32_t m) {
+    BigFloat a = bf_open(x), b = bf_open(y);
+    int c = bf_sign_of(a.m) - bf_sign_of(b.m);
+    if (c == 0 && a.m != 0) {
+        c = tomato_int_cmp(a.e, b.e);
+        if (a.m < 0) c = -c;
+        if (c == 0) c = bf_sign_of(a.m - b.m);
+    }
+    BF_CONSUME(m, x, y);
+    return (c > 0) - (c < 0);
+}
+
+/* the same for a float and an int, exactly */
+int32_t tomato_bf_cmp_int(int64_t x, int64_t n, int32_t m) {
+    BigFloat a = bf_open(x);
+    int sign = tomato_int_sign(n), c = bf_sign_of(a.m) - sign;
+    if (c == 0 && sign != 0) {
+        c = tomato_int_cmp(a.e, bi(bi_bits(n) - 1));
+        if (c == 0) {                                          /* the same power of two: compare the bits below it */
+            int sticky;
+            uint64_t t = bi_top64(n, &sticky), f = (uint64_t)ldexp(fabs(a.m), 52) << 11;
+            c = f != t ? (f < t ? -1 : 1) : -sticky;
+        }
+        c *= sign;
+    }
+    if (m & 1) tomato_bf_free(x);
+    if (m & 2) tomato_int_free(n);
+    return (c > 0) - (c < 0);
+}
+
+/* ---- arithmetic ---- */
+int64_t tomato_bf_neg(int64_t x, int32_t m) {
+    if (!bf_boxed(x)) return bf_bits(-bf_double(x));
+    int64_t r = tomato_bf_dup(x);
+    bf_ptr(r)->m = -bf_ptr(r)->m;
+    BF_CONSUME(m, x, 0);
+    return r;
+}
+int64_t tomato_bf_abs(int64_t x, int32_t m) {
+    if (!bf_boxed(x)) return bf_bits(fabs(bf_double(x)));
+    int64_t r = tomato_bf_dup(x);
+    bf_ptr(r)->m = fabs(bf_ptr(r)->m);
+    BF_CONSUME(m, x, 0);
+    return r;
+}
+int32_t tomato_bf_sign(int64_t x) { return bf_sign_of(bf_open(x).m); }
+
+/* The significands are doubles in [1, 2), so the hardware rounds their sum, product or quotient exactly as the whole result
+ * must be rounded: only the exponent is computed apart. */
+static int64_t bf_add(int64_t x, int64_t y) {
+    if (!bf_boxed(x) && !bf_boxed(y)) {
+        double s = bf_double(x) + bf_double(y);                /* (a sum never loses digits to underflow) */
+        if (isfinite(s)) return bf_bits(s);
+    }
+    BigFloat a = bf_open(x), b = bf_open(y);
+    if (a.m == 0) return tomato_bf_dup(y);                    /* (both zero: above) */
+    if (b.m == 0) return tomato_bf_dup(x);
+    int64_t d = tomato_int_sub(a.e, b.e);
+    if (tomato_int_sign(d) < 0) {
+        BigFloat t = a; a = b; b = t;
+        int64_t w = x; x = y; y = w;
+        d = bi_mul(d, bi(-1));
+    }
+    int far = !int_is_small(d) || int_small_val(d) > 60;       /* y is under a quarter of x's last place */
+    int k = far ? 0 : (int)int_small_val(d);
+    tomato_int_free(d);
+    if (far) return tomato_bf_dup(x);
+    double s = a.m + ldexp(b.m, -k);
+    return s == 0 ? 0 : bf_make(s, tomato_int_dup(a.e));
+}
+int64_t tomato_bf_add(int64_t x, int64_t y, int32_t m) { int64_t r = bf_add(x, y); BF_CONSUME(m, x, y); return r; }
+int64_t tomato_bf_sub(int64_t x, int64_t y, int32_t m) {
+    int64_t n = tomato_bf_neg(y, 0), r = bf_add(x, n);
+    tomato_bf_free(n);
+    BF_CONSUME(m, x, y);
+    return r;
+}
+
+/* a hardware product, quotient or power that is neither too large nor possibly rounded as a subnormal */
+static int bf_normal(double r) { return isfinite(r) && fabs(r) > 2.2250738585072014e-308; }
+
+int64_t tomato_bf_mul(int64_t x, int64_t y, int32_t m) {
+    if (!bf_boxed(x) && !bf_boxed(y)) {
+        double p = bf_double(x) * bf_double(y);
+        if (bf_normal(p)) return bf_bits(p);
+    }
+    BigFloat a = bf_open(x), b = bf_open(y);
+    double p = a.m * b.m;
+    int64_t r = p == 0 ? bf_bits(p) : bf_make(p, tomato_int_add(a.e, b.e));
+    BF_CONSUME(m, x, y);
+    return r;
+}
+
+/* y is not zero: the compiler tests it first */
+static int64_t bf_div(int64_t x, int64_t y) {
+    BigFloat a = bf_open(x), b = bf_open(y);
+    if (b.m == 0) tomato_fail_id(1, "division by zero");
+    double q = a.m / b.m;
+    return q == 0 ? bf_bits(q) : bf_make(q, tomato_int_sub(a.e, b.e));
+}
+int64_t tomato_bf_div(int64_t x, int64_t y, int32_t m) { int64_t r = bf_div(x, y); BF_CONSUME(m, x, y); return r; }
+
+/* x // y: the rounded quotient, rounded down, as a float (what a double does: floor(x / y)) */
+int64_t tomato_bf_floordiv(int64_t x, int64_t y, int32_t m) {
+    int64_t q = bf_div(x, y);
+    BF_CONSUME(m, x, y);
+    if (!bf_boxed(q)) return bf_bits(floor(bf_double(q)));
+    if (tomato_int_sign(bf_ptr(q)->e) > 0) return q;           /* 2^1024 and above: whole */
+    int neg = bf_ptr(q)->m < 0;
+    tomato_bf_free(q);
+    return bf_bits(neg ? -1.0 : 0.0);
+}
+
+/* x % y, with the sign of y: the remainder of the exact division. When x is the larger one it is mx * 2^d mod my (the
+ * significands as whole numbers), and the power of two is taken modulo my, so even a huge difference d is quick. */
+int64_t tomato_bf_mod(int64_t x, int64_t y, int32_t m) {
+    int64_t r;
+    BigFloat a = bf_open(x), b = bf_open(y);
+    if (b.m == 0) tomato_fail_id(1, "division by zero");
+    int64_t d = tomato_int_sub(a.e, b.e);
+    if (!bf_boxed(x) && !bf_boxed(y)) r = bf_bits(fmod(bf_double(x), bf_double(y)));
+    else if (a.m == 0 || tomato_int_sign(d) < 0) r = tomato_bf_dup(x);
+    else {
+        uint64_t mx = (uint64_t)ldexp(fabs(a.m), 52), my = (uint64_t)ldexp(fabs(b.m), 52), p = 1;
+        IntView v; int_view(d, &v);
+        for (int64_t i = bi_bits(d) - 1; i >= 0; i--) {
+            p = (uint64_t)((unsigned __int128)p * p % my);
+            if (v.d[i / 32] >> (i % 32) & 1) p = p * 2 % my;
+        }
+        double t = copysign((double)(uint64_t)((unsigned __int128)p * mx % my), a.m);
+        r = t == 0 ? bf_bits(t) : bf_make(t, tomato_int_sub(b.e, bi(52)));
+    }
+    tomato_int_free(d);
+    int s = tomato_bf_sign(r);
+    if (s != 0 && s != bf_sign_of(b.m)) { int64_t t = bf_add(r, y); tomato_bf_free(r); r = t; }
+    BF_CONSUME(m, x, y);
+    return r;
+}
+
+/* ---- fixed-point numbers: an int v stands for v / 2^P ----
+ * Logarithms and exponentials to any precision, for **, the decimal text and the math functions. Each is within a few units of
+ * its last place. The functions borrow their arguments. */
+static int64_t fx_mul(int64_t a, int64_t b, int64_t P) { return bi_shift(tomato_int_mul(a, b), -P); }
+
+/* the arc cotangent (hyperbolic) of a small whole number: 1/n + 1/(3 n^3) + 1/(5 n^5) ... */
+static int64_t fx_acoth(int64_t n, int64_t P) {
+    int64_t t = bi_div(bi_one(P), bi(n)), sum = tomato_int_dup(t);
+    for (int64_t k = 3; !bi_zero(t); k += 2) {
+        t = bi_div(t, bi(n * n));
+        sum = bi_add(sum, tomato_int_floordiv(t, bi(k)));
+    }
+    tomato_int_free(t);
+    return sum;
+}
+/* log 2 and log 10 (either may be NULL) */
+static void fx_logs(int64_t P, int64_t *ln2, int64_t *ln10) {
+    int64_t W = P + 32, a = fx_acoth(31, W), b = fx_acoth(49, W), c = fx_acoth(161, W);
+    if (ln2) *ln2 = bi_shift(bi_add(bi_add(tomato_int_mul(a, bi(14)), tomato_int_mul(b, bi(10))), tomato_int_mul(c, bi(6))), -32);
+    if (ln10) *ln10 = bi_shift(bi_add(bi_add(tomato_int_mul(a, bi(46)), tomato_int_mul(b, bi(34))), tomato_int_mul(c, bi(20))), -32);
+    tomato_int_free(a); tomato_int_free(b); tomato_int_free(c);
+}
+
+/* exp(x) for 0 <= x < 8 or so: the series for x / 2^s, squared s times */
+static int64_t fx_exp(int64_t x, int64_t P) {
+    int64_t s = 8 + (int64_t)sqrt((double)P), W = P + s + 32;
+    int64_t r = bi_shift(tomato_int_dup(x), W - P - s), t = bi_one(W), sum = bi_one(W);
+    for (int64_t k = 1; !bi_zero(t); k++) {
+        int64_t u = fx_mul(t, r, W);
+        tomato_int_free(t);
+        t = bi_div(u, bi(k));
+        sum = tomato_int_add_c(sum, t, 1);
+    }
+    for (int64_t i = 0; i < s; i++) { int64_t u = fx_mul(sum, sum, W); tomato_int_free(sum); sum = u; }
+    tomato_int_free(t); tomato_int_free(r);
+    return bi_shift(sum, P - W);
+}
+
+/* a finite double, cut to P places */
+static int64_t fx_double(double d, int64_t P) {
+    int k;
+    int64_t v = (int64_t)ldexp(frexp(d, &k), 53);
+    return bi_shift(bi(v), P + k - 53);
+}
+
+/* log(m) for a double 1 <= m < 2, P at least 100: c = log(m) to double precision, then the log of m / exp(c), which is 1 to 50
+ * bits, so each term of 2 atanh(z) = 2 (z + z^3/3 + ...) adds 100 bits */
+static int64_t fx_log(double m, int64_t P) {
+    if (m == 1) return bi(0);
+    int64_t W = P + 32, c = fx_double(log(m), W), e = fx_exp(c, W), x = fx_double(m, W);
+    int64_t zn = bi_shift(tomato_int_sub(x, e), W);                       /* (two statements: bi_add gives up x and e, and C does not say which argument comes first) */
+    int64_t z = bi_div(zn, bi_add(x, e)), z2 = fx_mul(z, z, W), sum = tomato_int_dup(z);
+    for (int64_t k = 3; !bi_zero(z); k += 2) {
+        int64_t u = fx_mul(z, z2, W);
+        tomato_int_free(z); z = u;
+        sum = bi_add(sum, tomato_int_floordiv(z, bi(k)));
+    }
+    tomato_int_free(z); tomato_int_free(z2);
+    return bi_shift(bi_add(c, bi_mul(sum, bi(2))), -32);
+}
+
+/* x * 2^e rounded to a float when that is certain for every value within err of x (x > 0): 1, with the float in *out. The exact
+ * value must not be halfway between two floats, or no precision is enough. Gives up x and err, borrows e. */
+static int bf_round_near(int64_t x, int64_t err, int64_t e, int neg, int64_t *out) {
+    int64_t sh = bi_bits(x) - 53, half = bi_one(sh - 1);
+    int64_t lo = bi_floor_shift(bi_add(tomato_int_sub(x, err), tomato_int_dup(half)), sh), hi = bi_shift(bi_add(bi_add(x, err), half), -sh);
+    int same = tomato_int_cmp(lo, hi) == 0;
+    if (same) {
+        double m = (double)int_small_val(lo);
+        *out = bf_make(neg ? -m : m, tomato_int_add(e, bi(sh)));
+    }
+    tomato_int_free(lo); tomato_int_free(hi);
+    return same;
+}
+
+/* ---- decimal text ----
+ * x = 10^k * v with 1 <= v < 10. bf_decimal gives k, and S = 2^e / 10^k (e is x's exponent) to F places, within 1024 units; v is
+ * m * S. Everything else is the question which decimals lie near v. */
+static int64_t bf_decimal(BigFloat x, int64_t F, int64_t *S) {
+    int64_t P = F + bi_bits(x.e) + 32, ln2, ln10, t;
+    fx_logs(P, &ln2, &ln10);
+    int64_t lg = tomato_int_mul(x.e, ln2);                                             /* log(2^e) */
+    int64_t k = bi_div(bi_add(tomato_int_dup(lg), fx_double(log(fabs(x.m)), P)), tomato_int_dup(ln10));
+    t = bi_sub(lg, tomato_int_mul(k, ln10));                                           /* log S, from log 0.5 to log 10 */
+    t = bi_shift(bi_add(t, bi_mul(ln2, bi(2))), F - P);
+    tomato_int_free(ln10);
+    int64_t s = bi_shift(fx_exp(t, F), -2), one = bi_shift(bi_one(F), 52);
+    tomato_int_free(t);
+    /* k is one off when v is within rounding of a power of ten */
+    int64_t v = tomato_int_mul(s, bi((int64_t)ldexp(fabs(x.m), 52))), ten = tomato_int_mul(one, bi(10));
+    if (tomato_int_cmp(v, one) < 0) { s = bi_mul(s, bi(10)); k = bi_sub(k, bi(1)); }
+    else if (tomato_int_cmp(v, ten) >= 0) { s = bi_div(s, bi(10)); k = bi_add(k, bi(1)); }
+    tomato_int_free(v); tomato_int_free(ten); tomato_int_free(one);
+    *S = s;
+    return k;
+}
+
+static int bi_near(int64_t x, int64_t err) {                                            /* |x| <= err; gives up x */
+    int64_t a = tomato_int_sign(x) < 0 ? bi_mul(x, bi(-1)) : x;
+    int r = tomato_int_cmp(a, err) <= 0;
+    tomato_int_free(a);
+    return r;
+}
+
+/* the digits of the first of x rounded to 1, 2, 3 ... digits that reads back as x (as a double is printed), and the exponent of
+ * the first digit. x is outside the normal doubles, so none of these is halfway between two floats, nor is x halfway between two
+ * decimals of 17 digits: they would need a factor 5^290. So more places settle every doubt. */
+static int64_t bf_shortest(BigFloat x, char *digits) {
+    int64_t M = (int64_t)ldexp(fabs(x.m), 52), q = 0;
+    for (int64_t F = 192;; F *= 2) {
+        int64_t S, k = bf_decimal(x, F, &S), U = F + 54;                               /* v = M * S / 2^(F + 52), times 4 for the halves */
+        int64_t v = tomato_int_mul(S, bi(4 * M)), half = bi_one(U - 1), err = bi_one(66);
+        int64_t lo = tomato_int_mul(S, bi(M == (int64_t)1 << 52 ? 4 * M - 1 : 4 * M - 2)), hi = tomato_int_mul(S, bi(4 * M + 2));
+        int found = 0, doubt = 0, n = 0;
+        while (!found && !doubt && n++ < 17) {
+            if (n > 1) { v = bi_mul(v, bi(10)); lo = bi_mul(lo, bi(10)); hi = bi_mul(hi, bi(10)); err = bi_mul(err, bi(10)); }
+            q = bi_shift(tomato_int_add(v, half), -U);                                 /* (17 digits: small) */
+            int64_t c = bi_shift(q, U), d = tomato_int_sub(v, c);
+            if (tomato_int_sign(d) < 0) d = bi_mul(d, bi(-1));
+            found = tomato_int_cmp(c, lo) > 0 && tomato_int_cmp(c, hi) < 0;
+            doubt = bi_near(tomato_int_sub(c, lo), err) || bi_near(tomato_int_sub(c, hi), err) || bi_near(bi_sub(d, tomato_int_dup(half)), err);
+            tomato_int_free(c);
+        }
+        tomato_int_free(v); tomato_int_free(lo); tomato_int_free(hi); tomato_int_free(half); tomato_int_free(err); tomato_int_free(S);
+        if (!doubt) {
+            int len = sprintf(digits, "%lld", (long long)int_small_val(q));
+            if (len > n) k = bi_add(k, bi(1));                                         /* 9.99 became 10 */
+            while (len > 1 && digits[len - 1] == '0') digits[--len] = 0;
+            return k;
+        }
+        tomato_int_free(k);
+    }
+}
+
+/* text with a decimal exponent (an int): d.ddd e +N, as the double printer lays it out. Gives up e. */
+static void *bf_join(const char *head, const char *mark, int64_t e) {
+    Str *n = tomato_int_str(e);
+    size_t size = strlen(head) + 8 + (size_t)n->bytes;
+    char *b = malloc(size);
+    if (!b) out_of_memory();
+    int len = snprintf(b, size, "%s%s%s%s", head, mark, n->data[0] == '-' ? "" : "+", n->data);
+    void *r = str_new(b, len);
+    free(b); tomato_release(n); tomato_int_free(e);
+    return r;
+}
+
+/* a float as print shows it, the shortest decimal that reads back as the same float: for a box 1.5e+1000000, or, when its
+ * exponent has more than 4096 bits, the exact 0x1.8p+E (reading that back needs no logarithm). A subnormal double takes the
+ * digits a float needs, not the fewer that a double needs: 2^-1074 is 4.9406564584124654e-324, because 5e-324 is another float. */
+void *tomato_bf_str(int64_t x) {
+    if (!bf_boxed(x) && (fabs(bf_double(x)) >= 2.2250738585072014e-308 || bf_double(x) == 0)) return tomato_str_from_f64(bf_double(x));
+    BigFloat b = bf_open(x);
+    char digits[24], head[40];
+    const char *sign = b.m < 0 ? "-" : "";
+    if (bi_bits(b.e) > 4096) {
+        int len = snprintf(head, sizeof head, "%s0x1.%013llx", sign, (unsigned long long)(bf_bits(b.m) & 0xFFFFFFFFFFFFFLL));
+        while (head[len - 1] == '0') head[--len] = 0;
+        if (head[len - 1] == '.') head[--len] = 0;
+        return bf_join(head, "p", tomato_int_dup(b.e));
+    }
+    int64_t k = bf_shortest(b, digits);
+    snprintf(head, sizeof head, "%s%c%s%s", sign, digits[0], digits[1] ? "." : "", digits + 1);
+    return bf_join(head, "e", k);
+}
+void tomato_bf_print(int64_t x) { void *s = tomato_bf_str(x); tomato_print_strobj(s); tomato_release(s); }
+
+/* ---- reading text ---- */
+/* 10^k, exactly; k is not negative */
+static int64_t bi_pow10(int64_t k) { return tomato_int_pow(bi(10), bi(k)); }
+
+/* D * 10^k (k an int) for the n digits D, which do not start or end with 0. Few digits and places decide nearly always; then
+ * all digits, exactly when k is small enough for D to be halfway between two floats, else with more places. Gives up k. */
+static int64_t bf_from_decimal(const char *s, int64_t n, int64_t k, int neg) {
+    int ok;
+    for (int64_t F = 192, take = 40;; F *= 2, take *= 4) {
+        if (take > n) take = n;
+        int64_t D = int_from_digits(s, take, &ok), K = tomato_int_add(k, bi(n - take)), r;
+        int64_t P = F + bi_bits(K) + 32, ln2, ln10;
+        fx_logs(P, &ln2, &ln10);
+        int64_t t = tomato_int_mul(K, ln10), e = tomato_int_floordiv(t, ln2);          /* 10^K = 2^e * exp(t - e log 2) */
+        t = bi_shift(bi_sub(t, tomato_int_mul(e, ln2)), F - P);
+        int64_t f = fx_exp(t, F), err = bi_mul(tomato_int_add(D, bi(1)), bi(64));
+        if (take < n) err = bi_add(err, tomato_int_dup(f));                              /* the digits left out are less than one unit of D */
+        int64_t v = bi_mul(D, f);
+        e = bi_sub(e, bi(F));
+        int sure = bf_round_near(v, err, e, neg, &r);
+        tomato_int_free(t); tomato_int_free(e); tomato_int_free(K); tomato_int_free(ln2); tomato_int_free(ln10);
+        if (sure) { tomato_int_free(k); return r; }
+        if (int_is_small(k) && llabs(int_small_val(k)) <= 2 * n + 400) {
+            int64_t kv = int_small_val(k), N = int_from_digits(s, n, &ok);
+            if (neg) N = bi_mul(N, bi(-1));
+            return kv >= 0 ? bf_round(bi_mul(N, bi_pow10(kv)), bi(0), 0) : bf_ratio(N, bi_pow10(-kv), bi(0));
+        }
+    }
+}
+
+/* a whole number with a sign, or 0 in *ok */
+static int64_t bf_exponent(const char *s, int64_t n, int *ok) {
+    if (n > 0 && *s == '+') { s++; n--; if (n > 0 && *s == '-') n = 0; }
+    return int_from_digits(s, n, ok);
+}
+
+/* decimal text with an exponent of any size, or the 0x1.8p+E form; BF_NONE when it is neither. s[n] is 0. */
+static int64_t bf_parse(const char *s, int64_t n) {
+    int64_t i = 0, point = -1, nd = 0, e = bi(0);
+    int neg = 0, hex = 0, ok = 1;
+    if (n > 0 && (s[0] == '-' || s[0] == '+')) { neg = s[0] == '-'; i = 1; }
+    if (n - i > 2 && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X')) { hex = 1; i += 2; }
+    char *d = malloc((size_t)n + 1);                                                       /* the digits without the point */
+    if (!d) out_of_memory();
+    for (; i < n; i++) {
+        if (s[i] == '.' && point < 0) point = nd;
+        else if (hex ? isxdigit((unsigned char)s[i]) != 0 : s[i] >= '0' && s[i] <= '9') d[nd++] = s[i];
+        else break;
+    }
+    if (point < 0) point = nd;
+    if (i < n && (hex ? s[i] == 'p' || s[i] == 'P' : s[i] == 'e' || s[i] == 'E')) e = bf_exponent(s + i + 1, n - i - 1, &ok);
+    else ok = i == n && !hex;
+    if (!ok || nd == 0) { free(d); tomato_int_free(e); return BF_NONE; }
+    int64_t r, z = 0;
+    while (nd > 0 && d[nd - 1] == '0') nd--;
+    while (z < nd && d[z] == '0') z++;
+    if (nd == 0) { tomato_int_free(e); r = bf_bits(neg ? -0.0 : 0.0); }
+    else if (hex) {
+        uint32_t *limbs = calloc((size_t)(nd / 8 + 1), 4);
+        if (!limbs) out_of_memory();
+        for (int64_t k = 0; k < nd; k++) {
+            int c = d[nd - 1 - k];
+            limbs[k / 8] |= (uint32_t)(c <= '9' ? c - '0' : (c | 32) - 'a' + 10) << (k % 8 * 4);
+        }
+        int64_t v = int_make(neg ? -1 : 1, limbs, nd / 8 + 1);
+        free(limbs);
+        r = bf_round(v, bi_add(e, bi(4 * (point - nd))), 0);
+    } else {
+        double v = strtod(s, NULL);                                                        /* correctly rounded: glibc, macOS and the WASI C library */
+        if (bf_normal(v)) { tomato_int_free(e); r = bf_bits(v); }
+        else r = bf_from_decimal(d + z, nd - z, bi_add(e, bi(point - nd)), neg);
+    }
+    free(d);
+    return r;
+}
+/* float(text): BF_NONE when the text, without the spaces around it, is not a number */
+int64_t tomato_bf_text(void *text) {
+    const char *s; int64_t n; text_trim(text, &s, &n);
+    char *c = malloc((size_t)n + 1);
+    if (!c) out_of_memory();
+    memcpy(c, s, (size_t)n); c[n] = 0;
+    int64_t r = bf_parse(c, n);
+    free(c);
+    return r;
+}
+/* a literal of the program (valid text) */
+int64_t tomato_bf_literal(const char *text) { return bf_parse(text, (int64_t)strlen(text)); }
+/* an input of the entry point */
+int64_t tomato_bf_parse_cstr(const char *text, int position) {
+    int64_t r = bf_parse(text, (int64_t)strlen(text));
+    if (r == BF_NONE) bad_input(position, "a number", text);
+    return r;
+}
+
+/* ---- powers, exponentials and logarithms ----
+ * The result is rounded correctly (fixed-point, with more places while the rounding is in doubt) when a fast path does not
+ * apply. A plain argument with a plain result keeps the C library's result, so doubles behave as they did. */
+
+/* 2^(y L), where L is 1 / log 2 (exp) or log2 |x| (a power; x is given), y is not zero and the exact value is neither a float
+ * nor halfway between two floats unless y L is whole */
+static int64_t bf_exp2(int neg, const BigFloat *x, BigFloat y) {
+    /* |y L| < 2^top: a result of 2^-55 or closer to 1 rounds to 1 */
+    int64_t top = bi_add(tomato_int_add(y.e, bi(2)), bi(x ? bi_bits(x->e) + 1 : 1));
+    int tiny = tomato_int_cmp(top, bi(-55)) < 0;
+    if (tiny) { tomato_int_free(top); return bf_bits(neg ? -1.0 : 1.0); }
+    int64_t ey = bf_count(y.e), grow = ey > 0 ? ey : 0, M = (int64_t)ldexp(y.m, 52), r;
+    tomato_int_free(top);
+    for (int64_t F = 128;; F *= 2) {
+        int64_t P = F + grow + 16, ln2, L;
+        fx_logs(P, &ln2, NULL);
+        if (!x) L = bi_div(bi_one(2 * P), tomato_int_dup(ln2));
+        else {
+            L = bi_shift(tomato_int_dup(x->e), P);
+            if (x->m != 1 && x->m != -1) L = bi_add(L, bi_div(bi_shift(fx_log(fabs(x->m), P), P), tomato_int_dup(ln2)));
+        }
+        int64_t p = bi_shift(bi_mul(L, bi(M)), ey - 52 + F - P), n = bi_floor_shift(tomato_int_dup(p), F);      /* 2^p = 2^n * 2^(p - n) */
+        p = bi_sub(p, bi_shift(tomato_int_dup(n), F));
+        int64_t t = bi_mul(p, bi_shift(ln2, F - P));
+        t = bi_shift(t, -F);
+        n = bi_sub(n, bi(F));
+        int sure = bf_round_near(fx_exp(t, F), bi(64), n, neg, &r);
+        tomato_int_free(t); tomato_int_free(n);
+        if (sure) return r;
+    }
+}
+
+/* log x (kind 0), log2 x (1) or log10 x (2) of x > 0, not 1, whose exponent is at least 100 in size, or, with k, the log of x 2^k */
+static int64_t bf_logarithm(BigFloat x, int kind, int64_t k) {
+    int64_t e = tomato_int_add(x.e, bi(k)), bits = bi_bits(e), r;
+    if (kind == 1 && x.m == 1) return bf_round(e, bi(0), 0);
+    for (int64_t F = 128;; F *= 2) {
+        int64_t P = F + 8, ln2, ln10, v;
+        fx_logs(P, &ln2, &ln10);
+        if (kind == 1) v = bi_add(bi_shift(tomato_int_dup(e), P), bi_div(bi_shift(fx_log(x.m, P), P), tomato_int_dup(ln2)));
+        else v = bi_add(tomato_int_mul(e, ln2), fx_log(x.m, P));
+        if (kind == 2) v = bi_div(bi_shift(v, P), tomato_int_dup(ln10));
+        tomato_int_free(ln2); tomato_int_free(ln10);
+        int neg = tomato_int_sign(v) < 0;
+        if (neg) v = bi_mul(v, bi(-1));
+        if (bf_round_near(v, bi_one(bits + 6), bi(-P), neg, &r)) { tomato_int_free(e); return r; }
+    }
+}
+
+/* whether a float is a whole number, and an odd one */
+static int bf_whole(BigFloat y, int *odd) {
+    *odd = 0;
+    if (y.m == 0) return 1;
+    if (tomato_int_sign(y.e) < 0) return 0;
+    if (!int_is_small(y.e) || int_small_val(y.e) > 52) return 1;
+    double v = ldexp(y.m, (int)int_small_val(y.e));
+    *odd = fmod(v, 2) != 0;
+    return v == floor(v);
+}
+
+/* whether x ** y has a value: 0 yes, 1 no because it is zero to a negative power, 2 no because it is a negative number to a
+ * power that is not whole */
+int32_t tomato_bf_pow_check(int64_t x, int64_t y) {
+    BigFloat a = bf_open(x), b = bf_open(y);
+    int odd;
+    if (a.m == 0) return b.m < 0;
+    return a.m < 0 && !bf_whole(b, &odd) ? 2 : 0;
+}
+
+static int64_t bf_pow(int64_t x, int64_t y) {
+    if (!bf_boxed(x) && !bf_boxed(y)) {
+        double p = pow(bf_double(x), bf_double(y));
+        if (bf_normal(p) || bf_double(x) == 0) return bf_bits(p);
+    }
+    BigFloat a = bf_open(x), b = bf_open(y);
+    int odd, whole = bf_whole(b, &odd), neg = odd && signbit(a.m);
+    if (b.m == 0) return bf_bits(1.0);
+    if (a.m == 0) return bf_bits(neg ? -0.0 : 0.0);
+    int one = fabs(a.m) == 1;                                        /* x is a power of two */
+    if (one && bi_zero(a.e)) return bf_bits(neg ? -1.0 : 1.0);
+    if (one && whole) {                                              /* 2^(e y), exactly, in case y is huge */
+        int64_t k = bf_count(b.e) - 52;
+        if (k + bi_bits(a.e) > INT_MAX_SHIFT) out_of_memory();      /* the result's exponent would have more than 2^31 bits */
+        int64_t e = bi_mul(bi((int64_t)ldexp(b.m, 52)), tomato_int_dup(a.e));
+        return bf_make(neg ? -1.0 : 1.0, bi_shift(e, k));            /* (no bits are lost: y is whole) */
+    }
+    /* A power that is halfway between two floats, or one, needs x = c^(2^j) and y = n / 2^j, n at most 34 (c^n has at most 54 bits),
+     * so those are done exactly: x is replaced by its square root while y is not whole. */
+    if (!one && b.m > 0 && int_is_small(b.e) && int_small_val(b.e) >= -6 && int_small_val(b.e) < 6) {
+        uint64_t M = (uint64_t)ldexp(fabs(a.m), 52);
+        int z = __builtin_ctzll(M);
+        int64_t e = bi_add(tomato_int_dup(a.e), bi(z - 52));
+        double n = ldexp(b.m, (int)int_small_val(b.e));
+        M >>= z;
+        for (;;) {
+            uint64_t c = (uint64_t)sqrt((double)M);
+            int64_t half = tomato_int_floordiv(e, bi(2));
+            int square = c * c == M && bi_zero(tomato_int_mod(e, bi(2)));
+            if (n == floor(n) || !square) { tomato_int_free(half); break; }
+            tomato_int_free(e);
+            M = c; e = half; n *= 2;
+        }
+        if (n == floor(n) && n <= 64) {
+            int64_t p = tomato_int_pow(bi((int64_t)M), bi((int64_t)n));
+            return bf_round(neg ? bi_mul(p, bi(-1)) : p, bi_mul(e, bi((int64_t)n)), 0);
+        }
+        tomato_int_free(e);
+    }
+    return bf_exp2(neg, &a, b);
+}
+/* x ** y, for what tomato_bf_pow_check allows */
+int64_t tomato_bf_pow(int64_t x, int64_t y, int32_t m) {
+    if (tomato_bf_pow_check(x, y)) tomato_fail_id(13, "the float result is infinite or not a number");
+    int64_t r = bf_pow(x, y);
+    BF_CONSUME(m, x, y);
+    return r;
+}
+
+/* ---- the math functions: op is the number tomato_math1 and tomato_math2 use ----
+ * An argument outside the domain (std/math.tom tests it first) is error 13. hypot and atan2 of a box are as exact as the C library's; the
+ * others are correctly rounded. */
+static int64_t bf_exp(BigFloat x, int64_t k) {                        /* exp(x) * 2^k, x not zero */
+    int64_t r = bf_exp2(0, NULL, x), s;
+    if (k == 0) return r;
+    BigFloat b = bf_open(r);
+    s = bf_make(b.m, tomato_int_add(b.e, bi(k)));
+    tomato_bf_free(r);
+    return s;
+}
+
+/* the cube root of a double of 1 to 8 in size, correctly rounded: the C library's moved to where r - 1/2 < root < r + 1/2, in
+ * units of its last place (the bound cubed, as whole numbers) */
+static double bf_cbrt(double f) {
+    int64_t r = (int64_t)ldexp(cbrt(fabs(f)), 52), x = bi_shift(bi((int64_t)ldexp(fabs(f), 52)), 107);
+    for (int up = 1; up >= 0;) {                                     /* up: past the upper bound? then: below the lower one? */
+        int64_t h = bi(2 * r + 2 * up - 1), c = bi_mul(tomato_int_mul(h, h), h);
+        int over = tomato_int_cmp(x, c) > 0;
+        tomato_int_free(c);
+        if (up && over) r++; else if (!up && !over) r--; else up--;
+    }
+    tomato_int_free(x);
+    return copysign(ldexp((double)r, -52), f);
+}
+
+static int64_t bf_math1(int64_t op, int64_t x) {
+    if (!bf_boxed(x)) {
+        double d = bf_double(x), r = tomato_math1(op, d);
+        /* only the exponentials leave the range of a double (log, asin, sqrt of a tiny number and the like do not) */
+        if (op == 1 ? bf_normal(r) : isfinite(r)) return bf_bits(r);
+        if (isnan(r) || (op != 1 && op != 11 && op != 12 && op != 17)) tomato_fail_id(13, "the float result is infinite or not a number");
+    }
+    BigFloat a = bf_open(x);
+    int big = tomato_int_sign(a.e) > 0, neg = a.m < 0;               /* at least 2^1024 (or an argument whose exp is), or tiny */
+    BigFloat p = { fabs(a.m), a.e };
+    double quarter = copysign(1.5707963267948966, a.m);
+    switch (op) {
+    case 0: case 19: {                                               /* sqrt, cbrt: the exponent is divided, the rest is a double in [1, 8) */
+        int64_t n = op == 0 ? 2 : 3, rest = tomato_int_mod(a.e, bi(n));
+        double f = ldexp(a.m, (int)int_small_val(rest));
+        if (op == 0 && neg) break;
+        return bf_make(op == 0 ? sqrt(f) : bf_cbrt(f), tomato_int_floordiv(a.e, bi(n)));
+    }
+    case 1: return bf_exp(a, 0);
+    case 2: case 3: case 4:
+        if (neg) break;
+        return bf_logarithm(a, (int)op - 2, 0);
+    case 5: case 7: case 8: case 16:                                 /* sin, tan, asin, atanh: x + x^3 / 6 and the like */
+        if (big) break;
+        return tomato_bf_dup(x);
+    case 6: if (big) break;                                          /* cos */
+        return bf_bits(1.0);
+    case 9: if (big) break;                                          /* acos */
+        return bf_bits(1.5707963267948966);
+    case 10: return big ? bf_bits(quarter) : tomato_bf_dup(x);       /* atan */
+    case 11: case 12: {                                              /* sinh, cosh: exp(|x|) / 2 */
+        if (!big) return op == 11 ? tomato_bf_dup(x) : bf_bits(1.0);
+        int64_t r = bf_exp(p, -1);
+        return op == 11 && neg ? tomato_bf_neg(r, 1) : r;
+    }
+    case 13: return big ? bf_bits(neg ? -1.0 : 1.0) : tomato_bf_dup(x);      /* tanh */
+    case 14: case 15: {                                              /* asinh, acosh: log(2 |x|) */
+        if (op == 15 && (!big || neg)) break;
+        if (!big) return tomato_bf_dup(x);
+        int64_t r = bf_logarithm(p, 0, 1);
+        return neg ? tomato_bf_neg(r, 1) : r;
+    }
+    case 17: return !big ? tomato_bf_dup(x) : neg ? bf_bits(-1.0) : bf_exp(a, 0);   /* expm1 */
+    case 18: if (big && neg) break;                                  /* log1p */
+        return big ? bf_logarithm(a, 0, 0) : tomato_bf_dup(x);
+    }
+    tomato_fail_id(13, "the float result is infinite or not a number");         /* outside the domain: std/math.tom tests it first */
+}
+int64_t tomato_bf_math1(int64_t op, int64_t x, int32_t m) { int64_t r = bf_math1(op, x); BF_CONSUME(m, x, 0); return r; }
+
+/* hypot and atan2 of x and y. Both are scaled by one power of two, so that the larger is in [1, 2), for the C library. */
+static int64_t bf_math2(int64_t op, int64_t x, int64_t y) {
+    if (!bf_boxed(x) && !bf_boxed(y)) {
+        double r = tomato_math2(op, bf_double(x), bf_double(y));
+        if (bf_normal(r) || bf_double(y) == 0) return bf_bits(r);
+    }
+    BigFloat a = bf_open(x), b = bf_open(y);
+    int c = a.m == 0 ? -1 : b.m == 0 ? 1 : tomato_int_cmp(a.e, b.e);
+    int64_t d = a.m == 0 || b.m == 0 ? bi(0) : tomato_int_sub(a.e, b.e);
+    int far = !int_is_small(d) || llabs(int_small_val(d)) > 500;
+    int k = far ? 0 : (int)int_small_val(d);
+    tomato_int_free(d);
+    double fx = c >= 0 ? a.m : ldexp(a.m, k), fy = c >= 0 ? ldexp(b.m, -k) : b.m;
+    if (op == 1) {                                                  /* hypot */
+        double h = far ? fabs(c > 0 ? a.m : b.m) : hypot(fx, fy);
+        return h == 0 ? bf_bits(h) : bf_make(h, tomato_int_dup(c > 0 ? a.e : b.e));
+    }
+    /* atan2(y, x) */
+    if (b.m == 0) return bf_bits(atan2(b.m, a.m));
+    if (!far) return bf_bits(atan2(fy, fx));
+    if (c < 0) return bf_bits(copysign(1.5707963267948966, b.m));
+    return a.m < 0 ? bf_bits(copysign(3.141592653589793, b.m)) : bf_div(y, x);
+}
+int64_t tomato_bf_math2(int64_t op, int64_t x, int64_t y, int32_t m) { int64_t r = bf_math2(op, x, y); BF_CONSUME(m, x, y); return r; }
+
+/* ---- round() and the f-string formats of a box ---- */
+/* |x| * 10^j as a whole number, to the nearest, ties to even */
+static int64_t bf_scaled(BigFloat x, int64_t j) {
+    int64_t num = bi((int64_t)ldexp(fabs(x.m), 52)), den = bi(1), e = bf_count(x.e) - 52, q, r;
+    if (j > 0) num = bi_mul(num, bi_pow10(j)); else den = bi_pow10(-j);
+    if (e > 0) num = bi_shift(num, e); else den = bi_shift(den, -e);
+    int_floordivmod(num, den, &q, &r);
+    r = bi_mul(r, bi(2));
+    int c = tomato_int_cmp(r, den);
+    if (c > 0 || (c == 0 && (tomato_int_low64(q) & 1))) q = bi_add(q, bi(1));
+    tomato_int_free(num); tomato_int_free(den); tomato_int_free(r);
+    return q;
+}
+
+/* round(x, ndigits): the float nearest to x rounded to that many digits after the point (before it when negative), as
+ * tomato_float_round does for a double */
+int64_t tomato_bf_round(int64_t x, int64_t ndigits, int32_t m) {
+    if (!bf_boxed(x)) {
+        double r = tomato_float_round(bf_double(x), ndigits);
+        if (bf_normal(r) || r == 0) return bf_bits(r);
+    }
+    BigFloat b = bf_open(x);
+    /* 10^-ndigits is 2^u: it is under a quarter of x's last place, or more than twice x, or the work is done exactly */
+    double u = -3.321928094887362 * (double)ndigits, slack = 2 + fabs(u) * 1e-14;
+    int64_t ef = tomato_bf_from_int(b.e, 0), r;
+    double e = tomato_bf_to_f64(ef);
+    tomato_bf_free(ef);
+    if (u < e - 54 - slack) r = tomato_bf_dup(x);
+    else if (u > e + 1 + slack) r = bf_bits(copysign(0.0, b.m));
+    else {
+        int64_t q = bf_scaled(b, ndigits);
+        if (bi_zero(q)) r = bf_bits(copysign(0.0, b.m));
+        else {
+            if (b.m < 0) q = bi_mul(q, bi(-1));
+            r = ndigits > 0 ? bf_ratio(q, bi_pow10(ndigits), bi(0)) : bf_round(bi_mul(q, bi_pow10(-ndigits)), bi(0), 0);
+        }
+    }
+    BF_CONSUME(m, x, 0);
+    return r;
+}
+
+/* the n digits of x, a box, rounded (ties to even), as text, and the exponent of the first (*k) */
+static Str *bf_digits(BigFloat x, int64_t n, int64_t *k) {
+    int64_t q, S;
+    for (int64_t F = 192 + 4 * n;; F *= 2) {
+        *k = bf_decimal(x, F, &S);
+        if (int_is_small(x.e) && llabs(int_small_val(x.e)) < 4 * n + 20000) {          /* it could be halfway between two texts: exactly */
+            tomato_int_free(S);
+            q = bf_scaled(x, n - 1 - bf_count(*k));
+            break;
+        }
+        int64_t ten = bi_pow10(n - 1), v = bi_mul(tomato_int_mul(S, bi((int64_t)ldexp(fabs(x.m), 52))), tomato_int_dup(ten)), U = F + 52;
+        tomato_int_free(S);
+        q = bi_shift(tomato_int_dup(v), -U);
+        int64_t rest = bi_sub(v, bi_shift(tomato_int_dup(q), U)), half = bi_one(U - 1), err = bi_mul(bi_one(63), ten);
+        if (tomato_int_cmp(rest, half) > 0) q = bi_add(q, bi(1));
+        int doubt = bi_near(bi_sub(rest, half), err);
+        tomato_int_free(err);
+        if (!doubt) break;
+        tomato_int_free(q); tomato_int_free(*k);
+    }
+    Str *s = tomato_int_str(q);
+    tomato_int_free(q);
+    if (s->bytes > n) *k = bi_add(*k, bi(1));                  /* 9.99 became 10.0: the last digit is a 0 too many */
+    return s;
+}
+
+/* x as C's %.*f, %.*e or %.*g would write it (kind is the letter), a leading '-' included */
+void *tomato_bf_format(int64_t x, int64_t prec, int64_t kind) {
+    if (!bf_boxed(x)) return tomato_float_format(bf_double(x), prec, kind);
+    BigFloat b = *bf_ptr(x);
+    int64_t n = prec, k = bi(0), point;                       /* the digits, and how many come before the point */
+    Str *s;
+    if (kind == 'f') {
+        int zero = !int_is_small(b.e) ? tomato_int_sign(b.e) < 0 : (double)prec * 3.3219 + (double)int_small_val(b.e) < -2;
+        int64_t q = zero ? bi(0) : bf_scaled(b, prec);
+        s = tomato_int_str(q);
+        tomato_int_free(q);
+        n = s->bytes > prec ? s->bytes : prec + 1;
+        point = n - prec;
+    } else {
+        if (kind == 'e' || n == 0) n++;
+        s = bf_digits(b, n, &k);
+        point = kind == 'g' && int_is_small(k) && int_small_val(k) >= 0 && int_small_val(k) < n ? int_small_val(k) + 1 : 1;   /* (a box is never 1e-5 to 1) */
+    }
+    char *t = malloc((size_t)n + 4);
+    if (!t) out_of_memory();
+    int64_t len = 0, pad = kind == 'f' ? n - s->bytes : 0;
+    if (b.m < 0) t[len++] = '-';
+    for (int64_t i = 0; i < n; i++) {
+        if (i == point) t[len++] = '.';
+        t[len++] = i < pad ? '0' : s->data[i - pad];
+    }
+    if (kind == 'g' && point < n) { while (t[len - 1] == '0') len--; if (t[len - 1] == '.') len--; }
+    t[len] = 0;
+    tomato_release(s);
+    void *r;
+    if (kind == 'f' || point > 1) { r = str_new(t, len); tomato_int_free(k); } else r = bf_join(t, "e", k);
+    free(t);
+    return r;
+}
