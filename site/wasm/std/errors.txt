@@ -156,7 +156,7 @@ CompileError a number cannot be followed by letters: {}
 CompileError a positional argument cannot follow a keyword argument
 CompileError a program input (a parameter of the @main function) must be an int, bool or str
 CompileError a program input cannot have a float default
-CompileError a replacement field in an f-string has no format options
+CompileError '{}' is not a format option that is supported
 CompileError a set can hold only int, bool or str values
 CompileError a tab cannot be used for indentation
 CompileError a task has no method '{}'
@@ -387,4 +387,51 @@ CompileError a tuple item needs a value
 ValueError gmtime needs seconds within about 292 billion years of 1970, but got {}
 ValueError a Time needs month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60, weekday 0-6 and yearday 1-366, but got month {}, day {}, hour {}, minute {}, second {}, weekday {}, yearday {}
 CompileError a dict value needs a value that is not None
+ValueError a bracketed host in a url must be an IPv6 address
+ValueError a byte must be a whole number from 0 to 255
+ValueError the base64 text has a character that is not in the base64 alphabet
+ValueError the base64 text has the wrong length or misplaced padding
+ValueError a hex text needs an even number of digits
+ValueError a hex text holds only the digits 0-9 and a-f
+ValueError randint needs a <= b
+ValueError randrange needs a step that is not zero
+ValueError randrange has no numbers in range
+ValueError choice needs a list that is not empty
+ValueError sample needs a size from 0 to
+ValueError token_bytes needs a length of 0 or more
+ValueError randbelow needs a bound above 0
+ValueError a UUID needs 16 bytes
+RuntimeError secure random bytes are not available on this system
+ValueError a UUID text needs 32 hexadecimal digits
+ValueError a date, time, datetime or timedelta value or offset is not valid, or text cannot be read as one
+OverflowError a date result is before year 1 or after year 9999, or a timedelta has 1000000000 days or more
+ValueError a CSV delimiter must be one character that is not a quote or a line break, but got {}
+ValueError a closing quote in CSV text must be followed by a delimiter or a line break, but found {}
+ValueError a quoted CSV field is not closed before the end of the text
+ValueError a CSV row has {} fields, but the header has {}
+ValueError textwrap needs a width of at least 1, but got {}
+ValueError the placeholder is too large for the width {}
+ValueError statistics needs at least one data point
+ValueError statistics needs at least two data points
+ValueError quantiles needs n of at least 1, but got {}
+OverflowError the rounded value is too large to be a float
+ValueError partition needs a separator that is not empty
+ValueError a fill character must be exactly one character
+ValueError factorial needs a number that is not negative
+ValueError comb needs numbers that are not negative
+ValueError perm needs numbers that are not negative
+ValueError isqrt needs a number that is not negative
+CompileError a format spec cannot hold another replacement field
+CompileError a format spec for an int cannot have a precision unless its type is f, e or g
+CompileError a format spec for text cannot have a ','
+CompileError a format spec for text cannot have a sign
+CompileError a format spec needs a text, an int or a float, but this value is {}
+CompileError a format spec needs the number of digits after '.'
+CompileError round() takes an int or a float, but this is {}
+CompileError round() takes a number and optionally ndigits: round(x) or round(x, ndigits)
+CompileError the format type 'd' is for whole numbers, but this value is float
+CompileError the format type '{}' is for numbers, but this value is text
+CompileError the format type 's' is for text, but this value is {}
+CompileError this width or precision in a format spec is too large
+OverflowError an int is too large to be a float
 CompileError '{}' does not take several types here

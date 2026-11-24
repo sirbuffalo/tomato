@@ -1,0 +1,22 @@
+ValueError: month must be in 1..12, but got 13 E406
+ValueError: day 29 is out of range for month 2 of year 2023 E406
+ValueError: year must be in 1..9999, but got 10000 E406
+ValueError: hour must be in 0..23, but got 24 E406
+ValueError: offset_minutes must be strictly between -1440 and 1440, but got 1440 E406
+ValueError: offset_minutes must be a whole number of minutes, or left out for a naive datetime E406
+OverflowError: date value out of range E407
+OverflowError: timedelta days must have a magnitude of at most 999999999, but got 1000000000 E407
+OverflowError: date value out of range E407
+ValueError: cannot compare or subtract a datetime with an offset and one without; they are not the same kind E406
+ValueError: cannot compare or subtract a datetime with an offset and one without; they are not the same kind E406
+False
+ValueError: cannot read '20240309' as a date or time E406
+ValueError: cannot read '12:30+01:00' as a date or time E406
+ValueError: hour must be in 0..23, but got 24 E406
+missing ValueError: the format needs %Y, %m and %d E406
+directive ValueError: the format directive '%b' is not supported: use %Y %m %d %H %M %S %f %z %% E406
+twice ValueError: the format directive '%Y' appears twice E406
+stray ValueError: a stray % ends the format E406
+trailing ValueError: unconverted data remains: ' x' E406
+mismatch ValueError: time data '2024/03/09' does not match format '%Y-%m-%d' E406
+range ValueError: day 30 is out of range for month 2 of year 2024 E406

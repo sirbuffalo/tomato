@@ -1,0 +1,5 @@
+from hex import decode
+
+@main
+def main():
+    print(decode('abc'))

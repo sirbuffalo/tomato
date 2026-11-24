@@ -1,0 +1,5 @@
+from statistics import stdev
+
+@main
+def main():
+    print(stdev([1.0]))

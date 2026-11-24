@@ -1,0 +1,382 @@
+['hello world'] hello world 3
+|hello world, this is a default [...]|
+wrap0 2
+  |The quick brown fox jumps over the lazy dog. Pack my box with five|
+  |dozen liquor jugs! How vexingly quick daft zebras jump?|
+wrap1 7
+  |The quick brown fox|
+  |jumps over the lazy|
+  |dog. Pack my box|
+  |with five dozen|
+  |liquor jugs! How|
+  |vexingly quick daft|
+  |zebras jump?|
+wrap2 14
+  |The quick|
+  |brown fox|
+  |jumps over|
+  |the lazy|
+  |dog. Pack|
+  |my box|
+  |with five|
+  |dozen|
+  |liquor|
+  |jugs! How|
+  |vexingly|
+  |quick daft|
+  |zebras|
+  |jump?|
+wrap3 100
+  |T|
+  |h|
+  |e|
+  |q|
+  |u|
+  |i|
+  |c|
+  |k|
+  |b|
+  |r|
+  |o|
+  |w|
+  |n|
+  |f|
+  |o|
+  |x|
+  |j|
+  |u|
+  |m|
+  |p|
+  |s|
+  |o|
+  |v|
+  |e|
+  |r|
+  |t|
+  |h|
+  |e|
+  |l|
+  |a|
+  |z|
+  |y|
+  |d|
+  |o|
+  |g|
+  |.|
+  |P|
+  |a|
+  |c|
+  |k|
+  |m|
+  |y|
+  |b|
+  |o|
+  |x|
+  |w|
+  |i|
+  |t|
+  |h|
+  |f|
+  |i|
+  |v|
+  |e|
+  |d|
+  |o|
+  |z|
+  |e|
+  |n|
+  |l|
+  |i|
+  |q|
+  |u|
+  |o|
+  |r|
+  |j|
+  |u|
+  |g|
+  |s|
+  |!|
+  |H|
+  |o|
+  |w|
+  |v|
+  |e|
+  |x|
+  |i|
+  |n|
+  |g|
+  |l|
+  |y|
+  |q|
+  |u|
+  |i|
+  |c|
+  |k|
+  |d|
+  |a|
+  |f|
+  |t|
+  |z|
+  |e|
+  |b|
+  |r|
+  |a|
+  |s|
+  |j|
+  |u|
+  |m|
+  |p|
+  |?|
+wrap4 4
+  |The quick brown fox jumps over the lazy|
+  |dog. Pack my box with five dozen liquor|
+  |jugs! How vexingly quick daft zebras|
+  |jump?|
+wrap5 0
+wrap6 0
+wrap7 1
+  |a|
+wrap8 2
+  |hel|
+  |lo|
+wrap9 4
+  |supercalif|
+  |ragilistic|
+  |expialidoc|
+  |ious|
+wrap10 7
+  |well-known|
+  |state-of-|
+  |the-art|
+  |self-|
+  |explanatory|
+  |re-entrant|
+  |words|
+wrap11 5
+  |a--b|
+  |---c|
+  |-- d|
+  |--e--|
+  |f|
+wrap12 4
+  |Look,|
+  |goof-ball|
+  |-- use the|
+  |-b option!|
+wrap13 3
+  |foo-bar-|
+  |baz-qux-|
+  |quux|
+wrap14 5
+  |x-|
+  |y-|
+  |z-|
+  |w-|
+  |v-u|
+wrap15 3
+  |-------|
+  |-------|
+  |------|
+wrap16 3
+  |ab|
+  |-----|
+  |cd-ef|
+wrap17 3
+  |1234-|
+  |5678-|
+  |9012|
+wrap18 3
+  |end-|
+  |of -s|
+  |tart|
+wrap19 4
+  |tab|
+  |separated|
+  |text here|
+  |and more|
+wrap20 2
+  |  inde|
+  |nted|
+wrap21 4
+  |abc|
+  |def|
+  |ghi jkl|
+  |mno pqr|
+wrap22 3
+  |line one|
+  |line two|
+  |line four|
+wrap23 4
+  |leading|
+  |and|
+  |trailing|
+  |spaces|
+wrap24 3
+  |a  b|
+  |c|
+  |d|
+wrap25 3
+  |multiple|
+  |spaces|
+  |inside    text|
+wrap26 4
+  |non breaki|
+  |ng space|
+  |and  em|
+  |space|
+wrap27 0
+wrap28 4
+  |wor|
+  |d |
+  |wor|
+  |d|
+wrap29 3
+  |日本語のテ|
+  |キストを折|
+  |り返す|
+wrap30 4
+  |héllo|
+  |wörld|
+  |naïve|
+  |café|
+wrap31 3
+  |snake_case|
+  |_word anot|
+  |her_word|
+wrap32 4
+  |it's a|
+  |"quoted"|
+  |text --|
+  |really|
+wrap33 2
+  |a-|
+  |b|
+wrap34 1
+  |a-b|
+wrap35 2
+  |ab-|
+  |cd|
+wrap36 4
+  |abc-|
+  |de-|
+  |fg-|
+  |hi|
+wrap37 5
+  |word word word word word word|
+  |word word word word word word|
+  |word word word word word word|
+  |word word word word word word|
+  |word word word word word word|
+wrap38 3
+  |xxxxxxxxxx|
+  |xxxxxxxxxx|
+  |xxxxx|
+wrap39 5
+  |aaa b|
+  |bbbbb|
+  |bbbbb|
+  |bb|
+  |ccc|
+wrap40 1
+  |x|
+wrap41 2
+  |a|
+  |b|
+wrap42 3
+  |1-|
+  |2-|
+  |3-4|
+wrap43 2
+  |well--|
+  |known|
+wrap44 3
+  |re-|
+  |e-|
+  |nter|
+wrap45 3
+  |under_s|
+  |core-|
+  |dash|
+wrap46 2
+  |...-|
+  |-...|
+wrap47 1
+  |a b|
+badwidth0 ValueError: textwrap needs a width of at least 1, but got 0
+shortbadwidth0 ValueError: textwrap needs a width of at least 1, but got 0
+badwidth1 ValueError: textwrap needs a width of at least 1, but got -1
+shortbadwidth1 ValueError: textwrap needs a width of at least 1, but got -1
+badwidth2 ValueError: textwrap needs a width of at least 1, but got -70
+shortbadwidth2 ValueError: textwrap needs a width of at least 1, but got -70
+shorten0 |Hello world!|
+shorten1 |Hello [...]|
+shorten2 |[...]|
+shorten3 |Hello world [...]|
+shorten4 |Hello world|
+shorten5 |Hello world|
+shorten6 ||
+shorten7 ValueError: the placeholder is too large for the width 4
+shorten8 |one two three...|
+shorten9 |one two (more)|
+shorten10 |[...]|
+shorten11 |[...]|
+shorten12 |a very [...]|
+shorten13 |Hello [...]|
+shorten14 |[...]|
+shorten15 ValueError: the placeholder is too large for the width 3
+shorten16 |Hello|
+shorten17 |alpha ...|
+shorten18 |hello|
+shorten19 |hello[...]|
+shorten20 |héllo wörld …|
+shorten21 ||
+shorten22 |日本語…|
+a b
+c d
+dedent0 |a\n  b\nc\n|
+dedent1 |hello\nworld|
+dedent2 |\thello\n  world|
+dedent3 |  hello\n\tworld|
+dedent4 |a\n  b|
+dedent5 |a\n\nb\n|
+dedent6 |a\n\nb\n|
+dedent7 |a\n\nb\n|
+dedent8 ||
+dedent9 |\n|
+dedent10 ||
+dedent11 |\n|
+dedent12 |x|
+dedent13 |x\ny\n|
+dedent14 |\na\nb\n|
+dedent15 |a\nb\n|
+dedent16 | a\n b|
+dedent17 | a\n b|
+dedent18 |a\n\n\nb|
+dedent19 |    deep\nshallow\n      deeper|
+dedent20 |a\n\tb|
+dedent21 |a\r\nb\r\n|
+dedent22 |no indent\n  indent|
+dedent23 |# comment\ncode|
+dedent24 |ab\nac|
+dedent25 |\n\n|
+dedent26 |a\n\nb|
+dedent27 |a\n\nb|
+indent0 |> a\n> b\n|
+indent1 |> a\n\n> b\n|
+indent2 |> a\n  \n> b|
+indent3 ||
+indent4 |\n|
+indent5 |abc|
+indent6 |    abc|
+indent7 |# a\r\n# b\r\n|
+indent8 |# a\r# b|
+indent9 |-a-b-c|
+indent10 |+a +b +c+d|
+indent11 |__  x\n__\ty\n|
+indent12 | \n> z|
+indent13 |\tline without end|
+indent14 |> a\n\n\n|
+indent15 |   \n|
+indent16 |>a　\n>b|
+indent17 |→ héllo\n→ 日本|
+indent18 |> a> b> c> de|

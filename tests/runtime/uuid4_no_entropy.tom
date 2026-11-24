@@ -1,0 +1,5 @@
+from uuid import uuid4
+
+@main
+def main():
+    print(uuid4())

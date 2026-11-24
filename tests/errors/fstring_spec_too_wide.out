@@ -1,0 +1,6 @@
+error[E435]: this width or precision in a format spec is too large
+ --> tests/errors/fstring_spec_too_wide.tom:4:16
+  |
+4 |     print(f'{n:99999999999}')
+  |                ^^^^^^^^^^^
+  = help: use a number below a billion

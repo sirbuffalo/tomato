@@ -1,0 +1,144 @@
+read0 1
+  [a|b|c]
+read1 2
+  [a|b|c]
+  [1|2|3]
+read2 2
+  [a|b|c]
+  [1|2|3]
+read3 0
+read4 1
+  []
+read5 2
+  []
+  []
+read6 1
+  [a||c]
+read7 1
+  [|]
+read8 1
+  [||]
+read9 1
+  [a|]
+read10 1
+  [a|b]
+read11 1
+  [a,b|c]
+read12 1
+  [say "hi"|x]
+read13 2
+  [line1\nline2|x]
+  [y|z]
+read14 2
+  [line1\r\nline2|x]
+  [y|z]
+read15 1
+  [a\n\nb]
+read16 3
+  [a]
+  []
+  [b]
+read17 3
+  [a]
+  [b]
+  [c]
+read18 3
+  [a]
+  []
+  [b]
+read19 1
+  [x"y|z]
+read20 1
+  [|]
+read21 1
+  []
+read22 1
+  [|a]
+read23 1
+  [a|b|c;d]
+read24 1
+  [a|b|c\td]
+read25 1
+  [a|b||c]
+read26 1
+  [a|b||c d]
+read27 1
+  [ a | b ]
+read28 2
+  [héllo|wörld]
+  [日本|語,語]
+read29 1
+  [ a| b]
+read30 ValueError: a quoted CSV field is not closed before the end of the text
+read31 ValueError: a closing quote in CSV text must be followed by a delimiter or a line break, but found b
+read32 ValueError: a closing quote in CSV text must be followed by a delimiter or a line break, but found  
+read33 ValueError: a closing quote in CSV text must be followed by a delimiter or a line break, but found c
+read34 ValueError: a quoted CSV field is not closed before the end of the text
+read35 ValueError: a quoted CSV field is not closed before the end of the text
+read36 2
+  [a|b|c]
+  [1|2]
+read37 2
+  [a]
+  [b]
+read38 1
+  [a"]
+read39 1
+  [a]
+read40 1
+  [x]
+read41 1
+  [x\r]
+delim0 ValueError: a CSV delimiter must be one character that is not a quote or a line break, but got 
+delim1 ValueError: a CSV delimiter must be one character that is not a quote or a line break, but got ,,
+delim2 ValueError: a CSV delimiter must be one character that is not a quote or a line break, but got "
+delim3 ValueError: a CSV delimiter must be one character that is not a quote or a line break, but got \n
+delim4 ValueError: a CSV delimiter must be one character that is not a quote or a line break, but got \r
+write0 a,b,c\r\n
+write1 a,"b,c"\r\n"say ""hi""",\r\n
+write2 ""\r\n
+write3 \r\n
+write4 ,\r\n""\r\n
+write5 
+write6 "line1\nline2",x\r\n"y\rz",w\r\n
+write7 "a;b";c\r\n
+write8 a;b,"c,d"\r\n
+write9 "a\tb"\tc d\r\n
+write10 héllo,"日本,語"\r\n
+write11 """"\r\n
+write12 """"""\r\n
+write13  a , \r\n
+write14 "a|b"|c\r\n
+write15 "a b" c\r\n
+write16  ,x\r\n
+write17 1,2,3\r\n4,5,6\r\n
+dict0 2
+  {name=Ann;age=31}
+  {name=Bob;age=25}
+dict1 1
+  {name=Ann;age=31}
+dict2 1
+  {a=1;b=2;c=}
+dict3 1
+  {a=1;b=;c=}
+dict4 ValueError: a CSV row has 3 fields, but the header has 2
+dict5 1
+  {a=2;b=3}
+dict6 2
+  {a=1;b=2}
+  {a=3;b=4}
+dict7 0
+dict8 0
+dict9 0
+dict10 1
+  {x=1;2;y=3}
+dict11 1
+  {k=multi\nline;v=2}
+dict12 ValueError: a quoted CSV field is not closed before the end of the text
+dict13 ValueError: a CSV row has 4 fields, but the header has 3
+dict14 1
+  {b=1;a=3;c=4}
+dict15 1
+  {a=;b=}
+dict16 1
+  {h=v}

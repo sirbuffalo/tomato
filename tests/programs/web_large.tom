@@ -1,0 +1,15 @@
+# The web modules on large inputs (100,000 bytes, 15,000 characters, 60,000 references): they run in time proportional to the input.
+import urlparse
+import html
+import base64
+import hex
+
+@main
+def main():
+    # a long input stays fast: 100000 bytes
+    big: list[int] = []
+    for i in range(100000):
+        big.append(i % 256)
+    text = base64.b64encode(big)
+    print(len(text), base64.b64decode(text) == big, len(hex.encode(big)))
+    print(len(urlparse.unquote(urlparse.quote('é日😀' * 5000))), len(html.unescape(html.escape('<&>' * 20000))))

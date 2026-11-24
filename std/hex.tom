@@ -1,0 +1,40 @@
+# Hexadecimal text for binary data, as Python's `bytes.hex()` and `bytes.fromhex()` (`import hex`). Binary data is a
+# `list[int]` of byte values 0-255 until the language has a bytes type:
+#
+#     print(hex.encode([222, 173, 190, 239]))        # deadbeef
+#     print(hex.decode('DEADbeef'))                  # [222, 173, 190, 239]
+#
+#   encode(data) -> str                 two lower-case digits per byte
+#   decode(text) -> list[int]           two digits (either case) per byte
+#
+# Encoding a number outside 0-255 is a ValueError. Decoding is strict, as Python's `binascii.unhexlify` is: an odd
+# number of digits or any character that is not 0-9, a-f or A-F (spaces included) is a ValueError.
+
+# Lower-case hex digits of the bytes.
+export def encode(data: list[int]) -> str:
+    digits = '0123456789abcdef'
+    parts: list[str] = []
+    for b in data:
+        if b < 0 or b > 255:
+            raise ValueError(f'a byte must be a whole number from 0 to 255, but got {b}', 'E391')
+        parts.append(digits[b // 16] + digits[b % 16])
+    return ''.join(parts)
+
+def _digit(c: str) -> int:
+    n = ord(c)
+    if n >= 48 and n <= 57:
+        return n - 48
+    if n >= 97 and n <= 102:
+        return n - 87
+    if n >= 65 and n <= 70:
+        return n - 55
+    raise ValueError(f"a hex text holds only the digits 0-9 and a-f, but got '{c}'", 'E395')
+
+# The bytes of a hex text.
+export def decode(text: str) -> list[int]:
+    if len(text) % 2 != 0:
+        raise ValueError(f'a hex text needs an even number of digits, but got {len(text)}', 'E394')
+    out: list[int] = []
+    for i in range(0, len(text), 2):
+        out.append(_digit(text[i]) * 16 + _digit(text[i + 1]))
+    return out

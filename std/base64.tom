@@ -1,0 +1,86 @@
+# Base64 (RFC 4648), modelled on Python's `base64` module (`import base64` or `from base64 import b64encode`). Binary data
+# is a `list[int]` of byte values 0-255 until the language has a bytes type:
+#
+#     print(base64.b64encode([104, 101, 108, 108, 111]))     # aGVsbG8=
+#     print(base64.b64decode('aGVsbG8='))                    # [104, 101, 108, 108, 111]
+#
+#   b64encode(data) -> str              the standard alphabet (A-Z a-z 0-9 + /) with '=' padding to a multiple of 4
+#   b64decode(text) -> list[int]        the inverse
+#   urlsafe_b64encode(data) -> str      the same with '-' and '_' instead of '+' and '/' (padding kept)
+#   urlsafe_b64decode(text) -> list[int]
+#
+# Encoding a number outside 0-255 is a ValueError. Decoding is strict (Python's `validate=True`): a character outside
+# the alphabet (so no spaces or line breaks, and '-' '_' are not accepted by the standard decoder, nor '+' '/' by the
+# urlsafe one), a length that is not a multiple of 4, and padding in the wrong place are all a ValueError. As in
+# Python, the unused bits of the last character are not required to be zero (`QR==` decodes like `QQ==`).
+# `b32`, `b16`, `a85` and the file-style `encodebytes` are not here.
+
+def _alphabet(urlsafe: bool) -> str:
+    return 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' + ('-_' if urlsafe else '+/')
+
+def _encode(data: list[int], urlsafe: bool) -> str:
+    for b in data:
+        if b < 0 or b > 255:
+            raise ValueError(f'a byte must be a whole number from 0 to 255, but got {b}', 'E391')
+    letters = _alphabet(urlsafe)
+    parts: list[str] = []
+    count = len(data)
+    i = 0
+    while i + 2 < count:
+        n = data[i] * 65536 + data[i + 1] * 256 + data[i + 2]
+        parts.append(letters[n // 262144] + letters[(n // 4096) % 64] + letters[(n // 64) % 64] + letters[n % 64])
+        i += 3
+    if count - i == 1:
+        n = data[i] * 65536
+        parts.append(letters[n // 262144] + letters[(n // 4096) % 64] + '==')
+    elif count - i == 2:
+        n = data[i] * 65536 + data[i + 1] * 256
+        parts.append(letters[n // 262144] + letters[(n // 4096) % 64] + letters[(n // 64) % 64] + '=')
+    return ''.join(parts)
+
+def _decode(text: str, urlsafe: bool) -> list[int]:
+    letters = _alphabet(urlsafe)
+    values: list[int] = []      # the 6-bit value of every character before the padding
+    padding = 0
+    for c in text:
+        if c == '=':
+            padding += 1
+            continue
+        if padding > 0:
+            raise ValueError('the base64 text has the wrong length or misplaced padding', 'E393')
+        at = letters.find(c)
+        if at < 0:
+            raise ValueError(f"the base64 text has a character that is not in the base64 alphabet: '{c}'", 'E392')
+        values.append(at)
+    if padding > 2 or len(text) % 4 != 0:
+        raise ValueError('the base64 text has the wrong length or misplaced padding', 'E393')
+    out: list[int] = []
+    i = 0
+    while i + 3 < len(values):
+        n = values[i] * 262144 + values[i + 1] * 4096 + values[i + 2] * 64 + values[i + 3]
+        out.extend([n // 65536, (n // 256) % 256, n % 256])
+        i += 4
+    left = len(values) - i
+    if left == 2:
+        n = values[i] * 262144 + values[i + 1] * 4096
+        out.append(n // 65536)
+    elif left == 3:
+        n = values[i] * 262144 + values[i + 1] * 4096 + values[i + 2] * 64
+        out.extend([n // 65536, (n // 256) % 256])
+    return out
+
+# The base64 text of the bytes, in the standard alphabet with '=' padding.
+export def b64encode(data: list[int]) -> str:
+    return _encode(data, False)
+
+# The bytes of a base64 text; a ValueError for anything the standard alphabet and padding do not allow.
+export def b64decode(text: str) -> list[int]:
+    return _decode(text, False)
+
+# Like b64encode with '-' and '_' in place of '+' and '/', so the text can go into a URL or a file name.
+export def urlsafe_b64encode(data: list[int]) -> str:
+    return _encode(data, True)
+
+# Like b64decode for the urlsafe alphabet.
+export def urlsafe_b64decode(text: str) -> list[int]:
+    return _decode(text, True)

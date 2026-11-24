@@ -1,0 +1,6 @@
+error[E429]: a format spec needs the number of digits after '.'
+ --> tests/errors/fstring_spec_precision.tom:4:16
+  |
+4 |     print(f'{x:.}')
+  |                ^
+  = help: write it as in f'{x:.2f}'

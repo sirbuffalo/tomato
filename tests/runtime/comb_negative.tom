@@ -1,0 +1,5 @@
+from math import comb
+
+@main
+def main():
+    print(comb(5, -1))

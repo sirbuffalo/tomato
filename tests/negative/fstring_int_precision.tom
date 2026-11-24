@@ -1,0 +1,4 @@
+@main
+def main():
+    n = 42
+    print(f'{n:.2}')

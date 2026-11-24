@@ -1,0 +1,6 @@
+from statistics import mean
+
+@main
+def main():
+    xs: list[float] = []
+    print(mean(xs))

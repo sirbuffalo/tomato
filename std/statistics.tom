@@ -1,0 +1,203 @@
+# Statistics on lists of floats, modelled on Python's `statistics` module:
+#
+#     from statistics import mean, median, mode, variance, stdev, quantiles
+#
+#     xs = [2.5, 3.25, 5.0, 7.75, 9.0]
+#     print(mean(xs), median(xs), mode([1.0, 2.0, 2.0, 3.0]))     # 5.5 5.0 2.0
+#     print(variance(xs), stdev(xs))                              # sample variance and standard deviation (n - 1)
+#     print(quantiles(xs))                                        # three cut points, the "exclusive" method (n = 4)
+#
+# mean, variance and stdev are computed with exact integer arithmetic (every float is a whole number over a power of two)
+# and rounded to a float once at the end, so they agree with Python to the last bit, whatever the order of the data.
+# median averages the two middle values of an even-sized list. mode gives the most common value; when several values tie
+# the one that comes first in the list wins. quantiles(xs, n=4) gives the n - 1 cut points that divide the sorted data
+# into n groups of equal chance, interpolating linearly between data points and treating the data as a sample
+# (the `exclusive` method). Empty data, fewer than two values for variance, stdev and quantiles, and n < 1 raise ValueError.
+# Unlike Python, quantiles of a single value is an error rather than that value repeated.
+# Values that are infinite or not a number cannot be held by a float here, so they do not need handling.
+
+def _need(xs: list[float], count: int):
+    if len(xs) >= count:
+        return
+    if count == 1:
+        raise ValueError('statistics needs at least one data point', 'E414')
+    raise ValueError('statistics needs at least two data points', 'E415')
+
+# Every float is m / 2^k for a whole m. The data as whole numbers over one shared power of two: values[i] / 2^shift.
+class _Exact:
+    values: list[int] = []
+    shift: int = 0
+
+def _exact(xs: list[float]) -> _Exact:
+    mantissas: list[int] = []
+    shifts: list[int] = []
+    biggest = 0
+    for x in xs:
+        y = x
+        k = 0
+        while float(int(y)) != y:
+            y = y * 2.0
+            k += 1
+        mantissas.append(int(y))
+        shifts.append(k)
+        if k > biggest:
+            biggest = k
+    result = _Exact()
+    for i, m in enumerate(mantissas):
+        result.values.append(m << (biggest - shifts[i]))
+    result.shift = biggest
+    return result
+
+export def mean(xs: list[float]) -> float:
+    _need(xs, 1)
+    exact = _exact(xs)
+    total = 0
+    for v in exact.values:
+        total += v
+    return _divide(total, len(xs) << exact.shift)
+
+export def median(xs: list[float]) -> float:
+    _need(xs, 1)
+    data = sorted(xs)
+    n = len(data)
+    if n % 2 == 1:
+        return data[n // 2]
+    return (data[n // 2 - 1] + data[n // 2]) / 2
+
+export def mode(xs: list[float]) -> float:
+    _need(xs, 1)
+    data = sorted(xs)
+    # the longest run of equal values in the sorted copy, and the values that have a run that long (in ascending order)
+    best_count = 0
+    winners: list[float] = []
+    run_start = 0
+    for p in range(1, len(data) + 1):
+        if p == len(data) or data[p] != data[run_start]:
+            count = p - run_start
+            if count > best_count:
+                best_count = count
+                winners = []
+            if count == best_count:
+                winners.append(data[run_start])
+            run_start = p
+    # the winner that comes first in the original order
+    for x in xs:
+        low = 0
+        high = len(winners) - 1
+        while low <= high:
+            middle = (low + high) // 2
+            if winners[middle] == x:
+                return x
+            if winners[middle] < x:
+                low = middle + 1
+            else:
+                high = middle - 1
+    return data[0]
+
+# n / d for whole numbers of any size (d is not zero), rounded once to the nearest float: the quotient is taken with 55 or
+# more bits and a sticky bit, so converting it to a float is the only rounding (the built-in / does not take numbers that
+# are too big for a float, even when their quotient is small). A result that is a subnormal float is rounded twice.
+def _divide(n: int, d: int) -> float:
+    if n == 0:
+        return 0.0
+    negative = (n < 0) != (d < 0)
+    top = -n if n < 0 else n
+    bottom = -d if d < 0 else d
+    s = 56 - (_bit_length(top) - _bit_length(bottom))
+    if s >= 0:
+        top = top << s
+    else:
+        bottom = bottom << -s
+    q = top // bottom
+    if q * bottom != top:
+        q = q | 1
+    x = float(q)
+    while s > 0:
+        step = s if s < 1000 else 1000
+        x = x / 2.0 ** step
+        s -= step
+    while s < 0:
+        step = -s if -s < 1000 else 1000
+        x = x * 2.0 ** step
+        s += step
+    return -x if negative else x
+
+# the exact sample variance as numerator and denominator: (n * sum(x^2) - sum(x)^2) / (n * (n - 1) * D^2)
+def _variance_fraction(xs: list[float]) -> list[int]:
+    exact = _exact(xs)
+    n = len(xs)
+    total = 0
+    squares = 0
+    for v in exact.values:
+        total += v
+        squares += v * v
+    return [n * squares - total * total, (n * (n - 1)) << (2 * exact.shift)]
+
+export def variance(xs: list[float]) -> float:
+    _need(xs, 2)
+    f = _variance_fraction(xs)
+    return _divide(f[0], f[1])
+
+# the number of bits in a whole number that is not negative
+def _bit_length(n: int) -> int:
+    bits = 0
+    while n >= 4294967296:
+        n = n >> 32
+        bits += 32
+    while n > 0:
+        n = n >> 1
+        bits += 1
+    return bits
+
+# floor of the square root of n >= 0 (Newton's method from above)
+def _isqrt(n: int) -> int:
+    if n < 2:
+        return n
+    x = 1 << ((_bit_length(n) + 1) // 2)
+    while True:
+        y = (x + n // x) >> 1
+        if y >= x:
+            return x
+        x = y
+
+# the square root of the fraction n / m rounded once to a float, as Python's statistics does it
+def _sqrt_fraction(n: int, m: int) -> float:
+    q = (_bit_length(n) - _bit_length(m) - 109) // 2
+    numerator = 0
+    denominator = 1
+    if q >= 0:
+        numerator = _sticky_sqrt(n, m << (2 * q)) << q
+    else:
+        numerator = _sticky_sqrt(n << (-2 * q), m)
+        denominator = 1 << (-q)
+    return _divide(numerator, denominator)
+
+# the integer square root of n / m, with the lowest bit set when it is not exact (round to odd)
+def _sticky_sqrt(n: int, m: int) -> int:
+    a = _isqrt(n // m)
+    if a * a * m != n:
+        return a | 1
+    return a
+
+export def stdev(xs: list[float]) -> float:
+    _need(xs, 2)
+    f = _variance_fraction(xs)
+    return _sqrt_fraction(f[0], f[1])
+
+export def quantiles(xs: list[float], n: int = 4) -> list[float]:
+    if n < 1:
+        raise ValueError(f'quantiles needs n of at least 1, but got {n}', 'E416')
+    _need(xs, 2)
+    data = sorted(xs)
+    size = len(data)
+    m = size + 1
+    out: list[float] = []
+    for i in range(1, n):
+        j = i * m // n
+        if j < 1:
+            j = 1
+        elif j > size - 1:
+            j = size - 1
+        delta = i * m - j * n
+        out.append((data[j - 1] * (n - delta) + data[j] * delta) / n)
+    return out

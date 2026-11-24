@@ -1,0 +1,5 @@
+from uuid import parse
+
+@main
+def main():
+    print(parse('not-a-uuid'))

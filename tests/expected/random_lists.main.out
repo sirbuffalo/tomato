@@ -1,0 +1,18 @@
+['ann', 'bob', 'ed', 'bob', 'ann', 'ed', 'cy', 'cy']
+3.5 True
+[5, 8, 4, 1, 6, 0, 2, 3, 7, 9] True
+['d', 'b', 'c', 'f', 'e', 'a']
+[] [7]
+[80, 60, 20] [30, 10, 20, 60, 70, 40, 50, 80] [] [10, 20, 30, 40, 50, 60, 70, 80]
+['y', 'x']
+randint ValueError: randint needs a <= b, but got 5 and 4 E396
+step 0 ValueError: randrange needs a step that is not zero E397
+empty ValueError: randrange has no numbers in range(5, 5, 1) E398
+negative step ValueError: randrange has no numbers in range(0, 10, -1) E398
+reversed ValueError: randrange has no numbers in range(10, 0, 1) E398
+choice ValueError: choice needs a list that is not empty E399
+sample too big ValueError: sample needs a size from 0 to 3, but got 4 E400
+sample negative ValueError: sample needs a size from 0 to 3, but got -1 E400
+24 True True
+True True
+True True

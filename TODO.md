@@ -1,5 +1,3 @@
-- Build Wave 1 of the next-features plan as Sonnet tasks
-  See `docs/next-features.md`, section 6. Everyday built-ins, text methods and math additions (item 1); `random`/`secrets`/`uuid` (4); `urllib.parse`, `html` and `base64` (5); the `csv`/`textwrap`/`statistics` pack (7); `datetime` (11). Each starts only after Davis approves its API sheet.
 - Assign a stronger agent to the async toolkit, then the scheduler fd-waiter and `socket` module
   Items 8 and 9 of `docs/next-features.md`: `gather`, timeouts and `Queue` first, then a scheduler wait on file descriptors plus a `socket` module, so the HTTP server (item 10) can follow. The scheduler is hand-written C with reference-counted frames, so use Opus or have Davis review it.
 - Remove mandelbrot's remaining float finite checks with float interval reasoning
@@ -36,3 +34,11 @@
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
 - Fix the compiler bug `set.discard(x)`
   `set_method` implements only `add` and `remove`, but the error text for set methods lists `discard` (and the lint's loop-change check names it), so `s.discard(x)` is rejected with "set has no method 'discard'". Found by the documentation review; see `docs/documentation-review.md`.
+- Verify browser entropy for the playground
+  The wasm `random_get` path (`site/wasm/wasi.js` -> `crypto.getRandomValues`) was only exercised under node, so `secrets` and `uuid4` in a real browser are unverified.
+- Add timedelta total_seconds, negation, multiplication and datetime replace/combine/timestamp
+  These are not in the approved Wave 1 datetime sheet, so `std/datetime.tom` lacks them.
+- Allow comparing a function's `tuple[int, int]` result with a tuple literal
+  Today `divmod(a, b) == (q, r)` does not compile because mixed and same-type tuple literals are different types.
+- Teach the VS Code grammar and website highlighter about f-string format specs
+  `{x:spec}` in an f-string has a format spec after the colon.

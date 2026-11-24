@@ -1,0 +1,37 @@
+# The std/random.tom module: the fixed algorithm (xoshiro128** with the documented seed mapping) gives these exact
+# numbers on every machine, natively and in the browser.
+from random import Random
+
+def show(seed: int):
+    rng = Random(seed)
+    values = [rng.random() for i in range(4)]
+    print(f'seed {seed}: {values}')
+
+@main
+def main():
+    show(0)
+    show(1)
+    show(42)
+    show(-1)
+    show(4294967296)
+    show(5)
+    show(18446744073709551621)     # the seed is taken modulo 2**64, so this is seed 5
+    show(123456789012345678901234567890)
+    # the same seed and the same calls always agree; seed() restarts the sequence
+    a = Random(7)
+    b = Random(7)
+    print(a.random() == b.random(), a.randint(1, 100) == b.randint(1, 100))
+    a.seed(7)
+    c = Random(7)
+    print(a.random() == c.random())
+    # whole numbers: the ends are included, a step steps, a huge range uses several outputs
+    rng = Random(2024)
+    print([rng.randint(1, 6) for i in range(12)])
+    print([rng.randrange(0, 20, 5) for i in range(8)])
+    print([rng.randrange(10, 0, -3) for i in range(8)])
+    print([rng.randrange(-5, 5) for i in range(8)])
+    print(rng.randint(0, 1000000000000000000000000), rng.randint(-3, -3))
+    print([rng.uniform(-1.0, 1.0) for i in range(3)], rng.uniform(5.0, 5.0))
+    print([rng.gauss(10.0, 2.0) for i in range(5)])
+    rng.seed(2024)
+    print(rng.randint(1, 6))

@@ -1,0 +1,66 @@
+# std/uuid.tom: version 5 against published vectors (RFC 9562, Python's documentation), SHA-1 over several block
+# sizes, parse and its errors, and version 4's bits and spread.
+from uuid import UUID, uuid4, uuid5, parse
+
+def try_parse(text: str):
+    try:
+        print(parse(text))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+
+def bits_ok(id: UUID) -> bool:
+    text = str(id)
+    return len(text) == 36 and text[8] == '-' and text[13] == '-' and text[18] == '-' and text[23] == '-'
+
+@main
+def main():
+    dns = parse('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
+    url = parse('6ba7b811-9dad-11d1-80b4-00c04fd430c8')
+    oid = parse('6ba7b812-9dad-11d1-80b4-00c04fd430c8')
+    x500 = parse('6ba7b814-9dad-11d1-80b4-00c04fd430c8')
+    print(uuid5(dns, 'www.example.com'))
+    print(uuid5(dns, 'python.org'))
+    print(uuid5(url, 'http://example.com/'))
+    print(uuid5(oid, '1.3.6.1.4.1'))
+    print(uuid5(x500, 'cn=John Doe'))
+    # names of many lengths (SHA-1 blocks of 64 bytes: the padding changes at 55, 56 and 64 bytes) and non-ASCII text
+    print(uuid5(dns, ''))
+    print(uuid5(dns, 'a' * 39))
+    print(uuid5(dns, 'a' * 40))
+    print(uuid5(dns, 'a' * 48))
+    print(uuid5(dns, 'a' * 100))
+    print(uuid5(dns, 'café'))
+    print(uuid5(dns, '世界 🍅'))
+    # a UUID5 is reproducible and depends on both inputs
+    print(uuid5(dns, 'x') == uuid5(dns, 'x'), uuid5(dns, 'x') == uuid5(dns, 'y'), uuid5(dns, 'x') == uuid5(url, 'x'))
+    # parse: the canonical form, upper case, and the other forms Python accepts
+    print(parse('A1B2C3D4-E5F6-4789-8ABC-DEF012345678'))
+    print(parse('a1b2c3d4e5f647898abcdef012345678'))
+    print(parse('{a1b2c3d4-e5f6-4789-8abc-def012345678}'))
+    print(parse('urn:uuid:a1b2c3d4-e5f6-4789-8abc-def012345678'))
+    print(parse('a1b2c3d4-e5f6-4789-8abc-def012345678') == parse('A1B2C3D4E5F647898ABCDEF012345678'))
+    print(parse('00000000-0000-0000-0000-000000000000'), parse('ffffffff-ffff-ffff-ffff-ffffffffffff'))
+    try_parse('')
+    try_parse('a1b2c3d4-e5f6-4789-8abc-def01234567')
+    try_parse('a1b2c3d4-e5f6-4789-8abc-def0123456789')
+    try_parse('g1b2c3d4-e5f6-4789-8abc-def012345678')
+    try_parse('a1b2c3d4 e5f6 4789 8abc def012345678')
+    try_parse('0xa1b2c3d4e5f647898abcdef012345678')
+    try_parse('-a1b2c3d4e5f647898abcdef01234567')
+    # the class: 16 bytes, equality, str
+    try:
+        print(UUID([1, 2, 3]))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    print(UUID([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 255]))
+    print(f'{dns} and {url}')
+    # version 4: random, the version nibble is 4 and the variant bits are 10
+    seen: dict[str, bool] = {}
+    good = True
+    for i in range(200):
+        id = uuid4()
+        text = str(id)
+        seen[text] = True
+        if not bits_ok(id) or text[14] != '4' or text[19] not in ['8', '9', 'a', 'b'] or text != text.lower() or parse(text) != id:
+            good = False
+    print(good, len(seen))

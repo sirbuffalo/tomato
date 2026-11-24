@@ -1,0 +1,199 @@
+# Random numbers, modelled on Python's `random.Random`: `from random import Random`.
+#
+#     rng = Random(42)                  # the same seed always gives the same numbers
+#     print(rng.random())               # a float in [0, 1)
+#     print(rng.randint(1, 6))          # a whole number from 1 to 6, both ends included
+#     shuffle(rng, cards)               # reorders the list in place
+#     print(sample(rng, cards, 5))      # five different items, in a random order
+#
+# What is here: random(), seed(seed), randint(a, b), randrange(start, stop, step), uniform(a, b) and gauss(mu, sigma)
+# on a `Random`, and the functions choice(rng, items), shuffle(rng, items) and sample(rng, items, k). The module has no
+# hidden shared generator and no module-level functions (the language has no top-level values): make a `Random` and
+# pass it around. A `Random` is NOT secure; use `secrets` for passwords, tokens and keys.
+#
+# The generator is xoshiro128** (Blackman and Vigna, 128 bits of state in four 32-bit words), written in Tomato so that
+# a program prints the same numbers natively and in the browser. The seed becomes the state like this: the seed is
+# taken modulo 2**64 (so a negative seed is fine and -1 is a different seed from 1), `lo` is its low 32 bits and `hi`
+# its high 32 bits; the SplitMix32 generator (state z, starting at lo xor ((hi * 0x85EBCA6B) mod 2**32)) is run four
+# times and its four outputs are the four state words (the state is never all zero). The sequences are NOT the ones of
+# Python's Mersenne Twister, only the same API. random() builds its 53 bits like Python does: a 27-bit and a 26-bit
+# part from two 32-bit outputs. randint, randrange, choice, shuffle and sample draw whole numbers below n by taking
+# the top bits of an output (two or more outputs for a bigger n, least significant output first) and drawing again
+# when the number is not below n, so every result is exactly equally likely. sample(items, k) does the first k steps of
+# a shuffle of a copy; gauss is Marsaglia's polar method (square root and a logarithm written in plain arithmetic, so
+# the same seed gives the same normal numbers on every system), keeping its second value for the next call.
+from math import sqrt
+
+# The natural logarithm of x > 0 from + - * / only (the system's libm may differ in the last digit between a computer
+# and the browser, and gauss must not): x is brought into [0.707, 1.414) by exact halvings and doublings, then
+# ln(x) = 2 * (s + s**3 / 3 + s**5 / 5 + ...) for s = (x - 1) / (x + 1), accurate to about one unit in the last place.
+def _ln(x: float) -> float:
+    exponent = 0
+    while x >= 1.414213562373095:
+        x = x / 2.0
+        exponent += 1
+    while x < 0.7071067811865475:
+        x = x * 2.0
+        exponent -= 1
+    s = (x - 1.0) / (x + 1.0)
+    s2 = s * s
+    term = s
+    total = 0.0
+    for k in range(1, 34, 2):
+        total += term / float(k)
+        term = term * s2
+    return 2.0 * total + float(exponent) * 0.6931471805599453
+
+# Python's `random.seed` takes any whole number; the seed is reduced to 64 bits, see above
+export class Random:
+    s0: int = 0
+    s1: int = 0
+    s2: int = 0
+    s3: int = 0
+    next_gauss: float = 0.0
+    has_gauss: bool = False
+
+    @init
+    def make(self, seed: int):
+        self.seed(seed)
+
+    # restarts the generator from a seed; the same seed always gives the same sequence, also after a gauss() call
+    def seed(self, seed: int):
+        bits = seed % 18446744073709551616
+        z = (bits % 4294967296) ^ (((bits // 4294967296) * 2246822507) % 4294967296)
+        words: list[int] = []
+        for i in range(4):
+            z = (z + 2654435769) % 4294967296
+            t = ((z ^ (z >> 16)) * 2246822507) % 4294967296
+            t = ((t ^ (t >> 13)) * 3266489909) % 4294967296
+            words.append(t ^ (t >> 16))
+        self.s0 = words[0]
+        self.s1 = words[1]
+        self.s2 = words[2]
+        self.s3 = words[3]
+        if words[0] == 0 and words[1] == 0 and words[2] == 0 and words[3] == 0:
+            self.s0 = 1
+        self.has_gauss = False
+        self.next_gauss = 0.0
+
+    # the next 32-bit output of xoshiro128**
+    def _next32(self) -> int:
+        m = 4294967295
+        a = (self.s1 * 5) & m
+        a = ((a << 7) | (a >> 25)) & m
+        result = (a * 9) & m
+        t = (self.s1 << 9) & m
+        self.s2 ^= self.s0
+        self.s3 ^= self.s1
+        self.s1 ^= self.s2
+        self.s0 ^= self.s3
+        self.s2 ^= t
+        self.s3 = ((self.s3 << 11) | (self.s3 >> 21)) & m
+        return result
+
+    # a float in [0, 1) with 53 random bits
+    def random(self) -> float:
+        a = self._next32() >> 5
+        b = self._next32() >> 6
+        return float(a * 67108864 + b) / float(9007199254740992)
+
+    # k random bits as a whole number (k >= 1): the top bits of one output, or whole outputs from the least
+    # significant end for more than 32 bits
+    def _bits(self, k: int) -> int:
+        if k <= 32:
+            return self._next32() >> (32 - k)
+        result = 0
+        shift = 0
+        left = k
+        while left > 0:
+            word = self._next32()
+            if left < 32:
+                word = word >> (32 - left)
+            result += word << shift
+            shift += 32
+            left -= 32
+        return result
+
+    # a whole number from 0 to n - 1 (n >= 1), every one equally likely
+    def _below(self, n: int) -> int:
+        if n == 1:
+            return 0
+        k = 0
+        m = n
+        while m > 0:
+            k += 1
+            m = m >> 1
+        r = self._bits(k)
+        while r >= n:
+            r = self._bits(k)
+        return r
+
+    # a whole number from a to b, both included
+    def randint(self, a: int, b: int) -> int:
+        if b < a:
+            raise ValueError(f'randint needs a <= b, but got {a} and {b}', 'E396')
+        return a + self._below(b - a + 1)
+
+    # a whole number of range(start, stop, step)
+    def randrange(self, start: int, stop: int, step: int = 1) -> int:
+        if step == 0:
+            raise ValueError('randrange needs a step that is not zero', 'E397')
+        if step > 0:
+            count = (stop - start + step - 1) // step
+        else:
+            count = (stop - start + step + 1) // step
+        if count <= 0:
+            raise ValueError(f'randrange has no numbers in range({start}, {stop}, {step})', 'E398')
+        return start + step * self._below(count)
+
+    # a float from a to b (b may be the result because of rounding, as in Python)
+    def uniform(self, a: float, b: float) -> float:
+        return a + (b - a) * self.random()
+
+    # a normally distributed float with mean mu and standard deviation sigma: Marsaglia's polar method, which makes two
+    # values from each accepted pair of random() numbers and keeps the second for the next call
+    def gauss(self, mu: float, sigma: float) -> float:
+        if self.has_gauss:
+            self.has_gauss = False
+            return mu + self.next_gauss * sigma
+        while True:
+            u = 2.0 * self.random() - 1.0
+            v = 2.0 * self.random() - 1.0
+            q = u * u + v * v
+            if q < 1.0 and q > 0.0:
+                factor = sqrt(-2.0 * _ln(q) / q)
+                self.next_gauss = v * factor
+                self.has_gauss = True
+                return mu + u * factor * sigma
+
+
+# The three operations on a list are free functions taking the generator first, because the compiler has no generic
+# methods yet (a method cannot take a `list[T]`): `choice(rng, items)` where Python writes `rng.choice(items)`
+# (provisional, docs/provisional.md; they become methods when the compiler allows it).
+
+# one item of a list that is not empty
+export def choice[T](rng: Random, items: list[T]) -> T:
+    if len(items) == 0:
+        raise ValueError('choice needs a list that is not empty', 'E399')
+    return items[rng._below(len(items))]
+
+# puts the items of a list in a random order, in place (Python's order of steps: from the end to the front)
+export def shuffle[T](rng: Random, items: list[T]):
+    i = len(items) - 1
+    while i > 0:
+        j = rng._below(i + 1)
+        items[i], items[j] = items[j], items[i]
+        i -= 1
+
+# k different items of a list (by position, so equal items may repeat), in a random order; the list is not changed
+export def sample[T](rng: Random, items: list[T], k: int) -> list[T]:
+    n = len(items)
+    if k < 0 or k > n:
+        raise ValueError(f'sample needs a size from 0 to {n}, but got {k}', 'E400')
+    pool = items[:]
+    out: list[T] = []
+    for i in range(k):
+        j = rng._below(n - i)
+        out.append(pool[j])
+        pool[j] = pool[n - i - 1]
+    return out

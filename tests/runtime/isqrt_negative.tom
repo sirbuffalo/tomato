@@ -1,0 +1,5 @@
+from math import isqrt
+
+@main
+def main():
+    print(isqrt(-4))

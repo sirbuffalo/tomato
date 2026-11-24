@@ -1,0 +1,271 @@
+# Text wrapping, modelled on Python's `textwrap` with its default options:
+#
+#     from textwrap import wrap, fill, dedent, indent, shorten
+#
+#     wrap('The quick brown fox jumps over the lazy dog', 20)    # ['The quick brown fox', 'jumps over the lazy', 'dog']
+#     print(fill(text, 40))                                      # the same lines joined with \n
+#     dedent('    a\n      b\n')                                 # 'a\n  b\n'
+#     indent('a\nb\n', '> ')                                     # '> a\n> b\n'
+#     shorten('Hello   world, how are you?', 18)                 # 'Hello world, [...]'
+#
+# wrap(text, width=70) reformats one paragraph into lines of at most `width` characters: tabs are expanded to multiples of
+# 8 columns, every other ASCII whitespace character (\n \r \v \f) becomes a space, whitespace at the ends of lines is
+# dropped, a word may be broken after a hyphen inside it (`well-known` can split after `well-`) or next to a `--` dash, and
+# a word longer than the width is cut. Only ASCII whitespace separates words in wrap and fill (a no-break space is part
+# of a word); shorten, dedent and indent treat any Unicode space as whitespace, as Python does. A width below 1 raises
+# ValueError. Letters and digits are the characters that isalpha() and isdigit() accept, plus `_`.
+#
+# shorten(text, width, placeholder=' [...]') collapses all whitespace to single spaces and, if the result is longer than
+# `width`, keeps as many whole words as fit with the placeholder after them. A placeholder (without its leading spaces)
+# that cannot fit in the width raises ValueError.
+
+# a character Python's str.isspace() accepts
+def _is_space(c: str) -> bool:
+    n = ord(c)
+    if n < 128:
+        return n == 32 or (n >= 9 and n <= 13) or (n >= 28 and n <= 31)
+    return n == 133 or n == 160 or n == 5760 or (n >= 8192 and n <= 8202) or n == 8232 or n == 8233 or n == 8239 or n == 8287 or n == 12288
+
+# str.isspace(): not empty and every character is a space
+def _all_space(s: str) -> bool:
+    if len(s) == 0:
+        return False
+    for c in s:
+        if not _is_space(c):
+            return False
+    return True
+
+# a character of the `\w` class: a letter, a digit or an underscore
+def _is_word(c: str) -> bool:
+    return c == '_' or c.isalpha() or c.isdigit()
+
+# a character of `[^\d\W]`: a letter or an underscore
+def _is_letter(c: str) -> bool:
+    return c == '_' or c.isalpha()
+
+# `[\w!"'&.,?]`
+def _is_word_punct(c: str) -> bool:
+    return _is_word(c) or c == '!' or c == '"' or c == "'" or c == '&' or c == '.' or c == ',' or c == '?'
+
+# tabs to spaces at multiples of 8 columns (str.expandtabs()), then every other ASCII whitespace character to a space
+def _munge(text: str) -> str:
+    out: list[str] = []
+    column = 0
+    for c in text:
+        if c == '\t':
+            n = 8 - column % 8
+            out.append(' ' * n)
+            column += n
+        elif c == '\n' or c == '\r':
+            out.append(' ')
+            column = 0
+        elif ord(c) == 11 or ord(c) == 12:
+            out.append(' ')
+            column += 1
+        else:
+            out.append(c)
+            column += 1
+    return ''.join(out)
+
+# True when text[i:] starts with two or more `-` followed by a `\w` character
+def _dashes_then_word(text: str, i: int) -> bool:
+    j = i
+    while j < len(text) and text[j] == '-':
+        j += 1
+    return j - i >= 2 and j < len(text) and _is_word(text[j])
+
+# True when a `-` at index i ends a chunk that may be split after the hyphen: two letters or a letter, a hyphen and a
+# letter before it, and a letter, an optional hyphen and a letter after it
+def _hyphen_break(text: str, i: int) -> bool:
+    before = False
+    if i >= 2 and _is_letter(text[i - 1]) and _is_letter(text[i - 2]):
+        before = True
+    if i >= 3 and _is_letter(text[i - 1]) and text[i - 2] == '-' and _is_letter(text[i - 3]):
+        before = True
+    if not before:
+        return False
+    j = i + 1
+    if j >= len(text) or not _is_letter(text[j]):
+        return False
+    j += 1
+    if j < len(text) and text[j] == '-':
+        j += 1
+    return j < len(text) and _is_letter(text[j])
+
+# the indivisible chunks of munged text: runs of spaces, and words cut after hyphens and around `--` dashes
+def _split(text: str) -> list[str]:
+    chunks: list[str] = []
+    n = len(text)
+    i = 0
+    while i < n:
+        start = i
+        if text[i] == ' ':
+            while i < n and text[i] == ' ':
+                i += 1
+        elif i > 0 and _is_word_punct(text[i - 1]) and text[i] == '-' and _dashes_then_word(text, i):
+            while text[i] == '-':
+                i += 1
+        else:
+            i += 1
+            while i < n:
+                if text[i] == ' ':
+                    break
+                if text[i] == '-' and _hyphen_break(text, i):
+                    i += 1
+                    break
+                if _is_word_punct(text[i - 1]) and _dashes_then_word(text, i):
+                    break
+                i += 1
+        chunks.append(text[start:i])
+    return chunks
+
+def _check_width(width: int):
+    if width <= 0:
+        raise ValueError(f'textwrap needs a width of at least 1, but got {width}', 'E412')
+
+# the lines for the chunks, which are given reversed (the next chunk is the last); max_lines 0 means no limit
+def _wrap_chunks(chunks: list[str], width: int, max_lines: int, placeholder: str) -> list[str]:
+    lines: list[str] = []
+    if max_lines > 0 and len(placeholder.lstrip()) > width:
+        raise ValueError(f'the placeholder is too large for the width {width}', 'E413')
+    chunks.reverse()
+    while len(chunks) > 0:
+        cur_line: list[str] = []
+        cur_len = 0
+        if len(lines) > 0 and _all_space(chunks[-1]):
+            chunks.pop()
+        while len(chunks) > 0:
+            size = len(chunks[-1])
+            if cur_len + size <= width:
+                cur_line.append(chunks.pop())
+                cur_len += size
+            else:
+                break
+        if len(chunks) > 0 and len(chunks[-1]) > width:
+            # a word that cannot fit on any line: cut it (after a hyphen if one is near enough)
+            space_left = width - cur_len
+            if space_left > 0:
+                end = space_left
+                chunk = chunks[-1]
+                if len(chunk) > space_left:
+                    hyphen = chunk.rfind('-', 0, space_left)
+                    if hyphen > 0:
+                        for c in chunk[:hyphen]:
+                            if c != '-':
+                                end = hyphen + 1
+                                break
+                cur_line.append(chunk[:end])
+                chunks[-1] = chunk[end:]
+            elif len(cur_line) == 0:
+                cur_line.append(chunks.pop())
+            cur_len = 0
+            for piece in cur_line:
+                cur_len += len(piece)
+        if len(cur_line) > 0 and _all_space(cur_line[-1]):
+            cur_len -= len(cur_line[-1])
+            cur_line.pop()
+        if len(cur_line) == 0:
+            continue
+        last_chunk_blank = len(chunks) == 1 and _all_space(chunks[0])
+        if max_lines == 0 or len(lines) + 1 < max_lines or ((len(chunks) == 0 or last_chunk_blank) and cur_len <= width):
+            lines.append(''.join(cur_line))
+        else:
+            done = False
+            while len(cur_line) > 0:
+                if not _all_space(cur_line[-1]) and cur_len + len(placeholder) <= width:
+                    cur_line.append(placeholder)
+                    lines.append(''.join(cur_line))
+                    done = True
+                    break
+                cur_len -= len(cur_line[-1])
+                cur_line.pop()
+            if not done:
+                if len(lines) > 0:
+                    previous = lines[-1].rstrip()
+                    if len(previous) + len(placeholder) <= width:
+                        lines[-1] = previous + placeholder
+                        break
+                lines.append(placeholder.lstrip())
+            break
+    return lines
+
+export def wrap(text: str, width: int = 70) -> list[str]:
+    _check_width(width)
+    return _wrap_chunks(_split(_munge(text)), width, 0, '')
+
+export def fill(text: str, width: int = 70) -> str:
+    return '\n'.join(wrap(text, width))
+
+# the text with its Unicode whitespace collapsed into single spaces and trimmed (' '.join(text.split()))
+def _collapse(text: str) -> str:
+    words: list[str] = []
+    current: list[str] = []
+    for c in text:
+        if _is_space(c):
+            if len(current) > 0:
+                words.append(''.join(current))
+                current = []
+        else:
+            current.append(c)
+    if len(current) > 0:
+        words.append(''.join(current))
+    return ' '.join(words)
+
+export def shorten(text: str, width: int, placeholder: str = ' [...]') -> str:
+    _check_width(width)
+    chunks = _split(_munge(_collapse(text)))
+    return '\n'.join(_wrap_chunks(chunks, width, 1, placeholder))
+
+# the lines of the text with their line breaks kept (str.splitlines(True)): \n \r \r\n \v \f and the Unicode separators
+def _lines_keep(text: str) -> list[str]:
+    lines: list[str] = []
+    start = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        code = ord(c)
+        if c == '\r' and i + 1 < n and text[i + 1] == '\n':
+            i += 2
+            lines.append(text[start:i])
+            start = i
+        elif code == 10 or code == 13 or code == 11 or code == 12 or (code >= 28 and code <= 30) or code == 133 or code == 8232 or code == 8233:
+            i += 1
+            lines.append(text[start:i])
+            start = i
+        else:
+            i += 1
+    if start < n:
+        lines.append(text[start:])
+    return lines
+
+export def indent(text: str, prefix: str) -> str:
+    out: list[str] = []
+    for line in _lines_keep(text):
+        if not _all_space(line):
+            out.append(prefix)
+        out.append(line)
+    return ''.join(out)
+
+export def dedent(text: str) -> str:
+    lines = text.split('\n')
+    margin = ''
+    first = True
+    for line in lines:
+        if len(line) == 0 or _all_space(line):
+            continue
+        lead = 0
+        while lead < len(line) and (line[lead] == ' ' or line[lead] == '\t'):
+            lead += 1
+        if first:
+            margin = line[:lead]
+            first = False
+        else:
+            same = 0
+            while same < len(margin) and same < lead and margin[same] == line[same]:
+                same += 1
+            margin = margin[:same]
+    out: list[str] = []
+    for line in lines:
+        out.append('' if _all_space(line) else line[len(margin):])
+    return '\n'.join(out)

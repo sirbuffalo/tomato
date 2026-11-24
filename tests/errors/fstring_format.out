@@ -1,6 +1,6 @@
-error[E159]: a replacement field in an f-string has no format options
- --> tests/errors/fstring_format.tom:4:15
+error[E159]: 'q' is not a format option that is supported
+ --> tests/errors/fstring_format.tom:4:16
   |
-4 |     print(f'{n:5}')
-  |               ^
-  = help: write just the expression, such as f'{x}'
+4 |     print(f'{n:5q}')
+  |                ^^
+  = help: the form is [[fill]align][sign][0][width][,][.precision][type]: the align is < > or ^, the sign + - or a space, and the type s, d, f, e or g

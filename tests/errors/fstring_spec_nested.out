@@ -1,0 +1,6 @@
+error[E424]: a format spec cannot hold another replacement field
+ --> tests/errors/fstring_spec_nested.tom:5:15
+  |
+5 |     print(f'{n:{width}}')
+  |               ^
+  = help: write the width or the precision as a number

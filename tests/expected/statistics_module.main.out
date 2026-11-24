@@ -1,0 +1,201 @@
+mean 3.0 median 3.0 mode 1.0
+variance 2.5 stdev 1.5811388300841898
+quantiles 4 [1.5, 3.0, 4.5]
+quantiles 2 [3.0]
+quantiles 1 []
+quantiles 3 [2.0, 4.0]
+quantiles 10 [0.6, 1.2, 1.8, 2.4, 3.0, 3.6, 4.2, 4.8, 5.4]
+mean 5.5 median 5.0 mode 2.5
+variance 7.90625 stdev 2.811805469800498
+quantiles 4 [2.875, 5.0, 8.375]
+quantiles 2 [5.0]
+quantiles 1 []
+quantiles 3 [3.25, 7.75]
+quantiles 10 [2.2, 2.65, 3.1, 3.95, 5.0, 6.65, 8.0, 8.75, 9.5]
+mean 2.5 median 2.5 mode 2.0
+variance 1.1 stdev 1.0488088481701516
+quantiles 4 [1.75, 2.5, 3.25]
+quantiles 2 [2.5]
+quantiles 1 []
+quantiles 3 [2.0, 3.0]
+quantiles 10 [0.7, 1.4, 2.0, 2.0, 2.5, 3.0, 3.0, 3.6, 4.3]
+mean 3.75 median 3.5 mode 4.0
+variance 6.25 stdev 2.5
+quantiles 4 [1.5, 3.5, 6.25]
+quantiles 2 [3.5]
+quantiles 1 []
+quantiles 3 [2.3333333333333335, 5.0]
+quantiles 10 [0.0, 1.0, 2.0, 3.0, 3.5, 4.0, 5.5, 7.0, 8.5]
+mean 42.0 median 42.0 mode 42.0
+mean 1.5 median 1.5 mode 1.5
+variance 0.0 stdev 0.0
+quantiles 4 [1.5, 1.5, 1.5]
+quantiles 2 [1.5]
+quantiles 1 []
+quantiles 3 [1.5, 1.5]
+quantiles 10 [1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
+mean 0.2 median 0.2 mode 0.1
+variance 0.009999999999999998 stdev 0.09999999999999999
+quantiles 4 [0.1, 0.2, 0.3]
+quantiles 2 [0.2]
+quantiles 1 []
+quantiles 3 [0.13333333333333333, 0.26666666666666666]
+quantiles 10 [0.039999999999999994, 0.08000000000000002, 0.12000000000000002, 0.16, 0.2, 0.24000000000000005, 0.27999999999999997, 0.31999999999999995, 0.36]
+mean 0.1 median 0.1 mode 0.1
+variance 0.0 stdev 0.0
+quantiles 4 [0.1, 0.1, 0.1]
+quantiles 2 [0.1]
+quantiles 1 []
+quantiles 3 [0.10000000000000002, 0.10000000000000002]
+quantiles 10 [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+mean 0.3333333333333333 median 1.0 mode 10000000000.0
+variance 1e+20 stdev 10000000000.0
+quantiles 4 [-10000000000.0, 1.0, 10000000000.0]
+quantiles 2 [1.0]
+quantiles 1 []
+quantiles 3 [-6666666666.333333, 6666666667.0]
+quantiles 10 [-16000000000.6, -12000000000.2, -7999999999.8, -3999999999.4, 1.0, 4000000000.6, 8000000000.2, 11999999999.8, 15999999999.4]
+mean 0.5 median 1.0 mode 1.0
+variance 6.666666666666667e+31 stdev 8164965809277260.0
+quantiles 4 [-7500000000000000.0, 1.0, 7500000000000000.0]
+quantiles 2 [1.0]
+quantiles 1 []
+quantiles 3 [-3333333333333332.5, 3333333333333334.0]
+quantiles 10 [-1.5e+16, -1e+16, -4999999999999999.0, 1.0, 1.0, 1.0, 5000000000000001.0, 1e+16, 1.5e+16]
+mean 2.0 median 2.0 mode 3.0
+variance 1.0 stdev 1.0
+quantiles 4 [1.0, 2.0, 3.0]
+quantiles 2 [2.0]
+quantiles 1 []
+quantiles 3 [1.0, 3.0]
+quantiles 10 [1.0, 1.0, 1.0, 1.4, 2.0, 2.6, 3.0, 3.0, 3.0]
+mean 1.5 median 1.5 mode 2.0
+variance 0.3333333333333333 stdev 0.5773502691896257
+quantiles 4 [1.0, 1.5, 2.0]
+quantiles 2 [1.5]
+quantiles 1 []
+quantiles 3 [1.0, 2.0]
+quantiles 10 [1.0, 1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0]
+mean -2.5 median -2.5 mode -1.5
+variance 1.0 stdev 1.0
+quantiles 4 [-3.5, -2.5, -1.5]
+quantiles 2 [-2.5]
+quantiles 1 []
+quantiles 3 [-3.1666666666666665, -1.8333333333333333]
+quantiles 10 [-4.1, -3.7, -3.3, -2.9, -2.5, -2.1, -1.7, -1.3, -0.9]
+mean 0.0 median 0.0 mode 0.0
+variance 0.0 stdev 0.0
+quantiles 4 [0.0, 0.0, 0.0]
+quantiles 2 [0.0]
+quantiles 1 []
+quantiles 3 [0.0, 0.0]
+quantiles 10 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+mean 1e+300 median 1e+300 mode 1e+300
+variance 0.0 stdev 0.0
+quantiles 4 [1e+300, 1e+300, 1e+300]
+quantiles 2 [1e+300]
+quantiles 1 []
+quantiles 3 [1e+300, 1e+300]
+quantiles 10 [1.0000000000000002e+300, 9.999999999999999e+299, 9.999999999999999e+299, 1e+300, 1e+300, 1e+300, 9.999999999999999e+299, 9.999999999999999e+299, 1.0000000000000002e+300]
+mean 3e-300 median 3e-300 mode 1e-300
+variance 0.0 stdev 2e-300
+quantiles 4 [1e-300, 3e-300, 5e-300]
+quantiles 2 [3e-300]
+quantiles 1 []
+quantiles 3 [1.666666666666667e-300, 4.333333333333333e-300]
+quantiles 10 [-1.9999999999999997e-301, 6.000000000000001e-301, 1.4000000000000001e-300, 2.2e-300, 3e-300, 3.8e-300, 4.6e-300, 5.4e-300, 6.2e-300]
+mean 5.0 median 4.5 mode 4.0
+variance 4.571428571428571 stdev 2.138089935299395
+quantiles 4 [4.0, 4.5, 6.5]
+quantiles 2 [4.5]
+quantiles 1 []
+quantiles 3 [4.0, 5.0]
+quantiles 10 [1.8, 3.6, 4.0, 4.0, 4.5, 5.0, 5.6, 7.4, 9.2]
+mean 2.375 median 2.375 mode 1.25
+variance 0.5729166666666666 stdev 0.7569125885243729
+quantiles 4 [1.6875, 2.375, 3.0625]
+quantiles 2 [2.375]
+quantiles 1 []
+quantiles 3 [1.9166666666666667, 2.8333333333333335]
+quantiles 10 [1.275, 1.55, 1.825, 2.1, 2.375, 2.65, 2.925, 3.2, 3.475]
+mean 50.25 median 50.25 mode 100.0
+variance 4950.125 stdev 70.35712472806148
+quantiles 4 [-24.375, 50.25, 124.875]
+quantiles 2 [50.25]
+quantiles 1 []
+quantiles 3 [0.5, 100.0]
+quantiles 10 [-69.15, -39.3, -9.45, 20.4, 50.25, 80.1, 109.95, 139.8, 169.65]
+mean 5.0 median 5.0 mode 5.0
+variance 0.0 stdev 0.0
+quantiles 4 [5.0, 5.0, 5.0]
+quantiles 2 [5.0]
+quantiles 1 []
+quantiles 3 [5.0, 5.0]
+quantiles 10 [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]
+mean 1.5 median 1.5 mode 1.0
+variance 0.5 stdev 0.7071067811865476
+quantiles 4 [0.75, 1.5, 2.25]
+quantiles 2 [1.5]
+quantiles 1 []
+quantiles 3 [1.0, 2.0]
+quantiles 10 [0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7]
+mean 6.333333333333333 median 7.0 mode 7.0
+variance 9.333333333333334 stdev 3.0550504633038935
+quantiles 4 [3.0, 7.0, 9.0]
+quantiles 2 [7.0]
+quantiles 1 []
+quantiles 3 [4.333333333333333, 8.333333333333334]
+quantiles 10 [0.6, 2.2, 3.8, 5.4, 7.0, 7.8, 8.6, 9.4, 10.2]
+mean 1.9699016666666667 median 1.98406 mode 3.14159
+variance 0.8617451968166666 stdev 0.9283023197303056
+quantiles 4 [1.20496, 1.98406, 2.8241075]
+quantiles 2 [1.98406]
+quantiles 1 []
+quantiles 3 [1.5201566666666668, 2.5575433333333333]
+quantiles 10 [0.32611, 0.9120100000000001, 1.445994, 1.6684820000000002, 1.9840600000000002, 2.332512, 2.6700589999999997, 2.972266, 3.2685829999999996]
+mean 0.0 median 0.0 mode -5.0
+variance 25.0 stdev 5.0
+quantiles 4 [-5.0, 0.0, 5.0]
+quantiles 2 [0.0]
+quantiles 1 []
+quantiles 3 [-5.0, 5.0]
+quantiles 10 [-5.0, -5.0, -5.0, -3.0, 0.0, 3.0, 5.0, 5.0, 5.0]
+mean 555555555.4259256 median 555555555.5 mode 123456789.123456
+variance 1.8670934380810883e+17 stdev 432098766.2654325
+quantiles 4 [123456789.123456, 555555555.5, 987654321.654321]
+quantiles 2 [555555555.5]
+quantiles 1 []
+quantiles 3 [267489711.24897066, 843621399.6028806]
+quantiles 10 [-135802470.7024704, 37037035.8481472, 209876542.3987648, 382716048.9493824, 555555555.5, 728395061.9617283, 901234568.4234568, 1074074074.8851852, 1246913581.3469136]
+mean 5.5 median 5.5 mode 1.0
+variance 9.166666666666666 stdev 3.0276503540974917
+quantiles 4 [2.75, 5.5, 8.25]
+quantiles 2 [5.5]
+quantiles 1 []
+quantiles 3 [3.6666666666666665, 7.333333333333333]
+quantiles 10 [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9]
+mean 1500000000000001.0 median 2.0 mode 4500000000000000.0
+variance 6.749999999999995e+30 stdev 2598076211353315.0
+quantiles 4 [1.0, 2.0, 4500000000000000.0]
+quantiles 2 [2.0]
+quantiles 1 []
+quantiles 3 [1.3333333333333333, 3000000000000000.5]
+quantiles 10 [0.4, 0.8, 1.2, 1.6, 2.0, 1800000000000001.2, 3600000000000000.5, 5400000000000000.0, 7199999999999998.0]
+mean 1e-323 median 1e-323 mode 5e-324
+variance 0.0 stdev 1e-323
+quantiles 4 [5e-324, 1e-323, 2e-323]
+quantiles 2 [1e-323]
+quantiles 1 []
+quantiles 3 [5e-324, 1.5e-323]
+quantiles 10 [0.0, 5e-324, 5e-324, 1e-323, 1e-323, 1.5e-323, 2e-323, 2e-323, 2.5e-323]
+mean 2e-320 median 2e-320 mode 1e-320
+variance 0.0 stdev 1.414e-320
+quantiles 4 [5e-321, 2e-320, 3.5e-320]
+quantiles 2 [2e-320]
+quantiles 1 []
+quantiles 3 [1e-320, 3e-320]
+quantiles 10 [-4e-321, 2e-321, 8e-321, 1.4e-320, 2e-320, 2.6e-320, 3.2e-320, 3.8e-320, 4.4e-320]
+ValueError: quantiles needs n of at least 1, but got 0
+ValueError: quantiles needs n of at least 1, but got -4
+ValueError: statistics needs at least two data points
+ValueError: statistics needs at least two data points

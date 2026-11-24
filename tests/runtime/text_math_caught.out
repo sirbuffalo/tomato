@@ -1,0 +1,14 @@
+ValueError: partition needs a separator that is not empty
+ValueError: rpartition needs a separator that is not empty
+ValueError: rjust needs a fill character of exactly one character
+RuntimeError: center needs a fill character of exactly one character
+ZeroDivisionError: division by zero
+RuntimeError: division by zero
+ValueError: factorial needs a number that is not negative, but got -3
+ValueError: comb needs numbers that are not negative, but got -3 and 2
+ValueError: perm needs numbers that are not negative, but got 3 and -2
+ValueError: isqrt needs a number that is not negative, but got -3
+OverflowError: an int is too large to be a float
+OverflowError: an int is too large to be a float
+OverflowError: an int is too large to be a float
+0 0 xxabc (3, 1)

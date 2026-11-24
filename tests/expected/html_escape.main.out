@@ -1,0 +1,617 @@
+|
+a|a
+&lt;|&lt;
+&gt;|&gt;
+&amp;|&amp;
+&quot;|"
+&#x27;|'
+&lt;&gt;&amp;&quot;&#x27;|&lt;&gt;&amp;"'
+&amp;amp;|&amp;amp;
+&amp;lt;|&amp;lt;
+a&lt;b&gt;c&amp;d&quot;e&#x27;f|a&lt;b&gt;c&amp;d"e'f
+&amp;&amp;&amp;|&amp;&amp;&amp;
+&quot;quoted&quot;|"quoted"
+&lt;a href=&quot;x&quot;&gt;T&lt;/a&gt;|&lt;a href="x"&gt;T&lt;/a&gt;
+é&lt;日&gt;😀|é&lt;日&gt;😀
+[]
+[plain]
+[a & b]
+[&]
+[&&]
+[&]
+[&]
+[&x]
+[&x]
+[&]
+[&]
+[&amp;]
+[<]
+[<]
+[<]
+[>]
+[>]
+["]
+["]
+[']
+[&apos]
+[  ]
+[© 2024]
+[©2024]
+[©x]
+[©]
+[®®]
+[¬it;]
+[∉]
+[¬in]
+[¬]
+[¬x]
+[¬]
+[¬i]
+[∉]
+[¬invax;]
+[¬inv]
+[éÉéx]
+[áás;]
+[æ]
+[æz;]
+[Æ]
+[&Aelig;]
+[½½&frac1]
+[¾]
+[¼x]
+[…]
+[&hellip]
+[—–]
+[€]
+[&euro]
+[≂̸]
+[fj]
+[=⃥]
+[  ]
+[∾̳]
+[<⃒]
+[⋮]
+[AB]
+[A AAA &#x;&#xg;&#;&#]
+[���]
+[]
+[€‚Ÿ ]
+[€Ÿ]
+[	
+]
+[퟿��]
+[��]
+[�]
+[�]
+[]
+[﷏ﷰ]
+[�]
+[�]
+[A]
+[A]
+[A;]
+[AA]
+[Ag]
+[Aa]
+[Ax]
+[x5;]
+[&# 65;]
+[&#-65;]
+[&#+65;]
+[&#x-41;]
+[&#xx41;]
+[&;]
+[& ;]
+[&	;]
+[&a;]
+[&a]
+[&ab]
+[&abc;]
+[&abc]
+[&zz;]
+[&<>]
+[&<>]
+[&&]
+[&&]
+[a&b<c]
+[&#65;]
+[<#]
+[<<]
+[<<]
+[&=]
+[&a=b;]
+[&=1]
+[&=1]
+[&=]
+[&é;]
+[&日本;]
+[éé]
+[ééáéé]
+[😀&😀]
+[&😀;]
+[&a😀;]
+[&😀]
+[¬in😀]
+[http://x?a=1©=2<=3]
+[a=1¶=2§=3]
+[¶=2]
+[§=3]
+[­]
+[¥£¢¤]
+[°±×÷]
+[¨Üü]
+[x&y&z]
+[&amp&]
+[&A]
+[A&]
+[&bogus;&&bogus]
+[&ThisIsAnAlmostLongEntityNameWith32chars;]
+[&ThisIsAnAlmostLongEntityNameWith32charsX;]
+[&abcdefghijklmnopqrstuvwxyz012345;]
+[&abcdefghijklmnopqrstuvwxyz012345]
+[&abcdefghijklmnopqrstuvwxyz0123456;]
+[&abcdefghijklmnopqrstuvwxyz012345678]
+[©abcdefghijklmnopqrstuvwxyz0123456789;]
+[line1&
+line2<
+]
+[&
+lt;]
+[<
+]
+[<]
+[<p class="a">"hi" & 'bye'</p>]
+[≫>>>≪<]
+[≶≦≤&LE;]
+[★△]
+[≧̸≫⃒≫̸]
+0 replacement
+1 dropped
+2 dropped
+3 dropped
+4 dropped
+5 dropped
+6 dropped
+7 dropped
+8 dropped
+9 same
+10 same
+11 dropped
+12 same
+13 same
+14 dropped
+15 dropped
+16 dropped
+17 dropped
+18 dropped
+19 dropped
+20 dropped
+21 dropped
+22 dropped
+23 dropped
+24 dropped
+25 dropped
+26 dropped
+27 dropped
+28 dropped
+29 dropped
+30 dropped
+31 dropped
+32 same
+33 same
+34 same
+35 same
+36 same
+37 same
+38 same
+39 same
+40 same
+41 same
+42 same
+43 same
+44 same
+45 same
+46 same
+47 same
+48 same
+49 same
+50 same
+51 same
+52 same
+53 same
+54 same
+55 same
+56 same
+57 same
+58 same
+59 same
+60 same
+61 same
+62 same
+63 same
+64 same
+65 same
+66 same
+67 same
+68 same
+69 same
+70 same
+71 same
+72 same
+73 same
+74 same
+75 same
+76 same
+77 same
+78 same
+79 same
+80 same
+81 same
+82 same
+83 same
+84 same
+85 same
+86 same
+87 same
+88 same
+89 same
+90 same
+91 same
+92 same
+93 same
+94 same
+95 same
+96 same
+97 same
+98 same
+99 same
+100 same
+101 same
+102 same
+103 same
+104 same
+105 same
+106 same
+107 same
+108 same
+109 same
+110 same
+111 same
+112 same
+113 same
+114 same
+115 same
+116 same
+117 same
+118 same
+119 same
+120 same
+121 same
+122 same
+123 same
+124 same
+125 same
+126 same
+127 dropped
+128 maps to 8364
+129 same
+130 maps to 8218
+131 maps to 402
+132 maps to 8222
+133 maps to 8230
+134 maps to 8224
+135 maps to 8225
+136 maps to 710
+137 maps to 8240
+138 maps to 352
+139 maps to 8249
+140 maps to 338
+141 same
+142 maps to 381
+143 same
+144 same
+145 maps to 8216
+146 maps to 8217
+147 maps to 8220
+148 maps to 8221
+149 maps to 8226
+150 maps to 8211
+151 maps to 8212
+152 maps to 732
+153 maps to 8482
+154 maps to 353
+155 maps to 8250
+156 maps to 339
+157 same
+158 maps to 382
+159 maps to 376
+160 same
+161 same
+162 same
+163 same
+164 same
+165 same
+166 same
+167 same
+168 same
+169 same
+170 same
+171 same
+172 same
+173 same
+174 same
+175 same
+176 same
+177 same
+178 same
+179 same
+180 same
+181 same
+182 same
+183 same
+184 same
+185 same
+186 same
+187 same
+188 same
+189 same
+190 same
+191 same
+192 same
+193 same
+194 same
+195 same
+196 same
+197 same
+198 same
+199 same
+55290 same
+55291 same
+55292 same
+55293 same
+55294 same
+55295 same
+55296 replacement
+55297 replacement
+55298 replacement
+55299 replacement
+57340 replacement
+57341 replacement
+57342 replacement
+57343 replacement
+57344 same
+57345 same
+57346 same
+57347 same
+57348 same
+57349 same
+64970 same
+64971 same
+64972 same
+64973 same
+64974 same
+64975 same
+64976 dropped
+64977 dropped
+64978 dropped
+64979 dropped
+64980 dropped
+64981 dropped
+64982 dropped
+64983 dropped
+64984 dropped
+64985 dropped
+64986 dropped
+64987 dropped
+64988 dropped
+64989 dropped
+64990 dropped
+64991 dropped
+64992 dropped
+64993 dropped
+64994 dropped
+64995 dropped
+64996 dropped
+64997 dropped
+64998 dropped
+64999 dropped
+65000 dropped
+65001 dropped
+65002 dropped
+65003 dropped
+65004 dropped
+65005 dropped
+65006 dropped
+65007 dropped
+65008 same
+65009 same
+65530 same
+65531 same
+65532 same
+65533 replacement
+65534 dropped
+65535 dropped
+65536 same
+65537 same
+65538 same
+65539 same
+65540 same
+131066 same
+131067 same
+131068 same
+131069 same
+131070 dropped
+131071 dropped
+131072 same
+131073 same
+131074 same
+131075 same
+131076 same
+196602 same
+196603 same
+196604 same
+196605 same
+196606 dropped
+196607 dropped
+196608 same
+196609 same
+196610 same
+196611 same
+196612 same
+262138 same
+262139 same
+262140 same
+262141 same
+262142 dropped
+262143 dropped
+262144 same
+262145 same
+262146 same
+262147 same
+262148 same
+327674 same
+327675 same
+327676 same
+327677 same
+327678 dropped
+327679 dropped
+327680 same
+327681 same
+327682 same
+327683 same
+327684 same
+393210 same
+393211 same
+393212 same
+393213 same
+393214 dropped
+393215 dropped
+393216 same
+393217 same
+393218 same
+393219 same
+393220 same
+458746 same
+458747 same
+458748 same
+458749 same
+458750 dropped
+458751 dropped
+458752 same
+458753 same
+458754 same
+458755 same
+458756 same
+524282 same
+524283 same
+524284 same
+524285 same
+524286 dropped
+524287 dropped
+524288 same
+524289 same
+524290 same
+524291 same
+524292 same
+589818 same
+589819 same
+589820 same
+589821 same
+589822 dropped
+589823 dropped
+589824 same
+589825 same
+589826 same
+589827 same
+589828 same
+655354 same
+655355 same
+655356 same
+655357 same
+655358 dropped
+655359 dropped
+655360 same
+655361 same
+655362 same
+655363 same
+655364 same
+720890 same
+720891 same
+720892 same
+720893 same
+720894 dropped
+720895 dropped
+720896 same
+720897 same
+720898 same
+720899 same
+720900 same
+786426 same
+786427 same
+786428 same
+786429 same
+786430 dropped
+786431 dropped
+786432 same
+786433 same
+786434 same
+786435 same
+786436 same
+851962 same
+851963 same
+851964 same
+851965 same
+851966 dropped
+851967 dropped
+851968 same
+851969 same
+851970 same
+851971 same
+851972 same
+917498 same
+917499 same
+917500 same
+917501 same
+917502 dropped
+917503 dropped
+917504 same
+917505 same
+917506 same
+917507 same
+917508 same
+983034 same
+983035 same
+983036 same
+983037 same
+983038 dropped
+983039 dropped
+983040 same
+983041 same
+983042 same
+983043 same
+983044 same
+1048570 same
+1048571 same
+1048572 same
+1048573 same
+1048574 dropped
+1048575 dropped
+1048576 same
+1048577 same
+1048578 same
+1048579 same
+1048580 same
+1114106 same
+1114107 same
+1114108 same
+1114109 same
+1114110 dropped
+1114111 dropped
+1114112 replacement
+1114113 replacement
+1114114 replacement
+1114115 replacement
+1114116 replacement
+1114112 replacement
+99999999 replacement
+True

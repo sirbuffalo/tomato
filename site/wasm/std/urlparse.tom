@@ -1,0 +1,492 @@
+# URLs, modelled on Python's `urllib.parse` (flat: `from urlparse import urlparse, urljoin, quote`), to split a URL into
+# parts, build one from parts, resolve a relative reference and percent-encode text:
+#
+#     p = urlparse('https://example.com:8080/a/b;v=1?x=1&y=2#top')
+#     print(p.netloc, p.path, p.params, p.query, p.fragment)      # example.com:8080 /a/b v=1 x=1&y=2 top
+#     print(urlunparse(p))                                        # the same URL again
+#     print(urljoin('http://a/b/c/d', '../e'))                    # http://a/b/e
+#     print(quote('a b/é'))                                       # a%20b/%C3%A9
+#     print(urlencode([('q', 'a b'), ('n', '1&2')]))              # q=a+b&n=1%262
+#     print(parse_qs('a=1&a=2&b=x%20y'))                          # {a: [1, 2], b: [x y]}
+#
+#   urlparse(url) -> ParseResult        scheme, netloc, path, params, query, fragment (all text, '' when missing)
+#   urlunparse(parts) -> str            the URL again (redundant delimiters such as an empty '?' are dropped)
+#   urljoin(base, url) -> str           a possibly relative URL resolved against a base, as a browser would
+#   quote(text, safe='/') -> str        UTF-8 percent-encoding: letters, digits and '_.-~' and the ASCII `safe` stay as they are
+#   unquote(text) -> str                the inverse; a malformed escape (%zz, a lone %) stays as written, bytes that are
+#                                       not UTF-8 become U+FFFD
+#   urlencode(pairs) -> str             `key=value` pairs joined with '&', form-encoded: a space is '+'
+#   parse_qs(query) -> dict[str, list[str]]   the fields of a query (or a form body) by name, repeated names collected
+#                                       in order, '+' is a space, fields with an empty value are dropped
+#
+# Like Python's, parsing is not validation: any text splits into some parts. The only errors are a ValueError for a
+# host in brackets that is not an IPv6 address (`http://[::1/` and `http://[abc]/`), as in Python. Python also
+# rejects a netloc whose NFKC normalization hides a delimiter; that check needs Unicode normalization and is not here.
+# The Python keyword options (`scheme=`, `allow_fragments=`, `encoding=`, `errors=`, `safe` as bytes, `doseq=`,
+# `keep_blank_values=`) are not here, and neither are `urlsplit`, `urldefrag`, `quote_plus` or `unquote_plus`.
+
+# the schemes that Python's urllib.parse lists; every list holds the empty scheme too
+def _uses_relative() -> str:
+    return 'ftp http gopher nntp imap wais file https shttp mms prospero rtsp rtsps rtspu sftp svn svn+ssh ws wss'
+
+def _uses_netloc() -> str:
+    return ('ftp http gopher nntp telnet imap wais file mms https shttp snews prospero rtsp rtsps rtspu rsync svn ' +
+            'svn+ssh sftp nfs git git+ssh ws wss itms-services')
+
+def _uses_params() -> str:
+    return 'ftp hdl prospero http imap https shttp rtsp rtsps rtspu sip sips mms sftp tel'
+
+def _listed(scheme: str, schemes: str) -> bool:
+    return scheme == '' or (' ' + scheme + ' ') in (' ' + schemes + ' ')
+
+# A URL split into its parts, keeping the difference between a part that is missing and one that is empty (the
+# netloc of `file:///x` is '', that of `mailto:x` is None), which urljoin and urlunparse need.
+class _Split:
+    scheme: str = ''
+    netloc: str | None = None
+    path: str = ''
+    query: str | None = None
+    fragment: str | None = None
+
+# The split of a URL, ParseResult without params. Parsing is not validation.
+export class ParseResult:
+    scheme: str = ''
+    netloc: str = ''
+    path: str = ''
+    params: str = ''
+    query: str = ''
+    fragment: str = ''
+
+    @init
+    def make(self, scheme: str = '', netloc: str = '', path: str = '', params: str = '', query: str = '', fragment: str = ''):
+        self.scheme = scheme
+        self.netloc = netloc
+        self.path = path
+        self.params = params
+        self.query = query
+        self.fragment = fragment
+
+    @str
+    def show(self) -> str:
+        return (f"ParseResult(scheme='{self.scheme}', netloc='{self.netloc}', path='{self.path}', " +
+                f"params='{self.params}', query='{self.query}', fragment='{self.fragment}')")
+
+def _is_scheme_char(c: str) -> bool:
+    n = ord(c)
+    return (n >= 48 and n <= 57) or (n >= 65 and n <= 90) or (n >= 97 and n <= 122) or c in ['+', '-', '.']
+
+# the part of `url` from `start` to the first '/', '?' or '#', and the rest
+def _split_netloc(url: str, start: int) -> tuple[str, str]:
+    delim = len(url)
+    for c in ['/', '?', '#']:
+        found = url.find(c, start)
+        if found >= 0 and found < delim:
+            delim = found
+    return url[start:delim], url[delim:]
+
+def _valid_ipv4(text: str) -> bool:
+    octets = text.split('.')
+    if len(octets) != 4:
+        return False
+    for octet in octets:
+        if octet == '' or len(octet) > 3:
+            return False
+        for c in octet:
+            if ord(c) < 48 or ord(c) > 57:
+                return False
+        if octet != '0' and octet[0] == '0':
+            return False
+        if int(octet) > 255:
+            return False
+    return True
+
+def _is_hex_digit(c: str) -> bool:
+    n = ord(c)
+    return (n >= 48 and n <= 57) or (n >= 65 and n <= 70) or (n >= 97 and n <= 102)
+
+# an IPv6 address, as Python's ipaddress accepts it (an optional %scope, an IPv4 address in the last 32 bits)
+def _valid_ipv6(text: str) -> bool:
+    addr = text
+    percent = text.find('%')
+    if percent >= 0:
+        scope = text[percent + 1:]
+        if scope == '' or '%' in scope:
+            return False
+        addr = text[:percent]
+    parts = addr.split(':')
+    if len(parts) < 3:
+        return False
+    if '.' in parts[-1]:
+        if not _valid_ipv4(parts[-1]):
+            return False
+        parts = parts[:-1] + ['0', '0']
+    if len(parts) > 9:
+        return False
+    skip = -1
+    for i in range(1, len(parts) - 1):
+        if parts[i] == '':
+            if skip >= 0:
+                return False
+            skip = i
+    if skip >= 0:
+        high = skip
+        low = len(parts) - skip - 1
+        if parts[0] == '':
+            high -= 1
+            if high > 0:
+                return False
+        if parts[-1] == '':
+            low -= 1
+            if low > 0:
+                return False
+        if 8 - (high + low) < 1:
+            return False
+    else:
+        if len(parts) != 8 or parts[0] == '' or parts[-1] == '':
+            return False
+    for part in parts:
+        if len(part) > 4:
+            return False
+        for c in part:
+            if not _is_hex_digit(c):
+                return False
+    return True
+
+# a host written in brackets: an IPv6 address or an IPvFuture (`v1.x`)
+def _check_bracketed_host(hostname: str):
+    if hostname.startswith('v'):
+        dot = hostname.find('.')
+        valid = dot > 1 and dot < len(hostname) - 1
+        if valid:
+            for c in hostname[1:dot]:
+                if not _is_hex_digit(c):
+                    valid = False
+        if not valid:
+            raise ValueError('IPvFuture address is invalid', 'E390')
+        return
+    if _valid_ipv4(hostname):
+        raise ValueError('An IPv4 address cannot be in brackets', 'E390')
+    if not _valid_ipv6(hostname):
+        raise ValueError(f"'{hostname}' does not appear to be an IPv4 or IPv6 address", 'E390')
+
+# Python checks the host of a netloc that holds both brackets (it mirrors how the host and port are found)
+def _check_bracketed_netloc(netloc: str):
+    host_port = netloc[netloc.rfind('@') + 1:]
+    hostname = ''
+    open_at = host_port.find('[')
+    if open_at >= 0:
+        if open_at > 0:
+            raise ValueError('Invalid IPv6 URL', 'E390')
+        rest = host_port[1:]
+        close_at = rest.find(']')
+        if close_at < 0:
+            hostname = rest
+        else:
+            hostname = rest[:close_at]
+            after = rest[close_at + 1:]
+            if after != '' and after[0] != ':':
+                raise ValueError('Invalid IPv6 URL', 'E390')
+    else:
+        colon = host_port.find(':')
+        hostname = host_port if colon < 0 else host_port[:colon]
+    _check_bracketed_host(hostname)
+
+def _split(text: str) -> _Split:
+    # leading control characters and spaces go, and tabs and line breaks anywhere (the WHATWG rules Python follows)
+    start = 0
+    while start < len(text) and ord(text[start]) <= 32:
+        start += 1
+    url = text[start:].replace('\t', '').replace('\r', '').replace('\n', '')
+    out = _Split()
+    colon = url.find(':')
+    if colon > 0 and ord(url[0]) < 128 and url[0].isalpha():
+        is_scheme = True
+        for c in url[:colon]:
+            if not _is_scheme_char(c):
+                is_scheme = False
+        if is_scheme:
+            out.scheme = url[:colon].lower()
+            url = url[colon + 1:]
+    if url[:2] == '//':
+        netloc, url = _split_netloc(url, 2)
+        out.netloc = netloc
+        if ('[' in netloc and ']' not in netloc) or (']' in netloc and '[' not in netloc):
+            raise ValueError('Invalid IPv6 URL', 'E390')
+        if '[' in netloc and ']' in netloc:
+            _check_bracketed_netloc(netloc)
+    hash_at = url.find('#')
+    if hash_at >= 0:
+        out.fragment = url[hash_at + 1:]
+        url = url[:hash_at]
+    question = url.find('?')
+    if question >= 0:
+        out.query = url[question + 1:]
+        url = url[:question]
+    out.path = url
+    return out
+
+def _join_split(scheme: str, netloc: str | None, path: str, query: str | None, fragment: str | None) -> str:
+    url = path
+    if netloc is not None:
+        if url != '' and url[0] != '/':
+            url = '/' + url
+        url = '//' + _or_empty(netloc) + url
+    elif url[:2] == '//':
+        url = '//' + url
+    if scheme != '':
+        url = scheme + ':' + url
+    if query is not None:
+        url = url + '?' + _or_empty(query)
+    if fragment is not None:
+        url = url + '#' + _or_empty(fragment)
+    return url
+
+def _or_empty(text: str | None) -> str:
+    if text is None:
+        return ''
+    return text
+
+# Splits a URL into its six parts. The scheme is lower case; the `params` are what follows the last ';' of the last
+# path segment, for the schemes Python knows to have them (http, ftp, ...).
+export def urlparse(url: str) -> ParseResult:
+    s = _split(url)
+    out = ParseResult(s.scheme, _or_empty(s.netloc), s.path, '', _or_empty(s.query), _or_empty(s.fragment))
+    if _listed(s.scheme, _uses_params()) and ';' in s.path:
+        slash = s.path.rfind('/')
+        semi = s.path.find(';', slash + 1 if slash >= 0 else 0)
+        if semi >= 0:
+            out.path = s.path[:semi]
+            out.params = s.path[semi + 1:]
+    return out
+
+# Puts the parts back together. An empty part is left out with its delimiter, so the result can differ from the URL
+# that was parsed (`http://a/?` comes back as `http://a/`).
+export def urlunparse(parts: ParseResult) -> str:
+    netloc: str | None = parts.netloc
+    if parts.netloc == '':
+        if parts.scheme != '' and _listed(parts.scheme, _uses_netloc()) and (parts.path == '' or parts.path[0] == '/'):
+            netloc = ''
+        else:
+            netloc = None
+    path = parts.path
+    if parts.params != '':
+        path = path + ';' + parts.params
+    query: str | None = None
+    if parts.query != '':
+        query = parts.query
+    fragment: str | None = None
+    if parts.fragment != '':
+        fragment = parts.fragment
+    return _join_split(parts.scheme, netloc, path, query, fragment)
+
+# Resolves `url`, which may be relative, against `base` as RFC 3986 and Python's urljoin do.
+export def urljoin(base: str, url: str) -> str:
+    if base == '':
+        return url
+    if url == '':
+        return base
+    b = _split(base)
+    u = _split(url)
+    scheme = u.scheme
+    if scheme == '':
+        scheme = b.scheme
+    if scheme != b.scheme or (scheme != '' and not _listed(scheme, _uses_relative())):
+        return url
+    netloc = u.netloc
+    if scheme == '' or _listed(scheme, _uses_netloc()):
+        if u.netloc is not None and u.netloc != '':
+            return _join_split(scheme, u.netloc, u.path, u.query, u.fragment)
+        netloc = b.netloc
+    if u.path == '':
+        query = u.query
+        fragment = u.fragment
+        if u.query is None:
+            query = b.query
+            if u.fragment is None:
+                fragment = b.fragment
+        return _join_split(scheme, netloc, b.path, query, fragment)
+    base_parts = b.path.split('/')
+    if base_parts[-1] != '':
+        base_parts.pop()
+    segments: list[str] = []
+    if u.path[0] == '/':
+        segments = u.path.split('/')
+    else:
+        everything = base_parts + u.path.split('/')
+        # segments that would make a double slash when joined again are dropped, except the first and the last
+        segments.append(everything[0])
+        for i in range(1, len(everything) - 1):
+            if everything[i] != '':
+                segments.append(everything[i])
+        if len(everything) > 1:
+            segments.append(everything[-1])
+    resolved: list[str] = []
+    for segment in segments:
+        if segment == '..':
+            if len(resolved) > 0:
+                resolved.pop()
+        elif segment != '.':
+            resolved.append(segment)
+    if segments[-1] == '.' or segments[-1] == '..':
+        resolved.append('')
+    path = '/'.join(resolved)
+    if path == '':
+        path = '/'
+    return _join_split(scheme, netloc, path, u.query, u.fragment)
+
+def _hex_digit_value(c: str) -> int:
+    n = ord(c)
+    if n >= 48 and n <= 57:
+        return n - 48
+    if n >= 65 and n <= 70:
+        return n - 55
+    if n >= 97 and n <= 102:
+        return n - 87
+    return -1
+
+# the UTF-8 bytes of one character
+def _utf8(c: str) -> list[int]:
+    n = ord(c)
+    if n < 128:
+        return [n]
+    if n < 2048:
+        return [192 + n // 64, 128 + n % 64]
+    if n < 65536:
+        return [224 + n // 4096, 128 + (n // 64) % 64, 128 + n % 64]
+    return [240 + n // 262144, 128 + (n // 4096) % 64, 128 + (n // 64) % 64, 128 + n % 64]
+
+# UTF-8 bytes to text; each bad sequence (its longest valid beginning) becomes one U+FFFD, as Python's 'replace' does
+def _decode(data: list[int]) -> str:
+    parts: list[str] = []
+    count = len(data)
+    i = 0
+    while i < count:
+        b = data[i]
+        if b < 128:
+            parts.append(chr(b))
+            i += 1
+            continue
+        need = 0
+        low = 128
+        high = 191
+        value = 0
+        if b >= 194 and b <= 223:
+            need = 1
+            value = b - 192
+        elif b >= 224 and b <= 239:
+            need = 2
+            value = b - 224
+            if b == 224:
+                low = 160
+            elif b == 237:
+                high = 159
+        elif b >= 240 and b <= 244:
+            need = 3
+            value = b - 240
+            if b == 240:
+                low = 144
+            elif b == 244:
+                high = 143
+        if need == 0:
+            parts.append(chr(65533))
+            i += 1
+            continue
+        i += 1
+        complete = True
+        for k in range(need):
+            if i >= count or data[i] < low or data[i] > high:
+                complete = False
+                break
+            value = value * 64 + (data[i] - 128)
+            i += 1
+            low = 128
+            high = 191
+        parts.append(chr(value) if complete else chr(65533))
+    return ''.join(parts)
+
+def _is_safe(c: str, safe: str) -> bool:
+    n = ord(c)
+    if n < 128 and ((n >= 48 and n <= 57) or (n >= 65 and n <= 90) or (n >= 97 and n <= 122) or c in ['_', '.', '-', '~']):
+        return True
+    return n < 128 and c in safe
+
+def _percent(n: int) -> str:
+    digits = '0123456789ABCDEF'
+    return '%' + digits[n // 16] + digits[n % 16]
+
+def _encode(text: str, safe: str, plus: bool) -> str:
+    parts: list[str] = []
+    for c in text:
+        if _is_safe(c, safe):
+            parts.append(c)
+        elif plus and c == ' ':
+            parts.append('+')
+        else:
+            for b in _utf8(c):
+                parts.append(_percent(b))
+    return ''.join(parts)
+
+# Percent-encodes text as UTF-8: letters, digits and `_.-~` stay, and so do the ASCII characters of `safe` (the
+# slash by default); every other byte becomes %XX in upper case. A space is %20.
+export def quote(text: str, safe: str = '/') -> str:
+    return _encode(text, safe, False)
+
+def _unquote(text: str, plus: bool) -> str:
+    if '%' not in text and not (plus and '+' in text):
+        return text
+    parts: list[str] = []
+    run: list[int] = []     # the bytes of the current run of ASCII text and escapes; other characters end the run
+    count = len(text)
+    i = 0
+    while i < count:
+        c = text[i]
+        if ord(c) >= 128:
+            if len(run) > 0:
+                parts.append(_decode(run))
+                run = []
+            parts.append(c)
+        elif c == '%' and i + 2 < count and _hex_digit_value(text[i + 1]) >= 0 and _hex_digit_value(text[i + 2]) >= 0:
+            run.append(_hex_digit_value(text[i + 1]) * 16 + _hex_digit_value(text[i + 2]))
+            i += 2
+        elif plus and c == '+':
+            run.append(32)
+        else:
+            run.append(ord(c))
+        i += 1
+    if len(run) > 0:
+        parts.append(_decode(run))
+    return ''.join(parts)
+
+# Replaces %XX escapes by their bytes and reads the bytes as UTF-8. Text that is not an escape, such as `%zz` or a
+# `%` at the end, stays as it is, and bytes that are not UTF-8 become U+FFFD.
+export def unquote(text: str) -> str:
+    return _unquote(text, False)
+
+# `key=value` pairs joined with '&', as a web form sends them: every part is percent-encoded with nothing kept safe,
+# and a space is written '+'.
+export def urlencode(pairs: list[tuple[str, str]]) -> str:
+    parts: list[str] = []
+    for key, value in pairs:
+        parts.append(_encode(key, '', True) + '=' + _encode(value, '', True))
+    return '&'.join(parts)
+
+# The fields of a query string (or form body), by name; a name repeated gives all its values in order. Names and
+# values are decoded as a form is ('+' is a space). A field without a value (`a`, `a=`) is dropped.
+export def parse_qs(query: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    if query == '':
+        return out
+    for field in query.split('&'):
+        if field == '':
+            continue
+        eq = field.find('=')
+        if eq < 0 or eq == len(field) - 1:
+            continue
+        name = _unquote(field[:eq], True)
+        value = _unquote(field[eq + 1:], True)
+        values = out.get(name)
+        if values is None:
+            out[name] = [value]
+        else:
+            values.append(value)
+    return out

@@ -1,0 +1,44 @@
+# round, divmod, any and all (D75a): the expected output is what Python 3 prints for the same lines.
+def show(label: str, a: int, b: int):
+    print(label, divmod(a, b), a // b, a % b)
+
+@main
+def main():
+    # round(x): an int, a tie goes to the even neighbour
+    print(round(0.5), round(1.5), round(2.5), round(3.5), round(-0.5), round(-1.5), round(-2.5), round(0.4999999999999999))
+    print(round(2.4), round(2.6), round(-2.4), round(-2.6), round(0.0), round(-0.0), round(7), round(-7))
+    print(round(1e15 + 0.5), round(562949953421311.5), round(1e22), round(1e300) % 10 ** 100, len(str(round(1e300))))
+    print(round(123456789.5), round(123456790.5), round(-123456789.5))
+    # round(x, ndigits) of a float: a float, judged on the exact value of x
+    print(round(2.675, 2), round(2.665, 2), round(0.125, 2), round(0.375, 2), round(1.005, 2), round(8.345, 2))
+    print(round(3.14159, 0), round(3.14159, 1), round(3.14159, 3), round(-3.14159, 3), round(2.5, 0), round(3.5, 0))
+    print(round(1234.5678, -1), round(1234.5678, -2), round(1234.5678, -3), round(1234.5678, -4), round(1234.5678, -5))
+    print(round(1250.0, -2), round(1350.0, -2), round(-1250.0, -2), round(150.0, -2), round(250.0, -2), round(0.5, -1), round(5.0, -1), round(15.0, -1), round(25.0, -1))
+    print(round(0.1, 20), round(1e-10, 5), round(-1e-10, 5), round(123.456, 400), round(1e308, -308), round(4.9e-324, 323))
+    print(round(2.5, 1), round(0.05, 1), round(0.15, 1), round(0.25, 1), round(0.35, 1), round(0.45, 1))
+    print(round(1e22, -22), round(5e22, -22), round(15e22, -22), round(25e22, -22), round(123456789012345.6, -5))
+    # round(n, ndigits) of an int: an int; negative ndigits rounds to tens, hundreds, ...
+    print(round(15, 0), round(15, 2), round(15, -1), round(25, -1), round(35, -1), round(-15, -1), round(-25, -1), round(14, -1))
+    print(round(1234, -2), round(1250, -2), round(1350, -2), round(-1250, -2), round(5, -1), round(4, -1), round(0, -3), round(99, -2), round(50, -2), round(51, -2))
+    print(round(10 ** 30 + 5 * 10 ** 12, -13), round(10 ** 30 + 15 * 10 ** 12, -13), round(7, -30), round(10 ** 40 * 5, -41), round(10 ** 40 * 6, -41), round(123456789123456789123456789, -10))
+    x = 2.5
+    n = 25
+    print(round(x), round(x, 0), round(n, -1), round(x * 3), round(n * 4, -2), round(2.25, ndigits=1))
+    # divmod: floor division, the remainder has the sign of the divisor
+    show('a', 7, 2)
+    show('b', -7, 2)
+    show('c', 7, -2)
+    show('d', -7, -2)
+    show('e', 0, 5)
+    show('f', 6, 3)
+    show('g', 10 ** 30, 7)
+    show('h', -(10 ** 30), 7)
+    show('i', 10 ** 30, -(10 ** 15))
+    show('j', 4611686018427387903, 3)
+    show('k', -4611686018427387904, 4611686018427387905)
+    q, r = divmod(100, 7)
+    print(q, r, divmod(100, 7)[0], divmod(100, 7)[1], divmod(-100, 7)[0] == -15)
+    # any and all
+    print(any([]), all([]), any([False]), all([True]), any([False, False, True]), all([True, True, False]), any([True]), all([False]))
+    flags = [i % 3 == 0 for i in range(10)]
+    print(any(flags), all(flags), any([k > 3 for k in [1, 2, 3]]), all([k > 0 for k in [1, 2, 3]]), any([c == 'z' for c in 'tomato']), all([c != 'z' for c in 'tomato']))

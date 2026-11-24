@@ -1,0 +1,5 @@
+from random import Random, sample
+
+@main
+def main():
+    print(sample(Random(1), [1, 2], 3))

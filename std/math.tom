@@ -589,3 +589,157 @@ export def atanh(x: int | float) -> float:
     if v <= -1.0 or v >= 1.0:
         raise ValueError(f'atanh needs a number between -1 and 1, but got {v}', 'E60')
     return !tomato_math1(16, v)
+
+# ---------------------------------------------------------------------------------------------------------------------
+# floor, ceil, trunc, isnan, isinf, isfinite, copysign, factorial, comb, perm, isqrt, fsum and prod (D75d). A float in
+# Tomato is always a finite number (an operation that would give infinity or not a number stops with an error), so isnan
+# and isinf are always false and isfinite always true for a float; they are here so that code written for Python runs.
+
+# floor(x), ceil(x) and trunc(x): the whole number below, above or toward zero from x. An int is its own answer.
+export def floor(x: int | float) -> int:
+    if x in int:
+        return x
+    t = int(x)
+    if x < float(t):
+        return t - 1
+    return t
+
+export def ceil(x: int | float) -> int:
+    if x in int:
+        return x
+    t = int(x)
+    if x > float(t):
+        return t + 1
+    return t
+
+export def trunc(x: int | float) -> int:
+    if x in int:
+        return x
+    return int(x)
+
+# an int or float as a float; an int beyond the largest float raises an OverflowError, as in Python
+def _float_of(x: int | float) -> float:
+    v = _f(x)
+    if !tomato_is_finite(v) == 0:
+        raise OverflowError('an int is too large to be a float', 'E436')
+    return v
+
+export def isnan(x: int | float) -> bool:
+    v = _float_of(x)
+    return v != v
+
+export def isinf(x: int | float) -> bool:
+    v = _float_of(x)
+    return !tomato_is_finite(v) == 0 and v == v
+
+export def isfinite(x: int | float) -> bool:
+    return !tomato_is_finite(_float_of(x)) != 0
+
+# x with the sign of y (a -0.0 counts as negative)
+export def copysign(x: int | float, y: int | float) -> float:
+    magnitude = _float_of(x)
+    if magnitude < 0.0:
+        magnitude = 0.0 - magnitude          # 0.0 - x, so that the magnitude of -0.0 is 0.0 and not -0.0
+    elif magnitude == 0.0:
+        magnitude = 0.0
+    sign_source = _float_of(y)
+    negative = sign_source < 0.0 or str(sign_source).startswith('-')
+    if negative:
+        return -magnitude
+    return magnitude
+
+# n! (factorial(0) is 1); a negative n raises a ValueError
+export def factorial(n: int) -> int:
+    if n < 0:
+        raise ValueError(f'factorial needs a number that is not negative, but got {n}', 'E420')
+    result = 1
+    for i in range(2, n + 1):
+        result *= i
+    return result
+
+# the number of ways to choose k of n items (comb) and to line up k of n items (perm); 0 when k > n
+export def comb(n: int, k: int) -> int:
+    if n < 0 or k < 0:
+        raise ValueError(f'comb needs numbers that are not negative, but got {n} and {k}', 'E421')
+    if k > n:
+        return 0
+    m = k
+    if n - k < m:
+        m = n - k
+    result = 1
+    for i in range(1, m + 1):
+        result = result * (n - m + i) // i
+    return result
+
+export def perm(n: int, k: int) -> int:
+    if n < 0 or k < 0:
+        raise ValueError(f'perm needs numbers that are not negative, but got {n} and {k}', 'E422')
+    if k > n:
+        return 0
+    result = 1
+    for i in range(n - k + 1, n + 1):
+        result *= i
+    return result
+
+# the whole part of the square root of n, exactly, for any size of n
+export def isqrt(n: int) -> int:
+    if n < 0:
+        raise ValueError(f'isqrt needs a number that is not negative, but got {n}', 'E423')
+    if n < 2:
+        return n
+    # Newton's method from a guess that is not below the root (a power of ten with half the digits of n, rounded up)
+    x = 10 ** ((len(str(n)) + 1) // 2)
+    while True:
+        y = (x + n // x) // 2
+        if y >= x:
+            return x
+        x = y
+
+# the sum of floats without the rounding errors of adding them one by one (Shewchuk's algorithm, as Python's fsum):
+# fsum([0.1] * 10) is 1.0
+export def fsum(xs: list[float]) -> float:
+    partials: list[float] = []
+    for value in xs:
+        x = value
+        i = 0
+        for p in partials:
+            y = p
+            if _abs_float(x) < _abs_float(y):
+                x, y = y, x
+            hi = x + y
+            lo = y - (hi - x)
+            if lo != 0.0:
+                partials[i] = lo
+                i += 1
+            x = hi
+        partials = partials[:i]
+        if x != 0.0:
+            partials.append(x)
+    n = len(partials)
+    if n == 0:
+        return 0.0
+    n -= 1
+    hi = partials[n]
+    lo = 0.0
+    # add the partials from the top while the sum stays exact, then round half to even across the rest
+    while n > 0:
+        x = hi
+        n -= 1
+        y = partials[n]
+        hi = x + y
+        lo = y - (hi - x)
+        if lo != 0.0:
+            break
+    if n > 0 and ((lo < 0.0 and partials[n - 1] < 0.0) or (lo > 0.0 and partials[n - 1] > 0.0)):
+        y = lo * 2.0
+        x = hi + y
+        if y == x - hi:
+            hi = x
+    return hi
+
+# the product of the numbers of a list (1 for an empty list)
+export def prod(xs: list[int]) -> int:
+    result = 1
+    for x in xs:
+        result *= x
+    return result

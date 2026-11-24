@@ -1,0 +1,116 @@
+# CSV (RFC 4180), modelled on Python's `csv` module with its strict parser:
+#
+#     from csv import reader, writer, dict_reader
+#
+#     rows = reader('name,age\r\n"Smith, Ann",31\r\n')     # [['name', 'age'], ['Smith, Ann', '31']]
+#     text = writer([['a', 'b,c'], ['say "hi"', '']])     # 'a,"b,c"\r\n"say ""hi""",\r\n'
+#     people = dict_reader('name,age\nAnn,31\n')         # [{'name': 'Ann', 'age': '31'}]
+#
+# reader(text, delimiter=',') splits the whole text into rows of fields. A field may be quoted with ", which lets it hold
+# the delimiter, line breaks and a doubled "" for a quote. A row ends at \n, \r\n or \r outside quotes; a blank line is an
+# empty row and the line break at the very end of the text starts no extra row. A quote inside an unquoted field is plain
+# text. Mistakes raise ValueError: text after a closing quote, a quoted field that is never closed, or a delimiter that is
+# not one character (a quote or a line break cannot be a delimiter).
+#
+# writer(rows, delimiter=',') gives the text with a \r\n after every row. A field is quoted only when it holds the
+# delimiter, a quote, \r or \n; quotes inside are doubled. A row of one empty field is written as "" so that it is not
+# read back as a blank line.
+#
+# dict_reader(text, delimiter=',') reads the first row as the headers and turns every later row into a dict from header
+# to field, in the header order. Blank lines are skipped (before the headers too). A header that is repeated keeps the
+# last field; a short row gets empty text for the missing fields; a row with more fields than headers raises ValueError.
+# The whole text is held in memory.
+
+def _check_delimiter(delimiter: str):
+    if len(delimiter) != 1 or delimiter == '"' or delimiter == '\n' or delimiter == '\r':
+        raise ValueError(f'a CSV delimiter must be one character that is not a quote or a line break, but got {delimiter}', 'E408')
+
+export def reader(text: str, delimiter: str = ',') -> list[list[str]]:
+    _check_delimiter(delimiter)
+    rows: list[list[str]] = []
+    fields: list[str] = []
+    chars: list[str] = []
+    # state: 0 start of a row, 1 start of a field, 2 in an unquoted field, 3 in a quoted field, 4 after a quote in a
+    # quoted field, 5 swallowing the second half of a \r\n
+    state = 0
+    for c in text:
+        if state == 5:
+            state = 0
+            if c == '\n':
+                continue
+        if state == 3:
+            if c == '"':
+                state = 4
+            else:
+                chars.append(c)
+        elif state == 4 and c == '"':
+            chars.append('"')
+            state = 3
+        elif c == delimiter and state != 3:
+            if state == 4 or state == 2 or state == 1 or state == 0:
+                fields.append(''.join(chars))
+                chars = []
+                state = 1
+        elif c == '\n' or c == '\r':
+            if state == 0:
+                rows.append([])
+            else:
+                fields.append(''.join(chars))
+                rows.append(fields)
+                fields = []
+                chars = []
+            state = 5 if c == '\r' else 0
+        elif state == 4:
+            raise ValueError(f'a closing quote in CSV text must be followed by a delimiter or a line break, but found {c}', 'E409')
+        elif state == 0 or state == 1:
+            if c == '"':
+                state = 3
+            else:
+                chars.append(c)
+                state = 2
+        else:
+            chars.append(c)
+    if state == 3:
+        raise ValueError('a quoted CSV field is not closed before the end of the text', 'E410')
+    if state == 1 or state == 2 or state == 4:
+        fields.append(''.join(chars))
+        rows.append(fields)
+    return rows
+
+def _quote_field(field: str, delimiter: str) -> str:
+    if delimiter in field or '"' in field or '\n' in field or '\r' in field:
+        return '"' + field.replace('"', '""') + '"'
+    return field
+
+export def writer(rows: list[list[str]], delimiter: str = ',') -> str:
+    _check_delimiter(delimiter)
+    out: list[str] = []
+    for row in rows:
+        if len(row) == 1 and row[0] == '':
+            out.append('""\r\n')
+            continue
+        parts: list[str] = []
+        for field in row:
+            parts.append(_quote_field(field, delimiter))
+        out.append(delimiter.join(parts) + '\r\n')
+    return ''.join(out)
+
+export def dict_reader(text: str, delimiter: str = ',') -> list[dict[str, str]]:
+    rows = reader(text, delimiter)
+    out: list[dict[str, str]] = []
+    headers: list[str] = []
+    seen = False
+    for row in rows:
+        if len(row) == 0:
+            continue
+        if not seen:
+            headers = row
+            seen = True
+            continue
+        if len(row) > len(headers):
+            raise ValueError(f'a CSV row has {len(row)} fields, but the header has {len(headers)}', 'E411')
+        record: dict[str, str] = {}
+        for i, header in enumerate(headers):
+            record[header] = row[i] if i < len(row) else ''
+        out.append(record)
+    return out

@@ -1,0 +1,4 @@
+@main
+def main():
+    name = 'tomato'
+    print(f'{name:,}')

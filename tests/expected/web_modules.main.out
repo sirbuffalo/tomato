@@ -1,0 +1,13 @@
+example.com:8080 /a/b v=1 x=1&y=2 top
+https://example.com:8080/a/b;v=1?x=1&y=2#top
+http://a/b/e
+a%20b/%C3%A9
+q=a+b&n=1%262
+{'a': ['1', '2'], 'b': ['x y']}
+&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&lt;/a&gt;
+&lt;a href="x"&gt;
+<b> & © é 😀
+aGVsbG8= [104, 101, 108, 108, 111]
+-_-- [251, 255, 190]
+deadbeef [222, 173, 190, 239]
+True True

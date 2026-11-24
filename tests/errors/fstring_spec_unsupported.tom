@@ -1,0 +1,4 @@
+@main
+def main():
+    n = 255
+    print(f'{n:x}')

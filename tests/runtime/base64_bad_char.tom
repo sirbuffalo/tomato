@@ -1,0 +1,5 @@
+from base64 import b64decode
+
+@main
+def main():
+    print(b64decode('Zm9v Zm9v'))

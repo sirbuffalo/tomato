@@ -1,0 +1,161 @@
+# UUIDs, modelled on Python's `uuid`: `from uuid import uuid4, uuid5, parse, UUID`.
+#
+#     id = uuid4()                      # a random UUID (version 4), from the operating system's secure entropy
+#     print(id)                         # 7f1d6b0e-52c4-4c3e-9a47-0d2f1f6f2f9b
+#     ns = parse('6ba7b810-9dad-11d1-80b4-00c04fd430c8')      # the DNS namespace of RFC 9562
+#     print(uuid5(ns, 'python.org'))    # the same name always gives the same UUID: 886313e1-3b8a-5372-9b90-0c9aee199e5d
+#     parse(str(id)) == id              # True
+#
+# A `UUID` holds its 16 bytes (`data`, ints from 0 to 255, first byte first), prints as 32 lower case hex digits in the
+# groups 8-4-4-4-12 and compares with `==`. uuid5 is RFC 9562's version 5: SHA-1 of the namespace's 16 bytes followed by
+# the UTF-8 bytes of the name, the first 16 bytes of the digest with the version nibble set to 5 and the variant bits
+# to 10. SHA-1 is written here in Tomato (it is only a naming hash, not used for security). `parse` takes what Python's
+# `UUID(text)` takes: 32 hex digits in any case, with hyphens anywhere, optionally in braces and/or after `urn:uuid:`;
+# anything else is a ValueError. uuid1, uuid3, version/variant fields, int/hex properties and namespace constants are
+# not here (yet).
+from secrets import token_bytes
+
+export class UUID:
+    data: list[int] = []
+
+    @init
+    def make(self, data: list[int]):
+        if len(data) != 16:
+            raise ValueError(f'a UUID needs 16 bytes, but got {len(data)}', 'E403')
+        for b in data:
+            if b < 0 or b > 255:
+                raise ValueError(f'a UUID needs 16 bytes, but got {len(data)}', 'E403')
+        self.data = data[:]
+
+    @eq
+    def same(self, other: UUID) -> bool:
+        return self.data == other.data
+
+    @str
+    def text(self) -> str:
+        digits = '0123456789abcdef'
+        out = ''
+        for i, b in enumerate(self.data):
+            if i == 4 or i == 6 or i == 8 or i == 10:
+                out += '-'
+            out += digits[b // 16] + digits[b % 16]
+        return out
+
+# a random (version 4) UUID: 122 random bits from the secure entropy, plus the version and variant bits
+export def uuid4() -> UUID:
+    data = token_bytes(16)
+    data[6] = (data[6] & 15) | 64
+    data[8] = (data[8] & 63) | 128
+    return UUID(data)
+
+# the UTF-8 bytes of a text
+def _utf8(text: str) -> list[int]:
+    out: list[int] = []
+    for c in text:
+        n = ord(c)
+        if n < 128:
+            out.append(n)
+        elif n < 2048:
+            out.append(192 | (n >> 6))
+            out.append(128 | (n & 63))
+        elif n < 65536:
+            out.append(224 | (n >> 12))
+            out.append(128 | ((n >> 6) & 63))
+            out.append(128 | (n & 63))
+        else:
+            out.append(240 | (n >> 18))
+            out.append(128 | ((n >> 12) & 63))
+            out.append(128 | ((n >> 6) & 63))
+            out.append(128 | (n & 63))
+    return out
+
+def _rotl(x: int, k: int) -> int:
+    return ((x << k) | (x >> (32 - k))) & 4294967295
+
+# SHA-1 (FIPS 180-4) of a list of bytes, as 20 bytes
+def _sha1(message: list[int]) -> list[int]:
+    m = 4294967295
+    padded = message[:]
+    padded.append(128)
+    while len(padded) % 64 != 56:
+        padded.append(0)
+    bits = len(message) * 8
+    for i in range(8):
+        padded.append((bits >> (56 - 8 * i)) & 255)
+    h0 = 1732584193
+    h1 = 4023233417
+    h2 = 2562383102
+    h3 = 271733878
+    h4 = 3285377520
+    for start in range(0, len(padded), 64):
+        w: list[int] = []
+        for i in range(16):
+            j = start + 4 * i
+            w.append((padded[j] << 24) | (padded[j + 1] << 16) | (padded[j + 2] << 8) | padded[j + 3])
+        for i in range(16, 80):
+            w.append(_rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1))
+        a = h0
+        b = h1
+        c = h2
+        d = h3
+        e = h4
+        for i in range(80):
+            if i < 20:
+                f = (b & c) | ((b ^ m) & d)
+                k = 1518500249
+            elif i < 40:
+                f = b ^ c ^ d
+                k = 1859775393
+            elif i < 60:
+                f = (b & c) | (b & d) | (c & d)
+                k = 2400959708
+            else:
+                f = b ^ c ^ d
+                k = 3395469782
+            t = (_rotl(a, 5) + f + e + k + w[i]) & m
+            e = d
+            d = c
+            c = _rotl(b, 30)
+            b = a
+            a = t
+        h0 = (h0 + a) & m
+        h1 = (h1 + b) & m
+        h2 = (h2 + c) & m
+        h3 = (h3 + d) & m
+        h4 = (h4 + e) & m
+    out: list[int] = []
+    for h in [h0, h1, h2, h3, h4]:
+        for i in range(4):
+            out.append((h >> (24 - 8 * i)) & 255)
+    return out
+
+# the name-based (version 5) UUID of a namespace UUID and a name: always the same for the same two inputs
+export def uuid5(namespace: UUID, name: str) -> UUID:
+    digest = _sha1(namespace.data + _utf8(name))
+    data = digest[:16]
+    data[6] = (data[6] & 15) | 80
+    data[8] = (data[8] & 63) | 128
+    return UUID(data)
+
+def _hex_value(c: str) -> int:
+    n = ord(c)
+    if n >= 48 and n <= 57:
+        return n - 48
+    if n >= 97 and n <= 102:
+        return n - 87
+    if n >= 65 and n <= 70:
+        return n - 55
+    return -1
+
+# a UUID from its text (see the top of this file for the accepted forms)
+export def parse(text: str) -> UUID:
+    body = text.replace('urn:', '').replace('uuid:', '').strip('{}').replace('-', '')
+    digits: list[int] = []
+    for c in body:
+        digits.append(_hex_value(c))
+    if len(digits) != 32 or -1 in digits:
+        raise ValueError(f'a UUID text needs 32 hexadecimal digits, but got {text}', 'E405')
+    data: list[int] = []
+    for i in range(16):
+        data.append(digits[2 * i] * 16 + digits[2 * i + 1])
+    return UUID(data)

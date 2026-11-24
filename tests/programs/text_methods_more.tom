@@ -1,0 +1,47 @@
+# splitlines, partition, rpartition, rsplit, zfill, ljust, rjust, center, title, capitalize, isalnum, removeprefix and
+# removesuffix (D75b): the expected output is what Python 3 prints for the same lines.
+@main
+def main():
+    # splitlines
+    print('a\nb\r\nc\rd'.splitlines(), 'a\nb\r\nc\rd\n'.splitlines(), ''.splitlines(), '\n'.splitlines(), '\n\n'.splitlines(), 'x'.splitlines())
+    print('a\nb\r\nc\rd\n'.splitlines(True), 'a\nb\r\nc\rd\n'.splitlines(keepends=True), '\r\n'.splitlines(True), '\r\r\n'.splitlines(True), 'a\n\nb'.splitlines(True))
+    ends = f'one{chr(11)}two{chr(12)}three{chr(28)}four{chr(29)}five{chr(30)}six{chr(133)}seven{chr(8232)}eight{chr(8233)}nine'
+    print(ends.splitlines(), ends.splitlines(True) == ends.splitlines(keepends=True), len(ends.splitlines(True)), ''.join(ends.splitlines(True)) == ends)
+    print([len(piece) for piece in f'a{chr(11)}b{chr(8232)}c'.splitlines(True)], 'ünï\ncödé\r\n'.splitlines(), ' a \n b '.splitlines(), [len(piece) for piece in f'x{chr(160)}y{chr(0)}z{chr(31)}'.splitlines()])
+    # partition and rpartition
+    print('a=b=c'.partition('='), 'a=b=c'.rpartition('='), 'abc'.partition('='), 'abc'.rpartition('='), ''.partition('x'), ''.rpartition('x'))
+    print('a--b--c'.partition('--'), 'a--b--c'.rpartition('--'), 'aaa'.partition('aa'), 'aaa'.rpartition('aa'), '--x'.partition('--'), 'x--'.rpartition('--'))
+    print('héllo wörld'.partition(' '), 'héllo wörld'.rpartition('ö'), 'abc'.partition('abc'), 'abc'.rpartition('abc'), 'abc'.partition('abcd'))
+    head, sep, tail = 'key: value: more'.partition(': ')
+    print(head, '|', sep, '|', tail)
+    # rsplit: the whitespace form and the separator form, with and without maxsplit
+    print('  a  b \t c\nd  '.rsplit(), 'a b c'.rsplit(), ''.rsplit(), '   '.rsplit(), 'abc'.rsplit(), ' x '.rsplit())
+    print('  a  b  c  '.rsplit('', 1), '  a  b  c  '.rsplit('', 2), '  a  b  c  '.rsplit('', 0), '  a  b  c  '.rsplit('', 5), 'a b c d'.rsplit(maxsplit=2), 'a b c d'.rsplit('', -1))
+    print('a,b,c,d'.rsplit(','), 'a,b,c,d'.rsplit(',', 1), 'a,b,c,d'.rsplit(',', 2), 'a,b,c,d'.rsplit(',', 0), 'a,b,c,d'.rsplit(',', 10), 'a,b,c,d'.rsplit(',', -1))
+    print(',a,,b,'.rsplit(','), ',a,,b,'.rsplit(',', 2), ''.rsplit(','), ','.rsplit(','), 'abc'.rsplit('abc'), 'a--b--c--d'.rsplit('--', 2), 'aaaa'.rsplit('aa'), 'aaaaa'.rsplit('aa'))
+    print('é,ü,ö'.rsplit(','), 'é,ü,ö'.rsplit(',', 1), 'a b'.rsplit('b'), 'a b'.rsplit('a'), 'x'.rsplit('x', 0), 'a  b'.rsplit(' '), 'a  b'.rsplit(' ', 1))
+    # zfill
+    print('42'.zfill(5), '-42'.zfill(5), '+42'.zfill(5), '42'.zfill(2), '42'.zfill(1), '42'.zfill(0), '42'.zfill(-3), ''.zfill(3), '-'.zfill(3), '+'.zfill(2), 'abc'.zfill(6), '-abc'.zfill(6), 'é'.zfill(3))
+    # ljust, rjust and center, with the default fill and a fill character
+    print('ab'.ljust(5) + '|', 'ab'.rjust(5) + '|', 'ab'.center(5) + '|', 'ab'.center(6) + '|', 'abc'.center(6) + '|', 'abc'.center(7) + '|', 'abc'.center(8) + '|')
+    print('ab'.ljust(5, '*'), 'ab'.rjust(5, '*'), 'ab'.center(5, '*'), 'ab'.center(6, '*'), 'abc'.center(6, '*'), 'abc'.center(7, '*'), 'abc'.center(10, '-'), 'a'.center(2, '#'), 'a'.center(3, '#'))
+    print('abc'.ljust(2), 'abc'.rjust(3), 'abc'.center(1), ''.ljust(2, '.'), ''.center(3, '.'), ''.rjust(1, '.'), 'abc'.ljust(0), 'abc'.rjust(-5), 'abc'.center(-1, 'x'))
+    print('é'.center(5, 'ü'), '日本'.ljust(5, '語'), 'ab'.rjust(4, 'é'), 'x'.center(4, ' ') + '|', 'x'.center(5, ' ') + '|', 'xy'.center(7, '0'), 'xyz'.center(4, '0'), 'xy'.center(3, '0'))
+    print(' '.join(['a'.center(n, '.') for n in range(0, 8)]), ' '.join(['ab'.center(n, '.') for n in range(0, 9)]))
+    # title and capitalize
+    print('hello world'.title(), 'HELLO WORLD'.title(), "they're here".title(), 'a1b2c3'.title(), 'ab-cd_ef gh.ij'.title(), ''.title(), '  x  y '.title(), "o'neil".title(), 'élan vital'.title(), 'ÉCOLE normale'.title())
+    print('hello world'.capitalize(), 'HELLO WORLD'.capitalize(), 'élan VITAL'.capitalize(), ''.capitalize(), 'a'.capitalize(), '1abc'.capitalize(), ' abc'.capitalize(), 'ÀBC'.capitalize(), 'привет мир'.title(), 'ПРИВЕТ'.capitalize())
+    # isalnum
+    print('abc123'.isalnum(), 'abc 123'.isalnum(), ''.isalnum(), 'abc_'.isalnum(), '123'.isalnum(), 'é1'.isalnum(), '日本語'.isalnum(), '!'.isalnum(), 'ab\n'.isalnum(), 'Привет2'.isalnum(), '٣'.isalnum())
+    # removeprefix and removesuffix
+    print('foobar'.removeprefix('foo'), 'foobar'.removeprefix('bar'), 'foobar'.removeprefix(''), 'foobar'.removeprefix('foobar'), 'foobar'.removeprefix('foobarx'), ''.removeprefix('a'), 'aaa'.removeprefix('aa'))
+    print('foobar'.removesuffix('bar'), 'foobar'.removesuffix('foo'), 'foobar'.removesuffix(''), 'foobar'.removesuffix('foobar'), 'foobar'.removesuffix('xfoobar'), ''.removesuffix('a'), 'aaa'.removesuffix('aa'), 'éàü'.removesuffix('ü'), 'éàü'.removeprefix('é'))
+    # results are ordinary values
+    name = 'ada lovelace'
+    parts = name.title().rsplit(' ', 1)
+    print(parts, len(parts), parts[0].center(10, '_') + parts[1].rjust(10, '.'))
+    words = 'the quick brown fox'.rsplit()
+    print(len(words), [w.capitalize() for w in words], ' '.join([w.zfill(6) for w in words]))
+    text = 'line one\nline two\n\nline four'
+    for line in text.splitlines():
+        print(line.ljust(10, '.') + '|', line.partition(' ')[2].upper())

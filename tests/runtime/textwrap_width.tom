@@ -1,0 +1,5 @@
+from textwrap import wrap
+
+@main
+def main():
+    print(wrap('abc', 0))

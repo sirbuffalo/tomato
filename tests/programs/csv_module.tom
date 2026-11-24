@@ -1,0 +1,119 @@
+# std/csv.tom: RFC 4180 reading and writing; expected output comes from Python's csv module (strict mode) as an oracle
+from csv import reader, writer, dict_reader
+
+def field(f: str) -> str:
+    return f.replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+
+def show_rows(label: str, rows: list[list[str]]):
+    print(label, len(rows))
+    for row in rows:
+        out: list[str] = []
+        for f in row:
+            out.append(field(f))
+        print('  [' + '|'.join(out) + ']')
+
+def read(label: str, text: str, delimiter: str = ','):
+    try:
+        show_rows(label, reader(text, delimiter))
+    catch ValueError as e:
+        print(label, 'ValueError:', field(e.message))
+
+def write(label: str, rows: list[list[str]], delimiter: str = ','):
+    print(label, field(writer(rows, delimiter)))
+
+def read_dicts(label: str, text: str, delimiter: str = ','):
+    try:
+        records = dict_reader(text, delimiter)
+        print(label, len(records))
+        for record in records:
+            out: list[str] = []
+            for k, v in record.items():
+                out.append(field(k) + '=' + field(v))
+            print('  {' + ';'.join(out) + '}')
+    catch ValueError as e:
+        print(label, 'ValueError:', field(e.message))
+
+@main
+def main():
+    read('read0', 'a,b,c', ',')
+    read('read1', 'a,b,c\n1,2,3\n', ',')
+    read('read2', 'a,b,c\r\n1,2,3\r\n', ',')
+    read('read3', '', ',')
+    read('read4', '\n', ',')
+    read('read5', '\n\n', ',')
+    read('read6', 'a,,c', ',')
+    read('read7', ',', ',')
+    read('read8', ',,', ',')
+    read('read9', 'a,', ',')
+    read('read10', '"a","b"', ',')
+    read('read11', '"a,b",c', ',')
+    read('read12', '"say ""hi""",x', ',')
+    read('read13', '"line1\nline2",x\ny,z\n', ',')
+    read('read14', '"line1\r\nline2",x\r\ny,z\r\n', ',')
+    read('read15', '"a\n\nb"', ',')
+    read('read16', 'a\n\nb\n', ',')
+    read('read17', 'a\rb\rc', ',')
+    read('read18', 'a\r\n\r\nb', ',')
+    read('read19', 'x"y,z', ',')
+    read('read20', '"",""', ',')
+    read('read21', '""', ',')
+    read('read22', '"",a', ',')
+    read('read23', 'a;b;"c;d"', ';')
+    read('read24', 'a\tb\t"c\td"\n', '\t')
+    read('read25', 'a|b||c', '|')
+    read('read26', 'a b  "c d"', ' ')
+    read('read27', ' a , b ', ',')
+    read('read28', 'héllo,wörld\n日本,"語,語"\n', ',')
+    read('read29', ' a, b\n', ',')
+    read('read30', 'a,b\n"c', ',')
+    read('read31', '"a"b,c', ',')
+    read('read32', '"a" ,b', ',')
+    read('read33', 'a,"b"c', ',')
+    read('read34', '"abc', ',')
+    read('read35', '"a""', ',')
+    read('read36', 'a,b,c\n1,2', ',')
+    read('read37', '"a"\n"b"\n', ',')
+    read('read38', '"a"""\n', ',')
+    read('read39', 'a\n', ',')
+    read('read40', '"x"\r', ',')
+    read('read41', '"x\r"\n', ',')
+    read('delim0', 'a,b', '')
+    read('delim1', 'a,b', ',,')
+    read('delim2', 'a,b', '"')
+    read('delim3', 'a,b', '\n')
+    read('delim4', 'a,b', '\r')
+    write('write0', [['a', 'b', 'c']], ',')
+    write('write1', [['a', 'b,c'], ['say "hi"', '']], ',')
+    write('write2', [['']], ',')
+    write('write3', [[]], ',')
+    write('write4', [['', ''], ['']], ',')
+    write('write5', [], ',')
+    write('write6', [['line1\nline2', 'x'], ['y\rz', 'w']], ',')
+    write('write7', [['a;b', 'c']], ';')
+    write('write8', [['a;b', 'c,d']], ',')
+    write('write9', [['a\tb', 'c d']], '\t')
+    write('write10', [['héllo', '日本,語']], ',')
+    write('write11', [['"']], ',')
+    write('write12', [['""']], ',')
+    write('write13', [[' a ', ' ']], ',')
+    write('write14', [['a|b', 'c']], '|')
+    write('write15', [['a b', 'c']], ' ')
+    write('write16', [[' ', 'x']], ',')
+    write('write17', [['1', '2', '3'], ['4', '5', '6']], ',')
+    read_dicts('dict0', 'name,age\nAnn,31\nBob,25\n', ',')
+    read_dicts('dict1', 'name,age\r\nAnn,31\r\n', ',')
+    read_dicts('dict2', 'a,b,c\n1,2\n', ',')
+    read_dicts('dict3', 'a,b,c\n1\n', ',')
+    read_dicts('dict4', 'a,b\n1,2,3\n', ',')
+    read_dicts('dict5', 'a,a,b\n1,2,3\n', ',')
+    read_dicts('dict6', 'a,b\n\n1,2\n\n3,4\n', ',')
+    read_dicts('dict7', 'a,b\n', ',')
+    read_dicts('dict8', 'a,b', ',')
+    read_dicts('dict9', '', ',')
+    read_dicts('dict10', 'x;y\n"1;2";3\n', ';')
+    read_dicts('dict11', 'k,v\n"multi\nline",2\n', ',')
+    read_dicts('dict12', 'a,b\n"x', ',')
+    read_dicts('dict13', 'a,b,c\n1,2,3,4\n', ',')
+    read_dicts('dict14', 'b,a,a,c\n1,2,3,4\n', ',')
+    read_dicts('dict15', 'a,b\n,\n', ',')
+    read_dicts('dict16', 'h\n"v"\n', ',')

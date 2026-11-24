@@ -1,0 +1,77 @@
+# choice, shuffle and sample of std/random.tom (free functions taking the generator: no generic methods yet), and the
+# errors of the whole module.
+from random import Random, choice, shuffle, sample
+
+def attempt(label: str, rng: Random, what: int):
+    try:
+        if what == 0:
+            print(rng.randint(5, 4))
+        elif what == 1:
+            print(rng.randrange(0, 10, 0))
+        elif what == 2:
+            print(rng.randrange(5, 5))
+        elif what == 3:
+            print(rng.randrange(0, 10, -1))
+        elif what == 4:
+            print(rng.randrange(10, 0))
+        elif what == 5:
+            print(choice(rng, ['a'][1:]))
+        elif what == 6:
+            print(sample(rng, [1, 2, 3], 4))
+        else:
+            print(sample(rng, [1, 2, 3], -1))
+    catch ValueError as e:
+        print(label, 'ValueError:', e.message, e.id)
+
+@main
+def main():
+    rng = Random(99)
+    names = ['ann', 'bob', 'cy', 'di', 'ed']
+    print([choice(rng, names) for i in range(8)])
+    print(choice(rng, [3.5]), choice(rng, [True, False, True]))
+    xs = list(range(10))
+    shuffle(rng, xs)
+    print(xs, sorted(xs) == list(range(10)))
+    words = ['a', 'b', 'c', 'd', 'e', 'f']
+    shuffle(rng, words)
+    print(words)
+    empty: list[int] = []
+    shuffle(rng, empty)
+    one = [7]
+    shuffle(rng, one)
+    print(empty, one)
+    pool = [10, 20, 30, 40, 50, 60, 70, 80]
+    print(sample(rng, pool, 3), sample(rng, pool, 8), sample(rng, pool, 0), pool)
+    print(sample(rng, ['x', 'x', 'y'], 2))
+    attempt('randint', rng, 0)
+    attempt('step 0', rng, 1)
+    attempt('empty', rng, 2)
+    attempt('negative step', rng, 3)
+    attempt('reversed', rng, 4)
+    attempt('choice', rng, 5)
+    attempt('sample too big', rng, 6)
+    attempt('sample negative', rng, 7)
+    # a shuffle gives each order about equally often (24 orders of 4 items, 480 shuffles)
+    counts: dict[str, int] = {}
+    for i in range(480):
+        deck = [1, 2, 3, 4]
+        shuffle(rng, deck)
+        key = str(deck)
+        counts[key] = counts.get(key, 0) + 1
+    low = min(counts.values())
+    high = max(counts.values())
+    print(len(counts), low > 5, high < 40)
+    # a die rolled 300 times
+    faces = [0, 0, 0, 0, 0, 0]
+    for i in range(300):
+        faces[rng.randint(1, 6) - 1] += 1
+    print(min(faces) > 25, max(faces) < 80)
+    # gauss has about the asked mean and spread
+    total = 0.0
+    squares = 0.0
+    for i in range(200):
+        v = rng.gauss(5.0, 2.0)
+        total += v
+        squares += (v - 5.0) * (v - 5.0)
+    mean = total / 200.0
+    print(mean > 4.4 and mean < 5.6, squares / 200.0 > 2.5 and squares / 200.0 < 5.5)

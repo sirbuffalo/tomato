@@ -1,0 +1,30 @@
+['a', 'b', 'c', 'd'] ['a', 'b', 'c', 'd'] [] [''] ['', ''] ['x']
+['a\n', 'b\r\n', 'c\r', 'd\n'] ['a\n', 'b\r\n', 'c\r', 'd\n'] ['\r\n'] ['\r', '\r\n'] ['a\n', '\n', 'b']
+['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'] True 9 True
+[2, 2, 1] ['ünï', 'cödé'] [' a ', ' b '] [6]
+('a', '=', 'b=c') ('a=b', '=', 'c') ('abc', '', '') ('', '', 'abc') ('', '', '') ('', '', '')
+('a', '--', 'b--c') ('a--b', '--', 'c') ('', 'aa', 'a') ('a', 'aa', '') ('', '--', 'x') ('x', '--', '')
+('héllo', ' ', 'wörld') ('héllo w', 'ö', 'rld') ('', 'abc', '') ('', 'abc', '') ('abc', '', '')
+key | :  | value: more
+['a', 'b', 'c', 'd'] ['a', 'b', 'c'] [] [] ['abc'] ['x']
+['  a  b', 'c'] ['  a', 'b', 'c'] ['  a  b  c'] ['a', 'b', 'c'] ['a b', 'c', 'd'] ['a', 'b', 'c', 'd']
+['a', 'b', 'c', 'd'] ['a,b,c', 'd'] ['a,b', 'c', 'd'] ['a,b,c,d'] ['a', 'b', 'c', 'd'] ['a', 'b', 'c', 'd']
+['', 'a', '', 'b', ''] [',a,', 'b', ''] [''] ['', ''] ['', ''] ['a--b', 'c', 'd'] ['', '', ''] ['a', '', '']
+['é', 'ü', 'ö'] ['é,ü', 'ö'] ['a ', ''] ['', ' b'] ['x'] ['a', '', 'b'] ['a ', 'b']
+00042 -0042 +0042 42 42 42 42 000 -00 +0 000abc -00abc 00é
+ab   |    ab|   ab |   ab  |  abc  |   abc  |   abc   |
+ab*** ***ab **ab* **ab** *abc** **abc** ---abc---- a# #a#
+abc abc abc .. ... . abc abc abc
+üüéüü 日本語語語 ééab  x  |   x  | 000xy00 xyz0 0xy
+a a a. .a. .a.. ..a.. ..a... ...a... ab ab ab .ab .ab. ..ab. ..ab.. ...ab.. ...ab...
+Hello World Hello World They'Re Here A1B2C3 Ab-Cd_Ef Gh.Ij    X  Y  O'Neil Élan Vital École Normale
+Hello world Hello world Élan vital  A 1abc  abc Àbc Привет Мир Привет
+True False False False True True True False False True True
+bar foobar foobar  foobar  a
+foo foobar foobar  foobar  a éà àü
+['Ada', 'Lovelace'] 2 ___Ada____..Lovelace
+4 ['The', 'Quick', 'Brown', 'Fox'] 000the 0quick 0brown 000fox
+line one..| ONE
+line two..| TWO
+..........| 
+line four.| FOUR

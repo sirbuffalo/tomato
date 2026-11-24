@@ -7,7 +7,7 @@
 # iN / uN for fixed-width integers. Heap values are reference counted: whoever an expression's value is handed to owns it.
 # A problem with the program is raised as a CompileError and reported by diag.tom.
 from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
-from lexer import LexError
+from lexer import LexError, parse_format_spec
 from diag import Diagnostic, format_error, closest
 from lint import lint_items, falls_through
 
@@ -4178,6 +4178,8 @@ class Gen:
             # the text of a union value inside a printed container: text is quoted, as Python does
             bv = self.expr(args[0])
             return self.union_text(bv, True, n.line)
+        if name == '_format_spec' and len(args) == 2 and name not in self.slots and self.mod.resolve(name) == '':
+            return self.format_call(args, n.line)
         if name == 'float' and len(args) == 1:
             return self.float_call(self.expr(args[0]), n.line)
         if name == 'int' and len(args) == 1:
@@ -4188,6 +4190,12 @@ class Gen:
         key = self.mod.resolve(name)
         if key == '' and name in ['abs', 'chr', 'ord'] and name not in self.slots:
             return self.number_text_builtin(name, args, n.line)
+        if key == '' and name == 'round' and name not in self.slots:
+            return self.round_call(args, n.fields[2].items, n.line)
+        if key == '' and name in ['divmod', 'any', 'all'] and name not in self.slots:
+            # written in Tomato, in std/builtin.tom (_divmod, _any, _all)
+            self.kw = n.fields[2].items
+            return self.helper_call('_' + name, name, ex('', ''), args, n.line)
         if key == '' and name == 'sorted' and len(n.fields[2].items) > 0:
             return self.sorted_by(args, n.fields[2].items, n.line)
         if key == '' and (name == 'map' or name == 'filter') and name not in self.slots:
@@ -4309,6 +4317,85 @@ class Gen:
         info = self.mod.instance_func(gkey, targs, n.line)
         self.kw = n.fields[2].items
         return self.call_function(info, '@tomato.' + info.key, ex('', ''), args, n.line)
+
+    # f'{x:spec}': the lexer wrote _format_spec(x, 'spec') after checking the form of the spec; the type of x says what the
+    # spec may hold. The work is done by _fmt_str, _fmt_int and _fmt_float in std/builtin.tom.
+    def format_call(self, args: list[Node], line: int) -> Ex:
+        spec = parse_format_spec(args[1].fields[0].text, line, 0)
+        v = self.expr(args[0])
+        if is_fixed(v.ty):
+            v = self.convert_explicit(v, 'int', line)
+        if v.ty != 'str' and v.ty != 'int' and v.ty != 'float':
+            raise CompileError(f'a format spec needs a text, an int or a float, but this value is {shown(v.ty)}\nleave the spec out, or make text with str() first', line)
+        what = 'text' if v.ty == 'str' else v.ty
+        if v.ty == 'str':
+            if spec.sign != '':
+                raise CompileError(f"a format spec for text cannot have a sign\nremove '{spec.sign}'", line)
+            if spec.comma:
+                raise CompileError("a format spec for text cannot have a ','\nthousands separators are for numbers", line)
+            if spec.kind != '' and spec.kind != 's':
+                raise CompileError(f"the format type '{spec.kind}' is for numbers, but this value is text\nuse s, or leave the type out", line)
+        elif spec.kind == 's':
+            raise CompileError(f"the format type 's' is for text, but this value is {what}\nleave the type out, or use d, f, e or g", line)
+        elif v.ty == 'float' and spec.kind == 'd':
+            raise CompileError("the format type 'd' is for whole numbers, but this value is float\nuse f, e or g, or leave the type out", line)
+        elif v.ty == 'int' and spec.precision >= 0 and spec.kind not in ['f', 'e', 'g']:
+            raise CompileError("a format spec for an int cannot have a precision unless its type is f, e or g\nremove the '.' and the digits after it", line)
+        fill = ex(self.mod.intern(spec.fill), 'str')
+        align = ex(self.mod.intern(spec.align), 'str')
+        sign = ex(self.mod.intern(spec.sign), 'str')
+        zero = ex('1' if spec.zero else '0', 'bool')
+        comma = ex('1' if spec.comma else '0', 'bool')
+        width = self.tag_small(str(spec.width))
+        if v.ty == 'str':
+            return self.builtin_call('_fmt_str', [v, fill, align, zero, width, self.tag_small(str(spec.precision))], line)
+        if v.ty == 'int' and spec.kind not in ['f', 'e', 'g']:
+            return self.builtin_call('_fmt_int', [v, fill, align, sign, zero, width, comma], line)
+        if v.ty == 'int':
+            v = self.float_call(v, line)
+        kind = ex(self.mod.intern(spec.kind), 'str')
+        return self.builtin_call('_fmt_float', [v, fill, align, sign, zero, width, comma, self.tag_small(str(spec.precision)), kind], line)
+
+    # round(x) and round(x, ndigits): an int or a float; round(x) is an int, round(x, ndigits) has the type of x
+    def round_call(self, args: list[Node], keywords: list[Val], line: int) -> Ex:
+        nodes: list[Node] = [a for a in args]
+        for kv in keywords:
+            if kv.items[0].text != 'ndigits' or len(nodes) != 1:
+                raise CompileError('round() takes a number and optionally ndigits: round(x) or round(x, ndigits)', line)
+            nodes.append(val_node(kv.items[1]))
+        if len(nodes) < 1 or len(nodes) > 2:
+            raise CompileError('round() takes a number and optionally ndigits: round(x) or round(x, ndigits)', line)
+        x = self.expr(nodes[0])
+        if x.ty != 'int' and x.ty != 'float':
+            raise CompileError(f'round() takes an int or a float, but this is {shown(x.ty)}', line)
+        if len(nodes) == 1:
+            if x.ty == 'int':
+                return x
+            return self.builtin_call('_round_float0', [x], line)
+        held_before = len(self.held)
+        self.hold(x)
+        digits = self.want(self.expr(nodes[1]), 'int', line, 'ndigits of round')
+        self.drop_held(held_before)
+        return self.builtin_call('_round_' + x.ty, [x, digits], line)
+
+    # a call of a function of std/builtin.tom under the built-in name `public` (messages and keywords use it); when recv
+    # is a value, it is the first parameter of the function (the object of a text method) and the others are `args`
+    def helper_call(self, helper: str, public: str, recv: Ex, args: list[Node], line: int) -> Ex:
+        key = self.mod.resolve(helper)
+        info = self.mod.find(key, line)
+        shown_info = FuncInfo()
+        shown_info.name = public
+        shown_info.line = info.line
+        shown_info.ret = info.ret
+        shown_info.ptypes = info.ptypes
+        shown_info.pnames = info.pnames
+        if recv.ty != '':
+            shown_info.ptypes = info.ptypes[1:]
+            shown_info.pnames = info.pnames[1:]
+        shown_info.defaults = info.defaults
+        shown_info.key = key
+        shown_info.module = info.module
+        return self.call_function(shown_info, '@tomato.' + key, recv, args, line)
 
     def number_text_builtin(self, name: str, args: list[Node], line: int) -> Ex:
         # abs(x) for an int or a float (std/builtin.tom), chr(n) and ord(c)
@@ -4767,6 +4854,9 @@ class Gen:
         if is_dict(obj.ty):
             return self.dict_method(obj, name, args, n.line)
         if obj.ty == 'str':
+            if name in text_helper_methods():
+                self.kw = n.fields[2].items
+                return self.helper_call('_str_' + name, name, obj, args, n.line)
             return self.text_method(obj, name, args, n.line)
         if obj.ty == 'File':
             return self.file_method(obj, name, args, n.line)
@@ -5979,7 +6069,7 @@ class Gen:
             return f"'{name}' is a variable, not a function, so it cannot be called"
         if name in ['reduce']:
             return f"'{name}' is not available\nuse a for loop instead"
-        if name in ['round', 'pow', 'divmod', 'any', 'all', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'hash', 'format']:
+        if name in ['pow', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'hash', 'format']:
             return f"'{name}' is not built in"
         near = closest(name, self.visible_names())
         if near != '':
@@ -5990,7 +6080,7 @@ class Gen:
         known: list[str] = []
         word = shown(ty)
         if ty == 'str':
-            known = ['find', 'rfind', 'count', 'startswith', 'endswith', 'replace', 'split', 'join', 'upper', 'lower', 'strip', 'lstrip', 'rstrip', 'isdigit', 'isalpha', 'isspace']
+            known = ['find', 'rfind', 'count', 'startswith', 'endswith', 'replace', 'split', 'join', 'upper', 'lower', 'strip', 'lstrip', 'rstrip', 'isdigit', 'isalpha', 'isspace'] + text_helper_methods()
             word = 'text'
         elif is_dict(ty):
             known = ['get', 'remove', 'keys', 'values', 'items']
@@ -7527,6 +7617,11 @@ def async_symbol(mod: Mod, info: FuncInfo) -> str:
     if info.owner == '':
         return f'@tomato.async.{info.key}'
     return '@tomato.async.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
+
+# the text methods that are written in Tomato, in std/builtin.tom as _str_NAME (the others are in the runtime or built in
+# to text_method)
+def text_helper_methods() -> list[str]:
+    return ['splitlines', 'partition', 'rpartition', 'rsplit', 'zfill', 'ljust', 'rjust', 'center', 'title', 'capitalize', 'isalnum', 'removeprefix', 'removesuffix']
 
 def function_symbol(mod: Mod, info: FuncInfo) -> str:
     if info.is_async:

@@ -1,0 +1,5 @@
+from textwrap import shorten
+
+@main
+def main():
+    print(shorten('hello world', 3))

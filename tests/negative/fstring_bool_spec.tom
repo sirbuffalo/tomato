@@ -1,0 +1,4 @@
+@main
+def main():
+    flag = True
+    print(f'{flag:>5}')

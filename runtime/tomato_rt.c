@@ -4690,6 +4690,64 @@ void *tomato_json_float(double x) {
     return str_new(b, o);
 }
 
+/* ---- round() and f-string number formats (std/builtin.tom) ---- */
+
+/* x rounded to ndigits digits after the decimal point (before it when ndigits is negative): the float nearest to x with
+ * that many digits, judged on the exact value of x with ties to even, as Python's round() does. snprintf (exact in glibc,
+ * macOS and the WASI C library) gives the digits. */
+double tomato_float_round(double x, int64_t ndigits) {
+    if (!isfinite(x) || x == 0.0 || ndigits > 323) return x;
+    if (ndigits < -308) return 0.0 * x;
+    if (ndigits >= 0) {
+        char b[700];
+        snprintf(b, sizeof b, "%.*f", (int)ndigits, x);
+        return strtod(b, NULL);
+    }
+    int k = (int)-ndigits;
+    char b[820], dig[800];
+    snprintf(b, sizeof b, "%.780e", fabs(x));          /* d.ddd...e+XX: every digit of x */
+    int nd = 0, p = 0;
+    for (; b[p] && b[p] != 'e'; p++) if (b[p] != '.') dig[nd++] = b[p];
+    int e10 = atoi(b + p + 1);
+    int keep = e10 - k + 1;                              /* how many leading digits are worth 10^k or more */
+    char out[840];
+    if (keep < 0) return 0.0 * x;
+    if (keep == 0) {                                     /* x is in [10^(k-1), 10^k): up only when above the half */
+        int up = dig[0] > '5';
+        if (dig[0] == '5') for (int i = 1; i < nd; i++) if (dig[i] != '0') up = 1;
+        if (!up) return 0.0 * x;
+        snprintf(out, sizeof out, "1e%d", k);
+    } else {
+        int up = dig[keep] > '5';
+        if (dig[keep] == '5') {
+            for (int i = keep + 1; i < nd; i++) if (dig[i] != '0') up = 1;
+            if (!up) up = (dig[keep - 1] - '0') % 2 == 1;
+        }
+        int i = keep - 1;
+        if (up) {
+            while (i >= 0 && dig[i] == '9') dig[i--] = '0';
+            if (i >= 0) dig[i]++;
+        }
+        int o = 0;
+        if (up && i < 0) out[o++] = '1';
+        for (int m = 0; m < keep; m++) out[o++] = dig[m];
+        snprintf(out + o, sizeof out - o, "e%d", k);
+    }
+    double r = strtod(out, NULL);
+    return signbit(x) ? -r : r;
+}
+
+/* x written by C's %.*f, %.*e or %.*g (kind is the letter: 102, 101 or 103), a leading '-' included, for f-string formats */
+void *tomato_float_format(double x, int64_t prec, int64_t kind) {
+    char fmt[5] = { '%', '.', '*', (char)kind, 0 };
+    int n = snprintf(NULL, 0, fmt, (int)prec, x);
+    char *b = (char *)malloc((size_t)n + 1);
+    snprintf(b, (size_t)n + 1, fmt, (int)prec, x);
+    void *r = str_new(b, n);
+    free(b);
+    return r;
+}
+
 /* ---- MessagePack (std/json.tom): a decoder with the same tape as the JSON scanner, and encoding helpers ----
  * Extra tape tokens: JT_BIN len bytes..., JT_EXT type len bytes..., JT_TS seconds nanos. Maps must have text keys.
  * tomato_msgpack_scan(data, tape, strs, nums): data is a list of ints 0..255. Returns 0, or 1 with pos at the end of
@@ -5036,3 +5094,28 @@ double tomato_math2(int64_t op, double x, double y) {
 int64_t tomato_is_finite(double x) { return isfinite(x) ? 1 : 0; }
 /* the number of 1 bits in a 32-bit chunk of a bitarray (std/bitarray.tom) */
 int64_t tomato_popcount(int64_t x) { return (int64_t)__builtin_popcountll((unsigned long long)x); }
+
+/* secrets and uuid4 of std/secrets.tom and std/uuid.tom: appends n bytes (ints 0-255) of operating-system entropy to the
+ * list out and returns 0, or returns 1 when the system has none. getentropy is the OS call natively (the kernel's
+ * random generator) and, under WebAssembly, WASI's random_get, which the website's host (site/wasm/wasi.js) serves with
+ * crypto.getRandomValues. There is no other source and no fallback: a failure is reported, never papered over. The
+ * flag TOMATO_TEST_NO_ENTROPY (tests only) builds a runtime whose entropy is always unavailable. */
+#include <unistd.h>
+#ifdef __APPLE__
+#include <sys/random.h>
+#endif
+int64_t tomato_entropy(void *out, int64_t n) {
+#ifdef TOMATO_TEST_NO_ENTROPY
+    (void)out; (void)n;
+    return 1;
+#else
+    unsigned char buf[256];
+    while (n > 0) {
+        size_t k = n < 256 ? (size_t)n : 256;
+        if (getentropy(buf, k) != 0) return 1;
+        for (size_t i = 0; i < k; i++) *(int64_t *)tomato_list_push(out, 8) = int_mk_small(buf[i]);
+        n -= (int64_t)k;
+    }
+    return 0;
+#endif
+}

@@ -1,0 +1,25 @@
+# The web modules used by their qualified names (`import urlparse`, `import html`, `import base64`, `import hex`), as their
+# header comments show them; the flat `urlparse` module holds a function of the same name.
+import urlparse
+import html
+import base64
+import hex
+
+@main
+def main():
+    p = urlparse.urlparse('https://example.com:8080/a/b;v=1?x=1&y=2#top')
+    print(p.netloc, p.path, p.params, p.query, p.fragment)
+    print(urlparse.urlunparse(p))
+    print(urlparse.urljoin('http://a/b/c/d', '../e'))
+    print(urlparse.quote('a b/é'))
+    print(urlparse.urlencode([('q', 'a b'), ('n', '1&2')]))
+    print(urlparse.parse_qs('a=1&a=2&b=x%20y'))
+    print(html.escape('<a href="x">Tom & Jerry</a>'))
+    print(html.escape('<a href="x">', False))
+    print(html.unescape('&lt;b&gt; &amp; &#169; &eacute; &#x1F600;'))
+    print(base64.b64encode([104, 101, 108, 108, 111]), base64.b64decode('aGVsbG8='))
+    print(base64.urlsafe_b64encode([251, 255, 190]), base64.urlsafe_b64decode('-_--'))
+    print(hex.encode([222, 173, 190, 239]), hex.decode('DEADbeef'))
+    # a round trip of every byte
+    every = list(range(256))
+    print(base64.b64decode(base64.b64encode(every)) == every, hex.decode(hex.encode(every)) == every)

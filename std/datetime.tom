@@ -1,0 +1,828 @@
+# Dates and times, modelled on Python's `datetime` module: `from datetime import date, time, datetime, timedelta`.
+#
+#     d = date(2024, 2, 28) + timedelta(2)                  # 2024-03-01 (2024 is a leap year, so there was a 29th)
+#     print(d.isoformat(), d.weekday())                     # 2024-03-01 4   (Monday is 0)
+#     start = datetime(2024, 3, 9, 16, 30)                  # naive: no offset
+#     end = datetime(2024, 3, 9, 18, 0, 0, 0, 60)           # aware: the last argument is a fixed offset from UTC, in minutes
+#     print(end - datetime(2024, 3, 9, 16, 0, 0, 0, 0))      # 1:00:00 (aware values subtract by UTC instant)
+#     when = datetime_strptime('09/03/2024 16:30', '%d/%m/%Y %H:%M')
+#
+# What is here, with the Python name where there is one:
+#   date(year, month, day), time(hour, minute, second, microsecond), timedelta(days, seconds, microseconds): arguments
+#   are positional (the language has no keyword arguments for creating an object), so a timedelta of 2 days is timedelta(2)
+#   datetime(year, month, day, hour, minute, second, microsecond, offset_minutes)
+#   The parts are read-only fields: d.year, d.month, d.day; t.hour, t.minute, t.second, t.microsecond; the same for a
+#   datetime, plus dt.offset_minutes (0 for a naive value) and dt.is_aware; td.days, td.seconds, td.microseconds.
+#   d.weekday() (Monday is 0), x.isoformat(), x.strftime(fmt) on a date, time or datetime
+#   date_fromisoformat(text), time_fromisoformat(text), datetime_fromisoformat(text), datetime_strptime(text, fmt)
+#   date_today() and datetime_now(): the clock, in UTC (`datetime_now()` is aware, with offset 0)
+#   `+` a timedelta to a date or datetime, `-` between two dates or two datetimes (a timedelta), `-` between two
+#   timedeltas, and `+` between two timedeltas; ==, !=, <, <=, >, >= between values of the same kind. `d.minus(delta)`
+#   takes a timedelta away from a date or datetime: a class has one `-`, and `-` between two dates is the one that gives
+#   a timedelta, so taking a duration away has a name (or add a negative timedelta).
+#
+# Years run 1 to 9999 in the proleptic Gregorian calendar; an offset is a whole number of minutes strictly between -24 and
+# +24 hours. A naive value (no offset) and an aware one cannot be compared with < or subtracted: that is a ValueError (they
+# are just not == to each other). Aware values compare and subtract by the instant they stand for. A result before year 1
+# or after year 9999, or a timedelta of 1000000000 days or more, is an OverflowError. There are no time zone names and no
+# daylight saving: the language has no time zones (see `time`), so `datetime_now()` and `date_today()` are UTC.
+#
+# `isoformat` gives 2024-03-09T16:30:00 (with .ffffff when the microseconds are not zero, and +HH:MM when aware; a date is
+# 2024-03-09, a time 16:30:00); `str(x)` is the same with a space between the date and the time of a datetime.
+# `strftime` knows %a %A %w %u %d %e %b %B %h %m %y %Y %C %H %I %p %M %S %f %z %Z %j %U %W %V %G %g %c %x %X %F %T %R %D
+# %n %t %%; any other directive is written as it is. For a naive value %z and %Z are empty, and %Z of an aware one is
+# UTC or UTC+HH:MM. A time has the date 1900-01-01 and a date the time 00:00:00, as in Python.
+# `datetime_strptime` knows %Y %m %d %H %M %S %f %z %% (a space in the format matches any run of spaces); the format must
+# have %Y, %m and %d (there is no default date), and the text must match all of it. `%z` reads +HHMM, +HH:MM or Z.
+# The parsers read what `isoformat` writes: 2024-03-09, 16:30, 16:30:00.123456, 2024-03-09T16:30:00+05:30 (the separator
+# may be any one character, a time may stop after the hour or the minute and have any number of fraction digits, the
+# offset may also be +HH, +HHMM or Z).
+from time import gmtime, timegm, time_ns
+
+# the ids of the two errors this module raises are lines of std/errors.txt
+# E406: ValueError, a value outside what a date, time, timedelta or offset can hold, or text that cannot be read
+# E407: OverflowError, a result outside the years 1 to 9999 or a timedelta of 1000000000 days or more
+
+def _pad(n: int, width: int) -> str:
+    text = str(n)
+    while len(text) < width:
+        text = '0' + text
+    return text
+
+def _is_leap(year: int) -> bool:
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+def _days_in_month(year: int, month: int) -> int:
+    if month == 2 and _is_leap(year):
+        return 29
+    return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+
+def _check_date(year: int, month: int, day: int):
+    if year < 1 or year > 9999:
+        raise ValueError(f'year must be in 1..9999, but got {year}', 'E406')
+    if month < 1 or month > 12:
+        raise ValueError(f'month must be in 1..12, but got {month}', 'E406')
+    if day < 1 or day > _days_in_month(year, month):
+        raise ValueError(f'day {day} is out of range for month {month} of year {year}', 'E406')
+
+def _check_time(hour: int, minute: int, second: int, microsecond: int):
+    if hour < 0 or hour > 23:
+        raise ValueError(f'hour must be in 0..23, but got {hour}', 'E406')
+    if minute < 0 or minute > 59:
+        raise ValueError(f'minute must be in 0..59, but got {minute}', 'E406')
+    if second < 0 or second > 59:
+        raise ValueError(f'second must be in 0..59, but got {second}', 'E406')
+    if microsecond < 0 or microsecond > 999999:
+        raise ValueError(f'microsecond must be in 0..999999, but got {microsecond}', 'E406')
+
+def _check_offset(minutes: int):
+    if minutes <= -1440 or minutes >= 1440:
+        raise ValueError(f'offset_minutes must be strictly between -1440 and 1440, but got {minutes}', 'E406')
+
+# days since 1970-01-01 of a date, and the date of a day number (a day number outside the years 1 to 9999 is an
+# OverflowError)
+def _epoch_days(year: int, month: int, day: int) -> int:
+    return timegm(year, month, day) // 86400
+
+def _check_days(days: int):
+    if days < -719162 or days > 2932896:
+        raise OverflowError('date value out of range', 'E407')
+
+def _weekday(days: int) -> int:
+    return (days + 3) % 7
+
+def _day_name(weekday: int) -> str:
+    return 'Monday Tuesday Wednesday Thursday Friday Saturday Sunday'.split(' ')[weekday]
+
+def _month_name(month: int) -> str:
+    return 'January February March April May June July August September October November December'.split(' ')[month - 1]
+
+# A length of time, kept as days, seconds (0 to 86399) and microseconds (0 to 999999); the three arguments may be any
+# size or sign and are carried over, so timedelta(0, -1) is days -1, seconds 86399.
+export class timedelta:
+    const days: int = 0
+    const seconds: int = 0
+    const microseconds: int = 0
+
+    @init
+    def make(self, days: int = 0, seconds: int = 0, microseconds: int = 0):
+        total = (days * 86400 + seconds) * 1000000 + microseconds
+        whole = total // 86400000000
+        if whole > 999999999 or whole < -999999999:
+            raise OverflowError(f'timedelta days must have a magnitude of at most 999999999, but got {whole}', 'E407')
+        rest = total % 86400000000
+        self.days = whole
+        self.seconds = rest // 1000000
+        self.microseconds = rest % 1000000
+
+    @add
+    def plus(self, other: timedelta) -> timedelta:
+        return timedelta(0, 0, _delta_micros(self) + _delta_micros(other))
+
+    @sub
+    def minus(self, other: timedelta) -> timedelta:
+        return timedelta(0, 0, _delta_micros(self) - _delta_micros(other))
+
+    @eq
+    def same(self, other: timedelta) -> bool:
+        return _delta_micros(self) == _delta_micros(other)
+
+    @lt
+    def less(self, other: timedelta) -> bool:
+        return _delta_micros(self) < _delta_micros(other)
+
+    @le
+    def less_equal(self, other: timedelta) -> bool:
+        return _delta_micros(self) <= _delta_micros(other)
+
+    @gt
+    def greater(self, other: timedelta) -> bool:
+        return _delta_micros(self) > _delta_micros(other)
+
+    @ge
+    def greater_equal(self, other: timedelta) -> bool:
+        return _delta_micros(self) >= _delta_micros(other)
+
+    # '1 day, 2:03:04', '-1 day, 23:59:59', '0:00:00.000500' as in Python
+    @str
+    def text(self) -> str:
+        out = f'{self.seconds // 3600}:{_pad(self.seconds % 3600 // 60, 2)}:{_pad(self.seconds % 60, 2)}'
+        if self.days != 0:
+            unit = 'days'
+            if self.days == 1 or self.days == -1:
+                unit = 'day'
+            out = f'{self.days} {unit}, {out}'
+        if self.microseconds != 0:
+            out += '.' + _pad(self.microseconds, 6)
+        return out
+
+def _delta_micros(delta: timedelta) -> int:
+    return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+
+# the wall-clock microseconds since 1970-01-01 00:00:00 of a date and time of day
+def _micros_of(year: int, month: int, day: int, hour: int, minute: int, second: int, microsecond: int) -> int:
+    return ((_epoch_days(year, month, day) * 24 + hour) * 60 + minute) * 60000000 + second * 1000000 + microsecond
+
+# A calendar date. `d + timedelta(days=1)` adds the days of the timedelta (whole days: its seconds are ignored, as in
+# Python), `d1 - d2` is a timedelta of whole days.
+export class date:
+    const year: int = 1
+    const month: int = 1
+    const day: int = 1
+
+    @init
+    def make(self, year: int, month: int, day: int):
+        _check_date(year, month, day)
+        self.year = year
+        self.month = month
+        self.day = day
+
+    # 0 for Monday up to 6 for Sunday
+    def weekday(self) -> int:
+        return _weekday(_epoch_days(self.year, self.month, self.day))
+
+    def isoformat(self) -> str:
+        return f'{_pad(self.year, 4)}-{_pad(self.month, 2)}-{_pad(self.day, 2)}'
+
+    def strftime(self, format: str) -> str:
+        return _strftime(format, self.year, self.month, self.day, 0, 0, 0, 0, False, 0)
+
+    # the date `delta` earlier (the same as adding a negative timedelta)
+    def minus(self, delta: timedelta) -> date:
+        return self + timedelta(-delta.days)
+
+    @add
+    def plus(self, delta: timedelta) -> date:
+        days = _epoch_days(self.year, self.month, self.day) + delta.days
+        _check_days(days)
+        parts = gmtime(days * 86400)
+        return date(parts.year, parts.month, parts.day)
+
+    @sub
+    def between(self, other: date) -> timedelta:
+        return timedelta(_epoch_days(self.year, self.month, self.day) - _epoch_days(other.year, other.month, other.day))
+
+    @eq
+    def same(self, other: date) -> bool:
+        return self.year == other.year and self.month == other.month and self.day == other.day
+
+    @lt
+    def less(self, other: date) -> bool:
+        return _date_key(self) < _date_key(other)
+
+    @le
+    def less_equal(self, other: date) -> bool:
+        return _date_key(self) <= _date_key(other)
+
+    @gt
+    def greater(self, other: date) -> bool:
+        return _date_key(self) > _date_key(other)
+
+    @ge
+    def greater_equal(self, other: date) -> bool:
+        return _date_key(self) >= _date_key(other)
+
+    @str
+    def text(self) -> str:
+        return self.isoformat()
+
+def _date_key(d: date) -> int:
+    return (d.year * 16 + d.month) * 32 + d.day
+
+# A time of day, without a date or an offset.
+export class time:
+    const hour: int = 0
+    const minute: int = 0
+    const second: int = 0
+    const microsecond: int = 0
+
+    @init
+    def make(self, hour: int = 0, minute: int = 0, second: int = 0, microsecond: int = 0):
+        _check_time(hour, minute, second, microsecond)
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+        self.microsecond = microsecond
+
+    def isoformat(self) -> str:
+        return _clock_text(self.hour, self.minute, self.second, self.microsecond)
+
+    # a time has the date 1900-01-01 for the date directives
+    def strftime(self, format: str) -> str:
+        return _strftime(format, 1900, 1, 1, self.hour, self.minute, self.second, self.microsecond, False, 0)
+
+    @eq
+    def same(self, other: time) -> bool:
+        return _time_key(self) == _time_key(other)
+
+    @lt
+    def less(self, other: time) -> bool:
+        return _time_key(self) < _time_key(other)
+
+    @le
+    def less_equal(self, other: time) -> bool:
+        return _time_key(self) <= _time_key(other)
+
+    @gt
+    def greater(self, other: time) -> bool:
+        return _time_key(self) > _time_key(other)
+
+    @ge
+    def greater_equal(self, other: time) -> bool:
+        return _time_key(self) >= _time_key(other)
+
+    @str
+    def text(self) -> str:
+        return self.isoformat()
+
+def _time_key(t: time) -> int:
+    return ((t.hour * 60 + t.minute) * 60 + t.second) * 1000000 + t.microsecond
+
+def _clock_text(hour: int, minute: int, second: int, microsecond: int) -> str:
+    out = f'{_pad(hour, 2)}:{_pad(minute, 2)}:{_pad(second, 2)}'
+    if microsecond != 0:
+        out += '.' + _pad(microsecond, 6)
+    return out
+
+# A date and time of day, naive (no offset: the default) or aware (a fixed offset from UTC in minutes, such as 330 for
+# +05:30; 0 is UTC). `offset_minutes` is read as an int, with 0 when naive: `is_aware` tells which. The language cannot
+# take `int | None` for a parameter, so the parameter is `int | bool`: leave it out (or give False) for naive.
+export class datetime:
+    const year: int = 1
+    const month: int = 1
+    const day: int = 1
+    const hour: int = 0
+    const minute: int = 0
+    const second: int = 0
+    const microsecond: int = 0
+    const offset_minutes: int = 0
+    const is_aware: bool = False
+
+    @init
+    def make(self, year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0, microsecond: int = 0, offset_minutes: int | bool = False):
+        _check_date(year, month, day)
+        _check_time(hour, minute, second, microsecond)
+        if offset_minutes in int:
+            _check_offset(offset_minutes)
+            self.offset_minutes = offset_minutes
+            self.is_aware = True
+        else:
+            if offset_minutes:
+                raise ValueError('offset_minutes must be a whole number of minutes, or left out for a naive datetime', 'E406')
+        self.year = year
+        self.month = month
+        self.day = day
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+        self.microsecond = microsecond
+
+    def weekday(self) -> int:
+        return _weekday(_epoch_days(self.year, self.month, self.day))
+
+    def isoformat(self) -> str:
+        return self._text('T')
+
+    def _text(self, separator: str) -> str:
+        out = f'{_pad(self.year, 4)}-{_pad(self.month, 2)}-{_pad(self.day, 2)}{separator}'
+        out += _clock_text(self.hour, self.minute, self.second, self.microsecond)
+        if self.is_aware:
+            out += _offset_text(self.offset_minutes, ':')
+        return out
+
+    def strftime(self, format: str) -> str:
+        return _strftime(format, self.year, self.month, self.day, self.hour, self.minute, self.second, self.microsecond, self.is_aware, self.offset_minutes)
+
+    # the datetime `delta` earlier (the same as adding a negative timedelta)
+    def minus(self, delta: timedelta) -> datetime:
+        return self + timedelta(0, 0, -_delta_micros(delta))
+
+    @add
+    def plus(self, delta: timedelta) -> datetime:
+        total = _dt_local(self) + _delta_micros(delta)
+        days = total // 86400000000
+        _check_days(days)
+        rest = total % 86400000000
+        parts = gmtime(days * 86400)
+        if self.is_aware:
+            return datetime(parts.year, parts.month, parts.day, rest // 3600000000, rest // 60000000 % 60, rest // 1000000 % 60, rest % 1000000, self.offset_minutes)
+        return datetime(parts.year, parts.month, parts.day, rest // 3600000000, rest // 60000000 % 60, rest // 1000000 % 60, rest % 1000000)
+
+    @sub
+    def between(self, other: datetime) -> timedelta:
+        _same_kind(self, other)
+        return timedelta(0, 0, _dt_instant(self) - _dt_instant(other))
+
+    @eq
+    def same(self, other: datetime) -> bool:
+        if self.is_aware != other.is_aware:
+            return False
+        return _dt_instant(self) == _dt_instant(other)
+
+    @lt
+    def less(self, other: datetime) -> bool:
+        _same_kind(self, other)
+        return _dt_instant(self) < _dt_instant(other)
+
+    @le
+    def less_equal(self, other: datetime) -> bool:
+        _same_kind(self, other)
+        return _dt_instant(self) <= _dt_instant(other)
+
+    @gt
+    def greater(self, other: datetime) -> bool:
+        _same_kind(self, other)
+        return _dt_instant(self) > _dt_instant(other)
+
+    @ge
+    def greater_equal(self, other: datetime) -> bool:
+        _same_kind(self, other)
+        return _dt_instant(self) >= _dt_instant(other)
+
+    # like isoformat, with a space between the date and the time
+    @str
+    def text(self) -> str:
+        return self._text(' ')
+
+def _same_kind(a: datetime, b: datetime):
+    if a.is_aware != b.is_aware:
+        raise ValueError("cannot compare or subtract a datetime with an offset and one without; they are not the same kind", 'E406')
+
+def _dt_local(d: datetime) -> int:
+    return _micros_of(d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond)
+
+# the microseconds since 1970-01-01 00:00:00 UTC that an aware datetime stands for (a naive one: its own clock)
+def _dt_instant(d: datetime) -> int:
+    return _dt_local(d) - d.offset_minutes * 60000000
+
+# +05:30, or +0530 with an empty separator
+def _offset_text(minutes: int, separator: str) -> str:
+    sign = '+'
+    if minutes < 0:
+        sign = '-'
+    return f'{sign}{_pad(abs(minutes) // 60, 2)}{separator}{_pad(abs(minutes) % 60, 2)}'
+
+# ---- strftime
+
+# the ISO 8601 year and week of a day number (days since 1970-01-01): the week of the Thursday of its Monday-first week
+def _iso_week(days: int) -> list[int]:
+    thursday = days - _weekday(days) + 3
+    year = gmtime(thursday * 86400).year
+    return [year, (thursday - _epoch_days(year, 1, 1)) // 7 + 1]
+
+def _directive(c: str, year: int, month: int, day: int, hour: int, minute: int, second: int, micro: int, aware: bool, offset: int) -> str:
+    days = _epoch_days(year, month, day)
+    weekday = _weekday(days)
+    yearday = days - _epoch_days(year, 1, 1)
+    if c == 'Y':
+        return _pad(year, 4)
+    if c == 'y':
+        return _pad(year % 100, 2)
+    if c == 'C':
+        return _pad(year // 100, 2)
+    if c == 'm':
+        return _pad(month, 2)
+    if c == 'd':
+        return _pad(day, 2)
+    if c == 'e':
+        if day < 10:
+            return ' ' + str(day)
+        return str(day)
+    if c == 'H':
+        return _pad(hour, 2)
+    if c == 'I':
+        return _pad((hour + 11) % 12 + 1, 2)
+    if c == 'M':
+        return _pad(minute, 2)
+    if c == 'S':
+        return _pad(second, 2)
+    if c == 'f':
+        return _pad(micro, 6)
+    if c == 'p':
+        if hour < 12:
+            return 'AM'
+        return 'PM'
+    if c == 'j':
+        return _pad(yearday + 1, 3)
+    if c == 'a':
+        return _day_name(weekday)[:3]
+    if c == 'A':
+        return _day_name(weekday)
+    if c == 'b' or c == 'h':
+        return _month_name(month)[:3]
+    if c == 'B':
+        return _month_name(month)
+    if c == 'w':
+        return str((weekday + 1) % 7)
+    if c == 'u':
+        return str(weekday + 1)
+    if c == 'U':
+        return _pad((yearday + 7 - (weekday + 1) % 7) // 7, 2)
+    if c == 'W':
+        return _pad((yearday + 7 - weekday) // 7, 2)
+    if c == 'V':
+        return _pad(_iso_week(days)[1], 2)
+    if c == 'G':
+        return _pad(_iso_week(days)[0], 4)
+    if c == 'g':
+        return _pad(_iso_week(days)[0] % 100, 2)
+    if c == 'z':
+        if aware:
+            return _offset_text(offset, '')
+        return ''
+    if c == 'Z':
+        if not aware:
+            return ''
+        if offset == 0:
+            return 'UTC'
+        return 'UTC' + _offset_text(offset, ':')
+    if c == 'F':
+        return _strftime('%Y-%m-%d', year, month, day, hour, minute, second, micro, aware, offset)
+    if c == 'T' or c == 'X':
+        return _strftime('%H:%M:%S', year, month, day, hour, minute, second, micro, aware, offset)
+    if c == 'R':
+        return _strftime('%H:%M', year, month, day, hour, minute, second, micro, aware, offset)
+    if c == 'D' or c == 'x':
+        return _strftime('%m/%d/%y', year, month, day, hour, minute, second, micro, aware, offset)
+    if c == 'c':
+        # the C library's own year here: it is not padded (year 5 is '5')
+        return _strftime('%a %b %e %H:%M:%S ', year, month, day, hour, minute, second, micro, aware, offset) + str(year)
+    if c == 'n':
+        return '\n'
+    if c == 't':
+        return '\t'
+    if c == '%':
+        return '%'
+    return ''
+
+def _strftime(fmt: str, year: int, month: int, day: int, hour: int, minute: int, second: int, micro: int, aware: bool, offset: int) -> str:
+    out = ''
+    i = 0
+    while i < len(fmt):
+        c = fmt[i]
+        if c == '%' and i + 1 < len(fmt):
+            directive = fmt[i + 1]
+            text = _directive(directive, year, month, day, hour, minute, second, micro, aware, offset)
+            # %z and %Z are empty for a naive value, so an empty answer only means "not a directive" for other letters
+            if text == '' and directive != 'z' and directive != 'Z':
+                out += fmt[i:i + 2]
+            else:
+                out += text
+            i += 2
+        else:
+            out += c
+            i += 1
+    return out
+
+# ---- parsing
+
+def _is_digit(text: str, i: int) -> bool:
+    return i < len(text) and text[i] in '0123456789'
+
+def _bad(whole: str):
+    raise ValueError(f"cannot read '{whole}' as a date or time", 'E406')
+
+# the int of a text of ASCII digits (at least one), else a ValueError naming `whole`, the text being read
+def _num(part: str, whole: str) -> int:
+    if len(part) == 0:
+        _bad(whole)
+    for c in part:
+        if c not in '0123456789':
+            _bad(whole)
+    return int(part)
+
+# the minutes of an offset text: Z, +HH, +HH:MM or +HHMM, with a sign (a whole number of minutes: seconds are rejected)
+def _parse_offset(whole: str, text: str) -> int:
+    if text == 'Z':
+        return 0
+    if len(text) < 3 or (text[0] != '+' and text[0] != '-'):
+        _bad(whole)
+    hours = _num(text[1:3], whole)
+    minutes = 0
+    if len(text) == 6 and text[3] == ':':
+        minutes = _num(text[4:], whole)
+    elif len(text) == 5:
+        minutes = _num(text[3:], whole)
+    elif len(text) == 9 and text[3] == ':' and text[6] == ':':
+        # +HH:MM:00 is read, but seconds of an offset that are not zero cannot be held
+        minutes = _num(text[4:6], whole)
+        if _num(text[7:], whole) != 0:
+            _bad(whole)
+    elif len(text) != 3:
+        _bad(whole)
+    if minutes > 59:
+        _bad(whole)
+    total = hours * 60 + minutes
+    if text[0] == '-':
+        total = -total
+    _check_offset(total)
+    return total
+
+# the parts read from a time of day text
+class _Clock:
+    hour: int = 0
+    minute: int = 0
+    second: int = 0
+    microsecond: int = 0
+    aware: bool = False
+    offset: int = 0
+
+# reads HH, HH:MM, HH:MM:SS or HH:MM:SS.f (any number of digits, the first six used) and, for a datetime, an offset after it
+def _parse_clock(whole: str, text: str, with_offset: bool) -> _Clock:
+    out = _Clock()
+    end = len(text)
+    for i in range(len(text)):
+        if text[i] == '+' or text[i] == '-' or text[i] == 'Z':
+            end = i
+            break
+    if end < len(text):
+        if not with_offset:
+            _bad(whole)
+        out.aware = True
+        out.offset = _parse_offset(whole, text[end:])
+    body = text[:end]
+    if len(body) != 2 and len(body) != 5 and len(body) != 8 and len(body) < 10:
+        _bad(whole)
+    out.hour = _num(body[:2], whole)
+    if len(body) > 2:
+        if body[2] != ':':
+            _bad(whole)
+        out.minute = _num(body[3:5], whole)
+    if len(body) > 5:
+        if body[5] != ':':
+            _bad(whole)
+        out.second = _num(body[6:8], whole)
+    if len(body) > 8:
+        if body[8] != '.':
+            _bad(whole)
+        out.microsecond = _micro_digits(body[9:], whole)
+    _check_time(out.hour, out.minute, out.second, out.microsecond)
+    return out
+
+# the microseconds of fraction digits: '5' is 500000, and digits after the sixth are dropped
+def _micro_digits(digits: str, whole: str) -> int:
+    _num(digits, whole)
+    return int((digits + '000000')[:6])
+
+def _parse_date(text: str) -> date:
+    if len(text) != 10 or text[4] != '-' or text[7] != '-':
+        _bad(text)
+    return date(_num(text[:4], text), _num(text[5:7], text), _num(text[8:], text))
+
+# 2024-03-09
+export def date_fromisoformat(text: str) -> date:
+    return _parse_date(text)
+
+# 16:30, 16:30:00 or 16:30:00.123456 (a time has no offset)
+export def time_fromisoformat(text: str) -> time:
+    reading = _parse_clock(text, text, False)
+    return time(reading.hour, reading.minute, reading.second, reading.microsecond)
+
+def _make(d: date, reading: _Clock) -> datetime:
+    if reading.aware:
+        return datetime(d.year, d.month, d.day, reading.hour, reading.minute, reading.second, reading.microsecond, reading.offset)
+    return datetime(d.year, d.month, d.day, reading.hour, reading.minute, reading.second, reading.microsecond)
+
+# 2024-03-09, 2024-03-09T16:30:00 or 2024-03-09 16:30:00.123456+05:30 (a date alone is midnight)
+export def datetime_fromisoformat(text: str) -> datetime:
+    if len(text) == 10:
+        return _make(_parse_date(text), _Clock())
+    if len(text) < 13:
+        _bad(text)
+    return _make(_parse_date(text[:10]), _parse_clock(text, text[11:], True))
+
+# ---- strptime
+
+# what a format has read so far
+class _Scan:
+    year: int = -1
+    month: int = -1
+    day: int = -1
+    hour: int = 0
+    minute: int = 0
+    second: int = 0
+    microsecond: int = 0
+    aware: bool = False
+    offset: int = 0
+    fmt: str = ''
+    text: str = ''
+
+def _is_space(c: str) -> bool:
+    return c.isspace()
+
+def _lower(c: str) -> str:
+    return c.lower()
+
+# how many characters the directive can take at text[ti:], the longest alternative of Python's pattern first
+# (e.g. %m is 1[0-2] | 0[1-9] | [1-9]), and the value of each is checked when it is stored
+def _lengths(c: str, text: str, ti: int) -> list[int]:
+    one = _is_digit(text, ti)
+    two = one and _is_digit(text, ti + 1)
+    first = ''
+    second = ''
+    if one:
+        first = text[ti]
+    if two:
+        second = text[ti + 1]
+    if c == 'Y':
+        if two and _is_digit(text, ti + 2) and _is_digit(text, ti + 3):
+            return [4]
+        return []
+    if c == 'm':
+        if two and ((first == '1' and second in '012') or (first == '0' and second != '0')):
+            return [2]
+        if one and first != '0':
+            return [1]
+        return []
+    if c == 'd':
+        out: list[int] = []
+        if two and ((first == '3' and second in '01') or first in '12' or (first == '0' and second != '0')):
+            out.append(2)
+        if one and first != '0':
+            out.append(1)
+        if ti + 1 < len(text) and text[ti] == ' ' and _is_digit(text, ti + 1) and text[ti + 1] != '0':
+            out.append(2)
+        return out
+    if c == 'H':
+        out2: list[int] = []
+        if two and (first in '01' or (first == '2' and second in '0123')):
+            out2.append(2)
+        if one:
+            out2.append(1)
+        return out2
+    if c == 'M':
+        out3: list[int] = []
+        if two and first in '012345':
+            out3.append(2)
+        if one:
+            out3.append(1)
+        return out3
+    if c == 'S':
+        out4: list[int] = []
+        if two and ((first == '6' and second in '01') or first in '012345'):
+            out4.append(2)
+        if one:
+            out4.append(1)
+        return out4
+    if c == 'f':
+        n = 0
+        while n < 6 and _is_digit(text, ti + n):
+            n += 1
+        return list(reversed(range(1, n + 1)))
+    if c == 'z':
+        if ti < len(text) and text[ti] == 'Z':
+            return [1]
+        if ti < len(text) and text[ti] in '+-' and _is_digit(text, ti + 1) and _is_digit(text, ti + 2):
+            out5: list[int] = []
+            colon = 0
+            if ti + 3 < len(text) and text[ti + 3] == ':':
+                colon = 1
+            if _is_digit(text, ti + 3 + colon) and text[ti + 3 + colon] in '012345' and _is_digit(text, ti + 4 + colon):
+                out5.append(5 + colon)
+            return out5
+        return []
+    return []
+
+# stores the directive's value (the ranges that a pattern cannot say are checked by the constructors at the end)
+def _store(c: str, text: str, scan: _Scan):
+    if c == 'Y':
+        scan.year = int(text)
+    elif c == 'm':
+        scan.month = int(text)
+    elif c == 'd':
+        scan.day = int(text.strip())
+    elif c == 'H':
+        scan.hour = int(text)
+    elif c == 'M':
+        scan.minute = int(text)
+    elif c == 'S':
+        scan.second = int(text)
+    elif c == 'f':
+        scan.microsecond = int((text + '000000')[:6])
+    else:
+        scan.aware = True
+        if text == 'Z':
+            scan.offset = 0
+        else:
+            sign = 1
+            if text[0] == '-':
+                sign = -1
+            scan.offset = sign * (int(text[1:3]) * 60 + int(text[-2:]))
+
+# matches fmt[fi:] against text[ti:] with backtracking over the alternatives; the text after the match is checked by the caller
+def _match(scan: _Scan, fi: int, ti: int) -> int:
+    fmt = scan.fmt
+    text = scan.text
+    if fi >= len(fmt):
+        return ti
+    c = fmt[fi]
+    if c == '%':
+        d = fmt[fi + 1]
+        if d == '%':
+            if ti < len(text) and text[ti] == '%':
+                return _match(scan, fi + 2, ti + 1)
+            return -1
+        for n in _lengths(d, text, ti):
+            _store(d, text[ti:ti + n], scan)
+            end = _match(scan, fi + 2, ti + n)
+            if end >= 0:
+                return end
+        return -1
+    if _is_space(c):
+        # a space in the format is any run of white space (at least one) in the text
+        end = ti
+        while end < len(text) and _is_space(text[end]):
+            end += 1
+        if end == ti:
+            return -1
+        return _match(scan, fi + 1, end)
+    if ti < len(text) and _lower(text[ti]) == _lower(c):
+        return _match(scan, fi + 1, ti + 1)
+    return -1
+
+# Reads `text` by `format` (%Y %m %d %H %M %S %f %z %%): a ValueError when the text does not match all of it, when the
+# format has a directive other than those or leaves out %Y, %m or %d, or when a part is out of range. Letters in the format
+# match either case; a %z (+HHMM, +HH:MM or Z) makes the result aware.
+export def datetime_strptime(text: str, format: str) -> datetime:
+    scan = _Scan()
+    scan.fmt = format
+    scan.text = text
+    seen = ''
+    i = 0
+    while i < len(format):
+        if format[i] == '%':
+            if i + 1 >= len(format):
+                raise ValueError('a stray % ends the format', 'E406')
+            d = format[i + 1]
+            if d not in 'YmdHMSfz%':
+                raise ValueError(f"the format directive '%{d}' is not supported: use %Y %m %d %H %M %S %f %z %%", 'E406')
+            if d != '%':
+                if d in seen:
+                    raise ValueError(f"the format directive '%{d}' appears twice", 'E406')
+                seen += d
+            i += 2
+        else:
+            i += 1
+    if 'Y' not in seen or 'm' not in seen or 'd' not in seen:
+        raise ValueError('the format needs %Y, %m and %d', 'E406')
+    end = _match(scan, 0, 0)
+    if end < 0:
+        raise ValueError(f"time data '{text}' does not match format '{format}'", 'E406')
+    if end < len(text):
+        raise ValueError(f"unconverted data remains: '{text[end:]}'", 'E406')
+    if scan.aware:
+        return datetime(scan.year, scan.month, scan.day, scan.hour, scan.minute, scan.second, scan.microsecond, scan.offset)
+    return datetime(scan.year, scan.month, scan.day, scan.hour, scan.minute, scan.second, scan.microsecond)
+
+# ---- the clock
+
+# the UTC date now
+export def date_today() -> date:
+    parts = gmtime(time_ns() // 1000000000)
+    return date(parts.year, parts.month, parts.day)
+
+# the UTC moment now, aware with offset 0
+export def datetime_now() -> datetime:
+    micros = time_ns() // 1000
+    parts = gmtime(micros // 1000000)
+    return datetime(parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second, micros % 1000000, 0)

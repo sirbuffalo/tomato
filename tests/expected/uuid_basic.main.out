@@ -1,0 +1,30 @@
+2ed6657d-e927-568b-95e1-2665a8aea6a2
+886313e1-3b8a-5372-9b90-0c9aee199e5d
+0a300ee9-f9e4-5697-a51a-efc7fafaba67
+106dd502-8b3e-50db-80ed-1134f5c18eae
+6b28d549-d26e-5bfc-ae5e-9a39af63dc3f
+4ebd0208-8328-5d69-8c44-ec50939c0967
+5824f981-4282-59d4-9716-acb6d741350e
+39f39c20-db47-5131-8879-62f8f67f9014
+7280cc42-274a-5c4a-91fc-ae23f853eeb7
+56596f37-716c-57a9-a735-2561f8608390
+5e2e2331-a683-5e18-b56d-666e31574b41
+c44b21cf-aad3-51ac-b081-44ade2295e14
+True False False
+a1b2c3d4-e5f6-4789-8abc-def012345678
+a1b2c3d4-e5f6-4789-8abc-def012345678
+a1b2c3d4-e5f6-4789-8abc-def012345678
+a1b2c3d4-e5f6-4789-8abc-def012345678
+True
+00000000-0000-0000-0000-000000000000 ffffffff-ffff-ffff-ffff-ffffffffffff
+ValueError: a UUID text needs 32 hexadecimal digits, but got  E405
+ValueError: a UUID text needs 32 hexadecimal digits, but got a1b2c3d4-e5f6-4789-8abc-def01234567 E405
+ValueError: a UUID text needs 32 hexadecimal digits, but got a1b2c3d4-e5f6-4789-8abc-def0123456789 E405
+ValueError: a UUID text needs 32 hexadecimal digits, but got g1b2c3d4-e5f6-4789-8abc-def012345678 E405
+ValueError: a UUID text needs 32 hexadecimal digits, but got a1b2c3d4 e5f6 4789 8abc def012345678 E405
+ValueError: a UUID text needs 32 hexadecimal digits, but got 0xa1b2c3d4e5f647898abcdef012345678 E405
+ValueError: a UUID text needs 32 hexadecimal digits, but got -a1b2c3d4e5f647898abcdef01234567 E405
+ValueError: a UUID needs 16 bytes, but got 3 E403
+00010203-0405-0607-0809-0a0b0c0d0eff
+6ba7b810-9dad-11d1-80b4-00c04fd430c8 and 6ba7b811-9dad-11d1-80b4-00c04fd430c8
+True 200

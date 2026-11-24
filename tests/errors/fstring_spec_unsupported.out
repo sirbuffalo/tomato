@@ -1,0 +1,6 @@
+error[E159]: 'x' is not a format option that is supported
+ --> tests/errors/fstring_spec_unsupported.tom:4:16
+  |
+4 |     print(f'{n:x}')
+  |                ^
+  = help: the form is [[fill]align][sign][0][width][,][.precision][type]: the align is < > or ^, the sign + - or a space, and the type s, d, f, e or g

@@ -1,0 +1,5 @@
+from csv import reader
+
+@main
+def main():
+    print(reader('a,b', '"'))

@@ -1,0 +1,75 @@
+# Every error of std/datetime.tom with its message and id, plus the forms Python reads that this module does not.
+from datetime import date, time, datetime, timedelta, date_fromisoformat, time_fromisoformat, datetime_fromisoformat, datetime_strptime
+
+def show(label: str, text: str, fmt: str):
+    try:
+        print(label, datetime_strptime(text, fmt))
+    catch ValueError as e:
+        print(label, 'ValueError:', e.message, e.id)
+
+@main
+def main():
+    try:
+        print(date(2024, 13, 1))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(date(2023, 2, 29))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(date(10000, 1, 1))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(time(24))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(datetime(2024, 1, 1, 0, 0, 0, 0, 1440))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(datetime(2024, 1, 1, 0, 0, 0, 0, True))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(date(9999, 12, 31) + timedelta(1))
+    catch OverflowError as e:
+        print('OverflowError:', e.message, e.id)
+    try:
+        print(timedelta(1000000000))
+    catch OverflowError as e:
+        print('OverflowError:', e.message, e.id)
+    try:
+        print(datetime(1, 1, 1) + timedelta(-1))
+    catch OverflowError as e:
+        print('OverflowError:', e.message, e.id)
+    try:
+        print(datetime(2024, 1, 1) - datetime(2024, 1, 1, 0, 0, 0, 0, 0))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(datetime(2024, 1, 1) < datetime(2024, 1, 1, 0, 0, 0, 0, 0))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    print(datetime(2024, 1, 1) == datetime(2024, 1, 1, 0, 0, 0, 0, 0))
+    try:
+        print(date_fromisoformat('20240309'))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(time_fromisoformat('12:30+01:00'))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    try:
+        print(datetime_fromisoformat('2024-03-09T24:00'))
+    catch ValueError as e:
+        print('ValueError:', e.message, e.id)
+    show('missing', '03-09', '%m-%d')
+    show('directive', 'Mar 2024-03-09', '%b %Y-%m-%d')
+    show('twice', '2024-03-09 2024', '%Y-%m-%d %Y')
+    show('stray', '2024-03-09', '%Y-%m-%d%')
+    show('trailing', '2024-03-09 x', '%Y-%m-%d')
+    show('mismatch', '2024/03/09', '%Y-%m-%d')
+    show('range', '2024-02-30', '%Y-%m-%d')

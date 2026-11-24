@@ -122,7 +122,8 @@ def push_op(toks: list[Token], op: str, ln: int, col: int):
 def push_text(toks: list[Token], text: str, ln: int, col: int):
     toks.append(make_token('STR', text, 0, ln, col))
 
-# the index of the '}' that closes the replacement field whose expression starts at `start`
+# the index of the '}' that closes the replacement field whose expression starts at `start`, or of the ':' that starts
+# its format spec
 def field_end(raw: str, start: int, ln: int) -> int:
     n = len(raw)
     j = start
@@ -142,9 +143,68 @@ def field_end(raw: str, start: int, ln: int) -> int:
                 return j
             nesting -= 1
         elif c == ':' and nesting == 0:
-            raise LexError("a replacement field in an f-string has no format options\nwrite just the expression, such as f'{x}'", ln, j + 1)
+            return j
         j += 1
     raise LexError("this f-string has a '{' that is never closed\nadd '}' after the expression, or write '{{' for a literal brace", ln, start)
+
+# The format spec of a replacement field, f'{x:>8.2f}': [[fill]align][sign][0][width][,][.precision][type]
+export class FormatSpec:
+    fill: str = ''          # '' when none was written
+    align: str = ''         # '<', '>' or '^', or '' when none was written
+    sign: str = ''          # '+', '-' or ' ', or ''
+    zero: bool = False      # a 0 before the width
+    width: int = 0
+    comma: bool = False
+    precision: int = -1     # -1 when none was written
+    kind: str = ''          # s, d, f, e or g, or '' when none was written
+
+# the whole number at the start of spec[i:]: its value, and the index after it
+def spec_number(spec: str, i: int, ln: int, col: int) -> list[int]:
+    j = i
+    while j < len(spec) and is_digit(spec[j]):
+        j += 1
+    if j - i > 9:
+        raise LexError('this width or precision in a format spec is too large\nuse a number below a billion', ln, col)
+    return [int(spec[i:j]), j]
+
+# Reads a format spec. Only the form is checked here; the compiler checks it against the type of the value.
+export def parse_format_spec(spec: str, ln: int, col: int) -> FormatSpec:
+    f = FormatSpec()
+    n = len(spec)
+    i = 0
+    if n >= 2 and spec[1] in '<>^':
+        f.fill = spec[0]
+        f.align = spec[1]
+        i = 2
+    elif n >= 1 and spec[0] in '<>^':
+        f.align = spec[0]
+        i = 1
+    if i < n and spec[i] in '+- ':
+        f.sign = spec[i]
+        i += 1
+    if i < n and spec[i] == '0':
+        f.zero = True
+        i += 1
+    if i < n and is_digit(spec[i]):
+        got = spec_number(spec, i, ln, col)
+        f.width = got[0]
+        i = got[1]
+    if i < n and spec[i] == ',':
+        f.comma = True
+        i += 1
+    if i < n and spec[i] == '.':
+        i += 1
+        if i >= n or not is_digit(spec[i]):
+            raise LexError("a format spec needs the number of digits after '.'\nwrite it as in f'{x:.2f}'", ln, col)
+        got = spec_number(spec, i, ln, col)
+        f.precision = got[0]
+        i = got[1]
+    if i < n and spec[i] in 'sdfeg':
+        f.kind = spec[i]
+        i += 1
+    if i < n:
+        raise LexError(f"'{spec[i:]}' is not a format option that is supported\nthe form is [[fill]align][sign][0][width][,][.precision][type]: the align is < > or ^, the sign + - or a space, and the type s, d, f, e or g", ln, col)
+    return f
 
 # An f-string f'text {expr} more' becomes the tokens of ('text ' + str(expr) + ' more'); returns the index after it.
 def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
@@ -173,6 +233,16 @@ def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
         elif c == '{':
             end = field_end(raw, j + 1, ln)
             source = raw[j + 1:end]
+            spec = ''
+            if raw[end] == ':':
+                close = raw.find('}', end + 1)
+                if close < 0:
+                    raise LexError("this f-string has a '{' that is never closed\nadd '}' after the format spec, or write '{{' for a literal brace", ln, j + 1)
+                spec = raw[end + 1:close]
+                if '{' in spec:
+                    raise LexError("a format spec cannot hold another replacement field\nwrite the width or the precision as a number", ln, end + 1)
+                parse_format_spec(spec, ln, end + 2)
+                end = close
             if source.strip() == '':
                 raise LexError("this f-string has an empty '{}'\nput an expression between the braces, or write '{{}}' for literal braces", ln, j + 1)
             if buf != '' or first:
@@ -181,13 +251,19 @@ def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
                 push_text(toks, buf, ln, col)
                 buf = ''
             push_op(toks, '+', ln, col)
-            toks.append(make_token('NAME', 'str', 0, ln, col))
+            if spec == '':
+                toks.append(make_token('NAME', 'str', 0, ln, col))
+            else:
+                toks.append(make_token('NAME', '_format_spec', 0, ln, col))
             push_op(toks, '(', ln, col)
             inner: list[Token] = []
             lex_line(source, ln, inner, 0)
             for t in inner:
                 t.col = j + 2
                 toks.append(t)
+            if spec != '':
+                push_op(toks, ',', ln, col)       # f'{x:spec}' is _format_spec(x, 'spec'); the compiler writes the text
+                push_text(toks, spec, ln, col)
             push_op(toks, ')', ln, col)
             first = False
             j = end

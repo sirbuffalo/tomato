@@ -1,4 +1,4 @@
 @main
 def main():
     n = 3
-    print(f'{n:5}')
+    print(f'{n:5q}')

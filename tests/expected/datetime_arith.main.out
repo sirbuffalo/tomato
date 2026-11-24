@@ -1,0 +1,775 @@
+0:00:00|0|0|0
+1 day, 0:00:00|1|0|0
+-1 day, 0:00:00|-1|0|0
+1 day, 23:59:59.999999|1|86399|999999
+-2 days, 23:59:58.999999|-2|86398|999999
+365 days, 0:00:00|365|0|0
+366 days, 0:00:00|366|0|0
+-366 days, 0:00:00|-366|0|0
+1 day, 0:00:00|1|0|0
+-1 day, 0:00:00|-1|0|0
+-1 day, 23:59:59.999999|-1|86399|999999
+36524 days, 0:00:00|36524|0|0
+-146097 days, 0:00:00|-146097|0|0
+2932896 days, 0:00:00|2932896|0|0
+-719162 days, 0:00:00|-719162|0|0
+999999999 days, 0:00:00|999999999|0|0
+OverflowError
+-2 days, 23:59:59.999999|-2|86399|999999
+7 days, 0:00:00.500000|7|0|500000
+-8 days, 23:59:59.500000|-8|86399|500000
+1:00:00|0|3600|0
+0:00:59|0|59|0
+1 day, 0:00:00.000500|1|0|500
+-3 days, 23:59:58.999999
+0:00:01.000001
+False True False False True True
+36889 days, 0:00:00
+36159 days, 0:00:00
+False True False False True True
+-109573 days, 0:00:00
+-182621 days, 0:00:00
+False True True True False False
+2969420 days, 0:00:00
+2896372 days, 0:00:00
+False True False False True True
+-719163 days, 23:59:59.999999
+719161 days, 23:59:59.999999
+False True False False True True
+1 day, 0:00:00
+1 day, 0:00:00
+False True False False True True
+2932530 days, 0:00:00
+2933262 days, 0:00:00
+False True False False True True
+-146096 days, 23:59:59.999999
+-146099 days, 0:00:00.000001
+False True True True False False
+-1 day, 23:59:59.999999
+-1 day, 23:59:59.999999
+False True True True False False
+-719163 days, 0:00:00
+-719161 days, 0:00:00
+False True True True False False
+366 days, 0:00:00
+-364 days, 0:00:00
+False True True True False False
+2932530 days, 0:00:00
+-2933262 days, 0:00:00
+False True True True False False
+0001-01-01
+0001-01-01
+0001-01-02
+OverflowError
+OverflowError
+0001-01-02
+0001-01-02
+OverflowError
+OverflowError
+0001-01-03
+0002-01-01
+OverflowError
+0002-01-02
+OverflowError
+OverflowError
+0002-01-02
+0001-01-02
+OverflowError
+OverflowError
+0001-01-02
+OverflowError
+0001-01-02
+0101-01-01
+OverflowError
+OverflowError
+0401-01-01
+8030-12-31
+OverflowError
+OverflowError
+1970-01-01
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+0001-01-01|0
+1900-02-28
+1900-02-28
+1900-03-01
+1900-02-27
+1900-02-27
+1900-03-01
+1900-03-01
+1900-02-27
+1900-02-26
+1900-03-02
+1901-02-28
+1899-02-28
+1901-03-01
+1899-02-27
+1899-02-27
+1901-03-01
+1900-03-01
+1900-02-27
+1900-02-27
+1900-03-01
+1900-02-27
+1900-03-01
+2000-02-28
+1800-02-28
+1500-02-28
+2300-02-28
+9930-02-27
+OverflowError
+OverflowError
+3869-02-27
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+1900-02-28|2
+1900-03-01
+1900-03-01
+1900-03-02
+1900-02-28
+1900-02-28
+1900-03-02
+1900-03-02
+1900-02-28
+1900-02-27
+1900-03-03
+1901-03-01
+1899-03-01
+1901-03-02
+1899-02-28
+1899-02-28
+1901-03-02
+1900-03-02
+1900-02-28
+1900-02-28
+1900-03-02
+1900-02-28
+1900-03-02
+2000-02-29
+1800-03-01
+1500-03-01
+2300-03-01
+9930-02-28
+OverflowError
+OverflowError
+3869-02-28
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+1900-03-01|3
+2000-02-29
+2000-02-29
+2000-03-01
+2000-02-28
+2000-02-28
+2000-03-01
+2000-03-01
+2000-02-28
+2000-02-27
+2000-03-02
+2001-02-28
+1999-03-01
+2001-03-01
+1999-02-28
+1999-02-28
+2001-03-01
+2000-03-01
+2000-02-28
+2000-02-28
+2000-03-01
+2000-02-28
+2000-03-01
+2100-02-28
+1900-03-01
+1600-02-29
+2400-02-29
+OverflowError
+OverflowError
+0031-03-01
+3969-02-28
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+2000-02-29|1
+2100-02-28
+2100-02-28
+2100-03-01
+2100-02-27
+2100-02-27
+2100-03-01
+2100-03-01
+2100-02-27
+2100-02-26
+2100-03-02
+2101-02-28
+2099-02-28
+2101-03-01
+2099-02-27
+2099-02-27
+2101-03-01
+2100-03-01
+2100-02-27
+2100-02-27
+2100-03-01
+2100-02-27
+2100-03-01
+2200-02-28
+2000-02-29
+1700-02-28
+2500-02-28
+OverflowError
+OverflowError
+0131-03-01
+4069-02-27
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+2100-02-28|6
+2023-12-31
+2023-12-31
+2024-01-01
+2023-12-30
+2023-12-30
+2024-01-01
+2024-01-01
+2023-12-30
+2023-12-29
+2024-01-02
+2024-12-30
+2022-12-31
+2024-12-31
+2022-12-30
+2022-12-30
+2024-12-31
+2024-01-01
+2023-12-30
+2023-12-30
+2024-01-01
+2023-12-30
+2024-01-01
+2123-12-31
+1924-01-01
+1623-12-31
+2423-12-31
+OverflowError
+OverflowError
+0054-12-31
+3992-12-30
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+2023-12-31|6
+2024-02-29
+2024-02-29
+2024-03-01
+2024-02-28
+2024-02-28
+2024-03-01
+2024-03-01
+2024-02-28
+2024-02-27
+2024-03-02
+2025-02-28
+2023-03-01
+2025-03-01
+2023-02-28
+2023-02-28
+2025-03-01
+2024-03-01
+2024-02-28
+2024-02-28
+2024-03-01
+2024-02-28
+2024-03-01
+2124-02-29
+1924-03-01
+1624-02-29
+2424-02-29
+OverflowError
+OverflowError
+0055-03-01
+3993-02-28
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+2024-02-29|3
+9999-12-31
+9999-12-31
+OverflowError
+9999-12-30
+9999-12-30
+OverflowError
+OverflowError
+9999-12-30
+9999-12-29
+OverflowError
+OverflowError
+9998-12-31
+OverflowError
+9998-12-30
+9998-12-30
+OverflowError
+OverflowError
+9999-12-30
+9999-12-30
+OverflowError
+9999-12-30
+OverflowError
+OverflowError
+9899-12-31
+9599-12-31
+OverflowError
+OverflowError
+1970-01-01
+8030-12-31
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+9999-12-31|4
+1970-01-01
+1970-01-01
+1970-01-02
+1969-12-31
+1969-12-31
+1970-01-02
+1970-01-02
+1969-12-31
+1969-12-30
+1970-01-03
+1971-01-01
+1969-01-01
+1971-01-02
+1968-12-31
+1968-12-31
+1971-01-02
+1970-01-02
+1969-12-31
+1969-12-31
+1970-01-02
+1969-12-31
+1970-01-02
+2069-12-31
+1870-01-01
+1570-01-01
+2370-01-01
+9999-12-31
+OverflowError
+0001-01-01
+3939-01-01
+OverflowError
+OverflowError
+OverflowError
+OverflowError
+1970-01-01|3
+8766 days, 0:00:00|False True True True False False
+-25509 days, 0:00:00|False True False False True True
+-730178 days, 0:00:00|False True False False True True
+8766 days, 0:00:00|False True True True False False
+-73048 days, 0:00:00|False True False False True True
+-45290 days, 0:00:00|False True False False True True
+1 day, 0:00:00|False True True True False False
+-2958404 days, 0:00:00|False True False False True True
+-693654 days, 0:00:00|False True False False True True
+730178 days, 0:00:00|False True True True False False
+-36524 days, 0:00:00|False True False False True True
+73048 days, 0:00:00|False True True True False False
+-8706 days, 0:00:00|False True False False True True
+11016 days, 0:00:00|False True True True False False
+36524 days, 0:00:00|False True True True False False
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+0001-01-01 00:00:00
+0001-01-01 00:00:00
+0001-01-02 00:00:00
+OverflowError
+OverflowError
+0001-01-02 00:00:00
+0001-01-01 00:00:01
+OverflowError
+OverflowError
+0001-01-01 00:00:01
+OverflowError
+0001-01-01 00:00:00.000001
+0001-01-02 23:59:59.999999
+OverflowError
+OverflowError
+0001-01-02 00:00:01.000001
+0002-01-02 00:00:00
+OverflowError
+0001-01-01 23:59:59.999999
+OverflowError
+8030-12-31 00:00:00
+OverflowError
+OverflowError
+1970-01-01 00:00:00
+OverflowError
+OverflowError
+0001-01-01 00:00:00|0001-01-01T00:00:00|0|1 1 1 0 0 0 0|0 False
+0001-01-01 00:00:00+00:00
+0001-01-01 00:00:00+00:00
+0001-01-02 00:00:00+00:00
+OverflowError
+OverflowError
+0001-01-02 00:00:00+00:00
+0001-01-01 00:00:01+00:00
+OverflowError
+OverflowError
+0001-01-01 00:00:01+00:00
+OverflowError
+0001-01-01 00:00:00.000001+00:00
+0001-01-02 23:59:59.999999+00:00
+OverflowError
+OverflowError
+0001-01-02 00:00:01.000001+00:00
+0002-01-02 00:00:00+00:00
+OverflowError
+0001-01-01 23:59:59.999999+00:00
+OverflowError
+8030-12-31 00:00:00+00:00
+OverflowError
+OverflowError
+1970-01-01 00:00:00+00:00
+OverflowError
+OverflowError
+0001-01-01 00:00:00+00:00|0001-01-01T00:00:00+00:00|0|1 1 1 0 0 0 0|0 True
+9999-12-31 23:59:59.999999
+9999-12-31 23:59:59.999999
+OverflowError
+9999-12-30 23:59:59.999999
+9999-12-30 23:59:59.999999
+OverflowError
+OverflowError
+9999-12-31 23:59:58.999999
+9999-12-31 23:59:58.999999
+OverflowError
+9999-12-31 23:59:59.999998
+OverflowError
+OverflowError
+9999-12-30 00:00:00
+9999-12-30 23:59:58.999998
+OverflowError
+OverflowError
+9998-12-30 23:59:59.999999
+OverflowError
+9999-12-31 00:00:00
+OverflowError
+1970-01-01 23:59:59.999999
+8030-12-31 23:59:59.999999
+OverflowError
+OverflowError
+OverflowError
+9999-12-31 23:59:59.999999|9999-12-31T23:59:59.999999|4|9999 12 31 23 59 59 999999|0 False
+9999-12-31 23:59:59.999999-01:00
+9999-12-31 23:59:59.999999-01:00
+OverflowError
+9999-12-30 23:59:59.999999-01:00
+9999-12-30 23:59:59.999999-01:00
+OverflowError
+OverflowError
+9999-12-31 23:59:58.999999-01:00
+9999-12-31 23:59:58.999999-01:00
+OverflowError
+9999-12-31 23:59:59.999998-01:00
+OverflowError
+OverflowError
+9999-12-30 00:00:00-01:00
+9999-12-30 23:59:58.999998-01:00
+OverflowError
+OverflowError
+9998-12-30 23:59:59.999999-01:00
+OverflowError
+9999-12-31 00:00:00-01:00
+OverflowError
+1970-01-01 23:59:59.999999-01:00
+8030-12-31 23:59:59.999999-01:00
+OverflowError
+OverflowError
+OverflowError
+9999-12-31 23:59:59.999999-01:00|9999-12-31T23:59:59.999999-01:00|4|9999 12 31 23 59 59 999999|-60 True
+9999-12-31 23:59:59.999999+00:00
+9999-12-31 23:59:59.999999+00:00
+OverflowError
+9999-12-30 23:59:59.999999+00:00
+9999-12-30 23:59:59.999999+00:00
+OverflowError
+OverflowError
+9999-12-31 23:59:58.999999+00:00
+9999-12-31 23:59:58.999999+00:00
+OverflowError
+9999-12-31 23:59:59.999998+00:00
+OverflowError
+OverflowError
+9999-12-30 00:00:00+00:00
+9999-12-30 23:59:58.999998+00:00
+OverflowError
+OverflowError
+9998-12-30 23:59:59.999999+00:00
+OverflowError
+9999-12-31 00:00:00+00:00
+OverflowError
+1970-01-01 23:59:59.999999+00:00
+8030-12-31 23:59:59.999999+00:00
+OverflowError
+OverflowError
+OverflowError
+9999-12-31 23:59:59.999999+00:00|9999-12-31T23:59:59.999999+00:00|4|9999 12 31 23 59 59 999999|0 True
+2024-02-29 12:00:00
+2024-02-29 12:00:00
+2024-03-01 12:00:00
+2024-02-28 12:00:00
+2024-02-28 12:00:00
+2024-03-01 12:00:00
+2024-02-29 12:00:01
+2024-02-29 11:59:59
+2024-02-29 11:59:59
+2024-02-29 12:00:01
+2024-02-29 11:59:59.999999
+2024-02-29 12:00:00.000001
+2024-03-02 11:59:59.999999
+2024-02-27 12:00:00.000001
+2024-02-28 11:59:58.999999
+2024-03-01 12:00:01.000001
+2025-03-01 12:00:00
+2023-02-28 12:00:00
+2024-03-01 11:59:59.999999
+2024-02-28 12:00:00.000001
+OverflowError
+OverflowError
+0055-03-01 12:00:00
+3993-02-28 12:00:00
+OverflowError
+OverflowError
+2024-02-29 12:00:00|2024-02-29T12:00:00|3|2024 2 29 12 0 0 0|0 False
+2024-02-29 12:00:00+05:30
+2024-02-29 12:00:00+05:30
+2024-03-01 12:00:00+05:30
+2024-02-28 12:00:00+05:30
+2024-02-28 12:00:00+05:30
+2024-03-01 12:00:00+05:30
+2024-02-29 12:00:01+05:30
+2024-02-29 11:59:59+05:30
+2024-02-29 11:59:59+05:30
+2024-02-29 12:00:01+05:30
+2024-02-29 11:59:59.999999+05:30
+2024-02-29 12:00:00.000001+05:30
+2024-03-02 11:59:59.999999+05:30
+2024-02-27 12:00:00.000001+05:30
+2024-02-28 11:59:58.999999+05:30
+2024-03-01 12:00:01.000001+05:30
+2025-03-01 12:00:00+05:30
+2023-02-28 12:00:00+05:30
+2024-03-01 11:59:59.999999+05:30
+2024-02-28 12:00:00.000001+05:30
+OverflowError
+OverflowError
+0055-03-01 12:00:00+05:30
+3993-02-28 12:00:00+05:30
+OverflowError
+OverflowError
+2024-02-29 12:00:00+05:30|2024-02-29T12:00:00+05:30|3|2024 2 29 12 0 0 0|330 True
+2024-03-09 23:59:59.999999-08:00
+2024-03-09 23:59:59.999999-08:00
+2024-03-10 23:59:59.999999-08:00
+2024-03-08 23:59:59.999999-08:00
+2024-03-08 23:59:59.999999-08:00
+2024-03-10 23:59:59.999999-08:00
+2024-03-10 00:00:00.999999-08:00
+2024-03-09 23:59:58.999999-08:00
+2024-03-09 23:59:58.999999-08:00
+2024-03-10 00:00:00.999999-08:00
+2024-03-09 23:59:59.999998-08:00
+2024-03-10 00:00:00-08:00
+2024-03-11 23:59:59.999998-08:00
+2024-03-08 00:00:00-08:00
+2024-03-08 23:59:58.999998-08:00
+2024-03-11 00:00:01-08:00
+2025-03-10 23:59:59.999999-08:00
+2023-03-09 23:59:59.999999-08:00
+2024-03-10 23:59:59.999998-08:00
+2024-03-09 00:00:00-08:00
+OverflowError
+OverflowError
+0055-03-10 23:59:59.999999-08:00
+3993-03-09 23:59:59.999999-08:00
+OverflowError
+OverflowError
+2024-03-09 23:59:59.999999-08:00|2024-03-09T23:59:59.999999-08:00|5|2024 3 9 23 59 59 999999|-480 True
+2024-01-01 00:00:00+23:59
+2024-01-01 00:00:00+23:59
+2024-01-02 00:00:00+23:59
+2023-12-31 00:00:00+23:59
+2023-12-31 00:00:00+23:59
+2024-01-02 00:00:00+23:59
+2024-01-01 00:00:01+23:59
+2023-12-31 23:59:59+23:59
+2023-12-31 23:59:59+23:59
+2024-01-01 00:00:01+23:59
+2023-12-31 23:59:59.999999+23:59
+2024-01-01 00:00:00.000001+23:59
+2024-01-02 23:59:59.999999+23:59
+2023-12-30 00:00:00.000001+23:59
+2023-12-30 23:59:58.999999+23:59
+2024-01-02 00:00:01.000001+23:59
+2025-01-01 00:00:00+23:59
+2022-12-31 00:00:00+23:59
+2024-01-01 23:59:59.999999+23:59
+2023-12-31 00:00:00.000001+23:59
+OverflowError
+OverflowError
+0055-01-01 00:00:00+23:59
+3992-12-31 00:00:00+23:59
+OverflowError
+OverflowError
+2024-01-01 00:00:00+23:59|2024-01-01T00:00:00+23:59|0|2024 1 1 0 0 0 0|1439 True
+2024-01-01 00:00:00-23:59
+2024-01-01 00:00:00-23:59
+2024-01-02 00:00:00-23:59
+2023-12-31 00:00:00-23:59
+2023-12-31 00:00:00-23:59
+2024-01-02 00:00:00-23:59
+2024-01-01 00:00:01-23:59
+2023-12-31 23:59:59-23:59
+2023-12-31 23:59:59-23:59
+2024-01-01 00:00:01-23:59
+2023-12-31 23:59:59.999999-23:59
+2024-01-01 00:00:00.000001-23:59
+2024-01-02 23:59:59.999999-23:59
+2023-12-30 00:00:00.000001-23:59
+2023-12-30 23:59:58.999999-23:59
+2024-01-02 00:00:01.000001-23:59
+2025-01-01 00:00:00-23:59
+2022-12-31 00:00:00-23:59
+2024-01-01 23:59:59.999999-23:59
+2023-12-31 00:00:00.000001-23:59
+OverflowError
+OverflowError
+0055-01-01 00:00:00-23:59
+3992-12-31 00:00:00-23:59
+OverflowError
+OverflowError
+2024-01-01 00:00:00-23:59|2024-01-01T00:00:00-23:59|0|2024 1 1 0 0 0 0|-1439 True
+1900-03-01 06:07:08.000009
+1900-03-01 06:07:08.000009
+1900-03-02 06:07:08.000009
+1900-02-28 06:07:08.000009
+1900-02-28 06:07:08.000009
+1900-03-02 06:07:08.000009
+1900-03-01 06:07:09.000009
+1900-03-01 06:07:07.000009
+1900-03-01 06:07:07.000009
+1900-03-01 06:07:09.000009
+1900-03-01 06:07:08.000008
+1900-03-01 06:07:08.000010
+1900-03-03 06:07:08.000008
+1900-02-27 06:07:08.000010
+1900-02-28 06:07:07.000008
+1900-03-02 06:07:09.000010
+1901-03-02 06:07:08.000009
+1899-02-28 06:07:08.000009
+1900-03-02 06:07:08.000008
+1900-02-28 06:07:08.000010
+9930-02-28 06:07:08.000009
+OverflowError
+OverflowError
+3869-02-28 06:07:08.000009
+OverflowError
+OverflowError
+1900-03-01 06:07:08.000009|1900-03-01T06:07:08.000009|3|1900 3 1 6 7 8 9|0 False
+2913114 days, 17:29:59.999999|False True True True False False
+738944 days, 12:00:00|False True True True False False
+ValueError|False True ValueError
+ValueError|False True ValueError
+ValueError|False True ValueError
+-2913174 days, 23:59:00.000001|False True False False True True
+ValueError|False True ValueError
+ValueError|False True ValueError
+ValueError|False True ValueError
+ValueError|False True ValueError
+-2913105 days, 8:00:00|False True False False True True
+2913114 days, 11:59:59.999999|False True True True False False
+0:00:00|True False False True False True
+-3652059 days, 0:00:00.000001|False True False False True True
+ValueError|False True ValueError
+ValueError|False True ValueError
+ValueError|False True ValueError
+ValueError|False True ValueError
+-59 days, 17:29:00|False True False False True True
+ValueError|False True ValueError
+3652058 days, 23:59:59.999999|False True True True False False
+2913173 days, 1:00:59.999999|False True True True False False
+3652059 days, 0:59:59.999999|False True True True False False
+ValueError|False True ValueError
+ValueError|False True ValueError
+2913174 days, 23:58:59.999999|False True True True False False
+-738955 days, 16:00:00.000001|False True False False True True
+ValueError|False True ValueError
+ValueError|False True ValueError
+-738945 days, 17:30:00|False True False False True True
+ValueError
+2024-05-05 05:05:05.000005-23:59|2024-05-05T05:05:05.000005-23:59|6|2024 5 5 5 5 5 5|-1439 True
+2024-05-05 05:05:05.000005+23:59|2024-05-05T05:05:05.000005+23:59|6|2024 5 5 5 5 5 5|1439 True
+ValueError
+ValueError
+2024-05-05 05:05:05.000005+00:00|2024-05-05T05:05:05.000005+00:00|6|2024 5 5 5 5 5 5|0 True
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+00:00:00|00:00:00|0 0 0 0
+23:59:59.999999|23:59:59.999999|23 59 59 999999
+12:30:00.000500|12:30:00.000500|12 30 0 500
+01:02:03.000004|01:02:03.000004|1 2 3 4
+ValueError
+ValueError
+ValueError
+ValueError
+ValueError
+True False False True False True
+False True True True False False
+False True True True False False
+False True True True False False
+False True True True False False
+False True False False True True
+True False False True False True
+False True True True False False
+False True True True False False
+False True True True False False
+False True False False True True
+False True False False True True
+True False False True False True
+False True True True False False
+True False False True False True
+False True False False True True
+False True False False True True
+False True False False True True
+True False False True False True
+False True False False True True
+False True False False True True
+False True False False True True
+True False False True False True
+False True True True False False
+True False False True False True

@@ -1,0 +1,59 @@
+from math import factorial, comb, perm, isqrt, isfinite, copysign
+
+# the errors of the text methods, divmod and the math additions are ValueError and ZeroDivisionError, and can be caught
+
+@main
+def main():
+    try:
+        print('abc'.partition(''))
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    try:
+        print('abc'.rpartition(''))
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    try:
+        print('abc'.rjust(9, 'xy'))
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    try:
+        print('abc'.center(9, ''))
+    catch RuntimeError as e:
+        print('RuntimeError:', e.message)
+    try:
+        print(divmod(7, 0))
+    catch ZeroDivisionError as e:
+        print('ZeroDivisionError:', e.message)
+    try:
+        print(divmod(-7, 0))
+    catch RuntimeError as e:
+        print('RuntimeError:', e.message)
+    try:
+        print(factorial(-3))
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    try:
+        print(comb(-3, 2))
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    try:
+        print(perm(3, -2))
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    try:
+        print(isqrt(-3))
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    try:
+        print(isfinite(10 ** 400))
+    catch OverflowError as e:
+        print('OverflowError:', e.message)
+    try:
+        print(copysign(1.5, 10 ** 400))
+    catch OverflowError as e:
+        print('OverflowError:', e.message)
+    try:
+        print(f'{10 ** 400:e}')
+    catch OverflowError as e:
+        print('OverflowError:', e.message)
+    print(comb(3, 5), perm(3, 5), 'abc'.rjust(5, 'x'), divmod(7, 2))

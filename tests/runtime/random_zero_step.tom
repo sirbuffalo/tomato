@@ -1,0 +1,5 @@
+from random import Random
+
+@main
+def main():
+    print(Random(1).randrange(0, 10, 0))

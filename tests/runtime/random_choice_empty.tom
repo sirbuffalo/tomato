@@ -1,0 +1,6 @@
+from random import Random, choice
+
+@main
+def main():
+    xs: list[int] = []
+    print(choice(Random(1), xs))

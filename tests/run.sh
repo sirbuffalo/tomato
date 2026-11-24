@@ -190,7 +190,12 @@ t_asan() { # PATH:ARGUMENT, the argument being a folder the program may write in
   else bad "asan $name" "this clang cannot build with -fsanitize=address"; fi
 }
 section "== memory (AddressSanitizer and the runtime's leak check) =="
-for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:WORK" "tests/programs/json_files:WORK" "tests/programs/msgpack_files:WORK" "tests/programs/msgpack_file_basics:WORK" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/tuple_type_args:" "tests/programs/union_show:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/dict_literal_inference:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/programs/utf8_invalid:" "tests/programs/async_tasks:" "tests/programs/async_cancel:" "tests/programs/async_sleep:" "tests/programs/error_path_release:" "tests/programs/int_ranges:" "tests/runtime/error_classes:" "tests/programs/time_module:"; do
+for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:WORK" "tests/programs/json_files:WORK" "tests/programs/msgpack_files:WORK" "tests/programs/msgpack_file_basics:WORK" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/tuple_type_args:" "tests/programs/union_show:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/dict_literal_inference:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/programs/utf8_invalid:" "tests/programs/async_tasks:" "tests/programs/async_cancel:" "tests/programs/async_sleep:" "tests/programs/error_path_release:" "tests/programs/int_ranges:" "tests/runtime/error_classes:" "tests/programs/time_module:" "tests/programs/url_parse:" "tests/programs/url_quote:" "tests/programs/html_escape:" "tests/programs/base64_codec:" "tests/programs/hex_codec:" "tests/programs/web_modules:" "tests/programs/html_fuzz:" "tests/programs/web_large:" "tests/programs/datetime_arith:" "tests/programs/datetime_format:" "tests/programs/datetime_parse:" "tests/runtime/datetime_errors:" "tests/programs/csv_module:" "tests/programs/textwrap_module:" "tests/programs/statistics_module:"; do
+  spawn t_asan "$spec"
+done
+
+section "== memory: round, text methods, math additions and f-string specs =="
+for spec in "tests/programs/round_divmod_any_all:" "tests/programs/text_methods_more:" "tests/programs/math_more:" "tests/programs/fstring_specs:" "tests/runtime/text_math_caught:"; do
   spawn t_asan "$spec"
 done
 
@@ -251,7 +256,7 @@ t_wasm_browser() { r="$(jsc native/tomato-jsc.js -- site/wasm run tests/programs
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru memoize bit_types bit_names text_dict_methods dict_literal_inference tuple_for unicode_class mixed_tuples union_show time_module int_ranges tuple_type_args; do
+  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru memoize bit_types bit_names text_dict_methods dict_literal_inference tuple_for unicode_class mixed_tuples union_show time_module int_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module; do
     spawn t_wasm_program "$name"
   done
   spawn t_wasm_browser
@@ -264,9 +269,13 @@ if [ -n "$have_js" ]; then
   wasm_neg trig_needs_angle "argument 1 of 'sin' (the parameter 'a') has type float, but math.Angle is expected"
   wasm_rt divide_by_zero "division by zero" 1
   wasm_rt index "index out of range" 1
+  wasm_rt csv_unclosed_quote "a quoted CSV field is not closed" 1
+  wasm_rt statistics_empty "statistics needs at least one data point" 1
   wasm_rt error_classes "$(cat tests/runtime/error_classes.out)" 0
   wasm_rt error_class_uncaught "error[E04]: index out of range" 1
   wasm_rt error_std_uncaught "error[E51]:" 1
+  wasm_rt datetime_errors "$(cat tests/runtime/datetime_errors.out)" 0
+  wasm_rt datetime_overflow "error[E407]: OverflowError: date value out of range" 1
   wasm_rt list_pop_empty "pop from an empty list" 1
   wasm_rt overflow "integer overflow" 1
   wasm_rt dict_missing_key "the key is not there" 1
@@ -274,8 +283,18 @@ if [ -n "$have_js" ]; then
   wasm_rt stack_overflow "stack overflow" 1
   wasm_rt tan_quarter "tan is not defined at 90 deg" 1
   wasm_rt caught_domain "caught sqrt needs a number that is not negative" 0
+  for name in round_divmod_any_all text_methods_more math_more fstring_specs; do spawn t_wasm_program "$name"; done
+  wasm_rt partition_empty "partition needs a separator that is not empty" 1
+  wasm_rt divmod_zero "division by zero" 1
+  wasm_rt factorial_negative "factorial needs a number that is not negative, but got -1" 1
+  wasm_rt text_math_caught "$(cat tests/runtime/text_math_caught.out)" 0
+  wasm_neg fstring_text_sign "a format spec for text cannot have a sign"
+  wasm_neg round_bad_type "round() takes an int or a float, but this is str"
   wasm_rt exp_overflow "exp(1000) is too large to be a float" 1
   wasm_rt trace_calls "at half (line 10)" 1
+  wasm_rt url_bad_ipv6 "Invalid IPv6 URL" 1
+  wasm_rt base64_bad_padding "misplaced padding" 1
+  wasm_rt hex_bad_digit "a hex text holds only the digits" 1
   spawn t_wasm_site_errors
 else spawn t_wasm_missing; fi
 
@@ -536,6 +555,22 @@ neg list_equal_types "cannot use '==' with list[int] and list[str]"
 neg list_pop_args "pop() takes at most 1 argument"
 neg list_extend_type "a list item has type str, but int is expected"
 neg tuple_pop "a tuple cannot be changed, so it has no 'pop'"
+neg fstring_text_sign "a format spec for text cannot have a sign"
+neg fstring_text_comma "a format spec for text cannot have a ','"
+neg fstring_text_number_type "the format type 'd' is for numbers, but this value is text"
+neg fstring_number_text_type "the format type 's' is for text, but this value is int"
+neg fstring_int_precision "a format spec for an int cannot have a precision unless its type is f, e or g"
+neg fstring_float_whole_type "the format type 'd' is for whole numbers, but this value is float"
+neg fstring_bool_spec "a format spec needs a text, an int or a float, but this value is bool"
+neg fstring_list_spec "a format spec needs a text, an int or a float, but this value is list[int]"
+neg round_bad_type "round() takes an int or a float, but this is str"
+neg round_no_args "round() takes a number and optionally ndigits"
+neg round_three_args "round() takes a number and optionally ndigits"
+neg divmod_float "argument 1 of 'divmod' (the parameter 'a') has type float, but int is expected"
+neg any_ints "a list item has type int, but bool is expected"
+neg zfill_missing_width "'zfill' needs a value for 'width'"
+neg center_bad_fill "argument 2 of 'center' (the parameter 'fillchar') has type int, but str is expected"
+neg text_no_such_method "text has no method 'zfilll'"
 neg type_arg_count "'list' does not take several types here"
 neg type_in_unknown "this type is not supported here"
 
@@ -629,6 +664,53 @@ rt list_pop_empty "pop from an empty list" 1
 rt error_classes "$(cat tests/runtime/error_classes.out)" 0
 rt error_class_uncaught "error[E04]: index out of range" 1
 rt error_std_uncaught "error[E51]:" 1
+rt url_bad_ipv6 "error[E390]: ValueError: Invalid IPv6 URL" 1
+rt url_ipv4_in_brackets "An IPv4 address cannot be in brackets" 1
+rt base64_bad_char "error[E392]: ValueError: the base64 text has a character that is not in the base64 alphabet" 1
+rt base64_bad_padding "error[E393]: ValueError: the base64 text has the wrong length or misplaced padding" 1
+rt base64_bad_byte "error[E391]: ValueError: a byte must be a whole number from 0 to 255, but got 256" 1
+rt hex_odd_length "error[E394]: ValueError: a hex text needs an even number of digits, but got 3" 1
+rt hex_bad_digit "error[E395]: ValueError: a hex text holds only the digits 0-9 and a-f, but got 'g'" 1
+rt csv_bad_delimiter "error[E408]: ValueError: a CSV delimiter must be one character" 1
+rt csv_unclosed_quote "error[E410]: ValueError: a quoted CSV field is not closed" 1
+rt csv_after_quote "error[E409]: ValueError: a closing quote in CSV text must be followed by" 1
+rt csv_extra_fields "error[E411]: ValueError: a CSV row has 3 fields, but the header has 2" 1
+rt textwrap_width "error[E412]: ValueError: textwrap needs a width of at least 1, but got 0" 1
+rt textwrap_placeholder "error[E413]: ValueError: the placeholder is too large for the width 3" 1
+rt statistics_empty "error[E414]: ValueError: statistics needs at least one data point" 1
+rt statistics_one_point "error[E415]: ValueError: statistics needs at least two data points" 1
+rt statistics_quantiles_n "error[E416]: ValueError: quantiles needs n of at least 1, but got 0" 1
+rt datetime_errors "$(cat tests/runtime/datetime_errors.out)" 0
+rt datetime_overflow "error[E407]: OverflowError: date value out of range" 1
+rt divmod_zero "division by zero" 1
+rt partition_empty "partition needs a separator that is not empty" 1
+rt rpartition_empty "rpartition needs a separator that is not empty" 1
+rt fill_length "center needs a fill character of exactly one character" 1
+rt fill_empty "ljust needs a fill character of exactly one character" 1
+rt factorial_negative "factorial needs a number that is not negative, but got -1" 1
+rt comb_negative "comb needs numbers that are not negative, but got 5 and -1" 1
+rt perm_negative "perm needs numbers that are not negative, but got -5 and 2" 1
+rt isqrt_negative "isqrt needs a number that is not negative, but got -4" 1
+rt text_math_caught "$(cat tests/runtime/text_math_caught.out)" 0
+
+t_no_entropy() {
+  n="$1"
+  "$c1" "tests/runtime/$n.tom" main std/ > "$work/r.ll" 2>/dev/null && clang -O1 -w -DTOMATO_TEST_NO_ENTROPY -o "$work/r" "$work/r.ll" runtime/tomato_rt.c -lm || { bad "runtime $n" "did not build"; return; }
+  "$work/r" > "$work/o" 2> "$work/e2"; code=$?
+  case "$(cat "$work/o" "$work/e2")" in *"secure random bytes are not available on this system"*) [ "$code" = 1 ] && ok "runtime $n" || bad "runtime $n" "exit status $code, wanted 1";; *) bad "runtime $n" "wanted the entropy error, got: $(cat "$work/o" "$work/e2")";; esac
+}
+section "== random, secrets and uuid (std/random.tom, std/secrets.tom, std/uuid.tom) =="
+for ent in random_randint_empty:"randint needs a <= b, but got 3 and 2" random_zero_step:"randrange needs a step that is not zero" random_sample_size:"sample needs a size from 0 to 2, but got 3" random_choice_empty:"choice needs a list that is not empty" secrets_negative_length:"token_bytes needs a length of 0 or more, but got -1" secrets_bound_zero:"randbelow needs a bound above 0, but got 0" uuid_bad_text:"a UUID text needs 32 hexadecimal digits, but got not-a-uuid"; do
+  rt "${ent%%:*}" "${ent#*:}" 1
+done
+# a runtime built with TOMATO_TEST_NO_ENTROPY has no secure entropy: secrets and uuid4 must stop, never fall back to a generator
+for ent in secrets_no_entropy uuid4_no_entropy; do spawn t_no_entropy "$ent"; done
+# the same seed gives the same numbers in the browser's path as natively, and the entropy comes through WASI random_get
+if [ -n "$have_js" ]; then
+  for name in random_basic random_lists secrets_basic uuid_basic; do spawn t_wasm_program "$name"; done
+  wasm_rt random_randint_empty "randint needs a <= b, but got 3 and 2" 1
+  wasm_rt secrets_negative_length "token_bytes needs a length of 0 or more, but got -1" 1
+fi
 
 # ---- known gaps ---------------------------------------------------------------------------------------------------------
 # Each file is a program a decision says must be rejected (should_reject_*) or must work (should_work_*). The test passes

@@ -1,0 +1,5 @@
+from urlparse import urlparse
+
+@main
+def main():
+    print(urlparse('http://[::1/'))
