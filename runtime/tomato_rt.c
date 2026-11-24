@@ -562,6 +562,21 @@ static int64_t char_offset(Str *s, int64_t i) {
     return s->bytes;
 }
 
+/* is character i of a (a negative one counts from the end) the text b? -1 when there is no character i */
+COLD static int32_t str_char_eq_slow(Str *s, int64_t i, Str *t) {
+    if (i < 0) i += s->chars;
+    if (i < 0 || i >= s->chars) return -1;
+    int64_t from = char_offset(s, i), to = from + 1;
+    while (to < s->bytes && ((unsigned char)s->data[to] & 0xC0) == 0x80) to++;
+    return t->bytes == to - from && memcmp(s->data + from, t->data, (size_t)(to - from)) == 0;
+}
+ALWAYS int32_t tomato_str_char_eq(void *a, int64_t i, void *b) {
+    Str *s = a, *t = b;
+    /* all ASCII: character i is byte i, and only a text of one byte can be equal to it */
+    if (__builtin_expect(s->bytes == s->chars && (uint64_t)i < (uint64_t)s->chars, 1)) return t->bytes == 1 && s->data[i] == t->data[0];
+    return str_char_eq_slow(s, i, t);
+}
+
 void *tomato_str_index(void *a, int64_t i) {
     Str *s = a;
     if (i < 0) i += s->chars;       /* a negative position counts from the end */
@@ -3994,7 +4009,6 @@ static void NAME(int64_t *a, int64_t n) {                                       
 
 #define LT_BIGINT(x, y) (tomato_int_cmp((x), (y)) < 0)
 #define LT_WORD(x, y) ((x) < (y))
-#define LT_SMALL(x, y) (((x) >> 1) < ((y) >> 1))  /* small ints: tagged words, or the untagged word 0 */
 #define LT_STR(x, y) (tomato_str_cmp((void *)(intptr_t)(x), (void *)(intptr_t)(y)) < 0)
 DEFINE_INTROSORT(sort_bigint, LT_BIGINT)
 DEFINE_INTROSORT(sort_word, LT_WORD)
@@ -4140,8 +4154,37 @@ static void NAME(KeyPos *a, KeyPos *tmp, int64_t n) {                           
 }
 DEFINE_MERGESORT(msort_bigint, LT_BIGINT)
 DEFINE_MERGESORT(msort_word, LT_WORD)
-DEFINE_MERGESORT(msort_small, LT_SMALL)
 DEFINE_MERGESORT(msort_str, LT_STR)
+
+/* The same for many (key, position) pairs whose keys are plain words that span few enough digits for their number: a radix sort
+ * of the digits, lowest first, which is stable too. The keys are sorted by their distance from the smallest one; `tagged`:
+ * every key is odd. 0 when the merge sort should be used. */
+static int radix_pairs(KeyPos *a, KeyPos *tmp, int64_t n, int tagged) {
+    if (n < RADIX_MIN || n > UINT32_MAX) return 0;
+    int64_t lo = a[0].key, hi = a[0].key, up = 1;
+    for (int64_t i = 1; i < n; i++) {
+        int64_t k = a[i].key;
+        lo = k < lo ? k : lo; hi = k > hi ? k : hi; up &= a[i - 1].key <= k;
+    }
+    if (up) return 1;                       /* in order already */
+    int bits = 64 - __builtin_clzll((uint64_t)hi - (uint64_t)lo) - tagged, depth = 63 - __builtin_clzll((uint64_t)n);
+    int passes = (bits + RADIX_BITS - 1) / RADIX_BITS;
+    if (passes * RADIX_COST > depth) return 0;
+    uint64_t base = (uint64_t)lo;
+    int digit = (bits + passes - 1) / passes, shift = tagged;
+    uint64_t mask = ((uint64_t)1 << digit) - 1;
+    KeyPos *x = a, *y = tmp;
+    for (int p = 0; p < passes; p++, shift += digit) {
+        uint32_t at[1 << RADIX_BITS], sum = 0;
+        memset(at, 0, sizeof at);
+        for (int64_t i = 0; i < n; i++) at[RADIX_DIGIT(x[i].key)]++;
+        for (uint64_t k = 0; k <= mask; k++) { uint32_t c = at[k]; at[k] = sum; sum += c; }
+        for (int64_t i = 0; i < n; i++) { KeyPos w = x[i]; y[at[RADIX_DIGIT(w.key)]++] = w; }
+        KeyPos *t = x; x = y; y = t;
+    }
+    if (x != a) memcpy(a, x, (size_t)n * sizeof(KeyPos));
+    return 1;
+}
 
 /* src: the list to sort; keys: a list of the same length holding each item's key; rc: how a copy of an item is made (see item_copy) */
 void *tomato_list_sorted_by(void *src, void *keys, int kind, int rc) {
@@ -4156,21 +4199,23 @@ void *tomato_list_sorted_by(void *src, void *keys, int kind, int rc) {
     for (int64_t i = 0; i < n; i++) {
         int64_t w = LIST_SLOT(k, i, int64_t);
         if (kind == 1) w = f64_order_word(w);
-        else if (kind == 0) small &= int_is_small(w);
+        else if (kind == 0) { w |= w == 0; small &= (int)(w & 1); }     /* (the zero word of a slot nobody has written is a zero) */
         a[i].key = w;
         a[i].pos = i;
     }
     if (n > 1) {
-        if (kind == 0) { if (small) msort_small(a, tmp, n); else msort_bigint(a, tmp, n); }
-        else if (kind == 1) msort_word(a, tmp, n);
+        if (kind == 0) { if (!small) msort_bigint(a, tmp, n); else if (!radix_pairs(a, tmp, n, 1)) msort_word(a, tmp, n); }
+        else if (kind == 1) { if (!radix_pairs(a, tmp, n, 0)) msort_word(a, tmp, n); }
         else msort_str(a, tmp, n);
     }
     if (rc >> 2) {      /* compact items */
         int64_t w = rc >> 2;
         for (int64_t i = 0; i < n; i++) memcpy(tomato_list_push(r, w), l->data + a[i].pos * w, (size_t)w);
     } else
-    for (int64_t i = 0; i < n; i++)
-        *(int64_t *)tomato_list_push(r, 8) = item_copy(rc, LIST_SLOT(l, a[i].pos, int64_t));
+    {
+        int64_t *d = (int64_t *)tomato_list_reserve(r, n, 8);
+        for (int64_t i = 0; i < n; i++) d[i] = item_copy(rc, LIST_SLOT(l, a[i].pos, int64_t));
+    }
     free(a);
     return r;
 }

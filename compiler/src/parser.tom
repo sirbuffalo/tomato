@@ -81,6 +81,7 @@ export class Node:
     kind: str = ''
     line: int = 0
     mark: int = 0            # the compiler numbers the statements of a small-int loop here while it compiles that loop
+    spot: int = 0            # the same for the statements of a loop nest (see Gen.nest_loop in compiler.tom)
     exported: bool = False
     fields: list[Val] = []
 

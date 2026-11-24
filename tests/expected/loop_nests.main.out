@@ -1,0 +1,265 @@
+[30, 45, 40, 35, 19] [[1, 7, 13, 19, 5], [16, 2, 8, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 10]]
+[80, 115, 110, 105, 41]
+3 -1
+[36893488147419103262, 45, 40, 35, 36893488147419103232] [[36893488147419103233, 7, 13, 19, 5], [16, 2, 8, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 10]]
+[73786976294838206544, 115, 110, 105, 73786976294838206466]
+0 0
+[30, 36893488147419103285, 40, 35, 36893488147419103247] [[1, 7, 13, 19, 5], [16, 2, 36893488147419103248, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 10]]
+[80, 73786976294838206595, 110, 105, 73786976294838206497]
+3 1002
+[30, 45, 40, 36893488147419103299, 36893488147419103273] [[1, 7, 13, 19, 5], [16, 2, 8, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 36893488147419103274]]
+[80, 115, 110, 73786976294838206633, 73786976294838206551]
+3 3004
+rows IndexError: index out of range
+[[1, 7, 13, 19, 5], [16, 2, 8, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 10]]
+cols IndexError: index out of range
+[[3, 15, 27, 39, 11], [16, 2, 8, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 10]]
+21 46116860184273879039 5
+3 2 3 1
+1006 910 107
+993133 [-3, 0, 3, 6]
+503823 [-3, 4611686018427387902, 3, -4611686018427387902]
+wrap IndexError: index out of range
+[-7, 4611686018427387900, 3, -4611686018427387900]
+divide 25
+divide ZeroDivisionError: division by zero
+divide ZeroDivisionError: modulo by zero
+divide ZeroDivisionError: division by zero
+[20, 17]
+divide IndexError: index out of range
+[25, 21]
+747179 [2, 3, 4, 0] [[22, 15, 18, 6], [9, 12, 15, 9, 41505174165846491136]]
+536829 [4611686018427387905, -4611686018427387903, 9223372036854775809, 0] [[22, 18446744073709551636, 18, 6], [9, 12, 15, 9, 41505174165846491136]]
+short IndexError: index out of range
+44 2.32421875 31 -96845406386975145949 0.0 0 0 0.0 3
+99 41505174165846491138 0
+302003 -4611686018427087906 388
+6.7439469094463895
+2.5978935318538525 1.0480419232130744 1 [1, 21, 16]
+0.2983204190643657 -0.45061656040430403 486 [2, 3, 24]
+4.478786049081782 0.15257463719122946 30257271966902092004519 [512409557603043100, 512409557603043101, 512409557603043102]
+blow_up 470184984576.0
+[65536.0, 43046721.0]
+blow_up OverflowError: the float result is infinite or not a number
+[1.3407807929942597e+154, 1.3900845237714473e+122]
+2.0
+ZeroDivisionError: division by zero
+  -1.1515189941660045 -1.332402179330469 3.375
+  0.8062024433049906 -13.280505138377665 0.5625
+  -6.5429812722384675 -0.5351946529243339 4.0
+3.0771011720074166
+0.375
+  0.7231306415554541 -0.00832441399629169 0.84375
+2.0
+ZeroDivisionError: division by zero
+  1.0 1.0 1.5
+  1.0 -0.5 0.25
+  3.0 0.0 4.0
+2.0
+ZeroDivisionError: division by zero
+  1.0 1.0 0.375
+2.0
+OverflowError: the float result is infinite or not a number
+  -4.84375e+299 1.25e+299 1.5
+  1.0 -0.5 0.25
+  3.0 0.0 4.0
+2.0
+2.5e+299
+  -2.421875e+299 6.25e+298 0.375
+2.0
+OverflowError: the float result is infinite or not a number
+  -2.421875e+99 -1.5e+200 1.5e+200
+  1e+200 -0.5 0.25
+  3.0 0.0 4.0
+OverflowError: the float result is infinite or not a number
+  1e+200 -0.5 0.25
+2.0
+ZeroDivisionError: division by zero
+  1.0 1.0 1.5e+200
+  1e+200 -0.5 0.25
+  3.0 0.0 4.0
+OverflowError: the float result is infinite or not a number
+  1e+200 -0.5 0.25
+2.0
+OverflowError: the float result is infinite or not a number
+  1.0 1.0 1e+200
+  1e+200 -0.5 0.25
+  3.0 0.0 4.0
+OverflowError: the float result is infinite or not a number
+  1e+200 -0.5 0.25
+2.0
+ZeroDivisionError: division by zero
+  0.6058001858716715 -5.93742255455864 3.3750000000000004e-200
+  -0.74217781931983 0.3730936915619254 0.5625
+  3.0 -0.5949034973076327 4.0
+3.6308980423035244
+0.375
+  -0.7906373166758597 0.2685740211517622 0.84375
+2.0
+ZeroDivisionError: division by zero
+  1.0 1.0 1.5e-200
+  1e-200 -0.5 0.25
+  3.0 0.0 4.0
+ZeroDivisionError: division by zero
+  1e-200 -0.5 0.25
+2.0
+OverflowError: the float result is infinite or not a number
+  -4.8437500000000005e+199 1.2500000000000002e+199 1.5e-200
+  1e-200 -0.5 0.25
+  3.0 0.0 4.0
+ZeroDivisionError: division by zero
+  1e-200 -0.5 0.25
+2.0
+ZeroDivisionError: division by zero
+  -2.867401857551582 -4.84057250076704 3.375
+  0.36768115312541916 -13.291134534654063 0.5625
+  -2.867401857551582 -4.84057250076704 3.375
+14.794055974792705
+0.375
+  1.0169190265499632 5.850152987396353 0.84375
+2.0
+ZeroDivisionError: division by zero
+  1.0 1.0 1.5
+  1.0 -0.5 0.25
+  1.0 1.0 1.5
+2.0
+ZeroDivisionError: division by zero
+  1.0 1.0 0.375
+2.0
+OverflowError: the float result is infinite or not a number
+  -4.84375e+299 1.25e+299 1.5
+  1.0 -0.5 0.25
+  -4.84375e+299 1.25e+299 1.5
+2.0
+2.5e+299
+  -2.421875e+299 6.25e+298 0.375
+2.0
+OverflowError: the float result is infinite or not a number
+  -2.421875e+99 -1.5e+200 1.5e+200
+  1e+200 -0.5 0.25
+  -2.421875e+99 -1.5e+200 1.5e+200
+OverflowError: the float result is infinite or not a number
+  1e+200 -0.5 0.25
+2.0
+ZeroDivisionError: division by zero
+  1.0 1.0 1.5e+200
+  1e+200 -0.5 0.25
+  1.0 1.0 1.5e+200
+OverflowError: the float result is infinite or not a number
+  1e+200 -0.5 0.25
+2.0
+OverflowError: the float result is infinite or not a number
+  1.0 1.0 1e+200
+  1e+200 -0.5 0.25
+  1.0 1.0 1e+200
+OverflowError: the float result is infinite or not a number
+  1e+200 -0.5 0.25
+2.0
+ZeroDivisionError: division by zero
+  0.6453391378133464 -0.8559774221692455 3.3750000000000004e-200
+  -0.1069971777711557 0.4028241990137025 0.5625
+  0.6453391378133464 -0.8559774221692455 3.3750000000000004e-200
+174.6969611368965
+0.375
+  10.536172268284876 85.80160556844825 0.84375
+2.0
+ZeroDivisionError: division by zero
+  1.0 1.0 1.5e-200
+  1e-200 -0.5 0.25
+  1.0 1.0 1.5e-200
+ZeroDivisionError: division by zero
+  1e-200 -0.5 0.25
+2.0
+OverflowError: the float result is infinite or not a number
+  -4.8437500000000005e+199 1.2500000000000002e+199 1.5e-200
+  1e-200 -0.5 0.25
+  -4.8437500000000005e+199 1.2500000000000002e+199 1.5e-200
+ZeroDivisionError: division by zero
+  1e-200 -0.5 0.25
+2.0
+ValueError: sqrt needs a number that is not negative, but got -0.5
+  1.0 1.0 -0.5
+2.0
+OverflowError: the float result is infinite or not a number
+  -4.84375e+153 -1.5e+308 1.5e+308
+  1.0 1.0 1.0
+roots 4.707106781186548
+roots ValueError: sqrt needs a number that is not negative, but got -2.25
+4.0 4294967296.0 1.5 2 7 36893488147419103232
+blends 6.0
+blends ZeroDivisionError: division by zero
+blends OverflowError: the float result is infinite or not a number
+10 15 0 0 -7
+12 14 2 -2 -14
+62 22 -2 2 -6
+2999999995 1000000028 285714290 -666666668 14
+8999999995 3000000028 857142858 -2000000000 14
+13835058055282163704 4611686018427387934 1317624576693539406 -3074457345618258602 14
+21267647932558653968766755973699207174 4611686018427387919 -1317624576693539396 3074457345618258600 -4611686018427387893
+13835058055282163707 4611686018427387936 1317624576693539402 -3074457345618258604 14
+55340232221128654843 18446744073709551640 5270498306774157608 -12297829382473034412 14
+ratio ZeroDivisionError: division by zero
+ratio ZeroDivisionError: division by zero
+calls 16909515435900422357
+calls ZeroDivisionError: division by zero
+calls 27670116110564327435
+35106 239718 1073695208
+ny
+ ynny
+nn
+ nnnn
+nn
+ nnnn
+nn
+ nnnn
+nn
+ nnnn
+yn
+ nnnn
+ny
+ ynny
+nn
+ nynn
+nn
+ nnnn
+nn
+ nnnn
+nn
+ nnnn
+yn
+ nnnn
+nn
+ nnnn
+nn
+ nnnn
+nn
+ ynyn
+nn
+ nnnn
+nn
+ nnnn
+nn
+ nnnn
+yy
+ IndexError: index out of range
+nn
+ IndexError: index out of range
+nn
+ IndexError: index out of range
+nn
+ IndexError: index out of range
+nn
+ IndexError: index out of range
+nn
+ IndexError: index out of range
+past IndexError: index out of range
+past IndexError: index out of range
+past IndexError: index out of range
+past IndexError: index out of range
+past OverflowError: the number is too big here
+empty IndexError: index out of range
+[4611686018427387904, 8, 5, 3, 0, -1, -4611686018427387904] [-9223372036854775808, 1, 9223372036854775808]
+[0, -1, 1, 2, -2, -3, 3, -4, 4, -5, 5, 6, -6, 7, -7, -8, 8, 9, -9, -10]
+[12.5, 12.25, 12.0, 11.75, 11.5, 11.25, 11.0, 10.75] [-2.5, -0.0, 0.0, 2.5]
+['0', '3', '6', '9', '2', '5', '8', '1', '4', '7', '37', '74', '10', '47']
+[0, 84, 57, 30, 3, 87, 60, 33] [0, 0, 1]

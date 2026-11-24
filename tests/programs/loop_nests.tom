@@ -1,0 +1,568 @@
+# The fast copies of loop nests and of functions that only compute with numbers (release mode), and the fast paths both modes
+# share: text[i] == text, bitwise operators on small numbers, sorted(key=) over numbers. A fast copy is left in the middle of a
+# loop for a big number, a bad index, a division by zero or a float that is not finite, and must then do what the ordinary code
+# does: everything before the statement has happened once, the statement itself not at all. tests/run.sh runs this in debug and
+# in release mode; main() only calls run(), so that a release program holds nothing at its end.
+import math
+
+class Body:
+    x: float
+    v: float
+    n: int
+    row: list[int]
+
+    @init
+    def make(self, x: float, v: float, n: int):
+        self.x = x
+        self.v = v
+        self.n = n
+        self.row = [n, n + 1, n + 2]
+
+def table(rows: int, cols: int, big: int) -> list[list[int]]:
+    g = [[(i * 7 + j * 3) % 10 for j in range(cols)] for i in range(rows)]
+    if big >= 0:
+        g[big // cols][big % cols] = 4611686018427387904 * 4 + big
+    return g
+
+def sums(g: list[list[int]], rows: int, cols: int) -> list[int]:
+    out: list[int] = []
+    best = 0
+    for i in range(rows):
+        row = g[i]
+        t = 0
+        for j in range(cols):
+            c = row[j] * 2 + i
+            if c > best:
+                best = c
+            t += c - j
+            row[j] = c + 1
+        out.append(t)
+    out.append(best)
+    return out
+
+def knap(weights: list[int], values: list[int], cap: int) -> int:
+    best = [0] * (cap + 1)
+    for i in range(len(weights)):
+        w = weights[i]
+        c = cap
+        while c >= w:
+            t = best[c - w] + values[i]
+            if t > best[c]:
+                best[c] = t
+            c -= 1
+    return best[cap]
+
+def edit(a: str, b: str) -> int:
+    prev = [j for j in range(len(b) + 1)]
+    for i in range(len(a)):
+        cur = [i + 1]
+        for j in range(len(b)):
+            cost = 0 if a[i] == b[j] else 1
+            cur.append(min(prev[j] + cost, min(prev[j + 1] + 1, cur[j] + 1)))
+        prev = cur
+    return prev[len(b)]
+
+def flips(n: int) -> int:
+    perm = [(i * 5 + 3) % n for i in range(n)]
+    count = 0
+    while perm[0] != 0 and count < 50:
+        i = 0
+        j = perm[0]
+        while i < j:
+            perm[i], perm[j] = perm[j], perm[i]
+            i += 1
+            j -= 1
+        count += 1
+    return count * 100 + perm[n - 1]
+
+# the index runs from -n to n, so half of the reads count from the end; `stop` steps past the end
+def wrap(xs: list[int], stop: int) -> int:
+    t = 0
+    n = len(xs)
+    for i in range(-n, n + stop):
+        xs[i] = xs[i] + i
+        t = t * 3 + xs[i]
+        t = t % 1000003
+    return t
+
+def divide(xs: list[int], ds: list[int], done: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(2):
+            done[0] += 1
+            t += xs[i] // ds[i] + xs[i] % (ds[i] + j)
+            done[1] += 1
+    return t
+
+def first_past(g: list[list[int]], limit: int) -> int:
+    for i in range(len(g)):
+        for j in range(len(g[i])):
+            if g[i][j] > limit:
+                return i * 1000 + j
+            if g[i][j] < 0:
+                break
+            if j % 2 == 1:
+                continue
+            g[i][j] += 1
+    return -1
+
+def grow(xs: list[int], i: int):
+    if i % 3 == 0:
+        xs.append(i * 4611686018427387904)
+
+# the list is replaced, appended to and emptied while the nest runs
+def moving(xs: list[int], g: list[list[int]]) -> int:
+    t = 0
+    for i in range(12):
+        for j in range(3):
+            xs[j] = xs[j] + i
+            t = (t * 5 + xs[j] + len(xs)) % 1000003
+        grow(xs, i)
+        if i % 4 == 1:
+            xs = [i, i * 2, i * 4611686018427387904]
+        if i == 6:
+            xs = g[1]
+        if i == 8:
+            g[0], g[1] = g[1], g[0]
+            xs = g[1]
+        t += g[0][i % 3] % 1009 + xs[-1] % 1013
+    return t
+
+def each(xs: list[int], fs: list[float], bs: list[bool]) -> str:
+    t = 0
+    f = 0.0
+    k = 0
+    for x in xs:
+        t += x * 3 - 1
+        if x % 5 == 4:
+            xs[0] = t
+        for y in fs:
+            f = f * 0.5 + y
+    for b in bs:
+        for i in range(3):
+            if b and i % 2 == 0:
+                k += i
+            else:
+                k = k * 2 + 1
+    return f'{t} {f} {k}'
+
+def add_half(xs: list[int], x: int):
+    if len(xs) < 40 and x % 2 == 0:
+        xs.append(x // 2 + 1)
+
+def growing(xs: list[int]) -> int:
+    t = 0
+    for x in xs:
+        t += x
+        add_half(xs, x)
+    return t
+
+def bodies(bs: list[Body], steps: int) -> float:
+    e = 0.0
+    for s in range(steps):
+        for i in range(len(bs)):
+            b = bs[i]
+            for j in range(i + 1, len(bs)):
+                c = bs[j]
+                d = b.x - c.x
+                m = 0.01 / math.sqrt(d * d + 0.5)
+                b.v -= d * m
+                c.v += d * m
+                c.n = c.n * 3 - i
+                b.row[j % 3] += c.n % 7
+        for b in bs:
+            b.x += b.v * 0.5
+            e += b.v * b.v
+    return e
+
+class Pair:
+    x: float
+    v: float
+    w: float
+
+    @init
+    def make(self, x: float, v: float, w: float):
+        self.x = x
+        self.v = v
+        self.w = w
+
+# runs of float assignments, which are checked together: the fields of two objects (which may be the same object), a variable
+# that is assigned twice, one that reads itself, a division and a call in the first statement
+def mix(ps: list[Pair], fs: list[float]) -> float:
+    t = 0.5
+    for i in range(len(ps)):
+        a = ps[i]
+        for j in range(len(ps)):
+            b = ps[j]
+            k = math.sqrt(a.w) * 0.5
+            d = a.x - b.x
+            u = d * d + fs[j]
+            d = u * 0.25 - d
+            t = t * 0.5 + d
+            a.v += d * k
+            a.w = a.w * 1.5
+            b.x = b.x - u * k
+            b.v -= t / u
+            a.x = a.x + b.v * 0.125
+            a.v = a.v - b.w
+    return t
+
+def blow_up(fs: list[float], n: int) -> float:
+    t = 1.0
+    for i in range(n):
+        for j in range(len(fs)):
+            t = t * fs[j]
+            fs[j] = fs[j] * fs[j]
+    return t
+
+def roots(fs: list[float]) -> float:
+    t = 0.0
+    for i in range(len(fs)):
+        t += math.sqrt(fs[i]) + math.sqrt(i) * 0.5
+    return t
+
+# functions that only compute with numbers
+def step(a: int, b: int) -> int:
+    if a > b:
+        return a * 3 - b
+    c = a * a + b
+    d = c - a // 2
+    return d + c % 10
+
+def ratio(a: int, b: int) -> int:
+    c = a * 2
+    return c // b + c % b
+
+def blend(a: float, b: float, k: int) -> float:
+    if k % 2 == 0:
+        return a * 0.5 + b
+    return a / b
+
+def loop_calls(xs: list[int], ds: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        t += step(xs[i], i) + ratio(xs[i], ds[i])
+    return t
+
+def blends(fs: list[float]) -> float:
+    t = 0.0
+    for i in range(1, len(fs)):
+        t += blend(fs[i - 1], fs[i], i)
+    return t
+
+def bits(xs: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        x = xs[i]
+        t = (t % 1000003 ^ (x << 3)) & 4294967295
+        t = (t >> 2) | (x & 255)
+        t += (x >> 1) ^ ~x
+        t -= (-x >> 3) & 1023
+    return t
+
+def same(text: str, other: str, at: list[int]) -> str:
+    out = ''
+    for i in range(len(at)):
+        if text[at[i]] == other:
+            out += 'y'
+        elif other != text[at[i]]:
+            out += 'n'
+    return out
+
+def big_text(text: str, other: str, i: int) -> bool:
+    return text[i] == other
+
+def nested_try(xs: list[int], n: int) -> int:
+    t = 0
+    for i in range(n):
+        for j in range(3):
+            try:
+                t += xs[i + j] // (i - 2)
+            catch ZeroDivisionError as e:
+                t += 1000
+            catch IndexError as e:
+                t += 100000
+            finally:
+                t += 1
+    return t
+
+def twice(x: int) -> int:
+    return x * 2
+
+def apply(f: fn(int) -> int, n: int) -> int:
+    t = 0
+    fs = [f]
+    for i in range(n):
+        for j in range(2):
+            t = t + fs[-1](i) * 3 - j
+            if i % 2 == j:
+                fs.append(x -> x * 10 - 1)
+            else:
+                fs.append(twice)
+    return t
+
+# what each reported case runs; `s` holds its arguments
+class Args:
+    g: list[list[int]] = []
+    xs: list[int] = []
+    done: list[int] = []
+    fs: list[float] = []
+    text: str = ''
+    other: str = ''
+
+def trial(k: int, s: Args) -> str:
+    if k == 1:
+        return f'{sums(s.g, 5, 5)}'
+    if k == 2:
+        return f'{sums(s.g, 4, 6)}'
+    if k == 3:
+        return f'{wrap(s.xs, 1)}'
+    if k == 4:
+        return f'{divide([5, 6, 7], [1, 2, 3], s.done)}'
+    if k == 5:
+        return f'{divide([5, 6, 7], [1, 0, 3], s.done)}'
+    if k == 6:
+        return f'{divide([5, 4611686018427387904 * 8, 7], [1, 3, -1], s.done)}'
+    if k == 7:
+        return f'{divide([5, 4611686018427387904 * 8, 7], [4611686018427387904 * 2, -4611686018427387904 * 2, 0], s.done)}'
+    if k == 8:
+        return f'{divide([5, 6, 7], [1, 2], s.done)}'
+    if k == 9:
+        return f'{moving([1, 2], s.g)}'
+    if k == 10:
+        return f'{blow_up(s.fs, 4)}'
+    if k == 11:
+        return f'{blow_up(s.fs, 40)}'
+    if k == 12:
+        return f'{roots([4.0, 2.25, 0.0])}'
+    if k == 13:
+        return f'{roots([4.0, -2.25, 0.0])}'
+    if k == 14:
+        return f'{blends([1.0, 2.0, 4.0, 8.0])}'
+    if k == 15:
+        return f'{blends([1.0, 0.0, 4.0, 8.0])}'
+    if k == 16:
+        return f'{blends([1.0e300, 1.0e-300, 4.0, 8.0])}'
+    if k == 17:
+        return f'{ratio(4611686018427387904, 0)}'
+    if k == 18:
+        return f'{ratio(1, 0)}'
+    if k == 19:
+        return f'{loop_calls([1, 2, 4611686018427387904 - 1, 10 ** 10, -5], [1, 2, 3, 4, 5])}'
+    if k == 20:
+        return f'{loop_calls([1, 2, 4611686018427387904 - 1, 10 ** 10, -5], [1, 2, 3, 0, 5])}'
+    if k == 21:
+        return f'{loop_calls([1, 2, 4611686018427387904 * 2], [1, 4611686018427387904 * 2, -4611686018427387904 * 4])}'
+    if k == 22:
+        return same(s.text, s.other, [1, 2, -2, 5])
+    if k == 23:
+        return f'{big_text("abc", "c", 3)}'
+    if k == 24:
+        return f'{big_text("abc", "c", -4)}'
+    if k == 25:
+        return f'{big_text("añc", "c", 3)}'
+    if k == 26:
+        return f'{big_text("añc", "c", -4)}'
+    if k == 27:
+        return f'{big_text("abc", "c", 4611686018427387904 * 4)}'
+    if k == 28:
+        return f'{big_text("", "", 0)}'
+    return ''
+
+def report(name: str, k: int, s: Args):
+    try:
+        print(name, trial(k, s))
+    catch IndexError as e:
+        print(name, 'IndexError:', e.message)
+    catch ZeroDivisionError as e:
+        print(name, 'ZeroDivisionError:', e.message)
+    catch ValueError as e:
+        print(name, 'ValueError:', e.message)
+    catch OverflowError as e:
+        print(name, 'OverflowError:', e.message)
+
+def nests():
+    s = Args()
+    for big in [-1, 0, 7, 19]:
+        g = table(4, 5, big)
+        print(sums(g, 4, 5), g)
+        print(sums(g, 4, 5))
+        print(first_past(table(4, 5, big), 8), first_past(table(4, 5, big), 4611686018427387904))
+    g = table(4, 5, -1)
+    s.g = g
+    report('rows', 1, s)
+    print(g)
+    s.g = g
+    report('cols', 2, s)
+    print(g)
+    print(knap([3, 4, 5, 9], [3, 4, 4, 10], 30), knap([3, 4, 5], [4611686018427387904 - 1, 4611686018427387904, 4611686018427387904 * 8], 20), knap([2, 3], [-4611686018427387904, 5], 9))
+    print(edit('kitten', 'sitting'), edit('naïve café', 'naive cafe'), edit('', 'abc'), edit('日本語', '日本'))
+    print(flips(7), flips(11), flips(9))
+    xs = [1, 2, 3, 4]
+    print(wrap(xs, 0), xs)
+    xs = [1, 4611686018427387904, 3, -4611686018427387904]
+    print(wrap(xs, 0), xs)
+    s.xs = xs
+    report('wrap', 3, s)
+    print(xs)
+    done = [0, 0]
+    s.done = done
+    report('divide', 4, s)
+    s.done = done
+    report('divide', 5, s)
+    s.done = done
+    report('divide', 6, s)
+    s.done = done
+    report('divide', 7, s)
+    print(done)
+    s.done = done
+    report('divide', 8, s)
+    print(done)
+    g = table(2, 4, -1)
+    ys = [1, 2, 3]
+    print(moving(ys, g), ys, g)
+    g = table(2, 4, 5)
+    ys = [4611686018427387904, -4611686018427387904, 4611686018427387904 * 2]
+    print(moving(ys, g), ys, g)
+    s.g = g
+    report('short', 9, s)
+    print(each([1, 2, 4, 9], [0.5, 1.5], [True, False]), each([4611686018427387904, 4, -4611686018427387904 * 8, 9], [], []), each([], [1.0], [True]))
+    print(growing([2, 4, 6, 8]), growing([4611686018427387904 * 4, 4611686018427387904 * 2]), growing([]))
+    print(nested_try([1, 2, 3, 4], 4), nested_try([4611686018427387904 * 2, 5], 2), apply(twice, 5))
+
+# (an infinite divisor does not show in the quotient)
+def inverse(ps: list[Pair]) -> float:
+    t = 0.0
+    for i in range(len(ps)):
+        for j in range(2):
+            p = ps[i]
+            q = p.x * p.x
+            p.v = 1.0 / q
+            t = t + p.v
+    return t
+
+def pairs(ps: list[Pair], fs: list[float]):
+    try:
+        print(inverse(ps[:1]))
+        print(mix(ps, fs))
+    catch OverflowError as e:
+        print('OverflowError:', e.message)
+    catch ZeroDivisionError as e:
+        print('ZeroDivisionError:', e.message)
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    for p in ps:
+        print(' ', p.x, p.v, p.w)
+
+def floats():
+    s = Args()
+    bs = [Body(0.0, 1.0, 1), Body(1.5, -0.5, 2), Body(4.0, 0.25, 4611686018427387904 // 9)]
+    print(bodies(bs, 5))
+    for b in bs:
+        print(b.x, b.v, b.n, b.row)
+    fs = [2.0, 3.0]
+    s.fs = fs
+    report('blow_up', 10, s)
+    print(fs)
+    s.fs = fs
+    report('blow_up', 11, s)
+    print(fs)
+    for twin in [False, True]:
+        for start in [1.0, 1.0e200, 1.0e-200]:
+            for f in [0.5, 0.0, 1.0e300]:
+                ps = [Pair(1.0, 2.0, start), Pair(start, -0.5, 0.25), Pair(3.0, 0.0, 4.0)]
+                if twin:
+                    ps[2] = ps[0]
+                pairs(ps, [f, 0.0, 1.0])
+                pairs([ps[1]], [f])
+    pairs([Pair(1.0, 2.0, -0.5)], [1.0])
+    pairs([Pair(1.0, 2.0, 1.0e308), Pair(1.0, 1.0, 1.0)], [1.0, 2.0])
+    report('roots', 12, s)
+    report('roots', 13, s)
+    print(math.sqrt(16), math.sqrt(4611686018427387904 * 4), math.sqrt(2.25), math.floor(2.5), math.floor(7), math.floor(4611686018427387904 * 8))
+    report('blends', 14, s)
+    report('blends', 15, s)
+    report('blends', 16, s)
+
+def functions():
+    s = Args()
+    for a in [0, 1, -7, 10 ** 9, 3 * 10 ** 9, 4611686018427387904 - 1, -4611686018427387904, 4611686018427387904, 4611686018427387904 * 4]:
+        print(step(a, 5), step(5, a), ratio(a, 7), ratio(a, -3), ratio(7, a - 2))
+    report('ratio', 17, s)
+    report('ratio', 18, s)
+    report('calls', 19, s)
+    report('calls', 20, s)
+    report('calls', 21, s)
+    print(bits([1, 2, 255, 256, 65537]), bits([576460752303423487, -576460752303423488, 5]), bits([-1, 0, -1000]))
+
+def texts():
+    s = Args()
+    for text in ['banana', 'bañana', '日本語日本語', 'a']:
+        for other in ['a', 'ñ', '本', '', 'an', 'b']:
+            print(same(text, other, [0, -1]))
+            s.other = other
+            s.text = text
+            report('', 22, s)
+    report('past', 23, s)
+    report('past', 24, s)
+    report('past', 25, s)
+    report('past', 26, s)
+    report('past', 27, s)
+    report('empty', 28, s)
+
+class Item:
+    key: int
+    real: float
+    at: int
+
+    @init
+    def make(self, key: int, real: float, at: int):
+        self.key = key
+        self.real = real
+        self.at = at
+
+def items(n: int, span: int, times: int) -> list[Item]:
+    out: list[Item] = []
+    for i in range(n):
+        k = (i * 7919 + 13) % 1009 % span
+        out.append(Item((k - span // 3) * times, float(k) * 0.25 - float(span), i))
+    return out
+
+def ordered(xs: list[Item], up: bool) -> bool:
+    for i in range(1, len(xs)):
+        a = xs[i - 1]
+        b = xs[i]
+        if a.key == b.key:
+            if a.at > b.at:
+                return False
+        elif (a.key < b.key) != up:
+            return False
+    return True
+
+def keyed():
+    for n in [0, 1, 2, 63, 64, 65, 200, 3000]:
+        for span in [1, 10, 256, 1000]:
+            for times in [1, 1000, 4611686018427, 4611686018427387904]:
+                xs = items(n, span, times)
+                if not ordered(sorted(xs, key=x -> x.key), True):
+                    print('wrong order', n, span, times)
+                if not ordered(sorted(xs, key=x -> -x.key), False):
+                    print('wrong falling order', n, span, times)
+                if not ordered(sorted(xs, key=x -> x.real), True):
+                    print('wrong float order', n, span, times)
+    print(sorted([5, 3, -1, 0, 8, 4611686018427387904, -4611686018427387904], key=x -> -x), sorted([4611686018427387904 * 2, 1, -4611686018427387904 * 2], key=x -> x))
+    print(sorted([x * 37 % 101 - 50 for x in range(100)], key=x -> x * x)[:20])
+    print(sorted([float(x * 37 % 101 - 50) / 4.0 for x in range(100)], key=x -> -x)[:8], sorted([0.0, -0.0, 2.5, -2.5], key=x -> x))
+    print(sorted([str(x * 37 % 101) for x in range(100)], key=s -> len(s))[:14])
+    print(sorted([x * 37 % 101 for x in range(100)], key=x -> x % 3)[:8], sorted([0] * 70 + [1], key=x -> 0)[68:])
+
+def run():
+    nests()
+    floats()
+    functions()
+    texts()
+    keyed()
+
+@main
+def main():
+    run()

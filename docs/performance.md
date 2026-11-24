@@ -120,6 +120,104 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (the suite's average at the speed goal, unreleased)
+
+The second step toward the goal below, which is about the average over the suite (Tomato ÷ Go 1.11, Tomato ÷ Rust 1.33): **the averages over the
+25 benchmarks now meet it** (0.98 and 1.27). Single programs do not all: 9 are above 1.11 times Go (spectral_norm 1.65, nbody 1.47, kmers 1.44,
+knapsack 1.41, levenshtein 1.30, strings 1.29, matmul 1.28, binary_trees 1.28, fannkuch 1.24) and 9 above 1.33 times Rust (nbody 2.60, hof 2.13,
+kmers 2.02, knapsack 1.89, spectral_norm 1.80, life 1.72, fib 1.63, binary_trees 1.59, levenshtein 1.58). One machine, and not the Mac. "Before" is `main` at `12f64cb4`, the first step. Same machine, load average 64, fastest of 11 runs in one shuffled order.
+
+| benchmark | before (s) | after (s) | after ÷ before | Go (s) | Rust (s) | Tomato ÷ Go before → after | Tomato ÷ Rust before → after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fib | 0.222 | 0.222 | 1.00 | 0.246 | 0.136 | 0.90 → 0.90 | 1.64 → 1.63 |
+| sieve | 0.434 | 0.486 | 1.12 | 0.740 | 0.535 | 0.59 → 0.66 | 0.81 → 0.91 |
+| matmul | 0.175 | 0.152 | 0.87 | 0.119 | 0.115 | 1.47 → 1.28 | 1.51 → 1.32 |
+| mandelbrot | 0.087 | 0.088 | 1.01 | 0.093 | 0.091 | 0.94 → 0.95 | 0.96 → 0.97 |
+| collatz | 0.164 | 0.165 | 1.01 | 0.267 | 0.159 | 0.61 → 0.62 | 1.03 → 1.04 |
+| strings | 0.534 | 0.554 | 1.04 | 0.429 | 0.768 | 1.24 → 1.29 | 0.69 → 0.72 |
+| sort | 0.216 | 0.223 | 1.03 | 0.385 | 0.310 | 0.56 → 0.58 | 0.70 → 0.72 |
+| wordcount | 0.267 | 0.265 | 0.99 | 0.599 | 0.413 | 0.45 → 0.44 | 0.65 → 0.64 |
+| bigint | 0.139 | 0.138 | 1.00 | 0.197 | 0.128 | 0.71 → 0.70 | 1.08 → 1.08 |
+| objects | 0.796 | 0.872 | 1.10 | 0.847 | 0.992 | 0.94 → 1.03 | 0.80 → 0.88 |
+| nbody | 0.412 | 0.211 | 0.51 | 0.143 | 0.081 | 2.87 → 1.47 | 5.09 → 2.60 |
+| spectral_norm | 0.178 | 0.106 | 0.60 | 0.064 | 0.059 | 2.77 → 1.65 | 3.02 → 1.80 |
+| fannkuch | 0.544 | 0.259 | 0.48 | 0.208 | 0.205 | 2.62 → 1.24 | 2.65 → 1.26 |
+| nqueens | 0.069 | 0.061 | 0.88 | 0.061 | 0.051 | 1.13 → 1.00 | 1.35 → 1.19 |
+| binary_trees | 0.378 | 0.376 | 0.99 | 0.293 | 0.237 | 1.29 → 1.28 | 1.59 → 1.59 |
+| levenshtein | 0.349 | 0.112 | 0.32 | 0.086 | 0.071 | 4.05 → 1.30 | 4.94 → 1.58 |
+| knapsack | 0.172 | 0.067 | 0.39 | 0.048 | 0.035 | 3.60 → 1.41 | 4.84 → 1.89 |
+| life | 0.194 | 0.132 | 0.68 | 0.119 | 0.077 | 1.64 → 1.11 | 2.53 → 1.72 |
+| dijkstra | 0.100 | 0.073 | 0.73 | 0.071 | 0.056 | 1.40 → 1.03 | 1.78 → 1.31 |
+| quicksort | 0.316 | 0.212 | 0.67 | 0.232 | 0.202 | 1.36 → 0.92 | 1.56 → 1.05 |
+| kmers | 0.359 | 0.371 | 1.03 | 0.257 | 0.183 | 1.40 → 1.44 | 1.96 → 2.02 |
+| revcomp | 0.063 | 0.071 | 1.13 | 0.561 | 0.284 | 0.11 → 0.13 | 0.22 → 0.25 |
+| tokenize | 0.233 | 0.220 | 0.95 | 0.355 | 0.302 | 0.66 → 0.62 | 0.77 → 0.73 |
+| crc32 | 0.175 | 0.171 | 0.98 | 0.217 | 0.207 | 0.81 → 0.79 | 0.84 → 0.82 |
+| hof | 0.230 | 0.187 | 0.81 | 0.317 | 0.088 | 0.72 → 0.59 | 2.61 → 2.13 |
+| **average** | | | | | | **1.39 → 0.98** | **1.83 → 1.27** |
+| geometric mean | | | | | | 1.08 → 0.88 | 1.41 → 1.15 |
+| average of the medians | | | | | | 1.35 → 0.92 | 1.86 → 1.27 |
+
+Instructions executed (callgrind, whole process, counting inputs, release mode, deterministic):
+
+| benchmark | before (M) | after (M) | after ÷ before | Rust (M) |
+| --- | ---: | ---: | ---: | ---: |
+| fib | 123.54 | 123.54 | 1.00 | 67.28 |
+| sieve | 36.69 | 30.32 | 0.83 | 24.64 |
+| matmul | 107.59 | 83.85 | 0.78 | 55.41 |
+| mandelbrot | 34.12 | 35.52 | 1.04 | 29.30 |
+| collatz | 82.13 | 82.13 | 1.00 | 46.14 |
+| strings | 69.52 | 69.52 | 1.00 | 94.28 |
+| sort | 24.02 | 22.67 | 0.94 | 35.87 |
+| wordcount | 146.13 | 146.13 | 1.00 | 240.68 |
+| bigint | 71.83 | 71.86 | 1.00 | 74.74 |
+| objects | 60.34 | 60.34 | 1.00 | 56.46 |
+| nbody | 261.11 | 115.31 | 0.44 | 30.46 |
+| spectral_norm | 122.34 | 75.87 | 0.62 | 33.42 |
+| fannkuch | 718.29 | 278.06 | 0.39 | 104.64 |
+| nqueens | 20.75 | 15.06 | 0.73 | 7.03 |
+| binary_trees | 113.54 | 111.78 | 0.98 | 107.17 |
+| levenshtein | 200.57 | 72.92 | 0.36 | 33.69 |
+| knapsack | 182.29 | 66.82 | 0.37 | 31.50 |
+| life | 138.50 | 78.72 | 0.57 | 40.56 |
+| dijkstra | 44.04 | 24.55 | 0.56 | 7.02 |
+| quicksort | 116.19 | 48.97 | 0.42 | 21.79 |
+| kmers | 136.86 | 135.02 | 0.99 | 66.90 |
+| revcomp | 16.42 | 15.62 | 0.95 | 30.83 |
+| tokenize | 39.46 | 37.38 | 0.95 | 45.33 |
+| crc32 | 57.85 | 31.45 | 0.54 | 9.71 |
+| hof | 47.34 | 38.65 | 0.82 | 21.95 |
+
+In 25 more interleaved runs of the two builds the new median was 0.92 of the old one for sieve, 0.94 for revcomp and 0.97 for objects, so their slower
+times above are noise. For kmers it was 1.09 (fastest runs 1.05): **kmers is slower**, though it executes slightly fewer instructions. Why is not known.
+
+All in release mode only, unless noted:
+
+1. **Loop nests** (`Gen.nest_loop`). An outermost `for` over a range or a list of plain numbers, or a `while`, is compiled twice with the loops in
+   it. The general copy is the ordinary code; its loop heads go to the fast copy when every int variable of the nest is small.
+   The fast copy has no big-number code: when a number is not small, an index is out of range or a float is not finite, it goes to
+   the same statement of the general copy, which does it again and raises the error if there is one. A statement compiled
+   this way (assignments to variables, fields and list items, conditions) has no effect before its one store; every other statement is the
+   ordinary code in both copies. Loops of more than 700 nodes are compiled once.
+2. **Functions that only compute with numbers** (`Mod.pure`) start over in their general copy instead of carrying big-number code, so the
+   copy for small arguments is short enough to inline. `inlinehint` on functions of up to 60 nodes.
+3. **Floats**: the test for infinity and NaN is one branch; a run of float assignments in a fast copy is tested once, before its stores
+   (`float_group`), so clang can work on several at once; `std/math` functions that take `int | float` are compiled again for floats (no box).
+4. **Text** (both modes): `text[i] == other` compares without making a one-character text.
+5. **Bitwise operators**, shifts by a constant and `%` of small numbers are inline (both modes).
+6. **`sorted(key=)`** over many whole-number or float keys is a stable radix sort when the keys span few enough digits (both modes).
+
+Test: `loop_nests` (debug; release under AddressSanitizer with the leak check). Outside the suite: 195 random programs of loop nests with big
+numbers, bad indices and lists that are replaced, swapped and resized in the loop, against Python (and about 770 on the way there); 233 of float runs, release against
+debug (267 more before the last change to `sqrt`); and every program of `tests/programs.txt` in release mode under AddressSanitizer (which found a unary minus that the fast
+copies got wrong; the test now has it).
+
+**Cost** (the compiler itself, built in release mode): 7% more IR lines, a 5% larger program; clang took 0.97 (median) to 1.12 (fastest) of the
+time before in 5 runs each, too noisy to say more. The website's `tomatoc.wasm` went from 2.00 to 2.14 MB.
+
+**What is left:** nbody (2.6 times Rust, which works on two floats at a time), hof (2.1), kmers (2.0: `dict_find_entry` and a text per key), knapsack (1.9),
+spectral_norm (1.8), life (1.7). Retaining and releasing an object per step costs nothing measurable in nbody. Nothing was measured on the Mac.
+
 ## What was done (toward the speed of Go and Rust, unreleased)
 
 Goal: averaged over the suite, about 90% of Go's speed (Tomato ÷ Go 1.11) and 75% of Rust's (Tomato ÷ Rust 1.33). Measured on
@@ -199,7 +297,7 @@ work), "after" the same with the changes above; fastest of 9 shuffled runs, same
 | average, the first ten | | | | | | 1.18 → 0.86 | 1.32 → 1.03 |
 | average, the other fifteen | | | | | | 1.91 → 1.63 | 2.83 → 2.42 |
 
-So the goal (1.11 and 1.33) is met on the first ten and **not on the whole suite**. The furthest behind: nbody, levenshtein,
+After this step the goal (1.11 and 1.33) was met on the first ten and not on the whole suite (the section above closes that). The furthest behind were: nbody, levenshtein,
 knapsack, hof, spectral_norm, fannkuch and life. The medians of these runs agree on the averages (1.52 → 1.30 for Go, 2.04 → 1.76 for Rust) but
 are noisy program by program (wordcount and life have slower medians after, and faster fastest runs).
 

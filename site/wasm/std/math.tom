@@ -508,10 +508,14 @@ export def atan2(y: int | float, x: int | float) -> Angle:
         raise ValueError('atan2(0, 0) has no angle: the point is the origin', 'E50')
     return Radians(!tomato_math2(0, b, a))
 
+# (made in a function of its own, so that sqrt stays short enough to be inlined)
+def _bad_sqrt(v: float) -> ValueError:
+    return ValueError(f'sqrt needs a number that is not negative, but got {v}', 'E51')
+
 export def sqrt(x: int | float) -> float:
     v = _f(x)
     if v < 0.0:
-        raise ValueError(f'sqrt needs a number that is not negative, but got {v}', 'E51')
+        raise _bad_sqrt(v)
     return !tomato_math1(0, v)
 
 export def cbrt(x: int | float) -> float:
