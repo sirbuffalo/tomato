@@ -2,7 +2,7 @@
 
 ## One command: `release/release.sh`
 
-Run it **on the Mac that holds the signing identities** (Davis's iMac; byre agents use the byre `bash` tool with that client, so no ssh is needed):
+Run it **on the Mac that holds the signing identities** (Davis's iMac). The iMac runs its own byre server, `https://byre-imac-1.tailcecab.ts.net`, with the tomato project shared there. An agent on another server runs the release in a terminal of that shared project (`start_terminal` and `terminal_type` with `server` and that project's `owner_id`), so no ssh is needed and the run survives the agent's turn. Davis's checkout there is in iCloud; the script never changes it, because it works in its own clone:
 
 ```sh
 release/release.sh --dry-run        # everything except publishing: no tag, no GitHub release, no push
@@ -38,7 +38,7 @@ Options: `--dry-run`, `--skip-bench`, `--no-push`, `--version X`, `--seed N`, `-
 ### One-time setup of the release Mac
 
 1. Both certificates with their private keys in the login keychain: `Developer ID Application: Davis McDowell (39BK8TGQ26)` and `Developer ID Installer: ...` (`security find-identity -v`).
-2. Let non-interactive sessions use the keys (an agent's shell is not the GUI session). In Terminal there, once, typing the login password when asked: `security unlock-keychain ~/Library/Keychains/login.keychain-db`, then `security set-key-partition-list -S apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db`. `errSecInternalComponent` from `codesign` means this is missing. The preflight signs a small test file with both identities to catch it.
+2. Let non-interactive sessions use the keys (an agent's shell is not the GUI session). In Terminal there, once, typing the login password when asked: `security unlock-keychain ~/Library/Keychains/login.keychain-db`, then `security set-key-partition-list -S apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db`. `errSecInternalComponent` from `codesign` means this is missing. The preflight signs a small test file with both identities to catch it. Also keep the keychain from locking itself: `security set-keychain-settings ~/Library/Keychains/login.keychain-db` (no `-t`, no `-l`: no timeout, no lock on sleep). `security show-keychain-info ~/Library/Keychains/login.keychain-db` must then say `no-timeout` and must not say `lock-on-sleep`; this is how the iMac is set. Tested for v0.51: signing from byre sessions on the iMac, with no prompt. **Not tested:** ssh sessions, a screen confirmed locked at the moment of signing, sleep or dark wake, and whether the setup still works after a restart. Expect to log in at the iMac once after a restart, because macOS unlocks the login keychain at login; the preflight test signature fails early if the keys are not usable.
 3. The notary login, once, in Terminal there (the app-specific password is typed there and stays in the keychain, never in a file): `xcrun notarytool store-credentials tomato-notary --apple-id APPLE_ID --team-id 39BK8TGQ26`.
 4. WASI SDK 24 unpacked in the home folder: `~/wasi-sdk-24.0-arm64-macos` (from https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-24), found automatically, or pass `--wasi-sdk`. It must be version 24: `site/wasm/build.sh` refuses another (see [The wasm files](#the-wasm-files)).
 5. `gh auth login` as an account that can push to `sirbuffalo/tomato`, and ssh access to GitHub for `git push`.
@@ -76,7 +76,7 @@ The suite also checks, without the SDK, that the committed wasm files have no de
 
 ## Signing and notarizing the package
 
-`release/sign-pkg.sh IN.pkg OUT.pkg` does the whole job and must run on a Mac that holds the signing certificates and the notary login. The build Mac has none of them (the private keys never leave Davis's MacBook Pro), so the package is copied there and back.
+`release/sign-pkg.sh IN.pkg OUT.pkg` does the whole job and must run on a Mac that holds the signing certificates and the notary login. Both identities, with usable keys, are in the login keychains of Davis's iMac (the release Mac) and MacBook Pro. Do not copy the private keys anywhere else (not to biggie, not into the repository). `release/release.sh` signs on the Mac it runs on; the manual copy-to-a-signing-Mac procedure below is only for a build Mac without the keys.
 
 Environment (defaults shown):
 

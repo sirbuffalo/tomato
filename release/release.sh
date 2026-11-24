@@ -267,7 +267,9 @@ step_preflight() {
   fi
   if [ -n "$problems" ]; then
     [ -z "${keychain_hint:-}" ] || problems="$problems
-  - keychain fix, once, in Terminal on this Mac (it asks for the login password): security unlock-keychain ~/Library/Keychains/login.keychain-db && security set-key-partition-list -S apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db   (errSecInternalComponent means the keychain is locked or its key refuses non-interactive use; over ssh add --unlock-keychain)"
+  - keychain fix, once, in Terminal on this Mac (it asks for the login password): security unlock-keychain ~/Library/Keychains/login.keychain-db && security set-key-partition-list -S apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db   (errSecInternalComponent means the keychain is locked or its key refuses non-interactive use; over ssh add --unlock-keychain)
+  - if signing works right after a login but fails later: the keychain locks itself on a timeout or on sleep. Turn that off once: security set-keychain-settings ~/Library/Keychains/login.keychain-db   (no -t, no -l; security show-keychain-info must then say no-timeout without lock-on-sleep)
+  - if this Mac was restarted: log in at it once (at the Mac or through Screen Sharing). macOS unlocks the login keychain at login; if signing still fails after that, redo the keychain fix above"
     die "preflight found problems:$problems"
   fi
   # the private clone

@@ -32,3 +32,7 @@
   For types that are written but not built, such as `dict[int, str]` and `int | None`. See the probes in `docs/architecture-review.md`, section 3.6.
 - Refill `tests/known_gaps/` and fix the drifted docs
   P26, P65, P83 and P85 in `docs/provisional.md`, the status table in `docs/specification.md`, and `docs/open-questions.md`. See `docs/architecture-review.md`, section 3.7.
+- Test unattended release signing on the iMac
+  Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
+- Re-run the Linux benchmarks on a quieter biggie
+  The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
