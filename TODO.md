@@ -1,5 +1,3 @@
-- Move the v0.50 tag to the merge commit
-  After merge, move the v0.50 tag to the merge commit (the release was created with --target main before the version bump landed); assets are unaffected.
 - Cut the remaining per-iteration cost of the mandelbrot loop
   At counting input 250, Tomato ÷ Go is 1.97 in instructions executed. The hot loop still pays for 3 float checks and the tagged counter `i` (tag tests, overflow-checked add). Removing the counter checks needs range reasoning such as proving that `i + 1` is small when `0 <= i < 100`.
 - Teach the expression-position type parser the comma form `tuple[A, B]`
