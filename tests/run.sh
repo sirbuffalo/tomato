@@ -470,9 +470,18 @@ check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"versio
 check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
 check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | sha256 | cut -d' ' -f1)" "$(sed -n 1p site/wasm/SOURCE.sha256 2>/dev/null)"
 check "the checked-in wasm files are the ones that were built" "$(sed -n 2,3p site/wasm/SOURCE.sha256)" "$(sha256 site/wasm/tomatoc.wasm site/wasm/runtime.wasm | cut -d' ' -f1)"
-if [ -n "$WASI_SDK" ]; then   # with the toolchain, rebuild and compare byte for byte
-  cp -R site/wasm "$work/wasm_orig"; WASI_SDK="$WASI_SDK" sh site/wasm/build.sh > /dev/null 2>&1
-  cmp -s site/wasm/tomatoc.wasm "$work/wasm_orig/tomatoc.wasm" && cmp -s site/wasm/runtime.wasm "$work/wasm_orig/runtime.wasm" && ok "wasm files rebuild identically" || bad "wasm files rebuild identically" "run site/wasm/build.sh and commit"
+if [ -n "$WASI_SDK" ]; then
+  if [ "$(uname -s)" = Linux ]; then
+    echo "skip wasm rebuild comparison on Linux (canonical build: macOS arm64, WASI SDK 24)"
+  else
+    cp -R site/wasm "$work/wasm_orig"
+    if WASI_SDK="$WASI_SDK" sh site/wasm/build.sh > /dev/null 2>&1 &&
+       cmp -s site/wasm/tomatoc.wasm "$work/wasm_orig/tomatoc.wasm" && cmp -s site/wasm/runtime.wasm "$work/wasm_orig/runtime.wasm"; then
+      ok "wasm files rebuild identically"
+    else
+      bad "wasm files rebuild identically" "rebuild on macOS arm64 with WASI SDK 24 and commit"
+    fi
+  fi
 fi
 
 echo; echo "$passes passed, $fails failed"
