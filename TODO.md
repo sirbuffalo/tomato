@@ -14,8 +14,6 @@
   `benchmarks/run.sh --site` there, so the live page gets the new Tomato numbers, the fifteen newer benchmarks and the eight added languages; then update the page's text, which still describes the v0.51 numbers.
 - Stop retaining the loop item in `for x in xs` when the body cannot change any list
   Needs a whole-program check of which functions change lists; about 8 of the instructions per item in `objects`.
-- Divide big integers 64 bits at a time
-  Division still works 32 bits at a time; a fuzz program with very large numbers took 70 s against Python's 3 s.
 - Use `epoll`/`kqueue` for descriptor waits
   With 4,000 idle sockets a round trip takes about 20 ms, because `poll` itself is slow.
 - Let sockets, requests and timeouts run while a task waits for input

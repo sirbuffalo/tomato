@@ -375,6 +375,14 @@ t_bigfloat() { # floats of any size, at the C level: fixed cases, then random on
 section "== memory: floats of any size (the C runtime; the compiler does not use them yet) =="
 spawn t_bigfloat
 
+t_bigdiv() {
+  if clang -O1 -w -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -o "$work/bigdiv" tests/bigdiv.c -lm 2> "$work/e"; then
+    out="$("$work/bigdiv" 2>&1 | head -14)"
+    [ "$out" = ok ] && ok "big integer division (asan and ubsan, against bitwise division)" || bad "big integer division" "$out"
+  else bad "big integer division" "tests/bigdiv.c does not build: $(head -3 "$work/e")"; fi
+}
+spawn t_bigdiv
+
 t_sort_fallback() {
   "$c1" tests/programs/native_sort.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -o "$work/p" "$work/p.ll" "$(rtcache_get "$work" o "$root/runtime/tomato_rt.c" -O1 -w -DSORT_DEPTH_MUL=0)" -lm && "$work/p" > "$work/out" 2>&1
   check "sort with the depth limit forced to 0" "$(cat tests/expected/native_sort.main.out)" "$(cat "$work/out")"

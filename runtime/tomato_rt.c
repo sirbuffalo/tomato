@@ -4472,47 +4472,90 @@ ALWAYS int64_t tomato_int_mul_c(int64_t x, int64_t y, int32_t m) {
 }
 ALWAYS int64_t tomato_int_mul(int64_t x, int64_t y) { return tomato_int_mul_c(x, y, 0); }
 
-/* magnitude division (Knuth algorithm D): q = u / v, r = u % v; q has un limbs, r has vn limbs; v is not zero */
+/* magnitude division (Knuth algorithm D), in base 2^64. Storage remains 32-bit limbs.
+ * q has un limbs, r has vn limbs; v is nonzero and both inputs are normalized. */
 static void mag_divmod(const uint32_t *u, int64_t un, const uint32_t *v, int64_t vn, uint32_t *q, uint32_t *r) {
+    typedef unsigned __int128 u128;
     memset(q, 0, (size_t)un * 4); memset(r, 0, (size_t)vn * 4);
     if (mag_cmp(u, un, v, vn) < 0) { memcpy(r, u, (size_t)un * 4); return; }
-    if (vn == 1) {
+    if (vn == 1) { /* A 32-bit divisor needs no 128-bit division or temporary arrays. */
         uint64_t rem = 0;
-        for (int64_t i = un - 1; i >= 0; i--) { uint64_t cur = (rem << 32) | u[i]; q[i] = (uint32_t)(cur / v[0]); rem = cur % v[0]; }
+        for (int64_t i = un; i-- > 0;) {
+            uint64_t cur = (rem << 32) | u[i];
+            q[i] = (uint32_t)(cur / v[0]); rem = cur % v[0];
+        }
         r[0] = (uint32_t)rem; return;
     }
-    int s = __builtin_clz(v[vn - 1]);
-    uint32_t *vn_ = malloc((size_t)vn * 4), *un_ = malloc((size_t)(un + 1) * 4);
-    if (!vn_ || !un_) out_of_memory();
-    for (int64_t i = vn - 1; i > 0; i--) vn_[i] = s ? (v[i] << s) | (v[i - 1] >> (32 - s)) : v[i];
-    vn_[0] = v[0] << s;
-    un_[un] = s ? u[un - 1] >> (32 - s) : 0;
-    for (int64_t i = un - 1; i > 0; i--) un_[i] = s ? (u[i] << s) | (u[i - 1] >> (32 - s)) : u[i];
-    un_[0] = u[0] << s;
-    for (int64_t j = un - vn; j >= 0; j--) {
-        uint64_t num = ((uint64_t)un_[j + vn] << 32) | un_[j + vn - 1];
-        uint64_t qhat = num / vn_[vn - 1], rhat = num % vn_[vn - 1];
-        while (qhat >= ((uint64_t)1 << 32) || qhat * vn_[vn - 2] > ((rhat << 32) | un_[j + vn - 2])) {
-            qhat--; rhat += vn_[vn - 1];
-            if (rhat >= ((uint64_t)1 << 32)) break;
+    int64_t nu = (un + 1) / 2, nv = (vn + 1) / 2;
+    uint64_t *uu = calloc((size_t)nu + 1, sizeof(uint64_t));
+    uint64_t *vv = calloc((size_t)nv, sizeof(uint64_t));
+    if (!uu || !vv) out_of_memory();
+    for (int64_t i = 0; i < un; i++) uu[i / 2] |= (uint64_t)u[i] << (32 * (i % 2));
+    for (int64_t i = 0; i < vn; i++) vv[i / 2] |= (uint64_t)v[i] << (32 * (i % 2));
+    if (nv == 1) {
+        uint64_t rem = 0;
+        for (int64_t i = nu; i-- > 0;) {
+            u128 cur = ((u128)rem << 64) | uu[i];
+            uint64_t digit = (uint64_t)(cur / vv[0]); rem = (uint64_t)(cur % vv[0]);
+            q[2 * i] = (uint32_t)digit;
+            if (2 * i + 1 < un) q[2 * i + 1] = (uint32_t)(digit >> 32);
         }
-        int64_t borrow = 0; uint64_t carry = 0;
-        for (int64_t i = 0; i < vn; i++) {
-            uint64_t p = qhat * vn_[i] + carry; carry = p >> 32;
-            int64_t t = (int64_t)un_[i + j] - borrow - (int64_t)(p & 0xFFFFFFFFu);
-            un_[i + j] = (uint32_t)t; borrow = t < 0 ? 1 : 0;
-        }
-        int64_t t = (int64_t)un_[j + vn] - borrow - (int64_t)carry;
-        un_[j + vn] = (uint32_t)t;
-        if (t < 0) {
-            qhat--; uint64_t c = 0;
-            for (int64_t i = 0; i < vn; i++) { uint64_t s2 = (uint64_t)un_[i + j] + vn_[i] + c; un_[i + j] = (uint32_t)s2; c = s2 >> 32; }
-            un_[j + vn] += (uint32_t)c;
-        }
-        q[j] = (uint32_t)qhat;
+        r[0] = (uint32_t)rem; if (vn > 1) r[1] = (uint32_t)(rem >> 32);
+        free(uu); free(vv); return;
     }
-    for (int64_t i = 0; i < vn; i++) r[i] = s ? (un_[i] >> s) | ((uint64_t)un_[i + 1] << (32 - s)) : un_[i];
-    free(vn_); free(un_);
+    int s = __builtin_clzll(vv[nv - 1]);
+    if (s) {
+        for (int64_t i = nv - 1; i > 0; i--) vv[i] = (vv[i] << s) | (vv[i - 1] >> (64 - s));
+        vv[0] <<= s;
+        uu[nu] = uu[nu - 1] >> (64 - s);
+        for (int64_t i = nu - 1; i > 0; i--) uu[i] = (uu[i] << s) | (uu[i - 1] >> (64 - s));
+        uu[0] <<= s;
+    }
+    for (int64_t j = nu - nv; j >= 0; j--) {
+        uint64_t qhat, rhat;
+        int overflow = 0;
+        if (uu[j + nv] == vv[nv - 1]) {
+            qhat = UINT64_MAX;
+            overflow = __builtin_add_overflow(uu[j + nv - 1], vv[nv - 1], &rhat);
+        } else {
+            u128 num = ((u128)uu[j + nv] << 64) | uu[j + nv - 1];
+            qhat = (uint64_t)(num / vv[nv - 1]); rhat = (uint64_t)(num % vv[nv - 1]);
+        }
+        while (!overflow && (u128)qhat * vv[nv - 2] > ((u128)rhat << 64 | uu[j + nv - 2])) {
+            qhat--; overflow = __builtin_add_overflow(rhat, vv[nv - 1], &rhat);
+        }
+        uint64_t carry = 0, borrow = 0;
+        for (int64_t i = 0; i < nv; i++) {
+            u128 p = (u128)qhat * vv[i] + carry;
+            carry = (uint64_t)(p >> 64);
+            uint64_t t, d;
+            int b1 = __builtin_sub_overflow(uu[j + i], (uint64_t)p, &t);
+            int b2 = __builtin_sub_overflow(t, borrow, &d);
+            uu[j + i] = d; borrow = (uint64_t)(b1 | b2);
+        }
+        uint64_t t, d;
+        int b1 = __builtin_sub_overflow(uu[j + nv], carry, &t);
+        int b2 = __builtin_sub_overflow(t, borrow, &d);
+        uu[j + nv] = d;
+        if (b1 | b2) {
+            qhat--; uint64_t c = 0;
+            for (int64_t i = 0; i < nv; i++) {
+                uint64_t t2, sum;
+                int c1 = __builtin_add_overflow(uu[j + i], vv[i], &t2);
+                int c2 = __builtin_add_overflow(t2, c, &sum);
+                uu[j + i] = sum; c = (uint64_t)(c1 | c2);
+            }
+            uu[j + nv] += c;
+        }
+        q[2 * j] = (uint32_t)qhat;
+        if (2 * j + 1 < un) q[2 * j + 1] = (uint32_t)(qhat >> 32);
+    }
+    for (int64_t i = 0; i < vn; i++) {
+        int64_t w = i / 2;
+        uint64_t x = s ? (uu[w] >> s) | (uu[w + 1] << (64 - s)) : uu[w];
+        r[i] = (uint32_t)(x >> (32 * (i % 2)));
+    }
+    free(uu); free(vv);
 }
 
 int32_t tomato_int_sign(int64_t x) {

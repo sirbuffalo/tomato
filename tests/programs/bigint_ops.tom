@@ -94,3 +94,13 @@ def main():
     m = 2 ** 62
     print(m, m - 1, m + 1, -m, -m - 1, 2 ** 63, -(2 ** 63), 4611686018427387903 + 1)
     print(m * 2 == 2 ** 63, (m + m) // 2 == m, huge(21) // huge(20))
+    # Exact and inexact division across 64-bit word boundaries, for each sign pair.
+    for bits in [63, 64, 65, 127, 128, 129, 191, 192, 193]:
+        divisor = 2 ** bits + 3
+        quotient = 2 ** (bits + 5) + 7
+        dividend = divisor * quotient + 2
+        print(dividend // divisor == quotient, dividend % divisor == 2,
+              -dividend // divisor == -quotient - 1, -dividend % divisor == divisor - 2,
+              dividend // -divisor == -quotient - 1, dividend % -divisor == 2 - divisor,
+              -dividend // -divisor == quotient, -dividend % -divisor == -2,
+              (divisor * quotient) // -divisor == -quotient, (divisor * quotient) % -divisor == 0)
