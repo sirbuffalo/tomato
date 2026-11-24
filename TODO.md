@@ -16,3 +16,5 @@
   After Davis answers the questions in `docs/wave2-api-sheets.md`, start build tasks for the approved sheets: `re` and hashing first (Sonnet-sized, pure Tomato), then os/sys, then testing.
 - Build Lock/Semaphore/Event on the Queue's waiter primitive
   After Davis answers the decisions in `docs/locks-design.md` section 9, build Lock/Semaphore/Event on the Queue's waiter primitive.
+- Fix today's int to float bugs (stage 0 of docs/bigfloat-design.md)
+  `float(huge)` silently gives `inf`, big ints round wrong, `10**400 / 10**399` raises although D05ad says 10.0, `sqrt` of a huge int gives `inf`.
