@@ -66,7 +66,7 @@ and the claims in the status table.
 
 ## Suspected compiler and runtime bugs found while checking (not fixed; compiler source is out of scope)
 
-- `set.discard(x)` is rejected (`set has no method 'discard'`) although the error lists `discard` among the set's methods
+- (Fixed since: `set.discard(x)` now works and has a regression test, `tests/programs/set_discard.tom`.) `set.discard(x)` was rejected (`set has no method 'discard'`) although the error lists `discard` among the set's methods
   (`no_method` in `compiler/src/compiler.tom`); `set_method` implements only `add` and `remove`. The lint's loop-change
   warning also lists `discard`.
 - `c: list[int[length=8]] = []` fails with E318 "this variable cannot be given a type automatically, write its type such as

@@ -5206,7 +5206,7 @@ class Gen:
         raise CompileError(self.no_method(name, d.ty), line)
 
     def set_method(self, st: Ex, name: str, args: list[Node], line: int) -> Ex:
-        if (name == 'add' or name == 'remove') and len(args) == 1:
+        if (name == 'add' or name == 'remove' or name == 'discard') and len(args) == 1:
             held_before = len(self.held)
             self.hold(st)
             v = self.expr(args[0], set_elem(st.ty))
@@ -5215,6 +5215,8 @@ class Gen:
             kw = self.key_word(v)
             if name == 'add':
                 self.emit(f'call ptr @tomato_dict_insert(ptr {st.reg}, i64 {kw}, i32 0)')
+            elif name == 'discard':
+                self.emit(f'call i32 @tomato_dict_delete(ptr {st.reg}, i64 {kw})')
             else:
                 slot = self.tmp('slot')
                 self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {st.reg}, i64 {kw})')

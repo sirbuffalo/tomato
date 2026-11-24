@@ -1,0 +1,36 @@
+# set.discard(x) removes x if it is there and does nothing if it is not (remove raises in that case)
+@main
+def main():
+    s: set[int] = {1, 2, 3}
+    s.discard(2)
+    s.discard(9)
+    print(len(s), 1 in s, 2 in s, 3 in s)
+    s.discard(2)
+    s.discard(1 + 2)
+    print(len(s))
+    s.add(4)
+    s.discard(4)
+    s.discard(4)
+    print(len(s), 4 in s)
+
+    big: set[int] = {10 ** 30, 5}
+    big.discard(10 ** 30)
+    big.discard(10 ** 31)
+    print(len(big), 5 in big)
+
+    words: set[str] = {'a', 'b'}
+    w = 'a'
+    words.discard(w)
+    words.discard('zz' + 'z')
+    words.discard('a')
+    print(len(words), 'a' in words, 'b' in words)
+
+    flags: set[bool] = {True}
+    flags.discard(False)
+    flags.discard(True)
+    print(len(flags))
+
+    try:
+        words.remove('a')
+    catch Error as e:
+        print("remove still raises:", e.message)
