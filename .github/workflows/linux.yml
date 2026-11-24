@@ -1,0 +1,45 @@
+name: Linux tests (LeakSanitizer)
+# macOS cannot run LeakSanitizer, so leaks on error paths went unnoticed there. This runs the same tests/run.sh on Linux x86-64, where
+# every `-fsanitize=address` build in the "memory" section of the suite also reports leaks (ASAN_OPTIONS detect_leaks=1).
+# The pages.yml workflow keeps the macOS run (jsc) and the website deploy; this one only reports.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    # a pinned image (not ubuntu-latest) so a runner upgrade never changes the clang or kernel under the sanitizers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      LLVM_VERSION: "18"
+      # the wasm checks run each program with a 5 s limit; a shared runner can be much slower than a Mac, so give them room (native/tomato-jsc.js)
+      TOMATO_WASM_TIMEOUT_MS: "30000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"   # tests/run.sh runs the wasm checks through native/jsc-on-node.js (macOS has jsc instead)
+      - name: Install clang, llvm-symbolizer and expect
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "clang-$LLVM_VERSION" "llvm-$LLVM_VERSION" expect
+          # tests/run.sh calls plain `clang`
+          mkdir -p "$HOME/llvm-bin"
+          ln -sf "/usr/bin/clang-$LLVM_VERSION" "$HOME/llvm-bin/clang"
+          echo "$HOME/llvm-bin" >> "$GITHUB_PATH"
+          # so a sanitizer report shows function names and lines, not raw addresses
+          echo "ASAN_SYMBOLIZER_PATH=/usr/lib/llvm-$LLVM_VERSION/bin/llvm-symbolizer" >> "$GITHUB_ENV"
+          echo "ASAN_OPTIONS=detect_leaks=1:symbolize=1:abort_on_error=0" >> "$GITHUB_ENV"
+      - name: Allow AddressSanitizer on new kernels (it can crash at start when ASLR uses 32 bits)
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: Versions
+        run: clang --version | head -1 && "$ASAN_SYMBOLIZER_PATH" --version | head -1 && node --version
+      - name: tests/run.sh
+        run: tests/run.sh

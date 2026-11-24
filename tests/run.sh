@@ -54,8 +54,9 @@ echo "== memory (AddressSanitizer and the runtime's leak check) =="
 for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:$work" "tests/programs/json_files:$work" "tests/programs/msgpack_files:$work" "tests/programs/msgpack_file_basics:$work" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/union_show:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/dict_literal_inference:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/programs/utf8_invalid:" "tests/programs/async_tasks:" "tests/programs/async_cancel:" "tests/programs/async_sleep:" "tests/programs/error_path_release:" "tests/programs/int_ranges:" "tests/runtime/error_classes:" "tests/programs/time_module:"; do
   path="${spec%%:*}"; name="$(basename "$path")"; arg="${spec#*:}"
   "$work/c1" "$path.tom" main std/ > "$work/p.ll" 2>/dev/null
+  # a failure shows the head of the sanitizer report (with ASAN_SYMBOLIZER_PATH set, as the Linux CI job does, that includes the leaking allocation's stack)
   if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
-    out="$("$work/asan" $arg 2>&1 >/dev/null | head -3)"
+    out="$("$work/asan" $arg 2>&1 >/dev/null | head -14)"
     [ -z "$out" ] && ok "asan $name" || bad "asan $name" "$out"
   else bad "asan $name" "this clang cannot build with -fsanitize=address"; fi
 done
@@ -73,7 +74,7 @@ if clang -O1 -w -o "$work/httpd" tests/http_server.c 2>/dev/null; then
   if clang -O1 -w -o "$work/rq" "$work/rq.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
     check "requests against the local server" "$(cat tests/expected/requests_local.main.out)" "$("$work/rq" "http://127.0.0.1:$port" 2>&1)"
     if clang -O1 -w -g -fsanitize=address -o "$work/rq_asan" "$work/rq.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
-      out="$("$work/rq_asan" "http://127.0.0.1:$port" 2>&1 >/dev/null | head -3)"
+      out="$("$work/rq_asan" "http://127.0.0.1:$port" 2>&1 >/dev/null | head -14)"
       [ -z "$out" ] && ok "asan requests_local" || bad "asan requests_local" "$out"
     else bad "asan requests_local" "this clang cannot build with -fsanitize=address"; fi
     # five requests that each take 1 s must overlap: the whole run is far below 5 s

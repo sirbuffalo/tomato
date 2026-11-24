@@ -66,13 +66,15 @@ function emit(text, stream) {   // jsc's print adds a newline, so one trailing n
   var t = text.charAt(text.length - 1) === "\n" ? text.slice(0, -1) : text;
   if (stream === "err") printErr(t); else print(t);
 }
+// the run limit: 5 s, or TOMATO_WASM_TIMEOUT_MS when it is set (only where there is a `process`, i.e. under node on Linux; the Linux CI sets it because hosted runners are slower than a Mac)
+var limitMs = (typeof process !== "undefined" && process.env && Number(process.env.TOMATO_WASM_TIMEOUT_MS)) || 5000;
 function finish(code) { printErr("~rc " + code); }
 tw.compile(source, "main", extra).then(function (c) {
   if (mode === "compile") { emit(c.ok ? c.ir : c.error, c.ok ? "out" : "err"); finish(c.ok ? 0 : 1); return; }
   if (!c.ok) { emit(c.error, "err"); finish(1); return; }
-  return tw.run(c.ir, { inputs: [], stdin: stdinFile ? new TextDecoder().decode(bin(stdinFile)) : "", ask: ask, timeoutMs: 5000 }).then(function (r) {
+  return tw.run(c.ir, { inputs: [], stdin: stdinFile ? new TextDecoder().decode(bin(stdinFile)) : "", ask: ask, timeoutMs: limitMs }).then(function (r) {
     emit(r.stdout, "out"); emit(r.stderr, "err");
-    if (r.timedOut) printErr("error[E369]: the program ran longer than 5 seconds");
+    if (r.timedOut) printErr("error[E369]: the program ran longer than " + limitMs / 1000 + " seconds");
     finish(r.code);
   });
 }).catch(function (e) { printErr("error[E370]: " + (e && e.message || e)); finish(1); });
