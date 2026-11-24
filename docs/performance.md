@@ -4,7 +4,43 @@ What the benchmarks (`benchmarks/`, results on the website's Benchmarks page) sa
 what has been done about it. Every change below was measured with `benchmarks/run.sh` on the same Apple M1 (release
 mode, median seconds) and kept only when it helped.
 
-## v0.50 snapshot
+## v0.51 snapshot
+
+v0.51, median of 10 runs per program (Python too), all runs in one shuffled order (seed 1), Apple M1, load average (1, 5 and 15 minutes) 1.40 1.97 2.33 before and 3.00 2.56 2.39 after. Written by `release/perf-snapshot.sh` from `benchmarks/results/results.md`, which has the full tables. Seconds (release mode): fib 0.156, sieve 0.068, matmul 0.144, mandelbrot 0.102, collatz 0.206, strings 0.178, sort 0.111, wordcount 0.207, bigint 0.111, objects 0.113.
+
+Linux x86-64 (`benchmarks/results/linux-x86_64/results.md`): AMD Ryzen Threadripper 3990X 64-Core Processor, 128 cores, median of 10 runs, seed 1, load average 77.33 before and 73.50 after (a shared machine: read its times with that load in mind). Seconds (release mode): fib 0.721, sieve 1.511, matmul 0.808, mandelbrot 0.305, collatz 0.284, strings 2.030, sort 0.518, wordcount 0.440, bigint 0.164, objects 1.627.
+
+Tomato's time divided by each language's time (below 1.0 Tomato is faster, above 1.0 it is slower):
+
+| benchmark | Tomato ÷ Go (Mac) | Tomato ÷ Rust (Mac) | Tomato ÷ Python (Mac) | Tomato ÷ Go (Linux) | Tomato ÷ Rust (Linux) | Tomato ÷ Python (Linux) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| fib | 1.12 | 1.26 | 0.02 | 2.66 | 5.13 | 0.14 |
+| sieve | 1.18 | 1.28 | 0.02 | 0.97 | 0.99 | 0.14 |
+| matmul | 2.35 | 2.23 | 0.02 | 2.16 | 6.42 | 0.04 |
+| mandelbrot | 1.08 | 1.15 | 0.01 | 3.07 | 3.21 | 0.02 |
+| collatz | 1.07 | 1.52 | 0.01 | 1.04 | 1.74 | 0.01 |
+| strings | 1.35 | 1.66 | 0.19 | 2.06 | 1.99 | 0.55 |
+| sort | 0.45 | 1.40 | 0.05 | 0.96 | 0.94 | 0.06 |
+| wordcount | 0.89 | 0.64 | 0.14 | 0.42 | 0.96 | 0.21 |
+| bigint | 1.56 | 1.03 | 0.17 | 0.37 | 1.22 | 0.45 |
+| objects | 1.17 | 1.94 | 0.02 | 1.19 | 1.14 | 0.14 |
+
+Instructions executed (deterministic, `benchmarks/count.sh`, callgrind), Tomato's count divided by each language's (below 1.0 Tomato executes fewer): arm64 in a Linux VM on the Mac, and x86-64 on the Linux machine.
+
+| benchmark | Tomato ÷ Go (arm64) | Tomato ÷ Rust (arm64) | Tomato ÷ Python (arm64) | Tomato ÷ Go (x86-64) | Tomato ÷ Rust (x86-64) | Tomato ÷ Python (x86-64) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| fib | 1.15 | 2.16 | 0.04 | 3.32 | 5.09 | 0.10 |
+| sieve | 1.93 | 1.75 | 0.02 | 4.25 | 3.99 | 0.04 |
+| matmul | 2.51 | 2.38 | 0.02 | 6.91 | 6.99 | 0.07 |
+| mandelbrot | 1.96 | 2.19 | 0.01 | 2.67 | 3.50 | 0.01 |
+| collatz | 1.51 | 1.52 | 0.01 | 1.33 | 1.53 | 0.01 |
+| strings | 1.18 | 1.33 | 0.16 | 1.20 | 1.35 | 0.22 |
+| sort | 1.10 | 1.99 | 0.05 | 1.41 | 1.98 | 0.07 |
+| wordcount | 0.74 | 0.57 | 0.14 | 0.96 | 0.77 | 0.20 |
+| bigint | 2.03 | 0.95 | 0.39 | 1.57 | 1.34 | 0.27 |
+| objects | 1.21 | 1.90 | 0.04 | 1.52 | 2.62 | 0.08 |
+
+## v0.50 snapshot (earlier)
 
 v0.50, median of 10 runs per program (Python too), all runs in one shuffled order (seed 1), Apple M1, load average about
 1.84 (1 minute) before and 1.60 after, with a 15-minute load of 2.93 before the run (iCloud sync and background indexing), so Go and Rust show wide spreads and their ratios may be somewhat inflated. Full tables in `benchmarks/results/results.md`. Seconds
