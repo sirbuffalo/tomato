@@ -3833,6 +3833,17 @@ class Gen:
 
     def type_operand(self, n: Node) -> str:
         # the right side of `x in Type` (D23f): a type name that is not a variable; '' when it is something else
+        if n.kind == 'Index':
+            # a type with type arguments: tuple[str, int], list[int], set[str] or dict[str, int]
+            base = val_node(n.fields[0])
+            if base.kind == 'Name' and base.fields[0].text not in self.slots and base.fields[0].text in ['tuple', 'list', 'set', 'dict'] and n.fields[1].tag == 'n':
+                saved = self.mod.cur
+                tt = self.mod.type_name(vn(self.type_node_of(n)))
+                self.mod.cur = saved
+                if tt == '':
+                    raise CompileError('this type is not supported here', n.line)
+                return tt
+            return ''
         if n.kind != 'Name':
             return ''
         name = n.fields[0].text
@@ -4255,7 +4266,16 @@ class Gen:
         if n.kind == 'Index':
             base = val_node(n.fields[0])
             if base.kind == 'Name' and n.fields[1].tag == 'n':
-                return mk('TypeRef', n.line, [vs(base.fields[0].text), vz(), vn(self.type_node_of(val_node(n.fields[1]))), vz()])
+                arg = val_node(n.fields[1])
+                if arg.kind == 'TupleLit':
+                    # several types in one index: tuple[str, int] (a fixed length, an own type per item) or dict[str, int]
+                    parts = [self.type_node_of(item) for item in val_nodes(arg.fields[0])]
+                    if base.fields[0].text == 'tuple':
+                        return mk('TypeRef', n.line, [vs('tuple'), vz(), vnodes(parts), vz()])
+                    if base.fields[0].text == 'dict' and len(parts) == 2:
+                        return mk('TypeRef', n.line, [vs('dict'), vz(), vn(parts[0]), vn(parts[1])])
+                    raise CompileError(f"'{base.fields[0].text}' does not take several types here\nonly tuple[A, B] and dict[K, V] are written with more than one type", n.line)
+                return mk('TypeRef', n.line, [vs(base.fields[0].text), vz(), vn(self.type_node_of(arg)), vz()])
         raise CompileError('this is not a type\nwrite the type of the items, such as Stack[str]()', n.line)
 
     # Name[Type](args): a generic class or function used with its type argument written out

@@ -1107,7 +1107,14 @@ export class Parser:
                 lo = vz()
                 if not self.is_op(':'):
                     lo = vn(self.expr())
-                if self.accept_op(':'):
+                if lo.tag == 'n' and self.is_op(','):
+                    # several types in one index, as in tuple[str, int] or dict[str, int]: the index is a tuple of them
+                    parts: list[Node] = [val_node(lo)]
+                    while self.accept_op(','):
+                        parts.append(self.expr())
+                    self.expect_op(']')
+                    e = mk('Index', ln, [vn(e), vn(mk('TupleLit', ln, [vnodes(parts)]))])
+                elif self.accept_op(':'):
                     hi = vz()
                     step = vz()
                     if not self.is_op(']') and not self.is_op(':'):

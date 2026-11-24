@@ -1,0 +1,51 @@
+# The comma form of a tuple type where a type stands inside an expression: `x in tuple[str, int]` tells which member of a
+# union a value is (and narrows it), and `Box[tuple[str, int]](...)` gives a generic its type argument.
+class Box[T]:
+    item: T
+
+    @init
+    def make(self, item: T):
+        self.item = item
+
+    def get(self) -> T:
+        return self.item
+
+def first[T](xs: list[T]) -> T:
+    return xs[0]
+
+def describe(x: int | tuple[str, int]) -> str:
+    if x in tuple[str, int]:
+        return f'pair {x[0]} {x[1] + 1}'
+    return f'number {x + 1}'
+
+def kind(x: int | tuple[str, int] | tuple[int, bool] | list[int]) -> str:
+    if x in tuple[str, int]:
+        return 'str-int pair'
+    elif x in tuple[int, bool]:
+        return 'int-bool pair'
+    elif x in list[int]:
+        return f'list of {len(x)}'
+    return 'int'
+
+@main
+def main():
+    print(describe(3), describe(('a', 1)))
+    print(kind(1), kind(('a', 1)), kind((2, True)), kind([5, 6, 7]))
+    u: int | tuple[str, int] = ('z', 26)
+    print(u in tuple[str, int], u in int, u in tuple[int, bool])
+    u = 5
+    print(u in tuple[str, int], u in int)
+
+    # explicit generic arguments
+    b = Box[tuple[str, int]](('a', 1))
+    print(b.get(), b.get()[1] + 1, b.item[0])
+    c = Box[tuple[str, list[int]]](('k', [1, 2]))
+    c.item[1].append(3)
+    print(c.get())
+    d = Box[dict[str, int]]({'k': 2})
+    print(d.get(), d.get()['k'])
+    e = Box[tuple[tuple[int, str], float]](((1, 'x'), 2.5))
+    print(e.get(), e.get()[0][1])
+    print(first[tuple[int, str]]([(1, 'x'), (2, 'y')]))
+    pairs: list[tuple[str, int]] = [('p', 1)]
+    print(Box[list[tuple[str, int]]](pairs).get())

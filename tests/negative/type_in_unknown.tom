@@ -1,0 +1,5 @@
+@main
+def main():
+    x: int | str = 1
+    if x in tuple[str, nothing]:
+        print(1)

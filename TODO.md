@@ -1,5 +1,3 @@
-- Teach the expression-position type parser the comma form `tuple[A, B]`
-  Mixed-type tuple types parse only in annotations, so `x in tuple[str, int]` (which would narrow a union such as `int | tuple[str, int]`) and explicit generic arguments such as `Box[tuple[str, int]](('a', 1))` fail with `expected ']', but found ','`. Inference from arguments and `Box[tuple[str, int]]` in an annotation already work; see P89 in `docs/provisional.md`.
 - Build Wave 1 of the next-features plan as Sonnet tasks
   See `docs/next-features.md`, section 6. Everyday built-ins, text methods and math additions (item 1); `random`/`secrets`/`uuid` (4); `urllib.parse`, `html` and `base64` (5); the `csv`/`textwrap`/`statistics` pack (7); `datetime` (11). Each starts only after Davis approves its API sheet.
 - Assign a stronger agent to the async toolkit, then the scheduler fd-waiter and `socket` module

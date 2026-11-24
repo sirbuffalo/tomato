@@ -120,3 +120,4 @@ unicode_class
 mixed_tuples
 union_show
 time_module
+tuple_type_args
