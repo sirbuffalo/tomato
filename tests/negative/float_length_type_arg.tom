@@ -1,0 +1,11 @@
+class Box[T]:
+    item: T
+
+    @init
+    def make(self, item: T):
+        self.item = item
+
+@main
+def main():
+    b = Box[float[length=16]](1.5)
+    print(b.item)

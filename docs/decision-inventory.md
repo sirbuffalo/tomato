@@ -225,7 +225,8 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 197. D76a is accepted: `std/asyncio.tom` (`import asyncio`): `gather(tasks)` (results in list order, first failure in list order raised after all finish), `wait_all(tasks)` (the same for tasks whose results are not wanted), `wait_for(t, seconds)` raising `asyncio.TimeoutError` after cancelling t and waiting for it, and `Queue[T](maxsize)` with async `put`/`get`; awaiting a finished task again gives its result (D51b, fixed).
 198. D76b is accepted: cancelling a task waiting in `await f(...)` cancels the call it awaits, down to the innermost wait (as in Python); a task made with `start` and awaited with `await t` keeps D58d (only the waiter is cancelled).
 199. D76c is accepted: `std/socket.tom` (`import socket`): TCP `connect`, `listen`/`accept`, `send(list[int])`, `send_text`, `recv(n)`, `recv_line`, `close`, a `SocketError` family; descriptor waits in the scheduler shared with libcurl; native only. UDP and `getaddrinfo` later.
-200. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+200. D77a is accepted: `float` becomes arbitrary-size (a big-int exponent, a 53-bit mantissa, a plain double whenever it fits; tiny numbers too), `float[length=64]` names the plain IEEE double with an overflow error as today (no `float[length=32]`), no optional-returning conversion, `int` and `float` compare exactly, huge exponents print as `0x1.8p+E` beyond 4096 bits of exponent. Only the name `float[length=64]` (the same type as `float` for now) is built.
+201. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 ## Later coverage pass
 

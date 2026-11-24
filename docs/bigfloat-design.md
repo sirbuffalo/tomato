@@ -1,7 +1,8 @@
 # Arbitrary-size floats: design
 
-Status: **proposal, nothing here is implemented or decided** except the requirement in the next section. The questions
-for Davis are numbered at the end; each has a recommended answer, so "all as recommended" is a complete reply.
+Status: **approved by Davis with all recommended answers** (the eight questions at the end). Stage 0 (the rounding
+fixes) is its own task; stage 1 (`float[length=64]` as a name for today's double) is built; stages 2 to 5 of the Plan are not
+started. The decision entry is D77a in `docs/decisions.md`.
 
 ## The requirement
 
@@ -367,7 +368,7 @@ hand-written lines, based on comparable past changes (the range analysis was abo
 | stage | content | size (lines) | risk |
 | --- | --- | ---: | --- |
 | 0 | **Done.** Independent of everything: round `int` to `float` correctly; make `int / int` follow D05ad; make `float(huge)` raise until stage 3 lands; check `sqrt` of a huge int. Not included: exact `int` against `float` comparison (question 6) | 150 | low |
-| 1 | `float[length=64]` as a type, with today's code generation unchanged underneath | 300 | low |
+| 1 | `float[length=64]` as a type, with today's code generation unchanged underneath (**done**: an alias of `float`, so far) | 300 | low |
 | 2 | Runtime core in C: box, conversions, `+ - * / // % **`, comparison, parse, print, math slow paths; tested by fuzzing against `rational` | 1,000 + 400 test | medium |
 | 3 | Compiler: `float` as a word at rest, slow arms for checks, chain rules, comparisons, literals, ownership in locals, fields, containers, unions, async frames, unwinding | 900 + 400 test | **high** |
 | 4 | std and formats (math, json, toml, time, requests), `!` calls, `llvm.js`, error list, docs, decision entry | 400 | medium |

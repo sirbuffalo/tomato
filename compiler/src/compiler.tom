@@ -1953,6 +1953,12 @@ class Mod:
             if name == 'int':
                 return f'i{length.fields[0].num}'
             return f'u{length.fields[0].num}'
+        if name == 'float' and t.fields[1].tag == 'n':
+            # float[length=64] is the plain double that float is today (D05aj, docs/bigfloat-design.md); no other length exists yet
+            length = val_node(t.fields[1])
+            if length.kind != 'IntLit' or length.fields[0].num != 64:
+                raise CompileError('float[length=N] exists only with N = 64, as in float[length=64]\nit is the plain 64-bit double, and an overflow is an error', t.line)
+            return 'float'
         if name == 'fn' and t.fields[1].tag == 'z' and t.fields[2].tag != 'n' and t.fields[2].tag != 'z':
             return self.fn_type(t)
         if name == 'union':
@@ -4671,11 +4677,14 @@ class Gen:
         return False
 
     def type_call(self, n: Node) -> Ex:
-        # int[length=8](x) and uint[length=8](x): an explicit conversion that stops when the number does not fit
+        # int[length=8](x), uint[length=8](x) and float[length=64](x): an explicit conversion that stops when the number does not fit
         t = val_node(n.fields[0])
         target = self.mod.type_name(vn(t))
+        if target == 'float':
+            # float[length=64](x) is float(x)
+            return self.float_call(self.expr(val_nodes(n.fields[1])[0]), n.line)
         if not is_fixed(target):
-            raise CompileError('this conversion is not supported\nonly int(), float(), str() and int[length=N] / uint[length=N] conversions exist', n.line)
+            raise CompileError('this conversion is not supported\nonly int(), float(), str(), int[length=N], uint[length=N] and float[length=64] conversions exist', n.line)
         args = val_nodes(n.fields[1])
         v = self.expr(args[0])
         return self.convert_explicit(v, target, n.line)

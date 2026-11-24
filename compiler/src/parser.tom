@@ -175,7 +175,7 @@ export def dump(n: Node) -> str:
     return f'{s})'
 
 def is_type_with_length(name: str) -> bool:
-    return name == 'int' or name == 'uint'
+    return name == 'int' or name == 'uint' or name == 'float'
 
 export def is_operator_marker(name: str) -> bool:
     # a method marked with an operator's name implements that operator for its class (D12j-l); names beyond @add are placeholders (P65)
@@ -448,6 +448,8 @@ export class Parser:
             self.adv()
             key = self.expect('NAME')
             if key.text != 'length':
+                if t.text == 'float':
+                    raise ParseError('float takes only length=, as in float[length=64]', key.line, key.col)
                 raise ParseError('integer types take only length=, as in int[length=32]', key.line, key.col)
             self.expect_op('=')
             length = vn(self.expr())
@@ -1178,6 +1180,12 @@ export class Parser:
         if t.kind == 'NAME':
             if is_type_with_length(t.text) and self.peek_is(1, 'OP', '['):
                 ty = self.type()
+                if t.text == 'float' and not self.is_op('('):
+                    # float[length=64] written as a type argument in an expression, as in Box[float[length=64]](x): the type float
+                    flen = val_node(ty.fields[1])
+                    if flen.kind != 'IntLit' or flen.fields[0].num != 64:
+                        raise ParseError('float[length=N] exists only with N = 64, as in float[length=64]', t.line, t.col)
+                    return mk('Name', t.line, [vs('float')])
                 self.expect_op('(')
                 args: list[Node] = [self.expr()]
                 self.expect_op(')')

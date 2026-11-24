@@ -453,3 +453,5 @@ CompileError _settle() takes one task: await _settle(t)
 CompileError _unpark() takes a task, but this is {}
 CompileError _unpark() takes one task: _unpark(t)
 CompileError '{}' takes {} type arguments, but {} given
+CompileError float takes only length=, as in float[length=64]
+CompileError float[length=N] exists only with N = 64, as in float[length=64]

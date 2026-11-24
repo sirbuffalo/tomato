@@ -1,0 +1,4 @@
+@main
+def main():
+    x: float[size=64] = 1.5
+    print(x)
