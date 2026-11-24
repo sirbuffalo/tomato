@@ -1,7 +1,7 @@
 name: Linux tests (LeakSanitizer)
 # macOS cannot run LeakSanitizer, so leaks on error paths went unnoticed there. This runs the same tests/run.sh on Linux x86-64, where
 # every `-fsanitize=address` build in the "memory" section of the suite also reports leaks (ASAN_OPTIONS detect_leaks=1).
-# The pages.yml workflow keeps the macOS run (jsc) and the website deploy; this one only reports.
+# The tests.yml workflow keeps the macOS run (jsc); pages.yml is the website deploy; this one only reports.
 on:
   push:
     branches: [main]

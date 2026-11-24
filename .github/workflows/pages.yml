@@ -1,44 +1,48 @@
-name: Test and publish the website
+name: Publish the website
+# Deploys tomato.davismcd.com after each push to main. Deliberately independent of the macOS test suite (tests.yml), so a slow or red
+# test run can neither delay nor cancel a deploy.
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
   pages: write
   id-token: write
 concurrency:
+  # never cancel: cancelling a run mid-deploy leaves the Pages deployment half-made; a newer push just queues behind the running one
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
-  test:
-    # macOS has jsc (JavaScriptCore), which tests/run.sh uses to check the WebAssembly path the website and repl run (Linux uses node and native/jsc-on-node.js)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: tests/run.sh (needs only clang)
-        run: tests/run.sh
-  site-check:
-    # the quick, compiler-free checks of the website itself; the deploy depends on this, not on the full suite above
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: sh site/check.sh
+      - uses: actions/checkout@v6
+      - name: Quick, compiler-free checks of the website
+        run: sh site/check.sh
+      - name: Assemble the site (copies the docs in; latest.json is committed with each release)
+        run: sh site/build.sh
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+          # site/.nojekyll is a dotfile; upload-pages-artifact v4+ leaves dotfiles out unless asked
+          include-hidden-files: true
   deploy:
-    if: github.event_name != 'pull_request'
-    needs: site-check
+    # a separate job from the upload: deploy-pages looks the artifact up by name through the Actions API, which can briefly lag behind
+    # the upload (it failed with 'No artifacts named "github-pages" were found' ~1s after a successful upload)
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.retry.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Assemble the site (copies the docs in; latest.json is committed with each release)
-        run: sh site/build.sh
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Retry once if the artifact lookup lagged behind the upload
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 30
+      - id: retry
+        if: steps.deployment.outcome == 'failure'
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,25 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    # macOS has jsc (JavaScriptCore), which tests/run.sh uses to check the WebAssembly path the website and repl run (Linux uses node and native/jsc-on-node.js)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: tests/run.sh (needs only clang)
+        run: tests/run.sh
+  site-check:
+    # the quick, compiler-free checks of the website itself (the deploy workflow runs the same before publishing)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: sh site/check.sh
