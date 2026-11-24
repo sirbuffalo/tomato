@@ -1,4 +1,5 @@
-# A program in the subset the LLVM compiler handles: tomato build examples/compiled.tom -o compiled
+# Building a native program: `tomato build examples/compiled.tom -o compiled`, then `./compiled 12` (the input is main's
+# parameter n; add `--mode release` to build for speed). `tomato run examples/compiled.tom main 12` runs it directly.
 def fib(n: int) -> int:
     if n < 2:
         return n

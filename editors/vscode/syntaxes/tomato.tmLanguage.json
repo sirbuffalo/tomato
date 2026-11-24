@@ -14,6 +14,8 @@
     { "include": "#fixed-type" },
     { "include": "#fn-type" },
     { "include": "#start-expression" },
+    { "include": "#yields-clause" },
+    { "include": "#generic-type" },
     { "include": "#keyword" },
     { "include": "#constant" },
     { "include": "#type" },
@@ -40,7 +42,7 @@
     "definition": {
       "patterns": [
         {
-          "match": "\\b(def)\\s+(?:(private|override)\\s+)*([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(def)\\s+(?:(private)\\s+)?([A-Za-z_][A-Za-z0-9_]*)",
           "captures": { "1": { "name": "storage.type.function.tomato" }, "2": { "name": "storage.modifier.tomato" }, "3": { "name": "entity.name.function.tomato" } }
         },
         {
@@ -97,6 +99,11 @@
       "match": "\\b(start)\\b(?=\\s+(?!(?:in|is|and|or|xor|not|if|else|for|as)\\b)[A-Za-z_])",
       "captures": { "1": { "name": "keyword.control.async.tomato" } }
     },
+    "yields-clause": {
+      "match": "\\b(yields)\\b(?=\\s+(?!(?:in|is|and|or|xor|not|if|else|for|as)\\b)[A-Za-z_])",
+      "captures": { "1": { "name": "keyword.control.async.tomato" } }
+    },
+    "generic-type": { "name": "support.type.primitive.tomato", "match": "\\b(task|Iterable)(?=\\s*\\[)" },
     "keyword": {
       "patterns": [
         { "name": "keyword.control.flow.tomato", "match": "\\b(if|elif|else|while|for|return|break|continue|pass)\\b" },
@@ -113,7 +120,7 @@
     "constant": { "name": "constant.language.tomato", "match": "\\b(True|False|None)\\b" },
     "type": {
       "name": "support.type.primitive.tomato",
-      "match": "\\b(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|IOError|EOFError|CancelledError)\\b(?!\\s*\\()"
+      "match": "\\b(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|IOError|EOFError|CancelledError|Sized|bitarray|frozenbitarray)\\b(?!\\s*\\()"
     },
     "builtin": { "name": "support.function.builtin.tomato", "match": "\\b(print|len|str|int|float|rational|range|open|input|sleep|clock|min|max|sum|abs|chr|ord|sorted|reversed|enumerate|zip|map|filter|list|dict|set|tuple|bool)(?=\\s*\\()" },
     "call": { "name": "entity.name.function.call.tomato", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" },

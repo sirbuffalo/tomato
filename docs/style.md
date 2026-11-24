@@ -59,7 +59,7 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 - A class with fields instead of parallel lists or a list used as a record (`[prime, exponent]` pairs are acceptable only
   where they are a documented result type). Fields with defaults (`count: int = 0`) instead of setting each in `@init`.
 - `dict[str, V]` to find things by name, instead of a search through a list (or two lists kept side by side).
-- `tuple[T]` for a fixed group of values of one type that will not change.
+- `tuple[T]` for a fixed group of values of one type that will not change. A pair or group of different types is a mixed tuple, `tuple[str, int]` (a fixed length, indexed by a written number such as `p[1]`; `a, b = p` takes it apart).
 - `a, b = b, a` to swap and `low, high = bounds(xs)` to take a tuple apart, not a pile of temporaries or indexes.
 - Narrow a union with `if x in T:`; after `if x in T: return` the rest of the function sees the other members.
 - `T | None` and `is None` / `is not None` for "no value", not a sentinel like `-1` or `''` or a list of zero or one items.

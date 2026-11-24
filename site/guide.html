@@ -3,6 +3,12 @@
 <body><header id="site-header"></header><main class="doc">
 <h1>Guide</h1>
 <p class="lead">A tour of the language as it runs today. Every example is a complete program: paste it into the <a href="play.html">Run page</a> to try it. The <a href="docs.html">reference</a> lists every decision behind these rules.</p>
+<h2>Getting started</h2>
+<p>With nothing installed, the <a href="play.html">Run page</a> compiles and runs a program in your browser. To use it from a terminal, install Tomato from the <a href="download.html">Download</a> page (a package on a Mac; on Linux or from source, <code>./install-native.sh</code> with <code>clang</code> installed), then save this as <code>hello.tom</code>:</p>
+<pre><code>@main
+def main():
+    print("hello", 6 * 7)</code></pre>
+<p>and run it with <code>tomato run hello.tom</code> (it prints <code>hello 42</code>); <code>tomato build hello.tom -o hello</code> writes a native program instead. The <a href="#commands">commands</a> are listed at the end of this guide.</p>
 <h2>Programs</h2>
 <p>A program starts at a function marked <code>@main</code>. A program has no top-level code: statements go inside a function (only the repl accepts bare statements). Functions also take other entry names, such as <code>@prime</code>; <code>tomato run FILE prime 17</code> runs it with the input <code>17</code>, read as the most restrictive type its parameter allows.</p>
 <pre><code>def greet(name: str, times: int = 2) -> str:
@@ -21,6 +27,44 @@ def main():
 <li><code>rational</code> is exact and comes from the library: <code>from rational import rational</code>, then <code>rational(1, 3)</code>. Also <code>bool</code>, <code>str</code>, <code>list[T]</code>, <code>dict[str, V]</code>, <code>set[T]</code>, and <code>T | None</code> for optional class, text and list values.</li>
 <li>Types are checked at compile time. A constant out of range for a fixed-width type, like <code>uint[length=8] = 300</code>, is a compile error.</li>
 </ul>
+<h2>Lists, dicts, tuples and text</h2>
+<pre><code>@main
+def main():
+    xs = [5, 3, 8]
+    xs.append(1)
+    print(xs.pop(), xs.pop(0), xs)         # 1 5 [3, 8]
+    xs.insert(1, 9)                        # [3, 9, 8]
+    xs.extend([4, 4])
+    xs.sort()                              # also xs.sort(key=n -&gt; -n) and xs.sort(cmp=(a, b) -&gt; b - a)
+    xs.reverse()
+    print(xs, xs[-1], xs[1:3], xs + [0], [0] * 2, 8 in xs, xs == [9, 8, 4, 4, 3])
+    try:
+        xs.pop(10)
+    catch IndexError as e:
+        print(e.message)                   # index out of range
+
+    ages = {'ann': 31, 'bob': 7}           # a dict[str, int]: the type comes from the first value
+    ages['cy'] = 40
+    ages.remove('bob')
+    print(ages, len(ages), 'ann' in ages, ages.get('zed', 0), ages.keys(), ages.values())
+    for name, age in ages.items():         # a for loop can take each pair apart
+        print(name, age + 1)
+    nicknames = {'ann': 'annie'}
+    print(nicknames.get('bob') is None, nicknames.get('ann'))   # get(key) gives None when it is missing
+
+    pair = ('ann', 31)                     # a tuple[str, int]: a fixed length, each item with its own type
+    who, n = pair
+    print(pair, pair[1] + 1, who, n)
+    for label, count in [('a', 1), ('b', 2)]:
+        print(label, count)
+
+    s = '  Hello, World  '
+    print(s.strip(), s.strip(' H'), s.find('o'), s.rfind('o'), s.count('l'), s.find('o', 8))
+    print('héllo'[1], len('héllo'), 'a-b-c'.split('-'), '+'.join(['x', 'y']), 'é'.isalpha())</code></pre>
+<p><strong>Lists.</strong> <code>xs.append(x)</code>, <code>xs.pop()</code> (the last item) or <code>xs.pop(i)</code>, <code>xs.insert(i, x)</code> (<code>i</code> from 0 to <code>len(xs)</code>, negative counts from the end, anything else is an error: no clamping), <code>xs.extend(ys)</code> (a list of the same type), <code>xs.sort()</code> and <code>xs.reverse()</code> change the list in place and give nothing back. <code>sort</code> takes <code>key=</code> or <code>cmp=</code> as <code>sorted</code> does. Lists compare with <code>==</code> and <code>!=</code> item by item (items of a class need an <code>@eq</code> method). <code>pop</code> on an empty list and an index out of range raise an <code>IndexError</code>. A list of <code>bool</code> or of fixed-width integers is stored one to four bytes per item, which changes nothing you write.</p>
+<p><strong>Dicts.</strong> Keys are text. A literal with no declared type takes its value type from its first value, as a list literal does (an empty <code>{}</code> needs a declared type: <code>d: dict[str, int] = {}</code>). <code>d[key]</code> raises a <code>KeyError</code> for a missing key; <code>d.get(key, default)</code> never does, and <code>d.get(key)</code> gives <code>None</code> when the key is missing, for a value that can be <code>None</code> (text, list, dict, set or object; for other values the compiler asks for a default). <code>d.remove(key)</code>, <code>d.keys()</code>, <code>d.values()</code> and <code>d.items()</code> (a list of <code>tuple[str, V]</code> pairs, for any value type) are the rest. Sets have <code>add</code> and <code>remove</code>.</p>
+<p><strong>Tuples.</strong> <code>(1, 2)</code> is a <code>tuple[int]</code>: immutable, any length, one item type. Different item types make a fixed-length tuple with a type per item, <code>tuple[str, int]</code> (<code>('ann', 31)</code>; indexes are written as numbers: <code>pair[1]</code>). <code>a, b = pair</code> takes one apart, a function can <code>return a, b</code>, and <code>for a, b in pairs:</code> and <code>for k, v in d.items():</code> take each pair apart in the loop. A mixed tuple type can be written in annotations (<code>x: tuple[str, int]</code>) but not inside an expression, and it prints like Python shows it, also inside a union (<code>('a', 1)</code>).</p>
+<p><strong>Text.</strong> Indexing, slicing and <code>len</code> count characters, not bytes (<code>'héllo'[1]</code> is <code>é</code>). Methods: <code>find</code>, <code>rfind</code> and <code>count</code> (with an optional start and end), <code>startswith</code>, <code>endswith</code>, <code>replace</code>, <code>split</code>, <code>join</code>, <code>upper</code> and <code>lower</code> (Unicode, one letter at a time), <code>strip</code>, <code>lstrip</code> and <code>rstrip</code> (white space, or the characters you give), <code>isdigit</code> and <code>isalpha</code> (Unicode) and <code>isspace</code>. Build text with f-strings: <code>f'{name} has {count} items'</code>.</p>
 <h2>Angles and math</h2>
 <pre><code>from math import deg, rad, turn, sin, cos, atan2, sqrt, hypot, log_base, pi
 
@@ -182,7 +226,7 @@ def main():
     print(Box(3).get(), Box('hi').get())     # a Box[int], then a Box[str]
     print(first(['a', 'b']), first([1.5]))
     b: Box[str] = Box('typed')
-    s = Stack[str]()                         # write the type out when no argument has it</code></pre>
+    nobody: list[Box[int]] = []              # write the type out when no argument has it</code></pre>
 <p>A class or function can take type parameters in brackets after its name (<code>class Pair[A, B]</code>, up to two). Each call works out the types from its arguments, and the compiler makes one copy of the declaration per set of types, so nothing is slower at run time. An <code>Iterable[T]</code> parameter takes <code>T</code> from the items of a list, tuple, set, dict, text, range or object with <code>@iter</code>. That is how <code>progress_bar</code> and the <code>itertools</code> helpers (<code>permutations</code>, <code>combinations</code>, <code>product</code>, <code>chain</code>, <code>pairwise</code>, <code>batched</code>, <code>repeat</code>) work with any item type: <code>for name in progress_bar(['a', 'b']):</code> gives text, <code>progress_bar(range(10))</code> gives ints. Generic interfaces, generic methods and bounds on <code>T</code> are not built yet.</p>
 <h2>Reading and writing TOML</h2>
 <p><code>toml</code> is a library written in Tomato (TOML v1.0.0): <code>from toml import loads, load, dump, dumps</code>. <code>loads(text)</code> and <code>load(path)</code> give a <code>Toml</code> (<code>dump(doc, path)</code> writes one to a file), one class for every kind of value; <code>doc['key']</code> reads a table and <code>.as_str()</code>, <code>.as_int()</code>, <code>.as_float()</code>, <code>.as_bool()</code> read a value (a different kind raises a <code>RuntimeError</code> that says what was found). An array's elements are <code>.items</code> or <code>.at(i)</code>, <code>'key' in doc</code> and <code>len(doc)</code> work, and <code>.kind</code> tells the type (<code>table</code>, <code>array</code>, <code>string</code>, <code>integer</code>, <code>float</code>, <code>boolean</code>, <code>datetime</code>, <code>local-datetime</code>, <code>local-date</code>, <code>local-time</code>). The date and time values are a small <code>Moment</code> class (<code>.as_moment()</code>). <code>dumps(doc)</code> writes the document back: plain values first, then <code>[tables]</code>, then <code>[[arrays of tables]]</code>.</p>
@@ -236,7 +280,7 @@ def main():
 
     t = Cache[str](100, 60.0)          # every entry expires after 60 seconds
     t.set('token', 'abc', ttl=5.0)     # this one after 5</code></pre>
-<p><code>from cache import Cache</code> is a least-recently-used cache written in Tomato. <code>get</code>, <code>c[key]</code> and <code>set</code> count as a use; <code>in</code>, <code>peek</code> and <code>keys()</code> do not. Every operation takes constant time (a dict plus a doubly linked list). Capacity 0 stores nothing. <code>delete(key)</code>, <code>clear()</code> and <code>len(c)</code> work as expected, and <code>hits</code>, <code>misses</code>, <code>evictions</code>, <code>expirations</code> and <code>hit_rate()</code> count what happened. An expired entry is dropped when it is next looked at. Time comes from the built-in <code>clock()</code>, the seconds on a monotonic clock as a <code>float</code> (take two readings and subtract); a test gives the cache its own <code>Clock</code> subclass, <code>Cache[int](100, 60.0, fake)</code>, whose <code>now()</code> it controls. Object creation takes no keyword arguments, so <code>ttl</code> and the clock are positional there. The cache has no locking because tasks only switch at <code>await</code>. Memoising a function, a disk-backed cache and a request cache for HTTP are not built yet. <code>d.remove(key)</code> deletes an entry from any dict.</p>
+<p><code>from cache import Cache</code> is a least-recently-used cache written in Tomato. <code>get</code>, <code>c[key]</code> and <code>set</code> count as a use; <code>in</code>, <code>peek</code> and <code>keys()</code> do not. Every operation takes constant time (a dict plus a doubly linked list). Capacity 0 stores nothing. <code>delete(key)</code>, <code>clear()</code> and <code>len(c)</code> work as expected, and <code>hits</code>, <code>misses</code>, <code>evictions</code>, <code>expirations</code> and <code>hit_rate()</code> count what happened. An expired entry is dropped when it is next looked at. Time comes from the built-in <code>clock()</code>, the seconds on a monotonic clock as a <code>float</code> (take two readings and subtract); a test gives the cache its own <code>Clock</code> subclass, <code>Cache[int](100, 60.0, fake)</code>, whose <code>now()</code> it controls. Object creation takes no keyword arguments, so <code>ttl</code> and the clock are positional there. The cache has no locking because tasks only switch at <code>await</code>. <code>memoize(f, capacity)</code> remembers a function's results: <code>m = memoize(slow, 100)</code>, then <code>m.call(7)</code> runs <code>slow(7)</code> once and later calls with <code>7</code> return the remembered result (<code>m.results</code> is the cache, with its <code>hits</code> and <code>misses</code>; there are no closures, so you call through <code>m.call</code>, and the argument is keyed by its text, so use an int or text). A disk-backed cache and a request cache for HTTP are not built yet. <code>d.remove(key)</code> deletes an entry from any dict.</p>
 
 <h2>Time</h2>
 <pre><code>from time import time, monotonic, gmtime, strftime, isoformat, format_duration, Stopwatch
@@ -285,6 +329,19 @@ def main():
 <p>The same module reads and writes MessagePack. Bytes are lists of ints from 0 to 255 (<code>loads_msgpack(data)</code>, <code>dumps_msgpack(value)</code>); there is no byte string type. A MessagePack <code>bin</code> becomes a <code>JsonBin</code> (<code>as_bytes()</code>), other extension values a <code>JsonExt</code> (<code>ext_type()</code>, <code>as_bytes()</code>) and timestamps (extension -1, all three sizes) a <code>JsonTimestamp</code> (<code>seconds()</code>, <code>nanos()</code>). Map keys must be text. Ints are written in their shortest form (up to 64 bits, signed or unsigned), floats as float64. Bad data raises <code>MsgpackError</code> with the byte offset; <code>dumps</code> of a bin, ext or timestamp is a <code>JSONEncodeError</code> because JSON text has no such values.</p>
 <p>To keep MessagePack in a file, <code>dump_msgpack(value, path)</code> writes <code>dumps_msgpack(value)</code> to the file, replacing it, and <code>load_msgpack(path)</code> reads the whole file and decodes it (<code>json.load</code> and <code>json.dump</code> do the same for JSON text). A path that cannot be opened raises <code>IOError</code> with the same message as <code>open()</code>, such as <code>could not open '/tmp/x.msgpack': No such file or directory</code>; a file that opens but cannot be read or written (a directory, a full disk) raises <code>IOError</code> naming the file too. Bad bytes in the file raise <code>MsgpackError</code>, and a value MessagePack cannot hold is refused before the file is touched.</p>
 
+<h2>Files</h2>
+<pre><code>@main
+def main():
+    out = open('notes.txt', 'w')            # 'r' (the default) reads, 'w' replaces the file, 'a' appends
+    out.write('hello\nworld\n')
+    out.close()
+    text = open('notes.txt').read()         # the whole file as text (UTF-8)
+    print(len(text.split('\n')), text.strip())
+    try:
+        open('no/such/folder/x.txt')
+    catch IOError as e:
+        print(e.message)                    # could not open 'no/such/folder/x.txt': No such file or directory</code></pre>
+<p><code>open(path)</code> or <code>open(path, mode)</code> gives a <code>File</code> with <code>read()</code>, <code>write(text)</code> and <code>close()</code>; the program closes the file itself. A file that cannot be opened raises <code>IOError</code> naming the path and the reason. <code>toml</code>, <code>json</code> and MessagePack have their own <code>load</code> and <code>dump</code> functions for whole files.</p>
 <h2>Errors</h2>
 <pre><code>@main
 def main():
@@ -296,21 +353,22 @@ def main():
     n: uint[length=8] = 250
     print(n + 5)    # 255
     print(n + 10)   # stops: integer overflow</code></pre>
-<p>Runtime failures (overflow, division by zero, a bad index, a missing key) raise a catchable <code>RuntimeError</code>; a file that cannot be opened raises <code>IOError</code>. An error nobody catches stops the program with exit status 1. Type errors are found at compile time and are never catchable.</p>
+<p>Runtime failures raise a catchable error, and every class is a <code>RuntimeError</code>, so <code>catch RuntimeError</code> takes any of them: <code>IndexError</code> (a bad index, <code>pop()</code> from an empty list), <code>KeyError</code> (a missing key), <code>ValueError</code> (<code>int('abc')</code>, a step of 0, <code>sqrt(-1)</code>), <code>ZeroDivisionError</code>, <code>OverflowError</code> (integer overflow, an infinite float result), <code>IOError</code> (a file that cannot be opened), <code>EOFError</code> and <code>CancelledError</code>. Catch the narrowest class you can handle; <code>e.message</code> says what happened and <code>e.id</code> is the error's id (such as <code>E04</code>, see <a href="docs.html#errors">error messages</a>). Write your own with <code>class MyError(RuntimeError)</code> and an <code>@init</code> method that passes the message on (<code>def make(self, message: str): RuntimeError.make(self, message)</code>), then <code>raise MyError('boom')</code> and <code>catch MyError as e</code>. An error nobody catches stops the program with exit status 1. Type errors are found at compile time and are never catchable.</p>
 <h2>Reading errors and warnings</h2>
 <p>An error that stops a program shows what is wrong, where (<code>--&gt; program.tom:6:11</code>), the line with a <code>^</code> under the problem and, often, a <code>help:</code> line. A runtime error then lists the calls it passed through, innermost first (<code>at half (line 6)</code>). A <em>warning</em> has the same shape but never stops the program: it points at a variable nothing reads, an unused import, code after a <code>return</code>, a variable that might have no value, a name that hides a built-in, or a list changed inside the loop that is going through it. Silence one on its line with a comment such as <code># allow: unused</code>. In a terminal the command line colors errors red and warnings yellow (<code>--color=auto|always|never</code>, <code>NO_COLOR</code>); the playground colors them too. The words are the same either way; see <a href="docs.html#errors">error messages</a>.</p>
 <h2>Modules and LLVM</h2>
 <p><code>from util import f</code> imports a module's <code>export</code>ed names; <code>import util</code> lets you write <code>util.f</code> instead. <code>!name(a: T) -> R</code> declares a function from LLVM IR you supply with <code>--llvm</code>, and <code>!name(x)</code> calls it.</p>
-<h2>Commands</h2>
+<h2 id="commands">Commands</h2>
 <table>
 <caption class="sr">The tomato command</caption>
-<tr><td><code>tomato run FILE [ENTRY [INPUTS…]] [--mode MODE]</code></td><td>compile, link and run; MODE is <code>debug</code> (the default: readable errors, leak report) or <code>release</code> (short error codes, linked with <code>-O2</code>) (reads standard input for <code>await input()</code>)</td></tr>
-<tr><td><code>tomato build FILE [-o OUT] [--mode MODE]</code></td><td>write a native program (<code>--mode release</code> for the optimised build)</td></tr>
-<tr><td><code>tomato compile FILE [--mode MODE]</code></td><td>print the LLVM IR</td></tr>
-<tr><td><code>tomato explain CODE FILE</code></td><td>decode an error code such as <code>E01:4</code> printed by a program built with <code>--mode release</code></td></tr>
-<tr><td><code>tomato repl [FILE…]</code></td><td>interactive prompt with history (arrow keys) and <code>+=</code>; needs only the compiler and clang; each line joins the session, which is compiled and run, and only new output is shown; <code>:program</code>, <code>:save</code>, <code>:compile</code>. Because the whole session re-runs on each line, a side effect outside the program (writing a file) repeats, and a function or class you define cannot read your variables (pass them as arguments)</td></tr>
+<tr><td><code>tomato run FILE [ENTRY [INPUTS…]] [--mode MODE] [--llvm F.ll]</code></td><td>compile, link and run; MODE is <code>debug</code> (the default: readable errors, leak report) or <code>release</code> (short error codes, linked with <code>-O2</code>) (reads standard input for <code>await input()</code>)</td></tr>
+<tr><td><code>tomato build FILE [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]</code></td><td>write a native program (<code>--mode release</code> for the optimised build)</td></tr>
+<tr><td><code>tomato compile FILE [--entry NAME] [--mode MODE]</code></td><td>print the LLVM IR</td></tr>
+<tr><td><code>tomato explain CODE [FILE]</code></td><td>decode an error id such as <code>E04</code>, or a code such as <code>E01:4</code> printed by a program built with <code>--mode release</code>, into the error's class and message; with a <code>FILE</code> it also shows the source line</td></tr>
+<tr><td><code>tomato repl [FILE…]</code></td><td>interactive prompt with history (arrow keys) and <code>+=</code>; needs only the compiler and clang; each line joins the session, which is compiled and run, and only new output is shown; <code>:load FILE</code>, <code>:program</code>, <code>:save FILE</code>, <code>:compile</code>, <code>:reset</code>, <code>:help</code> and <code>:quit</code>. Because the whole session re-runs on each line, a side effect outside the program (writing a file) repeats, and a function or class you define cannot read your variables (pass them as arguments)</td></tr>
 <tr><td><code>tomato update</code></td><td>install the newest release</td></tr>
 <tr><td><code>tomato version</code></td><td>print the version</td></tr>
+<tr><td><code>tomato help</code></td><td>list the commands. Every command also takes <code>--color=auto|always|never</code> and <code>--no-warnings</code>, and after <code>--</code> every word is an input to the program</td></tr>
 </table>
 <h2>Not yet</h2>
 <p>Some decided features are not built yet, such as <code>&amp;</code> intersection types, <code>*</code>/<code>**</code> spreading at call sites and <code>@init</code> flow analysis. The <a href="docs.html#specification">specification</a> has a status table that marks what is built and what is not.</p>

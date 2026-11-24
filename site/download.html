@@ -2,19 +2,19 @@
 <title>Download Tomato</title><meta name="description" content="Download the Tomato compiler and install it with clang alone."><link rel="stylesheet" href="style.css"></head>
 <body><header id="site-header"></header><main class="doc">
 <h1>Download</h1>
-<p>Tomato needs only <code>clang</code> (on a Mac: <code>xcode-select --install</code>).</p>
+<p>Tomato needs only <code>clang</code> (on a Mac: <code>xcode-select --install</code>; on Linux: your package manager, such as <code>sudo apt install clang</code>). It runs on macOS (Apple silicon and Intel) and on Linux x86-64; there is no native Windows build, but the <a href="play.html">Run page</a> works in any browser.</p>
 <h2>Latest release</h2>
 <p id="release" class="status">Looking up the latest release…</p>
 <h2>macOS installer</h2>
 <p id="pkg" class="status"></p>
 <p>Double-click the package and follow the steps. It installs to <code>/usr/local/lib/tomato</code> and links <code>/usr/local/bin/tomato</code>, with prebuilt compilers for Apple silicon and Intel, so nothing is built at install time. Programs are still compiled with <code>clang</code>, so you need the command line tools.</p>
 <p>The package is signed and notarized by Apple, so macOS opens it on a plain double-click. The disk image is signed, notarized and stapled too; open it and double-click the package inside. You can also run <code>sudo installer -pkg tomato-VERSION.pkg -target /</code>. To check the download, compare <code>shasum -a 256 tomato-VERSION.pkg</code> with the SHA-256 above. <code>tomato update</code> works on a package install too. The installer hands <code>/usr/local/lib/tomato</code> to the user who installs it, so update needs no sudo; the flip side is that any process running as that user can change the command, which is the same trust as the <code>~/.tomato</code> install. On a shared Mac, run <code>sudo chown -R root /usr/local/lib/tomato</code> and update with sudo instead. To uninstall: <code>sudo rm -rf /usr/local/lib/tomato /usr/local/bin/tomato</code>, then <code>sudo pkgutil --forget com.davismcd.tomato</code>.</p>
-<h2>Install from the tarball</h2>
+<h2>Install from the tarball (Linux, or a Mac without the package)</h2>
 <pre><code class="no-hl">tar -xzf tomato-VERSION.tar.gz
 cd tomato-VERSION
 ./install-native.sh
 tomato version</code></pre>
-<p>This builds the compiler from the checked-in IR into <code>~/.tomato/native</code> and links <code>~/.local/bin/tomato</code>. Put <code>~/.local/bin</code> on your PATH. An existing <code>tomato</code> that is not ours is kept as <code>tomato.old</code>.</p>
+<p>This builds the compiler from the checked-in IR into <code>~/.tomato/native</code> and links <code>~/.local/bin/tomato</code>. Put <code>~/.local/bin</code> on your PATH; <code>TOMATO_HOME</code> and <code>TOMATO_BIN</code> choose other folders. An existing <code>tomato</code> that is not ours is kept as <code>tomato.old</code>. The <code>requests</code> library needs the system libcurl (on Linux install it with your package manager), <code>tomato repl</code> needs <code>bash</code>, and <code>tomato update</code> needs <code>curl</code>. Then <code>tomato run ~/.tomato/native/examples/compiled.tom main 12</code> runs a sample program, and the <a href="guide.html">guide</a> shows the language.</p>
 <h2>Update</h2>
 <pre><code class="no-hl">tomato update</code></pre>
 <p>Reads <a href="latest.json">latest.json</a>, checks the download against its SHA-256, and reinstalls when a newer version exists.</p>

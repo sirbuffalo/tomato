@@ -1,8 +1,9 @@
 # Performance notes
 
 What the benchmarks (`benchmarks/`, results on the website's Benchmarks page) say about the compiler and runtime, and
-what has been done about it. Every change below was measured with `benchmarks/run.sh` on the same Apple M1 (release
-mode, median seconds) and kept only when it helped.
+what has been done about it. Every change below was measured with `benchmarks/run.sh` (wall-clock seconds, release mode,
+median) or `benchmarks/count.sh` (instructions executed), mostly on the same Apple M1 (the Linux checks say so), and kept
+only when it helped.
 
 ## v0.51 snapshot
 
@@ -119,13 +120,13 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
-## What was done (text indexing and fused f-strings, unreleased)
+## What was done (text indexing and fused f-strings, v0.51)
 
 **`s[i]`.** ASCII text was already indexed directly (the character number is the byte offset), but each `s[i]` allocated a one-character string, and text with any non-ASCII character was scanned from the start on every index (quadratic loops). Now: (1) `s[i]` on an ASCII character returns one of 128 shared immortal one-character strings (no allocation, no release work); (2) a string of 256 or more characters that is not all ASCII gets a chunked index (D17c) on its first indexed use: the byte offset of every 64th character, so an index scans at most 63 characters. The index lives in a side table of 4 strings (`chunk_cache` in the runtime, oldest dropped first), not in the string object, so the string layout, string constants and the wasm interpreter are unchanged; the table holds a reference to each indexed string (strings are immutable, so the address cannot be reused) and it is released before the debug-mode leak check. Slices, `find` from a position and extended slices use the same offsets. More than 4 long non-ASCII strings in use at once fall back to the plain scan. Measured with a loop reading every character of a 100,000 character non-ASCII text next to an ASCII one (release mode, user time, machine load average about 35 to 55 from other work): old 27.2 s, new 0.01 s; 300,000 characters take 0.05 s.
 
 **f-strings.** `f'w{i}'` is `'w' + str(i)`, and every `+` and every `str()` made its own string. A chain of `+` whose first two operands include a text literal or a `str(...)` call (at most 16 operands) is compiled to one `tomato_str_cat` call: the parts are evaluated in order, then one allocation is filled, and an int inside `str()` is written as digits straight into it. Error messages for a wrong operand type are unchanged. `benchmarks/count.sh` (instructions executed under Valgrind, whole process): wordcount 191.76 M to 159.70 M (Tomato ÷ old Tomato 0.83; Tomato ÷ Go 1.01 to 0.84, ÷ Rust 0.78 to 0.65); strings is unchanged at 140.44 M (it uses `join` and `split`, not `s[i]` or f-strings). Wall clock, wordcount with n = 5,000,000, release mode, 7 alternating runs, user seconds, load average about 35: old median 0.79 s, new 0.66 s (ratio 0.84, the same as the instruction count).
 
-## What was done (compact list storage, unreleased)
+## What was done (compact list storage, v0.51)
 
 A list whose item type is fixed at compile time keeps its items without the 8-byte slot, and the program cannot tell
 (no syntax, same results). The width comes from the static type (`item_width` in `compiler/src/compiler.tom`): `bool` is
@@ -221,7 +222,7 @@ Mandelbrot's wall time barely moves, although it executes 22% fewer instructions
 
 Not done: the three finite checks per iteration still remain. Removing them needs float range reasoning. The body's `zr` and `zi` are bounded once `zr*zr + zi*zi <= 4.0` holds, and `cr` and `ci` are bounded by `px < n`. Removing them would also make the small-int fast copy (`small_loop`) use the facts to drop its overflow checks. Collatz does not benefit from intervals, because `x` has no bound.
 
-## What was done (refcount bookkeeping, unreleased)
+## What was done (refcount bookkeeping, v0.51)
 
 Profile first (callgrind in the Lima VM, release mode, `benchmarks/count.sh` inputs): in `wordcount` and `strings` about 20% of the instructions, and in `objects` about 13%, were `destroy_object`, `free_internals` and `each_child` walking the type tables to free values that own nothing (every temporary string, every object with only number fields), and the inlined `tomato_release` ran the cycle-collector test (colour bits, kind table, offsets table) on every release that did not reach zero. The collector itself never ran in these three.
 
@@ -280,11 +281,11 @@ Wall clock (user seconds, release, input 1,000,000, 9 alternating runs, median, 
 
 What is left: the remaining difference is the `adds` + branch of each checked add and the multiply check on the `3x + 1` path (Rust and Go test no overflow because their ints wrap), the `x != 1` compare and the `x % 2` branch, which is as unpredictable here as in Go. Fusing `3 * x + 1` into one checked operation saves about three instructions on a third of the iterations (not done). Extending the fast copy to `for` loops over a range, `and`/`or`/`not` in conditions and `break`/`continue` is the next step; mandelbrot is floats and does not use it.
 
-## What was done (function values and sort, unreleased)
+## What was done (function values and sort)
 
 - `sorted(xs, key=f)`: the keys are worked out once per item in Tomato, then the runtime (`tomato_list_sorted_by`) stable-merge-sorts (key, position) pairs and gathers the items. 3,000,000 ints with `key=`: about 0.3 s for the sort (whole program 0.54 s; Python `sorted(key=lambda)` about 2.3 s, Rust `sort_by_key` 0.14 s on this loaded machine). Plain `sorted(xs)` is untouched (native introsort, same 0.17 s program as before).
 - `sorted(xs, cmp=f)`: a stable run-detecting merge sort written in Tomato (`std/builtin.tom`), so it also runs in the browser, where the C runtime cannot call back into the interpreted program. It took about 2.3 s for 3,000,000 ints before the small-int work (Python `cmp_to_key` about 12 s, Rust `sort_by` 0.12 s); the inlined small-int paths (see the collatz section) brought it to 0.69 s on its own.
-- **Native cmp sort (unreleased):** on native builds `sorted(xs, cmp=f)` calls `tomato_list_sorted_cmp` instead: a stable merge sort in the runtime (binary-insertion blocks of 16, then bottom-up merges, neighbours already in order copied not merged) that calls `f` through its function pointer with its own words as borrowed arguments (no copy, no per-call retain or free) and stops at the first error `f` raises, giving every item back. The compiler emits `tomato_callbacks()` and branches on it: 1 on native builds, 0 in the browser (`TOMATO_WASM`, `__wasi__`), where the Tomato sort (`_sorted_cmp`) still runs. It is used when the items are 8-byte slots holding an int or a pointer (not float, bool or the fixed-width integers; those use the Tomato sort). Measured with `time -l` on the 3,000,000-int program (`benchmarks/sort` generator, `cmp=` a subtraction function), instructions retired and cycles for the whole program on an Apple M1 with a load average above 60 (so wall time was useless, these counters are not): 7.40 G instructions and 2.35 G cycles before, 2.19 G instructions and 0.99 G cycles after (after ÷ before 0.30 and 0.42). Plain `sorted(xs)` is untouched (`benchmarks/count.sh --only sort`: 55.15 M instructions, the same as in the table below). Test: `sort_cmp_native` (sizes around the block and merge boundaries, big ints, text, objects, stability, an error raised mid-sort).
+- **Native cmp sort (v0.51):** on native builds `sorted(xs, cmp=f)` calls `tomato_list_sorted_cmp` instead: a stable merge sort in the runtime (binary-insertion blocks of 16, then bottom-up merges, neighbours already in order copied not merged) that calls `f` through its function pointer with its own words as borrowed arguments (no copy, no per-call retain or free) and stops at the first error `f` raises, giving every item back. The compiler emits `tomato_callbacks()` and branches on it: 1 on native builds, 0 in the browser (`TOMATO_WASM`, `__wasi__`), where the Tomato sort (`_sorted_cmp`) still runs. It is used when the items are 8-byte slots holding an int or a pointer (not float, bool or the fixed-width integers; those use the Tomato sort). Measured with `time -l` on the 3,000,000-int program (`benchmarks/sort` generator, `cmp=` a subtraction function), instructions retired and cycles for the whole program on an Apple M1 with a load average above 60 (so wall time was useless, these counters are not): 7.40 G instructions and 2.35 G cycles before, 2.19 G instructions and 0.99 G cycles after (after ÷ before 0.30 and 0.42). Plain `sorted(xs)` is untouched (`benchmarks/count.sh --only sort`: 55.15 M instructions, the same as in the table below). Test: `sort_cmp_native` (sizes around the block and merge boundaries, big ints, text, objects, stability, an error raised mid-sort).
 
 ## What was done (after v0.49)
 
@@ -307,7 +308,7 @@ about 5% between sessions):
    and bytes directly (and the pointer first).
 
 Tried and dropped: hashing string keys eight bytes at a time (wordcount 0.42 → 0.45 s, slower; the keys are about five
-bytes so FNV is already cheap). Not done: an f-string is still `'w' + str(x)` (two allocations); a runtime call that
+bytes so FNV is already cheap). Not done then (later done, see "text indexing and fused f-strings"): an f-string is still `'w' + str(x)` (two allocations); a runtime call that
 formats the pieces into one buffer needs a compiler change, and the rest of the time is `malloc`/`free`, which the
 size-class allocator task covers.
 
@@ -328,7 +329,7 @@ size-class allocator task covers.
    `bigint` (40000): 0.224 s and 1.53 GB peak memory before; 0.11 s and a few MB after, with the debug-mode leak check
    clean. The price is a slower small-int path in debug mode (see the notes above).
 
-4. **Size-class free-list allocator** for small objects. Objects up to 256 bytes (every instance, string, list and dict
+4. **Size-class free-list allocator** for small objects (released in v0.50). Objects up to 256 bytes (every instance, string, list and dict
    header; strings up to about 230 bytes) come from 16 size classes in 16-byte steps, each a singly linked free list carved
    from 64 KB chunks; the class lives in bits 48..52 of the header's type word, so freeing needs no size and no prefix.
    Freed memory is reused within its class but chunks are never returned to the operating system (documented trade-off:
@@ -363,7 +364,7 @@ size-class allocator task covers.
 1. **Sort with compare functions** is done on native builds (see "function values and sort"); the browser still runs the Tomato merge sort, whose every compare is an interpreted call. The native loop takes 0.42 of the cycles of the Tomato merge sort. **Small-int fast paths** are already inlined everywhere in both modes (the collatz section); what remains in the generated code is the tagged-word untag and retag around each operation and the `dup`/`free` pairs on ints passed to calls.
 2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds and tests the tag of each item (for the big-integer copy); no reference counting is left in that loop (see the refcount section).
 3. **Typed list storage** is done for `bool` and the fixed-width integers (see above); `int` and `float` lists are already 8 bytes per item and cannot shrink.
-4. **Strings:** f-strings and `split` still allocate one string per piece; fuse `'w' + str(x)` chains into one buffer (needs a compiler change).
+4. **Strings:** `split` still allocates one string per piece (f-strings and `+` chains are fused now, see "text indexing and fused f-strings").
 5. (done, see the collatz section) Debug-mode small-int arithmetic.
 
 ## JSON and MessagePack (std/json.tom)
@@ -408,28 +409,28 @@ this checkout into the VM, builds every program there, runs each N times (defaul
 because Valgrind is about 50 times slower; the whole run takes roughly 15 minutes. Python's hash seed is fixed and Go
 runs with `GOMAXPROCS=1`.
 
+On a Linux machine with `valgrind`, `clang`, `gcc`, Go, Rust and Python, `benchmarks/count.sh --guest` does the counting directly, without a VM (the release's Linux step uses it, and its report goes to `benchmarks/results/linux-x86_64/instructions.md`).
+
 **Reproducibility.** Two runs of every program: Tomato, Rust (except wordcount, 0.007%) and Python agree to the exact
 instruction; Go differs by 0.003-0.16% (runtime threads). At the tiny smoke inputs Go's difference is up to 12%, because the
 runtime's fixed work dominates, so only the counting inputs are meaningful.
 
-Tomato v0.50 (release), instructions executed, millions, and Tomato's count divided by the other's (below 1.0 Tomato
-executes fewer instructions):
+Tomato v0.51 (release mode), instructions executed, millions, and Tomato's count divided by the other's (below 1.0 Tomato
+executes fewer instructions; from `benchmarks/results/instructions.md`):
 
 | benchmark | input | tomato | go | rust | python | ÷ go | ÷ rust | ÷ python |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | fib | 32 | 127.0 | 110.0 | 58.8 | 3621.1 | 1.15 | 2.16 | 0.04 |
-| sieve | 1000000 | 42.6 | 23.2 | 25.5 | 2706.1 | 1.84 | 1.67 | 0.02 |
-| matmul | 150 | 131.5 | 52.4 | 55.2 | 6299.2 | 2.51 | 2.38 | 0.02 |
-| mandelbrot | 250 | 106.7 | 28.7 | 25.9 | 7349.7 | 3.72 | 4.13 | 0.01 |
-| collatz | 50000 | 123.5 | 36.5 | 36.0 | 8697.6 | 3.39 | 3.43 | 0.01 |
-| strings | 150000 | 140.4 | 98.9 | 87.8 | 725.6 | 1.42 | 1.60 | 0.19 |
-| sort | 150000 | 55.2 | 48.5 | 27.0 | 1178.3 | 1.14 | 2.05 | 0.05 |
-| wordcount | 250000 | 191.8 | 189.1 | 244.6 | 1004.8 | 1.01 | 0.78 | 0.19 |
-| bigint | 10000 | 83.2 | 41.1 | 87.6 | 214.7 | 2.02 | 0.95 | 0.39 |
-| objects | 100000 | 116.3 | 79.3 | 50.5 | 2283.6 | 1.47 | 2.30 | 0.05 |
+| sieve | 1000000 | 44.6 | 23.1 | 25.5 | 2706.1 | 1.93 | 1.75 | 0.02 |
+| matmul | 150 | 131.4 | 52.4 | 55.2 | 6299.2 | 2.51 | 2.38 | 0.02 |
+| mandelbrot | 250 | 56.6 | 28.8 | 25.9 | 7349.7 | 1.96 | 2.19 | 0.01 |
+| collatz | 50000 | 54.9 | 36.5 | 36.0 | 8697.6 | 1.51 | 1.52 | 0.01 |
+| strings | 150000 | 116.5 | 99.1 | 87.8 | 725.6 | 1.18 | 1.33 | 0.16 |
+| sort | 150000 | 53.6 | 48.6 | 26.9 | 1178.3 | 1.10 | 1.99 | 0.05 |
+| wordcount | 250000 | 139.3 | 189.1 | 244.6 | 1004.8 | 0.74 | 0.57 | 0.14 |
+| bigint | 10000 | 83.3 | 41.1 | 87.6 | 214.7 | 2.03 | 0.95 | 0.39 |
+| objects | 100000 | 95.8 | 79.3 | 50.5 | 2283.7 | 1.21 | 1.90 | 0.04 |
 
-Measured on this branch after merging `main` (which includes the compact list storage; sieve fell from 70.5 to 42.6 million
-instructions with it). Tomato's counts are 1.7-4.1 times Go's and Rust's on the numeric loops (sieve, matmul, mandelbrot,
-collatz), where the generated code executes the most extra instructions. Instruction counts
+Tomato's counts are 1.5-2.5 times Go's and Rust's on the numeric loops (sieve, matmul, mandelbrot, collatz), where the generated code executes the most extra instructions. Instruction counts
 alone do not say how those instructions perform, so compare them with the wall-clock table only as a second opinion.
 Full output: `benchmarks/results/instructions.md`.

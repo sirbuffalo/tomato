@@ -1,3 +1,8 @@
+# Entry points that take inputs: @name marks a function that `tomato run FILE NAME INPUTS...` starts, and each input is
+# converted to its parameter's type (a number, a text, True or False).
+#   tomato run examples/args.tom                    runs main: no inputs
+#   tomato run examples/args.tom prime 17           prints: 17 True
+#   tomato run examples/args.tom greet bob 2 True   prints BOB twice
 from math import is_prime
 
 @main

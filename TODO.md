@@ -34,3 +34,5 @@
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
 - Re-run the Linux benchmarks on a quieter biggie
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
+- Fix the compiler bug `set.discard(x)`
+  `set_method` implements only `add` and `remove`, but the error text for set methods lists `discard` (and the lint's loop-change check names it), so `s.discard(x)` is rejected with "set has no method 'discard'". Found by the documentation review; see `docs/documentation-review.md`.

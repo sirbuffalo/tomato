@@ -1,5 +1,5 @@
-# Loop helpers, written in Tomato: `from itertools import progress_bar`, a small progress bar.
-# There is no clock in the language yet, so the bar shows a count and a percentage but no speed or time left.
+# Loop helpers, written in Tomato: `progress_bar`, `permutations`, `combinations`, `product`, `chain`, `pairwise`, `batched`, `repeat`, ...
+# The progress bar shows a count and a percentage but no speed or time left (the built-in `clock()` would give one).
 #
 #     for x in progress_bar(items, 'copying'):     # items: any iterable with a length (list, range, text, a class)
 #         ...

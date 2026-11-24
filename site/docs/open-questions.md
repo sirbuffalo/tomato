@@ -2,7 +2,7 @@
 
 Every question still to decide. Nothing here is decided or assumed; Davis decides all semantics. Accepted answers move to `decisions.md` and `specification.md`. New questions are added here as they come up.
 
-Last updated after D12bg. The question currently asked is marked **asking**.
+Last updated for v0.51 (decisions up to D68a; numbers are not reused when an item is settled). Items 55-86 were written in 2026-11 and are updated for what the compiler has built since. No question is marked **asking** now.
 
 ## Priorities and scope
 
@@ -21,7 +21,7 @@ Last updated after D12bg. The question currently asked is marked **asking**.
 10. Processing phase: when are interface requirements checked relative to other declarations?
 11. ~~Inherited conformance~~ settled by D12bf (yes).
 12. ~~Member compatibility~~ settled by D12bg (exact types, names need not match).
-13. **asking** Interface-to-class conversion: can an interface-typed value be converted back to a class, and how does failure show?
+13. ~~Interface-to-class conversion~~ settled by D12bh (an explicit conversion that can fail). Open: the conversion's spelling beyond calling the class name, and the failure's form.
 14. Generic or container interface types (for example a list of an interface).
 15. Other interface member kinds (fields, class functions, operators).
 
@@ -74,7 +74,7 @@ Last updated after D12bg. The question currently asked is marked **asking**.
 46b. `range` forms and bounds, the loop variable's scope and type, `break` and `continue`, and loops over collections.
 47. Boolean operators, truthiness, comparison rules between types, and the `%` result type for fixed-width integers (P9; the sign rule is settled by D05au).
 48. String operations and syntax (D17c settles character units), whether a character means code point or grapheme, escapes, multi-line literals, float literals, `print` and other standard-library I/O.
-49. How the final compiler should treat the prototype's partly-static checks (P19).
+49. ~~How the final compiler should treat the prototype's partly-static checks (P19)~~: moot. The compiler written in Tomato checks all types before running (D33a, D40a, still partial for constants).
 
 ## Entry points (D16a)
 
@@ -88,20 +88,20 @@ Last updated after D12bg. The question currently asked is marked **asking**.
 
 Davis asked to grow the prototype toward a real, full language. These are not designed yet. Asked in roughly this order, one at a time.
 
-55. ~~Lists~~ settled by D20a. Still open: empty literal typing, negative indexes, slicing, removal and insertion, equality, printing.
-56. ~~Dicts and sets~~ exist (D20b; the dict is called `dict`, D20c). Open: syntax, key rules, ordering, iteration while changing, operations, equality.
-57. Tuples or multiple return values.
-58. Generics: how `list[int]` and user-written generic classes and functions work (D04b leaves generics open).
+55. ~~Lists~~ settled by D20a; negative indexes, slicing, printing, `pop`, `insert`, `extend`, `sort`, `reverse` and equality are built (P81, P82, P86). Still open: empty literal typing (a declared type is required now, P27).
+56. ~~Dicts and sets~~ exist (D20b; the dict is called `dict`, D20c) with literals, insertion order and snapshot iteration (P28, P90). Open: keys other than text for `dict`, more operations, equality.
+57. ~~Tuples or multiple return values~~ settled by D39a, D54a and P89 (`tuple[T]`, mixed `tuple[str, int]`, `return a, b`, unpacking). Open: `for`, `in` and slicing on mixed tuples.
+58. ~~Generics~~: classes and functions are built (D60a). Open: generic interfaces, generic methods, bounds, generic functions as values.
 59. ~~Missing values~~: `None` exists (D23a) and an optional is `T | None` (D23b). Open: general unions, narrowing, and operators on optionals.
-60. ~~Errors~~ exist with try/catch/finally/else (D22a). Open: how to raise, what an error is, which failures are catchable, rethrow, and the final error class tree.
-61. ~~Modules~~: import and export exist (D24a). Open: `import module` form, defaults, namespaces and name clashes, re-exports (items 8-9), search paths.
+60. ~~Errors~~ exist with try/catch/finally/else (D22a); `raise` and the runtime error classes with ids are built (P29, P88). Open: rethrow and the final error class tree.
+61. ~~Modules~~: import and export exist (D24a), `import module` with `module.name` is built (D62a). Open: aliases, re-exports (items 8-9), search paths.
 62. ~~A standard library~~ exists (D24a). Open: its contents, its names, and where `range` lives (D18a).
-63. Input and output: `open` exists (D26a). Open: reading input, command line, environment, line-by-line reading, file modes.
+63. Input and output: `open` exists (D26a) and `await input()` reads a line (D50a). Open: environment, line-by-line file reading, file modes.
 64. Web servers: how a Tomato program listens, routes and answers requests (R09); and concurrency, which web servers need.
 65. Functions as values: lambdas, closures, passing functions. Function values, named functions and non-capturing lambdas are decided (D63a). Open: closures (capturing variables), bound methods as values, generic functions as values, optional function values, comparing functions.
 66. ~~Other data kinds~~: classes model data (D21a). Open: enums and variants later if wanted, type aliases.
-67. String formatting and interpolation; multi-line string literals.
-68. ~~`break`, `continue`~~ exist (D25a). Open: `match`/`switch`, the `if` expression form, loop `else`.
+67. String formatting: f-strings exist (D53a). Open: format options, multi-line string literals.
+68. ~~`break`, `continue`~~ exist (D25a), and the `if` expression is `a if c else b` (D53b). Open: `match`/`switch`, loop `else`.
 69. Constants and module-level values (item 54).
 70. Testing and tooling: a test syntax, a formatter, and how `tomato` is run and built.
 71. Foreign calls: `!x` refers to an LLVM function (D27a). Open: how its types are declared, call form, dotted names, and how Tomato calls C or the browser (R10).
@@ -109,24 +109,24 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 ## Compiling (added 2026-11-21)
 
 72. ~~First compile target~~: the compiler emits LLVM IR (D30a). Open: LLVM version, linking and running per target, the runtime.
-73. Reference counting (D29a): weak references exist and debug mode reports leaks (D29c), plus best-effort compile-time cycle detection (D29b). Open: weak-reference syntax, the leak check's details, warning versus error, atomic counts for threads, release timing, cleanup actions.
+73. Reference counting (D29a) with a runtime cycle collector (D29d); debug mode reports leaks (D29c) and a best-effort compile-time cycle notice is wanted (D29b, not built). Open: the leak check's details, warning versus error, atomic counts for threads, release timing, cleanup actions.
 74. ~~Plain `int` in compiled code~~: it chooses its own size, staying unlimited (D32a, reading to confirm). Open: the analysis, spilling to big numbers, guarantees.
 75. The static type checker (D33a: types are checked at compile time). Open: inference rules, `None` and optional types, generics, monomorphization.
 76. Errors in compiled code: unwinding or result codes (D22a).
 77. Memory layout (a first slice is built: heap objects with a {count, type code} header, D36a): a value is a 64-bit type code plus 64-bit data (D35a, reading to confirm). Open: code assignments, inline types, reference-count placement, strings (chunked, D17c), lists, dicts, sets and objects.
-78. Modules have separate namespaces (D24c). Open: qualified names and aliases, the plain `import module` form (D24b) and the end of Davis's sentence, re-exports, and a build layout.
-79. Concurrency: async only for now, tentatively (D31b); the threading library (D31a) is deferred. Open: how async is written, interaction with reference counting, web-server model.
+78. Modules have separate namespaces (D24c) and `import module` gives qualified names (D24b, D62a). Open: aliases, the end of Davis's sentence, re-exports, and a build layout.
+79. Concurrency: async only for now, tentatively (D31b); `async def`, `await`, `start` and `sleep` are built (D51a-c, D58a-e). The threading library (D31a) is deferred. Open: threads, timeouts, `t.cancelled()`, the web-server model.
 80. ~~Types of `!x` LLVM functions~~: declared with `!name(a: T) -> R` (D27b, my design). Open: pointers, aggregates, where the IR comes from.
 81. ~~The self-hosting plan~~: done. The compiler written in Tomato compiles itself; the Python prototype that ran it first was retired in v0.6 (D46a).
 82. ~~Whether `tomato compile` should keep the Python-bundle mode~~: moot, the Python implementation and `bundle` are gone (D46a).
 
-83. Error modes (D34a, settled in outline): the code format, how a mode is selected, location details, and what release mode prints, if anything.
+83. ~~Error modes~~ settled by D34b (debug and release) and built: ids such as `E04`, `E04:12` in release, `tomato explain` (P66, P88).
 
 84. Weak references: not language syntax; the runtime frees cycles automatically (D29d, reading to confirm), and a weak reference may exist in the standard library (D29e). Open: that library type's design and runtime support, when the collector runs, its cost, and its use with threads.
 
-85. Checking before running (D40a, reading to confirm): the prototype's check pass is partial (P54). Open: narrowing after `x in Type` or a `None` check, types of collection literals and methods in the pass, and whether the interpreter should also stop on code it cannot type.
+85. Checking before running (D40a, reading to confirm): the check pass is partial (P54; the compiler finds type mismatches and constant division by zero in dead code, not `rational(1, 0)` or constant `uint[length=8](300)`). Open: narrowing after `x in Type` or a `None` check, types of collection literals and methods in the pass, and whether the interpreter should also stop on code it cannot type.
 
-86. Floats and the new operators (D41a, reading to confirm): float literal grammar (`1.` and `.5` are not literals), mixing `rational` with `float`, typing fixed-width results of `//` and `**` from literals, and the compiler written in Tomato, which has decimal float literals, `//`, `**` and mixed arithmetic since v0.17 but not exponent notation, `float(x)` or the infinite/NaN stop.
+86. Floats and the new operators (D41a, reading to confirm): float literal grammar (`1.` and `.5` are not literals), mixing `rational` with `float`, typing fixed-width results of `//` and `**` from literals, and the compiler written in Tomato, which has float literals with exponents, `//`, `**`, mixed arithmetic, `float(x)` and the infinite/NaN stop (v0.17-v0.23).
 
 ## Out of scope
 

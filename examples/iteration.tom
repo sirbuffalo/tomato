@@ -1,5 +1,5 @@
 # Ranges and iteration: a range keeps only start, stop and step; a method marked @iter (or any function that uses yield)
-# can be looped over with `for`.
+# can be looped over with `for`; progress_bar (from itertools) wraps any loop that has a length.
 from itertools import progress_bar
 
 def fib(limit: int) -> int:

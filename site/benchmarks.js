@@ -12,7 +12,7 @@
   fetch("benchmarks.json").then(function (r) { return r.json(); }).then(function (d) {
     var m = d.machine, v = d.versions;
     var langs = LANGS.filter(function (l) { return d.benchmarks[0].results[l[0]]; });
-    $("meta").textContent = m.cpu + ", " + m.cores + " cores, " + m.memory + ", " + m.os + ". Tomato v" + v.tomato + ", " + (v.go || "") + ", " + (v.rust || "") + ", " + (v.python || "") + ". Median of " + d.runs + " runs (" + d.python_runs + " for Python)" + (d.seed != null ? ", all runs in one shuffled order (seed " + d.seed + ")" : "") + ", measured " + d.date.slice(0, 10) + "; load average before " + d.load_before + ", after " + d.load_after + ".";
+    $("meta").textContent = [m.cpu, m.cores + " cores", m.memory, m.os].filter(Boolean).join(", ") + ". Tomato v" + v.tomato + ", " + (v.go || "") + ", " + (v.rust || "") + ", " + (v.python || "") + ". Median of " + d.runs + " runs (" + d.python_runs + " for Python)" + (d.seed != null ? ", all runs in one shuffled order (seed " + d.seed + ")" : "") + ", measured " + d.date.slice(0, 10) + "; load average before " + d.load_before + ", after " + d.load_after + ".";
     var b0debug = !!d.benchmarks[0].results["tomato-debug"];
     var cm = $("commands");
     langs.forEach(function (l) { if (d.commands[l[0]]) cm.appendChild(el("li", "", "<strong>" + l[1] + ":</strong> <code>" + d.commands[l[0]] + "</code>")); });

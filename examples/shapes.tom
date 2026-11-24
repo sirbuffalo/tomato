@@ -1,3 +1,5 @@
+# Interfaces and classes: an interface that extends another, a class that implements it with private fields, and a
+# subclass that overrides a method; describe() takes any Shape. Run it with: tomato run examples/shapes.tom
 interface Named:
     def name(self) -> str
 

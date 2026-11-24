@@ -1,3 +1,5 @@
+# Whole-number helpers from the math module (is_prime), a loop that updates two variables at once, `/` on whole numbers
+# (5 / 2 is 2.5) and exact fractions from the rational module. Run it with: tomato run examples/primes.tom
 from math import is_prime
 from rational import rational
 

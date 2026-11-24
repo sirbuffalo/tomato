@@ -1,3 +1,5 @@
+# A tour of the core language: an error class with @init, raise and try/catch/finally, dicts and sets, loops with break
+# and continue, and the math module. Run it with: tomato run examples/features.tom
 from math import gcd, pow
 
 class NegativeError(Error):

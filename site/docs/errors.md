@@ -4,7 +4,7 @@ Every problem found before a program runs is reported in one format, whether it 
 `tomato compile`, the repl or the website playground:
 
 ```
-error: name 'tets' is not defined
+error[E227]: name 'tets' is not defined
  --> prog.tom:6:11
   |
 6 |     print(tets)
@@ -12,7 +12,7 @@ error: name 'tets' is not defined
   = help: did you mean 'test'?
 ```
 
-- The first line, `error: ...`, says what is wrong in plain words and quotes the offending name or text in single quotes.
+- The first line, `error[ID]: ...`, says what is wrong in plain words and quotes the offending name or text in single quotes.
 - `--> FILE:LINE:COLUMN` says where. Lines and columns count from 1. In the repl the file is `repl` and the line is the line
   you just typed; on the website the file is `program.tom`.
 - The next lines show that source line with a row of `^` under the offending text. When the compiler knows only the line, the
@@ -23,13 +23,13 @@ error: name 'tets' is not defined
 Only the first error is reported. The command exits with status 1 and prints the message on standard error.
 
 Messages never mention compiler internals (token names, temporary paths, decision numbers). A limit of the language is
-described as what you cannot do and what to do instead ("`map` is not available: Tomato has no function values yet; use a
-for loop instead"). An argument of the wrong type names the function and the parameter: `argument 1 of 'f' (the parameter
+described as what you cannot do and what to do instead ("`reduce` is not available" with the help "use a for loop instead").
+An argument of the wrong type names the function and the parameter: `argument 1 of 'f' (the parameter
 'a') has type str, but int is expected`.
 
 ## Warnings
 
-A warning has the same layout with `warning:` in place of `error:`. It is about code that runs but is probably wrong or
+A warning has the same layout with `warning:` in place of `error[ID]:` (a warning has no ID). It is about code that runs but is probably wrong or
 useless, and it never stops the program or changes its exit status. All the warnings of a program are shown (in line order)
 before it runs. The checks are:
 
@@ -76,26 +76,27 @@ and the website's copy of the text see. On the website the same text is shown wi
 
 ## Errors while a program runs
 
-An error that stops a running program prints `error: MESSAGE`, for example `error: division by zero`, then a call trace: one
-`at FUNCTION (line N)` line for the function where the error was raised and one for each function that called it, innermost
-first (`Class.method` for a method):
+An error that stops a running program prints `error[ID]: MESSAGE`, with the diagnostic ID of the kind of failure (see "Error
+classes and ids" below), for example `error[E01]: division by zero`, then a call trace: one `at FUNCTION (line N)` line for the
+function where the error was raised and one for each function that called it, innermost first (`Class.method` for a method):
 
 ```
-error: division by zero
+error[E01]: division by zero
   at half (line 6)
   at main (line 3)
 ```
 
-An error the program raises itself and nobody catches prints `error: ClassName: message (raised on line N)` and then the same
-trace. A `catch` that handles the error discards its trace. At most 24 lines are kept; further ones are counted
-(`... and 3 more calls`). In `--mode release` there is no trace: the program prints only the short code described next.
+An error the program raises itself with `raise` and nobody catches prints `error: ClassName: message (raised on line N)` (no
+ID: the program made the message up) and then the same trace; in a release build its code is `E11`, "an error raised by the
+program". A `catch` that handles the error discards its trace. At
+most 24 lines are kept; further ones are counted (`... and 3 more calls`).
 
-An error that stops a running program prints its diagnostic ID, for example `error[E01]: division by zero`. An error the program
-raises itself without an ID and nobody catches prints `error: ClassName: message (raised on line N)`. There are two modes (D34b). `--mode debug`
-(the default) prints the readable text above and reports objects that were never freed. `--mode release` prints a short code
-such as `error E01:4` (error id E01, source line 4) that `tomato explain CODE FILE` turns back into the class, the message and the source
-line (with a caret, like a compiler error), and links the program with a higher optimisation level (`clang -O2` with link-time optimisation, so the runtime is inlined into the program, and no leak report or exit-time cycle collection; debug uses `-O1`). `tomato run`, `build` and
-`compile` all take `--mode`; `--mode normal` is an error that says it was renamed to `release`.
+There are two modes (D34b). `--mode debug` (the default) prints the readable text above and reports objects that were never
+freed. `--mode release` prints no trace, only a short code such as `error E01:4` (error id E01, source line 4) that
+`tomato explain CODE [FILE]` turns back into the class, the message and, when a FILE is given, the source line (with a caret,
+like a compiler error); it also links the program with a higher optimisation level (`clang -O2` with link-time optimisation, so
+the runtime is inlined into the program, and no leak report or exit-time cycle collection; debug uses `-O1`). `tomato run`,
+`build` and `compile` all take `--mode`; `--mode normal` is an error that says it was renamed to `release`.
 
 ## For compiler authors
 
@@ -128,6 +129,10 @@ The language raises these classes, all of them a `RuntimeError` (so `catch Runti
 | `ZeroDivisionError` | `/`, `//` or `%` by zero |
 | `OverflowError` | integer overflow, a number that does not fit its type, a float result that is infinite |
 | `IOError`, `EOFError`, `CancelledError` | files, the end of input, a cancelled task |
+
+The libraries raise subclasses of their own, each also a `RuntimeError`: `JSONDecodeError`, `JSONEncodeError`, `JSONTypeError` and
+`MsgpackError` (`json`), `TOMLDecodeError` (`toml`), `CacheMiss` (`cache`), and `requests.RequestError` (an `IOError`) with
+`ConnectionError`, `TimeoutError`, `InvalidURL`, `TooManyRedirects` and `HTTPError`. They have ids too (`std/errors.txt`).
 
 Write your own with `class MyError(RuntimeError)`. To accept a message, give the class an `@init` method that calls
 `RuntimeError.make(self, message)`. The `message` and `id` fields default to `""`. Release builds print `error E04:12` with the ID and the line

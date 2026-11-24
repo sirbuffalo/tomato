@@ -14,24 +14,33 @@ Rust (`.rs`) and Python (`.py`), in `benchmarks/<name>/`. Each takes one number 
 | `mandelbrot` | 64-bit float arithmetic, a `while` loop |
 | `collatz` | integer division and branching, no memory |
 | `strings` | `str(i)`, `join`, `split`, `int(text)` |
-| `sort` | `sorted` on a million integers |
+| `sort` | `sorted` on millions of integers (`sort_radix.rs` is an extra Rust version that uses a radix sort) |
 | `wordcount` | a dict from text to count, f-strings |
 | `bigint` | unlimited-size integers (n!); Rust uses the num-bigint crate (benchmarks/bigint/Cargo.toml) |
-| `objects` | a million heap objects and method calls |
+| `objects` | millions of heap objects and method calls |
 
 ## Running
 
 ```sh
-benchmarks/run.sh                 # full inputs, 10 runs each in a shuffled order (--seed N, default 1); writes benchmarks/results/results.{json,md}
-benchmarks/run.sh --runs 3 --only fib,sort
+benchmarks/run.sh                 # full inputs, 10 runs each (Python too) in one shuffled order (--seed N, default 1); writes benchmarks/results/results.{json,md}
+benchmarks/run.sh --runs 3 --only fib,sort   # also --python-runs N and --out DIR
 benchmarks/run.sh --smoke         # tiny inputs, only checks the four versions agree (tests/run.sh does this)
 benchmarks/run.sh --site          # also copies the JSON to site/benchmarks.json for the Benchmarks page
 ```
 
-It needs `clang` (it builds Tomato from this checkout and `measure.c`, the timing helper), `go`, `rustc` and `python3`;
-a missing language is skipped. Inputs are in `sizes.txt`. Go is built with `go build`, Rust with `rustc -O`, Tomato with
-`tomato build`, Python is run as installed. The results and caveats are on the website's Benchmarks page, and the
-compiler improvements they suggest are in `docs/performance.md`.
+It needs `clang` (it builds Tomato from this checkout, using `compiler/bootstrap/tomatoc.ll`, and `measure.c`, the timing
+helper), `go`, `rustc` (and `cargo`, for `bigint`) and `python3`; a missing language is skipped. Inputs are in `sizes.txt`
+(columns: smoke input, full input, input for `count.sh`). Tomato is built twice with `tomato build`, in release mode (the
+`tomato` column) and in debug mode (`tomato-debug`); Go with `go build`, Rust with `rustc -O` (`bigint` with `cargo build
+--release`, which fetches the pinned `num-bigint` crate once), and Python is run as installed. It works on macOS and Linux.
+The results and caveats are on the website's Benchmarks page, and what they say about the compiler is in `docs/performance.md`.
+
+## Results
+
+`results/results.json` and `results/results.md` are the last run of `run.sh` on the Mac (`site/benchmarks.json` is a copy of
+the JSON); `results/instructions.md` is the last `count.sh`. When `release/release.sh` runs its Linux step, the same three
+files for Linux x86-64 go in `results/linux-x86_64/`. `release/perf-snapshot.sh` turns them into the newest section of
+`docs/performance.md`.
 
 ## json
 
@@ -39,8 +48,15 @@ compiler improvements they suggest are in `docs/performance.md`.
 `jsonbench gen FILE N` writes a document of N records, and `jsonbench loads|dumps|pretty FILE` parses it (and writes it
 back). Results are in docs/performance.md.
 
+## cache_scaling.tom
+
+`benchmarks/cache_scaling.tom` (run it with `tomato run benchmarks/cache_scaling.tom`; not part of `run.sh`) times a million
+`set` and `get` calls on `std/cache.tom` caches of very different sizes, to check that each call takes constant time.
+
 ## count.sh: instructions executed, not time
 
-`benchmarks/count.sh` runs the same programs under Valgrind in a Linux arm64 VM (Lima) and reports instructions executed,
-which do not depend on machine load. `benchmarks/count.sh --setup` once, then `benchmarks/count.sh`. It reports instructions,
-not cycles. Details and results: docs/performance.md.
+`benchmarks/count.sh` runs the same programs under Valgrind (callgrind) and reports instructions executed, which do not
+depend on machine load. On a Mac it runs them in a Linux arm64 VM (Lima): `benchmarks/count.sh --setup` once, then
+`benchmarks/count.sh`. On a Linux machine that has `valgrind`, `clang`, `gcc`, `go`, `rustc` and `python3`,
+`benchmarks/count.sh --guest` does the counting directly (this is what the release's Linux step runs). It reports
+instructions, not cycles. Details and results: docs/performance.md.

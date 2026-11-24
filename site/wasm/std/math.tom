@@ -1,4 +1,4 @@
-# A small standard-library module of integer helpers (D24a). Import with: from math import abs, gcd, is_prime,
+# The standard-library math module (D24a): integer helpers, angles, trigonometry and logarithms. Import with: from math import abs, gcd, is_prime,
 # next_prime
 
 export def abs(n: int) -> int:
@@ -179,7 +179,7 @@ export def lcm(a: int, b: int) -> int:
 # Angles, trigonometry and the other real-number functions (D49a-c). Import what you use:
 #
 #     from math import deg, rad, sin, cos, atan2, sqrt, hypot
-#     print(sin(deg(30)))              # 0.5
+#     print(sin(deg(30)))              # 0.49999999999999994
 #     print(atan2(1, 1))               # 0.7853981633974483 rad
 #     print(atan2(1, 1).deg())         # 45.0
 #
