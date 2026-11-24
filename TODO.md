@@ -12,3 +12,5 @@
   `small_loop`'s fast copy keeps its overflow checks even when an interval from `Gen.loop_facts` proves them unnecessary; dropping them there would cut the checks from small-int loops whose variables have known bounds (collatz itself has none).
 - Rebuild `site/wasm` on the Mac before the next release
   macOS arm64, WASI SDK 24: the error-path temporaries task landed a Linux-built `tomatoc.wasm`. It was built with the host-independent `site/wasm/build.sh`, so the Mac rebuild should give the same bytes ("wasm files rebuild identically").
+- Build the approved Wave 2 packs as Sonnet tasks
+  After Davis answers the questions in `docs/wave2-api-sheets.md`, start build tasks for the approved sheets: `re` and hashing first (Sonnet-sized, pure Tomato), then os/sys, then testing.
