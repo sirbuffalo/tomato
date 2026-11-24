@@ -66,7 +66,7 @@ export GOMAXPROCS=1 PYTHONHASHSEED=0 CGO_ENABLED=1
 [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] && export GODEBUG=asyncpreemptoff=1   # x86-64 Linux only: callgrind crashes on the Go wordcount binary with async preemption signals; the arm64 VM counts stay as they were
 home="$work/tomato"; mkdir -p "$home/bin"
 clang -O1 -w -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm || exit 1
-cp "$root/native/tomato" "$home/bin/tomato"; cp -R "$root/runtime" "$root/std" "$root/VERSION" "$home/"
+cp "$root/native/tomato" "$root/native/rtcache.sh" "$home/bin/"; cp -R "$root/runtime" "$root/std" "$root/VERSION" "$home/"
 release_mode=release
 langs="tomato go rust python"
 ext() { case "$1" in tomato) echo tom ;; go) echo go ;; rust) echo rs ;; python) echo py ;; esac; }

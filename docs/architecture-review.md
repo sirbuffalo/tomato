@@ -304,6 +304,10 @@ What is left, and why:
   with `tomato_rt.c` took 1.5 to 1.75 s in most runs, up to 6.5 s under load. Linking a runtime compiled once
   (`clang -O1 -flto -c`) took 0.4 to 0.6 s, up to 1.4 s, and gave a **byte-identical binary**. The repl already compiles the
   runtime once per session (`tomato-repl:26`).
+  *Update (runtime cache task).* `native/tomato` now keeps the compiled runtime, as LLVM bitcode, in the user cache folder
+  (`native/rtcache.sh`; `tests/run.sh` shares it). With link-time optimisation the saving is smaller than the figure above, which
+  was a plain non-LTO object link: clang still optimises and generates code for the whole merged module on every link, so only
+  the C compile of the runtime goes away (about 0.5 s of CPU on the Linux build box; measurements in the task's merge card).
 - **The compiler spends much of its time appending to one string** [M]. `compile_with` builds the output with
   `bodies += f'{compile_function(...)}'` (`compiler.tom:7933-7951`) on a string that reaches about 10 MB. Callgrind puts
   35% of all instructions in `tomato_str_concat`, and the kernel another large share (628,000 page faults). In a scratch

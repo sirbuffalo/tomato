@@ -129,8 +129,14 @@ finish() {
   pump
 }
 
-cc() { clang -O1 -w -o "$1" "$2" "$root/runtime/tomato_rt.c" -lm; }
+cc() { clang -O1 -w -o "$1" "$2" "$rt_o" -lm; }
 c1="$shared/c1"
+# The compiled runtime, from the cache (native/rtcache.sh: the same cache `tomato run` uses), so the tests that link a program with the
+# runtime do not compile its 5,000 lines of C again each time: $rt_o for the plain link, $rt_asan with AddressSanitizer (empty when
+# this clang cannot build it: the tests then report that). Without a usable object the C file itself is linked, as it always was.
+. "$root/native/rtcache.sh"
+rt_o="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -w)" || rt_o="$root/runtime/tomato_rt.c"
+rt_asan="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -w -g -fsanitize=address)" || rt_asan=""
 home="$shared/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"; t="$home/bin/tomato"
 
 # ---- compiler -----------------------------------------------------------------------------------------------------------
@@ -159,7 +165,7 @@ t_example() { # name, entry, the arguments
   name="$1"; entry="$2"; rest="$3"
   "$c1" "examples/$name.tom" "$entry" std/ > "$work/p.ll" 2> "$work/e" || { echo "FAIL $name $entry: $(cat "$work/e")"; echo x >> "$shared/failed"; return; }
   grep -q '^;! ' "$work/p.ll" && { echo "FAIL $name $entry: warnings"; grep '^;! ' "$work/p.ll" | head -6 | sed 's/^/     /'; echo x >> "$shared/failed"; return; }
-  clang -O1 -w -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm || { echo "FAIL $name $entry: link"; echo x >> "$shared/failed"; return; }
+  clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -lm || { echo "FAIL $name $entry: link"; echo x >> "$shared/failed"; return; }
   # shellcheck disable=SC2086
   "$work/p" $rest > "$work/out" 2>&1 < /dev/null
   if cmp -s "$work/out" "tests/expected/$name.$entry.out"; then echo "ok   $name $entry"; echo x >> "$shared/passed"; else echo "FAIL $name $entry"; diff "$work/out" "tests/expected/$name.$entry.out" | head -5 | sed 's/^/     /'; echo x >> "$shared/failed"; fi
@@ -175,7 +181,7 @@ t_program() {
   if grep -q '^;! ' "$work/p.ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
   arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics) arg="$work" ;; esac   # they write files: into this test's own folder, not a shared /tmp
   # shellcheck disable=SC2086
-  [ -s "$work/p.ll" ] && clang -O1 -w -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm && "$work/p" $arg > "$work/out" 2>&1
+  [ -s "$work/p.ll" ] && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -lm && "$work/p" $arg > "$work/out" 2>&1
   if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$shared/passed"; else echo "FAIL program $name"; { head -3 "$work/e"; diff "$work/out" "tests/expected/$name.main.out" | head -5; } | sed 's/^/     /'; echo x >> "$shared/failed"; fi
 }
 section "== decided rules (programs) =="
@@ -186,7 +192,7 @@ while read -r name; do spawn t_program "$name"; done < "$shared/list"
 t_asan() { # PATH:ARGUMENT, the argument being a folder the program may write into when it is $work
   spec="$1"; path="${spec%%:*}"; name="$(basename "$path")"; arg="${spec#*:}"; [ "$arg" = WORK ] && arg="$work"
   "$c1" "$path.tom" main std/ > "$work/p.ll" 2>/dev/null
-  if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+  if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" "$rt_asan" -lm 2>/dev/null; then
     # a failure shows the head of the sanitizer report (with ASAN_SYMBOLIZER_PATH set, as the Linux CI job does, that includes the leaking allocation's stack)
     # shellcheck disable=SC2086
     out="$("$work/asan" $arg 2>&1 >/dev/null | head -14)"
@@ -213,7 +219,7 @@ t_sort_fallback() {
 # in programs whose entry function holds nothing: there, whatever is left at the end was leaked.
 t_release_asan() { # program, "leaks" to look for leaks too
   "$c1" "tests/programs/$1.tom" main std/ release > "$work/p.ll" 2> "$work/e"
-  if clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+  if clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" "$rt_asan" -lm 2>/dev/null; then
     if [ "$2" = leaks ]; then "$work/rel" > "$work/out" 2> "$work/e"; cat "$work/e" >> "$work/out"
     else ASAN_OPTIONS=detect_leaks=0 "$work/rel" > "$work/out" 2> "$work/e"; grep -v "never freed" "$work/e" >> "$work/out"; fi
     cmp -s "$work/out" "tests/expected/$1.main.out" && ok "release $1" || bad "release $1" "$(diff "$work/out" "tests/expected/$1.main.out" | head -5)"
@@ -221,7 +227,7 @@ t_release_asan() { # program, "leaks" to look for leaks too
 }
 t_release_leak() { # fused expressions over big numbers; the test itself is tested by taking the frees out of the runtime
   printf 'def work():\n    x = 2 ** 70\n    xs = [2 ** 65, 7]\n    for i in range(40):\n        x = x * 3 - i * xs[i %% 2] + 1\n        xs[1] = xs[1] * xs[0] - x %% 1000003\n    print(x %% 97, xs[1] %% 97)\n\n@main\ndef main():\n    work()\n' > "$work/leak.tom"
-  "$c1" "$work/leak.tom" main std/ release > "$work/p.ll" 2> "$work/e" && clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" runtime/tomato_rt.c -lm
+  "$c1" "$work/leak.tom" main std/ release > "$work/p.ll" 2> "$work/e" && clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" "$rt_asan" -lm
   check "release: big numbers in fused expressions are freed" "55 51" "$("$work/rel" 2>&1)"
   sed 's/^#define INT_CONSUME(m, x, y) .*/#define INT_CONSUME(m, x, y) do { } while (0)/' runtime/tomato_rt.c > "$work/leaky.c"
   clang -O1 -w -o "$work/leaky" "$work/p.ll" "$work/leaky.c" -lm
@@ -237,7 +243,7 @@ section "== sort: the heapsort fallback gives the same results =="
 spawn t_sort_fallback
 
 t_socket_many() { # more waiting tasks than descriptors the process may open
-  "$c1" tests/programs/socket_many.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm
+  "$c1" tests/programs/socket_many.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -lm
   check "300 tasks accept on one server with ulimit -n 64" "$(cat tests/expected/socket_many.main.out)" "$(ulimit -n 64; "$work/p" 2>&1)"
 }
 section "== sockets: more waiting tasks than descriptors the process may open =="
@@ -251,21 +257,21 @@ t_requests() { # one local server for this job's own requests
     port="$(cat "$work/httpd.port")"
     "$c1" tests/programs/requests_local.tom main std/ > "$work/rq.ll" 2> "$work/e"
     if grep -q '^;! ' "$work/rq.ll"; then bad "requests_local has warnings" "$(grep '^;! ' "$work/rq.ll" | head -4)"; fi
-    if clang -O1 -w -o "$work/rq" "$work/rq.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+    if clang -O1 -w -o "$work/rq" "$work/rq.ll" "$rt_o" -lm 2>/dev/null; then
       check "requests against the local server" "$(cat tests/expected/requests_local.main.out)" "$("$work/rq" "http://127.0.0.1:$port" 2>&1)"
-      if clang -O1 -w -g -fsanitize=address -o "$work/rq_asan" "$work/rq.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+      if clang -O1 -w -g -fsanitize=address -o "$work/rq_asan" "$work/rq.ll" "$rt_asan" -lm 2>/dev/null; then
         out="$("$work/rq_asan" "http://127.0.0.1:$port" 2>&1 >/dev/null | head -14)"
         [ -z "$out" ] && ok "asan requests_local" || bad "asan requests_local" "$out"
       else bad "asan requests_local" "this clang cannot build with -fsanitize=address"; fi
       # five requests that each take 1 s must overlap: the whole run is far below 5 s
       cp tests/programs/requests_overlap.tom "$work/overlap.tom"
-      "$c1" "$work/overlap.tom" main std/ > "$work/ov.ll" 2>/dev/null && clang -O1 -w -o "$work/ov" "$work/ov.ll" runtime/tomato_rt.c -lm
+      "$c1" "$work/overlap.tom" main std/ > "$work/ov.ll" 2>/dev/null && clang -O1 -w -o "$work/ov" "$work/ov.ll" "$rt_o" -lm
       t0="$(date +%s)"; ovo="$("$work/ov" "http://127.0.0.1:$port" 2>&1)"; t1="$(date +%s)"
       [ "$ovo" = done ] && [ $((t1 - t0)) -lt 4 ] && ok "requests overlap (5 x 1 s took $((t1 - t0)) s)" || bad "requests overlap" "output '$ovo' after $((t1 - t0)) s"
     else bad "requests against the local server" "did not build: $(cat "$work/e")"; fi
     kill "$httpd_pid" 2>/dev/null
   else bad "requests test server" "tests/http_server.c did not build"; fi
-  "$c1" examples/http_get.tom main std/ > "$work/hg.ll" 2> "$work/e" && clang -O1 -w -o "$work/hg" "$work/hg.ll" runtime/tomato_rt.c -lm && ok "examples/http_get.tom builds" || bad "examples/http_get.tom builds" "$(cat "$work/e")"
+  "$c1" examples/http_get.tom main std/ > "$work/hg.ll" 2> "$work/e" && clang -O1 -w -o "$work/hg" "$work/hg.ll" "$rt_o" -lm && ok "examples/http_get.tom builds" || bad "examples/http_get.tom builds" "$(cat "$work/e")"
 }
 section "== requests (tests/http_server.c is a local server: no internet needed) =="
 spawn t_requests
@@ -392,6 +398,45 @@ t_cli_no_lto() { # a clang whose linker has no LLVM plugin (-flto fails when lin
   cli_setup
   mkdir -p "$work/nolto"; printf '#!/bin/sh\ncase " $* " in *" -flto "*) case " $* " in *" -c "*) ;; *) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v clang)" > "$work/nolto/clang"; chmod +x "$work/nolto/clang"
   for m in debug release; do check "without link-time optimisation in the linker ($m)" "$(cat tests/expected/int_fast_paths.main.out)" "$(PATH="$work/nolto:$PATH" $t run tests/programs/int_fast_paths.tom --mode $m 2>&1)"; done
+}
+t_cli_runtime_cache() { # the compiled runtime is kept in the cache folder: a hit, a miss for every change of key, concurrent runs, no cache
+  cli_setup
+  h="$work/h"; mkdir -p "$h"; cp -R "$home/native/bin" "$home/native/runtime" "$home/native/std" "$home/native/VERSION" "$h/"   # a copy whose runtime the test may change
+  mkdir -p "$work/spy"; real="$(command -v clang)"
+  # a clang that logs each compile of an object (-c) and, with FAKE_CLANG_VERSION, reports another version
+  printf '#!/bin/sh\ncase " $* " in *" -c "*) echo "$*" >> "%s/compiles" ;; esac\n[ -n "$FAKE_CLANG_VERSION" ] && [ "$1" = --version ] && { echo "$FAKE_CLANG_VERSION"; exit 0; }\nexec "%s" "$@"\n' "$work" "$real" > "$work/spy/clang"; chmod +x "$work/spy/clang"
+  export TOMATO_CACHE_DIR="$work/cache"; PATH="$work/spy:$PATH"
+  r() { $h/bin/tomato run "$work/echo.tom" main a b "$@"; }   # (a program with arguments: --mode goes before them)
+  compiles() { [ -f "$work/compiles" ] && wc -l < "$work/compiles" | tr -d ' ' || echo 0; }
+  files() { ls "$work/cache" 2>/dev/null | grep -c '^rt-'; }
+  want="[a][b]"
+  check "runtime cache: a first run is right" "$want" "$(r 2>&1)"
+  check "runtime cache: a first run compiles the runtime once and stores it" "1 1" "$(compiles) $(files)"
+  ino="$(ls -i "$work/cache"/rt-* | cut -d' ' -f1)"
+  check "runtime cache: a second run is right" "$want" "$(r 2>&1)"
+  check "runtime cache: a second run is a hit (no compile, the file is not replaced)" "1 1 $ino" "$(compiles) $(files) $(ls -i "$work/cache"/rt-* | cut -d' ' -f1)"
+  $h/bin/tomato build "$work/echo.tom" -o "$work/echo_d" > /dev/null 2>&1; check "runtime cache: build uses the same entry" "1 1" "$(compiles) $(files)"
+  check "runtime cache: a built program runs" "$want" "$("$work/echo_d" a b 2>&1)"
+  check "runtime cache: release is another entry" "$want" "$($h/bin/tomato run "$work/echo.tom" main a b --mode release 2>&1)"
+  check "runtime cache: release compiled the runtime once more" "2 2" "$(compiles) $(files)"
+  $h/bin/tomato run "$work/echo.tom" main a b --mode release > /dev/null 2>&1; check "runtime cache: release hits too" "2 2" "$(compiles) $(files)"
+  printf '\n/* a change to the runtime */\n' >> "$h/runtime/tomato_rt.c"
+  check "runtime cache: a changed runtime source is right" "$want" "$(r 2>&1)"
+  check "runtime cache: a changed runtime source is a miss with its own entry" "3 3" "$(compiles) $(files)"
+  check "runtime cache: another clang version is a miss with its own entry" "$want" "$(FAKE_CLANG_VERSION='clang version 0.0 (fake)' r 2>&1)"
+  check "runtime cache: another clang version compiled once more" "4 4" "$(compiles) $(files)"
+  # concurrent runs on an empty cache: all right, one entry, no leftover temporary file, and the entry is whole (the next run hits)
+  rm -rf "$work/cache"; : > "$work/compiles"; k=0; : > "$work/conc.out"
+  while [ $k -lt 8 ]; do ( r > "$work/conc.$k" 2>&1 ) & k=$((k + 1)); done; wait
+  k=0; bad_runs=0; while [ $k -lt 8 ]; do [ "$(cat "$work/conc.$k")" = "$want" ] || bad_runs=$((bad_runs + 1)); k=$((k + 1)); done
+  check "runtime cache: 8 concurrent runs on an empty cache are all right" "0" "$bad_runs"
+  check "runtime cache: concurrent runs leave one entry and no temporary file" "1 0" "$(files) $(ls -A "$work/cache" | grep -c '^\.tmp\.')"
+  n0="$(compiles)"; r > /dev/null 2>&1; check "runtime cache: the entry the concurrent runs left is whole (a hit)" "$n0" "$(compiles)"
+  # no cache: off, and a folder that cannot be made (a file is in the way); both still run, and nothing is stored
+  rm -rf "$work/cache"; check "runtime cache: TOMATO_CACHE=off still runs" "$want" "$(TOMATO_CACHE=off r 2>&1)"
+  check "runtime cache: TOMATO_CACHE=off stores nothing" "0" "$(files)"
+  : > "$work/notdir"; check "runtime cache: an unusable cache folder still runs" "$want" "$(TOMATO_CACHE_DIR="$work/notdir/x" r 2>&1)"
+  check "runtime cache: the program is the same with and without the cache" "$(TOMATO_CACHE=off $h/bin/tomato build "$work/echo.tom" -o "$work/e_off" >/dev/null 2>&1; "$work/e_off" a b 2>&1)" "$("$work/echo_d" a b 2>&1)"
 }
 t_cli_release_no_leak() { cli_setup; $t build tests/programs/cycle.tom -o "$work/cyc_rel" --mode release > /dev/null 2>&1; check "release mode does not print a leak report" "$(cat tests/expected/cycle.main.out)" "$("$work/cyc_rel" 2>&1)"; }
 t_cli_explain() {
@@ -533,6 +578,7 @@ for name in int_boundary big_numbers bitwise floor_divide_power containers cycle
 done
 spawn t_cli_release_no_leak
 spawn t_cli_no_lto
+spawn t_cli_runtime_cache
 spawn t_cli_explain
 spawn t_cli_repl_1
 spawn t_cli_color
@@ -632,7 +678,7 @@ neg type_in_unknown "this type is not supported here"
 # ---- input --------------------------------------------------------------------------------------------------------------
 t_input() {
   f="$1"; n="$(basename "$f" .tom)"
-  "$c1" "$f" main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" runtime/tomato_rt.c -lm || { bad "input $n" "did not build: $(cat "$work/e")"; return; }
+  "$c1" "$f" main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input $n" "did not build: $(cat "$work/e")"; return; }
   "$work/i" < "tests/input/$n.in" > "$work/o" 2>&1
   if cmp -s "$work/o" "tests/input/$n.out"; then ok "input $n"; else bad "input $n" "$(diff "$work/o" "tests/input/$n.out" | head -6)"; fi
   if [ -n "$have_js" ]; then
@@ -691,7 +737,7 @@ for f in tests/errors/*.tom; do spawn t_error_text "$f"; done
 
 # ---- runtime errors -----------------------------------------------------------------------------------------------------
 t_rt() { # file, expected stderr text, expected exit status
-  "$c1" "tests/runtime/$1.tom" main std/ > "$work/r.ll" 2>/dev/null && clang -O1 -w -o "$work/r" "$work/r.ll" runtime/tomato_rt.c -lm || { bad "runtime $1" "did not build"; return; }
+  "$c1" "tests/runtime/$1.tom" main std/ > "$work/r.ll" 2>/dev/null && clang -O1 -w -o "$work/r" "$work/r.ll" "$rt_o" -lm || { bad "runtime $1" "did not build"; return; }
   "$work/r" > "$work/o" 2> "$work/e2"; code=$?
   case "$(cat "$work/o" "$work/e2")" in *"$2"*) [ "$code" = "$3" ] && ok "runtime $1" || bad "runtime $1" "exit status $code, wanted $3";; *) bad "runtime $1" "wanted '$2', got: $(cat "$work/o" "$work/e2")";; esac
 }
@@ -787,7 +833,7 @@ fi
 t_gap() {
   f="$1"; n="$(basename "$f" .tom)"
   accepted=no
-  if "$c1" "$f" main std/ > "$work/g.ll" 2>/dev/null && clang -O1 -w -o "$work/g" "$work/g.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+  if "$c1" "$f" main std/ > "$work/g.ll" 2>/dev/null && clang -O1 -w -o "$work/g" "$work/g.ll" "$rt_o" -lm 2>/dev/null; then
     accepted=yes; "$work/g" > /dev/null 2>&1 || accepted=fails
   fi
   case "$n" in

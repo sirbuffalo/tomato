@@ -13,7 +13,7 @@ out="${TOMATO_RELEASE_OUT:-$root/release/out}"; stage="$out/tomato-$version"
 if [ -e "$out" ] && [ -n "$(ls -A "$out" 2>/dev/null)" ] && [ ! -f "$out/latest.json" ]; then echo "error: $out is not empty and not release output; refusing to delete it" >&2; exit 1; fi
 rm -rf "$out"; mkdir -p "$stage/native" "$stage/runtime" "$stage/std" "$stage/compiler/bootstrap"
 cp "$root/VERSION" "$root/install-native.sh" "$stage/"
-cp "$root/native/tomato" "$root/native/tomato-repl" "$root/native/tomato-jsc.js" "$stage/native/"
+cp "$root/native/tomato" "$root/native/tomato-repl" "$root/native/rtcache.sh" "$root/native/tomato-jsc.js" "$stage/native/"
 mkdir -p "$stage/site/wasm"
 cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/wasm/wasi.js" "$root/site/wasm/llvm.js" "$root/site/wasm/tomato.js" "$root/site/wasm/SOURCE.sha256" "$stage/site/wasm/"
 cp "$root/runtime/tomato_rt.c" "$stage/runtime/"
