@@ -10,10 +10,6 @@
   `native/tomato` hides a failed `-flto` link and links without LTO. Warn on that fallback, test that LTO happened, and fix `release/linux-setup.sh` (its clang cannot load `LLVMgold.so`, and its `lld` lacks `libxml2`). Then re-measure the v0.51 Linux column, which was measured without LTO. See `docs/architecture-review.md`, section 3.3.
 - Cache the compiled runtime
   For `tomato run`, `tomato build` and `tests/run.sh`, keyed on mode, clang version and runtime hash. Linking a prebuilt runtime took 0.4 to 0.6 s instead of 1.5 to 1.75 s, with an identical binary. See `docs/architecture-review.md`, section 3.3.
-- Report failed text file writes and closes
-  `tomato_file_write` and `tomato_file_close` in `runtime/tomato_rt.c` ignore the results of `fwrite` and `fclose`, so a full disk loses data silently.
-- Say what is unsupported instead of E318 "write its type"
-  For types that are written but not built, such as `dict[int, str]` and `int | None`. See the probes in `docs/architecture-review.md`, section 3.6.
 - Test unattended release signing on the iMac
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
 - Re-run the Linux benchmarks on a quieter biggie

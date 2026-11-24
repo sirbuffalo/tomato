@@ -885,6 +885,13 @@ got:    $msg";; esac
 }
 neg() { spawn t_neg "$@"; }
 section "== rejected programs =="
+neg dict_int_keys "dict keys other than str are not supported yet, so dict[int, ...] cannot be built"
+neg int_or_none "'int' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None"
+neg list_of_int_or_none "'int' cannot be combined with None"
+neg param_int_or_none "'int' cannot be combined with None"
+neg field_dict_int_keys "dict keys other than str are not supported yet"
+neg return_dict_int_keys "dict keys other than str are not supported yet"
+neg union_with_none "a union cannot hold None together with two or more other types"
 neg type_mismatch "cannot use '+' with int and str"
 neg generic_keyword_args "keyword arguments are not supported when creating an object"
 neg clock_args "clock() takes no arguments"
@@ -1074,6 +1081,8 @@ rt chr_range "chr() takes a number from 0 to 1114111, not a surrogate" 1
 rt ord_length "ord() takes a text of exactly one character" 1
 rt chr_huge "chr() takes a number from 0 to 1114111, not a surrogate" 1
 rt msgpack_missing "error[E25]: IOError: could not open '/nonexistent_dir_for_tomato/missing.msgpack': No such file or directory" 1
+[ -e /dev/full ] && rt text_write_full_disk "E382 could not write to the file: No space left on device" 0
+[ -e /dev/full ] && rt text_close_full_disk "E382 could not write to the file when closing it: No space left on device" 0
 [ -e /dev/full ] && rt msgpack_full_disk "E382 could not write '/dev/full': No space left on device" 0
 rt trace_calls "at half (line 10)" 1
 rt list_pop_empty "pop from an empty list" 1

@@ -1685,6 +1685,50 @@ class Mod:
             return k
         raise CompileError(f"'{c.name}' has no field '{name}'", line)
 
+    def unsupported_type(self, v: Val) -> str:
+        # why a written type has no built form: the error message (first line, then what to do instead), or '' when no
+        # particular reason is known (a type that is not written, or one the helper does not recognise)
+        if v.tag != 'n':
+            return ''
+        t = val_node(v)
+        name = t.fields[0].text
+        if name == 'union':
+            members = val_nodes(t.fields[2])
+            if self.has_none_member(members):
+                if len(members) > 2:
+                    return "a union cannot hold None together with two or more other types\nuse one type with None, such as: x: str | None, or a class that holds the choices"
+                other = members[0]
+                if other.fields[0].text == 'None':
+                    other = members[1]
+                if other.fields[0].text == 'None':
+                    return ''
+                written = other.fields[0].text
+                if self.type_name(vn(other)) != '' and not is_optional(self.type_name(vn(other))):
+                    return f"'{written}' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None\nuse {written} with a flag or a default value, such as -1 or 0, or wrap it in a class"
+                return self.unsupported_type(vn(other))
+            for m in members:
+                found = self.unsupported_type(vn(m))
+                if found != '':
+                    return found
+            return ''
+        if name == 'dict' and t.fields[2].tag == 'n' and t.fields[3].tag == 'n':
+            key = val_node(t.fields[2]).fields[0].text
+            if self.type_name(t.fields[2]) != 'str':
+                return f"dict keys other than str are not supported yet, so dict[{key}, ...] cannot be built\nuse str keys, such as dict[str, ...], and convert with str(key)"
+            return self.unsupported_type(t.fields[3])
+        if t.fields[2].tag == 'n':
+            found = self.unsupported_type(t.fields[2])
+            if found != '':
+                return found
+        if t.fields[3].tag == 'n':
+            return self.unsupported_type(t.fields[3])
+        if t.fields[2].tag == 'l':
+            for tv in t.fields[2].items:
+                found = self.unsupported_type(tv)
+                if found != '':
+                    return found
+        return ''
+
     def has_none_member(self, members: list[Node]) -> bool:
         for m in members:
             if m.fields[0].text == 'None':
@@ -6566,13 +6610,30 @@ class Gen:
         if name == 'write' and len(args) == 1:
             v = self.expr(args[0])
             v = self.want(v, 'str', line, 'the argument of write')
-            self.emit(f'call void @tomato_file_write(ptr {f.reg}, ptr {v.reg})')
-            self.release(v)
+            self.file_check(f'call i32 @tomato_file_write(ptr {f.reg}, ptr {v.reg})', 0, v)
             return ex('', '')
         if name == 'close' and len(args) == 0:
-            self.emit(f'call void @tomato_file_close(ptr {f.reg})')
+            self.file_check(f'call i32 @tomato_file_close(ptr {f.reg})', 1, ex('', ''))
             return ex('', '')
         raise CompileError(self.no_method(name, 'File'), line)
+
+    def file_check(self, call: str, closing: int, arg: Ex):
+        # a failed write or close (a full disk, a closed pipe) raises an IOError, which a program can catch
+        # (arg, the written text, is released first; nothing for a close)
+        r = self.tmp('status')
+        self.emit(f'{r} = {call}')
+        if arg.reg != '':
+            self.release(arg)
+        bad = self.tmp('failed')
+        self.emit(f'{bad} = icmp ne i32 {r}, 0')
+        stop = self.label('stop')
+        ok = self.label('ok')
+        self.cond_br(bad, stop, ok)
+        self.place(stop)
+        text = self.tmp('why')
+        self.emit(f'{text} = call ptr @tomato_file_write_error(i64 {closing})')
+        self.raise_here('IOError', text, True, 'E382')
+        self.place(ok)
 
     def open_call(self, args: list[Node], line: int) -> Ex:
         if len(args) < 1 or len(args) > 2:
@@ -8012,6 +8073,9 @@ class Gen:
         elif k == 'Declare':
             ty = self.mod.type_name(s.fields[1])
             if ty == '':
+                why = self.mod.unsupported_type(s.fields[1])
+                if why != '':
+                    raise CompileError(why, s.line)
                 raise CompileError('this variable cannot be given a type automatically\nwrite its type, such as: name: Type = value', s.line)
             after = self.facts
             if self.tracking():
@@ -10544,8 +10608,9 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_file_open(ptr, ptr)\n'
     d += 'declare ptr @tomato_open_error(ptr)\n'
     d += 'declare ptr @tomato_file_read(ptr)\n'
-    d += 'declare void @tomato_file_write(ptr, ptr)\n'
-    d += 'declare void @tomato_file_close(ptr)\n'
+    d += 'declare i32 @tomato_file_write(ptr, ptr)\n'
+    d += 'declare i32 @tomato_file_close(ptr)\n'
+    d += 'declare ptr @tomato_file_write_error(i64)\n'
     d += 'declare ptr @tomato_input(ptr)\n'
     d += 'declare ptr @tomato_str_split_next(ptr, ptr, ptr)\n'
     d += 'declare i64 @tomato_text_int(ptr)\n'
@@ -10707,6 +10772,9 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     if item.fields[2].tag != 'z':
         info.ret = mod.type_name(item.fields[2])
         if info.ret == '':
+            why = mod.unsupported_type(item.fields[2])
+            if why != '':
+                raise CompileError(why, item.line)
             raise CompileError('this return type is not supported\na function can return int, bool, str, float, a list, a set, a dict or a class', item.line)
     seen: list[str] = []
     for p in val_nodes(item.fields[1]):
@@ -10719,6 +10787,9 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
             info.defaults.append(val_node(p.fields[2]))
         pt = mod.type_name(p.fields[1])
         if pt == '':
+            why = mod.unsupported_type(p.fields[1])
+            if why != '':
+                raise CompileError(why, p.line)
             raise CompileError('this parameter type is not supported\na function can take int, bool, str, float, a list, a set, a dict or a class', p.line)
         if p.fields[3].tag == 's':
             if p.fields[3].text == '*' and not pt.startswith('tuple['):
@@ -10976,6 +11047,9 @@ def resolve_class(mod: Mod, c: ClassInfo):
     for fd in val_nodes(node.fields[3]):
         ft = mod.type_name(fd.fields[1])
         if ft == '':
+            why = mod.unsupported_type(fd.fields[1])
+            if why != '':
+                raise CompileError(why, fd.line)
             raise CompileError('this field type is not supported\na field can hold int, bool, str, float, a list, a set, a dict or a class', fd.line)
         before = field_position(c, fd.fields[0].text)
         if before >= 0:

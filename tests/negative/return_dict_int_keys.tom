@@ -1,0 +1,6 @@
+def f() -> dict[int, str]:
+    return {}
+
+@main
+def main():
+    print(1)

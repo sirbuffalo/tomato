@@ -115,6 +115,19 @@ the runtime is inlined into the program, and no leak report or exit-time cycle c
 - Color is not the compiler's job: `tomato paint` (awk, in `native/tomato`), `use_color` in `runtime/tomato_rt.c` and
   `tomatoErrors` in `site/site.js` implement the same table.
 
+## Types that are written but not built
+
+A type the compiler understands but cannot build says what is unsupported, with what to do instead, rather than asking for a
+type that was already written. `tomato explain` shows the id and text of each.
+
+| Written | Message | Instead |
+| --- | --- | --- |
+| `d: dict[int, str]` (any key that is not `str`) | `dict keys other than str are not supported yet, so dict[int, ...] cannot be built` (E460) | use `str` keys and convert with `str(key)` |
+| `x: int \| None`, `list[float \| None]` | `'int' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None` (E459) | use a default such as `-1`, a flag, or a class |
+| `x: int \| str \| None` | `a union cannot hold None together with two or more other types` (E458) | one type with `None`, or a class holding the choices |
+
+Only a type the compiler has no reason for at all still gets `this variable cannot be given a type automatically`.
+
 ## Error classes and ids
 
 Built-in errors have an ID formed from `E` and their line number in `std/errors.txt` (`E04` is `IndexError`, `index out of range`). The table
@@ -131,6 +144,12 @@ The language raises these classes, all of them a `RuntimeError` (so `catch Runti
 | `ZeroDivisionError` | `/`, `//` or `%` by zero |
 | `OverflowError` | integer overflow, a number that does not fit its type, a float result that is infinite |
 | `IOError`, `EOFError`, `CancelledError` | files, the end of input, a cancelled task |
+
+An `IOError` from a file says what failed: `could not open 'PATH': REASON` (E25), `could not read ...` (E381) and
+`could not write ...` (E382). `f.write(text)` and `f.close()` on a file from `open(path, 'w')` raise E382 when the data cannot be
+written (a full disk, a closed pipe, no permission): `could not write to the file: No space left on device`, or
+`could not write to the file when closing it: ...` from `close()`. The C library buffers output, so a small write to a full disk
+may fail only at `close()`; call `close()` inside `try` and catch `IOError` to be sure the data arrived.
 
 The libraries raise subclasses of their own, each also a `RuntimeError`: `JSONDecodeError`, `JSONEncodeError`, `JSONTypeError` and
 `MsgpackError` (`json`), `TOMLDecodeError` (`toml`), `CacheMiss` (`cache`), and `requests.RequestError` (an `IOError`) with

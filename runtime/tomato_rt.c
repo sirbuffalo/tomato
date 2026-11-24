@@ -2131,8 +2131,33 @@ void *tomato_file_read(void *f) {
     return r;
 }
 
-void tomato_file_write(void *f, void *s) { fwrite(((Str *)s)->data, 1, (size_t)((Str *)s)->bytes, f); }
-void tomato_file_close(void *f) { fclose(f); }
+/* write and close report failure (a full disk, a closed pipe, a permission): they return 0, or 1 with the reason kept
+ * for tomato_file_write_error, and the compiled code raises the IOError. A failed fwrite may have buffered nothing and
+ * a buffered one fails only when the buffer is flushed, so the close (and any later write) can report it. */
+static int write_errno;
+int tomato_file_write(void *f, void *s) {
+    size_t n = (size_t)((Str *)s)->bytes;
+    errno = 0;
+    if (n > 0 && fwrite(((Str *)s)->data, 1, n, f) != n) { write_errno = errno ? errno : EIO; return 1; }
+    return 0;
+}
+int tomato_file_close(void *f) {
+    errno = 0;
+    int bad = fflush(f) != 0;
+    int why = errno;
+    errno = 0;
+    if (fclose(f) != 0) bad = 1;
+    if (!why) why = errno;
+    if (bad) { write_errno = why ? why : EIO; return 1; }
+    return 0;
+}
+/* the message of the IOError for a failed write or close; it starts "could not write" (std/errors.txt line 382) */
+void *tomato_file_write_error(int64_t closing) {
+    char buf[256];
+    const char *why = write_errno ? strerror(write_errno) : "unknown error";
+    int n = snprintf(buf, sizeof buf, "could not write to the file%s: %s", closing ? " when closing it" : "", why);
+    return str_new(buf, n);
+}
 
 int tomato_input_ask = 0;   /* set by the host (TOMATO_INPUT_ASK in the environment, or by the browser): see tomato_input */
 

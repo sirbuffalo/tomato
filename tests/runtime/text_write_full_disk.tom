@@ -1,0 +1,9 @@
+# a write to /dev/full (Linux) that is bigger than the buffer fails at write(): an IOError a program can catch
+@main
+def main():
+    f = open('/dev/full', 'w')
+    try:
+        f.write('x' * 10000)
+        print('no error')
+    catch IOError as e:
+        print(e.id, e.message)

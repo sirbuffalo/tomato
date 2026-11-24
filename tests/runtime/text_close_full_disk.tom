@@ -1,0 +1,10 @@
+# a small write is buffered, so a full disk shows only when close() flushes it
+@main
+def main():
+    g = open('/dev/full', 'w')
+    g.write('hello')
+    try:
+        g.close()
+        print('no error')
+    catch IOError as e:
+        print(e.id, e.message)
