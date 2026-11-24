@@ -1,0 +1,24 @@
+('a', 2)
+7
+<7> 7
+1
+('x', 2)
+3
+[1, ('x', 2)]
+['it', ['a', "it's"]]
+{'a': 1, 'b': [2, 3]}
+('x', 2)
+('k', ('v', 9))
+('z', [1, (2, 'two')])
+plain ('pair', [1, 2])
+['p', 'q']
+{'k': 1}
+{4}
+Tag(t)
+[Tag(t), 'x']
+text
+<object>
+caught no text for you
+caught again 0
+caught again 1
+caught again 2

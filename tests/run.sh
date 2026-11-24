@@ -51,7 +51,7 @@ done
 [ -f "$work/failed2" ] && fails=$((fails + $(wc -l < "$work/failed2")))
 
 echo "== memory (AddressSanitizer and the runtime's leak check) =="
-for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:$work" "tests/programs/json_files:$work" "tests/programs/msgpack_files:$work" "tests/programs/msgpack_file_basics:$work" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/dict_literal_inference:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/programs/utf8_invalid:" "tests/programs/async_tasks:" "tests/programs/async_cancel:" "tests/programs/async_sleep:" "tests/programs/error_path_release:" "tests/runtime/error_classes:" "tests/programs/time_module:"; do
+for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:$work" "tests/programs/json_files:$work" "tests/programs/msgpack_files:$work" "tests/programs/msgpack_file_basics:$work" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/union_show:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/dict_literal_inference:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/programs/utf8_invalid:" "tests/programs/async_tasks:" "tests/programs/async_cancel:" "tests/programs/async_sleep:" "tests/programs/error_path_release:" "tests/runtime/error_classes:" "tests/programs/time_module:"; do
   path="${spec%%:*}"; name="$(basename "$path")"; arg="${spec#*:}"
   "$work/c1" "$path.tom" main std/ > "$work/p.ll" 2>/dev/null
   if clang -O1 -w -g -fsanitize=address -o "$work/asan" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
@@ -92,7 +92,7 @@ jsc_mac=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/j
 if [ -x "$jsc_mac" ]; then have_js=1; jsc() { "$jsc_mac" "$@"; }
 elif command -v node > /dev/null 2>&1; then have_js=1; jsc() { node "$root/native/jsc-on-node.js" "$@"; }; fi
 if [ -n "$have_js" ]; then
-  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru memoize bit_types bit_names text_dict_methods dict_literal_inference tuple_for unicode_class mixed_tuples time_module; do
+  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru memoize bit_types bit_names text_dict_methods dict_literal_inference tuple_for unicode_class mixed_tuples union_show time_module; do
     jsc native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
     # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
     if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
@@ -470,9 +470,18 @@ check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"versio
 check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
 check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | sha256 | cut -d' ' -f1)" "$(sed -n 1p site/wasm/SOURCE.sha256 2>/dev/null)"
 check "the checked-in wasm files are the ones that were built" "$(sed -n 2,3p site/wasm/SOURCE.sha256)" "$(sha256 site/wasm/tomatoc.wasm site/wasm/runtime.wasm | cut -d' ' -f1)"
-if [ -n "$WASI_SDK" ]; then   # with the toolchain, rebuild and compare byte for byte
-  cp -R site/wasm "$work/wasm_orig"; WASI_SDK="$WASI_SDK" sh site/wasm/build.sh > /dev/null 2>&1
-  cmp -s site/wasm/tomatoc.wasm "$work/wasm_orig/tomatoc.wasm" && cmp -s site/wasm/runtime.wasm "$work/wasm_orig/runtime.wasm" && ok "wasm files rebuild identically" || bad "wasm files rebuild identically" "run site/wasm/build.sh and commit"
+if [ -n "$WASI_SDK" ]; then
+  if [ "$(uname -s)" = Linux ]; then
+    echo "skip wasm rebuild comparison on Linux (canonical build: macOS arm64, WASI SDK 24)"
+  else
+    cp -R site/wasm "$work/wasm_orig"
+    if WASI_SDK="$WASI_SDK" sh site/wasm/build.sh > /dev/null 2>&1 &&
+       cmp -s site/wasm/tomatoc.wasm "$work/wasm_orig/tomatoc.wasm" && cmp -s site/wasm/runtime.wasm "$work/wasm_orig/runtime.wasm"; then
+      ok "wasm files rebuild identically"
+    else
+      bad "wasm files rebuild identically" "rebuild on macOS arm64 with WASI SDK 24 and commit"
+    fi
+  fi
 fi
 
 echo; echo "$passes passed, $fails failed"
