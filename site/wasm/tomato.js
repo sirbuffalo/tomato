@@ -78,7 +78,11 @@
       cur = isDecl ? decl : body; cur.push([l, i + 1]);
       if (l[0] === "@" && i + 1 < lines.length) { i++; cur.push([lines[i], i + 1]); }
     }
-    if (!body.some(function (b) { return b[0].trim() && b[0][0] !== "#"; })) return { text: src, map: [0].concat(identity) };
+    // a piece with no statements (an import, a definition) still becomes a program, so that it is checked and an error in it
+    // is its own (a missing module, a name the module lacks) instead of "no function is marked @main"
+    var hasBody = body.some(function (b) { return b[0].trim() && b[0][0] !== "#"; });
+    if (!hasBody && !decl.some(function (d) { return d[0].trim() && d[0][0] !== "#"; })) return { text: src, map: [0].concat(identity) };
+    if (!hasBody) body = [["pass", lines.length]];
     var out = [], map = [0], firstBody = body[0][1];
     decl.forEach(function (d) { out.push(d[0]); map.push(d[1]); });
     out.push(""); map.push(firstBody);

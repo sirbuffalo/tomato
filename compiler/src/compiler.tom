@@ -1385,7 +1385,17 @@ class Mod:
             if not b.exported:
                 raise CompileError(f"module '{module}' does not export '{name}'\nput 'export' before its definition in {module}.tom", line)
             return b.key
-        raise CompileError(f"module '{module}' has no '{name}'\ncheck the spelling in {module}.tom", line)
+        names: list[str] = []
+        for seen in self.scope:
+            if seen.module == module and seen.exported and not seen.name.startswith('_'):
+                names.append(seen.name)
+        help = f'check the spelling in {module}.tom'
+        near = closest(name, names)
+        if near != '':
+            help = f"did you mean '{near}'?"
+        if len(names) > 0:
+            help += f"\nmodule '{module}' exports: " + ', '.join(names)
+        raise CompileError(f"module '{module}' has no '{name}'\n{help}", line)
 
     def has_iface(self, name: str) -> bool:
         for i in self.ifaces:
@@ -10993,6 +11003,10 @@ def builtin_parts() -> list[str]:
 def builtin_modules() -> list[str]:
     return ['bitarray']
 
+# every module in std/ (a test checks this list against the folder), for the help of "cannot find the module"
+def std_modules() -> list[str]:
+    return ['asyncio', 'base64', 'bitarray', 'cache', 'csv', 'datetime', 'hex', 'html', 'itertools', 'json', 'math', 'random', 'rational', 'requests', 'secrets', 'socket', 'statistics', 'textwrap', 'time', 'toml', 'urlparse', 'uuid']
+
 def std_path(std: str, name: str) -> str:
     # the file of a standard library module
     if name in builtin_modules():
@@ -11012,7 +11026,11 @@ def read_module(dir: str, std: str, name: str, line: int) -> str:
             text = g.read()
             g.close()
         catch IOError:
-            raise CompileError(f"cannot find the module '{name}'\nlooked for {name}.tom next to the program and in the standard library", line)
+            help = f'looked for {name}.tom next to the program and in the standard library'
+            near = closest(name, std_modules())
+            if near != '':
+                help = f"did you mean '{near}'?\n" + help
+            raise CompileError(f"cannot find the module '{name}'\n{help}\nstandard modules: " + ', '.join(std_modules()), line)
     return text
 
 class TopItem:
@@ -11132,6 +11150,7 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
                     arities[gid] = [count]
             mod.declare_name(top.module, name, key_of(top.module, name), item.exported, item.line)
     for ii in imports:
+        mod.cur = ii.importer   # an error in an import is the importing module's, not that of the module loaded last
         if len(ii.names) == 1 and ii.names[0] == '*':
             # import module: every exported name of the module, written module.name
             for top in items:

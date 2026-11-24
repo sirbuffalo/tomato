@@ -306,6 +306,15 @@ got: $m";; esac; }
 wasm_neg() { spawn t_wasm_neg "$@"; }
 wasm_rt() { spawn t_wasm_rt "$@"; }
 t_wasm_browser() { r="$(tjsc site/wasm run tests/programs/requests_browser.tom 2>&1 | grep "no network")"; check "wasm requests raise ConnectionError" "no network: True" "$r"; }
+# the website repl wraps what you type in a program (wrapMain): a piece with only an import must still be checked, not fail with "no @main"
+t_wasm_repl_import() {
+  jsc tests/repl_wrap.js -- 'from itertools import progres_bar' > "$work/imp.tom" 2>&1
+  m="$(tjsc site/wasm run "$work/imp.tom" 2>&1)"
+  case "$m" in *"error[E226]: module 'itertools' has no 'progres_bar'"*"did you mean 'progress_bar'?"*"~rc 1"*) ok "wasm repl: a bad import is reported as itself";; *) bad "wasm repl: a bad import is reported as itself" "$m";; esac
+  jsc tests/repl_wrap.js -- 'from itertools import progress_bar' > "$work/imp2.tom" 2>&1
+  m="$(tjsc site/wasm run "$work/imp2.tom" 2>&1)"
+  case "$m" in *"~rc 0"*) ok "wasm repl: a good import alone runs";; *) bad "wasm repl: a good import alone runs" "$m";; esac
+}
 t_wasm_sockets() { r="$(jsc native/tomato-jsc.js -- site/wasm run tests/programs/socket_browser.tom 2>&1 | grep "no sockets")"; check "wasm sockets raise SocketError" "no sockets: True E446" "$r"; }
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
 t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ] && ok "highlighters know every lexer keyword and built-in" || bad "highlighters" "$r"; }
@@ -355,6 +364,7 @@ if [ -n "$have_js" ]; then
   wasm_rt base64_bad_padding "misplaced padding" 1
   wasm_rt hex_bad_digit "a hex text holds only the digits" 1
   spawn t_wasm_site_errors
+  spawn t_wasm_repl_import
   spawn t_wasm_site_editor
 else spawn t_wasm_missing; fi
 
@@ -477,6 +487,23 @@ t_cli_repl_1() {
 hi" "$(printf 'x = 3\nx + 4\ndef sq(n: int) -> int:\n    return n * n\n\nsq(x)\nprint("hi")\n:quit\n' | $t repl)"
   check "repl: std imports resolve (itertools, math)" "True
 False" "$(printf 'from math import is_prime\nfrom itertools import progress_bar\nis_prime(97)\nis_prime(91)\n:quit\n' | $t repl 2>&1)"
+  check "repl: an import of a missing name says so, with a suggestion and the names there are" "error[E226]: module 'itertools' has no 'progres_bar'
+ --> repl:1:6
+  |
+1 | from itertools import progres_bar
+  |      ^^^^^^^^^
+  = help: did you mean 'progress_bar'?
+  = help: module 'itertools' exports: progress_bar, permutations, combinations, combinations_with_replacement, product, product_repeat, accumulate, chain, pairwise, batched, repeat" "$(printf 'from itertools import progres_bar\n:quit\n' | $t repl 2>&1)"
+  check "repl: an import of a missing module suggests one and lists the standard modules" "error[E183]: cannot find the module 'itertoolz'
+ --> repl:1:8
+  |
+1 | import itertoolz
+  |        ^^^^^^^^^
+  = help: did you mean 'itertools'?
+  = help: looked for itertoolz.tom next to the program and in the standard library
+  = help: standard modules: $(ls std/*.tom std/builtin/bitarray.tom | sed 's#.*/##; s#\.tom$##' | sort | paste -sd, - | sed 's/,/, /g')" "$(printf 'import itertoolz\n:quit\n' | $t repl 2>&1)"
+  check "repl: an import alone is accepted, and a later line uses it" "ok
+2" "$(printf 'import datetime\nfrom itertools import progress_bar\nprint("ok")\nfrom math import isqrt\nisqrt(5)\n:quit\n' | $t repl 2>&1)"
   check "repl: :load runs a program that has its own @main" "$(cat tests/expected/shapes.main.out)" "$(printf ':load examples/shapes.tom\n:quit\n' | $t repl)"
   check "repl: a block, then a failing line, then a good one" "9
 error[E190]: cannot use '+' with int and str
@@ -739,10 +766,16 @@ t_builtin_folder() { # every file of std/builtin/ is a part of the built-ins or 
   for n in $names; do [ -f "std/builtin/$n.tom" ] || missing="$missing std/builtin/$n.tom(missing)"; done
   [ -z "$missing" ] && ok "std/builtin/ matches the compiler's list and the website's" || bad "std/builtin/ matches the compiler's list and the website's" "$missing"
 }
+t_std_modules() { # std_modules() in the compiler (the help of "cannot find the module") lists every module of std/
+  names="$(sed -n '/^def std_modules()/,/return/p' compiler/src/compiler.tom | sed -n 's/^ *return \[//p' | tr -d "]',")"
+  have="$(ls std/*.tom std/builtin/bitarray.tom | sed 's#.*/##; s#\.tom$##' | sort | tr '\n' ' ')"
+  [ "$(echo $names | tr ' ' '\n' | sort | tr '\n' ' ')" = "$have" ] && ok "std_modules lists the modules of std/" || bad "std_modules lists the modules of std/" "compiler: $names / std: $have"
+}
 section "== error ids =="
 spawn t_error_templates
 spawn t_error_raises
 spawn t_builtin_folder
+spawn t_std_modules
 
 # ---- error messages -----------------------------------------------------------------------------------------------------
 t_error_text() {

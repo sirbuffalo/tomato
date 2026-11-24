@@ -18,6 +18,8 @@ error[E227]: name 'tets' is not defined
 - The next lines show that source line with a row of `^` under the offending text. When the compiler knows only the line, the
   caret covers the statement.
 - `= help: ...` lines, when present, say how to fix it. A name that is close to a known one gets `did you mean '...'?`.
+- A bad import is reported at its own line, in the repl and on the website too: a missing name (`E226`) gets a
+  `did you mean` and lists what the module exports, and a missing module (`E183`) gets a `did you mean` and lists the standard modules.
 - An error with no place in the source (for example, no function marked `@main`) has only the first line and its help.
 
 Only the first error is reported. The command exits with status 1 and prints the message on standard error.
