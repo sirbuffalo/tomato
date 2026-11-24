@@ -1,0 +1,37 @@
+# Benchmark: edit distance (Levenshtein) by dynamic programming. Makes two pseudo-random strings of n letters (a..d) with a
+# linear congruential generator and fills the table row by row (two rows kept). Prints the distance.
+import sys
+
+n = int(sys.argv[1])
+seed = 42
+letters = ['a', 'b', 'c', 'd']
+first_parts = []
+second_parts = []
+for i in range(n):
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    first_parts.append(letters[seed // 65536 % 4])
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    second_parts.append(letters[seed // 65536 % 4])
+s = ''.join(first_parts)
+t = ''.join(second_parts)
+prev = list(range(n + 1))
+cur = [0] * (n + 1)
+for i in range(1, n + 1):
+    cur[0] = i
+    si = s[i - 1]
+    for j in range(1, n + 1):
+        cost = 1
+        if si == t[j - 1]:
+            cost = 0
+        best = prev[j - 1] + cost
+        up = prev[j] + 1
+        if up < best:
+            best = up
+        left = cur[j - 1] + 1
+        if left < best:
+            best = left
+        cur[j] = best
+    swap = prev
+    prev = cur
+    cur = swap
+print(prev[n])

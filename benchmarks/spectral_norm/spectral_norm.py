@@ -1,0 +1,44 @@
+# Benchmark: spectral norm of an infinite matrix, cut to n x n (float arithmetic in nested loops, function calls).
+# Ten rounds of the power method; prints the norm times 1e9, cut to a whole number.
+import sys
+from math import sqrt
+
+
+def a(i, j):
+    return 1.0 / ((i + j) * (i + j + 1) // 2 + i + 1)
+
+
+def times_a(n, v, out):
+    for i in range(n):
+        s = 0.0
+        for j in range(n):
+            s += a(i, j) * v[j]
+        out[i] = s
+
+
+def times_a_transposed(n, v, out):
+    for i in range(n):
+        s = 0.0
+        for j in range(n):
+            s += a(j, i) * v[j]
+        out[i] = s
+
+
+def times_at_a(n, v, out, tmp):
+    times_a(n, v, tmp)
+    times_a_transposed(n, tmp, out)
+
+
+n = int(sys.argv[1])
+u = [1.0] * n
+v = [0.0] * n
+tmp = [0.0] * n
+for _ in range(10):
+    times_at_a(n, u, v, tmp)
+    times_at_a(n, v, u, tmp)
+vbv = 0.0
+vv = 0.0
+for i in range(n):
+    vbv += u[i] * v[i]
+    vv += v[i] * v[i]
+print(int(sqrt(vbv / vv) * 1000000000.0))

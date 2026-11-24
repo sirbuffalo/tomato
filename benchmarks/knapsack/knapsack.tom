@@ -1,0 +1,24 @@
+# Benchmark: 0/1 knapsack by dynamic programming over one row of capacities. n items with pseudo-random weights (1..60) and
+# values (1..1000) from a linear congruential generator, capacity 5 * n. Prints the best total value.
+@main
+def main(n: int):
+    seed = 7
+    weights = [0] * n
+    values = [0] * n
+    for i in range(n):
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        weights[i] = seed // 65536 % 60 + 1
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        values[i] = seed // 65536 % 1000 + 1
+    capacity = 5 * n
+    best = [0] * (capacity + 1)
+    for i in range(n):
+        w = weights[i]
+        v = values[i]
+        c = capacity
+        while c >= w:
+            candidate = best[c - w] + v
+            if candidate > best[c]:
+                best[c] = candidate
+            c -= 1
+    print(best[capacity])

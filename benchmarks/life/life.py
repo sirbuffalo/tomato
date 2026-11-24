@@ -1,0 +1,41 @@
+# Benchmark: Conway's Game of Life on an n x n torus, 100 generations, from a pseudo-random start (about 1 cell in 3
+# alive). Nested lists, neighbour counting with wrap-around. Prints the live cells at the end and a position checksum.
+import sys
+
+n = int(sys.argv[1])
+seed = 99
+grid = []
+next_grid = []
+for y in range(n):
+    row = [0] * n
+    for x in range(n):
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        if seed // 65536 % 3 == 0:
+            row[x] = 1
+    grid.append(row)
+    next_grid.append([0] * n)
+for gen in range(100):
+    for y in range(n):
+        up = grid[(y + n - 1) % n]
+        mid = grid[y]
+        down = grid[(y + 1) % n]
+        out = next_grid[y]
+        for x in range(n):
+            left = (x + n - 1) % n
+            right = (x + 1) % n
+            around = up[left] + up[x] + up[right] + mid[left] + mid[right] + down[left] + down[x] + down[right]
+            if around == 3 or (around == 2 and mid[x] == 1):
+                out[x] = 1
+            else:
+                out[x] = 0
+    swap = grid
+    grid = next_grid
+    next_grid = swap
+alive = 0
+checksum = 0
+for y in range(n):
+    for x in range(n):
+        if grid[y][x] == 1:
+            alive += 1
+            checksum = (checksum * 31 + y * n + x) % 1000000007
+print(alive, checksum)

@@ -1,0 +1,52 @@
+# Benchmark: a hand-written quicksort (recursive, Hoare partition, middle pivot, insertion sort for short ranges) on n
+# pseudo-random integers from a linear congruential generator. Prints a position-weighted checksum of the sorted list.
+import sys
+
+
+def insertion_sort(values, low, high):
+    for i in range(low + 1, high + 1):
+        x = values[i]
+        j = i - 1
+        while j >= low and values[j] > x:
+            values[j + 1] = values[j]
+            j -= 1
+        values[j + 1] = x
+
+
+def quicksort(values, low, high):
+    while high - low > 16:
+        pivot = values[(low + high) // 2]
+        i = low
+        j = high
+        while i <= j:
+            while values[i] < pivot:
+                i += 1
+            while values[j] > pivot:
+                j -= 1
+            if i <= j:
+                t = values[i]
+                values[i] = values[j]
+                values[j] = t
+                i += 1
+                j -= 1
+        # recurse into the smaller part, loop on the larger one
+        if j - low < high - i:
+            quicksort(values, low, j)
+            low = i
+        else:
+            quicksort(values, i, high)
+            high = j
+    insertion_sort(values, low, high)
+
+
+n = int(sys.argv[1])
+seed = 12345
+values = [0] * n
+for i in range(n):
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    values[i] = seed
+quicksort(values, 0, n - 1)
+checksum = 0
+for i in range(n):
+    checksum = (checksum + (i % 1000 + 1) * values[i]) % 1000000007
+print(checksum)

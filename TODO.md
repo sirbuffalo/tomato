@@ -38,3 +38,7 @@
   An experiment gave matmul -2.4% and strings -0.7% but sieve +2.2% and objects +0.7% instructions executed; it needs tuning, and site/wasm/llvm.js must accept the metadata.
 - Fix the benchmarks check in `tests/run.sh` (`t_benchmarks`) so a `skipping go: ...` line doesn't count as a failure
   When the benchmarks themselves pass, a `skipping go: go is not installed` line (go missing on the machine) makes the check fail, because the check expects every output line to start with `ok:`.
+- Add the other languages' versions of the 15 new benchmarks
+  After the multi-language harness (JavaScript, Java, C, C++, C#, TypeScript, PHP, Swift; branch `byre/tskSQTqy23EMBy`) lands on main, add the other languages' versions of nbody, spectral_norm, fannkuch, nqueens, binary_trees, levenshtein, knapsack, life, dijkstra, quicksort, kmers, revcomp, tokenize, crc32 and hof, following its `<name>/<name>.<ext>` convention.
+- Publish results for all 25 benchmarks and update the "ten benchmarks" text
+  At the next release run, publish results for all 25 benchmarks (`benchmarks/run.sh --site`) and update the "ten benchmarks" text on `site/index.html` and `site/benchmarks.html`.

@@ -1,0 +1,54 @@
+# Benchmark: a hand-written tokenizer (no regular expressions). Makes n pseudo-random tokens of source-like text (names,
+# whole numbers and punctuation), joins them, then scans the text one character at a time and classifies the tokens.
+# Prints the number of names, numbers and symbols, the sum of the numbers and the total length of the names.
+import sys
+
+n = int(sys.argv[1])
+seed = 555
+words = ['alpha', 'beta', 'gamma', 'delta', 'count', 'total', 'index', 'value']
+symbols = ['+', '-', '*', '/', '=', '(', ')', ';']
+pieces = []
+for i in range(n):
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    kind = seed // 65536 % 4
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    pick = seed // 65536
+    if kind == 0:
+        pieces.append(words[pick % 8] + ' ')
+    elif kind == 1:
+        pieces.append(str(pick % 100000) + ' ')
+    elif kind == 2:
+        pieces.append(symbols[pick % 8])
+    else:
+        pieces.append(words[pick % 8] + str(pick // 8 % 100) + ' ')
+text = ''.join(pieces)
+names = 0
+numbers = 0
+syms = 0
+number_sum = 0
+name_length = 0
+in_name = False
+in_number = False
+value = 0
+for ch in text:
+    if ch.isalpha() or (in_name and ch.isdigit()):
+        if not in_name:
+            in_name = True
+            names += 1
+        name_length += 1
+    elif ch.isdigit():
+        if not in_number:
+            in_number = True
+            numbers += 1
+            value = 0
+        value = value * 10 + ord(ch) - 48
+    else:
+        if in_number:
+            number_sum += value
+        in_name = False
+        in_number = False
+        if ch != ' ':
+            syms += 1
+if in_number:
+    number_sum += value
+print(names, numbers, syms, number_sum, name_length)

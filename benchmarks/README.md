@@ -1,6 +1,6 @@
 # Benchmarks
 
-Ten small programs, each written four times with the same algorithm and the same input: Tomato (`.tom`), Go (`.go`),
+Twenty-five small programs (the first ten are the ones on the website's Benchmarks page and in the v0.51 results; the other fifteen were added after v0.51 and have no published results yet), each written four times with the same algorithm and the same input: Tomato (`.tom`), Go (`.go`),
 Rust (`.rs`) and Python (`.py`), in `benchmarks/<name>/`. Each takes one number on the command line and prints a checksum;
 `run.sh` checks that all four print the same.
 
@@ -18,6 +18,21 @@ Rust (`.rs`) and Python (`.py`), in `benchmarks/<name>/`. Each takes one number 
 | `wordcount` | a dict from text to count, f-strings |
 | `bigint` | unlimited-size integers (n!); Rust uses the num-bigint crate (benchmarks/bigint/Cargo.toml) |
 | `objects` | millions of heap objects and method calls |
+| `nbody` | 64-bit floats in objects with float fields, `sqrt` (the Sun and four planets) |
+| `spectral_norm` | float arithmetic in nested loops, a small function called tens of millions of times |
+| `fannkuch` | permutations in lists: element swaps, prefix reversals, `while` loops |
+| `nqueens` | recursive backtracking over lists of bools |
+| `binary_trees` | millions of small objects with `Node \| None` children, built, walked and freed recursively |
+| `levenshtein` | dynamic programming over two rows, indexing into `str` |
+| `knapsack` | dynamic programming over one row, a descending `while` loop |
+| `life` | Conway's Game of Life on a torus: lists of lists, modulo wrap-around |
+| `dijkstra` | shortest paths on a grid with a hand-written binary heap in a list |
+| `quicksort` | a hand-written recursive quicksort (Hoare partition, insertion sort for short ranges) |
+| `kmers` | substring slices as `dict` keys, counts for k = 1, 2, 4, 6, 12 |
+| `revcomp` | building and joining a long string from one-letter strings, slicing into lines, a `dict` lookup per letter |
+| `tokenize` | scanning text one character at a time (`isalpha`, `isdigit`, `ord`) with state flags, no regular expressions |
+| `crc32` | bitwise operators (`^`, `&`, `>>`) and a 256-entry table over a long list of bytes, plus Adler-32 |
+| `hof` | calls through function values (`list[fn(int) -> int]`), `map` and `filter` with lambdas, `sorted(key=...)` |
 
 ## Running
 
