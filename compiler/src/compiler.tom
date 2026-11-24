@@ -1704,6 +1704,43 @@ class Mod:
         node = self.generics[key]
         return [tp.text for tp in node.fields[-1].items]
 
+    # Overloads: a generic class or function may be declared again under the same name with another number of type
+    # parameters (`Cache[K, R]`, `Cache[K1, K2, R]`, ...). The first declaration keeps the plain key; the others are
+    # kept under `key#N`, N being their number of type parameters. The copies of every overload are named `key[args]`
+    # (base_of), which cannot collide because their numbers of type arguments differ.
+    def base_of(self, gkey: str) -> str:
+        return gkey.split('#')[0]
+
+    # the key of the overload of gkey that takes n type arguments, or gkey itself when there is none (the caller reports it)
+    def pick_generic(self, gkey: str, n: int, line: int) -> str:
+        base = self.base_of(gkey)
+        if base not in self.generics:
+            return gkey
+        if len(self.type_params_of(base)) == n:
+            return base
+        counts: list[str] = [str(len(self.type_params_of(base)))]
+        for k in range(1, 6):
+            alt = f'{base}#{k}'
+            if alt in self.generics:
+                if k == n:
+                    return alt
+                counts.append(str(k))
+        if len(counts) == 1:
+            return base
+        counts.sort()
+        shown_counts = ', '.join(counts[:-1]) + ' or ' + counts[-1]
+        raise CompileError(f"'{self.generics[base].fields[0].text}' takes {shown_counts} type arguments, but {n} given", line)
+
+    # every overload of gkey: the first declared, then the others by number of type parameters
+    def overloads_of(self, gkey: str) -> list[str]:
+        base = self.base_of(gkey)
+        out: list[str] = [base]
+        for k in range(1, 6):
+            alt = f'{base}#{k}'
+            if alt in self.generics:
+                out.append(alt)
+        return out
+
     def class_args(self, c: ClassInfo) -> list[str]:
         return [c.targs[tp] for tp in self.type_params_of(c.generic)]
 
@@ -1716,7 +1753,7 @@ class Mod:
         node = self.generics[gkey]
         if len(args) != len(tparams):
             raise CompileError(f"'{node.fields[0].text}' takes {plural(len(tparams), 'type argument')}, but {len(args)} given", line)
-        key = f'{gkey}[{self.arg_key(args)}]'
+        key = f'{self.base_of(gkey)}[{self.arg_key(args)}]'
         if self.has_class(key):
             return key
         c = ClassInfo()
@@ -1782,7 +1819,7 @@ class Mod:
             raise CompileError('gather() gives the results of the tasks, but these tasks give none\nwait for them with: await asyncio.wait_all(tasks)', line)
         if len(args) != len(tparams):
             raise CompileError(f"'{node.fields[0].text}' takes {plural(len(tparams), 'type argument')}, but {len(args)} given", line)
-        name = f'{gkey}[{self.arg_key(args)}]'
+        name = f'{self.base_of(gkey)}[{self.arg_key(args)}]'
         if name in self.instance_funcs:
             return self.find(self.instance_funcs[name], line)
         binds: dict[str, str] = {}
@@ -1797,7 +1834,7 @@ class Mod:
         self.tvars = saved_vars
         self.instance_count += 1
         info.targs = binds
-        info.key = f'{gkey}.g{self.instance_count}'
+        info.key = f'{self.base_of(gkey)}.g{self.instance_count}'
         self.instance_funcs[name] = info.key
         self.infos.append(info)
         self.func_nodes.append(node)
@@ -1840,7 +1877,7 @@ class Mod:
                 depth = 0
                 while k < len(act):
                     d = act[k]
-                    if depth == 0 and stop != '' and d == stop:
+                    if depth == 0 and ((stop != '' and d == stop) or d == ','):   # a type has no comma of its own outside brackets
                         break
                     if d == '[':
                         depth += 1
@@ -1982,15 +2019,22 @@ class Mod:
             return f'{name}[{inner}]'
         gkey = self.resolve(name)
         if gkey != '' and self.is_generic(gkey, 'ClassDef'):
-            if t.fields[2].tag != 'n' or t.fields[1].tag != 'z':
+            if (t.fields[2].tag != 'n' and t.fields[2].tag != 'l') or t.fields[1].tag != 'z':
                 raise CompileError(f"'{name}' is generic, so it needs its type arguments: {name}[{', '.join(self.type_params_of(gkey))}]", t.line)
-            targs: list[str] = [self.type_name(t.fields[2])]
-            if t.fields[3].tag == 'n':
-                targs.append(self.type_name(t.fields[3]))
+            targs: list[str] = []
+            if t.fields[2].tag == 'l':
+                # three or more type arguments are a list of types
+                for ta in t.fields[2].items:
+                    targs.append(self.type_name(ta))
+            else:
+                targs.append(self.type_name(t.fields[2]))
+                if t.fields[3].tag == 'n':
+                    targs.append(self.type_name(t.fields[3]))
+            gkey = self.pick_generic(gkey, len(targs), t.line)
             if '' in targs:
                 return ''
             if self.pattern_mode(targs):
-                return f'@{gkey}[{self.arg_key(targs)}]'
+                return f'@{self.base_of(gkey)}[{self.arg_key(targs)}]'
             return '@' + self.instance_class(gkey, targs, t.line)
         if t.fields[2].tag != 'z' or t.fields[1].tag != 'z':
             return ''
@@ -4718,7 +4762,7 @@ class Gen:
             g = self.mod.find_op(s.ty[1:], 'get')
             if g is None or len(g.ptypes) != 1 or g.ret == '':
                 raise CompileError("'" + s.ty[1:] + "' objects cannot be indexed\nadd a method marked @get that takes the index and returns the item", n.line)
-            gi = self.want(self.expr(val_node(n.fields[1])), g.ptypes[0], n.line, 'an index')
+            gi = self.want(self.expr(val_node(n.fields[1]), g.ptypes[0]), g.ptypes[0], n.line, 'an index')
             self.drop_held(held_before)
             return self.marker_call(s, g, [gi], n.line)
         if is_list(s.ty):
@@ -4807,6 +4851,16 @@ class Gen:
         self.fail_if(bad, 'slice step cannot be zero', [s])
         self.release(s)
         return ex(r, s.ty)
+
+    # the type of the key that the @contains method of this object takes, when it is a tuple of mixed item types, else ''
+    def contains_key_type(self, node: Node) -> str:
+        ty = self.arg_type(node)
+        if not is_class(ty):
+            return ''
+        cf = self.mod.find_op(ty[1:], 'contains')
+        if cf is None or len(cf.ptypes) != 1 or not is_mtuple(cf.ptypes[0]):
+            return ''
+        return cf.ptypes[0]
 
     def membership(self, a: Ex, b: Ex, line: int) -> Ex:
         if is_class(b.ty):
@@ -5054,7 +5108,15 @@ class Gen:
         a = ex('', '')
         b = ex('', '')
         held_before = len(self.held)
-        if (op == '+' or op == '-' or op == '*') and self.literal_only(n) and is_fixed(expected):
+        tuple_key = ''
+        if op == 'in' and left.kind == 'TupleLit':
+            tuple_key = self.contains_key_type(right)
+        if tuple_key != '':
+            # (1, 'a') in cache: the tuple is written for the type of key the object's @contains method takes
+            a = self.expr(left, tuple_key)
+            self.hold(a)
+            b = self.expr(right)
+        elif (op == '+' or op == '-' or op == '*') and self.literal_only(n) and is_fixed(expected):
             a = self.expr(left, expected)
             b = self.expr(right, expected)
         elif (op == '+' or op == '-' or op == '*') and self.literal_only(left) and not self.literal_only(right):
@@ -5446,38 +5508,71 @@ class Gen:
                         return mk('TypeRef', n.line, [vs('tuple'), vz(), vnodes(parts), vz()])
                     if base.fields[0].text == 'dict' and len(parts) == 2:
                         return mk('TypeRef', n.line, [vs('dict'), vz(), vn(parts[0]), vn(parts[1])])
+                    if self.mod.resolve(base.fields[0].text) in self.mod.generics:
+                        # a generic class with several type arguments, such as the Cache[int, int, float] in Box[Cache[int, int, float]](...)
+                        if len(parts) == 2:
+                            return mk('TypeRef', n.line, [vs(base.fields[0].text), vz(), vn(parts[0]), vn(parts[1])])
+                        return mk('TypeRef', n.line, [vs(base.fields[0].text), vz(), vnodes(parts), vz()])
                     raise CompileError(f"'{base.fields[0].text}' does not take several types here\nonly tuple[A, B] and dict[K, V] are written with more than one type", n.line)
                 return mk('TypeRef', n.line, [vs(base.fields[0].text), vz(), vn(self.type_node_of(arg)), vz()])
         raise CompileError('this is not a type\nwrite the type of the items, such as Stack[str]()', n.line)
 
     # Name[Type](args): a generic class or function used with its type argument written out
     def explicit_call(self, gkey: str, n: Node, f: Node, args: list[Node]) -> Ex:
-        g = self.mod.generics[gkey]
         if f.fields[1].tag != 'n':
             raise CompileError('this is not a type\nwrite the type of the items, such as Stack[str]()', n.line)
-        saved = self.mod.cur
-        targ = self.mod.type_name(vn(self.type_node_of(val_node(f.fields[1]))))
-        self.mod.cur = saved
-        if targ == '':
-            raise CompileError('this type is not supported here', n.line)
+        # several type arguments are one index with commas: Cache[int, int, float](10)
+        index = val_node(f.fields[1])
+        written: list[Node] = [index]
+        if index.kind == 'TupleLit':
+            written = val_nodes(index.fields[0])
+        targs: list[str] = []
+        for w in written:
+            saved = self.mod.cur
+            targ = self.mod.type_name(vn(self.type_node_of(w)))
+            self.mod.cur = saved
+            if targ == '':
+                raise CompileError('this type is not supported here', n.line)
+            targs.append(targ)
+        gkey = self.mod.pick_generic(gkey, len(targs), n.line)
+        g = self.mod.generics[gkey]
         if g.kind == 'ClassDef':
             if len(n.fields[2].items) > 0:
                 raise CompileError('keyword arguments are not supported when creating an object\npass the arguments by position', n.line)
-            ckey = self.mod.instance_class(gkey, [targ], n.line)
+            ckey = self.mod.instance_class(gkey, targs, n.line)
             return self.construct(self.mod.find_class(ckey, n.line), args, n.line)
-        info = self.mod.instance_func(gkey, [targ], n.line)
+        info = self.mod.instance_func(gkey, targs, n.line)
         self.kw = n.fields[2].items
         return self.call_function(info, '@tomato.' + info.key, ex('', ''), args, n.line)
 
+    # the overload of a generic class or function that a call without written type arguments means, and its type arguments:
+    # the first overload whose type parameters can all be found from the arguments (`Memo(f, 10)` with f taking two
+    # parameters is the overload with three type parameters, `Memo[A, B, R]`)
+    def infer_overload(self, gkey: str, args: list[Node], line: int) -> list[str]:
+        options = self.mod.overloads_of(gkey)
+        problem = ''
+        for k, option in enumerate(options):
+            g = self.mod.generics[option]
+            params = self.generic_class_init(option) if g.kind == 'ClassDef' else val_nodes(g.fields[1])
+            if len(options) > 1 and len(args) > len(params):
+                continue         # this overload takes fewer arguments than the call has
+            try:
+                found = self.infer_targs(option, params, args, line)
+                return [option] + found
+            catch CompileError as e:
+                if k == 0:
+                    problem = e.message
+        raise CompileError(problem, line)
+
     def generic_call(self, gkey: str, n: Node, args: list[Node]) -> Ex:
-        g = self.mod.generics[gkey]
-        if g.kind == 'ClassDef':
+        found = self.infer_overload(gkey, args, n.line)
+        gkey = found[0]
+        targs = found[1:]
+        if self.mod.generics[gkey].kind == 'ClassDef':
             if len(n.fields[2].items) > 0:
                 raise CompileError('keyword arguments are not supported when creating an object\npass the arguments by position', n.line)
-            targs = self.infer_targs(gkey, self.generic_class_init(gkey), args, n.line)
             ckey = self.mod.instance_class(gkey, targs, n.line)
             return self.construct(self.mod.find_class(ckey, n.line), args, n.line)
-        targs = self.infer_targs(gkey, val_nodes(g.fields[1]), args, n.line)
         info = self.mod.instance_func(gkey, targs, n.line)
         self.kw = n.fields[2].items
         return self.call_function(info, '@tomato.' + info.key, ex('', ''), args, n.line)
@@ -8115,7 +8210,7 @@ class Gen:
                 raise CompileError("'" + lst.ty[1:] + "' objects cannot be assigned by index\nadd a method marked @set that takes the index and the new item", s.line)
             held_before = len(self.held)
             self.hold(lst)
-            si = self.want(self.expr(val_node(target.fields[1])), f.ptypes[0], s.line, 'an index')
+            si = self.want(self.expr(val_node(target.fields[1]), f.ptypes[0]), f.ptypes[0], s.line, 'an index')
             self.hold(si)
             sv = self.expr(val_node(s.fields[1]), f.ptypes[1])
             sv = self.want(sv, f.ptypes[1], s.line, 'the assigned item')
@@ -11012,10 +11107,20 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
 
 def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
     # every module sees its own declarations, the built-ins, and what it imports (D24c)
+    arities: dict[str, list[int]] = {}   # the numbers of type parameters of the generic declarations of each name
     for top in items:
         item = top.node
         if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'ConstDef':
             name = item.fields[0].text
+            if is_generic_item(item):
+                # a generic class or function may be declared again with another number of type parameters (an overload)
+                gid = f'{top.module}.{name}'
+                count = len(item.fields[-1].items)
+                if gid in arities and count not in arities[gid]:
+                    arities[gid].append(count)
+                    continue
+                if gid not in arities:
+                    arities[gid] = [count]
             mod.declare_name(top.module, name, key_of(top.module, name), item.exported, item.line)
     for ii in imports:
         if len(ii.names) == 1 and ii.names[0] == '*':
@@ -11023,6 +11128,8 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
             for top in items:
                 item = top.node
                 if top.module == ii.module and item.exported and (item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'ConstDef'):
+                    if is_generic_item(item) and mod.binding(ii.importer, ii.module + '.' + item.fields[0].text) is not None:
+                        continue     # another overload of a generic name that is already bound
                     mod.declare_name(ii.importer, ii.module + '.' + item.fields[0].text, key_of(top.module, item.fields[0].text), False, ii.line)
             continue
         for nm in ii.names:
@@ -11058,6 +11165,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     for top in items:
         if is_generic_item(top.node):
             gk = key_of(top.module, top.node.fields[0].text)
+            if gk in mod.generics:
+                gk = f'{gk}#{len(top.node.fields[-1].items)}'     # an overload (see Mod.base_of)
             mod.generics[gk] = top.node
             mod.generic_mods[gk] = top.module
         else:

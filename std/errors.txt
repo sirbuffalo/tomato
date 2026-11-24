@@ -136,7 +136,7 @@ CompileError _http_wait() is async, so it must be awaited
 CompileError _http_wait() takes the request handle: await _http_wait(handle)
 CompileError a bracket is opened here but never closed
 CompileError a class can inherit from only one parent class
-CompileError a class or function takes at most two type parameters
+CompileError a class or function takes at most five type parameters
 CompileError a for loop can loop over a range(), a list, a tuple, a set, a dict, text or an object with an @iter method, but this is {}
 CompileError a for loop cannot loop over a '{}
 CompileError a for loop cannot loop over a value of type Sized
@@ -452,3 +452,4 @@ CompileError _settle() takes a task, but this is {}
 CompileError _settle() takes one task: await _settle(t)
 CompileError _unpark() takes a task, but this is {}
 CompileError _unpark() takes one task: _unpark(t)
+CompileError '{}' takes {} type arguments, but {} given

@@ -459,6 +459,13 @@ export class Parser:
             second = vz()
             if self.accept_op(','):
                 second = vn(self.type())
+            if self.is_op(','):
+                # three or more type arguments, Cache[int, int, str, float]: they are a list, as for tuple[A, B, C]
+                parts: list[Node] = [first, val_node(second)]
+                while self.accept_op(','):
+                    parts.append(self.type())
+                self.expect_op(']')
+                return mk('TypeRef', t.line, [vs(t.text), vz(), vnodes(parts), vz()])
             self.expect_op(']')
             return mk('TypeRef', t.line, [vs(t.text), vz(), vn(first), second])
         return mk('TypeRef', t.line, [vs(t.text), length, vz(), vz()])
@@ -553,8 +560,8 @@ export class Parser:
                 if seen.text == nm.text:
                     raise ParseError(f"the type parameter '{nm.text}' is declared twice", nm.line, nm.col)
             out.append(vs(nm.text))
-            if len(out) > 2:
-                raise ParseError('a class or function takes at most two type parameters', nm.line, nm.col)
+            if len(out) > 5:
+                raise ParseError('a class or function takes at most five type parameters', nm.line, nm.col)
             if not self.accept_op(','):
                 break
         self.expect_op(']')

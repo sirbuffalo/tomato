@@ -17,7 +17,7 @@ class Thing:
 @main
 def main():
     # eviction order: the least recently used entry goes first
-    c = Cache[int](3)
+    c = Cache[str, int](3)
     c.set('a', 1)
     c.set('b', 2)
     c.set('c', 3)
@@ -48,10 +48,10 @@ def main():
     print(c.keys())
 
     # capacity 0 stores nothing; capacity 1 keeps the last key
-    z = Cache[str](0)
+    z = Cache[str, str](0)
     z.set('a', 'x')
     print(len(z), z.get('a', 'none'))
-    one = Cache[str](1)
+    one = Cache[str, str](1)
     one.set('a', 'x')
     one.set('b', 'y')
     print(one.keys(), one.get('a', 'none'), one.get('b', 'none'), one.evictions)
@@ -59,16 +59,16 @@ def main():
     print(one['b'], len(one))
 
     # statistics
-    s = Cache[int](2)
+    s = Cache[str, int](2)
     s.set('a', 1)
     s.get('a', 0)
     s.get('b', 0)
     s.get('a', 0)
-    print(s.hits, s.misses, s.hit_rate(), Cache[int](1).hit_rate())
+    print(s.hits, s.misses, s.hit_rate(), Cache[str, int](1).hit_rate())
 
     # TTL with a fake clock: a cache-wide ttl, and a ttl on one entry
     clk = FakeClock()
-    t = Cache[int](10, 10.0, clk)
+    t = Cache[str, int](10, 10.0, clk)
     t.set('a', 1)
     t.set('b', 2, ttl=3.0)
     t.set('c', 3, ttl=100.0)
@@ -87,7 +87,7 @@ def main():
     clk.t = 20.0
     print(t.get('c', -1), len(t))
     # a ttl of zero or less means no limit
-    u = Cache[int](2, 0.0, clk)
+    u = Cache[str, int](2, 0.0, clk)
     u.set('k', 1)
     clk.t = 1000000.0
     print(u.get('k', -1))
@@ -98,18 +98,18 @@ def main():
     print(b >= a)
 
     # objects are freed when evicted, deleted or the cache is dropped
-    things = Cache[Thing](2)
+    things = Cache[str, Thing](2)
     for i in range(1000):
         things.set(f'k{i}', Thing(f'thing {i}'))
     print(len(things), things.keys(), things['k999'].name, things.evictions)
     things.delete('k999')
     things.clear()
     print(len(things))
-    keep = Cache[Thing](5)
+    keep = Cache[str, Thing](5)
     keep.set('a', Thing('a'))
 
     # many entries
-    big = Cache[int](1000)
+    big = Cache[str, int](1000)
     for i in range(5000):
         big.set(str(i), i)
         if i % 3 == 0:
@@ -118,7 +118,7 @@ def main():
 
     # a full cache whose oldest entry has expired drops it as expired, not as an eviction; len counts unread expired entries
     k = FakeClock()
-    q = Cache[int](2, 0.0, k)
+    q = Cache[str, int](2, 0.0, k)
     q.set('old', 1, ttl=1.0)
     q.set('new', 2)
     k.t = 5.0

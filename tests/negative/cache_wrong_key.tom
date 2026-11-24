@@ -1,0 +1,6 @@
+from cache import Cache
+
+@main
+def main():
+    c = Cache[int, str, float](3)
+    c.set(1, 2, 0.5)

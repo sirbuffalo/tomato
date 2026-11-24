@@ -1,0 +1,106 @@
+# std/cache.tom Cache[K1, ..., R]: the last type is the result and the others are the parts of the key (one to four).
+from cache import Cache, CacheMiss, Clock
+
+class FakeClock(Clock):
+    t: float = 0.0
+
+    override def now(self) -> float:
+        return self.t
+
+# a cache as a parameter and a field, written with all its type arguments
+class Grid:
+    cells: Cache[int, int, str]
+
+    @init
+    def make(self):
+        self.cells = Cache[int, int, str](4)
+
+    def paint(self, x: int, y: int, color: str):
+        self.cells.set(x, y, color)
+
+def total(c: Cache[int, int, str, float], a: int, b: int, s: str) -> float:
+    return c.get(a, b, s, -1.0)
+
+@main
+def main():
+    # one key part
+    one = Cache[int, float](2)
+    one.set(3, 9.0)
+    one.set(4, 16.0)
+    print(one.get(3, 0.0), one[4], 3 in one, 5 in one, one.keys(), len(one))
+    one.set(5, 25.0)
+    print(one.keys(), one.evictions, one.get(4, -1.0))
+
+    # two key parts: set, get, [], in, peek, delete, keys (tuples, most recently used first)
+    two = Cache[int, int, str](3)
+    two.set(1, 2, 'a')
+    two.set(2, 1, 'b')
+    two.set(1, 1, 'c')
+    print(two.keys(), two.get(1, 2, 'none'), two[2, 1], (1, 1) in two, (9, 9) in two)
+    print(two.peek(1, 1, 'none'), two.peek(8, 8, 'none'), two.keys())
+    two.set(7, 7, 'd')
+    print(two.keys(), two.evictions, two.get(2, 1, 'none'))
+    print(two.delete(7, 7), two.delete(7, 7), two.keys())
+    try:
+        two[4, 4]
+    catch CacheMiss as e:
+        print('miss:', e.message)
+
+    # three key parts: the example from the design, a function of (int, int, str) returning float
+    g = Cache[int, int, str, float](100)
+    g.set(1, 2, 'x', 0.5)
+    g.set(1, 2, 'y', 1.5)
+    print(g.get(1, 2, 'x', 0.0), g[1, 2, 'y'], total(g, 1, 2, 'x'), total(g, 2, 1, 'x'), g.hits, g.misses)
+    print(g.keys(), ((1, 2, 'x') in g))
+
+    # four key parts, including bool and float parts
+    f = Cache[bool, float, str, int, str](10)
+    f.set(True, 0.5, 'k', 3, 'v1')
+    f.set(False, -0.0, 'k', 3, 'v2')
+    f.set(False, 0.0, 'k', 3, 'v3')
+    print(f.get(True, 0.5, 'k', 3, '?'), f.get(False, -0.0, 'k', 3, '?'), f.get(False, 0.0, 'k', 3, '?'), len(f))
+    print(f.keys())
+
+    # keys that would run together without the length prefix stay apart
+    t = Cache[str, str, int](10)
+    t.set('a:1', 'b', 1)
+    t.set('a', '1:b', 2)
+    t.set('', 'a:1b', 3)
+    t.set('a:1b', '', 4)
+    print(len(t), t.get('a:1', 'b', 0), t.get('a', '1:b', 0), t.get('', 'a:1b', 0), t.get('a:1b', '', 0), t.get('a', '1', 0))
+    s = Cache[str, str, int](10)
+    s.set('12', '3', 1)
+    s.set('1', '23', 2)
+    print(len(s), s.get('12', '3', 0), s.get('1', '23', 0))
+    # a number and the text of that number are different types, so they are different caches, not different keys
+    n = Cache[int, int](10)
+    n.set(11, 1)
+    n.set(1, 2)
+    print(n.get(11, 0), n.get(1, 0), len(n))
+
+    # capacity, statistics, hit rate and TTL with a fake clock work for every number of key parts
+    clk = FakeClock()
+    w = Cache[int, int, int](2, 10.0, clk)
+    w.set(1, 1, 1)
+    w.set(2, 2, 2, ttl=3.0)
+    clk.t = 3.0
+    print(w.get(2, 2, -1), w.get(1, 1, -1), (1, 1) in w, w.expirations, len(w))
+    clk.t = 10.0
+    print(w.get(1, 1, -1), w.expirations, w.hits, w.misses, w.hit_rate())
+    w.set(3, 3, 3)
+    w.set(4, 4, 4)
+    w.set(5, 5, 5)
+    print(w.keys(), w.evictions)
+    w.clear()
+    print(len(w), w.keys())
+
+    # capacity 0 stores nothing
+    z = Cache[int, int, int](0)
+    z.set(1, 2, 3)
+    print(len(z), z.get(1, 2, -1))
+
+    # a cache in a class
+    grid = Grid()
+    grid.paint(1, 2, 'red')
+    grid.paint(3, 4, 'blue')
+    print(grid.cells.get(1, 2, '?'), grid.cells[3, 4], grid.cells.keys())

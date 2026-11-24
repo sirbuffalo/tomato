@@ -12,24 +12,41 @@ def collatz_steps(n: int) -> int:
         steps += 1
     return steps
 
-def cached_steps(cache: Cache[int], n: int) -> int:
-    key = str(n)
-    known = cache.get(key, -1)          # -1 cannot be a step count, so it means "not cached"
+def cached_steps(cache: Cache[int, int], n: int) -> int:
+    known = cache.get(n, -1)            # -1 cannot be a step count, so it means "not cached"
     if known >= 0:
         return known
     answer = collatz_steps(n)
-    cache.set(key, answer)
+    cache.set(n, answer)
     return answer
+
+# the number of division steps Euclid's algorithm takes for the pair (a, b)
+def euclid_steps(a: int, b: int) -> int:
+    steps = 0
+    while b != 0:
+        a, b = b, a % b
+        steps += 1
+    return steps
 
 @main
 def main():
-    cache = Cache[int](3)
+    cache = Cache[int, int](3)   # the key is an int (n), the result an int (its steps)
     for n in [27, 97, 27, 871, 6171, 27, 97]:
         print(n, cached_steps(cache, n))
     print('kept, most recent first:', cache.keys())
     print(f'{cache.hits} hits, {cache.misses} misses, {cache.evictions} evicted, hit rate {cache.hit_rate()}')
-    print(cache.get('1', -1))
+    print(cache.get(1, -1))
     try:
-        print(cache['1'])
+        print(cache[1])
     catch CacheMiss as e:
         print('not cached:', e.message)
+
+    # a key can have several parts: in Cache[int, int, int] the last type is the result, the others are the key (a, b)
+    pairs = Cache[int, int, int](10)
+    for p in [[1071, 462], [462, 1071], [1071, 462], [89, 55]]:
+        steps = pairs.get(p[0], p[1], -1)
+        if steps < 0:
+            steps = euclid_steps(p[0], p[1])
+            pairs.set(p[0], p[1], steps)
+        print(p[0], p[1], steps)
+    print(pairs.keys(), (89, 55) in pairs, pairs[1071, 462])

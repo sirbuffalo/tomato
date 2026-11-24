@@ -81,6 +81,7 @@ sort_cmp_native
 alloc_pool
 str_fast
 cache_lru
+cache_multi
 memoize
 bit_types
 bit_names

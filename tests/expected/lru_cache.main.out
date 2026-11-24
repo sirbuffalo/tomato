@@ -5,7 +5,12 @@
 6171 261
 27 111
 97 118
-kept, most recent first: ['97', '27', '6171']
+kept, most recent first: [97, 27, 6171]
 2 hits, 5 misses, 2 evicted, hit rate 0.2857142857142857
 -1
 not cached: 1 is not in the cache
+1071 462 3
+462 1071 4
+1071 462 3
+89 55 9
+[(89, 55), (1071, 462), (462, 1071)] True 3

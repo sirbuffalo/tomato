@@ -265,7 +265,7 @@ async def main_demo():
 
 @main
 def main():
-    c = Cache[int](2)                  # at most 2 entries; keys are text, values are all ints
+    c = Cache[str, int](2)             # the last type is the result, the types before it are the key: text keys, int results; at most 2 entries
     c.set('a', 1)
     c.set('b', 2)
     print(c.get('a', 0))               # 1, and 'a' is now the most recently used
@@ -278,9 +278,14 @@ def main():
         print(e.message)
     print(c.hits, c.misses, c.hit_rate())
 
-    t = Cache[str](100, 60.0)          # every entry expires after 60 seconds
-    t.set('token', 'abc', ttl=5.0)     # this one after 5</code></pre>
-<p><code>from cache import Cache</code> is a least-recently-used cache written in Tomato. <code>get</code>, <code>c[key]</code> and <code>set</code> count as a use; <code>in</code>, <code>peek</code> and <code>keys()</code> do not. Every operation takes constant time (a dict plus a doubly linked list). Capacity 0 stores nothing. <code>delete(key)</code>, <code>clear()</code> and <code>len(c)</code> work as expected, and <code>hits</code>, <code>misses</code>, <code>evictions</code>, <code>expirations</code> and <code>hit_rate()</code> count what happened. An expired entry is dropped when it is next looked at. Time comes from the built-in <code>clock()</code>, the seconds on a monotonic clock as a <code>float</code> (take two readings and subtract); a test gives the cache its own <code>Clock</code> subclass, <code>Cache[int](100, 60.0, fake)</code>, whose <code>now()</code> it controls. Object creation takes no keyword arguments, so <code>ttl</code> and the clock are positional there. The cache has no locking because tasks only switch at <code>await</code>. <code>memoize(f, capacity)</code> remembers a function's results: <code>m = memoize(slow, 100)</code>, then <code>m.call(7)</code> runs <code>slow(7)</code> once and later calls with <code>7</code> return the remembered result (<code>m.results</code> is the cache, with its <code>hits</code> and <code>misses</code>; there are no closures, so you call through <code>m.call</code>, and the argument is keyed by its text, so use an int or text). A disk-backed cache and a request cache for HTTP are not built yet. <code>d.remove(key)</code> deletes an entry from any dict.</p>
+    t = Cache[str, str](100, 60.0)     # every entry expires after 60 seconds
+    t.set('token', 'abc', ttl=5.0)     # this one after 5
+
+    g = Cache[int, int, str, float](1000)   # a key of three parts (int, int, str) and a float result
+    g.set(1, 2, 'x', 0.5)                   # the key parts, then the result
+    print(g.get(1, 2, 'x', 0.0), g[1, 2, 'x'], (1, 2, 'x') in g)   # 0.5 0.5 True
+    print(g.keys())                         # [(1, 2, 'x')]</code></pre>
+<p><code>from cache import Cache</code> is a least-recently-used cache written in Tomato. <code>Cache[K1, K2, ..., R]</code> lists the types of the key parts (one to four) and then the type of the result, the way a function lists its parameters and its return type: <code>Cache[int, int, str, float]</code> remembers a <code>float</code> for each <code>(int, int, str)</code>. <code>get(k1, k2, ..., default)</code>, <code>peek</code>, <code>set(k1, k2, ..., value, ttl)</code> and <code>delete</code> take the key parts one by one; <code>c[k1, k2]</code> and <code>(k1, k2) in c</code> take them in the brackets or as a tuple; <code>keys()</code> gives tuples when the key has several parts. A key part can be an <code>int</code>, <code>float</code>, <code>bool</code> or <code>str</code> (an object only when its class has <code>@str</code>). <code>get</code>, <code>c[key]</code> and <code>set</code> count as a use; <code>in</code>, <code>peek</code> and <code>keys()</code> do not. Every operation takes constant time (a dict plus a doubly linked list). Capacity 0 stores nothing. <code>delete(key)</code>, <code>clear()</code> and <code>len(c)</code> work as expected, and <code>hits</code>, <code>misses</code>, <code>evictions</code>, <code>expirations</code> and <code>hit_rate()</code> count what happened. An expired entry is dropped when it is next looked at. Time comes from the built-in <code>clock()</code>, the seconds on a monotonic clock as a <code>float</code> (take two readings and subtract); a test gives the cache its own <code>Clock</code> subclass, <code>Cache[str, int](100, 60.0, fake)</code>, whose <code>now()</code> it controls. Object creation takes no keyword arguments, so <code>ttl</code> and the clock are positional there. The cache has no locking because tasks only switch at <code>await</code>. <code>memoize(f, capacity)</code> remembers a function's results, for a function of one to four parameters: <code>m = memoize(slow, 100)</code>, then <code>m.call(7, 2)</code> runs <code>slow(7, 2)</code> once and later calls with <code>7, 2</code> return the remembered result (<code>m.results</code> is the cache, a <code>Cache[int, int, int]</code> here, with its <code>hits</code> and <code>misses</code>; there are no closures, so you call through <code>m.call</code>). A disk-backed cache and a request cache for HTTP are not built yet. <code>d.remove(key)</code> deletes an entry from any dict.</p>
 
 <h2>Time</h2>
 <pre><code>from time import time, monotonic, gmtime, strftime, isoformat, format_duration, Stopwatch

@@ -1,0 +1,6 @@
+from cache import Cache
+
+@main
+def main():
+    c = Cache[int](3)
+    print(len(c))

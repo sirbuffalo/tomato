@@ -1,4 +1,4 @@
-# std/cache.tom memoize / Memo: results are remembered, counted, evicted, expired; errors pass through; text keys.
+# std/cache.tom memoize / Memo: results are remembered, counted, evicted, expired; errors pass through; one to four arguments.
 # The functions print when they really run (a function value cannot capture a list yet).
 from cache import Clock, Memo, memoize
 
@@ -14,6 +14,18 @@ def square(x: int) -> int:
 
 def shout(s: str) -> str:
     return s + '!'
+
+def add(a: int, b: int) -> int:
+    print('add', a, b)
+    return a + b
+
+def label(n: int, s: str, big: bool) -> str:
+    print('label', n, s, big)
+    return f'{s}{n}' + ('!' if big else '')
+
+def scale(a: int, b: int, c: str, d: float) -> float:
+    print('scale', a, b, c, d)
+    return a * b * d
 
 def fail(x: int) -> int:
     print('try', x)
@@ -53,3 +65,15 @@ def main():
     # capacity 0 remembers nothing
     z = memoize(square, 0)
     print(z.call(2), z.call(2))
+    # functions of several arguments: the cache key is all of them
+    two = memoize(add, 2)
+    print(two.call(1, 2), two.call(1, 2), two.call(2, 1), two.call(1, 2), two.call(3, 3), two.call(2, 1))
+    print(two.results.hits, two.results.misses, two.results.evictions, two.results.keys())
+    three = memoize(label, 10)
+    print(three.call(1, 'a', True), three.call(1, 'a', False), three.call(1, 'a', True))
+    four = Memo(scale, 10, 5.0, clk)
+    print(four.call(2, 3, 'x', 0.5), four.call(2, 3, 'x', 0.5), four.call(2, 3, 'y', 0.5))
+    clk.t = 20.0
+    print(four.call(2, 3, 'x', 0.5), four.results.expirations)
+    four.clear()
+    print(len(four.results), four.results.keys())

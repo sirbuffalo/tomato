@@ -10,7 +10,7 @@ class FakeClock(Clock):
 @main
 def main():
     clk = FakeClock()
-    c = Cache[int](5, 10.0, clk)
+    c = Cache[str, int](5, 10.0, clk)
     c.set('a', 1)
     c.set('b', 2)
     c.set('c', 3)

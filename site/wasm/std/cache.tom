@@ -1,32 +1,58 @@
 # An in-memory cache with least-recently-used eviction, written in Tomato: `from cache import Cache`.
 #
-#     c = Cache[int](100)               # keys are text, values are any one type; at most 100 entries
-#     c.set('a', 1)
-#     n = c.get('a', 0)                 # the value, or 0 when 'a' is missing, expired or evicted
-#     n = c['a']                        # the value, or CacheMiss when missing
-#     if 'a' in c: ...                  # does not refresh the entry and does not count as a hit or a miss
+# `Cache[K1, K2, ..., R]` caches a function: the LAST type is the result and the types before it are the parts of the
+# key (one to four parts). `Cache[int, int, str, float]` remembers a `float` for each `(int, int, str)`:
+#
+#     c = Cache[int, float](100)                  # one key part, a float result; at most 100 entries
+#     c.set(3, 9.0)
+#     x = c.get(3, 0.0)                           # the result, or 0.0 when the key is missing, expired or evicted
+#     x = c[3]                                    # the result, or CacheMiss when missing
+#     if 3 in c: ...                              # does not refresh the entry and does not count as a hit or a miss
+#
+#     g = Cache[int, int, str, float](1000)       # three key parts
+#     g.set(1, 2, 'a', 0.5)                       # the key parts, then the result
+#     y = g.get(1, 2, 'a', 0.0)                   # the key parts, then the default
+#     y = g[1, 2, 'a']                            # the key parts in one index (a tuple); CacheMiss when missing
+#     if (1, 2, 'a') in g: ...
+#     g.peek(1, 2, 'a', 0.0)
+#     g.delete(1, 2, 'a')                         # true when the key was there
+#     g.keys()                                    # a list of tuples, most recently used first: [(1, 2, 'a')]
+#
+# A key part can have any type whose `str` tells two different values apart: `int`, `float`, `bool`, `str` and the
+# fixed-width integers do. An object can be a key part only when its class has an `@str` method (otherwise the compiler
+# rejects it), and that text must differ for different values. The keys are stored as one text (dicts have only text keys): every part is written as the length of its
+# `str` text, a colon, and the text, and the parts follow each other: the key `(1, 22, 'a:b')` is `1:12:223:a:b`. A
+# part's length says where it ends, so two different keys never give the same text, and `1` and `'1'` cannot meet because
+# every position has one type. A `float` key is the text of the float: 0.0 and -0.0 are two keys, and nan is one key.
 #
 # When a cache is full, `set` of a new key drops the entry that was used longest ago. `get`, `c[key]` and `set` count as
 # a use; `contains`, `peek` and `keys` do not. Every operation takes constant time: a dict finds the entry and a doubly
 # linked list keeps the use order (the most recent entry first), so a use moves one entry to the front.
 #
-# Entries can expire. `Cache[int](100, 60.0)` gives every entry 60 seconds; `c.set('a', 1, ttl=5.0)` gives one entry
-# its own time (a ttl of 0 or less means "no limit"). An expired entry is dropped when it is next looked at, and
+# Entries can expire. `Cache[int, float](100, 60.0)` gives every entry 60 seconds; `c.set(3, 9.0, ttl=5.0)` gives one
+# entry its own time (a ttl of 0 or less means "no limit"). An expired entry is dropped when it is next looked at, and
 # counts as a miss. Time comes from `clock()`; a test passes its own `Clock` subclass (the third argument,
-# `Cache[int](100, 60.0, fake)`) whose `now()` it controls:
+# `Cache[int, float](100, 60.0, fake)`) whose `now()` it controls:
 #
 #     class FakeClock(Clock):
 #         t: float = 0.0
 #         override def now(self) -> float:
 #             return self.t
 #
-# `memoize(f, capacity)` remembers a function's results (see `Memo` at the end of this file).
+# `memoize(f, capacity)` remembers a function's results, for a function of one to four parameters (see `Memo` below).
 #
 # `c.hits`, `c.misses`, `c.evictions` and `c.expirations` count what happened, and `c.hit_rate()` is hits / (hits +
 # misses).
 #
 # A cache belongs to one program and the language runs one thing at a time: tasks switch only at `await`, and no cache
 # method awaits, so a cache can be shared by async tasks without a lock.
+#
+# How it is built: the work is done once, by `Lru[K, V]` below (a cache whose entries are found by a text and carry the
+# key as a value of type K). Each `Cache` class is a thin front: it turns the key parts into the text and hands the key
+# (one value, or a tuple of the parts) to the `Lru`, then copies the four counters into its own fields. The language has
+# no generic class with a variable number of type parameters, so the four `Cache` classes (and the four `Memo` classes)
+# are declared one after the other under one name, each with its own number of type parameters, and the compiler picks
+# the one that has as many type arguments as the use writes.
 
 export class CacheMiss(RuntimeError):
     @init
@@ -37,26 +63,34 @@ export class Clock:
     def now(self) -> float:
         return clock()
 
-class Entry[V]:
-    key: str
+# one key part as text: the length of its `str` text, a colon and the text
+def part[T](x: T) -> str:
+    s = str(x)
+    return f'{len(s)}:{s}'
+
+class Entry[K, V]:
+    text: str                     # the key as the text the dict knows it by
+    key: K                        # the key as it was given (the value, or a tuple of the parts)
     value: V
     expires: float = 0.0          # 0 means never
-    prev: Entry[V] | None = None
-    nxt: Entry[V] | None = None
+    prev: Entry[K, V] | None = None
+    nxt: Entry[K, V] | None = None
 
     @init
-    def make(self, key: str, value: V, expires: float):
+    def make(self, text: str, key: K, value: V, expires: float):
+        self.text = text
         self.key = key
         self.value = value
         self.expires = expires
 
-export class Cache[V]:
+# the cache itself, with the key already turned into text
+class Lru[K, V]:
     capacity: int = 0
     ttl: float = 0.0
     timer: Clock = Clock()
-    items: dict[str, Entry[V]] = {}
-    first: Entry[V] | None = None        # most recently used
-    last: Entry[V] | None = None         # least recently used
+    items: dict[str, Entry[K, V]] = {}
+    first: Entry[K, V] | None = None        # most recently used
+    last: Entry[K, V] | None = None         # least recently used
     hits: int = 0
     misses: int = 0
     evictions: int = 0
@@ -70,13 +104,7 @@ export class Cache[V]:
         self.ttl = ttl
         self.timer = Clock() if timer is None else timer
 
-    # counts entries that expired but have not been looked at yet: expiry is lazy (constant time), so an expired
-    # entry is dropped when it is read, deleted, reaches the end of the use order, or is replaced
-    @len
-    def size(self) -> int:
-        return len(self.items)
-
-    def unlink(self, e: Entry[V]):
+    def unlink(self, e: Entry[K, V]):
         p = e.prev
         n = e.nxt
         if p is None:
@@ -90,7 +118,7 @@ export class Cache[V]:
         e.prev = None
         e.nxt = None
 
-    def push_front(self, e: Entry[V]):
+    def push_front(self, e: Entry[K, V]):
         f = self.first
         e.prev = None
         e.nxt = f
@@ -100,16 +128,16 @@ export class Cache[V]:
             f.prev = e
         self.first = e
 
-    def remove(self, e: Entry[V]):
+    def remove(self, e: Entry[K, V]):
         self.unlink(e)
-        self.items.remove(e.key)
+        self.items.remove(e.text)
 
-    def expired(self, e: Entry[V]) -> bool:
+    def expired(self, e: Entry[K, V]) -> bool:
         return e.expires > 0.0 and self.timer.now() >= e.expires
 
-    # the live entry for key, or None; an expired one is dropped on the way
-    def find(self, key: str) -> Entry[V] | None:
-        e = self.items.get(key)
+    # the live entry for text, or None; an expired one is dropped on the way
+    def find(self, text: str) -> Entry[K, V] | None:
+        e = self.items.get(text)
         if e is None:
             return None
         if self.expired(e):
@@ -119,40 +147,37 @@ export class Cache[V]:
         return e
 
     # a hit: count it and make the entry the most recently used
-    def touch(self, e: Entry[V]):
+    def touch(self, e: Entry[K, V]):
         self.hits += 1
         self.unlink(e)
         self.push_front(e)
 
-    def get(self, key: str, default: V) -> V:
-        e = self.find(key)
+    # find the entry and count a hit (and refresh it) or a miss
+    def fetch(self, text: str) -> Entry[K, V] | None:
+        e = self.find(text)
         if e is None:
             self.misses += 1
-            return default
+            return None
         self.touch(e)
-        return e.value
+        return e
 
-    @get
-    def at(self, key: str) -> V:
-        e = self.find(key)
+    def get(self, text: str, default: V) -> V:
+        e = self.fetch(text)
         if e is None:
-            self.misses += 1
-            raise CacheMiss(f'{key} is not in the cache', 'E90')
-        self.touch(e)
+            return default
         return e.value
 
     # like get, but does not refresh the entry and does not count
-    def peek(self, key: str, default: V) -> V:
-        e = self.find(key)
+    def peek(self, text: str, default: V) -> V:
+        e = self.find(text)
         if e is None:
             return default
         return e.value
 
-    @contains
-    def contains(self, key: str) -> bool:
-        return self.find(key) is not None
+    def contains(self, text: str) -> bool:
+        return self.find(text) is not None
 
-    def set(self, key: str, value: V, ttl: float = 0.0):
+    def set(self, text: str, key: K, value: V, ttl: float):
         if self.capacity == 0:
             return
         life = ttl
@@ -161,7 +186,7 @@ export class Cache[V]:
         expires = 0.0
         if life > 0.0:
             expires = self.timer.now() + life
-        old = self.items.get(key)
+        old = self.items.get(text)
         if old is not None:
             old.value = value
             old.expires = expires
@@ -170,8 +195,8 @@ export class Cache[V]:
             return
         if len(self.items) >= self.capacity:
             self.evict()
-        e = Entry[V](key, value, expires)
-        self.items[key] = e
+        e = Entry[K, V](text, key, value, expires)
+        self.items[text] = e
         self.push_front(e)
 
     # make room: drop the least recently used entry (an expired one at the end counts as expired, not evicted)
@@ -186,8 +211,8 @@ export class Cache[V]:
                 self.evictions += 1
 
     # true when the key was there (and live)
-    def delete(self, key: str) -> bool:
-        e = self.find(key)
+    def delete(self, text: str) -> bool:
+        e = self.find(text)
         if e is None:
             return False
         self.remove(e)
@@ -201,8 +226,8 @@ export class Cache[V]:
             self.remove(e)
 
     # the live keys, most recently used first
-    def keys(self) -> list[str]:
-        out: list[str] = []
+    def keys(self) -> list[K]:
+        out: list[K] = []
         e = self.first
         while e is not None:
             if not self.expired(e):
@@ -216,36 +241,323 @@ export class Cache[V]:
             return 0.0
         return self.hits / total
 
-# Memoising a function. There are no closures yet, so `memoize` cannot return a function: it returns a `Memo`, and the
-# function is called through it, `m.call(x)`. The results live in an LRU `Cache`, keyed by the text of the argument
-# (`str(x)`), so use an int or text argument: two different values with the same `str` (a float and a text, say) would
-# share one result; the function should return the same result for the same argument. A function that raises is not
+# ---- the caches: one class per number of key parts (the compiler picks by the number of type arguments)
+
+# Cache[int, float]: one key part and a result.
+export class Cache[K, R]:
+    core: Lru[K, R]
+    hits: int = 0
+    misses: int = 0
+    evictions: int = 0
+    expirations: int = 0
+
+    @init
+    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        self.core = Lru[K, R](capacity, ttl, timer)
+
+    # copies the core's counters (the entries and the use order live in the core)
+    def sync(self):
+        c = self.core
+        self.hits = c.hits
+        self.misses = c.misses
+        self.evictions = c.evictions
+        self.expirations = c.expirations
+
+    @len
+    def size(self) -> int:
+        return len(self.core.items)
+
+    def get(self, key: K, default: R) -> R:
+        v = self.core.get(part(key), default)
+        self.sync()
+        return v
+
+    @get
+    def at(self, key: K) -> R:
+        e = self.core.fetch(part(key))
+        self.sync()
+        if e is None:
+            raise CacheMiss(f'{key} is not in the cache', 'E90')
+        return e.value
+
+    # like get, but does not refresh the entry and does not count
+    def peek(self, key: K, default: R) -> R:
+        v = self.core.peek(part(key), default)
+        self.sync()
+        return v
+
+    @contains
+    def contains(self, key: K) -> bool:
+        found = self.core.contains(part(key))
+        self.sync()
+        return found
+
+    def set(self, key: K, value: R, ttl: float = 0.0):
+        self.core.set(part(key), key, value, ttl)
+        self.sync()
+
+    # true when the key was there (and live)
+    def delete(self, key: K) -> bool:
+        found = self.core.delete(part(key))
+        self.sync()
+        return found
+
+    def clear(self):
+        self.core.clear()
+        self.sync()
+
+    # the live keys, most recently used first
+    def keys(self) -> list[K]:
+        return self.core.keys()
+
+    def hit_rate(self) -> float:
+        return self.core.hit_rate()
+
+# Cache[int, int, float]: two key parts and a result.
+export class Cache[K1, K2, R]:
+    core: Lru[tuple[K1, K2], R]
+    hits: int = 0
+    misses: int = 0
+    evictions: int = 0
+    expirations: int = 0
+
+    @init
+    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        self.core = Lru[tuple[K1, K2], R](capacity, ttl, timer)
+
+    # copies the core's counters (the entries and the use order live in the core)
+    def sync(self):
+        c = self.core
+        self.hits = c.hits
+        self.misses = c.misses
+        self.evictions = c.evictions
+        self.expirations = c.expirations
+
+    @len
+    def size(self) -> int:
+        return len(self.core.items)
+
+    def get(self, k1: K1, k2: K2, default: R) -> R:
+        v = self.core.get(part(k1) + part(k2), default)
+        self.sync()
+        return v
+
+    @get
+    def at(self, key: tuple[K1, K2]) -> R:
+        e = self.core.fetch(part(key[0]) + part(key[1]))
+        self.sync()
+        if e is None:
+            raise CacheMiss(f'{key} is not in the cache', 'E90')
+        return e.value
+
+    # like get, but does not refresh the entry and does not count
+    def peek(self, k1: K1, k2: K2, default: R) -> R:
+        v = self.core.peek(part(k1) + part(k2), default)
+        self.sync()
+        return v
+
+    @contains
+    def contains(self, key: tuple[K1, K2]) -> bool:
+        found = self.core.contains(part(key[0]) + part(key[1]))
+        self.sync()
+        return found
+
+    def set(self, k1: K1, k2: K2, value: R, ttl: float = 0.0):
+        self.core.set(part(k1) + part(k2), (k1, k2), value, ttl)
+        self.sync()
+
+    # true when the key was there (and live)
+    def delete(self, k1: K1, k2: K2) -> bool:
+        found = self.core.delete(part(k1) + part(k2))
+        self.sync()
+        return found
+
+    def clear(self):
+        self.core.clear()
+        self.sync()
+
+    # the live keys, most recently used first
+    def keys(self) -> list[tuple[K1, K2]]:
+        return self.core.keys()
+
+    def hit_rate(self) -> float:
+        return self.core.hit_rate()
+
+# Cache[int, int, str, float]: three key parts and a result.
+export class Cache[K1, K2, K3, R]:
+    core: Lru[tuple[K1, K2, K3], R]
+    hits: int = 0
+    misses: int = 0
+    evictions: int = 0
+    expirations: int = 0
+
+    @init
+    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        self.core = Lru[tuple[K1, K2, K3], R](capacity, ttl, timer)
+
+    # copies the core's counters (the entries and the use order live in the core)
+    def sync(self):
+        c = self.core
+        self.hits = c.hits
+        self.misses = c.misses
+        self.evictions = c.evictions
+        self.expirations = c.expirations
+
+    @len
+    def size(self) -> int:
+        return len(self.core.items)
+
+    def get(self, k1: K1, k2: K2, k3: K3, default: R) -> R:
+        v = self.core.get(part(k1) + part(k2) + part(k3), default)
+        self.sync()
+        return v
+
+    @get
+    def at(self, key: tuple[K1, K2, K3]) -> R:
+        e = self.core.fetch(part(key[0]) + part(key[1]) + part(key[2]))
+        self.sync()
+        if e is None:
+            raise CacheMiss(f'{key} is not in the cache', 'E90')
+        return e.value
+
+    # like get, but does not refresh the entry and does not count
+    def peek(self, k1: K1, k2: K2, k3: K3, default: R) -> R:
+        v = self.core.peek(part(k1) + part(k2) + part(k3), default)
+        self.sync()
+        return v
+
+    @contains
+    def contains(self, key: tuple[K1, K2, K3]) -> bool:
+        found = self.core.contains(part(key[0]) + part(key[1]) + part(key[2]))
+        self.sync()
+        return found
+
+    def set(self, k1: K1, k2: K2, k3: K3, value: R, ttl: float = 0.0):
+        self.core.set(part(k1) + part(k2) + part(k3), (k1, k2, k3), value, ttl)
+        self.sync()
+
+    # true when the key was there (and live)
+    def delete(self, k1: K1, k2: K2, k3: K3) -> bool:
+        found = self.core.delete(part(k1) + part(k2) + part(k3))
+        self.sync()
+        return found
+
+    def clear(self):
+        self.core.clear()
+        self.sync()
+
+    # the live keys, most recently used first
+    def keys(self) -> list[tuple[K1, K2, K3]]:
+        return self.core.keys()
+
+    def hit_rate(self) -> float:
+        return self.core.hit_rate()
+
+# Cache[int, int, str, int, float]: four key parts and a result.
+export class Cache[K1, K2, K3, K4, R]:
+    core: Lru[tuple[K1, K2, K3, K4], R]
+    hits: int = 0
+    misses: int = 0
+    evictions: int = 0
+    expirations: int = 0
+
+    @init
+    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        self.core = Lru[tuple[K1, K2, K3, K4], R](capacity, ttl, timer)
+
+    # copies the core's counters (the entries and the use order live in the core)
+    def sync(self):
+        c = self.core
+        self.hits = c.hits
+        self.misses = c.misses
+        self.evictions = c.evictions
+        self.expirations = c.expirations
+
+    @len
+    def size(self) -> int:
+        return len(self.core.items)
+
+    def get(self, k1: K1, k2: K2, k3: K3, k4: K4, default: R) -> R:
+        v = self.core.get(part(k1) + part(k2) + part(k3) + part(k4), default)
+        self.sync()
+        return v
+
+    @get
+    def at(self, key: tuple[K1, K2, K3, K4]) -> R:
+        e = self.core.fetch(part(key[0]) + part(key[1]) + part(key[2]) + part(key[3]))
+        self.sync()
+        if e is None:
+            raise CacheMiss(f'{key} is not in the cache', 'E90')
+        return e.value
+
+    # like get, but does not refresh the entry and does not count
+    def peek(self, k1: K1, k2: K2, k3: K3, k4: K4, default: R) -> R:
+        v = self.core.peek(part(k1) + part(k2) + part(k3) + part(k4), default)
+        self.sync()
+        return v
+
+    @contains
+    def contains(self, key: tuple[K1, K2, K3, K4]) -> bool:
+        found = self.core.contains(part(key[0]) + part(key[1]) + part(key[2]) + part(key[3]))
+        self.sync()
+        return found
+
+    def set(self, k1: K1, k2: K2, k3: K3, k4: K4, value: R, ttl: float = 0.0):
+        self.core.set(part(k1) + part(k2) + part(k3) + part(k4), (k1, k2, k3, k4), value, ttl)
+        self.sync()
+
+    # true when the key was there (and live)
+    def delete(self, k1: K1, k2: K2, k3: K3, k4: K4) -> bool:
+        found = self.core.delete(part(k1) + part(k2) + part(k3) + part(k4))
+        self.sync()
+        return found
+
+    def clear(self):
+        self.core.clear()
+        self.sync()
+
+    # the live keys, most recently used first
+    def keys(self) -> list[tuple[K1, K2, K3, K4]]:
+        return self.core.keys()
+
+    def hit_rate(self) -> float:
+        return self.core.hit_rate()
+
+# Memoising a function of one to four parameters. There are no closures yet, so `memoize` cannot return a function: it
+# returns a `Memo`, and the function is called through it, `m.call(x)` or `m.call(x, y)`. The results live in an LRU
+# `Cache` whose key parts are the types of the parameters, so `memoize(f, 100)` for `f(int, int, str) -> float` keeps a
+# `Cache[int, int, str, float]` in `m.results` (the key parts must be types whose `str` tells two values apart, see the top
+# of this file). The function should return the same result for the same arguments. A function that raises is not
 # remembered: the error passes through.
 #
-#     def slow(n: int) -> int: ...
-#     m = memoize(slow, 100)            # remember the results of the last 100 different arguments
-#     m.call(7)                         # runs slow(7)
-#     m.call(7)                         # remembered
+#     def slow(n: int, k: int) -> int: ...
+#     m = memoize(slow, 100)            # remember the results of the last 100 different argument pairs
+#     m.call(7, 2)                      # runs slow(7, 2)
+#     m.call(7, 2)                      # remembered
 #     m.results.hits, m.results.misses  # the cache's statistics
 #
 # `Memo(slow, 100, 60.0)` gives each result 60 seconds. A top-level `@cached` marker cannot exist: `@name` before a
 # function already means an entry point, and `@name` before a method a role.
+
 export class Memo[K, V]:
     f: fn(K) -> V
-    results: Cache[V]
+    results: Cache[K, V]
 
     @init
     def make_memo(self, f: fn(K) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
         self.f = f
-        self.results = Cache[V](capacity, ttl, timer)
+        self.results = Cache[K, V](capacity, ttl, timer)
 
     def call(self, arg: K) -> V:
-        key = str(arg)
-        if key in self.results:
-            return self.results[key]
-        self.results.misses += 1          # `in` does not count, so a miss is counted here
+        text = part(arg)
+        core = self.results.core
+        e = core.fetch(text)
+        if e is not None:
+            self.results.sync()
+            return e.value
         v = self.f(arg)
-        self.results.set(key, v)
+        core.set(text, arg, v, 0.0)
+        self.results.sync()
         return v
 
     # forget every remembered result
@@ -253,4 +565,88 @@ export class Memo[K, V]:
         self.results.clear()
 
 export def memoize[K, V](f: fn(K) -> V, capacity: int) -> Memo[K, V]:
+    return Memo(f, capacity)
+
+export class Memo[K1, K2, V]:
+    f: fn(K1, K2) -> V
+    results: Cache[K1, K2, V]
+
+    @init
+    def make_memo(self, f: fn(K1, K2) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        self.f = f
+        self.results = Cache[K1, K2, V](capacity, ttl, timer)
+
+    def call(self, a1: K1, a2: K2) -> V:
+        text = part(a1) + part(a2)
+        core = self.results.core
+        e = core.fetch(text)
+        if e is not None:
+            self.results.sync()
+            return e.value
+        v = self.f(a1, a2)
+        core.set(text, (a1, a2), v, 0.0)
+        self.results.sync()
+        return v
+
+    # forget every remembered result
+    def clear(self):
+        self.results.clear()
+
+export def memoize[K1, K2, V](f: fn(K1, K2) -> V, capacity: int) -> Memo[K1, K2, V]:
+    return Memo(f, capacity)
+
+export class Memo[K1, K2, K3, V]:
+    f: fn(K1, K2, K3) -> V
+    results: Cache[K1, K2, K3, V]
+
+    @init
+    def make_memo(self, f: fn(K1, K2, K3) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        self.f = f
+        self.results = Cache[K1, K2, K3, V](capacity, ttl, timer)
+
+    def call(self, a1: K1, a2: K2, a3: K3) -> V:
+        text = part(a1) + part(a2) + part(a3)
+        core = self.results.core
+        e = core.fetch(text)
+        if e is not None:
+            self.results.sync()
+            return e.value
+        v = self.f(a1, a2, a3)
+        core.set(text, (a1, a2, a3), v, 0.0)
+        self.results.sync()
+        return v
+
+    # forget every remembered result
+    def clear(self):
+        self.results.clear()
+
+export def memoize[K1, K2, K3, V](f: fn(K1, K2, K3) -> V, capacity: int) -> Memo[K1, K2, K3, V]:
+    return Memo(f, capacity)
+
+export class Memo[K1, K2, K3, K4, V]:
+    f: fn(K1, K2, K3, K4) -> V
+    results: Cache[K1, K2, K3, K4, V]
+
+    @init
+    def make_memo(self, f: fn(K1, K2, K3, K4) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+        self.f = f
+        self.results = Cache[K1, K2, K3, K4, V](capacity, ttl, timer)
+
+    def call(self, a1: K1, a2: K2, a3: K3, a4: K4) -> V:
+        text = part(a1) + part(a2) + part(a3) + part(a4)
+        core = self.results.core
+        e = core.fetch(text)
+        if e is not None:
+            self.results.sync()
+            return e.value
+        v = self.f(a1, a2, a3, a4)
+        core.set(text, (a1, a2, a3, a4), v, 0.0)
+        self.results.sync()
+        return v
+
+    # forget every remembered result
+    def clear(self):
+        self.results.clear()
+
+export def memoize[K1, K2, K3, K4, V](f: fn(K1, K2, K3, K4) -> V, capacity: int) -> Memo[K1, K2, K3, K4, V]:
     return Memo(f, capacity)

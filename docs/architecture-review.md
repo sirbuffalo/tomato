@@ -390,7 +390,7 @@ Other inconsistencies from the docs and code:
   So `int | None` cannot be a nullable pointer and `str | int | None` has no representation [V].
 - **Fixed-width integers** are allowed in inferred lists (`[int[length=8](1)]`) but `list[int[length=8]]` cannot be
   declared (P53, `docs/performance.md`).
-- **Generics**: at most two type parameters, no bounds, no generic methods or interfaces (D60a).
+- **Generics**: at most five type parameters (two when this was written; D62b), no bounds, no generic methods or interfaces (D60a).
 - **Placeholders that read as decisions.** D35a (128-bit value pairs) and D32a ("int auto-detects its size") describe a design the implementation replaced
   with tagged 64-bit words and an ownership rule; the decisions were never revisited.
 - **Resource cleanup**: `File` must be closed by hand, there is no `with`/`defer`, and R03's "resource cleanup" is open.
