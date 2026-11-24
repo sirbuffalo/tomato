@@ -470,18 +470,30 @@ check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"versio
 check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
 check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | sha256 | cut -d' ' -f1)" "$(sed -n 1p site/wasm/SOURCE.sha256 2>/dev/null)"
 check "the checked-in wasm files are the ones that were built" "$(sed -n 2,3p site/wasm/SOURCE.sha256)" "$(sha256 site/wasm/tomatoc.wasm site/wasm/runtime.wasm | cut -d' ' -f1)"
-if [ -n "$WASI_SDK" ]; then
-  if [ "$(uname -s)" = Linux ]; then
-    echo "skip wasm rebuild comparison on Linux (canonical build: macOS arm64, WASI SDK 24)"
-  else
-    cp -R site/wasm "$work/wasm_orig"
-    if WASI_SDK="$WASI_SDK" sh site/wasm/build.sh > /dev/null 2>&1 &&
-       cmp -s site/wasm/tomatoc.wasm "$work/wasm_orig/tomatoc.wasm" && cmp -s site/wasm/runtime.wasm "$work/wasm_orig/runtime.wasm"; then
-      ok "wasm files rebuild identically"
-    else
-      bad "wasm files rebuild identically" "rebuild on macOS arm64 with WASI SDK 24 and commit"
-    fi
-  fi
+# the wasm files must be the same on every host (site/wasm/build.sh): no debug sections, which name the SDK's build folder
+for f in tomatoc runtime; do
+  sh site/wasm/sections.sh "site/wasm/$f.wasm" > "$work/sections" 2>&1 || bad "site/wasm/sections.sh reads $f.wasm" "$(tail -3 "$work/sections")"
+  check "site/wasm/sections.sh accounts for every byte of $f.wasm" "$(wc -c < "site/wasm/$f.wasm" | tr -d ' ')" "$(awk '{ n += $2 } END { print n + 8 }' "$work/sections")"
+  r="$(grep -E ' custom:\.debug|custom:external_debug' "$work/sections" | awk '{ print $4 }' | tr '\n' ' ')"
+  [ -z "$r" ] && ok "$f.wasm has no debug sections (they differ between the macOS and Linux WASI SDKs)" || bad "$f.wasm has no debug sections" "found: $r
+run site/wasm/build.sh (it links with --strip-debug) and commit"
+done
+# sections.sh names the section that differs: change one byte inside the data section of a copy
+sh site/wasm/sections.sh site/wasm/runtime.wasm > "$work/sections"
+awk '$4 == "data" { print $1 + $2 - 1 }' "$work/sections" > "$work/at"
+{ head -c "$(cat "$work/at")" site/wasm/runtime.wasm; printf 'X'; tail -c "+$(($(cat "$work/at") + 2))" site/wasm/runtime.wasm; } > "$work/changed.wasm"
+r="$(sh site/wasm/sections.sh site/wasm/runtime.wasm "$work/changed.wasm" | sed 1d)"
+check "site/wasm/sections.sh names the section that differs" "  data: same size ($(awk '$4 == "data" { print $2 }' "$work/sections") bytes), different bytes" "$r"
+sh site/wasm/sections.sh site/wasm/runtime.wasm site/wasm/runtime.wasm && ok "site/wasm/sections.sh: identical files compare equal" || bad "site/wasm/sections.sh: identical files compare equal"
+if [ -n "$WASI_SDK" ]; then   # with the toolchain, rebuild and compare byte for byte
+  cp -R site/wasm "$work/wasm_orig"
+  if WASI_SDK="$WASI_SDK" sh site/wasm/build.sh > "$work/wasm_build.log" 2>&1; then
+    r=""; for f in tomatoc runtime; do
+      cmp -s "$work/wasm_orig/$f.wasm" "site/wasm/$f.wasm" || r="$r$(sh site/wasm/sections.sh "$work/wasm_orig/$f.wasm" "site/wasm/$f.wasm" | sed "s|$work/wasm_orig/$f.wasm|the committed $f.wasm|; s|site/wasm/$f.wasm|the rebuilt one|")
+"; done
+    [ -z "$r" ] && ok "wasm files rebuild identically" || bad "wasm files rebuild identically" "${r}the rebuilt files are now in site/wasm; docs/releasing.md (The wasm files) says what each kind of difference means"
+  else bad "wasm files rebuild identically" "site/wasm/build.sh failed:
+$(cat "$work/wasm_build.log")"; fi
 fi
 
 echo; echo "$passes passed, $fails failed"
