@@ -70,7 +70,10 @@
           "name": "meta.embedded.expression.tomato", "begin": "\\{", "end": "\\}",
           "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.tomato" } },
           "endCaptures": { "0": { "name": "punctuation.section.embedded.end.tomato" } },
-          "patterns": [{ "include": "$self" }]
+          "patterns": [
+            { "match": "(:)([^{}'\"\\\\\\[\\]()]*)(?=\\})", "captures": { "1": { "name": "punctuation.separator.format-spec.tomato" }, "2": { "name": "constant.other.format-spec.tomato" } } },
+            { "include": "$self" }
+          ]
         }
       ]
     },

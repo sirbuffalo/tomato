@@ -1,0 +1,5 @@
+# D28b: a union-typed entry-point input takes the first member that accepts the text (int, then float, bool, str).
+# Today the entry point rejects it (E157).
+@main
+def main(x: int | str = 'none'):
+    print(x)

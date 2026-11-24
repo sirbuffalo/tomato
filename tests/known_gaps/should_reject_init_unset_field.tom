@@ -1,0 +1,14 @@
+# D12x: the compiler checks that @init sets every field declared without a value, on every path. Here `n` stays unset
+# when flag is False. Today the flow analysis does not exist and this is accepted.
+class A:
+    n: int
+
+    @init
+    def init(self, flag: bool):
+        if flag:
+            self.n = 1
+
+@main
+def main():
+    a = A(False)
+    print('hi')

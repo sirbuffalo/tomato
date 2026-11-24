@@ -331,7 +331,7 @@ What is left, and why:
   changed program output or a bootstrap diff, which is hard to localise [V].
 - **One wasm test depends on machine speed.** `wasm sort_stable` failed in the suite and in a re-run on this box
   (E369, the 5 s limit); the other 57 wasm checks passed [M]. It is a limit on the test, not a wrong result.
-- **`tests/known_gaps/` is empty** although the spec still says "see tests/known_gaps" for D23g, D23h, D28b, D39a and
+- **`tests/known_gaps/` was empty** (nine programs have been added since) although the spec still says "see tests/known_gaps" for D23g, D23h, D28b, D39a and
   D40a, and the probes below find several decided-but-unbuilt rules [V]. The mechanism that keeps the status table
   honest is not in use.
 - **CI is macOS only**; Linux runs only in the release gate; no Linux arm64, no Windows (no Windows support at all:

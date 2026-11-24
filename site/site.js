@@ -91,14 +91,34 @@ function markdown(src) {
   var MOD = /^(asyncio|base64|cache|csv|datetime|hex|html|itertools|json|math|random|rational|requests|secrets|socket|statistics|textwrap|time|toml|urlparse|uuid)$/;
   var TY = /^(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IOError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|EOFError|CancelledError|Sized|bitarray|frozenbitarray)$/;
   var BI = /^(print|len|str|int|float|rational|range|open|input|sleep|clock|min|max|sum|abs|chr|ord|round|divmod|any|all|sorted|reversed|enumerate|zip|map|filter|list|dict|set|tuple|bool)$/;
-  var TOKEN = /(#[^\n]*)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(!?[A-Za-z_]\w*)|(->|\*\*|\/\/|==|!=|<=|>=|[-+*\/%<>=&|^])|(@\w+)/g;
+  var TOKEN = /(#[^\n]*)|((?:\bf)?(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'))|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(!?[A-Za-z_]\w*)|(->|\*\*|\/\/|==|!=|<=|>=|[-+*\/%<>=&|^])|(@\w+)/g;
+  // an f-string: the text is a string, each {expression} is highlighted as code, and a format spec after the colon ({x:>8.2f}) is a number-like part
+  var FEXPR = /^((?:[^:\[\(\{'"]|\[[^\]]*\]|\([^)]*\)|'[^']*'|"[^"]*")*)(:[^]*)?$/;
+  function fstring(t) {
+    var out = "", text = "", i = 1, s = function (x) { return x ? '<span class="tk-s">' + esc(x) + "</span>" : ""; };
+    text = "f";
+    while (i < t.length) {
+      var c = t.charAt(i), two = t.substr(i, 2);
+      if (c === "\\") { text += t.substr(i, 2); i += 2; }
+      else if (two === "{{" || two === "}}") { text += two; i += 2; }
+      else if (c === "{") {
+        var depth = 1, j = i + 1;
+        while (j < t.length && depth > 0) { var d = t.charAt(j); if (d === "{") depth++; else if (d === "}") depth--; j++; }
+        if (depth > 0) { text += t.slice(i); i = t.length; break; }
+        var inner = t.slice(i + 1, j - 1), parts = FEXPR.exec(inner) || [inner, inner, ""];
+        out += s(text) + '<span class="tk-o">{</span>' + highlight(parts[1]) + (parts[2] ? '<span class="tk-n">' + esc(parts[2]) + "</span>" : "") + '<span class="tk-o">}</span>';
+        text = ""; i = j;
+      } else { text += c; i++; }
+    }
+    return out + s(text);
+  }
   function highlight(src) {
-    var out = "", last = 0, m;
-    TOKEN.lastIndex = 0;
-    while ((m = TOKEN.exec(src))) {
+    var out = "", last = 0, m, re = new RegExp(TOKEN.source, "g");   // its own copy: an f-string field calls highlight again
+    while ((m = re.exec(src))) {
       out += esc(src.slice(last, m.index));
       var t = m[0], cls = "";
       if (m[1]) cls = "tk-c";
+      else if (m[2] && t.charAt(0) === "f") { out += fstring(t); last = m.index + t.length; continue; }
       else if (m[2]) cls = "tk-s";
       else if (m[3]) cls = "tk-n";
       else if (m[4]) {

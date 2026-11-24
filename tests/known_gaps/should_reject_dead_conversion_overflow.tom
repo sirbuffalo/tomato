@@ -1,0 +1,8 @@
+# D05x, D40a: a constant conversion that does not fit is a compile error wherever it is written, even in a branch that
+# never runs. Today it is accepted (a live one stops at run time, E09).
+@main
+def main():
+    if False:
+        x: uint[length=8] = uint[length=8](300)
+        print(x)
+    print('hi')

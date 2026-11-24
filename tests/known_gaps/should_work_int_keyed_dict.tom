@@ -1,0 +1,6 @@
+# D20b: dict[K, V] for any hashable K. Today only `str` keys are built (E318 for dict[int, str]).
+@main
+def main():
+    d: dict[int, str] = {1: 'a', 2: 'b'}
+    d[3] = 'c'
+    print(d[1], d[3], len(d))

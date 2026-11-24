@@ -1,0 +1,9 @@
+# D05ap, D40a: rational(1, 0) is a compile error even in unreachable code. Today it is accepted.
+from rational import rational
+
+@main
+def main():
+    if False:
+        r = rational(1, 0)
+        print(r)
+    print('hi')

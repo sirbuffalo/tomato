@@ -14,8 +14,6 @@
   `tomato_file_write` and `tomato_file_close` in `runtime/tomato_rt.c` ignore the results of `fwrite` and `fclose`, so a full disk loses data silently.
 - Say what is unsupported instead of E318 "write its type"
   For types that are written but not built, such as `dict[int, str]` and `int | None`. See the probes in `docs/architecture-review.md`, section 3.6.
-- Refill `tests/known_gaps/` and fix the drifted docs
-  P26, P65, P83 and P85 in `docs/provisional.md`, the status table in `docs/specification.md`, and `docs/open-questions.md`. See `docs/architecture-review.md`, section 3.7.
 - Test unattended release signing on the iMac
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
 - Re-run the Linux benchmarks on a quieter biggie
@@ -26,12 +24,8 @@
   These are not in the approved Wave 1 datetime sheet, so `std/datetime.tom` lacks them.
 - Allow comparing a function's `tuple[int, int]` result with a tuple literal
   Today `divmod(a, b) == (q, r)` does not compile because mixed and same-type tuple literals are different types.
-- Teach the VS Code grammar and website highlighter about f-string format specs
-  `{x:spec}` in an f-string has a format spec after the colon.
 - Mark error branches as unlikely in the emitted LLVM IR (`!prof` weights on `fail_if`)
   An experiment gave matmul -2.4% and strings -0.7% but sieve +2.2% and objects +0.7% instructions executed; it needs tuning, and site/wasm/llvm.js must accept the metadata.
-- Fix the benchmarks check in `tests/run.sh` (`t_benchmarks`) so a `skipping go: ...` line doesn't count as a failure
-  When the benchmarks themselves pass, a `skipping go: go is not installed` line (go missing on the machine) makes the check fail, because the check expects every output line to start with `ok:`.
 - Add the other languages' versions of the 15 new benchmarks
   After the multi-language harness (JavaScript, Java, C, C++, C#, TypeScript, PHP, Swift; branch `byre/tskSQTqy23EMBy`) lands on main, add the other languages' versions of nbody, spectral_norm, fannkuch, nqueens, binary_trees, levenshtein, knapsack, life, dijkstra, quicksort, kmers, revcomp, tokenize, crc32 and hof, following its `<name>/<name>.<ext>` convention.
 - Publish results for all 25 benchmarks and update the "ten benchmarks" text

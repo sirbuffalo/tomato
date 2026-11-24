@@ -1,0 +1,7 @@
+# P86: lists of fixed-width integers are compact, and the type can be written: `list[int[length=8]]`.
+# Today a declaration with that type is refused (E318 as a variable, E313 as a parameter).
+@main
+def main():
+    c: list[int[length=8]] = []
+    c.append(int[length=8](7))
+    print(len(c), c[0])

@@ -1,0 +1,8 @@
+# D05ag, D40a: a constant `/` whose result is too big for a float is a compile error even in unreachable code.
+# Today it is accepted.
+@main
+def main():
+    if False:
+        x = 10 ** 400 / 1
+        print(x)
+    print('hi')

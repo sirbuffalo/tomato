@@ -1,0 +1,26 @@
+# D23h: `A & B` is a type for a value that is every member (at least one an interface). Today it is refused (E313).
+interface Named:
+    def name(self) -> str
+
+interface Sized:
+    def size(self) -> int
+
+class Box implements Named, Sized:
+    n: int
+
+    @init
+    def init(self, n: int):
+        self.n = n
+
+    def name(self) -> str:
+        return 'box'
+
+    def size(self) -> int:
+        return self.n
+
+def show(x: Named & Sized):
+    print(x.name(), x.size())
+
+@main
+def main():
+    show(Box(3))
