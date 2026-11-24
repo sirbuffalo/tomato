@@ -34,7 +34,7 @@ Programs have no top-level code: statements go inside a function, and `@main` ma
 | `compiler/src/` | the lexer, parser, error reporting and compiler, written in Tomato |
 | `compiler/bootstrap/` | `tomatoc.ll`, the compiler's own IR, so a machine with only clang can build it; `refresh.sh` regenerates it |
 | `runtime/` | the C runtime every program links with |
-| `std/` | the standard library, written in Tomato: `math`, `rational`, `itertools`, `cache` (LRU cache, `memoize`), `time`, `json` (JSON and MessagePack), `toml`, `bitarray`, `requests` (HTTP); `builtin.tom` holds the names every file can use (`Error`, `RuntimeError` and the other error classes) and `errors.txt` the table of error ids |
+| `std/` | the standard library, written in Tomato: `math`, `rational`, `itertools`, `cache` (LRU cache, `memoize`), `time`, `json` (JSON and MessagePack), `toml`, `bitarray`, `requests` (HTTP); the folder `builtin/` holds the names every file can use (`Error`, `RuntimeError` and the other error classes) and `errors.txt` the table of error ids |
 | `native/` | the `tomato` command and the repl (shell scripts), and the helpers that run the WebAssembly compiler in `jsc` or `node` |
 | `site/` | the website for tomato.davismcd.com; `site/wasm/` is the compiler, runtime and IR interpreter that run in the browser |
 | `editors/` | the VS Code extension: TextMate grammar, snippets, language configuration |

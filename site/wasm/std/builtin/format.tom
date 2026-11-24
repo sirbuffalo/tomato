@@ -1,0 +1,132 @@
+# f-string format specs. Part of the built-ins (std/builtin/).
+
+# f-string format specs (D75c): f'{x:>8.2f}'. The compiler turns the field into _fmt_str, _fmt_int or _fmt_float with the
+# parts of the spec already taken apart (compiler.tom, format_call; the form of a spec is checked by the lexer): fill and
+# align are '' when not written, sign is '', '+', '-' or ' ', width is 0 and precision -1 when not written, and kind is
+# '', 'f', 'e' or 'g'. They follow Python.
+
+# C's %.*f, %.*e or %.*g of a float (exact, ties to even), with its sign; kind is the code of the letter
+!tomato_float_format(x: float, precision: int, kind: int) -> str
+
+# the digits of a whole number with a comma before each group of three from the right
+def _group3(digits: str) -> str:
+    n = len(digits)
+    if n <= 3:
+        return digits
+    parts: list[str] = []
+    first = n % 3
+    if first > 0:
+        parts.append(digits[:first])
+    i = first
+    while i < n:
+        parts.append(digits[i:i + 3])
+        i += 3
+    return ','.join(parts)
+
+# fill goes to the left, the right or both sides of text so that it is width long; a '' fill is a space, or a 0 when the
+# spec had a 0 before the width
+def _fmt_pad(text: str, fill: str, align: str, zero: bool, width: int) -> str:
+    pad = width - len(text)
+    if pad <= 0:
+        return text
+    f = fill
+    if f == '':
+        f = '0' if zero else ' '
+    if align == '>':
+        return f * pad + text
+    if align == '^':
+        left = pad // 2
+        return f * left + text + f * (pad - left)
+    return text + f * pad
+
+def _fmt_str(s: str, fill: str, align: str, zero: bool, width: int, precision: int) -> str:
+    text = s
+    if precision >= 0:
+        text = s[:precision]
+    return _fmt_pad(text, fill, align, zero, width)
+
+# a number written as a sign, the digits of its whole part and the rest (a fraction, an exponent), in a field of width
+def _fmt_number(sign: str, whole: str, rest: str, fill: str, align: str, zero: bool, width: int, comma: bool) -> str:
+    if align == '' and zero and fill == '':
+        # a 0 before the width pads after the sign, with zeros; with commas the zeros are grouped too, and the number
+        # never starts with a comma
+        total = width - len(sign) - len(rest)
+        k = len(whole)
+        if comma:
+            while k + (k - 1) // 3 < total:
+                k += 1
+        elif k < total:
+            k = total
+        digits = '0' * (k - len(whole)) + whole
+        if comma:
+            digits = _group3(digits)
+        return sign + digits + rest
+    digits = whole
+    if comma:
+        digits = _group3(whole)
+    a = align
+    if a == '':
+        a = '>'
+    return _fmt_pad(sign + digits + rest, fill, a, zero, width)
+
+def _fmt_sign(negative: bool, sign: str) -> str:
+    if negative:
+        return '-'
+    if sign == '+' or sign == ' ':
+        return sign
+    return ''
+
+def _fmt_int(n: int, fill: str, align: str, sign: str, zero: bool, width: int, comma: bool) -> str:
+    digits = str(n)
+    if n < 0:
+        digits = digits[1:]
+    return _fmt_number(_fmt_sign(n < 0, sign), digits, '', fill, align, zero, width, comma)
+
+# a float with a precision and no type: the precision counts significant digits, as for g, but a number that is whole shows
+# its .0 (as repr does) and the exponent form starts one place earlier: format(123.0, '.3') is 1.23e+02 and
+# format(12.0, '.3') is 12.0
+def _fmt_repr_digits(x: float, precision: int) -> str:
+    p = precision
+    if p < 1:
+        p = 1
+    text = !tomato_float_format(x, p - 1, 101)
+    sign = ''
+    if text.startswith('-'):
+        sign = '-'
+        text = text[1:]
+    e = text.find('e')
+    exponent = int(text[e + 1:])
+    digits = text[:e].replace('.', '').rstrip('0')
+    if digits == '':
+        digits = '0'
+    if exponent < -4 or exponent >= p - 1:
+        if len(digits) > 1:
+            return sign + digits[:1] + '.' + digits[1:] + text[e:]
+        return sign + digits + text[e:]
+    if exponent < 0:
+        return sign + '0.' + '0' * (-exponent - 1) + digits
+    if len(digits) <= exponent + 1:
+        return sign + digits + '0' * (exponent + 1 - len(digits)) + '.0'
+    return sign + digits[:exponent + 1] + '.' + digits[exponent + 1:]
+
+# (an int beyond the largest float arrives here as infinity, and stops)
+def _fmt_float(x: float, fill: str, align: str, sign: str, zero: bool, width: int, comma: bool, precision: int, kind: str) -> str:
+    if !tomato_is_finite(x) == 0:
+        raise OverflowError('an int is too large to be a float', 'E436')
+    text = ''
+    if kind == '' and precision < 0:
+        text = str(x)
+    elif kind == '':
+        text = _fmt_repr_digits(x, precision)
+    else:
+        p = precision
+        if p < 0:
+            p = 6
+        text = !tomato_float_format(x, p, ord(kind))
+    negative = text.startswith('-')
+    if negative:
+        text = text[1:]
+    i = 0
+    while i < len(text) and text[i] in '0123456789':
+        i += 1
+    return _fmt_number(_fmt_sign(negative, sign), text[:i], text[i:], fill, align, zero, width, comma)

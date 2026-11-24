@@ -1,0 +1,206 @@
+# Text helpers the compiler calls for str methods and for printing strings inside containers. Part of the built-ins
+# (std/builtin/).
+
+# The text of a string inside a printed list, dict or set, quoted the way Python shows it: 'abc'.
+def _quote(s: str) -> str:
+    q = '"' if "'" in s and '"' not in s else "'"
+    t = s.replace('\\', '\\\\')
+    if q == "'":
+        t = t.replace("'", "\\'")
+    t = t.replace('\n', '\\n')
+    t = t.replace('\t', '\\t')
+    t = t.replace('\r', '\\r')
+    return q + t + q
+
+# str.isspace(): True when the text is not empty and every character is a space, tab, newline or carriage return (isalpha()
+# and isdigit() know all of Unicode and are in the runtime)
+def _str_isspace(s: str) -> bool:
+    return _all_in(s, ' \t\n\r')
+
+# True when s is not empty and every character of it is one of chars
+def _all_in(s: str, chars: str) -> bool:
+    if s == '':
+        return False
+    for c in s:
+        if c not in chars:
+            return False
+    return True
+
+# s.lstrip() and s.rstrip(): whitespace is a space, tab, newline or carriage return
+def _str_lstrip(s: str) -> str:
+    return _str_lstrip_chars(s, ' \t\n\r')
+
+def _str_rstrip(s: str) -> str:
+    return _str_rstrip_chars(s, ' \t\n\r')
+
+# s.lstrip(chars), s.rstrip(chars) and s.strip(chars): take off the characters that are in chars (in any order) from the
+# start, the end or both; an empty chars takes nothing off
+def _str_lstrip_chars(s: str, chars: str) -> str:
+    i = 0
+    while i < len(s) and s[i] in chars:
+        i += 1
+    return s[i:]
+
+def _str_rstrip_chars(s: str, chars: str) -> str:
+    n = len(s)
+    while n > 0 and s[n - 1] in chars:
+        n -= 1
+    return s[:n]
+
+def _str_strip_chars(s: str, chars: str) -> str:
+    return _str_rstrip_chars(_str_lstrip_chars(s, chars), chars)
+
+# The text methods splitlines, partition, rpartition, rsplit, zfill, ljust, rjust, center, title, capitalize, isalnum,
+# removeprefix and removesuffix (D75b). The compiler turns `s.zfill(5)` into _str_zfill(s, 5), and keeps the names and the
+# defaults of the parameters below for the messages and for keywords.
+
+# ends of a line for splitlines(): \n, \r, \v, \f, the separators \x1c to \x1e, NEL and the Unicode line and paragraph
+# separators (as in Python)
+def _is_line_end(code: int) -> bool:
+    return code == 10 or code == 13 or code == 11 or code == 12 or (code >= 28 and code <= 30) or code == 133 or code == 8232 or code == 8233
+
+def _str_splitlines(s: str, keepends: bool = False) -> list[str]:
+    lines: list[str] = []
+    n = len(s)
+    start = 0
+    i = 0
+    while i < n:
+        c = s[i]
+        if not _is_line_end(ord(c)):
+            i += 1
+            continue
+        end = i
+        i += 1
+        if c == '\r' and i < n and s[i] == '\n':
+            i += 1
+        if keepends:
+            lines.append(s[start:i])
+        else:
+            lines.append(s[start:end])
+        start = i
+    if start < n:
+        lines.append(s[start:])
+    return lines
+
+def _str_partition(s: str, sep: str) -> tuple[str, str, str]:
+    if sep == '':
+        raise ValueError('partition needs a separator that is not empty', 'E418')
+    i = s.find(sep)
+    if i < 0:
+        return (s, '', '')
+    return (s[:i], sep, s[i + len(sep):])
+
+def _str_rpartition(s: str, sep: str) -> tuple[str, str, str]:
+    if sep == '':
+        raise ValueError('rpartition needs a separator that is not empty', 'E418')
+    i = s.rfind(sep)
+    if i < 0:
+        return ('', '', s)
+    return (s[:i], sep, s[i + len(sep):])
+
+# s.rsplit(sep, maxsplit): split at most maxsplit times, from the right (all of them for a negative maxsplit); the empty
+# sep splits at runs of whitespace (a space, tab, newline or carriage return, as strip() does) and drops the empty pieces
+def _str_rsplit(s: str, sep: str = '', maxsplit: int = -1) -> list[str]:
+    parts: list[str] = []
+    if sep == '':
+        i = len(s)
+        count = 0
+        while True:
+            while i > 0 and s[i - 1] in ' \t\n\r':
+                i -= 1
+            if i == 0:
+                break
+            if maxsplit >= 0 and count == maxsplit:
+                parts.append(s[:i])
+                break
+            j = i
+            while j > 0 and s[j - 1] not in ' \t\n\r':
+                j -= 1
+            parts.append(s[j:i])
+            count += 1
+            i = j
+        parts.reverse()
+        return parts
+    end = len(s)
+    count = 0
+    while maxsplit < 0 or count < maxsplit:
+        j = s.rfind(sep, 0, end)
+        if j < 0:
+            break
+        parts.append(s[j + len(sep):end])
+        end = j
+        count += 1
+    parts.append(s[:end])
+    parts.reverse()
+    return parts
+
+def _check_fill(fillchar: str, what: str):
+    if len(fillchar) != 1:
+        raise ValueError(f'{what} needs a fill character of exactly one character', 'E419')
+
+# s.zfill(width): pad with zeros on the left up to width, after a leading + or -
+def _str_zfill(s: str, width: int) -> str:
+    n = len(s)
+    if n >= width:
+        return s
+    zeros = '0' * (width - n)
+    if s[:1] == '+' or s[:1] == '-':
+        return s[:1] + zeros + s[1:]
+    return zeros + s
+
+def _str_ljust(s: str, width: int, fillchar: str = ' ') -> str:
+    _check_fill(fillchar, 'ljust')
+    return s + fillchar * (width - len(s))
+
+def _str_rjust(s: str, width: int, fillchar: str = ' ') -> str:
+    _check_fill(fillchar, 'rjust')
+    return fillchar * (width - len(s)) + s
+
+# center puts the extra fill character on the left when the padding is odd and the width is odd (as Python does)
+def _str_center(s: str, width: int, fillchar: str = ' ') -> str:
+    _check_fill(fillchar, 'center')
+    pad = width - len(s)
+    if pad <= 0:
+        return s
+    left = pad // 2
+    if pad % 2 == 1 and width % 2 == 1:
+        left += 1
+    return fillchar * left + s + fillchar * (pad - left)
+
+# a letter that has an upper and a lower case (the case tables are the runtime's: see unicode_case)
+def _is_cased(c: str) -> bool:
+    return c.upper() != c.lower()
+
+# s.title(): each run of letters starts with an upper case letter and goes on in lower case
+def _str_title(s: str) -> str:
+    out: list[str] = []
+    after_letter = False
+    for c in s:
+        if after_letter:
+            out.append(c.lower())
+        else:
+            out.append(c.upper())
+        after_letter = _is_cased(c)
+    return ''.join(out)
+
+def _str_capitalize(s: str) -> str:
+    return s[:1].upper() + s[1:].lower()
+
+# s.isalnum(): not empty, and every character a letter or a digit (the runtime's Unicode tables, as isalpha and isdigit)
+def _str_isalnum(s: str) -> bool:
+    if s == '':
+        return False
+    for c in s:
+        if not (c.isalpha() or c.isdigit()):
+            return False
+    return True
+
+def _str_removeprefix(s: str, prefix: str) -> str:
+    if prefix != '' and s.startswith(prefix):
+        return s[len(prefix):]
+    return s
+
+def _str_removesuffix(s: str, suffix: str) -> str:
+    if suffix != '' and s.endswith(suffix):
+        return s[:len(s) - len(suffix)]
+    return s

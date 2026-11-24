@@ -22,7 +22,7 @@ Status: **proposals only; nothing here is built, decided or merged.** Davis appr
 | No top-level code (D47a); `export const name = literal` is the only module-level value (D49b) | `docs/decisions.md` | No lookup tables or caches at module level: tables are rebuilt per call or held in an object (see D, C) |
 | Function values are plain code pointers: non-capturing; not async, not generic, not methods, not `*args` functions (D63a) | `docs/decisions.md:1511-1517` | `assert_raises` and `sub` callbacks take a **named** `fn(...)`; an async function cannot be a test callback (B-Q6) |
 | Entry points: `@name` marks one, `tomato run FILE ENTRY INPUTS` passes typed inputs (D16a, D28a, D28b); `*args`/`**kwargs` exist (D39a) | `docs/decisions.md` | Pack A's `argv`, pack B's `@test` build on this (A-Q3, B-Q2) |
-| Errors are classes in `std/builtin.tom`, each with a line in `std/errors.txt` (the line number is the id `E##`) (D22a, `docs/errors.md`) | repo | Every new error kind needs a line there; parallel branches adding lines collide (section 0.4) |
+| Errors are classes in `std/builtin/errors.tom`, each with a line in `std/errors.txt` (the line number is the id `E##`) (D22a, `docs/errors.md`) | repo | Every new error kind needs a line there; parallel branches adding lines collide (section 0.4) |
 | Native-only features raise a clear runtime error in the browser (the `requests` precedent, D62a) | `std/requests.tom`, `tests/programs/requests_browser.tom` | Used for the few pack A calls the playground cannot serve (A-Q8) |
 | "He decides all language semantics" (`docs/handoff.md`) | repo | Everything marked **Davis** below waits for an answer |
 
@@ -165,12 +165,12 @@ The playground's host is `site/wasm/wasi.js`: `args_get`, `environ_get`, `proc_e
 
 - **Runtime C** (all of it works in the WASI build; `TOMATO_WASM` guards only where a call is not in WASI): `tomato_env_get/set/unset/list`, `tomato_getcwd`, `tomato_chdir`, `tomato_getpid`, `tomato_listdir`, `tomato_stat`, `tomato_mkdir`, `tomato_rmdir`, `tomato_remove`, `tomato_rename`, `tomato_exit`, `tomato_write_fd`, `tomato_file_readline`, `tomato_file_flush`. Each fills a result or returns an `errno` code that Tomato code maps to the error class (1.7); keep the entry-point list short as `tomato_math1/2` do `[V]` (a comment says the browser build must export every name).
 - **Compiler** (S): `File` methods `readline`, `readlines`, `writelines`, `flush`; `for line in f`; open-mode check; entry `*args` if A-Q3 option 1.
-- **`std/builtin.tom`**: the error subclasses of 1.7, if approved.
+- **`std/builtin/errors.tom`**: the error subclasses of 1.7, if approved.
 - **No change** to the scheduler. File calls block the thread, as `open().read()` does today; async file I/O is not proposed.
 
 ### 1.7 Errors (**Davis A-Q4**)
 
-Today every file failure is an `IOError` with the text `could not open 'PATH': REASON` and id E25/E381/E382 `[V]`. Python code catches `FileNotFoundError` and friends; proposal: add subclasses of `IOError` in `std/builtin.tom` — `FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError` — chosen from `errno`, and have `open()` raise them too. `catch IOError` keeps working; ids stay (`E25` etc., one new line per subclass). No `errno` field (the message carries `strerror`). Alternative: keep one `IOError` and tell people to read the message — smaller, but un-Pythonic.
+Today every file failure is an `IOError` with the text `could not open 'PATH': REASON` and id E25/E381/E382 `[V]`. Python code catches `FileNotFoundError` and friends; proposal: add subclasses of `IOError` in `std/builtin/errors.tom` — `FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError` — chosen from `errno`, and have `open()` raise them too. `catch IOError` keeps working; ids stay (`E25` etc., one new line per subclass). No `errno` field (the message carries `strerror`). Alternative: keep one `IOError` and tell people to read the message — smaller, but un-Pythonic.
 
 ### 1.8 Tests to write
 
@@ -208,7 +208,7 @@ assert condition, 'message'
 - A new reserved word `assert` (lexer keyword list `lexer.tom:44`, `lint.tom` `is_keyword`, the VS Code grammar in `editors/vscode`, the website highlighter, `docs/specification.md`). No existing source uses `assert` as a name `[V]` (grep of `std`, `tests`, `examples`, `compiler/src`).
 - The condition must be `bool` (rule P8: conditions are `bool`, so `assert (a, b)` is a compile error, not Python's always-true tuple). `message` must be `str`.
 - Lowers to `if not condition: raise AssertionError(message)` in the parser (a desugar, no new IR), with the line of the `assert` so the usual `(raised on line N)` suffix and call trace appear `[V]` (`tomato_rt.c:3030`).
-- New error class `AssertionError` in `std/builtin.tom`, one new id in `std/errors.txt`. Parent (**B-Q5**): `RuntimeError` like the other runtime kinds, or directly `Error`? Python's is a direct `Exception`; `catch RuntimeError` catching a failed assertion is surprising, so I recommend a direct subclass of `Error`.
+- New error class `AssertionError` in `std/builtin/errors.tom`, one new id in `std/errors.txt`. Parent (**B-Q5**): `RuntimeError` like the other runtime kinds, or directly `Error`? Python's is a direct `Exception`; `catch RuntimeError` catching a failed assertion is surprising, so I recommend a direct subclass of `Error`.
 - **Always on**, in debug and release mode alike (Python strips asserts under `-O`; Tomato's release mode already means "short error codes", D34b, and silently dropping checks would be a second meaning). **Davis: confirm.**
 - Message when none is given: `assertion failed`. Nice-to-have if the parser keeps source spans: append the expression text (`assertion failed: x == 1`); builder checks feasibility, no promise.
 

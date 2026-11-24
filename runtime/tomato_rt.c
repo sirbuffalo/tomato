@@ -3012,7 +3012,7 @@ int tomato_str_contains(void *hay, void *needle) { return find_bytes(hay, needle
  * compiler. Mode is 1 debug, 2 release (D34b). */
 static void print_uncaught(void *obj, int line, int runtime, int mode, const char *where) {
     fflush(stdout);
-    /* The prefix of Error and its subclasses in std/builtin.tom. Pointers are 32-bit on wasm. */
+    /* The prefix of Error and its subclasses in std/builtin/errors.tom. Pointers are 32-bit on wasm. */
     typedef struct { Hdr header; Str *message; Str *id; } ErrorFields;
     ErrorFields *error = obj;
     Str *msg = error->message;
@@ -3421,7 +3421,7 @@ void *tomato_box_str(void *b) {
     }
 }
 
-/* The same inside a printed container: text is quoted the way Python shows it (and the way std/builtin.tom _quote does). */
+/* The same inside a printed container: text is quoted the way Python shows it (and the way _quote in std/builtin/text.tom does). */
 void *tomato_box_repr(void *b) {
     int64_t *w = b;
     if (w[3] != 4) return tomato_box_str(b);
@@ -3980,7 +3980,7 @@ void *tomato_list_sorted_by(void *src, void *keys, int kind, int rc) {
     free(a);
     return r;
 }
-/* ---- sorted(xs, cmp=f) on native builds: the same stable merge sort as std/builtin.tom, calling f directly ----
+/* ---- sorted(xs, cmp=f) on native builds: the same stable merge sort as std/builtin/sorting.tom, calling f directly ----
  * The browser's IR interpreter cannot be called back from C (and a WebAssembly function pointer is a table index), so there
  * tomato_callbacks() is 0 and the compiler uses the sort written in Tomato instead. Items are 8-byte slots (int or pointer; the
  * compiler checks). f only borrows its two arguments, like any Tomato function, so the sort passes its own words without a copy.
@@ -4709,7 +4709,7 @@ void *tomato_json_float(double x) {
     return str_new(b, o);
 }
 
-/* ---- round() and f-string number formats (std/builtin.tom) ---- */
+/* ---- round() and f-string number formats (std/builtin/numbers.tom and format.tom) ---- */
 
 /* x rounded to ndigits digits after the decimal point (before it when ndigits is negative): the float nearest to x with
  * that many digits, judged on the exact value of x with ties to even, as Python's round() does. snprintf (exact in glibc,
@@ -5111,7 +5111,7 @@ double tomato_math2(int64_t op, double x, double y) {
 }
 /* 1 when x is neither infinite nor not-a-number */
 int64_t tomato_is_finite(double x) { return isfinite(x) ? 1 : 0; }
-/* the number of 1 bits in a 32-bit chunk of a bitarray (std/bitarray.tom) */
+/* the number of 1 bits in a 32-bit chunk of a bitarray (std/builtin/bitarray.tom) */
 int64_t tomato_popcount(int64_t x) { return (int64_t)__builtin_popcountll((unsigned long long)x); }
 
 /* secrets and uuid4 of std/secrets.tom and std/uuid.tom: appends n bytes (ints 0-255) of operating-system entropy to the

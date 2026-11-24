@@ -14,7 +14,7 @@
     ]).then(function (x) { self.compiler = x[0]; self.runtime = x[1]; self.std = x[2]; return self; });
     return this.ready;
   };
-  TomatoWasm.STD = ["builtin", "math", "itertools", "rational", "cache", "requests", "toml", "bitarray", "json", "time", "urlparse", "html", "base64", "hex", "random", "secrets", "uuid", "datetime", "csv", "textwrap", "statistics", "errors"];   // the standard library modules (std/NAME.tom) and the error table (std/errors.txt)
+  TomatoWasm.STD = ["builtin/errors", "builtin/range", "builtin/numbers", "builtin/text", "builtin/sorting", "builtin/lists", "builtin/format", "builtin/bitarray", "math", "itertools", "rational", "cache", "requests", "toml", "json", "time", "urlparse", "html", "base64", "hex", "random", "secrets", "uuid", "datetime", "csv", "textwrap", "statistics", "errors"];   // the standard library modules (std/NAME.tom; the built-ins and bitarray are in std/builtin/, see builtin_parts in compiler/src/compiler.tom) and the error table (std/errors.txt)
   TomatoWasm.file = function (n) { return n === "errors" ? "errors.txt" : n + ".tom"; };
   var enc = function (s) { return new TextEncoder().encode(s); };
 

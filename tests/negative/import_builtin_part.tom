@@ -1,0 +1,6 @@
+# the files of std/builtin/ that make up the built-ins are not modules of their own: their names need no import
+import sorting
+
+@main
+def main():
+    print(sorted([2, 1]))

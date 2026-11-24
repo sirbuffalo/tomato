@@ -1,0 +1,121 @@
+# The range class and the helpers the compiler calls for range(stop) and range(start, stop). Part of the built-ins
+# (std/builtin/).
+
+# range(stop), range(start, stop) and range(start, stop, step) are a value of their own. It keeps only the three
+# numbers, so it takes the same small amount of memory however long it is, and prints as range(0, 100, 1). It is a
+# sequence of ints: `for`, len(), indexing (negative too), slicing (gives another range), `in`, ==, reversed(),
+# sorted(), sum(), min(), max() and list() all work, each through the method marked for it. `for i in range(n)`,
+# `range(a, b)` and `range(a, b, step)` are counted by the compiler directly; everything else about range is written
+# here, in Tomato.
+class range:
+    start: int
+    stop: int
+    step: int
+
+    @init
+    def make(self, start: int, stop: int, step: int):
+        if step == 0:
+            raise ValueError('range step cannot be zero', 'E23')
+        self.start = start
+        self.stop = stop
+        self.step = step
+
+    @str
+    def text(self) -> str:
+        return f'range({self.start}, {self.stop}, {self.step})'
+
+    @iter
+    def numbers(self) -> int:
+        i = self.start
+        if self.step > 0:
+            while i < self.stop:
+                yield i
+                i += self.step
+        else:
+            while i > self.stop:
+                yield i
+                i += self.step
+
+    @len
+    def count(self) -> int:
+        if self.step > 0:
+            if self.stop <= self.start:
+                return 0
+            return (self.stop - self.start - 1) // self.step + 1
+        if self.start <= self.stop:
+            return 0
+        return (self.start - self.stop - 1) // -self.step + 1
+
+    @get
+    def at(self, i: int) -> int:
+        n = self.count()
+        if i < 0:
+            i += n
+        if i < 0 or i >= n:
+            raise IndexError('index out of range', 'E04')
+        return self.start + i * self.step
+
+    @contains
+    def has(self, x: int) -> bool:
+        if self.step > 0:
+            return x >= self.start and x < self.stop and (x - self.start) % self.step == 0
+        return x <= self.start and x > self.stop and (self.start - x) % -self.step == 0
+
+    # flags: 1 = a start was written, 2 = an end was written, 4 = a step was written (as for list slices)
+    @slice
+    def part(self, lo: int, hi: int, st: int, flags: int) -> range:
+        n = self.count()
+        k = 1
+        if flags & 4 != 0:
+            k = st
+        if k == 0:
+            raise ValueError('slice step cannot be zero', 'E24')
+        # a forward slice runs over positions 0..n, a backward one over -1..n-1 (so it can stop before position 0)
+        low = 0
+        high = n
+        a = 0
+        b = n
+        if k < 0:
+            low = -1
+            high = n - 1
+            a = n - 1
+            b = -1
+        if flags & 1 != 0:
+            a = _slice_bound(lo, n, low, high)
+        if flags & 2 != 0:
+            b = _slice_bound(hi, n, low, high)
+        return range(self.start + a * self.step, self.start + b * self.step, self.step * k)
+
+    @reversed
+    def backwards(self) -> range:
+        n = self.count()
+        return range(self.start + (n - 1) * self.step, self.start - self.step, -self.step)
+
+    # two ranges are equal when they hold the same numbers, so range(0) == range(5, 5)
+    @eq
+    def same(self, other: range) -> bool:
+        n = self.count()
+        if n != other.count():
+            return False
+        if n == 0:
+            return True
+        if self.start != other.start:
+            return False
+        return n == 1 or self.step == other.step
+
+# A written slice bound as a position in a sequence of n items: negative counts from the end, then it is kept in
+# low..high.
+def _slice_bound(i: int, n: int, low: int, high: int) -> int:
+    if i < 0:
+        i += n
+    if i < low:
+        return low
+    if i > high:
+        return high
+    return i
+
+def _range1(stop: int) -> range:
+    return range(0, stop, 1)
+
+def _range2(start: int, stop: int) -> range:
+    return range(start, stop, 1)

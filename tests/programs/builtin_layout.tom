@@ -1,0 +1,28 @@
+# The built-ins are the files of std/builtin/ (one module, no import needed), and bitarray lives in that folder too
+# (std/builtin/bitarray.tom): every way of reaching it still works, under the name bitarray.
+from bitarray import bitarray, frozenbitarray
+from builtin_layout_lib import packed
+
+def by_length(a: str, b: str) -> int:
+    return len(a) - len(b)
+
+@main
+def main():
+    # bitarray by a from-import here and by `import bitarray` in the library module (bit_types uses it with no import)
+    a = bitarray('1011')
+    f = frozenbitarray('0110')
+    print(a, f, len(a), a.count(), f.thaw() | a)
+    print(packed('11110000'), packed('1'))
+    # a name from each file of std/builtin/
+    try:
+        x = range(1, 5, 0)
+        print(x)
+    catch ValueError as e:                                  # errors.tom, raised in range.tom
+        print('ValueError', e.message, e.id)
+    r = range(10)[2:8:2]                                    # range.tom
+    print(r, list(r), 4 in r, reversed(r))
+    print(abs(-3), abs(-2.5))                               # numbers.tom
+    print(['it\'s', 'a\tb'], ' x '.rstrip(), 'xxhixx'.strip('x'), ' '.isspace())   # text.tom
+    print(sorted(['ccc', 'a', 'bb', 'd'], cmp=by_length))   # sorting.tom
+    print(map(n -> n * n, [1, 2, 3]), filter(n -> n % 2 == 1, [1, 2, 3]), [1, 2] == [1, 2])   # lists.tom
+    print(any([False, True]), round(2.5), divmod(-7, 2), 'a-b'.partition('-'), f'{1234.5:>10,.2f}')   # lists, numbers, text and format.tom

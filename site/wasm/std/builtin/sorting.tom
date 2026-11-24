@@ -1,0 +1,112 @@
+# The stable sorts behind sorted(xs, key=f) and sorted(xs, cmp=f). Part of the built-ins (std/builtin/).
+
+# sorted(xs, key=f) and sorted(xs, cmp=f) are these, written in Tomato (so they run the same natively and in the
+# browser). The sorts are stable: a merge sort that finds the runs already in order (a strictly descending run is
+# reversed), extends short runs to a minimum length with binary insertion, and merges neighbouring runs; neighbours
+# already in order are not merged. The key version works out the keys here (each once) and the runtime
+# (tomato_list_sorted_by) sorts them and gathers the items; the cmp version sorts a copy of the items here, since it
+# must call the function on pairs. Native builds do not use it for items that are ints or pointers: the compiler calls
+# tomato_list_sorted_cmp (runtime/tomato_rt.c, the same algorithm in C). This one runs in the browser and for float,
+# bool and fixed-width items.
+def _min_run(n: int) -> int:
+    minrun = n
+    extra = 0
+    while minrun >= 64:
+        if minrun % 2 == 1:
+            extra = 1
+        minrun = minrun // 2
+    return minrun + extra
+
+def _sorted_cmp[T](xs: list[T], cmp: fn(T, T) -> int) -> list[T]:
+    n = len(xs)
+    a = xs[0:n]
+    if n < 2:
+        return a
+    minrun = _min_run(n)
+    starts: list[int] = []
+    lo = 0
+    while lo < n:
+        hi = lo + 1
+        if hi < n:
+            if cmp(a[hi], a[lo]) < 0:
+                hi += 1
+                while hi < n and cmp(a[hi], a[hi - 1]) < 0:
+                    hi += 1
+                i = lo
+                j = hi - 1
+                while i < j:
+                    a[i], a[j] = a[j], a[i]
+                    i += 1
+                    j -= 1
+            else:
+                hi += 1
+                while hi < n and not (cmp(a[hi], a[hi - 1]) < 0):
+                    hi += 1
+        end = lo + minrun
+        if end > n:
+            end = n
+        p = hi
+        while p < end:
+            v = a[p]
+            left = lo
+            right = p
+            while left < right:
+                mid = (left + right) // 2
+                if cmp(v, a[mid]) < 0:
+                    right = mid
+                else:
+                    left = mid + 1
+            q = p
+            while q > left:
+                a[q] = a[q - 1]
+                q -= 1
+            a[left] = v
+            p += 1
+        if hi < end:
+            hi = end
+        starts.append(lo)
+        lo = hi
+    starts.append(n)
+    b = a[0:n]
+    while len(starts) > 2:
+        next_starts: list[int] = []
+        runs = len(starts) - 1
+        k = 0
+        while k < runs:
+            s = starts[k]
+            if k + 1 < runs:
+                mid = starts[k + 1]
+                e = starts[k + 2]
+                i = s
+                j = mid
+                o = s
+                if cmp(a[mid], a[mid - 1]) < 0:
+                    while i < mid and j < e:
+                        if cmp(a[j], a[i]) < 0:
+                            b[o] = a[j]
+                            j += 1
+                        else:
+                            b[o] = a[i]
+                            i += 1
+                        o += 1
+                while i < mid:
+                    b[o] = a[i]
+                    i += 1
+                    o += 1
+                while j < e:
+                    b[o] = a[j]
+                    j += 1
+                    o += 1
+                k += 2
+            else:
+                for o in range(s, starts[k + 1]):
+                    b[o] = a[o]
+                k += 1
+            next_starts.append(s)
+        next_starts.append(n)
+        starts = next_starts
+        a, b = b, a
+    return a
+
+def _keys[T, K](xs: list[T], key: fn(T) -> K) -> list[K]:
+    return [key(x) for x in xs]

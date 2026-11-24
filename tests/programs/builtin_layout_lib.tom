@@ -1,0 +1,5 @@
+# for builtin_layout.tom: reaches bitarray through `import bitarray`, as bitarray.bitarray
+import bitarray
+
+export def packed(bits: str) -> list[int]:
+    return bitarray.bitarray(bits).to_ints()

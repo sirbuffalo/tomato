@@ -79,6 +79,7 @@ cache_lru
 memoize
 bit_types
 bit_names
+builtin_layout
 json_strict
 json_accept
 json_dumps

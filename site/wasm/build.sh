@@ -50,7 +50,7 @@ for f in tomatoc runtime; do
   fi
   mv "$tmp/$f.wasm" "$out/$f.wasm"
 done
-mkdir -p "$out/std"; cp "$root/std/"*.tom "$root/std/errors.txt" "$out/std/"
+rm -rf "$out/std"; mkdir -p "$out/std"; cp "$root/std/"*.tom "$root/std/errors.txt" "$out/std/"; cp -R "$root/std/builtin" "$out/std/"
 { cat "$root/compiler/bootstrap/tomatoc.ll" "$rt" | sha256 | cut -d" " -f1
   sha256 "$out/tomatoc.wasm" "$out/runtime.wasm" | cut -d" " -f1; } > "$out/SOURCE.sha256"   # source hash, then the two wasm files   # tests/run.sh checks the wasm files are not stale
 echo "built $out/tomatoc.wasm and $out/runtime.wasm"

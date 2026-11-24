@@ -40,3 +40,5 @@
   After the multi-language harness (JavaScript, Java, C, C++, C#, TypeScript, PHP, Swift; branch `byre/tskSQTqy23EMBy`) lands on main, add the other languages' versions of nbody, spectral_norm, fannkuch, nqueens, binary_trees, levenshtein, knapsack, life, dijkstra, quicksort, kmers, revcomp, tokenize, crc32 and hof, following its `<name>/<name>.<ext>` convention.
 - Publish results for all 25 benchmarks and update the "ten benchmarks" text
   At the next release run, publish results for all 25 benchmarks (`benchmarks/run.sh --site`) and update the "ten benchmarks" text on `site/index.html` and `site/benchmarks.html`.
+- Confirm on a Mac that the Linux-built `site/wasm/tomatoc.wasm` rebuilds identically (WASI SDK 24, arm64)
+  The `std/builtin/` folder task landed a Linux-built `tomatoc.wasm`. Run `WASI_SDK=~/wasi-sdk-24.0-arm64-macos sh tests/run.sh` and look for "wasm files rebuild identically"; if it fails, run `site/wasm/build.sh` there and commit the result.

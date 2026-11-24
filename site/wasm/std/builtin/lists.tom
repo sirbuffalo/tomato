@@ -1,0 +1,30 @@
+# map(f, xs), filter(f, xs), == on lists, any() and all(), written in Tomato (so they run the same natively and in the browser). Part
+# of the built-ins (std/builtin/).
+
+def _map[T, R](f: fn(T) -> R, xs: list[T]) -> list[R]:
+    return [f(x) for x in xs]
+
+def _filter[T](f: fn(T) -> bool, xs: list[T]) -> list[T]:
+    return [x for x in xs if f(x)]
+
+# xs == ys on two lists of the same type: the same length and every pair of items equal
+def _list_eq[T](a: list[T], b: list[T]) -> bool:
+    if len(a) != len(b):
+        return False
+    for x, y in zip(a, b):
+        if x != y:
+            return False
+    return True
+
+# any() and all() (D75a)
+def _any(xs: list[bool]) -> bool:
+    for x in xs:
+        if x:
+            return True
+    return False
+
+def _all(xs: list[bool]) -> bool:
+    for x in xs:
+        if not x:
+            return False
+    return True

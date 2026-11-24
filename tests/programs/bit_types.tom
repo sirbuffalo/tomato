@@ -1,4 +1,4 @@
-# bitarray and frozenbitarray (std/bitarray.tom, available without an import): construction, indexing, slicing, operators, conversions, errors.
+# bitarray and frozenbitarray (std/builtin/bitarray.tom, available without an import): construction, indexing, slicing, operators, conversions, errors.
 
 def check(label: str, got: str, want: str):
     if got == want:

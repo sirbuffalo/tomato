@@ -1,7 +1,7 @@
 # The Tomato compiler, written in Tomato (D38a). It compiles itself, and it is the only implementation.
 #
 # It takes the syntax tree from compiler/src/parser.tom and writes LLVM IR text that links with the C runtime
-# (runtime/tomato_rt.c). compile_module at the end is the entry point: it loads std/builtin.tom and every imported module,
+# (runtime/tomato_rt.c). compile_module at the end is the entry point: it loads the built-ins (std/builtin/) and every imported module,
 # collects the classes, interfaces and functions (Mod), then compiles each function (Gen) and adds the type tables.
 # Types are written as short texts: int, str, list[int], @Class, %Interface, U:a;b for a union, str? for str | None, and
 # iN / uN for fixed-width integers. Heap values are reference counted: whoever an expression's value is handed to owns it.
@@ -3178,7 +3178,7 @@ class Gen:
             raise CompileError(f'{name}() takes a list or a range, but this is {shown(lst.ty)}', line)
         return lst
 
-    # sorted(xs, key=f) and sorted(xs, cmp=f): a new list, stable (D-fn); the work is done by _sorted_key and _sorted_cmp in std/builtin.tom
+    # sorted(xs, key=f) and sorted(xs, cmp=f): a new list, stable (D-fn); the work is done by _sorted_key and _sorted_cmp in std/builtin/sorting.tom
     def sorted_by(self, args: list[Node], keywords: list[Val], line: int) -> Ex:
         if len(args) != 1:
             raise CompileError('sorted() takes one list, and then key= or cmp=', line)
@@ -4295,7 +4295,7 @@ class Gen:
         if key == '' and name == 'round' and name not in self.slots:
             return self.round_call(args, n.fields[2].items, n.line)
         if key == '' and name in ['divmod', 'any', 'all'] and name not in self.slots:
-            # written in Tomato, in std/builtin.tom (_divmod, _any, _all)
+            # written in Tomato, in std/builtin/ (_divmod in numbers.tom, _any and _all in lists.tom)
             self.kw = n.fields[2].items
             return self.helper_call('_' + name, name, ex('', ''), args, n.line)
         if key == '' and name == 'sorted' and len(n.fields[2].items) > 0:
@@ -4306,7 +4306,7 @@ class Gen:
             self.kw = []
             return self.list_builtin(name, args, n.line)
         if name == 'range' and name not in self.slots:
-            # range(...) is a value of the builtin class `range` (std/builtin.tom); range(a, b, c) is its constructor
+            # range(...) is a value of the builtin class `range` (std/builtin/range.tom); range(a, b, c) is its constructor
             if len(args) < 1 or len(args) > 3 or len(n.fields[2].items) > 0:
                 raise CompileError('range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', n.line)
             if len(args) < 3:
@@ -4421,7 +4421,7 @@ class Gen:
         return self.call_function(info, '@tomato.' + info.key, ex('', ''), args, n.line)
 
     # f'{x:spec}': the lexer wrote _format_spec(x, 'spec') after checking the form of the spec; the type of x says what the
-    # spec may hold. The work is done by _fmt_str, _fmt_int and _fmt_float in std/builtin.tom.
+    # spec may hold. The work is done by _fmt_str, _fmt_int and _fmt_float in std/builtin/format.tom.
     def format_call(self, args: list[Node], line: int) -> Ex:
         spec = parse_format_spec(args[1].fields[0].text, line, 0)
         v = self.expr(args[0])
@@ -4480,7 +4480,7 @@ class Gen:
         self.drop_held(held_before)
         return self.builtin_call('_round_' + x.ty, [x, digits], line)
 
-    # a call of a function of std/builtin.tom under the built-in name `public` (messages and keywords use it); when recv
+    # a call of a function of the built-ins (std/builtin/) under the built-in name `public` (messages and keywords use it); when recv
     # is a value, it is the first parameter of the function (the object of a text method) and the others are `args`
     def helper_call(self, helper: str, public: str, recv: Ex, args: list[Node], line: int) -> Ex:
         key = self.mod.resolve(helper)
@@ -4500,7 +4500,7 @@ class Gen:
         return self.call_function(shown_info, '@tomato.' + key, recv, args, line)
 
     def number_text_builtin(self, name: str, args: list[Node], line: int) -> Ex:
-        # abs(x) for an int or a float (std/builtin.tom), chr(n) and ord(c)
+        # abs(x) for an int or a float (std/builtin/numbers.tom), chr(n) and ord(c)
         if len(args) != 1 or len(self.kw) > 0:
             raise CompileError(f"'{name}' takes exactly one argument", line)
         v = self.expr(args[0])
@@ -5264,7 +5264,7 @@ class Gen:
         return v
 
     def builtin_call(self, name: str, values: list[Ex], line: int) -> Ex:
-        # a call to a function written in std/builtin.tom, with arguments that are already computed
+        # a call to a function written in the built-ins (std/builtin/), with arguments that are already computed
         return self.call_helper(self.mod.find(self.mod.resolve(name), line), values)
 
     def text_method(self, obj: Ex, name: str, args: list[Node], line: int) -> Ex:
@@ -5344,7 +5344,7 @@ class Gen:
             self.release(obj)
             return self.bool_of(i1)
         if name in ['isspace', 'lstrip', 'rstrip'] and len(args) == 0:
-            # written in Tomato, in std/builtin.tom
+            # written in Tomato, in the built-ins (std/builtin/)
             return self.builtin_call(f'_str_{name}', [obj], line)
         raise CompileError(self.no_method(name, 'str'), line)
 
@@ -7973,7 +7973,7 @@ def async_symbol(mod: Mod, info: FuncInfo) -> str:
         return f'@tomato.async.{info.key}'
     return '@tomato.async.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
 
-# the text methods that are written in Tomato, in std/builtin.tom as _str_NAME (the others are in the runtime or built in
+# the text methods that are written in Tomato, in std/builtin/text.tom as _str_NAME (the others are in the runtime or built in
 # to text_method)
 def text_helper_methods() -> list[str]:
     return ['splitlines', 'partition', 'rpartition', 'rsplit', 'zfill', 'ljust', 'rjust', 'center', 'title', 'capitalize', 'isalnum', 'removeprefix', 'removesuffix']
@@ -8922,6 +8922,22 @@ def resolve_class(mod: Mod, c: ClassInfo):
         c.fields.append(fld)
     mod.tvars = saved_vars
 
+# The built-ins are the files of std/builtin/ named here, read in this order as the one module `builtin`, whose
+# names every file can use without importing them.
+def builtin_parts() -> list[str]:
+    return ['errors', 'range', 'numbers', 'text', 'sorting', 'lists', 'format']
+
+# Modules that also live in std/builtin/ but are loaded only when a program uses them, under their own names (so
+# `import bitarray` and `from bitarray import bitarray` are written as before).
+def builtin_modules() -> list[str]:
+    return ['bitarray']
+
+def std_path(std: str, name: str) -> str:
+    # the file of a standard library module
+    if name in builtin_modules():
+        return f'{std}builtin/{name}.tom'
+    return f'{std}{name}.tom'
+
 def read_module(dir: str, std: str, name: str, line: int) -> str:
     # a module next to the program, else one from the standard library
     text = ''
@@ -8931,7 +8947,7 @@ def read_module(dir: str, std: str, name: str, line: int) -> str:
         f.close()
     catch IOError:
         try:
-            g = open(f'{std}{name}.tom')
+            g = open(std_path(std, name))
             text = g.read()
             g.close()
         catch IOError:
@@ -9065,12 +9081,17 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         raise CompileError("the mode 'normal' was renamed to 'release': use --mode release (the old release mode, which printed nothing, is gone)", 0)
     elif mode != 'debug':
         raise CompileError(f"the mode must be debug or release, not '{mode}'", 0)
-    mod.loading = 'builtin'
-    base = open(f'{std}builtin.tom')
-    base_text = base.read()
-    base.close()
-    mod.sources['builtin'] = base_text
-    items: list[TopItem] = [top_item(b, 'builtin') for b in val_nodes(parse(base_text).fields[0])]
+    items: list[TopItem] = []
+    for part in builtin_parts():
+        # each file is parsed on its own, so its line numbers are its own and a syntax error names it, into the module builtin
+        # (an item does not record its part, so a compile error inside a built-in, a bug in the built-ins, prints without a place)
+        where = f'builtin/{part}'
+        mod.loading = where
+        base = open(f'{std}{where}.tom')
+        base_text = base.read()
+        base.close()
+        mod.sources[where] = base_text
+        items += [top_item(b, 'builtin') for b in val_nodes(parse(base_text).fields[0])]
     mod.loading = ''
     imports: list[ImportInfo] = []
     loaded: list[str] = []

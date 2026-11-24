@@ -261,7 +261,7 @@ t_wasm_browser() { r="$(tjsc site/wasm run tests/programs/requests_browser.tom 2
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru memoize bit_types bit_names text_dict_methods dict_literal_inference tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide float_ranges fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module; do
+  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide float_ranges fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module; do
     spawn t_wasm_program "$name"
   done
   spawn t_wasm_browser
@@ -542,6 +542,7 @@ neg async_init "cannot be async"
 neg invert_on_text "cannot use '~' on str"
 neg set_item_without_marker "objects cannot be assigned by index"
 neg frozen_item_assign "'bitarray.frozenbitarray' objects cannot be assigned by index"
+neg import_builtin_part "cannot find the module 'sorting'"
 neg mixed_bit_types "the right operand of & has type bitarray.frozenbitarray"
 neg frozen_bits_field "the field 'bits' is private to class 'bitarray.frozenbitarray'"
 neg async_override_mismatch "must take and return the same types"
@@ -610,12 +611,25 @@ t_error_raises() {
       sub(/\(.*/, "", line)
       if (!match($0, /\047E[0-9]+\047\)$/) || classes[substr($0, RSTART + 2, RLENGTH - 4) + 0] != line)
         print FILENAME ":" FNR ": " $0
-    }' std/errors.txt std/*.tom)"
+    }' std/errors.txt std/*.tom std/builtin/*.tom)"
   [ -z "$missing" ] && ok "standard-library raises have IDs for their classes" || bad "standard-library raises have IDs for their classes" "$missing"
+}
+t_builtin_folder() { # every file of std/builtin/ is a part of the built-ins or a module found there (builtin_parts and builtin_modules
+  # in the compiler), and the website loads it (TomatoWasm.STD in site/wasm/tomato.js)
+  names="$(sed -n -e '/^def builtin_parts()/,/return/p' -e '/^def builtin_modules()/,/return/p' compiler/src/compiler.tom | sed -n 's/^ *return \[//p' | tr -d "]',")"
+  missing=""
+  for f in std/builtin/*.tom; do
+    n="$(basename "$f" .tom)"
+    case " $(echo $names) " in *" $n "*) ;; *) missing="$missing $f(not named in compiler.tom)";; esac
+    grep -q "\"builtin/$n\"" site/wasm/tomato.js || missing="$missing $f(not in TomatoWasm.STD)"
+  done
+  for n in $names; do [ -f "std/builtin/$n.tom" ] || missing="$missing std/builtin/$n.tom(missing)"; done
+  [ -z "$missing" ] && ok "std/builtin/ matches the compiler's list and the website's" || bad "std/builtin/ matches the compiler's list and the website's" "$missing"
 }
 section "== error ids =="
 spawn t_error_templates
 spawn t_error_raises
+spawn t_builtin_folder
 
 # ---- error messages -----------------------------------------------------------------------------------------------------
 t_error_text() {
