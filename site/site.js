@@ -2,9 +2,8 @@
 (function () {
   var pages = [["index.html", "Home"], ["guide.html", "Guide"], ["docs.html", "Reference"], ["play.html", "Run & Repl"], ["benchmarks.html", "Benchmarks"], ["download.html", "Download"]];
   var here = location.pathname.split("/").pop() || "index.html";
-  var h = '<a class="skip" href="#main">Skip to content</a><nav aria-label="Site"><a class="brand" href="index.html">🍅 Tomato</a>';
+  var h = '<a class="skip" href="#main">Skip to content</a><nav aria-label="Site"><a class="brand" href="index.html"><img src="assets/tomato-wordmark.svg" alt="Tomato" width="177" height="40"></a>';
   pages.forEach(function (p) { h += '<a href="' + p[0] + '"' + (p[0] === here ? ' aria-current="page"' : "") + ">" + p[1] + "</a>"; });
-  if (!document.querySelector("link[rel=icon]")) { var ic = document.createElement("link"); ic.rel = "icon"; ic.href = "data:image/svg+xml," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍅</text></svg>"); document.head.appendChild(ic); }
   var main = document.querySelector("main"); if (main && !main.id) main.id = "main";
   var el = document.getElementById("site-header");
   if (el) el.innerHTML = h + "</nav>";
