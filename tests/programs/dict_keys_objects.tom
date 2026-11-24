@@ -1,0 +1,239 @@
+# Objects as dict keys and set members: a class needs a method marked @hash (and then compares by its @eq, or by identity when it has
+# none). Hashing and equality stay consistent: keys whose hashes collide are told apart by @eq, an error raised by @hash or @eq
+# reaches the caller, a subclass runs its own @hash and @eq, and the table keeps its keys alive.
+
+class Point:
+    x: int
+    y: int
+
+    @init
+    def make(self, x: int, y: int):
+        self.x = x
+        self.y = y
+
+    @eq
+    def same(self, other: Point) -> bool:
+        return self.x == other.x and self.y == other.y
+
+    @hash
+    def h(self) -> int:
+        return hash(self.x) * 31 + hash(self.y)
+
+    @str
+    def text(self) -> str:
+        return f'P({self.x},{self.y})'
+
+# @hash but no @eq: two Tags with the same name are different keys, because objects are equal only to themselves
+class Tag:
+    name: str
+
+    @init
+    def make(self, name: str):
+        self.name = name
+
+    @hash
+    def h(self) -> int:
+        return hash(self.name)
+
+    @str
+    def text(self) -> str:
+        return 'Tag ' + self.name
+
+# every key has the same hash: only @eq tells them apart
+class Same:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @eq
+    def eq_n(self, other: Same) -> bool:
+        return self.n == other.n
+
+    @hash
+    def h(self) -> int:
+        return 7
+
+class Fussy:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @eq
+    def eq_n(self, other: Fussy) -> bool:
+        if self.n == 99 or other.n == 99:
+            raise ValueError('cannot compare 99')
+        return self.n == other.n
+
+    @hash
+    def h(self) -> int:
+        if self.n < 0:
+            raise ValueError('negative has no hash')
+        return 1
+
+class Shape:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @eq
+    def same(self, other: Shape) -> bool:
+        return self.area() == other.area()
+
+    def area(self) -> int:
+        return self.n
+
+    @hash
+    def h(self) -> int:
+        return self.area()
+
+class Square(Shape):
+    @init
+    def make(self, n: int):
+        Shape.make(self, n)
+
+    override def area(self) -> int:
+        return self.n * self.n
+
+# a hash made by arithmetic on other hashes can be bigger than a machine word: it is an int like any other
+class Person:
+    name: str
+    age: int
+
+    @init
+    def make(self, name: str, age: int):
+        self.name = name
+        self.age = age
+
+    @eq
+    def same(self, other: Person) -> bool:
+        return self.name == other.name and self.age == other.age
+
+    @hash
+    def h(self) -> int:
+        return hash(self.name) * 1000003 * 1000003 + hash(self.age)
+
+class Node:
+    name: str
+    seen: dict[Node, int] = {}
+
+    @init
+    def make(self, name: str):
+        self.name = name
+
+    @hash
+    def h(self) -> int:
+        return hash(self.name)
+
+@main
+def main():
+    d: dict[Point, str] = {}
+    d[Point(1, 2)] = 'a'
+    d[Point(3, 4)] = 'b'
+    d[Point(1, 2)] = 'c'
+    print(len(d), d[Point(1, 2)], d[Point(3, 4)], d.get(Point(0, 0), 'none'))
+    print(Point(1, 2) in d, Point(9, 9) in d)
+    print(d)
+    d.remove(Point(1, 2))
+    print(len(d), d, d.keys())
+    ps: set[Point] = {Point(1, 1), Point(1, 1), Point(2, 2)}
+    ps.add(Point(2, 2))
+    ps.discard(Point(1, 1))
+    print(len(ps), ps)
+
+    # no @eq: identity
+    a = Tag('x')
+    b = Tag('x')
+    g: dict[Tag, int] = {}
+    g[a] = 1
+    g[b] = 2
+    g[a] += 10
+    print(len(g), g[a], g[b], Tag('x') in g, a in g)
+    print(hash(a) == hash(b), hash(a) == hash(Tag('y')))
+
+    # collisions
+    c: dict[Same, int] = {}
+    for i in range(200):
+        c[Same(i)] = i * 2
+    ok = True
+    for i in range(200):
+        if c[Same(i)] != i * 2:
+            ok = False
+    print(len(c), ok)
+    for i in range(0, 200, 2):
+        c.remove(Same(i))
+    print(len(c), Same(1) in c, Same(2) in c)
+    for i in range(1000, 1100):
+        c[Same(i)] = i
+    print(len(c), c[Same(1050)], c[Same(199)])
+
+    # an error in @hash or @eq reaches the caller, and the table is left as it was
+    f: dict[Fussy, int] = {}
+    f[Fussy(1)] = 1
+    try:
+        f[Fussy(-1)] = 2
+    catch ValueError as e:
+        print('caught', e.message)
+    try:
+        print(Fussy(-5) in f)
+    catch ValueError as e:
+        print('caught', e.message)
+    try:
+        f.remove(Fussy(99))
+    catch ValueError as e:
+        print('caught', e.message)
+    print(len(f), f[Fussy(1)])
+
+    # a subclass runs its own @hash and @eq
+    s: dict[Shape, str] = {}
+    s[Shape(9)] = 'shape 9'
+    print(Square(3) in s, s[Square(3)], Square(2) in s)
+
+    # tuples of objects
+    t: dict[tuple[Point, int], str] = {}
+    t[(Point(1, 1), 1)] = 'a'
+    print(t[(Point(1, 1), 1)], (Point(1, 1), 2) in t)
+
+    # a key is kept alive by the table; cycles through a table are collected
+    n = Node('a')
+    n.seen[n] = 1
+    m = Node('b')
+    m.seen[Node('c')] = 2
+    print(len(n.seen), len(m.seen), n in n.seen, m in n.seen)
+
+    # a hash that does not fit in a machine word
+    people: dict[Person, int] = {}
+    for i in range(50):
+        people[Person('p' + str(i % 10), i % 7)] = i
+    print(len(people), people[Person('p3', 3)], Person('p3', 4) in people)
+
+    # a class written after the code that uses it
+    late: dict[Late, int] = {}
+    late[Late(1)] = 5
+    print(late[Late(1)], Late(2) in late)
+
+    # frozenbitarray has a @hash
+    bits: dict[frozenbitarray, str] = {}
+    bits[frozenbitarray('1011')] = 'a'
+    bits[frozenbitarray('1011')] = 'b'
+    print(len(bits), bits[frozenbitarray('1011')])
+
+class Late:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @eq
+    def same(self, other: Late) -> bool:
+        return self.n == other.n
+
+    @hash
+    def h(self) -> int:
+        return self.n

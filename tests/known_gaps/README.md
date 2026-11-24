@@ -18,7 +18,6 @@ Today's programs:
 | `should_work_union_entry_input` | D28b | E157: entry inputs must be `int`, `bool` or `str` |
 | `should_work_optional_int` | D23g | `int \| None` gives E318 |
 | `should_work_interface_intersection` | D23h | `Named & Sized` as a parameter type gives E313 |
-| `should_work_int_keyed_dict` | D20b | `dict[int, str]` gives E318 |
 | `should_work_compact_list_declared` | P86 | `list[int[length=8]]` gives E318 |
 
 A `NAME.expected` file next to a `should_work_*` program holds the output the decisions call for (a regression oracle for

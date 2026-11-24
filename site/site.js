@@ -90,7 +90,7 @@ function markdown(src) {
   var KW = /^(def|class|interface|implements|private|const|override|return|if|elif|else|while|for|in|pass|break|continue|try|catch|finally|raise|yield|import|from|export|async|await|as|is|and|or|xor|not)$/;
   var MOD = /^(asyncio|base64|cache|csv|datetime|hex|html|itertools|json|math|random|rational|requests|secrets|socket|statistics|textwrap|time|toml|urlparse|uuid)$/;
   var TY = /^(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IOError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|EOFError|CancelledError|Sized|bitarray|frozenbitarray)$/;
-  var BI = /^(print|len|str|int|float|rational|range|open|input|sleep|clock|min|max|sum|abs|chr|ord|round|divmod|any|all|sorted|reversed|enumerate|zip|map|filter|list|dict|set|tuple|bool)$/;
+  var BI = /^(print|len|str|int|float|rational|range|open|input|sleep|clock|min|max|sum|abs|chr|ord|round|divmod|any|all|hash|sorted|reversed|enumerate|zip|map|filter|list|dict|set|tuple|bool)$/;
   var TOKEN = /(#[^\n]*)|((?:\bf)?(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'))|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(!?[A-Za-z_]\w*)|(->|\*\*|\/\/|==|!=|<=|>=|[-+*\/%<>=&|^])|(@\w+)/g;
   // an f-string: the text is a string, each {expression} is highlighted as code, and a format spec after the colon ({x:>8.2f}) is a number-like part
   var FEXPR = /^((?:[^:\[\(\{'"]|\[[^\]]*\]|\([^)]*\)|'[^']*'|"[^"]*")*)(:[^]*)?$/;

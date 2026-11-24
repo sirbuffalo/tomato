@@ -78,15 +78,68 @@ def mtuple_type(items: list[str]) -> str:
 def is_set(t: str) -> bool:
     return t.startswith('set[')
 
-# the type inside the brackets: the item type of list[T], tuple[T] and set[T], the value type of dict[V] (whose keys are text)
+# the type inside the brackets: the item type of list[T], tuple[T] and set[T]
 def elem_of(t: str) -> str:
     return t[t.find('[') + 1:-1]
 
 def set_elem(t: str) -> str:
     return elem_of(t)
 
+# a dict type is written dict[K,V] inside the compiler (the key type, a comma, the value type)
+def dict_type(k: str, v: str) -> str:
+    return 'dict[' + k + ',' + v + ']'
+
+def dict_key(t: str) -> str:
+    return split_types(t[5:-1])[0]
+
 def dict_value(t: str) -> str:
-    return elem_of(t)
+    return split_types(t[5:-1])[1]
+
+# can a key of type t reference other objects (so a table of them can be part of a reference cycle)? Text cannot; objects, tuples, unions and the like can
+def key_holds_refs(t: str) -> bool:
+    return is_rc(t) and t != 'str' and t != 'str?'
+
+# how the runtime table treats a key of type t: 0 a plain word (bool or a fixed-width integer), 1 text, 2 an int (a big number is copied), 3 a reference-counted
+# object (a class instance, tuple, interface value, union or optional) that compiled code hashes and compares, 4 a float
+def key_kind_of(t: str) -> int:
+    if t == 'bool' or is_fixed(t):
+        return 0
+    if t == 'str':
+        return 1
+    if t == 'int':
+        return 2
+    if t == 'float':
+        return 4
+    return 3
+
+# '' when a value of type t has the form of a dict key or set element, else why not. A class is checked for its @hash separately
+# (key_problem), because the methods of the classes are not all known when a type is written.
+def key_form_problem(t: str) -> str:
+    if is_optional(t):
+        return key_form_problem(strip_optional(t))
+    if t == 'str' or t == 'int' or t == 'bool' or t == 'float' or t.startswith('@') or t.startswith('%') or is_fixed(t):
+        return ''
+    if is_union(t):
+        for member in union_members(t):
+            why = key_form_problem(member)
+            if why != '':
+                return why
+        return ''
+    if t.startswith('list['):
+        return 'a list can change, so it cannot be a dict key or set element\nuse a tuple instead'
+    if t.startswith('set['):
+        return 'a set can change, so it cannot be a dict key or set element\nuse a tuple instead'
+    if t.startswith('dict['):
+        return 'a dict can change, so it cannot be a dict key or set element\nuse a tuple instead'
+    if t.startswith('tuple['):
+        return key_form_problem(elem_of(t))
+    if t.startswith('tup['):
+        for item in mtuple_items(t):
+            why = key_form_problem(item)
+            if why != '':
+                return why
+        return ''
+    return f'a value of type {shown(t)} cannot be a dict key or set element\nkeys are int, bool, float, text, fixed-width integers, tuples, optionals, unions and interface values of those, and objects of classes with a method marked @hash'
 
 def is_class(t: str) -> bool:
     return t.startswith('@')
@@ -384,7 +437,7 @@ def shown(t: str) -> str:
     if is_list(t):
         return f'list[{shown(elem_of(t))}]'
     if is_dict(t):
-        return f'dict[str, {shown(dict_value(t))}]'
+        return f'dict[{shown(dict_key(t))}, {shown(dict_value(t))}]'
     if is_set(t):
         return f'set[{shown(set_elem(t))}]'
     if is_fixed(t):
@@ -1470,8 +1523,10 @@ class Mod:
 
     # what a for loop yields from a value of type vt, or '' when it cannot loop over one
     def iter_item(self, vt: str) -> str:
-        if vt == 'str' or is_dict(vt):
+        if vt == 'str':
             return 'str'
+        if is_dict(vt):
+            return dict_key(vt)
         if is_list(vt) or is_set(vt):
             return elem_of(vt)
         if is_class(vt) and self.has_class(vt[1:]):
@@ -1711,11 +1766,6 @@ class Mod:
                 if found != '':
                     return found
             return ''
-        if name == 'dict' and t.fields[2].tag == 'n' and t.fields[3].tag == 'n':
-            key = val_node(t.fields[2]).fields[0].text
-            if self.type_name(t.fields[2]) != 'str':
-                return f"dict keys other than str are not supported yet, so dict[{key}, ...] cannot be built\nuse str keys, such as dict[str, ...], and convert with str(key)"
-            return self.unsupported_type(t.fields[3])
         if t.fields[2].tag == 'n':
             found = self.unsupported_type(t.fields[2])
             if found != '':
@@ -2053,16 +2103,21 @@ class Mod:
             return 'Z'
         if name == 'set' and t.fields[2].tag == 'n':
             member = self.type_name(t.fields[2])
-            if member == 'str' or member == 'int' or member == 'bool':
-                return f'set[{member}]'
-            return ''
-        if name == 'dict' and t.fields[2].tag == 'n' and t.fields[3].tag == 'n':
-            if self.type_name(t.fields[2]) != 'str':
+            if member == '':
                 return ''
+            if '$' not in member and key_form_problem(member) != '':
+                raise CompileError(key_form_problem(member), t.line)
+            return f'set[{member}]'
+        if name == 'dict' and t.fields[2].tag == 'n' and t.fields[3].tag == 'n':
+            key = self.type_name(t.fields[2])
+            if key == '':
+                return ''
+            if '$' not in key and key_form_problem(key) != '':
+                raise CompileError(key_form_problem(key), t.line)
             inner = self.type_name(t.fields[3])
             if inner == '' or is_fixed(inner):
                 return ''
-            return f'dict[{inner}]'
+            return dict_type(key, inner)
         if name == 'tuple' and t.fields[2].tag == 'l':
             # tuple[str, int]: a fixed number of items, each of its own type
             item_types: list[str] = []
@@ -2738,9 +2793,9 @@ class Gen:
         if not (is_list(e.ty) or is_dict(e.ty) or is_set(e.ty)):
             return self.box_as(e, e.ty, ty)
         if dyn_iterable(ty) and not is_list(e.ty):
-            keys = f'list[{elem_of(e.ty)}]'
+            keys = f'list[{set_elem(e.ty)}]'
             if is_dict(e.ty):
-                keys = 'list[str]'
+                keys = f'list[{dict_key(e.ty)}]'
             snap = self.tmp('keys')
             self.emit(f'{snap} = call ptr @tomato_dict_keys(ptr {e.reg}, i64 {self.mod.code_of(keys)}, i64 {item_width(keys)})')
             self.release(e)
@@ -4587,20 +4642,111 @@ class Gen:
         return -1000000
 
     def key_word(self, k: Ex) -> str:
-        # a key as the 64-bit word the runtime hashes: the number itself, or the text's address
-        if k.ty != 'str':
+        # a key as the 64-bit word the runtime stores: the number itself, a float's bits, or an object's (or text's) address
+        if k.ty == 'float':
+            fb = self.tmp('kw')
+            self.emit(f'{fb} = call i64 @tomato_float_bits(double {k.reg})')     # (the browser's IR interpreter has no double-to-integer bitcast)
+            return fb
+        if is_fixed(k.ty):
+            return self.widen(k, 64)           # sign- or zero-extended, so equal numbers are equal words
+        if llvm_type(k.ty) != 'ptr':
             return k.reg
         r = self.tmp('kw')
         self.emit(f'{r} = ptrtoint ptr {k.reg} to i64')
         return r
 
-    def new_set(self, t: str) -> Ex:
-        kind = '1' if set_elem(t) == 'str' else '0'
-        if set_elem(t) == 'int':
-            kind = '2'                  # a table that copies big numbers
-        r = self.tmp('set')
-        self.emit(f'{r} = call ptr @tomato_dict_new(i64 {self.mod.code_of(t)}, i64 0, i32 {kind})')
-        return ex(r, t)
+    def key_check(self, kt: str, line: int):
+        # a type that is a dict key or set element must be hashable: a class needs a method marked @hash
+        why = key_problem(self.mod, kt)
+        if why != '':
+            raise CompileError(why, line)
+
+    def dict_new(self, t: str, line: int) -> str:
+        # a new empty table for a dict or set type
+        kt = set_elem(t) if is_set(t) else dict_key(t)
+        self.key_check(kt, line)
+        r = self.tmp('dict')
+        size = '0' if is_set(t) else '8'
+        self.emit(f'{r} = call ptr @tomato_dict_new(i64 {self.mod.code_of(t)}, i64 {size}, i32 {key_kind_of(kt)})')
+        return r
+
+    def key_hash(self, k: Ex, live: list[Ex], line: int) -> str:
+        # the hash a table stores for a key of kind 3 (a class instance or a tuple): the compiled hash function, which can raise
+        # (then `live` is released and the function returns), reduced to a machine word
+        info = self.mod.helper('hash', k.ty, line)
+        symbol = function_symbol(self.mod, info)
+        r = self.tmp('hv')
+        self.emit(f'{r} = call i64 {symbol}(ptr {k.reg})')
+        self.check_error(live, symbol)
+        w = self.tmp('hw')
+        self.emit(f'{w} = call i64 @tomato_hash_word(i64 {r})')
+        self.emit(f'call void @tomato_int_free(i64 {r})')
+        return w
+
+    def key_place(self, d: Ex, k: Ex, live: list[Ex], line: int) -> list[str]:
+        # where the key of kind 3 is in the table: [its hash word, its place or -1]. The compiled code walks the entries with an
+        # equal stored hash and compares each with the key (the helper written for the key's type), so a user's @eq can run.
+        hw = self.key_hash(k, live, line)
+        tagged = self.tmp('ht')
+        self.emit(f'{tagged} = shl i64 {hw}, 1')
+        tagged2 = self.tmp('ht')
+        self.emit(f'{tagged2} = or i64 {tagged}, 1')
+        info = self.mod.helper('dloc', k.ty, line)
+        symbol = function_symbol(self.mod, info)
+        r = self.tmp('place')
+        self.emit(f'{r} = call i64 {symbol}(ptr {d.reg}, ptr {k.reg}, i64 {tagged2})')
+        self.check_error(live, symbol)
+        loc = self.tmp('loc')
+        self.emit(f'{loc} = ashr i64 {r}, 1')
+        return [hw, loc]
+
+    def table_key(self, d: Ex, k: Ex) -> Ex:
+        # the key as a value of the table's key type (a None that was accepted for an optional key type still says None)
+        kt = set_elem(d.ty) if is_set(d.ty) else dict_key(d.ty)
+        if k.ty == kt:
+            return k
+        return ex(k.reg, kt)
+
+    def dict_locate(self, d: Ex, k0: Ex, live: list[Ex], line: int) -> list[str]:
+        # [the address of the key's value or null, its hash word, its place] (the last two are '' unless the key is of kind 3)
+        k = self.table_key(d, k0)
+        slot = self.tmp('slot')
+        if key_kind_of(k.ty) != 3:
+            self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {self.key_word(k)})')
+            return [slot, '', '']
+        where = self.key_place(d, k, live, line)
+        self.emit(f'{slot} = call ptr @tomato_dict_slot_at(ptr {d.reg}, i64 {where[1]}, i64 {where[0]})')
+        return [slot, where[0], where[1]]
+
+    def dict_find(self, d: Ex, k: Ex, live: list[Ex], line: int) -> str:
+        return self.dict_locate(d, k, live, line)[0]
+
+    def dict_insert(self, d: Ex, k0: Ex, only_new: int, live: list[Ex], line: int) -> str:
+        # the address of the value for k, adding the key when it is missing; null when it is there and only_new is 1
+        k = self.table_key(d, k0)
+        slot = self.tmp('slot')
+        if key_kind_of(k.ty) != 3:
+            self.emit(f'{slot} = call ptr @tomato_dict_insert(ptr {d.reg}, i64 {self.key_word(k)}, i32 {only_new})')
+            return slot
+        where = self.key_place(d, k, live, line)
+        self.emit(f'{slot} = call ptr @tomato_dict_insert_h(ptr {d.reg}, i64 {self.key_word(k)}, i64 {where[0]}, i64 {where[1]}, i32 {only_new})')
+        return slot
+
+    def dict_delete(self, d: Ex, k0: Ex, found: list[str], live: list[Ex], line: int):
+        # takes the key out; found is what dict_locate gave for it (or [] to look it up again)
+        k = self.table_key(d, k0)
+        if key_kind_of(k.ty) != 3:
+            self.emit(f'call i32 @tomato_dict_delete(ptr {d.reg}, i64 {self.key_word(k)})')
+            return
+        where: list[str] = []
+        if len(found) == 0:
+            where = self.key_place(d, k, live, line)
+        else:
+            where = [found[1], found[2]]
+        self.emit(f'call i32 @tomato_dict_delete_h(ptr {d.reg}, i64 {where[0]}, i64 {where[1]})')
+
+    def new_set(self, t: str, line: int) -> Ex:
+        return ex(self.dict_new(t, line), t)
 
     def set_lit(self, n: Node, expected: str) -> Ex:
         items = val_nodes(n.fields[0])
@@ -4608,10 +4754,10 @@ class Gen:
         first = ex('', '')
         if not is_set(expected):
             first = self.expr(items[0])
+            if first.ty == '' or first.ty == 'None' or key_form_problem(first.ty) != '':
+                raise CompileError('a set element must be an int, bool, float, text, tuple of those, or an object with a method marked @hash', n.line)
             t = f'set[{first.ty}]'
-            if not is_set(t) or not (first.ty == 'str' or first.ty == 'int' or first.ty == 'bool'):
-                raise CompileError('a set can hold only int, bool or str values', n.line)
-        st = self.new_set(t)
+        st = self.new_set(t, n.line)
         held_before = len(self.held)
         self.hold(st)
         for k, item in enumerate(items):
@@ -4621,8 +4767,7 @@ class Gen:
             else:
                 v = self.expr(item, set_elem(t))
             v = self.want(v, set_elem(t), n.line, 'a set element')
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_dict_insert(ptr {st.reg}, i64 {self.key_word(v)}, i32 0)')
+            self.dict_insert(st, v, 0, [v], n.line)
             self.release(v)
         self.drop_held(held_before)
         return st
@@ -4630,25 +4775,27 @@ class Gen:
     def map_lit(self, n: Node, expected: str) -> Ex:
         pairs = n.fields[0].items
         if is_set(expected) and len(pairs) == 0:
-            return self.new_set(expected)
+            return self.new_set(expected, n.line)
         if len(pairs) == 0 and not is_dict(expected):
             raise CompileError('the type of an empty {} cannot be guessed\ndeclare it, such as: m: dict[str, int] = {}', n.line)
-        # without a dict type to take from the context, the value type is the first value's, as for a list literal (the keys are text)
+        # without a dict type to take from the context, the key and value types are the first pair's, as for a list literal
         first_k = ex('', '')
         first_v = ex('', '')
         t = expected
         if not is_dict(expected):
             before = len(self.held)
-            first_k = self.want(self.expr(val_node(pairs[0].items[0])), 'str', n.line, 'a dict key')
+            first_k = self.expr(val_node(pairs[0].items[0]))
+            if first_k.ty == '' or first_k.ty == 'None' or key_form_problem(first_k.ty) != '':
+                raise CompileError('a dict key must be an int, bool, float, text, tuple of those, or an object with a method marked @hash', n.line)
             self.hold(first_k)
             first_v = self.expr(val_node(pairs[0].items[1]))
             self.drop_held(before)
             if first_v.ty == '' or first_v.ty == 'None':
                 raise CompileError('a dict value needs a value that is not None\ndeclare the type, such as: m: dict[str, int] = {...}', n.line)
-            t = f'dict[{first_v.ty}]'
+            t = dict_type(first_k.ty, first_v.ty)
         value_t = dict_value(t)
-        d = self.tmp('dict')
-        self.emit(f'{d} = call ptr @tomato_dict_new(i64 {self.mod.code_of(t)}, i64 8, i32 1)')
+        key_t = dict_key(t)
+        d = self.dict_new(t, n.line)
         held_before = len(self.held)
         self.hold(ex(d, t))
         for j, pair in enumerate(pairs):
@@ -4656,7 +4803,7 @@ class Gen:
             if j == 0 and first_k.ty != '':
                 k = first_k
             else:
-                k = self.want(self.expr(val_node(pair.items[0])), 'str', n.line, 'a dict key')
+                k = self.want(self.expr(val_node(pair.items[0]), key_t), key_t, n.line, 'a dict key')
             self.hold(k)
             v = ex('', '')
             if j == 0 and first_v.ty != '':
@@ -4665,8 +4812,7 @@ class Gen:
                 v = self.expr(val_node(pair.items[1]), value_t)
             self.drop_held(held_before + 1)
             v = self.want(v, value_t, n.line, 'a dict value')
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_dict_insert(ptr {d}, i64 {self.key_word(k)}, i32 1)')
+            slot = self.dict_insert(ex(d, t), k, 1, [k, v], n.line)
             dup = self.tmp('dup')
             self.emit(f'{dup} = icmp eq ptr {slot}, null')
             self.fail_if(dup, 'duplicate key in a dict literal', [k, v])
@@ -4794,11 +4940,10 @@ class Gen:
         held_before = len(self.held)
         self.hold(s)                              # a fresh base is freed by the error path if the index expression raises
         if is_dict(s.ty):
-            k = self.expr(val_node(n.fields[1]))
-            k = self.want(k, 'str', n.line, 'a dict key')
+            k = self.expr(val_node(n.fields[1]), dict_key(s.ty))
+            k = self.want(k, dict_key(s.ty), n.line, 'a dict key')
             self.drop_held(held_before)
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {s.reg}, i64 {self.key_word(k)})')
+            slot = self.dict_find(s, k, [k, s], n.line)
             missing = self.tmp('missing')
             self.emit(f'{missing} = icmp eq ptr {slot}, null')
             self.fail_if(missing, 'the key is not there', [k, s])
@@ -4942,9 +5087,8 @@ class Gen:
             self.release(b)
             return self.bool_of(i1)
         if is_set(b.ty) or is_dict(b.ty):
-            a = self.want(a, set_elem(b.ty) if is_set(b.ty) else 'str', line, 'the left side of in')
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {b.reg}, i64 {self.key_word(a)})')
+            a = self.want(a, set_elem(b.ty) if is_set(b.ty) else dict_key(b.ty), line, 'the left side of in')
+            slot = self.dict_find(b, a, [a, b], line)
             i1 = self.tmp('flag')
             self.emit(f'{i1} = icmp ne ptr {slot}, null')
             self.release(a)
@@ -5195,6 +5339,12 @@ class Gen:
             a = self.operand(left, False)
             self.hold(a)
             b = self.expr(right, a.ty if is_mtuple(a.ty) else '')
+        elif op == 'in' and (left.kind == 'TupleLit' or left.kind == 'IntLit' or left.kind == 'UnOp') and (is_set(self.peek_type(right)) or is_dict(self.peek_type(right))):
+            # (1, 2) in seen, 5 in small: a literal takes the key type of the set or dict
+            seen_t = self.peek_type(right)
+            a = self.expr(left, set_elem(seen_t) if is_set(seen_t) else dict_key(seen_t))
+            self.hold(a)
+            b = self.operand(right, True)
         elif (op == '==' or op == '!=') and left.kind == 'TupleLit' and right.kind != 'TupleLit' and is_mtuple(self.peek_type(right)):
             a = self.expr(left, self.peek_type(right))
             self.hold(a)
@@ -5458,7 +5608,12 @@ class Gen:
             if conv.ty == 'float':
                 return self.float_to_int(conv, n.line)
             return self.convert_explicit(conv, 'int', n.line)
+        # these do no type checks: only the compiler's own helpers (key_helper_source), which are compiled in the module builtin, may use them
+        if name in ['_hash_mix', '_dict_next', '_dict_key', '_same', '_isa', '_cast'] and self.mod.cur == 'builtin' and name not in self.slots and self.mod.resolve(name) == '':
+            return self.hash_intrinsic(name, args, n.line)
         key = self.mod.resolve(name)
+        if key == '' and name == 'hash' and name not in self.slots:
+            return self.hash_call(args, n.line)
         if key == '' and name in ['abs', 'chr', 'ord'] and name not in self.slots:
             return self.number_text_builtin(name, args, n.line)
         if key == '' and name == 'round' and name not in self.slots:
@@ -5718,6 +5873,116 @@ class Gen:
         shown_info.key = key
         shown_info.module = info.module
         return self.call_function(shown_info, '@tomato.' + key, recv, args, line)
+
+    def hash_call(self, args: list[Node], line: int) -> Ex:
+        # hash(x): an int that is the same for equal values, for anything that can be a dict key; an object's is its @hash method's
+        if len(args) != 1 or len(self.kw) > 0:
+            raise CompileError("hash() takes exactly one argument", line)
+        v = self.expr(args[0])
+        if not is_optional(v.ty):
+            v = self.unwrap(v, line)
+        if key_form_problem(v.ty) != '':
+            raise CompileError(f'hash() cannot take a value of type {shown(v.ty)}\nit works on int, bool, float, text, tuples of those, and objects of classes with a method marked @hash', line)
+        if is_fixed(v.ty):
+            v = self.resize(v, 'int')
+        if v.ty == 'int':
+            r = self.tmp('hash')
+            self.emit(f'{r} = call i64 @tomato_hash_int(i64 {v.reg})')
+            self.release(v)
+            return exf(r, 'int')
+        if v.ty == 'bool':
+            return self.int_from_machine(v.reg, True)
+        if v.ty == 'str':
+            r2 = self.tmp('hash')
+            self.emit(f'{r2} = call i64 @tomato_hash_str(ptr {v.reg})')
+            self.release(v)
+            return exf(r2, 'int')
+        if v.ty == 'float':
+            r3 = self.tmp('hash')
+            self.emit(f'{r3} = call i64 @tomato_hash_float(double {v.reg})')
+            return exf(r3, 'int')
+        self.key_check(v.ty, line)
+        return self.call_helper(self.mod.helper('hash', v.ty, line), [v])
+
+    def hash_intrinsic(self, name: str, args: list[Node], line: int) -> Ex:
+        # what the compiler-written key helpers (helper_source: hash, keyeq, dloc) use: mixing hashes, and walking a table
+        if (name == '_hash_mix' or name == '_same' or name == '_isa' or name == '_cast') and len(args) == 2:
+            pass
+        elif (name == '_dict_key' and len(args) == 2) or (name == '_dict_next' and len(args) == 3):
+            pass
+        else:
+            raise CompileError(f"internal compiler error: wrong arguments for {name}", line)
+        if name == '_isa' or name == '_cast':
+            # _isa(x, 'T'): does the union or interface value x hold a T (a member of the union, or an instance of the class T)?
+            # _cast(x, 'T'): x as a T, once _isa said so (or an optional known not to be None); T is a type written as text
+            want = args[1].fields[0].text
+            held0 = self.expr(args[0])
+            if name == '_cast':
+                if is_union(held0.ty):
+                    member = self.unbox_value(held0, want)
+                    self.release(held0)
+                    return ret_ex(member.reg, member.ty)
+                return ret_ex(held0.reg, want)
+            if is_union(held0.ty):
+                yes = self.box_is(held0, want)
+            else:
+                tp0 = self.tmp('tp')
+                self.emit(f'{tp0} = getelementptr {{ i64, i64 }}, ptr {held0.reg}, i32 0, i32 1')
+                raw0 = self.tmp('rawcode')
+                self.emit(f'{raw0} = load i64, ptr {tp0}')
+                code0 = self.tmp('code')
+                self.emit(f'{code0} = and i64 {raw0}, 4294967295')
+                isa0 = self.tmp('isa')
+                self.emit(f'{isa0} = call i32 @tomato_is_subclass(i64 {code0}, i64 {self.mod.code_of(want)})')
+                yes = self.tmp('isclass')
+                self.emit(f'{yes} = icmp ne i32 {isa0}, 0')
+            self.release(held0)
+            return self.bool_of(yes)
+        if name == '_same':
+            # two references to the same object
+            a0 = self.expr(args[0])
+            self.hold(a0)
+            b0 = self.expr(args[1])
+            self.drop_held(len(self.held) - 1)
+            c = self.tmp('same')
+            self.emit(f'{c} = icmp eq ptr {a0.reg}, {b0.reg}')
+            self.release(a0)
+            self.release(b0)
+            return self.bool_of(c)
+        if name == '_hash_mix':
+            a = self.expr(args[0])
+            self.hold(a)
+            b = self.expr(args[1])
+            self.drop_held(len(self.held) - 1)
+            r = self.tmp('mix')
+            self.emit(f'{r} = call i64 @tomato_hash_mix(i64 {a.reg}, i64 {b.reg})')
+            self.release(a)
+            self.release(b)
+            return exf(r, 'int')
+        d = self.expr(args[0])
+        self.hold(d)
+        if name == '_dict_key':
+            loc = self.expr(args[1])
+            self.drop_held(len(self.held) - 1)
+            raw = self.arith('ashr', loc.reg, '1')
+            kw = self.tmp('stored')
+            self.emit(f'{kw} = call i64 @tomato_dict_key_at(ptr {d.reg}, i64 {raw})')
+            kp = self.tmp('key')
+            self.emit(f'{kp} = inttoptr i64 {kw} to ptr')
+            key = ex(kp, set_elem(d.ty))
+            self.retain(key)
+            self.release(d)
+            return ret_ex(kp, key.ty)
+        h = self.expr(args[1])
+        self.hold(h)
+        loc2 = self.expr(args[2])
+        self.drop_held(len(self.held) - 2)
+        raw_h = self.arith('ashr', h.reg, '1')
+        raw_l = self.arith('ashr', loc2.reg, '1')
+        nxt = self.tmp('next')
+        self.emit(f'{nxt} = call i64 @tomato_dict_next(ptr {d.reg}, i64 {raw_h}, i64 {raw_l})')
+        self.release(d)
+        return self.int_from_machine(nxt, True)
 
     def number_text_builtin(self, name: str, args: list[Node], line: int) -> Ex:
         # abs(x) for an int or a float (std/builtin/numbers.tom), chr(n) and ord(c)
@@ -6076,7 +6341,7 @@ class Gen:
 
     def build_kwargs(self, t: str, names: list[str], items: list[Ex]) -> Ex:
         d = self.tmp('kwargs')
-        self.emit(f'{d} = call ptr @tomato_dict_new(i64 {self.mod.code_of(t)}, i64 8, i32 1)')
+        self.emit(f'{d} = call ptr @tomato_dict_new(i64 {self.mod.code_of(t)}, i64 8, i32 {key_kind_of(dict_key(t))})')
         for k, it0 in enumerate(items):
             it = self.owned(it0)
             key = ex(self.mod.intern(names[k]), 'str')
@@ -6362,15 +6627,14 @@ class Gen:
                 raise CompileError(f"get(key) gives None for a missing key, but a value of type {shown(vt)} cannot be None\nwrite get(key, default), or check 'key in d' first", line)
             held_before = len(self.held)
             self.hold(d)                        # freed by the error path if the key or the default raises
-            k = self.want(self.expr(args[0]), 'str', line, 'a dict key')
+            k = self.want(self.expr(args[0], dict_key(d.ty)), dict_key(d.ty), line, 'a dict key')
             self.hold(k)
             fallback = ex('', '')
             if len(args) == 2:
                 fallback = self.owned(self.want(self.expr(args[1], vt), vt, line, 'the default of get'))
             self.drop_held(held_before)
             if len(args) == 1:
-                slot1 = self.tmp('slot')
-                self.emit(f'{slot1} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {self.key_word(k)})')
+                slot1 = self.dict_find(d, k, [k, d], line)
                 gone = self.tmp('missing')
                 self.emit(f'{gone} = icmp eq ptr {slot1}, null')
                 hit1 = self.label('gothit')
@@ -6390,8 +6654,7 @@ class Gen:
                 self.release(k)
                 self.release(d)
                 return ret_ex(r1, vt + '?')
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {self.key_word(k)})')
+            slot = self.dict_find(d, k, [k, d, fallback], line)
             missing = self.tmp('missing')
             self.emit(f'{missing} = icmp eq ptr {slot}, null')
             hit = self.label('gothit')
@@ -6419,17 +6682,16 @@ class Gen:
                 raise CompileError('remove() takes a key: remove(key)', line)
             held_before = len(self.held)
             self.hold(d)
-            k = self.want(self.expr(args[0]), 'str', line, 'a dict key')
+            k = self.want(self.expr(args[0], dict_key(d.ty)), dict_key(d.ty), line, 'a dict key')
             self.drop_held(held_before)
-            kw = self.key_word(k)
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {d.reg}, i64 {kw})')
+            seat = self.dict_locate(d, k, [k, d], line)
+            slot = seat[0]
             missing = self.tmp('missing')
             self.emit(f'{missing} = icmp eq ptr {slot}, null')
             self.fail_if(missing, 'the key is not in the dict', [k, d])
             old = self.tmp('old')
             self.emit(f'{old} = load {llvm_type(vt)}, ptr {slot}')
-            self.emit(f'call i32 @tomato_dict_delete(ptr {d.reg}, i64 {kw})')
+            self.dict_delete(d, k, seat, [k, d], line)
             self.release(exf(old, vt))       # last: it can start a collection, which must not find the value in the dict
             self.release(k)
             self.release(d)
@@ -6440,9 +6702,10 @@ class Gen:
             raise CompileError(f"'{name}' takes no arguments", line)
         if name == 'keys':
             r = self.tmp('keys')
-            self.emit(r + ' = call ptr @tomato_dict_keys(ptr ' + d.reg + ', i64 ' + str(self.mod.code_of('list[str]')) + ', i64 8)')
+            kl = f'list[{dict_key(d.ty)}]'
+            self.emit(r + ' = call ptr @tomato_dict_keys(ptr ' + d.reg + ', i64 ' + str(self.mod.code_of(kl)) + ', i64 ' + str(item_width(kl)) + ')')
             self.release(d)
-            return ex(r, 'list[str]')
+            return ex(r, kl)
         if name == 'values':
             t = f'list[{vt}]'
             r = self.tmp('values')
@@ -6451,7 +6714,7 @@ class Gen:
             return ex(r, t)
         if name == 'items':
             # each pair is a tuple of two item types, tuple[str, V], made by the runtime
-            pt = mtuple_type(['str', vt])
+            pt = mtuple_type([dict_key(d.ty), vt])
             t = f'list[{pt}]'
             r = self.tmp('items')
             self.emit(f'{r} = call ptr @tomato_dict_pairs(ptr {d.reg}, i64 {self.mod.code_of(t)}, i64 {self.mod.code_of(pt)}, i32 {elem_rc(vt)})')
@@ -6466,18 +6729,16 @@ class Gen:
             v = self.expr(args[0], set_elem(st.ty))
             v = self.want(v, set_elem(st.ty), line, 'the set element')
             self.drop_held(held_before)
-            kw = self.key_word(v)
             if name == 'add':
-                self.emit(f'call ptr @tomato_dict_insert(ptr {st.reg}, i64 {kw}, i32 0)')
+                self.dict_insert(st, v, 0, [v, st], line)
             elif name == 'discard':
-                self.emit(f'call i32 @tomato_dict_delete(ptr {st.reg}, i64 {kw})')
+                self.dict_delete(st, v, [], [v, st], line)
             else:
-                slot = self.tmp('slot')
-                self.emit(f'{slot} = call ptr @tomato_dict_find(ptr {st.reg}, i64 {kw})')
+                found = self.dict_locate(st, v, [v, st], line)
                 missing = self.tmp('missing')
-                self.emit(f'{missing} = icmp eq ptr {slot}, null')
+                self.emit(f'{missing} = icmp eq ptr {found[0]}, null')
                 self.fail_if(missing, 'the element is not there', [v, st])
-                self.emit(f'call i32 @tomato_dict_delete(ptr {st.reg}, i64 {kw})')
+                self.dict_delete(st, v, found, [v, st], line)
             self.release(v)
             self.release(st)
             return ex('', '')
@@ -7571,7 +7832,7 @@ class Gen:
             return f"'{name}' is a variable, not a function, so it cannot be called"
         if name in ['reduce']:
             return f"'{name}' is not available\nuse a for loop instead"
-        if name in ['pow', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'hash', 'format']:
+        if name in ['pow', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'format']:
             return f"'{name}' is not built in"
         near = closest(name, self.visible_names())
         if near != '':
@@ -8275,14 +8536,13 @@ class Gen:
         if is_dict(lst.ty):
             held_dict = len(self.held)
             self.hold(lst)
-            k = self.expr(val_node(target.fields[1]))
-            k = self.want(k, 'str', s.line, 'a dict key')
+            k = self.expr(val_node(target.fields[1]), dict_key(lst.ty))
+            k = self.want(k, dict_key(lst.ty), s.line, 'a dict key')
             self.hold(k)
             dv = self.expr(val_node(s.fields[1]), dict_value(lst.ty))
             dv = self.want(dv, dict_value(lst.ty), s.line, 'the assigned value')
             self.drop_held(held_dict)
-            slot = self.tmp('slot')
-            self.emit(f'{slot} = call ptr @tomato_dict_insert(ptr {lst.reg}, i64 {self.key_word(k)}, i32 0)')
+            slot = self.dict_insert(lst, k, 0, [k, lst, dv], s.line)
             self.store_owned(slot, dv)
             self.release(k)
             self.release(lst)
@@ -9525,12 +9785,13 @@ class Gen:
             return
         vt = dict_value(obj.ty)
         ks = self.tmp('keys')
-        self.emit(f'{ks} = call ptr @tomato_dict_keys(ptr {obj.reg}, i64 {self.mod.code_of("list[str]")}, i64 {item_width("list[str]")})')
+        kl = f'list[{dict_key(obj.ty)}]'
+        self.emit(f'{ks} = call ptr @tomato_dict_keys(ptr {obj.reg}, i64 {self.mod.code_of(kl)}, i64 {item_width(kl)})')
         vl = f'list[{vt}]'
         vs_ = self.tmp('values')
         self.emit(f'{vs_} = call ptr @tomato_dict_values(ptr {obj.reg}, i64 {self.mod.code_of(vl)}, i64 {item_width(vl)}, i32 {elem_rc(vt)})')
         self.release(obj)
-        self.for_value(s, ex(ks, 'list[str]'), ex(vs_, vl))
+        self.for_value(s, ex(ks, kl), ex(vs_, vl))
 
     def for_value(self, s: Node, lst: Ex, vals: Ex | None = None):
         if is_dyn(lst.ty):
@@ -9547,7 +9808,7 @@ class Gen:
             # a loop over a set or dict walks a snapshot of its keys (P28)
             keys = f'list[{set_elem(lst.ty)}]'
             if is_dict(lst.ty):
-                keys = 'list[str]'
+                keys = f'list[{dict_key(lst.ty)}]'
             snap = self.tmp('keys')
             self.emit(f'{snap} = call ptr @tomato_dict_keys(ptr {lst.reg}, i64 {self.mod.code_of(keys)}, i64 {item_width(keys)})')
             self.release(lst)
@@ -10466,9 +10727,9 @@ def runtime_tables(mod: Mod) -> str:
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
         elif is_set(code):
-            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(set_elem(code) == 'str'))      # a set of ints says so in its key kind
+            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(is_rc(set_elem(code))) + 4096 * int_of_bool(key_holds_refs(set_elem(code))))      # 256: its keys are heap values (text, objects, tuples); a set of ints says so in its key kind
         elif is_dict(code):
-            kinds[slot] = 'i32 ' + str(3 + 256 + 512 * int_of_bool(is_rc(dict_value(code))) + 2048 * int_of_bool(dict_value(code) == 'int'))    # a table with text keys
+            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(is_rc(dict_key(code))) + 512 * int_of_bool(is_rc(dict_value(code))) + 2048 * int_of_bool(dict_value(code) == 'int') + 4096 * int_of_bool(key_holds_refs(dict_key(code))))
         elif elem_of(code) == 'str' or is_rc(elem_of(code)):
             kinds[slot] = 'i32 258'          # a list: 2, plus 256 when its items are reference counted
         elif elem_of(code) == 'int':
@@ -10578,6 +10839,17 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_dict_insert(ptr, i64, i32)\n'
     d += 'declare i32 @tomato_dict_delete(ptr, i64)\n'
     d += 'declare ptr @tomato_dict_keys(ptr, i64, i64)\n'
+    d += 'declare i64 @tomato_dict_next(ptr, i64, i64)\n'
+    d += 'declare i64 @tomato_dict_key_at(ptr, i64)\n'
+    d += 'declare ptr @tomato_dict_slot_at(ptr, i64, i64)\n'
+    d += 'declare ptr @tomato_dict_insert_h(ptr, i64, i64, i64, i32)\n'
+    d += 'declare i32 @tomato_dict_delete_h(ptr, i64, i64)\n'
+    d += 'declare i64 @tomato_hash_word(i64)\n'
+    d += 'declare i64 @tomato_hash_int(i64)\n'
+    d += 'declare i64 @tomato_float_bits(double)\n'
+    d += 'declare i64 @tomato_hash_str(ptr)\n'
+    d += 'declare i64 @tomato_hash_float(double)\n'
+    d += 'declare i64 @tomato_hash_mix(i64, i64)\n'
     d += 'declare void @tomato_usage(i32, i32)\n'
     d += 'declare i64 @tomato_parse_i64(ptr, i32)\n'
     d += 'declare i64 @tomato_parse_u64(ptr, i32)\n'
@@ -10794,8 +11066,8 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
         if p.fields[3].tag == 's':
             if p.fields[3].text == '*' and not pt.startswith('tuple['):
                 raise CompileError(f"'*{p.fields[0].text}' needs a tuple type, such as tuple[int]", p.line)
-            if p.fields[3].text == '**' and not is_dict(pt):
-                raise CompileError(f"'**{p.fields[0].text}' needs a dict type, such as dict[int]", p.line)
+            if p.fields[3].text == '**' and not (is_dict(pt) and dict_key(pt) == 'str'):
+                raise CompileError(f"'**{p.fields[0].text}' needs a dict type with text keys, such as dict[str, int]", p.line)
             info.stars += 1
             if p.fields[3].text == '*':
                 info.has_varargs = True
@@ -10878,6 +11150,51 @@ def has_init(mod: Mod, c: ClassInfo) -> bool:
         return has_init(mod, mod.find_class(c.parent, c.line))
     return False
 
+# the classes whose instances an interface value can hold, as far as a type test goes: those that implement it and whose parent
+# does not (an instance of a subclass is found through its class that does)
+def key_classes(mod: Mod, iface: str) -> list[str]:
+    out: list[str] = []
+    for c in mod.classes:
+        if mod.assignable('@' + c.name, iface) and not (c.parent != '' and mod.assignable('@' + c.parent, iface)):
+            out.append(c.name)
+    return out
+
+# '' when a value of type t can be a dict key or set element, else why not (the classes in it need a method marked @hash)
+def key_problem(mod: Mod, t: str) -> str:
+    why = key_form_problem(t)
+    if why != '':
+        return why
+    if is_optional(t):
+        return key_problem(mod, strip_optional(t))
+    if is_class(t):
+        name = t[1:]
+        if mod.has_op(name, 'hash'):
+            return ''
+        if mod.has_op(name, 'eq'):
+            return f"'{name}' has a method marked @eq but none marked @hash, so it cannot be a dict key or set element\nadd a method marked @hash that returns an int, the same for objects that are equal"
+        return f"'{name}' has no method marked @hash, so it cannot be a dict key or set element\nadd one: @hash def h(self) -> int"
+    if is_iface(t):
+        # the objects an interface value can hold are the instances of the classes that implement it: each needs a @hash
+        for c in key_classes(mod, t):
+            why3 = key_problem(mod, '@' + c)
+            if why3 != '':
+                return f"'{t[1:]}' values cannot be a dict key or set element: the class '{c}' implements it but has no method marked @hash\nadd one: @hash def h(self) -> int"
+        return ''
+    if is_union(t):
+        for member in union_members(t):
+            why4 = key_problem(mod, member)
+            if why4 != '':
+                return why4
+        return ''
+    if t.startswith('tuple['):
+        return key_problem(mod, elem_of(t))
+    if is_mtuple(t):
+        for item in mtuple_items(t):
+            why2 = key_problem(mod, item)
+            if why2 != '':
+                return why2
+    return ''
+
 def is_showable(mod: Mod, t: str) -> bool:
     # can a value of this type be shown inside a printed container (what show_item accepts)?
     if is_numeric(t) or t == 'bool' or t == 'float' or t == 'str' or is_union(t):
@@ -10889,7 +11206,7 @@ def is_showable(mod: Mod, t: str) -> bool:
     if is_set(t):
         return is_showable(mod, set_elem(t))
     if is_dict(t):
-        return is_showable(mod, dict_value(t))
+        return is_showable(mod, dict_key(t)) and is_showable(mod, dict_value(t))
     if is_mtuple(t):
         for item in mtuple_items(t):
             if not is_showable(mod, item):
@@ -10922,10 +11239,82 @@ def iter_elem(mod: Mod, ty: str) -> str:
     # what the @iter method of a class yields
     return mod.find_op(ty[1:], 'iter').ret
 
+# the Tomato source of what a dict or set whose keys are class instances or tuples needs (key kind 3): the hash of a key, the
+# comparison of two keys, and the walk over the entries whose stored hash is equal to a key's that finds the one that is equal
+def key_eq_source(mod: Mod, et: str, a: str, b: str, line: int) -> str:
+    if et.startswith('tuple[') or is_mtuple(et) or is_optional(et) or is_union(et) or is_iface(et):
+        return mod.helper('keyeq', et, line).name + '(' + a + ', ' + b + ')'
+    if is_class(et) and not mod.has_op(et[1:], 'eq'):
+        return f'_same({a}, {b})'          # no @eq: objects are equal only when they are the same object
+    return f'{a} == {b}'
+
+# the types a union or an interface value is told apart by: the members of the union, or the root classes of the interface
+def key_alternatives(mod: Mod, t: str) -> list[str]:
+    if is_union(t):
+        return union_members(t)
+    out: list[str] = []
+    for c in key_classes(mod, t):
+        out.append('@' + c)
+    return out
+
+def key_helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
+    why = key_problem(mod, ty)
+    if why != '':
+        raise CompileError(why, line)
+    if kind == 'dloc':
+        body = f'def {name}(d: int, key: int, h: int) -> int:\n    loc = -1\n    while True:\n        loc = _dict_next(d, h, loc)\n        if loc < 0:\n            return -1\n'
+        body += '        stored = _dict_key(d, loc)\n'
+        body += '        if ' + key_eq_source(mod, ty, 'stored', 'key', line) + ':\n            return loc\n'
+        return body
+    if kind == 'keyeq':
+        head = f'def {name}(x: int, y: int) -> bool:\n'
+        if is_optional(ty):
+            it = strip_optional(ty)
+            inner = key_eq_source(mod, it, f"_cast(x, '{it}')", f"_cast(y, '{it}')", line)
+            return head + f'    if x is None:\n        return y is None\n    if y is None:\n        return False\n    return {inner}\n'
+        if is_union(ty) or is_iface(ty):
+            body3 = ''
+            for m in key_alternatives(mod, ty):
+                body3 += f"    if _isa(x, '{m}'):\n        if _isa(y, '{m}'):\n            return " + key_eq_source(mod, m, f"_cast(x, '{m}')", f"_cast(y, '{m}')", line) + '\n        return False\n'
+            return head + body3 + '    return False\n'
+        if is_class(ty):
+            return head + '    return ' + key_eq_source(mod, ty, 'x', 'y', line) + '\n'
+        if is_mtuple(ty):
+            parts: list[str] = []
+            members = mtuple_items(ty)
+            for k, it in enumerate(members):
+                parts.append(key_eq_source(mod, it, f'x[{k}]', f'y[{k}]', line))
+            return head + '    return ' + ' and '.join(parts) + '\n'
+        same = key_eq_source(mod, elem_of(ty), 'x[i]', 'y[i]', line)
+        return head + f'    if len(x) != len(y):\n        return False\n    for i in range(len(x)):\n        if not ({same}):\n            return False\n    return True\n'
+    head = f'def {name}(x: int) -> int:\n'
+    if is_optional(ty):
+        return head + f"    if x is None:\n        return 0\n    return hash(_cast(x, '{strip_optional(ty)}'))\n"
+    if is_union(ty) or is_iface(ty):
+        # one test per member (or per root class of an interface), the member's own hash mixed with its place so that 1 and True differ
+        body4 = ''
+        alts = key_alternatives(mod, ty)
+        for k, m in enumerate(alts):
+            body4 += f"    if _isa(x, '{m}'):\n        return _hash_mix({k + 1}, hash(_cast(x, '{m}')))\n"
+        return head + body4 + '    return 0\n'
+    if is_class(ty):
+        f = mod.find_op(ty[1:], 'hash')
+        if f is None or len(f.ptypes) != 0 or f.ret != 'int':
+            raise CompileError(f"the method marked @hash in '{ty[1:]}' must take nothing besides self and return an int", line)
+        return head + f'    return x.{f.name}()\n'
+    if is_mtuple(ty):
+        body2 = '    h = 3\n'
+        for k in range(len(mtuple_items(ty))):
+            body2 += f'    h = _hash_mix(h, hash(x[{k}]))\n'
+        return head + body2 + '    return h\n'
+    return head + '    h = 3\n    for v in x:\n        h = _hash_mix(h, hash(v))\n    return h\n'
+
 def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     # the Tomato source of a helper function; parameters are written as int and given their real types by helper_types
     head = f'def {name}(x: int) -> str:\n'
     err = '62' if kind == 'max' else '61'
+    if kind == 'hash' or kind == 'keyeq' or kind == 'dloc':
+        return key_helper_source(mod, name, kind, ty, line)
     if kind == 'eq':
         # two tuples of mixed item types, compared item by item
         same: list[str] = []
@@ -10955,8 +11344,9 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
                 shown_parts.append(show_item(mod, et, f'x[{k}]', line))
             return head + "    return '(' + " + " + ', ' + ".join(shown_parts) + " + ')'\n"
         if is_dict(ty):
-            body = "    out = '{'\n    first = True\n    for k in x:\n        if not first:\n            out = out + ', '\n        first = False\n"
-            body += "        out = out + _quote(k) + ': ' + " + show_item(mod, dict_value(ty), 'x[k]', line) + '\n'
+            # the entries are read by position (items()), not looked up by key again: a key that was changed after it was added still prints
+            body = "    out = '{'\n    first = True\n    for k, v in x.items():\n        if not first:\n            out = out + ', '\n        first = False\n"
+            body += "        out = out + " + show_item(mod, dict_key(ty), 'k', line) + " + ': ' + " + show_item(mod, dict_value(ty), 'v', line) + '\n'
             return f"{head}{body}    return out + '}}'\n"
         open_text = '['
         close_text = ']'
@@ -10987,6 +11377,19 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
 def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):
     # give the stub parameter its real type, and the result the type the helper gives
     info.ptypes[0] = ty
+    if kind == 'hash':
+        info.ret = 'int'
+        return
+    if kind == 'keyeq':
+        info.ptypes[1] = ty
+        info.ret = 'bool'
+        return
+    if kind == 'dloc':
+        info.ptypes[0] = f'set[{ty}]'
+        info.ptypes[1] = ty
+        info.ptypes[2] = 'int'
+        info.ret = 'int'
+        return
     if is_class(ty):
         info.ret = f'list[{iter_elem(mod, ty)}]' if kind == 'tolist' else iter_elem(mod, ty)
     elif kind == 'show':

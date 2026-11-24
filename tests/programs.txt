@@ -114,6 +114,10 @@ fstring_fuse
 temp_unwind
 text_dict_methods
 dict_literal_inference
+dict_keys_any
+dict_keys_objects
+dict_keys_forms
+dict_keys_cycles
 tuple_for
 small_int_loops
 list_methods
@@ -161,3 +165,4 @@ loop_nests
 float_length
 tuple_compare
 chained_keywords
+int_keyed_dict

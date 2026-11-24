@@ -1,0 +1,11 @@
+class Point:
+    x: int
+
+    @init
+    def make(self, x: int):
+        self.x = x
+
+@main
+def main():
+    d: dict[Point | None, int] = {}
+    d[None] = 1

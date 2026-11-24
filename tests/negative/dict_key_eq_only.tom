@@ -1,0 +1,15 @@
+class Point:
+    x: int
+
+    @init
+    def make(self, x: int):
+        self.x = x
+
+    @eq
+    def same(self, other: Point) -> bool:
+        return self.x == other.x
+
+@main
+def main():
+    seen: set[Point] = {Point(1)}
+    print(len(seen))

@@ -1,0 +1,20 @@
+2 c b none
+True False
+{P(1,2): 'c', P(3,4): 'b'}
+1 {P(3,4): 'b'} [P(3,4)]
+1 {P(2,2)}
+2 11 2 False True
+True False
+200 True
+100 True False
+200 1050 398
+caught negative has no hash
+caught negative has no hash
+caught cannot compare 99
+1 1
+True shape 9 False
+a False
+1 1 True False
+50 3 False
+5 False
+1 b

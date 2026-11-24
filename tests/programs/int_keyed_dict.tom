@@ -1,4 +1,4 @@
-# D20b: dict[K, V] for any hashable K. Today only `str` keys are built (E318 for dict[int, str]).
+# D20b: dict[K, V] for any hashable K (this was a known gap while only text keys were built).
 @main
 def main():
     d: dict[int, str] = {1: 'a', 2: 'b'}

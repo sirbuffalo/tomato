@@ -535,7 +535,9 @@ export class frozenbitarray:
     def to_int(self) -> int:
         return self.bits.to_int()
 
-    # a number that is the same for equal arrays (a frozenbitarray never changes, so it can be kept)
+    # a number that is the same for equal arrays (a frozenbitarray never changes, so it can be kept); the @hash marker makes a
+    # frozenbitarray a dict key and a set member
+    @hash
     def hash(self) -> int:
         h = self.bits.n
         for w in self.bits.words:

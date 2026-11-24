@@ -1,0 +1,17 @@
+interface Shape:
+    def area(self) -> int
+
+class Sq implements Shape:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    def area(self) -> int:
+        return self.n
+
+@main
+def main():
+    s: set[Shape] = {Sq(1)}
+    print(len(s))

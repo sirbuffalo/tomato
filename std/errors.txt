@@ -458,3 +458,17 @@ CompileError float[length=N] exists only with N = 64, as in float[length=64]
 CompileError a union cannot hold None together with two or more other types
 CompileError '{}' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None
 CompileError dict keys other than str are not supported yet, so dict[{}, ...] cannot be built
+CompileError a dict key must be an int, bool, float, text, tuple of those, or an object with a method marked @hash
+CompileError a set element must be an int, bool, float, text, tuple of those, or an object with a method marked @hash
+CompileError hash() cannot take a value of type {}
+CompileError hash() takes exactly one argument
+CompileError internal compiler error: wrong arguments for {}
+CompileError '**{}' needs a dict type with text keys, such as dict[str, int]
+CompileError the method marked @hash in '{}' must take nothing besides self and return an int
+CompileError a list can change, so it cannot be a dict key or set element
+CompileError a set can change, so it cannot be a dict key or set element
+CompileError a dict can change, so it cannot be a dict key or set element
+CompileError a value of type {} cannot be a dict key or set element
+CompileError '{}' has a method marked @eq but none marked @hash, so it cannot be a dict key or set element
+CompileError '{}' has no method marked @hash, so it cannot be a dict key or set element
+CompileError '{}' values cannot be a dict key or set element: the class '{}' implements it but has no method marked @hash

@@ -1,0 +1,4 @@
+@main
+def main():
+    s: set[set[int]] = {}
+    print(len(s))

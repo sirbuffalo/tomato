@@ -1,4 +1,0 @@
-@main
-def main():
-    d: dict[int, str] = {1: 'a'}
-    print(d)

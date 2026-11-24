@@ -122,7 +122,6 @@ type that was already written. `tomato explain` shows the id and text of each.
 
 | Written | Message | Instead |
 | --- | --- | --- |
-| `d: dict[int, str]` (any key that is not `str`) | `dict keys other than str are not supported yet, so dict[int, ...] cannot be built` (E460) | use `str` keys and convert with `str(key)` |
 | `x: int \| None`, `list[float \| None]` | `'int' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None` (E459) | use a default such as `-1`, a flag, or a class |
 | `x: int \| str \| None` | `a union cannot hold None together with two or more other types` (E458) | one type with `None`, or a class holding the choices |
 

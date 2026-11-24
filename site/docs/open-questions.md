@@ -89,7 +89,7 @@ Last updated for v0.51 (decisions up to D68a; numbers are not reused when an ite
 Davis asked to grow the prototype toward a real, full language. These are not designed yet. Asked in roughly this order, one at a time.
 
 55. ~~Lists~~ settled by D20a; negative indexes, slicing, printing, `pop`, `insert`, `extend`, `sort`, `reverse` and equality are built (P81, P82, P86). Still open: empty literal typing (a declared type is required now, P27).
-56. ~~Dicts and sets~~ exist (D20b; the dict is called `dict`, D20c) with literals, insertion order and snapshot iteration (P28, P90). Open: keys other than text for `dict`, more operations, equality.
+56. ~~Dicts and sets~~ exist (D20b; the dict is called `dict`, D20c) with literals, insertion order and snapshot iteration (P28, P90). Keys of any hashable type were built with D78a. Open: more operations, equality of dicts and sets.
 57. ~~Tuples or multiple return values~~ settled by D39a, D54a and P89 (`tuple[T]`, mixed `tuple[str, int]`, `return a, b`, unpacking). Open: `for`, `in` and slicing on mixed tuples.
 58. ~~Generics~~: classes and functions are built (D60a). Open: generic interfaces, generic methods, bounds, generic functions as values.
 59. ~~Missing values~~: `None` exists (D23a) and an optional is `T | None` (D23b). Open: general unions, narrowing, and operators on optionals.

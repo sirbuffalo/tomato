@@ -1,4 +1,4 @@
 @main
 def main():
-    d = {1: 'a'}
+    d = {1: 'a', 'b': 'c'}
     print(d)

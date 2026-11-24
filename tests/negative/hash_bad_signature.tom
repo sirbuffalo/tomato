@@ -1,0 +1,9 @@
+class Key:
+    @hash
+    def h(self) -> str:
+        return 'x'
+
+@main
+def main():
+    keys: set[Key] = {Key()}
+    print(len(keys))

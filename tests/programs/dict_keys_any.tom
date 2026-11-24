@@ -1,0 +1,105 @@
+# dict[K, V] and set[K] take any key type that has a hash: int (any size), bool, float, text, tuples of those, and (see
+# dict_keys_objects) objects of classes with @hash. Insertion order, len, in, get, remove, keys, values, items and for all work
+# the same for every key type.
+
+def count_keys[K, V](d: dict[K, V]) -> int:
+    n = 0
+    for k in d:
+        n += 1
+    return n
+
+class Counter[K]:
+    counts: dict[K, int] = {}
+
+    def add(self, k: K):
+        if k in self.counts:
+            self.counts[k] = self.counts[k] + 1
+        else:
+            self.counts[k] = 1
+
+@main
+def main():
+    # int keys (the first program that was a known gap)
+    d: dict[int, str] = {1: 'a', 2: 'b'}
+    d[3] = 'c'
+    d[1] = 'z'
+    print(d, len(d), d[1], d[3], 2 in d, 9 in d)
+    print(d.get(2), d.get(9), d.get(9, 'none'))
+    d.remove(2)
+    print(d, d.keys(), d.values(), d.items())
+    for k, v in d.items():
+        print(k, v)
+    for k in d:
+        d[k] = 'x'
+    print(d)
+
+    # a number too big for a machine word is a key by value
+    big: dict[int, int] = {}
+    big[10 ** 30] = 1
+    big[10 ** 30] = 2
+    big[10 ** 30 + 1] = 3
+    big[-5] = 4
+    print(len(big), big[10 ** 30], big[10 ** 30 + 1], big[-5], 10 ** 30 in big)
+
+    # bool and float keys; 0.0 and -0.0 are the same key
+    b: dict[bool, int] = {True: 1, False: 0}
+    print(b[True], b[False], len(b))
+    f: dict[float, str] = {1.5: 'a', 2.5: 'b'}
+    f[0.0] = 'zero'
+    f[-0.0] = 'negative zero'
+    print(f, len(f), f[1.5], 0.0 in f)
+
+    # tuple keys, with an item type each
+    t: dict[tuple[int, str], int] = {}
+    t[(1, 'a')] = 5
+    t[(1, 'a')] = 6
+    t[(2, 'a')] = 7
+    print(t, t[(1, 'a')], (2, 'b') in t)
+    same: dict[tuple[int], str] = {(1, 2, 3): 'x'}
+    print(same[(1, 2, 3)], (1, 2) in same, (1, 2, 3, 4) in same)
+    nested: dict[tuple[tuple[int, int], str], int] = {((1, 2), 'a'): 1}
+    nested[((1, 2), 'a')] += 1
+    print(nested)
+    inferred = {(1, 2): 'x', (3, 4): 'y'}
+    print(inferred, inferred[(3, 4)])
+    grid: dict[tuple[int, int], int] = {}
+    for x in range(30):
+        for y in range(30):
+            grid[(x, y)] = x * y
+    removed = 0
+    for x in range(30):
+        grid.remove((x, x))
+        removed += 1
+    print(len(grid), grid[(7, 9)], (7, 7) in grid, removed)
+
+    # sets of any key type
+    s: set[int] = {3, 1, 2}
+    s.add(2)
+    s.add(10 ** 25)
+    print(s, len(s), 10 ** 25 in s)
+    sf: set[float] = {1.5, 1.5, 2.5}
+    print(sf, len(sf))
+    st: set[tuple[int, int]] = {(1, 2), (1, 2), (2, 1)}
+    st.add((3, 3))
+    st.discard((2, 1))
+    print(st, len(st), (3, 3) in st, (2, 1) in st)
+    st.remove((1, 2))
+    print(st)
+
+    # generic code works over any key type
+    print(count_keys(d), count_keys(t), count_keys(inferred))
+    c = Counter[int]()
+    for x in [1, 2, 1, 3, 1]:
+        c.add(x)
+    print(c.counts)
+    cs = Counter[tuple[int, int]]()
+    cs.add((1, 2))
+    cs.add((1, 2))
+    cs.add((2, 1))
+    print(cs.counts)
+
+    # hash(): equal values have equal hashes
+    print(hash(7), hash(True), hash(10 ** 30) == hash(10 ** 30), hash('abc') == hash('abc'), hash('abc') == hash('abd'))
+    print(hash(1.5) == hash(1.5), hash(0.0) == hash(-0.0), hash((1, 'a')) == hash((1, 'a')), hash((1, 'a')) == hash((1, 'b')))
+    # a float and an int that are == hash alike
+    print(1 == 1.0, hash(1) == hash(1.0), hash(-7) == hash(-7.0), hash(0) == hash(-0.0), hash(2 ** 70) == hash(2.0 ** 70), hash(1) == hash(1.5))

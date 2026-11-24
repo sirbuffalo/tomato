@@ -1,6 +1,0 @@
-class A:
-    d: dict[int, str] = {}
-
-@main
-def main():
-    print(1)

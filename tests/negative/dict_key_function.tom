@@ -1,0 +1,7 @@
+def twice(x: int) -> int:
+    return x * 2
+
+@main
+def main():
+    d: dict[fn(int) -> int, str] = {}
+    print(len(d))

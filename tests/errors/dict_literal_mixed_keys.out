@@ -1,0 +1,5 @@
+error[E324]: a dict key has type str, but int is expected
+ --> tests/errors/dict_literal_mixed_keys.tom:3:5
+  |
+3 |     d = {1: 'a', 'b': 'c'}
+  |     ^^^^^^^^^^^^^^^^^^^^^^

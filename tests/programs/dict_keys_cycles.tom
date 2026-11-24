@@ -1,0 +1,105 @@
+# A table whose keys are objects can be part of a reference cycle: the objects point at the table that holds them. The table
+# may be the last thing let go of, and everything must still be freed (the program's leak check and AddressSanitizer see it).
+# Also: a dict is printed from its entries, not by looking each key up again, so it prints even when a key was changed.
+
+class Node:
+    name: str
+    peers: set[Node] = {}
+    scores: dict[Node, int] = {}
+
+    @init
+    def make(self, name: str):
+        self.name = name
+
+    @hash
+    def h(self) -> int:
+        return hash(self.name)
+
+    @str
+    def text(self) -> str:
+        return 'Node ' + self.name
+
+def ring_set_last():
+    a = Node('a')
+    b = Node('b')
+    group: set[Node] = {a, b}
+    a.peers = group
+    b.peers = group
+
+def ring_set_first():
+    group: set[Node] = {}
+    a = Node('a')
+    b = Node('b')
+    group.add(a)
+    group.add(b)
+    a.peers = group
+    b.peers = group
+
+def ring_dict():
+    table: dict[Node, int] = {}
+    a = Node('x')
+    table[a] = 1
+    a.scores = table
+
+def ring_tuple():
+    owner = Node('t')
+    pairs: dict[tuple[Node, int], str] = {}
+    pairs[(owner, 1)] = 'one'
+    owner.peers = {owner}
+
+# the cycle collector runs while the table is still held by a local (the two objects were let go of and are possible roots, but
+# they look referenced from outside and are left alone), and the table is the last thing let go of: nothing else is waiting to be looked at, so only the table can start the
+# collection that finds the cycle
+def ring_after_collection():
+    group: set[Node] = {}
+    a = Node('late a')
+    b = Node('late b')
+    group.add(a)
+    group.add(b)
+    a.peers = group
+    b.peers = group
+    a = Node('other a')
+    b = Node('other b')
+    for i in range(30000):
+        t = Node('t')
+        t.peers = {t}
+
+def count(n: int) -> int:
+    total = 0
+    for i in range(n):
+        ring_set_last()
+        ring_set_first()
+        ring_dict()
+        ring_tuple()
+        total += 4
+    return total
+
+class Counter:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @hash
+    def h(self) -> int:
+        return self.n
+
+    @str
+    def text(self) -> str:
+        return 'C' + str(self.n)
+
+@main
+def main():
+    print(count(200))
+    ring_after_collection()
+    ring_after_collection()
+    print('collected')
+    # printing does not depend on finding the keys again
+    c = Counter(1)
+    d: dict[Counter, str] = {c: 'one', Counter(2): 'two'}
+    c.n = 99
+    print(d, len(d), c in d)
+    print(str(d), f'{d}')
+    for k, v in d.items():
+        print(k, v)

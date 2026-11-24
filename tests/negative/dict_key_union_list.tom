@@ -1,0 +1,4 @@
+@main
+def main():
+    d: dict[int | list[int], int] = {}
+    print(len(d))
