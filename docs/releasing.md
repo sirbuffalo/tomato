@@ -102,3 +102,7 @@ Status: done. The Developer ID Application certificate, the Installer certificat
 ## The disk image
 
 `release/dmg.sh PKG OUT.dmg` runs after `sign-pkg.sh`, on the same Mac. It copies the finished package (signed, notarized and stapled) into a compressed HFS+ image named `Tomato VERSION`, which holds only `tomato-VERSION.pkg`. Then it signs the image with `codesign --timestamp` and the **Application** identity (a disk image is code-signed, not product-signed), notarizes it with `tomato-notary`, staples it, and checks it with `hdiutil verify`, `codesign --verify --strict`, `stapler validate` and `spctl --assess --type open --context context:primary-signature`. Finally it mounts the image read-only and checks that the package inside is byte-identical to PKG, still signed and still stapled. With `TOMATO_LATEST_JSON` it adds `dmg_url` and `dmg_sha256` to that file. `tomato update` ignores both fields, and the download page shows the link. `TOMATO_SKIP_NOTARIZE` and `TOMATO_NO_SIGN` are for dry runs only, as with `sign-pkg.sh`.
+
+## How the website is deployed
+
+Pushing to `main` runs `.github/workflows/pages.yml`: `site-check` (`site/check.sh`: VERSION, `site/config.js`, `site/latest.json` and its download URLs agree; the pages and wasm files exist) and, in parallel, the full `tests/run.sh` on macOS. `deploy` needs only `site-check`, so a failing full suite does not keep a release off the website (it still shows red). Nothing is published by hand: the release script's last step pushes main, and the site follows within minutes.

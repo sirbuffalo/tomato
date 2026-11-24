@@ -19,9 +19,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: tests/run.sh (needs only clang)
         run: tests/run.sh
+  site-check:
+    # the quick, compiler-free checks of the website itself; the deploy depends on this, not on the full suite above
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh site/check.sh
   deploy:
     if: github.event_name != 'pull_request'
-    needs: test
+    needs: site-check
     runs-on: ubuntu-latest
     environment:
       name: github-pages

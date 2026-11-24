@@ -18,3 +18,5 @@
   After Davis answers the decisions in `docs/locks-design.md` section 9, build Lock/Semaphore/Event on the Queue's waiter primitive.
 - Fix today's int to float bugs (stage 0 of docs/bigfloat-design.md)
   `float(huge)` silently gives `inf`, big ints round wrong, `10**400 / 10**399` raises although D05ad says 10.0, `sqrt` of a huge int gives `inf`.
+- Fix the macOS failure in the `Test and publish the website` workflow
+  Open the latest failed run on GitHub and fix the macOS test failure (needs repo admin to read logs). Every run since #59 fails near the end of the log; the website now deploys through `site/check.sh`, so this no longer blocks it.
