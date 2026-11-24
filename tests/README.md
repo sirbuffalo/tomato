@@ -10,6 +10,13 @@ tests/run.sh -j N            N tests at a time (TOMATO_TEST_JOBS=N)
 tests/run.sh --times         after the summary: the 20 slowest tests and the time per section
 ```
 
+## Browser entropy check
+
+Serve the repository over HTTP on localhost (a secure context for Web Crypto) and open
+`site/wasm/entropy-test.html` in a browser. It compiles and runs a Tomato program twice, compares its token and UUID
+with the actual bytes supplied by `crypto.getRandomValues`, and reports PASS or FAIL. This supplements the JavaScript-shell
+WebAssembly checks; it is not run by `tests/run.sh`.
+
 ## The two tiers
 
 **Full** (no flag) runs every test. **`--fast`** (or `TOMATO_TEST_FAST=1`) runs the same kinds of check on fewer programs of the kinds

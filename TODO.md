@@ -12,8 +12,6 @@
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
 - Re-run the Linux benchmarks on a quieter biggie
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
-- Verify browser entropy for the playground
-  The wasm `random_get` path (`site/wasm/wasi.js` -> `crypto.getRandomValues`) was only exercised under node, so `secrets` and `uuid4` in a real browser are unverified.
 - Mark error branches as unlikely in the emitted LLVM IR (`!prof` weights on `fail_if`)
   An experiment gave matmul -2.4% and strings -0.7% but sieve +2.2% and objects +0.7% instructions executed; it needs tuning, and site/wasm/llvm.js must accept the metadata.
 - Update the homepage benchmark text

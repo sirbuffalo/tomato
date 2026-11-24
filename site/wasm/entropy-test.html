@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Browser entropy test</title>
+<pre id="result">Running browser entropy test…</pre>
+<script src="wasi.js"></script><script src="llvm.js"></script><script src="tomato.js"></script>
+<script>
+// Run through the same compiler, interpreter, WASI host and browser crypto as the playground.
+(async function () {
+  const output = document.getElementById("result");
+  const original = crypto.getRandomValues;
+  const calls = [];
+  crypto.getRandomValues = function (array) {
+    const result = original.call(crypto, array);
+    calls.push(Array.from(array));
+    return result;
+  };
+  function hex(bytes) { return bytes.map(x => x.toString(16).padStart(2, "0")).join(""); }
+  function uuid(bytes) {
+    bytes = bytes.slice();
+    bytes[6] = (bytes[6] & 15) | 64;
+    bytes[8] = (bytes[8] & 63) | 128;
+    const s = hex(bytes);
+    return s.slice(0, 8) + "-" + s.slice(8, 12) + "-" + s.slice(12, 16) + "-" + s.slice(16, 20) + "-" + s.slice(20);
+  }
+  try {
+    const tomato = new TomatoWasm("");
+    const compiled = await tomato.compile("from secrets import token_hex\nfrom uuid import uuid4\n\n@main\ndef main():\n    print(token_hex(16))\n    print(uuid4())\n");
+    if (!compiled.ok) throw new Error(compiled.error);
+    calls.length = 0;
+    const runs = [];
+    for (let i = 0; i < 2; i++) {
+      const start = calls.length;
+      const result = await tomato.run(compiled.ir);
+      if (result.code !== 0 || result.stderr) throw new Error("program failed: " + result.stderr);
+      const entropy = calls.slice(start).flat();
+      const lines = result.stdout.trim().split("\n");
+      if (entropy.length !== 32 || lines.length !== 2 || lines[0] !== hex(entropy.slice(0, 16)) || lines[1] !== uuid(entropy.slice(16)))
+        throw new Error("output does not match the bytes supplied by browser crypto");
+      runs.push(lines);
+    }
+    if (runs[0][0] === runs[1][0] || runs[0][1] === runs[1][1]) throw new Error("independent outputs repeated");
+    output.textContent = "PASS: secrets and uuid4 use browser crypto bytes; UUID version and variant are correct; independent runs differ.";
+    output.dataset.status = "pass";
+  } catch (e) {
+    output.textContent = "FAIL: " + (e.stack || e);
+    output.dataset.status = "fail";
+  } finally {
+    crypto.getRandomValues = original;
+  }
+})();
+</script>
