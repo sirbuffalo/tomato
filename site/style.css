@@ -6,7 +6,7 @@ header { border-bottom:1px solid var(--line); }
 nav { max-width:960px; margin:0 auto; padding:12px 16px; display:flex; flex-wrap:wrap; gap:4px 18px; align-items:center; }
 nav .brand { margin-right:auto; line-height:0; }
 nav .brand img { height:40px; width:auto; margin:-6px 0 -6px -8px; } /* the SVG has a built-in margin of about 21% of its height, so pull it back to align with the page text */
-h1 .mark { height:1em; width:1em; vertical-align:-.1em; margin-right:.25em; }
+h1 .mark { height:.9em; width:.9em; vertical-align:baseline; margin-right:.3em; } /* the glyph fills its box, so .8em spans the baseline to the ascender line of the heading text */
 nav a { color:var(--fg); text-decoration:none; }
 nav a:hover, nav a[aria-current] { color:var(--accent); }
 main { max-width:960px; margin:0 auto; padding:24px 16px 64px; }
@@ -16,21 +16,26 @@ code, pre { font:14px/1.5 ui-monospace, Menlo, monospace; }
 code { background:var(--code); padding:.1em .3em; border-radius:4px; overflow-wrap:anywhere; }
 pre { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
 pre code { background:none; padding:0; }
-.lead { color:var(--muted); font-size:1.15rem; }
+.lead { color:var(--muted); font-size:1.05rem; max-width:76ch; } .lead .status { font-size:inherit; }
 .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; margin:16px 0; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
 .card h3 { margin:0 0 4px; }
 .btn, button { font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; text-decoration:none; display:inline-block; }
 .btn.primary, button.primary { background:var(--brand); color:var(--accent-fg); border-color:var(--brand); font-weight:600; }
 button:disabled { opacity:.5; }
+[role=tablist] { display:flex; gap:4px; margin:20px 0 14px; border-bottom:1px solid var(--line); }
+[role=tab] { background:none; border:0; border-bottom:3px solid transparent; border-radius:8px 8px 0 0; margin-bottom:-1px; padding:8px 16px; color:var(--muted); font-weight:600; }
+[role=tab]:hover { color:var(--fg); }
+[role=tab][aria-selected=true] { color:var(--accent); border-bottom-color:var(--brand); }
 textarea, input, select { font:inherit; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
-textarea { width:100%; min-height:300px; font:14px/1.5 ui-monospace, Menlo, monospace; tab-size:4; resize:vertical; }
+textarea { width:100%; font:14px/1.5 ui-monospace, Menlo, monospace; tab-size:4; }
 .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:8px 0; }
+.toolbar { margin:0 0 12px; } .toolbar input { flex:1 1 12ch; min-width:0; max-width:22ch; } .toolbar .hint-keys { margin-left:auto; }
 .status { color:var(--muted); font-size:.9rem; } .err { color:var(--err); }
 table { border-collapse:collapse; width:100%; } td, th { border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; }
 .doc h2 { font-size:1.25rem; } .doc ul { padding-left:1.4em; } .doc li { margin:.25em 0; }
 #toc { columns:2 260px; font-size:.95rem; }
-#repl-log { height:340px; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px; font:14px/1.5 ui-monospace, Menlo, monospace; white-space:pre-wrap; }
+#repl-log { height:clamp(240px, calc(100vh - 420px), 560px); overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px; font:14px/1.5 ui-monospace, Menlo, monospace; white-space:pre-wrap; }
 #repl-log .in { color:var(--accent); } #repl-log .out { color:var(--fg); } #repl-log .e { color:var(--err); }
 .repl-line { display:flex; gap:8px; margin-top:8px; } .repl-line input { flex:1; font:14px ui-monospace, Menlo, monospace; }
 
@@ -42,10 +47,12 @@ table { border-collapse:collapse; width:100%; } td, th { border:1px solid var(--
   .tk-t { color:#7ec1ee; } .tk-f { color:#c9a0ea; } .tk-b { color:#c9a0ea; } .tk-l { color:#f0b46a; } .tk-o { color:#a39890; } .tk-d { color:#f0b46a; }
 }
 
-.editor { position:relative; }
+.editor { position:relative; height:100%; min-height:240px; }
+.editor:focus-within pre.hl { border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent); }
+.editor textarea:focus-visible { outline:none; }
 .editor pre.hl, .editor textarea { font:14px/1.5 ui-monospace, Menlo, monospace; tab-size:4; padding:12px; margin:0; border-radius:8px; white-space:pre-wrap; overflow-wrap:anywhere; letter-spacing:0; }
 .editor pre.hl { position:absolute; inset:0; overflow:hidden; pointer-events:none; background:var(--card); border:1px solid var(--line); color:var(--fg); }
-.editor textarea { position:relative; background:transparent; color:transparent; caret-color:var(--fg); border:1px solid transparent; z-index:1; min-height:300px; display:block; }
+.editor textarea { position:relative; background:transparent; color:transparent; caret-color:var(--fg); border:1px solid transparent; z-index:1; height:100%; resize:none; display:block; }
 .editor textarea::selection { background:rgba(200,50,30,.25); color:transparent; }
 #repl-log .in code, #repl-log .in span { font:inherit; }
 .tk-p { color:#8a7f77; } #repl-log .in { color:var(--fg); }
@@ -53,6 +60,7 @@ table { border-collapse:collapse; width:100%; } td, th { border:1px solid var(--
 .skip { position:absolute; left:8px; top:-48px; background:var(--brand); color:var(--accent-fg); padding:8px 12px; border-radius:8px; z-index:10; }
 .skip:focus { top:8px; }
 :focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+input:focus-visible, select:focus-visible { outline-offset:0; }
 .table-wrap { overflow-x:auto; margin:12px 0; } .table-wrap table { min-width:480px; font-size:.92rem; }
 th { background:var(--code); }
 blockquote { margin:12px 0; padding:4px 14px; border-left:3px solid var(--brand); color:var(--muted); }
@@ -85,3 +93,32 @@ input.stdin-line { font: inherit; color: inherit; background: transparent; borde
 .e-arrow, .e-gutter { color:var(--info); font-weight:700; } .e-loc { color:var(--loc); }
 .e-caret { font-weight:700; } .e-caret.e-error { color:var(--err); } .e-caret.e-warning { color:var(--warn); }
 .e-helplabel { color:var(--hint); font-weight:700; } .e-help { color:var(--hint); } .e-trace { opacity:.7; }
+
+/* Run page: editor and output side by side on wide screens, stacked on narrow ones */
+.split { display:grid; grid-template-columns:minmax(0, 11fr) minmax(0, 9fr); gap:16px; height:clamp(340px, calc(100vh - 440px), 720px); }
+.result { display:flex; flex-direction:column; min-height:0; }
+.result-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:0 0 6px; }
+.result-head h2 { margin:0; padding:0; border:0; font-size:1rem; }
+.result pre { margin:0; }
+#out { flex:1; min-height:0; overflow:auto; }
+#out:empty::before { content:"Output appears here after you run the program."; color:var(--muted); font-family:system-ui, sans-serif; }
+#out[data-state=running]:empty::before { content:"Running…"; } #out[data-state=done]:empty::before { content:"(no output)"; } #out[data-state=failed]:empty::before { content:"No output: the program did not run."; }
+#err { margin-top:10px; max-height:50%; overflow:auto; flex:none; }
+#err:empty { display:none; }
+#err:not(:empty)::before { content:"Errors and messages"; display:block; margin-bottom:6px; color:var(--muted); font:600 .8rem system-ui, sans-serif; letter-spacing:.03em; }
+@media (max-width:860px) {
+  .split { grid-template-columns:minmax(0, 1fr); grid-template-rows:auto auto; height:auto; }
+  .editor { height:clamp(220px, 40vh, 380px); }
+  #out { min-height:140px; max-height:50vh; flex:none; }
+}
+
+/* header on a phone: wordmark on its own line, links wrap beneath */
+header nav .links { display:flex; flex-wrap:wrap; gap:2px 18px; }
+@media (max-width:600px) {
+  header nav { gap:2px 0; }
+  header nav .brand { flex:0 0 100%; }
+  header nav .links { gap:2px 14px; font-size:.95rem; }
+  main { padding-top:16px; }
+  .toolbar input { flex-basis:100%; max-width:none; }
+  h1 { font-size:1.7rem; }
+}

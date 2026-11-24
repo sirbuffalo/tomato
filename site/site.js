@@ -2,11 +2,11 @@
 (function () {
   var pages = [["index.html", "Home"], ["guide.html", "Guide"], ["docs.html", "Reference"], ["play.html", "Run & Repl"], ["benchmarks.html", "Benchmarks"], ["download.html", "Download"]];
   var here = location.pathname.split("/").pop() || "index.html";
-  var h = '<a class="skip" href="#main">Skip to content</a><nav aria-label="Site"><a class="brand" href="index.html"><img src="assets/tomato-wordmark.svg" alt="Tomato" width="177" height="40"></a>';
+  var h = '<a class="skip" href="#main">Skip to content</a><nav aria-label="Site"><a class="brand" href="index.html"><img src="assets/tomato-wordmark.svg" alt="Tomato" width="177" height="40"></a><div class="links">';
   pages.forEach(function (p) { h += '<a href="' + p[0] + '"' + (p[0] === here ? ' aria-current="page"' : "") + ">" + p[1] + "</a>"; });
   var main = document.querySelector("main"); if (main && !main.id) main.id = "main";
   var el = document.getElementById("site-header");
-  if (el) el.innerHTML = h + "</nav>";
+  if (el) el.innerHTML = h + "</div></nav>";
   ["version", "version2"].forEach(function (id) { var v = document.getElementById(id); if (v) v.textContent = window.TOMATO_VERSION; });
 })();
 

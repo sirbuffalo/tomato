@@ -3,15 +3,17 @@
 <body><header id="site-header"></header><main>
 <h1><img class="mark" src="assets/tomato-icon.svg" alt="" width="32" height="32">Run &amp; Repl</h1>
 <p class="lead">Your program is compiled by the Tomato compiler (written in Tomato, running as WebAssembly) and run in this page, with a 5 second limit. <span id="where" class="status"></span></p>
-<div class="bar" role="tablist" aria-label="Mode"><button id="tab-run" class="primary" role="tab" aria-selected="true" aria-controls="run-pane">Run a program</button><button id="tab-repl" role="tab" aria-selected="false" aria-controls="repl-pane">Repl</button></div>
+<div role="tablist" aria-label="Mode"><button id="tab-run" role="tab" aria-selected="true" aria-controls="run-pane">Run a program</button><button id="tab-repl" role="tab" aria-selected="false" aria-controls="repl-pane">Repl</button></div>
 
 <section id="run-pane">
-  <div class="bar"><select id="examples" aria-label="Example"></select><button id="run" class="primary">Compile and run</button><input id="inputs" aria-label="Inputs for main(), separated by spaces" placeholder="inputs for main, e.g. 12" size="22"><span id="status" class="status" role="status"></span><span class="status hint-keys">Ctrl+Enter runs</span></div>
+  <div class="bar toolbar"><select id="examples" aria-label="Example"></select><button id="run" class="primary">Compile and run</button><input id="inputs" aria-label="Inputs for main(), separated by spaces" placeholder="inputs for main, e.g. 12"><span class="status hint-keys">Ctrl+Enter runs</span></div>
+  <div class="split">
   <div class="editor"><pre class="hl" id="hl" aria-hidden="true"></pre><textarea id="src" spellcheck="false" aria-label="Program">@main
 def main():
     print("hello", 6 * 7)
 </textarea></div>
-  <h3>Output</h3><pre id="out" aria-live="polite"></pre><pre id="err" class="err" role="alert"></pre>
+  <div class="result"><div class="result-head"><h2>Output</h2><span id="status" class="status" role="status"></span></div><pre id="out" aria-label="Program output" aria-live="polite"></pre><pre id="err" class="err" aria-label="Errors and messages" role="alert"></pre></div>
+  </div>
 </section>
 
 <section id="repl-pane" hidden>
@@ -52,7 +54,6 @@ paint();
 function showTab(repl) {
   $("run-pane").hidden = repl; $("repl-pane").hidden = !repl;
   $("tab-run").setAttribute("aria-selected", String(!repl)); $("tab-repl").setAttribute("aria-selected", String(repl));
-  $("tab-run").className = repl ? "" : "primary"; $("tab-repl").className = repl ? "primary" : "";
   if (repl) $("repl-in").focus();
 }
 $("tab-run").onclick = function () { showTab(false); };
@@ -74,9 +75,9 @@ fetch("examples.json").then(function (r) { return r.json(); }).then(function (ex
 var answers = [];
 function stdinText(list) { return list.length ? list.join("\n") + "\n" : ""; }
 function execute() {
-  $("run").disabled = true; $("status").textContent = "Running…"; $("err").textContent = "";
+  $("run").disabled = true; $("status").textContent = "Running…"; $("err").textContent = ""; $("out").dataset.state = "running";
   runProgram($("src").value, false, $("inputs").value.split(/\s+/).filter(Boolean), stdinText(answers)).then(function (d) {
-    if (!d.ok) { $("out").textContent = ""; $("err").innerHTML = tomatoErrors(hint(d.error || "failed")); $("status").textContent = "Failed"; return; }
+    if (!d.ok) { $("out").textContent = ""; $("out").dataset.state = "failed"; $("err").innerHTML = tomatoErrors(hint(d.error || "failed")); $("status").textContent = "Failed"; return; }
     $("out").textContent = d.stdout; var e = d.stderr || "";
     if (d.exit === 75 && !d.timed_out) {
       var f = document.createElement("input"); f.className = "stdin-line"; f.setAttribute("aria-label", "Input for the program"); f.autocomplete = "off"; f.spellcheck = false;
@@ -88,7 +89,7 @@ function execute() {
     if (d.stopped === "output") e += "\nStopped: too much output.";
     $("err").innerHTML = tomatoErrors(((d.warnings ? d.warnings + "\n" : "") + e).trim()); $("status").textContent = "Done in " + d.ms + " ms";
   }).catch(function (e) { $("err").textContent = "Could not run the program: " + e; $("status").textContent = ""; })
-    .then(function () { $("run").disabled = false; });
+    .then(function () { $("run").disabled = false; if ($("out").dataset.state === "running") $("out").dataset.state = "done"; });
 }
 $("run").onclick = function () { answers = []; $("out").textContent = ""; execute(); };
 
