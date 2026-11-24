@@ -1,0 +1,17 @@
+# A function's tuple[int, int] result compared with a tuple literal (the literal takes the other side's tuple type)
+def divmod2(a: int, b: int) -> tuple[int, int]:
+    return (a // b, a % b)
+
+def pair(a: int) -> tuple[str, int]:
+    return ('x', a)
+
+@main
+def main():
+    print(divmod2(7, 2) == (3, 1))
+    print(divmod2(7, 2) != (3, 1))
+    print((3, 1) == divmod2(7, 2))
+    print((3, 2) != divmod2(7, 2))
+    print(divmod2(7, 2) == (3, 2))
+    print(pair(4) == ('x', 4))
+    p = divmod2(9, 4)
+    print(p == (2, 1), (2, 1) == p, p != (2, 1))

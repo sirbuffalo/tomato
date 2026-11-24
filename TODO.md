@@ -20,10 +20,6 @@
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
 - Verify browser entropy for the playground
   The wasm `random_get` path (`site/wasm/wasi.js` -> `crypto.getRandomValues`) was only exercised under node, so `secrets` and `uuid4` in a real browser are unverified.
-- Add timedelta total_seconds, negation, multiplication and datetime replace/combine/timestamp
-  These are not in the approved Wave 1 datetime sheet, so `std/datetime.tom` lacks them.
-- Allow comparing a function's `tuple[int, int]` result with a tuple literal
-  Today `divmod(a, b) == (q, r)` does not compile because mixed and same-type tuple literals are different types.
 - Mark error branches as unlikely in the emitted LLVM IR (`!prof` weights on `fail_if`)
   An experiment gave matmul -2.4% and strings -0.7% but sieve +2.2% and objects +0.7% instructions executed; it needs tuning, and site/wasm/llvm.js must accept the metadata.
 - Add the other languages' versions of the 15 new benchmarks

@@ -13,6 +13,9 @@
 #   datetime(year, month, day, hour, minute, second, microsecond, offset_minutes)
 #   The parts are read-only fields: d.year, d.month, d.day; t.hour, t.minute, t.second, t.microsecond; the same for a
 #   datetime, plus dt.offset_minutes (0 for a naive value) and dt.is_aware; td.days, td.seconds, td.microseconds.
+#   td.total_seconds() (a float), `td * n` (n an int, on the right), td.negated() (Python's `-td`)
+#   dt.replace(year=..., ..., offset_minutes=...) (any parts by name), dt.timestamp() (a float; a naive value is read as
+#   UTC), datetime_combine(date, time) (and an optional offset_minutes)
 #   d.weekday() (Monday is 0), x.isoformat(), x.strftime(fmt) on a date, time or datetime
 #   date_fromisoformat(text), time_fromisoformat(text), datetime_fromisoformat(text), datetime_strptime(text, fmt)
 #   date_today() and datetime_now(): the clock, in UTC (`datetime_now()` is aware, with offset 0)
@@ -119,6 +122,20 @@ export class timedelta:
     def plus(self, other: timedelta) -> timedelta:
         return timedelta(0, 0, _delta_micros(self) + _delta_micros(other))
 
+    # `td * 3`: the length of time times a whole number (Python's `td * 3`); the int has to be on the right, and a float
+    # is not taken (Python rounds that to the nearest microsecond)
+    @mul
+    def times(self, factor: int) -> timedelta:
+        return timedelta(0, 0, _delta_micros(self) * factor)
+
+    # `-td` in Python: every part of the length of time with the opposite sign (a class has no unary minus here)
+    def negated(self) -> timedelta:
+        return timedelta(0, 0, -_delta_micros(self))
+
+    # the whole length of time in seconds, with the microseconds as the fraction: timedelta(1, 0, 500000) is 86400.5
+    def total_seconds(self) -> float:
+        return _seconds(_delta_micros(self))
+
     @sub
     def minus(self, other: timedelta) -> timedelta:
         return timedelta(0, 0, _delta_micros(self) - _delta_micros(other))
@@ -155,6 +172,17 @@ export class timedelta:
         if self.microseconds != 0:
             out += '.' + _pad(self.microseconds, 6)
         return out
+
+# microseconds as float seconds, rounded once to the nearest float as Python does. Up to 2**53 microseconds the int is an
+# exact float and one division rounds correctly. Beyond that the whole seconds (at least 2**33) and the fraction are each
+# exact enough that a float's spacing (over 1e-6) swallows the fraction's own rounding error, so their sum is correct too
+# (a plain int / int would round the microseconds first)
+def _seconds(micros: int) -> float:
+    if micros < 0:
+        return -_seconds(-micros)
+    if micros < 9007199254740992:
+        return float(micros) / 1000000.0
+    return float(micros // 1000000) + float(micros % 1000000) / 1000000.0
 
 def _delta_micros(delta: timedelta) -> int:
     return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
@@ -336,6 +364,42 @@ export class datetime:
     # the datetime `delta` earlier (the same as adding a negative timedelta)
     def minus(self, delta: timedelta) -> datetime:
         return self + timedelta(0, 0, -_delta_micros(delta))
+
+    # a copy with the parts you give (by name, such as dt.replace(hour=0)) changed and the rest kept; the result is checked
+    # like a new datetime. offset_minutes makes a naive value aware (or moves the offset of an aware one without changing
+    # its clock), as replace(tzinfo=...) does in Python; there is no way to make an aware value naive again
+    def replace(self, year: int | bool = False, month: int | bool = False, day: int | bool = False, hour: int | bool = False, minute: int | bool = False, second: int | bool = False, microsecond: int | bool = False, offset_minutes: int | bool = False) -> datetime:
+        y = self.year
+        mo = self.month
+        d = self.day
+        h = self.hour
+        mi = self.minute
+        s = self.second
+        us = self.microsecond
+        if year in int:
+            y = year
+        if month in int:
+            mo = month
+        if day in int:
+            d = day
+        if hour in int:
+            h = hour
+        if minute in int:
+            mi = minute
+        if second in int:
+            s = second
+        if microsecond in int:
+            us = microsecond
+        if offset_minutes in int:
+            return datetime(y, mo, d, h, mi, s, us, offset_minutes)
+        if self.is_aware:
+            return datetime(y, mo, d, h, mi, s, us, self.offset_minutes)
+        return datetime(y, mo, d, h, mi, s, us)
+
+    # the seconds since 1970-01-01 00:00:00 UTC, as a float (an aware value by its instant; a naive one is read as UTC, as
+    # there is no local time zone here, where Python reads it in the local zone)
+    def timestamp(self) -> float:
+        return _seconds(_dt_instant(self))
 
     @add
     def plus(self, delta: timedelta) -> datetime:
@@ -820,6 +884,12 @@ export def datetime_strptime(text: str, format: str) -> datetime:
 export def date_today() -> date:
     parts = gmtime(time_ns() // 1000000000)
     return date(parts.year, parts.month, parts.day)
+
+# the date and the time of day as one datetime (Python's datetime.combine); the result is naive unless offset_minutes is given
+export def datetime_combine(d: date, t: time, offset_minutes: int | bool = False) -> datetime:
+    if offset_minutes in int:
+        return datetime(d.year, d.month, d.day, t.hour, t.minute, t.second, t.microsecond, offset_minutes)
+    return datetime(d.year, d.month, d.day, t.hour, t.minute, t.second, t.microsecond)
 
 # the UTC moment now, aware with offset 0
 export def datetime_now() -> datetime:

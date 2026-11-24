@@ -5065,6 +5065,15 @@ class Gen:
             a = self.expr(left)
             hint = a.ty if is_fixed(a.ty) else ''
             b = self.expr(right, hint)
+        elif (op == '==' or op == '!=') and right.kind == 'TupleLit' and left.kind != 'TupleLit':
+            # f() == (1, 2): a tuple literal takes the mixed tuple type tuple[int, int] of the other side
+            a = self.operand(left, False)
+            self.hold(a)
+            b = self.expr(right, a.ty if is_mtuple(a.ty) else '')
+        elif (op == '==' or op == '!=') and left.kind == 'TupleLit' and right.kind != 'TupleLit' and is_mtuple(self.peek_type(right)):
+            a = self.expr(left, self.peek_type(right))
+            self.hold(a)
+            b = self.operand(right, True)
         else:
             can_defer = op == '+' or op == '-' or op == '*'
             self.defer_float = can_defer and self.float_chain(left) and self.float_pure(right) > 0
@@ -6010,10 +6019,13 @@ class Gen:
         name = f.fields[1].text
         args = val_nodes(n.fields[1])
         recv = val_node(f.fields[0])
+        kw = self.kw                          # the receiver may itself be a call, which would take these keyword arguments as its own
+        self.kw = []
         if recv.kind == 'Name' and recv.fields[0].text in self.slots and self.borrowable_receiver(self.types[recv.fields[0].text], name):
             obj = self.unwrap(self.expr_b(recv, args), n.line)
         else:
             obj = self.unwrap(self.expr(recv), n.line)
+        self.kw = kw
         return self.method_on(obj, n, name, args)
 
     def method_on(self, obj: Ex, n: Node, name: str, args: list[Node]) -> Ex:

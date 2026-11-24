@@ -1,0 +1,22 @@
+# keyword arguments on a method called on the result of another call (they used to be dropped, or given to the inner call)
+class P:
+    a: int = 0
+    b: int = 0
+    def set(self, a: int = -1, b: int = -1) -> P:
+        r = P()
+        r.a = self.a if a == -1 else a
+        r.b = self.b if b == -1 else b
+        return r
+    def show(self) -> str:
+        return f'{self.a} {self.b}'
+
+def mk() -> P:
+    return P()
+
+@main
+def main():
+    p = P()
+    print(p.set(a=1).set(b=2).show())
+    print(p.set(a=1).set(2, 3).show())
+    print(mk().set(b=2).show())
+    print(p.set(b=1).set(a=2).show())
