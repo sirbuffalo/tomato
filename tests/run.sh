@@ -293,6 +293,7 @@ wasm_rt() { spawn t_wasm_rt "$@"; }
 t_wasm_browser() { r="$(tjsc site/wasm run tests/programs/requests_browser.tom 2>&1 | grep "no network")"; check "wasm requests raise ConnectionError" "no network: True" "$r"; }
 t_wasm_sockets() { r="$(jsc native/tomato-jsc.js -- site/wasm run tests/programs/socket_browser.tom 2>&1 | grep "no sockets")"; check "wasm sockets raise SocketError" "no sockets: True E446" "$r"; }
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
+t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
   for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide float_ranges int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module; do
@@ -336,6 +337,7 @@ if [ -n "$have_js" ]; then
   wasm_rt base64_bad_padding "misplaced padding" 1
   wasm_rt hex_bad_digit "a hex text holds only the digits" 1
   spawn t_wasm_site_errors
+  spawn t_wasm_site_editor
 else spawn t_wasm_missing; fi
 
 # ---- command line -------------------------------------------------------------------------------------------------------

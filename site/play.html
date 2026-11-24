@@ -21,7 +21,7 @@ def main():
   <div id="repl-log" aria-live="polite"></div>
   <form class="repl-line" id="repl-form"><input id="repl-in" autocomplete="off" spellcheck="false" aria-label="Tomato input" placeholder="x = 3"><button class="primary">Enter</button></form>
 </section>
-</main><script src="config.js"></script><script src="site.js"></script>
+</main><script src="config.js"></script><script src="site.js"></script><script src="editor.js"></script>
 <script>
 function $(id) { return document.getElementById(id); }
 $("where").textContent = "Nothing is sent to a server. A program needs a function marked @main (the repl accepts bare statements).";
@@ -49,6 +49,7 @@ function runProgram(source, repl, inputs, stdin) {
 // syntax highlighting: a coloured copy of the text sits behind the transparent textarea
 function paint() { $("hl").innerHTML = tomatoHighlight($("src").value) + "\n"; $("hl").scrollTop = $("src").scrollTop; }
 $("src").addEventListener("input", paint);
+tomatoAttachEditor($("src"), paint);
 $("src").addEventListener("scroll", function () { $("hl").scrollTop = $("src").scrollTop; });
 paint();
 function showTab(repl) {
@@ -123,7 +124,7 @@ function log(cls, text, more) { var d = document.createElement("div"); d.classNa
 function plain(msg) { return msg.replace(/^ {2}(at |\.\.\. and ).*\n?/gm, "").replace(/ on line \d+/g, "").replace(/\bline \d+: /g, ""); }
 function program(extra) { return defs.concat(stmts, extra || []).join("\n") + "\n"; }
 function isDef(t) { return /^(def|class|interface|from|import|@|export|async def)\b|^!/.test(t) || /^\w+ implements /.test(t); }
-function isBlock(t) { return /:\s*$/.test(t.split("\n")[0]); }
+function isBlock(t) { return tomatoOpensBlock(t.split("\n")[0]); }
 function submit(text, echoed) {
   if (!echoed) log("in", text);
   if (text === ":reset") { defs = []; stmts = []; shown = ""; replAnswers = []; log("out", "session cleared"); return Promise.resolve(); }
@@ -155,12 +156,16 @@ function submit(text, echoed) {
   return tryOne(0).catch(function (e) { log("e", "Could not run: " + e.message); });
 }
 var buffer = [];
+// inside a block the line starts with the previous line's indent (four more after a colon), as in the installed repl; Tab and Backspace move by one level
+function nextPrompt(prev) { var i = tomatoNextIndent(prev); $("repl-in").value = i; $("repl-in").setSelectionRange(i.length, i.length); }
+tomatoAttachEditor($("repl-in"), null, function (e) { return buffer.length > 0 && (e.key === "Tab" || e.key === "Backspace"); });
 $("repl-form").onsubmit = function (ev) {
   ev.preventDefault();
   var line = $("repl-in").value; $("repl-in").value = "";
-  if (buffer.length) { if (line.trim() === "") { var text = buffer.join("\n"); buffer = []; $("repl-in").placeholder = "x = 3"; submit(text, true); } else { buffer.push(line); log("in", line, true); } return; }
+  if (buffer.length && !line.trim()) line = "";
+  if (buffer.length) { if (line.trim() === "") { var text = buffer.join("\n"); buffer = []; $("repl-in").placeholder = "x = 3"; submit(text, true); } else { buffer.push(line); log("in", line, true); nextPrompt(line); } return; }
   if (!line.trim()) return;
-  if (isBlock(line) || line[0] === "@") { buffer = [line]; log("in", line); $("repl-in").placeholder = "… (empty line to finish)"; return; }
+  if (isBlock(line) || line[0] === "@") { buffer = [line]; log("in", line); $("repl-in").placeholder = "… (empty line to finish)"; nextPrompt(line); return; }
   submit(line);
 };
 log("out", "Tomato repl. Enter a statement, expression, or a def/class (finish blocks with an empty line).");

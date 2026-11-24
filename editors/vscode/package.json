@@ -11,6 +11,7 @@
   "contributes": {
     "languages": [{ "id": "tomato", "aliases": ["Tomato", "tomato"], "extensions": [".tom"], "configuration": "./language-configuration.json" }],
     "grammars": [{ "language": "tomato", "scopeName": "source.tomato", "path": "./syntaxes/tomato.tmLanguage.json" }],
+    "configurationDefaults": { "[tomato]": { "editor.tabSize": 4, "editor.insertSpaces": true, "editor.autoIndent": "full" } },
     "snippets": [{ "language": "tomato", "path": "./snippets/tomato.json" }]
   }
 }

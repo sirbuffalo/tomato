@@ -7,10 +7,11 @@
   ],
   "surroundingPairs": [["(", ")"], ["[", "]"], ["{", "}"], ["\"", "\""], ["'", "'"]],
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(?:(?:export|override)\\s+)?(async|def|class|interface|if|elif|else|while|for|try|catch|finally)\\b.*:\\s*(#.*)?$",
+    "increaseIndentPattern": "^\\s*(?:(?:export|override)\\s+)?(async|def|class|interface|if|elif|else|while|for|try|catch|finally|match|case|with|switch)\\b.*:\\s*(#.*)?$",
     "decreaseIndentPattern": "^\\s*(elif|else|catch|finally)\\b.*:\\s*(#.*)?$"
   },
   "onEnterRules": [
-    { "beforeText": "^\\s*(?:(?:export|override)\\s+)?(?:async|def|class|interface|if|elif|else|while|for|try|catch|finally)\\b.*:\\s*(#.*)?$", "action": { "indent": "indent" } }
+    { "beforeText": "^\\s*(?:(?:export|override)\\s+)?(?:async|def|class|interface|if|elif|else|while|for|try|catch|finally|match|case|with|switch)\\b.*:\\s*(#.*)?$", "action": { "indent": "indent" } },
+    { "beforeText": "^\\s*(?:return|break|continue|pass|raise)\\b.*[^(\\[{,\\\\\\s]\\s*$", "action": { "indent": "outdent" } }
   ]
 }
