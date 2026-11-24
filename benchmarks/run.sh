@@ -2,7 +2,7 @@
 # The benchmark runner: builds every benchmark in Tomato and in the other languages whose tools are installed (Go, Rust, C,
 # C++, Java, C#, Swift, JavaScript, TypeScript, PHP and Python), runs each several times, and writes the
 # median and fastest time, peak memory, build time and binary size as JSON and a Markdown table.
-#   benchmarks/run.sh [--runs N] [--python-runs N] [--seed N] [--smoke] [--only a,b,c] [--langs a,b,c] [--out DIR] [--site]
+#   benchmarks/run.sh [--runs N] [--python-runs N] [--seed N] [--smoke] [--only a,b,c] [--langs a,b,c] [--out DIR] [--site] [--tomatoc FILE]
 #     --runs N     runs per program (default 10; the median is reported); Python and PHP run --python-runs times (default 10)
 #     --seed N     the seed for the random order of the runs (default 1): every (benchmark, language, run) job is shuffled
 #                  and run in that order, so throttling and background load fall evenly on every row; the seed is recorded
@@ -13,6 +13,8 @@
 #                  every installed one; Tomato always runs)
 #     --out DIR    where results.json and results.md go (default benchmarks/results)
 #     --site       also copy results.json to site/benchmarks.json for the website's Benchmarks page
+#     --tomatoc F  use this compiler binary (built from compiler/bootstrap/tomatoc.ll) instead of building one: tests/run.sh,
+#                  which has just built it, runs one smoke run per benchmark at the same time, and passes it here
 # Tomato is built from this checkout (compiler/bootstrap/tomatoc.ll), so the numbers always describe the source tree.
 # Tomato is built twice: "tomato" in release mode (what Davis calls the real thing: no leak checks, short error codes) and
 # "tomato-debug" in debug mode (leak checks and full error text).
@@ -21,7 +23,7 @@
 # node (22.6 or newer for TypeScript, which it runs by stripping the types), php and python3.
 # The other languages' programs exist only to be compared with; the repository's own tooling does not use Python.
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(dirname "$here")"
-runs=10; python_runs=10; seed=1; smoke=0; only=""; wanted=""; out="$here/results"; site=0
+runs=10; python_runs=10; seed=1; smoke=0; only=""; wanted=""; out="$here/results"; site=0; tomatoc=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --runs) runs="$2"; shift 2 ;;
@@ -32,7 +34,8 @@ while [ $# -gt 0 ]; do
     --langs) wanted="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --site) site=1; shift ;;
-    *) echo "usage: run.sh [--runs N] [--python-runs N] [--seed N] [--smoke] [--only a,b] [--langs a,b] [--out DIR] [--site]" >&2; exit 2 ;;
+    --tomatoc) tomatoc="$2"; shift 2 ;;
+    *) echo "usage: run.sh [--runs N] [--python-runs N] [--seed N] [--smoke] [--only a,b] [--langs a,b] [--out DIR] [--site] [--tomatoc FILE]" >&2; exit 2 ;;
   esac
 done
 release_mode=release
@@ -42,7 +45,8 @@ say() { echo "$*" >&2; }
 
 # --- the Tomato compiler from this checkout, and the timing helper
 home="$work/tomato"; mkdir -p "$home/bin"
-clang -O1 -w -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm || exit 1
+if [ -n "$tomatoc" ]; then cp "$tomatoc" "$home/bin/tomatoc" || exit 1
+else clang -O1 -w -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm || exit 1; fi
 cp "$root/native/tomato" "$root/native/rtcache.sh" "$home/bin/"; cp -R "$root/runtime" "$root/std" "$root/VERSION" "$home/"
 clang -O2 -o "$work/measure" "$here/measure.c" || exit 1
 # a clang wrapper that records which optimization level each Tomato build really used

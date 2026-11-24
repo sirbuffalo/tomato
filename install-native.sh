@@ -10,7 +10,13 @@ sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else s
 command -v clang >/dev/null || { echo "clang is required (on a Mac: xcode-select --install)" >&2; exit 1; }
 mkdir -p "$home/bin" "$home/runtime" "$home/std" "$bindir"
 echo "building the Tomato compiler from compiler/bootstrap/tomatoc.ll ..."
-clang -O1 -Wno-override-module -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm $([ "$(uname)" = Linux ] && echo -ldl)
+# The compiler (13 MB of LLVM IR, most of the time) and the runtime are compiled at the same time and then linked: the same program as
+# one clang command, built in less time.
+objs="$(mktemp -d)"; trap 'rm -rf "$objs"' EXIT
+clang -O1 -Wno-override-module -c -o "$objs/tomatoc.o" "$root/compiler/bootstrap/tomatoc.ll" & ir_pid=$!
+clang -O1 -Wno-override-module -c -o "$objs/rt.o" "$root/runtime/tomato_rt.c"
+wait "$ir_pid"
+clang -O1 -Wno-override-module -o "$home/bin/tomatoc" "$objs/tomatoc.o" "$objs/rt.o" -lm $([ "$(uname)" = Linux ] && echo -ldl)
 cp "$root/runtime/tomato_rt.c" "$home/runtime/"
 rm -rf "$home/std"; mkdir -p "$home/std"; cp "$root/std/"*.tom "$root/std/errors.txt" "$home/std/"; cp -R "$root/std/builtin" "$home/std/"
 rm -rf "$home/examples"; cp -R "$root/examples" "$home/examples"
