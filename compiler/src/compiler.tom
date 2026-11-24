@@ -9175,35 +9175,37 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
                 raise CompileError('an entry point (a function marked with @main or similar) cannot return a value', item.line)
     if entry == '':
         raise CompileError(f'no function is marked @{entry_name}\nwrite @{entry_name} on the line above the function that should start the program', 0)
-    bodies = ''
+    # the output is collected in a list and joined once: appending to one string that grows to megabytes copies it every time
+    bodies: list[str] = []
     for k, f in enumerate(funcs):
         if not mod.infos[k].is_gen:          # a generator is compiled where a for loop uses it
             if mod.infos[k].is_async:
-                bodies += f'{compile_async_function(f, mod, mod.infos[k])}\n'
+                bodies.append(f'{compile_async_function(f, mod, mod.infos[k])}\n')
             else:
-                bodies += f'{compile_function(f, mod, mod.infos[k])}\n'
+                bodies.append(f'{compile_function(f, mod, mod.infos[k])}\n')
     # compiling a function can ask for more helper functions, so the list may grow while this runs
     done = 0
     while done < len(mod.extra_funcs):
         if not mod.infos[len(funcs) + done].is_gen:
-            bodies += f'{compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done])}\n'
+            bodies.append(f'{compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done])}\n')
         done += 1
     for c in mod.classes:
-        bodies += f'{compile_constructor(c, mod)}\n'
+        bodies.append(f'{compile_constructor(c, mod)}\n')
     for fr in mod.frames:
         mod.classes.append(fr)
     if len(mod.frames) > 0:
-        bodies += scheduler_ir(mod)
+        bodies.append(scheduler_ir(mod))
     mod.cur = 'main'
     wrapper = entry_wrapper(mod.find(entry, 1), mod)
-    out = '; written by the Tomato compiler in Tomato (compiler/src/compiler.tom)\n'
-    out += declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod)
+    out: list[str] = ['; written by the Tomato compiler in Tomato (compiler/src/compiler.tom)\n']
+    out.append(declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod))
     for j, s in enumerate(mod.strings):
-        out += f'{string_global(j, s)}\n'
-        out += f'{string_c(j, s)}\n'
-    out += f'\n{bodies}'
-    out += wrapper
-    return out
+        out.append(f'{string_global(j, s)}\n')
+        out.append(f'{string_c(j, s)}\n')
+    out.append('\n')
+    out.extend(bodies)
+    out.append(wrapper)
+    return ''.join(out)
 
 def error_label(mod: Mod, message: str) -> str:
     kind = mod.compile_error_kind(message)

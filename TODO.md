@@ -12,8 +12,6 @@
   Open the latest failed run on GitHub and fix the macOS test failure (needs repo admin to read logs). Every run since #59 fails near the end of the log; the website now deploys through `site/check.sh`, so this no longer blocks it.
 - Make a lost LTO visible and re-measure the v0.51 Linux benchmarks
   `native/tomato` hides a failed `-flto` link and links without LTO. Warn on that fallback, test that LTO happened, and fix `release/linux-setup.sh` (its clang cannot load `LLVMgold.so`, and its `lld` lacks `libxml2`). Then re-measure the v0.51 Linux column, which was measured without LTO. See `docs/architecture-review.md`, section 3.3.
-- Join the compiler's output in `compile_with` instead of appending
-  Build it with a list and one join instead of appending to a 10 MB string (self-compile 24.0 s to 9.9 s in an experiment, identical output). See `docs/architecture-review.md`, section 3.3.
 - Cache the compiled runtime
   For `tomato run`, `tomato build` and `tests/run.sh`, keyed on mode, clang version and runtime hash. Linking a prebuilt runtime took 0.4 to 0.6 s instead of 1.5 to 1.75 s, with an identical binary. See `docs/architecture-review.md`, section 3.3.
 - Report failed text file writes and closes
@@ -38,3 +36,5 @@
   `{x:spec}` in an f-string has a format spec after the colon.
 - Mark error branches as unlikely in the emitted LLVM IR (`!prof` weights on `fail_if`)
   An experiment gave matmul -2.4% and strings -0.7% but sieve +2.2% and objects +0.7% instructions executed; it needs tuning, and site/wasm/llvm.js must accept the metadata.
+- Fix the benchmarks check in `tests/run.sh` (`t_benchmarks`) so a `skipping go: ...` line doesn't count as a failure
+  When the benchmarks themselves pass, a `skipping go: go is not installed` line (go missing on the machine) makes the check fail, because the check expects every output line to start with `ok:`.
