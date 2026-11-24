@@ -4,8 +4,6 @@
   After Davis answers the questions in `docs/wave2-api-sheets.md`, start build tasks for the approved sheets: `re` and hashing first (Sonnet-sized, pure Tomato), then os/sys, then testing.
 - Build Lock/Semaphore/Event on the Queue's waiter primitive
   After Davis answers the decisions in `docs/locks-design.md` section 9, build Lock/Semaphore/Event on the Queue's waiter primitive.
-- Fix the macOS failure in the `Tests` workflow (`.github/workflows/tests.yml`, formerly part of `Test and publish the website`)
-  The macOS (and Linux) job logs need repo admin, so the exact failing check was never read. A first round of fixes landed (jsc now honors the wasm time limit, the benchmarks smoke test skips a missing go or rust, `hdiutil` retries), and a failed run now writes its FAIL lines to annotations and the job summary, which anyone can read (`tests/ci_report.sh`). Check the next run's annotations: if the job is still red, fix the check named there.
 - Make a lost LTO visible and re-measure the v0.51 Linux benchmarks
   `native/tomato` hides a failed `-flto` link and links without LTO. Warn on that fallback, test that LTO happened, and fix `release/linux-setup.sh` (its clang cannot load `LLVMgold.so`, and its `lld` lacks `libxml2`). Then re-measure the v0.51 Linux column, which was measured without LTO. See `docs/architecture-review.md`, section 3.3.
 - Test unattended release signing on the iMac
