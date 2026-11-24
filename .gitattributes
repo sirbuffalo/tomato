@@ -1,3 +1,23 @@
+# Tomato is not in GitHub Linguist, so show .tom sources as Python (closest
+# stand-in) on the repository language bar.
+*.tom linguist-language=Python
+
 # Generated output: keep it out of the language statistics and diffs.
 compiler/bootstrap/tomatoc.ll linguist-generated=true linguist-vendored=true -diff
 site/docs/*.md linguist-generated=true
+
+# Other LLVM IR (bootstrap or hand-kept).
+*.ll linguist-generated=true
+
+# Built WebAssembly artifacts for the playground.
+site/wasm/*.wasm linguist-generated=true -diff
+site/wasm/SOURCE.sha256 linguist-generated=true
+
+# Copies of std/ and generated site data synced by the site build.
+site/wasm/std/** linguist-generated=true
+site/examples.json linguist-generated=true
+site/latest.json linguist-generated=true
+site/benchmarks.json linguist-generated=true
+
+# Prose, not code.
+docs/** linguist-documentation=true
