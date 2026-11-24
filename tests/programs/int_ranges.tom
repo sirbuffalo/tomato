@@ -1,0 +1,256 @@
+# Integer range analysis (Gen.range_of, Gen.loop_facts): a local whose interval is known to be inside the small range is read
+# without a tag test and its + - * skip the overflow check. Results must be exactly those of unlimited integers, also when a
+# loop crosses the edge of the small range (2^62), when the body assigns a number the analysis cannot know, and around
+# break, continue, try, comprehensions, generators and range loops.
+
+const LIMIT = 30
+const EDGE = 4611686018427387903
+
+def counted(limit: float) -> int:
+    # the mandelbrot shape: a counter bounded by the first half of an `and`
+    i = 0
+    x = 0.0
+    while i < 100 and x <= limit:
+        x = x + 1.5
+        i += 1
+    return i
+
+def up_to_edge() -> list[int]:
+    # i < EDGE + 3 lets i + 1 leave the small range: the add must stay checked
+    out: list[int] = []
+    i = EDGE - 3
+    while i < EDGE + 3:
+        i += 1
+        out.append(i)
+    return out
+
+def down_to_edge() -> list[int]:
+    out: list[int] = []
+    i = -EDGE + 2
+    while i > -EDGE - 3:
+        i = i - 1
+        out.append(i)
+    return out
+
+def times_three() -> int:
+    x = 1
+    steps = 0
+    while x < 1000:
+        x = x * 3
+        steps += 1
+    return x * 100 + steps
+
+def times_four() -> int:
+    # x < 2^61 does not keep x * 4 small
+    x = 1
+    while x < 2305843009213693952:
+        x = x * 4
+    return x
+
+def powers() -> int:
+    p = 1
+    c = 0
+    while c < 70:
+        p = p * 2
+        c += 1
+    return p + c
+
+def jumps() -> int:
+    i = 0
+    n = 0
+    while i < 50:
+        i += 1
+        if i % 3 == 0:
+            continue
+        if i > 40:
+            break
+        n += i
+    return n * 1000 + i
+
+def unknown(i: int) -> int:
+    if i == 7:
+        return 2 ** 70
+    return i + 2
+
+def reassigned() -> int:
+    # the body stores a number the analysis knows nothing about: i is not known to be small afterwards
+    i = 0
+    total = 0
+    while i < 10:
+        i = unknown(i)
+        total += i
+    return total + i
+
+def with_try() -> int:
+    i = 0
+    while i < 10:
+        try:
+            i += 1
+            if i == 5:
+                break
+        catch Error:
+            pass
+    return i + EDGE
+
+def comprehension() -> int:
+    i = EDGE
+    xs = [i * 2 for i in range(5)]
+    return i + xs[4] + EDGE
+
+def evens(n: int) -> int:
+    k = 0
+    while k < n:
+        yield k
+        k += 2
+
+def from_generator() -> int:
+    total = 0
+    count = 0
+    for v in evens(10):
+        count += 1
+        total += v * count
+    return total * 10 + count
+
+def ranges() -> int:
+    s = 0
+    for k in range(10):
+        s += k * k - 3 * k
+    for k in range(-5, 5, 2):
+        s += k * 7
+    for k in range(20, 3, -4):
+        s = s * 2 + k
+    for k in range(EDGE - 2, EDGE):
+        s += k % 1000
+    for k in range(EDGE, EDGE - 3, -1):
+        s += (k + 1) % 1000 + (k - EDGE)
+    return s
+
+def divisions() -> int:
+    i = -20
+    total = 0
+    while i < 20:
+        j = i % 7
+        k = i // 4
+        m = i % -3
+        total += j * 1000 + k * 10 + m
+        i += 1
+    return total
+
+def conditions() -> int:
+    a = 0
+    while not (a >= 10):
+        a += 1
+    b = 0
+    while b != 10:
+        b += 1
+    c = 9
+    while c > 0:
+        c -= 2
+    d = 0
+    while d < LIMIT or d < 5:
+        d += 1
+    e = 0
+    while 50 > e:
+        if e == 20:
+            e = e + 100
+        else:
+            e = e + 3
+    return a + b * 10 + c * 100 + d * 1000 + e * 100000
+
+def nested(n: int) -> int:
+    total = 0
+    for py in range(n):
+        i = 0
+        while i < 8:
+            j = 0
+            while j < i:
+                total += i * j
+                j += 1
+            i += 1
+        total += py
+    return total
+
+def branch_join(flag: bool) -> int:
+    if flag:
+        v = 10
+    else:
+        v = EDGE
+    v = v + 1
+    return v
+
+def after_loop() -> int:
+    i = 0
+    while i < 25:
+        i += 1
+    # here i is 25: i + EDGE leaves the small range
+    return i + EDGE
+
+def by_length(xs: list[int], text: str) -> int:
+    # i < len(xs) keeps i + 1 small: a length is always a small number
+    i = 0
+    total = 0
+    while i < len(xs):
+        total += xs[i] * (i + 1)
+        i += 1
+    j = len(text)
+    while j > 0:
+        j -= 1
+        total += j
+    return total + i + j
+
+def near_two_64() -> list[int]:
+    # bounds at 2^64 are numbers on their closed side: y is exactly 2^64, so z <= 2^64 - 1 holds and n can be EDGE
+    y = 4294967296 * 4294967296
+    z = y - 1
+    w = 18446744073709551616 + 1
+    v = -4294967296 * 4294967296
+    u = v + 1
+    n = 0
+    m = 0
+    p = 0
+    k = 0
+    while k < 3:
+        k += 1
+        if z <= 18446744073709551615:
+            n = EDGE
+        if w > 18446744073709551616 and w != 18446744073709551616:
+            m = EDGE
+        if u >= -18446744073709551615 and y // 2 == 9223372036854775808:
+            p = EDGE
+    return [n + 1, m + 2, p + 3, -n - 2, z, u]
+
+def long_condition(c: int) -> int:
+    # alternating and/or nesting: the refinement stops at a fixed depth, so this compiles quickly
+    if ((((((((((((c == 0 or c == 1) and c != 2) or c == 3) and c != 4) or c == 5) and c != 6) or c == 7) and c != 8) or c == 9) and c != 10) or c == 11) and c != 12) or c == 13:
+        return c + 1
+    return c
+
+def to_float() -> float:
+    i = 0
+    f = 0.0
+    while i < 10:
+        f = f + i * 0.5
+        i += 1
+    return f
+
+@main
+def main():
+    print(counted(1000.0), counted(10.0), counted(-1.0))
+    print(up_to_edge())
+    print(down_to_edge())
+    print(times_three(), times_four(), powers())
+    print(jumps())
+    print(reassigned())
+    print(with_try())
+    print(comprehension())
+    print(from_generator())
+    print(ranges())
+    print(divisions())
+    print(conditions())
+    print(nested(3))
+    print(branch_join(True), branch_join(False))
+    print(after_loop())
+    print(by_length([5, EDGE, -EDGE - 1, 7], 'tomato'))
+    print(near_two_64())
+    print(long_condition(5), long_condition(6), long_condition(13))
+    print(to_float())

@@ -168,7 +168,58 @@ Instructions executed (count.sh, Linux arm64 under Valgrind, input 250, 1 run ea
 
 After integrating the later compiler and runtime changes through `b0a638b1`, the same instruction count was 102.50 M on `main` and 56.61 M in both runs with the corrected Mandelbrot optimization. Tomato ÷ Go was 1.97 and Tomato ÷ Rust was 2.19. The programs agreed on the output. Host load average was 3–5 at the start of these runs.
 
-Still to do: about 31 instructions per iteration remain against about 15 in Go, 9 of them the remaining checks (sum for the comparison, the new `zr` and `zi`) and about 10 the tagged counter `i` (tag test on the old value and on the compare, add with overflow test). Removing those needs range reasoning (`i < 100` makes `i + 1` small) that the compiler does not have yet. Tests: `float_chains` (results and errors of chains equal the old compiler's output, including which error comes first).
+What was left then: about 31 instructions per iteration against about 15 in Go, 9 of them the remaining finite checks and about 10 the tagged counter `i` (tag tests on the compare and the add, the add's overflow test). The counter part is done, see "integer ranges" below. Tests: `float_chains` (results and errors of chains equal the old compiler's output, including which error comes first).
+
+## What was done (integer ranges, unreleased)
+
+**The compiler now knows intervals of int locals** (`Gen.range_of`, `Gen.loop_facts` and the `Facts` helpers in `compiler/src/compiler.tom`). While a function is compiled, `self.facts` maps some int locals to an interval that certainly holds the number at that point. The facts come from:
+- assignments of literals, of `+ - *`, of `//` and `%` by a constant, of `len(xs)` on a local list, tuple, dict, set or text, and of a range loop's variable;
+- the conditions of `if` and `while`, with `and`, `or` and `not` (`i < 100` lowers the upper bound of `i`);
+- for a `while` loop, a fixpoint over its body. The head facts start from the facts before the loop. They are joined with what one pass of the body gives back, including `continue`, and a bound that is still moving after two rounds is dropped (widening). Two more passes narrow the result again. Each step keeps a post-fixpoint, so the head facts hold on every pass. After the loop the facts are the head facts with the condition false, joined with those at each `break`.
+
+**Uses.**
+- A local whose interval lies inside the small range (-2^62 .. 2^62 - 1) is read as a known small int: its comparisons have no tag test, and indexing has no range check.
+- A `+ - *` whose result interval lies inside the small range, with small operands, becomes one `add`/`sub`/`mul nsw` on the tagged words, with no tag test, no overflow check and no call (`small_arith`).
+- Assigning to a local that holds a known small number frees nothing.
+- A known small int converts to a float with a shift and `sitofp`.
+
+**Soundness.** Each statement either has its effect modelled exactly (an assignment to a local, `if`, `while`, `break`, `continue`, `return`, `raise`), or every local it can assign is forgotten (`bound_names`: assignment targets, loop variables, comprehension variables, catch names).
+- A `for` loop forgets the locals its body assigns at the start of every pass, and the range loop's variable gets the interval between its bounds. When a bound is not known to be small, it gets only the small range, because `tag_small` wraps there.
+- A `try` keeps no facts inside, because its handlers can start from any point of its body. Generator loops (which switch scopes) and async functions keep none either.
+- A local with no fact may hold anything, including the word 0 of a slot nothing has written. A fact is only created by an assignment of a computed int, never by refining an unknown local. So an interval inside the small range always means a tagged small word.
+- Overflow stays exact: when the interval does not prove the result small, the checked operation is emitted as before.
+- Test `int_ranges` covers loops that cross ±2^62 in both directions, multiplication past the edge, `break`/`continue`, `try`, comprehensions, generators, range loops with 1 to 3 arguments and negative steps, `//` and `%` with negative operands, nested loops, `len` bounds and constants. An independent fuzzing pass compared about 4,500 random programs against the old compiler at -O1 and -O2, plus 640 under AddressSanitizer, and found no difference.
+
+**Mandelbrot.** The inner loop's `i < 100` now compiles to `icmp slt i64 %i, 201` and `i += 1` to `add nsw i64 %i, 2`, with nothing else.
+
+**Results.** Instructions executed, `benchmarks/count.sh --guest` on Linux x86-64 (valgrind 3.26, clang 21, Go 1.27.4, Rust 1.100.0), counting inputs, one run each (Tomato is deterministic):
+
+| benchmark | before | after | after ÷ before | Tomato ÷ Go before → after | Tomato ÷ Rust before → after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| mandelbrot | 79.67 M | 62.37 M | 0.78 | 2.07 → 1.62 | 2.72 → 2.13 |
+| fib, sieve, matmul, collatz, strings, sort, bigint, objects | unchanged | unchanged | 1.00 | | |
+| wordcount | 155.53 M | 155.53 M | 1.00 | | |
+
+That is about 9.1 fewer instructions per inner iteration (1,898,564 iterations at input 250). Eight of the other nine benchmarks build to byte-identical binaries. Wordcount changes only in standard-library code it does not run: `_str_lstrip` loops on `i < len(s)` and now benefits. Compiling the compiler itself takes 2% more instructions (14.06 G → 14.34 G).
+
+Wall clock: release binaries at the full inputs, old and new run alternately and pinned to one core, median of 21 runs. The machine is a shared 128-core Linux box with a load average around 90, so treat these seconds as rough. The identical binaries show the noise level:
+
+| benchmark | input | before (s) | after (s) | after ÷ before | binary |
+| --- | --- | ---: | ---: | ---: | --- |
+| fib | 38 | 0.265 | 0.264 | 0.99 | identical |
+| sieve | 20000000 | 1.738 | 1.736 | 1.00 | identical |
+| matmul | 400 | 0.280 | 0.280 | 1.00 | identical |
+| mandelbrot | 1000 | 0.1066 | 0.1051 | 0.99 | changed |
+| collatz | 1000000 | 0.269 | 0.269 | 1.00 | identical |
+| strings | 3000000 | 2.004 | 2.020 | 1.01 | identical |
+| sort | 3000000 | 0.580 | 0.584 | 1.01 | identical |
+| wordcount | 5000000 | 0.341 | 0.340 | 1.00 | changed (std code it does not run) |
+| bigint | 40000 | 0.147 | 0.147 | 1.00 | identical |
+| objects | 2000000 | 1.552 | 1.568 | 1.01 | identical |
+
+Mandelbrot's wall time barely moves, although it executes 22% fewer instructions. A second session gave 0.1048 s before and 0.1052 s after, with Go at 0.0955 s and Rust at 0.0955 s, so Tomato ÷ Go is about 1.10 in time. The removed instructions were integer work that already ran alongside the loop's floating-point dependency chain: each pass needs the new `zr` and `zi`, and their multiply-adds are what set the pace on this x86 core. On a core with less spare integer throughput the gain may be larger; it was not measured on the M1.
+
+Not done: the three finite checks per iteration still remain. Removing them needs float range reasoning. The body's `zr` and `zi` are bounded once `zr*zr + zi*zi <= 4.0` holds, and `cr` and `ci` are bounded by `px < n`. Removing them would also make the small-int fast copy (`small_loop`) use the facts to drop its overflow checks. Collatz does not benefit from intervals, because `x` has no bound.
 
 ## What was done (refcount bookkeeping, unreleased)
 

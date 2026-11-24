@@ -558,6 +558,287 @@ def val_has_comp(v: Val) -> bool:
                 return True
     return False
 
+# ---- integer ranges (see Gen.range_of and Gen.loop_facts). A Rng is an interval that certainly holds the number in an int
+# local. Only the open side of a bound is unbounded: a lower bound at -RANGE_INF or below means "no lower bound" and an upper
+# bound at RANGE_INF or above means "no upper bound"; every other bound is the number it says (a lower bound of 2^64 is the
+# number 2^64). Bounds are only ever moved outwards (b_clamp), so an interval never loses a value. Facts maps int locals to their intervals at one point
+# of a function. A local with no entry may hold anything, including the word 0 of a slot nothing has written yet: only a
+# local last assigned an int that the program computed (a literal, arithmetic, a range loop's variable) gets an entry, and
+# refining a local by a condition never creates one, so an entry inside the small range always means a tagged small int.
+const RANGE_INF = 18446744073709551616
+const SMALL_LO = -4611686018427387904
+const SMALL_HI = 4611686018427387903
+const REFINE_DEPTH = 5
+
+class Rng:
+    lo: int = 0
+    hi: int = 0
+
+class Facts:
+    m: dict[str, Rng] = {}
+    dead: bool = False        # no run of the program reaches this point
+
+class LoopAI:
+    # what the analysis of one loop body collected: the facts at each continue and each break that belongs to the loop
+    conts: list[Facts] = []
+    brks: list[Facts] = []
+
+class LoopFacts:
+    head: Facts = Facts()     # at the loop head, before the condition
+    post: Facts = Facts()     # after the loop
+
+def rng(lo: int, hi: int) -> Rng:
+    r = Rng()
+    r.lo = lo
+    r.hi = hi
+    return r
+
+def rng_small(r: Rng) -> bool:
+    return r.lo >= SMALL_LO and r.hi <= SMALL_HI
+
+def b_clamp(x: int) -> int:
+    # keeps the numbers small: a lower bound above RANGE_INF becomes RANGE_INF (a smaller lower bound), an upper bound below
+    # -RANGE_INF becomes -RANGE_INF, and anything beyond on the open side becomes unbounded. Each move is outwards.
+    if x >= RANGE_INF:
+        return RANGE_INF
+    if x <= -RANGE_INF:
+        return -RANGE_INF
+    return x
+
+def b_add(x: int, y: int, upper: bool) -> int:
+    # the sum of two lower bounds (upper False) or two upper bounds; only an unbounded side stays unbounded
+    if upper:
+        if x >= RANGE_INF or y >= RANGE_INF:
+            return RANGE_INF
+    elif x <= -RANGE_INF or y <= -RANGE_INF:
+        return -RANGE_INF
+    return b_clamp(x + y)
+
+def b_ext(x: int, lower: bool) -> int:
+    # a bound as an extended number: -1 for "no lower bound", 1 for "no upper bound", else 0 (the bound is the number x)
+    if lower and x <= -RANGE_INF:
+        return -1
+    if not lower and x >= RANGE_INF:
+        return 1
+    return 0
+
+def b_mul(x: int, xlower: bool, y: int, ylower: bool) -> int:
+    # one corner of an interval product; an unbounded factor gives an unbounded product (0 times it is 0, as in interval
+    # arithmetic: the other corners give the unbounded side)
+    kx = b_ext(x, xlower)
+    ky = b_ext(y, ylower)
+    if (kx == 0 and x == 0) or (ky == 0 and y == 0):
+        return 0
+    if kx != 0 or ky != 0:
+        sx = kx if kx != 0 else (1 if x > 0 else -1)
+        sy = ky if ky != 0 else (1 if y > 0 else -1)
+        return RANGE_INF if sx == sy else -RANGE_INF
+    return x * y
+
+def b_min(x: int, y: int) -> int:
+    return x if x < y else y
+
+def b_max(x: int, y: int) -> int:
+    return x if x > y else y
+
+def rng_add(a: Rng, b: Rng) -> Rng:
+    return rng(b_add(a.lo, b.lo, False), b_add(a.hi, b.hi, True))
+
+def rng_neg(a: Rng) -> Rng:
+    return rng(-a.hi, -a.lo)
+
+def rng_mul(a: Rng, b: Rng) -> Rng:
+    p1 = b_mul(a.lo, True, b.lo, True)
+    p2 = b_mul(a.lo, True, b.hi, False)
+    p3 = b_mul(a.hi, False, b.lo, True)
+    p4 = b_mul(a.hi, False, b.hi, False)
+    # the smallest corner as a lower bound and the largest as an upper bound, each moved outwards to fit
+    return rng(b_clamp(b_min(b_min(p1, p2), b_min(p3, p4))), b_clamp(b_max(b_max(p1, p2), b_max(p3, p4))))
+
+def rng_floordiv(a: Rng, d: int) -> Rng:
+    # a // d for a constant d != 0; floor division is monotone in a (increasing for d > 0, decreasing for d < 0)
+    if d > 0:
+        lo = -RANGE_INF if a.lo <= -RANGE_INF else b_clamp(a.lo // d)
+        hi = RANGE_INF if a.hi >= RANGE_INF else b_clamp(a.hi // d)
+        return rng(lo, hi)
+    lo = -RANGE_INF if a.hi >= RANGE_INF else b_clamp(a.hi // d)
+    hi = RANGE_INF if a.lo <= -RANGE_INF else b_clamp(a.lo // d)
+    return rng(lo, hi)
+
+def rng_empty(lo: int, hi: int) -> bool:
+    # no number lies in [lo, hi]; an unbounded side is never empty
+    return lo > -RANGE_INF and hi < RANGE_INF and lo > hi
+
+def facts_new() -> Facts:
+    f = Facts()
+    m: dict[str, Rng] = {}
+    f.m = m
+    return f
+
+def facts_dead() -> Facts:
+    f = facts_new()
+    f.dead = True
+    return f
+
+def facts_copy(f: Facts) -> Facts:
+    g = facts_new()
+    g.dead = f.dead
+    for k in f.m:
+        g.m[k] = f.m[k]
+    return g
+
+def facts_kill(f: Facts, names: list[str]) -> Facts:
+    g = facts_new()
+    g.dead = f.dead
+    for k in f.m:
+        if k not in names:
+            g.m[k] = f.m[k]
+    return g
+
+def facts_set(f: Facts, name: str, r: Rng) -> Facts:
+    g = facts_copy(f)
+    g.m[name] = r
+    return g
+
+def facts_join(a: Facts, b: Facts) -> Facts:
+    # the facts that hold on both ways in: each interval grows to cover both, and a local known on one side only is unknown
+    if a.dead:
+        return facts_copy(b)
+    if b.dead:
+        return facts_copy(a)
+    g = facts_new()
+    for k in a.m:
+        if k in b.m:
+            x = a.m[k]
+            y = b.m[k]
+            g.m[k] = rng(b_min(x.lo, y.lo), b_max(x.hi, y.hi))
+    return g
+
+def facts_widen(old: Facts, nxt: Facts) -> Facts:
+    # a bound that is still moving is dropped, so the loop analysis ends after a few rounds
+    if old.dead:
+        return facts_copy(nxt)
+    if nxt.dead:
+        return facts_copy(old)
+    g = facts_new()
+    for k in nxt.m:
+        if k in old.m:
+            x = old.m[k]
+            y = nxt.m[k]
+            lo = x.lo if y.lo >= x.lo else -RANGE_INF
+            hi = x.hi if y.hi <= x.hi else RANGE_INF
+            g.m[k] = rng(lo, hi)
+    return g
+
+def facts_same(a: Facts, b: Facts) -> bool:
+    if a.dead or b.dead:
+        return a.dead == b.dead
+    if len(a.m) != len(b.m):
+        return False
+    for k in a.m:
+        if k not in b.m:
+            return False
+        if a.m[k].lo != b.m[k].lo or a.m[k].hi != b.m[k].hi:
+            return False
+    return True
+
+def bound_names(n: Node, out: list[str]):
+    # every local a statement or expression can assign, over-approximated: assignment and declaration targets, loop variables
+    # (of comprehensions too, and the names a `for k, v in d.items()` loop sets directly) and catch names. A lambda has its own scope.
+    k = n.kind
+    if k == 'Lambda':
+        return
+    if k == 'Assign':
+        t = val_node(n.fields[0])
+        if t.kind == 'Name':
+            out.append(t.fields[0].text)
+    elif k == 'Declare' or k == 'For' or k == 'AsyncFor':
+        if n.fields[0].tag == 's':
+            out.append(n.fields[0].text)
+        if k == 'For' and len(n.fields) > 3:
+            for v in n.fields[3].items:
+                out.append(v.text)
+    elif k == 'Try':
+        for h in n.fields[1].items:
+            if h.items[1].tag == 's':
+                out.append(h.items[1].text)
+    for f in n.fields:
+        bound_names_val(f, out)
+
+def bound_names_val(v: Val, out: list[str]):
+    if v.tag == 'n':
+        bound_names(val_node(v), out)
+    elif v.tag == 'l' or v.tag == 't':
+        for it in v.items:
+            bound_names_val(it, out)
+
+def comp_names(n: Node, out: list[str]):
+    # the loop variables of the list comprehensions in n, which the comprehension assigns while n runs
+    if n.kind == 'ListComp':
+        bound_names(n, out)
+        return
+    if n.kind == 'Lambda':
+        return
+    for f in n.fields:
+        comp_names_val(f, out)
+
+def comp_names_val(v: Val, out: list[str]):
+    if v.tag == 'n':
+        comp_names(val_node(v), out)
+    elif v.tag == 'l' or v.tag == 't':
+        for it in v.items:
+            comp_names_val(it, out)
+
+def loop_jump(n: Node) -> bool:
+    # a break or continue in n that leaves the loop around n (not one of a loop inside n)
+    k = n.kind
+    if k == 'Break' or k == 'Continue':
+        return True
+    if k == 'For' or k == 'While' or k == 'AsyncFor' or k == 'ListComp' or k == 'Lambda':
+        return False
+    for f in n.fields:
+        if loop_jump_val(f):
+            return True
+    return False
+
+def loop_jump_val(v: Val) -> bool:
+    if v.tag == 'n':
+        return loop_jump(val_node(v))
+    if v.tag == 'l' or v.tag == 't':
+        for it in v.items:
+            if loop_jump_val(it):
+                return True
+    return False
+
+def flip_compare(op: str) -> str:
+    # a OP b is b flip(OP) a
+    if op == '<':
+        return '>'
+    if op == '>':
+        return '<'
+    if op == '<=':
+        return '>='
+    if op == '>=':
+        return '<='
+    return op
+
+def negate_compare(op: str) -> str:
+    # not (a OP b) for whole numbers
+    if op == '<':
+        return '>='
+    if op == '>=':
+        return '<'
+    if op == '>':
+        return '<='
+    if op == '<=':
+        return '>'
+    if op == '==':
+        return '!='
+    return '=='
+
+def is_compare_op(op: str) -> bool:
+    return op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
+
 class FuncInfo:
     name: str = ''
     line: int = 0            # the line of the def
@@ -1457,6 +1738,10 @@ class Gen:
     fresh_frame: bool = False  # the last call made a new task frame
     lifted: int = 0            # how many awaits were moved into statements of their own
     defer_float: bool = False  # the binop about to be compiled is an operand of a float + - *, so it may leave its finite check to that operator
+    facts: Facts = facts_new()      # the integer ranges known at the point being compiled (see range_of)
+    facts_off: int = 0              # inside a try, a generator or another place whose statements can be entered from more than one point
+    for_body: Facts = facts_new()   # the facts at the start of each pass through the body of the for loop being compiled
+    for_entry: Facts = facts_new()  # the facts where that for loop starts (its range bounds are evaluated there)
 
     def tmp(self, hint: str) -> str:
         self.n += 1
@@ -1608,8 +1893,8 @@ class Gen:
             return ex(r, self.types[name])
         return self.expr(n)
 
-    def store_owned(self, slot: str, e: Ex):
-        # the slot takes over the reference and releases what it held
+    def store_owned(self, slot: str, e: Ex, old_small: bool = False):
+        # the slot takes over the reference and releases what it held (an int slot known to hold a small number frees nothing)
         if is_rc(e.ty):
             old = self.tmp('old')
             self.emit(f'{old} = load ptr, ptr {slot}')
@@ -1617,6 +1902,9 @@ class Gen:
             self.emit(f'call void @{self.slot_release(slot)}(ptr {old})')
         elif e.ty == 'int':
             v = self.owned(e)                 # copied first: it may be the very number the slot is about to drop
+            if old_small:
+                self.emit(f'store i64 {v.reg}, ptr {slot}')
+                return
             old = self.tmp('old')
             self.emit(f'{old} = load i64, ptr {slot}')
             self.emit(f'store i64 {v.reg}, ptr {slot}')
@@ -1882,11 +2170,13 @@ class Gen:
         self.emit(f'{zero} = icmp eq i32 {sign}, 0')
         self.fail_if(zero, message, live)
 
-    def num_arith(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
-        # + - * with an overflow stop, in the type both operands fit
+    def num_arith(self, op: str, a: Ex, b: Ex, line: int, known: Rng | None = None) -> Ex:
+        # + - * with an overflow stop, in the type both operands fit. known: the interval of the result (see range_of)
         t = self.common_type(a.ty, b.ty, line)
         x = self.resize(a, t)
         y = self.resize(b, t)
+        if t == 'int' and known is not None and rng_small(known) and (x.small or small_text(x.reg)) and (y.small or small_text(y.reg)):
+            return self.small_arith(op, x, y)
         if t == 'int':
             return self.int_call_c(op, x, y)
         llt = llvm_type(t)
@@ -1901,6 +2191,22 @@ class Gen:
         self.emit(f'{ov} = extractvalue {{{llt}, i1}} {pair}, 1')
         self.fail_if(ov, 'integer overflow')
         return ex(r, t)
+
+    def small_arith(self, op: str, x: Ex, y: Ex) -> Ex:
+        # + - * of two small numbers whose result is known to be small: plain 64-bit arithmetic on the tagged words, with no tag
+        # test and no overflow check. For x = 2a+1 and y = 2b+1: x + (y - 1) = 2(a+b)+1, x - (y - 1) = 2(a-b)+1 and
+        # (x - 1) * (y >> 1) + 1 = 2ab+1; nothing overflows because the result is small.
+        r = self.tmp('small')
+        if op == 'mul':
+            xm = str(int(x.reg) - 1) if small_text(x.reg) else self.arith('sub', x.reg, '1')
+            yh = str((int(y.reg) - 1) // 2) if small_text(y.reg) else self.arith('ashr', y.reg, '1')
+            p = self.tmp('prod')
+            self.emit(f'{p} = mul nsw i64 {xm}, {yh}')
+            self.emit(f'{r} = or i64 {p}, 1')
+            return exs(r, 'int')
+        ym = str(int(y.reg) - 1) if small_text(y.reg) else self.arith('sub', y.reg, '1')
+        self.emit(f'{r} = {op} nsw i64 {x.reg}, {ym}')
+        return exs(r, 'int')
 
     def int_equal_const(self, op: str, x: Ex, k: Ex) -> Ex:
         # x == 3 and x != 0: a big number is never equal to a small constant (a big number is always outside the small range), so
@@ -2314,6 +2620,12 @@ class Gen:
         return ex(text, 'float')
 
     def to_double(self, e: Ex) -> str:
+        if e.ty == 'int' and e.small and not small_text(e.reg):
+            # a small number is the tagged word 2v+1: v is one shift away
+            v = self.arith('ashr', e.reg, '1')
+            d = self.tmp('fp')
+            self.emit(f'{d} = sitofp i64 {v} to double')
+            return d
         if e.ty == 'int':
             d = self.tmp('fp')
             self.emit(f'{d} = call double @tomato_int_to_f64(i64 {e.reg})')
@@ -2467,6 +2779,8 @@ class Gen:
             r = self.tmp('l')
             self.emit(f'{r} = load {llvm_type(ty)}, ptr {self.slots[name]}')
             e = ex(r, ty)
+            if ty == 'int' and self.fact_small(name):
+                e.small = True         # its interval is inside the small range: a tagged word that owns nothing
             if ty != 'int':
                 self.retain(e)         # an int is lent: whoever keeps it copies it (see owned)
             elif self.take_name == name:
@@ -2576,7 +2890,10 @@ class Gen:
         self.emit('; the new list goes here')
         at = len(self.lines) - 1
         self.comps.append(ctx)
-        self.for_stmt(val_node(n.fields[0]))
+        if self.tracking():
+            self.for_facts(val_node(n.fields[0]))
+        else:
+            self.for_stmt(val_node(n.fields[0]))
         self.comps.pop()
         if ctx.ty == '':
             raise CompileError('the items of this list comprehension have no type', n.line)
@@ -3666,12 +3983,15 @@ class Gen:
         elif not (is_numeric(a.ty) and is_numeric(b.ty)):
             raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", n.line)
         if is_numeric(a.ty):
+            known: Rng | None = None
+            if (op == '+' or op == '-' or op == '*') and self.tracking():
+                known = self.range_of(n, self.facts)
             if op == '+':
-                return self.num_arith('add', a, b, n.line)
+                return self.num_arith('add', a, b, n.line, known)
             if op == '-':
-                return self.num_arith('sub', a, b, n.line)
+                return self.num_arith('sub', a, b, n.line, known)
             if op == '*':
-                return self.num_arith('mul', a, b, n.line)
+                return self.num_arith('mul', a, b, n.line, known)
             if op == '%':
                 return self.num_modulo(a, b, n.line)
             if op == '/':
@@ -5678,6 +5998,47 @@ class Gen:
             lbl = f'{self.mark_prefix}_{s.mark}'
             self.br(lbl)
             self.place(lbl)
+        if not self.tracking():
+            self.stmt_kind(s)
+            return
+        comps: list[str] = []
+        comp_names(s, comps)
+        if len(comps) > 0:
+            self.facts = facts_kill(self.facts, comps)
+        k = s.kind
+        if k == 'For':
+            self.for_facts(s)
+            return
+        if not (k == 'ExprStmt' or k == 'Assign' or k == 'Multi' or k == 'Declare' or k == 'Return' or k == 'Raise' or k == 'If' or k == 'While' or k == 'Break' or k == 'Continue' or k == 'CompAppend' or k == 'Pass'):
+            # a try (its handlers can be entered from any point of its body) and the rest: no facts inside, and afterwards
+            # every local it can assign is forgotten
+            names: list[str] = []
+            bound_names(s, names)
+            outside = facts_kill(self.facts, names)
+            self.facts_off += 1
+            self.stmt_kind(s)
+            self.facts_off -= 1
+            self.facts = outside
+            return
+        self.stmt_kind(s)
+
+    def for_facts(self, s: Node):
+        # a for loop (or a comprehension's loop): its head is reached again after each pass, so the locals the loop assigns are
+        # unknown at the start of every pass and after it; the rest keep their facts
+        names: list[str] = []
+        bound_names(s, names)
+        inner = facts_kill(self.facts, names)
+        saved_body = self.for_body
+        saved_entry = self.for_entry
+        self.for_entry = self.facts
+        self.for_body = inner
+        self.facts = facts_copy(inner)
+        self.for_stmt(s)
+        self.for_body = saved_body
+        self.for_entry = saved_entry
+        self.facts = facts_copy(inner)
+
+    def stmt_kind(self, s: Node):
         k = s.kind
         if k == 'ExprStmt':
             e = val_node(s.fields[0])
@@ -5703,6 +6064,11 @@ class Gen:
             if name in self.narrowed:
                 raise CompileError(f"'{name}' is known to be {shown(self.types[name])} inside this check, so it cannot be assigned here\nassign to it outside the check", s.line)
             expected = self.types[name] if name in self.slots else ''
+            track = self.tracking()
+            old_small = self.fact_small(name)        # the number the slot holds now owns nothing, so it needs no free
+            after = self.facts
+            if track:
+                after = self.assign_facts(self.facts, name, val_node(s.fields[1]))
             if name in self.slots and self.types[name] == 'int' and self_update(name, val_node(s.fields[1])):
                 self.take_name = name
                 self.taken = ex('', '')
@@ -5713,6 +6079,8 @@ class Gen:
                 self.taken = ex('', '')
                 var = self.slot(name, 'int', s.line)
                 self.emit(f'store i64 {v.reg}, ptr {var}')
+                if track:
+                    self.facts = after
                 return
             self.taken = ex('', '')
             slot_type = v.ty
@@ -5721,16 +6089,25 @@ class Gen:
                 slot_type = self.types[name]
             if slot_type == 'None' or slot_type == '':
                 raise CompileError(f"the type of '{name}' cannot be guessed from None\ndeclare it, such as: {name}: Item | None = None", s.line)
-            self.store_owned(self.slot(name, slot_type, s.line), v)
+            self.store_owned(self.slot(name, slot_type, s.line), v, old_small)
+            if track:
+                self.facts = after
         elif k == 'Multi':
             self.block(val_nodes(s.fields[0]))
         elif k == 'Declare':
             ty = self.mod.type_name(s.fields[1])
             if ty == '':
                 raise CompileError('this variable cannot be given a type automatically\nwrite its type, such as: name: Type = value', s.line)
+            after = self.facts
+            if self.tracking():
+                after = facts_kill(self.facts, [s.fields[0].text])
+                if ty == 'int':
+                    after = self.assign_facts(self.facts, s.fields[0].text, val_node(s.fields[2]))
             v = self.expr(val_node(s.fields[2]), ty)
             v = self.want(v, ty, s.line, 'the value')
             self.store_owned(self.slot(s.fields[0].text, ty, s.line), v)
+            if self.tracking():
+                self.facts = after
         elif k == 'AsyncFor':
             self.async_for(s)
         elif k == 'Yield' and self.is_async:
@@ -6021,17 +6398,25 @@ class Gen:
         left: list[str] = []           # the members it can still be when the next condition is tested
         kept: list[str] = []           # the members it can be after the whole if, over the branches that do not leave
         branches = s.fields[0].items
+        track = self.tracking()
+        cur = self.facts              # the facts where the next condition is tested (all the conditions before it were false)
+        outs = facts_dead()           # the facts after the if, over the branches that do not leave
         for k, branch in enumerate(branches):
             target = self.narrow_target(val_node(branch.items[0]))
             if k == 0 and len(target) > 0:
                 var = target[0]
                 members = union_members(self.types[var])
                 left = members
+            if track:
+                self.facts = self.live_facts(cur)
             cond = self.truth(self.expr(val_node(branch.items[0])), s.line)
             then = self.label('then')
             nxt = self.label('next')
             self.cond_br(cond, then, nxt)
             self.place(then)
+            if track:
+                self.facts = self.live_facts(self.refine(cur, val_node(branch.items[0]), True))
+                cur = self.refine(cur, val_node(branch.items[0]), False)
             saved: list[str] = []
             # a later branch that does not test the variable still knows which members are left, so it cannot assign it
             rest_known = var != '' and k > 0 and not (len(target) > 0 and target[0] == var) and len(left) > 0 and len(left) < len(members)
@@ -6046,6 +6431,8 @@ class Gen:
             if rest_known:
                 self.leave_narrow(var, saved_rest)
             if not self.terminated:
+                if track:
+                    outs = facts_join(outs, self.facts)
                 self.br(end)
                 if var != '' and len(target) > 0 and target[0] == var:
                     kept.append(target[1])
@@ -6060,20 +6447,291 @@ class Gen:
             saved = []
             if narrowed_else:
                 saved = self.narrow_to(var, left)
+            if track:
+                self.facts = self.live_facts(cur)
             self.block(val_nodes(s.fields[1]))
             if narrowed_else:
                 self.leave_narrow(var, saved)
             if not self.terminated:
                 kept = kept + left
+                if track:
+                    outs = facts_join(outs, self.facts)
         else:
             kept = kept + left
+            if track:
+                outs = facts_join(outs, cur)
         if not self.terminated:
             self.br(end)
         self.place(end)
+        if track:
+            self.facts = self.live_facts(outs)
         if var != '' and len(kept) > 0 and self.types[var] == union_type(members):
             keep: list[str] = [m for m in members if m in kept]
             if len(keep) < len(members):
                 self.settle_narrow(var, keep)
+
+    # ---- integer ranges. While a function is compiled, self.facts says, for some int locals, an interval that certainly holds
+    # the local's number at the point being compiled. Facts come from assignments (a literal, + - * and // % by a constant of
+    # known numbers, a range loop's variable) and from the conditions of if and while; at the head of a `while` they are the
+    # result of a fixpoint over the loop body (loop_facts). A local whose interval is inside the small range holds a tagged
+    # small int, so its reads need no tag test, and a + - * whose result interval is inside the small range needs no overflow
+    # check. The facts are a sound approximation by construction: each statement's effect is either modelled exactly (an
+    # assignment to a local, if, while, break, continue) or every local it can assign is forgotten (bound_names).
+    def tracking(self) -> bool:
+        return self.facts_off == 0 and not self.is_async and self.gen_n == 0
+
+    def range_of(self, n: Node, f: Facts) -> Rng | None:
+        # the interval of an int expression's value under the facts f, or None when it is unknown (or not an int)
+        k = n.kind
+        if k == 'IntLit':
+            return rng(n.fields[0].num, n.fields[0].num)
+        if k == 'Name':
+            name = n.fields[0].text
+            if name in f.m:
+                return f.m[name]
+            if name in self.slots:
+                return None
+            ck = self.mod.resolve(name)
+            if ck != '' and ck in self.mod.consts:
+                return self.range_of(self.mod.consts[ck], f)
+            return None
+        if k == 'UnOp':
+            if n.fields[0].text != '-':
+                return None
+            inner = self.range_of(val_node(n.fields[1]), f)
+            if inner is None:
+                return None
+            return rng_neg(inner)
+        if k == 'Call':
+            return self.len_range(n)
+        if k != 'BinOp':
+            return None
+        op = n.fields[0].text
+        if not (op == '+' or op == '-' or op == '*' or op == '//' or op == '%'):
+            return None
+        a = self.range_of(val_node(n.fields[1]), f)
+        if a is None:
+            return None
+        b = self.range_of(val_node(n.fields[2]), f)
+        if b is None:
+            return None
+        if op == '+':
+            return rng_add(a, b)
+        if op == '-':
+            return rng_add(a, rng_neg(b))
+        if op == '*':
+            return rng_mul(a, b)
+        if b.lo != b.hi or b.lo == 0 or b.lo >= RANGE_INF or b.lo <= -RANGE_INF:
+            return None                       # only a constant divisor
+        d = b.lo
+        if op == '//':
+            return rng_floordiv(a, d)
+        # floor modulo: the sign of the divisor
+        if d > 0:
+            if a.lo >= 0 and a.hi < d:
+                return a
+            return rng(0, d - 1)
+        if a.hi <= 0 and a.lo > d:
+            return a
+        return rng(d + 1, 0)
+
+    def len_range(self, n: Node) -> Rng | None:
+        # len(xs) of a local list, tuple, dict, set or text: a count the runtime keeps, given back as a small number (len_of)
+        f = val_node(n.fields[0])
+        args = val_nodes(n.fields[1])
+        if f.kind != 'Name' or f.fields[0].text != 'len' or 'len' in self.slots or len(args) != 1 or len(n.fields[2].items) > 0:
+            return None
+        a = args[0]
+        if a.kind != 'Name' or a.fields[0].text not in self.slots:
+            return None
+        t = self.types[a.fields[0].text]
+        if is_optional(t) or '|' in t or not (is_list(t) or is_dict(t) or is_set(t) or t == 'str'):
+            return None
+        return rng(0, SMALL_HI)
+
+    def fact_small(self, name: str) -> bool:
+        return self.tracking() and name in self.facts.m and rng_small(self.facts.m[name])
+
+    def refine(self, f: Facts, c: Node, truth: bool, depth: int = 0) -> Facts:
+        # the facts that hold where the condition c has just been found truth. Below `and` and `or` the left side is refined
+        # for both outcomes, so nested conditions are only followed REFINE_DEPTH levels deep (keeping f is always sound).
+        if f.dead:
+            return f
+        if c.kind == 'BoolLit':
+            if c.fields[0].flag != truth:
+                return facts_dead()
+            return f
+        if depth >= REFINE_DEPTH:
+            return f
+        if c.kind == 'UnOp' and c.fields[0].text == 'not':
+            return self.refine(f, val_node(c.fields[1]), not truth, depth + 1)
+        if c.kind != 'BinOp':
+            return f
+        op = c.fields[0].text
+        left = val_node(c.fields[1])
+        right = val_node(c.fields[2])
+        d = depth + 1
+        if op == 'and':
+            if truth:
+                return self.refine(self.refine(f, left, True, d), right, True, d)
+            return facts_join(self.refine(f, left, False, d), self.refine(self.refine(f, left, True, d), right, False, d))
+        if op == 'or':
+            if truth:
+                return facts_join(self.refine(f, left, True, d), self.refine(self.refine(f, left, False, d), right, True, d))
+            return self.refine(self.refine(f, left, False, d), right, False, d)
+        if not is_compare_op(op):
+            return f
+        if not truth:
+            op = negate_compare(op)
+        a = self.range_of(left, f)
+        b = self.range_of(right, f)
+        if a is None or b is None:
+            return f                          # not two ints with known intervals (a float, a text, an object, ...)
+        g = f
+        if left.kind == 'Name' and left.fields[0].text in f.m:
+            g = self.narrow_fact(g, left.fields[0].text, op, b)
+        if right.kind == 'Name' and right.fields[0].text in g.m:
+            g = self.narrow_fact(g, right.fields[0].text, flip_compare(op), a)
+        return g
+
+    def narrow_fact(self, f: Facts, name: str, op: str, other: Rng) -> Facts:
+        # the facts after `name OP other` was found true
+        if f.dead:
+            return f
+        cur = f.m[name]
+        lo = cur.lo
+        hi = cur.hi
+        if op == '<':
+            hi = b_min(hi, b_add(other.hi, -1, True))
+        elif op == '<=':
+            hi = b_min(hi, other.hi)
+        elif op == '>':
+            lo = b_max(lo, b_add(other.lo, 1, False))
+        elif op == '>=':
+            lo = b_max(lo, other.lo)
+        elif op == '==':
+            lo = b_max(lo, other.lo)
+            hi = b_min(hi, other.hi)
+        elif op == '!=' and other.lo == other.hi and other.lo > -RANGE_INF and other.lo < RANGE_INF:
+            if lo == other.lo:
+                lo = b_add(lo, 1, False)
+            if hi == other.lo:
+                hi = b_add(hi, -1, True)
+        if rng_empty(lo, hi):
+            return facts_dead()
+        return facts_set(f, name, rng(lo, hi))
+
+    def assign_facts(self, f: Facts, name: str, value: Node) -> Facts:
+        # the facts after `name = value` (computed with the facts from before the assignment)
+        g = facts_kill(f, [name])
+        if name in self.slots and self.types[name] != 'int':
+            return g
+        r = self.range_of(value, f)
+        if r is None:
+            return g
+        g.m[name] = r
+        return g
+
+    def ai_block(self, body: list[Node], f: Facts, ctx: LoopAI) -> Facts:
+        # the facts after running body from f (dead when it always leaves by break, continue, return or raise). Breaks and
+        # continues of the loop being analysed record their facts in ctx.
+        for s in body:
+            if f.dead:
+                return f
+            f = self.ai_stmt(s, f, ctx)
+        return f
+
+    def ai_stmt(self, s: Node, f: Facts, ctx: LoopAI) -> Facts:
+        comps: list[str] = []
+        comp_names(s, comps)
+        if len(comps) > 0:
+            f = facts_kill(f, comps)
+        k = s.kind
+        if k == 'Pass' or k == 'ExprStmt' or k == 'CompAppend':
+            return f
+        if k == 'Assign':
+            t = val_node(s.fields[0])
+            if t.kind != 'Name':
+                return f
+            return self.assign_facts(f, t.fields[0].text, val_node(s.fields[1]))
+        if k == 'Multi':
+            return self.ai_block(val_nodes(s.fields[0]), f, ctx)
+        if k == 'If':
+            outs = facts_dead()
+            cur = f
+            for branch in s.fields[0].items:
+                cond = val_node(branch.items[0])
+                outs = facts_join(outs, self.ai_block(val_nodes(branch.items[1]), self.refine(cur, cond, True), ctx))
+                cur = self.refine(cur, cond, False)
+            if s.fields[1].tag == 'l':
+                cur = self.ai_block(val_nodes(s.fields[1]), cur, ctx)
+            return facts_join(outs, cur)
+        if k == 'Break':
+            ctx.brks.append(f)
+            return facts_dead()
+        if k == 'Continue':
+            ctx.conts.append(f)
+            return facts_dead()
+        if k == 'Return' or k == 'Raise':
+            return facts_dead()
+        # anything else (a nested loop, try, a declaration): forget every local it can assign. A break or continue inside it
+        # that leaves this loop (from a try) leaves with those facts too.
+        names: list[str] = []
+        bound_names(s, names)
+        g = facts_kill(f, names)
+        if k != 'For' and k != 'While' and k != 'AsyncFor' and loop_jump(s):
+            ctx.brks.append(g)
+            ctx.conts.append(g)
+        return g
+
+    def loop_back(self, h: Facts, cond: Node, body: list[Node], ctx: LoopAI) -> Facts:
+        # the facts that come back to the head of `while cond: body` after one pass that started at the head with h
+        out = self.ai_block(body, self.refine(h, cond, True), ctx)
+        for c in ctx.conts:
+            out = facts_join(out, c)
+        return out
+
+    def loop_facts(self, s: Node, entry: Facts) -> LoopFacts:
+        # the facts at the head of a while loop and after it. The head facts are a post-fixpoint: entry joined with what one
+        # pass of the body gives back from them is inside them, so they hold on every pass. Found by joining passes (widening
+        # a bound that keeps moving), then narrowed with two more passes (each again a post-fixpoint).
+        cond = val_node(s.fields[0])
+        body = val_nodes(s.fields[1])
+        out = LoopFacts()
+        names: list[str] = []
+        bound_names(s, names)
+        out.head = facts_kill(entry, names)
+        out.post = out.head
+        if not self.tracking() or has_comp(cond):
+            return out
+        h = entry
+        rounds = 0
+        while True:
+            nxt = facts_join(entry, self.loop_back(h, cond, body, LoopAI()))
+            if rounds >= 2:
+                nxt = facts_widen(h, nxt)
+            if facts_same(nxt, h):
+                break
+            h = nxt
+            rounds += 1
+            if rounds > 100:
+                return out
+        for _ in range(2):
+            h = facts_join(entry, self.loop_back(h, cond, body, LoopAI()))
+        ctx = LoopAI()
+        self.loop_back(h, cond, body, ctx)
+        post = self.refine(h, cond, False)
+        for b in ctx.brks:
+            post = facts_join(post, b)
+        out.head = h
+        out.post = post
+        return out
+
+    def live_facts(self, f: Facts) -> Facts:
+        # facts for compiling code: a point no run reaches may assume nothing (its code never runs)
+        if f.dead:
+            return facts_new()
+        return facts_copy(f)
 
     # ---- small-integer loops. A `while` whose body is only int arithmetic on local variables (assignments built from + - * and
     # // % by a power of two, if/elif/else on comparisons) is compiled twice. The fast copy assumes every int variable it uses holds a
@@ -6240,7 +6898,7 @@ class Gen:
             self.br(end)
             self.place(end)
 
-    def small_loop(self, s: Node) -> bool:
+    def small_loop(self, s: Node, lf: LoopFacts) -> bool:
         # compile `while` as the fast copy plus the general copy when its body qualifies; False means nothing was emitted
         if self.is_async or self.gen_n > 0:
             return False
@@ -6283,9 +6941,14 @@ class Gen:
         self.fast_block(body, prefix)
         self.br(fhead)
         self.place(gcond)
+        track = self.tracking()
+        if track:
+            self.facts = self.live_facts(lf.head)
         c = self.truth(self.expr(cond), s.line)
         self.cond_br(c, gbody, end)
         self.place(gbody)
+        if track:
+            self.facts = self.live_facts(self.refine(lf.head, cond, True))
         self.push_loop(end, ghead)
         self.block(body)
         self.loop_depth -= 1
@@ -6297,22 +6960,32 @@ class Gen:
         return True
 
     def while_stmt(self, s: Node):
-        if self.small_loop(s):
+        track = self.tracking()
+        lf = self.loop_facts(s, self.facts)
+        if self.small_loop(s, lf):
+            if track:
+                self.facts = self.live_facts(lf.post)
             return
         head = self.label('while')
         body = self.label('body')
         end = self.label('endwhile')
         self.br(head)
         self.place(head)
+        if track:
+            self.facts = self.live_facts(lf.head)
         cond = self.truth(self.expr(val_node(s.fields[0])), s.line)
         self.cond_br(cond, body, end)
         self.place(body)
+        if track:
+            self.facts = self.live_facts(self.refine(lf.head, val_node(s.fields[0]), True))
         self.push_loop(end, head)
         self.block(val_nodes(s.fields[1]))
         self.loop_depth -= 1
         if not self.terminated:
             self.br(head)
         self.place(end)
+        if track:
+            self.facts = self.live_facts(lf.post)
 
     def gen_push(self, c: GenCtx):
         if len(self.gens) > self.gen_n:
@@ -6375,6 +7048,7 @@ class Gen:
         c.owner = info.owner
         c.module = info.module
         c.targs = info.targs
+        self.facts_off += 1
         self.swap_scope(c)
         self.gen_push(c)
         k = 0
@@ -6391,6 +7065,7 @@ class Gen:
         self.place(c.end)
         self.gen_n -= 1
         self.swap_scope(c)
+        self.facts_off -= 1
 
     def yield_stmt(self, s: Node):
         if self.gen_n == 0:
@@ -6484,6 +7159,8 @@ class Gen:
         ch = self.tmp('ch')
         self.emit(f'{ch} = call ptr @tomato_str_index(ptr {t}, i64 {i})')
         self.store_owned(var, ex(ch, 'str'))
+        if self.tracking():
+            self.facts = facts_copy(self.for_body)
         self.push_loop(end, step)
         self.block(val_nodes(s.fields[2]))
         self.loop_depth -= 1
@@ -6654,6 +7331,8 @@ class Gen:
             e2 = ex(item2, elem_of(vals.ty))
             self.retain(e2)
             self.store_owned(var2, e2)
+        if self.tracking():
+            self.facts = facts_copy(self.for_body)
         self.push_loop(end, step)
         self.block(stmts)
         self.loop_depth -= 1
@@ -6667,6 +7346,26 @@ class Gen:
         self.emit(f'store i64 {nxt}, ptr {counter}')
         self.br(head)
         self.place(end)
+
+    def range_var_range(self, bounds: list[Node]) -> Rng:
+        # the interval of a range loop's variable inside the body, from the bounds' intervals where the loop starts. The loop
+        # stores the variable with tag_small, so it is always a tagged word; only when every bound is known to be inside the
+        # small range is its number known to lie between them (beyond the small range tag_small wraps).
+        whole = rng(SMALL_LO, SMALL_HI)
+        if not self.tracking():
+            return whole
+        rs: list[Rng] = []
+        for b in bounds[:2]:
+            r = self.range_of(b, self.for_entry)
+            if r is None or not rng_small(r):
+                return whole
+            rs.append(r)
+        if len(bounds) == 1:
+            return rng(0, b_max(rs[0].hi - 1, 0))
+        if len(bounds) == 2:
+            return rng(rs[0].lo, b_max(rs[1].hi - 1, rs[0].lo))
+        # start + k * step for either sign of step lies between start and stop
+        return rng(b_min(rs[0].lo, rs[1].lo), b_max(rs[0].hi, rs[1].hi))
 
     def for_stmt(self, s: Node):
         it = val_node(s.fields[1])
@@ -6684,6 +7383,7 @@ class Gen:
         bounds = val_nodes(it.fields[1])
         if len(bounds) < 1 or len(bounds) > 3:
             raise CompileError('range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', s.line)
+        var_range = self.range_var_range(bounds)
         start = '0'
         stop = ''
         stepv = '1'
@@ -6781,6 +7481,8 @@ class Gen:
             i = self.tmp('val')
             self.emit(f'{i} = add nsw i64 {bv}, {off}')
         self.emit(f'store i64 {self.tag_small(i).reg}, ptr {var}')
+        if self.tracking():
+            self.facts = facts_set(self.for_body, s.fields[0].text, var_range)
         self.push_loop(end, step)
         self.block(val_nodes(s.fields[2]))
         self.loop_depth -= 1

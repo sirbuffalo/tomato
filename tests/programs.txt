@@ -95,6 +95,7 @@ compact_lists
 compact_fuzz
 int_fast_paths
 float_chains
+int_ranges
 json_files
 msgpack_files
 msgpack_file_basics
