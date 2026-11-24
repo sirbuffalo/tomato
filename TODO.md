@@ -42,3 +42,11 @@
   At the next release run, publish results for all 25 benchmarks (`benchmarks/run.sh --site`) and update the "ten benchmarks" text on `site/index.html` and `site/benchmarks.html`.
 - Confirm on a Mac that the Linux-built `site/wasm/tomatoc.wasm` rebuilds identically (WASI SDK 24, arm64)
   The `std/builtin/` folder task landed a Linux-built `tomatoc.wasm`. Run `WASI_SDK=~/wasi-sdk-24.0-arm64-macos sh tests/run.sh` and look for "wasm files rebuild identically"; if it fails, run `site/wasm/build.sh` there and commit the result.
+- Rerun the benchmark suite on the Mac with the new languages installed
+  `benchmarks/run.sh --site` there, so the live page gets the new Tomato numbers, the fifteen newer benchmarks and the eight added languages; then update the page's text, which still describes the v0.51 numbers.
+- Write the fifteen newer benchmarks in the eight added languages
+  JavaScript, TypeScript, Java, C, C++, C#, PHP and Swift, 120 programs in all.
+- Stop retaining the loop item in `for x in xs` when the body cannot change any list
+  Needs a whole-program check of which functions change lists; about 8 of the instructions per item in `objects`.
+- Divide big integers 64 bits at a time
+  Division still works 32 bits at a time; a fuzz program with very large numbers took 70 s against Python's 3 s.

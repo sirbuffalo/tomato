@@ -1,10 +1,18 @@
 # Benchmarks
 
-Twenty-five small programs (the first ten are the ones on the website's Benchmarks page and in the v0.51 results; the other fifteen were added after v0.51 and have no published results yet), each written four times with the same algorithm and the same input: Tomato (`.tom`), Go (`.go`),
-Rust (`.rs`) and Python (`.py`), in `benchmarks/<name>/`. Each takes one number on the command line and prints a checksum;
-`run.sh` checks that all four print the same.
+Twenty-five small programs (the first ten are the ones on the website's Benchmarks page and in the v0.51 results; the other fifteen were
+added after v0.51 and have no published results yet), each written with the same algorithm and the same input in Tomato (`.tom`)
+and in Go (`.go`), Rust (`.rs`) and Python (`.py`), in `benchmarks/<name>/`. The first ten are also in C (`.c`), C++ (`.cpp`), Java
+(`.java`), C# (`.cs`), Swift (`.swift`), JavaScript (`.js`), TypeScript (`.ts`) and PHP (`.php`); a benchmark without a program in
+a language is left out of that language's results. Each program takes one number on the command line and prints a checksum;
+`run.sh` checks that every version it runs prints the same.
 
-**The Python programs exist only as a comparison.** Tomato's own tooling uses no Python; nothing outside `benchmarks/` runs them.
+**The other languages' programs exist only as a comparison.** Tomato's own tooling uses no Python; nothing outside
+`benchmarks/` runs them.
+
+Where a language has no such thing in its standard library, the program carries a short one of its own: the big numbers of C,
+C++, Swift and PHP (`bigint`: one number times a small one, not a general library) and the hash table of C (`wordcount`).
+TypeScript runs on Node with its types stripped, so its times are JavaScript's.
 
 | Benchmark | What it exercises |
 | --- | --- |
@@ -37,17 +45,20 @@ Rust (`.rs`) and Python (`.py`), in `benchmarks/<name>/`. Each takes one number 
 ## Running
 
 ```sh
-benchmarks/run.sh                 # full inputs, 10 runs each (Python too) in one shuffled order (--seed N, default 1); writes benchmarks/results/results.{json,md}
+benchmarks/run.sh                 # full inputs, 10 runs each in one shuffled order (--seed N, default 1); writes benchmarks/results/results.{json,md}
 benchmarks/run.sh --runs 3 --only fib,sort   # also --python-runs N and --out DIR
-benchmarks/run.sh --smoke         # tiny inputs, only checks the four versions agree (tests/run.sh does this)
+benchmarks/run.sh --langs go,rust # only these other languages (default: every installed one)
+benchmarks/run.sh --smoke         # tiny inputs, only checks that the versions agree (tests/run.sh does this for a few languages)
 benchmarks/run.sh --site          # also copies the JSON to site/benchmarks.json for the Benchmarks page
 ```
 
-It needs `clang` (it builds Tomato from this checkout, using `compiler/bootstrap/tomatoc.ll`, and `measure.c`, the timing
-helper), `go`, `rustc` (and `cargo`, for `bigint`) and `python3`; a missing language is skipped. Inputs are in `sizes.txt`
-(columns: smoke input, full input, input for `count.sh`). Tomato is built twice with `tomato build`, in release mode (the
-`tomato` column) and in debug mode (`tomato-debug`); Go with `go build`, Rust with `rustc -O` (`bigint` with `cargo build
---release`, which fetches the pinned `num-bigint` crate once), and Python is run as installed. It works on macOS and Linux.
+It needs `clang` (it builds Tomato from this checkout, using `compiler/bootstrap/tomatoc.ll`, `measure.c`, the timing helper, and
+the C and C++ programs). The other languages are skipped when their tools are missing: `go`, `rustc` (and `cargo`, for
+`bigint`), `javac` and `java`, `dotnet` 10 or newer, `swiftc`, `node` (22.6 or newer for TypeScript), `php` and `python3`.
+Inputs are in `sizes.txt` (columns: smoke input, full input, input for `count.sh`). Tomato is built twice with `tomato build`,
+in release mode (the `tomato` column) and in debug mode (`tomato-debug`); Go with `go build`, Rust with `rustc -O` (`bigint`
+with `cargo build --release`, which fetches the pinned `num-bigint` crate once), C and C++ with `clang -O2`, C# with `dotnet
+build -c Release`, Swift with `swiftc -O`; the rest are run as installed. It works on macOS and Linux.
 The results and caveats are on the website's Benchmarks page, and what they say about the compiler is in `docs/performance.md`.
 
 ## Results

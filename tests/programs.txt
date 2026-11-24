@@ -148,3 +148,4 @@ math_more
 fstring_specs
 tuple_type_args
 set_discard
+fast_paths

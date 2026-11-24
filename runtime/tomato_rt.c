@@ -20,6 +20,9 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/resource.h>
+#if defined(__linux__)
+#include <sys/mman.h>
+#endif
 #endif
 
 typedef struct { int64_t rc; int64_t type; } Hdr;
@@ -298,20 +301,49 @@ void tomato_fit_unsigned(uint64_t v, int bits, int position) {
 #define TOMATO_NO_POOL 1
 #endif
 #endif
+/* Large buffers ask the system for 2 MB pages (Linux only, a hint that changes no result): a list or table of many megabytes
+ * otherwise costs one page fault per 4 KB and misses the address-translation cache on almost every random access. Only the
+ * whole 2 MB pages inside the buffer are marked, so at most the ends of the buffer are shared with a neighbour. */
+#define HUGE_PAGE ((size_t)2 << 20)
+#define HUGE_MIN (HUGE_PAGE * 2)
+static inline void *huge_hint(void *p, size_t n) {
+#if defined(TOMATO_STACK_GUARD) && defined(__linux__) && defined(MADV_HUGEPAGE)
+    if (n >= HUGE_MIN && p) {
+        uintptr_t lo = ((uintptr_t)p + HUGE_PAGE - 1) & ~(uintptr_t)(HUGE_PAGE - 1), hi = ((uintptr_t)p + n) & ~(uintptr_t)(HUGE_PAGE - 1);
+        if (hi > lo) madvise((void *)lo, hi - lo, MADV_HUGEPAGE);
+    }
+#else
+    (void)n;
+#endif
+    return p;
+}
+
 #define POOL_SHIFT 48
 #define POOL_MAX 256
-#define POOL_CHUNK 65536
+#define POOL_CHUNK 65536          /* the chunks stay small until a program is seen to use a lot of small objects */
+#define POOL_BIG_CHUNK ((size_t)8 << 20)
 #ifndef TOMATO_NO_POOL
 typedef struct FreeCell { struct FreeCell *next; } FreeCell;
 static FreeCell *pool_free[POOL_MAX / 16 + 1];
 static char *pool_cur, *pool_end;
+static size_t pool_total;
 
 NOINLINE static void *pool_refill(int64_t cls) {
     size_t need = (size_t)cls * 16;
     if ((size_t)(pool_end - pool_cur) < need) {
-        char *c = malloc(POOL_CHUNK);
+        size_t chunk = POOL_CHUNK;
+        char *c;
+#if defined(TOMATO_STACK_GUARD) && defined(__linux__)
+        if (pool_total >= POOL_BIG_CHUNK) {            /* 2 MB pages (see huge_hint); untouched pages of the chunk cost nothing */
+            void *q;
+            chunk = POOL_BIG_CHUNK;
+            c = posix_memalign(&q, HUGE_PAGE, chunk) == 0 ? huge_hint(q, chunk) : NULL;
+        } else
+#endif
+        c = malloc(chunk);
         if (!c) out_of_memory();
-        pool_cur = c; pool_end = c + POOL_CHUNK;
+        pool_total += chunk;
+        pool_cur = c; pool_end = c + chunk;
     }
     void *p = pool_cur;
     pool_cur += need;
@@ -328,20 +360,21 @@ static inline void obj_free(Hdr *h) {
     free(h);
 }
 
-void *tomato_alloc(int64_t size, int64_t type) {
+/* the header of a new object of `size` bytes; with `zero`, the rest of it is zeroed */
+static inline void *obj_alloc(int64_t size, int64_t type, int zero) {
     Hdr *h;
 #ifndef TOMATO_NO_POOL
-    if (size <= POOL_MAX) {
+    if (__builtin_expect(size <= POOL_MAX, 1)) {
         int64_t cls = (size + 15) >> 4;
         FreeCell *c = pool_free[cls];
-        if (c) pool_free[cls] = c->next; else c = pool_refill(cls);
-        memset(c, 0, (size_t)cls * 16);
+        if (__builtin_expect(c != NULL, 1)) pool_free[cls] = c->next; else c = pool_refill(cls);
+        if (zero) memset((char *)c + sizeof(Hdr), 0, (size_t)cls * 16 - sizeof(Hdr));
         h = (Hdr *)c;
         type |= cls << POOL_SHIFT;
     } else
 #endif
     {
-        h = calloc(1, (size_t)size);
+        h = zero ? calloc(1, (size_t)size) : huge_hint(malloc((size_t)size), (size_t)size);
         if (!h) out_of_memory();
     }
     h->rc = 1;
@@ -349,6 +382,8 @@ void *tomato_alloc(int64_t size, int64_t type) {
     LIVE_ADJUST(1);
     return h;
 }
+
+ALWAYS void *tomato_alloc(int64_t size, int64_t type) { return obj_alloc(size, type, 1); }
 
 ALWAYS void tomato_retain(void *p) {
     if (p && ((Hdr *)p)->rc > 0) ((Hdr *)p)->rc++;   /* an immortal object (rc < 0) is never counted */
@@ -417,16 +452,30 @@ void tomato_leak_check(void) {
 /* ---- strings: {header, byte length, character length, UTF-8 bytes}; type code 1 ---- */
 typedef struct { Hdr h; int64_t bytes; int64_t chars; char data[]; } Str;
 
+/* a new text of n bytes (the caller fills in the bytes and the number of characters; the 0 byte after them is written here) */
+static inline Str *str_alloc(int64_t n) {
+    Str *s = obj_alloc((int64_t)sizeof(Str) + n + 1, 1, 0);
+    s->bytes = n;
+    s->data[n] = 0;
+    return s;
+}
+
 static int64_t count_chars(const char *s, int64_t n) {
     int64_t k = 0;
+    if (n < 16) {                          /* short text: no set-up for a vector loop */
+        for (int64_t i = 0; i < n; i++) {
+            __asm__("" : "+r"(i));         /* keeps the optimiser from vectorising (or unrolling) this loop */
+            k += ((unsigned char)s[i] & 0xC0) != 0x80;
+        }
+        return k;
+    }
     for (int64_t i = 0; i < n; i++) if (((unsigned char)s[i] & 0xC0) != 0x80) k++;
     return k;
 }
 
 static Str *str_new(const char *bytes, int64_t n) {
-    Str *s = tomato_alloc((int64_t)sizeof(Str) + n + 1, 1);
+    Str *s = str_alloc(n);
     memcpy(s->data, bytes, (size_t)n);
-    s->bytes = n;
     s->chars = count_chars(bytes, n);
     return s;
 }
@@ -435,10 +484,9 @@ void *tomato_str_from_cstr(const char *c) { return str_new(c, (int64_t)strlen(c)
 
 void *tomato_str_concat(void *a, void *b) {
     Str *x = a, *y = b;
-    Str *s = tomato_alloc((int64_t)sizeof(Str) + x->bytes + y->bytes + 1, 1);
+    Str *s = str_alloc(x->bytes + y->bytes);
     memcpy(s->data, x->data, (size_t)x->bytes);
     memcpy(s->data + x->bytes, y->data, (size_t)y->bytes);
-    s->bytes = x->bytes + y->bytes;
     s->chars = x->chars + y->chars;
     return s;
 }
@@ -730,6 +778,16 @@ void *tomato_str_replace(void *src, void *a, void *b) {
 }
 
 /* A new list of the pieces between each `sep`; the compiler rejects an empty `sep`. */
+/* for piece in text.split(sep): the piece that starts at byte *at, or NULL after the last one */
+void *tomato_str_split_next(void *src, void *sep, int64_t *at) {
+    Str *s = src, *x = sep;
+    int64_t from = *at;
+    if (from < 0) return NULL;
+    int64_t hit = find_bytes(s, x, from);
+    *at = hit < 0 ? -1 : hit + x->bytes;
+    return str_new(s->data + from, (hit < 0 ? s->bytes : hit) - from);
+}
+
 void *tomato_str_split(void *src, void *sep, int64_t list_type, int64_t elem_size) {
     Str *s = src, *x = sep;
     void *l = tomato_list_new(list_type);
@@ -2575,9 +2633,9 @@ void *tomato_str_from_i64(int64_t v) {
     do { *--p = (char)('0' + m % 10); m /= 10; } while (m);
     if (v < 0) *--p = '-';
     int64_t n = e - p;
-    Str *s = tomato_alloc((int64_t)sizeof(Str) + n + 1, 1);
-    memcpy(s->data, p, (size_t)n);
-    s->bytes = n; s->chars = n;
+    Str *s = str_alloc(n);
+    for (int64_t i = 0; i < n; i++) { __asm__("" : "+r"(i)); s->data[i] = p[i]; }     /* at most 20 bytes: no call to memcpy */
+    s->chars = n;
     return s;
 }
 void *tomato_str_from_u64(uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%llu", (unsigned long long)v); return str_new(b, n); }
@@ -2594,19 +2652,20 @@ typedef struct { Hdr h; int64_t len; int64_t cap; char *data; } List;
 void *tomato_list_new(int64_t type) { return tomato_alloc((int64_t)sizeof(List), type); }
 
 /* Makes room for one more element and returns the address of its slot; the caller stores the element. */
-void *tomato_list_push(void *l, int64_t elem_size) {
+COLD static void list_grow(List *x, int64_t elem_size) {
+    x->cap = x->cap ? x->cap * 2 : 4;
+    x->data = huge_hint(realloc(x->data, (size_t)(x->cap * elem_size)), (size_t)(x->cap * elem_size));
+    if (!x->data) out_of_memory();
+}
+ALWAYS void *tomato_list_push(void *l, int64_t elem_size) {
     List *x = l;
-    if (x->len == x->cap) {
-        x->cap = x->cap ? x->cap * 2 : 4;
-        x->data = realloc(x->data, (size_t)(x->cap * elem_size));
-        if (!x->data) out_of_memory();
-    }
+    if (__builtin_expect(x->len == x->cap, 0)) list_grow(x, elem_size);
     return x->data + (x->len++) * elem_size;
 }
 
 /* Sets the length of an empty list to n items of `w` bytes and returns its data (the caller fills it in). */
 static char *tomato_list_reserve(List *x, int64_t n, int64_t w) {
-    x->data = malloc((size_t)(n * w ? n * w : 1));
+    x->data = huge_hint(malloc((size_t)(n * w ? n * w : 1)), (size_t)(n * w));
     if (!x->data) out_of_memory();
     x->cap = n;
     x->len = n;
@@ -2673,11 +2732,16 @@ void *tomato_list_repeat(void *a, int64_t n, int rc) {
         else for (int64_t k = 0; k < n; k++) memcpy(d + k * x->len * w, x->data, (size_t)(x->len * w));
         return r;
     }
+    if (n <= 0 || x->len == 0) return r;
+    int64_t *d = (int64_t *)tomato_list_reserve(r, n * x->len, 8), m = x->len;
+    if (m == 1 && (rc != 2 || (LIST_SLOT(x, 0, int64_t) & 1))) {      /* [0] * n: one word, many times */
+        int64_t item = LIST_SLOT(x, 0, int64_t);
+        if (rc == 1) for (int64_t k = 0; k < n; k++) tomato_retain((void *)(intptr_t)item);
+        for (int64_t k = 0; k < n; k++) d[k] = item;
+        return r;
+    }
     for (int64_t k = 0; k < n; k++)
-        for (int64_t i = 0; i < x->len; i++) {
-            int64_t item = LIST_SLOT(x, i, int64_t);
-            *(int64_t *)tomato_list_push(r, 8) = item_copy(rc, item);
-        }
+        for (int64_t i = 0; i < m; i++) d[k * m + i] = item_copy(rc, LIST_SLOT(x, i, int64_t));
     return r;
 }
 
@@ -2699,7 +2763,7 @@ void *tomato_str_join(void *sep, void *list) {
     List *l = list;
     int64_t total = 0;
     for (int64_t i = 0; i < l->len; i++) total += LIST_SLOT(l, i, Str *)->bytes + (i ? x->bytes : 0);
-    Str *r = tomato_alloc((int64_t)sizeof(Str) + total + 1, 1);     /* built in place: one allocation, no scratch buffer */
+    Str *r = str_alloc(total);     /* built in place: one allocation, no scratch buffer */
     char *out = r->data;
     int64_t at = 0, chars = 0;
     for (int64_t i = 0; i < l->len; i++) {
@@ -3506,9 +3570,9 @@ COLD static int64_t int_dup_slow(int64_t x) {
     memcpy(c, b, size);
     return (int64_t)(uintptr_t)c;
 }
-COLD static void int_free_slow(int64_t x) { if (x == 0) return; free((void *)(uintptr_t)x); BIG_ADJUST(-1); }
+COLD static void int_free_slow(int64_t x) { free((void *)(uintptr_t)x); BIG_ADJUST(-1); }
 ALWAYS int64_t tomato_int_dup(int64_t x) { return __builtin_expect(x & 1, 1) ? x : int_dup_slow(x); }
-ALWAYS void tomato_int_free(int64_t x) { if (__builtin_expect(!(x & 1), 0)) int_free_slow(x); }
+ALWAYS void tomato_int_free(int64_t x) { if (__builtin_expect(!(x & 1), 0) && x != 0) int_free_slow(x); }
 
 /* a hash of the value: the word for a small number, else the limbs mixed in */
 int64_t tomato_int_hash(int64_t x) {
@@ -3525,42 +3589,49 @@ static int mag_cmp(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn)
     return 0;
 }
 
+/* The loops below take two limbs at a time as one 64-bit word where they can (every machine Tomato runs on is little-endian). */
+static inline uint64_t limb2(const uint32_t *d) { uint64_t w; memcpy(&w, d, 8); return w; }
+static inline void limb2_put(uint32_t *d, uint64_t w) { memcpy(d, &w, 8); }
+
+/* out may be a or b */
 static int64_t mag_add(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
     if (an < bn) { const uint32_t *t = a; a = b; b = t; int64_t tn = an; an = bn; bn = tn; }
     uint64_t carry = 0;
-    for (int64_t i = 0; i < an; i++) {
-        uint64_t s = (uint64_t)a[i] + (i < bn ? b[i] : 0) + carry;
+    int64_t i = 0;
+    for (; i + 2 <= bn; i += 2) {
+        uint64_t s, t;
+        uint64_t c1 = __builtin_add_overflow(limb2(a + i), limb2(b + i), &s), c2 = __builtin_add_overflow(s, carry, &t);
+        limb2_put(out + i, t); carry = c1 | c2;
+    }
+    for (; i < bn; i++) {
+        uint64_t s = (uint64_t)a[i] + b[i] + carry;
         out[i] = (uint32_t)s; carry = s >> 32;
     }
+    for (; i < an && carry; i++) {
+        uint64_t s = (uint64_t)a[i] + carry;
+        out[i] = (uint32_t)s; carry = s >> 32;
+    }
+    if (i < an && out != a) memcpy(out + i, a + i, (size_t)(an - i) * 4);
     out[an] = (uint32_t)carry;
     return an + 1;
 }
 
-/* a - b where |a| >= |b| */
+/* a - b where |a| >= |b|; out may be a */
 static int64_t mag_sub(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
-    int64_t borrow = 0;
-    for (int64_t i = 0; i < an; i++) {
-        int64_t s = (int64_t)a[i] - (i < bn ? (int64_t)b[i] : 0) - borrow;
-        if (s < 0) { s += ((int64_t)1 << 32); borrow = 1; } else borrow = 0;
+    uint64_t borrow = 0;
+    int64_t i = 0;
+    for (; i + 2 <= bn; i += 2) {
+        uint64_t s, t;
+        uint64_t c1 = __builtin_sub_overflow(limb2(a + i), limb2(b + i), &s), c2 = __builtin_sub_overflow(s, borrow, &t);
+        limb2_put(out + i, t); borrow = c1 | c2;
+    }
+    for (; i < an && (i < bn || borrow); i++) {
+        int64_t s = (int64_t)a[i] - (i < bn ? (int64_t)b[i] : 0) - (int64_t)borrow;
+        borrow = s < 0;
         out[i] = (uint32_t)s;
     }
+    if (i < an && out != a) memcpy(out + i, a + i, (size_t)(an - i) * 4);
     return an;
-}
-
-static int64_t int_add_signed(int sa, const uint32_t *a, int64_t an, int sb, const uint32_t *b, int64_t bn) {
-    uint32_t *out = malloc(((size_t)(an > bn ? an : bn) + 2) * 4);
-    if (!out) out_of_memory();
-    int64_t r; int sign;
-    if (sa == sb) { r = mag_add(a, an, b, bn, out); sign = sa; }
-    else {
-        int c = mag_cmp(a, an, b, bn);
-        if (c == 0) { free(out); return int_mk_small(0); }
-        if (c > 0) { r = mag_sub(a, an, b, bn, out); sign = sa; }
-        else { r = mag_sub(b, bn, a, an, out); sign = sb; }
-    }
-    int64_t w = int_make(sign, out, r);
-    free(out);
-    return w;
 }
 
 /* finish a Big whose limbs were written in place: drop leading zeros, and turn it into the small form when it fits */
@@ -3577,6 +3648,17 @@ static int64_t int_finish(Big *b, int sign, int64_t n) {
     return (int64_t)(uintptr_t)b;
 }
 
+static int64_t int_add_signed(int sa, const uint32_t *a, int64_t an, int sb, const uint32_t *b, int64_t bn) {
+    int c = 1;
+    if (sa != sb) { c = mag_cmp(a, an, b, bn); if (c == 0) return int_mk_small(0); }
+    Big *out = malloc(sizeof(Big) + ((size_t)(an > bn ? an : bn) + 1) * 4);
+    if (!out) out_of_memory();
+    BIG_ADJUST(1);
+    if (sa == sb) return int_finish(out, sa, mag_add(a, an, b, bn, out->d));
+    if (c > 0) return int_finish(out, sa, mag_sub(a, an, b, bn, out->d));
+    return int_finish(out, sb, mag_sub(b, bn, a, an, out->d));
+}
+
 COLD static int64_t int_add_slow(int64_t x, int64_t y) {
     IntView a, b; int_view(x, &a); int_view(y, &b);
     return int_add_signed(a.sign, a.d, a.n, b.sign, b.d, b.n);
@@ -3588,12 +3670,12 @@ COLD static int64_t int_add_slow(int64_t x, int64_t y) {
  * there is nothing to free, so the small-number path pays nothing for it. */
 #define INT_CONSUME(m, x, y) do { if ((m) & 1) tomato_int_free(x); if ((m) & 2) tomato_int_free(y); } while (0)
 
-COLD static int64_t int_add_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_add_slow(x, y); INT_CONSUME(m, x, y); return r; }
+COLD int64_t tomato_int_add_slow(int64_t x, int64_t y, int32_t m) { int64_t r = int_add_slow(x, y); INT_CONSUME(m, x, y); return r; }
 ALWAYS int64_t tomato_int_add_c(int64_t x, int64_t y, int32_t m) {
     /* tagged words: (2a+1) + (2b+1) - 1 = 2(a+b)+1, and the 64-bit overflow flag is exactly "a+b is out of the small range" */
     int64_t s;
     if (__builtin_expect(x & y & 1, 1) && !__builtin_add_overflow(x, y - 1, &s)) return s;
-    return int_add_slow_c(x, y, m);
+    return tomato_int_add_slow(x, y, m);
 }
 ALWAYS int64_t tomato_int_add(int64_t x, int64_t y) { return tomato_int_add_c(x, y, 0); }
 
@@ -3609,13 +3691,54 @@ COLD static int64_t int_sub_slow(int64_t x, int64_t y) {
     return int_add_signed(a.sign, a.d, a.n, -b.sign, b.d, b.n);
 }
 
-COLD static int64_t int_sub_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_sub_slow(x, y); INT_CONSUME(m, x, y); return r; }
+COLD int64_t tomato_int_sub_slow(int64_t x, int64_t y, int32_t m) { int64_t r = int_sub_slow(x, y); INT_CONSUME(m, x, y); return r; }
 ALWAYS int64_t tomato_int_sub_c(int64_t x, int64_t y, int32_t m) {
     int64_t s;
     if (__builtin_expect(x & y & 1, 1) && !__builtin_sub_overflow(x, y - 1, &s)) return s;
-    return int_sub_slow_c(x, y, m);
+    return tomato_int_sub_slow(x, y, m);
 }
 ALWAYS int64_t tomato_int_sub(int64_t x, int64_t y) { return tomato_int_sub_c(x, y, 0); }
+
+/* out = a * m, a 64-bit word; out has room for an + 2 limbs and may be a itself. The limb count of the result (leading zeros are possible). */
+static int64_t mag_mul_word(const uint32_t *a, int64_t an, uint64_t m, uint32_t *out) {
+    typedef unsigned __int128 u128;
+    uint64_t carry = 0;
+    int64_t i = 0;
+#define MUL_STEP(k) do { u128 t = (u128)limb2(a + i + 2 * (k)) * m + carry; limb2_put(out + i + 2 * (k), (uint64_t)t); carry = (uint64_t)(t >> 64); } while (0)
+    for (; i + 8 <= an; i += 8) { MUL_STEP(0); MUL_STEP(1); MUL_STEP(2); MUL_STEP(3); }
+    for (; i + 2 <= an; i += 2) MUL_STEP(0);
+#undef MUL_STEP
+    u128 c = carry;
+    if (i < an) { c += (u128)a[i] * m; out[i++] = (uint32_t)c; c >>= 32; }
+    for (; i < an + 2; i++) { out[i] = (uint32_t)c; c >>= 32; }
+    return i;
+}
+
+/* out = a * b; out has an + bn limbs, all zero, and is neither operand */
+static void mag_mul(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
+    typedef unsigned __int128 u128;
+    if (an > bn) { const uint32_t *t = a; a = b; b = t; int64_t tn = an; an = bn; bn = tn; }     /* the longer number in the inner loop */
+    int64_t i = 0;
+    for (; i + 2 <= an; i += 2) {                      /* two limbs of a at a time: 64-bit words */
+        uint64_t m = limb2(a + i), carry = 0;
+        int64_t j = 0;
+        for (; j + 2 <= bn; j += 2) {
+            u128 t = (u128)limb2(b + j) * m + limb2(out + i + j) + carry;
+            limb2_put(out + i + j, (uint64_t)t); carry = (uint64_t)(t >> 64);
+        }
+        u128 c = carry;
+        if (j < bn) { c += (u128)b[j] * m + out[i + j]; out[i + j] = (uint32_t)c; c >>= 32; j++; }
+        for (int64_t k = i + j; c; k++) { c += out[k]; out[k] = (uint32_t)c; c >>= 32; }
+    }
+    if (i < an) {
+        uint64_t carry = 0;
+        for (int64_t j = 0; j < bn; j++) {
+            uint64_t t = (uint64_t)a[i] * b[j] + out[i + j] + carry;
+            out[i + j] = (uint32_t)t; carry = t >> 32;
+        }
+        out[i + bn] += (uint32_t)carry;
+    }
+}
 
 COLD static int64_t int_mul_slow(int64_t x, int64_t y) {
     IntView a, b; int_view(x, &a); int_view(y, &b);
@@ -3623,47 +3746,43 @@ COLD static int64_t int_mul_slow(int64_t x, int64_t y) {
     if (a.n <= 2 || b.n <= 2) {                       /* one operand fits in 64 bits: one pass straight into the result */
         const IntView *big = a.n <= 2 ? &b : &a, *sm = a.n <= 2 ? &a : &b;
         uint64_t m = (uint64_t)sm->d[0] | (sm->n > 1 ? (uint64_t)sm->d[1] << 32 : 0);
-        int64_t n = big->n, pairs = n / 2;
-        Big *r = malloc(sizeof(Big) + (size_t)(n + 2) * 4);
+        Big *r = malloc(sizeof(Big) + (size_t)(big->n + 2) * 4);
         if (!r) out_of_memory();
         BIG_ADJUST(1);
-        unsigned __int128 carry = 0;
-        for (int64_t i = 0; i < pairs; i++) {
-            uint64_t w; memcpy(&w, big->d + 2 * i, 8);
-            unsigned __int128 t = (unsigned __int128)w * m + carry;
-            uint64_t lo = (uint64_t)t; memcpy(r->d + 2 * i, &lo, 8);
-            carry = t >> 64;
-        }
-        int64_t rn = 2 * pairs;
-        if (n & 1) {
-            unsigned __int128 t = (unsigned __int128)big->d[n - 1] * m + carry;
-            r->d[rn++] = (uint32_t)t; carry = t >> 32;
-        }
-        while (carry) { r->d[rn++] = (uint32_t)carry; carry >>= 32; }
-        return int_finish(r, a.sign * b.sign, rn);
+        return int_finish(r, a.sign * b.sign, mag_mul_word(big->d, big->n, m, r->d));
     }
     int64_t rn = a.n + b.n;
     Big *res = calloc(1, sizeof(Big) + (size_t)rn * 4);
     if (!res) out_of_memory();
     BIG_ADJUST(1);
-    uint32_t *out = res->d;
-    for (int64_t i = 0; i < a.n; i++) {
-        uint64_t carry = 0;
-        for (int64_t j = 0; j < b.n; j++) {
-            uint64_t t = (uint64_t)a.d[i] * b.d[j] + out[i + j] + carry;
-            out[i + j] = (uint32_t)t; carry = t >> 32;
-        }
-        out[i + b.n] += (uint32_t)carry;
-    }
+    mag_mul(a.d, a.n, b.d, b.n, res->d);
     return int_finish(res, a.sign * b.sign, rn);
 }
 
-COLD static int64_t int_mul_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_mul_slow(x, y); INT_CONSUME(m, x, y); return r; }
+/* x *= y where the caller gives up x, a big number, and y fits in 64 bits: the product takes over x's memory */
+static int64_t int_mul_in_place(int64_t x, int64_t y) {
+    IntView b; int_view(y, &b);
+    Big *r = (Big *)(uintptr_t)x;
+    uint64_t w = (uint64_t)b.d[0] | (b.n > 1 ? (uint64_t)b.d[1] << 32 : 0);
+    int sign = r->sign * b.sign;
+    int64_t n = r->n;
+    r = realloc(r, sizeof(Big) + (size_t)(n + 2) * 4);
+    if (!r) out_of_memory();
+    return int_finish(r, sign, mag_mul_word(r->d, n, w, r->d));
+}
+static int int_fits_word(int64_t x) { return !int_is_small(x) ? ((Big *)(uintptr_t)x)->n <= 2 : int_small_val(x) != 0; }
+COLD int64_t tomato_int_mul_slow(int64_t x, int64_t y, int32_t m) {
+    if ((m & 1) && !int_is_small(x) && x != y && int_fits_word(y)) { int64_t r = int_mul_in_place(x, y); INT_CONSUME(m & 2, x, y); return r; }
+    if ((m & 2) && !int_is_small(y) && x != y && int_fits_word(x)) { int64_t r = int_mul_in_place(y, x); INT_CONSUME(m & 1, x, y); return r; }
+    int64_t r = int_mul_slow(x, y);
+    INT_CONSUME(m, x, y);
+    return r;
+}
 ALWAYS int64_t tomato_int_mul_c(int64_t x, int64_t y, int32_t m) {
     /* (2a) * b = 2ab: it fits in 64 bits exactly when ab is in the small range; the tag bit is added back */
     int64_t p;
     if (__builtin_expect(x & y & 1, 1) && !__builtin_mul_overflow(x - 1, y >> 1, &p)) return p | 1;
-    return int_mul_slow_c(x, y, m);
+    return tomato_int_mul_slow(x, y, m);
 }
 ALWAYS int64_t tomato_int_mul(int64_t x, int64_t y) { return tomato_int_mul_c(x, y, 0); }
 
@@ -3748,23 +3867,25 @@ static void int_floordivmod(int64_t x, int64_t y, int64_t *quot, int64_t *rem) {
 COLD static int64_t int_floordiv_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(r); return q; }
 COLD static int64_t int_mod_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(q); return r; }
 /* Python-style floor division and remainder of two small numbers, inline (the caller has checked the divisor is not zero). */
-COLD static int64_t int_floordiv_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_floordiv_slow(x, y); INT_CONSUME(m, x, y); return r; }
-COLD static int64_t int_mod_slow_c(int64_t x, int64_t y, int32_t m) { int64_t r = int_mod_slow(x, y); INT_CONSUME(m, x, y); return r; }
+COLD int64_t tomato_int_floordiv_slow(int64_t x, int64_t y, int32_t m) { int64_t r = int_floordiv_slow(x, y); INT_CONSUME(m, x, y); return r; }
+COLD int64_t tomato_int_mod_slow(int64_t x, int64_t y, int32_t m) { int64_t r = int_mod_slow(x, y); INT_CONSUME(m, x, y); return r; }
 ALWAYS int64_t tomato_int_floordiv_c(int64_t x, int64_t y, int32_t m) {
     if ((x & y & 1) && !(int_small_val(x) == INT_SMALL_MIN && int_small_val(y) == -1)) {
         int64_t a = int_small_val(x), b = int_small_val(y), q = a / b, r = a % b;
-        if (r != 0 && ((r < 0) != (b < 0))) q--;
+        if (b > 0) q += r >> 63;                              /* r has the sign of a */
+        else q -= r > 0;
         return int_mk_small(q);
     }
-    return int_floordiv_slow_c(x, y, m);
+    return tomato_int_floordiv_slow(x, y, m);
 }
 ALWAYS int64_t tomato_int_mod_c(int64_t x, int64_t y, int32_t m) {
     if ((x & y & 1) && !(int_small_val(x) == INT_SMALL_MIN && int_small_val(y) == -1)) {
         int64_t a = int_small_val(x), b = int_small_val(y), r = a % b;
-        if (r != 0 && ((r < 0) != (b < 0))) r += b;
+        if (b > 0) r += (r >> 63) & b;                        /* r has the sign of a */
+        else if (r > 0) r += b;
         return int_mk_small(r);
     }
-    return int_mod_slow_c(x, y, m);
+    return tomato_int_mod_slow(x, y, m);
 }
 /* x // 2^k and x % 2^k (k is a constant from 1 to 61, chosen by the compiler): a shift and a mask on a small number. A tagged word is 2v+1, so
  * (w >> k) | 1 is floor(v / 2^k) tagged, and w & ((2^k - 1) << 1) | 1 is v mod 2^k tagged (the floor modulo of a power of two is never negative). */
@@ -3877,9 +3998,86 @@ static void NAME(int64_t *a, int64_t n) {                                       
 #define LT_STR(x, y) (tomato_str_cmp((void *)(intptr_t)(x), (void *)(intptr_t)(y)) < 0)
 DEFINE_INTROSORT(sort_bigint, LT_BIGINT)
 DEFINE_INTROSORT(sort_word, LT_WORD)
-DEFINE_INTROSORT(sort_small, LT_SMALL)
 DEFINE_INTROSORT(sort_str, LT_STR)
 
+/* Sorts plain signed words. Long lists use a radix sort, whose time grows with n times the number of digits the values really
+ * span (the words are sorted by their distance from the smallest one). A list that does not fit in the cache is first cut
+ * by its highest digit, in place, into parts that do, so each word crosses main memory only a few times; a part is sorted by its
+ * remaining digits, lowest first, with a small buffer. For short lists, or values that span too many digits for the length
+ * of the list, the introsort runs. A list already in order (or in reverse
+ * order) is noticed first. Equal words cannot be told apart, so the order among them does not matter. */
+#ifndef RADIX_MIN
+#define RADIX_MIN 512
+#endif
+#ifndef RADIX_PART
+#define RADIX_PART 8192         /* words: a part and its buffer fit in a second-level cache */
+#endif
+#define RADIX_BITS 8
+#ifndef RADIX_COST
+#define RADIX_COST 2            /* a pass over the digits costs about as much as this many levels of the introsort */
+#endif
+#define RADIX_DIGIT(x) (((uint64_t)(x) - base) >> shift & mask)
+/* x holds the n words and y is the buffer; the result goes to y if `into_y`, else to x. The words differ from `base` only in
+ * the `bits` bits from bit `low` up. */
+static void radix_lsd(int64_t *x, int64_t *y, int64_t n, uint64_t base, int low, int bits, int into_y) {
+    int passes = (bits + RADIX_BITS - 1) / RADIX_BITS;
+    int64_t *end = into_y ? y : x;
+    if (passes) {
+        int digit = (bits + passes - 1) / passes;
+        uint64_t mask = ((uint64_t)1 << digit) - 1;
+        for (int shift = low; passes > 0; passes--, shift += digit) {
+            uint32_t at[1 << RADIX_BITS], sum = 0;
+            memset(at, 0, sizeof at);
+            for (int64_t i = 0; i < n; i++) at[RADIX_DIGIT(x[i])]++;
+            for (uint64_t k = 0; k <= mask; k++) { uint32_t c = at[k]; at[k] = sum; sum += c; }
+            for (int64_t i = 0; i < n; i++) { int64_t w = x[i]; y[at[RADIX_DIGIT(w)]++] = w; }
+            int64_t *t = x; x = y; y = t;
+        }
+    }
+    if (x != end) memcpy(end, x, (size_t)n * 8);
+}
+/* sorts x in place; buf has room for RADIX_PART words */
+static void radix_sort(int64_t *x, int64_t *buf, int64_t n, uint64_t base, int low, int bits) {
+    if (n < 64 || (n < RADIX_MIN && bits > 2 * RADIX_BITS)) { sort_word(x, n); return; }
+    if (n <= RADIX_PART) { radix_lsd(x, buf, n, base, low, bits, 0); return; }
+    int digit = bits < RADIX_BITS ? bits : RADIX_BITS, shift = low + bits - digit;
+    uint64_t mask = ((uint64_t)1 << digit) - 1;
+    int64_t at[1 << RADIX_BITS], end[1 << RADIX_BITS], from = 0;
+    memset(end, 0, sizeof end);
+    for (int64_t i = 0; i < n; i++) end[RADIX_DIGIT(x[i])]++;
+    for (uint64_t k = 0; k <= mask; k++) { at[k] = from; from += end[k]; end[k] = from; }
+    /* every word goes straight to the next free place of its part, and the word found there is moved on in turn */
+    for (uint64_t k = 0; k <= mask; k++)
+        while (at[k] < end[k]) {
+            int64_t w = x[at[k]];
+            for (uint64_t d; (d = RADIX_DIGIT(w)) != k; ) { int64_t *p = &x[at[d]++], t = *p; __builtin_prefetch(p + 16, 1); *p = w; w = t; }
+            x[at[k]++] = w;
+        }
+    if (bits == digit) return;
+    from = 0;
+    for (uint64_t k = 0; k <= mask; k++) {
+        if (end[k] > from) radix_sort(x + from, buf, end[k] - from, base + (k << shift), low, bits - digit);
+        from = end[k];
+    }
+}
+/* `tagged`: every word is odd, so the lowest bit needs no pass */
+static void sort_words(int64_t *a, int64_t n, int tagged) {
+    if (n < RADIX_MIN || n > UINT32_MAX) { sort_word(a, n); return; }
+    int64_t lo = a[0], hi = a[0], up = 1, down = 1;
+    for (int64_t i = 1; i < n; i++) {
+        int64_t x = a[i];
+        lo = x < lo ? x : lo; hi = x > hi ? x : hi;
+        up &= a[i - 1] <= x; down &= a[i - 1] >= x;
+    }
+    if (up) return;
+    if (down) { for (int64_t i = 0, j = n - 1; i < j; i++, j--) { int64_t t = a[i]; a[i] = a[j]; a[j] = t; } return; }
+    int bits = 64 - __builtin_clzll((uint64_t)hi - (uint64_t)lo) - tagged, depth = 63 - __builtin_clzll((uint64_t)n);
+    if ((bits + RADIX_BITS - 1) / RADIX_BITS * RADIX_COST > depth) { sort_word(a, n); return; }
+    int64_t *tmp = malloc((size_t)(n < RADIX_PART ? n : RADIX_PART) * 8);
+    if (!tmp) { sort_word(a, n); return; }
+    radix_sort(a, tmp, n, (uint64_t)lo, tagged, bits);
+    free(tmp);
+}
 /* a double's bits as a signed word that orders like IEEE totalOrder; the mapping is its own inverse */
 static inline int64_t f64_order_word(int64_t w) { return w ^ (int64_t)((uint64_t)(w >> 63) >> 1); }
 
@@ -3890,23 +4088,19 @@ void *tomato_list_sorted(void *src, int kind) {
     int64_t n = l->len;
     List *r = tomato_list_new(((Hdr *)l)->type & TYPE_MASK);
     if (n == 0) return r;
-    r->data = malloc((size_t)n * 8);
-    if (!r->data) out_of_memory();
-    r->cap = n;
-    r->len = n;
-    int64_t *a = (int64_t *)r->data;
-    memcpy(a, l->data, (size_t)n * 8);
+    int64_t *a = (int64_t *)tomato_list_reserve(r, n, 8);
+    if (kind != 0) memcpy(a, l->data, (size_t)n * 8);
     if (kind == 2) for (int64_t i = 0; i < n; i++) tomato_retain((void *)(intptr_t)a[i]);
-    if (n > 1) {
-        if (kind == 0) {
-            int small = 1;
-            for (int64_t i = 0; i < n; i++) small &= int_is_small(a[i]);
-            /* every item small (tagged, or the word 0): compare the values */
-            if (small) sort_small(a, n);
-            else { for (int64_t i = 0; i < n; i++) a[i] = tomato_int_dup(a[i]); sort_bigint(a, n); }
-        } else if (kind == 1) {
+    if (kind == 0) {
+        /* the zero word of a slot nobody has written becomes a tagged zero; when every word is tagged, the words order like the numbers */
+        int64_t small = 1, *from = (int64_t *)l->data;
+        for (int64_t i = 0; i < n; i++) { int64_t w = from[i] | (from[i] == 0); small &= w; a[i] = w; }
+        if (small) sort_words(a, n, 1);
+        else { for (int64_t i = 0; i < n; i++) a[i] = tomato_int_dup(a[i]); sort_bigint(a, n); }
+    } else if (n > 1) {
+        if (kind == 1) {
             for (int64_t i = 0; i < n; i++) a[i] = f64_order_word(a[i]);
-            sort_word(a, n);
+            sort_words(a, n, 0);
             for (int64_t i = 0; i < n; i++) a[i] = f64_order_word(a[i]);
         } else sort_str(a, n);
     }
@@ -4264,7 +4458,7 @@ void *tomato_str_cat(int64_t n, const int64_t *p) {
         total += len[k];
         nchars += chars[k];
     }
-    Str *r = tomato_alloc((int64_t)sizeof(Str) + total + 1, 1);
+    Str *r = str_alloc(total);
     char *out = r->data;
     for (int64_t k = 0; k < n; k++) {
         memcpy(out, src[k], (size_t)len[k]);
@@ -4311,23 +4505,17 @@ static int64_t int_from_digits(const char *s, int64_t len, int *ok) {
 static void text_trim(void *text, const char **s, int64_t *len) {
     const char *p = ((Str *)text)->data;
     int64_t n = ((Str *)text)->bytes;
-    while (n > 0 && isspace((unsigned char)*p)) { p++; n--; }
-    while (n > 0 && isspace((unsigned char)p[n - 1])) n--;
+    if (n == 0 || (unsigned char)*p <= ' ' || (unsigned char)p[n - 1] <= ' ') {     /* (no white space is above the blank) */
+        while (n > 0 && isspace((unsigned char)*p)) { p++; n--; }
+        while (n > 0 && isspace((unsigned char)p[n - 1])) n--;
+    }
     *s = p; *len = n;
 }
 
-int32_t tomato_text_int_ok(void *text) {
-    const char *s; int64_t n; text_trim(text, &s, &n);
-    if (n > 0 && s[0] == '+') { s++; n--; if (n > 0 && s[0] == '-') return 0; }
-    int ok;
-    int64_t w = int_from_digits(s, n, &ok);
-    if (ok) tomato_int_free(w);
-    return ok;
-}
-
+/* the number, or the word 0 (no number the runtime makes) when the text is not a whole number */
 int64_t tomato_text_int(void *text) {
     const char *s; int64_t n; text_trim(text, &s, &n);
-    if (n > 0 && s[0] == '+') { s++; n--; }
+    if (n > 0 && s[0] == '+') { s++; n--; if (n > 0 && s[0] == '-') return 0; }
     int ok;
     return int_from_digits(s, n, &ok);
 }

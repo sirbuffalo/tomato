@@ -186,7 +186,9 @@ case "$mode" in
 esac
 # debug links at -O1 and keeps readable errors and the leak report; release links at -O2 (and prints short error codes, without the
 # leak report). Both use link-time optimisation, so the runtime's small-number and reference-count fast paths are inlined into the
-# program (without it, debug mode made a call for every integer operation). If this clang cannot do LTO, both fall back to a plain link.
+# program (without it, debug mode made a call for every integer operation). Where the linker cannot do LTO (many Linux systems have a
+# clang without the linker's LLVM plugin), clang itself merges the runtime into the program before optimising it, which inlines
+# the same fast paths; if that fails too, both modes fall back to a plain link.
 opt=-O1; ltoflags="-flto"; nolto=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; nolto="-DTOMATO_RELEASE"; }
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -206,6 +208,11 @@ link() {   # a function has its own "$@", so the run inputs survive; $1 holds th
   IFS="$OLDIFS"
   "$@" "$runtime" -lm $([ "$(uname)" = Linux ] && echo -ldl)   # -ldl: the runtime loads libcurl with dlopen (older glibc keeps it in libdl)
 }
-link "$ltoflags" 2>/dev/null || link "$nolto" || exit 1
+merge() {   # no LTO in the linker: the runtime as LLVM bitcode, merged into the program by clang (not with extra .ll files: each would get a copy)
+  clang $opt $ltoflags -c -o "$tmp/runtime.bc" "$runtime" || return 1
+  clang $opt -Xclang -mlink-bitcode-file -Xclang "$tmp/runtime.bc" -Wno-override-module -o "$exe" "$tmp/program.ll" \
+    -lm $([ "$(uname)" = Linux ] && echo -ldl)
+}
+link "$ltoflags" 2>/dev/null || { [ -z "$llvm" ] && merge 2>/dev/null; } || link "$nolto" || exit 1
 [ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }
 "$exe" "$@"

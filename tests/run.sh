@@ -194,7 +194,7 @@ t_asan() { # PATH:ARGUMENT, the argument being a folder the program may write in
   else bad "asan $name" "this clang cannot build with -fsanitize=address"; fi
 }
 section "== memory (AddressSanitizer and the runtime's leak check) =="
-for spec in "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:WORK" "tests/programs/json_files:WORK" "tests/programs/msgpack_files:WORK" "tests/programs/msgpack_file_basics:WORK" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/tuple_type_args:" "tests/programs/union_show:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/dict_literal_inference:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/programs/utf8_invalid:" "tests/programs/async_tasks:" "tests/programs/async_cancel:" "tests/programs/async_sleep:" "tests/programs/error_path_release:" "tests/programs/int_ranges:" "tests/programs/range_wide:" "tests/programs/float_ranges:" "tests/programs/fast_ranges:" "tests/runtime/error_classes:" "tests/programs/time_module:" "tests/programs/url_parse:" "tests/programs/url_quote:" "tests/programs/html_escape:" "tests/programs/base64_codec:" "tests/programs/hex_codec:" "tests/programs/web_modules:" "tests/programs/html_fuzz:" "tests/programs/web_large:" "tests/programs/datetime_arith:" "tests/programs/datetime_format:" "tests/programs/datetime_parse:" "tests/runtime/datetime_errors:" "tests/programs/csv_module:" "tests/programs/textwrap_module:" "tests/programs/statistics_module:"; do
+for spec in "tests/programs/fast_paths:" "examples/shapes:" "examples/objects:4" "tests/programs/cycle:" "tests/programs/gc_cycles:" "tests/programs/containers:" "tests/programs/modules:" "tests/programs/borrow_elision:" "tests/programs/native_sort:" "tests/programs/function_values:" "tests/programs/lambdas:" "tests/programs/sort_stable:" "tests/programs/sort_errors:" "tests/programs/sort_key_cmp:" "tests/programs/sort_cmp_native:" "tests/programs/str_fast:" "tests/programs/alloc_pool:" "tests/programs/text_index:" "tests/programs/fstring_fuse:" "tests/programs/cache_lru:" "tests/programs/memoize:" "tests/programs/bit_types:" "tests/programs/int_shift:" "tests/programs/bit_chunks:" "tests/programs/json_strict:" "tests/programs/json_accept:" "tests/programs/json_dumps:" "tests/programs/json_access:" "tests/programs/json_depth:" "tests/programs/json_utf8:" "tests/programs/json_fuzz:" "tests/programs/msgpack_basic:" "tests/programs/msgpack_errors:" "tests/programs/msgpack_fuzz:" "tests/programs/bigint_ownership:" "tests/programs/bigint_ops:" "tests/programs/bigint_frames:" "tests/programs/bigint_unwind:" "tests/programs/big_numbers:" "tests/programs/big_mul:" "tests/programs/unlimited_int:" "tests/programs/toml_valid:" "tests/programs/toml_invalid:" "tests/programs/toml_api:WORK" "tests/programs/json_files:WORK" "tests/programs/msgpack_files:WORK" "tests/programs/msgpack_file_basics:WORK" "tests/runtime/msgpack_full_disk:" "tests/programs/open_errors:" "tests/programs/unicode_case:" "tests/programs/unicode_class:" "tests/programs/mixed_tuples:" "tests/programs/tuple_type_args:" "tests/programs/union_show:" "tests/programs/toml_big:" "tests/programs/compact_lists:" "tests/programs/compact_fuzz:" "tests/programs/temp_unwind:" "tests/programs/text_dict_methods:" "tests/programs/dict_literal_inference:" "tests/programs/tuple_for:" "tests/programs/list_methods:" "tests/programs/utf8_invalid:" "tests/programs/async_tasks:" "tests/programs/async_cancel:" "tests/programs/async_sleep:" "tests/programs/error_path_release:" "tests/programs/int_ranges:" "tests/programs/range_wide:" "tests/programs/float_ranges:" "tests/programs/fast_ranges:" "tests/runtime/error_classes:" "tests/programs/time_module:" "tests/programs/url_parse:" "tests/programs/url_quote:" "tests/programs/html_escape:" "tests/programs/base64_codec:" "tests/programs/hex_codec:" "tests/programs/web_modules:" "tests/programs/html_fuzz:" "tests/programs/web_large:" "tests/programs/datetime_arith:" "tests/programs/datetime_format:" "tests/programs/datetime_parse:" "tests/runtime/datetime_errors:" "tests/programs/csv_module:" "tests/programs/textwrap_module:" "tests/programs/statistics_module:"; do
   spawn t_asan "$spec"
 done
 
@@ -207,6 +207,32 @@ t_sort_fallback() {
   "$c1" tests/programs/native_sort.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -DSORT_DEPTH_MUL=0 -o "$work/p" "$work/p.ll" runtime/tomato_rt.c -lm && "$work/p" > "$work/out" 2>&1
   check "sort with the depth limit forced to 0" "$(cat tests/expected/native_sort.main.out)" "$(cat "$work/out")"
 }
+# Release mode makes other code (fused integer expressions, copies for small arguments, no error tests after calls that cannot raise).
+# The runtime is built without TOMATO_RELEASE, so it reports what was never freed, and with AddressSanitizer. A release program
+# leaves freeing what its entry function holds to the end of the process, so leaks are only looked for (the second argument)
+# in programs whose entry function holds nothing: there, whatever is left at the end was leaked.
+t_release_asan() { # program, "leaks" to look for leaks too
+  "$c1" "tests/programs/$1.tom" main std/ release > "$work/p.ll" 2> "$work/e"
+  if clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" runtime/tomato_rt.c -lm 2>/dev/null; then
+    if [ "$2" = leaks ]; then "$work/rel" > "$work/out" 2> "$work/e"; cat "$work/e" >> "$work/out"
+    else ASAN_OPTIONS=detect_leaks=0 "$work/rel" > "$work/out" 2> "$work/e"; grep -v "never freed" "$work/e" >> "$work/out"; fi
+    cmp -s "$work/out" "tests/expected/$1.main.out" && ok "release $1" || bad "release $1" "$(diff "$work/out" "tests/expected/$1.main.out" | head -5)"
+  else bad "release $1" "does not build"; fi
+}
+t_release_leak() { # fused expressions over big numbers; the test itself is tested by taking the frees out of the runtime
+  printf 'def work():\n    x = 2 ** 70\n    xs = [2 ** 65, 7]\n    for i in range(40):\n        x = x * 3 - i * xs[i %% 2] + 1\n        xs[1] = xs[1] * xs[0] - x %% 1000003\n    print(x %% 97, xs[1] %% 97)\n\n@main\ndef main():\n    work()\n' > "$work/leak.tom"
+  "$c1" "$work/leak.tom" main std/ release > "$work/p.ll" 2> "$work/e" && clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" runtime/tomato_rt.c -lm
+  check "release: big numbers in fused expressions are freed" "55 51" "$("$work/rel" 2>&1)"
+  sed 's/^#define INT_CONSUME(m, x, y) .*/#define INT_CONSUME(m, x, y) do { } while (0)/' runtime/tomato_rt.c > "$work/leaky.c"
+  clang -O1 -w -o "$work/leaky" "$work/p.ll" "$work/leaky.c" -lm
+  case "$("$work/leaky" 2>&1)" in *"never freed"*) ok "release: a big number that is not freed is reported";; *) bad "release: a big number that is not freed is reported";; esac
+}
+section "== release mode (AddressSanitizer; the same output as debug mode) =="
+for name in fast_paths int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers float_chains; do
+  case "$name" in fast_paths) spawn t_release_asan "$name" leaks ;; *) spawn t_release_asan "$name" ;; esac
+done
+spawn t_release_leak
+
 section "== sort: the heapsort fallback gives the same results =="
 spawn t_sort_fallback
 
@@ -348,6 +374,11 @@ t_cli_modes() {
 }
 # release links with LTO and an inlined runtime: the same programs must print exactly what debug mode prints
 t_cli_release_like_debug() { cli_setup; check "release mode runs $1 like debug" "$(cat "tests/expected/$1.main.out")" "$($t run "tests/programs/$1.tom" --mode release 2>&1)"; }
+t_cli_no_lto() { # a clang whose linker has no LLVM plugin (-flto fails when linking): clang merges the runtime into the program instead
+  cli_setup
+  mkdir -p "$work/nolto"; printf '#!/bin/sh\ncase " $* " in *" -flto "*) case " $* " in *" -c "*) ;; *) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v clang)" > "$work/nolto/clang"; chmod +x "$work/nolto/clang"
+  for m in debug release; do check "without link-time optimisation in the linker ($m)" "$(cat tests/expected/int_fast_paths.main.out)" "$(PATH="$work/nolto:$PATH" $t run tests/programs/int_fast_paths.tom --mode $m 2>&1)"; done
+}
 t_cli_release_no_leak() { cli_setup; $t build tests/programs/cycle.tom -o "$work/cyc_rel" --mode release > /dev/null 2>&1; check "release mode does not print a leak report" "$(cat tests/expected/cycle.main.out)" "$("$work/cyc_rel" 2>&1)"; }
 t_cli_explain() {
   cli_setup
@@ -487,6 +518,7 @@ for name in int_boundary big_numbers bitwise floor_divide_power containers cycle
   spawn t_cli_release_like_debug "$name"
 done
 spawn t_cli_release_no_leak
+spawn t_cli_no_lto
 spawn t_cli_explain
 spawn t_cli_repl_1
 spawn t_cli_color
@@ -788,9 +820,9 @@ spawn t_docs_in_sync
 if [ "$(uname)" = Darwin ] && command -v pkgbuild >/dev/null 2>&1; then serial_last t_release_pkg; fi   # the macOS installer package
 
 # ---- benchmarks and the rest --------------------------------------------------------------------------------------------
-t_benchmarks() { # serial (last): it measures, so it must not compete with the other tests
-  # a missing toolchain (go, rust, python) is skipped by benchmarks/run.sh, with a "skipping" line: that must not fail the test
-  out="$(sh benchmarks/run.sh --smoke 2>&1)"; rc=$?
+t_benchmarks() { # serial (last): it measures, so it must not compete with the other tests. Few languages: building them all takes minutes
+  # a missing toolchain  is skipped by benchmarks/run.sh, with a "skipping" line: that must not fail the test
+  out="$(sh benchmarks/run.sh --smoke --langs go,rust,python,c,javascript 2>&1)"; rc=$?
   line="$(printf '%s\n' "$out" | grep '^ok: every benchmark prints the same in ' | tail -1)"
   if [ $rc -eq 0 ] && [ -n "$line" ]; then
     skipped="$(printf '%s\n' "$out" | sed -n 's/^skipping \([a-z]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//')"

@@ -1,0 +1,303 @@
+# The fast paths of release mode (and the ones both modes share): fused integer expressions, the small-argument copies of short
+# functions, direct method calls, lists kept in registers by calm loops, error tests removed after calls that cannot raise,
+# loops over split(), the radix sort and the big-number loops. tests/run.sh runs this in debug and in release mode.
+class Point:
+    x: int
+    y: int
+
+    @init
+    def make(self, x: int, y: int):
+        self.x = x
+        self.y = y
+
+    def mix(self, k: int) -> int:
+        return self.x * k + self.y - k
+
+    def move(self, k: int):
+        self.x = (self.x + self.y * k) % 1000003
+
+    def name(self) -> str:
+        return 'point'
+
+class Fancy(Point):
+    @init
+    def start(self, x: int, y: int):
+        Point.make(self, x, y)
+
+    override def mix(self, k: int) -> int:
+        return self.x * k * k - self.y
+
+    def twice(self) -> int:
+        return self.mix(2) + self.mix(3)
+
+class Shape:
+    side: int = 3
+
+    def area(self) -> int:
+        return self.side * self.side
+
+    def label(self) -> str:
+        return 'shape'
+
+class Named[T](Shape):
+    tag: list[T] = []
+
+    override def label(self) -> str:
+        return f'named {len(self.tag)}'
+
+def fused(a: int, b: int, c: int) -> list[int]:
+    return [a + b * c, a * b - c * 3, (a - b) * (a + b), (a * 3 + b) % 1000003, (a * b + c) // 7, (a + b) // 4 - c, a - (b - (c - 1)), (a + 1) % 8 + b, 2 * a + 1 - 2 * b, -5 + a * 2 + b]
+
+def update(x: int, n: int) -> int:
+    for i in range(n):
+        x = x * 3 + i
+        x = x - x // 4 + 1
+        x += i * i - x % 5
+    return x
+
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def power(base: int, n: int) -> int:
+    if n == 0:
+        return 1
+    return base * power(base, n - 1)
+
+def down(n: int) -> int:
+    if n <= -4611686018427387900:
+        return n - 10
+    return down(n - 1000000000000000000) - 1
+
+def check(n: int) -> int:
+    if n > 3:
+        raise ValueError(f'{n} is too big')
+    return n * 2 + 1
+
+def total(xs: list[int], n: int) -> int:
+    t = 0
+    for i in range(n):
+        t += xs[i] * 2 - i
+    return t
+
+def add_leaves(xs: list[int], d: int) -> int:
+    # the last leaf raises while the first ones (a big number among them) are waiting
+    return xs[0] * xs[1] + check(d) - xs[2]
+
+def safe_total(xs: list[int], n: int) -> str:
+    try:
+        return str(total(xs, n))
+    catch IndexError as e:
+        return f'IndexError: {e.message}'
+
+def edges():
+    big = 2 ** 62
+    for a in [0, 1, -1, 3, big - 1, big, -big, -big - 1, big // 3, 2 ** 64, -(2 ** 100)]:
+        for b in [0, 2, -7, big - 1, -big]:
+            print(a, b, fused(a, b, 5), fused(b, 3, a))
+    print([update(x, 12) for x in [0, 7, -7, big - 1, -big, 2 ** 70]])
+    p = Point(big - 2, big - 1)
+    print(p.mix(1), p.mix(3), p.mix(big))
+    p.move(big)
+    print(p.x, p.y)
+
+def calls():
+    print([fib(n) for n in [-3, 0, 1, 2, 20]], power(3, 45), power(-2 ** 31, 5), down(-1), down(2 ** 62))
+    for p in [Point(5, 6), Fancy(5, 6)]:
+        print(p.mix(7), p.name())
+    f = Fancy(2, 3)
+    print(f.twice())
+    s: list[Shape] = [Shape(), Named[str](), Named[int]()]
+    for v in s:
+        print(v.area(), v.label())
+    for d in [1, 3, 4]:
+        try:
+            print(add_leaves([2 ** 70, 2 ** 65, 9], d))
+        catch ValueError as e:
+            print('ValueError', e.message)
+
+def loops():
+    grid = [[(i * 7 + j) % 10 for j in range(5)] for i in range(4)]
+    row = grid[0]
+    acc = 0
+    for i in range(4):
+        row = grid[i]
+        for j in range(5):
+            acc += row[j] * grid[(i + j) % 4][j] - row[-1]
+            grid[i][j] = acc % 13
+    print(acc, grid)
+    same = grid[2]
+    for i in range(5):
+        same[i] = grid[2][4 - i] + 1
+    print(grid[2])
+    grow = [1]
+    for i in range(6):
+        grow.append(grow[i] * 2 + grow[-1])
+    print(grow)
+    xs = [5, 6, 7]
+    for i in range(3):
+        xs[i] = 2 ** (61 + i) * 3
+    xs[1] = xs[1] * xs[2] - xs[0]
+    for i in range(3):
+        xs[i] = xs[i] * 2 + i
+    print(xs)
+    k = 0
+    while k < 3 and xs[k] > 0:
+        xs[k] = xs[k] // (2 ** 60) + k
+        k += 1
+    print(xs, safe_total([1, 2, 3], 3), safe_total([1, 2, 3], 4))
+    flags = [False] * 6
+    for i in range(2, 6, 3):
+        flags[i] = True
+    vals = [0.5] * 4
+    for i in range(1, 4):
+        vals[i] = vals[i - 1] * 2.0 + i
+    print(flags, vals)
+
+def collatz(limit: int) -> int:
+    best = 0
+    for start in range(1, limit):
+        x = start
+        n = 1
+        while x != 1:
+            if x % 2 == 0:
+                x //= 2
+            else:
+                x = 3 * x + 1
+            n += 1
+        if n > best:
+            best = n
+    return best
+
+def choices():
+    print(collatz(3000))
+    for start in [1, 2 ** 60 + 1, -(2 ** 61), 2 ** 62 - 1, 1537228672809129301, 1537228672809129302]:
+        x = start
+        d = 1
+        k = 0
+        while k < 40:
+            if x % 2 == 0:
+                x = x // 2
+            else:
+                x = 3 * x + 1
+            if d % 4 == 1:
+                d = 5 - 7 * d
+            else:
+                d = 2 * d - 3
+            k += 1
+        print(x, d)
+
+def pieces(text: str, sep: str) -> list[str]:
+    out: list[str] = []
+    for p in text.split(sep):
+        if p == 'stop':
+            break
+        if p == '':
+            continue
+        text = p
+        out.append(p + '!')
+    return out
+
+def splits():
+    print(pieces('a,b,,c,stop,d', ','), pieces('', ','), pieces('äö--ü--', '--'), pieces('no', 'x'))
+    n = 0
+    for p in '10, 20 ,-3,+4'.split(','):
+        n += int(p)
+    print(n)
+    for bad in ['', '-', '+-5', '1x', ' ', '99999999999999999999999x']:
+        try:
+            print(int(bad))
+        catch ValueError as e:
+            print('ValueError')
+    try:
+        for p in 'abc'.split(''):
+            print(p)
+    catch ValueError as e:
+        print(e.message)
+    for q in '7;8;9'.split(';'):
+        try:
+            print(check(int(q) - 5))
+        catch ValueError as e:
+            print(e.message)
+
+def ordered(xs: list[int]) -> bool:
+    ys = sorted(xs)
+    seen = 0
+    for x in xs:
+        seen += x * x - x
+    for k in range(len(ys)):
+        seen -= ys[k] * ys[k] - ys[k]
+        if k > 0 and ys[k - 1] > ys[k]:
+            return False
+    return seen == 0 and len(xs) == len(ys)
+
+def sorts():
+    ok = True
+    for n in [0, 1, 2, 63, 64, 511, 512, 513, 2000, 9000, 40000]:
+        for span in [1, 2, 200, 65536, 2 ** 31, 2 ** 45, 2 ** 61]:
+            seed = 12345
+            xs = [0] * n
+            for i in range(n):
+                seed = (seed * 1103515245 + 12345) % (2 ** 63)
+                xs[i] = seed // 4 % span - span // 2
+            if not ordered(xs) or not ordered(sorted(xs)):
+                ok = False
+                print('wrong order', n, span)
+    print(ok)
+    ext = [2 ** 62 - 1, -(2 ** 62), 0, 5] * 300
+    print(ordered(ext), sorted(ext)[0], sorted(ext)[-1])
+    ext[7] = 2 ** 90
+    ext[11] = -(2 ** 90)
+    print(ordered(ext), sorted(ext)[0], sorted(ext)[-1])
+    falling = [1000 - i for i in range(1500)]
+    print(sorted(falling)[:3], sorted(falling)[-2:])
+    fs = [((i * 7919) % 2003 - 1000) / 8.0 for i in range(3000)]
+    gs = sorted(fs)
+    good = True
+    for i in range(1, 3000):
+        if gs[i - 1] > gs[i]:
+            good = False
+    print(good, gs[0], gs[-1])
+
+def bigs():
+    x = 1
+    for i in range(1, 60):
+        x *= i
+    y = x
+    for i in range(59, 0, -1):
+        y //= i
+    print(x, y)
+    a = 2 ** 200 - 1
+    b = 2 ** 64 + 1
+    ok = True
+    for i in range(1, 70):
+        c = a * i + b
+        d = c * c - b * (i - 35)
+        e = d + a - c
+        if c - b != a * i or d + b * (i - 35) != c * c or e - a + c != d or (c * d) // d != c or (c * d + i) % c != i:
+            ok = False
+        a = a * -3 + i
+        b = -b * 2 ** 31 - i
+    print(ok, a % 1000000007, b % 1000000007)
+    m = 2 ** 128
+    m -= 1
+    m += 1
+    m *= m
+    print(m, m - m, m * 0, (2 ** 96 - 1) * (2 ** 96 - 1), 2 ** 64 - (2 ** 64 - 1), 0 - 2 ** 64)
+    for n in [0, 1, 2 ** 63]:
+        z = 2 ** 63
+        z *= n
+        w = n
+        w *= 2 ** 63
+        print(z, w)
+
+@main
+def main():
+    edges()
+    calls()
+    loops()
+    choices()
+    splits()
+    sorts()
+    bigs()

@@ -120,6 +120,135 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (toward the speed of Go and Rust, unreleased)
+
+Goal: averaged over the suite, about 90% of Go's speed (Tomato ÷ Go 1.11) and 75% of Rust's (Tomato ÷ Rust 1.33). Measured on
+Linux x86-64 (Threadripper 3990X, clang 21, Go 1.27.4, Rust 1.100.0), a shared machine with a load average around 75, so
+every program was run 15 times in one shuffled order together with the old build (`bf8eb2c`), Go and Rust, and the **fastest**
+run is the one compared. The medians are noisier: the old matmul, for one, ran in 0.24 s or in 1.3 s depending on what else ran.
+
+| benchmark | before (s) | after (s) | after ÷ before | Go (s) | Rust (s) | Tomato ÷ Go before → after | Tomato ÷ Rust before → after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fib | 0.243 | 0.221 | 0.91 | 0.252 | 0.136 | 0.96 → 0.88 | 1.80 → 1.63 |
+| sieve | 1.237 | 1.133 | 0.92 | 1.145 | 1.009 | 1.08 → 0.99 | 1.23 → 1.12 |
+| matmul | 0.240 | 0.178 | 0.74 | 0.132 | 0.120 | 1.81 → 1.35 | 1.99 → 1.48 |
+| mandelbrot | 0.101 | 0.101 | 1.00 | 0.095 | 0.093 | 1.06 → 1.06 | 1.09 → 1.09 |
+| collatz | 0.259 | 0.164 | 0.63 | 0.268 | 0.159 | 0.97 → 0.61 | 1.63 → 1.03 |
+| strings | 1.690 | 0.733 | 0.43 | 0.568 | 0.815 | 2.98 → 1.29 | 2.07 → 0.90 |
+| sort | 0.420 | 0.269 | 0.64 | 0.430 | 0.456 | 0.98 → 0.63 | 0.92 → 0.59 |
+| wordcount | 0.287 | 0.268 | 0.93 | 0.802 | 0.415 | 0.36 → 0.33 | 0.69 → 0.65 |
+| bigint | 0.142 | 0.141 | 1.00 | 0.295 | 0.130 | 0.48 → 0.48 | 1.09 → 1.09 |
+| objects | 1.324 | 0.915 | 0.69 | 1.193 | 1.166 | 1.11 → 0.77 | 1.14 → 0.79 |
+| **average** | | | | | | **1.18 → 0.84** | **1.36 → 1.04** |
+| geometric mean | | | | | | 1.01 → 0.77 | 1.29 → 0.99 |
+
+Medians of the same 15 runs: Tomato ÷ Go 1.40 → 0.73 (average) and 1.18 → 0.66 (geometric mean), Tomato ÷ Rust 2.31 → 1.03
+and 1.76 → 0.98. Peak memory: strings 348 → 184 MB, objects 97 → 84 MB, sieve 21.0 → 22.3 MB, sort 49.3 → 50.2 MB, the rest
+unchanged. Nothing here was measured on the Mac.
+
+Instructions executed (callgrind, whole process, counting inputs, release mode, deterministic):
+
+| benchmark | before (M) | after (M) | after ÷ before |
+| --- | ---: | ---: | ---: |
+| fib | 183.46 | 123.54 | 0.67 |
+| sieve | 49.04 | 45.78 | 0.93 |
+| matmul | 138.65 | 107.57 | 0.78 |
+| mandelbrot | 62.37 | 62.30 | 1.00 |
+| collatz | 70.34 | 82.13 | 1.17 |
+| strings | 106.59 | 69.52 | 0.65 |
+| sort | 50.83 | 24.02 | 0.47 |
+| wordcount | 155.53 | 146.13 | 0.94 |
+| bigint | 100.27 | 71.83 | 0.72 |
+| objects | 106.01 | 60.24 | 0.57 |
+
+(The old Linux snapshot, where fib was 5.13 times Rust, was measured with no link-time optimisation: see 10 below.)
+
+**The 25-benchmark suite, after merging with the range-analysis work.** Fifteen programs joined the suite while this was being done; none
+was looked at while the changes above were made. "Before" here is `main` at `f11e1824` (which already has the range-analysis
+work), "after" the same with the changes above; fastest of 9 shuffled runs, same machine, load about 75.
+
+| benchmark | before (s) | after (s) | after ÷ before | Go (s) | Rust (s) | Tomato ÷ Go before → after | Tomato ÷ Rust before → after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fib | 0.246 | 0.223 | 0.91 | 0.253 | 0.136 | 0.97 → 0.88 | 1.81 → 1.64 |
+| sieve | 1.117 | 1.138 | 1.02 | 1.256 | 1.332 | 0.89 → 0.91 | 0.84 → 0.85 |
+| matmul | 0.251 | 0.188 | 0.75 | 0.145 | 0.108 | 1.73 → 1.29 | 2.33 → 1.74 |
+| mandelbrot | 0.087 | 0.088 | 1.01 | 0.096 | 0.091 | 0.91 → 0.92 | 0.96 → 0.97 |
+| collatz | 0.271 | 0.166 | 0.61 | 0.270 | 0.157 | 1.01 → 0.62 | 1.73 → 1.06 |
+| strings | 1.680 | 0.813 | 0.48 | 0.517 | 0.968 | 3.25 → 1.57 | 1.74 → 0.84 |
+| sort | 0.470 | 0.293 | 0.62 | 0.519 | 0.512 | 0.91 → 0.56 | 0.92 → 0.57 |
+| wordcount | 0.317 | 0.265 | 0.84 | 0.696 | 0.417 | 0.46 → 0.38 | 0.76 → 0.64 |
+| bigint | 0.140 | 0.141 | 1.01 | 0.326 | 0.129 | 0.43 → 0.43 | 1.08 → 1.09 |
+| objects | 1.418 | 1.187 | 0.84 | 1.180 | 1.316 | 1.20 → 1.01 | 1.08 → 0.90 |
+| nbody | 0.446 | 0.414 | 0.93 | 0.144 | 0.082 | 3.09 → 2.87 | 5.44 → 5.05 |
+| spectral_norm | 0.232 | 0.179 | 0.77 | 0.066 | 0.060 | 3.50 → 2.69 | 3.89 → 2.99 |
+| fannkuch | 0.698 | 0.544 | 0.78 | 0.212 | 0.206 | 3.29 → 2.56 | 3.39 → 2.64 |
+| nqueens | 0.079 | 0.069 | 0.88 | 0.065 | 0.051 | 1.21 → 1.07 | 1.53 → 1.35 |
+| binary_trees | 0.393 | 0.394 | 1.00 | 0.421 | 0.246 | 0.93 → 0.94 | 1.59 → 1.60 |
+| levenshtein | 0.384 | 0.353 | 0.92 | 0.091 | 0.074 | 4.21 → 3.86 | 5.21 → 4.78 |
+| knapsack | 0.193 | 0.172 | 0.89 | 0.055 | 0.037 | 3.51 → 3.13 | 5.22 → 4.65 |
+| life | 0.221 | 0.196 | 0.89 | 0.124 | 0.078 | 1.78 → 1.59 | 2.83 → 2.51 |
+| dijkstra | 0.149 | 0.120 | 0.81 | 0.093 | 0.069 | 1.60 → 1.29 | 2.16 → 1.74 |
+| quicksort | 0.431 | 0.394 | 0.91 | 0.343 | 0.254 | 1.26 → 1.15 | 1.69 → 1.55 |
+| kmers | 0.656 | 0.426 | 0.65 | 0.608 | 0.330 | 1.08 → 0.70 | 1.99 → 1.29 |
+| revcomp | 0.113 | 0.101 | 0.89 | 0.939 | 0.398 | 0.12 → 0.11 | 0.28 → 0.25 |
+| tokenize | 0.302 | 0.245 | 0.81 | 0.695 | 0.350 | 0.43 → 0.35 | 0.86 → 0.70 |
+| crc32 | 0.338 | 0.237 | 0.70 | 0.283 | 0.232 | 1.19 → 0.84 | 1.45 → 1.02 |
+| hof | 0.547 | 0.467 | 0.85 | 0.364 | 0.112 | 1.50 → 1.28 | 4.87 → 4.16 |
+| **average, all 25** | | | | | | **1.62 → 1.32** | **2.23 → 1.86** |
+| geometric mean, all 25 | | | | | | 1.24 → 1.01 | 1.76 → 1.44 |
+| average, the first ten | | | | | | 1.18 → 0.86 | 1.32 → 1.03 |
+| average, the other fifteen | | | | | | 1.91 → 1.63 | 2.83 → 2.42 |
+
+So the goal (1.11 and 1.33) is met on the first ten and **not on the whole suite**. The furthest behind: nbody, levenshtein,
+knapsack, hof, spectral_norm, fannkuch and life. The medians of these runs agree on the averages (1.52 → 1.30 for Go, 2.04 → 1.76 for Rust) but
+are noisy program by program (wordcount and life have slower medians after, and faster fastest runs).
+
+**Compiler** (1 to 4 change release mode only: the IR they make is longer, and the website interprets the IR):
+
+1. **Fused integer expressions** (`Gen.fused`). Two or more `+ - *` (and `//` or `%` by a positive constant) on ints are one unit. The
+   numbers it starts from are worked out first, left to right, then one test of all their tags together leads to a fast copy
+   with one overflow test per operation (none where the range facts prove it small). A big number or an overflow leads to a
+   cold slow copy that redoes the expression from the same numbers with the general operations. `x = x * a + y` hands the old
+   number to the operation, as single operations already did. `%` and `//` by d work on the tagged word with 2d.
+2. **A copy for small arguments** (`has_small`). A short function that never assigns its int parameters is compiled twice; the copy
+   knows that they are small, and after `if n < 2: return n` the range facts prove `n - 1` and `n - 2` need no test at all.
+3. **Error tests after calls that cannot raise are removed** (`finish_bodies`): which functions can leave an error pending is worked
+   out over the whole program once every function is compiled (this one is in both modes).
+4. **A release program does not free what its entry function holds** when it ends (the process ends anyway; nothing in the
+   language can see it).
+5. **Direct method calls** (`Mod.overridden`): a method that no class below the static one overrides is called directly, so it
+   can be inlined. Generic classes that could still be copied count as if they were.
+6. **Lists that a loop only reads** (`keep_lists`): a loop of plain assignments, ifs and range loops over numbers, items and fields
+   cannot run user code or change a list's length, so the length and the items' address of its local lists are loaded once.
+7. **Small-int loops** (`small_loop`'s fast copy): `3 * x + 1` is one range test instead of two overflow tests, and an `if`/`else` that
+   assigns one variable a short sum either way works out both and selects, so an unpredictable condition costs no branch
+   (collatz executes more instructions and is 37% faster).
+8. **`for piece in text.split(sep)`** makes one piece at a time instead of a list of them, and `int(text)` parses once instead of twice.
+
+**Runtime and linking:**
+
+9. **Numbers sort with a radix sort** above 512 items, when the values span few enough digits for the length; text, short lists, wide
+   values, `key=` and `cmp=` sort as before. (The v0.49 radix sort was dropped because it could not take a compare function;
+   those have had their own paths since, so this only replaces the introsort where no function is given.) The highest digit
+   cuts the list in place into parts that fit the cache, with a prefetch ahead of each part's write position; the parts are sorted
+   with a 64 KB buffer. A list already in order, or in reverse order, is noticed first.
+10. **No silent loss of link-time optimisation on Linux.** When `-flto` fails at the link (no LLVM plugin in the linker), `tomato`
+    used to fall back to a plain link, which makes a call of every integer operation. Now clang merges the runtime's
+    bitcode into the program first (`-mlink-bitcode-file`).
+11. **Big integers**: 64-bit words throughout `+`, `-` and `*` (the multiply by a word is unrolled), `x *= small` reuses x's memory, and
+    sums are written straight into their result.
+12. **Memory**: lists and pool chunks of many megabytes ask Linux for 2 MB pages, texts are not zeroed before they are filled, and
+    the allocation of a small object is inlined.
+
+Tests: `fast_paths` (debug and release), the release-mode AddressSanitizer section of `tests/run.sh`, and a check of 10. Outside the
+suite: 959 random programs whose output matches Python's in release mode (plain and under AddressSanitizer, with the leak
+check; one more was too slow to check there, in the old compiler as well), and
+every program of `tests/programs.txt` in release mode under AddressSanitizer.
+
+**What is left:** fib (1.63 times Rust, which unrolls part of the recursion) and matmul (1.48 times Rust, 1.35 times Go: two bounds
+tests, three tags and two overflow tests per step). The loop item of `for x in xs` is still retained and released. Division
+of big integers still goes 32 bits at a time.
+
 ## What was done (text indexing and fused f-strings, v0.51)
 
 **`s[i]`.** ASCII text was already indexed directly (the character number is the byte offset), but each `s[i]` allocated a one-character string, and text with any non-ASCII character was scanned from the start on every index (quadratic loops). Now: (1) `s[i]` on an ASCII character returns one of 128 shared immortal one-character strings (no allocation, no release work); (2) a string of 256 or more characters that is not all ASCII gets a chunked index (D17c) on its first indexed use: the byte offset of every 64th character, so an index scans at most 63 characters. The index lives in a side table of 4 strings (`chunk_cache` in the runtime, oldest dropped first), not in the string object, so the string layout, string constants and the wasm interpreter are unchanged; the table holds a reference to each indexed string (strings are immutable, so the address cannot be reused) and it is released before the debug-mode leak check. Slices, `find` from a position and extended slices use the same offsets. More than 4 long non-ASCII strings in use at once fall back to the plain scan. Measured with a loop reading every character of a 100,000 character non-ASCII text next to an ASCII one (release mode, user time, machine load average about 35 to 55 from other work): old 27.2 s, new 0.01 s; 300,000 characters take 0.05 s.
@@ -402,9 +531,9 @@ size-class allocator task covers.
 ## Still to do, biggest first
 
 1. **Sort with compare functions** is done on native builds (see "function values and sort"); the browser still runs the Tomato merge sort, whose every compare is an interpreted call. The native loop takes 0.42 of the cycles of the Tomato merge sort. **Small-int fast paths** are already inlined everywhere in both modes (the collatz section); what remains in the generated code is the tagged-word untag and retag around each operation and the `dup`/`free` pairs on ints passed to calls.
-2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds and tests the tag of each item (for the big-integer copy); no reference counting is left in that loop (see the refcount section).
+2. **Remaining list-read cost in matmul:** each `b[k][j]` still checks both bounds and tests the tag of each item, now in one test per step (see "toward the speed of Go and Rust"); no reference counting is left in that loop (see the refcount section).
 3. **Typed list storage** is done for `bool` and the fixed-width integers (see above); `int` and `float` lists are already 8 bytes per item and cannot shrink.
-4. **Strings:** `split` still allocates one string per piece (f-strings and `+` chains are fused now, see "text indexing and fused f-strings").
+4. **Strings:** `split` still allocates one string per piece (a `for` loop over it reuses one at a time; f-strings and `+` chains are fused, see "text indexing and fused f-strings").
 5. (done, see the collatz section) Debug-mode small-int arithmetic.
 
 ## JSON and MessagePack (std/json.tom)

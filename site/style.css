@@ -80,9 +80,31 @@ input.stdin-line { font: inherit; color: inherit; background: transparent; borde
 .bench-fill { height:100%; border-radius:4px; min-width:2px; }
 .bench-val { text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
 .lang-tomato { background:#c8321e; } .lang-tomato-debug { background:#e8a090; } .lang-rust { background:#a0521b; } .lang-go { background:#1d6fa5; } .lang-python { background:#7a8f2a; }
+.lang-c { background:#5c6670; } .lang-cpp { background:#8a4fa0; } .lang-java { background:#b8860b; } .lang-csharp { background:#3f7f4f; } .lang-swift { background:#d9691e; } .lang-javascript { background:#9c8200; } .lang-typescript { background:#2f5f9f; } .lang-php { background:#6a63a8; }
 @media (prefers-color-scheme: dark) { .lang-tomato { background:#ee6a55; } .lang-tomato-debug { background:#8f3a2e; } .lang-rust { background:#f0a868; } .lang-go { background:#7ec1ee; } .lang-python { background:#b5c95a; } }
-.bench-legend { display:flex; flex-wrap:wrap; gap:4px 16px; font-size:.9rem; }
-.bench-legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+@media (prefers-color-scheme: dark) { .lang-c { background:#a9b4bf; } .lang-cpp { background:#c99ae0; } .lang-java { background:#e0b84a; } .lang-csharp { background:#86c796; } .lang-swift { background:#f59a5c; } .lang-javascript { background:#ecd75a; } .lang-typescript { background:#84b1ea; } .lang-php { background:#aaa4e0; } }
+/* the language boxes: a pill per language; its check square takes the color of the language's bars, and the real checkbox is
+   there for the keyboard and screen readers but not drawn */
+.bench-legend { --tick:#fff; display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 4px; }
+@media (prefers-color-scheme: dark) { .bench-legend { --tick:#181513; } }
+.lang-pill { position:relative; display:inline-flex; align-items:center; gap:8px; padding:6px 13px 6px 8px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--fg); font-size:.9rem; line-height:1.3; white-space:nowrap; cursor:pointer; user-select:none; transition:border-color .15s, background .15s, color .15s, box-shadow .15s; }
+.lang-pill input { position:absolute; opacity:0; width:100%; height:100%; left:0; top:0; margin:0; cursor:inherit; }
+.lang-pill .box { flex:none; display:grid; place-items:center; width:18px; height:18px; border-radius:6px; transition:background .15s, box-shadow .15s; }
+.lang-pill .box svg { width:12px; height:12px; fill:none; stroke:var(--tick); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:14; stroke-dashoffset:0; transition:stroke-dashoffset .18s ease-out; }
+.lang-pill .box.lang-tomato-debug svg { stroke:#241f1c; }
+@media (prefers-color-scheme: dark) { .lang-pill .box.lang-tomato-debug svg { stroke:#fff; } }
+.lang-pill input:checked ~ .name { font-weight:600; }
+.lang-pill.off { background:transparent; color:var(--muted); }
+.lang-pill.off .box { background:transparent; box-shadow:inset 0 0 0 1.5px var(--muted); }
+.lang-pill.off .box svg { stroke-dashoffset:14; }
+.lang-pill:hover { border-color:var(--muted); color:var(--fg); box-shadow:0 1px 4px rgb(0 0 0 / .08); }
+.lang-pill:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+.lang-pill.fixed { cursor:default; } .lang-pill.fixed:hover { border-color:var(--line); box-shadow:none; }
+.lang-pill .name { display:inline-grid; } .lang-pill .name::after { content:attr(data-name); font-weight:600; height:0; overflow:hidden; visibility:hidden; }   /* keeps the width of the bold name, so ticking moves nothing */
+.lang-pills-do { display:inline-flex; gap:4px; align-items:center; }
+.lang-pills-do button { border:0; background:none; padding:6px 8px; font-size:.9rem; line-height:1.3; color:var(--accent); border-radius:999px; }
+.lang-pills-do button:hover { background:var(--code); } .lang-pills-do button:focus-visible { outline:2px solid var(--accent); }
+@media (prefers-reduced-motion: reduce) { .lang-pill, .lang-pill .box, .lang-pill .box svg { transition:none; } }
 .table-wrap td.num, .table-wrap th.num { text-align:right; font-variant-numeric:tabular-nums; }
 .best { font-weight:700; }
 

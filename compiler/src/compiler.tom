@@ -422,6 +422,7 @@ class Ex:
     ty: str = ''
     fresh: bool = False       # an int that the code holding it owns (it frees it or moves it into a place that keeps it), not one borrowed from a variable
     small: bool = False       # an int known to be in the small form, which owns nothing
+    list_name: str = ''     # the local list this was read from, when its length and data are kept in registers (see keep_lists)
     unchecked: str = ''     # a float result of + - * whose finite check is left to the operator that uses it (the check on that one covers it)
 
 def ex(reg: str, ty: str) -> Ex:
@@ -990,6 +991,67 @@ class ClassInfo:
     generic: str = ''             # the generic class this is a copy of, or ''
     populated: bool = True        # the methods of a copy of a generic class are in mod.infos
 
+class Body:
+    # a compiled function whose text is not final yet (see finish_bodies)
+    symbol: str = ''
+    head: str = ''
+    lines: list[str] = []
+    raises: bool = False          # it can leave an error pending when it returns
+    uses: list[str] = []          # the program functions it mentions (it may call them)
+    checks: list[int] = []        # the lines that test for an error after a direct call; each ends with `; @function`
+    epilogue: int = 0             # the line of its `epilogue:` label
+
+def fast_linear(n: Node, out: list[int]) -> str:
+    # the variable x when n is a * x + b for constants (a and b are added to out), else ''
+    c = fast_line_of(n)
+    if c.name == '' or c.name == '?':
+        return ''
+    out.append(c.a)
+    out.append(c.b)
+    return c.name
+
+class Line:
+    # a * name + b; no name means the constant b, and the name '?' anything else
+    name: str = ''
+    a: int = 0
+    b: int = 0
+
+def line_of(name: str, a: int, b: int) -> Line:
+    r = Line()
+    r.name = name
+    r.a = a
+    r.b = b
+    if abs(a) > 1000000000 or abs(b) > 1000000000:
+        r.name = '?'
+    return r
+
+def fast_line_of(n: Node) -> Line:
+    if n.kind == 'IntLit':
+        return line_of('', 0, n.fields[0].num)
+    if n.kind == 'UnOp':
+        return line_of('', 0, -val_node(n.fields[1]).fields[0].num)
+    if n.kind == 'Name':
+        return line_of(n.fields[0].text, 1, 0)
+    if n.kind != 'BinOp':
+        return line_of('?', 0, 0)
+    op = n.fields[0].text
+    if op != '+' and op != '-' and op != '*':
+        return line_of('?', 0, 0)
+    x = fast_line_of(val_node(n.fields[1]))
+    y = fast_line_of(val_node(n.fields[2]))
+    if x.name == '?' or y.name == '?':
+        return line_of('?', 0, 0)
+    if op == '*':
+        if x.name == '':
+            return line_of(y.name, x.b * y.a, x.b * y.b)
+        if y.name == '':
+            return line_of(x.name, y.b * x.a, y.b * x.b)
+        return line_of('?', 0, 0)
+    sign = 1 if op == '+' else -1
+    if x.name != '' and y.name != '' and x.name != y.name:
+        return line_of('?', 0, 0)
+    return line_of(x.name if x.name != '' else y.name, x.a + sign * y.a, x.b + sign * y.b)
+
 class Binding:
     # a name a module can see, and the program-wide key it stands for
     module: str = ''
@@ -1035,6 +1097,9 @@ class Mod:
     preload: list[str] = []             # copies of generic classes to make before any body is compiled (see NeedsEarlyCopy)
     dyn_seen: list[str] = []            # the Iterable and Sized types whose loops and lengths are compiled over the classes there are so far
     flat_cache: dict[str, bool] = {}       # flat_type answers, by type
+    bodies: list[Body] = []                # the functions compiled so far
+    small_cache: dict[str, bool] = {}      # has_small answers, by function symbol
+    override_cache: dict[str, bool] = {}   # overridden answers, by class and method name
 
     def code_of(self, t: str) -> int:
         if t in self.code_index:
@@ -1396,6 +1461,33 @@ class Mod:
             return False
         self.flat_cache[t] = ans
         return ans
+
+    def overridden(self, cls: str, name: str) -> bool:
+        # can an object of class cls, or of a class below it, have another method of this name than the one cls itself uses?
+        # Copies of generic classes are made while bodies are compiled, so the generic classes below cls count as if they existed.
+        key = f'{cls}.{name}'
+        if key in self.override_cache:
+            return self.override_cache[key]
+        found = False
+        for f in self.infos:
+            if f.name == name and f.owner != '' and f.owner != cls and self.subclass(f'@{f.owner}', f'@{cls}'):
+                found = True
+                break
+        if not found:
+            for gk, node in self.generics.items():
+                if node.kind != 'ClassDef' or node.fields[1].tag != 's':
+                    continue
+                saved = self.cur
+                self.cur = self.generic_mods[gk]
+                parent = self.class_key(node.fields[1].text, node.line)
+                self.cur = saved
+                if not self.subclass(f'@{parent}', f'@{cls}'):
+                    continue
+                for m in val_nodes(node.fields[4]):
+                    if m.fields[0].text == name:
+                        found = True
+        self.override_cache[key] = found
+        return found
 
     def field_index(self, c: ClassInfo, name: str, line: int) -> int:
         k = field_position(c, name)
@@ -1801,6 +1893,12 @@ class Gen:
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
     take_name: str = ''           # `x = x + 1`: the int local whose one read in the right side hands its number over to the operation
     mark_prefix: str = ''        # inside a small-int loop: the prefix of the labels its fast copy jumps back to (see small_loop)
+    list_lens: dict[str, str] = {}    # local lists that the loops being compiled cannot change: the register that holds the length
+    list_datas: dict[str, str] = {}   # of each, and the one that holds the address of its items (see keep_lists)
+    fast_over: str = ''          # whether an operation worked out ahead overflowed (see fast_choice)
+    fuse_at: int = 0             # the next leaf of the fused expression being compiled (see fused)
+    fuse_used: bool = False      # its fast copy can branch to the slow copy
+    calm_types: dict[str, str] = {}   # while a loop is checked (see calm): the types of the variables it makes
     taken: Ex = ex('', '')        # that read (fresh while an operation has not used it up)
     settled: list[str] = []       # the narrowed variables whose narrowing lasts to the end of the block (after an if that left)
     after: list[list[str]] = []   # for each of those: its name, slot and type before, put back when the block ends
@@ -1982,8 +2080,161 @@ class Gen:
             name = n.fields[0].text
             r = self.tmp('bl')
             self.emit(f'{r} = load ptr, ptr {self.slots[name]}')
-            return ex(r, self.types[name])
+            lent = ex(r, self.types[name])
+            if name in self.list_lens:
+                lent.list_name = name
+            return lent
         return self.expr(n)
+
+    # ---- lists that a loop only reads. A loop is calm when nothing in it can run user code or change the length of any list: only
+    # assignments, ifs and range loops over numbers, list items and fields. A local list that a calm loop does not assign keeps its
+    # length and the address of its items, so they are loaded once, in front of the loop, into registers.
+    def calm(self, n: Node) -> bool:
+        t = self.peek_type(n)
+        if not (t == 'int' or t == 'float' or t == 'bool' or (is_list(t) and not is_optional(t))):
+            return False
+        return self.calm_parts(n)
+
+    def calm_parts(self, n: Node) -> bool:
+        k = n.kind
+        if k == 'Name' or k == 'IntLit' or k == 'FloatLit' or k == 'BoolLit':
+            return True
+        if k == 'UnOp':
+            return self.calm(val_node(n.fields[1]))
+        if k == 'BinOp':
+            return self.calm(val_node(n.fields[1])) and self.calm(val_node(n.fields[2]))
+        if k == 'Index':
+            return self.calm(val_node(n.fields[0])) and self.calm(val_node(n.fields[1]))
+        if k == 'Attr':
+            return self.quiet_read(val_node(n.fields[0]))
+        if k == 'Call':                     # peek_type knows its type: len(), or a user function, which may do anything
+            f = val_node(n.fields[0])
+            return f.kind == 'Name' and f.fields[0].text == 'len' and self.calm(val_nodes(n.fields[1])[0])
+        return False
+
+    def calm_block(self, body: list[Node]) -> bool:
+        for s in body:
+            if not self.calm_stmt(s):
+                return False
+        return True
+
+    def calm_stmt(self, s: Node) -> bool:
+        k = s.kind
+        if k == 'Pass' or k == 'Break' or k == 'Continue':
+            return True
+        if k == 'Multi':
+            return self.calm_block(val_nodes(s.fields[0]))
+        if k == 'Assign':
+            t = val_node(s.fields[0])
+            if not self.calm(val_node(s.fields[1])):
+                return False
+            if t.kind == 'Name':
+                name = t.fields[0].text
+                if name not in self.slots:       # its type is only known once it is compiled, and later statements may use it
+                    self.calm_types[name] = self.peek_type(val_node(s.fields[1]))
+                return True
+            if t.kind == 'Index':
+                return self.peek_type(val_node(t.fields[0])).startswith('list[') and self.calm(t)
+            return t.kind == 'Attr' and self.calm(t)
+        if k == 'If':
+            for branch in s.fields[0].items:
+                if not self.calm(val_node(branch.items[0])) or not self.calm_block(val_nodes(branch.items[1])):
+                    return False
+            return s.fields[1].tag != 'l' or self.calm_block(val_nodes(s.fields[1]))
+        if k == 'While':
+            return self.calm(val_node(s.fields[0])) and self.calm_block(val_nodes(s.fields[1]))
+        if k == 'For':
+            it = val_node(s.fields[1])
+            if len(s.fields) > 3 or it.kind != 'Call' or val_node(it.fields[0]).kind != 'Name' or val_node(it.fields[0]).fields[0].text != 'range':
+                return False
+            for b in val_nodes(it.fields[1]):
+                if not self.calm(b):
+                    return False
+            if s.fields[0].text not in self.slots:
+                self.calm_types[s.fields[0].text] = 'int'
+            return self.calm_block(val_nodes(s.fields[2]))
+        return False
+
+    def indexed_names(self, n: Node, out: list[str]):
+        # the local lists that n takes items of
+        if n.kind == 'Index' and val_node(n.fields[0]).kind == 'Name':
+            name = val_node(n.fields[0]).fields[0].text
+            if name in self.slots and is_list(self.types[name]) and not is_optional(self.types[name]) and name not in out:
+                out.append(name)
+        for f in n.fields:
+            self.indexed_names_val(f, out)
+
+    def indexed_names_val(self, v: Val, out: list[str]):
+        if v.tag == 'n':
+            self.indexed_names(val_node(v), out)
+        elif v.tag == 'l' or v.tag == 't':
+            for it in v.items:
+                self.indexed_names_val(it, out)
+
+    def keep_lists(self, loop: Node, parts: list[Node], cond: Node | None = None) -> list[str]:
+        # called in front of a loop: loads the length and the address of the items of each local list that the loop reads items of
+        # and, being calm, cannot change. Gives the names that it added; drop_lists takes them off again after the loop.
+        added: list[str] = []
+        if self.is_async or self.gen_n > 0:
+            return added
+        names: list[str] = []
+        self.indexed_names(loop, names)
+        bound: list[str] = []
+        bound_names(loop, bound)
+        names = [x for x in names if x not in bound and x not in self.list_lens]
+        if len(names) == 0:
+            return added
+        self.calm_types = {}
+        calm = self.calm_block(parts)
+        if calm and cond is not None:
+            calm = self.calm(cond)
+        self.calm_types = {}
+        if not calm:
+            return added
+        for name in names:
+            l = self.tmp('lst')
+            self.emit(f'{l} = load ptr, ptr {self.slots[name]}')
+            isnull = self.tmp('unset')
+            self.emit(f'{isnull} = icmp eq ptr {l}, null')        # a variable nothing has assigned yet: a list with no items
+            some = self.label('haslist')
+            none = self.label('nolist')
+            join = self.label('keep')
+            self.cond_br(isnull, none, some)
+            self.place(none)
+            self.br(join)
+            self.place(some)
+            lenp = self.tmp('lenp')
+            self.emit(f'{lenp} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {l}, i32 0, i32 2')
+            ln = self.tmp('len')
+            self.emit(f'{ln} = load i64, ptr {lenp}')
+            datap = self.tmp('datap')
+            self.emit(f'{datap} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {l}, i32 0, i32 4')
+            data = self.tmp('data')
+            self.emit(f'{data} = load ptr, ptr {datap}')
+            self.br(join)
+            self.place(join)
+            klen = self.tmp('keeplen')
+            self.emit(f'{klen} = phi i64 [ 0, %{none} ], [ {ln}, %{some} ]')
+            kdata = self.tmp('keepdata')
+            self.emit(f'{kdata} = phi ptr [ null, %{none} ], [ {data}, %{some} ]')
+            self.list_lens[name] = klen
+            self.list_datas[name] = kdata
+            added.append(name)
+        return added
+
+    def drop_lists(self, added: list[str]):
+        for name in added:
+            self.list_lens.remove(name)
+            self.list_datas.remove(name)
+
+    def list_length(self, lst: Ex) -> str:
+        if lst.list_name != '' and lst.list_name in self.list_lens:
+            return self.list_lens[lst.list_name]
+        lenp = self.tmp('lenp')
+        self.emit(f'{lenp} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {lst.reg}, i32 0, i32 2')
+        ln = self.tmp('len')
+        self.emit(f'{ln} = load i64, ptr {lenp}')
+        return ln
 
     def store_owned(self, slot: str, e: Ex, old_small: bool = False):
         # the slot takes over the reference and releases what it held (an int slot known to hold a small number frees nothing)
@@ -2299,6 +2550,310 @@ class Gen:
         ym = str(int(y.reg) - 1) if small_text(y.reg) else self.arith('sub', y.reg, '1')
         self.emit(f'{r} = {op} nsw i64 {x.reg}, {ym}')
         return exs(r, 'int')
+
+    # ---- fused integer arithmetic (release mode). An expression of two or more + - * (and // or % by a positive constant) on
+    # ints, such as `(self.x + self.v * round) % 1000003`, is compiled as one unit: the numbers it starts from (its leaves) are
+    # worked out first, from left to right; then one test of all their tags together leads to a fast copy that works on the
+    # tagged words, with nothing but an overflow test per operation; a big number or an overflow leads to a slow copy
+    # that does the whole expression again from the same leaves with the runtime's general operations. The operations
+    # themselves cannot raise and run no user code, so working out the leaves first changes nothing a program can see.
+    def peek_type(self, n: Node) -> str:
+        # the type of a simple expression, without compiling it, or '' when it is not one of the simple cases known here
+        k = n.kind
+        if k == 'IntLit':
+            return 'int' if n.fields[0].num < 2 ** 61 else ''
+        if k == 'UnOp':
+            inner = self.peek_type(val_node(n.fields[1]))
+            if n.fields[0].text == 'not':
+                return 'bool' if inner == 'bool' else ''
+            if n.fields[0].text == '-' and inner == 'float':
+                return 'float'
+            return 'int' if n.fields[0].text == '-' and val_node(n.fields[1]).kind == 'IntLit' and inner == 'int' else ''
+        if k == 'FloatLit':
+            return 'float'
+        if k == 'BoolLit':
+            return 'bool'
+        if k == 'Name':
+            name = n.fields[0].text
+            if name in self.slots:
+                return self.types[name]
+            if name in self.calm_types:
+                return self.calm_types[name]
+            ck = self.mod.resolve(name)
+            if ck != '' and ck in self.mod.consts:
+                return self.peek_type(self.mod.consts[ck])
+            return ''
+        if k == 'Attr':
+            at = self.peek_type(val_node(n.fields[0]))
+            if not is_class(at) or not self.mod.has_class(at[1:]):
+                return ''
+            c = self.mod.find_class(at[1:], n.line)
+            pos = field_position(c, n.fields[1].text)
+            return c.fields[pos].ty if pos >= 0 else ''
+        if k == 'Index':
+            bt = self.peek_type(val_node(n.fields[0]))
+            if is_list(bt) and not is_mtuple(bt) and self.peek_type(val_node(n.fields[1])) == 'int':
+                return elem_of(bt)
+            return ''
+        if k == 'BinOp':
+            op = n.fields[0].text
+            lt = self.peek_type(val_node(n.fields[1]))
+            rt2 = self.peek_type(val_node(n.fields[2]))
+            if op == 'and' or op == 'or':
+                return 'bool' if lt == 'bool' and rt2 == 'bool' else ''
+            if not (lt == 'int' or lt == 'float') or not (rt2 == 'int' or rt2 == 'float'):
+                return ''
+            if op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>=':
+                return 'bool'
+            if op == '+' or op == '-' or op == '*':
+                return 'int' if lt == 'int' and rt2 == 'int' else 'float'
+            if op == '//' or op == '%' or op == '&' or op == '|' or op == '^':
+                return 'int' if lt == 'int' and rt2 == 'int' else ''
+            return 'float' if op == '/' else ''
+        if k == 'Call':
+            f = val_node(n.fields[0])
+            if f.kind == 'Name' and f.fields[0].text == 'len' and 'len' not in self.slots:
+                args = val_nodes(n.fields[1])
+                at3 = self.peek_type(args[0]) if len(args) == 1 else ''
+                return 'int' if (is_list(at3) or at3 == 'str') and not is_optional(at3) else ''
+            if f.kind == 'Name' and f.fields[0].text not in self.slots:
+                key = self.mod.resolve(f.fields[0].text)
+                if key != '' and key not in self.mod.generics and not self.mod.has_class(key) and self.mod.has_func(key):
+                    info = self.mod.find(key, n.line)
+                    if not info.is_async and not info.is_gen:
+                        return info.ret
+            elif f.kind == 'Attr':
+                rt = self.peek_type(val_node(f.fields[0]))
+                if is_class(rt) and self.mod.has_class(rt[1:]) and field_position(self.mod.find_class(rt[1:], n.line), f.fields[1].text) < 0:
+                    found = self.mod.lookup_method(rt[1:], f.fields[1].text)
+                    if found is not None and not found.is_async and not found.is_gen:
+                        return found.ret
+        return ''
+
+    def quiet_read(self, n: Node) -> bool:
+        # can this expression (whose type peek_type knows) be worked out without running any user code?
+        if n.kind == 'Attr':
+            return self.quiet_read(val_node(n.fields[0]))
+        if n.kind == 'Index' or n.kind == 'BinOp':
+            at = 0 if n.kind == 'Index' else 1
+            return self.quiet_read(val_node(n.fields[at])) and self.quiet_read(val_node(n.fields[at + 1]))
+        return n.kind == 'Name' or n.kind == 'IntLit' or n.kind == 'UnOp'
+
+    def fuse_ops(self, n: Node, leaves: list[Node]) -> int:
+        # how many operations the fused expression n has (its leaves are added to leaves), or -1 when it cannot be fused
+        if n.kind == 'BinOp':
+            op = n.fields[0].text
+            left = val_node(n.fields[1])
+            right = val_node(n.fields[2])
+            if op == '+' or op == '-' or op == '*':
+                a = self.fuse_ops(left, leaves)
+                if a < 0:
+                    return -1
+                b = self.fuse_ops(right, leaves)
+                return -1 if b < 0 else a + b + 1
+            if (op == '//' or op == '%') and right.kind == 'IntLit' and right.fields[0].num > 0 and right.fields[0].num < 2 ** 60:
+                a2 = self.fuse_ops(left, leaves)
+                return -1 if a2 < 0 else a2 + 1
+        if len(leaves) >= 12 or self.peek_type(n) != 'int':
+            return -1
+        leaves.append(n)
+        return 0
+
+    def fusable(self, n: Node) -> bool:
+        if self.mod.mode != 2 or n.kind != 'BinOp':
+            return False
+        leaves: list[Node] = []
+        return self.fuse_ops(n, leaves) >= 2
+
+    def fuse_update(self, name: str, n: Node) -> bool:
+        # `name = <n>` where n is a fused expression that reads the variable directly exactly once: the operation may take the old
+        # number over (see self_update), because it is used up only after every leaf has been worked out
+        leaves: list[Node] = []
+        if self.mod.mode != 2 or n.kind != 'BinOp' or self.fuse_ops(n, leaves) < 2:
+            return False
+        count = 0
+        for leaf in leaves:
+            if leaf.kind == 'Name' and leaf.fields[0].text == name:
+                count += 1
+            elif leaf.kind != 'Name':
+                # the taken number is the first read of the name, so no read may hide inside another leaf
+                inside: list[str] = []
+                names_read(leaf, inside)
+                if name in inside or has_comp(leaf):
+                    return False
+        return count == 1
+
+    def fused(self, n: Node) -> Ex:
+        nodes: list[Node] = []
+        self.fuse_ops(n, nodes)
+        leaves: list[Ex] = []
+        held_before = len(self.held)
+        for k, leaf in enumerate(nodes):
+            lend = True
+            for later in nodes[k + 1:]:
+                if not self.quiet_read(later):
+                    lend = False
+            e = self.operand(leaf, lend)
+            leaves.append(e)
+            if leaf.kind != 'Name':             # a variable's number stays the variable's until the operation takes it
+                self.hold(e)
+        self.drop_held(held_before)
+        test = ''
+        for e2 in leaves:
+            if not e2.small and not small_text(e2.reg):
+                test = e2.reg if test == '' else self.arith('and', test, e2.reg)
+        slow = self.label('fuseslow')
+        join = self.label('fusejoin')
+        self.fuse_used = False
+        if test != '':
+            bit = self.arith('and', test, '1')
+            c = self.tmp('small')
+            self.emit(f'{c} = icmp ne i64 {bit}, 0')
+            fast = self.label('fusefast')
+            self.cond_br(c, fast, slow)
+            self.place(fast)
+            self.fuse_used = True
+        self.fuse_at = 0
+        r = self.fuse_fast(n, leaves, slow)
+        value = self.fuse_form(r, 'T').reg
+        small_result = n.fields[0].text == '%'
+        if not self.fuse_used:                  # nothing can go wrong: there is no slow copy
+            return exs(value, 'int')
+        done = self.label('fuseok')
+        self.br(done)
+        self.place(done)
+        self.br(join)
+        self.place(slow)
+        self.fuse_at = 0
+        sv = self.fuse_slow(n, leaves)
+        self.br(join)
+        self.place(join)
+        out = self.tmp('fused')
+        self.emit(f'{out} = phi i64 [ {value}, %{done} ], [ {sv.reg}, %{slow} ]')
+        e3 = exf(out, 'int')
+        e3.small = small_result                 # the remainder of a division by a constant that fits a word always fits
+        return e3
+
+    def fuse_form(self, e: Ex, form: str) -> Ex:
+        # a number of the fast copy in the form that is asked for. e.ty is its form now: 'T' the tagged word 2v+1, 'D' the word 2v, 'R' v itself
+        if e.ty == form:
+            return e
+        if small_text(e.reg):                   # a constant (always tagged)
+            return ex(str(int(e.reg) - 1) if form == 'D' else str((int(e.reg) - 1) // 2), form)
+        if form == 'R':
+            return ex(self.arith('ashr', e.reg, '1'), 'R')
+        if e.ty == 'R':
+            d = self.tmp('dbl')
+            self.emit(f'{d} = shl nsw i64 {e.reg}, 1')
+            if form == 'D':
+                return ex(d, 'D')
+            return ex(self.arith('or', d, '1'), 'T')
+        if form == 'T':
+            return ex(self.arith('or', e.reg, '1'), 'T')
+        return ex(self.arith('sub', e.reg, '1'), 'D')
+
+    def fuse_check(self, op: str, a: str, b: str, proved: bool, slow: str) -> str:
+        if proved:
+            r = self.tmp('r')
+            self.emit(f'{r} = {op} nsw i64 {a}, {b}')
+            return r
+        self.fuse_used = True
+        return self.fast_checked('s' + op, a, b, slow)
+
+    def fuse_fast(self, n: Node, leaves: list[Ex], slow: str) -> Ex:
+        op = n.fields[0].text if n.kind == 'BinOp' else ''
+        right = val_node(n.fields[2]) if n.kind == 'BinOp' else n
+        if op == '//' or op == '%':
+            if right.kind != 'IntLit' or right.fields[0].num <= 0 or right.fields[0].num >= 2 ** 60:
+                op = ''
+        elif op != '+' and op != '-' and op != '*':
+            op = ''
+        if op == '':
+            e = leaves[self.fuse_at]
+            self.fuse_at += 1
+            return ex(e.reg, 'T')
+        a = self.fuse_fast(val_node(n.fields[1]), leaves, slow)
+        if op == '//' or op == '%':
+            d = right.fields[0].num
+            at = self.fuse_form(a, 'T')         # floor division of 2v+1 by 2d gives floor(v / d), and the remainder is 2(v mod d)+1
+            k = 0
+            p = d
+            while p > 1 and p % 2 == 0:
+                p //= 2
+                k += 1
+            plus = False                        # is the number divided known not to be negative?
+            if self.tracking():
+                known = self.range_of(val_node(n.fields[1]), self.facts)
+                if known is not None:
+                    plus = known.lo >= 0
+            if p == 1:
+                if op == '//':
+                    return ex(self.arith('ashr', at.reg, str(k + 1)), 'R')
+                return ex(self.arith('and', at.reg, str(2 ** (k + 1) - 1)), 'T')
+            rem = self.arith('srem', at.reg, str(2 * d))
+            if op == '%':
+                if plus:
+                    return ex(rem, 'T')
+                sign = self.arith('ashr', rem, '63')
+                fix = self.arith('and', sign, str(2 * d))
+                return ex(self.arith('add', rem, fix), 'T')
+            q = self.arith('sdiv', at.reg, str(2 * d))
+            if plus:
+                return ex(q, 'R')
+            return ex(self.arith('add', q, self.arith('ashr', rem, '63')), 'R')
+        b = self.fuse_fast(right, leaves, slow)
+        proved = False
+        if self.tracking():
+            interval = self.range_of(n, self.facts)
+            if interval is not None:
+                proved = rng_small(interval)
+        if op == '*':
+            if small_text(a.reg) or a.ty == 'R':              # the number that is already plain (or a constant) is the factor
+                return ex(self.fuse_check('mul', self.fuse_form(b, 'D').reg, self.fuse_form(a, 'R').reg, proved, slow), 'D')
+            return ex(self.fuse_check('mul', self.fuse_form(a, 'D').reg, self.fuse_form(b, 'R').reg, proved, slow), 'D')
+        if a.ty == 'R':
+            a = self.fuse_form(a, 'D')
+        if b.ty == 'R':
+            b = self.fuse_form(b, 'D')
+        if op == '+':
+            if a.ty == 'T' and b.ty == 'T':
+                if small_text(a.reg):
+                    a = self.fuse_form(a, 'D')
+                else:
+                    b = self.fuse_form(b, 'D')
+            form = 'T' if a.ty == 'T' or b.ty == 'T' else 'D'
+            return ex(self.fuse_check('add', a.reg, b.reg, proved, slow), form)
+        if b.ty == 'T':
+            b = self.fuse_form(b, 'D')
+        return ex(self.fuse_check('sub', a.reg, b.reg, proved, slow), a.ty)
+
+    def fuse_slow(self, n: Node, leaves: list[Ex]) -> Ex:
+        op = n.fields[0].text if n.kind == 'BinOp' else ''
+        name = ''
+        if op == '+':
+            name = 'add'
+        elif op == '-':
+            name = 'sub'
+        elif op == '*':
+            name = 'mul'
+        elif op == '//' or op == '%':
+            d = val_node(n.fields[2])
+            if d.kind == 'IntLit' and d.fields[0].num > 0 and d.fields[0].num < 2 ** 60:
+                name = 'floordiv' if op == '//' else 'mod'
+        if name == '':
+            leaf = leaves[self.fuse_at]
+            self.fuse_at += 1
+            return leaf
+        a = self.fuse_slow(val_node(n.fields[1]), leaves)
+        b = ex('', '')
+        if op == '//' or op == '%':
+            b = ex(str(val_node(n.fields[2]).fields[0].num * 2 + 1), 'int')
+        else:
+            b = self.fuse_slow(val_node(n.fields[2]), leaves)
+        m = self.consume_mask(a, b)
+        r = self.tmp('big')
+        self.emit(f'{r} = call i64 @tomato_int_{name}_slow(i64 {a.reg}, i64 {b.reg}, i32 {m})')
+        return exf(r, 'int')
 
     def int_equal_const(self, op: str, x: Ex, k: Ex) -> Ex:
         # x == 3 and x != 0: a big number is never equal to a small constant (a big number is always outside the small range), so
@@ -2676,14 +3231,13 @@ class Gen:
         raise CompileError(f'float() takes a number, but this is {shown(v.ty)}', line)
 
     def text_to_int(self, v: Ex) -> Ex:
-        # int(text): a whole number written in decimal, spaces around it allowed; anything else raises a RuntimeError
-        ok = self.tmp('isint')
-        self.emit(f'{ok} = call i32 @tomato_text_int_ok(ptr {v.reg})')
-        bad = self.tmp('notint')
-        self.emit(f'{bad} = icmp eq i32 {ok}, 0')
+        # int(text): a whole number written in decimal, spaces around it allowed; anything else raises a RuntimeError (the
+        # runtime gives the word 0, which is never a number it makes)
         r = self.tmp('parsed')
         self.emit(f'{r} = call i64 @tomato_text_int(ptr {v.reg})')
         self.release(v)
+        bad = self.tmp('notint')
+        self.emit(f'{bad} = icmp eq i64 {r}, 0')
         self.fail_if(bad, 'the text is not a whole number')
         return exf(r, 'int')
 
@@ -3054,7 +3608,7 @@ class Gen:
         parts: list[str] = [f'{llvm_type(v.ty)} {v.reg}' for v in values]
         r = self.tmp('help')
         self.emit(r + ' = call ' + self.ret_llvm(info) + ' ' + function_symbol(self.mod, info) + '(' + ', '.join(parts) + ')')
-        self.check_error(values)
+        self.check_error(values, function_symbol(self.mod, info))
         for v2 in values:
             self.release(v2)
         return ret_ex(r, info.ret)
@@ -3064,7 +3618,8 @@ class Gen:
         parts: list[str] = ['ptr ' + a.reg]
         for b in args:
             parts.append(f'{llvm_type(b.ty)} {b.reg}')
-        text = 'call ' + self.ret_llvm(info) + ' ' + self.dispatch(a, info.name) + '(' + ', '.join(parts) + ')'
+        symbol = self.method_symbol(a, info)
+        text = 'call ' + self.ret_llvm(info) + ' ' + symbol + '(' + ', '.join(parts) + ')'
         result = ex('', '')
         if info.ret == '':
             self.emit(text)
@@ -3073,7 +3628,7 @@ class Gen:
             self.emit(f'{r} = {text}')
             result = ret_ex(r, info.ret)
         values = [a] + args
-        self.check_error(values)
+        self.check_error(values, symbol)
         for v in values:
             self.release(v)
         return result
@@ -3277,17 +3832,18 @@ class Gen:
 
     def list_slot(self, lst: Ex, i: Ex, live: list[Ex] = []) -> str:
         # the address of item i, after a bounds check
-        lenp = self.tmp('lenp')
-        self.emit(f'{lenp} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {lst.reg}, i32 0, i32 2')
-        ln = self.tmp('len')
-        self.emit(f'{ln} = load i64, ptr {lenp}')
+        ln = self.list_length(lst)
         bad = self.tmp('oob')
         self.emit(f'{bad} = icmp uge i64 {i.reg}, {ln}')
         self.fail_if(bad, 'index out of range', live)
-        datap = self.tmp('datap')
-        self.emit(f'{datap} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {lst.reg}, i32 0, i32 4')
-        data = self.tmp('data')
-        self.emit(f'{data} = load ptr, ptr {datap}')
+        data = ''
+        if lst.list_name != '' and lst.list_name in self.list_datas:
+            data = self.list_datas[lst.list_name]
+        else:
+            datap = self.tmp('datap')
+            self.emit(f'{datap} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {lst.reg}, i32 0, i32 4')
+            data = self.tmp('data')
+            self.emit(f'{data} = load ptr, ptr {datap}')
         addr = self.tmp('addr')
         w = item_width(lst.ty)
         unit = item_llvm(w)
@@ -3739,7 +4295,7 @@ class Gen:
             li = self.expr(val_node(n.fields[1]))
             li = self.want(li, 'int', n.line, 'an index')
             self.drop_held(held_before)
-            addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li, [s])), 'int'), [s])
+            addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li, [s]), val_node(n.fields[1])), 'int'), [s])
             lent = s.reg.startswith('%bl.') and ((lend and elem_of(s.ty) == 'int') or (as_base and is_rc(elem_of(s.ty))))
             item = self.load_item(s.ty, addr, 'bl' if lent else 'item')
             e = ex(item, elem_of(s.ty))
@@ -3760,12 +4316,15 @@ class Gen:
         self.release(s)
         return ex(r, 'str')
 
-    def norm_index(self, s: Ex, i: str) -> str:
-        # a negative position counts from the end, as in Python: i + len when i < 0
-        lenp = self.tmp('lenp')
-        self.emit(f'{lenp} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {s.reg}, i32 0, i32 2')
-        ln = self.tmp('len')
-        self.emit(f'{ln} = load i64, ptr {lenp}')
+    def norm_index(self, s: Ex, i: str, n: Node | None = None) -> str:
+        # a negative position counts from the end, as in Python: i + len when i < 0. n is the index as written, when there is one
+        if n is not None:
+            if self.tracking():
+                known = self.range_of(n, self.facts)
+                if known is not None:
+                    if known.lo >= 0:
+                        return i
+        ln = self.list_length(s)
         neg = self.tmp('neg')
         self.emit(f'{neg} = icmp slt i64 {i}, 0')
         shifted = self.tmp('shifted')
@@ -4003,6 +4562,8 @@ class Gen:
         self.defer_float = False
         if op == 'and' or op == 'or':
             return self.logic(n, op)
+        if not is_fixed(expected) and self.fusable(n):
+            return self.fused(n)
         if op == '+':
             chain: list[Node] = []
             self.concat_parts(n, chain)
@@ -4205,7 +4766,8 @@ class Gen:
             raise CompileError(f"the @{marker} method '{info.name}' must take exactly one argument besides self", line)
         b = self.want(b, info.ptypes[0], line, 'the right operand of ' + op)
         values: list[Ex] = [a, b]
-        text = f'call {self.ret_llvm(info)} {self.dispatch(a, info.name)}(ptr {a.reg}, {llvm_type(b.ty)} {b.reg})'
+        symbol = self.method_symbol(a, info)
+        text = f'call {self.ret_llvm(info)} {symbol}(ptr {a.reg}, {llvm_type(b.ty)} {b.reg})'
         result = ex('', '')
         if info.ret == '':
             self.emit(text)
@@ -4213,7 +4775,7 @@ class Gen:
             r = self.tmp('op')
             self.emit(f'{r} = {text}')
             result = ret_ex(r, info.ret)
-        self.check_error(values)
+        self.check_error(values, symbol)
         self.release(a)
         self.release(b)
         if marker == 'eq' or marker == 'lt' or marker == 'le' or marker == 'gt' or marker == 'ge':
@@ -4807,6 +5369,13 @@ class Gen:
         if info.has_kwargs:
             values.append(self.build_kwargs(info.ptypes[-1], extra_names, extra_values))
         parts: list[str] = [f'{llvm_type(v2.ty)} {v2.reg}' for v2 in values]
+        if symbol.startswith('@') and not info.is_async and has_small(self.mod, info):
+            all_small = True
+            for v0 in values:
+                if v0.ty == 'int' and not v0.small and not small_text(v0.reg):
+                    all_small = False
+            if all_small:
+                symbol += '.small'
         text = 'call ' + self.ret_llvm(info) + ' ' + symbol + '(' + ', '.join(parts) + ')'
         result = ex('', '')
         if info.is_async:
@@ -4822,7 +5391,7 @@ class Gen:
             r = self.tmp('call')
             self.emit(f'{r} = {text}')
             result = ret_ex(r, info.ret)
-        self.check_error(values)
+        self.check_error(values, symbol)
         for v3 in values:
             self.release(v3)
         return result
@@ -4846,12 +5415,16 @@ class Gen:
             self.emit(f'store {llvm_type(it.ty)} {it.reg}, ptr {slot}')
         return ex(d, t)
 
-    def check_error(self, values: list[Ex]):
-        # an error raised by the callee is pending: drop the borrowed arguments and leave this function (D22a)
+    def check_error(self, values: list[Ex], callee: str = ''):
+        # an error raised by the callee is pending: drop the borrowed arguments and leave this function (D22a). callee is the
+        # function that was called, when the call was direct: finish_bodies removes the test if that function cannot raise.
         ex1 = self.tmp('ex')
         self.emit(f'{ex1} = load ptr, ptr @tomato_exc')
         has = self.tmp('has')
-        self.emit(f'{has} = icmp ne ptr {ex1}, null')
+        if callee.startswith('@'):
+            self.emit(f'{has} = icmp ne ptr {ex1}, null ; {callee}')
+        else:
+            self.emit(f'{has} = icmp ne ptr {ex1}, null')
         bad = self.label('raised')
         fine = self.label('fine')
         self.cond_br(has, bad, fine)
@@ -4877,11 +5450,19 @@ class Gen:
         values = self.args_with_defaults(args, ptypes, defaults, line, c.name)
         parts: list[str] = [f'{llvm_type(v.ty)} {v.reg}' for v in values]
         r = self.tmp('obj')
-        self.emit(r + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + c.name)) + '(' + ', '.join(parts) + ')')
-        self.check_error(values)
+        symbol = '@tomato.new.' + str(self.mod.code_of('@' + c.name))
+        self.emit(f'{r} = call ptr {symbol}(' + ', '.join(parts) + ')')
+        self.check_error(values, symbol)
         for v in values:
             self.release(v)
         return ex(r, '@' + c.name)
+
+    def method_symbol(self, obj: Ex, info: FuncInfo) -> str:
+        # what to call for the method info of obj: the method itself when no class below the static one overrides it (the call is
+        # then direct, so it can be inlined), else the function a virtual lookup finds
+        if is_class(obj.ty) and self.mod.late and not self.mod.overridden(obj.ty[1:], info.name):
+            return function_symbol(self.mod, info)
+        return self.dispatch(obj, info.name)
 
     def dispatch(self, obj: Ex, name: str) -> str:
         # a virtual lookup: the object's type code picks a method table, the method name picks the slot
@@ -4977,7 +5558,7 @@ class Gen:
             info = self.mod.find_method(obj.ty[1:], name, n.line)
             if info.is_private and self.owner != info.owner:
                 raise CompileError(f"the method '{name}' is private to class '{info.owner}'\nonly its own methods can call it", n.line)
-            return self.call_function(info, self.dispatch(obj, name), obj, args, n.line)
+            return self.call_function(info, self.method_symbol(obj, info), obj, args, n.line)
         raise CompileError(self.no_method(name, obj.ty), n.line)
 
     def list_len(self, lst: Ex) -> str:
@@ -5599,7 +6180,7 @@ class Gen:
             if it is not None and it.is_async:        # an object whose @iter is async: its task is made and started here
                 self.async_ok = True
                 self.fresh_frame = False
-                t = self.call_function(it, self.dispatch(t, it.name), t, [], s.line)
+                t = self.call_function(it, self.method_symbol(t, it), t, [], s.line)
                 self.async_ok = False
                 self.fresh_frame = False
                 self.launch(t)
@@ -5868,8 +6449,9 @@ class Gen:
         if len(info.ptypes) != 0 or info.ret != 'str':
             raise CompileError(f"the @str method '{info.name}' must take no argument besides self and return str", line)
         r = self.tmp('shown')
-        self.emit(f'{r} = call ptr {self.dispatch(v, info.name)}(ptr {v.reg})')
-        self.check_error([v])
+        symbol = self.method_symbol(v, info)
+        self.emit(f'{r} = call ptr {symbol}(ptr {v.reg})')
+        self.check_error([v], symbol)
         return ex(r, 'str')
 
     def show_text(self, v: Ex, line: int) -> Ex:
@@ -5877,7 +6459,7 @@ class Gen:
         info = self.mod.helper('show', v.ty, line)
         r = self.tmp('shown')
         self.emit(f'{r} = call ptr {function_symbol(self.mod, info)}(ptr {v.reg})')
-        self.check_error([v])
+        self.check_error([v], function_symbol(self.mod, info))
         self.release(v)
         return ex(r, 'str')
 
@@ -6288,12 +6870,12 @@ class Gen:
             after = self.facts
             if track:
                 after = self.assign_facts(self.facts, name, val_node(s.fields[1]))
-            if name in self.slots and self.types[name] == 'int' and self_update(name, val_node(s.fields[1])):
+            if name in self.slots and self.types[name] == 'int' and (self_update(name, val_node(s.fields[1])) or self.fuse_update(name, val_node(s.fields[1]))):
                 self.take_name = name
                 self.taken = ex('', '')
             v = self.expr(val_node(s.fields[1]), expected)
             self.take_name = ''
-            if self.taken.reg != '' and not self.taken.fresh and v.ty == 'int' and v.fresh:
+            if self.taken.reg != '' and not self.taken.fresh and v.ty == 'int' and (v.fresh or v.small):
                 # the operation used the old number up (freeing it if it was big), so the slot takes the result and frees nothing
                 self.taken = ex('', '')
                 var = self.slot(name, 'int', s.line)
@@ -6542,7 +7124,7 @@ class Gen:
         i = self.expr(val_node(target.fields[1]))
         i = self.want(i, 'int', s.line, 'an index')
         self.drop_held(held_before)
-        i = ex(self.norm_index(lst, self.int_raw(i, [lst])), 'int')
+        i = ex(self.norm_index(lst, self.int_raw(i, [lst]), val_node(target.fields[1])), 'int')
         self.hold(lst)
         v = self.expr(val_node(s.fields[1]), elem_of(lst.ty))
         v = self.want(v, elem_of(lst.ty), s.line, 'the assigned item')
@@ -7197,10 +7779,43 @@ class Gen:
         self.emit(f'{r} = extractvalue {{i64, i1}} {pair}, 0')
         ov = self.tmp('ov')
         self.emit(f'{ov} = extractvalue {{i64, i1}} {pair}, 1')
-        ok = self.label('fastok')
-        self.cond_br(ov, bail, ok)
-        self.place(ok)
+        self.fast_bail(ov, bail)
         return r
+
+    def fast_bail(self, over: str, bail: str):
+        # leave the fast copy when over is true; without a label, only remember it (see fast_choice)
+        if bail == '':
+            if self.fast_over == '':
+                self.fast_over = over
+            else:
+                both = self.tmp('ov')
+                self.emit(f'{both} = or i1 {self.fast_over}, {over}')
+                self.fast_over = both
+            return
+        ok = self.label('fastok')
+        self.cond_br(over, bail, ok)
+        self.place(ok)
+
+    def fast_line(self, n: Node, var: str, a: int, b: int, bail: str, f: Facts) -> str:
+        # a * x + b for constants a and b: instead of an overflow test per operation, one test that x lies where the result is small.
+        # On tagged words, 2(av + b) + 1 is a * (2v + 1) + (2b + 1 - a).
+        x = self.tmp('fl')
+        self.emit(f'{x} = load i64, ptr {self.slots[var]}')
+        if not self.fast_known(n, f):
+            lo = 0
+            hi = 0
+            if a > 0:
+                lo = -((SMALL_HI + 1 + b) // a)        # the least v with a*v + b >= -2^62
+                hi = (SMALL_HI - b) // a
+            else:
+                lo = -((SMALL_HI - b) // (-a))
+                hi = (SMALL_HI + 1 + b) // (-a)
+            off = self.arith('sub', x, str(2 * lo + 1))
+            over = self.tmp('ov')
+            self.emit(f'{over} = icmp ugt i64 {off}, {2 * (hi - lo)}')
+            self.fast_bail(over, bail)
+        p = self.arith('mul', x, str(a))
+        return self.arith('add', p, str(2 * b + 1 - a))
 
     def fast_expr(self, n: Node, bail: str, f: Facts) -> str:
         if n.kind == 'IntLit':
@@ -7212,6 +7827,10 @@ class Gen:
             self.emit(f'{r} = load i64, ptr {self.slots[n.fields[0].text]}')
             return r
         op = n.fields[0].text
+        lin: list[int] = []
+        var = fast_linear(n, lin)
+        if var != '' and (lin[0] > 1 or lin[0] < -1):
+            return self.fast_line(n, var, lin[0], lin[1], bail, f)
         a = self.fast_expr(val_node(n.fields[1]), bail, f)
         if op == '//' or op == '%':
             v = val_node(n.fields[2]).fields[0].num
@@ -7249,12 +7868,48 @@ class Gen:
         self.emit(f'{c} = icmp {signed_cc(op)} i64 {a}, {b}')
         return c
 
+    def fast_choice(self, s: Node) -> bool:
+        # if c: x = a / else: x = b, where a and b are short sums and products: both are worked out and one is selected, so a
+        # condition that cannot be predicted (is this number even?) costs no branch
+        if len(s.fields[0].items) != 1 or s.fields[1].tag != 'l':
+            return False
+        yes = val_nodes(s.fields[0].items[0].items[1])
+        no = val_nodes(s.fields[1])
+        if len(yes) != 1 or len(no) != 1 or yes[0].kind != 'Assign' or no[0].kind != 'Assign':
+            return False
+        if val_node(yes[0].fields[0]).fields[0].text != val_node(no[0].fields[0]).fields[0].text:
+            return False
+        return node_count(val_node(yes[0].fields[1]), 8) <= 5 and node_count(val_node(no[0].fields[1]), 8) <= 5
+
     def fast_block(self, body: list[Node], prefix: str, f: Facts, names: list[str]) -> Facts:
         # compiles body from the facts f and gives the facts after it
         for s in body:
             if s.kind == 'Pass':
                 continue
             bail = f'{prefix}_{s.mark}'
+            if s.kind == 'If' and self.fast_choice(s):
+                pick = val_node(s.fields[0].items[0].items[0])
+                picked = val_node(val_nodes(s.fields[1])[0].fields[0]).fields[0].text
+                c0 = self.fast_cond(pick, bail, f)
+                joined = facts_dead()
+                over: list[str] = []
+                values: list[str] = []
+                for yes in [True, False]:
+                    side = val_nodes(s.fields[0].items[0].items[1])[0] if yes else val_nodes(s.fields[1])[0]
+                    self.fast_over = ''
+                    values.append(self.fast_expr(val_node(side.fields[1]), '', f))     # worked out whatever the condition says, so it may not count on it
+                    there = self.fast_facts(self.refine(f, pick, yes), names)
+                    joined = facts_join(joined, self.fast_facts(self.assign_facts(there, picked, val_node(side.fields[1])), names))
+                    if self.fast_over != '':
+                        over.append(self.fast_over)
+                # leaving the fast copy because of the side that is not chosen is harmless: the general copy does the same work
+                for bad in over:
+                    self.fast_bail(bad, bail)
+                chosen = self.tmp('pick')
+                self.emit(f'{chosen} = select i1 {c0}, i64 {values[0]}, i64 {values[1]}')
+                self.emit(f'store i64 {chosen}, ptr {self.slots[picked]}')
+                f = joined
+                continue
             if s.kind == 'Assign':
                 v = self.fast_expr(val_node(s.fields[1]), bail, f)
                 name = val_node(s.fields[0]).fields[0].text
@@ -7357,6 +8012,7 @@ class Gen:
         head = self.label('while')
         body = self.label('body')
         end = self.label('endwhile')
+        kept = self.keep_lists(s, val_nodes(s.fields[1]), val_node(s.fields[0]))
         self.br(head)
         self.place(head)
         if track:
@@ -7372,6 +8028,7 @@ class Gen:
         if not self.terminated:
             self.br(head)
         self.place(end)
+        self.drop_lists(kept)
         if track:
             self.facts = self.live_facts(lf.post)
 
@@ -7603,7 +8260,48 @@ class Gen:
         self.place(end)
 
     def for_each(self, s: Node, it: Node):
+        if it.kind == 'Call' and val_node(it.fields[0]).kind == 'Attr' and len(it.fields[2].items) == 0:
+            f = val_node(it.fields[0])
+            if f.fields[1].text == 'split' and len(val_nodes(it.fields[1])) == 1 and self.peek_type(val_node(f.fields[0])) == 'str':
+                self.for_split(s, self.expr(val_node(f.fields[0])), val_nodes(it.fields[1]), it.line)
+                return
         self.for_value(s, self.expr(it))
+
+    def for_split(self, s: Node, text: Ex, args: list[Node], line: int):
+        # for piece in text.split(sep): the pieces are made one at a time, so there is no list of them
+        a = self.text_args(text, 'split', args, 1, line)
+        self.not_empty(a[0], 'split', [text, a[0]])
+        holder = self.hidden_rc_slot('for.text')
+        self.store_owned(holder, text)
+        holder2 = self.hidden_rc_slot('for.sep')
+        self.store_owned(holder2, a[0])
+        at = self.hidden_slot('for.i')
+        self.emit(f'store i64 0, ptr {at}')
+        var = self.slot(s.fields[0].text, 'str', s.line)
+        head = self.label('piece')
+        body = self.label('piecebody')
+        end = self.label('endpiece')
+        self.br(head)
+        self.place(head)
+        t = self.tmp('txt')
+        self.emit(f'{t} = load ptr, ptr {holder}')
+        sep = self.tmp('sep')
+        self.emit(f'{sep} = load ptr, ptr {holder2}')
+        piece = self.tmp('piece')
+        self.emit(f'{piece} = call ptr @tomato_str_split_next(ptr {t}, ptr {sep}, ptr {at})')
+        go = self.tmp('go')
+        self.emit(f'{go} = icmp ne ptr {piece}, null')
+        self.cond_br(go, body, end)
+        self.place(body)
+        self.store_owned(var, ex(piece, 'str'))
+        if self.tracking():
+            self.facts = facts_copy(self.for_body)
+        self.push_loop(end, head)
+        self.block(val_nodes(s.fields[2]))
+        self.loop_depth -= 1
+        if not self.terminated:
+            self.br(head)
+        self.place(end)
 
     # a loop over a value of an Iterable type: the loop is compiled once for each kind of value the box can hold, and the
     # one matching the box's contents runs (the same way a union is narrowed)
@@ -7905,6 +8603,7 @@ class Gen:
         self.emit(f'store i64 {stop}, ptr {limit}')
         self.emit(f'store i64 {stepv}, ptr {stepslot}')
         self.emit(f'store i64 {basev}, ptr {baseslot}')
+        in_registers = self.keep_lists(s, val_nodes(s.fields[2]))
         head = self.label('for')
         body = self.label('forbody')
         step = self.label('forstep')
@@ -7966,6 +8665,7 @@ class Gen:
             self.fail_if(more, 'the number is too big here')
             self.br(end)
         self.place(end)
+        self.drop_lists(in_registers)
 
 def async_symbol(mod: Mod, info: FuncInfo) -> str:
     # the constructor of an async function's task; the resume function is this name followed by .resume
@@ -7985,8 +8685,23 @@ def function_symbol(mod: Mod, info: FuncInfo) -> str:
         return f'@tomato.{info.key}'
     return '@tomato.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
 
-def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
+# the program functions a line of IR mentions: @tomato.NAME (the runtime's are @tomato_NAME)
+def mentions(line: str, out: list[str]):
+    at = line.find('@tomato.')
+    while at >= 0:
+        end = at + 8
+        while end < len(line) and (line[end].isalpha() or line[end].isdigit() or line[end] == '.' or line[end] == '_'):
+            end += 1
+        name = line[at:end]
+        if name not in out:
+            out.append(name)
+        at = line.find('@tomato.', end)
+
+def finish_function(g: Gen, symbol: str, sig: list[str], ret: str):
     # the epilogue releases every slot that owns a heap value, then returns the stored result
+    b = Body()
+    b.symbol = symbol
+    b.epilogue = len(g.lines)
     g.lines.append('epilogue:')
     for reg in g.rc_slots:
         o = g.tmp('rel')
@@ -8009,8 +8724,62 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str) -> str:
         text += f'  %retval = alloca {llvm_ret}\n  store {llvm_ret} {zero_of(ret)}, ptr %retval\n'
     if len(g.allocas) > 0:
         text += '\n'.join(g.allocas) + '\n'
-    text += '\n'.join(g.lines) + '\n}\n'
-    return text
+    b.head = text
+    b.lines = g.lines
+    for k, line in enumerate(g.lines):
+        if '@tomato.' in line:
+            if ' = icmp ne ptr ' in line and '; @tomato.' in line:
+                b.checks.append(k)
+            else:
+                mentions(line, b.uses)
+        if '@tomato_exc' in line:
+            # reading the pending error, or clearing it, raises nothing; anything else that touches it may
+            if 'ptr @tomato_exc' in line.replace('@tomato_exc_', '') and not ' = load ptr, ptr @tomato_exc' in line and not 'store ptr null, ptr @tomato_exc' in line:
+                b.raises = True
+        elif ' call ' in line and '@printf' not in line:
+            at = line.find(' call ')
+            if '@' not in line[at:line.find('(', at)]:
+                b.raises = True            # a call through a pointer could call anything
+    g.mod.bodies.append(b)
+
+def finish_bodies(mod: Mod, entry: str) -> str:
+    # the text of the compiled functions, once all of them are known: which functions can raise an error is worked out over the
+    # whole program, and a test for an error after a direct call of a function that cannot raise becomes a constant. In release mode
+    # the entry function, when nothing else refers to it, ends the program: it gives nothing back that the end of the
+    # process would not.
+    index: dict[str, int] = {}
+    callers: list[list[int]] = []
+    for k, b in enumerate(mod.bodies):
+        index[b.symbol] = k
+        callers.append([])
+    work: list[int] = []
+    for k, b in enumerate(mod.bodies):
+        for name in b.uses:
+            if name in index:
+                callers[index[name]].append(k)
+            else:
+                b.raises = True            # a task, a user function in LLVM, ...: not compiled here
+        if b.raises:
+            work.append(k)
+    while len(work) > 0:
+        for c in callers[work.pop()]:
+            if not mod.bodies[c].raises:
+                mod.bodies[c].raises = True
+                work.append(c)
+    parts: list[str] = []
+    for b in mod.bodies:
+        for k in b.checks:
+            line = b.lines[k]
+            at = line.find(' ; @')
+            callee = line[at + 3:]
+            if callee in index and not mod.bodies[index[callee]].raises:
+                b.lines[k] = line[:line.find('icmp ne ptr ')] + 'icmp ne ptr null, null'
+            else:
+                b.lines[k] = line[:at]
+        if b.symbol == entry and mod.mode == 2 and len(mod.frames) == 0 and len(callers[index[entry]]) == 0:
+            b.lines = b.lines[:b.epilogue + 1] + ['  ret void']
+        parts.append(b.head + '\n'.join(b.lines) + '\n}\n')
+    return '\n'.join(parts) + '\n'
 
 def trace_name(info: FuncInfo) -> str:
     # the function as a call trace shows it: Class.method, or just the name
@@ -8018,7 +8787,64 @@ def trace_name(info: FuncInfo) -> str:
         return info.name
     return info.owner.split('.')[-1] + '.' + info.name
 
-def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
+# the number of nodes in a tree, counted up to a limit
+def node_count(n: Node, limit: int) -> int:
+    total = 1
+    for f in n.fields:
+        if total > limit:
+            return total
+        total += val_count(f, limit - total)
+    return total
+
+def val_count(v: Val, limit: int) -> int:
+    if v.tag == 'n':
+        return node_count(val_node(v), limit)
+    total = 0
+    if v.tag == 'l' or v.tag == 't':
+        for it in v.items:
+            if total > limit:
+                return total
+            total += val_count(it, limit - total)
+    return total
+
+# In release mode a short function with int parameters that it never assigns is compiled twice. The copy SYMBOL.small is called
+# when every int argument is a small number: it knows that about its parameters (see range_of), so their uses need no tag tests and
+# often no overflow tests. The general copy SYMBOL starts by testing its arguments and hands over to the other when it can.
+const SMALL_COPY_NODES = 160
+
+def has_small(mod: Mod, info: FuncInfo) -> bool:
+    if mod.mode != 2 or info.is_async or info.is_gen or 'int' not in info.ptypes:
+        return False
+    symbol = function_symbol(mod, info)
+    if symbol in mod.small_cache:
+        return mod.small_cache[symbol]
+    f = mod.node_of(info)
+    ok = f.kind == 'FuncDef' and not (f.fields[6].tag == 's' and f.fields[6].text.startswith('entry:'))
+    if ok:
+        size = 0
+        assigned: list[str] = []
+        names: list[str] = []
+        for st in val_nodes(f.fields[3]):
+            size += node_count(st, SMALL_COPY_NODES)
+            bound_names(st, assigned)
+            names_read(st, names)
+        ok = size <= SMALL_COPY_NODES
+        used = False
+        params = param_names(f)
+        ptypes = param_types(f, info)
+        for k, t in enumerate(ptypes):
+            if t == 'int':
+                if params[k] in assigned:
+                    ok = False
+                if params[k] in names:
+                    used = True
+        ok = ok and used
+    mod.small_cache[symbol] = ok
+    return ok
+
+def compile_function(f: Node, mod: Mod, info: FuncInfo, small: bool = False):
+    if not small and has_small(mod, info):
+        compile_function(f, mod, info, True)
     mod.cur = info.module
     mod.tvars = info.targs
     g = Gen()
@@ -8029,6 +8855,26 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     g.ret = info.ret
     names = param_names(f)
     types = param_types(f, info)
+    if not small and has_small(mod, info):
+        # every int argument small: the other copy does the work
+        test = ''
+        parts: list[str] = []
+        for k, name in enumerate(names):
+            parts.append(f'{llvm_type(types[k])} %arg.{name}')
+            if types[k] == 'int':
+                test = f'%arg.{name}' if test == '' else g.arith('and', test, f'%arg.{name}')
+        bit = g.arith('and', test, '1')
+        g.emit(f'%small.args = icmp ne i64 {bit}, 0')
+        g.cond_br('%small.args', 'smallcall', 'general')
+        g.place('smallcall')
+        call = f'call {g.ret_llvm(info)} {function_symbol(mod, info)}.small(' + ', '.join(parts) + ')'
+        if info.ret == '':
+            g.emit(call)
+            g.emit('ret void')
+        else:
+            g.emit(f'%small.ret = {call}')
+            g.emit(f'ret {g.ret_llvm(info)} %small.ret')
+        g.place('general')
     sig: list[str] = []
     lent: list[list[str]] = []          # per rc or int parameter: its name, its slot, and the line index of its retain (of its copy, for an int)
     for k, name in enumerate(names):
@@ -8044,6 +8890,10 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
             lent.append([name, reg, str(len(g.lines))])
             g.emit('call void @tomato_retain(ptr %arg.' + name + ')')    # the caller only lent it
     g.assigned = []
+    if small:
+        for k, name in enumerate(names):
+            if types[k] == 'int':
+                g.facts = facts_set(g.facts, name, rng(SMALL_LO, SMALL_HI))
     g.block(val_nodes(f.fields[3]))
     # a parameter that the body never assigns keeps the caller's reference for as long as the call lasts (the caller holds one
     # during the call), so it needs no reference of its own: no retain now and no release in the epilogue
@@ -8056,7 +8906,7 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo) -> str:
                 g.lines[int(pl[2]) + 1] = '  store i64 %arg.' + pl[0] + ', ptr ' + pl[1]
                 g.int_slots = [r for r in g.int_slots if r != pl[1]]
     end_body(g, f, info)
-    return finish_function(g, function_symbol(mod, info), sig, info.ret)
+    finish_function(g, function_symbol(mod, info) + ('.small' if small else ''), sig, info.ret)
 
 # the name of each parameter of the definition f, in order (self included)
 def param_names(f: Node) -> list[str]:
@@ -8137,6 +8987,9 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     mod.frames.append(fr)
     cls = f'%class.{code}'
     sym = async_symbol(mod, info)
+    for k, line in enumerate(g.lines):
+        if ' ; @tomato.' in line:               # a check_error: it stays a test (see finish_bodies)
+            g.lines[k] = line[:line.find(' ; @tomato.')]
     # the resume function
     text = f'define void {sym}.resume(ptr %frame) {{\nentry:\n'
     if info.ret != '':
@@ -8201,7 +9054,7 @@ def scheduler_ir(mod: Mod) -> str:
     t += 'raise:\n  call void @tomato.task.raise(ptr %main)\n  br label %out\nout:\n  call void @tomato_release(ptr %main)\n  ret void\n}\n'
     return t
 
-def compile_constructor(c: ClassInfo, mod: Mod) -> str:
+def compile_constructor(c: ClassInfo, mod: Mod):
     # allocate, store the declared field defaults, then run @init
     mod.cur = c.module
     mod.tvars = c.targs
@@ -8230,11 +9083,12 @@ def compile_constructor(c: ClassInfo, mod: Mod) -> str:
         parts: list[str] = ['ptr ' + obj]
         for k, t in enumerate(ptypes):
             parts.append(f'{llvm_type(t)} %arg.{k}')
-        g.emit('call void @' + 'tomato.m.' + str(mod.code_of('@' + mod.find_method(c.name, c.init, c.line).owner)) + '.' + c.init + '(' + ', '.join(parts) + ')')
+        init = '@tomato.m.' + str(mod.code_of('@' + mod.find_method(c.name, c.init, c.line).owner)) + '.' + c.init
+        g.emit(f'call void {init}(' + ', '.join(parts) + ')')
         pending = g.tmp('ex')
         g.emit(f'{pending} = load ptr, ptr @tomato_exc')
         has = g.tmp('has')
-        g.emit(f'{has} = icmp ne ptr {pending}, null')
+        g.emit(f'{has} = icmp ne ptr {pending}, null ; {init}')
         bad = g.label('initfailed')
         ok = g.label('initok')
         g.cond_br(has, bad, ok)
@@ -8244,7 +9098,7 @@ def compile_constructor(c: ClassInfo, mod: Mod) -> str:
         g.place(ok)
     g.emit(f'store ptr {obj}, ptr %retval')
     g.br('epilogue')
-    return finish_function(g, '@tomato.new.' + code, sig, '@' + c.name)
+    finish_function(g, '@tomato.new.' + code, sig, '@' + c.name)
 
 def class_types(mod: Mod) -> str:
     # one struct type per class: the reference count and type code, then the fields
@@ -8403,6 +9257,8 @@ def declarations(mod: Mod) -> str:
 
     for op in ['add', 'sub', 'mul', 'floordiv', 'mod', 'shl', 'shr']:
         d += f'declare i64 @tomato_int_{op}_c(i64, i64, i32)\n'
+    for op2 in ['add', 'sub', 'mul', 'floordiv', 'mod']:
+        d += f'declare i64 @tomato_int_{op2}_slow(i64, i64, i32)\n'
     d += 'declare i64 @tomato_int_floordivp2_c(i64, i32, i32)\n'
     d += 'declare i64 @tomato_int_modp2_c(i64, i32, i32)\n'
     d += 'declare i32 @tomato_int_cmp_c(i64, i64, i32)\n'
@@ -8481,7 +9337,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare void @tomato_file_write(ptr, ptr)\n'
     d += 'declare void @tomato_file_close(ptr)\n'
     d += 'declare ptr @tomato_input(ptr)\n'
-    d += 'declare i32 @tomato_text_int_ok(ptr)\n'
+    d += 'declare ptr @tomato_str_split_next(ptr, ptr, ptr)\n'
     d += 'declare i64 @tomato_text_int(ptr)\n'
     d += 'declare i32 @tomato_text_float_ok(ptr)\n'
     d += 'declare double @tomato_text_float(ptr)\n'
@@ -9205,21 +10061,22 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             if mod.infos[k].is_async:
                 bodies.append(f'{compile_async_function(f, mod, mod.infos[k])}\n')
             else:
-                bodies.append(f'{compile_function(f, mod, mod.infos[k])}\n')
+                compile_function(f, mod, mod.infos[k])
     # compiling a function can ask for more helper functions, so the list may grow while this runs
     done = 0
     while done < len(mod.extra_funcs):
         if not mod.infos[len(funcs) + done].is_gen:
-            bodies.append(f'{compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done])}\n')
+            compile_function(mod.extra_funcs[done], mod, mod.infos[len(funcs) + done])
         done += 1
     for c in mod.classes:
-        bodies.append(f'{compile_constructor(c, mod)}\n')
+        compile_constructor(c, mod)
     for fr in mod.frames:
         mod.classes.append(fr)
     if len(mod.frames) > 0:
         bodies.append(scheduler_ir(mod))
     mod.cur = 'main'
     wrapper = entry_wrapper(mod.find(entry, 1), mod)
+    bodies.append(finish_bodies(mod, f'@tomato.{mod.find(entry, 1).key}'))
     out: list[str] = ['; written by the Tomato compiler in Tomato (compiler/src/compiler.tom)\n']
     out.append(declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod))
     for j, s in enumerate(mod.strings):
