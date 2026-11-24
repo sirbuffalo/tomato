@@ -13,6 +13,14 @@ index out of range
 the key is not there
 index out of range
 slice step cannot be zero
+division by zero
+division by zero
+the shelf cannot step
+division by zero
+the number is too big here
+the number is too big here
+division by zero
+the number is too big here
 the number does not fit the integer type
 division by zero
 division by zero
@@ -22,5 +30,5 @@ the key is not in the dict
 the element is not there
 division by zero
 division by zero
-24
+32
 True

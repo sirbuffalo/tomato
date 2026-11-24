@@ -2986,15 +2986,20 @@ class Gen:
         lo = ex('1', 'int')
         hi = ex('1', 'int')
         step = ex('1', 'int')
+        held_before = len(self.held)
+        self.hold(s)                              # the object and the bounds so far are freed by the error path if a later bound raises
         if n.fields[1].tag == 'n':
             lo = self.want(self.expr(val_node(n.fields[1])), 'int', n.line, 'a slice start')
+            self.hold(lo)
             flags += 1
         if n.fields[2].tag == 'n':
             hi = self.want(self.expr(val_node(n.fields[2])), 'int', n.line, 'a slice end')
+            self.hold(hi)
             flags += 2
         if len(n.fields) > 3 and n.fields[3].tag == 'n':
             step = self.want(self.expr(val_node(n.fields[3])), 'int', n.line, 'a slice step')
             flags += 4
+        self.drop_held(held_before)               # from here the call owns them: it releases them, also when the method raises
         return self.marker_call(s, f, [lo, hi, step, self.tag_small(str(flags))], n.line)
 
     def list_call(self, args: list[Node], line: int) -> Ex:
