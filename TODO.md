@@ -1,5 +1,3 @@
-- Rebuild `site/wasm` on the Mac before the next release
-  macOS arm64, WASI SDK 24: the error-path temporaries task landed a Linux-built `tomatoc.wasm`. It was built with the host-independent `site/wasm/build.sh`, so the Mac rebuild should give the same bytes ("wasm files rebuild identically").
 - Build the approved Wave 2 packs as Sonnet tasks
   After Davis answers the questions in `docs/wave2-api-sheets.md`, start build tasks for the approved sheets: `re` and hashing first (Sonnet-sized, pure Tomato), then os/sys, then testing.
 - Build Lock/Semaphore/Event on the Queue's waiter primitive
@@ -12,8 +10,6 @@
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
 - Mark error branches as unlikely in the emitted LLVM IR (`!prof` weights on `fail_if`)
   An experiment gave matmul -2.4% and strings -0.7% but sieve +2.2% and objects +0.7% instructions executed; it needs tuning, and site/wasm/llvm.js must accept the metadata.
-- Confirm on a Mac that the Linux-built `site/wasm/tomatoc.wasm` rebuilds identically (WASI SDK 24, arm64)
-  The `std/builtin/` folder task landed a Linux-built `tomatoc.wasm`. Run `WASI_SDK=~/wasi-sdk-24.0-arm64-macos sh tests/run.sh` and look for "wasm files rebuild identically"; if it fails, run `site/wasm/build.sh` there and commit the result.
 - Rerun the benchmark suite on the Mac with the new languages installed
   `benchmarks/run.sh --site` there, so the live page gets the new Tomato numbers, the fifteen newer benchmarks and the eight added languages; then update the page's text, which still describes the v0.51 numbers.
 - Stop retaining the loop item in `for x in xs` when the body cannot change any list
