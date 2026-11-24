@@ -4956,12 +4956,87 @@ static int64_t range_split(int64_t start, int64_t stop, int64_t step, int64_t *c
 COLD int64_t tomato_range_late(int64_t start, int64_t stop, int64_t step) { int64_t cut; return range_split(start, stop, step, &cut); }
 COLD int64_t tomato_range_cut(int64_t start, int64_t stop, int64_t step) { int64_t cut; range_split(start, stop, step, &cut); return cut; }
 
+/* int to float and int / int, rounded once to the nearest double, ties to even (D05ad, D05ae). The result is infinite when the exact
+   value is too large for a double (the compiler turns that into an error: P58); it is 0.0 (or a subnormal) when it is tiny. */
+static int64_t mag_bitlen(const uint32_t *d, int64_t n) { return n == 0 ? 0 : (n - 1) * 32 + (32 - __builtin_clz(d[n - 1])); }
+
+/* the top 64 bits of a magnitude of bl bits (bl > 64), with the lowest of them set when any lower bit is (round to odd) */
+static uint64_t mag_top64(const uint32_t *d, int64_t n, int64_t bl) {
+    int64_t sh = bl - 64, li = sh / 32; int bi = (int)(sh % 32);
+    uint64_t lo = (uint64_t)d[li] | ((li + 1 < n ? (uint64_t)d[li + 1] : 0) << 32);
+    uint64_t hi = li + 2 < n ? d[li + 2] : 0;
+    uint64_t m = bi ? (lo >> bi) | (hi << (64 - bi)) : lo;
+    int sticky = bi && (d[li] & (((uint32_t)1 << bi) - 1));
+    for (int64_t i = 0; !sticky && i < li; i++) sticky = d[i] != 0;
+    return sticky ? m | 1 : m;
+}
+
 double tomato_int_to_f64(int64_t x) {
-    if (int_is_small(x)) return (double)int_small_val(x);
+    if (int_is_small(x)) return (double)int_small_val(x);   /* the hardware rounds a 64-bit integer correctly */
     IntView a; int_view(x, &a);
-    double r = 0;
-    for (int64_t i = a.n - 1; i >= 0; i--) r = r * 4294967296.0 + (double)a.d[i];
+    int64_t bl = mag_bitlen(a.d, a.n);
+    double r;
+    if (bl > 1024) r = INFINITY;                              /* 2^1024 and more is beyond every double */
+    else if (bl <= 64) { uint64_t m = 0; for (int64_t i = 0; i < a.n; i++) m |= (uint64_t)a.d[i] << (32 * i); r = (double)m; }
+    else r = ldexp((double)mag_top64(a.d, a.n, bl), (int)(bl - 64));   /* 64 bits with a sticky bit round like the whole number */
     return a.sign < 0 ? -r : r;
+}
+
+/* the magnitude shifted left by k >= 0 bits, in a new array of *rn limbs (the caller frees it) */
+static uint32_t *mag_shl(const uint32_t *d, int64_t n, int64_t k, int64_t *rn) {
+    int64_t w = k / 32; int b = (int)(k % 32);
+    uint32_t *r = calloc((size_t)(n + w + 1), 4);
+    if (!r) out_of_memory();
+    for (int64_t i = 0; i < n; i++) {
+        r[i + w] |= d[i] << b;
+        if (b) r[i + w + 1] |= d[i] >> (32 - b);
+    }
+    int64_t m = n + w + 1;
+    while (m > 0 && r[m - 1] == 0) m--;
+    *rn = m;
+    return r;
+}
+
+/* x / y for ints, the exact quotient rounded once (y is not zero). A zero numerator gives 0.0 with the sign of the quotient. */
+double tomato_int_div_f64(int64_t x, int64_t y) {
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    int neg = a.sign != b.sign;
+    double sg = neg ? -1.0 : 1.0;
+    if (a.n == 0) return neg ? -0.0 : 0.0;
+    int64_t la = mag_bitlen(a.d, a.n), lb = mag_bitlen(b.d, b.n);
+    if (la - lb >= 1026) return sg * INFINITY;        /* the quotient is at least 2^1025 */
+    if (lb - la >= 1078) return neg ? -0.0 : 0.0;     /* the quotient is below 2^-1077: less than half the smallest subnormal */
+    /* scale so that the integer quotient q has 63 or 64 bits: num / den = q + (remainder / den), and the value is that times 2^-s */
+    int64_t s = 63 - (la - lb), nn, dn;
+    uint32_t *num, *den;
+    if (s >= 0) { num = mag_shl(a.d, a.n, s, &nn); den = malloc((size_t)b.n * 4); if (!den) out_of_memory(); memcpy(den, b.d, (size_t)b.n * 4); dn = b.n; }
+    else { den = mag_shl(b.d, b.n, -s, &dn); num = malloc((size_t)a.n * 4); if (!num) out_of_memory(); memcpy(num, a.d, (size_t)a.n * 4); nn = a.n; }
+    uint32_t *q = malloc((size_t)(nn + 1) * 4), *r = malloc((size_t)(dn + 1) * 4);
+    if (!q || !r) out_of_memory();
+    mag_divmod(num, nn, den, dn, q, r);
+    uint64_t qv = (uint64_t)q[0] | (nn > 1 ? (uint64_t)q[1] << 32 : 0);
+    int sticky = 0;
+    for (int64_t i = 0; i < dn; i++) if (r[i]) sticky = 1;
+    free(num); free(den); free(q); free(r);
+    if (sticky) qv |= 1;                                /* the true quotient lies strictly between qv - 1 and qv + 1: round to odd */
+    int64_t bits = 64 - __builtin_clzll(qv);
+    int64_t e = bits - 1 - s;                            /* the binary exponent of the result */
+    double v;
+    if (e >= -1022) v = ldexp((double)qv, (int)-s);      /* a normal number (or infinity): one hardware rounding of 63 or 64 bits */
+    else {                                               /* a subnormal: round to the bits that are left, by hand */
+        int64_t keep = e + 1075;                         /* the number of significant bits a subnormal of this size can hold */
+        if (keep < 0) return neg ? -0.0 : 0.0;
+        int64_t k = bits - keep;                         /* bits to drop: 11 to 64 */
+        uint64_t m;
+        if (k >= 64) m = qv > ((uint64_t)1 << 63) ? 1 : 0;   /* below one unit: round up only when above half a unit */
+        else {
+            m = qv >> k;
+            uint64_t rem = qv & (((uint64_t)1 << k) - 1), half = (uint64_t)1 << (k - 1);
+            if (rem > half || (rem == half && (m & 1))) m++;
+        }
+        v = ldexp((double)m, (int)(k - s));
+    }
+    return sg * v;
 }
 
 void *tomato_int_str(int64_t x) {

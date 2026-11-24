@@ -1,0 +1,148 @@
+# Stage 0 of docs/bigfloat-design.md: a whole number becomes a float rounded once to the nearest (ties to even), a whole
+# number too big for a float stops the program (OverflowError, an infinity is never made), and int / int rounds the exact
+# quotient once, however large the operands are (D05ad). tests/run.sh runs it under AddressSanitizer too.
+from math import sqrt
+
+def to_float(n: int) -> str:
+    try:
+        return str(float(n))
+    catch OverflowError as e:
+        return 'OverflowError: ' + e.message
+
+def divide(a: int, b: int) -> str:
+    try:
+        return str(a / b)
+    catch OverflowError as e:
+        return 'OverflowError: ' + e.message
+
+def show_sqrt(n: int) -> str:
+    try:
+        return str(sqrt(n))
+    catch OverflowError as e:
+        return 'OverflowError: ' + e.message
+
+def mixed(n: int, x: float) -> str:
+    out = ''
+    try:
+        out += str(n * x)
+    catch OverflowError as e:
+        out += 'mul: ' + e.message
+    try:
+        out += ' | ' + str(n < x)
+    catch OverflowError as e:
+        out += ' | cmp: ' + e.message
+    try:
+        out += ' | ' + str(x / n)
+    catch OverflowError as e:
+        out += ' | div: ' + e.message
+    return out
+
+def fixed(a: int[length=64], b: int[length=64]) -> str:
+    return str(a / b)
+
+@main
+def main():
+    # rounding of whole numbers: one rounding of the exact value, ties to even (the old code rounded once per 32-bit limb)
+    print(to_float(7014465087773491448540667509))
+    print(to_float(-7014465087773491448540667509))
+    print(to_float(2 ** 53 + 1))
+    print(to_float(2 ** 53 + 3))
+    print(to_float(2 ** 62 + 1024))
+    print(to_float(2 ** 62 + 1025))
+    print(to_float(2 ** 63 + 1025))
+    print(to_float(2 ** 64 + 2 ** 11))
+    print(to_float(2 ** 64 + 2 ** 11 + 1))
+    print(to_float(2 ** 100 + 2 ** 47))
+    print(to_float(2 ** 100 + 2 ** 47 + 1))
+    print(to_float(3 * 2 ** 100 + 2 ** 47))
+    print(to_float(3 * 2 ** 100 + 2 ** 47 + 1))
+    print(to_float(10 ** 30))
+    print(to_float(10 ** 300))
+    print(to_float(123456789012345678901234567890123456789))
+    # the end of the range: the largest float is 2**1024 - 2**971; half way to 2**1024 rounds up and does not fit
+    print(to_float(2 ** 1024 - 2 ** 971))
+    print(to_float(2 ** 1024 - 2 ** 970 - 1))
+    print(to_float(2 ** 1024 - 2 ** 970))
+    print(to_float(-(2 ** 1024 - 2 ** 970)))
+    print(to_float(2 ** 1024))
+    # an int that does not fit is an error, not infinity
+    print(to_float(10 ** 400))
+    print(to_float(-10 ** 400))
+    print(show_sqrt(10 ** 400))
+    print(show_sqrt(10 ** 20))
+    print(mixed(10 ** 400, 1.5))
+    print(mixed(10 ** 20, 1.5))
+    print(mixed(-10 ** 400, 1.5))
+    try:
+        print(f'{10 ** 400:.2f}')
+    catch OverflowError as e:
+        print('format: ' + e.message)
+    try:
+        x = 1.0 / float(10 ** 400)
+        print(x)
+    catch OverflowError as e:
+        print('reciprocal: ' + e.message)
+    # int / int: the exact quotient rounded once
+    print(divide(10 ** 400, 10 ** 399))
+    print(divide(10 ** 400, 10 ** 400))
+    print(divide(-10 ** 400, 10 ** 400))
+    print(divide(3 * 10 ** 400, 2 * 10 ** 399))
+    print(divide(1, 3))
+    print(divide(2 ** 100 + 1, 3))
+    print(divide(10 ** 30, 10 ** 10))
+    print(divide(1, 10 ** 30))
+    print(divide(10 ** 400, 3))
+    print(divide(-10 ** 400, 3))
+    print(divide(10 ** 400, 1))
+    print(divide(1, 10 ** 400))
+    print(divide(5, 10 ** 320))
+    print(divide(-5, 10 ** 320))
+    print(divide(1, 10 ** 323))
+    print(divide(1, 10 ** 324))
+    print(divide(3, 10 ** 324))
+    print(divide(1, 2 ** 1074))
+    print(divide(1, 2 ** 1075))
+    print(divide(3, 2 ** 1075))
+    print(divide(1, 2 ** 1076))
+    print(divide(2 ** 1024 - 2 ** 971, 1))
+    print(divide(2 ** 1024 - 2 ** 970, 1))
+    print(divide(0, 10 ** 30))
+    print(divide(0, -10 ** 30))
+    print(divide(7, -10 ** 30))
+    # two small numbers beyond 53 bits: the quotient is rounded once, not after rounding both operands
+    print(divide(1187039413221620805, 777821))
+    print(divide(1158842196798852933, 13752))
+    print(divide(1008496978946874144, 427978))
+    print(divide(-1187039413221620805, 777821))
+    print(divide(9007199254740993, 1))
+    print(divide(9007199254740993, 3))
+    print(divide(2 ** 53, 3))
+    print(divide(2 ** 53 + 1, 3))
+    print(divide(-(2 ** 53) - 1, 3))
+    print(divide(12, 5))
+    print(divide(-12, 5))
+    print(divide(4611686018427387903, 7))
+    print(divide(4611686018427387904, 7))
+    print(divide(-4611686018427387904, 7))
+    print(fixed(6083775061392763377, 798937))
+    print(fixed(9223372036854775807, 1))
+    print(fixed(-9223372036854775807, 3))
+    a8: int[length=8] = 100
+    b8: int[length=8] = 7
+    print(a8 / b8)
+    a32: int[length=32] = 2000000000
+    b32: int[length=32] = 7
+    print(a32 / b32)
+    u64a: uint[length=64] = 18446744073709551615
+    u64b: uint[length=64] = 3
+    print(u64a / u64b)
+    # a loop of divisions keeps working with variables of every size
+    total = 0.0
+    for i in range(1, 8):
+        total += (10 ** (i * 60)) / (7 * 10 ** (i * 60 - 1))
+    print(total)
+    big = 10 ** 400
+    small = 10 ** 399
+    r = big / small
+    print(r + 1.0)
+    print(r * r)

@@ -18,12 +18,12 @@ signed small 1e+30
 divide 0.7619047619047619
 divide tiny error: the float result is infinite or not a number
 divide zero error: division by zero
-divide huge 0.5
+divide huge error: an int is too large to be a float
 ratio -5.5
 ratio zero error: division by zero
-ratio huge 0.0
+ratio huge error: an int is too large to be a float
 huge 7 14.0
-huge error: the float result is infinite or not a number
+huge error: an int is too large to be a float
 reset 1e+150
 caught 5e+99
 literals 5e+307

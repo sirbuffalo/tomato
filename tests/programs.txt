@@ -152,6 +152,7 @@ text_methods_more
 math_more
 fstring_specs
 tuple_type_args
+int_to_float
 set_discard
 fast_paths
 loop_nests

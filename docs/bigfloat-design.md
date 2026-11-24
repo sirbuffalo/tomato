@@ -29,6 +29,8 @@ too large for one). Those need a new decision entry when this is accepted.
 The expensive part is not arithmetic. It is **ownership**: a float that may be a pointer has to be copied and freed like
 a big `int`, where today a float is plain data.
 
+> **Stage 0 is done** (`tests/programs/int_to_float.tom`): `tomato_int_to_f64` rounds once; `float(10**400)`, `sqrt(10**400)` and every other implicit conversion of an `int` too big for a `float` raise OverflowError E436 "an int is too large to be a float"; `int / int` divides the exact values (`tomato_int_div_f64`), so `10**400 / 10**399` is 10.0. The table below describes the state before it, except that `2**53 + 1 == float(2**53)` is still `True` (exact comparison waits for question 6).
+
 ## What happens today
 
 Checked by building the current compiler from `compiler/bootstrap/tomatoc.ll` (commit bf8eb2ce) and running programs:
@@ -364,7 +366,7 @@ hand-written lines, based on comparable past changes (the range analysis was abo
 
 | stage | content | size (lines) | risk |
 | --- | --- | ---: | --- |
-| 0 | Independent of everything: round `int` to `float` correctly; make `int / int` follow D05ad; make `float(huge)` raise until stage 3 lands; check `sqrt` of a huge int | 150 | low |
+| 0 | **Done.** Independent of everything: round `int` to `float` correctly; make `int / int` follow D05ad; make `float(huge)` raise until stage 3 lands; check `sqrt` of a huge int. Not included: exact `int` against `float` comparison (question 6) | 150 | low |
 | 1 | `float[length=64]` as a type, with today's code generation unchanged underneath | 300 | low |
 | 2 | Runtime core in C: box, conversions, `+ - * / // % **`, comparison, parse, print, math slow paths; tested by fuzzing against `rational` | 1,000 + 400 test | medium |
 | 3 | Compiler: `float` as a word at rest, slow arms for checks, chain rules, comparisons, literals, ownership in locals, fields, containers, unions, async frames, unwinding | 900 + 400 test | **high** |

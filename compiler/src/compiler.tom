@@ -3422,10 +3422,10 @@ class Gen:
             return self.convert_explicit(exf(r, 'int'), t, line)
         return exf(r, 'int')
 
-    def as_double(self, e: Ex) -> str:
+    def as_double(self, e: Ex, live: list[Ex] = []) -> str:
         if e.ty == 'float':
             return e.reg
-        return self.to_double(e)
+        return self.to_double(e, live)
 
     def finite_known(self, n: Node | None) -> bool:
         # the result of the float operation n is known to be finite, so it needs no check
@@ -3438,7 +3438,7 @@ class Gen:
         # arithmetic and comparison when either side is a float: the other side is converted to a float. node: the whole expression
         if not (a.ty == 'float' or is_numeric(a.ty)) or not (b.ty == 'float' or is_numeric(b.ty)):
             raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", line)
-        x = self.as_double(a)
+        x = self.as_double(a, [b])
         y = self.as_double(b)
         if op == '+' or op == '-' or op == '*':
             ins = 'fadd'
@@ -3512,8 +3512,8 @@ class Gen:
     def float_pure(self, n: Node) -> int:
         # 2: a float read or float arithmetic that can fail only with infinity or NaN; 1: an integer read or literal;
         # 0: anything else. A class operand can call a custom operator, and an optional operand can fail when unwrapped.
-        # (An int operand is converted with tomato_int_to_f64, which never stops: a huge int becomes infinity, and the postponed
-        # check then reports the same error at the same line.)
+        # (An int operand is converted by to_double, which stops with "an int is too large to be a float" when it does not fit,
+        # so it never brings infinity into a chain.)
         k = n.kind
         if k == 'FloatLit':
             return 2
@@ -3536,9 +3536,9 @@ class Gen:
                 return 2
         return 0
 
-    def check_finite(self, r: str):
-        # a float result that is infinite or not a number stops the program (P58)
-        if self.mod.mode == 2:
+    def check_finite(self, r: str, message: str = 'the float result is infinite or not a number', live: list[Ex] = []):
+        # a float result that is infinite or not a number stops the program (P58). live: operands the failure path must free
+        if self.mod.mode == 2 and len(live) == 0 and message == 'the float result is infinite or not a number':
             # one comparison: x - x is not a number when x is infinite or not a number, and 0 otherwise
             none = self.tmp('diff')
             self.emit(f'{none} = fsub double {r}, {r}')
@@ -3547,7 +3547,7 @@ class Gen:
                 return
             wrong = self.tmp('notfinite')
             self.emit(f'{wrong} = fcmp uno double {none}, 0.0')
-            self.fail_if(wrong, 'the float result is infinite or not a number')
+            self.fail_if(wrong, message)
             return
         d = self.tmp('diff')
         self.emit(f'{d} = fsub double {r}, {r}')
@@ -3555,7 +3555,7 @@ class Gen:
         self.emit(f'{ok} = fcmp oeq double {d}, 0.0')
         bad = self.tmp('notfinite')
         self.emit(f'{bad} = xor i1 {ok}, true')
-        self.fail_if(bad, 'the float result is infinite or not a number')
+        self.fail_if(bad, message, live)
 
     def float_call(self, v: Ex, line: int) -> Ex:
         # float(x): a whole number or a float as a float, or text written as a number
@@ -3611,7 +3611,9 @@ class Gen:
             text += f'+{-scale}'
         return ex(text, 'float')
 
-    def to_double(self, e: Ex) -> str:
+    def to_double(self, e: Ex, live: list[Ex] = []) -> str:
+        # a whole number as a float, rounded once to the nearest (ties to even). An int that does not fit stops the program
+        # (P58, D05af). live: other owned operands of the same operation, which the failure path frees
         if e.ty == 'int' and e.small and not small_text(e.reg):
             # a small number is the tagged word 2v+1: v is one shift away
             v = self.arith('ashr', e.reg, '1')
@@ -3622,6 +3624,8 @@ class Gen:
             d = self.tmp('fp')
             self.emit(f'{d} = call double @tomato_int_to_f64(i64 {e.reg})')
             self.release(e)
+            if not small_text(e.reg):
+                self.check_finite(d, 'an int is too large to be a float', live)
             return d
         r = self.tmp('fp')
         op = 'sitofp' if is_signed(e.ty) else 'uitofp'
@@ -3629,17 +3633,88 @@ class Gen:
         return r
 
     def num_divide(self, a: Ex, b: Ex, line: int, node: Node | None = None) -> Ex:
-        if b.ty == 'int':
-            self.int_zero_check(b, 'division by zero', [a, b])
-        else:
+        # int / int: the exact quotient rounded once to a float (D05ad), however large the operands
+        if (a.ty != 'int' and bits_of(a.ty) <= 32) and (b.ty != 'int' and bits_of(b.ty) <= 32):
+            # both fit a double exactly, so the hardware division is that one rounding
             zero = self.tmp('zero')
             self.emit(f'{zero} = icmp eq {llvm_type(b.ty)} {b.reg}, 0')
             self.fail_if(zero, 'division by zero', [a, b])
-        q = self.tmp('div')
-        self.emit(f'{q} = fdiv double {self.to_double(a)}, {self.to_double(b)}')
+            q = self.tmp('div')
+            self.emit(f'{q} = fdiv double {self.to_double(a)}, {self.to_double(b)}')
+        else:
+            x = self.resize(a, 'int')
+            y = self.resize(b, 'int')
+            self.int_zero_check(y, 'division by zero', [x, y])
+            q = self.int_quotient(x, y)
+            self.release(x)
+            self.release(y)
         if not self.finite_known(node):
             self.check_finite(q)
         return ex(q, 'float')
+
+    def int_quotient(self, x: Ex, y: Ex) -> str:
+        # x / y of two ints (y not zero) as a double, rounded once. Two small numbers of at most 53 bits are exact as doubles, so
+        # the division itself is that one rounding; anything else goes to the runtime, which divides the exact values
+        # (infinite when the quotient is too large: the caller checks)
+        tests: list[str] = []
+        both = ''
+        if not (small_text(x.reg) or x.small) and not (small_text(y.reg) or y.small):
+            both = self.tmp('divtags')
+            self.emit(f'{both} = and i64 {x.reg}, {y.reg}')
+        elif not (small_text(x.reg) or x.small):
+            both = x.reg
+        elif not (small_text(y.reg) or y.small):
+            both = y.reg
+        if both != '':
+            bit = self.tmp('divbit')
+            self.emit(f'{bit} = and i64 {both}, 1')
+            tagged = self.tmp('divsmall')
+            self.emit(f'{tagged} = icmp ne i64 {bit}, 0')
+            tests.append(tagged)
+        for e in [x, y]:
+            if small_text(e.reg):
+                lit = (int(e.reg) - 1) // 2
+                if lit >= -9007199254740992 and lit <= 9007199254740992:
+                    continue
+            v = self.tmp('divval')
+            self.emit(f'{v} = ashr i64 {e.reg}, 1')
+            sh = self.tmp('divshift')
+            self.emit(f'{sh} = add i64 {v}, 9007199254740992')
+            near = self.tmp('divnear')
+            self.emit(f'{near} = icmp ule i64 {sh}, 18014398509481984')
+            tests.append(near)
+        fast = self.label('divfast')
+        slow = self.label('divslow')
+        join = self.label('divjoin')
+        cond = ''
+        for t in tests:
+            if cond == '':
+                cond = t
+            else:
+                c = self.tmp('divall')
+                self.emit(f'{c} = and i1 {cond}, {t}')
+                cond = c
+        if cond == '':
+            cond = 'true'
+        self.cond_br(cond, fast, slow)
+        self.place(fast)
+        fx = self.tmp('fx')
+        fy = self.tmp('fy')
+        vx = self.arith('ashr', x.reg, '1')
+        vy = self.arith('ashr', y.reg, '1')
+        self.emit(f'{fx} = sitofp i64 {vx} to double')
+        self.emit(f'{fy} = sitofp i64 {vy} to double')
+        fq = self.tmp('div')
+        self.emit(f'{fq} = fdiv double {fx}, {fy}')
+        self.br(join)
+        self.place(slow)
+        sq = self.tmp('div')
+        self.emit(f'{sq} = call double @tomato_int_div_f64(i64 {x.reg}, i64 {y.reg})')
+        self.br(join)
+        self.place(join)
+        q = self.tmp('div')
+        self.emit(f'{q} = phi double [ {fq}, %{fast} ], [ {sq}, %{slow} ]')
+        return q
 
     def convert_explicit(self, v: Ex, target: str, line: int) -> Ex:
         # int[length=N](x): the same number in another integer type, or a stop when it does not fit (D05p)
@@ -10291,6 +10366,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare i64 @tomato_range_late(i64, i64, i64)\n'
     d += 'declare i64 @tomato_range_cut(i64, i64, i64)\n'
     d += 'declare double @tomato_int_to_f64(i64)\n'
+    d += 'declare double @tomato_int_div_f64(i64, i64)\n'
     d += 'declare double @tomato_clock()\n'
     d += 'declare ptr @tomato_int_str(i64)\n'
     d += 'declare i64 @tomato_int_parse(ptr)\n'
