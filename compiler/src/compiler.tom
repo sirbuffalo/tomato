@@ -565,14 +565,20 @@ def val_has_comp(v: Val) -> bool:
 # of a function. A local with no entry may hold anything, including the word 0 of a slot nothing has written yet: only a
 # local last assigned an int that the program computed (a literal, arithmetic, a range loop's variable) gets an entry, and
 # refining a local by a condition never creates one, so an entry inside the small range always means a tagged small int.
+# A float local can have an entry too (fl is True): its value is then certainly finite (no infinity, no NaN) and lies in the
+# interval, whose bounds are whole numbers rounded outwards (see frng). A bound at FLOAT_INF or beyond, on either side, means
+# only "finite". The real bound is 2^1024; the cap is far below it, so a result inside the cap needs no finite check.
 const RANGE_INF = 18446744073709551616
 const SMALL_LO = -4611686018427387904
 const SMALL_HI = 4611686018427387903
 const REFINE_DEPTH = 5
+const FLOAT_INF = 115792089237316195423570985008687907853269984665640564039457584007913129639936
+const FLOAT_EXACT = 9007199254740992
 
 class Rng:
     lo: int = 0
     hi: int = 0
+    fl: bool = False          # the interval of a float
 
 class Facts:
     m: dict[str, Rng] = {}
@@ -594,7 +600,7 @@ def rng(lo: int, hi: int) -> Rng:
     return r
 
 def rng_small(r: Rng) -> bool:
-    return r.lo >= SMALL_LO and r.hi <= SMALL_HI
+    return not r.fl and r.lo >= SMALL_LO and r.hi <= SMALL_HI
 
 def b_clamp(x: int) -> int:
     # keeps the numbers small: a lower bound above RANGE_INF becomes RANGE_INF (a smaller lower bound), an upper bound below
@@ -665,6 +671,84 @@ def rng_floordiv(a: Rng, d: int) -> Rng:
     hi = RANGE_INF if a.lo <= -RANGE_INF else b_clamp(a.lo // d)
     return rng(lo, hi)
 
+# ---- float intervals. fl(x) stands for a real number rounded to the nearest float. Rounding keeps order, so a result that lies
+# between two whole numbers which are floats themselves still does after rounding; f_bound moves a bound outwards to such a number.
+def f_bound(x: int, upper: bool) -> int:
+    # every whole number up to 2^53 is a float; a larger bound moves outwards to a power of two, which is one too
+    if x >= -FLOAT_EXACT and x <= FLOAT_EXACT:
+        return x
+    m = x if x > 0 else -x
+    if m >= FLOAT_INF:
+        if (x > 0) == upper:
+            return FLOAT_INF if upper else -FLOAT_INF
+        m = FLOAT_INF                 # on the inner side: a bound nearer to 0 is further out
+    p = FLOAT_EXACT
+    while p * 2 <= m:
+        p *= 2
+    if (x > 0) == upper and p < m:
+        p *= 2
+    return p if x > 0 else -p
+
+def frng(lo: int, hi: int) -> Rng:
+    r = rng(f_bound(lo, False), f_bound(hi, True))
+    r.fl = True
+    return r
+
+def frng_any() -> Rng:
+    return frng(-FLOAT_INF, FLOAT_INF)
+
+def frng_bounded(r: Rng) -> bool:
+    return r.lo > -FLOAT_INF and r.hi < FLOAT_INF
+
+def frng_of(r: Rng) -> Rng | None:
+    # an interval as a float's: a float's own, or an int's after its conversion to a float (an unbounded int may be too big)
+    if r.fl:
+        return r
+    if r.lo <= -RANGE_INF or r.hi >= RANGE_INF:
+        return None
+    return frng(r.lo, r.hi)
+
+def frng_hull(m: int) -> Rng:
+    return frng(-m, m)
+
+def frng_reach(r: Rng) -> int:
+    # the largest magnitude in r
+    return b_max(r.hi, -r.lo)
+
+def float_literal_range(mantissa: int, scale: int) -> Rng | None:
+    # the interval of the literal mantissa / 10^scale
+    if scale <= 0:
+        if scale < -80:
+            return None
+        v = mantissa * 10 ** -scale
+        return frng(v, v)
+    if scale > 400:
+        return None
+    d = 10 ** scale
+    return frng(mantissa // d, (mantissa + d - 1) // d)
+
+def frng_op(op: str, a: Rng, b: Rng) -> Rng:
+    # + - * of two floats that did not fail: finite, and inside the interval of the exact result
+    if not (frng_bounded(a) and frng_bounded(b)):
+        return frng_any()
+    if op == '+':
+        return frng(a.lo + b.lo, a.hi + b.hi)
+    if op == '-':
+        return frng(a.lo - b.hi, a.hi - b.lo)
+    p1 = a.lo * b.lo
+    p2 = a.lo * b.hi
+    p3 = a.hi * b.lo
+    p4 = a.hi * b.hi
+    return frng(b_min(b_min(p1, p2), b_min(p3, p4)), b_max(b_max(p1, p2), b_max(p3, p4)))
+
+def root_bound(h: int) -> int:
+    # a whole number r for which fl(x * x) <= h means -r <= x <= r: the smallest power of two with r * r >= 2 * h. (For |x| > r
+    # the exact square is above 2 * h and above 1, so its rounded value, off by one part in 2^53 at most, is above h.)
+    r = 1
+    while r * r < 2 * h:
+        r *= 2
+    return r
+
 def rng_empty(lo: int, hi: int) -> bool:
     # no number lies in [lo, hi]; an unbounded side is never empty
     return lo > -RANGE_INF and hi < RANGE_INF and lo > hi
@@ -711,7 +795,10 @@ def facts_join(a: Facts, b: Facts) -> Facts:
         if k in b.m:
             x = a.m[k]
             y = b.m[k]
-            g.m[k] = rng(b_min(x.lo, y.lo), b_max(x.hi, y.hi))
+            if x.fl == y.fl:
+                r = rng(b_min(x.lo, y.lo), b_max(x.hi, y.hi))
+                r.fl = x.fl
+                g.m[k] = r
     return g
 
 def facts_widen(old: Facts, nxt: Facts) -> Facts:
@@ -725,9 +812,14 @@ def facts_widen(old: Facts, nxt: Facts) -> Facts:
         if k in old.m:
             x = old.m[k]
             y = nxt.m[k]
-            lo = x.lo if y.lo >= x.lo else -RANGE_INF
-            hi = x.hi if y.hi <= x.hi else RANGE_INF
-            g.m[k] = rng(lo, hi)
+            if x.fl != y.fl:
+                continue
+            top = FLOAT_INF if x.fl else RANGE_INF
+            lo = x.lo if y.lo >= x.lo else -top
+            hi = x.hi if y.hi <= x.hi else top
+            r = rng(lo, hi)
+            r.fl = x.fl
+            g.m[k] = r
     return g
 
 def facts_same(a: Facts, b: Facts) -> bool:
@@ -738,7 +830,7 @@ def facts_same(a: Facts, b: Facts) -> bool:
     for k in a.m:
         if k not in b.m:
             return False
-        if a.m[k].lo != b.m[k].lo or a.m[k].hi != b.m[k].hi:
+        if a.m[k].lo != b.m[k].lo or a.m[k].hi != b.m[k].hi or a.m[k].fl != b.m[k].fl:
             return False
     return True
 
@@ -2456,8 +2548,15 @@ class Gen:
             return e.reg
         return self.to_double(e)
 
-    def float_op(self, op: str, a: Ex, b: Ex, line: int, defer: bool = False) -> Ex:
-        # arithmetic and comparison when either side is a float: the other side is converted to a float
+    def finite_known(self, n: Node | None) -> bool:
+        # the result of the float operation n is known to be finite, so it needs no check
+        if n is None or not self.tracking():
+            return False
+        r = self.range_of(n, self.facts)
+        return r is not None and r.fl and frng_bounded(r)
+
+    def float_op(self, op: str, a: Ex, b: Ex, line: int, defer: bool = False, node: Node | None = None) -> Ex:
+        # arithmetic and comparison when either side is a float: the other side is converted to a float. node: the whole expression
         if not (a.ty == 'float' or is_numeric(a.ty)) or not (b.ty == 'float' or is_numeric(b.ty)):
             raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", line)
         x = self.as_double(a)
@@ -2472,10 +2571,11 @@ class Gen:
             self.emit(f'{r} = {ins} double {x}, {y}')
             # inf and NaN never become finite again under + - *, so one check on the last result of a chain covers the whole chain
             result = ex(r, 'float')
-            if defer:
-                result.unchecked = r
-            else:
-                self.check_finite(r)
+            if not self.finite_known(node):
+                if defer:
+                    result.unchecked = r
+                else:
+                    self.check_finite(r)
             return result
         if op == '/' or op == '//' or op == '%':
             zero = self.tmp('fzero')
@@ -2491,7 +2591,8 @@ class Gen:
                 self.emit(f'{r} = call double @tomato_floor_div_f64(double {x}, double {y})')
             else:
                 self.emit(f'{r} = call double @tomato_mod_f64(double {x}, double {y})')
-            self.check_finite(r)
+            if not self.finite_known(node):
+                self.check_finite(r)
             return ex(r, 'float')
         if op == '**':
             r = self.tmp('f')
@@ -2636,7 +2737,7 @@ class Gen:
         self.emit(f'{r} = {op} {llvm_type(e.ty)} {e.reg} to double')
         return r
 
-    def num_divide(self, a: Ex, b: Ex, line: int) -> Ex:
+    def num_divide(self, a: Ex, b: Ex, line: int, node: Node | None = None) -> Ex:
         if b.ty == 'int':
             self.int_zero_check(b, 'division by zero', [a, b])
         else:
@@ -2645,7 +2746,8 @@ class Gen:
             self.fail_if(zero, 'division by zero', [a, b])
         q = self.tmp('div')
         self.emit(f'{q} = fdiv double {self.to_double(a)}, {self.to_double(b)}')
-        self.check_finite(q)
+        if not self.finite_known(node):
+            self.check_finite(q)
         return ex(q, 'float')
 
     def convert_explicit(self, v: Ex, target: str, line: int) -> Ex:
@@ -3992,7 +4094,7 @@ class Gen:
             b = self.want(b, 'bool', n.line, 'the right side of ' + op)
             return ex(self.arith(op, a.reg, b.reg), 'bool')
         if a.ty == 'float' or b.ty == 'float':
-            return self.float_op(op, a, b, n.line, defer)
+            return self.float_op(op, a, b, n.line, defer, n)
         if is_compare and a.ty == 'bool' and b.ty == 'bool':
             if op != '==' and op != '!=':
                 raise CompileError('bool values cannot be ordered with < or >\nuse == or != to compare them', n.line)
@@ -4011,7 +4113,7 @@ class Gen:
             if op == '%':
                 return self.num_modulo(a, b, n.line)
             if op == '/':
-                return self.num_divide(a, b, n.line)
+                return self.num_divide(a, b, n.line, n)
             if op == '//':
                 return self.num_floor_divide(a, b, n.line)
             if op == '**':
@@ -6216,8 +6318,11 @@ class Gen:
             after = self.facts
             if self.tracking():
                 after = facts_kill(self.facts, [s.fields[0].text])
-                if ty == 'int':
-                    after = self.assign_facts(self.facts, s.fields[0].text, val_node(s.fields[2]))
+                name = s.fields[0].text
+                if ty == 'int' or ty == 'float':
+                    after = self.assign_facts(self.facts, name, val_node(s.fields[2]))
+                    if name in after.m and after.m[name].fl != (ty == 'float'):
+                        after = facts_kill(after, [name])          # an int literal in a float variable
             v = self.expr(val_node(s.fields[2]), ty)
             v = self.want(v, ty, s.line, 'the value')
             self.store_owned(self.slot(s.fields[0].text, ty, s.line), v)
@@ -6600,6 +6705,8 @@ class Gen:
         k = n.kind
         if k == 'IntLit':
             return rng(n.fields[0].num, n.fields[0].num)
+        if k == 'FloatLit':
+            return float_literal_range(n.fields[0].num, n.fields[1].num)
         if k == 'Name':
             name = n.fields[0].text
             if name in f.m:
@@ -6616,20 +6723,32 @@ class Gen:
             inner = self.range_of(val_node(n.fields[1]), f)
             if inner is None:
                 return None
+            if inner.fl:
+                return frng(-inner.hi, -inner.lo)
             return rng_neg(inner)
         if k == 'Call':
             return self.len_range(n)
         if k != 'BinOp':
             return None
         op = n.fields[0].text
-        if not (op == '+' or op == '-' or op == '*' or op == '//' or op == '%'):
+        if not (op == '+' or op == '-' or op == '*' or op == '//' or op == '%' or op == '/'):
             return None
         a = self.range_of(val_node(n.fields[1]), f)
         if a is None:
             return None
+        if op == '/':
+            return self.quotient_range(a, val_node(n.fields[2]), f)
         b = self.range_of(val_node(n.fields[2]), f)
         if b is None:
             return None
+        if a.fl or b.fl:
+            if op == '//' or op == '%':
+                return None
+            x = frng_of(a)
+            y = frng_of(b)
+            if x is None or y is None:
+                return None
+            return frng_op(op, x, y)
         if op == '+':
             return rng_add(a, b)
         if op == '-':
@@ -6649,6 +6768,39 @@ class Gen:
         if a.hi <= 0 and a.lo > d:
             return a
         return rng(d + 1, 0)
+
+    def quotient_range(self, a: Rng, divisor: Node, f: Facts) -> Rng | None:
+        # the interval of a / divisor (a float) when the division did not fail, so the divisor is not 0
+        x = frng_of(a)
+        if x is None or not frng_bounded(x):
+            return None
+        if self.int_typed(divisor):
+            # a whole number that is not 0 has a magnitude of 1 or more (as a float too, where a huge one is infinity: 0 then)
+            return frng_hull(frng_reach(x))
+        if divisor.kind == 'FloatLit':
+            m = divisor.fields[0].num
+            s = divisor.fields[1].num
+            if m > 0 and s >= 0 and s <= 80 and m < 10 ** 80:
+                # x * 10^s / m, doubled to cover the rounding of the divisor and of the quotient (off by one part in 2^52)
+                return frng_hull(frng_reach(x) * 10 ** s // m * 2 + 2)
+        return None
+
+    def int_typed(self, n: Node) -> bool:
+        # an expression whose value is certainly a whole number (int or fixed-width)
+        k = n.kind
+        if k == 'IntLit':
+            return True
+        if k == 'Name':
+            name = n.fields[0].text
+            if name in self.slots:
+                return is_numeric(self.types[name])
+            ck = self.mod.resolve(name)
+            return ck != '' and ck in self.mod.consts and self.mod.consts[ck].kind == 'IntLit'
+        if k == 'BinOp':
+            op = n.fields[0].text
+            if op == '+' or op == '-' or op == '*' or op == '//' or op == '%':
+                return self.int_typed(val_node(n.fields[1])) and self.int_typed(val_node(n.fields[2]))
+        return False
 
     def len_range(self, n: Node) -> Rng | None:
         # len(xs) of a local list, tuple, dict, set or text: a count the runtime keeps, given back as a small number (len_of)
@@ -6701,13 +6853,89 @@ class Gen:
         a = self.range_of(left, f)
         b = self.range_of(right, f)
         if a is None or b is None:
-            return f                          # not two ints with known intervals (a float, a text, an object, ...)
+            return f                          # not two numbers with known intervals (a text, an object, ...)
+        if a.fl or b.fl:
+            return self.refine_float(f, op, left, a, right, b)
         g = f
         if left.kind == 'Name' and left.fields[0].text in f.m:
             g = self.narrow_fact(g, left.fields[0].text, op, b)
         if right.kind == 'Name' and right.fields[0].text in g.m:
             g = self.narrow_fact(g, right.fields[0].text, flip_compare(op), a)
         return g
+
+    def refine_float(self, f: Facts, op: str, left: Node, a: Rng, right: Node, b: Rng) -> Facts:
+        # the facts after `left OP right` was found true, when one side is a float. Both sides have known intervals, so they are
+        # finite numbers (never NaN) and an untrue comparison means the opposite one. Only float locals are narrowed.
+        x = frng_of(a)
+        y = frng_of(b)
+        if x is None or y is None:
+            return f
+        g = f
+        if left.kind == 'Name':
+            g = self.narrow_float(g, left.fields[0].text, op, y)
+        if right.kind == 'Name':
+            g = self.narrow_float(g, right.fields[0].text, flip_compare(op), x)
+        if (op == '<' or op == '<=' or op == '==') and y.hi < FLOAT_INF and y.hi >= 0:
+            g = self.narrow_squares(g, left, y.hi, f)
+        if (op == '>' or op == '>=' or op == '==') and x.hi < FLOAT_INF and x.hi >= 0:
+            g = self.narrow_squares(g, right, x.hi, f)
+        return g
+
+    def narrow_float(self, f: Facts, name: str, op: str, other: Rng) -> Facts:
+        # the facts after `name OP other` was found true, for a float local with an interval
+        if f.dead or name not in f.m or not f.m[name].fl:
+            return f
+        lo = f.m[name].lo
+        hi = f.m[name].hi
+        if op == '<' or op == '<=' or op == '==':
+            hi = b_min(hi, other.hi)
+        if op == '>' or op == '>=' or op == '==':
+            lo = b_max(lo, other.lo)
+        if lo > hi:
+            return facts_dead()
+        return facts_set(f, name, frng(lo, hi))
+
+    def square_of(self, n: Node, f: Facts) -> str:
+        # the name of a float local with an interval when n is name * name, else ''
+        if n.kind != 'BinOp' or n.fields[0].text != '*':
+            return ''
+        x = val_node(n.fields[1])
+        y = val_node(n.fields[2])
+        if x.kind != 'Name' or y.kind != 'Name' or x.fields[0].text != y.fields[0].text:
+            return ''
+        name = x.fields[0].text
+        if name in f.m and f.m[name].fl:
+            return name
+        return ''
+
+    def narrow_squares(self, g: Facts, n: Node, h: int, f: Facts) -> Facts:
+        # the facts g after the finite float n was found to be at most h: in a sum of numbers that are not negative, each part is
+        # at most the sum (rounding keeps order), so each x * x in it bounds x
+        name = self.square_of(n, f)
+        if name != '':
+            if g.dead or name not in g.m:
+                return g
+            r = root_bound(h)
+            lo = b_max(g.m[name].lo, -r)
+            hi = b_min(g.m[name].hi, r)
+            if lo > hi:
+                return facts_dead()
+            return facts_set(g, name, frng(lo, hi))
+        if n.kind != 'BinOp' or n.fields[0].text != '+':
+            return g
+        x = val_node(n.fields[1])
+        y = val_node(n.fields[2])
+        if self.not_negative(x, f) and self.not_negative(y, f):
+            return self.narrow_squares(self.narrow_squares(g, x, h, f), y, h, f)
+        return g
+
+    def not_negative(self, n: Node, f: Facts) -> bool:
+        if self.square_of(n, f) != '':
+            return True
+        if n.kind == 'BinOp' and n.fields[0].text == '+':
+            return self.not_negative(val_node(n.fields[1]), f) and self.not_negative(val_node(n.fields[2]), f)
+        r = self.range_of(n, f)
+        return r is not None and r.lo >= 0
 
     def narrow_fact(self, f: Facts, name: str, op: str, other: Rng) -> Facts:
         # the facts after `name OP other` was found true
@@ -6739,10 +6967,10 @@ class Gen:
     def assign_facts(self, f: Facts, name: str, value: Node) -> Facts:
         # the facts after `name = value` (computed with the facts from before the assignment)
         g = facts_kill(f, [name])
-        if name in self.slots and self.types[name] != 'int':
+        if name in self.slots and self.types[name] != 'int' and self.types[name] != 'float':
             return g
         r = self.range_of(value, f)
-        if r is None:
+        if r is None or (name in self.slots and r.fl != (self.types[name] == 'float')):
             return g
         g.m[name] = r
         return g
@@ -6853,6 +7081,29 @@ class Gen:
     # small number (checked once when the loop is entered, and again each time the general copy comes back to the loop head): it has no
     # tag tests, no big-number calls and no frees, and an operation that would leave the small range jumps to the start of the same
     # statement in the general copy (nothing of that statement has been stored yet), which carries on with big numbers as before.
+    # Inside the fast copy every variable is a small number at every point, whatever else is known about it (fast_facts); an
+    # operation whose result interval is then inside the small range needs no overflow check.
+    def fast_facts(self, f: Facts, names: list[str]) -> Facts:
+        # the facts f at a point of the fast copy, with the interval of every variable cut to the small range
+        g = facts_new()
+        for k in f.m:
+            g.m[k] = f.m[k]
+        for name in names:
+            lo = SMALL_LO
+            hi = SMALL_HI
+            if name in f.m and not f.dead:
+                lo = b_max(lo, f.m[name].lo)
+                hi = b_min(hi, f.m[name].hi)
+            if lo > hi:                      # no run reaches this point
+                lo = SMALL_LO
+                hi = SMALL_HI
+            g.m[name] = rng(lo, hi)
+        return g
+
+    def fast_known(self, n: Node, f: Facts) -> bool:
+        r = self.range_of(n, f)
+        return r is not None and rng_small(r)
+
     def fast_expr_ok(self, n: Node, names: list[str]) -> bool:
         if n.kind == 'IntLit':
             return n.fields[0].num < 2 ** 60
@@ -6949,7 +7200,7 @@ class Gen:
         self.place(ok)
         return r
 
-    def fast_expr(self, n: Node, bail: str) -> str:
+    def fast_expr(self, n: Node, bail: str, f: Facts) -> str:
         if n.kind == 'IntLit':
             return str(n.fields[0].num * 2 + 1)
         if n.kind == 'UnOp':
@@ -6959,7 +7210,7 @@ class Gen:
             self.emit(f'{r} = load i64, ptr {self.slots[n.fields[0].text]}')
             return r
         op = n.fields[0].text
-        a = self.fast_expr(val_node(n.fields[1]), bail)
+        a = self.fast_expr(val_node(n.fields[1]), bail, f)
         if op == '//' or op == '%':
             v = val_node(n.fields[2]).fields[0].num
             k = 0
@@ -6971,7 +7222,14 @@ class Gen:
                 return self.arith('or', s, '1')
             m = self.arith('and', a, str(2 ** (k + 1) - 2))
             return self.arith('or', m, '1')
-        b = self.fast_expr(val_node(n.fields[2]), bail)
+        b = self.fast_expr(val_node(n.fields[2]), bail, f)
+        if self.fast_known(n, f):
+            # the result is small: plain arithmetic on the tagged words (see small_arith)
+            if op == '+':
+                return self.arith('add nsw', a, self.arith('sub', b, '1'))
+            if op == '-':
+                return self.arith('sub nsw', a, self.arith('sub', b, '1'))
+            return self.arith('or', self.arith('mul nsw', self.arith('sub', a, '1'), self.arith('ashr', b, '1')), '1')
         if op == '+':
             return self.fast_checked('sadd', a, self.arith('sub', b, '1'), bail)
         if op == '-':
@@ -6981,37 +7239,46 @@ class Gen:
         p = self.fast_checked('smul', am, bm, bail)
         return self.arith('or', p, '1')
 
-    def fast_cond(self, n: Node, bail: str) -> str:
+    def fast_cond(self, n: Node, bail: str, f: Facts) -> str:
         op = n.fields[0].text
-        a = self.fast_expr(val_node(n.fields[1]), bail)
-        b = self.fast_expr(val_node(n.fields[2]), bail)
+        a = self.fast_expr(val_node(n.fields[1]), bail, f)
+        b = self.fast_expr(val_node(n.fields[2]), bail, f)
         c = self.tmp('fc')
         self.emit(f'{c} = icmp {signed_cc(op)} i64 {a}, {b}')
         return c
 
-    def fast_block(self, body: list[Node], prefix: str):
+    def fast_block(self, body: list[Node], prefix: str, f: Facts, names: list[str]) -> Facts:
+        # compiles body from the facts f and gives the facts after it
         for s in body:
             if s.kind == 'Pass':
                 continue
             bail = f'{prefix}_{s.mark}'
             if s.kind == 'Assign':
-                v = self.fast_expr(val_node(s.fields[1]), bail)
-                self.emit(f'store i64 {v}, ptr {self.slots[val_node(s.fields[0]).fields[0].text]}')
+                v = self.fast_expr(val_node(s.fields[1]), bail, f)
+                name = val_node(s.fields[0]).fields[0].text
+                self.emit(f'store i64 {v}, ptr {self.slots[name]}')
+                f = self.fast_facts(self.assign_facts(f, name, val_node(s.fields[1])), names)
                 continue
             end = self.label('fendif')
+            outs = facts_dead()
             for branch in s.fields[0].items:
-                c = self.fast_cond(val_node(branch.items[0]), bail)
+                cond = val_node(branch.items[0])
+                c = self.fast_cond(cond, bail, f)
                 then = self.label('fthen')
                 nxt = self.label('fnext')
                 self.cond_br(c, then, nxt)
                 self.place(then)
-                self.fast_block(val_nodes(branch.items[1]), prefix)
+                after = self.fast_block(val_nodes(branch.items[1]), prefix, self.fast_facts(self.refine(f, cond, True), names), names)
+                outs = facts_join(outs, after)
                 self.br(end)
                 self.place(nxt)
+                f = self.fast_facts(self.refine(f, cond, False), names)
             if s.fields[1].tag == 'l':
-                self.fast_block(val_nodes(s.fields[1]), prefix)
+                f = self.fast_block(val_nodes(s.fields[1]), prefix, f, names)
             self.br(end)
             self.place(end)
+            f = facts_join(outs, f)
+        return f
 
     def small_loop(self, s: Node, lf: LoopFacts) -> bool:
         # compile `while` as the fast copy plus the general copy when its body qualifies; False means nothing was emitted
@@ -7050,10 +7317,14 @@ class Gen:
         self.emit(f'{small} = icmp ne i64 {bit}, 0')
         self.cond_br(small, fhead, gcond)
         self.place(fhead)
-        fc = self.fast_cond(cond, gcond)
+        known = facts_new()
+        if self.tracking():
+            known = lf.head
+        known = self.fast_facts(known, names)
+        fc = self.fast_cond(cond, gcond, known)
         self.cond_br(fc, fbody, end)
         self.place(fbody)
-        self.fast_block(body, prefix)
+        self.fast_block(body, prefix, self.fast_facts(self.refine(known, cond, True), names), names)
         self.br(fhead)
         self.place(gcond)
         track = self.tracking()
@@ -7463,9 +7734,9 @@ class Gen:
         self.place(end)
 
     def range_var_range(self, bounds: list[Node]) -> Rng:
-        # the interval of a range loop's variable inside the body, from the bounds' intervals where the loop starts. The loop
-        # stores the variable with tag_small, so it is always a tagged word; only when every bound is known to be inside the
-        # small range is its number known to lie between them (beyond the small range tag_small wraps).
+        # the interval of a range loop's variable inside the body, from the bounds' intervals where the loop starts. The
+        # loop's variable is always a small number (a loop that would leave the small range is cut, see range_cut); when every
+        # bound is known to be inside the small range, its number lies between them too.
         whole = rng(SMALL_LO, SMALL_HI)
         if not self.tracking():
             return whole
@@ -7481,6 +7752,53 @@ class Gen:
             return rng(rs[0].lo, b_max(rs[1].hi - 1, rs[0].lo))
         # start + k * step for either sign of step lies between start and stop
         return rng(b_min(rs[0].lo, rs[1].lo), b_max(rs[0].hi, rs[1].hi))
+
+    def range_unsure(self, bound: Node, e: Ex, out: list[str]):
+        # collects the word of a range bound that is not known to be a small number
+        if e.small or small_text(e.reg):
+            return
+        if self.tracking():
+            r = self.range_of(bound, self.for_entry)
+            if r is not None and rng_small(r):
+                return
+        out.append(e.reg)
+
+    def range_cut(self, start: str, stop: str, stepv: str, unsure: list[str], late: str) -> str:
+        # The variable of a range loop is always a small number. A start or stop past the small range (the machine word holds
+        # one more bit) therefore cuts the loop: it runs over the numbers that are small, and then, when there are more, stops
+        # with an error (the late slot is not 0; see for_stmt). With both small (one tag test each) there is nothing to cut.
+        small = ''
+        for w in unsure:
+            bit = self.arith('and', w, '1')
+            one = self.tmp('tagged')
+            self.emit(f'{one} = icmp ne i64 {bit}, 0')
+            if small == '':
+                small = one
+            else:
+                both = self.tmp('tagged')
+                self.emit(f'{both} = and i1 {small}, {one}')
+                small = both
+        cut = self.hidden_slot('for.c')
+        self.emit(f'store i64 {stop}, ptr {cut}')
+        self.emit(f'store i64 0, ptr {late}')
+        wide = self.label('widerange')
+        ready = self.label('ranged')
+        self.cond_br(small, ready, wide)
+        self.place(wide)
+        flag = self.tmp('late')
+        self.emit(f'{flag} = call i64 @tomato_range_late(i64 {start}, i64 {stop}, i64 {stepv})')
+        first = self.tmp('first')
+        self.emit(f'{first} = icmp eq i64 {flag}, 2')
+        self.fail_if(first, 'the number is too big here')
+        self.emit(f'store i64 {flag}, ptr {late}')
+        last = self.tmp('cut')
+        self.emit(f'{last} = call i64 @tomato_range_cut(i64 {start}, i64 {stop}, i64 {stepv})')
+        self.emit(f'store i64 {last}, ptr {cut}')
+        self.br(ready)
+        self.place(ready)
+        r = self.tmp('stop')
+        self.emit(f'{r} = load i64, ptr {cut}')
+        return r
 
     def for_stmt(self, s: Node):
         it = val_node(s.fields[1])
@@ -7503,9 +7821,11 @@ class Gen:
         stop = ''
         stepv = '1'
         basev = '0'
+        unsure: list[str] = []         # the words of the start and stop that may be outside the small range
         if len(bounds) == 1:
             e = self.expr(bounds[0])
             e = self.want(e, 'int', s.line, 'a range bound')
+            self.range_unsure(bounds[0], e, unsure)
             stop = self.int_raw(e)
         else:
             held_before = len(self.held)
@@ -7515,6 +7835,8 @@ class Gen:
             self.drop_held(held_before)
             a = self.want(a, 'int', s.line, 'a range bound')
             b = self.want(b, 'int', s.line, 'a range bound')
+            self.range_unsure(bounds[0], a, unsure)
+            self.range_unsure(bounds[1], b, unsure)
             start = self.int_raw(a, [b])
             stop = self.int_raw(b)
         if len(bounds) == 3:
@@ -7524,7 +7846,12 @@ class Gen:
             zero = self.tmp('zerostep')
             self.emit(f'{zero} = icmp eq i64 {stepv}, 0')
             self.fail_if(zero, 'range step cannot be zero')
-            # (the raw bounds are 63-bit numbers, so stop - start is at most 2^63 - 1 and cannot overflow)
+        empty = ''
+        late = ''
+        if len(unsure) > 0:
+            late = self.hidden_slot('for.w')
+            stop = self.range_cut(start, stop, stepv, unsure, late)
+        if len(bounds) == 3:
             # the number of times round: a division once, so the loop itself is one compare and one add
             up = self.tmp('up')
             self.emit(f'{up} = icmp sgt i64 {stepv}, 0')
@@ -7541,22 +7868,33 @@ class Gen:
             less = self.tmp('less')
             self.emit(f'{less} = sub i64 {dist}, 1')
             quo = self.tmp('quo')
-            self.emit(f'{quo} = sdiv i64 {less}, {width}')
+            self.emit(f'{quo} = udiv i64 {less}, {width}')          # (wrapping and unsigned: stop - start can be 2^63)
             plus = self.tmp('plus')
             self.emit(f'{plus} = add i64 {quo}, 1')
+            above = self.tmp('above')
+            self.emit(f'{above} = icmp sge i64 {start}, {stop}')
+            below = self.tmp('below')
+            self.emit(f'{below} = icmp sle i64 {start}, {stop}')
             empty = self.tmp('empty')
-            self.emit(f'{empty} = icmp sle i64 {dist}, 0')
+            self.emit(f'{empty} = select i1 {up}, i1 {above}, i1 {below}')
             cnt = self.tmp('cnt')
             self.emit(f'{cnt} = select i1 {empty}, i64 0, i64 {plus}')
             basev = start
             start = '0'
             stop = cnt
         var = self.slot(s.fields[0].text, 'int', s.line)
+        old = self.tmp('old')
+        self.emit(f'{old} = load i64, ptr {var}')
         if len(bounds) < 3:
-            old = self.tmp('old')
-            self.emit(f'{old} = load i64, ptr {var}')
             self.emit(f'call void @tomato_int_free(i64 {old})')           # a number the variable held before the loop; the loop stores small ones
             self.emit(f'store i64 1, ptr {var}')
+        else:                            # (an empty loop leaves the variable alone)
+            gone = self.tmp('gone')
+            self.emit(f'{gone} = select i1 {empty}, i64 1, i64 {old}')
+            self.emit(f'call void @tomato_int_free(i64 {gone})')
+            kept = self.tmp('kept')
+            self.emit(f'{kept} = select i1 {empty}, i64 {old}, i64 1')
+            self.emit(f'store i64 {kept}, ptr {var}')
         counter = self.hidden_slot('for.i')
         limit = self.hidden_slot('for.n')
         stepslot = self.hidden_slot('for.s')
@@ -7569,6 +7907,9 @@ class Gen:
         body = self.label('forbody')
         step = self.label('forstep')
         end = self.label('endfor')
+        done = end if late == '' else self.label('fordone')        # where a loop that ran to its end goes (a break goes to end)
+        less_cc = 'ult' if len(bounds) == 3 else 'slt'
+        wraps = 'nuw' if len(bounds) == 3 else 'nsw'
         self.br(head)
         self.place(head)
         i = self.tmp('i')
@@ -7576,17 +7917,21 @@ class Gen:
         lim = self.tmp('lim')
         self.emit(f'{lim} = load i64, ptr {limit}')
         c = self.tmp('go')
-        self.emit(f'{c} = icmp slt i64 {i}, {lim}')
-        self.cond_br(c, body, end)
+        self.emit(f'{c} = icmp {less_cc} i64 {i}, {lim}')
+        self.cond_br(c, body, done)
         self.place(body)
         if len(bounds) == 1 or len(bounds) == 3:         # the count starts at 0, so an index made from it is never negative
             nonneg = self.tmp('nonneg')
             self.emit(f'{nonneg} = icmp sge i64 {i}, 0')
             self.emit(f'call void @llvm.assume(i1 {nonneg})')
-        if len(bounds) == 3:             # an empty loop leaves the variable alone; one the body gave a big number is freed first
+        names: list[str] = []
+        for stmt in val_nodes(s.fields[2]):
+            bound_names(stmt, names)
+        if s.fields[0].text in names:        # a big number the body gave the variable is freed
             old = self.tmp('old')
             self.emit(f'{old} = load i64, ptr {var}')
             self.emit(f'call void @tomato_int_free(i64 {old})')
+        if len(bounds) == 3:
             bv = self.tmp('bv')
             self.emit(f'{bv} = load i64, ptr {baseslot}')
             sv = self.tmp('sv')
@@ -7607,9 +7952,17 @@ class Gen:
         cur = self.tmp('cur')
         self.emit(f'{cur} = load i64, ptr {counter}')
         nxt = self.tmp('next')
-        self.emit(f'{nxt} = add nsw i64 {cur}, 1')
+        self.emit(f'{nxt} = add {wraps} i64 {cur}, 1')
         self.emit(f'store i64 {nxt}, ptr {counter}')
         self.br(head)
+        if late != '':
+            self.place(done)
+            flag = self.tmp('late')
+            self.emit(f'{flag} = load i64, ptr {late}')
+            more = self.tmp('more')
+            self.emit(f'{more} = icmp ne i64 {flag}, 0')
+            self.fail_if(more, 'the number is too big here')
+            self.br(end)
         self.place(end)
 
 def async_symbol(mod: Mod, info: FuncInfo) -> str:
@@ -8069,6 +8422,8 @@ def declarations(mod: Mod) -> str:
     d += 'declare i64 @tomato_int_raw(i64)\n'
     d += 'declare i64 @tomato_int_low64(i64)\n'
     d += 'declare i32 @tomato_int_in_range(i64, i32, i32)\n'
+    d += 'declare i64 @tomato_range_late(i64, i64, i64)\n'
+    d += 'declare i64 @tomato_range_cut(i64, i64, i64)\n'
     d += 'declare double @tomato_int_to_f64(i64)\n'
     d += 'declare double @tomato_clock()\n'
     d += 'declare ptr @tomato_int_str(i64)\n'

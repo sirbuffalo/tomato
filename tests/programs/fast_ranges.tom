@@ -1,0 +1,208 @@
+# The fast copy of a small-int loop leaves out an overflow check only when the interval of the result is inside the small range
+# (-2^62 .. 2^62 - 1). Each loop is also written with a call in its body, which keeps it out of the fast copy: results must agree.
+
+const E = 4611686018427387903
+
+def nothing():
+    pass
+
+# every value has a known interval
+def random_fast(n: int) -> int:
+    s = 7
+    t = 0
+    i = 0
+    while i < n:
+        s = (s * 1103 + 12345) % 65536
+        t = t + s // 16 % 8
+        i += 1
+    return t * 65536 + s
+
+def random_slow(n: int) -> int:
+    s = 7
+    t = 0
+    i = 0
+    while i < n:
+        nothing()
+        s = (s * 1103 + 12345) % 65536
+        t = t + s // 16 % 8
+        i += 1
+    return t * 65536 + s
+
+# the counter's bound is the edge itself
+def edge_fast(start: int, stop: int) -> int:
+    i = E - 20
+    t = 0
+    while i < E:
+        t = t + 1
+        i += 1
+    while i > E - 5:
+        i -= 3
+        t = t * 3
+    return t + i + start - stop
+
+def edge_slow(start: int, stop: int) -> int:
+    i = E - 20
+    t = 0
+    while i < E:
+        nothing()
+        t = t + 1
+        i += 1
+    while i > E - 5:
+        nothing()
+        i -= 3
+        t = t * 3
+    return t + i + start - stop
+
+# the interval says nothing about one side: the check stays
+def past_fast(n: int) -> int:
+    i = E - 3
+    k = 0
+    j = -E
+    while k < n:
+        i += 1
+        j -= k
+        k += 1
+        if k % 4 == 3:
+            i = i * 3 - j
+    return i - j
+
+def past_slow(n: int) -> int:
+    i = E - 3
+    k = 0
+    j = -E
+    while k < n:
+        nothing()
+        i += 1
+        j -= k
+        k += 1
+        if k % 4 == 3:
+            i = i * 3 - j
+    return i - j
+
+# products just inside and just outside: 2^31 * 2^31 = 2^62 is the first number too large
+def mul_fast(a: int, n: int) -> int:
+    x = a % 2147483648 + 1
+    y = 0
+    i = 0
+    while i < n:
+        if x <= 2147483647:
+            y = x * x + y % 8
+        else:
+            y = x * x
+        if y % 2 == 0:
+            y = y - 1
+        i += 1
+    return y
+
+def mul_slow(a: int, n: int) -> int:
+    x = a % 2147483648 + 1
+    y = 0
+    i = 0
+    while i < n:
+        nothing()
+        if x <= 2147483647:
+            y = x * x + y % 8
+        else:
+            y = x * x
+        if y % 2 == 0:
+            y = y - 1
+        i += 1
+    return y
+
+# halves of any small number can be added without a check; the variables themselves may be big numbers
+def halves_fast(a: int, b: int, n: int) -> int:
+    x = a
+    y = b
+    i = 0
+    while i < n:
+        z = x // 2 + y // 2
+        y = x - 1
+        x = z + x % 2
+        i += 1
+    return x * 3 + y
+
+def halves_slow(a: int, b: int, n: int) -> int:
+    x = a
+    y = b
+    i = 0
+    while i < n:
+        nothing()
+        z = x // 2 + y // 2
+        y = x - 1
+        x = z + x % 2
+        i += 1
+    return x * 3 + y
+
+# intervals from if, elif and else, and a loop inside a range loop and a try
+def mixed_fast(a: int) -> int:
+    total = 0
+    for k in range(6):
+        x = a
+        i = 0
+        while x > 1 - k:
+            if x > 1000:
+                x = x // 8
+            elif x >= 100:
+                x = x - 99
+            elif x % 2 == 0:
+                x = x - 1
+            else:
+                x = -x + 20
+                if x > 0:
+                    x = x - 40
+            i += 1
+        total = total * 7 + x + i
+    try:
+        i = 0
+        while i < 5:
+            total = total * E
+            i += 1
+    catch Error:
+        print('never')
+    return total
+
+def mixed_slow(a: int) -> int:
+    total = 0
+    for k in range(6):
+        x = a
+        i = 0
+        while x > 1 - k:
+            nothing()
+            if x > 1000:
+                x = x // 8
+            elif x >= 100:
+                x = x - 99
+            elif x % 2 == 0:
+                x = x - 1
+            else:
+                x = -x + 20
+                if x > 0:
+                    x = x - 40
+            i += 1
+        total = total * 7 + x + i
+    try:
+        i = 0
+        while i < 5:
+            nothing()
+            total = total * E
+            i += 1
+    catch Error:
+        print('never')
+    return total
+
+def same(name: str, a: int, b: int):
+    print(name, a, a == b)
+
+@main
+def main():
+    same('random', random_fast(1000), random_slow(1000))
+    same('edge', edge_fast(1, 2), edge_slow(1, 2))
+    for n in [0, 1, 2, 3, 4, 5, 9]:
+        same('past', past_fast(n), past_slow(n))
+    for a in [0, 1, 2147483646, 2147483647, 2147483648, -1, -5, E]:
+        same('mul', mul_fast(a, 3), mul_slow(a, 3))
+    for a in [0, E, -E - 1, E + 1, 2 ** 80, -(2 ** 80), 12345]:
+        same('halves', halves_fast(a, E, 10), halves_slow(a, E, 10))
+        same('halves', halves_fast(-E - 1, a, 10), halves_slow(-E - 1, a, 10))
+    for a in [0, 7, 500, 123456, 2 ** 70]:
+        same('mixed', mixed_fast(a), mixed_slow(a))

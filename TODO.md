@@ -1,11 +1,5 @@
 - Assign a stronger agent to the async toolkit, then the scheduler fd-waiter and `socket` module
   Items 8 and 9 of `docs/next-features.md`: `gather`, timeouts and `Queue` first, then a scheduler wait on file descriptors plus a `socket` module, so the HTTP server (item 10) can follow. The scheduler is hand-written C with reference-counted frames, so use Opus or have Davis review it.
-- Remove mandelbrot's remaining float finite checks with float interval reasoning
-  The mandelbrot inner loop still pays for 3 finite checks per iteration. zr and zi are bounded once `zr*zr + zi*zi <= 4.0` holds, and cr, ci are bounded via `px < n`, so float interval reasoning (alongside the integer ranges in `Gen.range_of`) could prove the results finite. See the "integer ranges" section of docs/performance.md.
-- Fix range loops whose bounds pass 2^62
-  `tag_small` wraps the loop variable: `for i in range(E + 2, E - 3, -1)` with E = 2^62 - 1 starts at -2^62. Bounds beyond the small range need the general (big-number) loop or a check.
-- Use the range facts in the small-int loop fast copy
-  `small_loop`'s fast copy keeps its overflow checks even when an interval from `Gen.loop_facts` proves them unnecessary; dropping them there would cut the checks from small-int loops whose variables have known bounds (collatz itself has none).
 - Rebuild `site/wasm` on the Mac before the next release
   macOS arm64, WASI SDK 24: the error-path temporaries task landed a Linux-built `tomatoc.wasm`. It was built with the host-independent `site/wasm/build.sh`, so the Mac rebuild should give the same bytes ("wasm files rebuild identically").
 - Build the approved Wave 2 packs as Sonnet tasks
@@ -42,3 +36,5 @@
   Today `divmod(a, b) == (q, r)` does not compile because mixed and same-type tuple literals are different types.
 - Teach the VS Code grammar and website highlighter about f-string format specs
   `{x:spec}` in an f-string has a format spec after the colon.
+- Mark error branches as unlikely in the emitted LLVM IR (`!prof` weights on `fail_if`)
+  An experiment gave matmul -2.4% and strings -0.7% but sieve +2.2% and objects +0.7% instructions executed; it needs tuning, and site/wasm/llvm.js must accept the metadata.

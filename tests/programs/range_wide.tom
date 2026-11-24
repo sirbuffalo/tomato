@@ -1,0 +1,147 @@
+# Range loops near the edge of the small range (-2^62 .. 2^62 - 1). The loop variable is always a small number, so a loop that
+# would leave that range stops with an error after the numbers inside it (it never wraps around).
+
+const E = 4611686018427387903
+
+def up(a: int, b: int):
+    try:
+        for i in range(a, b):
+            print(i)
+        print('done')
+    catch Error as e:
+        print('error:', e.message)
+
+def by(a: int, b: int, step: int):
+    try:
+        for i in range(a, b, step):
+            print(i)
+        print('done')
+    catch Error as e:
+        print('error:', e.message)
+
+def first(n: int, stop: int) -> list[int]:
+    out: list[int] = []
+    for i in range(n):
+        out.append(i)
+        if i == stop:
+            break
+    return out
+
+def total(a: int, b: int) -> int:
+    t = 0
+    for i in range(a, b):
+        for j in range(b - 1, a - 1, -1):
+            t += i - j
+            if j - i > 5:
+                continue
+    return t
+
+def pairs(a: int, b: int) -> int:
+    for i in range(a, b):
+        yield i
+
+def assigns(n: int) -> int:
+    t = 0
+    for i in range(n):
+        t += i
+        i = i * E * E
+        t += i % 7
+    for i in range(0, n, 2):
+        i += E * E
+        t += i % 5
+    print(i > E)
+    return t
+
+def empty(a: int, b: int, step: int):
+    i = E * E
+    for i in range(a, b, step):
+        print('never')
+    print(i == E * E)
+
+@main
+def main():
+    print('constants')
+    try:
+        for i in range(E + 2, E - 3, -1):
+            print(i)
+    catch Error as e:
+        print('error:', e.message)
+    try:
+        for i in range(E - 1, E + 3):
+            print(i)
+    catch Error as e:
+        print('error:', e.message)
+    for i in range(E, E - 3, -1):
+        print(i)
+    for i in range(-E - 1, -E + 1):
+        print(i)
+    print('up')
+    up(E - 2, E)
+    up(E - 2, E + 1)                 # the last number is E: still small
+    up(E - 2, E + 2)
+    up(E - 2, 2 ** 63 - 1)
+    up(E + 1, E + 3)
+    up(E + 1, E + 1)
+    up(E + 5, 3)
+    up(-E - 1, -E + 1)
+    up(-E - 2, -E + 1)
+    up(-(2 ** 63), -(2 ** 63) + 2)
+    up(5, -(2 ** 63))
+    up(2 ** 63 - 1, -(2 ** 63))
+    print('by')
+    by(E, E - 4, -2)
+    by(E + 1, E - 4, -2)
+    by(E - 3, E + 4, 2)
+    by(E - 3, E + 1, 2)
+    by(-E + 2, -E - 1, -1)
+    by(-E + 2, -E - 2, -1)           # the last number is -E - 1 = -2^62: still small
+    by(-E + 2, -E - 3, -1)
+    by(-E + 2, -(2 ** 63), -3)
+    by(0, E + 3, E + 5)              # one pass, the next number is past the stop
+    by(0, E + 7, E + 5)
+    by(-5, E + 7, 2 ** 63 - 1)
+    by(3, -E - 7, -(2 ** 63))
+    by(2 ** 63 - 1, -(2 ** 63), -(2 ** 63))
+    by(-E - 1, E + 1, E)
+    by(-E - 1, E + 1, 2 ** 62)
+    by(-(2 ** 63), 2 ** 63 - 1, 2 ** 62)
+    by(E + 1, E + 9, -1)
+    by(-E - 5, -E - 9, 1)
+    print('break')
+    print(first(2 ** 63 - 1, 4), first(E, 2), first(E + 1, 2), first(3, 9), first(-(2 ** 63), 1))
+    n = 0
+    for i in range(-E - 1, E + 1):
+        n += 1
+        if n == 4:
+            print(i)
+            break
+    n = 0
+    for i in range(-E - 1, 2 ** 63 - 1, 1):
+        n += 1
+        if n == 4:
+            print(i)
+            break
+    print('nested', total(E - 3, E), total(E - 3, E + 1))
+    try:
+        print(total(E - 3, E + 2))
+    catch Error as e:
+        print('error:', e.message)
+    print([x - E for x in range(E - 2, E + 1)])
+    try:
+        print([x - E for x in range(E - 2, E + 2)])
+    catch Error as e:
+        print('error:', e.message)
+    try:
+        for i in pairs(E - 1, E + 5):
+            print(i)
+    catch Error as e:
+        print('error:', e.message)
+    try:
+        up(2 ** 63, 2 ** 64)
+    catch Error as e:
+        print('too big:', e.message)
+    print('assigned', assigns(5))
+    empty(0, 0, 1)
+    empty(5, 0, 2)
+    empty(E + 5, 0, 2)
+    empty(0, -E - 5, 1)

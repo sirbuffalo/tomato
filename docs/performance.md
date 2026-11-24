@@ -185,7 +185,7 @@ What was left then: about 31 instructions per iteration against about 15 in Go, 
 - A known small int converts to a float with a shift and `sitofp`.
 
 **Soundness.** Each statement either has its effect modelled exactly (an assignment to a local, `if`, `while`, `break`, `continue`, `return`, `raise`), or every local it can assign is forgotten (`bound_names`: assignment targets, loop variables, comprehension variables, catch names).
-- A `for` loop forgets the locals its body assigns at the start of every pass, and the range loop's variable gets the interval between its bounds. When a bound is not known to be small, it gets only the small range, because `tag_small` wraps there.
+- A `for` loop forgets the locals its body assigns at the start of every pass, and the range loop's variable gets the interval between its bounds. When a bound is not known to be small, it gets only the small range; a loop that would leave that range stops with an error (see "range loops and float intervals" below).
 - A `try` keeps no facts inside, because its handlers can start from any point of its body. Generator loops (which switch scopes) and async functions keep none either.
 - A local with no fact may hold anything, including the word 0 of a slot nothing has written. A fact is only created by an assignment of a computed int, never by refining an unknown local. So an interval inside the small range always means a tagged small word.
 - Overflow stays exact: when the interval does not prove the result small, the checked operation is emitted as before.
@@ -220,7 +220,47 @@ Wall clock: release binaries at the full inputs, old and new run alternately and
 
 Mandelbrot's wall time barely moves, although it executes 22% fewer instructions. A second session gave 0.1048 s before and 0.1052 s after, with Go at 0.0955 s and Rust at 0.0955 s, so Tomato ÷ Go is about 1.10 in time. The removed instructions were integer work that already ran alongside the loop's floating-point dependency chain: each pass needs the new `zr` and `zi`, and their multiply-adds are what set the pace on this x86 core. On a core with less spare integer throughput the gain may be larger; it was not measured on the M1.
 
-Not done: the three finite checks per iteration still remain. Removing them needs float range reasoning. The body's `zr` and `zi` are bounded once `zr*zr + zi*zi <= 4.0` holds, and `cr` and `ci` are bounded by `px < n`. Removing them would also make the small-int fast copy (`small_loop`) use the facts to drop its overflow checks. Collatz does not benefit from intervals, because `x` has no bound.
+The three finite checks per iteration, which this left, are gone now: see "range loops and float intervals" below.
+
+## What was done (range loops and float intervals, unreleased)
+
+Three follow-ups of the integer ranges above.
+
+**1. Range loops past ±2^62** (a correctness fix). The variable of a counted `for i in range(...)` was tagged without a check, so a bound past the small range wrapped: `range(2**62 + 1, 2**62 - 4, -1)` began at -2^62 + 1, and some loops never ended. Now a start or stop that is not known to be small is tested once where the loop starts (its tag bit, which the conversion to a machine number tests anyway). When one is outside, `tomato_range_late` and `tomato_range_cut` (cold) cut the loop to the numbers inside the small range, and after those the loop stops with `the number is too big here`, as a bound past the machine word already did. A loop whose first number is already outside stops before its first pass, even when later numbers would be inside. A loop that breaks first, such as one over `range(2**63 - 1)`, is not affected. The count of a three-argument loop is worked out in unsigned arithmetic, so no step or distance overflows. Two things in the same code were fixed as well: a body that assigned a big number to its own range variable leaked it, and the three-argument loop tested its old variable for freeing on every pass (now once, before the loop).
+
+*Tried and not kept:* exact big numbers in the loop. The body then has to be compiled twice, since a variable that may be big costs a tag test at each use. The second copy gave the inliner two call sites where it had one: matmul +7%, wordcount +2%, strings +1.4% instructions executed. The class `range` (`r = range(...)`, then `for i in r`) has no limit.
+
+**2. Float intervals.** A float local can have an interval too (`Rng.fl`): its value is then certainly finite and lies between two whole numbers. The interval rules use only that rounding keeps order: the rounded result of `+ - *` lies between bounds that are floats themselves, so each bound moves outwards to a whole number that is a float (any up to 2^53, above that a power of two). An operation whose result interval is bounded (the cap is 2^256, far below the real limit of 2^1024) needs no finite check. Facts come from literals, `+ - *`, small ints converted to floats, division by a whole number (its magnitude is at least 1 once the zero check passed, so the quotient is not larger than the dividend) or by a positive literal, comparisons of a float local with a number of known interval, and sums: when `a*a + b*b + ... <= c` holds and every part is known not to be negative, each `x*x` is at most `c` after rounding, so `|x| <= r` for the smallest power of two with `r*r >= 2c`. A value with no known interval (a parameter, a call's result, a field) still gets its check, and so does everything computed from it. Refining a comparison is sound for NaN because both sides must have known intervals, which are finite.
+
+In mandelbrot the inner loop has no check left. `cr` and `ci` are bounded because `px` and `py` are range variables and `n` is an int; the fixpoint at the loop head then finds `zr` and `zi` bounded (the condition gives `|zr|, |zi| <= 4`, and the body adds bounded numbers).
+
+**3. Interval facts in the small-int fast copy.** In the fast copy of a small-int loop (`small_loop`) every variable is a small number at every point. `fast_facts` starts from the loop head's facts with every variable cut to the small range, and follows assignments, `if` and the conditions; an operation whose result interval is inside the small range is emitted as plain `add`/`sub`/`mul nsw`. The intervals also use what the fast copy itself guarantees: `x // 2 + y // 2` needs no check for any small `x` and `y`.
+
+**Soundness checks.** Tests `range_wide`, `float_ranges` and `fast_ranges` (all also under AddressSanitizer and through `site/wasm`). `range_wide` agrees with a Python model of the same loops. Random programs (float loops with conditions on sums of squares, small-int loops near ±2^62, mixed nests with `try`, `break` and range loops) were compiled with the old compiler, the new one, and a build of the new one that tests at every read of a local that its value is inside its interval. All 2,136 programs that finished under the old compiler gave the same output and exit code (1,536 at -O1, 600 at -O2); 364 more were left out because the old compiler's program ran longer than 10 seconds. To see whether this can find mistakes, three compilers were broken on purpose (a root bound too small, float subtraction with swapped bounds, a fast-copy interval too small): all three were caught, but the float ones in only 1 to 3 of 60 programs of a generator (the root bound in none of 60 of the mixed one), so a rare float mistake could still hide.
+
+**Results.** All three changes together, against `bf8eb2ce`. Instructions executed (million, callgrind, release mode, counting inputs, Linux x86-64, valgrind 3.26, clang 21) and wall time (seconds, full inputs, both programs run alternately 21 times, pinned to one core, median; a shared 128-core machine with a load average around 80, so treat the seconds as rough):
+
+| benchmark | count input | before (M) | after (M) | change | full input | before (s) | after (s) | after ÷ before |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fib | 32 | 183.46 | 183.46 | 0 | 38 | 0.321 | 0.322 | 1.00 |
+| sieve | 1000000 | 49.04 | 40.10 | -18.2% | 20000000 | 1.888 | 1.802 | 0.95 |
+| matmul | 150 | 138.65 | 138.76 | +0.08% | 400 | 2.108 | 2.123 | 1.01 |
+| mandelbrot | 250 | 62.37 | 34.13 | -45.3% | 1000 | 0.210 | 0.140 | 0.67 |
+| collatz | 50000 | 70.34 | 70.34 | 0 | 1000000 | 0.304 | 0.335 | 1.10 |
+| strings | 150000 | 106.59 | 107.64 | +0.99% | 3000000 | 3.107 | 3.091 | 0.99 |
+| sort | 150000 | 50.83 | 50.53 | -0.6% | 3000000 | 0.815 | 0.820 | 1.01 |
+| wordcount | 250000 | 155.53 | 155.77 | +0.15% | 5000000 | 0.830 | 0.862 | 1.04 |
+| bigint | 10000 | 100.27 | 100.27 | 0 | 40000 | 0.372 | 0.371 | 1.00 |
+| objects | 100000 | 106.01 | 106.11 | +0.09% | 2000000 | 2.052 | 2.045 | 1.00 |
+
+- **Mandelbrot** (float intervals): 28.2 M fewer, 14.9 per inner iteration. Tomato ÷ Go 1.62 → 0.89 and Tomato ÷ Rust 2.13 → 1.16 in instructions executed (Go 38.51 M, Rust 29.30 M). The checks also held up the floating-point chain, so this time the wall time follows.
+- **Sieve** (range loops): the per-pass free test of the three-argument loop is gone.
+- **The fast copy** changes no benchmark: all ten build to the same programs with and without it, because their small-int loops have no variable with a useful bound. Two loops written for it: a linear congruential generator modulo 65536 takes 17.18 → 13.18 M instructions (-23%, wall time 0.11 → 0.09 s at 50,000,000 passes), a bit-reversal loop 267.7 → 172.9 M (-35%, 1.11 → 0.86 s).
+- **Regressions** (instructions): strings +1.0%, wordcount +0.15%, objects +0.09%, matmul +0.08%, all from the range-loop fix, which tests each unknown bound once per loop and once more at its end. Strings is more than that: the larger `main` makes the inliner keep `tomato_str_split` and `tomato_str_join` as calls.
+- **Regressions** (wall time): collatz +10% and wordcount +4%. Collatz's hot loop is the same instructions before and after, at another address (0x20a0 before, 0x21f0 after). Linked with `-Wl,-plugin-opt=-align-loops=64`, both programs take the same time before and after (collatz 0.295 and 0.296 s, wordcount 0.808 and 0.805 s), so this is code placement. Not fixed: aligning loops in `tomato build` was not measured for the other benchmarks.
+- **Compile time:** compiling the compiler (the `bf8eb2ce` sources, callgrind) takes 14,672.7 → 14,686.8 M instructions (+0.1%).
+
+*Not tried further:* marking the error branches unlikely (`!prof` weights on every `fail_if`). An experiment on the emitted IR gave matmul -2.4% and strings -0.7%, but sieve +2.2% and objects +0.7%.
 
 ## What was done (refcount bookkeeping, v0.51)
 

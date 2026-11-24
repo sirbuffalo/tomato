@@ -4189,6 +4189,25 @@ ALWAYS int64_t tomato_int_raw_c(int64_t x, int32_t m) {
     return int_raw_slow_c(x, m);
 }
 
+/* A range loop whose start or stop is outside the small range (see Gen.range_cut). The machine numbers start, stop and step
+   (not 0) give the numbers start, start + step, ... before stop. tomato_range_late: 0 when all of them are small (or there are
+   none), 1 when the loop begins with small ones and leaves the small range, 2 when the first one is already outside.
+   tomato_range_cut: a stop for the part before they leave. Differences are taken in unsigned arithmetic, so nothing overflows. */
+static int64_t range_split(int64_t start, int64_t stop, int64_t step, int64_t *cut) {
+    uint64_t width = step > 0 ? (uint64_t)step : (uint64_t)0 - (uint64_t)step;
+    *cut = start;                                   /* an empty loop */
+    if (step > 0 ? start >= stop : start <= stop) return 0;
+    if (start < INT_SMALL_MIN || start > INT_SMALL_MAX) return 2;
+    uint64_t dist = step > 0 ? (uint64_t)stop - (uint64_t)start : (uint64_t)start - (uint64_t)stop;
+    uint64_t room = step > 0 ? (uint64_t)INT_SMALL_MAX - (uint64_t)start : (uint64_t)start - (uint64_t)INT_SMALL_MIN;
+    uint64_t last = (dist - 1) / width, fits = room / width;       /* the last pass, counted from 0, and the last one that is small */
+    uint64_t k = last < fits ? last : fits;
+    *cut = (int64_t)((uint64_t)start + k * (uint64_t)step) + (step > 0 ? 1 : -1);
+    return last > fits;
+}
+COLD int64_t tomato_range_late(int64_t start, int64_t stop, int64_t step) { int64_t cut; return range_split(start, stop, step, &cut); }
+COLD int64_t tomato_range_cut(int64_t start, int64_t stop, int64_t step) { int64_t cut; range_split(start, stop, step, &cut); return cut; }
+
 double tomato_int_to_f64(int64_t x) {
     if (int_is_small(x)) return (double)int_small_val(x);
     IntView a; int_view(x, &a);

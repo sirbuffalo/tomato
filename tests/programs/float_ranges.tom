@@ -1,0 +1,271 @@
+# Float intervals: the finite check of a float operation is left out only when its result is certainly finite. Every case here
+# that can overflow must still stop with the error, in the same place, as it did before the intervals existed.
+
+const LIMIT = 4.0
+
+def escape(cr: float, ci: float) -> int:
+    zr = 0.0
+    zi = 0.0
+    i = 0
+    while i < 100 and zr * zr + zi * zi <= LIMIT:
+        t = zr * zr - zi * zi + cr
+        zi = 2.0 * zr * zi + ci
+        zr = t
+        i += 1
+    return i
+
+def grid(n: int) -> int:
+    total = 0
+    for py in range(n):
+        ci = 2.0 * py / n - 1.0
+        for px in range(n):
+            cr = 3.0 * px / n - 2.0
+            zr = 0.0
+            zi = 0.0
+            i = 0
+            while i < 50 and zr * zr + zi * zi <= 4.0:
+                t = zr * zr - zi * zi + cr
+                zi = 2.0 * zr * zi + ci
+                zr = t
+                i += 1
+            total += i
+    return total
+
+def grows(n: int) -> float:
+    # no bound on x: the check stays
+    x = 2.0
+    i = 0
+    while i < n:
+        x = x * x
+        i += 1
+    return x
+
+def squares(n: int) -> float:
+    # x is bounded only by the condition, and the body may still overflow
+    x = 1.5
+    s = 0.0
+    i = 0
+    while i < n and x * x <= 1e200:
+        s = x * 1e300
+        x = x * 10.0
+        i += 1
+    return s
+
+def below(n: int) -> float:
+    # a bound on one side only says nothing about the other
+    x = -1.0
+    i = 0
+    while i < n and x < 5.0:
+        x = x * 1e100
+        i += 1
+    return x
+
+def negated(x0: float, n: int) -> float:
+    x = x0 + 0.0
+    i = 0
+    while i < n and not (x * x > 100.0):
+        x = x * 3.0
+        i += 1
+    return x
+
+def either(a: float, n: int) -> float:
+    x = a + 0.0
+    i = 0
+    while i < n and (x * x <= 4.0 or i < 3):
+        x = x * 1e200
+        i += 1
+    return x
+
+def minus(n: int) -> float:
+    # x * x - y * y <= 4.0 bounds neither of them
+    x = 1.0
+    y = 1.0
+    i = 0
+    while i < n and x * x - y * y <= 4.0:
+        x = x * 1e100
+        y = y * 1e100
+        i += 1
+    return x
+
+def signed(n: int, k: int) -> float:
+    # k may be negative, so x * x + k * 1.0 <= 4.0 does not bound x
+    x = 1.0
+    i = 0
+    while i < n and x * x + k * 1.0 <= 4.0:
+        x = x * 1e30
+        i += 1
+    return x
+
+def divide(a: float, b: float, n: int) -> float:
+    x = 3.0
+    y = x / n              # n is a whole number: at least 1 in size when the division works
+    z = a / b              # nothing is known about b
+    return y + z
+
+def ratio(n: int, d: int) -> float:
+    total = 0.0
+    for k in range(5):
+        total = total + k / d
+    return total * 2.0 - 1.0 * n / d
+
+def huge(n: int) -> float:
+    # an int of any size becomes infinity as a float
+    x = 1.0
+    if n > 5:
+        x = 2.0 * n
+    return x
+
+def reset(n: int) -> float:
+    x = 1.0
+    for i in range(n):
+        x = x * 1e150
+        if i % 2 == 1:
+            x = 1.0
+    return x
+
+def caught(n: int) -> float:
+    x = 1.0
+    try:
+        for i in range(n):
+            x = x * 1e200
+    catch Error:
+        x = x * 0.5
+    return x * 1e-100
+
+def literals() -> float:
+    a = 1e308
+    b = 1e-300
+    c: float = 3.0
+    d = 123456789.5
+    return a * 0.5 + b + c + d / 1e10 + d * 1e-40
+
+def nested(n: int) -> float:
+    x = 1.0
+    i = 0
+    while i < n:
+        j = 0
+        while j < 3 and x < 1e6:
+            x = x * 10.0
+            j += 1
+        x = x - 5.0
+        i += 1
+        if x > 1e5:
+            x = 1.0
+    return x
+
+@main
+def main():
+    print(escape(0.1, 0.2), escape(2.0, 2.0), escape(-0.5, 0.5))
+    print(grid(40), grid(1), grid(0), grid(-3))
+    try:
+        print(escape(1e308, 1e308))
+    catch Error as e:
+        print('escape', e.message)
+    try:
+        print('grows 5', grows(5))
+    catch Error as e:
+        print('grows 5', 'error:', e.message)
+    try:
+        print('grows 12', grows(12))
+    catch Error as e:
+        print('grows 12', 'error:', e.message)
+    try:
+        print('squares 50', squares(50))
+    catch Error as e:
+        print('squares 50', 'error:', e.message)
+    try:
+        print('squares 300', squares(300))
+    catch Error as e:
+        print('squares 300', 'error:', e.message)
+    try:
+        print('below 3', below(3))
+    catch Error as e:
+        print('below 3', 'error:', e.message)
+    try:
+        print('below 9', below(9))
+    catch Error as e:
+        print('below 9', 'error:', e.message)
+    try:
+        print('negated', negated(1.0, 20))
+    catch Error as e:
+        print('negated', 'error:', e.message)
+    try:
+        print('negated big', negated(1e308, 20))
+    catch Error as e:
+        print('negated big', 'error:', e.message)
+    try:
+        print('negated tiny', negated(1e-5, 20))
+    catch Error as e:
+        print('negated tiny', 'error:', e.message)
+    try:
+        print('either', either(1.0, 1))
+    catch Error as e:
+        print('either', 'error:', e.message)
+    try:
+        print('either again', either(1.0, 9))
+    catch Error as e:
+        print('either again', 'error:', e.message)
+    try:
+        print('minus', minus(9))
+    catch Error as e:
+        print('minus', 'error:', e.message)
+    try:
+        print('signed', signed(50, -(10 ** 300)))
+    catch Error as e:
+        print('signed', 'error:', e.message)
+    try:
+        print('signed small', signed(50, 1))
+    catch Error as e:
+        print('signed small', 'error:', e.message)
+    try:
+        print('divide', divide(1.0, 3.0, 7))
+    catch Error as e:
+        print('divide', 'error:', e.message)
+    try:
+        print('divide tiny', divide(1e300, 1e-300, 7))
+    catch Error as e:
+        print('divide tiny', 'error:', e.message)
+    try:
+        print('divide zero', divide(1.0, 2.0, 0))
+    catch Error as e:
+        print('divide zero', 'error:', e.message)
+    try:
+        print('divide huge', divide(1.0, 2.0, 10 ** 400))
+    catch Error as e:
+        print('divide huge', 'error:', e.message)
+    try:
+        print('ratio', ratio(9, -2))
+    catch Error as e:
+        print('ratio', 'error:', e.message)
+    try:
+        print('ratio zero', ratio(9, 0))
+    catch Error as e:
+        print('ratio zero', 'error:', e.message)
+    try:
+        print('ratio huge', ratio(9, 10 ** 400))
+    catch Error as e:
+        print('ratio huge', 'error:', e.message)
+    try:
+        print('huge 7', huge(7))
+    catch Error as e:
+        print('huge 7', 'error:', e.message)
+    try:
+        print('huge', huge(10 ** 400))
+    catch Error as e:
+        print('huge', 'error:', e.message)
+    try:
+        print('reset', reset(9))
+    catch Error as e:
+        print('reset', 'error:', e.message)
+    try:
+        print('caught', caught(4))
+    catch Error as e:
+        print('caught', 'error:', e.message)
+    try:
+        print('literals', literals())
+    catch Error as e:
+        print('literals', 'error:', e.message)
+    try:
+        print('nested', nested(30))
+    catch Error as e:
+        print('nested', 'error:', e.message)
