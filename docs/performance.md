@@ -5,6 +5,38 @@ what has been done about it. Every change below was measured with `benchmarks/ru
 median) or `benchmarks/count.sh` (instructions executed), mostly on the same Apple M1 (the Linux checks say so), and kept
 only when it helped.
 
+## Linux x86-64 snapshot (2026-11-24)
+
+Tomato v0.51, on Ubuntu 26.04.1 LTS, AMD Ryzen Threadripper 3990X (64 physical cores, 128 logical CPUs), 247 GB RAM. Each program ran ten times in one shuffled order (seed 1); values are median wall-clock seconds. The shared machine was heavily loaded: one-, five-, and fifteen-minute load averages were 71.60, 75.50, 75.93 before and 61.07, 63.62, 66.26 after. Treat small differences cautiously. Full measurements are in `benchmarks/results/linux-x86_64/results.md` and `raw.tsv`; earlier website numbers were measured on an Apple M1 Mac and are not directly comparable.
+
+| Benchmark | Tomato (s) | Tomato ÷ Go | Tomato ÷ Rust | Tomato ÷ Python |
+| --- | ---: | ---: | ---: | ---: |
+| fib | 0.231 | 0.91 | 1.62 | 0.05 |
+| sieve | 0.963 | 0.97 | 0.94 | 0.14 |
+| matmul | 0.163 | 1.14 | 1.35 | 0.02 |
+| mandelbrot | 0.089 | 0.93 | 0.97 | 0.01 |
+| collatz | 0.166 | 0.62 | 1.03 | 0.01 |
+| strings | 0.751 | 1.17 | 0.82 | 0.26 |
+| sort | 0.305 | 0.73 | 0.80 | 0.04 |
+| wordcount | 0.271 | 0.34 | 0.63 | 0.14 |
+| bigint | 0.140 | 0.44 | 1.06 | 0.41 |
+| objects | 1.113 | 0.96 | 0.85 | 0.11 |
+| nbody | 0.216 | 1.47 | 2.59 | 0.02 |
+| spectral_norm | 0.112 | 1.60 | 1.82 | 0.02 |
+| fannkuch | 0.262 | 1.23 | 1.25 | 0.01 |
+| nqueens | 0.062 | 0.98 | 1.14 | 0.10 |
+| binary_trees | 0.385 | 0.97 | 1.56 | 0.22 |
+| levenshtein | 0.113 | 1.28 | 1.53 | 0.01 |
+| knapsack | 0.069 | 1.33 | 1.88 | 0.01 |
+| life | 0.136 | 1.12 | 1.74 | 0.03 |
+| dijkstra | 0.090 | 0.95 | 1.31 | 0.05 |
+| quicksort | 0.276 | 1.04 | 1.11 | 0.03 |
+| kmers | 0.489 | 0.90 | 1.47 | 0.23 |
+| revcomp | 0.096 | 0.14 | 0.25 | 0.15 |
+| tokenize | 0.252 | 0.55 | 0.67 | 0.12 |
+| crc32 | 0.218 | 0.78 | 0.96 | 0.04 |
+| hof | 0.268 | 0.78 | 2.46 | 0.07 |
+
 ## v0.51 snapshot
 
 v0.51, median of 10 runs per program (Python too), all runs in one shuffled order (seed 1), Apple M1, load average (1, 5 and 15 minutes) 1.40 1.97 2.33 before and 3.00 2.56 2.39 after. Written by `release/perf-snapshot.sh` from `benchmarks/results/results.md`, which has the full tables. Seconds (release mode): fib 0.156, sieve 0.068, matmul 0.144, mandelbrot 0.102, collatz 0.206, strings 0.178, sort 0.111, wordcount 0.207, bigint 0.111, objects 0.113.

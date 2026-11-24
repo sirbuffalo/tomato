@@ -17,7 +17,7 @@
     var m = d.machine, v = d.versions;
     var all = LANGS.filter(function (l) { return d.benchmarks.some(function (b) { return b.results[l[0]]; }); });
     var tools = [v.go, v.rust, v.clang, v.java, v.csharp && ".NET " + v.csharp, v.swift, v.node && "Node " + v.node, v.php, v.python].filter(Boolean);
-    $("meta").textContent = [m.cpu, m.cores + " cores", m.memory, m.os].filter(Boolean).join(", ") + ". Tomato v" + v.tomato + ", " + tools.join(", ") + ". Median of " + d.runs + " runs (" + d.python_runs + " for Python and PHP)" + (d.seed != null ? ", all runs in one shuffled order (seed " + d.seed + ")" : "") + ", measured " + d.date.slice(0, 10) + "; load average before " + d.load_before + ", after " + d.load_after + ".";
+    $("meta").textContent = [m.cpu, m.cores + " logical CPUs", m.memory, m.os].filter(Boolean).join(", ") + ". Tomato v" + v.tomato + ", " + tools.join(", ") + ". Median of " + d.runs + " runs (" + d.python_runs + " for Python and PHP)" + (d.seed != null ? ", all runs in one shuffled order (seed " + d.seed + ")" : "") + ", measured " + d.date.slice(0, 10) + "; load average before " + d.load_before + ", after " + d.load_after + ".";
     var cm = $("commands");
     all.forEach(function (l) { if (d.commands[l[0]]) cm.appendChild(el("li", "", "<strong>" + l[1] + ":</strong> <code>" + d.commands[l[0]] + "</code>")); });
 

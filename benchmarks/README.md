@@ -1,11 +1,6 @@
 # Benchmarks
 
-Twenty-five small programs (the first ten are the ones on the website's Benchmarks page and in the v0.51 results; the other fifteen were
-added after v0.51 and have no published results yet), each written with the same algorithm and the same input in Tomato (`.tom`)
-and in Go (`.go`), Rust (`.rs`) and Python (`.py`), in `benchmarks/<name>/`. The first ten are also in C (`.c`), C++ (`.cpp`), Java
-(`.java`), C# (`.cs`), Swift (`.swift`), JavaScript (`.js`), TypeScript (`.ts`) and PHP (`.php`); a benchmark without a program in
-a language is left out of that language's results. Each program takes one number on the command line and prints a checksum;
-`run.sh` checks that every version it runs prints the same.
+Twenty-five small programs, each written with the same algorithm and input in Tomato (`.tom`), Go (`.go`), Rust (`.rs`), Python (`.py`), C (`.c`), C++ (`.cpp`), Java (`.java`), C# (`.cs`), Swift (`.swift`), JavaScript (`.js`), TypeScript (`.ts`) and PHP (`.php`), in `benchmarks/<name>/`. Each program takes one number on the command line and prints a checksum; `run.sh` checks that every version it runs prints the same. A language without an installed toolchain is left out of the results.
 
 **The other languages' programs exist only as a comparison.** Tomato's own tooling uses no Python; nothing outside
 `benchmarks/` runs them.
@@ -50,6 +45,7 @@ benchmarks/run.sh --runs 3 --only fib,sort   # also --python-runs N and --out DI
 benchmarks/run.sh --langs go,rust # only these other languages (default: every installed one)
 benchmarks/run.sh --smoke         # tiny inputs, only checks that the versions agree (tests/run.sh does this for a few languages)
 benchmarks/run.sh --site          # also copies the JSON to site/benchmarks.json for the Benchmarks page
+benchmarks/run.sh --max-minutes 60 # stop scheduling runs after 60 minutes and save completed results
 ```
 
 It needs `clang` (it builds Tomato from this checkout, using `compiler/bootstrap/tomatoc.ll`, `measure.c`, the timing helper, and
@@ -63,10 +59,9 @@ The results and caveats are on the website's Benchmarks page, and what they say 
 
 ## Results
 
-`results/results.json` and `results/results.md` are the last run of `run.sh` on the Mac (`site/benchmarks.json` is a copy of
-the JSON); `results/instructions.md` is the last `count.sh`. When `release/release.sh` runs its Linux step, the same three
-files for Linux x86-64 go in `results/linux-x86_64/`. `release/perf-snapshot.sh` turns them into the newest section of
-`docs/performance.md`.
+`results/linux-x86_64/results.json` and `results.md` contain the latest Linux run; `site/benchmarks.json` is a copy of the JSON. `raw.tsv` records the individual measurements. The earlier Mac run remains in `results/results.json` and `results/results.md`. Instruction counts in `instructions.md` are separate measurements and may be older. `release/perf-snapshot.sh` can turn release results into a section of `docs/performance.md`.
+
+When `--max-minutes` expires or the timing loop receives SIGINT or SIGTERM, the runner summarizes completed measurements. The JSON marks incomplete runs with `partial: true` and records each program's run count. An interruption during the build phase does not produce partial results.
 
 ## json
 

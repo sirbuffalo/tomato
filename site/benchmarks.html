@@ -1,9 +1,10 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Benchmarks — Tomato</title><meta name="description" content="How fast Tomato programs run compared with Go, Rust, C, JavaScript, Python and other languages on ten classic benchmarks, with the method, the caveats and the source."><link rel="stylesheet" href="style.css"><link rel="icon" href="favicon.ico?v=2" sizes="48x48"><link rel="icon" href="favicon.svg?v=2" type="image/svg+xml"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=2"><link rel="manifest" href="site.webmanifest?v=2"></head>
+<title>Benchmarks — Tomato</title><meta name="description" content="How fast Tomato programs run compared with Go, Rust, C, JavaScript, Python and other languages on 25 small benchmarks, with the method, the caveats and the source."><link rel="stylesheet" href="style.css"><link rel="icon" href="favicon.ico?v=2" sizes="48x48"><link rel="icon" href="favicon.svg?v=2" type="image/svg+xml"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=2"><link rel="manifest" href="site.webmanifest?v=2"></head>
 <body><header id="site-header"></header><main class="doc">
 <h1><img class="mark" src="assets/tomato-icon.svg" alt="" width="32" height="32">Benchmarks</h1>
-<p class="lead">Ten small programs, each written with the same algorithm and the same input in Tomato and in Go, Rust, C, C++, Java, C#, Swift, JavaScript, TypeScript, PHP and Python. Tick the languages to show below. Every version prints the same checksum, so none of the work can be skipped.</p>
+<p class="lead">Twenty-five small programs, each written with the same algorithm and the same input in Tomato and in Go, Rust, C, C++, Java, C#, Swift, JavaScript, TypeScript, PHP and Python. Tick the languages to show below. Every version prints the same checksum, so none of the work can be skipped.</p>
 <p class="status" id="meta">Loading the results…</p>
+<p class="status">These numbers were measured on a Linux x86-64 machine. The earlier numbers on this page (v0.51, ten benchmarks) came from an Apple M1 Mac, so the two sets are not comparable.</p>
 <noscript><p class="err">This page draws its tables and charts with JavaScript from <a href="benchmarks.json">benchmarks.json</a>.</p></noscript>
 <div class="bench-legend" id="legend" role="group" aria-label="Languages to show"></div>
 
@@ -34,7 +35,7 @@
 
 <h2>Caveats</h2>
 <ul>
-<li>One machine, one run of the suite, fixed inputs. More than half of the timings varied by more than 20% between the fastest and slowest run. Other programs ran on the machine at the same time (the load average is at the top of the page), so small differences are noise; the spread between the fastest and slowest run is in the JSON.</li>
+<li>One heavily loaded shared machine, one run of the suite, fixed inputs. Many timings varied substantially between runs. Small differences may be noise; the load averages are above, and the spread is in the table and JSON.</li>
 <li>Tomato is young and its compiler does little optimization of its own (release mode relies on clang and link-time inlining of the runtime). The numbers are a snapshot of this version, not a verdict on the language.</li>
 <li>Tomato's <code>int</code> is unlimited in size, with small values held in one tagged word; Go, Rust and (for big values) Python pay different costs for numbers, so the integer benchmarks compare designs as much as compilers. The Go <code>int</code> and Rust <code>u64</code> versions can overflow silently or stop; the checksums are chosen not to.</li>
 <li>The <em>sort</em> benchmark compares different algorithms: Tomato's <code>sorted</code> is a radix sort for long lists of ints and floats and an introsort for the rest (up to v0.51 an introsort for all of them), C uses the library's <code>qsort</code>, C++ <code>std::sort</code>, Rust uses the standard library's <code>sort</code> (a stable merge sort), and Go its <code>sort</code> package. A Rust radix sort (<code>benchmarks/sort/sort_radix.rs</code>) is measured too and shown under the sort chart.</li>
@@ -46,8 +47,8 @@
 <h2>What the numbers suggest for Tomato</h2>
 <p>The list is in <a href="https://github.com/sirbuffalo/tomato/blob/main/docs/performance.md">docs/performance.md</a>.</p>
 <ol>
-<li>Cut the checks that every integer operation still makes (a tag test and an overflow test) in numeric loops: <em>matmul</em> is 2.4 times slower than Go, and <em>collatz</em>, <em>fib</em> and <em>sieve</em> are 1.1 to 1.2 times slower (wall-clock medians in the table above).</li>
-<li>Allocate less in text code: <code>split</code> still makes one string per piece, and <em>strings</em> and <em>wordcount</em> spend most of their time in <code>malloc</code> and <code>free</code>.</li>
+<li>Investigate numeric loops, including <em>spectral_norm</em> and <em>nbody</em>, with profiling and less-loaded runs before drawing conclusions.</li>
+<li>Investigate allocations in text code: <code>split</code> still makes one string per piece. Profiling and less-loaded runs can help identify the costs.</li>
 </ol>
 <p class="status">Since v0.48 release mode links the program and the runtime with link-time optimisation and the cycle collector skips objects that cannot form cycles; since v0.49 the compiler no longer counts references for reads of a variable that keeps its value alive, <code>sorted</code> is a native introsort and big integers are freed; since v0.50 small objects come from a size-class allocator, string paths work in place, <code>range(a, b, step)</code> loops are counted loops and <code>sorted</code> takes <code>key=</code> and <code>cmp=</code> functions.</p>
 
