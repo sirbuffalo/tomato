@@ -10,8 +10,10 @@
 # The tests run in parallel: -j N (or TOMATO_TEST_JOBS=N) is the number of tests running at once. The default is a modest
 # min(8, cores / 4) so that a shared machine is not starved; -j 1 runs the tests one after the other, printing each as it goes.
 # Whatever N is, the output is the same and in the same order (a test's lines are printed when it is done, but never before
-# the tests that come before it), and so are the final count and the exit status. With more than one job the WebAssembly
-# checks get a 30 s limit instead of 5 s (TOMATO_WASM_TIMEOUT_MS, when you have not set it), because a busy machine is slow.
+# the tests that come before it), and so are the final count and the exit status. The WebAssembly checks run each program
+# with a 30 s limit instead of the website's 5 s (TOMATO_WASM_TIMEOUT_MS, when you have not set it), because a busy machine
+# (or a hosted CI runner) is slow, and the programs run in an interpreter. Real jsc has no environment, so the limit is
+# passed to native/tomato-jsc.js as an argument (--timeout-ms=N).
 #
 # How it works: every test is a function (t_NAME) that runs in a job of its own with its own temp folder ($work), so tests
 # never share a file. The few things that are shared (the compiler built in step 1 and the installed `tomato` command) are
@@ -39,9 +41,11 @@ fi
 case "$jobs" in ''|*[!0-9]*) echo "tests/run.sh: the number of jobs must be a number, not '$jobs'" >&2; exit 2 ;; esac
 [ "$jobs" -ge 1 ] || jobs=1
 
-# With several tests at once a machine is slower, and the WebAssembly runner stops a program after 5 s: give it more room
-# (native/tomato-jsc.js reads this under node; set it yourself to change it).
-[ "$jobs" -gt 1 ] && : "${TOMATO_WASM_TIMEOUT_MS:=30000}" && export TOMATO_WASM_TIMEOUT_MS
+# The WebAssembly runner stops a program after 5 s, which a loaded machine or a hosted CI runner can exceed (and the big
+# programs run slowly in the interpreter): give it more room. tests/run.sh passes this to native/tomato-jsc.js as
+# --timeout-ms (jsc, the macOS shell, has no environment to read it from); set TOMATO_WASM_TIMEOUT_MS yourself to change it.
+case "${TOMATO_WASM_TIMEOUT_MS:-}" in ''|*[!0-9]*|0) TOMATO_WASM_TIMEOUT_MS=30000 ;; esac
+export TOMATO_WASM_TIMEOUT_MS
 t_start="$(date +%s)"
 work="$(mktemp -d)"; shared="$work"
 sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }   # macOS has shasum, some Linux systems only sha256sum
@@ -239,20 +243,21 @@ section "== the same programs through WebAssembly (site/wasm, the website and re
 jsc_mac=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc; have_js=""
 if [ -x "$jsc_mac" ]; then have_js=1; jsc() { "$jsc_mac" "$@"; }
 elif command -v node > /dev/null 2>&1; then have_js=1; jsc() { node "$root/native/jsc-on-node.js" "$@"; }; fi
+tjsc() { jsc native/tomato-jsc.js -- "--timeout-ms=$TOMATO_WASM_TIMEOUT_MS" "$@"; }   # the toolchain script, with the run limit
 t_wasm_program() {
   name="$1"
-  jsc native/tomato-jsc.js -- site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
+  tjsc site/wasm run "tests/programs/$name.tom" > "$work/js.out" 2> "$work/js.err"
   # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
   if [ "$(cat "$work/js.out")" = "$(cat "tests/expected/$name.main.out")" ]; then ok "wasm $name"; else bad "wasm $name" "$(diff "$work/js.out" "tests/expected/$name.main.out" | head -4; head -2 "$work/js.err")"; fi
 }
 # rejected programs and runtime errors through the same path (the messages and failures must agree with native)
-t_wasm_neg() { m="$(jsc native/tomato-jsc.js -- site/wasm run "tests/negative/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc 1"*) ok "wasm rejects $1";; *) bad "wasm rejects $1" "wanted: $2
+t_wasm_neg() { m="$(tjsc site/wasm run "tests/negative/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc 1"*) ok "wasm rejects $1";; *) bad "wasm rejects $1" "wanted: $2
 got: $m";; esac; }
-t_wasm_rt() { m="$(jsc native/tomato-jsc.js -- site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
+t_wasm_rt() { m="$(tjsc site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
 got: $m";; esac; }
 wasm_neg() { spawn t_wasm_neg "$@"; }
 wasm_rt() { spawn t_wasm_rt "$@"; }
-t_wasm_browser() { r="$(jsc native/tomato-jsc.js -- site/wasm run tests/programs/requests_browser.tom 2>&1 | grep "no network")"; check "wasm requests raise ConnectionError" "no network: True" "$r"; }
+t_wasm_browser() { r="$(tjsc site/wasm run tests/programs/requests_browser.tom 2>&1 | grep "no network")"; check "wasm requests raise ConnectionError" "no network: True" "$r"; }
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
@@ -581,7 +586,7 @@ t_input() {
   "$work/i" < "tests/input/$n.in" > "$work/o" 2>&1
   if cmp -s "$work/o" "tests/input/$n.out"; then ok "input $n"; else bad "input $n" "$(diff "$work/o" "tests/input/$n.out" | head -6)"; fi
   if [ -n "$have_js" ]; then
-    jsc native/tomato-jsc.js -- site/wasm run "$f" "tests/input/$n.in" > "$work/js.out" 2> "$work/js.err"
+    tjsc site/wasm run "$f" "tests/input/$n.in" > "$work/js.out" 2> "$work/js.err"
     if [ "$(cat "$work/js.out" "$work/js.err" | grep -v '^~rc ')" = "$(cat "tests/input/$n.out")" ]; then ok "wasm input $n"; else bad "wasm input $n" "$(cat "$work/js.out" "$work/js.err" | head -6)"; fi
   fi
 }
@@ -770,8 +775,13 @@ if [ "$(uname)" = Darwin ] && command -v pkgbuild >/dev/null 2>&1; then serial_l
 
 # ---- benchmarks and the rest --------------------------------------------------------------------------------------------
 t_benchmarks() { # serial (last): it measures, so it must not compete with the other tests
-  r="$(sh benchmarks/run.sh --smoke 2>&1 | grep -v -e " done$" -e " built$" -e " runs$" | tail -20)"; rc=$?; [ -n "${r##ok:*}" ] && rc=1
-  if [ $rc -eq 0 ]; then ok "benchmarks: the Tomato, Go, Rust and Python versions print the same"; else bad "benchmarks: the versions print the same" "$r"; fi
+  # a missing toolchain (go, rust, python) is skipped by benchmarks/run.sh, with a "skipping" line: that must not fail the test
+  out="$(sh benchmarks/run.sh --smoke 2>&1)"; rc=$?
+  line="$(printf '%s\n' "$out" | grep '^ok: every benchmark prints the same in ' | tail -1)"
+  if [ $rc -eq 0 ] && [ -n "$line" ]; then
+    skipped="$(printf '%s\n' "$out" | sed -n 's/^skipping \([a-z]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//')"
+    ok "benchmarks: the versions print the same (${line#ok: every benchmark prints the same in }${skipped:+; skipped, not installed: $skipped})"
+  else bad "benchmarks: the versions print the same" "$(printf '%s\n' "$out" | grep -v -e " done$" -e " built$" -e " runs$" | tail -20)"; fi
 }
 t_versions() {
   cmp -s docs/provisional.md site/docs/PROVISIONAL.md && ok "site/docs/PROVISIONAL.md is in sync" || bad "site/docs/PROVISIONAL.md is in sync" "run site/build.sh"

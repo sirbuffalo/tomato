@@ -26,10 +26,12 @@ rm -f "$out"
 work="$(mktemp -d)"; mnt=""
 cleanup() { [ -z "$mnt" ] || hdiutil detach -quiet "$mnt" 2>/dev/null || hdiutil detach -force -quiet "$mnt" 2>/dev/null || true; rm -rf "$work"; }
 trap cleanup EXIT
+# hdiutil sometimes fails with "Resource busy" or a timeout (often on a busy CI runner) and works a moment later
+retry() { try=1; until "$@"; do [ "$try" -ge 3 ] && return 1; try=$((try + 1)); sleep 3; done; }
 mkdir "$work/stage"; cp "$pkg" "$work/stage/$name"
 tmp="$work/tomato-$ver.dmg"   # OUT appears only once signed, notarized, stapled and checked
-hdiutil create -quiet -volname "Tomato $ver" -srcfolder "$work/stage" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$tmp"
-hdiutil verify -quiet "$tmp"
+retry hdiutil create -quiet -volname "Tomato $ver" -srcfolder "$work/stage" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$tmp"
+retry hdiutil verify -quiet "$tmp"
 if [ -z "$TOMATO_NO_SIGN" ]; then
   codesign --force --timestamp --sign "$appsign" "$tmp"
   codesign --verify --strict -vv "$tmp"
@@ -53,7 +55,7 @@ if [ -z "$TOMATO_NO_SIGN" ] && [ -z "$TOMATO_SKIP_NOTARIZE" ]; then
   spctl --assess --type open --context context:primary-signature -vv "$tmp"
 fi
 # the contents: exactly the package we were given, still signed (and, when notarized, still stapled)
-mkdir "$work/mnt"; hdiutil attach -quiet -readonly -nobrowse -noautoopen -mountpoint "$work/mnt" "$tmp"; mnt="$work/mnt"
+mkdir "$work/mnt"; retry hdiutil attach -quiet -readonly -nobrowse -noautoopen -mountpoint "$work/mnt" "$tmp"; mnt="$work/mnt"
 listing="$(ls "$mnt")"   # dot entries (.fseventsd and the like) are the file system's own
 [ "$listing" = "$name" ] || { echo "error: the image should hold only $name, it holds: $(echo "$listing" | tr '\n' ' ')" >&2; exit 1; }
 cmp -s "$mnt/$name" "$pkg" || { echo "error: the package in the image differs from $pkg" >&2; exit 1; }

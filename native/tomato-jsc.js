@@ -36,6 +36,9 @@ var self = globalThis;
 })();
 
 var args = Array.prototype.slice.call(arguments);
+// --timeout-ms=N anywhere in the arguments sets the run limit (jsc has no environment, so this is how the macOS test run passes TOMATO_WASM_TIMEOUT_MS)
+var argLimitMs = 0;
+args = args.filter(function (a) { var m = /^--timeout-ms=([0-9]+)$/.exec(a); if (m) argLimitMs = Number(m[1]); return !m; });
 var dir = args[0], mode = args[1], file = args[2];
 var stdinFile = args[3] || "", ask = args[4] === "ask";   // the answers so far, one per line; ask: exit code 75 when the program wants another (the line printed last then ends with a newline jsc added)
 ["wasi.js", "llvm.js", "tomato.js"].forEach(function (f) { load(dir + "/" + f); });
@@ -66,8 +69,9 @@ function emit(text, stream) {   // jsc's print adds a newline, so one trailing n
   var t = text.charAt(text.length - 1) === "\n" ? text.slice(0, -1) : text;
   if (stream === "err") printErr(t); else print(t);
 }
-// the run limit: 5 s, or TOMATO_WASM_TIMEOUT_MS when it is set (only where there is a `process`, i.e. under node on Linux; the Linux CI sets it because hosted runners are slower than a Mac)
-var limitMs = (typeof process !== "undefined" && process.env && Number(process.env.TOMATO_WASM_TIMEOUT_MS)) || 5000;
+// the run limit: 5 s, or --timeout-ms=N, or TOMATO_WASM_TIMEOUT_MS when it is set (that one only where there is a `process`, i.e. under node;
+// real jsc has no environment, so tests/run.sh passes the flag). Hosted CI runners are much slower than a Mac, hence the option.
+var limitMs = argLimitMs || (typeof process !== "undefined" && process.env && Number(process.env.TOMATO_WASM_TIMEOUT_MS)) || 5000;
 function finish(code) { printErr("~rc " + code); }
 tw.compile(source, "main", extra).then(function (c) {
   if (mode === "compile") { emit(c.ok ? c.ir : c.error, c.ok ? "out" : "err"); finish(c.ok ? 0 : 1); return; }

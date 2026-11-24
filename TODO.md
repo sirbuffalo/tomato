@@ -9,7 +9,7 @@
 - Fix today's int to float bugs (stage 0 of docs/bigfloat-design.md)
   `float(huge)` silently gives `inf`, big ints round wrong, `10**400 / 10**399` raises although D05ad says 10.0, `sqrt` of a huge int gives `inf`.
 - Fix the macOS failure in the `Tests` workflow (`.github/workflows/tests.yml`, formerly part of `Test and publish the website`)
-  Open the latest failed run on GitHub and fix the macOS test failure (needs repo admin to read logs). Every run since #59 fails near the end of the log; the website now deploys through `site/check.sh`, so this no longer blocks it.
+  The macOS (and Linux) job logs need repo admin, so the exact failing check was never read. A first round of fixes landed (jsc now honors the wasm time limit, the benchmarks smoke test skips a missing go or rust, `hdiutil` retries), and a failed run now writes its FAIL lines to annotations and the job summary, which anyone can read (`tests/ci_report.sh`). Check the next run's annotations: if the job is still red, fix the check named there.
 - Make a lost LTO visible and re-measure the v0.51 Linux benchmarks
   `native/tomato` hides a failed `-flto` link and links without LTO. Warn on that fallback, test that LTO happened, and fix `release/linux-setup.sh` (its clang cannot load `LLVMgold.so`, and its `lld` lacks `libxml2`). Then re-measure the v0.51 Linux column, which was measured without LTO. See `docs/architecture-review.md`, section 3.3.
 - Cache the compiled runtime

@@ -45,7 +45,8 @@ printf '#!/bin/sh\necho "$*" >> "%s/clang.log"\nexec "%s" "$@"\n' "$work" "$(com
 langs="tomato tomato-debug"
 have() { command -v "$1" >/dev/null 2>&1; }
 for t in go:go rust:rustc python:python3; do
-  if have "${t#*:}"; then langs="$langs ${t%:*}"; else say "skipping ${t%:*}: ${t#*:} is not installed"; fi
+  need="${t#*:}"; [ "${t%:*}" = rust ] && ! have cargo && need=cargo   # the bigint benchmark is a cargo project, so Rust needs both
+  if have "$need" && have "${t#*:}"; then langs="$langs ${t%:*}"; else say "skipping ${t%:*}: $need is not installed"; fi
 done
 ext() { case "$1" in tomato|tomato-debug) echo tom ;; go) echo go ;; rust) echo rs ;; python) echo py ;; esac; }
 

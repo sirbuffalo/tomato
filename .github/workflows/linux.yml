@@ -42,4 +42,8 @@ jobs:
       - name: Versions
         run: clang --version | head -1 && "$ASAN_SYMBOLIZER_PATH" --version | head -1 && node --version
       - name: tests/run.sh
-        run: tests/run.sh
+        shell: bash   # with -o pipefail, so a failing run is a failing step even though its output is copied to a file
+        run: tests/run.sh --times 2>&1 | tee "$RUNNER_TEMP/tests.log"
+      - name: Show what failed (the job log is visible only to repository admins; annotations and the summary are visible to everyone)
+        if: failure()
+        run: tests/ci_report.sh "$RUNNER_TEMP/tests.log"
