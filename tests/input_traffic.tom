@@ -1,0 +1,31 @@
+import asyncio
+import socket
+
+async def echo(peer: socket.Socket):
+    while True:
+        data = await peer.recv(16)
+        if len(data) == 0:
+            return
+        await peer.send(data)
+
+async def pingpong(client: socket.Socket, stop: list[bool]):
+    end = clock() + 10.0
+    while not stop[0] and clock() < end:
+        await client.send_text('x')
+        await client.recv(16)
+
+@main
+async def main():
+    server = await socket.listen('127.0.0.1', 0)
+    client = await socket.connect('127.0.0.1', server.port)
+    peer = await server.accept()
+    stop = [False]
+    e = start echo(peer)
+    p = start pingpong(client, stop)
+    print('line', await input('ready? '))
+    stop[0] = True
+    await p
+    client.close()
+    await e
+    peer.close()
+    server.close()

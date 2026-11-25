@@ -16,8 +16,6 @@
   Needs a whole-program check of which functions change lists; about 8 of the instructions per item in `objects`.
 - Use `epoll`/`kqueue` for descriptor waits
   With 4,000 idle sockets a round trip takes about 20 ms, because `poll` itself is slow.
-- Let sockets, requests and timeouts run while a task waits for input
-  Today `await input()` stops everything until a line comes.
 - Fix small async bugs found in the sockets reviews
   An error raised in a `finally` that replaces another leaks the first one; un-started async calls are accepted in some positions and never run; a generator cannot be used in an async function; a task that calls `wait_for` on itself deadlocks.
 - Re-measure the full tier on a quiet biggie (load below 32) with `-j 64` and put the real number in tests/README.md

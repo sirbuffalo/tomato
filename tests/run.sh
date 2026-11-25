@@ -1020,6 +1020,59 @@ t_input() {
 section "== input (tests/input: the file NAME.in is the standard input, NAME.out the whole output) =="
 for f in tests/input/*.tom; do spawn t_input "$f"; done
 
+# The writer leaves a partial line in the pipe while a socket exchange and an input timeout run. The cancelled
+# reader must leave that partial line for the next waiter; a second buffered line and EOF must also be delivered.
+t_input_concurrent() {
+  "$c1" tests/input_concurrent.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input overlaps I/O" "did not build: $(cat "$work/e")"; return; }
+  start_httpd || { bad "input overlaps I/O" "test server did not build"; return; }
+  (printf 'par'; i=0; while ! grep -q 'timed out' "$work/o" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done; printf 'tial\nnext\n') | "$work/i" "http://127.0.0.1:$port" > "$work/o" 2>&1
+  kill "$httpd_pid" 2>/dev/null
+  # The request and socket may finish in either order, but both must finish before the timeout and input.
+  first="$(sed -n '1,2p' "$work/o" | sed 's/^first? //' | sort)"
+  rest="$(sed -n '3,$p' "$work/o")"
+  check "input overlaps I/O" "$(printf 'http 200\nreceived socket')
+timed out
+second? line: partial
+next: next
+end" "$first
+$rest"
+}
+spawn t_input_concurrent
+
+t_input_timer() {
+  "$c1" tests/input_timer.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input overlaps a timer without network" "did not build: $(cat "$work/e")"; return; }
+  (printf 'par'; i=0; while ! grep -q 'timed out' "$work/o" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done; printf 'tial\n') | "$work/i" > "$work/o" 2>&1
+  check "input overlaps a timer without network" "first? timed out
+second? line: partial" "$(cat "$work/o")"
+}
+spawn t_input_timer
+
+t_input_fair() {
+  "$c1" tests/input_fair.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input with zero sleeps" "did not build: $(cat "$work/e")"; return; }
+  (printf 'ready\npar'; i=0; while ! grep -q 'timed out' "$work/o" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done; printf 'tial\n') | "$work/i" > "$work/o" 2>&1
+  check "input with zero sleeps" "first? got ready False
+waiting? timed out False
+next? line partial" "$(cat "$work/o")"
+}
+spawn t_input_fair
+
+t_input_traffic() {
+  "$c1" tests/input_traffic.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input with socket traffic" "did not build: $(cat "$work/e")"; return; }
+  # an endless socket exchange must not keep a waiting input from a line that is already there
+  out="$(printf 'ready\n' | "$work/i" 2>&1)"
+  check "input with socket traffic" "ready? line ready" "$out"
+}
+spawn t_input_traffic
+
+t_input_ask() {
+  "$c1" tests/input_ask.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input asks last" "did not build: $(cat "$work/e")"; return; }
+  # with no answer in the pipe, the host is asked (exit 75) only after the task that was due has printed
+  out="$(TOMATO_INPUT_ASK=1 "$work/i" < /dev/null 2>&1; echo "rc=$?")"
+  check "input asks last" "tick
+ready? rc=75" "$out"
+}
+spawn t_input_ask
+
 # ---- error ids ----------------------------------------------------------------------------------------------------------
 t_error_templates() {
   tests/error_templates.sh | awk '{ l=$0; gsub(/\{\}/,"",l); if (length(l) >= 12) print }' > "$work/templates"

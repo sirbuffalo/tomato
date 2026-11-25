@@ -1,0 +1,9 @@
+async def tick():
+    await sleep(0)
+    print('tick')
+
+@main
+async def main():
+    t = start tick()
+    print('line', await input('ready? '))
+    await t

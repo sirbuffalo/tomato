@@ -1,0 +1,22 @@
+import asyncio
+
+async def spin(stop: list[bool]):
+    end = clock() + 10.0
+    while not stop[0] and clock() < end:
+        await sleep(0)
+
+async def ask() -> str:
+    return await input('waiting? ')
+
+@main
+async def main():
+    stop = [False]
+    t = start spin(stop)
+    print('got', await input('first? '), t.done())
+    try:
+        await asyncio.wait_for(start ask(), 0.05)
+    catch asyncio.TimeoutError:
+        print('timed out', t.done())
+    print('line', await input('next? '))
+    stop[0] = True
+    await t

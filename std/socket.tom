@@ -33,8 +33,6 @@
 #
 # A task waiting on a socket keeps the program running even after main is done: close the socket to let it end.
 #
-# Waiting for a line of input (await input()) stops every other task, sockets and timeouts included, until it comes.
-#
 # Limits: there is no TLS; there are no
 # destructors, so close() what you open (a socket nobody closes stays open until the program ends). The browser
 # playground has no sockets: there every call raises SocketError.

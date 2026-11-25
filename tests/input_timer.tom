@@ -1,0 +1,12 @@
+import asyncio
+
+async def ask() -> str:
+    return await input('first? ')
+
+@main
+async def main():
+    try:
+        await asyncio.wait_for(start ask(), 0.1)
+    catch asyncio.TimeoutError:
+        print('timed out')
+    print('line:', await input('second? '))

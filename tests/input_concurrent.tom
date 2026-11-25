@@ -1,0 +1,40 @@
+import asyncio
+import socket
+import requests
+
+async def ask() -> str:
+    return await input('first? ')
+
+async def exchange(server: socket.Server):
+    await sleep(0.02)
+    client = await socket.connect('127.0.0.1', server.port)
+    peer = await server.accept()
+    await client.send_text('socket\n')
+    print('received', (await peer.recv_line())[:-1])
+    client.close()
+    peer.close()
+
+async def fetch(base: str):
+    await sleep(0.02)
+    r = await requests.get(base + '/hello')
+    print('http', r.status)
+
+@main
+async def main(base: str):
+    server = await socket.listen('127.0.0.1', 0)
+    t = start exchange(server)
+    h = start fetch(base)
+    reader = start ask()
+    await t
+    await h
+    try:
+        await asyncio.wait_for(reader, 0.1)
+    catch asyncio.TimeoutError:
+        print('timed out')
+    print('line:', await input('second? '))
+    print('next:', await input())
+    try:
+        await input()
+    catch EOFError:
+        print('end')
+    server.close()

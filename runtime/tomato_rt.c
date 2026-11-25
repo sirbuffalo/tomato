@@ -2161,12 +2161,17 @@ void *tomato_file_write_error(int64_t closing) {
 
 int tomato_input_ask = 0;   /* set by the host (TOMATO_INPUT_ASK in the environment, or by the browser): see tomato_input */
 
+static int input_ask_mode(void) {
+    static int env_checked;
+    if (!env_checked) { env_checked = 1; if (getenv("TOMATO_INPUT_ASK")) tomato_input_ask = 1; }
+    return tomato_input_ask;
+}
+
 /* input(prompt): shows the prompt, then reads one line from standard input without its line end. Returns NULL when
  * there is nothing left to read (the compiled code raises EOFError). */
 void *tomato_input(void *prompt) {
     int c;
-    static int env_checked;
-    if (!env_checked) { env_checked = 1; if (getenv("TOMATO_INPUT_ASK")) tomato_input_ask = 1; }
+    input_ask_mode();
     int64_t cap = 128, len = 0;
     char *out;
     fwrite(((Str *)prompt)->data, 1, (size_t)((Str *)prompt)->bytes, stdout);
@@ -2199,6 +2204,7 @@ typedef struct { void **items; int64_t n, cap; } PtrVec;
 static PtrVec ready_q; static int64_t ready_head;
 typedef struct { void *frame; void *prompt; } InputWait;
 static InputWait *in_q; static int64_t in_n, in_cap, in_head;
+static int input_prompted;
 
 #define F_CANCEL (1LL << 38)     /* cancelled: CancelledError is raised at the task's next wait */
 #define F_PARKED (1LL << 39)     /* parked by await _park (std/asyncio) */
@@ -2681,8 +2687,8 @@ static int fd_cancel_frame(void *frame) {
  * the process can have open (poll refuses more than RLIMIT_NOFILE); slot[i] says which pollfd wait i uses */
 static int64_t fd_poll_set(struct pollfd **out, int64_t **slot) {
     static int64_t *of; static int64_t of_n;      /* by descriptor: its pollfd + 1 in this set, or 0 (all 0 between calls) */
-    struct pollfd *p = malloc((size_t)fd_n * sizeof *p);
-    int64_t *at = malloc((size_t)fd_n * sizeof *at);
+    struct pollfd *p = malloc((size_t)(fd_n + 1) * sizeof *p);
+    int64_t *at = malloc((size_t)(fd_n + 1) * sizeof *at);
     if (!p || !at) out_of_memory();
     int64_t m = 0;
     for (int64_t i = 0; i < fd_n; i++) {
@@ -2707,9 +2713,14 @@ static int64_t fd_poll_set(struct pollfd **out, int64_t **slot) {
 /* wait up to ms for a listed descriptor (and for libcurl when requests are running) */
 static void io_block(int ms) {
     if (ms < 0) ms = 0;
-    if (fd_n == 0) { http_block(ms); return; }
+    if (fd_n == 0 && in_head >= in_n) { http_block(ms); return; }
     struct pollfd *p; int64_t *at;
     int64_t m = fd_poll_set(&p, &at);
+    if (in_head < in_n) {
+        p = realloc(p, (size_t)(m + 1) * sizeof *p);
+        if (!p) out_of_memory();
+        p[m].fd = 0; p[m].events = POLLIN; p[m].revents = 0; m++;
+    }
     if (http_active > 0) {
         struct { int fd; short events, revents; } *w = malloc((size_t)m * sizeof *w);    /* struct curl_waitfd */
         if (!w) out_of_memory();
@@ -2738,12 +2749,64 @@ static int fd_step(void) {
     free(p); free(at);
     return woke;
 }
+
+/* Read only available bytes; a readable pipe need not yet contain a whole line. Keep extra lines for later waiters. */
+static char *input_buf;
+static size_t input_len, input_cap;
+static int input_eof;
+/* A waiter exists and nothing it could take has arrived yet: only then is a real wait for input needed. */
+static int input_waiting(void) {
+    return in_head < in_n && !input_ask_mode() && !input_eof && !memchr(input_buf ? input_buf : "", '\n', input_len);
+}
+/* may_ask: nothing else was just made ready. In ask mode (the repl) a missing line ends the run with exit 75, and the
+ * host shows the output so far before asking, so that must wait until every woken task has run. */
+static int input_step(int may_ask) {
+    if (in_head >= in_n) return 0;
+    if (input_ask_mode() && !may_ask) return 0;
+    if (!input_prompted) {
+        Str *prompt = in_q[in_head].prompt;
+        fwrite(prompt->data, 1, (size_t)prompt->bytes, stdout);
+        fflush(stdout);
+        input_prompted = 1;
+    }
+    char *end = memchr(input_buf ? input_buf : "", '\n', input_len);
+    if (!end && !input_eof) {
+        struct pollfd p = { 0, POLLIN, 0 };
+        if (poll(&p, 1, 0) > 0 && (p.revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
+            char chunk[4096];
+            ssize_t n = read(0, chunk, sizeof chunk);
+            if (n > 0) {
+                if (input_len + (size_t)n > input_cap) {
+                    size_t cap = input_cap ? input_cap : 4096;
+                    while (cap < input_len + (size_t)n) cap *= 2;
+                    input_buf = realloc(input_buf, cap);
+                    if (!input_buf) out_of_memory();
+                    input_cap = cap;
+                }
+                memcpy(input_buf + input_len, chunk, (size_t)n); input_len += (size_t)n;
+            } else if (n == 0 || (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)) input_eof = 1;
+            end = memchr(input_buf ? input_buf : "", '\n', input_len);
+        }
+    }
+    if (!end && !input_eof) return 0;
+    size_t used = end ? (size_t)(end - input_buf) + 1 : input_len;
+    size_t len = end ? used - 1 : used;
+    if (len && input_buf[len - 1] == '\r') len--;
+    if (!used && tomato_input_ask) { fflush(stdout); exit(75); }
+    void *line = used ? str_new(input_buf, (int64_t)len) : NULL;
+    if (line && tomato_input_ask) { fwrite(input_buf, 1, len, stdout); putchar('\n'); }
+    if (used) { memmove(input_buf, input_buf + used, input_len - used); input_len -= used; }
+    InputWait w = in_q[in_head++]; input_prompted = 0;
+    *(void **)((char *)w.frame + 88) = line;
+    tomato_release(w.prompt); tomato_q_push(w.frame); tomato_release(w.frame);
+    return 1;
+}
 #else
 static void io_block(int ms) { (void)ms; }
 static int fd_step(void) { return 0; }
 #endif
 
-/* once the network is used, the clock catches up with real time, but not past the first sleeper (it wakes there) */
+/* Once network or input has required a real wait, catch up with real time, but not past the first sleeper. */
 static void clock_catch_up(int64_t first) {
     if (!net_used) return;
     double now = clock_now();
@@ -2751,8 +2814,8 @@ static void clock_catch_up(int64_t first) {
     if (now > sl_now) sl_now = now;
 }
 
-/* nothing is ready to run: wake a sleeper whose time has come; else let the oldest task that asked for a line of input have
- * it (time does not pass while there is input to give); else move the clock to the first wake-up. Returns 1 when one was woken. */
+/* Nothing is ready: wake due sleepers, step network and input, then wait for I/O or the first wake-up. Returns 1 when a
+ * task was woken. In the browser input still uses the replay host's synchronous input. */
 int tomato_sched_idle(void) {
     int64_t s = sleeper_first();
     clock_catch_up(s);
@@ -2766,8 +2829,15 @@ int tomato_sched_idle(void) {
         }
         if (http_active > 0) http_step();
         if (fd_n > 0) fd_step();          /* a task that keeps sleeping 0 seconds must not starve the sockets */
+        #if !defined(TOMATO_WASM) && !defined(__wasi__)
+        if (in_head < in_n) {
+            input_step(0);                /* nor input, including a prompt or a partial line */
+            if (input_waiting()) net_wait_begins(); /* timeouts must advance even while a sleeper keeps yielding */
+        }
+        #endif
         return 1;
     }
+    #if defined(TOMATO_WASM) || defined(__wasi__)
     if (http_active > 0 && http_step() > 0) return 1;      /* a request finished */
     if (fd_n > 0 && fd_step() > 0) return 1;               /* a socket can be used */
     if (in_head < in_n) {
@@ -2779,7 +2849,16 @@ int tomato_sched_idle(void) {
         tomato_release(w.frame);
         return 1;
     }
-    if (http_active > 0 || fd_n > 0) {    /* nothing else can run: wait for the network, but not past the first wake-up */
+    #else
+    /* Step all three every time, so traffic that keeps waking tasks cannot keep a waiting input from its line */
+    int ready = 0;
+    if (http_active > 0) ready += http_step();             /* a request finished */
+    if (fd_n > 0) ready += fd_step();                      /* a socket can be used */
+    ready += input_step(ready == 0);
+    if (ready > 0) return 1;
+    if (input_waiting()) { net_wait_begins(); s = sleeper_first(); }
+    #endif
+    if (http_active > 0 || fd_n > 0 || in_head < in_n) {    /* wait for I/O, but not past the first wake-up */
         for (;;) {
             int ms = 1000;
             if (s >= 0) {
@@ -2793,8 +2872,11 @@ int tomato_sched_idle(void) {
             int woke = 0;
             if (http_active > 0) woke += http_step();
             woke += fd_step();
+            #if !defined(TOMATO_WASM) && !defined(__wasi__)
+            woke += input_step(woke == 0);
+            #endif
             if (woke > 0) return 1;
-            if (http_active <= 0 && fd_n <= 0) break;
+            if (http_active <= 0 && fd_n <= 0 && in_head >= in_n) break;
         }
     }
     if (s >= 0) {
@@ -2841,6 +2923,7 @@ void tomato_task_cancel(void *h) {
         }
     for (int64_t i = in_head; i < in_n && !waiting; i++)
         if (in_q[i].frame == h) {
+            if (i == in_head) input_prompted = 0;
             tomato_release(in_q[i].prompt);
             memmove(in_q + i, in_q + i + 1, (size_t)(in_n - i - 1) * sizeof *in_q); in_n--;
             tomato_release(h); waiting = 1;
