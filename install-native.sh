@@ -13,7 +13,7 @@ echo "building the Tomato compiler from compiler/bootstrap/tomatoc.ll ..."
 # The compiler (13 MB of LLVM IR, most of the time) and the runtime are compiled at the same time and then linked: the same program as
 # one clang command, built in less time.
 objs="$(mktemp -d)"; trap 'rm -rf "$objs"' EXIT
-clang -O1 -Wno-override-module -c -o "$objs/tomatoc.o" "$root/compiler/bootstrap/tomatoc.ll" & ir_pid=$!
+"$root/compiler/bootstrap/build-object.sh" "$objs/tomatoc.o" & ir_pid=$!
 clang -O1 -pthread -Wno-override-module -c -o "$objs/rt.o" "$root/runtime/tomato_rt.c"
 wait "$ir_pid"
 clang -O1 -Wno-override-module -o "$home/bin/tomatoc" "$objs/tomatoc.o" "$objs/rt.o" -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl)

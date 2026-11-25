@@ -68,10 +68,12 @@ The fast tier still builds the compiler and the installed `tomato` and runs the 
   makes the real one. `runtime_cache` uses a copy of the command made from the compiler just built, so it does not wait for the install.
 * **The benchmark smoke is one test per benchmark**, beside the others: it checks only that every version prints what Tomato prints
   (tiny inputs; nothing is timed), so it does not have to run alone.
-* **`install-native.sh` compiles the IR and the runtime at the same time**, and then links them (same flags, same program). In the suite, both
-  installs (the installed command and the update's) are given the object of the bootstrap IR that the compiler build has already made
-  (a `clang` shim in front of the real one, only for `-c` of `compiler/bootstrap/tomatoc.ll`), so the 13 MB is compiled once, not three
-  times; the runtime compile and the link in the installer are still done for real.
+* **`install-native.sh` compiles the IR and the runtime at the same time**, and then links them (same flags, same program). The IR is
+  compiled by `compiler/bootstrap/build-object.sh`, in eight parts at once (`split.awk` cuts it; the checked-in file is unchanged), and
+  falls back to one clang process if that fails. In the suite, the compiler build uses that script, and both installs (the installed
+  command and the update's) are given its object through `TOMATO_TEST_BOOTSTRAP_OBJECT` (a test-only variable the script honours), so the
+  13 MB is compiled once, not three times; the runtime compile and the link in the installer are still done for real. A separate test
+  checks that the release archive ships the script and `split.awk` and that the unpacked `split.awk` splits its IR.
 
 ## What bounds the wall time
 

@@ -100,6 +100,9 @@ cpu_ms() { # sets $tm_cpu to the CPU time (user and system, in milliseconds) of 
 await_file() { # waits (up to 10 minutes) for a file another job writes; fails when it never comes
   i=0; until [ -f "$1" ]; do nap; i=$((i + 1)); [ "$i" -gt 12000 ] && return 1; done; return 0
 }
+await_object() { # waits for the bootstrap object t_compiler_build makes; fails at once when that build has failed
+  i=0; until [ -f "$shared/c0.o.done" ]; do [ -f "$shared/c0.o.failed" ] && return 1; nap; i=$((i + 1)); [ "$i" -gt 12000 ] && return 1; done; return 0
+}
 job_run() { # id, function and arguments: runs it in a folder of its own
   id="$1"; shift; work="$shared/j$id"; mkdir -p "$work"; eval "section_name=\$sec_$id"
   case "$1" in   # (the ones that do not link a program with the runtime do not wait for it)
@@ -253,9 +256,12 @@ home="$shared/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"; t="$home
 # ---- compiler -----------------------------------------------------------------------------------------------------------
 t_compiler_build() { # the compiler everything else uses: $shared/c0 (from the bootstrap IR) and $shared/c1 (built by c0)
   # the IR is compiled while the runtime object is made (or fetched from the cache), then they are linked: the same program as one clang command
-  clang -O1 -w -c -o "$shared/c0.o" compiler/bootstrap/tomatoc.ll 2> "$work/e" & ir_pid=$!
+  compiler/bootstrap/build-object.sh "$shared/c0.o" 2> "$work/e" & ir_pid=$!
   await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")"
-  wait "$ir_pid" && : > "$shared/c0.o.done" && clang -O1 -w -o "$shared/c0" "$shared/c0.o" "$rt_o" -pthread -lm 2>> "$work/e" && ok "builds from the bootstrap IR" || { bad "builds from the bootstrap IR" "$(head -5 "$work/e")"; return 1; }
+  if wait "$ir_pid"; then : > "$shared/c0.o.done"; else : > "$shared/c0.o.failed"; fi
+  # build-object.sh falls back to one clang process when the parallel build fails; that works, so the suite would stay green and only slow: fail it here
+  if grep -q 'the split build failed' "$work/e"; then bad "the bootstrap IR compiles in parallel parts" "$(head -5 "$work/e")"; else ok "the bootstrap IR compiles in parallel parts"; fi
+  [ -f "$shared/c0.o.done" ] && clang -O1 -w -o "$shared/c0" "$shared/c0.o" "$rt_o" -pthread -lm 2>> "$work/e" && ok "builds from the bootstrap IR" || { bad "builds from the bootstrap IR" "$(head -5 "$work/e")"; return 1; }
   "$shared/c0" compiler/src/ctool.tom compile > "$shared/ir1.ll" 2> "$work/e" && ok "compiles its own source" || bad "compiles its own source" "$(cat "$work/e")"
   # c1 is c0 compiled from ir1.ll: when ir1.ll is the checked-in IR (the normal case, and what t_fixed_point checks) that is the very
   # program c0 already is, so it is not built a second time (half a minute); when it is not, c1 is built, and the tests use it
@@ -268,13 +274,11 @@ t_fixed_point() {
   cmp -s "$work/ir2.ll" compiler/bootstrap/tomatoc.ll && ok "compiler/bootstrap/tomatoc.ll is current" || bad "compiler/bootstrap/tomatoc.ll is current" "run compiler/bootstrap/refresh.sh"
   grep -q '^;! ' "$shared/ir1.ll" && bad "the compiler's own source compiles without warnings" "$(grep '^;! ' "$shared/ir1.ll" | head -6)" || ok "the compiler's own source compiles without warnings"
 }
-# A clang that gives install-native.sh the object of the bootstrap IR that t_compiler_build has already made (the same `clang -O1 -c` of the same
-# file) instead of compiling its 13 MB again: both the installs (this one and the update's) then spend their time on the runtime and the link, which
-# are still done for real. Everything else is passed to clang. (If that object never comes, in 10 minutes, it compiles it itself.)
-mkdir -p "$shared/shim"
-printf '#!/bin/sh\nobj=""; prev=""; ir=""; c=""\nfor a; do case "$a" in */compiler/bootstrap/tomatoc.ll) ir=1 ;; -c) c=1 ;; esac; [ "$prev" = -o ] && obj="$a"; prev="$a"; done\nif [ -n "$ir" ] && [ -n "$c" ] && [ -n "$obj" ]; then\n  i=0; until [ -f "%s/c0.o.done" ]; do sleep 0.1; i=$((i + 1)); [ "$i" -gt 6000 ] && exec "%s" "$@"; done\n  cp "%s/c0.o" "$obj" && exit 0\nfi\nexec "%s" "$@"\n' "$shared" "$(command -v clang)" "$shared" "$(command -v clang)" > "$shared/shim/clang"; chmod +x "$shared/shim/clang"
+# Installation reuses the same completed bootstrap object while still compiling the runtime and linking for real.
 t_install() { # the installed `tomato` command: the command line tests use it, and only read it
-  PATH="$shared/shim:$PATH" ./install-native.sh > /dev/null 2>&1; echo $? > "$shared/install.tmp"; mv "$shared/install.tmp" "$shared/install.rc"
+  if await_object; then TOMATO_TEST_BOOTSTRAP_OBJECT="$shared/c0.o" ./install-native.sh > /dev/null 2>&1; echo $? > "$shared/install.tmp"
+  else echo 1 > "$shared/install.tmp"; fi   # (the object never came: the compiler build failed, so the install fails too, at once)
+  mv "$shared/install.tmp" "$shared/install.rc"
 }
 
 section "== compiler =="
@@ -848,13 +852,19 @@ t_cli_update() {
   # The installed command this test starts from is the `tomato` script, its cache helper and a VERSION, laid out as install-native.sh
   # lays them out (a link in bin/ to native/bin/tomato): `tomato update` does not use the compiler it replaces, and the real install
   # (half a minute of compiling the compiler) is the one the update itself makes, from the release archive built below.
-  PATH="$shared/shim:$PATH"   # (the update's installer takes the compiler's object from t_compiler_build too)
+  await_object || { bad "update installs a verified release" "the bootstrap object never came"; return 1; }
+  TOMATO_TEST_BOOTSTRAP_OBJECT="$shared/c0.o"; export TOMATO_TEST_BOOTSTRAP_OBJECT
   home="$work/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"; t="$home/bin/tomato"
   mkdir -p "$home/native/bin" "$home/bin"; cp native/tomato native/rtcache.sh "$home/native/bin/"; chmod +x "$home/native/bin/tomato"
   cp VERSION "$home/native/VERSION"; ln -s "$home/native/bin/tomato" "$t"
   fake="$work/fake"; mkdir -p "$fake"; cp VERSION "$fake/VERSION.old"
   TOMATO_RELEASE_OUT="$fake/out" sh release/build.sh "file://$fake/t.tar.gz" > /dev/null && cp "$fake"/out/tomato-*.tar.gz "$fake/t.tar.gz"
   want="$(sha256 "$fake/t.tar.gz" | cut -d' ' -f1)"
+  # the update's install reuses the object above, so check separately that the archive ships the parallel build and that it splits
+  mkdir -p "$fake/unpacked" && tar -xzf "$fake/t.tar.gz" -C "$fake/unpacked" && b="$(echo "$fake"/unpacked/tomato-*/compiler/bootstrap)" && mkdir -p "$fake/parts" \
+    && cmp -s "$b/build-object.sh" compiler/bootstrap/build-object.sh && cmp -s "$b/split.awk" compiler/bootstrap/split.awk \
+    && awk -v parts=8 -v dir="$fake/parts" -f "$b/split.awk" "$b/tomatoc.ll" "$b/tomatoc.ll" && [ -s "$fake/parts/part7.ll" ] \
+    && ok "the release archive ships the parallel bootstrap build" || bad "the release archive ships the parallel bootstrap build"
   echo 0.0 > "$home/native/VERSION"
   printf '{"version":"%s","url":"file://%s/t.tar.gz","sha256":"%s"}' "$(cat VERSION)" "$fake" "$want" > "$fake/ok.json"
   printf '{"version":"%s","url":"file://%s/t.tar.gz"}' "$(cat VERSION)" "$fake" > "$fake/nosum.json"
@@ -1032,7 +1042,7 @@ for f in tests/input/*.tom; do spawn t_input "$f"; done
 # The writer leaves a partial line in the pipe while a socket exchange and an input timeout run. The cancelled
 # reader must leave that partial line for the next waiter; a second buffered line and EOF must also be delivered.
 t_input_concurrent() {
-  "$c1" tests/input_concurrent.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input overlaps I/O" "did not build: $(cat "$work/e")"; return; }
+  "$c1" tests/input_concurrent.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -pthread -lm || { bad "input overlaps I/O" "did not build: $(cat "$work/e")"; return; }
   start_httpd || { bad "input overlaps I/O" "test server did not build"; return; }
   (printf 'par'; i=0; while ! grep -q 'timed out' "$work/o" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done; printf 'tial\nnext\n') | "$work/i" "http://127.0.0.1:$port" > "$work/o" 2>&1
   kill "$httpd_pid" 2>/dev/null
@@ -1049,7 +1059,7 @@ $rest"
 spawn t_input_concurrent
 
 t_input_timer() {
-  "$c1" tests/input_timer.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input overlaps a timer without network" "did not build: $(cat "$work/e")"; return; }
+  "$c1" tests/input_timer.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -pthread -lm || { bad "input overlaps a timer without network" "did not build: $(cat "$work/e")"; return; }
   (printf 'par'; i=0; while ! grep -q 'timed out' "$work/o" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done; printf 'tial\n') | "$work/i" > "$work/o" 2>&1
   check "input overlaps a timer without network" "first? timed out
 second? line: partial" "$(cat "$work/o")"
@@ -1057,7 +1067,7 @@ second? line: partial" "$(cat "$work/o")"
 spawn t_input_timer
 
 t_input_fair() {
-  "$c1" tests/input_fair.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input with zero sleeps" "did not build: $(cat "$work/e")"; return; }
+  "$c1" tests/input_fair.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -pthread -lm || { bad "input with zero sleeps" "did not build: $(cat "$work/e")"; return; }
   (printf 'ready\npar'; i=0; while ! grep -q 'timed out' "$work/o" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done; printf 'tial\n') | "$work/i" > "$work/o" 2>&1
   check "input with zero sleeps" "first? got ready False
 waiting? timed out False
@@ -1066,7 +1076,7 @@ next? line partial" "$(cat "$work/o")"
 spawn t_input_fair
 
 t_input_traffic() {
-  "$c1" tests/input_traffic.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input with socket traffic" "did not build: $(cat "$work/e")"; return; }
+  "$c1" tests/input_traffic.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -pthread -lm || { bad "input with socket traffic" "did not build: $(cat "$work/e")"; return; }
   # an endless socket exchange must not keep a waiting input from a line that is already there
   out="$(printf 'ready\n' | "$work/i" 2>&1)"
   check "input with socket traffic" "ready? line ready" "$out"
@@ -1074,7 +1084,7 @@ t_input_traffic() {
 spawn t_input_traffic
 
 t_input_ask() {
-  "$c1" tests/input_ask.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input asks last" "did not build: $(cat "$work/e")"; return; }
+  "$c1" tests/input_ask.tom main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -pthread -lm || { bad "input asks last" "did not build: $(cat "$work/e")"; return; }
   # with no answer in the pipe, the host is asked (exit 75) only after the task that was due has printed
   out="$(TOMATO_INPUT_ASK=1 "$work/i" < /dev/null 2>&1; echo "rc=$?")"
   check "input asks last" "tick
