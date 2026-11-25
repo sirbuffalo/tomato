@@ -270,7 +270,7 @@
   };
 
   Machine.prototype.parseFunction = function (ls) {
-    var h = /^define\s+(.*?)\s*@([\w.$]+)\((.*)\)\s*(?:#\d+\s*)?\{$/.exec(ls[0]);
+    var h = /^define\s+(.*?)\s*@([\w.$]+)\((.*)\)\s*(?:(?:#\d+|inlinehint)\s*)?\{$/.exec(ls[0]);
     if (!h) throw new Error("cannot read function header: " + ls[0].slice(0, 80));
     var params = splitTop(h[3]).map(function (p) {
       var r = parseType(p, 0); var nm = /%[\w.$]+/.exec(p.slice(r[1]));
@@ -340,7 +340,8 @@
       }
       case "br": {
         if (rest.startsWith("label")) { var to = rest.replace(/^label\s+%/, ""); return { br: function () { return to; } }; }
-        var mm = /^i1\s+(\S+),\s*label\s+%(\S+),\s*label\s+%(\S+)$/.exec(rest);
+        // Branch weights guide native LLVM optimizations; they do not affect interpretation.
+        var mm = /^i1\s+(\S+),\s*label\s+%([\w.$]+),\s*label\s+%([\w.$]+)(?:,\s*!prof\s+!\d+)?$/.exec(rest);
         var c = self.operand({ k: "i", bits: 1 }, mm[1]), a = mm[2], b = mm[3];
         return { br: function (f) { return c(f) ? a : b; } };
       }

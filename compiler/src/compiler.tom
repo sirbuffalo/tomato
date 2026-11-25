@@ -2316,10 +2316,11 @@ class Gen:
         self.emit(f'br i1 {c}, label %{yes}, label %{no}')
         self.terminated = True
 
-    def cold_br(self, c: str, bad: str, good: str):
+    def cold_br(self, c: str, bad: str, good: str, error: bool = False):
         # a branch that is almost never taken (release mode: the interpreter on the website does not read the weights)
         if self.mod.mode == 2:
-            self.emit(f'br i1 {c}, label %{bad}, label %{good}, !prof !0')
+            weight = '!1' if error else '!0'
+            self.emit(f'br i1 {c}, label %{bad}, label %{good}, !prof {weight}')
             self.terminated = True
         else:
             self.cond_br(c, bad, good)
@@ -3952,7 +3953,7 @@ class Gen:
             return
         stop = self.label('stop')
         ok = self.label('ok')
-        self.cond_br(bad, stop, ok)
+        self.cold_br(bad, stop, ok, True)
         self.place(stop)
         for v in live:
             self.release(v)
@@ -11804,7 +11805,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     out.extend(bodies)
     out.append(wrapper)
     if mod.mode == 2:
-        out.append('!0 = !{!"branch_weights", i32 1, i32 100000}\n')      # see Gen.cold_br
+        out.append('!0 = !{!"branch_weights", i32 1, i32 100000}\n')      # loop bailouts, see Gen.cold_br
+        out.append('!1 = !{!"branch_weights", i32 1, i32 10}\n')          # runtime errors, see Gen.fail_with
     return ''.join(out)
 
 def error_label(mod: Mod, message: str) -> str:

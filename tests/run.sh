@@ -636,6 +636,15 @@ t_cli_modes() {
   $t compile "$work/dz.tom" --mode release > "$work/dz_rel.ll" 2>&1
   grep -q tomato_report_uncaught "$work/dz_rel.ll" && ok "compile --mode release works" || bad "compile --mode release works" "$(head -3 "$work/dz_rel.ll")"
   if grep -q '^@tomato.name\.' "$work/dz_rel.ll"; then bad "release omits class name metadata"; else ok "release omits class name metadata"; fi
+  if grep -Eq 'br i1 .*label %stop\.[0-9]+, label %ok\.[0-9]+, !prof !1$' "$work/dz_rel.ll" && grep -q '^!1 = !{!"branch_weights", i32 1, i32 10}$' "$work/dz_rel.ll"; then ok "release marks error branches unlikely"; else bad "release marks error branches unlikely"; fi
+  $t compile "$work/dz.tom" --mode debug > "$work/dz_debug.ll" 2>&1
+  if grep -Eq 'br i1 .*label %stop\.[0-9]+, label %ok\.[0-9]+$' "$work/dz_debug.ll" && ! grep -q '!prof' "$work/dz_debug.ll"; then ok "debug error branches remain unweighted"; else bad "debug error branches remain unweighted"; fi
+  if [ -n "$have_js" ]; then
+    $t compile tests/runtime/error_classes.tom --mode release > "$work/errors_rel.ll" 2>&1
+    r="$(tjsc site/wasm run-ir "$work/errors_rel.ll" 2> "$work/errors_rel.err")"
+    check "wasm interpreter runs weighted error branches" "$(cat tests/runtime/error_classes.out)" "$r"
+    grep -q '^~rc 0$' "$work/errors_rel.err" && ok "weighted wasm run succeeds" || bad "weighted wasm run succeeds" "$(cat "$work/errors_rel.err")"
+  fi
   fi
 }
 # release links with LTO and an inlined runtime: the same programs must print exactly what debug mode prints

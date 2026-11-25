@@ -73,7 +73,7 @@ function emit(text, stream) {   // jsc's print adds a newline, so one trailing n
 // real jsc has no environment, so tests/run.sh passes the flag). Hosted CI runners are much slower than a Mac, hence the option.
 var limitMs = argLimitMs || (typeof process !== "undefined" && process.env && Number(process.env.TOMATO_WASM_TIMEOUT_MS)) || 5000;
 function finish(code) { printErr("~rc " + code); }
-tw.compile(source, "main", extra).then(function (c) {
+(mode === "run-ir" ? Promise.resolve({ ok: true, ir: source }) : tw.compile(source, "main", extra)).then(function (c) {
   if (mode === "compile") { emit(c.ok ? c.ir : c.error, c.ok ? "out" : "err"); finish(c.ok ? 0 : 1); return; }
   if (!c.ok) { emit(c.error, "err"); finish(1); return; }
   return tw.run(c.ir, { inputs: [], stdin: stdinFile ? new TextDecoder().decode(bin(stdinFile)) : "", ask: ask, timeoutMs: limitMs }).then(function (r) {

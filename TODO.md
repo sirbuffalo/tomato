@@ -8,8 +8,6 @@
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
 - Re-run the Linux benchmarks on a quieter biggie
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
-- Mark error branches as unlikely in the emitted LLVM IR (`!prof` weights on `fail_if`)
-  An experiment gave matmul -2.4% and strings -0.7% but sieve +2.2% and objects +0.7% instructions executed; it needs tuning, and site/wasm/llvm.js must accept the metadata.
 - Rerun the benchmark suite on the Mac with the new languages installed
   `benchmarks/run.sh --site` there, so the live page gets the new Tomato numbers, the fifteen newer benchmarks and the eight added languages; then update the page's text, which still describes the v0.51 numbers.
 - Stop retaining the loop item in `for x in xs` when the body cannot change any list

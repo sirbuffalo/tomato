@@ -733,3 +733,18 @@ executes fewer instructions; from `benchmarks/results/instructions.md`):
 Tomato's counts are 1.5-2.5 times Go's and Rust's on the numeric loops (sieve, matmul, mandelbrot, collatz), where the generated code executes the most extra instructions. Instruction counts
 alone do not say how those instructions perform, so compare them with the wall-clock table only as a second opinion.
 Full output: `benchmarks/results/instructions.md`.
+
+**Error branch weights.** Release IR gives runtime error branches weights 1:10 (error:success); loop bailouts keep their
+separate 1:100000 weights. On Linux x86-64, clang 21 and Callgrind 3.26, one run at each counting input with release LTO
+gave these whole-process instruction counts (millions), comparing unweighted error branches with 1:10:
+
+| benchmark | unweighted | 1:10 | change |
+| --- | ---: | ---: | ---: |
+| matmul | 83.851 | 83.783 | −0.08% |
+| strings | 69.516 | 69.516 | approximately 0% |
+| sieve | 30.317 | 30.081 | −0.78% |
+| objects | 60.337 | 60.538 | +0.33% |
+
+Weights of 1:100, 1:1000 and 1:100000 had different tradeoffs; in this run 1:100 increased sieve's count by 3.8%,
+while 1:100000 increased it by 0.26%. These counts measure instructions, not elapsed time, and are not a universal
+performance guarantee.
