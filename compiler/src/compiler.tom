@@ -1239,6 +1239,7 @@ class Mod:
     flat_cache: dict[str, bool] = {}       # flat_type answers, by type
     bodies: list[Body] = []                # the functions compiled so far
     pure_cache: dict[str, bool] = {}       # pure answers, by function key
+    lent_pure_cache: dict[str, bool] = {}  # pure calls whose raise expressions cannot run user code
     float_cache: dict[str, str] = {}       # the copies made by float_copy
     small_cache: dict[str, bool] = {}      # has_small answers, by function symbol
     override_cache: dict[str, bool] = {}   # overridden answers, by class and method name
@@ -1680,6 +1681,45 @@ class Mod:
                     return False
             elif k != 'Raise' and k != 'Pass':      # (a raise ends the call; what its message is made of does not matter)
                 return False
+        return True
+
+    def lent_pure(self, key: str) -> bool:
+        # pure() permits arbitrary raise expressions because their values do not matter to its numeric optimization.
+        # Here even a raise expression must not mutate a list, so reject raises, including in transitive callees.
+        if key in self.lent_pure_cache:
+            return self.lent_pure_cache[key]
+        self.lent_pure_cache[key] = False
+        if not self.pure(key):
+            return False
+        info = self.find(key, 0)
+        saved = self.cur
+        self.cur = info.module
+        ok = self.lent_pure_node(self.node_of(info))
+        self.cur = saved
+        self.lent_pure_cache[key] = ok
+        return ok
+
+    def lent_pure_node(self, n: Node) -> bool:
+        if n.kind == 'Raise':
+            return False
+        if n.kind == 'Call':
+            f = val_node(n.fields[0])
+            if f.kind == 'Name' and f.fields[0].text != 'int' and f.fields[0].text != 'float':
+                key = self.resolve(f.fields[0].text)
+                if key == '' or not self.lent_pure(key):
+                    return False
+        for v in n.fields:
+            if not self.lent_pure_val(v):
+                return False
+        return True
+
+    def lent_pure_val(self, v: Val) -> bool:
+        if v.tag == 'n':
+            return self.lent_pure_node(val_node(v))
+        if v.tag == 'l' or v.tag == 't':
+            for item in v.items:
+                if not self.lent_pure_val(item):
+                    return False
         return True
 
     def pure_expr(self, n: Node) -> bool:
@@ -2222,6 +2262,7 @@ class CompCtx:
 class Gen:
     # one function being compiled
     comps: list[CompCtx] = []     # the list comprehensions being compiled, innermost last
+    borrowed_unwind: str = ''     # restore a borrowed loop variable before propagating an error
     mod: Mod = Mod()
     lines: list[str] = []
     allocas: list[str] = []
@@ -2368,6 +2409,8 @@ class Gen:
     def unwind_target(self) -> str:
         # where an error raised here goes: the innermost try's catch (or its finally once past the body), else out of
         # the function, which returns early so that its caller can check (D22a)
+        if self.borrowed_unwind != '':
+            return self.borrowed_unwind
         if self.try_depth > 0:
             t = self.tries[self.try_depth - 1]
             if t.state == 'body':
@@ -2579,6 +2622,153 @@ class Gen:
                 self.calm_types[s.fields[0].text] = 'int'
             return self.calm_block(val_nodes(s.fields[2]))
         return False
+
+    def lent_loop_body(self, body: list[Node], name: str) -> bool:
+        # This deliberately accepts only a small, verifiable subset. lent_safe() proves an expression runs no user code (no
+        # protocol method, no operator on an object) and lent_pure() follows calls to pure numeric functions through the
+        # whole program; unknown calls, other methods, list writes and nested control flow remain owning loops.
+        bound: list[str] = []
+        for s in body:
+            bound_names(s, bound)
+        if name in bound:
+            return False
+        for s in body:
+            k = s.kind
+            if k == 'Pass' or k == 'Break' or k == 'Continue':
+                continue
+            if k == 'Assign':
+                if val_node(s.fields[0]).kind != 'Name' or not self.lent_safe(val_node(s.fields[1])):
+                    return False
+            elif k == 'CompAppend':
+                # The compiler-created result list is new and cannot alias the iterated list.
+                if not self.lent_safe(val_node(s.fields[0])):
+                    return False
+            elif k == 'ExprStmt':
+                if not self.lent_method(val_node(s.fields[0]), name):
+                    return False
+            elif k == 'If':
+                for branch in s.fields[0].items:
+                    if not self.lent_safe(val_node(branch.items[0])) or not self.lent_loop_body(val_nodes(branch.items[1]), name):
+                        return False
+                if s.fields[1].tag == 'l' and not self.lent_loop_body(val_nodes(s.fields[1]), name):
+                    return False
+            else:
+                return False
+        return True
+
+    def lent_method(self, call: Node, name: str) -> bool:
+        # A deliberately small method proof: a non-overridden method may update only numeric fields of its receiver,
+        # using numeric expressions and the same verified numeric callees. Other methods keep the owning loop.
+        if call.kind != 'Call' or len(call.fields[2].items) != 0:
+            return False
+        f = val_node(call.fields[0])
+        if f.kind != 'Attr':
+            return False
+        recv = val_node(f.fields[0])
+        if recv.kind != 'Name' or recv.fields[0].text != name:
+            return False
+        ty = self.types[name]
+        if not is_class(ty) or not self.mod.has_class(ty[1:]) or self.mod.overridden(ty[1:], f.fields[1].text):
+            return False
+        info = self.mod.lookup_method(ty[1:], f.fields[1].text)
+        if info is None or info.is_async or info.is_gen or info.stars != 0 or len(info.defaults) != 0:
+            return False
+        for arg in val_nodes(call.fields[1]):
+            if not self.lent_safe(arg) or not pure_number(self.peek_type(arg)):
+                return False
+        for t in info.ptypes:
+            if not pure_number(t):
+                return False
+        node = self.mod.node_of(info)
+        check = Gen()
+        check.mod = self.mod
+        check.slots['self'] = 'self'
+        check.types['self'] = '@' + info.owner
+        for k, p in enumerate(info.pnames):
+            check.slots[p] = p
+            check.types[p] = info.ptypes[k]
+        saved = self.mod.cur
+        self.mod.cur = info.module
+        ok = True
+        for s in val_nodes(node.fields[3]):
+            if s.kind != 'Assign':
+                ok = False
+                break
+            target = val_node(s.fields[0])
+            if target.kind != 'Attr' or val_node(target.fields[0]).kind != 'Name' or val_node(target.fields[0]).fields[0].text != 'self':
+                ok = False
+                break
+            if not pure_number(check.peek_type(target)) or not check.lent_safe(val_node(s.fields[1])):
+                ok = False
+                break
+        self.mod.cur = saved
+        return ok
+
+    def lent_safe(self, n: Node) -> bool:
+        # Can this expression be evaluated without running any user code and without changing any list? The borrowed loop item
+        # is kept alive only by the list, so this is the whole safety proof. It is stricter than calm(): len(), indexing and
+        # operators run user code (@len, @get, @add, @eq ...) when an operand is an object, so class operands are rejected here
+        # and an object is used only as the base of a field read or as a plain value.
+        t = self.peek_type(n)
+        if not (t == 'int' or t == 'float' or t == 'bool' or t == 'str' or ((is_list(t) or is_class(t)) and not is_optional(t))):
+            return False
+        k = n.kind
+        if k == 'Name' or k == 'IntLit' or k == 'FloatLit' or k == 'BoolLit' or k == 'StrLit':
+            return True
+        if k == 'Attr':
+            base = val_node(n.fields[0])
+            rt = self.peek_type(base)
+            if not is_class(rt) or is_optional(rt) or not self.mod.has_class(rt[1:]) or field_position(self.mod.find_class(rt[1:], n.line), n.fields[1].text) < 0:
+                return False
+            return self.lent_safe(base)
+        if k == 'UnOp':
+            return self.lent_plain(val_node(n.fields[1]))
+        if k == 'BinOp':
+            return self.lent_plain(val_node(n.fields[1])) and self.lent_plain(val_node(n.fields[2]))
+        if k == 'Index':
+            bt = self.peek_type(val_node(n.fields[0]))
+            if not (is_list(bt) or bt == 'str') or is_optional(bt) or self.peek_type(val_node(n.fields[1])) != 'int':
+                return False
+            return self.lent_safe(val_node(n.fields[0])) and self.lent_safe(val_node(n.fields[1]))
+        if k == 'Call':
+            f = val_node(n.fields[0])
+            if f.kind != 'Name' or f.fields[0].text in self.slots or len(n.fields[2].items) > 0:
+                return False
+            args = val_nodes(n.fields[1])
+            key = self.mod.resolve(f.fields[0].text)
+            if f.fields[0].text == 'len' and key == '':
+                if len(args) != 1:
+                    return False
+                at = self.peek_type(args[0])
+                return (is_list(at) or at == 'str') and not is_optional(at) and self.lent_safe(args[0])
+            if key == '' or not self.mod.lent_pure(key):
+                return False
+            for a in args:
+                if not pure_number(self.peek_type(a)) or not self.lent_safe(a):
+                    return False
+            return True
+        return False
+
+    def lent_plain(self, n: Node) -> bool:
+        # an operand of an operator: only numbers and text, never an object or a list, whose operators may run user code
+        t = self.peek_type(n)
+        return (pure_number(t) or t == 'str') and self.lent_safe(n)
+
+    def finish_lent_loop(self, borrowed: str, owned_slot: str, used: str, ty: str):
+        # Keep the old variable on an empty loop; otherwise make the final borrowed value owned before any exit.
+        flag = self.tmp('lent.used')
+        self.emit(f'{flag} = load i1, ptr {used}')
+        take = self.label('lent.take')
+        done = self.label('lent.done')
+        self.cond_br(flag, take, done)
+        self.place(take)
+        value = self.tmp('lent.item')
+        self.emit(f'{value} = load ptr, ptr {borrowed}')
+        e = ex(value, ty)
+        self.retain(e)
+        self.store_owned(owned_slot, e)
+        self.br(done)
+        self.place(done)
 
     def indexed_names(self, n: Node, out: list[str]):
         # the local lists that n takes items of
@@ -9843,6 +10033,21 @@ class Gen:
             var = self.slot(s.fields[3].items[0].text, elem, s.line)
             var2 = self.slot(s.fields[3].items[1].text, elem_of(vals.ty), s.line)
             stmts = stmts[1:]
+        lent = False
+        borrowed = ''
+        used = ''
+        unwind = ''
+        previous_unwind = ''
+        if vals is None and is_class(elem) and not self.is_async and self.gen_n == 0 and not in_nest and self.nest == '' and self.bail == '' and self.borrowed_unwind == '':
+            lent = self.lent_loop_body(stmts, s.fields[0].text)
+        if lent:
+            borrowed = self.tmp('lent.slot')
+            used = self.tmp('lent.flag')
+            self.allocas.append(f'  {borrowed} = alloca ptr')
+            self.allocas.append(f'  {used} = alloca i1')
+            self.emit(f'store i1 false, ptr {used}')
+            previous_unwind = self.unwind_target()
+            unwind = self.label('lent.unwind')
         head = self.nest_label(s, 'each')
         body = self.label('eachbody')
         step = self.label('eachstep')
@@ -9866,7 +10071,10 @@ class Gen:
         addr = self.list_slot(ex(l, lst.ty), ex(i, 'int'))
         item = self.load_item(lst.ty, addr, 'item')
         e = ex(item, elem)
-        if in_nest and self.nest_fast:
+        if lent:
+            self.emit(f'store ptr {item}, ptr {borrowed}')
+            self.emit(f'store i1 true, ptr {used}')
+        elif in_nest and self.nest_fast:
             if elem == 'int':
                 for h in self.nest_heads:            # a big number: the general copy takes this pass over, from behind its entry test
                     if h[2] == str(s.spot):
@@ -9888,7 +10096,13 @@ class Gen:
         if self.tracking():
             self.facts = facts_copy(self.for_body)
         self.push_loop(end, step)
+        if lent:
+            self.slots[s.fields[0].text] = borrowed
+            self.borrowed_unwind = unwind
         self.block(stmts)
+        if lent:
+            self.slots[s.fields[0].text] = var
+            self.borrowed_unwind = ''
         self.loop_depth -= 1
         if not self.terminated:
             self.br(step)
@@ -9900,6 +10114,14 @@ class Gen:
         self.emit(f'store i64 {nxt}, ptr {counter}')
         self.br(head)
         self.place(end)
+        if lent:
+            self.finish_lent_loop(borrowed, var, used, elem)
+            after = self.label('lent.after')
+            self.br(after)
+            self.place(unwind)
+            self.finish_lent_loop(borrowed, var, used, elem)
+            self.br(previous_unwind)
+            self.place(after)
 
     def range_var_range(self, bounds: list[Node]) -> Rng:
         # the interval of a range loop's variable inside the body, from the bounds' intervals where the loop starts. The

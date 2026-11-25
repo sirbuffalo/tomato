@@ -1,0 +1,132 @@
+# borrowed loops: 6
+# Borrowed loop values must be made owned on every exit, and mutation must keep the ordinary owning path.
+class Box:
+    n: int
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    def add(self, amount: int):
+        self.n = self.n + amount
+
+class Peer:
+    n: int
+    peers: list[Peer] = []
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @len
+    def size(self) -> int:
+        self.peers.pop(0)
+        return self.n
+
+    @get
+    def at(self, k: int) -> int:
+        self.peers.pop(0)
+        return self.n + k
+
+class Cell:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    def bump(self):
+        self.n = self.n + 1
+
+class Drain(Cell):
+    pool: list[Cell] = []
+
+    @init
+    def start(self, n: int):
+        Cell.make(self, n)
+
+    override def bump(self):
+        self.pool.pop(0)
+        self.n = self.n + 10
+
+def drained() -> list[Cell]:
+    d = Drain(1)
+    cells: list[Cell] = [d, Cell(5)]
+    d.pool = cells
+    return cells
+
+def twice(n: int) -> int:
+    return n * 2
+
+def remove_first(xs: list[Box]) -> int:
+    xs.pop(0)
+    return 0
+
+@main
+def main():
+    xs = [Box(1), Box(2), Box(3)]
+    x = Box(9)
+    total = 0
+    for x in xs:
+        total = total + twice(x.n)
+    for x in xs:
+        x.add(2)
+    xs = []
+    print(total, x.n)
+
+    empty: list[Box] = []
+    for x in empty:
+        total = total + x.n
+    print(x.n)
+
+    ys = [Box(4), Box(5)]
+    for x in ys:
+        if x.n == 4:
+            break
+    ys = []
+    print(x.n)
+
+    zs = [Box(6), Box(7)]
+    try:
+        for x in zs:
+            total = 1 // (x.n - 6)
+    catch RuntimeError:
+        zs = []
+        print(x.n)
+
+    ms = [Box(8), Box(9)]
+    for x in ms:
+        total = remove_first(ms) + x.n
+    print(total, x.n, len(ms))
+
+    cs = [Box(10), Box(11)]
+    nums = [x.n for x in cs]
+    cs = []
+    print(nums, x.n)
+
+    # a protocol method that removes the item from the list being walked: the loop must keep the item alive
+    ps = [Peer(1), Peer(2)]
+    ps[0].peers = ps
+    total = 0
+    for p in ps:
+        total = total + len(p) + p.n
+    print(total, len(ps))
+
+    gs = [Peer(3), Peer(4)]
+    gs[0].peers = gs
+    total = 0
+    for p in gs:
+        total = total + p[2] + p.n
+    print(total, len(gs))
+
+    # an overriding method that removes the item from the list: the call must keep the item alive
+    cells = drained()
+    for c in cells:
+        c.bump()
+    print(c.n, len(cells))
+
+    # assigning the loop name makes the loop an owning one
+    qs = [Box(20), Box(21)]
+    for x in qs:
+        x = Box(x.n + 1)
+    qs = []
+    print(x.n)
