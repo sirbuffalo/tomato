@@ -1,0 +1,8 @@
+# sys.exit() with no argument ends the program with status 0, flushing what was written.
+import sys
+
+@main
+def main():
+    sys.write_stdout('partial line')
+    sys.exit()
+    print('NEVER')

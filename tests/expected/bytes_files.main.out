@@ -1,0 +1,20 @@
+256 True 256 0 255 32640
+hi| [104, 105, 10]
+[104, 105, 10, 1, 2, 255]
+[] 0
+[9, 8, 7]
+write E391 [9, 8, 7]
+append E391 [9, 8, 7]
+write E391 [9, 8, 7]
+append E391 [9, 8, 7]
+write E391 [9, 8, 7]
+append E391 [9, 8, 7]
+write E391 [9, 8, 7]
+append E391 [9, 8, 7]
+bad value before open E391 False
+read missing E505
+write missing dir E505
+read dir E508
+write dir E508
+write inside file E509
+300000 True 54

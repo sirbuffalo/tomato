@@ -1,0 +1,41 @@
+# Checksums compatible with Python's zlib. Compression is not yet provided.
+def _check(data: list[int]):
+    for b in data:
+        if b < 0 or b > 255:
+            raise ValueError('a byte must be from 0 to 255', 'E391')
+
+export def crc32(data: list[int], value: int = 0) -> int:
+    _check(data)
+    c = (value & 4294967295) ^ 4294967295
+    if len(data) < 256:
+        # a small chunk is cheaper bit by bit than building the 256-entry table (module-level values are not allowed, D49b, so the
+        # table would be rebuilt on every call), and checksumming a stream in small chunks calls this many times
+        for b in data:
+            c = c ^ b
+            for i in range(8):
+                if (c & 1) != 0:
+                    c = (c >> 1) ^ 3988292384
+                else:
+                    c = c >> 1
+        return c ^ 4294967295
+    table: list[int] = []
+    for n in range(256):
+        t = n
+        for i in range(8):
+            if (t & 1) != 0:
+                t = (t >> 1) ^ 3988292384
+            else:
+                t = t >> 1
+        table.append(t)
+    for b in data:
+        c = table[(c ^ b) & 255] ^ (c >> 8)
+    return c ^ 4294967295
+
+export def adler32(data: list[int], value: int = 1) -> int:
+    _check(data)
+    a = (value & 65535) % 65521
+    b = ((value >> 16) & 65535) % 65521
+    for x in data:
+        a = (a + x) % 65521
+        b = (b + a) % 65521
+    return (b << 16) | a

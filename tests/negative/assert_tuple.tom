@@ -1,0 +1,5 @@
+# assert (a, b) is a tuple, not a condition and a message: it is rejected instead of always passing as in Python
+@main
+def main():
+    n = 1
+    assert (n == 1, 'one')

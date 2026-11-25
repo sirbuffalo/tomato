@@ -1,0 +1,10 @@
+3
+assertion failed E519
+x is 7 E519
+x is 7 E519
+the message was made
+made E519
+a box needs a positive n, got 0 E519
+Error catches it: assertion failed
+it passed through catch RuntimeError: assertion failed
+done

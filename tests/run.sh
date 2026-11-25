@@ -106,7 +106,7 @@ await_object() { # waits for the bootstrap object t_compiler_build makes; fails 
 job_run() { # id, function and arguments: runs it in a folder of its own
   id="$1"; shift; work="$shared/j$id"; mkdir -p "$work"; eval "section_name=\$sec_$id"
   case "$1" in   # (the ones that do not link a program with the runtime do not wait for it)
-    t_install|t_compiler_build|t_cli_update|t_wasm_*|t_error_templates|t_error_raises|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
+    t_install|t_compiler_build|t_cli_update|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
     *) await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")" ;;
   esac
   if [ -n "$times" ]; then
@@ -302,11 +302,11 @@ while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done
 
 # ---- programs -----------------------------------------------------------------------------------------------------------
 # the fast tier builds only these with AddressSanitizer (one or two programs of each kind of thing the suite looks at)
-fast_asan=" float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module "
+fast_asan=" float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module re_api re_limits sys_args os_files file_lines string_io assert_ok testing_lib "
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
 asan_specs1="tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_ownership: tests/programs/float_keys: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
-asan_specs2="tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught:"
+asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_modes:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
   want="$(sed -n '1s/^# borrowed loops: //p' "tests/programs/$2.tom")"
@@ -317,7 +317,7 @@ t_program() {
   "$c1" "tests/programs/$name.tom" main std/ > "$work/p.ll" 2> "$work/e"
   if grep -q '^;! ' "$work/p.ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
   lent_loops_ok "$work/p.ll" "$name" || { echo "FAIL program $name: the number of loops that borrow their item changed"; echo x >> "$shared/failed"; return; }
-  arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics) arg="$work" ;; esac   # they write files: into this test's own folder, not a shared /tmp
+  arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics|os_files|file_lines|file_modes|bytes_files) arg="$work" ;; sys_basics) arg="alpha" ;; sys_args) arg="7 b c" ;; esac   # they write files: into this test's own folder, not a shared /tmp; the sys programs take inputs
   # shellcheck disable=SC2086
   [ -s "$work/p.ll" ] && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -pthread -lm && "$work/p" $arg > "$work/out" 2>&1
   if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$shared/passed"; else echo "FAIL program $name"; { head -3 "$work/e"; diff "$work/out" "tests/expected/$name.main.out" | head -5; } | sed 's/^/     /'; echo x >> "$shared/failed"; fi
@@ -328,7 +328,7 @@ t_program_asan() { # the same test as t_program, for a program that an AddressSa
   asan_build "tests/programs/$name"
   if grep -q '^;! ' "$asan_ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
   lent_loops_ok "$asan_ll" "$name" || { echo "FAIL program $name: the number of loops that borrow their item changed"; echo x >> "$shared/failed"; return; }
-  arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics) arg="$work" ;; esac   # they write files: into this test's own folder, not a shared /tmp
+  arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics|os_files|file_lines|file_modes|bytes_files) arg="$work" ;; sys_basics) arg="alpha" ;; sys_args) arg="7 b c" ;; esac   # they write files: into this test's own folder, not a shared /tmp; the sys programs take inputs
   # shellcheck disable=SC2086
   [ -x "$asan_exe" ] && "$asan_exe" $arg > "$work/out" 2>&1
   if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$shared/passed"; else echo "FAIL program $name"; { head -3 "$asan_err"; diff "$work/out" "tests/expected/$name.main.out" | head -5; } | sed 's/^/     /'; echo x >> "$shared/failed"; fi
@@ -541,7 +541,7 @@ got: $m";; esac; }
 t_wasm_rt() { m="$(tjsc site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
 got: $m";; esac; }
 # the fast tier runs these through WebAssembly (the others only in the full suite): a few of each kind
-fast_wasm=" p:angles p:containers p:compact_fuzz p:open_errors p:modules p:numbers_rules p:iter_protocol p:async_tasks p:async_sync p:bigint_ops p:function_values p:sort_stable p:text_dict_methods p:time_module p:int_ranges p:web_modules p:datetime_parse p:random_basic p:secrets_basic n:type_mismatch n:private_field n:bad_return r:divide_by_zero r:index r:error_classes r:caught r:stack_overflow r:async_lock_deadlock r:overflow r:datetime_errors r:trace_calls r:random_randint_empty "
+fast_wasm=" p:angles p:containers p:compact_fuzz p:open_errors p:modules p:numbers_rules p:iter_protocol p:async_tasks p:async_sync p:bigint_ops p:function_values p:sort_stable p:text_dict_methods p:time_module p:int_ranges p:web_modules p:datetime_parse p:random_basic p:secrets_basic p:re_api p:os_browser p:ospath_text p:assert_ok n:type_mismatch n:private_field n:bad_return r:divide_by_zero r:index r:error_classes r:caught r:stack_overflow r:async_lock_deadlock r:overflow r:datetime_errors r:trace_calls r:random_randint_empty r:exit_status "
 wasm_wanted() { # KIND:NAME (p program, n rejected, r runtime error): is it run in this tier?
   case " $fast_wasm " in *" $1 "*) return 0 ;; esac
   [ -z "$fast" ] && return 0
@@ -564,12 +564,24 @@ t_wasm_sockets() { r="$(tjsc site/wasm run tests/programs/socket_browser.tom 2>&
 no listening: E446
 no udp: E446
 no lookup: E446" "$r"; }
+t_wasm_test_entry() { # the entry name `test` in the browser path: the driver runs the @test functions, with the line, and the status is 1
+  printf 'from testing import assert_equal, skip\n\n@test\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test\ndef lookup():\n    skip("no network")\n' > "$work/wt.tom"
+  m="$(tjsc site/wasm run "$work/wt.tom" --entry=test 2>&1)"
+  case "$m" in "ok   adds
+FAIL fails
+     expected 3, got 2  (raised on line 9)
+skip lookup  (no network)
+1 passed, 1 failed, 1 skipped
+~rc 1") ok "wasm: the entry test runs the @test functions";; *) bad "wasm: the entry test runs the @test functions" "$m";; esac
+  m="$(tjsc site/wasm run "$work/wt.tom" 2>&1)"
+  case "$m" in *"no function is marked @main"*"~rc 1") ok "wasm: a test file without @main is not a program";; *) bad "wasm: a test file without @main is not a program" "$m";; esac
+}
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
 t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ] && ok "highlighters know every lexer keyword and built-in" || bad "highlighters" "$r"; }
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module float_any_size float_ownership float_keys; do
+  for name in wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser string_io assert_ok testing_lib float_any_size float_ownership float_keys; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -613,6 +625,10 @@ if [ -n "$have_js" ]; then
   wasm_rt url_bad_ipv6 "Invalid IPv6 URL" 1
   wasm_rt base64_bad_padding "misplaced padding" 1
   wasm_rt hex_bad_digit "a hex text holds only the digits" 1
+  wasm_rt exit_status "pending" 3
+  wasm_neg assert_not_bool "a condition has type int, but bool is expected"
+  wasm_rt assert_failed "error[E519]: AssertionError: x should be 4, but is 3 (raised on line 3)" 1
+  spawn_free t_wasm_test_entry
   spawn_free t_wasm_site_errors
   spawn_free t_wasm_repl_import
   spawn_free t_wasm_site_editor
@@ -767,6 +783,7 @@ t_cli_explain() {
   check "explain accepts an ID with no source location" "error[E350]: RuntimeError: stack overflow: a function calls itself too deeply" "$($t explain E350:0 "$work/dz.tom")"
   check "explain rejects a malformed source line" "1" "$($t explain 'E04:4abc' "$work/dz.tom" >/dev/null 2>&1; echo $?)"
   check "run with inputs" "17 True" "$($t run examples/args.tom prime 17)"
+  check "run with inputs and *args" "$(printf '8 2 True\nb\nc')" "$($t run tests/programs/sys_args.tom main 7 b c)"
   check "--version is version" "$($t version)" "$($t --version)"
   case "$($t help)" in *"tomato explain"*"tomato version"*) ok "help lists every command";; *) bad "help lists every command" "$($t help)";; esac
   check "explain says when the line is not in the file" "error[E01]: ZeroDivisionError: division by zero
@@ -928,6 +945,83 @@ t_cli_update() {
   manifest_sum="$(sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' "$fake/out/latest.json")"
   check "release manifest names its own archive's checksum" "$(sha256 "$fake/out/tomato-$(cat VERSION).tar.gz" | cut -d' ' -f1)" "$manifest_sum"
 }
+t_cli_test() { # tomato test: the ok/FAIL lines and summary on standard output, the status, --filter, --mode, several files, errors (pack B)
+  part="${1:-1}"; cli_setup
+  printf 'from testing import assert_equal, skip\n\n@test\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test\ndef lookup():\n    skip("no network")\n' > "$work/t3.tom"
+  printf 'from testing import assert_equal\n\n@test\ndef one():\n    assert_equal(1, 1)\n\n@test\ndef two():\n    assert 2 > 1\n\n@test\ndef three():\n    assert_equal("a" + "b", "ab")\n' > "$work/tpass.tom"
+  printf 'from testing import assert_equal\n\n@test\ndef broken():\n    assert_equal(undefined_name, 1)\n' > "$work/tbad.tom"
+  printf '@test\ndef plain():\n    x = 2\n    assert x == 3, "x is not three"\n\n@test\ndef later():\n    print("later ran")\n' > "$work/tplain.tom"
+  printf 'import testing\n\n@test\ndef q():\n    testing.assert_equal(1, 1)\n    testing.assert_raises(boom, "ValueError")\n\ndef boom():\n    raise ValueError("x")\n' > "$work/timport.tom"
+  if step 1; then
+  r="$($t test "$work/t3.tom" 2>/dev/null)"; rc=$?
+  check "tomato test: the lines and the summary are on standard output" "ok   adds
+FAIL fails
+     expected 3, got 2  (raised on line 9)
+skip lookup  (no network)
+1 passed, 1 failed, 1 skipped" "$r"
+  check "tomato test: a failing test makes the status 1" "1" "$rc"
+  r="$($t test "$work/tpass.tom" 2>&1)"; rc=$?
+  check "tomato test: an all-pass file" "ok   one
+ok   two
+ok   three
+3 passed, 0 failed, 0 skipped" "$r"
+  check "tomato test: an all-pass file exits 0" "0" "$rc"
+  r="$($t test "$work/t3.tom" --filter adds 2>&1)"; rc=$?
+  check "tomato test: --filter runs the tests whose name contains the text" "ok   adds
+1 passed, 0 failed, 0 skipped" "$r"
+  check "tomato test: a filtered run that passes exits 0" "0" "$rc"
+  r="$($t test "$work/t3.tom" --filter nomatch 2>&1)"; rc=$?
+  check "tomato test: a filter that matches no test says so, and the status stays 0" "warning: no test name contains 'nomatch'
+0 passed, 0 failed, 0 skipped 0" "$r $rc"
+  r="$($t test --filter ail "$work/t3.tom" 2>&1)"; rc=$?
+  case "$r" in "FAIL fails"*"0 passed, 1 failed, 0 skipped") ok "tomato test: --filter before the file";; *) bad "tomato test: --filter before the file" "$r";; esac
+  r="$($t test "$work/timport.tom" 2>&1)"; rc=$?
+  check "tomato test: a file that imports testing itself (import testing) runs" "ok   q
+1 passed, 0 failed, 0 skipped" "$r"
+  fi; if step 2; then
+  r="$($t test "$work/tbad.tom" 2>&1)"; rc=$?
+  case "$r" in *"error[E227]: name 'undefined_name' is not defined"*) [ "$rc" = 1 ] && ok "tomato test: a compile error is reported and exits 1" || bad "tomato test: a compile error exits 1" "status $rc";; *) bad "tomato test: a compile error is reported" "$r";; esac
+  r="$($t test "$work/tpass.tom" "$work/t3.tom" "$work/tbad.tom" 2>/dev/null)"; rc=$?
+  check "tomato test: several files run one after another, each under its name" "==> $work/tpass.tom <==
+ok   one
+ok   two
+ok   three
+3 passed, 0 failed, 0 skipped
+==> $work/t3.tom <==
+ok   adds
+FAIL fails
+     expected 3, got 2  (raised on line 9)
+skip lookup  (no network)
+1 passed, 1 failed, 1 skipped
+==> $work/tbad.tom <==" "$r"
+  check "tomato test: any failing file makes the status 1" "1" "$rc"
+  r="$($t test 2>&1)"; rc=$?
+  case "$r" in *"tomato test FILE..."*) [ "$rc" = 2 ] && ok "tomato test: no file is a usage error" || bad "tomato test: no file is a usage error" "status $rc";; *) bad "tomato test: no file is a usage error" "$r";; esac
+  r="$($t test "$work/nothing.tom" 2>&1)"; rc=$?
+  check "tomato test: a missing file" "error: cannot read $work/nothing.tom" "$r"
+  r="$($t test "$work/dz.tom" 2>&1)"; rc=$?
+  case "$r" in *"error[E522]: no function is marked @test"*) [ "$rc" = 1 ] && ok "tomato test: a file with no @test function" || bad "tomato test: a file with no @test function" "status $rc";; *) bad "tomato test: a file with no @test function" "$r";; esac
+  fi; if step 3; then
+  r="$($t test "$work/tplain.tom" 2>&1)"; rc=$?
+  check "tomato test: a plain assert fails the test with its message and line; the next test still runs" "FAIL plain
+     x is not three  (raised on line 4)
+later ran
+ok   later
+1 passed, 1 failed, 0 skipped" "$r"
+  r="$($t test "$work/tplain.tom" --mode release 2>&1)"; rc=$?
+  check "tomato test --mode release: the same, without the line (release mode keeps no call trace)" "FAIL plain
+     x is not three
+later ran
+ok   later
+1 passed, 1 failed, 0 skipped" "$r"
+  check "tomato test --mode release exits 1 on a failure" "1" "$rc"
+  check "release mode runs testing_lib (assert_raises by class name) like debug" "$(cat tests/expected/testing_lib.main.out)" "$($t run tests/programs/testing_lib.tom --mode release 2>&1)"
+  check "an uncaught failed assert has its release ID and line" "error E519:3" "$($t run tests/runtime/assert_failed.tom --mode release 2>&1)"
+  r="$($t run "$work/t3.tom" 2>&1)"; rc=$?
+  case "$r" in *"no function is marked @main"*) ok "tomato run on a test file without @main asks for @main";; *) bad "tomato run on a test file without @main" "$r";; esac
+  case "$($t help)" in *"tomato test FILE... [--filter TEXT] [--mode MODE]"*) ok "tomato help lists the test command";; *) bad "tomato help lists the test command";; esac
+  fi
+}
 t_cli_compile() { cli_setup; check "compile writes IR" "yes" "$($t compile examples/shapes.tom | grep -q 'define i32 @main' && echo yes)"; }
 section "== command line =="
 register t early t_cli_update      # it needs no installed command: it makes its own install, which takes long (the compiler is built)
@@ -963,10 +1057,13 @@ spawn_cli t_cli_repl_2 2
 spawn_cli t_cli_repl_2 3
 spawn_cli t_cli_repl_history
 spawn_cli t_cli_compile
+spawn_cli t_cli_test 1
+spawn_cli t_cli_test 2
+spawn_cli t_cli_test 3
 
 # ---- rejected programs --------------------------------------------------------------------------------------------------
-t_neg() { # file, message that the compiler must report
-  msg="$("$c1" "tests/negative/$1.tom" main std/ 2>&1 >/dev/null)"; code=$?
+t_neg() { # file, message that the compiler must report, and the entry name (default main; `test` for the @test checks)
+  msg="$("$c1" "tests/negative/$1.tom" "${3:-main}" std/ 2>&1 >/dev/null)"; code=$?
   case "$msg" in *"$2"*) [ $code -ne 0 ] && ok "rejects $1" || bad "rejects $1" "exit status was 0";; *) bad "rejects $1" "wanted: $2
 got:    $msg";; esac
 }
@@ -1075,6 +1172,14 @@ neg center_bad_fill "argument 2 of 'center' (the parameter 'fillchar') has type 
 neg text_no_such_method "text has no method 'zfilll'"
 neg type_arg_count "'list' does not take several types here"
 neg type_in_unknown "this type is not supported here"
+neg assert_not_bool "a condition has type int, but bool is expected"
+neg assert_tuple "a condition has type tuple[bool, str], but bool is expected"
+neg assert_message_not_text "argument 1 of AssertionError has type int, but str is expected"
+neg test_on_async "is marked @test, but it is async, and async tests are not supported yet" test
+neg test_with_parameter "is marked @test, so it must take no parameters and return nothing" test
+neg test_with_result "is marked @test, so it must take no parameters and return nothing" test
+neg duplicate_test_name "'adds' is defined twice in module 'main'" test
+neg test_none_marked "no function is marked @test" test
 
 # ---- input --------------------------------------------------------------------------------------------------------------
 t_input() {
@@ -1151,6 +1256,16 @@ t_error_templates() {
   $tpl"; done < "$work/templates"
   [ -z "$missing" ] && ok "every extracted compile error template has an id in std/errors.txt" || bad "every extracted compile error template has an id in std/errors.txt" "add these lines (CompileError TEMPLATE):$missing"
 }
+# sys.version() is a literal in std/sys.tom (and its copy for the website) that the release script's bump step rewrites: it must say what VERSION says
+t_sys_version() {
+  v="$(cat VERSION)"
+  wrong=""
+  for f in std/sys.tom site/wasm/std/sys.tom; do
+    got="$(awk '/^export def version\(\)/ { inside = 1; next } inside && /return / { gsub(/^[^\047]*\047|\047.*$/, ""); print; exit }' "$f")"
+    [ "$got" = "$v" ] || wrong="$wrong $f says '$got' but VERSION says '$v';"
+  done
+  [ -z "$wrong" ] && ok "sys.version() says what VERSION says" || bad "sys.version() says what VERSION says" "$wrong"
+}
 t_error_raises() {
   missing="$(awk '
     NR == FNR { classes[NR] = $1; next }
@@ -1183,6 +1298,7 @@ t_std_modules() { # std_modules() in the compiler (the help of "cannot find the 
 section "== error ids =="
 spawn_free t_error_templates
 spawn_free t_error_raises
+spawn_free t_sys_version
 spawn_free t_builtin_folder
 spawn t_std_modules
 
@@ -1269,6 +1385,19 @@ rt comb_negative "comb needs numbers that are not negative, but got 5 and -1" 1
 rt perm_negative "perm needs numbers that are not negative, but got -5 and 2" 1
 rt isqrt_negative "isqrt needs a number that is not negative, but got -4" 1
 rt text_math_caught "$(cat tests/runtime/text_math_caught.out)" 0
+rt assert_failed "error[E519]: AssertionError: x should be 4, but is 3 (raised on line 3)" 1
+rt assert_default "error[E519]: AssertionError: assertion failed (raised on line 5)" 1
+t_exit_status() { # sys.exit: the status, what is flushed (print and write_stdout), and what does not run (finally, the code after)
+  for t in exit_status:3 exit_default:0; do
+    n="${t%%:*}"; want_code="${t#*:}"
+    "$c1" "tests/runtime/$n.tom" main std/ > "$work/x.ll" 2>/dev/null && clang -O1 -w -o "$work/x" "$work/x.ll" "$rt_o" -lm || { bad "sys.exit $n" "did not build"; continue; }
+    out="$("$work/x" 2>&1)"; code=$?
+    case "$n" in exit_status) want_out="$(printf 'before\npending ')" ;; *) want_out="partial line" ;; esac
+    check "sys.exit $n: output" "$want_out" "$out"
+    check "sys.exit $n: status" "$want_code" "$code"
+  done
+}
+spawn t_exit_status
 
 t_no_entropy() {
   n="$1"
@@ -1361,6 +1490,7 @@ t_benchmark() { # name, the languages
 t_versions() {
   cmp -s docs/provisional.md site/docs/PROVISIONAL.md && ok "site/docs/PROVISIONAL.md is in sync" || bad "site/docs/PROVISIONAL.md is in sync" "run site/build.sh"
   check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
+  check "VERSION matches std/sys.tom (sys.version)" "$(cat VERSION)" "$(sed -n "s/^    return '\\([0-9.]*\\)'\$/\\1/p" std/sys.tom | tail -1)"
   check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
   check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | sha256 | cut -d' ' -f1)" "$(sed -n 1p site/wasm/SOURCE.sha256 2>/dev/null)"
   check "the checked-in wasm files are the ones that were built" "$(sed -n 2,3p site/wasm/SOURCE.sha256)" "$(sha256 site/wasm/tomatoc.wasm site/wasm/runtime.wasm | cut -d' ' -f1)"

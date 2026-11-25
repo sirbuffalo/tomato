@@ -1,0 +1,200 @@
+# Path text functions (Python's os.path, POSIX rules: the separator is '/'). The text functions touch no file; abspath, relpath,
+# exists, isfile, isdir, islink, getsize and getmtime ask the file system. Works natively and in the browser playground, where
+# the files are the ones the page holds (Wave 2, pack A).
+!tomato_stat(path: str, follow: int, out: list[int]) -> int
+!tomato_getcwd(out: list[str]) -> int
+!tomato_os_error(what: str) -> str
+!tomato_env_has(name: str) -> int
+!tomato_env_get(name: str) -> str
+
+export const sep = '/'
+
+# Raises the error class of a failure kind from the runtime (1 not found, 2 exists, 3 permission, 4 is a directory,
+# 5 not a directory, anything else a plain IOError), with the message the runtime made.
+def _raise(kind: int, message: str):
+    if kind == 1:
+        raise FileNotFoundError(message, 'E505')
+    if kind == 2:
+        raise FileExistsError(message, 'E506')
+    if kind == 3:
+        raise PermissionError(message, 'E507')
+    if kind == 4:
+        raise IsADirectoryError(message, 'E508')
+    if kind == 5:
+        raise NotADirectoryError(message, 'E509')
+    raise IOError(message, 'E515')
+
+def _no_nul(path: str):
+    if chr(0) in path:
+        raise ValueError('a path or name cannot contain a NUL character', 'E511')
+
+# The result of stat (follow 1) or lstat (follow 0): size, mode, seconds, nanoseconds, kind; empty when it fails
+def _stat(path: str, follow: int) -> list[int]:
+    out: list[int] = []
+    if chr(0) in path:
+        return out
+    if !tomato_stat(path, follow, out) != 0:
+        return []
+    return out
+
+# Joins the parts: a part that starts with '/' replaces what came before, and a '/' is added only where there is none.
+export def join(first: str, *rest: tuple[str]) -> str:
+    path = first
+    for b in rest:
+        if b.startswith('/'):
+            path = b
+        elif path == '' or path.endswith('/'):
+            path = path + b
+        else:
+            path = path + '/' + b
+    return path
+
+# (head, tail): tail is what follows the last '/', head has no trailing '/' unless it is all slashes.
+export def split(path: str) -> tuple[str, str]:
+    i = path.rfind('/') + 1
+    head = path[:i]
+    tail = path[i:]
+    if head != '' and head != '/' * len(head):
+        head = head.rstrip('/')
+    return (head, tail)
+
+export def basename(path: str) -> str:
+    return path[path.rfind('/') + 1:]
+
+export def dirname(path: str) -> str:
+    i = path.rfind('/') + 1
+    head = path[:i]
+    if head != '' and head != '/' * len(head):
+        head = head.rstrip('/')
+    return head
+
+# (root, extension): the extension starts at the last '.', unless the name has only dots before it (so '.bashrc' has none).
+export def splitext(path: str) -> tuple[str, str]:
+    sep_at = path.rfind('/')
+    dot_at = path.rfind('.')
+    if dot_at > sep_at:
+        k = sep_at + 1
+        while k < dot_at:
+            if path[k:k + 1] != '.':
+                return (path[:dot_at], path[dot_at:])
+            k += 1
+    return (path, '')
+
+export def isabs(path: str) -> bool:
+    return path.startswith('/')
+
+# Collapses '.', '..' and repeated '/' (two leading slashes are kept, three or more become one); '' is '.'.
+export def normpath(path: str) -> str:
+    if path == '':
+        return '.'
+    slashes = 0
+    if path.startswith('/'):
+        slashes = 1
+        if path.startswith('//') and not path.startswith('///'):
+            slashes = 2
+    parts: list[str] = []
+    for comp in path.split('/'):
+        if comp == '' or comp == '.':
+            continue
+        if comp != '..' or (slashes == 0 and len(parts) == 0) or (len(parts) > 0 and parts[-1] == '..'):
+            parts.append(comp)
+        elif len(parts) > 0:
+            parts.pop()
+    text = '/'.join(parts)
+    if slashes > 0:
+        text = '/' * slashes + text
+    if text == '':
+        return '.'
+    return text
+
+# normpath(join(current directory, path)). An error in the current directory is an IOError.
+export def abspath(path: str) -> str:
+    _no_nul(path)
+    text = path
+    if not text.startswith('/'):
+        here: list[str] = []
+        kind = !tomato_getcwd(here)
+        if kind != 0:
+            _raise(kind, !tomato_os_error('get the current directory'))
+        text = join(here[0], text)
+    return normpath(text)
+
+# The path from start to path, as text only (after abspath); no file is looked at. relpath('') is a ValueError.
+export def relpath(path: str, start: str = '.') -> str:
+    if path == '':
+        raise ValueError('no path specified', 'E518')
+    a: list[str] = []
+    for x in abspath(start).split('/'):
+        if x != '':
+            a.append(x)
+    b: list[str] = []
+    for x in abspath(path).split('/'):
+        if x != '':
+            b.append(x)
+    i = 0
+    while i < len(a) and i < len(b) and a[i] == b[i]:
+        i += 1
+    rel: list[str] = []
+    for k in range(len(a) - i):
+        rel.append('..')
+    for k in range(i, len(b)):
+        rel.append(b[k])
+    if len(rel) == 0:
+        return '.'
+    return '/'.join(rel)
+
+# A leading '~' or '~/' becomes the HOME of the process; the path is unchanged when HOME is not set, and '~user' is never expanded.
+export def expanduser(path: str) -> str:
+    if not path.startswith('~'):
+        return path
+    i = path.find('/', 1)
+    if i < 0:
+        i = len(path)
+    if i != 1:
+        return path
+    home = _home()
+    if home == '':
+        return path
+    home = home.rstrip('/')
+    out = home + path[i:]
+    if out == '':
+        return '/'
+    return out
+
+def _home() -> str:
+    if !tomato_env_has('HOME') == 0:
+        return ''
+    return !tomato_env_get('HOME')
+
+# The tests below follow symbolic links (islink does not) and never raise: they are False for anything that fails.
+export def exists(path: str) -> bool:
+    return len(_stat(path, 1)) > 0
+
+export def isfile(path: str) -> bool:
+    s = _stat(path, 1)
+    return len(s) > 0 and s[4] == 1
+
+export def isdir(path: str) -> bool:
+    s = _stat(path, 1)
+    return len(s) > 0 and s[4] == 2
+
+export def islink(path: str) -> bool:
+    s = _stat(path, 0)
+    return len(s) > 0 and s[4] == 3
+
+export def getsize(path: str) -> int:
+    _no_nul(path)
+    out: list[int] = []
+    kind = !tomato_stat(path, 1, out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"get the size of '{path}'"))
+    return out[0]
+
+# Seconds since the epoch of the last change of the file's content
+export def getmtime(path: str) -> float:
+    _no_nul(path)
+    out: list[int] = []
+    kind = !tomato_stat(path, 1, out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"get the modification time of '{path}'"))
+    return float(out[2]) + float(out[3]) / 1000000000.0

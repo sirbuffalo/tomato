@@ -1,0 +1,22 @@
+E493 too many steps (catastrophic backtracking?)
+(0, 200000)
+1000
+100000
+100000
+100001
+1000 ok
+1001 E491 pattern is nested too deeply
+20000 E491 pattern is nested too deeply
+a{65535} ok
+a{65536} E490 repeat count is too large
+a{100000000} E490 repeat count is too large
+(?:a{1000}){1000} E491 pattern is too large
+(?:(?:a{300}){300}){300} E491 pattern is too large
+a{3,70000} E490 repeat count is too large
+alternatives 10000 ok
+sequence 10000 ok
+alternatives 10001 E491 too many alternatives
+sequence 10001 E491 pattern sequence is too long
+40000
+backreference E493
+True

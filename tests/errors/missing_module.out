@@ -4,4 +4,4 @@ error[E183]: cannot find the module 'nosuchmodule'
 1 | from nosuchmodule import thing
   |      ^^^^^^^^^^^^
   = help: looked for nosuchmodule.tom next to the program and in the standard library
-  = help: standard modules: asyncio, base64, bitarray, cache, csv, datetime, hex, html, itertools, json, math, random, rational, requests, secrets, socket, statistics, textwrap, time, toml, urlparse, uuid
+  = help: standard modules: asyncio, base64, bitarray, cache, csv, datetime, hashlib, hex, hmac, html, io, itertools, json, math, os, ospath, random, rational, re, requests, secrets, socket, statistics, struct, sys, testing, textwrap, time, toml, urlparse, utf8, uuid, zlib

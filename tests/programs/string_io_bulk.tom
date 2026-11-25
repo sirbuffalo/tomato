@@ -1,0 +1,17 @@
+# io.StringIO: many small writes at the end must stay linear (each used to copy the whole buffer).
+from io import StringIO
+
+@main
+def main():
+    s = StringIO()
+    for i in range(100000):
+        s.write('line of text ' + str(i) + '\n')
+    text = s.getvalue()
+    print(len(text))
+    s.write('end')
+    s.seek(0)
+    print(len(s.readline()), len(s.read()))
+    t = StringIO('héllo ')
+    for i in range(1000):
+        t.write('é')
+    print(len(t.getvalue()), t.getvalue()[:8])

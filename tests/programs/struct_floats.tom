@@ -1,0 +1,82 @@
+import struct
+
+def pack_f64(x: float, order: str) -> list[int]:
+    p = struct.Packer(order)
+    p.f64(x)
+    return p.bytes()
+
+def pack_f32(x: float, order: str) -> list[int]:
+    p = struct.Packer(order)
+    try:
+        p.f32(x)
+    catch OverflowError:
+        print('f32 overflow', x, p.bytes())
+        return []
+    return p.bytes()
+
+def show(x: float):
+    big = pack_f64(x, '>')
+    little = pack_f64(x, '<')
+    back = struct.Reader(big, '>').read_f64()
+    print('f64', x, big, little, back, struct.Reader(little, '<').read_f64() == x)
+    b32 = pack_f32(x, '>')
+    if len(b32) == 4:
+        print('f32', x, b32, struct.Reader(b32, '>').read_f32())
+
+def bad(data: list[int], order: str = '>'):
+    r = struct.Reader(data + [9], order)
+    try:
+        if len(data) == 4:
+            print(r.read_f32())
+        else:
+            print(r.read_f64())
+    catch ValueError:
+        print('not finite', r.pos, r.remaining())
+
+@main
+def main():
+    for x in [0.0, -0.0, 1.0, -1.0, 2.5, -2.5, 0.1, 0.5, 3.141592653589793, 1e300, -1e300, 1e-300, 123456.789,
+              16777216.0, 16777217.0, 16777219.0, 1.0000001, 3.4028235e38, 3.402823466385289e38, 3.4028236e38, 1e39,
+              1e-45, 1.4e-45, 7e-46, 7.1e-46, 1e-46, 1.175494350822288e-38, 1.1754942e-38, 1e-39, 5e-324, 1e-310]:
+        show(x)
+    r = struct.Reader([127, 239, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 1, 128, 0, 0, 0, 0, 0, 0, 0], '>')
+    print(r.read_f64(), r.read_f64(), r.read_f64())
+    r = struct.Reader([255, 255, 127, 127, 1, 0, 0, 0, 0, 0, 128, 128, 0, 0, 0, 128], '<')
+    print(r.read_f32(), r.read_f32(), r.read_f32(), r.read_f32())
+    bad([127, 240, 0, 0, 0, 0, 0, 0])
+    bad([255, 240, 0, 0, 0, 0, 0, 0])
+    bad([127, 248, 0, 0, 0, 0, 0, 1])
+    bad([0, 0, 0, 0, 0, 0, 240, 127], '<')
+    bad([127, 128, 0, 0])
+    bad([255, 128, 0, 0])
+    bad([127, 192, 0, 1])
+    bad([0, 0, 128, 127], '<')
+    r = struct.Reader([63, 128, 0, 0, 127, 128, 0, 0, 64, 0, 0, 0], '>')
+    print(r.read_f32())
+    try:
+        r.read_f32()
+    catch ValueError:
+        print('not finite', r.pos)
+    r.read_raw(4)
+    print(r.read_f32(), r.pos, r.remaining())
+    try:
+        r.read_f32()
+    catch ValueError:
+        print('short', r.pos)
+    r = struct.Reader([1, 2, 3])
+    try:
+        r.read_f64()
+    catch ValueError:
+        print('short', r.pos)
+    p = struct.Packer('>')
+    p.u8(1)
+    try:
+        p.f32(1e39)
+    catch OverflowError:
+        print('unchanged', p.bytes())
+    p.f64(-0.0)
+    p.f32(2.5)
+    p.u8(2)
+    print(p.bytes())
+    q = struct.Reader(p.bytes())
+    print(q.read_u8(), q.read_f64(), q.read_f32(), q.read_u8(), q.remaining())

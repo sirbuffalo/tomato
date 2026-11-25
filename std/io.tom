@@ -1,0 +1,89 @@
+# StringIO: text in memory that is written and read like a file (Wave 2, pack A). A File is not an interface, so a function that
+# takes a File cannot take a StringIO; use StringIO for code that is written for it.
+export class StringIO:
+    data: str = ''
+    tail: list[str] = []          # text appended at the end and not yet joined into data (many small writes stay cheap)
+    size: int = 0                 # the length of data and tail together, in characters (kept here so a write need not join)
+    pos: int = 0                  # the position, in characters
+    done: bool = False
+
+    @init
+    def make(self, initial: str = ''):
+        self.data = initial
+        self.tail = []
+        self.size = len(initial)
+        self.pos = 0
+
+    # Every method but an appending write joins the tail first, so the others see one string.
+    def private open_check(self):
+        if self.done:
+            raise ValueError('the StringIO is closed', 'E516')
+        if len(self.tail) > 0:
+            self.data = self.data + ''.join(self.tail)
+            self.tail = []
+
+    # Writes at the position (over what is there, or after the end), like a file opened for writing in Python.
+    def write(self, text: str):
+        if self.done:
+            raise ValueError('the StringIO is closed', 'E516')
+        n = self.size
+        if self.pos == n:
+            # appending at the end only collects the piece; the join waits for the next read, seek or middle write
+            self.tail.append(text)
+            self.size = n + len(text)
+            self.pos = self.size
+            return
+        self.open_check()
+        if self.pos > n:
+            self.data = self.data + chr(0) * (self.pos - n)
+            n = self.pos
+        after = self.pos + len(text)
+        self.data = self.data[:self.pos] + text + (self.data[after:] if after < n else '')
+        self.size = max(n, after)
+        self.pos = after
+
+    def getvalue(self) -> str:
+        self.open_check()
+        return self.data
+
+    # What is left from the position to the end.
+    def read(self) -> str:
+        self.open_check()
+        if self.pos >= len(self.data):
+            return ''
+        text = self.data[self.pos:]
+        self.pos = len(self.data)
+        return text
+
+    # The next line including its newline, or '' at the end.
+    def readline(self) -> str:
+        self.open_check()
+        n = len(self.data)
+        if self.pos >= n:
+            return ''
+        at = self.data.find('\n', self.pos)
+        stop = n if at < 0 else at + 1
+        line = self.data[self.pos:stop]
+        self.pos = stop
+        return line
+
+    def readlines(self) -> list[str]:
+        lines: list[str] = []
+        line = self.readline()
+        while line != '':
+            lines.append(line)
+            line = self.readline()
+        return lines
+
+    # Moves to a position from the start (only seek(0) and other positions from 0 on; a negative one is a ValueError).
+    def seek(self, pos: int):
+        self.open_check()
+        if pos < 0:
+            raise ValueError('a StringIO position cannot be negative', 'E517')
+        self.pos = pos
+
+    def close(self):
+        self.done = True
+        self.data = ''
+        self.tail = []
+        self.size = 0

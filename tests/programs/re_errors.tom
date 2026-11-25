@@ -1,0 +1,34 @@
+from re import compile, sub, RegexError
+
+@main
+def main():
+    for pattern in [')', '\\q', '(', '[a', '*a', 'a++', '\\G', '\\p{x}', '(?L)', '(?>a)', '(?(1)a|b)', '(?u)', '\\N{x}', '(?<=a+)b', '(a)\\2', '[z-a]', '(a)\\11', '\\400', '[\\400]', '[\\8]', '\\777', '^*', '\\b+', '\\Z*', '\\B{1,2}', '$?', 'a\\b*', '(?:^)*', '(^)*', '(?=a)*']:
+        try:
+            compile(pattern)
+            print('accepted', pattern)
+        catch RegexError as e:
+            print(e.id, e.pos, e.message)
+    try:
+        sub('a', '\\g<missing>', 'zzz')
+        print('accepted bad replacement')
+    catch RegexError as e:
+        print(e.id, e.pos, e.message)
+    try:
+        compile('a', 1)
+        print('accepted bad flags')
+    catch ValueError:
+        print('invalid flags')
+    try:
+        compile('(a)').match('a').group('missing')
+        print('accepted bad group')
+    catch IndexError:
+        print('invalid group')
+    # replacement templates follow Python for control and octal escapes
+    for template in ['\\0', '\\012', '\\101', '\\a\\b\\f\\v', '\\0101', '\\400', '\\11', '\\18']:
+        try:
+            codes: list[int] = []
+            for ch in sub('a', template, 'xax'):
+                codes.append(ord(ch))
+            print(template, codes)
+        catch RegexError as e:
+            print(template, e.id, e.message)

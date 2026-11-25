@@ -15,6 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #if !defined(TOMATO_WASM) && !defined(__wasi__)
 #define TOMATO_STACK_GUARD   /* native programs only: WebAssembly has no signals */
 #include <signal.h>
@@ -53,7 +56,14 @@ static int use_color(void) {
 #define TRACE_MAX 24
 static const char *trace_fn[TRACE_MAX];
 static int trace_line[TRACE_MAX], trace_n = 0, trace_more = 0;
-void tomato_trace_clear(void) { trace_n = 0; trace_more = 0; }
+static int trace_caught = 0;
+/* A catch that handles an error clears the trace. The trace ends with the function that catches (a call that failed adds the line it
+ * was at), so the entry before the last is the function the catch called and the line that function was at when the error left it:
+ * kept for tomato_caught_line, which the test runner reports (the line in the test, not in testing.tom). */
+void tomato_trace_clear(void) { trace_caught = (trace_n >= 2 && trace_more == 0) ? trace_line[trace_n - 2] : 0; trace_n = 0; trace_more = 0; }
+/* The line the error that was last caught was at in the function the catch called: in debug mode only, which keeps the call trace
+ * (0 in release mode, or when the trace was too long to keep). */
+int64_t tomato_caught_line(void) { return trace_caught; }
 void tomato_trace(const char *fn, int line) {
     if (trace_n < TRACE_MAX) { trace_fn[trace_n] = fn; trace_line[trace_n] = line; trace_n++; }
     else trace_more++;
@@ -2095,6 +2105,7 @@ static int std_stream_fd(const char *path) {
 }
 #endif
 
+static void plus_register(FILE *f);   /* files opened with +, see file_to_reading */
 void *tomato_file_open(void *path, void *mode) {
     const char *p = ((Str *)path)->data, *m = ((Str *)mode)->data;
     FILE *f;
@@ -2107,29 +2118,119 @@ void *tomato_file_open(void *path, void *mode) {
         return f;
     }
 #endif
+    char fm[4];
+    if (m[0] == 'x') { fm[0] = 'w'; fm[1] = m[1] == '+' ? '+' : 'x'; fm[2] = m[1] == '+' ? 'x' : 0; fm[3] = 0; m = fm; }   /* x: create, fail when it exists */
     f = fopen(p, m);
     if (!f) open_errno = errno;
+    else if (m[0] == 'r' && m[1] == 0) {          /* a directory opens for reading on some systems: it is an error here, as in Python */
+        struct stat st;
+        if (fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode)) { fclose(f); open_errno = EISDIR; return NULL; }
+    }
+    if (f && strchr(m, '+')) plus_register(f);
     return f;
+}
+
+/* open() takes text modes only: r, w, a or x, with an optional + (anything else, such as a b, is refused before fopen) */
+int32_t tomato_file_mode_ok(void *mode) {
+    Str *m = mode;
+    if (m->bytes < 1 || m->bytes > 2) return 0;
+    if (m->data[0] != 'r' && m->data[0] != 'w' && m->data[0] != 'a' && m->data[0] != 'x') return 0;
+    return m->bytes == 1 || m->data[1] == '+';
 }
 
 /* the message of the IOError open() raises: which path failed and why (the reason the last open gave) */
 void *tomato_file_error(void *path, int64_t code);
 void *tomato_open_error(void *path) { return tomato_file_error(path, 1); }
 
+/* A file opened with + both reads and writes one C stream, and C needs a flush or a seek between a read and a write on it (otherwise the
+ * behavior is undefined and, with glibc, the written data can be lost). Only files opened with + are remembered here; the file functions
+ * below call file_to_reading and file_to_writing at the start, which do nothing for any other file, so a loop that only reads or only
+ * writes a plain file pays nothing on any platform. Where the C library can say what the stream did last (glibc, musl, WASI) the seek
+ * happens only on a switch; elsewhere (macOS) it happens at every call on a + file, which is correct but slower. */
+static FILE **plus_files;
+static int64_t plus_count, plus_cap;
+static void plus_register(FILE *f) {
+    if (plus_count == plus_cap) { plus_cap = plus_cap ? plus_cap * 2 : 8; plus_files = realloc(plus_files, (size_t)plus_cap * sizeof *plus_files); if (!plus_files) out_of_memory(); }
+    plus_files[plus_count++] = f;
+}
+static void plus_forget(FILE *f) {
+    for (int64_t k = 0; k < plus_count; k++)
+        if (plus_files[k] == f) { plus_files[k] = plus_files[--plus_count]; return; }
+}
+static int plus_is(FILE *f) {
+    for (int64_t k = 0; k < plus_count; k++) if (plus_files[k] == f) return 1;
+    return 0;
+}
+#ifdef __APPLE__
+#define file_was_writing(f) 1
+#define file_was_reading(f) 1
+#else
+#include <stdio_ext.h>
+#define file_was_writing(f) __fwriting(f)
+#define file_was_reading(f) __freading(f)
+#endif
+static void file_to_reading(FILE *f) { if (plus_count > 0 && plus_is(f) && file_was_writing(f)) fseek(f, 0, SEEK_CUR); }
+static void file_to_writing(FILE *f) { if (plus_count > 0 && plus_is(f) && file_was_reading(f)) fseek(f, 0, SEEK_CUR); }
+
+static int read_errno;
+/* read() gives the rest of the file, or NULL when the read fails (a directory, say) */
 void *tomato_file_read(void *f) {
     char buf[4096];
     int64_t cap = 4096, len = 0;
     char *out = malloc((size_t)cap);
     size_t got;
     if (!out) out_of_memory();
+    file_to_reading(f);
+    errno = 0;
     while ((got = fread(buf, 1, sizeof buf, f)) > 0) {
         if (len + (int64_t)got > cap) { cap = (len + (int64_t)got) * 2; out = realloc(out, (size_t)cap); if (!out) out_of_memory(); }
         memcpy(out + len, buf, got);
         len += (int64_t)got;
     }
+    int failed = ferror(f), why = errno;
+    void *r = failed ? NULL : str_new(out, len);
+    free(out);
+    if (failed) read_errno = why ? why : EIO;
+    return r;
+}
+
+/* The lines of a text file. readline gives the next line with its \n ('' at the end of the file); next_line gives NULL at the end
+ * (for a loop over a File). Both give NULL, with tomato_file_read_failed 1, when the read itself fails. */
+static int file_read_failed;
+static void *file_line(void *fp, int at_end_null) {
+    FILE *f = fp;
+    int64_t cap = 128, len = 0;
+    char *out = malloc((size_t)cap);
+    int c;
+    if (!out) out_of_memory();
+    file_read_failed = 0;
+    file_to_reading(f);
+    errno = 0;
+    while ((c = getc(f)) != EOF) {
+        if (len + 1 > cap) { cap *= 2; out = realloc(out, (size_t)cap); if (!out) out_of_memory(); }
+        out[len++] = (char)c;
+        if (c == '\n') break;
+    }
+    if (c == EOF && ferror(f)) { read_errno = errno ? errno : EIO; file_read_failed = 1; free(out); return NULL; }
+    if (len == 0 && at_end_null) { free(out); return NULL; }
     void *r = str_new(out, len);
     free(out);
     return r;
+}
+void *tomato_file_readline(void *f) { return file_line(f, 0); }
+void *tomato_file_next_line(void *f) { return file_line(f, 1); }
+int32_t tomato_file_read_failed(void) { return file_read_failed; }
+/* readlines: pushes every remaining line onto the list out; 1 when a read fails */
+int32_t tomato_file_readlines(void *f, void *out) {
+    void *line;
+    while ((line = file_line(f, 1)) != NULL) *(void **)tomato_list_push(out, 8) = line;
+    return file_read_failed;
+}
+/* the message of the IOError for a failed read; it starts "could not read" (std/errors.txt line 381) */
+void *tomato_file_read_error(void) {
+    char buf[256];
+    int n = snprintf(buf, sizeof buf, "could not read from the file: %s", read_errno ? strerror(read_errno) : "unknown error");
+    return str_new(buf, n);
 }
 
 /* write and close report failure (a full disk, a closed pipe, a permission): they return 0, or 1 with the reason kept
@@ -2138,11 +2239,18 @@ void *tomato_file_read(void *f) {
 static int write_errno;
 int tomato_file_write(void *f, void *s) {
     size_t n = (size_t)((Str *)s)->bytes;
+    file_to_writing(f);
     errno = 0;
     if (n > 0 && fwrite(((Str *)s)->data, 1, n, f) != n) { write_errno = errno ? errno : EIO; return 1; }
     return 0;
 }
+int tomato_file_flush(void *f) {
+    errno = 0;
+    if (fflush(f) != 0) { write_errno = errno ? errno : EIO; return 1; }
+    return 0;
+}
 int tomato_file_close(void *f) {
+    plus_forget(f);
     errno = 0;
     int bad = fflush(f) != 0;
     int why = errno;
@@ -3696,6 +3804,18 @@ int tomato_is_subclass(int64_t code, int64_t target) {
     while (code) {
         if (code == target) return 1;
         code = tomato_parents[code];
+    }
+    return 0;
+}
+
+/* Is the error of class `err` (or one of its parents) called `name`? The class names are in the program in debug mode, and in release
+ * mode when it imports testing (assert_raises matches an error by the name of its class). */
+int64_t tomato_error_is(void *err, void *name) {
+    if (!err) return 0;
+    Str *n = name;
+    for (int64_t code = ((Hdr *)err)->type & TYPE_MASK; code; code = tomato_parents[code]) {
+        const char *cn = tomato_class_names[code];
+        if (cn && strlen(cn) == (size_t)n->bytes && memcmp(cn, n->data, (size_t)n->bytes) == 0) return 1;
     }
     return 0;
 }
@@ -6492,12 +6612,13 @@ int64_t tomato_file_read_bytes(void *path, void *out) {
     return 0;
 }
 
-/* Writes data to the file at path, replacing it. A list that is not all bytes is refused before the file is opened. */
-int64_t tomato_file_write_bytes(void *path, void *data) {
+/* Writes data to the file at path, replacing it (or after its end when append is not 0). A list that is not all bytes is
+ * refused before the file is opened. */
+int64_t tomato_file_write_bytes_mode(void *path, void *data, int64_t append) {
     int64_t bad = 0;
     unsigned char *b = mbytes(data, &bad);
     if (!b) return 4;
-    FILE *f = fopen(((Str *)path)->data, "wb");
+    FILE *f = fopen(((Str *)path)->data, append ? "ab" : "wb");
     if (!f) { open_errno = errno; free(b); return 1; }
     size_t n = (size_t)((List *)data)->len;
     int why = 0;
@@ -6509,6 +6630,7 @@ int64_t tomato_file_write_bytes(void *path, void *data) {
     if (why) { open_errno = why; return 3; }
     return 0;
 }
+int64_t tomato_file_write_bytes(void *path, void *data) { return tomato_file_write_bytes_mode(path, data, 0); }
 
 /* the message of the IOError for a code above: which path failed, at which step, and why */
 void *tomato_file_error(void *path, int64_t code) {
@@ -6523,6 +6645,197 @@ void *tomato_file_error(void *path, int64_t code) {
     void *r = str_new(t, len);
     free(t);
     return r;
+}
+
+/* writelines: every item of the list of text, no separator; 1 when a write fails (the reason is kept for tomato_file_write_error) */
+int tomato_file_writelines(void *f, void *lines) {
+    List *l = lines;
+    file_to_writing(f);
+    errno = 0;
+    for (int64_t k = 0; k < l->len; k++) {
+        Str *s = LIST_SLOT(l, k, Str *);
+        size_t n = (size_t)s->bytes;
+        if (n > 0 && fwrite(s->data, 1, n, f) != n) { write_errno = errno ? errno : EIO; return 1; }
+    }
+    return 0;
+}
+
+/* ---- Pack A (std/sys.tom, std/os.tom, std/ospath.tom): the process and the file system. Each call returns 0, or the kind of
+ * the failure (1 not found, 2 exists, 3 permission, 4 is a directory, 5 not a directory, 6 any other) and keeps the reason, which
+ * tomato_os_error words; the Tomato code raises the class of the kind. Results come back in a list the caller made. */
+static int64_t errno_kind(int e) {
+    switch (e) {
+    case ENOENT: return 1;
+    case EEXIST: return 2;
+    case EACCES: case EPERM: return 3;
+    case EISDIR: return 4;
+    case ENOTDIR: return 5;
+    }
+    return 6;
+}
+static int64_t os_fail(int e) { open_errno = e ? e : EIO; return errno_kind(open_errno); }
+/* the kind of the failure that the last open (or os call) kept */
+int64_t tomato_open_kind(void) { return errno_kind(open_errno); }
+int64_t tomato_os_kind(void) { return errno_kind(open_errno); }   /* (the same, for std/os.tom: a program's own declaration cannot repeat the compiler's) */
+/* "could not WHAT: REASON" */
+void *tomato_os_error(void *what) {
+    Str *w = what;
+    const char *why = open_errno ? strerror(open_errno) : "unknown error";
+    size_t n = (size_t)w->bytes + strlen(why) + 32;
+    char *t = malloc(n);
+    if (!t) out_of_memory();
+    int len = snprintf(t, n, "could not %s: %s", w->data, why);
+    void *r = str_new(t, len);
+    free(t);
+    return r;
+}
+static void push_text(void *out, const char *s, size_t n) { *(void **)tomato_list_push(out, 8) = str_new(s, (int64_t)n); }
+
+static int saved_argc;
+static char **saved_argv;
+void tomato_set_args(int32_t argc, void *argv) { saved_argc = argc; saved_argv = argv; }
+/* the command-line words, the program first */
+int64_t tomato_args(void *out) {
+    for (int k = 0; k < saved_argc; k++) push_text(out, saved_argv[k], strlen(saved_argv[k]));
+    return 0;
+}
+/* the words of the command line from index from on, pushed onto a list of text (the *args of an entry point) */
+int32_t tomato_args_into(void *out, int32_t argc, void *argv, int32_t from) {
+    char **v = argv;
+    for (int k = from; k < argc; k++) push_text(out, v[k], strlen(v[k]));
+    return 0;
+}
+/* flushes standard output and error and every open file (exit does), then ends the process */
+int64_t tomato_exit(int64_t code) {
+    fflush(stdout);
+    fflush(stderr);
+    exit((int)code);
+    return 0;
+}
+void *tomato_platform(void) {
+#if defined(TOMATO_WASM) || defined(__wasi__)
+    return tomato_str_from_cstr("wasi");
+#elif defined(__APPLE__)
+    return tomato_str_from_cstr("darwin");
+#else
+    return tomato_str_from_cstr("linux");
+#endif
+}
+int64_t tomato_write_fd(int64_t fd, void *text) {
+    Str *s = text;
+    FILE *f = fd == 2 ? stderr : stdout;
+    if (s->bytes > 0) fwrite(s->data, 1, (size_t)s->bytes, f);
+    return 0;
+}
+int64_t tomato_flush_std(void) { fflush(stdout); fflush(stderr); return 0; }
+
+int64_t tomato_env_has(void *name) { return getenv(((Str *)name)->data) != NULL; }
+void *tomato_env_get(void *name) {
+    const char *v = getenv(((Str *)name)->data);
+    return tomato_str_from_cstr(v ? v : "");
+}
+extern char **environ;
+int64_t tomato_env_list(void *out) {
+    for (char **e = environ; e && *e; e++) push_text(out, *e, strlen(*e));
+    return 0;
+}
+int64_t tomato_env_set(void *name, void *value) {
+    if (setenv(((Str *)name)->data, ((Str *)value)->data, 1) != 0) return os_fail(errno);
+    return 0;
+}
+int64_t tomato_env_unset(void *name) {
+    if (unsetenv(((Str *)name)->data) != 0) return os_fail(errno);
+    return 0;
+}
+int64_t tomato_getcwd(void *out) {
+#if defined(TOMATO_WASM) || defined(__wasi__)
+    push_text(out, "/", 1);
+    return 0;
+#else
+    char buf[4096];
+    if (!getcwd(buf, sizeof buf)) return os_fail(errno);
+    push_text(out, buf, strlen(buf));
+    return 0;
+#endif
+}
+int64_t tomato_chdir(void *path) {
+#if defined(TOMATO_WASM) || defined(__wasi__)
+    (void)path;
+    return os_fail(ENOSYS);
+#else
+    if (chdir(((Str *)path)->data) != 0) return os_fail(errno);
+    return 0;
+#endif
+}
+int64_t tomato_getpid(void) {
+#if defined(TOMATO_WASM) || defined(__wasi__)
+    return 1;
+#else
+    return (int64_t)getpid();
+#endif
+}
+
+static int name_cmp(const void *a, const void *b) { return strcmp(*(const char *const *)a, *(const char *const *)b); }
+/* the names in a directory, without . and .., sorted by bytes (the same on every platform) */
+int64_t tomato_listdir(void *path, void *out) {
+    DIR *d = opendir(((Str *)path)->data);
+    if (!d) return os_fail(errno);
+    char **names = NULL;
+    size_t n = 0, cap = 0;
+    struct dirent *e;
+    errno = 0;
+    while ((e = readdir(d)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+        if (n == cap) { cap = cap ? cap * 2 : 16; names = realloc(names, cap * sizeof *names); if (!names) out_of_memory(); }
+        names[n] = strdup(e->d_name);
+        if (!names[n]) out_of_memory();
+        n++;
+    }
+    int why = errno;
+    closedir(d);
+    if (why) { for (size_t k = 0; k < n; k++) free(names[k]); free(names); return os_fail(why); }
+    if (n > 1) qsort(names, n, sizeof *names, name_cmp);
+    for (size_t k = 0; k < n; k++) { push_text(out, names[k], strlen(names[k])); free(names[k]); }
+    free(names);
+    return 0;
+}
+int64_t tomato_mkdir(void *path) {
+    if (mkdir(((Str *)path)->data, 0777) != 0) return os_fail(errno);
+    return 0;
+}
+int64_t tomato_rmdir(void *path) {
+    if (rmdir(((Str *)path)->data) != 0) return os_fail(errno);
+    return 0;
+}
+/* removes a file or a symbolic link; a directory is IsADirectoryError on every platform (unlink says EPERM on macOS) */
+int64_t tomato_remove(void *path) {
+    struct stat st;
+    if (lstat(((Str *)path)->data, &st) == 0 && S_ISDIR(st.st_mode)) return os_fail(EISDIR);
+    if (unlink(((Str *)path)->data) != 0) return os_fail(errno);
+    return 0;
+}
+int64_t tomato_rename(void *src, void *dst) {
+    if (rename(((Str *)src)->data, ((Str *)dst)->data) != 0) return os_fail(errno);
+    return 0;
+}
+static void push_int(void *out, int64_t v) { *(int64_t *)tomato_list_push(out, 8) = int_mk_small(v); }
+/* stat (follow 1) or lstat (follow 0): pushes size, mode, seconds and nanoseconds of the modification time, and the kind
+ * (1 a file, 2 a directory, 3 a symbolic link, 0 anything else) */
+int64_t tomato_stat(void *path, int64_t follow, void *out) {
+    struct stat st;
+    if ((follow ? stat(((Str *)path)->data, &st) : lstat(((Str *)path)->data, &st)) != 0) return os_fail(errno);
+    int64_t nsec;
+#if defined(__APPLE__)
+    nsec = st.st_mtimespec.tv_nsec;
+#else
+    nsec = st.st_mtim.tv_nsec;
+#endif
+    push_int(out, (int64_t)st.st_size);
+    push_int(out, (int64_t)st.st_mode);
+    push_int(out, (int64_t)st.st_mtime);
+    push_int(out, nsec);
+    push_int(out, S_ISREG(st.st_mode) ? 1 : S_ISDIR(st.st_mode) ? 2 : S_ISLNK(st.st_mode) ? 3 : 0);
+    return 0;
 }
 
 /* ---- libm for the standard library's math module (std/math.tom). One entry point per arity keeps the list the

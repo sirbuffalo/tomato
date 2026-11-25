@@ -1,0 +1,104 @@
+# open(path, mode): the text modes r w a x, each with an optional +; any other mode is a ValueError before anything is opened.
+# The work directory comes from tests/run.sh.
+import os
+import ospath
+
+def attempt(path: str, mode: str) -> str:
+    try:
+        f = open(path, mode)
+        f.close()
+        return 'ok'
+    catch ValueError as e:
+        return 'ValueError ' + e.id
+    catch FileNotFoundError as e:
+        return 'FileNotFoundError ' + e.id
+    catch FileExistsError as e:
+        return 'FileExistsError ' + e.id
+    catch IsADirectoryError as e:
+        return 'IsADirectoryError ' + e.id
+    catch IOError as e:
+        return 'IOError ' + e.id
+
+def show(text: str) -> str:
+    # newlines shown as | so each result stays on one line
+    return '[' + text.replace('\n', '|') + ']'
+
+@main
+def main(dir: str = '/tmp'):
+    path = dir + '/tomato_file_modes.txt'
+    if ospath.exists(path):
+        os.remove(path)
+    # the accepted modes on a missing file
+    for mode in ['r', 'r+']:
+        print(mode, 'missing:', attempt(path, mode))
+    for mode in ['w', 'a', 'x', 'w+', 'a+', 'x+']:
+        print(mode, 'missing:', attempt(path, mode))
+        if ospath.exists(path):
+            os.remove(path)
+    # on an existing file: x refuses; w truncates; a keeps
+    os.write_text(path, 'abc')
+    print('x existing:', attempt(path, 'x'), attempt(path, 'x+'))
+    print('r:', attempt(path, 'r'), os.read_text(path))
+    print('a:', attempt(path, 'a'), os.read_text(path))
+    print('w:', attempt(path, 'w'), ospath.getsize(path))
+    # what each mode does
+    f = open(path, 'w')
+    f.write('hello world')
+    f.close()
+    f = open(path, 'a')
+    f.write('!')
+    f.close()
+    print(os.read_text(path))
+    f = open(path, 'r+')
+    f.write('J')
+    f.close()
+    print(os.read_text(path))
+    f = open(path, 'w+')
+    f.write('new')
+    f.close()
+    print(os.read_text(path))
+    f = open(path, 'a+')
+    f.write('er')
+    f.close()
+    print(os.read_text(path))
+    os.remove(path)
+    f = open(path, 'x')
+    f.write('exclusive')
+    f.close()
+    print(os.read_text(path))
+    os.remove(path)
+    f = open(path, 'x+')
+    f.write('both')
+    f.close()
+    print(os.read_text(path))
+    # the default mode is r
+    f = open(path)
+    print(f.read())
+    f.close()
+    # refused modes: binary, text 't', combinations, empty and unknown
+    for mode in ['rb', 'wb', 'ab', 'xb', 'r+b', 'rt', 'wt', 'tr', 'rw', 'r++', '', 'b', '+', 'R', 'w ', 'U', 'rU', 'wx', 'w+x']:
+        print('mode', mode, '->', attempt(path, mode))
+    # a refused mode touches nothing, not even a path that does not exist
+    print(attempt(dir + '/tomato_file_modes_never/x', 'wb'), ospath.exists(dir + '/tomato_file_modes_never'))
+    try:
+        open(path, 'rb')
+    catch ValueError as e:
+        print(e.message)
+    # a directory cannot be opened for reading or writing
+    print('dir:', attempt(dir, 'r'), attempt(dir, 'w'), attempt(dir, 'a'), attempt(dir, 'r+'))
+    print('missing dir:', attempt(dir + '/tomato_file_modes_never/x', 'w'))
+    os.remove(path)
+    # reading and writing one + file: the stream switches between them, so nothing is lost
+    f = open(path, 'w+')
+    f.write('hello\nworld\n')
+    print('w+ read after write:', show(f.read()))
+    f.close()
+    print('w+ file:', show(os.read_text(path)))
+    os.write_text(path, 'hello\nworld\nthird\n')
+    g = open(path, 'r+')
+    print('r+ readline:', show(g.readline()))
+    g.write('ZZ')
+    print('r+ read after write:', show(g.read()))
+    g.close()
+    print('r+ file:', show(os.read_text(path)))
+    os.remove(path)

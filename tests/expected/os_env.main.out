@@ -1,0 +1,30 @@
+None 'fallback'
+'one' 'one'
+''
+'a=b c' a=b c
+'a=b c'
+changed two True
+False None
+None
+getenv E512 an environment variable name is empty or contains '='
+putenv E512
+unsetenv E512
+getenv E512 an environment variable name is empty or contains '='
+putenv E512
+unsetenv E512
+getenv E511 a path or name cannot contain a NUL character
+putenv E511
+unsetenv E511
+value E511 a path or name cannot contain a NUL character
+~ -> /home/tom
+~/ -> /home/tom/
+~/x/y -> /home/tom/x/y
+~other -> ~other
+~other/x -> ~other/x
+a/~ -> a/~
+ -> 
+/~ -> /~
+/home/tom/z /home/tom
+/z /
+~/z ~
+True True

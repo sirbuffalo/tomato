@@ -1,0 +1,5 @@
+# a failed assert with no message says "assertion failed"
+@main
+def main():
+    items = [1, 2, 3]
+    assert len(items) == 2

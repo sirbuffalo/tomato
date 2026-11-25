@@ -1,0 +1,17 @@
+(?P<word>a+)(b)? 2 2 {'word': 1} 20000000
+!AA! 0 4 (?P<word>a+)(b)?
+AA AA AA  False
+['AA', ''] {'word': 'AA'} 1 3 (-1, -1)
+AA-
+True (1, 3) (0, 2)
+a (1, 2) (0, 2)
+['a', 'a'] [['a'], ['a']] 2
+<a>b<a> ('Xba', 1) [a]b[a]
+['a', ',', 'b,c'] a\.b\ \#
+2 2 8 8 16 16 64 64 256 256
+['', 'a', '']
+True True
+True
+True True
+True
+(1, 1)

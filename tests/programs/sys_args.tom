@@ -1,0 +1,8 @@
+# Entry points with *args: tests/run.sh runs this with the inputs "7 b c" (an int, then text words).
+import sys
+
+@main
+def main(n: int, *rest: tuple[str]):
+    print(n + 1, len(rest), sys.argv()[1:] == ['7', 'b', 'c'])
+    for w in rest:
+        print(w)

@@ -1,0 +1,7 @@
+# a failed assert with a message that is made from the values: AssertionError (E519), with the line of the assert
+def check(x: int):
+    assert x == 4, f'x should be 4, but is {x}'
+
+@main
+def main():
+    check(3)

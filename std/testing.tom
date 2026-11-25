@@ -1,0 +1,162 @@
+# Testing (Wave 2, pack B): assertions for tests, and the runner behind `tomato test`. Every assertion raises AssertionError
+# (a direct subclass of Error, like the `assert` statement) with the text shown below; a `message` is added after it, as
+# "text: message". Pure Tomato, so it works natively and in the playground. No module-level values (D49b): the runner counts in a
+# small _Report object it passes around.
+#
+# A test file marks plain functions with no parameters and no result with @test and runs with `tomato test FILE`:
+#     from testing import assert_equal
+#     @test
+#     def adds():
+#         assert_equal(1 + 1, 2)
+# The compiler adds a driver that calls _run_all with the names and functions in the order they are written.
+#
+# The generic helpers need the language to accept their operation for the type: assert_equal and assert_not_equal take types with ==
+# (not a class without an @eq method), and assert_none and assert_not_none take types that can be None (text, lists, dicts, sets,
+# classes, tuples; not int or float). Otherwise the compile error points into this file.
+#
+# The callbacks of assert_raises are named functions (D63a: a function value cannot see the variables around it); to pass
+# a value, use assert_raises_with.
+import sys
+
+!tomato_error_is(err: Error, name: str) -> int
+!tomato_caught_line() -> int
+
+# Raised by skip(): the runner counts the test as skipped, not failed.
+export class SkipTest(Error):
+    @init
+    def make_skip(self, message: str, id: str = ""):
+        Error.start(self, message, id)
+
+def _fail(text: str, message: str):
+    if message != '':
+        text = text + ': ' + message
+    raise AssertionError(text, 'E519')
+
+# fails the test with message
+export def fail(message: str = ''):
+    if message == '':
+        raise AssertionError('test failed', 'E519')
+    raise AssertionError(message, 'E519')
+
+# "expected True" / "expected False"
+export def assert_true(value: bool, message: str = ''):
+    if not value:
+        _fail('expected True', message)
+
+export def assert_false(value: bool, message: str = ''):
+    if value:
+        _fail('expected False', message)
+
+# "expected X, got Y" (the values as str() shows them)
+export def assert_equal[T](actual: T, expected: T, message: str = ''):
+    if not (actual == expected):
+        _fail(f'expected {str(expected)}, got {str(actual)}', message)
+
+# "values are equal: X"
+export def assert_not_equal[T](actual: T, expected: T, message: str = ''):
+    if actual == expected:
+        _fail(f'values are equal: {str(actual)}', message)
+
+# "X is not in [...]" / "X is in [...]"
+export def assert_in[T](item: T, items: list[T], message: str = ''):
+    if item not in items:
+        _fail(f'{str(item)} is not in {str(items)}', message)
+
+export def assert_not_in[T](item: T, items: list[T], message: str = ''):
+    if item in items:
+        _fail(f'{str(item)} is in {str(items)}', message)
+
+# "expected None, got X" / "expected a value, got None". T is not found from a value that may be None: write the type,
+# as in assert_none[str](name).
+export def assert_none[T](value: T | None, message: str = ''):
+    if value is not None:
+        _fail(f'expected None, got {str(value)}', message)
+
+export def assert_not_none[T](value: T | None, message: str = ''):
+    if value is None:
+        _fail('expected a value, got None', message)
+
+# Python's math.isclose rule: |actual - expected| <= max(rel_tol * max(|actual|, |expected|), abs_tol). A float in Tomato is
+# always finite, so there is no NaN or infinity to special-case. The text is "expected X, got Y".
+export def assert_close(actual: float, expected: float, rel_tol: float = 1e-9, abs_tol: float = 0.0, message: str = ''):
+    if rel_tol < 0.0 or abs_tol < 0.0:
+        raise ValueError('a tolerance must not be negative', 'E524')
+    if actual == expected:
+        return
+    close = False
+    try:
+        diff = abs(expected - actual)
+        close = diff <= abs(rel_tol * expected) or diff <= abs(rel_tol * actual) or diff <= abs_tol
+    catch OverflowError:
+        close = False      # the difference or a tolerance is too big for a float: not close
+    if not close:
+        _fail(f'expected {str(expected)}, got {str(actual)}', message)
+
+# Calls f and returns the error it raises, which must be of the class called kind (the class name as text, such as 'ValueError')
+# or a subclass of it. It fails the test if f raises nothing or an error of another class. kind 'Error' matches any error.
+export def assert_raises(f: fn(), kind: str = 'Error') -> Error:
+    try:
+        f()
+    catch Error as e:
+        if !tomato_error_is(e, kind) == 0:
+            raise AssertionError(f'expected {kind}, but another error was raised: {e.message}', 'E519')
+        return e
+    raise AssertionError(f'expected {kind} to be raised, but nothing was raised', 'E519')
+
+# The same for a function of one argument: assert_raises_with(parse, 'x', 'ValueError')
+export def assert_raises_with[A](f: fn(A), arg: A, kind: str = 'Error') -> Error:
+    try:
+        f(arg)
+    catch Error as e:
+        if !tomato_error_is(e, kind) == 0:
+            raise AssertionError(f'expected {kind}, but another error was raised: {e.message}', 'E519')
+        return e
+    raise AssertionError(f'expected {kind} to be raised, but nothing was raised', 'E519')
+
+# Ends the test as skipped (the runner counts it apart from the failures).
+export def skip(reason: str):
+    raise SkipTest(reason, 'E523')
+
+class _Report:
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+
+# Runs the tests in the order given, one after another in this process, and prints one line each (ok, FAIL with the message and
+# the line, or skip), then the counts. args holds the words after the file name; `--filter TEXT` runs only the tests whose name
+# contains TEXT. The program ends with status 1 when any test failed. Called by the driver the compiler writes for `tomato test`.
+export def _run_all(names: list[str], tests: list[fn()], args: tuple[str]):
+    pattern = ''
+    wants = False
+    for w in args:
+        if wants:
+            pattern = w
+            wants = False
+        elif w == '--filter':
+            wants = True
+    report = _Report()
+    for i in range(len(names)):
+        if pattern != '' and pattern not in names[i]:
+            continue
+        test = tests[i]
+        try:
+            test()
+            report.passed += 1
+            print(f'ok   {names[i]}')
+        catch SkipTest as s:
+            report.skipped += 1
+            print(f'skip {names[i]}  ({s.message})')
+        catch Error as e:
+            line = !tomato_caught_line()
+            report.failed += 1
+            print(f'FAIL {names[i]}')
+            if line > 0:
+                print(f'     {e.message}  (raised on line {line})')
+            else:
+                print(f'     {e.message}')
+    if pattern != '' and report.passed + report.failed + report.skipped == 0:
+        # a typo in the filter would otherwise pass silently; the status stays 0 (whether it should be 1 is Davis's choice)
+        print(f"warning: no test name contains '{pattern}'")
+    print(f'{report.passed} passed, {report.failed} failed, {report.skipped} skipped')
+    if report.failed > 0:
+        sys.exit(1)

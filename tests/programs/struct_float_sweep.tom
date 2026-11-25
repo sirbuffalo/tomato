@@ -1,0 +1,50 @@
+import struct
+
+def pack_f64(x: float, order: str) -> list[int]:
+    p = struct.Packer(order)
+    p.f64(x)
+    return p.bytes()
+
+@main
+def main():
+    # a sweep of pseudo-random bit patterns: every finite pattern reads back to the same bytes, and f64 values narrow to f32
+    state = 12345
+    same64 = 0
+    same32 = 0
+    skipped = 0
+    over = 0
+    check = 0
+    for i in range(3000):
+        raw: list[int] = []
+        for j in range(8):
+            state = (state * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+            raw.append((state // 1099511627776) % 256)
+        if i % 3 == 1:
+            raw[0] = raw[0] % 128
+            raw[1] = raw[1] % 32
+        if i % 3 == 2:
+            raw[1] = raw[1] % 16
+            raw[2] = 0
+        rd = struct.Reader(raw)
+        try:
+            x = rd.read_f64()
+        catch ValueError:
+            skipped += 1
+            continue
+        if pack_f64(x, '>') == raw:
+            same64 += 1
+        narrow = struct.Packer('<')
+        try:
+            narrow.f32(x)
+        catch OverflowError:
+            over += 1
+            continue
+        nb = narrow.bytes()
+        back = struct.Reader(nb, '<').read_f32()
+        again = struct.Packer('<')
+        again.f32(back)
+        if again.bytes() == nb:
+            same32 += 1
+        for k in range(4):
+            check = (check * 31 + nb[k]) % 1000000007
+    print(same64, same32, skipped, over, check)

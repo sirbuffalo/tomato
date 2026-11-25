@@ -1,0 +1,15 @@
+# re: a plain linear scan over a long text must not use up the step budget (it grows with the text), while catastrophic
+# backtracking still does. Native only (not in the ASan list: the text is 3.6 million characters).
+from re import compile, RegexError
+
+@main
+def main():
+    text = 'hello world ' * 300000
+    print(len(compile('\\w+').findall(text)))
+    print(len(compile('\\d+x').findall(text)))
+    print(compile('zzz').search(text) is None)
+    try:
+        compile('(a+)+$').search('a' * 40 + 'b')
+        print('limit missed')
+    catch RegexError as e:
+        print(e.id)

@@ -1,0 +1,294 @@
+join('a') 'a'
+join('a', 'b') 'a/b'
+join('a', 'b', 'c') 'a/b/c'
+join('/a', 'b') '/a/b'
+join('a', '/b') '/b'
+join('a', '/b', 'c') '/b/c'
+join('a/', 'b') 'a/b'
+join('a', 'b/') 'a/b/'
+join('a/', '/b') '/b'
+join('', 'a') 'a'
+join('a', '') 'a/'
+join('', '') ''
+join('a', '', 'b') 'a/b'
+join('', '', 'x') 'x'
+join('/', 'a') '/a'
+join('a', '/') '/'
+join('/', '/') '/'
+join('//', 'a') '//a'
+join('a//', 'b') 'a//b'
+join('a', '.', 'b') 'a/./b'
+join('a', '..', 'b') 'a/../b'
+join('/a/b', '../c') '/a/b/../c'
+join('a b', 'c d') 'a b/c d'
+join('é', '日本') 'é/日本'
+join('a', 'b', 'c', 'd', 'e') 'a/b/c/d/e'
+join('x', '', '', 'y') 'x/y'
+join('/usr', 'local', 'bin') '/usr/local/bin'
+join('usr/', '/local', 'bin') '/local/bin'
+join('.', 'a') './a'
+join('a', '.') 'a/.'
+split('') ('', '')
+split('/') ('/', '')
+split('//') ('//', '')
+split('///') ('///', '')
+split('a') ('', 'a')
+split('/a') ('/', 'a')
+split('a/') ('a', '')
+split('/a/') ('/a', '')
+split('a/b') ('a', 'b')
+split('/a/b') ('/a', 'b')
+split('a/b/') ('a/b', '')
+split('/a/b/') ('/a/b', '')
+split('a//b') ('a', 'b')
+split('//a//b//') ('//a//b', '')
+split('a/b/c.txt') ('a/b', 'c.txt')
+split('/a/b/c.txt') ('/a/b', 'c.txt')
+split('c.txt') ('', 'c.txt')
+split('.bashrc') ('', '.bashrc')
+split('/a/.bashrc') ('/a', '.bashrc')
+split('a.b.c') ('', 'a.b.c')
+split('/a.b/c') ('/a.b', 'c')
+split('/a.b/c.d') ('/a.b', 'c.d')
+split('archive.tar.gz') ('', 'archive.tar.gz')
+split('..') ('', '..')
+split('.') ('', '.')
+split('...') ('', '...')
+split('..a') ('', '..a')
+split('a.') ('', 'a.')
+split('a..') ('', 'a..')
+split('.a.b') ('', '.a.b')
+split('a/.') ('a', '.')
+split('a/..') ('a', '..')
+split('a/b/..') ('a/b', '..')
+split('dir.d/') ('dir.d', '')
+split('é/日本.txt') ('é', '日本.txt')
+split('a b/c d.e f') ('a b', 'c d.e f')
+split('/a/b/.hidden.txt') ('/a/b', '.hidden.txt')
+split('noext/') ('noext', '')
+split('/.') ('/', '.')
+split('/..') ('/', '..')
+split('./a') ('.', 'a')
+split('../a') ('..', 'a')
+splitext('') ('', '')
+splitext('/') ('/', '')
+splitext('//') ('//', '')
+splitext('///') ('///', '')
+splitext('a') ('a', '')
+splitext('/a') ('/a', '')
+splitext('a/') ('a/', '')
+splitext('/a/') ('/a/', '')
+splitext('a/b') ('a/b', '')
+splitext('/a/b') ('/a/b', '')
+splitext('a/b/') ('a/b/', '')
+splitext('/a/b/') ('/a/b/', '')
+splitext('a//b') ('a//b', '')
+splitext('//a//b//') ('//a//b//', '')
+splitext('a/b/c.txt') ('a/b/c', '.txt')
+splitext('/a/b/c.txt') ('/a/b/c', '.txt')
+splitext('c.txt') ('c', '.txt')
+splitext('.bashrc') ('.bashrc', '')
+splitext('/a/.bashrc') ('/a/.bashrc', '')
+splitext('a.b.c') ('a.b', '.c')
+splitext('/a.b/c') ('/a.b/c', '')
+splitext('/a.b/c.d') ('/a.b/c', '.d')
+splitext('archive.tar.gz') ('archive.tar', '.gz')
+splitext('..') ('..', '')
+splitext('.') ('.', '')
+splitext('...') ('...', '')
+splitext('..a') ('..a', '')
+splitext('a.') ('a', '.')
+splitext('a..') ('a.', '.')
+splitext('.a.b') ('.a', '.b')
+splitext('a/.') ('a/.', '')
+splitext('a/..') ('a/..', '')
+splitext('a/b/..') ('a/b/..', '')
+splitext('dir.d/') ('dir.d/', '')
+splitext('é/日本.txt') ('é/日本', '.txt')
+splitext('a b/c d.e f') ('a b/c d', '.e f')
+splitext('/a/b/.hidden.txt') ('/a/b/.hidden', '.txt')
+splitext('noext/') ('noext/', '')
+splitext('/.') ('/.', '')
+splitext('/..') ('/..', '')
+splitext('./a') ('./a', '')
+splitext('../a') ('../a', '')
+basename('') ''
+basename('/') ''
+basename('//') ''
+basename('///') ''
+basename('a') 'a'
+basename('/a') 'a'
+basename('a/') ''
+basename('/a/') ''
+basename('a/b') 'b'
+basename('/a/b') 'b'
+basename('a/b/') ''
+basename('/a/b/') ''
+basename('a//b') 'b'
+basename('//a//b//') ''
+basename('a/b/c.txt') 'c.txt'
+basename('/a/b/c.txt') 'c.txt'
+basename('c.txt') 'c.txt'
+basename('.bashrc') '.bashrc'
+basename('/a/.bashrc') '.bashrc'
+basename('a.b.c') 'a.b.c'
+basename('/a.b/c') 'c'
+basename('/a.b/c.d') 'c.d'
+basename('archive.tar.gz') 'archive.tar.gz'
+basename('..') '..'
+basename('.') '.'
+basename('...') '...'
+basename('..a') '..a'
+basename('a.') 'a.'
+basename('a..') 'a..'
+basename('.a.b') '.a.b'
+basename('a/.') '.'
+basename('a/..') '..'
+basename('a/b/..') '..'
+basename('dir.d/') ''
+basename('é/日本.txt') '日本.txt'
+basename('a b/c d.e f') 'c d.e f'
+basename('/a/b/.hidden.txt') '.hidden.txt'
+basename('noext/') ''
+basename('/.') '.'
+basename('/..') '..'
+basename('./a') 'a'
+basename('../a') 'a'
+dirname('') ''
+dirname('/') '/'
+dirname('//') '//'
+dirname('///') '///'
+dirname('a') ''
+dirname('/a') '/'
+dirname('a/') 'a'
+dirname('/a/') '/a'
+dirname('a/b') 'a'
+dirname('/a/b') '/a'
+dirname('a/b/') 'a/b'
+dirname('/a/b/') '/a/b'
+dirname('a//b') 'a'
+dirname('//a//b//') '//a//b'
+dirname('a/b/c.txt') 'a/b'
+dirname('/a/b/c.txt') '/a/b'
+dirname('c.txt') ''
+dirname('.bashrc') ''
+dirname('/a/.bashrc') '/a'
+dirname('a.b.c') ''
+dirname('/a.b/c') '/a.b'
+dirname('/a.b/c.d') '/a.b'
+dirname('archive.tar.gz') ''
+dirname('..') ''
+dirname('.') ''
+dirname('...') ''
+dirname('..a') ''
+dirname('a.') ''
+dirname('a..') ''
+dirname('.a.b') ''
+dirname('a/.') 'a'
+dirname('a/..') 'a'
+dirname('a/b/..') 'a/b'
+dirname('dir.d/') 'dir.d'
+dirname('é/日本.txt') 'é'
+dirname('a b/c d.e f') 'a b'
+dirname('/a/b/.hidden.txt') '/a/b'
+dirname('noext/') 'noext'
+dirname('/.') '/'
+dirname('/..') '/'
+dirname('./a') '.'
+dirname('../a') '..'
+isabs('') False
+isabs('/') True
+isabs('//') True
+isabs('///') True
+isabs('a') False
+isabs('/a') True
+isabs('a/') False
+isabs('/a/') True
+isabs('a/b') False
+isabs('/a/b') True
+isabs('a/b/') False
+isabs('/a/b/') True
+isabs('a//b') False
+isabs('//a//b//') True
+isabs('a/b/c.txt') False
+isabs('/a/b/c.txt') True
+isabs('c.txt') False
+isabs('.bashrc') False
+isabs('/a/.bashrc') True
+isabs('a.b.c') False
+isabs('/a.b/c') True
+isabs('/a.b/c.d') True
+isabs('archive.tar.gz') False
+isabs('..') False
+isabs('.') False
+isabs('...') False
+isabs('..a') False
+isabs('a.') False
+isabs('a..') False
+isabs('.a.b') False
+isabs('a/.') False
+isabs('a/..') False
+isabs('a/b/..') False
+isabs('dir.d/') False
+isabs('é/日本.txt') False
+isabs('a b/c d.e f') False
+isabs('/a/b/.hidden.txt') True
+isabs('noext/') False
+isabs('/.') True
+isabs('/..') True
+isabs('./a') False
+isabs('../a') False
+normpath('') '.'
+normpath('.') '.'
+normpath('..') '..'
+normpath('/') '/'
+normpath('//') '//'
+normpath('///') '/'
+normpath('////') '/'
+normpath('a') 'a'
+normpath('a/') 'a'
+normpath('a//b') 'a/b'
+normpath('a/./b') 'a/b'
+normpath('a/../b') 'b'
+normpath('a/b/..') 'a'
+normpath('a/b/../..') '.'
+normpath('a/b/../../..') '..'
+normpath('../a') '../a'
+normpath('../../a') '../../a'
+normpath('/..') '/'
+normpath('/../a') '/a'
+normpath('/a/../..') '/'
+normpath('//a/../b') '//b'
+normpath('///a') '/a'
+normpath('/a/./b/../c/') '/a/c'
+normpath('./a/./b/.') 'a/b'
+normpath('a/b/./../c') 'a/c'
+normpath('a/..b/c') 'a/..b/c'
+normpath('a/.../c') 'a/.../c'
+normpath('/a//b///c////') '/a/b/c'
+normpath('é/../日本') '日本'
+normpath('../..') '../..'
+normpath('./..') '..'
+normpath('..//a') '../a'
+normpath('a/b/c/../../d') 'a/d'
+normpath('/./.') '/'
+relpath('/a/b/c', '/a') 'b/c'
+relpath('/a', '/a/b/c') '../..'
+relpath('/a/b', '/a/b') '.'
+relpath('/a/b/c', '/a/d') '../b/c'
+relpath('/', '/a') '..'
+relpath('/a', '/') 'a'
+relpath('/a/b', '/c/d') '../../a/b'
+relpath('/a/b/', '/a') 'b'
+relpath('/a//b', '/a/./c') '../b'
+relpath('/a/b/c/d', '/a/b/x/y') '../../c/d'
+relpath('/x', '/') 'x'
+relpath('/', '/') '.'
+relpath('a/b', 'a') 'b'
+relpath('a', 'a/b') '..'
+relpath('a/b/c', 'a/d') '../b/c'
+relpath('a', 'a') '.'
+relpath('é/日本', 'é') '日本'
+relpath('/a/b/../c', '/a') 'c'
+relpath('/a/./b', '/a/b/c') '..'
+293 cases

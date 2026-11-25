@@ -1,0 +1,4 @@
+# the entry `test` needs at least one function marked @test
+@main
+def main():
+    print(1)

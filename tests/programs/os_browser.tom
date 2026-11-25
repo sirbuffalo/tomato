@@ -1,0 +1,115 @@
+# sys, os, ospath and File in the browser playground (tests/run.sh runs this through WebAssembly only): the files and
+# directories are the page's own, kept in memory; putenv, unsetenv, chdir and getpid raise RuntimeError there; getcwd is '/'.
+import os
+import ospath
+import sys
+from io import StringIO
+
+def names(xs: list[str]) -> str:
+    return '[' + ', '.join(xs) + ']'
+
+def blocked(what: str):
+    try:
+        if what == 'putenv':
+            os.putenv('A', 'b')
+        elif what == 'unsetenv':
+            os.unsetenv('A')
+        elif what == 'chdir':
+            os.chdir('/tmp')
+        else:
+            print(os.getpid())
+    catch RuntimeError as e:
+        print(what, e.id, e.message)
+
+@main
+def main():
+    print(sys.platform(), len(sys.argv()), len(sys.version()) > 0)
+    print(os.getenv('NO_SUCH_VARIABLE_12345'), os.getenv('NO_SUCH_VARIABLE_12345', 'dflt'), 'NO_SUCH_VARIABLE_12345' in os.environ())
+    for w in ['putenv', 'unsetenv', 'chdir', 'getpid']:
+        blocked(w)
+    print(os.getcwd(), ospath.abspath('x'), ospath.relpath('/a/b', '/a'))
+    # files and directories (made under /tmp, which exists)
+    base = '/tmp/browser_os'
+    os.mkdir(base)
+    print(ospath.exists(base), ospath.isdir(base), ospath.isfile(base), os.listdir(base))
+    os.write_text(base + '/a.txt', 'one\n')
+    os.write_text(base + '/a.txt', 'two\n', append=True)
+    print(os.read_text(base + '/a.txt').replace('\n', '|'), ospath.getsize(base + '/a.txt'), ospath.isfile(base + '/a.txt'))
+    os.makedirs(base + '/p/q/r')
+    os.makedirs(base + '/p/q/r', exist_ok=True)
+    for n in ['b', 'B', 'a', '_', 'é']:
+        os.write_text(base + '/' + n, n)
+    print(names(os.listdir(base)), names(os.listdir(base + '/p')), names(os.listdir(base + '/p/q/r')))
+    st = os.stat(base + '/a.txt')
+    sd = os.stat(base + '/p')
+    print(st.size, st.is_file, st.is_dir, sd.is_file, sd.is_dir, sd.is_symlink)
+    os.rename(base + '/a.txt', base + '/z.txt')
+    os.rename(base + '/p', base + '/p2')
+    print(names(os.listdir(base)), ospath.isdir(base + '/p2/q/r'), ospath.exists(base + '/a.txt'))
+    os.remove(base + '/z.txt')
+    os.rmdir(base + '/p2/q/r')
+    print(names(os.listdir(base)), names(os.listdir(base + '/p2/q')))
+    os.write_bytes(base + '/bin', [0, 1, 254, 255])
+    os.write_bytes(base + '/bin', [7], append=True)
+    print(os.read_bytes(base + '/bin'))
+    # the error classes
+    try:
+        os.listdir(base + '/missing')
+    catch FileNotFoundError as e:
+        print('listdir', e.id)
+    try:
+        os.mkdir(base)
+    catch FileExistsError as e:
+        print('mkdir', e.id)
+    try:
+        os.mkdir(base + '/no/parent')
+    catch FileNotFoundError as e:
+        print('mkdir parent', e.id)
+    try:
+        os.read_text(base + '/p2')
+    catch IsADirectoryError as e:
+        print('read_text dir', e.id)
+    try:
+        os.listdir(base + '/bin')
+    catch NotADirectoryError as e:
+        print('listdir file', e.id)
+    try:
+        os.rmdir(base)
+    catch IOError as e:
+        print('rmdir', e.id)
+    try:
+        os.remove(base + '/p2')
+    catch IsADirectoryError as e:
+        print('remove dir', e.id)
+    try:
+        os.remove(base + '/missing')
+    catch FileNotFoundError as e:
+        print('remove', e.id)
+    # File: lines, modes
+    f = open(base + '/lines', 'w')
+    f.writelines(['one\n', 'two\r\n', 'three'])
+    f.flush()
+    f.close()
+    f = open(base + '/lines')
+    print(f.readline().replace('\n', '|'))
+    for line in f:
+        print(line.replace('\r', '<CR>').replace('\n', '<LF>'))
+    f.close()
+    f = open(base + '/lines')
+    print(len(f.readlines()))
+    f.close()
+    try:
+        open(base + '/lines', 'rb')
+    catch ValueError as e:
+        print('mode', e.id)
+    try:
+        open(base + '/lines', 'x')
+    catch FileExistsError as e:
+        print('x', e.id)
+    f = open(base + '/lines', 'a')
+    f.write('!')
+    f.close()
+    print(os.read_text(base + '/lines').replace('\n', '|').replace('\r', '<CR>'))
+    s = StringIO('abc')
+    s.seek(1)
+    print(s.read())

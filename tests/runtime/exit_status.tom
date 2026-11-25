@@ -1,0 +1,16 @@
+# sys.exit(3) ends the program at once with status 3: text written with write_stdout and print is flushed, a finally block
+# does not run, and nothing after the call runs.
+import sys
+
+def leave():
+    try:
+        sys.exit(3)
+    finally:
+        print('NEVER: finally')
+
+@main
+def main():
+    print('before')
+    sys.write_stdout('pending ')
+    leave()
+    print('NEVER: after')

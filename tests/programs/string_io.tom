@@ -1,0 +1,76 @@
+# io.StringIO: text in memory written and read like a file.
+from io import StringIO
+
+def show(text: str) -> str:
+    return '[' + text.replace('\n', '<LF>') + ']'
+
+@main
+def main():
+    s = StringIO()
+    print(show(s.getvalue()), show(s.read()), show(s.readline()), len(s.readlines()))
+    s.write('hello')
+    s.write(' ')
+    s.write('world\nsecond\nthird')
+    print(show(s.getvalue()))
+    print(show(s.read()))          # the position is at the end
+    s.seek(0)
+    print(show(s.readline()), show(s.readline()), show(s.readline()), show(s.readline()))
+    s.seek(0)
+    print(len(s.readlines()))
+    s.seek(0)
+    for line in s.readlines():
+        print(show(line))
+    s.seek(6)
+    print(show(s.read()))
+    # an initial value starts at position 0: write overwrites, as in Python
+    t = StringIO('abcdef')
+    t.write('XY')
+    print(show(t.getvalue()), show(t.read()))
+    t.write('!!!!!!')
+    print(show(t.getvalue()))
+    t.seek(2)
+    t.write('--')
+    print(show(t.getvalue()))
+    # a write past the end pads the gap with NUL characters, as in Python
+    gap = StringIO('ab')
+    gap.seek(4)
+    gap.write('x')
+    padded = gap.getvalue()
+    print(len(padded), ord(padded[2]), ord(padded[3]), padded[4])
+    u = StringIO('é日')
+    print(show(u.read()), show(u.getvalue()), len(u.getvalue()))
+    u.seek(1)
+    u.write('本')
+    print(show(u.getvalue()))
+    # many small writes stay fast, and reading them back works
+    big = StringIO()
+    for i in range(20000):
+        big.write('line ' + str(i) + '\n')
+    print(len(big.getvalue()))
+    big.seek(0)
+    lines = big.readlines()
+    print(len(lines), show(lines[0]), show(lines[19999]))
+    # an empty text, one without a newline, only newlines
+    v = StringIO('\n\n')
+    print(len(v.readlines()), show(v.read()))
+    w = StringIO('no newline')
+    print(show(w.readline()), show(w.readline()))
+    # seek: negative is a ValueError; after close every use is a ValueError
+    try:
+        w.seek(-1)
+    catch ValueError as e:
+        print(e.id, e.message)
+    w.close()
+    try:
+        w.write('x')
+    catch ValueError as e:
+        print(e.id, e.message)
+    try:
+        w.getvalue()
+    catch ValueError as e:
+        print(e.id)
+    try:
+        w.read()
+    catch ValueError as e:
+        print(e.id)
+    w.close()

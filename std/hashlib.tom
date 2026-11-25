@@ -1,0 +1,277 @@
+# Incremental SHA-256, SHA-224, SHA-1 and MD5. SHA-1 and MD5 are not collision resistant.
+import utf8
+
+def _rotr(x: int, n: int) -> int:
+    return ((x >> n) | (x << (32 - n))) & 4294967295
+
+def _rotl(x: int, n: int) -> int:
+    return ((x << n) | (x >> (32 - n))) & 4294967295
+
+def _hex(data: list[int]) -> str:
+    digits = '0123456789abcdef'
+    out: list[str] = []
+    for b in data:
+        out.append(digits[b // 16] + digits[b % 16])
+    return ''.join(out)
+
+export class Hash:
+    name: str = ''
+    digest_size: int = 0
+    block_size: int = 64
+    state: list[int] = []
+    buffer: list[int] = []
+    length: int = 0
+    @init
+    def make(self, name: str):
+        self.name = name
+        self.buffer = []
+        self.length = 0
+        if name == 'sha256':
+            self.digest_size = 32
+            self.state = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225]
+        elif name == 'sha224':
+            self.digest_size = 28
+            self.state = [3238371032, 914150663, 812702999, 4144912697, 4290775857, 1750603025, 1694076839, 3204075428]
+        elif name == 'sha1':
+            self.digest_size = 20
+            self.state = [1732584193, 4023233417, 2562383102, 271733878, 3285377520]
+        elif name == 'md5':
+            self.digest_size = 16
+            self.state = [1732584193, 4023233417, 2562383102, 271733878]
+        else:
+            raise ValueError('unknown hash algorithm', 'E501')
+
+    def copy(self) -> Hash:
+        other = Hash(self.name)
+        other.state = self.state[:]
+        other.buffer = self.buffer[:]
+        other.length = self.length
+        return other
+
+    def update(self, data: list[int]):
+        for b in data:
+            if b < 0 or b > 255:
+                raise ValueError('a byte must be from 0 to 255', 'E391')
+        self.length += len(data)
+        self.buffer += data
+        pos = 0
+        while pos + 64 <= len(self.buffer):
+            self._block(self.buffer[pos:pos+64])
+            pos += 64
+        self.buffer = self.buffer[pos:]
+
+    def update_text(self, text: str):
+        self.update(utf8.encode(text))
+
+    def digest(self) -> list[int]:
+        h = self.copy()
+        bits = (self.length * 8) % 18446744073709551616
+        pad: list[int] = [128]
+        while (self.length + len(pad)) % 64 != 56:
+            pad.append(0)
+        for i in range(8):
+            shift = 56 - 8 * i
+            if self.name == 'md5':
+                shift = 8 * i
+            pad.append((bits // (2 ** shift)) % 256)
+        h.update(pad)
+        out: list[int] = []
+        for word in h.state:
+            for i in range(4):
+                shift = 24 - 8 * i
+                if self.name == 'md5':
+                    shift = 8 * i
+                out.append((word >> shift) & 255)
+        return out[:self.digest_size]
+
+    def hexdigest(self) -> str:
+        return _hex(self.digest())
+
+    def _block(self, block: list[int]):
+        if self.name == 'sha1':
+            self._sha1(block)
+        elif self.name == 'md5':
+            self._md5(block)
+        else:
+            self._sha256(block)
+
+    def _sha1(self, block: list[int]):
+        w: list[int] = []
+        for i in range(16):
+            j = 4 * i
+            w.append((block[j] << 24) | (block[j+1] << 16) | (block[j+2] << 8) | block[j+3])
+        for i in range(16, 80):
+            w.append(_rotl(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1))
+        a = self.state[0]
+        b = self.state[1]
+        c = self.state[2]
+        d = self.state[3]
+        e = self.state[4]
+        for i in range(80):
+            if i < 20:
+                f = (b & c) | ((b ^ 4294967295) & d)
+                k = 1518500249
+            elif i < 40:
+                f = b ^ c ^ d
+                k = 1859775393
+            elif i < 60:
+                f = (b & c) | (b & d) | (c & d)
+                k = 2400959708
+            else:
+                f = b ^ c ^ d
+                k = 3395469782
+            t = (_rotl(a, 5) + f + e + k + w[i]) & 4294967295
+            e = d
+            d = c
+            c = _rotl(b, 30)
+            b = a
+            a = t
+        self.state = [(self.state[0] + a) & 4294967295, (self.state[1] + b) & 4294967295, (self.state[2] + c) & 4294967295, (self.state[3] + d) & 4294967295, (self.state[4] + e) & 4294967295]
+
+    def _sha256(self, block: list[int]):
+        k: list[int] = [1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298]
+        w: list[int] = []
+        for i in range(16):
+            j = 4 * i
+            w.append((block[j] << 24) | (block[j+1] << 16) | (block[j+2] << 8) | block[j+3])
+        for i in range(16, 64):
+            x = w[i-15]
+            y = w[i-2]
+            s0 = _rotr(x, 7) ^ _rotr(x, 18) ^ (x >> 3)
+            s1 = _rotr(y, 17) ^ _rotr(y, 19) ^ (y >> 10)
+            w.append((w[i-16] + s0 + w[i-7] + s1) & 4294967295)
+        a = self.state[0]
+        b = self.state[1]
+        c = self.state[2]
+        d = self.state[3]
+        e = self.state[4]
+        f = self.state[5]
+        g = self.state[6]
+        h = self.state[7]
+        for i in range(64):
+            s1 = _rotr(e, 6) ^ _rotr(e, 11) ^ _rotr(e, 25)
+            ch = (e & f) ^ ((e ^ 4294967295) & g)
+            t1 = (h + s1 + ch + k[i] + w[i]) & 4294967295
+            s0 = _rotr(a, 2) ^ _rotr(a, 13) ^ _rotr(a, 22)
+            maj = (a & b) ^ (a & c) ^ (b & c)
+            t2 = (s0 + maj) & 4294967295
+            h = g
+            g = f
+            f = e
+            e = (d + t1) & 4294967295
+            d = c
+            c = b
+            b = a
+            a = (t1 + t2) & 4294967295
+        vals = [a, b, c, d, e, f, g, h]
+        for i in range(8):
+            self.state[i] = (self.state[i] + vals[i]) & 4294967295
+
+    def _md5(self, block: list[int]):
+        k: list[int] = [3614090360, 3905402710, 606105819, 3250441966, 4118548399, 1200080426, 2821735955, 4249261313, 1770035416, 2336552879, 4294925233, 2304563134, 1804603682, 4254626195, 2792965006, 1236535329, 4129170786, 3225465664, 643717713, 3921069994, 3593408605, 38016083, 3634488961, 3889429448, 568446438, 3275163606, 4107603335, 1163531501, 2850285829, 4243563512, 1735328473, 2368359562, 4294588738, 2272392833, 1839030562, 4259657740, 2763975236, 1272893353, 4139469664, 3200236656, 681279174, 3936430074, 3572445317, 76029189, 3654602809, 3873151461, 530742520, 3299628645, 4096336452, 1126891415, 2878612391, 4237533241, 1700485571, 2399980690, 4293915773, 2240044497, 1873313359, 4264355552, 2734768916, 1309151649, 4149444226, 3174756917, 718787259, 3951481745]
+        shifts = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21]
+        w: list[int] = []
+        for i in range(16):
+            j = 4 * i
+            w.append(block[j] | (block[j+1] << 8) | (block[j+2] << 16) | (block[j+3] << 24))
+        a = self.state[0]
+        b = self.state[1]
+        c = self.state[2]
+        d = self.state[3]
+        for i in range(64):
+            if i < 16:
+                f = (b & c) | ((b ^ 4294967295) & d)
+                g = i
+            elif i < 32:
+                f = (d & b) | ((d ^ 4294967295) & c)
+                g = (5 * i + 1) % 16
+            elif i < 48:
+                f = b ^ c ^ d
+                g = (3 * i + 5) % 16
+            else:
+                f = c ^ (b | (d ^ 4294967295))
+                g = (7 * i) % 16
+            temp = d
+            d = c
+            c = b
+            b = (b + _rotl((a + f + k[i] + w[g]) & 4294967295, shifts[(i // 16) * 4 + i % 4])) & 4294967295
+            a = temp
+        vals = [a, b, c, d]
+        for i in range(4):
+            self.state[i] = (self.state[i] + vals[i]) & 4294967295
+
+export def new(name: str, data: list[int] = []) -> Hash:
+    h = Hash(name)
+    h.update(data)
+    return h
+
+export def sha256(data: list[int] = []) -> Hash:
+    return new('sha256', data)
+
+export def sha224(data: list[int] = []) -> Hash:
+    return new('sha224', data)
+
+export def sha1(data: list[int] = []) -> Hash:
+    return new('sha1', data)
+
+export def md5(data: list[int] = []) -> Hash:
+    return new('md5', data)
+
+export def sha256_hex(data: list[int]) -> str:
+    return sha256(data).hexdigest()
+
+export def sha1_hex(data: list[int]) -> str:
+    return sha1(data).hexdigest()
+
+export def md5_hex(data: list[int]) -> str:
+    return md5(data).hexdigest()
+
+# PBKDF2-HMAC, RFC 8018. A zero dklen selects the digest size.
+export def pbkdf2_hmac(hash_name: str, password: list[int], salt: list[int], iterations: int, dklen: int = 0) -> list[int]:
+    probe = new(hash_name)
+    if iterations < 1 or dklen < 0:
+        raise ValueError('invalid PBKDF2 iteration count or length', 'E502')
+    for b in password + salt:
+        if b < 0 or b > 255:
+            raise ValueError('a byte must be from 0 to 255', 'E391')
+    if dklen == 0:
+        dklen = probe.digest_size
+    if dklen > probe.digest_size * 4294967295:
+        raise OverflowError('derived key is too long', 'E500')
+    key = password[:]
+    if len(key) > 64:
+        key = new(hash_name, key).digest()
+    while len(key) < 64:
+        key.append(0)
+    ipad: list[int] = []
+    opad: list[int] = []
+    for b in key:
+        ipad.append(b ^ 54)
+        opad.append(b ^ 92)
+    inner = new(hash_name, ipad)
+    outer = new(hash_name, opad)
+    out: list[int] = []
+    block = 1
+    while len(out) < dklen:
+        n = block
+        suffix: list[int] = [0, 0, 0, 0]
+        for i in range(3, -1, -1):
+            suffix[i] = n % 256
+            n = n // 256
+        h = inner.copy()
+        h.update(salt + suffix)
+        o = outer.copy()
+        o.update(h.digest())
+        u = o.digest()
+        result = u[:]
+        for i in range(1, iterations):
+            h = inner.copy()
+            h.update(u)
+            o = outer.copy()
+            o.update(h.digest())
+            u = o.digest()
+            for j in range(len(result)):
+                result[j] = result[j] ^ u[j]
+        out.extend(result)
+        block += 1
+    return out[:dklen]

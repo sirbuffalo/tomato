@@ -10,7 +10,7 @@
 #              the notary profile, WASI SDK and toolchains, GitHub CLI login and push rights, a quiet machine
 #   version    the next version number (or --version X); refuses a version that already has a tag or a GitHub release
 #   test       tests/run.sh with the WASI SDK (so the wasm files are rebuilt and compared too)
-#   bump       VERSION and site/config.js
+#   bump       VERSION, site/config.js and std/sys.tom (sys.version)
 #   linux      the same tests (tests/run.sh) and benchmarks (plus callgrind instruction counts) on a Linux x86-64 machine over ssh, from the
 #              commit being released (before the bump); results go to benchmarks/results/linux-x86_64/. A test FAILURE there stops the release; an
 #              unreachable host, missing tools or failed Linux benchmarks only warn
@@ -204,7 +204,7 @@ verify_state_tree() { # a resumed run must still be on the commit the run starte
   in_clone
   base="$(st_get base_sha)"; [ -n "$base" ] || return 0
   git merge-base --is-ancestor "$base" HEAD 2>/dev/null || die "the clone is no longer based on $base (state says so). Use --restart."
-  bad="$(git status --porcelain | sed 's/^...//' | grep -v -e '^VERSION$' -e '^site/' -e '^benchmarks/results/' -e '^docs/performance.md$' || true)"
+  bad="$(git status --porcelain | sed 's/^...//' | grep -v -e '^VERSION$' -e '^std/sys.tom$' -e '^site/' -e '^benchmarks/results/' -e '^docs/performance.md$' || true)"
   [ -z "$bad" ] || die "unexpected changes in $clone: $(echo "$bad" | head -5 | tr '\n' ' ')"
 }
 
@@ -334,11 +334,14 @@ step_test() {
 }
 
 step_bump() {
-  banner bump "VERSION and site/config.js"
+  banner bump "VERSION, site/config.js and std/sys.tom"
   in_clone; v="$(st_get version)"
   printf '%s\n' "$v" > VERSION
   sed "s/window.TOMATO_VERSION = \".*\"/window.TOMATO_VERSION = \"$v\"/" site/config.js > site/config.js.new && mv site/config.js.new site/config.js
-  note "VERSION and site/config.js now say $v"
+  for f in std/sys.tom site/wasm/std/sys.tom; do   # sys.version() returns the version as text (tests/run.sh t_sys_version checks it against VERSION)
+    sed "s/^    return '[0-9.]*'\$/    return '$v'/" "$f" > "$f.new" && mv "$f.new" "$f"
+  done
+  note "VERSION, site/config.js and std/sys.tom now say $v"
 }
 
 step_bench() {
@@ -557,14 +560,14 @@ step_commit() {
   [ "$(shasum -a 256 "release/out/tomato-$v.dmg" | cut -d' ' -f1)" = "$dsum" ] || die "release/out/tomato-$v.dmg is not the disk image that was signed"
   [ "$(sed -n 's/.*"dmg_sha256" *: *"\([^"]*\)".*/\1/p' site/latest.json)" = "$dsum" ] || die "site/latest.json dmg_sha256 is not $dsum"
   [ "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)" = "$v" ] || die "site/config.js is not $v"
-  bad="$(git status --porcelain | sed 's/^...//' | grep -v -e '^VERSION$' -e '^site/' -e '^benchmarks/results/' -e '^docs/performance.md$' || true)"
+  bad="$(git status --porcelain | sed 's/^...//' | grep -v -e '^VERSION$' -e '^std/sys.tom$' -e '^site/' -e '^benchmarks/results/' -e '^docs/performance.md$' || true)"
   [ -z "$bad" ] || die "unexpected changed files, not committing: $(echo "$bad" | head -5 | tr '\n' ' ')"
   if [ -z "$(git config user.email)" ]; then   # the author is the logged-in GitHub account (its noreply address), so nothing personal is configured here
     login="$(gh api user -q .login)"; gid="$(gh api user -q .id)"; gname="$(gh api user -q .name)"
     export GIT_AUTHOR_NAME="${gname:-$login}" GIT_COMMITTER_NAME="${gname:-$login}" GIT_AUTHOR_EMAIL="$gid+$login@users.noreply.github.com" GIT_COMMITTER_EMAIL="$gid+$login@users.noreply.github.com"
   fi
   if [ -n "$(git status --porcelain)" ]; then
-    git add -A VERSION site benchmarks/results docs/performance.md
+    git add -A VERSION std/sys.tom site benchmarks/results docs/performance.md
     git commit -q -m "Release Tomato $v" -m "Signed and notarized package sha256 $sum, disk image sha256 $dsum." || die "git commit failed"
   fi
   [ "$(git rev-parse HEAD)" != "$(st_get base_sha)" ] || die "nothing was committed"

@@ -1,0 +1,53 @@
+fail -> stop here
+fail empty -> test failed
+true ok -> passes
+true bad -> expected True
+true message -> expected True: one is not above two
+false ok -> passes
+false bad -> expected False
+equal ok -> passes
+equal int -> expected 3, got 2: sum
+equal text -> expected abd, got abc
+equal list -> expected [1, 3], got [1, 2]
+equal float -> expected 0.25, got 0.5
+equal bool -> expected False, got True
+equal object ok -> passes
+equal object -> expected Point(2), got Point(1)
+not equal ok -> passes
+not equal bad -> values are equal: a
+in ok -> passes
+in bad -> 5 is not in [1, 2, 3]: looking for five
+not in ok -> passes
+not in bad -> a is in ['a', 'b']
+none ok -> passes
+none bad -> expected None, got tom
+not none ok -> passes
+not none bad -> expected a value, got None: a name is needed
+close ok -> passes
+close bad -> expected 1.1, got 1.0
+close rel -> passes
+close rel bad -> expected 1100.0, got 1000.0: too far
+close abs -> passes
+close zero bad -> expected 1e-07, got 0.0
+close same -> passes
+close huge opposite -> expected -1e+308, got 1e+308
+close tiny -> expected 2e-320, got 1e-320
+raises ok -> passes
+raises any -> passes
+raises parent -> passes
+raises Error -> passes
+raises user class -> passes
+raises user subclass -> passes
+raises wrong class -> expected ValueError, but another error was raised: missing
+raises wrong user class -> expected DeepError, but another error was raised: app broke
+raises nothing -> expected ValueError to be raised, but nothing was raised
+raises with ok -> passes
+raises with nothing -> expected ValueError to be raised, but nothing was raised
+raises zero division -> passes
+raises assertion -> passes
+raises assertion is not runtime -> expected RuntimeError, but another error was raised: expected True
+returned: bad value True
+returned with: the text is not a whole number
+negative tolerance: a tolerance must not be negative
+skipped: no network
+an Error: again

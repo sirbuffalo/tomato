@@ -191,7 +191,7 @@ submit() {   # one piece of source text in $1
   if [ ! -s "$S/cd" ] && [ -s "$S/cb" ]; then
     first=$(head -1 "$S/cb")
     # a bare expression shows its value
-    if printf '%s' "$first" | grep -qvE '^(print|for|while|if|elif|else|try|catch|finally|raise|return|pass|break|continue)([ (:]|$)' \
+    if printf '%s' "$first" | grep -qvE '^(print|for|while|if|elif|else|try|catch|finally|raise|assert|return|pass|break|continue)([ (:]|$)' \
        && ! printf '%s' "$first" | grep -qE '^[A-Za-z_][A-Za-z_0-9]*( *:[^=]+)? *([-+*/%&|^]|//|\*\*)?= *[^=]' \
        && [ "$(wc -l < "$S/cb" | tr -d ' ')" = 1 ] && ! printf '%s' "$first" | grep -q ':$'; then
       printf 'print(%s)\n' "$first" > "$S/ce"

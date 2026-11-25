@@ -1,0 +1,40 @@
+# The process: the command-line words, ending the program, the standard streams, the platform and the version. Functions
+# only, no module-level values (D49b). Works natively and in the browser playground (Wave 2, pack A).
+!tomato_args(out: list[str]) -> int
+!tomato_exit(code: int) -> int
+!tomato_write_fd(fd: int, text: str) -> int
+!tomato_flush_std() -> int
+!tomato_platform() -> str
+
+# All the words of the command line: argv()[0] is the program as it was started, then the inputs. An entry point that takes
+# `*args: tuple[str]` receives the inputs after its fixed ones.
+export def argv() -> list[str]:
+    out: list[str] = []
+    _r = !tomato_args(out)
+    return out
+
+# Flushes standard output and error and every open File, then ends the program with status code (0 to 255) at once: finally
+# blocks and other tasks do not run. It never returns.
+export def exit(code: int = 0):
+    if code < 0 or code > 255:
+        raise ValueError('an exit status must be from 0 to 255', 'E513')
+    _r = !tomato_exit(code)
+
+# Writes text to standard error or standard output (no newline is added). Standard output goes through the same buffer as print.
+export def write_stderr(text: str):
+    _r = !tomato_write_fd(2, text)
+
+export def write_stdout(text: str):
+    _r = !tomato_write_fd(1, text)
+
+export def flush():
+    _r = !tomato_flush_std()
+
+# 'linux', 'darwin' or 'wasi' (the browser playground)
+export def platform() -> str:
+    return !tomato_platform()
+
+# The version of Tomato, the same text as `tomato version`. tests/run.sh (t_sys_version) checks the literal below against the VERSION file,
+# and the release script's bump step writes it (release/release.sh).
+export def version() -> str:
+    return '0.51'

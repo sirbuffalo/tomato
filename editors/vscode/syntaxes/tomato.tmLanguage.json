@@ -108,14 +108,14 @@
       "captures": { "1": { "name": "keyword.control.async.tomato" } }
     },
     "import-module": {
-      "match": "\\b(import|from)\\s+(asyncio|base64|cache|csv|datetime|hex|html|itertools|json|math|random|rational|requests|secrets|socket|statistics|textwrap|time|toml|urlparse|uuid)\\b",
+      "match": "\\b(import|from)\\s+(asyncio|base64|cache|csv|datetime|hex|hashlib|hmac|html|io|itertools|json|math|os|ospath|random|rational|re|requests|secrets|socket|statistics|struct|sys|testing|textwrap|time|toml|urlparse|utf8|uuid|zlib)\\b",
       "captures": { "1": { "name": "keyword.control.import.tomato" }, "2": { "name": "entity.name.namespace.tomato" } }
     },
     "generic-type": { "name": "support.type.primitive.tomato", "match": "\\b(task|Iterable)(?=\\s*\\[)" },
     "keyword": {
       "patterns": [
         { "name": "keyword.control.flow.tomato", "match": "\\b(if|elif|else|while|for|return|break|continue|pass)\\b" },
-        { "name": "keyword.control.exception.tomato", "match": "\\b(try|catch|finally|raise)\\b" },
+        { "name": "keyword.control.exception.tomato", "match": "\\b(try|catch|finally|raise|assert)\\b" },
         { "name": "keyword.control.flow.tomato", "match": "\\b(yield)\\b" },
         { "name": "keyword.control.import.tomato", "match": "\\b(import|from|export|as)\\b" },
         { "name": "keyword.control.async.tomato", "match": "\\b(async|await)\\b" },
@@ -128,7 +128,7 @@
     "constant": { "name": "constant.language.tomato", "match": "\\b(True|False|None)\\b" },
     "type": {
       "name": "support.type.primitive.tomato",
-      "match": "\\b(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|IOError|EOFError|CancelledError|Sized|bitarray|frozenbitarray)\\b(?!\\s*\\()"
+      "match": "\\b(int|uint|float|rational|bool|str|list|dict|set|tuple|File|range|Error|RuntimeError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|IOError|FileNotFoundError|FileExistsError|PermissionError|IsADirectoryError|NotADirectoryError|EOFError|CancelledError|Sized|bitarray|frozenbitarray)\\b(?!\\s*\\()"
     },
     "builtin": { "name": "support.function.builtin.tomato", "match": "\\b(print|len|str|int|float|rational|range|open|input|sleep|clock|min|max|sum|abs|chr|ord|round|divmod|any|all|hash|sorted|reversed|enumerate|zip|map|filter|list|dict|set|tuple|bool)(?=\\s*\\()" },
     "call": { "name": "entity.name.function.call.tomato", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" },

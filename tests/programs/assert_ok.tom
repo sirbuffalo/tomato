@@ -1,0 +1,77 @@
+# The assert statement (Wave 2, pack B): `assert condition` and `assert condition, 'message'`. Passing checks do nothing, and the
+# message is worked out only when a check fails. A failed one raises AssertionError, which is an Error but not a RuntimeError.
+class Box:
+    n: int = 0
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    def check(self):
+        assert self.n > 0, f'a box needs a positive n, got {self.n}'
+
+def note() -> str:
+    print('the message was made')
+    return 'made'
+
+def length_of(name: str | None) -> int:   # (an assert does not narrow the type; this one only checks the value)
+    assert name is not None
+    return len(name)
+
+def plain_fail():
+    assert 1 + 1 == 3
+
+def with_text():
+    x = 7
+    assert x == 8, 'x is ' + str(x)
+
+def with_fstring():
+    x = 7
+    assert x == 8, f'x is {x}'
+
+def with_call():
+    assert False, note()
+
+def in_method():
+    b = Box(0)
+    b.check()
+
+@main
+def main():
+    x = 5
+    assert x == 5
+    assert x == 5, 'x is five'
+    assert x == 5, 'x is ' + str(x)
+    assert x == 5, f'x is {x}'
+    assert x == 5, note()                  # the message is not made: the check passes
+    assert x > 0 and x < 10 or False
+    assert 'a' in ['a', 'b'], 'in a list'
+    assert not (x == 6)
+    ok = x == 5
+    assert ok
+    assert [1, 2] == [1, 2]
+    for i in range(3):
+        assert i < 3, f'i is {i}'
+    Box(2).check()
+    print(length_of('abc'))
+    fns: list[fn()] = [plain_fail, with_text, with_fstring, with_call, in_method]
+    for f in fns:
+        try:
+            f()
+            print('not raised')
+        catch AssertionError as e:
+            print(e.message, e.id)
+    try:
+        plain_fail()
+    catch RuntimeError:
+        print('wrong: a RuntimeError caught it')
+    catch Error as e:
+        print('Error catches it:', e.message)
+    try:
+        try:
+            plain_fail()
+        catch RuntimeError:
+            print('wrong: a RuntimeError caught it')
+    catch AssertionError as e:
+        print('it passed through catch RuntimeError:', e.message)
+    print('done')

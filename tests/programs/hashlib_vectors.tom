@@ -1,0 +1,39 @@
+import hashlib
+import utf8
+
+@main
+def main():
+    data: list[int] = []
+    for n in range(201):
+        print(n, hashlib.sha256(data).hexdigest(), hashlib.sha224(data).hexdigest(), hashlib.sha1(data).hexdigest(), hashlib.md5(data).hexdigest())
+        data.append(n % 256)
+    good = True
+    for split in range(201):
+        h = hashlib.sha256(data[:200][:split])
+        original = h.copy()
+        first = h.hexdigest()
+        if first != h.hexdigest() or original.hexdigest() != first:
+            good = False
+        h.update(data[split:200])
+        if h.hexdigest() != hashlib.sha256(data[:200]).hexdigest() or original.hexdigest() != first:
+            good = False
+    h = hashlib.sha256([1, 2])
+    try:
+        h.update([3, 256])
+    catch ValueError:
+        pass
+    for name in ['sha224', 'sha1', 'md5']:
+        expected = hashlib.new(name, data[:200]).hexdigest()
+        for split in range(201):
+            part = hashlib.new(name, data[:split])
+            part.update(data[split:200])
+            if part.hexdigest() != expected:
+                good = False
+    print('incremental', good, h.hexdigest() == hashlib.sha256([1, 2]).hexdigest())
+    print('text', hashlib.sha256(utf8.encode('hé😀')).hexdigest())
+    print(hashlib.sha256(utf8.encode('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq')).hexdigest(), hashlib.sha224(utf8.encode('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq')).hexdigest(), hashlib.sha1(utf8.encode('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq')).hexdigest(), hashlib.md5(utf8.encode('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq')).hexdigest())
+    print(hashlib.sha256(utf8.encode('abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu')).hexdigest(), hashlib.sha224(utf8.encode('abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu')).hexdigest(), hashlib.sha1(utf8.encode('abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu')).hexdigest(), hashlib.md5(utf8.encode('abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu')).hexdigest())
+    million: list[int] = []
+    for i in range(1000000):
+        million.append(97)
+    print('million', hashlib.sha256(million).hexdigest())

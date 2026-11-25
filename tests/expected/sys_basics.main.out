@@ -1,0 +1,14 @@
+2 0 alpha
+[alpha]
+True 2
+True
+True True True
+a
+b
+c
+to stderr
+d
+E513 an exit status must be from 0 to 255
+E513 an exit status must be from 0 to 255
+body
+finally

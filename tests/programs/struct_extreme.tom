@@ -1,0 +1,31 @@
+# struct: floats with any exponent. A value beyond the format raises OverflowError at once (f64 as well as f32); a value below half
+# the smallest subnormal packs as a signed zero. Neither may loop for the exponent's size. Native only (not in the browser list).
+import struct
+
+def try_pack(x: float, double: bool) -> str:
+    p = struct.Packer('<')
+    try:
+        if double:
+            p.f64(x)
+        else:
+            p.f32(x)
+    catch OverflowError as e:
+        return 'OverflowError ' + e.id
+    return str(p.bytes())
+
+@main
+def main():
+    print(try_pack(1e1000000000, True))
+    print(try_pack(-1e1000000000, True))
+    print(try_pack(1e1000000000, False))
+    print(try_pack(1e-1000000000, True))
+    print(try_pack(-1e-1000000000, True))
+    print(try_pack(1e-1000000000, False))
+    print(try_pack(1e-400, True))
+    print(try_pack(1e400, True))
+    print(try_pack(1.7976931348623157e308, True))
+    print(try_pack(5e-324, True))
+    print(try_pack(2.4703282292062327e-324, True))
+    print(try_pack(1e-46, False))
+    print(try_pack(3.4028234663852886e38, False))
+    print(try_pack(3.5e38, False))

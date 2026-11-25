@@ -1,0 +1,74 @@
+# os.read_bytes and os.write_bytes: all 256 byte values round trip, append adds to the end, and a bad value leaves the file
+# untouched (the check runs before the file is opened). The work directory comes from tests/run.sh.
+import os
+import ospath
+
+@main
+def main(dir: str = '/tmp'):
+    path = dir + '/tomato_bytes_files.bin'
+    if ospath.exists(path):
+        os.remove(path)
+    every: list[int] = []
+    for i in range(256):
+        every.append(i)
+    os.write_bytes(path, every)
+    back = os.read_bytes(path)
+    print(len(back), back == every, ospath.getsize(path), back[0], back[255], sum(back))
+    # a text file with the same bytes
+    os.write_bytes(path, [104, 105, 10])
+    print(os.read_text(path).replace('\n', '|'), os.read_bytes(path))
+    # append, and an empty list
+    os.write_bytes(path, [1, 2], append=True)
+    os.write_bytes(path, [], append=True)
+    os.write_bytes(path, [255], True)
+    print(os.read_bytes(path))
+    os.write_bytes(path, [])
+    print(os.read_bytes(path), ospath.getsize(path))
+    # append creates the file
+    os.remove(path)
+    os.write_bytes(path, [9, 8, 7], append=True)
+    print(os.read_bytes(path))
+    # a bad value is a ValueError and the file does not change (not truncated, not created)
+    for bad in [[1, 256], [-1], [0, 1, 2, 1000], [300, 1]]:
+        try:
+            os.write_bytes(path, bad)
+        catch ValueError as e:
+            print('write', e.id, os.read_bytes(path))
+        try:
+            os.write_bytes(path, bad, append=True)
+        catch ValueError as e:
+            print('append', e.id, os.read_bytes(path))
+    missing = dir + '/tomato_bytes_files_missing/x.bin'
+    try:
+        os.write_bytes(missing, [1, 400])
+    catch ValueError as e:
+        print('bad value before open', e.id, ospath.exists(dir + '/tomato_bytes_files_missing'))
+    # errors from the file system
+    try:
+        os.read_bytes(path + '.nothing')
+    catch FileNotFoundError as e:
+        print('read missing', e.id)
+    try:
+        os.write_bytes(missing, [1])
+    catch FileNotFoundError as e:
+        print('write missing dir', e.id)
+    try:
+        os.read_bytes(dir)
+    catch IsADirectoryError as e:
+        print('read dir', e.id)
+    try:
+        os.write_bytes(dir, [1])
+    catch IsADirectoryError as e:
+        print('write dir', e.id)
+    try:
+        os.write_bytes(path + '/inside', [1])
+    catch NotADirectoryError as e:
+        print('write inside file', e.id)
+    # a large round trip
+    big: list[int] = []
+    for i in range(300000):
+        big.append(i % 251)
+    os.write_bytes(path, big)
+    again = os.read_bytes(path)
+    print(len(again), again == big, again[299999])
+    os.remove(path)

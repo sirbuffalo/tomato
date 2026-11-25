@@ -7469,16 +7469,60 @@ class Gen:
         if name == 'read' and len(args) == 0:
             r = self.tmp('text')
             self.emit(f'{r} = call ptr @tomato_file_read(ptr {f.reg})')
+            self.file_read_check(r)
             return ex(r, 'str')
+        if name == 'readline' and len(args) == 0:
+            r = self.tmp('line')
+            self.emit(f'{r} = call ptr @tomato_file_readline(ptr {f.reg})')
+            self.file_read_check(r)
+            return ex(r, 'str')
+        if name == 'readlines' and len(args) == 0:
+            lst = self.tmp('lines')
+            self.emit(f'{lst} = call ptr @tomato_list_new(i64 {self.mod.code_of("list[str]")})')
+            bad = self.tmp('failed')
+            status = self.tmp('status')
+            self.emit(f'{status} = call i32 @tomato_file_readlines(ptr {f.reg}, ptr {lst})')
+            self.emit(f'{bad} = icmp ne i32 {status}, 0')
+            stop = self.label('stop')
+            ok = self.label('ok')
+            self.cond_br(bad, stop, ok)
+            self.place(stop)
+            self.emit(f'call void @tomato_release(ptr {lst})')
+            text = self.tmp('why')
+            self.emit(f'{text} = call ptr @tomato_file_read_error()')
+            self.raise_here('IOError', text, True, 'E381')
+            self.place(ok)
+            return ex(lst, 'list[str]')
         if name == 'write' and len(args) == 1:
             v = self.expr(args[0])
             v = self.want(v, 'str', line, 'the argument of write')
             self.file_check(f'call i32 @tomato_file_write(ptr {f.reg}, ptr {v.reg})', 0, v)
             return ex('', '')
+        if name == 'writelines' and len(args) == 1:
+            v = self.expr(args[0], 'list[str]')
+            v = self.want(v, 'list[str]', line, 'the argument of writelines')
+            self.file_check(f'call i32 @tomato_file_writelines(ptr {f.reg}, ptr {v.reg})', 0, v)
+            return ex('', '')
+        if name == 'flush' and len(args) == 0:
+            self.file_check(f'call i32 @tomato_file_flush(ptr {f.reg})', 0, ex('', ''))
+            return ex('', '')
         if name == 'close' and len(args) == 0:
             self.file_check(f'call i32 @tomato_file_close(ptr {f.reg})', 1, ex('', ''))
             return ex('', '')
         raise CompileError(self.no_method(name, 'File'), line)
+
+    def file_read_check(self, r: str):
+        # a read that failed (a directory, a file opened for writing) gave null: raise an IOError, which a program can catch
+        bad = self.tmp('failed')
+        self.emit(f'{bad} = icmp eq ptr {r}, null')
+        stop = self.label('stop')
+        ok = self.label('ok')
+        self.cond_br(bad, stop, ok)
+        self.place(stop)
+        text = self.tmp('why')
+        self.emit(f'{text} = call ptr @tomato_file_read_error()')
+        self.raise_here('IOError', text, True, 'E381')
+        self.place(ok)
 
     def file_check(self, call: str, closing: int, arg: Ex):
         # a failed write or close (a full disk, a closed pipe) raises an IOError, which a program can catch
@@ -7510,6 +7554,19 @@ class Gen:
             mode = self.expr(args[1])
             mode = self.want(mode, 'str', line, 'the mode')
             self.drop_held(held_before)
+        # only the text modes r, w, a and x, with an optional +, are accepted (D80a); a ValueError before anything is opened
+        mode_ok = self.tmp('modeok')
+        self.emit(f'{mode_ok} = call i32 @tomato_file_mode_ok(ptr {mode.reg})')
+        bad_mode = self.tmp('badmode')
+        self.emit(f'{bad_mode} = icmp eq i32 {mode_ok}, 0')
+        stop_mode = self.label('stopmode')
+        go = self.label('open')
+        self.cond_br(bad_mode, stop_mode, go)
+        self.place(stop_mode)
+        self.release(path)
+        self.release(mode)
+        self.raise_here('ValueError', self.mod.intern('open() text modes only: r, w, a or x, with an optional +; use os.read_bytes/os.write_bytes for bytes'), False, 'E510')
+        self.place(go)
         r = self.tmp('file')
         self.emit(f'{r} = call ptr @tomato_file_open(ptr {path.reg}, ptr {mode.reg})')
         bad = self.tmp('nofile')
@@ -7523,6 +7580,24 @@ class Gen:
         self.emit(f'{text} = call ptr @tomato_open_error(ptr {path.reg})')
         self.release(path)
         self.release(mode)
+        # the class says why: FileNotFoundError, FileExistsError, PermissionError, IsADirectoryError, NotADirectoryError (all
+        # IOErrors, A-Q4 of the Wave 2 sheets), or a plain IOError for any other reason; the id stays E25 for all of them
+        kind = self.tmp('kind')
+        self.emit(f'{kind} = call i64 @tomato_open_kind()')
+        classes = ['FileNotFoundError', 'FileExistsError', 'PermissionError', 'IsADirectoryError', 'NotADirectoryError']
+        arms: list[str] = []
+        for c in classes:
+            arms.append(self.label('arm'))
+        other = self.label('other')
+        cases = ''
+        for k in range(len(classes)):
+            cases += f' i64 {str(k + 1)}, label %{arms[k]}'
+        self.emit(f'switch i64 {kind}, label %{other} [{cases} ]')
+        self.terminated = True
+        for k in range(len(classes)):
+            self.place(arms[k])
+            self.raise_here(classes[k], text, True, 'E25')
+        self.place(other)
         self.raise_here('IOError', text, True, 'E25')
         self.place(ok)
         self.release(path)
@@ -8469,7 +8544,7 @@ class Gen:
         elif is_set(ty) or ty == 'set':
             known = ['add', 'remove', 'discard']
         elif ty == 'File':
-            known = ['read', 'write', 'close']
+            known = ['read', 'readline', 'readlines', 'write', 'writelines', 'flush', 'close']
             word = 'a file'
         elif is_list(ty):
             known = ['append', 'pop', 'insert', 'extend', 'sort', 'reverse']
@@ -10154,7 +10229,7 @@ class Gen:
         # the type of the items a for loop gives over a value of type t, or '' when it is not known here
         if is_list(t):
             return elem_of(t)
-        if t == 'str':
+        if t == 'str' or t == 'File':
             return 'str'
         if is_class(t) and self.mod.has_op(t[1:], 'iter'):
             return self.mod.find_op(t[1:], 'iter').ret
@@ -10275,9 +10350,52 @@ class Gen:
         self.release(obj)
         self.for_value(s, ex(ks, kl), ex(vs_, vl))
 
+    def for_file(self, s: Node, f: Ex):
+        # for line in f: the lines of a text file, each with its \n, read one at a time (a large file is never loaded whole); the loop never closes f (a File opened in the loop header needs the lifetime rule A-Q7 left to Davis, see D80a)
+        holder = self.hidden_slot('for.file')
+        self.emit(f'store ptr {f.reg}, ptr {holder}')
+        var = self.slot(s.fields[0].text, 'str', s.line)
+        head = self.label('fileline')
+        body = self.label('filelinebody')
+        done = self.label('filelinedone')
+        broken = self.label('filelinefail')
+        end = self.label('endfile')
+        self.br(head)
+        self.place(head)
+        fp = self.tmp('fp')
+        self.emit(f'{fp} = load ptr, ptr {holder}')
+        line = self.tmp('line')
+        self.emit(f'{line} = call ptr @tomato_file_next_line(ptr {fp})')
+        go = self.tmp('go')
+        self.emit(f'{go} = icmp ne ptr {line}, null')
+        self.cond_br(go, body, done)
+        self.place(done)
+        failed = self.tmp('failed')
+        self.emit(f'{failed} = call i32 @tomato_file_read_failed()')
+        bad = self.tmp('bad')
+        self.emit(f'{bad} = icmp ne i32 {failed}, 0')
+        self.cond_br(bad, broken, end)
+        self.place(broken)
+        text = self.tmp('why')
+        self.emit(f'{text} = call ptr @tomato_file_read_error()')
+        self.raise_here('IOError', text, True, 'E381')
+        self.place(body)
+        self.store_owned(var, ex(line, 'str'))
+        if self.tracking():
+            self.facts = facts_copy(self.for_body)
+        self.push_loop(end, head)
+        self.block(val_nodes(s.fields[2]))
+        self.loop_depth -= 1
+        if not self.terminated:
+            self.br(head)
+        self.place(end)
+
     def for_value(self, s: Node, lst: Ex, vals: Ex | None = None):
         if is_dyn(lst.ty):
             self.for_dyn(s, lst)
+            return
+        if lst.ty == 'File':
+            self.for_file(s, lst)
             return
         if is_class(lst.ty):
             ai = self.mod.find_op(lst.ty[1:], 'iter')
@@ -11242,7 +11360,7 @@ def runtime_tables(mod: Mod) -> str:
                 kinds[slot] = 'i32 ' + str(int(kinds[slot][4:]) + 8192)
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
-            if mod.mode == 1:
+            if mod.mode == 1 or 'testing' in mod.sources:      # (release mode names the classes only for testing.assert_raises)
                 extra += f'@tomato.name.{slot} = private constant [{str(len(c.display) + 1)} x i8] c"{c.display}\\00"\n'
                 names[slot] = f'ptr @tomato.name.{slot}'
         elif is_mtuple(code):
@@ -11438,6 +11556,17 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_file_open(ptr, ptr)\n'
     d += 'declare ptr @tomato_open_error(ptr)\n'
     d += 'declare ptr @tomato_file_read(ptr)\n'
+    d += 'declare ptr @tomato_file_readline(ptr)\n'
+    d += 'declare ptr @tomato_file_next_line(ptr)\n'
+    d += 'declare i32 @tomato_file_read_failed()\n'
+    d += 'declare i32 @tomato_file_readlines(ptr, ptr)\n'
+    d += 'declare ptr @tomato_file_read_error()\n'
+    d += 'declare i32 @tomato_file_writelines(ptr, ptr)\n'
+    d += 'declare i32 @tomato_file_flush(ptr)\n'
+    d += 'declare i32 @tomato_file_mode_ok(ptr)\n'
+    d += 'declare i64 @tomato_open_kind()\n'
+    d += 'declare void @tomato_set_args(i32, ptr)\n'
+    d += 'declare i32 @tomato_args_into(ptr, i32, ptr, i32)\n'
     d += 'declare i32 @tomato_file_write(ptr, ptr)\n'
     d += 'declare i32 @tomato_file_close(ptr)\n'
     d += 'declare ptr @tomato_file_write_error(i64)\n'
@@ -11493,17 +11622,24 @@ def literal_text(n: Node, ty: str) -> str:
 
 def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     # main(): read the command-line inputs, run the entry point, report an error nobody caught (D28a, D22a)
-    k = len(info.ptypes)
+    k = len(info.ptypes) - info.stars          # the fixed inputs; a last *args: tuple[str] takes the words beyond them (A-Q3)
+    if info.has_kwargs or (info.has_varargs and info.ptypes[k] != 'tuple[str]'):
+        raise CompileError('a program input (a parameter of the @main function) must be an int, bool or str', 0)
     low = k - len(info.defaults)
     out = 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
-    out += f'  %lo = icmp sge i32 %n, {low}\n  %hi = icmp sle i32 %n, {k}\n  %ok = and i1 %lo, %hi\n'
+    out += '  call void @tomato_set_args(i32 %argc, ptr %argv)\n'
+    if info.has_varargs:
+        out += f'  %ok = icmp sge i32 %n, {low}\n'
+    else:
+        out += f'  %lo = icmp sge i32 %n, {low}\n  %hi = icmp sle i32 %n, {k}\n  %ok = and i1 %lo, %hi\n'
     out += '  br i1 %ok, label %go, label %bad\n'
     out += f'bad:\n  call void @tomato_usage(i32 {k}, i32 %n)\n  unreachable\ngo:\n'
     args: list[str] = []
     owned: list[str] = []
     owned_ints: list[str] = []
     owned_floats: list[str] = []
-    for i, t in enumerate(info.ptypes):
+    fixed = info.ptypes[0:k]
+    for i, t in enumerate(fixed):
         si = str(i)
         optional = i >= low
         if optional:
@@ -11557,6 +11693,12 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
                 owned_ints.append(reg)
             if t == 'float' and not optional:
                 owned_floats.append(reg)
+    if info.has_varargs:
+        # the words beyond the fixed inputs, as the tuple[str] of *args
+        out += f'  %rest = call ptr @tomato_list_new(i64 {mod.code_of(info.ptypes[k])})\n'
+        out += f'  %restn = call i32 @tomato_args_into(ptr %rest, i32 %argc, ptr %argv, i32 {k + 1})\n'
+        args.append('ptr %rest')
+        owned.append('%rest')
     if info.is_async:
         out += '  %fr = call ptr @tomato.async.' + info.key + '(' + ', '.join(args) + ')\n  call void @tomato.sched.run(ptr %fr)\n'
     else:
@@ -12044,7 +12186,7 @@ def builtin_modules() -> list[str]:
 
 # every module in std/ (a test checks this list against the folder), for the help of "cannot find the module"
 def std_modules() -> list[str]:
-    return ['asyncio', 'base64', 'bitarray', 'cache', 'csv', 'datetime', 'hex', 'html', 'itertools', 'json', 'math', 'random', 'rational', 'requests', 'secrets', 'socket', 'statistics', 'textwrap', 'time', 'toml', 'urlparse', 'uuid']
+    return ['asyncio', 'base64', 'bitarray', 'cache', 'csv', 'datetime', 'hashlib', 'hex', 'hmac', 'html', 'io', 'itertools', 'json', 'math', 'os', 'ospath', 'random', 'rational', 're', 'requests', 'secrets', 'socket', 'statistics', 'struct', 'sys', 'testing', 'textwrap', 'time', 'toml', 'urlparse', 'utf8', 'uuid', 'zlib']
 
 def std_path(std: str, name: str) -> str:
     # the file of a standard library module
@@ -12187,6 +12329,7 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
                     continue
                 if gid not in arities:
                     arities[gid] = [count]
+            mod.cur = top.module        # a name declared twice is reported in the module that declares it (not the last one loaded)
             mod.declare_name(top.module, name, key_of(top.module, name), item.exported, item.line)
     for ii in imports:
         mod.cur = ii.importer   # an error in an import is the importing module's, not that of the module loaded last
@@ -12202,10 +12345,44 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
         for nm in ii.names:
             mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
 
+def test_driver(mod: Mod, src: str) -> str:
+    # tomato test (B-Q2): the entry name `test` runs every function marked @test, in the order they are written, one after another in one
+    # process. The functions are found in the main file, checked, and the source gets a driver function appended (as text, so no IR is
+    # written by hand): it passes the names and the functions themselves, as fn() values, to testing._run_all, which does the running
+    # and printing in Tomato (std/testing.tom). The driver is the entry point @test_main; the functions marked @test keep their own marker.
+    mod.sources['main'] = src
+    mod.loading = 'main'
+    top = val_nodes(parse(src).fields[0])
+    mod.loading = ''
+    mod.cur = 'main'
+    imported = False       # set by `import testing`, which the parser stores as an import of every name (item `*`), or by a star import
+    names: list[str] = []
+    for item in top:
+        if item.kind == 'Import' and item.fields[0].text == 'testing' and len(item.fields[1].items) == 1 and item.fields[1].items[0].text == '*':      # (how the parser writes a plain `import testing`; there is no `from testing import *`)
+            imported = True
+        if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text == 'entry:test':
+            name = item.fields[0].text
+            if len(item.fields) > 8 and item.fields[8].flag:
+                raise CompileError(f"the function '{name}' is marked @test, but it is async, and async tests are not supported yet\nwrite the test as a plain function", item.line)
+            if len(item.fields[1].items) > 0 or item.fields[2].tag != 'z' or len(item.fields) > 10 or item.fields[7].flag:
+                raise CompileError(f"the function '{name}' is marked @test, so it must take no parameters and return nothing\nmove what it needs into the test, or into a helper function it calls", item.line)
+            names.append(name)
+    if len(names) == 0:
+        raise CompileError('no function is marked @test\nwrite @test on the line above each function that is a test', 0)
+    text = src + '\n\n'
+    if not imported:
+        text += 'import testing\n\n'
+    text += "@test_main\ndef _tomato_test_driver(*args: tuple[str]):\n"
+    text += "    testing._run_all([" + ', '.join([f"'{n}'" for n in names]) + "], [" + ', '.join(names) + "], args)\n"
+    return text
+
 def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: str) -> str:
     table = open(f'{std}errors.txt')
     mod.errors = table.read().split('\n')
     table.close()
+    if entry_name == 'test':
+        src = test_driver(mod, src)
+        entry_name = 'test_main'
     if mode == 'release':
         mod.mode = 2
     elif mode == 'normal':
@@ -12312,7 +12489,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         elif item.kind == 'LlvmDecl':
             decl = function_info(item, mod, '')
             for pt in decl.ptypes:
-                if pt == 'File' or (is_rc(pt) and pt != 'str' and not pt.startswith('list[')):
+                if pt == 'File' or (is_rc(pt) and pt != 'str' and pt != '@Error' and not pt.startswith('list[')):      # (an Error object only for testing's tomato_error_is)
                     raise CompileError('an LLVM function can only take int, bool, float, text and list values, and return int, bool, float and text', item.line)
             mod.llvm_decls.append(decl)
         else:

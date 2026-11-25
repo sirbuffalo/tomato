@@ -1,0 +1,371 @@
+# Integer binary encodings with standard sizes and no alignment.
+import utf8
+import math
+
+export class StructError(ValueError):
+    @init
+    def make(self, message: str, id: str = ""):
+        ValueError.make_value(self, message, id)
+def _order(byteorder: str) -> bool:
+    if byteorder == 'big' or byteorder == '>' or byteorder == '!':
+        return True
+    if byteorder == 'little' or byteorder == '<' or byteorder == '=' or byteorder == '@':
+        return False
+    raise ValueError('invalid byte order', 'E499')
+
+export def int_to_bytes(value: int, length: int, byteorder: str = 'big', signed: bool = False) -> list[int]:
+    big = _order(byteorder)
+    if length < 0:
+        raise ValueError('length must be nonnegative', 'E499')
+    limit = 256 ** length
+    low = 0
+    high = limit
+    if signed and length > 0:
+        low = -(limit // 2)
+        high = limit // 2
+    if value < low or value >= high:
+        raise OverflowError('integer does not fit', 'E500')
+    x = value
+    if x < 0:
+        x += limit
+    out: list[int] = []
+    for i in range(length):
+        out.append(x % 256)
+        x = x // 256
+    if big:
+        out.reverse()
+    return out
+
+export def int_from_bytes(data: list[int], byteorder: str = 'big', signed: bool = False) -> int:
+    big = _order(byteorder)
+    x = 0
+    for i in range(len(data)):
+        b = data[i]
+        if b < 0 or b > 255:
+            raise ValueError('a byte must be from 0 to 255', 'E391')
+        if big:
+            x = x * 256 + b
+        else:
+            x += b * (256 ** i)
+    if signed and len(data) > 0:
+        top = data[0]
+        if not big:
+            top = data[len(data) - 1]
+        if top >= 128:
+            x -= 256 ** len(data)
+    return x
+
+# Parse the compact integer-only format into codes and an order.
+class _Format:
+    big: bool = False
+    codes: list[str] = []
+    @init
+    def make(self, fmt: str):
+        self.codes = []
+        i = 0
+        if len(fmt) > 0 and (fmt[0] == '<' or fmt[0] == '>' or fmt[0] == '!' or fmt[0] == '=' or fmt[0] == '@'):
+            self.big = _order(fmt[0])
+            i = 1
+        while i < len(fmt):
+            c = fmt[i]
+            if c == ' ' or c == '\t' or c == '\n' or c == '\r':
+                i += 1
+                continue
+            count = 0
+            has_count = False
+            while i < len(fmt) and fmt[i] >= '0' and fmt[i] <= '9':
+                has_count = True
+                count = count * 10 + ord(fmt[i]) - 48
+                # each repeat is expanded into one code, so an absurd count must not be expanded
+                if count > 1000000:
+                    raise StructError('invalid struct format', 'E503')
+                i += 1
+            if i >= len(fmt):
+                raise StructError('invalid struct format', 'E503')
+            c = fmt[i]
+            if c not in 'xbBhHiIlLqQ':
+                raise StructError('invalid struct format', 'E503')
+            if not has_count:
+                count = 1
+            if len(self.codes) + count > 1000000:
+                raise StructError('invalid struct format', 'E503')
+            for j in range(count):
+                self.codes.append(c)
+            i += 1
+
+def _size(c: str) -> int:
+    if c == 'x' or c == 'b' or c == 'B':
+        return 1
+    if c == 'h' or c == 'H':
+        return 2
+    if c == 'i' or c == 'I' or c == 'l' or c == 'L':
+        return 4
+    return 8
+
+def _signed(c: str) -> bool:
+    return c == 'b' or c == 'h' or c == 'i' or c == 'l' or c == 'q'
+
+export def calcsize(fmt: str) -> int:
+    f = _Format(fmt)
+    n = 0
+    for c in f.codes:
+        n += _size(c)
+    return n
+
+export def pack_ints(fmt: str, values: list[int]) -> list[int]:
+    f = _Format(fmt)
+    order = 'little'
+    if f.big:
+        order = 'big'
+    out: list[int] = []
+    i = 0
+    for c in f.codes:
+        if c == 'x':
+            out.append(0)
+        else:
+            if i >= len(values):
+                raise StructError('wrong number of values', 'E503')
+            out.extend(int_to_bytes(values[i], _size(c), order, _signed(c)))
+            i += 1
+    if i != len(values):
+        raise StructError('wrong number of values', 'E503')
+    return out
+
+export def unpack_ints(fmt: str, data: list[int]) -> list[int]:
+    f = _Format(fmt)
+    if len(data) != calcsize(fmt):
+        raise StructError('wrong buffer size', 'E503')
+    for b in data:
+        if b < 0 or b > 255:
+            raise ValueError('a byte must be from 0 to 255', 'E391')
+    order = 'little'
+    if f.big:
+        order = 'big'
+    out: list[int] = []
+    pos = 0
+    for c in f.codes:
+        n = _size(c)
+        if c != 'x':
+            out.append(int_from_bytes(data[pos:pos+n], order, _signed(c)))
+        pos += n
+    return out
+
+
+# IEEE 754 binary floats. Tomato floats are always finite, so a NaN or infinity cannot be read (ValueError) and a value that
+# rounds past the largest f32 cannot be written (OverflowError). Signed zero and subnormal values are kept.
+def _pow2(n: int) -> float:
+    r = 1.0
+    b = 2.0
+    k = n
+    if k < 0:
+        b = 0.5
+        k = -k
+    while k > 0:
+        if k % 2 == 1:
+            r = r * b
+        k = k // 2
+        if k > 0:
+            b = b * b
+    return r
+
+def _float_bits(x: float, ebits: int, mbits: int) -> int:
+    bias = 2 ** (ebits - 1) - 1
+    sign = 0
+    if math.copysign(1.0, x) < 0.0:
+        sign = 2 ** (ebits + mbits)
+    m = x
+    if m < 0.0:
+        m = -m
+    if m == 0.0:
+        return sign
+    # floats have any exponent, so decide the extremes before the loops below, which step 64 binary digits at a time: a value this
+    # large is out of range for the format, and one this small is below half the smallest subnormal and rounds to zero
+    approx = 0.0
+    try:
+        approx = math.log2(m)
+    catch OverflowError:
+        # beyond even a double's range (math works in doubles): too large is out of range, too small rounds to zero
+        if m > 1.0:
+            raise OverflowError('float too large to pack', 'E504')
+        return sign
+    if approx >= bias + 2:
+        raise OverflowError('float too large to pack', 'E504')
+    if approx < 1 - bias - mbits - 2:
+        return sign
+    up = _pow2(64)
+    down = _pow2(-64)
+    e = 0
+    while m >= up:
+        m = m * down
+        e += 64
+    while m >= 2.0:
+        m = m / 2.0
+        e += 1
+    while m < down:
+        m = m * up
+        e -= 64
+    while m < 1.0:
+        m = m * 2.0
+        e -= 1
+    sig = int(m * _pow2(52))
+    emin = 1 - bias
+    shift = 52 - mbits
+    if e < emin:
+        shift += emin - e
+    q = sig
+    if shift > 0:
+        q = sig // 2 ** shift
+        rest = sig - q * 2 ** shift
+        half = 2 ** (shift - 1)
+        if rest > half or (rest == half and q % 2 == 1):
+            q += 1
+    if e < emin:
+        return sign + q
+    if q == 2 ** (mbits + 1):
+        q = q // 2
+        e += 1
+    biased = e + bias
+    if biased >= 2 ** ebits - 1:
+        raise OverflowError('float too large to pack', 'E504')
+    return sign + biased * 2 ** mbits + (q - 2 ** mbits)
+
+def _bits_float(bits: int, ebits: int, mbits: int) -> float:
+    bias = 2 ** (ebits - 1) - 1
+    top = 2 ** (mbits + ebits)
+    e = (bits % top) // 2 ** mbits
+    frac = bits % 2 ** mbits
+    if e == 2 ** ebits - 1:
+        raise ValueError('not a finite float', 'E499')
+    sig = frac
+    ex = 1 - bias - mbits
+    if e > 0:
+        sig = frac + 2 ** mbits
+        ex = e - bias - mbits
+    v = 0.0
+    if sig > 0:
+        v = float(sig) * _pow2(ex)
+    if bits >= top:
+        v = v * -1.0
+    return v
+
+# Incremental writers and readers for mixed binary records.
+export class Packer:
+    data: list[int] = []
+    order: str = 'big'
+    @init
+    def make(self, byteorder: str = '>'):
+        _order(byteorder)
+        self.order = byteorder
+        self.data = []
+
+    def raw(self, data: list[int]):
+        for b in data:
+            if b < 0 or b > 255:
+                raise ValueError('a byte must be from 0 to 255', 'E391')
+        self.data.extend(data)
+
+    def text(self, value: str):
+        self.raw(utf8.encode(value))
+
+    def bytes(self) -> list[int]:
+        return self.data[:]
+
+    def u8(self, value: int):
+        self.raw(int_to_bytes(value, 1, self.order, False))
+
+    def u16(self, value: int):
+        self.raw(int_to_bytes(value, 2, self.order, False))
+
+    def u32(self, value: int):
+        self.raw(int_to_bytes(value, 4, self.order, False))
+
+    def u64(self, value: int):
+        self.raw(int_to_bytes(value, 8, self.order, False))
+
+    def i8(self, value: int):
+        self.raw(int_to_bytes(value, 1, self.order, True))
+
+    def i16(self, value: int):
+        self.raw(int_to_bytes(value, 2, self.order, True))
+
+    def i32(self, value: int):
+        self.raw(int_to_bytes(value, 4, self.order, True))
+
+    def i64(self, value: int):
+        self.raw(int_to_bytes(value, 8, self.order, True))
+
+    def f32(self, value: float):
+        self.raw(int_to_bytes(_float_bits(value, 8, 23), 4, self.order, False))
+
+    def f64(self, value: float):
+        self.raw(int_to_bytes(_float_bits(value, 11, 52), 8, self.order, False))
+
+export class Reader:
+    data: list[int] = []
+    order: str = 'big'
+    pos: int = 0
+    @init
+    def make(self, data: list[int], byteorder: str = '>'):
+        _order(byteorder)
+        for b in data:
+            if b < 0 or b > 255:
+                raise ValueError('a byte must be from 0 to 255', 'E391')
+        self.data = data[:]
+        self.order = byteorder
+        self.pos = 0
+
+    def remaining(self) -> int:
+        return len(self.data) - self.pos
+
+    def read_raw(self, n: int) -> list[int]:
+        if n < 0 or n > self.remaining():
+            raise ValueError('not enough bytes', 'E499')
+        out = self.data[self.pos:self.pos+n]
+        self.pos += n
+        return out
+
+    def read_text(self, n: int) -> str:
+        if n < 0 or n > self.remaining():
+            raise ValueError('not enough bytes', 'E499')
+        out = utf8.decode(self.data[self.pos:self.pos+n])
+        self.pos += n
+        return out
+
+    def read_u8(self) -> int:
+        return int_from_bytes(self.read_raw(1), self.order, False)
+
+    def read_u16(self) -> int:
+        return int_from_bytes(self.read_raw(2), self.order, False)
+
+    def read_u32(self) -> int:
+        return int_from_bytes(self.read_raw(4), self.order, False)
+
+    def read_u64(self) -> int:
+        return int_from_bytes(self.read_raw(8), self.order, False)
+
+    def read_i8(self) -> int:
+        return int_from_bytes(self.read_raw(1), self.order, True)
+
+    def read_i16(self) -> int:
+        return int_from_bytes(self.read_raw(2), self.order, True)
+
+    def read_i32(self) -> int:
+        return int_from_bytes(self.read_raw(4), self.order, True)
+
+    def read_i64(self) -> int:
+        return int_from_bytes(self.read_raw(8), self.order, True)
+
+    def _peek(self, n: int) -> list[int]:
+        if n > self.remaining():
+            raise ValueError('not enough bytes', 'E499')
+        return self.data[self.pos:self.pos+n]
+
+    def read_f32(self) -> float:
+        v = _bits_float(int_from_bytes(self._peek(4), self.order, False), 8, 23)
+        self.pos += 4
+        return v
+
+    def read_f64(self) -> float:
+        v = _bits_float(int_from_bytes(self._peek(8), self.order, False), 11, 52)
+        self.pos += 8
+        return v

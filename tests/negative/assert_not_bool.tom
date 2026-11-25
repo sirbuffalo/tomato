@@ -1,0 +1,5 @@
+# an assert condition must be a bool (rule P8: no truthiness)
+@main
+def main():
+    n = 1
+    assert n

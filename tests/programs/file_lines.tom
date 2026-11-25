@@ -1,0 +1,154 @@
+# File: readline, readlines, writelines, flush and `for line in f` (lines keep their \n; CRLF is kept; no trailing newline;
+# empty file; invalid UTF-8; a big file is read line by line). tests/run.sh passes a work directory.
+import os
+import utf8
+
+def show(line: str) -> str:
+    return '[' + line.replace('\r', '<CR>').replace('\n', '<LF>') + ']'
+
+def show_all(lines: list[str]) -> str:
+    parts: list[str] = []
+    for l in lines:
+        parts.append(show(l))
+    return ' '.join(parts)
+
+def first_long(path: str, n: int) -> str:
+    # a return from inside the loop
+    f = open(path)
+    for line in f:
+        if len(line) > n:
+            f.close()
+            return line
+    f.close()
+    return 'none'
+
+@main
+def main(dir: str = '/tmp'):
+    path = dir + '/tomato_file_lines.txt'
+    # readline and readlines
+    os.write_text(path, 'alpha\nbeta\n\ngamma')
+    f = open(path)
+    print(show(f.readline()), show(f.readline()), show(f.readline()), show(f.readline()), show(f.readline()), show(f.readline()))
+    f.close()
+    f = open(path)
+    print(show_all(f.readlines()), len(f.readlines()))
+    f.close()
+    f = open(path)
+    print(show(f.readline()), show_all(f.readlines()))
+    f.close()
+    # for line in f
+    f = open(path)
+    for line in f:
+        print(show(line), len(line))
+    print(show(f.readline()))
+    f.close()
+    # the loop goes on where readline stopped, and break leaves the rest for the next read
+    f = open(path)
+    print(show(f.readline()))
+    for line in f:
+        print('loop', show(line))
+        break
+    print('after break', show(f.readline()))
+    for line in f:
+        print('again', show(line))
+        continue
+    f.close()
+    # a nested loop reads from two files
+    os.write_text(path + '.2', 'x\ny\n')
+    f = open(path)
+    g = open(path + '.2')
+    for a in f:
+        for b in g:
+            print(show(a), show(b))
+        g.close()
+        g = open(path + '.2')
+    f.close()
+    g.close()
+    print(show(first_long(path, 4)), show(first_long(path, 99)))
+    # a file with one line, no newline; an empty file; only newlines
+    os.write_text(path, 'solo')
+    f = open(path)
+    print(show_all(f.readlines()))
+    f.close()
+    os.write_text(path, '')
+    f = open(path)
+    print(show(f.readline()), len(f.readlines()))
+    count = 0
+    f.close()
+    f = open(path)
+    for line in f:
+        count += 1
+    f.close()
+    print(count)
+    os.write_text(path, '\n\n\n')
+    f = open(path)
+    print(show_all(f.readlines()))
+    f.close()
+    # CRLF and lone CR are kept as they are
+    os.write_text(path, 'one\r\ntwo\rthree\r\n')
+    f = open(path)
+    for line in f:
+        print(show(line))
+    f.close()
+    # Unicode lines and invalid UTF-8 are kept byte for byte
+    os.write_text(path, 'é\n日本\n')
+    f = open(path)
+    for line in f:
+        print(show(line), len(line))
+    f.close()
+    os.write_bytes(path, [255, 10, 195, 40, 10, 65])
+    f = open(path)
+    for line in f:
+        print(utf8.encode(line))
+    f.close()
+    # writelines (no separator added) and flush
+    f = open(path, 'w')
+    f.writelines(['a', 'b\n', 'c\n'])
+    f.writelines([])
+    f.flush()
+    print(show_all(os.read_text(path).split('\n')))
+    f.write('d')
+    f.close()
+    print(show(os.read_text(path)))
+    # a reading error is an IOError: a file opened for writing cannot be read
+    f = open(path, 'w')
+    try:
+        f.readline()
+    catch IOError as e:
+        print('readline', e.id)
+    try:
+        f.readlines()
+    catch IOError as e:
+        print('readlines', e.id)
+    try:
+        for line in f:
+            print('never')
+    catch IOError as e:
+        print('for', e.id)
+    try:
+        f.read()
+    catch IOError as e:
+        print('read', e.id)
+    f.close()
+    # a big file (5 MB) is read line by line
+    f = open(path, 'w')
+    text = 'x' * 49 + '\n'
+    for i in range(1000):
+        f.write(text)
+    block: list[str] = []
+    for i in range(1000):
+        block.append(text)
+    for i in range(104):
+        f.writelines(block)
+    f.close()
+    print(os.stat(path).size)
+    lines = 0
+    chars = 0
+    f = open(path)
+    for line in f:
+        lines += 1
+        chars += len(line)
+    f.close()
+    print(lines, chars)
+    os.remove(path)
+    os.remove(path + '.2')

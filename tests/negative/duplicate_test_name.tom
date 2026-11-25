@@ -1,0 +1,10 @@
+# two tests with the same name are two functions with the same name: run with the entry `test`
+from testing import assert_equal
+
+@test
+def adds():
+    assert_equal(1 + 1, 2)
+
+@test
+def adds():
+    assert_equal(2 + 2, 4)

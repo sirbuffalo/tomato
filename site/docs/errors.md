@@ -133,7 +133,7 @@ Built-in errors have an ID formed from `E` and their line number in `std/errors.
 only grows, so an id never changes meaning. A compile error shows its id in the label (`error[E227]: name 'tets' is not defined`) and an
 uncaught runtime error does too (`error[E04]: index out of range`). A program that catches an error can read `e.id` and `e.message`.
 
-The language raises these classes, all of them a `RuntimeError` (so `catch RuntimeError` catches any of them):
+The language raises these classes, all of them a `RuntimeError` (so `catch RuntimeError` catches any of them) except `AssertionError`:
 
 | Class | Raised for |
 | --- | --- |
@@ -143,12 +143,16 @@ The language raises these classes, all of them a `RuntimeError` (so `catch Runti
 | `ZeroDivisionError` | `/`, `//` or `%` by zero |
 | `OverflowError` | integer overflow, a number that does not fit its type, a float result that is infinite |
 | `IOError`, `EOFError`, `CancelledError` | files, the end of input, a cancelled task |
+| `AssertionError` | a failed `assert` statement or `testing` assertion; **not** a `RuntimeError`, a direct subclass of `Error` (E519), so `catch RuntimeError` does not catch it |
+| `FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError` | the `IOError`s that say why a file or directory call failed (`open()`, `os`, `ospath`); each is an `IOError`, so `catch IOError` still catches them |
 
 An `IOError` from a file says what failed: `could not open 'PATH': REASON` (E25), `could not read ...` (E381) and
 `could not write ...` (E382). `f.write(text)` and `f.close()` on a file from `open(path, 'w')` raise E382 when the data cannot be
 written (a full disk, a closed pipe, no permission): `could not write to the file: No space left on device`, or
 `could not write to the file when closing it: ...` from `close()`. The C library buffers output, so a small write to a full disk
 may fail only at `close()`; call `close()` inside `try` and catch `IOError` to be sure the data arrived.
+
+`open()` raises the class that matches the reason (`FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError`, else a plain `IOError`) and keeps the id E25; the `os` and `ospath` functions raise the same classes with E505 to E509 (`IOError` E515 for another reason) and the text `could not list the directory 'PATH': REASON`. A mode other than `r`, `w`, `a` or `x` with an optional `+` is a `ValueError` (E510). Reading a file that cannot be read (a file opened for writing) is E381.
 
 The libraries raise subclasses of their own, each also a `RuntimeError`: `JSONDecodeError`, `JSONEncodeError`, `JSONTypeError` and
 `MsgpackError` (`json`), `TOMLDecodeError` (`toml`), `CacheMiss` (`cache`), and `requests.RequestError` (an `IOError`) with

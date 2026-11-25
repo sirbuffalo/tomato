@@ -1,0 +1,61 @@
+# os: environment variables (native: the playground cannot change the environment; tests/programs/os_browser.tom covers that).
+import os
+import ospath
+
+def show(v: str | None) -> str:
+    if v is None:
+        return 'None'
+    return f"'{v}'"
+
+@main
+def main():
+    name = 'TOMATO_OS_ENV_TEST'
+    os.unsetenv(name)
+    print(show(os.getenv(name)), show(os.getenv(name, 'fallback')))
+    os.putenv(name, 'one')
+    print(show(os.getenv(name)), show(os.getenv(name, 'fallback')))
+    os.putenv(name, '')
+    print(show(os.getenv(name)))
+    os.putenv(name, 'a=b c')
+    print(show(os.getenv(name)), os.environ()[name])
+    # environ() is a copy: changing it changes nothing; putenv shows in the next copy
+    snapshot = os.environ()
+    snapshot[name] = 'changed'
+    print(show(os.getenv(name)))
+    os.putenv(name, 'two')
+    print(snapshot[name], os.environ()[name], name in os.environ())
+    os.unsetenv(name)
+    print(name in os.environ(), show(os.getenv(name)))
+    os.unsetenv(name)
+    # a variable the test harness does not set, and PATH-like names that exist in every shell
+    print(show(os.getenv('TOMATO_SURELY_NOT_SET_12345')))
+    # bad names: empty, containing '=', containing NUL (Python returns the default for these; Tomato refuses so a typo shows)
+    for bad in ['', 'A=B', 'A' + chr(0) + 'B']:
+        try:
+            os.getenv(bad)
+        catch ValueError as e:
+            print('getenv', e.id, e.message)
+        try:
+            os.putenv(bad, 'x')
+        catch ValueError as e:
+            print('putenv', e.id)
+        try:
+            os.unsetenv(bad)
+        catch ValueError as e:
+            print('unsetenv', e.id)
+    try:
+        os.putenv('GOOD', 'a' + chr(0) + 'b')
+    catch ValueError as e:
+        print('value', e.id, e.message)
+    # HOME decides expanduser
+    os.putenv('HOME', '/home/tom')
+    for p in ['~', '~/', '~/x/y', '~other', '~other/x', 'a/~', '', '/~']:
+        print(p, '->', ospath.expanduser(p))
+    os.putenv('HOME', '/home/tom//')
+    print(ospath.expanduser('~/z'), ospath.expanduser('~'))
+    os.putenv('HOME', '/')
+    print(ospath.expanduser('~/z'), ospath.expanduser('~'))
+    os.unsetenv('HOME')
+    print(ospath.expanduser('~/z'), ospath.expanduser('~'))
+    # the process id and the working directory
+    print(os.getpid() > 0, os.getcwd().startswith('/'))

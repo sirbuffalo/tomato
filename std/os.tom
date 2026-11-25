@@ -1,0 +1,237 @@
+# The operating system: environment variables, the working directory, directories, removing and renaming, stat, and whole-file
+# helpers (Wave 2, pack A). Paths and names are text; a path with a NUL is a ValueError. A failing call raises FileNotFoundError,
+# FileExistsError, PermissionError, IsADirectoryError or NotADirectoryError (all IOErrors), or a plain IOError for another
+# reason. Path text functions are in ospath. In the browser playground the files and directories are the page's own (kept in
+# memory); chdir, getpid, putenv and unsetenv are not available there and raise RuntimeError.
+import sys
+!tomato_env_has(name: str) -> int
+!tomato_env_get(name: str) -> str
+!tomato_env_list(out: list[str]) -> int
+!tomato_env_set(name: str, value: str) -> int
+!tomato_env_unset(name: str) -> int
+!tomato_getcwd(out: list[str]) -> int
+!tomato_chdir(path: str) -> int
+!tomato_getpid() -> int
+!tomato_listdir(path: str, out: list[str]) -> int
+!tomato_mkdir(path: str) -> int
+!tomato_rmdir(path: str) -> int
+!tomato_remove(path: str) -> int
+!tomato_rename(src: str, dst: str) -> int
+!tomato_stat(path: str, follow: int, out: list[int]) -> int
+!tomato_os_error(what: str) -> str
+!tomato_file_error(path: str, code: int) -> str
+!tomato_os_kind() -> int
+!tomato_file_read_bytes(path: str, out: list[int]) -> int
+!tomato_file_write_bytes_mode(path: str, data: list[int], append: int) -> int
+
+export class StatResult:
+    size: int = 0
+    mtime: float = 0.0
+    mode: int = 0
+    is_file: bool = False
+    is_dir: bool = False
+    is_symlink: bool = False
+
+    @init
+    def make(self, size: int, mtime: float, mode: int, is_file: bool, is_dir: bool, is_symlink: bool):
+        self.size = size
+        self.mtime = mtime
+        self.mode = mode
+        self.is_file = is_file
+        self.is_dir = is_dir
+        self.is_symlink = is_symlink
+
+# Raises the error class of a failure kind from the runtime (1 not found, 2 exists, 3 permission, 4 is a directory,
+# 5 not a directory, anything else a plain IOError), with the message the runtime made.
+def _raise(kind: int, message: str):
+    if kind == 1:
+        raise FileNotFoundError(message, 'E505')
+    if kind == 2:
+        raise FileExistsError(message, 'E506')
+    if kind == 3:
+        raise PermissionError(message, 'E507')
+    if kind == 4:
+        raise IsADirectoryError(message, 'E508')
+    if kind == 5:
+        raise NotADirectoryError(message, 'E509')
+    raise IOError(message, 'E515')
+
+def _no_nul(path: str):
+    if chr(0) in path:
+        raise ValueError('a path or name cannot contain a NUL character', 'E511')
+
+def _env_name(name: str):
+    if name == '' or '=' in name:
+        raise ValueError("an environment variable name is empty or contains '='", 'E512')
+    _no_nul(name)
+
+def _not_in_browser(what: str):
+    if sys.platform() == 'wasi':
+        raise RuntimeError(what + ' is not available in the browser playground', 'E514')
+
+# The value of the variable, or default when it is not set. An empty name, or one with '=', is a ValueError.
+export def getenv(name: str, default: str | None = None) -> str | None:
+    _env_name(name)
+    if !tomato_env_has(name) == 0:
+        return default
+    return !tomato_env_get(name)
+
+# A copy of the environment: changing the dict does not change the process (use putenv and unsetenv).
+export def environ() -> dict[str, str]:
+    items: list[str] = []
+    _r = !tomato_env_list(items)
+    out: dict[str, str] = {}
+    for item in items:
+        at = item.find('=')
+        if at > 0:
+            out[item[:at]] = item[at + 1:]
+    return out
+
+export def putenv(name: str, value: str):
+    _env_name(name)
+    _no_nul(value)
+    _not_in_browser('putenv')
+    kind = !tomato_env_set(name, value)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"set the environment variable '{name}'"))
+
+export def unsetenv(name: str):
+    _env_name(name)
+    _not_in_browser('unsetenv')
+    kind = !tomato_env_unset(name)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"remove the environment variable '{name}'"))
+
+export def getcwd() -> str:
+    out: list[str] = []
+    kind = !tomato_getcwd(out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error('get the current directory'))
+    return out[0]
+
+# Changes the directory of the whole process, for every task and every relative path afterwards.
+export def chdir(path: str):
+    _no_nul(path)
+    _not_in_browser('chdir')
+    kind = !tomato_chdir(path)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"change to the directory '{path}'"))
+
+export def getpid() -> int:
+    _not_in_browser('getpid')
+    return !tomato_getpid()
+
+# The names in a directory without '.' and '..', sorted by bytes (the same order on every platform).
+export def listdir(path: str = '.') -> list[str]:
+    _no_nul(path)
+    out: list[str] = []
+    kind = !tomato_listdir(path, out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"list the directory '{path}'"))
+    return out
+
+# Makes one directory (mode 0o777 less the umask); its parent must exist and it must not.
+export def mkdir(path: str):
+    _no_nul(path)
+    kind = !tomato_mkdir(path)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"create the directory '{path}'"))
+
+def _is_dir(path: str) -> bool:
+    out: list[int] = []
+    return !tomato_stat(path, 1, out) == 0 and out[4] == 2
+
+def _exists(path: str) -> bool:
+    out: list[int] = []
+    return !tomato_stat(path, 1, out) == 0
+
+# Makes a directory and the parents it needs. A directory that exists is a FileExistsError unless exist_ok is True.
+export def makedirs(path: str, exist_ok: bool = False):
+    _no_nul(path)
+    trimmed = path.rstrip('/')
+    if trimmed == '':
+        trimmed = path
+    cut = trimmed.rfind('/')
+    if cut > 0:
+        parent = trimmed[:cut].rstrip('/')
+        if parent != '' and not _exists(parent):
+            makedirs(parent, exist_ok)
+    kind = !tomato_mkdir(trimmed)
+    if kind != 0:
+        if kind == 2 and exist_ok and _is_dir(trimmed):
+            return
+        _raise(kind, !tomato_os_error(f"create the directory '{path}'"))
+
+# Removes a file or a symbolic link (a directory is an IsADirectoryError).
+export def remove(path: str):
+    _no_nul(path)
+    kind = !tomato_remove(path)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"remove '{path}'"))
+
+# Removes an empty directory.
+export def rmdir(path: str):
+    _no_nul(path)
+    kind = !tomato_rmdir(path)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"remove the directory '{path}'"))
+
+# Renames src to dst; an existing dst file is replaced.
+export def rename(src: str, dst: str):
+    _no_nul(src)
+    _no_nul(dst)
+    kind = !tomato_rename(src, dst)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"rename '{src}' to '{dst}'"))
+
+# Size, modification time (seconds since the epoch), mode and what the path is. It follows symbolic links, except for is_symlink,
+# which says whether the path itself is one.
+export def stat(path: str) -> StatResult:
+    _no_nul(path)
+    out: list[int] = []
+    kind = !tomato_stat(path, 1, out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"stat '{path}'"))
+    link: list[int] = []
+    is_link = False
+    if !tomato_stat(path, 0, link) == 0:
+        is_link = link[4] == 3
+    return StatResult(out[0], float(out[2]) + float(out[3]) / 1000000000.0, out[1], out[4] == 1, out[4] == 2, is_link)
+
+# The whole file as text, or written (replacing the file, or after its end with append=True; the file is created).
+export def read_text(path: str) -> str:
+    _no_nul(path)
+    f = open(path)
+    text = ''
+    try:
+        text = f.read()
+    finally:
+        f.close()
+    return text
+
+export def write_text(path: str, text: str, append: bool = False):
+    _no_nul(path)
+    f = open(path, 'a' if append else 'w')
+    try:
+        f.write(text)
+    finally:
+        f.close()
+
+# The whole file as a list of bytes (ints from 0 to 255), or written from one. A value outside 0 to 255 is a ValueError and the
+# file is not touched.
+export def read_bytes(path: str) -> list[int]:
+    _no_nul(path)
+    data: list[int] = []
+    code = !tomato_file_read_bytes(path, data)
+    if code != 0:
+        _raise(!tomato_os_kind(), !tomato_file_error(path, code))
+    return data
+
+export def write_bytes(path: str, data: list[int], append: bool = False):
+    _no_nul(path)
+    for b in data:
+        if b < 0 or b > 255:
+            raise ValueError('a byte must be a whole number from 0 to 255', 'E391')
+    code = !tomato_file_write_bytes_mode(path, data, 1 if append else 0)
+    if code != 0:
+        _raise(!tomato_os_kind(), !tomato_file_error(path, code))

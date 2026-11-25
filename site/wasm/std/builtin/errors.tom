@@ -13,6 +13,13 @@ class Error:
         self.message = message
         self.id = id
 
+# A failed `assert` statement or testing assertion (Wave 2, pack B). A direct subclass of Error, so `catch RuntimeError` does not
+# catch it: a failed check is a mistake in the program or its tests, not a failure of an operation.
+class AssertionError(Error):
+    @init
+    def make_assertion(self, message: str, id: str = ""):
+        Error.start(self, message, id)
+
 # Failures the language itself raises: division by zero, an index out of range, a missing key, bad text for int().
 class RuntimeError(Error):
     @init
@@ -53,6 +60,33 @@ class IOError(RuntimeError):
     @init
     def make_io(self, message: str, id: str = ""):
         RuntimeError.make(self, message, id)
+
+# The file and directory failures that say why (os, ospath and open() raise them; each is an IOError, so catch IOError still
+# catches them): the path is not there, is already there, may not be used, is a directory, or goes through something that is not one.
+class FileNotFoundError(IOError):
+    @init
+    def make_not_found(self, message: str, id: str = ""):
+        IOError.make_io(self, message, id)
+
+class FileExistsError(IOError):
+    @init
+    def make_exists(self, message: str, id: str = ""):
+        IOError.make_io(self, message, id)
+
+class PermissionError(IOError):
+    @init
+    def make_permission(self, message: str, id: str = ""):
+        IOError.make_io(self, message, id)
+
+class IsADirectoryError(IOError):
+    @init
+    def make_is_dir(self, message: str, id: str = ""):
+        IOError.make_io(self, message, id)
+
+class NotADirectoryError(IOError):
+    @init
+    def make_not_dir(self, message: str, id: str = ""):
+        IOError.make_io(self, message, id)
 
 # Raised by input() when there is no more input to read.
 class EOFError(RuntimeError):

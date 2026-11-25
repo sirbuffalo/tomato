@@ -1,0 +1,6 @@
+# a test cannot be async (no async tests in the first version): run with the entry `test`
+from testing import assert_equal
+
+@test
+async def waits():
+    assert_equal(1, 1)

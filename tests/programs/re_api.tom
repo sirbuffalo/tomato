@@ -1,0 +1,27 @@
+from re import compile, match, search, fullmatch, findall, findall_groups, finditer, sub, subn, sub_with, split, escape, IGNORECASE, I, MULTILINE, M, DOTALL, S, VERBOSE, X, ASCII, A, Match
+
+def bracket(m: Match) -> str:
+    return '[' + m.group() + ']'
+
+@main
+def main():
+    p = compile('(?P<word>a+)(b)?', I)
+    print(p.pattern, p.flags, p.groups, p.groupindex, p.step_limit)
+    m = p.search('!AA!')
+    if m is not None:
+        print(m.string, m.pos, m.endpos, m.re.pattern)
+        print(m.group(), m.group(1), m.group('word'), m.group(2), m.matched(2))
+        print(m.groups(), m.groupdict(), m.start(), m.end(), m.span(2))
+        print(m.expand('\\g<word>-\\2'))
+    print(p.match('!aa') is None, p.match('!aa', 1).span(), p.fullmatch('aa').span())
+    print(match('a', 'ab').group(), search('b', 'ab').span(), fullmatch('ab', 'ab').span())
+    print(findall('(a)', 'aba'), findall_groups('(a)', 'aba'), len(finditer('a', 'aba')))
+    print(sub('(a)', '<\\1>', 'aba'), subn('a', 'X', 'aba', 1), sub_with('a', bracket, 'aba'))
+    print(split('(,)', 'a,b,c', 1), escape('a.b #'))
+    print(IGNORECASE, I, MULTILINE, M, DOTALL, S, VERBOSE, X, ASCII, A)
+    print(compile('a*').findall('ba'))
+    print(fullmatch('é', 'É', I) is not None, fullmatch('ß', 'SS', I) is None)
+    print(fullmatch('(?x)a # ignored\n *', 'aaa') is not None)
+    print(fullmatch('(?i:a)(?-i:b)', 'Ab') is not None, fullmatch('(?i:a)(?-i:b)', 'AB') is None)
+    print(compile('(ab)(?<=\\1)c').fullmatch('abc') is not None)
+    print(compile('a*').search('a', 99).span())

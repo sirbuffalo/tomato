@@ -1,0 +1,233 @@
+# The testing module (Wave 2, pack B): every assertion passes silently or raises AssertionError with its documented text; the failures
+# are caught here and printed. Named functions are the callbacks (a function value cannot see the variables around it).
+from testing import fail, skip, assert_true, assert_false, assert_equal, assert_not_equal, assert_in, assert_not_in
+from testing import assert_none, assert_not_none, assert_close, assert_raises, assert_raises_with, SkipTest
+
+class Point:
+    x: int = 0
+
+    @init
+    def make(self, x: int):
+        self.x = x
+
+    @eq
+    def same(self, other: Point) -> bool:
+        return self.x == other.x
+
+    @str
+    def show(self) -> str:
+        return f'Point({self.x})'
+
+class AppError(Error):
+    @init
+    def make_app(self, message: str, id: str = ""):
+        Error.start(self, message, id)
+
+class DeepError(AppError):
+    @init
+    def make_deep(self, message: str, id: str = ""):
+        AppError.make_app(self, message, id)
+
+# runs f and prints what it raised (or that it did not)
+def show(label: str, f: fn()):
+    try:
+        f()
+        print(label, '-> passes')
+    catch AssertionError as e:
+        print(label, '->', e.message)
+
+def parse(text: str):
+    _n = int(text)
+
+def divide():
+    _x = 1 // int('0')
+
+def raise_value():
+    raise ValueError('bad value')
+
+def raise_key():
+    raise KeyError('missing')
+
+def raise_app():
+    raise AppError('app broke')
+
+def raise_deep():
+    raise DeepError('deep broke')
+
+def nothing():
+    pass
+
+def f_fail():
+    fail('stop here')
+def f_fail_empty():
+    fail()
+def f_true_ok():
+    assert_true(1 < 2)
+def f_true_bad():
+    assert_true(1 > 2)
+def f_true_msg():
+    assert_true(1 > 2, 'one is not above two')
+def f_false_ok():
+    assert_false(1 > 2)
+def f_false_bad():
+    assert_false(1 < 2)
+def f_equal_int_ok():
+    assert_equal(1 + 1, 2)
+def f_equal_int_bad():
+    assert_equal(1 + 1, 3, 'sum')
+def f_equal_text_bad():
+    assert_equal('abc', 'abd')
+def f_equal_list_bad():
+    assert_equal([1, 2], [1, 3])
+def f_equal_float_bad():
+    assert_equal(0.5, 0.25)
+def f_equal_bool_bad():
+    assert_equal(True, False)
+def f_equal_obj_ok():
+    assert_equal(Point(1), Point(1))
+def f_equal_obj_bad():
+    assert_equal(Point(1), Point(2))
+def f_not_equal_ok():
+    assert_not_equal(1, 2)
+def f_not_equal_bad():
+    assert_not_equal('a', 'a')
+def f_in_ok():
+    assert_in(2, [1, 2, 3])
+def f_in_bad():
+    assert_in(5, [1, 2, 3], 'looking for five')
+def f_not_in_ok():
+    assert_not_in('z', ['a', 'b'])
+def f_not_in_bad():
+    assert_not_in('a', ['a', 'b'])
+def f_none_ok():
+    name: str | None = None
+    assert_none[str](name)
+def f_none_bad():
+    name: str | None = 'tom'
+    assert_none[str](name)
+def f_not_none_ok():
+    p: Point | None = Point(3)
+    assert_not_none[Point](p)
+def f_not_none_bad():
+    name: str | None = None
+    assert_not_none[str](name, 'a name is needed')
+def f_close_ok():
+    assert_close(0.1 + 0.2, 0.3)
+def f_close_bad():
+    assert_close(1.0, 1.1)
+def f_close_rel():
+    assert_close(1000.0, 1001.0, 0.01)
+def f_close_rel_bad():
+    assert_close(1000.0, 1100.0, 0.01, 0.0, 'too far')
+def f_close_abs():
+    assert_close(0.0, 0.0000001, 0.0, 0.000001)
+def f_close_zero_bad():
+    assert_close(0.0, 0.0000001)
+def f_close_same():
+    assert_close(1e300, 1e300)
+def f_close_huge_opposite():
+    assert_close(1e308, -1e308)
+def f_close_tiny():
+    assert_close(1e-320, 2e-320)
+def f_close_negative_tol():
+    assert_close(1.0, 1.0, -0.5)
+def f_raises_ok():
+    assert_raises(raise_value, 'ValueError')
+def f_raises_any():
+    assert_raises(raise_key)
+def f_raises_parent():
+    assert_raises(raise_value, 'RuntimeError')
+def f_raises_error():
+    assert_raises(raise_app, 'Error')
+def f_raises_user_class():
+    assert_raises(raise_app, 'AppError')
+def f_raises_user_subclass():
+    assert_raises(raise_deep, 'AppError')
+def f_raises_wrong():
+    assert_raises(raise_key, 'ValueError')
+def f_raises_user_wrong():
+    assert_raises(raise_app, 'DeepError')
+def f_raises_nothing():
+    assert_raises(nothing, 'ValueError')
+def f_raises_with_ok():
+    assert_raises_with(parse, 'x', 'ValueError')
+def f_raises_with_nothing():
+    assert_raises_with(parse, '12', 'ValueError')
+def f_raises_zero():
+    assert_raises(divide, 'ZeroDivisionError')
+def f_raises_assertion():
+    assert_raises(f_true_bad, 'AssertionError')
+def f_raises_assertion_not_runtime():
+    assert_raises(f_true_bad, 'RuntimeError')
+
+@main
+def main():
+    show('fail', f_fail)
+    show('fail empty', f_fail_empty)
+    show('true ok', f_true_ok)
+    show('true bad', f_true_bad)
+    show('true message', f_true_msg)
+    show('false ok', f_false_ok)
+    show('false bad', f_false_bad)
+    show('equal ok', f_equal_int_ok)
+    show('equal int', f_equal_int_bad)
+    show('equal text', f_equal_text_bad)
+    show('equal list', f_equal_list_bad)
+    show('equal float', f_equal_float_bad)
+    show('equal bool', f_equal_bool_bad)
+    show('equal object ok', f_equal_obj_ok)
+    show('equal object', f_equal_obj_bad)
+    show('not equal ok', f_not_equal_ok)
+    show('not equal bad', f_not_equal_bad)
+    show('in ok', f_in_ok)
+    show('in bad', f_in_bad)
+    show('not in ok', f_not_in_ok)
+    show('not in bad', f_not_in_bad)
+    show('none ok', f_none_ok)
+    show('none bad', f_none_bad)
+    show('not none ok', f_not_none_ok)
+    show('not none bad', f_not_none_bad)
+    show('close ok', f_close_ok)
+    show('close bad', f_close_bad)
+    show('close rel', f_close_rel)
+    show('close rel bad', f_close_rel_bad)
+    show('close abs', f_close_abs)
+    show('close zero bad', f_close_zero_bad)
+    show('close same', f_close_same)
+    show('close huge opposite', f_close_huge_opposite)
+    show('close tiny', f_close_tiny)
+    show('raises ok', f_raises_ok)
+    show('raises any', f_raises_any)
+    show('raises parent', f_raises_parent)
+    show('raises Error', f_raises_error)
+    show('raises user class', f_raises_user_class)
+    show('raises user subclass', f_raises_user_subclass)
+    show('raises wrong class', f_raises_wrong)
+    show('raises wrong user class', f_raises_user_wrong)
+    show('raises nothing', f_raises_nothing)
+    show('raises with ok', f_raises_with_ok)
+    show('raises with nothing', f_raises_with_nothing)
+    show('raises zero division', f_raises_zero)
+    show('raises assertion', f_raises_assertion)
+    show('raises assertion is not runtime', f_raises_assertion_not_runtime)
+    # assert_raises returns the error it caught
+    e = assert_raises(raise_value, 'ValueError')
+    print('returned:', e.message, e.id == '')
+    e2 = assert_raises_with(parse, 'x', 'ValueError')
+    print('returned with:', e2.message)
+    # a negative tolerance is a mistake of the test itself
+    try:
+        f_close_negative_tol()
+    catch ValueError as v:
+        print('negative tolerance:', v.message)
+    # skip raises SkipTest, which is an Error but not an AssertionError
+    try:
+        skip('no network')
+    catch SkipTest as s:
+        print('skipped:', s.message)
+    try:
+        skip('again')
+    catch AssertionError:
+        print('wrong: caught as AssertionError')
+    catch Error as err:
+        print('an Error:', err.message)

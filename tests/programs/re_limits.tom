@@ -1,0 +1,68 @@
+from re import compile, RegexError
+
+@main
+def main():
+    p = compile('(a+)+$')
+    try:
+        p.search('a' * 30 + 'b')
+        print('limit missed')
+    catch RegexError as e:
+        print(e.id, e.message)
+    print(compile('.*').fullmatch('a' * 200000).span())
+    text = ('x' * 999 + 'a') * 1000
+    print(len(compile('a').findall(text)))
+    # many matches in a long text must stay linear: a literal prefix is found by one scan over the code points
+    many = 'ab' * 100000
+    print(len(compile('a').findall(many)))
+    print(len(compile('ab').sub('c', many)))
+    print(len(compile('a').split(many)))
+    # nesting is limited, so a hostile pattern is a RegexError, not a stack overflow
+    for depth in [1000, 1001, 20000]:
+        try:
+            compile('(?:' * depth + 'a' + ')' * depth)
+            print(depth, 'ok')
+        catch RegexError as e:
+            print(depth, e.id, e.message)
+    # counted repeats are unrolled, so counts and the size of the whole program are limited
+    for pattern in ['a{65535}', 'a{65536}', 'a{100000000}', '(?:a{1000}){1000}', '(?:(?:a{300}){300}){300}', 'a{3,70000}']:
+        try:
+            compile(pattern)
+            print(pattern, 'ok')
+        catch RegexError as e:
+            print(pattern, e.id, e.message)
+    # the compiler recurses once per sequence item and per alternative
+    parts: list[str] = []
+    for i in range(10001):
+        parts.append('w' + str(i))
+    for count in [10000, 10001]:
+        try:
+            compile('|'.join(parts[:count]))
+            print('alternatives', count, 'ok')
+        catch RegexError as e:
+            print('alternatives', count, e.id, e.message)
+        try:
+            compile('a' * count)
+            print('sequence', count, 'ok')
+        catch RegexError as e:
+            print('sequence', count, e.id, e.message)
+    # match with pos converts the text once, not once per call
+    text = 'ab ' * 40000
+    pos = 0
+    tokens = 0
+    word = compile('[a-z]+')
+    while pos < len(text):
+        m = word.match(text, pos)
+        if m is None:
+            pos += 1
+        else:
+            tokens += 1
+            pos = m.end()
+    print(tokens)
+    # a backreference compare costs the characters it looks at: this used to run for minutes instead of reaching the limit
+    big = 'a' * 100000
+    try:
+        compile('(.*)\\1x').search(big)
+        print('limit missed')
+    catch RegexError as e:
+        print('backreference', e.id)
+    print(compile('(a*)\\1').fullmatch('a' * 20000) is not None)

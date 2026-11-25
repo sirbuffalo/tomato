@@ -483,3 +483,42 @@ OverflowError a float is too large for a double
 ZeroDivisionError zero cannot be raised to a negative power
 ValueError a negative number cannot be raised to a power that is not a whole number
 OverflowError a float is too small for a double
+RegexError unexpected regex syntax
+RegexError invalid regex escape
+RegexError invalid regex group
+RegexError invalid regex character class
+RegexError invalid regex repetition
+RegexError regex construct is not supported
+RegexError invalid regex group reference
+RegexError too many steps (catastrophic backtracking?)
+RegexError invalid regex replacement
+ValueError unsupported regular expression flags
+IndexError no such group {}
+ValueError unknown UTF-8 error mode
+ValueError invalid UTF-8
+ValueError invalid struct format or data
+OverflowError integer does not fit
+ValueError unknown hash algorithm
+ValueError invalid PBKDF2 iteration count or length
+StructError invalid struct format or data
+OverflowError float too large to pack
+FileNotFoundError the path does not exist
+FileExistsError the path already exists
+PermissionError permission denied
+IsADirectoryError the path is a directory
+NotADirectoryError a part of the path is not a directory
+ValueError open() text modes only
+ValueError a path or name cannot contain a NUL character
+ValueError an environment variable name is empty or contains '='
+ValueError an exit status must be from 0 to 255
+RuntimeError not available in the browser playground
+IOError the system call failed
+ValueError the StringIO is closed
+ValueError a StringIO position cannot be negative
+ValueError no path specified
+AssertionError assertion failed
+CompileError the function '{}' is marked @test, but it is async, and async tests are not supported yet
+CompileError the function '{}' is marked @test, so it must take no parameters and return nothing
+CompileError no function is marked @test
+SkipTest the test was skipped
+ValueError a tolerance must not be negative

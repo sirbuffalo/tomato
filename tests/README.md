@@ -25,14 +25,14 @@ silent. What it skips:
 
 | Where | Full runs | `--fast` runs | Skipped |
 | --- | --- | --- | --- |
-| memory (AddressSanitizer builds of programs) | 111 | 42 (`fast_asan` in `tests/run.sh`) | 69 |
+| memory (AddressSanitizer builds of programs) | 128 | 49 (`fast_asan` in `tests/run.sh`) | 79 |
 | release mode (AddressSanitizer) | 10 programs | 4: `fast_paths`, `loop_nests`, `int_ranges`, `containers` | 6 |
 | WebAssembly (programs, rejected programs, runtime errors) | 109 | 36 (`fast_wasm`) | 73 |
 | command line: release mode runs like debug mode | 10 programs | 3: `int_boundary`, `containers`, `cycle` | 7 |
 | benchmarks smoke | 25 benchmarks, each in Tomato and go, rust, python, c, javascript | 6 (`fib sieve strings sort wordcount hof`), each in Tomato and c, python | 19 benchmarks (and, for the six, go, rust, javascript) |
 
-That is 755 checks in the full suite and 654 in the fast tier (101 skipped); the fast tier takes a little over half the CPU time.
-Everything else runs in both tiers: the compiler and its fixed point, the install, the 14 examples, all 171 programs with expected output,
+That was 755 checks in the full suite and 654 in the fast tier (101 skipped) before the Wave 2 packs (`re`, hashing and binary, `os`/`sys`, testing), which added about 30 programs, 17 AddressSanitizer builds, a dozen WebAssembly programs and the `tomato test`, exit-status and `sys.version` checks; the ASan rows and the program count above are recounted, the other rows and totals are not; the fast tier takes a little over half the CPU time.
+Everything else runs in both tiers: the compiler and its fixed point, the install, the 14 examples, all 200 programs with expected output,
 the 103 rejected programs and 76 error messages, the 63 runtime errors, the input, error-id, known-gaps, highlighter and release-file checks, and
 the rest of the command line (the update, the runtime cache, `explain`, the repl, colors, warnings, modes). Which tests were skipped is printed at the
 end of every `--fast` run, as `SECTION: NAME`.
@@ -98,3 +98,7 @@ Write `t_NAME` (it runs in `$work`, its own folder), and register it where it be
 that takes more than a few seconds, `spawn_cli` for one that uses the installed `tomato`, `last` for one that must run alone). Report
 with `ok`, `bad` or `check`. For the fast tier, a test that is one of many alike should be listed in the sample (`fast_asan`,
 `fast_wasm`, ...) or skipped with `skip NAME` when `$fast` is set.
+
+## Tables generated from Python
+
+`tests/programs/ospath_text.tom` and `tests/regex/cases.txt` hold data that was produced once by running Python 3.14.4 and then committed; no script that needs Python is kept in the repository. `ospath_text.tom` has 293 calls of `join`, `split`, `splitext`, `basename`, `dirname`, `isabs`, `normpath` and `relpath` on a fixed list of paths (empty, rooted, doubled slashes, dotted names, non-ASCII), each with the result of the same function in `posixpath`; `tests/regex/README.md` describes the regex rows. To extend either table, produce the new rows from Python the same way and append them with their expected results.

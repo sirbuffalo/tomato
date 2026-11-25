@@ -765,6 +765,17 @@ export class Parser:
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Raise', t.line, [vn(v)])
+        if self.is_kw('assert'):
+            # assert condition[, 'message'] is `if condition: pass else: raise AssertionError(message, 'E519')` (B-Q1): the error has the line
+            # of the assert, and the message is worked out only when the check fails. E519 is the line of AssertionError in std/errors.txt.
+            self.adv()
+            cond = self.expr()
+            msg = mk('StrLit', t.line, [vs('assertion failed')])
+            if self.accept_op(','):
+                msg = self.expr()
+            self.expect('NEWLINE')
+            err = mk('Call', t.line, [vn(mk('Name', t.line, [vs('AssertionError')])), vnodes([msg, mk('StrLit', t.line, [vs('E519')])]), vlist([])])
+            return mk('If', t.line, [vlist([vtuple([vn(cond), vnodes([mk('Pass', t.line, [])])])]), vnodes([mk('Raise', t.line, [vn(err)])])])
         if self.is_kw('yield'):
             self.adv()
             yv = self.expr()

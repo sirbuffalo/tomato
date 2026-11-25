@@ -1,0 +1,179 @@
+# os: files and directories under a work directory that tests/run.sh passes in (a fixed folder in a shared /tmp can belong to
+# another user): create, write, append, listdir (sorted), stat, rename, remove, makedirs and the error classes.
+import os
+import ospath
+
+def show(names: list[str]) -> str:
+    return '[' + ', '.join(names) + ']'
+
+def clear(path: str):
+    # removes what an earlier run left
+    if not ospath.exists(path):
+        return
+    if ospath.isdir(path):
+        for n in os.listdir(path):
+            clear(path + '/' + n)
+        os.rmdir(path)
+    else:
+        os.remove(path)
+
+@main
+def main(dir: str = '/tmp'):
+    base = dir + '/tomato_os_files'
+    clear(base)
+    print(ospath.exists(base))
+    os.mkdir(base)
+    print(ospath.exists(base), ospath.isdir(base), ospath.isfile(base), os.listdir(base))
+    # write, append, read
+    f = base + '/a.txt'
+    os.write_text(f, 'one\n')
+    os.write_text(f, 'two\n', append=True)
+    os.write_text(f, 'three\n', True)
+    print(os.read_text(f).replace('\n', '|'))
+    os.write_text(f, 'replaced')
+    print(os.read_text(f), ospath.getsize(f), ospath.isfile(f), ospath.isdir(f))
+    os.write_text(base + '/empty', '')
+    print(repr_size(base + '/empty'))
+    # listdir is sorted by bytes whatever the order the system gives
+    for n in ['b', 'a', 'B', 'a.txt2', '_x', 'é', 'Z', '10', '9']:
+        os.write_text(base + '/' + n, n)
+    os.mkdir(base + '/dir')
+    print(show(os.listdir(base)))
+    print(show(os.listdir(base + '/dir')))
+    # stat
+    st = os.stat(f)
+    print(st.size, st.is_file, st.is_dir, st.is_symlink, st.mtime > 1000000000.0, st.mode > 0)
+    sd = os.stat(base + '/dir')
+    print(sd.is_file, sd.is_dir, sd.is_symlink)
+    print(ospath.getmtime(f) == st.mtime)
+    # rename replaces an existing file, and renames a directory
+    os.write_text(base + '/old', 'OLD')
+    os.write_text(base + '/new', 'NEW')
+    os.rename(base + '/old', base + '/new')
+    print(ospath.exists(base + '/old'), os.read_text(base + '/new'))
+    os.rename(base + '/dir', base + '/dir2')
+    print(ospath.isdir(base + '/dir'), ospath.isdir(base + '/dir2'))
+    # makedirs: parents, exist_ok, trailing slash
+    os.makedirs(base + '/p/q/r')
+    print(ospath.isdir(base + '/p/q/r'))
+    os.makedirs(base + '/p/q/r', exist_ok=True)
+    os.makedirs(base + '/p/q/s/', exist_ok=True)
+    print(show(os.listdir(base + '/p/q')))
+    # remove and rmdir
+    os.remove(base + '/new')
+    os.rmdir(base + '/p/q/r')
+    print(ospath.exists(base + '/new'), ospath.exists(base + '/p/q/r'))
+    # errors: each class, the id and the message with the path made relative to this run
+    try:
+        os.read_text(base + '/missing')
+    catch FileNotFoundError as e:
+        print('read_text', e.id, trim(e.message, dir))
+    try:
+        os.listdir(base + '/missing')
+    catch FileNotFoundError as e:
+        print('listdir', e.id, trim(e.message, dir))
+    try:
+        os.stat(base + '/missing')
+    catch FileNotFoundError as e:
+        print('stat', e.id, trim(e.message, dir))
+    try:
+        os.remove(base + '/missing')
+    catch FileNotFoundError as e:
+        print('remove', e.id, trim(e.message, dir))
+    try:
+        os.rename(base + '/missing', base + '/x')
+    catch FileNotFoundError as e:
+        print('rename', e.id, trim(e.message, dir))
+    try:
+        os.mkdir(base + '/no/parent')
+    catch FileNotFoundError as e:
+        print('mkdir', e.id, trim(e.message, dir))
+    try:
+        os.mkdir(base)
+    catch FileExistsError as e:
+        print('mkdir exists', e.id, trim(e.message, dir))
+    try:
+        os.makedirs(base)
+    catch FileExistsError as e:
+        print('makedirs exists', e.id)
+    try:
+        os.makedirs(f)
+    catch FileExistsError as e:
+        print('makedirs on a file', e.id)
+    try:
+        os.makedirs(f + '/sub')
+    catch NotADirectoryError as e:
+        print('makedirs under a file', e.id)
+    try:
+        os.remove(base)
+    catch IsADirectoryError as e:
+        print('remove dir', e.id, trim(e.message, dir))
+    try:
+        os.read_text(base)
+    catch IsADirectoryError as e:
+        print('read_text dir', e.id, trim(e.message, dir))
+    try:
+        os.write_text(base, 'x')
+    catch IsADirectoryError as e:
+        print('write_text dir', e.id)
+    try:
+        os.listdir(f)
+    catch NotADirectoryError as e:
+        print('listdir file', e.id, trim(e.message, dir))
+    try:
+        os.read_text(f + '/inside')
+    catch NotADirectoryError as e:
+        print('read inside file', e.id)
+    try:
+        os.rmdir(base)
+    catch IOError as e:
+        print('rmdir not empty', e.id, trim(e.message, dir))
+    try:
+        os.rmdir(f)
+    catch NotADirectoryError as e:
+        print('rmdir file', e.id)
+    try:
+        ospath.getsize(base + '/missing')
+    catch FileNotFoundError as e:
+        print('getsize', e.id)
+    try:
+        ospath.getmtime(base + '/missing')
+    catch FileNotFoundError as e:
+        print('getmtime', e.id)
+    # permission: a directory the user cannot create into is a PermissionError (a user with full rights makes it, and the test says the same)
+    try:
+        os.mkdir('/usr/tomato_os_files_permission')
+        os.rmdir('/usr/tomato_os_files_permission')
+        print('PermissionError')
+    catch PermissionError as e:
+        print('PermissionError')
+    # every file error is an IOError (and a RuntimeError, and an Error)
+    try:
+        os.listdir(base + '/missing')
+    catch IOError as e:
+        print('caught as IOError')
+    # names with NUL
+    try:
+        os.mkdir('a' + chr(0))
+    catch ValueError as e:
+        print('NUL', e.id)
+    print(ospath.exists('a' + chr(0)), ospath.isfile('a' + chr(0)), ospath.isdir('a' + chr(0)), ospath.islink('a' + chr(0)))
+    # the current directory
+    here = os.getcwd()
+    os.chdir(base)
+    print(os.getcwd() == ospath.abspath(base) or os.getcwd().endswith('tomato_os_files'))
+    print(os.listdir() == os.listdir('.'), ospath.exists('a.txt'), ospath.abspath('a.txt').endswith('/tomato_os_files/a.txt'))
+    os.chdir(here)
+    try:
+        os.chdir(base + '/missing')
+    catch FileNotFoundError as e:
+        print('chdir', e.id)
+    clear(base)
+    print(ospath.exists(base))
+
+def repr_size(path: str) -> str:
+    return str(ospath.getsize(path)) + ' ' + str(len(os.read_bytes(path)))
+
+# the message without the work directory, so the output does not depend on where the test runs
+def trim(message: str, dir: str) -> str:
+    return message.replace(dir, '<dir>')

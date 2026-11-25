@@ -1,0 +1,7 @@
+import utf8
+@main
+def main():
+    for b in range(256):
+        print(b, utf8.encode(utf8.decode([b, 128, 65], 'replace')))
+    for b in range(256):
+        print(b, utf8.encode(utf8.decode([240, b, 128, 65], 'replace')))

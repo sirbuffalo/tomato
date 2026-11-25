@@ -1,0 +1,41 @@
+# sys: the command-line words, the platform and version, and the standard streams against print. tests/run.sh runs it with the
+# input "alpha"; the entry point has a fixed input and *args (A-Q3: the inputs beyond the fixed ones go to *args).
+import sys
+
+def show(words: list[str]) -> str:
+    return '[' + ', '.join(words) + ']'
+
+@main
+def main(first: str, *rest: tuple[str]):
+    words = sys.argv()
+    print(len(words), len(rest), first)
+    print(show(words[1:]))
+    words2 = sys.argv()
+    print(words2[0] == words[0], len(words2))
+    print(sys.platform() in ['linux', 'darwin', 'wasi'])
+    v = sys.version()
+    print(len(v) > 0, v[0].isdigit(), '.' in v)
+    # print and write_stdout share one buffer, so their order is kept; flush puts it before the unbuffered standard error
+    print('a')
+    sys.write_stdout('b')
+    sys.write_stdout('\n')
+    print('c')
+    sys.flush()
+    sys.write_stderr('to stderr\n')
+    print('d')
+    for w in rest:
+        print('rest', w)
+    # exit values outside 0..255 are refused before anything ends
+    try:
+        sys.exit(256)
+    catch ValueError as e:
+        print(e.id, e.message)
+    try:
+        sys.exit(-1)
+    catch ValueError as e:
+        print(e.id, e.message)
+    # finally runs when a function returns normally
+    try:
+        print('body')
+    finally:
+        print('finally')

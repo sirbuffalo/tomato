@@ -1,0 +1,68 @@
+# HMAC (RFC 2104). compare_digest avoids position-dependent early exits, but Tomato does not guarantee constant time.
+import hashlib
+
+export class HMAC:
+    inner: hashlib.Hash = hashlib.sha256()
+    outer: hashlib.Hash = hashlib.sha256()
+    @init
+    def make(self, key: list[int], digestmod: str):
+        h = hashlib.new(digestmod)
+        for b in key:
+            if b < 0 or b > 255:
+                raise ValueError('a byte must be from 0 to 255', 'E391')
+        k = key[:]
+        if len(k) > 64:
+            h.update(k)
+            k = h.digest()
+        while len(k) < 64:
+            k.append(0)
+        ipad: list[int] = []
+        opad: list[int] = []
+        for b in k:
+            ipad.append(b ^ 54)
+            opad.append(b ^ 92)
+        self.inner = hashlib.new(digestmod, ipad)
+        self.outer = hashlib.new(digestmod, opad)
+
+    def update(self, data: list[int]):
+        self.inner.update(data)
+
+    def digest(self) -> list[int]:
+        h = self.outer.copy()
+        h.update(self.inner.digest())
+        return h.digest()
+
+    def hexdigest(self) -> str:
+        digits = '0123456789abcdef'
+        out: list[str] = []
+        for b in self.digest():
+            out.append(digits[b // 16] + digits[b % 16])
+        return ''.join(out)
+
+    def copy(self) -> HMAC:
+        h = HMAC([], self.inner.name)
+        h.inner = self.inner.copy()
+        h.outer = self.outer.copy()
+        return h
+
+export def digest(key: list[int], msg: list[int], digestmod: str) -> list[int]:
+    h = HMAC(key, digestmod)
+    h.update(msg)
+    return h.digest()
+
+export def hexdigest(key: list[int], msg: list[int], digestmod: str) -> str:
+    h = HMAC(key, digestmod)
+    h.update(msg)
+    return h.hexdigest()
+
+export def compare_digest(a: list[int], b: list[int]) -> bool:
+    for x in a:
+        if x < 0 or x > 255:
+            raise ValueError('a byte must be from 0 to 255', 'E391')
+    for x in b:
+        if x < 0 or x > 255:
+            raise ValueError('a byte must be from 0 to 255', 'E391')
+    diff = len(a) ^ len(b)
+    for i in range(min(len(a), len(b))):
+        diff = diff | (a[i] ^ b[i])
+    return diff == 0

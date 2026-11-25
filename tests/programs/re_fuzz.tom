@@ -1,0 +1,43 @@
+# Deterministic generated subjects test relationships between entry points.
+from re import compile
+
+@main
+def main():
+    patterns = ['', 'a', 'a*', '(a|b)+', '(a)?b', '[ab]+', '^a', 'a$', 'a(?=b)', '(?<=a)b', '\\b', '(a*)*', 'a{1,3}?']
+    alphabet = 'ab !\n'
+    seed = 7429
+    count = 0
+    failed = 0
+    for round in range(200):
+        seed = (seed * 48271) % 2147483647
+        n = seed % 12
+        chars: list[str] = []
+        for i in range(n):
+            seed = (seed * 48271) % 2147483647
+            chars.append(alphabet[seed % len(alphabet)])
+        text = ''.join(chars)
+        for pattern in patterns:
+            p = compile(pattern)
+            m = p.match(text)
+            s = p.search(text)
+            f = p.fullmatch(text)
+            ok = True
+            if m is not None:
+                if m.start() != 0 or s is None:
+                    ok = False
+                elif s.span() != m.span():
+                    ok = False
+            if f is not None:
+                if f.span() != (0, len(text)) or m is None:
+                    ok = False
+            all = p.finditer(text)
+            if s is None:
+                if len(all) != 0:
+                    ok = False
+            elif len(all) == 0 or all[0].span() != s.span():
+                ok = False
+            if not ok:
+                print('inconsistent', pattern, text)
+                failed += 1
+            count += 1
+    print('ok', count - failed, '/', count)

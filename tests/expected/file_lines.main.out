@@ -1,0 +1,40 @@
+[alpha<LF>] [beta<LF>] [<LF>] [gamma] [] []
+[alpha<LF>] [beta<LF>] [<LF>] [gamma] 0
+[alpha<LF>] [beta<LF>] [<LF>] [gamma]
+[alpha<LF>] 6
+[beta<LF>] 5
+[<LF>] 1
+[gamma] 5
+[]
+[alpha<LF>]
+loop [beta<LF>]
+after break [<LF>]
+again [gamma]
+[alpha<LF>] [x<LF>]
+[alpha<LF>] [y<LF>]
+[beta<LF>] [x<LF>]
+[beta<LF>] [y<LF>]
+[<LF>] [x<LF>]
+[<LF>] [y<LF>]
+[gamma] [x<LF>]
+[gamma] [y<LF>]
+[alpha<LF>] [none]
+[solo]
+[] 0
+0
+[<LF>] [<LF>] [<LF>]
+[one<CR><LF>]
+[two<CR>three<CR><LF>]
+[é<LF>] 2
+[日本<LF>] 3
+[255, 10]
+[195, 40, 10]
+[65]
+[ab] [c] []
+[ab<LF>c<LF>d]
+readline E381
+readlines E381
+for E381
+read E381
+5250000
+105000 5250000

@@ -1,0 +1,23 @@
+[] [] [] 0
+[hello world<LF>second<LF>third]
+[]
+[hello world<LF>] [second<LF>] [third] []
+3
+[hello world<LF>]
+[second<LF>]
+[third]
+[world<LF>second<LF>third]
+[XYcdef] [cdef]
+[XYcdef!!!!!!]
+[XY--ef!!!!!!]
+5 0 0 x
+[é日] [é日] 2
+[é本]
+208890
+20000 [line 0<LF>] [line 19999<LF>]
+2 []
+[no newline] []
+E517 a StringIO position cannot be negative
+E516 the StringIO is closed
+E516
+E516

@@ -1,0 +1,21 @@
+# struct: many small appends to a Packer and many values in one pack_ints call stay linear (each append used to copy the whole
+# buffer, so 40,000 records took minutes). Native only: it is too much work for the browser time limit.
+import struct
+
+@main
+def main():
+    big = struct.Packer('>')
+    for i in range(200000):
+        big.u8(i % 256)
+    print(len(big.bytes()))
+    wide = struct.Packer('<')
+    for i in range(20000):
+        wide.u32(i)
+        wide.f64(float(i) / 4.0)
+    rd = struct.Reader(wide.bytes(), '<')
+    total = 0
+    for i in range(20000):
+        total += rd.read_u32()
+        total += int(rd.read_f64())
+    print(total)
+    print(len(struct.pack_ints('<' + '50000i', [7] * 50000)))

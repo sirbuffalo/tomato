@@ -1,0 +1,5 @@
+# the message of an assert must be text
+@main
+def main():
+    n = 1
+    assert n == 1, 42

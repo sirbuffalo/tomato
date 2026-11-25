@@ -1,0 +1,47 @@
+r missing: FileNotFoundError E25
+r+ missing: FileNotFoundError E25
+w missing: ok
+a missing: ok
+x missing: ok
+w+ missing: ok
+a+ missing: ok
+x+ missing: ok
+x existing: FileExistsError E25 FileExistsError E25
+r: ok abc
+a: ok abc
+w: ok 0
+hello world!
+Jello world!
+new
+newer
+exclusive
+both
+both
+mode rb -> ValueError E510
+mode wb -> ValueError E510
+mode ab -> ValueError E510
+mode xb -> ValueError E510
+mode r+b -> ValueError E510
+mode rt -> ValueError E510
+mode wt -> ValueError E510
+mode tr -> ValueError E510
+mode rw -> ValueError E510
+mode r++ -> ValueError E510
+mode  -> ValueError E510
+mode b -> ValueError E510
+mode + -> ValueError E510
+mode R -> ValueError E510
+mode w  -> ValueError E510
+mode U -> ValueError E510
+mode rU -> ValueError E510
+mode wx -> ValueError E510
+mode w+x -> ValueError E510
+ValueError E510 False
+open() text modes only: r, w, a or x, with an optional +; use os.read_bytes/os.write_bytes for bytes
+dir: IsADirectoryError E25 IsADirectoryError E25 IsADirectoryError E25 IsADirectoryError E25
+missing dir: FileNotFoundError E25
+w+ read after write: []
+w+ file: [hello|world|]
+r+ readline: [hello|]
+r+ read after write: [rld|third|]
+r+ file: [hello|ZZrld|third|]

@@ -43,7 +43,7 @@ def digit_value(c: str) -> int:
 
 def is_keyword(w: str) -> bool:
     words = ['def', 'class', 'interface', 'implements', 'private', 'const', 'override', 'return', 'if', 'elif',
-             'else', 'while', 'for', 'in', 'pass', 'break', 'continue', 'try', 'catch', 'finally', 'raise', 'yield',
+             'else', 'while', 'for', 'in', 'pass', 'break', 'continue', 'try', 'catch', 'finally', 'raise', 'assert', 'yield',
              'import', 'from', 'export', 'async', 'await', 'as', 'is', 'and', 'or', 'xor', 'not', 'True', 'False']
     return w in words
 

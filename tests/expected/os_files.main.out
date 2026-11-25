@@ -1,0 +1,42 @@
+False
+True True False []
+one|two|three|
+replaced 8 True False
+0 0
+[10, 9, B, Z, _x, a, a.txt, a.txt2, b, dir, empty, é]
+[]
+8 True False False True True
+False True False
+True
+False OLD
+False True
+True
+[r, s]
+False False
+read_text E25 could not open '<dir>/tomato_os_files/missing': No such file or directory
+listdir E505 could not list the directory '<dir>/tomato_os_files/missing': No such file or directory
+stat E505 could not stat '<dir>/tomato_os_files/missing': No such file or directory
+remove E505 could not remove '<dir>/tomato_os_files/missing': No such file or directory
+rename E505 could not rename '<dir>/tomato_os_files/missing' to '<dir>/tomato_os_files/x': No such file or directory
+mkdir E505 could not create the directory '<dir>/tomato_os_files/no/parent': No such file or directory
+mkdir exists E506 could not create the directory '<dir>/tomato_os_files': File exists
+makedirs exists E506
+makedirs on a file E506
+makedirs under a file E509
+remove dir E508 could not remove '<dir>/tomato_os_files': Is a directory
+read_text dir E25 could not open '<dir>/tomato_os_files': Is a directory
+write_text dir E25
+listdir file E509 could not list the directory '<dir>/tomato_os_files/a.txt': Not a directory
+read inside file E25
+rmdir not empty E515 could not remove the directory '<dir>/tomato_os_files': Directory not empty
+rmdir file E509
+getsize E505
+getmtime E505
+PermissionError
+caught as IOError
+NUL E511
+False False False False
+True
+True True True
+chdir E505
+False

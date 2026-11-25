@@ -1,0 +1,41 @@
+E486 0 unexpected character
+E487 0 unknown escape
+E488 0 unclosed group
+E489 0 unclosed character class
+E490 0 nothing to repeat
+E491 2 possessive quantifiers are not supported
+E491 0 escape is not supported
+E491 0 escape is not supported
+E491 0 group extension is not supported
+E491 0 group extension is not supported
+E491 0 group extension is not supported
+E491 0 group extension is not supported
+E491 0 escape is not supported
+E488 0 lookbehind requires fixed width
+E492 3 unknown group reference
+E489 0 invalid character class range
+E492 3 unknown group reference
+E487 0 octal escape is out of range
+E487 0 octal escape is out of range
+E487 0 unknown escape
+E487 0 octal escape is out of range
+E490 1 nothing to repeat
+E490 2 nothing to repeat
+E490 2 nothing to repeat
+E490 2 nothing to repeat
+E490 1 nothing to repeat
+E490 3 nothing to repeat
+accepted (?:^)*
+accepted (^)*
+accepted (?=a)*
+E494 3 no such group missing
+invalid flags
+invalid group
+\0 [120, 0, 120]
+\012 [120, 10, 120]
+\101 [120, 65, 120]
+\a\b\f\v [120, 7, 8, 12, 11, 120]
+\0101 [120, 8, 49, 120]
+\400 E494 octal escape is out of range
+\11 E494 no such group 11
+\18 E494 no such group 18

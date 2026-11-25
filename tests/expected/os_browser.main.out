@@ -1,0 +1,30 @@
+wasi 1 True
+None dflt False
+putenv E514 putenv is not available in the browser playground
+unsetenv E514 unsetenv is not available in the browser playground
+chdir E514 chdir is not available in the browser playground
+getpid E514 getpid is not available in the browser playground
+/ /x b
+True True False []
+one|two| 8 True
+[B, _, a, a.txt, b, p, é] [q] []
+8 True False False True False
+[B, _, a, b, p2, z.txt, é] True False
+[B, _, a, b, p2, é] []
+[0, 1, 254, 255, 7]
+listdir E505
+mkdir E506
+mkdir parent E505
+read_text dir E25
+listdir file E509
+rmdir E515
+remove dir E508
+remove E505
+one|
+two<CR><LF>
+three
+3
+mode E510
+x E25
+one|two<CR>|three!
+bc
