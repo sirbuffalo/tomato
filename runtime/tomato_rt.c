@@ -2676,10 +2676,90 @@ void tomato_http_free(int64_t id) {
 }
 
 /* ---- descriptor waits (std/socket.tom): await _fd_wait(fd, mode) parks the task until the descriptor can be read (mode 1) or
- * written (mode 2). The descriptors are checked with poll when nothing else can run, in the same wait as libcurl's (its
- * curl_multi_poll takes extra descriptors), so sockets, requests and sleeps all overlap. */
+ * written (mode 2). fd_q lists the waiting tasks. Where the system has one (epoll on Linux, kqueue on macOS and the BSDs), a
+ * level-triggered kernel set also holds the waited descriptors, so a check costs the number of ready descriptors, not of idle
+ * ones (poll builds and scans its whole list every time). Many tasks may wait on one descriptor, so fd_state counts the readers
+ * and writers of each, and a descriptor is added to the set with its first waiter and removed with its last (when a wait ends by
+ * wake-up, cancellation or close). When nothing else can run, the kernel set's own descriptor is what is waited on, in the same
+ * wait as libcurl's (curl_multi_poll takes extra descriptors), so sockets, requests and sleeps all overlap. If the set cannot be
+ * made or used (no such system, a descriptor it refuses such as a regular file, or one numbered past FD_STATE_MAX), the set is
+ * dropped for good and every wait is checked with poll over fd_q, as on systems without one. */
 typedef struct { void *frame; int64_t fd; int mode; } FdWait;
 static FdWait *fd_q; static int64_t fd_n, fd_cap;
+
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+#include <poll.h>
+#if defined(__linux__)
+#include <sys/epoll.h>
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include <sys/event.h>
+#endif
+
+/* A level-triggered kernel set remains registered between scheduler turns.  If a
+ * descriptor cannot be registered, retain the poll implementation as a fallback. */
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#define FD_KERNEL_SET 1
+typedef struct { int read, write; short ready; } FdState;
+static FdState *fd_state; static int64_t fd_state_n;
+static int fd_backend = -2; /* -2 uninitialized, -1 fallback */
+#define FD_STATE_MAX (1 << 20)  /* fd_state is indexed by descriptor; a higher number would make it huge, so poll is used */
+static void fd_backend_fail(void) { if (fd_backend >= 0) close(fd_backend); fd_backend = -1; }
+static void fd_register(int fd, int mode, int delta) {
+    if (fd_backend == -2) {
+#if defined(__linux__)
+        fd_backend = epoll_create1(EPOLL_CLOEXEC);
+#else
+        fd_backend = kqueue();
+        if (fd_backend >= 0) fcntl(fd_backend, F_SETFD, FD_CLOEXEC);
+        if (fd_backend >= 0) {   /* io_block waits on the set with poll: be sure the set becomes readable when a descriptor is ready */
+            int pp[2], ok = 0;
+            if (pipe(pp) == 0) {
+                struct kevent ev; EV_SET(&ev, (uintptr_t)pp[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
+                struct pollfd probe = {fd_backend, POLLIN, 0};
+                if (write(pp[1], "x", 1) == 1 && kevent(fd_backend, &ev, 1, NULL, 0, NULL) == 0 &&
+                    poll(&probe, 1, 100) == 1 && (probe.revents & POLLIN)) ok = 1;
+                close(pp[0]); close(pp[1]);   /* closing removes the probe's registration */
+            }
+            if (!ok) fd_backend_fail();
+        }
+#endif
+    }
+    if (fd_backend < 0) return;
+    if (fd >= FD_STATE_MAX) { fd_backend_fail(); return; }
+    if (fd >= fd_state_n) {
+        int64_t n = fd_state_n ? fd_state_n : 64;
+        while (n <= fd) n *= 2;
+        fd_state = realloc(fd_state, (size_t)n * sizeof *fd_state);
+        if (!fd_state) out_of_memory();
+        memset(fd_state + fd_state_n, 0, (size_t)(n - fd_state_n) * sizeof *fd_state);
+        fd_state_n = n;
+    }
+    FdState *s = &fd_state[fd];
+    int old_read = s->read, old_write = s->write;
+    if (mode == 2) s->write += delta; else s->read += delta;
+#if defined(__linux__)
+    uint32_t old = (old_read ? EPOLLIN : 0) | (old_write ? EPOLLOUT : 0);
+    uint32_t now = (s->read ? EPOLLIN : 0) | (s->write ? EPOLLOUT : 0);
+    if (old != now) {
+        struct epoll_event ev = {0}; ev.events = now; ev.data.fd = fd;
+        int op = !old ? EPOLL_CTL_ADD : !now ? EPOLL_CTL_DEL : EPOLL_CTL_MOD;
+        if (epoll_ctl(fd_backend, op, fd, &ev) < 0) fd_backend_fail();
+    }
+#else
+    int old = mode == 2 ? old_write : old_read, now = mode == 2 ? s->write : s->read;
+    if (!!old != !!now) {
+        struct kevent ev;
+        EV_SET(&ev, (uintptr_t)fd, mode == 2 ? EVFILT_WRITE : EVFILT_READ, now ? EV_ADD : EV_DELETE, 0, 0, NULL);
+        if (kevent(fd_backend, &ev, 1, NULL, 0, NULL) < 0) fd_backend_fail();
+    }
+#endif
+}
+#else
+static void fd_register(int fd, int mode, int delta) { (void)fd; (void)mode; (void)delta; }
+#endif
+#else
+static void fd_register(int fd, int mode, int delta) { (void)fd; (void)mode; (void)delta; }
+#endif
 
 void tomato_fd_wait(void *frame, int64_t fd, int64_t mode) {
     net_wait_begins();
@@ -2696,6 +2776,7 @@ void tomato_fd_wait(void *frame, int64_t fd, int64_t mode) {
         if (!fd_q) out_of_memory();
     }
     fd_q[fd_n].frame = frame; fd_q[fd_n].fd = fd; fd_q[fd_n].mode = (int)mode; fd_n++;
+    fd_register((int)fd, (int)mode, 1);
 #endif
 }
 
@@ -2703,6 +2784,7 @@ void tomato_fd_wait(void *frame, int64_t fd, int64_t mode) {
 static int fd_cancel_frame(void *frame) {
     for (int64_t i = 0; i < fd_n; i++)
         if (fd_q[i].frame == frame) {
+            fd_register((int)fd_q[i].fd, fd_q[i].mode, -1);
             memmove(fd_q + i, fd_q + i + 1, (size_t)(fd_n - i - 1) * sizeof *fd_q); fd_n--;
             tomato_release(frame);
             return 1;
@@ -2711,7 +2793,6 @@ static int fd_cancel_frame(void *frame) {
 }
 
 #if !defined(TOMATO_WASM) && !defined(__wasi__)
-#include <poll.h>
 /* one pollfd per distinct descriptor (many tasks may wait on one, such as a server's accept), so there are never more than
  * the process can have open (poll refuses more than RLIMIT_NOFILE); slot[i] says which pollfd wait i uses */
 static int64_t fd_poll_set(struct pollfd **out, int64_t **slot) {
@@ -2743,6 +2824,18 @@ static int64_t fd_poll_set(struct pollfd **out, int64_t **slot) {
 static void io_block(int ms) {
     if (ms < 0) ms = 0;
     if (fd_n == 0 && in_head >= in_n) { http_block(ms); return; }
+#ifdef FD_KERNEL_SET
+    if (fd_backend >= 0 && in_head >= in_n) {     /* a task waiting for input also watches descriptor 0: the poll set below does that */
+        if (http_active > 0) {
+            struct { int fd; short events, revents; } w = {fd_backend, 1, 0};
+            int n; cu.multi_poll(cu.multi, &w, 1, ms, &n);
+        } else {
+            struct pollfd p = {fd_backend, POLLIN, 0};
+            poll(&p, 1, ms);
+        }
+        return;
+    }
+#endif
     struct pollfd *p; int64_t *at;
     int64_t m = fd_poll_set(&p, &at);
     if (in_head < in_n) {
@@ -2763,6 +2856,49 @@ static void io_block(int ms) {
 /* make ready every task whose descriptor can be used now (an error or a hang-up counts: the call it retries reports it) */
 static int fd_step(void) {
     if (fd_n == 0) return 0;
+#ifdef FD_KERNEL_SET
+    if (fd_backend >= 0) {
+        int count;
+#if defined(__linux__)
+        struct epoll_event events[128];
+        count = epoll_wait(fd_backend, events, 128, 0);
+        for (int j = 0; j < count; j++) {
+            int fd = events[j].data.fd; uint32_t e = events[j].events;
+            fd_state[fd].ready |= (e & (EPOLLIN | EPOLLERR | EPOLLHUP) ? POLLIN : 0) |
+                                  (e & (EPOLLOUT | EPOLLERR | EPOLLHUP) ? POLLOUT : 0);
+        }
+#else
+        struct kevent events[128]; struct timespec zero = {0, 0};
+        count = kevent(fd_backend, NULL, 0, events, 128, &zero);
+        for (int j = 0; j < count; j++) {
+            int fd = (int)events[j].ident;
+            fd_state[fd].ready |= events[j].filter == EVFILT_WRITE ? POLLOUT : POLLIN;
+            if (events[j].flags & (EV_ERROR | EV_EOF)) fd_state[fd].ready |= POLLIN | POLLOUT;
+        }
+#endif
+        if (count < 0 && errno != EINTR) fd_backend_fail();
+        if (fd_backend >= 0 && count <= 0) return 0;
+        if (fd_backend >= 0) {
+            int woke = 0; int64_t keep = 0, n = fd_n;
+            for (int64_t i = 0; i < n; i++) {
+                FdWait w = fd_q[i];
+                if (fd_state[w.fd].ready & (w.mode == 2 ? POLLOUT : POLLIN)) {
+                    fd_register((int)w.fd, w.mode, -1);
+                    tomato_q_push(w.frame); tomato_release(w.frame); woke++;
+                } else fd_q[keep++] = w;
+            }
+            fd_n = keep;
+            for (int j = 0; j < count; j++) {
+#if defined(__linux__)
+                fd_state[events[j].data.fd].ready = 0;
+#else
+                fd_state[events[j].ident].ready = 0;
+#endif
+            }
+            return woke;
+        }
+    }
+#endif
     struct pollfd *p; int64_t *at;
     int64_t m = fd_poll_set(&p, &at);
     int woke = 0;
@@ -3349,7 +3485,7 @@ void tomato_sock_close(int64_t fd) {
     if (fd < 0) return;
     int64_t keep = 0, n = fd_n;
     for (int64_t i = 0; i < n; i++) {
-        if (fd_q[i].fd == fd) { tomato_q_push(fd_q[i].frame); tomato_release(fd_q[i].frame); }
+        if (fd_q[i].fd == fd) { fd_register((int)fd, fd_q[i].mode, -1); tomato_q_push(fd_q[i].frame); tomato_release(fd_q[i].frame); }
         else fd_q[keep++] = fd_q[i];
     }
     fd_n = keep;

@@ -446,6 +446,14 @@ t_socket_many() { # more waiting tasks than descriptors the process may open
   "$c1" tests/programs/socket_many.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -pthread -lm
   check "300 tasks accept on one server with ulimit -n 64" "$(cat tests/expected/socket_many.main.out)" "$(ulimit -n 64; "$work/p" 2>&1)"
 }
+t_fd_wait() {
+  clang -O1 -w -ffunction-sections -fdata-sections tests/fd_wait.c -Wl,-dead_strip -lm -o "$work/fd_wait" 2>/dev/null ||
+    clang -O1 -w -ffunction-sections -fdata-sections tests/fd_wait.c -Wl,--gc-sections -lm -o "$work/fd_wait" || { bad "descriptor wait lifecycle builds" "compile failed"; return; }
+  "$work/fd_wait" && ok "descriptor wait lifecycle" || bad "descriptor wait lifecycle" "test failed"
+}
+section "== descriptor wait lifecycle =="
+spawn t_fd_wait
+
 section "== sockets: more waiting tasks than descriptors the process may open =="
 spawn t_socket_many
 
