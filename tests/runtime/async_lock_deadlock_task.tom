@@ -1,0 +1,11 @@
+import asyncio
+
+async def worker(lock: asyncio.Lock):
+    await lock.acquire()
+
+@main
+async def main():
+    lock = asyncio.Lock()
+    await lock.acquire()
+    t = start worker(lock)
+    await t

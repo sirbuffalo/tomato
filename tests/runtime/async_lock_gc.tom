@@ -1,0 +1,31 @@
+# A task waiting for a lock that nothing can reach any more is freed by the cycle collector; the deadlock report that follows must
+# list only the task that is really waiting (tests/run.sh t_lock_gc builds this with AddressSanitizer and counts the lines)
+import asyncio
+
+class Node:
+    other: Node | None = None
+
+def churn(k: int):
+    for i in range(k):
+        a = Node()
+        b = Node()
+        a.other = b
+        b.other = a
+
+async def waiter(lock: asyncio.Lock):
+    await lock.acquire()
+    print('never printed')
+
+async def leak():
+    lock = asyncio.Lock()
+    await lock.acquire()
+    t = start waiter(lock)  # allow: unused
+    await sleep(0)
+
+@main
+async def main():
+    await leak()
+    churn(300000)
+    lock = asyncio.Lock()
+    await lock.acquire()
+    await lock.acquire()

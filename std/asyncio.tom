@@ -22,6 +22,14 @@
 #   started waiting: a value put while a task waits is promised to that task, so a later get waits for the next one even
 #   while qsize() still counts it. qsize(), empty() and full() do not wait. A maxsize of 0 means no limit; a negative
 #   one is a ValueError, and it cannot be changed later. A wait_for that runs out of time drops a value its get had already received.
+# Lock, Semaphore and Event coordinate tasks without polling. Lock is non-reentrant and has no owner; release it in a finally
+#   block. Lock and Semaphore serve waiters in FIFO order, including when a woken waiter is cancelled. Semaphore is bounded:
+#   release above its initial value raises LockError. Event.set wakes all current waiters and stays set until clear.
+#   Use wait_for(start lock.acquire(), seconds) for a timeout, and let the acquiring task finish: when the task that runs the wait_for
+#   is cancelled, the acquire task is not (D58d), so it runs on, takes the lock later and nothing releases it. waiting() counts a
+#   waiter that was cancelled but has not run yet. When every task is waiting, the stop names each task waiting in
+#   Lock.acquire, the line where it called acquire and the line where the lock was last taken (Semaphore and Event are not named).
+#   Tasks are numbered as they start (main is 1), and that includes tasks this module starts: wait_for starts a timer task.
 #
 # The waits use three internal waits of the language (`_settle`, `_park`, `_unpark`; see await_settle in the compiler),
 # so a waiting task costs nothing while it waits: nothing polls.
@@ -111,34 +119,45 @@ class _Line:
     claims: set[int] = {}   # the tickets of the tasks that were woken and have not run yet
     next: int = 0
 
-    # wait for a turn: gives the claim, which the caller gives back (claims.remove) as it takes what it was woken for
-    async def wait(self) -> int:
+    def join(self) -> int:
         ticket = self.next
         self.next += 1
         self.tickets.append(ticket)
+        return ticket
+
+    # True when a handed-off turn had no successor; the caller must return its resource.
+    def cancel(self, ticket: int, forward: bool) -> bool:
+        if ticket in self.claims:
+            self.claims.remove(ticket)
+            if forward:
+                return not self.wake()
+        else:
+            for i in range(len(self.tickets)):
+                if self.tickets[i] == ticket:
+                    self.tickets.pop(i)
+                    self.tasks.pop(i)
+                    break
+        return False
+
+    # wait for a turn: gives the claim, which the caller gives back (claims.remove) as it takes what it was woken for
+    async def wait(self) -> int:
+        ticket = self.join()
         try:
             await _park(self.tasks)
         catch Error as e:
-            if ticket in self.claims:         # woken, then cancelled before it ran: the turn goes to the next in line
-                self.claims.remove(ticket)
-                self.wake()
-            else:
-                for i in range(len(self.tickets)):
-                    if self.tickets[i] == ticket:
-                        self.tickets.pop(i)
-                        self.tasks.pop(i)
-                        break
+            self.cancel(ticket, True)
             raise e
         return ticket
 
     # wake the first task in line, if there is one
-    def wake(self):
+    def wake(self) -> bool:
         while len(self.tasks) > 0:
             t = self.tasks.pop(0)
             ticket = self.tickets.pop(0)
             if _unpark(t):                    # False when it was cancelled and has not run yet
                 self.claims.add(ticket)
-                return
+                return True
+        return False
 
 export class Queue[T]:
     # the values, oldest first: those in `front` from its end to its start, then those in `back`
@@ -182,3 +201,117 @@ export class Queue[T]:
         item = self.front.pop(len(self.front) - 1 - promised)
         self.putters.wake()
         return item
+
+# A release has no owner: any task may give up a held lock or semaphore permit.
+export class LockError(RuntimeError):
+    @init
+    def make_lock_error(self, message: str, id: str = ''):
+        RuntimeError.make(self, message, id)
+
+export class Lock:
+    private held: bool = False
+    private line: _Line = _Line()
+    # The line where acquire last took the lock (0 when try_acquire did, or when it is free). It is a one-item list so that the
+    # runtime can read it when every task is waiting: a task parked in acquire is reported with this line, whoever holds the
+    # lock by then. Only Lock is reported this way: a Semaphore has no one holder to point at.
+    private taken_at: list[int] = [0]
+
+    def locked(self) -> bool:
+        return self.held
+
+    def waiting(self) -> int:
+        return len(self.line.tasks)
+
+    def try_acquire(self) -> bool:
+        if self.held:
+            return False
+        self.held = True
+        self.taken_at[0] = 0
+        return True
+
+    async def acquire(self):
+        if self.try_acquire():
+            self.taken_at[0] = _site()
+            return
+        ticket = self.line.join()
+        try:
+            await _park(self.line.tasks, self.taken_at)
+        catch Error as e:
+            if self.line.cancel(ticket, True):
+                self.held = False
+            raise e
+        self.line.claims.remove(ticket)
+        self.taken_at[0] = _site()
+
+    def release(self):
+        if not self.held:
+            raise LockError('cannot release an unlocked lock', 'E478')
+        if len(self.line.claims) > 0:
+            # the lock was handed to a waiter that has not run yet, so no task holds it that could release it
+            raise LockError('cannot release a lock that was already handed to a waiting task', 'E480')
+        self.taken_at[0] = 0         # the next holder sets it when it runs; until then no line is better than the old holder's
+        if not self.line.wake():
+            self.held = False
+
+export class Semaphore:
+    private limit: int = 1
+    private held: int = 0
+    private line: _Line = _Line()
+
+    @init
+    def make(self, value: int = 1):
+        if value < 0:
+            raise ValueError('a Semaphore value cannot be negative', 'E475')
+        self.limit = value
+
+    def locked(self) -> bool:
+        return self.held + len(self.line.claims) >= self.limit
+
+    def try_acquire(self) -> bool:
+        if self.locked():
+            return False
+        self.held += 1
+        return True
+
+    async def acquire(self):
+        if self.try_acquire():
+            return
+        ticket = self.line.join()
+        try:
+            await _park(self.line.tasks)
+        catch Error as e:
+            self.line.cancel(ticket, True)
+            raise e
+        self.line.claims.remove(ticket)
+        self.held += 1
+
+    def release(self):
+        if self.held == 0:
+            raise LockError('cannot release a semaphore above its initial value', 'E479')
+        self.held -= 1
+        self.line.wake()
+
+export class Event:
+    private flag: bool = False
+    private line: _Line = _Line()
+
+    def is_set(self) -> bool:
+        return self.flag
+
+    def set(self):
+        self.flag = True
+        while self.line.wake():
+            pass
+
+    def clear(self):
+        self.flag = False
+
+    async def wait(self):
+        if not self.flag:
+            ticket = self.line.join()
+            try:
+                await _park(self.line.tasks)
+            catch Error as e:
+                self.line.cancel(ticket, False)
+                raise e
+            self.line.claims.remove(ticket)

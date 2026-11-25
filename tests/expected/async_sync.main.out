@@ -1,0 +1,28 @@
+initial False True False
+waiting 3
+handoff True False
+cancelled b
+cancelled a
+lock c
+free False
+cancelled lone
+cancelled handoff free False
+holder released
+holder cancelled
+lock after holder
+unlocked error
+timeout True 0
+sem acquire True True False
+sem handoff False
+cancelled first
+sem second
+bounded error
+cancelled lone
+cancelled permit free True
+cancelled one
+event two
+event clear False False
+event three
+event set True
+handoff error
+lock handed

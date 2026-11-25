@@ -472,3 +472,9 @@ CompileError a value of type {} cannot be a dict key or set element
 CompileError '{}' has a method marked @eq but none marked @hash, so it cannot be a dict key or set element
 CompileError '{}' has no method marked @hash, so it cannot be a dict key or set element
 CompileError '{}' values cannot be a dict key or set element: the class '{}' implements it but has no method marked @hash
+ValueError a Semaphore value cannot be negative
+CompileError _park() takes a list[int] as its second argument, but this is {}
+CompileError _site() takes no arguments and can only be used inside an async function
+LockError cannot release an unlocked lock
+LockError cannot release a semaphore above its initial value
+LockError cannot release a lock that was already handed to a waiting task

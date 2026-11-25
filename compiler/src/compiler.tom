@@ -5782,6 +5782,13 @@ class Gen:
             raise CompileError(f"{name}() is async, so it must be awaited\nwrite: await {name}(...)  inside an async def", n.line)
         if name == '_unpark' and name not in self.slots and self.mod.resolve(name) == '':
             return self.unpark_call(args, n.line)
+        if name == '_site' and name not in self.slots and self.mod.resolve(name) == '':
+            # the line where the async function running now was called (std/asyncio's Lock records where it was taken)
+            if len(args) != 0 or not self.is_async:
+                raise CompileError('_site() takes no arguments and can only be used inside an async function', n.line)
+            raw = self.tmp('site')
+            self.emit(f'{raw} = load i64, ptr {self.frame_field("%frame", 4, "u64")}')
+            return self.tag_small(raw)
         if name == 'len':
             return self.len_call(args, n.line)
         if name == 'str':
@@ -6508,6 +6515,9 @@ class Gen:
             self.emit(fr + ' = call ptr ' + symbol + '(' + ', '.join(parts) + ')')
             for v4 in values:
                 self.release(v4)
+            # the line of the call goes in the field that holds an error line once the task fails (nothing reads it before):
+            # _site() gives it back, and a deadlock report names it
+            self.emit(f'store i64 {line}, ptr {self.frame_field(fr, 4, "u64")}')
             self.fresh_frame = True
             self.fresh_reg = fr
             return ex(fr, task_type_of(info))
@@ -7332,13 +7342,23 @@ class Gen:
         return ex('', '')
 
     def await_park(self, args: list[Node], line: int) -> Ex:
-        if len(args) != 1:
+        if len(args) != 1 and len(args) != 2:
             raise CompileError('_park() takes the list of parked tasks: await _park(waiters)', line)
         self.check_unread()                   # first, so an error raised here leaves nothing to release
         v = self.expr(args[0])
         if v.ty != 'list[task[None]]':
             raise CompileError(f'_park() takes a list[task[None]], but this is {shown(v.ty)}', line)
-        self.emit(f'call void @tomato_park(ptr %frame, ptr {v.reg})')
+        cell = 'null'
+        held: list[Ex] = []
+        if len(args) == 2:
+            h2 = self.expr(args[1])
+            if h2.ty != 'list[int]':
+                raise CompileError(f'_park() takes a list[int] as its second argument, but this is {shown(h2.ty)}', line)
+            cell = h2.reg
+            held.append(h2)
+        self.emit(f'call void @tomato_park(ptr %frame, ptr {v.reg}, ptr {cell})')
+        for h3 in held:
+            self.release(h3)
         self.release(v)
         self.suspend_here()
         return ex('', '')
@@ -7415,6 +7435,7 @@ class Gen:
         who = self.tmp('starter')
         self.emit(f'{who} = ptrtoint ptr %frame to i64')
         self.emit('store i64 ' + who + ', ptr ' + self.frame_field(t.reg, 7, 'u64'))
+        self.emit('call void @tomato_task_number(ptr ' + t.reg + ')')    # a deadlock report names the task by it
         self.emit('call void @tomato_q_push(ptr ' + t.reg + ')')      # the scheduler holds it too until it has run
 
     def async_for(self, s: Node):
@@ -10800,12 +10821,12 @@ def scheduler_ir(mod: Mod) -> str:
     t += f'define void @tomato.task.raise(ptr %h) {{\n  call void @tomato_task_retrieved(ptr %h)\n  %ep = getelementptr {hdr}, ptr %h, i32 0, i32 12\n  %e = load ptr, ptr %ep\n  call void @tomato_retain(ptr %e)\n  store ptr %e, ptr @tomato_exc\n'
     t += f'  %lp = getelementptr {hdr}, ptr %h, i32 0, i32 6\n  %l = load i64, ptr %lp\n  %l32 = trunc i64 %l to i32\n  store i32 %l32, ptr @tomato_exc_line\n'
     t += f'  %rp = getelementptr {hdr}, ptr %h, i32 0, i32 7\n  %r = load i64, ptr %rp\n  %r32 = trunc i64 %r to i32\n  store i32 %r32, ptr @tomato_exc_rt\n  store i32 1, ptr @tomato_exc_seen\n  ret void\n}}\n'
-    t += f'define void @tomato.sched.run(ptr %main) {{\nentry:\n  call void @tomato_set_mode(i32 {mod.mode})\n  call void @tomato_q_push(ptr %main)\n  br label %loop\n'
+    t += f'define void @tomato.sched.run(ptr %main) {{\nentry:\n  call void @tomato_set_mode(i32 {mod.mode})\n  call void @tomato_task_number(ptr %main)\n  call void @tomato_q_push(ptr %main)\n  br label %loop\n'
     t += 'loop:\n  %f = call ptr @tomato_q_pop()\n  %none = icmp eq ptr %f, null\n  br i1 %none, label %idle, label %go\n'
     t += 'go:\n  call void @tomato.sched.step(ptr %f)\n  call void @tomato_release(ptr %f)\n  br label %loop\n'
     t += 'idle:\n  %did = call i32 @tomato_sched_idle()\n  %more = icmp ne i32 %did, 0\n  br i1 %more, label %loop, label %done\n'
     t += 'done:\n  call void @tomato_pending_flush()\n  %sp = getelementptr i8, ptr %main, i64 32\n  %st = load i64, ptr %sp\n  %fin = icmp ne i64 %st, 0\n  br i1 %fin, label %finished, label %stuck\n'
-    t += 'stuck:\n  call void @tomato_fail_id(i32 355, ptr ' + mod.intern('every task is waiting for something that can no longer happen') + '.c)\n  unreachable\n'
+    t += 'stuck:\n  call void @tomato_lock_wait_diagnostic()\n  call void @tomato_fail_id(i32 355, ptr ' + mod.intern('every task is waiting for something that can no longer happen') + '.c)\n  unreachable\n'
     t += 'finished:\n  %bad = icmp eq i64 %st, 2\n  br i1 %bad, label %raise, label %out\n'
     t += 'raise:\n  call void @tomato.task.raise(ptr %main)\n  br label %out\nout:\n  call void @tomato_release(ptr %main)\n  ret void\n}\n'
     return t
@@ -11121,7 +11142,9 @@ def declarations(mod: Mod) -> str:
     d += 'declare void @tomato_task_cancel(ptr)\n'
     d += 'declare void @tomato_sleep_wait(ptr, double)\n'
     d += 'declare void @tomato_http_wait(ptr, i64)\n'
-    d += 'declare void @tomato_park(ptr, ptr)\n'
+    d += 'declare void @tomato_park(ptr, ptr, ptr)\n'
+    d += 'declare void @tomato_task_number(ptr)\n'
+    d += 'declare void @tomato_lock_wait_diagnostic()\n'
     d += 'declare void @tomato_task_inline(ptr)\n'
     d += 'declare i32 @tomato_task_unstarted(ptr)\n'
     d += 'declare void @tomato_fd_wait(ptr, i64, i64)\n'

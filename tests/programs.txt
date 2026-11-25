@@ -53,6 +53,7 @@ async_sleep
 async_cancel
 async_conditions
 async_toolkit
+async_sync
 async_queue_drop
 async_gc_release
 socket_local

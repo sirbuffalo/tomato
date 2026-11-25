@@ -1,7 +1,5 @@
 - Build the approved Wave 2 packs as Sonnet tasks
   After Davis answers the questions in `docs/wave2-api-sheets.md`, start build tasks for the approved sheets: `re` and hashing first (Sonnet-sized, pure Tomato), then os/sys, then testing.
-- Build Lock/Semaphore/Event on the Queue's waiter primitive
-  After Davis answers the decisions in `docs/locks-design.md` section 9, build Lock/Semaphore/Event on the Queue's waiter primitive.
 - Make a lost LTO visible and re-measure the v0.51 Linux benchmarks
   `native/tomato` hides a failed `-flto` link and links without LTO. Warn on that fallback, test that LTO happened, and fix `release/linux-setup.sh` (its clang cannot load `LLVMgold.so`, and its `lld` lacks `libxml2`). Then re-measure the v0.51 Linux column, which was measured without LTO. See `docs/architecture-review.md`, section 3.3.
 - Test unattended release signing on the iMac

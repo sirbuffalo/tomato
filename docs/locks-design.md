@@ -1,6 +1,6 @@
 # Locks for Tomato: a design for Davis to review
 
-Status: **proposal, nothing decided, nothing implemented.** Davis decides every API and language rule; each numbered decision in section 9 needs his answer before a builder starts. Written against `main` at `3b1ea879`. Evidence marks: `[V]` I read it in this repo (file and line given where it matters); `[I]` inferred. I ran nothing (no program, test or build); every `[V]` is about source text.
+Status: **approved for implementation.** Davis chose the recommendations in section 9: all three types in `asyncio`, the proposed semantics, `wait_for` timeouts, `try/finally`, lock-wait deadlock diagnostics without a held-at-exit note, and reuse of Queue's landed waiters. The implemented diagnostic (section 8) lists each task waiting in `Lock.acquire` with the line where it called `acquire` and the line where the lock was last taken (Davis chose "Add the details" for the diagnostic); `Semaphore` and `Event` waits are not listed. The original proposal below was written against `main` at `3b1ea879`; evidence marks `[V]` and `[I]` describe that original source review.
 
 Coordination: the *Async toolkit and sockets* task (`tskgHjcVrXs7re`) is building `Queue[T]`, `gather` and `wait_for` (Davis approved those three only). Its plan: a FIFO `Queue` that parks the task in a scheduler wait, cancellation unlinking the frame before queuing it to resume, no shielding, no `t.cancelled()`, a timeout cancels and joins the target and raises `asyncio.TimeoutError`; its exact waiter data structure is still open. This design reuses that parking mechanism and does not change anything it chose. `Lock` and friends are **not yet approved**; they should land after, and on top of, the Queue's wait.
 
@@ -52,7 +52,7 @@ finally:
     lock.release()
 ```
 
-`LockError(RuntimeError)` is the new error (id `lock-error`, following P88's id scheme `[V]` `docs/provisional.md:96`). It is raised by `release()` on a lock that is not held, and by nothing else.
+`LockError(RuntimeError)` is the new error (ids E478 and E479 in `std/errors.txt`, following P88's id scheme `[V]` `docs/provisional.md:96`). It is raised by `release()` on a lock that is not held, and by nothing else.
 
 ### Companions (same wait primitive, same rules)
 

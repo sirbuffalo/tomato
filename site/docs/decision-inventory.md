@@ -230,6 +230,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 202. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 203. D76d is accepted: UDP datagram sockets and public asynchronous `getaddrinfo` return numeric address records; name resolution lets other tasks run.
+204. D76e is accepted: `asyncio.Lock`, bounded `Semaphore` and `Event` with FIFO hand-off, `LockError`, `wait_for` timeouts, and a deadlock report that names each task waiting in `Lock.acquire`.
 
 ## Later coverage pass
 

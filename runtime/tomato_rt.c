@@ -2209,6 +2209,24 @@ static int input_prompted;
 #define F_CANCEL (1LL << 38)     /* cancelled: CancelledError is raised at the task's next wait */
 #define F_PARKED (1LL << 39)     /* parked by await _park (std/asyncio) */
 #define F_INLINE (1LL << 40)     /* made by await f(...): only the awaiting task waits on it, nobody else can hold it */
+#define F_LOCK_WAIT (1LL << 41)  /* parked in Lock.acquire, for deadlock diagnostics */
+/* The tasks parked in Lock.acquire, in the order they started waiting, each with the lock's cell: a one-item list[int] that
+ * holds the line where the lock was last taken, which the lock keeps up to date. The cell is kept alive by the parked frame
+ * (it holds the lock), and the entry goes before the frame does (lock_wait_clear), so no reference is kept here. */
+typedef struct { void *frame; void *cell; } LockWait;
+static LockWait *lw_q; static int64_t lw_n, lw_cap;
+/* Removal searches from the front and moves the tail: tasks wake in FIFO order, so the entry is nearly always first and the move is
+ * 16 bytes per task still queued. That only matters for a lock with a very long queue; then an index kept in the frame would be O(1). */
+static void lock_wait_clear(Hdr *h) {
+    if (!(h->type & F_LOCK_WAIT)) return;
+    h->type &= ~F_LOCK_WAIT;
+    for (int64_t i = 0; i < lw_n; i++)
+        if (lw_q[i].frame == h) { memmove(lw_q + i, lw_q + i + 1, (size_t)(lw_n - i - 1) * sizeof *lw_q); lw_n--; break; }
+}
+static int64_t task_count;
+/* number a task when it starts (the first task is 1): a deadlock report names it by this, in byte 56, which is otherwise
+ * only used once a task has failed */
+void tomato_task_number(void *h) { *(int64_t *)((char *)h + 56) = ++task_count; }
 void tomato_task_cancel(void *h);
 
 void tomato_q_push(void *f) {
@@ -2929,7 +2947,7 @@ void tomato_task_cancel(void *h) {
             tomato_release(h); waiting = 1;
         }
     if (!waiting && http_cancel_frame(h)) waiting = 1;
-    if (!waiting && (((Hdr *)h)->type & F_PARKED)) { ((Hdr *)h)->type &= ~F_PARKED; waiting = 1; }
+    if (!waiting && (((Hdr *)h)->type & F_PARKED)) { ((Hdr *)h)->type &= ~F_PARKED; lock_wait_clear(h); waiting = 1; }
     if (!waiting && fd_cancel_frame(h)) waiting = 1;
     void *on = waiting ? NULL : (void *)(uintptr_t)*(uint64_t *)((char *)h + 80);
     if (on) {
@@ -2988,11 +3006,20 @@ ALWAYS void *tomato_list_push(void *l, int64_t elem_size) {
  * stops until another task gives it to tomato_unpark. The runtime keeps no reference of its own, so a parked task that nobody
  * can reach any more is freed with the list by the cycle collector (D51b). A cancelled task stays in the list until the library
  * takes it out; tomato_unpark refuses it meanwhile. */
-void tomato_park(void *frame, void *list) {
+void tomato_park(void *frame, void *list, void *cell) {
     tomato_retain(frame);
     *(int64_t *)tomato_list_push(list, 8) = (int64_t)(uintptr_t)frame;
     if (cancelled_before_wait(frame)) return;
     ((Hdr *)frame)->type |= F_PARKED;
+    if (cell) {
+        if (lw_n == lw_cap) {
+            lw_cap = lw_cap ? lw_cap * 2 : 8;
+            lw_q = realloc(lw_q, (size_t)lw_cap * sizeof *lw_q);
+            if (!lw_q) out_of_memory();
+        }
+        ((Hdr *)frame)->type |= F_LOCK_WAIT;
+        lw_q[lw_n].frame = frame; lw_q[lw_n].cell = cell; lw_n++;
+    }
 }
 
 /* make a parked task ready again (the caller has taken it out of its list); 0 when it is not parked */
@@ -3000,6 +3027,7 @@ int32_t tomato_unpark(void *frame) {
     Hdr *h = frame;
     if (!(h->type & F_PARKED)) return 0;
     h->type &= ~F_PARKED;
+    lock_wait_clear(h);
     tomato_q_push(frame);
     return 1;
 }
@@ -3993,6 +4021,7 @@ static void frame_free_waiters(Hdr *h) {
 
 /* a task frame the cycle collector frees: its waiters and starter were counted by the tracing, so they are not released */
 static void frame_forget_traced(Hdr *h) {
+    lock_wait_clear(h);
     PtrVec *v = *(PtrVec **)((char *)h + 40);
     *(PtrVec **)((char *)h + 40) = NULL;
     for (int64_t i = 0; v && i < v->n; i++) {
@@ -4015,6 +4044,7 @@ static void frame_report_unread(Hdr *h) {
 }
 
 static void frame_dropped(Hdr *h) {
+    lock_wait_clear(h);
     frame_free_waiters(h);
     void *starter = frame_starter(h);
     *(uint64_t *)((char *)h + 72) = 0;
@@ -4318,6 +4348,28 @@ typedef struct { int sign; int64_t n; const uint32_t *d; uint32_t buf[2]; } IntV
 static int int_is_small(int64_t w) { return (w & 1) || w == 0; }
 static int64_t int_small_val(int64_t w) { return w >> 1; }
 static int64_t int_mk_small(int64_t v) { return (int64_t)(((uint64_t)v << 1) | 1); }
+
+/* one line for each task waiting for a lock: its number, the line where it called acquire (byte 48, set by the call), and the
+ * line where the lock was last taken. The frame waiting is the acquire call; the task is the first one above it, going by whoever awaits it,
+ * that was started (has a number). */
+void tomato_lock_wait_diagnostic(void) {
+    for (int64_t i = 0; i < lw_n; i++) {
+        void *f = lw_q[i].frame, *t = f;
+        for (int d = 0; d < 64 && *(int64_t *)((char *)t + 56) == 0; d++) {
+            PtrVec *v = *(PtrVec **)((char *)t + 40);
+            if (!v || v->n == 0) break;
+            t = v->items[0];
+        }
+        long long num = (long long)*(int64_t *)((char *)t + 56), at = (long long)*(int64_t *)((char *)f + 48);
+        List *cell = lw_q[i].cell;
+        long long held = cell && cell->len > 0 ? (long long)int_small_val(LIST_SLOT(cell, 0, int64_t)) : 0;
+        if (num > 0) fprintf(stderr, "  task %lld is waiting", num); else fprintf(stderr, "  a task is waiting");
+        if (at > 0) fprintf(stderr, " at line %lld", at);
+        fprintf(stderr, " for a lock");
+        if (held > 0) fprintf(stderr, " held since line %lld", held);
+        fprintf(stderr, "\n");
+    }
+}
 
 static void int_view(int64_t w, IntView *v) {
     if (int_is_small(w)) {

@@ -1,0 +1,6 @@
+import asyncio
+@main
+async def main():
+    lock = asyncio.Lock()
+    await lock.acquire()
+    await lock.acquire()

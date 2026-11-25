@@ -1,0 +1,127 @@
+import asyncio
+
+async def lock_worker(lock: asyncio.Lock, name: str):
+    try:
+        await lock.acquire()
+        print('lock', name)
+        lock.release()
+    catch CancelledError:
+        print('cancelled', name)
+
+async def sem_worker(sem: asyncio.Semaphore, name: str):
+    try:
+        await sem.acquire()
+        print('sem', name)
+        sem.release()
+    catch CancelledError:
+        print('cancelled', name)
+
+async def event_worker(event: asyncio.Event, name: str):
+    try:
+        await event.wait()
+        print('event', name)
+    catch CancelledError:
+        print('cancelled', name)
+
+async def lock_holder(lock: asyncio.Lock):
+    await lock.acquire()
+    try:
+        await sleep(10.0)
+    finally:
+        lock.release()
+        print('holder released')
+
+@main
+async def main():
+    lock = asyncio.Lock()
+    print('initial', lock.locked(), lock.try_acquire(), lock.try_acquire())
+    a = start lock_worker(lock, 'a')
+    b = start lock_worker(lock, 'b')
+    c = start lock_worker(lock, 'c')
+    await sleep(0.01)
+    print('waiting', lock.waiting())
+    b.cancel()
+    lock.release()
+    print('handoff', lock.locked(), lock.try_acquire())
+    a.cancel()
+    await a
+    await b
+    await c
+    print('free', lock.locked())
+    await lock.acquire()
+    lone = start lock_worker(lock, 'lone')
+    await sleep(0.01)
+    lock.release()
+    lone.cancel()
+    await lone
+    print('cancelled handoff free', lock.locked())
+    holder = start lock_holder(lock)
+    await sleep(0.01)
+    next_holder = start lock_worker(lock, 'after holder')
+    await sleep(0.01)
+    holder.cancel()
+    try:
+        await holder
+    catch CancelledError:
+        print('holder cancelled')
+    await next_holder
+    try:
+        lock.release()
+    catch asyncio.LockError:
+        print('unlocked error')
+    await lock.acquire()
+    d = start lock.acquire()
+    try:
+        await asyncio.wait_for(d, 0.01)
+    catch asyncio.TimeoutError:
+        print('timeout', lock.locked(), lock.waiting())
+    lock.release()
+    sem = asyncio.Semaphore(2)
+    print('sem acquire', sem.try_acquire(), sem.try_acquire(), sem.try_acquire())
+    s = start sem_worker(sem, 'first')
+    t = start sem_worker(sem, 'second')
+    await sleep(0.01)
+    sem.release()
+    s.cancel()
+    print('sem handoff', sem.try_acquire())
+    await s
+    await t
+    sem.release()
+    try:
+        sem.release()
+    catch asyncio.LockError:
+        print('bounded error')
+    one = asyncio.Semaphore(1)
+    await one.acquire()
+    lone_sem = start sem_worker(one, 'lone')
+    await sleep(0.01)
+    one.release()
+    lone_sem.cancel()
+    await lone_sem
+    print('cancelled permit free', one.try_acquire())
+    one.release()
+    event = asyncio.Event()
+    e1 = start event_worker(event, 'one')
+    e2 = start event_worker(event, 'two')
+    await sleep(0.01)
+    event.set()
+    event.clear()
+    e1.cancel()
+    e3 = start event_worker(event, 'three')
+    await e1
+    await e2
+    print('event clear', event.is_set(), e3.done())
+    event.set()
+    await e3
+    await event.wait()
+    print('event set', event.is_set())
+    pending = asyncio.Lock()
+    await pending.acquire()
+    w = start lock_worker(pending, 'handed')
+    await sleep(0.01)
+    pending.release()
+    try:
+        pending.release()
+    catch asyncio.LockError:
+        print('handoff error')
+    await w

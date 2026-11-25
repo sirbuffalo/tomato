@@ -302,10 +302,10 @@ while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done
 
 # ---- programs -----------------------------------------------------------------------------------------------------------
 # the fast tier builds only these with AddressSanitizer (one or two programs of each kind of thing the suite looks at)
-fast_asan=" loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module "
+fast_asan=" loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module "
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
-asan_specs1="tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/float_ranges: tests/programs/float_length: tests/programs/int_to_float: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
+asan_specs1="tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/float_ranges: tests/programs/float_length: tests/programs/int_to_float: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
 asan_specs2="tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
@@ -401,6 +401,18 @@ t_sort_fallback() {
 # The runtime is built without TOMATO_RELEASE, so it reports what was never freed, and with AddressSanitizer. A release program
 # leaves freeing what its entry function holds to the end of the process, so leaks are only looked for (the second argument)
 # in programs whose entry function holds nothing: there, whatever is left at the end was leaked.
+# A task waiting for a lock that the cycle collector frees must leave the runtime's list of lock waiters: the deadlock report after it
+# names only the task that is really waiting, and AddressSanitizer sees no read of the freed frame or lock
+t_lock_gc() {
+  use_asan
+  "$c1" tests/runtime/async_lock_gc.tom main std/ > "$work/g.ll" 2> "$work/e"
+  if clang -O1 -w -g -fsanitize=address -o "$work/g" "$work/g.ll" "$rt_asan" -pthread -lm 2>/dev/null; then
+    ASAN_OPTIONS=detect_leaks=0 "$work/g" > "$work/out" 2>&1
+    n="$(grep -c '^  task [0-9]* is waiting' "$work/out")"
+    if [ "$n" = 1 ] && grep -q 'task 1 is waiting at line 31 for a lock held since line 30' "$work/out" && ! grep -q 'AddressSanitizer' "$work/out"; then ok "lock waiters freed by the collector leave no stale report"
+    else bad "lock waiters freed by the collector leave no stale report" "$(head -8 "$work/out")"; fi
+  else bad "lock waiters freed by the collector leave no stale report" "does not build"; fi
+}
 t_release_asan() { # program, "leaks" to look for leaks too
   use_asan
   "$c1" "tests/programs/$1.tom" main std/ release > "$work/p.ll" 2> "$work/e"
@@ -425,6 +437,7 @@ for name in fast_paths loop_nests int_ranges int_fast_paths small_int_loops int_
   case "$name" in fast_paths|loop_nests) spawn_first t_release_asan "$name" leaks ;; *) spawn_first t_release_asan "$name" ;; esac
 done
 spawn_first t_release_leak
+spawn_first t_lock_gc
 
 section "== sort: the heapsort fallback gives the same results =="
 spawn t_sort_fallback
@@ -520,7 +533,7 @@ got: $m";; esac; }
 t_wasm_rt() { m="$(tjsc site/wasm run "tests/runtime/$1.tom" 2>&1)"; case "$m" in *"$2"*"~rc $3"*) ok "wasm runtime $1";; *) bad "wasm runtime $1" "wanted: $2 (rc $3)
 got: $m";; esac; }
 # the fast tier runs these through WebAssembly (the others only in the full suite): a few of each kind
-fast_wasm=" p:angles p:containers p:compact_fuzz p:open_errors p:modules p:numbers_rules p:iter_protocol p:async_tasks p:bigint_ops p:function_values p:sort_stable p:text_dict_methods p:time_module p:int_ranges p:web_modules p:datetime_parse p:random_basic p:secrets_basic n:type_mismatch n:private_field n:bad_return r:divide_by_zero r:index r:error_classes r:caught r:stack_overflow r:overflow r:datetime_errors r:trace_calls r:random_randint_empty "
+fast_wasm=" p:angles p:containers p:compact_fuzz p:open_errors p:modules p:numbers_rules p:iter_protocol p:async_tasks p:async_sync p:bigint_ops p:function_values p:sort_stable p:text_dict_methods p:time_module p:int_ranges p:web_modules p:datetime_parse p:random_basic p:secrets_basic n:type_mismatch n:private_field n:bad_return r:divide_by_zero r:index r:error_classes r:caught r:stack_overflow r:async_lock_deadlock r:overflow r:datetime_errors r:trace_calls r:random_randint_empty "
 wasm_wanted() { # KIND:NAME (p program, n rejected, r runtime error): is it run in this tier?
   case " $fast_wasm " in *" $1 "*) return 0 ;; esac
   [ -z "$fast" ] && return 0
@@ -548,7 +561,7 @@ t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide float_ranges float_length int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module; do
+  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide float_ranges float_length int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -575,6 +588,8 @@ if [ -n "$have_js" ]; then
   wasm_rt overflow "integer overflow" 1
   wasm_rt dict_missing_key "the key is not there" 1
   wasm_rt caught "caught boom" 0
+  wasm_rt async_lock_deadlock "task 1 is waiting at line 6 for a lock held since line 5" 1
+  wasm_rt async_lock_deadlock_task "task 2 is waiting at line 4 for a lock held since line 9" 1
   wasm_rt stack_overflow "stack overflow" 1
   wasm_rt tan_quarter "tan is not defined at 90 deg" 1
   wasm_rt caught_domain "caught sqrt needs a number that is not negative" 0
@@ -1167,6 +1182,8 @@ rt shift_huge "the shift count is too big" 1
 rt shift_overflow "does not fit" 1
 rt caught "caught boom" 0
 rt async_unread "in a task nobody awaited" 1
+rt async_lock_deadlock "task 1 is waiting at line 6 for a lock held since line 5" 1
+rt async_lock_deadlock_task "task 2 is waiting at line 4 for a lock held since line 9" 1
 rt dict_missing_key "the key is not there" 1
 rt set_missing "the element is not there" 1
 rt rational_zero "a rational cannot have a zero denominator" 1
