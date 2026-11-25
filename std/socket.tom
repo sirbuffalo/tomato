@@ -1,4 +1,4 @@
-# TCP sockets, async like the rest of the waits: `import socket`.
+# TCP and UDP sockets, async like the rest of the waits: `import socket`.
 #
 #     conn = await socket.connect('example.com', 80)     # tries every address the name has (IPv4 and IPv6)
 #     await conn.send_text('GET / HTTP/1.0\r\nHost: example.com\r\n\r\n')
@@ -10,6 +10,15 @@
 #     while True:
 #         c = await server.accept()                       # c.peer_host, c.peer_port
 #         start handle(c)
+#
+#     udp = await socket.udp('127.0.0.1', 0)       # bind; udp.port is the chosen port
+#     await udp.sendto([104, 105], '127.0.0.1', 9000)
+#     data, host, port = await udp.recvfrom()        # one datagram and its numeric sender
+#     udp.close()                                   # empty datagrams are valid; truncation raises SocketError
+#     addresses = await socket.getaddrinfo('localhost', 80) # Address.host, .port, .family (4 or 6)
+#
+# Name lookup runs in a helper thread, so other tasks run while it waits. Cancelling a lookup does not wait for the
+# operating system resolver to finish. UDP sends use the socket's address family; each send is one datagram.
 #
 # Bytes are list[int] (each 0-255), as in requests' Response.content; send_text and recv_line cover text protocols
 # (UTF-8, and bytes that are not valid UTF-8 come back as U+FFFD). send waits until everything is sent. Every wait lets
@@ -26,7 +35,7 @@
 #
 # Waiting for a line of input (await input()) stops every other task, sockets and timeouts included, until it comes.
 #
-# Limits: looking a name up (getaddrinfo) blocks every task while it runs; there is no TLS and no UDP yet; there are no
+# Limits: there is no TLS; there are no
 # destructors, so close() what you open (a socket nobody closes stays open until the program ends). The browser
 # playground has no sockets: there every call raises SocketError.
 
@@ -34,7 +43,18 @@
 # waits until it can be read (1) or written (2)
 !tomato_sock_err_kind() -> int
 !tomato_sock_err_text() -> str
-!tomato_sock_resolve(host: str, port: int, passive: int) -> int
+!tomato_sock_lookup_start(host: str, port: int, passive: int, dgram: int) -> int
+!tomato_sock_lookup_fd(id: int) -> int
+!tomato_sock_lookup_result(id: int) -> int
+!tomato_sock_lookup_free(id: int)
+!tomato_sock_addr_host(id: int, i: int) -> str
+!tomato_sock_addr_port(id: int, i: int) -> int
+!tomato_sock_addr_family(id: int, i: int) -> int
+!tomato_sock_udp_bind(id: int, i: int) -> int
+!tomato_sock_udp_send(fd: int, data: list[int], id: int) -> int
+!tomato_sock_udp_recv(fd: int, out: list[int], n: int) -> int
+!tomato_sock_udp_host() -> str
+!tomato_sock_udp_port() -> int
 !tomato_sock_addr_count(id: int) -> int
 !tomato_sock_resolve_free(id: int)
 !tomato_sock_open(id: int, i: int) -> int
@@ -252,9 +272,106 @@ export class Server:
             !tomato_sock_close(self.fd)
             self.fd = -1
 
+# The worker owns its input and result until it finishes. Cancellation closes the wait without waiting for DNS.
+async def _resolve(host: str, port: int, passive: int, dgram: int) -> int:
+    q = !tomato_sock_lookup_start(host, port, passive, dgram)
+    if q == 0:
+        _fail('')
+    try:
+        await _fd_wait(!tomato_sock_lookup_fd(q), 1)
+        r = !tomato_sock_lookup_result(q)
+        if r == 0:
+            _fail('')
+        return r
+    finally:
+        !tomato_sock_lookup_free(q)
+
+export class Address:
+    host: str = ''
+    port: int = 0
+    family: int = 0
+
+    @init
+    def make(self, host: str, port: int, family: int):
+        self.host = host
+        self.port = port
+        self.family = family
+
+# Addresses in resolver order, with numeric host names and family 4 or 6.
+export async def getaddrinfo(host: str, port: int) -> list[Address]:
+    r = await _resolve(host, port, 0, 0)
+    try:
+        out: list[Address] = []
+        for i in range(!tomato_sock_addr_count(r)):
+            out.append(Address(!tomato_sock_addr_host(r, i), !tomato_sock_addr_port(r, i), !tomato_sock_addr_family(r, i)))
+        return out
+    finally:
+        !tomato_sock_resolve_free(r)
+
+export class DatagramSocket:
+    fd: int = -1
+    host: str = ''
+    port: int = 0
+    private busy: int = 0
+
+    @init
+    def make(self, fd: int, host: str):
+        self.fd = fd
+        self.host = host
+        self.port = !tomato_sock_port(fd)
+
+    async def sendto(self, data: list[int], host: str, port: int):
+        if self.fd < 0:
+            raise SocketError('the socket is closed', 'E445')
+        r = await _resolve(host, port, 0, 1)
+        try:
+            while True:
+                if self.fd < 0:
+                    raise SocketError('the socket is closed', 'E445')
+                if !tomato_sock_udp_send(self.fd, data, r) >= 0:
+                    return
+                if not _would_block():
+                    _fail('')
+                await _fd_wait(self.fd, 2)
+        finally:
+            !tomato_sock_resolve_free(r)
+
+    # One datagram, including an empty one. A too-small buffer discards it and raises SocketError.
+    async def recvfrom(self, n: int = 65535) -> tuple[list[int], str, int]:
+        self.busy += 1
+        if self.busy >= _turns:
+            self.busy = 0
+            await sleep(0)
+        while True:
+            if self.fd < 0:
+                raise SocketError('the socket is closed', 'E445')
+            data: list[int] = []
+            if !tomato_sock_udp_recv(self.fd, data, n) >= 0:
+                return (data, !tomato_sock_udp_host(), !tomato_sock_udp_port())
+            if not _would_block():
+                _fail('')
+            await _fd_wait(self.fd, 1)
+
+    def close(self):
+        if self.fd >= 0:
+            !tomato_sock_close(self.fd)
+            self.fd = -1
+
+export async def udp(host: str, port: int) -> DatagramSocket:
+    r = await _resolve(host, port, 1, 1)
+    try:
+        for i in range(!tomato_sock_addr_count(r)):
+            fd = !tomato_sock_udp_bind(r, i)
+            if fd >= 0:
+                return DatagramSocket(fd, host)
+        _fail(f'{host}:{port}')
+        return DatagramSocket(-1, host)
+    finally:
+        !tomato_sock_resolve_free(r)
+
 # connect to host:port over TCP, trying each address the name has in turn
 export async def connect(host: str, port: int) -> Socket:
-    r = !tomato_sock_resolve(host, port, 0)
+    r = await _resolve(host, port, 0, 0)
     if r == 0:
         _fail('')
     try:
@@ -283,7 +400,7 @@ export async def connect(host: str, port: int) -> Socket:
 
 # listen for connections on the first address of host:port that can be used ('' or '0.0.0.0' for every address of this machine; port 0 picks a free one)
 export async def listen(host: str, port: int, backlog: int = 128) -> Server:
-    r = !tomato_sock_resolve(host, port, 1)
+    r = await _resolve(host, port, 1, 0)
     if r == 0:
         _fail('')
     try:

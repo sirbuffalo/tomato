@@ -49,7 +49,7 @@ say() { echo "$*" >&2; }
 # --- the Tomato compiler from this checkout, and the timing helper
 home="$work/tomato"; mkdir -p "$home/bin"
 if [ -n "$tomatoc" ]; then cp "$tomatoc" "$home/bin/tomatoc" || exit 1
-else clang -O1 -w -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm || exit 1; fi
+else clang -O1 -w -o "$home/bin/tomatoc" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -pthread -lm || exit 1; fi
 cp "$root/native/tomato" "$root/native/rtcache.sh" "$home/bin/"; cp -R "$root/runtime" "$root/std" "$root/VERSION" "$home/"
 clang -O2 -o "$work/measure" "$here/measure.c" || exit 1
 # a clang wrapper that records which optimization level each Tomato build really used

@@ -1,0 +1,16 @@
+import asyncio
+import socket
+
+@main
+async def main():
+    task = start socket.getaddrinfo('slow.test', 80)
+    await sleep(0.02)
+    print('timer ran:', not task.done())
+    task.cancel()
+    try:
+        await task
+    catch CancelledError:
+        print('lookup cancelled')
+    a = await socket.getaddrinfo('127.0.0.1', 1)
+    print('next lookup:', a[0].host)
+    await sleep(0.4)

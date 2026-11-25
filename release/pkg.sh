@@ -16,7 +16,7 @@ TOMATO_HOME="$payload/usr/local/lib/tomato" TOMATO_BIN="$work/unused" sh "$root/
 rm -rf "$work/unused" "$payload/usr/local/lib/tomato/native/bin/tomatoc"
 # universal compiler, built from the checked-in IR
 for arch in arm64 x86_64; do
-  clang -arch "$arch" -O1 -Wno-override-module -o "$work/tomatoc.$arch" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -lm
+  clang -arch "$arch" -O1 -Wno-override-module -o "$work/tomatoc.$arch" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -pthread -lm
 done
 lipo -create "$work/tomatoc.arm64" "$work/tomatoc.x86_64" -output "$payload/usr/local/lib/tomato/native/bin/tomatoc"
 ln -s ../lib/tomato/native/bin/tomato "$payload/usr/local/bin/tomato"

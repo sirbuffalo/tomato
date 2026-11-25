@@ -237,16 +237,16 @@ run_all() {
 # for the plain link, $rt_asan with AddressSanitizer (empty when this clang cannot build it: the tests then say so). They are made
 # in the background while the compiler is built; without a usable object the C file itself is linked, as it always was.
 . "$root/native/rtcache.sh"
-( p="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -w)" || p="$root/runtime/tomato_rt.c"; echo "$p" > "$shared/rt_o.tmp"; mv "$shared/rt_o.tmp" "$shared/rt_o.path" ) > /dev/null 2>&1 &
-( p="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -w -g -fsanitize=address)" || p=""; echo "$p" > "$shared/rt_asan.tmp"; mv "$shared/rt_asan.tmp" "$shared/rt_asan.path" ) > /dev/null 2>&1 &
+( p="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -pthread -w)" || p="$root/runtime/tomato_rt.c"; echo "$p" > "$shared/rt_o.tmp"; mv "$shared/rt_o.tmp" "$shared/rt_o.path" ) > /dev/null 2>&1 &
+( p="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -pthread -w -g -fsanitize=address)" || p=""; echo "$p" > "$shared/rt_asan.tmp"; mv "$shared/rt_asan.tmp" "$shared/rt_asan.path" ) > /dev/null 2>&1 &
 # the runtime that `tomato run` links (bitcode, for link-time optimisation: debug and release), for the command-line tests: made now, while the
 # install is running, so that when it is done they all find it, instead of each of them compiling it at the same time (a cold cache)
 for rt_flags in "-O1 -flto" "-O2 -flto -DTOMATO_RELEASE"; do
   # shellcheck disable=SC2086
-  ( rtcache_get "$shared" bc "$root/runtime/tomato_rt.c" $rt_flags > /dev/null 2>&1 ) &
+  ( rtcache_get "$shared" bc "$root/runtime/tomato_rt.c" $rt_flags -pthread > /dev/null 2>&1 ) &
 done
 use_asan() { await_file "$shared/rt_asan.path"; rt_asan="$(cat "$shared/rt_asan.path")"; }
-cc() { clang -O1 -w -o "$1" "$2" "$rt_o" -lm; }
+cc() { clang -O1 -w -o "$1" "$2" "$rt_o" -pthread -lm; }
 c1="$shared/c1"
 home="$shared/home"; export TOMATO_HOME="$home" TOMATO_BIN="$home/bin"; t="$home/bin/tomato"
 
@@ -255,7 +255,7 @@ t_compiler_build() { # the compiler everything else uses: $shared/c0 (from the b
   # the IR is compiled while the runtime object is made (or fetched from the cache), then they are linked: the same program as one clang command
   clang -O1 -w -c -o "$shared/c0.o" compiler/bootstrap/tomatoc.ll 2> "$work/e" & ir_pid=$!
   await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")"
-  wait "$ir_pid" && : > "$shared/c0.o.done" && clang -O1 -w -o "$shared/c0" "$shared/c0.o" "$rt_o" -lm 2>> "$work/e" && ok "builds from the bootstrap IR" || { bad "builds from the bootstrap IR" "$(head -5 "$work/e")"; return 1; }
+  wait "$ir_pid" && : > "$shared/c0.o.done" && clang -O1 -w -o "$shared/c0" "$shared/c0.o" "$rt_o" -pthread -lm 2>> "$work/e" && ok "builds from the bootstrap IR" || { bad "builds from the bootstrap IR" "$(head -5 "$work/e")"; return 1; }
   "$shared/c0" compiler/src/ctool.tom compile > "$shared/ir1.ll" 2> "$work/e" && ok "compiles its own source" || bad "compiles its own source" "$(cat "$work/e")"
   # c1 is c0 compiled from ir1.ll: when ir1.ll is the checked-in IR (the normal case, and what t_fixed_point checks) that is the very
   # program c0 already is, so it is not built a second time (half a minute); when it is not, c1 is built, and the tests use it
@@ -287,7 +287,7 @@ t_example() { # name, entry, the arguments
   name="$1"; entry="$2"; rest="$3"
   "$c1" "examples/$name.tom" "$entry" std/ > "$work/p.ll" 2> "$work/e" || { echo "FAIL $name $entry: $(cat "$work/e")"; echo x >> "$shared/failed"; return; }
   grep -q '^;! ' "$work/p.ll" && { echo "FAIL $name $entry: warnings"; grep '^;! ' "$work/p.ll" | head -6 | sed 's/^/     /'; echo x >> "$shared/failed"; return; }
-  clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -lm || { echo "FAIL $name $entry: link"; echo x >> "$shared/failed"; return; }
+  clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -pthread -lm || { echo "FAIL $name $entry: link"; echo x >> "$shared/failed"; return; }
   # shellcheck disable=SC2086
   "$work/p" $rest > "$work/out" 2>&1 < /dev/null
   if cmp -s "$work/out" "tests/expected/$name.$entry.out"; then echo "ok   $name $entry"; echo x >> "$shared/passed"; else echo "FAIL $name $entry"; diff "$work/out" "tests/expected/$name.$entry.out" | head -5 | sed 's/^/     /'; echo x >> "$shared/failed"; fi
@@ -298,10 +298,10 @@ while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done
 
 # ---- programs -----------------------------------------------------------------------------------------------------------
 # the fast tier builds only these with AddressSanitizer (one or two programs of each kind of thing the suite looks at)
-fast_asan=" fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel socket_local error_path_release error_classes time_module web_modules datetime_arith csv_module "
+fast_asan=" fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module "
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
-asan_specs1="tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/float_ranges: tests/programs/float_length: tests/programs/int_to_float: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
+asan_specs1="tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/float_ranges: tests/programs/float_length: tests/programs/int_to_float: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
 asan_specs2="tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 t_program() {
@@ -310,7 +310,7 @@ t_program() {
   if grep -q '^;! ' "$work/p.ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
   arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics) arg="$work" ;; esac   # they write files: into this test's own folder, not a shared /tmp
   # shellcheck disable=SC2086
-  [ -s "$work/p.ll" ] && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -lm && "$work/p" $arg > "$work/out" 2>&1
+  [ -s "$work/p.ll" ] && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -pthread -lm && "$work/p" $arg > "$work/out" 2>&1
   if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$shared/passed"; else echo "FAIL program $name"; { head -3 "$work/e"; diff "$work/out" "tests/expected/$name.main.out" | head -5; } | sed 's/^/     /'; echo x >> "$shared/failed"; fi
 }
 t_program_asan() { # the same test as t_program, for a program that an AddressSanitizer test builds too: its output (standard output and standard error)
@@ -338,7 +338,7 @@ asan_build() { # PATH (without .tom): the IR of a program, with what the compile
   asan_ll="$ab_dir/$ab_key.ll"; asan_err="$ab_dir/$ab_key.err"; asan_exe="$ab_dir/$ab_key.exe"
   if mkdir "$ab_dir/$ab_key.lock" 2>/dev/null; then
     "$c1" "$1.tom" main std/ > "$asan_ll" 2> "$asan_err"
-    clang -O1 -w -g -fsanitize=address -o "$asan_exe.tmp" "$asan_ll" "$rt_asan" -lm 2>/dev/null && mv "$asan_exe.tmp" "$asan_exe"
+    clang -O1 -w -g -fsanitize=address -o "$asan_exe.tmp" "$asan_ll" "$rt_asan" -pthread -lm 2>/dev/null && mv "$asan_exe.tmp" "$asan_exe"
     : > "$ab_dir/$ab_key.done"
   else await_file "$ab_dir/$ab_key.done"; fi
   [ -x "$asan_exe" ]
@@ -367,7 +367,7 @@ for spec in $asan_specs2; do
 done
 
 t_bigfloat() { # floats of any size, at the C level: fixed cases, then random ones against an exact reference (tests/bigfloat.c)
-  if clang -O1 -w -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -o "$work/bigfloat" tests/bigfloat.c -lm 2> "$work/e"; then
+  if clang -O1 -w -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -o "$work/bigfloat" tests/bigfloat.c -pthread -lm 2> "$work/e"; then
     out="$("$work/bigfloat" 1500 2>&1 | head -14)"
     [ "$out" = ok ] && ok "floats of any size (asan and ubsan, against an exact reference)" || bad "floats of any size" "$out"
   else bad "floats of any size" "tests/bigfloat.c does not build: $(head -3 "$work/e")"; fi
@@ -384,7 +384,7 @@ t_bigdiv() {
 spawn t_bigdiv
 
 t_sort_fallback() {
-  "$c1" tests/programs/native_sort.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -o "$work/p" "$work/p.ll" "$(rtcache_get "$work" o "$root/runtime/tomato_rt.c" -O1 -w -DSORT_DEPTH_MUL=0)" -lm && "$work/p" > "$work/out" 2>&1
+  "$c1" tests/programs/native_sort.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -o "$work/p" "$work/p.ll" "$(rtcache_get "$work" o "$root/runtime/tomato_rt.c" -O1 -pthread -w -DSORT_DEPTH_MUL=0)" -pthread -lm && "$work/p" > "$work/out" 2>&1
   check "sort with the depth limit forced to 0" "$(cat tests/expected/native_sort.main.out)" "$(cat "$work/out")"
 }
 # Release mode makes other code (fused integer expressions, copies for small arguments, no error tests after calls that cannot raise).
@@ -394,7 +394,7 @@ t_sort_fallback() {
 t_release_asan() { # program, "leaks" to look for leaks too
   use_asan
   "$c1" "tests/programs/$1.tom" main std/ release > "$work/p.ll" 2> "$work/e"
-  if clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" "$rt_asan" -lm 2>/dev/null; then
+  if clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" "$rt_asan" -pthread -lm 2>/dev/null; then
     if [ "$2" = leaks ]; then "$work/rel" > "$work/out" 2> "$work/e"; cat "$work/e" >> "$work/out"
     else ASAN_OPTIONS=detect_leaks=0 "$work/rel" > "$work/out" 2> "$work/e"; grep -v "never freed" "$work/e" >> "$work/out"; fi
     cmp -s "$work/out" "tests/expected/$1.main.out" && ok "release $1" || bad "release $1" "$(diff "$work/out" "tests/expected/$1.main.out" | head -5)"
@@ -403,10 +403,10 @@ t_release_asan() { # program, "leaks" to look for leaks too
 t_release_leak() { # fused expressions over big numbers; the test itself is tested by taking the frees out of the runtime
   use_asan
   printf 'def work():\n    x = 2 ** 70\n    xs = [2 ** 65, 7]\n    for i in range(40):\n        x = x * 3 - i * xs[i %% 2] + 1\n        xs[1] = xs[1] * xs[0] - x %% 1000003\n    print(x %% 97, xs[1] %% 97)\n\n@main\ndef main():\n    work()\n' > "$work/leak.tom"
-  "$c1" "$work/leak.tom" main std/ release > "$work/p.ll" 2> "$work/e" && clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" "$rt_asan" -lm
+  "$c1" "$work/leak.tom" main std/ release > "$work/p.ll" 2> "$work/e" && clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" "$rt_asan" -pthread -lm
   check "release: big numbers in fused expressions are freed" "55 51" "$("$work/rel" 2>&1)"
   sed 's/^#define INT_CONSUME(m, x, y) .*/#define INT_CONSUME(m, x, y) do { } while (0)/' runtime/tomato_rt.c > "$work/leaky.c"
-  clang -O1 -w -o "$work/leaky" "$work/p.ll" "$(rtcache_get "$work" o "$work/leaky.c" -O1 -w)" -lm   # (kept in the cache by what the file holds)
+  clang -O1 -w -o "$work/leaky" "$work/p.ll" "$(rtcache_get "$work" o "$work/leaky.c" -O1 -pthread -w)" -pthread -lm   # (kept in the cache by what the file holds)
   case "$("$work/leaky" 2>&1)" in *"never freed"*) ok "release: a big number that is not freed is reported";; *) bad "release: a big number that is not freed is reported";; esac
 }
 section "== release mode (AddressSanitizer; the same output as debug mode) =="
@@ -420,11 +420,20 @@ section "== sort: the heapsort fallback gives the same results =="
 spawn t_sort_fallback
 
 t_socket_many() { # more waiting tasks than descriptors the process may open
-  "$c1" tests/programs/socket_many.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -lm
+  "$c1" tests/programs/socket_many.tom main std/ > "$work/p.ll" 2>/dev/null && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -pthread -lm
   check "300 tasks accept on one server with ulimit -n 64" "$(cat tests/expected/socket_many.main.out)" "$(ulimit -n 64; "$work/p" 2>&1)"
 }
 section "== sockets: more waiting tasks than descriptors the process may open =="
 spawn t_socket_many
+
+t_socket_lookup_async() { # force a slow lookup while a timer and cancellation run
+  "$c1" tests/programs/socket_lookup_async.tom main std/ > "$work/p.ll" 2> "$work/compile.err" &&
+    clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" tests/runtime/socket_slow_lookup.c -Wl,--wrap=getaddrinfo -pthread -lm || { bad "slow lookup compiles" "$(cat "$work/compile.err")"; return; }
+  check "slow lookup leaves timers and cancellation running" "timer ran: True
+lookup cancelled
+next lookup: 127.0.0.1" "$("$work/p" 2>&1)"
+}
+if [ "$(uname)" = Linux ]; then spawn t_socket_lookup_async; fi
 
 # ---- requests -----------------------------------------------------------------------------------------------------------
 start_httpd() { # a local server for this job: sets $port and $httpd_pid
@@ -440,9 +449,9 @@ t_requests() { # one local server for this job's own requests; three parts: 1 re
     if start_httpd; then
       "$c1" tests/programs/requests_local.tom main std/ > "$work/rq.ll" 2> "$work/e"
       if grep -q '^;! ' "$work/rq.ll"; then bad "requests_local has warnings" "$(grep '^;! ' "$work/rq.ll" | head -4)"; fi
-      if clang -O1 -w -o "$work/rq" "$work/rq.ll" "$rt_o" -lm 2>/dev/null; then
+      if clang -O1 -w -o "$work/rq" "$work/rq.ll" "$rt_o" -pthread -lm 2>/dev/null; then
         check "requests against the local server" "$(cat tests/expected/requests_local.main.out)" "$("$work/rq" "http://127.0.0.1:$port" 2>&1)"
-        if clang -O1 -w -g -fsanitize=address -o "$work/rq_asan" "$work/rq.ll" "$rt_asan" -lm 2>/dev/null; then
+        if clang -O1 -w -g -fsanitize=address -o "$work/rq_asan" "$work/rq.ll" "$rt_asan" -pthread -lm 2>/dev/null; then
           out="$("$work/rq_asan" "http://127.0.0.1:$port" 2>&1 >/dev/null | head -14)"
           [ -z "$out" ] && ok "asan requests_local" || bad "asan requests_local" "$out"
         else bad "asan requests_local" "this clang cannot build with -fsanitize=address"; fi
@@ -455,7 +464,7 @@ t_requests() { # one local server for this job's own requests; three parts: 1 re
     # five requests that each take 1 s must overlap: the whole run is far below 5 s (when serialized they take 5 s or more). On a busy
     # machine one run can be slow by itself, so a run that took too long is made again (up to three runs); a wrong output is not
     cp tests/programs/requests_overlap.tom "$work/overlap.tom"
-    "$c1" "$work/overlap.tom" main std/ > "$work/ov.ll" 2>/dev/null && clang -O1 -w -o "$work/ov" "$work/ov.ll" "$rt_o" -lm
+    "$c1" "$work/overlap.tom" main std/ > "$work/ov.ll" 2>/dev/null && clang -O1 -w -o "$work/ov" "$work/ov.ll" "$rt_o" -pthread -lm
     ov_try=1
     while :; do
       t0="$(date +%s)"; ovo="$("$work/ov" "http://127.0.0.1:$port" 2>&1)"; t1="$(date +%s)"
@@ -466,7 +475,7 @@ t_requests() { # one local server for this job's own requests; three parts: 1 re
     kill "$httpd_pid" 2>/dev/null
   fi
   if step 3; then
-    "$c1" examples/http_get.tom main std/ > "$work/hg.ll" 2> "$work/e" && clang -O1 -w -o "$work/hg" "$work/hg.ll" "$rt_o" -lm && ok "examples/http_get.tom builds" || bad "examples/http_get.tom builds" "$(cat "$work/e")"
+    "$c1" examples/http_get.tom main std/ > "$work/hg.ll" 2> "$work/e" && clang -O1 -w -o "$work/hg" "$work/hg.ll" "$rt_o" -pthread -lm && ok "examples/http_get.tom builds" || bad "examples/http_get.tom builds" "$(cat "$work/e")"
   fi
 }
 section "== requests (tests/http_server.c is a local server: no internet needed) =="
@@ -520,7 +529,10 @@ t_wasm_repl_import() {
   m="$(tjsc site/wasm run "$work/imp2.tom" 2>&1)"
   case "$m" in *"~rc 0"*) ok "wasm repl: a good import alone runs";; *) bad "wasm repl: a good import alone runs" "$m";; esac
 }
-t_wasm_sockets() { r="$(tjsc site/wasm run tests/programs/socket_browser.tom 2>&1 | grep "no sockets")"; check "wasm sockets raise SocketError" "no sockets: True E446" "$r"; }
+t_wasm_sockets() { r="$(tjsc site/wasm run tests/programs/socket_browser.tom 2>&1 | grep '^no ')"; check "wasm sockets raise SocketError" "no sockets: True E446
+no listening: E446
+no udp: E446
+no lookup: E446" "$r"; }
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
 t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ] && ok "highlighters know every lexer keyword and built-in" || bad "highlighters" "$r"; }
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
@@ -997,7 +1009,7 @@ neg type_in_unknown "this type is not supported here"
 # ---- input --------------------------------------------------------------------------------------------------------------
 t_input() {
   f="$1"; n="$(basename "$f" .tom)"
-  "$c1" "$f" main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -lm || { bad "input $n" "did not build: $(cat "$work/e")"; return; }
+  "$c1" "$f" main std/ > "$work/i.ll" 2> "$work/e" && clang -O1 -w -o "$work/i" "$work/i.ll" "$rt_o" -pthread -lm || { bad "input $n" "did not build: $(cat "$work/e")"; return; }
   "$work/i" < "tests/input/$n.in" > "$work/o" 2>&1
   if cmp -s "$work/o" "tests/input/$n.out"; then ok "input $n"; else bad "input $n" "$(diff "$work/o" "tests/input/$n.out" | head -6)"; fi
   if [ -n "$have_js" ]; then
@@ -1062,7 +1074,7 @@ for f in tests/errors/*.tom; do spawn t_error_text "$f"; done
 
 # ---- runtime errors -----------------------------------------------------------------------------------------------------
 t_rt() { # file, expected stderr text, expected exit status
-  "$c1" "tests/runtime/$1.tom" main std/ > "$work/r.ll" 2>/dev/null && clang -O1 -w -o "$work/r" "$work/r.ll" "$rt_o" -lm || { bad "runtime $1" "did not build"; return; }
+  "$c1" "tests/runtime/$1.tom" main std/ > "$work/r.ll" 2>/dev/null && clang -O1 -w -o "$work/r" "$work/r.ll" "$rt_o" -pthread -lm || { bad "runtime $1" "did not build"; return; }
   "$work/r" > "$work/o" 2> "$work/e2"; code=$?
   case "$(cat "$work/o" "$work/e2")" in *"$2"*) [ "$code" = "$3" ] && ok "runtime $1" || bad "runtime $1" "exit status $code, wanted $3";; *) bad "runtime $1" "wanted '$2', got: $(cat "$work/o" "$work/e2")";; esac
 }
@@ -1136,7 +1148,7 @@ rt text_math_caught "$(cat tests/runtime/text_math_caught.out)" 0
 
 t_no_entropy() {
   n="$1"
-  "$c1" "tests/runtime/$n.tom" main std/ > "$work/r.ll" 2>/dev/null && clang -O1 -w -o "$work/r" "$work/r.ll" "$(rtcache_get "$work" o "$root/runtime/tomato_rt.c" -O1 -w -DTOMATO_TEST_NO_ENTROPY)" -lm || { bad "runtime $n" "did not build"; return; }
+  "$c1" "tests/runtime/$n.tom" main std/ > "$work/r.ll" 2>/dev/null && clang -O1 -w -o "$work/r" "$work/r.ll" "$(rtcache_get "$work" o "$root/runtime/tomato_rt.c" -O1 -pthread -w -DTOMATO_TEST_NO_ENTROPY)" -pthread -lm || { bad "runtime $n" "did not build"; return; }
   "$work/r" > "$work/o" 2> "$work/e2"; code=$?
   case "$(cat "$work/o" "$work/e2")" in *"secure random bytes are not available on this system"*) [ "$code" = 1 ] && ok "runtime $n" || bad "runtime $n" "exit status $code, wanted 1";; *) bad "runtime $n" "wanted the entropy error, got: $(cat "$work/o" "$work/e2")";; esac
 }
@@ -1160,7 +1172,7 @@ fi
 t_gap() {
   f="$1"; n="$(basename "$f" .tom)"
   accepted=no
-  if "$c1" "$f" main std/ > "$work/g.ll" 2>/dev/null && clang -O1 -w -o "$work/g" "$work/g.ll" "$rt_o" -lm 2>/dev/null; then
+  if "$c1" "$f" main std/ > "$work/g.ll" 2>/dev/null && clang -O1 -w -o "$work/g" "$work/g.ll" "$rt_o" -pthread -lm 2>/dev/null; then
     accepted=yes; "$work/g" > /dev/null 2>&1 || accepted=fails
   fi
   case "$n" in

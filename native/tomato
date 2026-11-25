@@ -204,19 +204,19 @@ exe="$tmp/program"
 # The runtime is compiled once per mode, clang and runtime source, and kept in the cache folder (native/rtcache.sh); each run then
 # links the stored object (bitcode) instead of compiling the 5,000 lines of C again. Without a usable object (the compile or the
 # cache failed) the runtime source is linked, as before.
-rtobj="$(rtcache_get "$tmp" bc "$runtime" $opt $ltoflags)" || rtobj=""
+rtobj="$(rtcache_get "$tmp" bc "$runtime" $opt $ltoflags -pthread)" || rtobj=""
 link() {   # a function has its own "$@", so the run inputs survive; $1 holds the extra clang flags (release: LTO), $2 the runtime
   extra="$1"; rt="${2:-$runtime}"
   set -- clang $opt $extra -Wno-override-module -o "$exe" "$tmp/program.ll"
   OLDIFS="$IFS"; IFS="$nl"
   for f in $llvm; do set -- "$@" "$f"; done
   IFS="$OLDIFS"
-  "$@" "$rt" -lm $([ "$(uname)" = Linux ] && echo -ldl)   # -ldl: the runtime loads libcurl with dlopen (older glibc keeps it in libdl)
+  "$@" "$rt" -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl)   # -ldl: the runtime loads libcurl with dlopen (older glibc keeps it in libdl)
 }
 merge() {   # no LTO in the linker: the runtime as LLVM bitcode, merged into the program by clang (not with extra .ll files: each would get a copy)
   [ -n "$rtobj" ] || return 1
   clang $opt -Xclang -mlink-bitcode-file -Xclang "$rtobj" -Wno-override-module -o "$exe" "$tmp/program.ll" \
-    -lm $([ "$(uname)" = Linux ] && echo -ldl)
+    -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl)
 }
 link "$ltoflags" "${rtobj:-$runtime}" 2>/dev/null || { [ -z "$llvm" ] && merge 2>/dev/null; } || link "$nolto" || exit 1
 [ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }

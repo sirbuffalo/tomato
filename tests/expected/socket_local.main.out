@@ -16,8 +16,8 @@ then: []
 a byte must be an int from 0 to 255
 peer closed, recv gives []
 write after close: ConnectionResetError
-descriptor reused: True
 reader: the socket is closed
+descriptor reused: True
 lines ['a', 'b', 'c', 'd']
 accept cancelled
 server closed: the socket is closed

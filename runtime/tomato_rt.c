@@ -2971,7 +2971,18 @@ int64_t tomato_sock_find(void *list, int64_t from, int64_t byte) {
 
 #if defined(TOMATO_WASM) || defined(__wasi__)
 static int64_t sk_browser(void) { return sk_fail(SK_BROWSER, "sockets are not available in the browser playground (it has no network access from here); run the program with 'tomato run'"); }
-int64_t tomato_sock_resolve(void *host, int64_t port, int64_t passive) { (void)host; (void)port; (void)passive; sk_browser(); return 0; }
+int64_t tomato_sock_lookup_start(void *h, int64_t p, int64_t a, int64_t d) { (void)h; (void)p; (void)a; (void)d; sk_browser(); return 0; }
+int64_t tomato_sock_lookup_fd(int64_t id) { (void)id; return -1; }
+void tomato_sock_lookup_free(int64_t id) { (void)id; }
+int64_t tomato_sock_lookup_result(int64_t id) { (void)id; return 0; }
+void *tomato_sock_addr_host(int64_t id, int64_t i) { (void)id; (void)i; return tomato_str_from_cstr(""); }
+int64_t tomato_sock_addr_port(int64_t id, int64_t i) { (void)id; (void)i; return 0; }
+int64_t tomato_sock_addr_family(int64_t id, int64_t i) { (void)id; (void)i; return 0; }
+int64_t tomato_sock_udp_bind(int64_t id, int64_t i) { (void)id; (void)i; return sk_browser(); }
+int64_t tomato_sock_udp_send(int64_t fd, void *data, int64_t id) { (void)fd; (void)data; (void)id; return sk_browser(); }
+int64_t tomato_sock_udp_recv(int64_t fd, void *out, int64_t n) { (void)fd; (void)out; (void)n; return sk_browser(); }
+void *tomato_sock_udp_host(void) { return tomato_str_from_cstr(""); }
+int64_t tomato_sock_udp_port(void) { return 0; }
 int64_t tomato_sock_addr_count(int64_t id) { (void)id; return 0; }
 void tomato_sock_resolve_free(int64_t id) { (void)id; }
 int64_t tomato_sock_open(int64_t id, int64_t i) { (void)id; (void)i; return sk_browser(); }
@@ -2993,6 +3004,7 @@ int64_t tomato_sock_peer_port(int64_t fd) { (void)fd; return 0; }
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 static int64_t sk_errno(int e, const char *what) {
     int kind = e == ECONNREFUSED ? SK_REFUSED : (e == ECONNRESET || e == EPIPE || e == ECONNABORTED || e == ENOTCONN) ? SK_RESET :
@@ -3001,32 +3013,50 @@ static int64_t sk_errno(int e, const char *what) {
     return sk_fail(kind, t);
 }
 
-/* name lookups, by handle (index + 1); the lookup itself blocks every task while it runs */
+/* A detached resolver owns its copied arguments and never touches Tomato objects or scheduler state.
+ * Closing its notification socket makes the scheduler wake; cancellation only releases the caller's reference. */
+typedef struct { pthread_mutex_t lock; int refs, reader, writer, error; char *host; int port, passive, dgram; struct addrinfo *result; } SkLookup;
+static void sk_lookup_release(SkLookup *q) {
+    pthread_mutex_lock(&q->lock); int last = --q->refs == 0; pthread_mutex_unlock(&q->lock);
+    if (last) { if (q->result) freeaddrinfo(q->result); free(q->host); pthread_mutex_destroy(&q->lock); free(q); }
+}
+static void *sk_lookup_worker(void *arg) {
+    SkLookup *q = arg; struct addrinfo hints; memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC; hints.ai_socktype = q->dgram ? SOCK_DGRAM : SOCK_STREAM;
+    if (q->passive) hints.ai_flags = AI_PASSIVE;
+    char ps[8]; snprintf(ps, sizeof ps, "%d", q->port);
+    struct addrinfo *result = NULL;
+    int error = getaddrinfo(*q->host ? q->host : NULL, ps, &hints, &result);
+    pthread_mutex_lock(&q->lock); q->result = result; q->error = error; pthread_mutex_unlock(&q->lock);
+    close(q->writer); sk_lookup_release(q); return NULL;
+}
 static struct addrinfo **sk_res; static int64_t sk_res_n;
-int64_t tomato_sock_resolve(void *host, int64_t port, int64_t passive) {
+int64_t tomato_sock_lookup_start(void *host, int64_t port, int64_t passive, int64_t dgram) {
     Str *h = host;
     if (port < 0 || port > 65535) { sk_fail(SK_ADDRESS, "the port must be from 0 to 65535"); return 0; }
     if (memchr(h->data, 0, (size_t)h->bytes)) { sk_fail(SK_ADDRESS, "the host name holds a zero character"); return 0; }
-    struct addrinfo hints; memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
-    if (passive) hints.ai_flags = AI_PASSIVE;
-    char ps[8]; snprintf(ps, sizeof ps, "%d", (int)port);
-    struct addrinfo *res = NULL;
+    int fds[2]; if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) { sk_errno(errno, "could not start address lookup"); return 0; }
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC); fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    SkLookup *q = calloc(1, sizeof *q); if (!q) out_of_memory();
+    q->host = malloc((size_t)h->bytes + 1); if (!q->host) out_of_memory();
+    memcpy(q->host, h->data, (size_t)h->bytes); q->host[h->bytes] = 0;
+    q->refs = 2; q->reader = fds[0]; q->writer = fds[1]; q->port = (int)port; q->passive = (int)passive; q->dgram = (int)dgram;
+    pthread_mutex_init(&q->lock, NULL); pthread_t thread;
     fflush(stdout);
-    int r = getaddrinfo(h->bytes ? h->data : NULL, ps, &hints, &res);
-    if (r != 0 || !res) {
-        char t[220]; snprintf(t, sizeof t, "could not find the address of '%.100s': %s", h->data, gai_strerror(r));
-        sk_fail(SK_ADDRESS, t); return 0;
-    }
+    int error = pthread_create(&thread, NULL, sk_lookup_worker, q);
+    if (error) { close(fds[0]); close(fds[1]); q->refs = 1; sk_lookup_release(q); sk_errno(error, "could not start address lookup"); return 0; }
+    pthread_detach(thread); return (int64_t)(intptr_t)q;
+}
+int64_t tomato_sock_lookup_fd(int64_t id) { return ((SkLookup *)(intptr_t)id)->reader; }
+void tomato_sock_lookup_free(int64_t id) { SkLookup *q = (SkLookup *)(intptr_t)id; close(q->reader); sk_lookup_release(q); }
+int64_t tomato_sock_lookup_result(int64_t id) {
+    SkLookup *q = (SkLookup *)(intptr_t)id;
+    pthread_mutex_lock(&q->lock); struct addrinfo *res = q->result; q->result = NULL; int error = q->error; pthread_mutex_unlock(&q->lock);
+    if (error || !res) { char t[220]; snprintf(t, sizeof t, "could not find the address of '%.100s': %s", q->host, gai_strerror(error)); sk_fail(SK_ADDRESS, t); if (res) freeaddrinfo(res); return 0; }
     int64_t slot = -1;
     for (int64_t i = 0; i < sk_res_n; i++) if (!sk_res[i]) { slot = i; break; }
-    if (slot < 0) {
-        sk_res = realloc(sk_res, (size_t)(sk_res_n + 1) * sizeof *sk_res);
-        if (!sk_res) out_of_memory();
-        slot = sk_res_n++;
-    }
-    sk_res[slot] = res;
-    return slot + 1;
+    if (slot < 0) { sk_res = realloc(sk_res, (size_t)(sk_res_n + 1) * sizeof *sk_res); if (!sk_res) out_of_memory(); slot = sk_res_n++; }
+    sk_res[slot] = res; return slot + 1;
 }
 static struct addrinfo *sk_addr(int64_t id, int64_t i) {
     if (id < 1 || id > sk_res_n || !sk_res[id - 1]) return NULL;
@@ -3039,6 +3069,14 @@ void tomato_sock_resolve_free(int64_t id) {
     if (id < 1 || id > sk_res_n || !sk_res[id - 1]) return;
     freeaddrinfo(sk_res[id - 1]); sk_res[id - 1] = NULL;
 }
+
+static int sk_addr_name(struct sockaddr *addr, socklen_t len, char *host, size_t hn, int *port) {
+    char ps[16]; if (getnameinfo(addr, len, host, (socklen_t)hn, ps, sizeof ps, NI_NUMERICHOST | NI_NUMERICSERV)) return 0;
+    *port = atoi(ps); return 1;
+}
+void *tomato_sock_addr_host(int64_t id, int64_t i) { struct addrinfo *a = sk_addr(id, i); char h[NI_MAXHOST]; int p; return tomato_str_from_cstr(a && sk_addr_name(a->ai_addr, a->ai_addrlen, h, sizeof h, &p) ? h : ""); }
+int64_t tomato_sock_addr_port(int64_t id, int64_t i) { struct addrinfo *a = sk_addr(id, i); char h[NI_MAXHOST]; int p = 0; if (a) sk_addr_name(a->ai_addr, a->ai_addrlen, h, sizeof h, &p); return p; }
+int64_t tomato_sock_addr_family(int64_t id, int64_t i) { struct addrinfo *a = sk_addr(id, i); return !a ? 0 : a->ai_family == AF_INET ? 4 : a->ai_family == AF_INET6 ? 6 : 0; }
 
 /* a non-blocking socket that never raises SIGPIPE (MSG_NOSIGNAL on Linux, SO_NOSIGPIPE on macOS) */
 static int sk_socket(struct addrinfo *a) {
@@ -3091,6 +3129,40 @@ int64_t tomato_sock_bind(int64_t id, int64_t i, int64_t backlog) {
     if (listen(fd, backlog > 0 ? (int)backlog : 128) != 0) { int e = errno; close(fd); return sk_errno(e, "could not listen"); }
     return fd;
 }
+
+int64_t tomato_sock_udp_bind(int64_t id, int64_t i) {
+    net_wait_begins(); struct addrinfo *a = sk_addr(id, i); if (!a) return sk_fail(SK_ADDRESS, "no such address");
+    int fd = sk_socket(a); if (fd < 0) return sk_errno(errno, "could not make a socket");
+    if (bind(fd, a->ai_addr, a->ai_addrlen)) { int e = errno; close(fd); return sk_errno(e, "could not bind"); } return fd;
+}
+int64_t tomato_sock_udp_send(int64_t fd, void *data, int64_t id) {
+    struct sockaddr_storage local; socklen_t n = sizeof local;
+    if (getsockname((int)fd, (struct sockaddr *)&local, &n)) return sk_errno(errno, "could not inspect socket");
+    List *l = data; unsigned char *bytes = sock_bytes(l, 0, l->len);
+    if (!bytes) return sk_fail(SK_OTHER, "a byte must be an int from 0 to 255");
+    int compatible = 0, error = 0;
+    for (struct addrinfo *a = sk_addr(id, 0); a; a = a->ai_next) if (a->ai_family == local.ss_family) {
+        compatible = 1; ssize_t sent = sendto((int)fd, bytes, (size_t)l->len, MSG_NOSIGNAL, a->ai_addr, a->ai_addrlen);
+        if (sent >= 0) { free(bytes); return 0; } error = errno; if (error == EAGAIN || error == EWOULDBLOCK || error == EINTR) break;
+    }
+    free(bytes); if (!compatible) return sk_fail(SK_ADDRESS, "no address matches the socket family"); return sk_errno(error, "could not send datagram");
+}
+static char sk_datagram_host[NI_MAXHOST]; static int sk_datagram_port;
+int64_t tomato_sock_udp_recv(int64_t fd, void *out, int64_t n) {
+    if (n < 0 || n > 65535) return sk_fail(SK_OTHER, "datagram buffer size must be from 0 to 65535");
+    unsigned char *b = malloc((size_t)(n ? n : 1)); if (!b) out_of_memory();
+    struct sockaddr_storage peer; struct iovec iov = {b, (size_t)n}; struct msghdr msg; memset(&msg, 0, sizeof msg);
+    msg.msg_name = &peer; msg.msg_namelen = sizeof peer; msg.msg_iov = &iov; msg.msg_iovlen = 1;
+    ssize_t r = recvmsg((int)fd, &msg, 0);
+    if (r < 0) { int e = errno; free(b); return sk_errno(e, "could not receive datagram"); }
+    if (msg.msg_flags & MSG_TRUNC) { free(b); return sk_fail(SK_OTHER, "datagram is larger than the receive buffer"); }
+    if (!sk_addr_name((struct sockaddr *)&peer, msg.msg_namelen, sk_datagram_host, sizeof sk_datagram_host, &sk_datagram_port)) { free(b); return sk_fail(SK_ADDRESS, "could not read datagram address"); }
+    List *l = out; if (r) { l->data = realloc(l->data, (size_t)r * 8); if (!l->data) out_of_memory(); l->cap = r; }
+    for (ssize_t k = 0; k < r; k++) LIST_SLOT(l, k, int64_t) = int_mk_small(b[k]);
+    l->len = r; free(b); return r;
+}
+void *tomato_sock_udp_host(void) { return tomato_str_from_cstr(sk_datagram_host); }
+int64_t tomato_sock_udp_port(void) { return sk_datagram_port; }
 
 int64_t tomato_sock_accept(int64_t fd) {
     int c = accept((int)fd, NULL, NULL);

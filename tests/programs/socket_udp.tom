@@ -1,0 +1,46 @@
+import asyncio
+import socket
+
+async def receive_until_closed(sock: socket.DatagramSocket):
+    try:
+        await sock.recvfrom()
+    catch socket.SocketError:
+        print('waiter woken')
+
+@main
+async def main():
+    addresses = await socket.getaddrinfo('127.0.0.1', 1234)
+    print('address:', addresses[0].host, addresses[0].port, addresses[0].family)
+    a = await socket.udp('127.0.0.1', 0)
+    b = await socket.udp('127.0.0.1', 0)
+    await a.sendto([1, 2, 3], 'localhost', b.port)
+    data, host, port = await b.recvfrom()
+    print('packet:', data, host, port == a.port)
+    await a.sendto([], '127.0.0.1', b.port)
+    data, host, port = await b.recvfrom()
+    print('empty:', data, host, port == a.port)
+    await a.sendto([1, 2], '127.0.0.1', b.port)
+    try:
+        data, host, port = await b.recvfrom(1)
+    catch socket.SocketError:
+        print('truncated')
+    try:
+        await asyncio.wait_for(start b.recvfrom(), 0.01)
+    catch asyncio.TimeoutError:
+        print('timeout')
+    await a.sendto([4], '127.0.0.1', b.port)
+    data, host, port = await b.recvfrom()
+    print('after timeout:', data)
+    waiter = start receive_until_closed(b)
+    await sleep(0)
+    b.close()
+    await waiter
+    try:
+        await b.recvfrom()
+    catch socket.SocketError:
+        print('closed')
+    try:
+        await socket.getaddrinfo('127.0.0.1', 70000)
+    catch socket.AddressError:
+        print('bad port')
+    a.close()

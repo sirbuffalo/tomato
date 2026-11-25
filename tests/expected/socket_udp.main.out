@@ -1,0 +1,9 @@
+address: 127.0.0.1 1234 4
+packet: [1, 2, 3] 127.0.0.1 True
+empty: [] 127.0.0.1 True
+truncated
+timeout
+after timeout: [4]
+waiter woken
+closed
+bad port

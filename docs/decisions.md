@@ -1653,6 +1653,12 @@ The earlier public decision page, its password-protected chat and the chat bridg
 - A cancel made while the awaited call is running is raised at its next wait, or, when it ends without one, at its awaiter's next wait. If the call had already finished, its awaiter gets the result first. A task that never waits again ends normally.
 - Implementation: `await f()` marks the new task as only its awaiter's (a header bit), and `tomato_task_cancel` follows that bit.
 
+### D76d — UDP and asynchronous address lookup: accepted
+
+- Davis chose `await socket.udp(host, port)` returning a `DatagramSocket` with `host`, `port`, `fd`, `await sendto(data: list[int], host: str, port: int)`, `await recvfrom(n: int = 65535) -> tuple[list[int], str, int]`, and `close()`. Each call sends or receives one datagram. Empty datagrams are valid; a receive buffer that is too small discards the datagram and raises `SocketError`. A destination name is resolved asynchronously to an address matching the socket family.
+- Davis chose `await socket.getaddrinfo(host: str, port: int) -> list[Address]`; each record has numeric `host`, `port`, and `family` (4 or 6), in resolver order. Bad names or ports raise `AddressError`.
+- Native name resolution, including TCP and UDP operations, runs off the scheduler thread. Cancelling a lookup releases the task immediately; the resolver may finish later. Socket operations still use the existing descriptor waits and browser calls raise `SocketError`.
+
 ### D76c — `std/socket.tom`: TCP sockets: accepted
 
 - Evidence: Davis chose "Approve TCP as above; UDP and a public `getaddrinfo` later" and "`list[int]` now, plus text helpers" (roadmap item 9; D3 of the roadmap, a `bytes` type, stays open).
@@ -1662,7 +1668,7 @@ The earlier public decision page, its password-protected chat and the chat bridg
 - The scheduler waits on the sockets' descriptors with `poll`, in the same wait as libcurl (`curl_multi_poll` takes extra descriptors), so sockets, requests and sleeps overlap; nothing polls in a loop. Native only: in the browser every call raises `SocketError`.
 - A task waiting on a socket keeps the program running after `main` is done (Davis chose "Keep running"), as a sleep or request does; close the socket to let it end.
 - A socket call that does not need to wait still lets other tasks and timers run once in 16 calls, so a peer that is always ready cannot keep them waiting. `listen` uses the first address of the name that can be used. Waiting for input (D50a) still stops everything, sockets and timeouts included.
-- Limits: name lookup blocks every task while it runs; no TLS, no UDP, no public `getaddrinfo` yet; no destructors, so a socket nobody closes stays open until the program ends.
+- At acceptance: name lookup blocked every task; UDP and public `getaddrinfo` were deferred. D76d adds them. No TLS or destructors; a socket nobody closes stays open until the program ends.
 
 ### D77a — arbitrary-size `float`, and `float[length=64]` for the plain double: accepted (stage 1 built)
 

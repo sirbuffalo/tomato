@@ -13,3 +13,12 @@ async def main():
         server.close()
     catch socket.SocketError as e:
         print('no listening:', e.id)
+    try:
+        u = await socket.udp('127.0.0.1', 0)
+        u.close()
+    catch socket.SocketError as e:
+        print('no udp:', e.id)
+    try:
+        addresses = await socket.getaddrinfo('localhost', 80)
+    catch socket.SocketError as e:
+        print('no lookup:', e.id)
