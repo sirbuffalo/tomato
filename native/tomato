@@ -218,6 +218,20 @@ merge() {   # no LTO in the linker: the runtime as LLVM bitcode, merged into the
   clang $opt -Xclang -mlink-bitcode-file -Xclang "$rtobj" -Wno-override-module -o "$exe" "$tmp/program.ll" \
     -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl)
 }
-link "$ltoflags" "${rtobj:-$runtime}" 2>/dev/null || { [ -z "$llvm" ] && merge 2>/dev/null; } || link "$nolto" || exit 1
+# A lost LTO link is never silent (it costs 2 to 3 times the speed). The warning comes only once a fallback has produced the program (a
+# program that is itself wrong gets just its own error, not a toolchain warning), and shows what the linker said, if it printed anything
+# (usually a clang whose linker has no LLVM plugin; release/linux-setup.sh installs a toolchain that does). It appears on every build and
+# run with such a clang, and a test that captures stderr will show it: there is deliberately no switch to silence it, because a quiet
+# fallback is the bug this warning exists for (the suite wants an LTO toolchain; release/check-lto.sh tells you whether you have one).
+lto_warn() { echo "warning: LTO link failed; $1" >&2; [ -s "$tmp/lto-error" ] && sed -n '1,5s/^/  the linker said: /p' "$tmp/lto-error" >&2; return 0; }
+if ! link "$ltoflags" "${rtobj:-$runtime}" 2>"$tmp/lto-error"; then
+  if [ -z "$llvm" ] && merge 2>"$tmp/merge-error"; then
+    lto_warn "using clang bitcode merge instead"
+  else
+    [ -s "$tmp/merge-error" ] && cat "$tmp/merge-error" >> "$tmp/lto-error"   # (the merge failed too: say why, after the LTO error)
+    link "$nolto" || exit 1
+    lto_warn "linking without cross-module optimization"
+  fi
+fi
 [ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }
 "$exe" "$@"

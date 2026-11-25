@@ -377,9 +377,16 @@ while :; do
   [ "$(date +%s)" -lt "$deadline" ] || { echo "@@LOAD_WARN=load average $l1 is above $max_load after waiting ${wait_sec}s; benchmarking anyway"; break; }
   sleep 20
 done
-sh tests/run.sh > "$out/tests.log" 2>&1; rc=$?
+# Without working LTO the benchmark numbers would be the wrong ones, so then (and only then) they are skipped; failing tests still get
+# benchmarks, as before (--ignore-linux-failures goes on with fresh Linux numbers). A toolchain without LTO still gets its tests (which
+# then do not require LTO) and is reported as a failure on the last line of tests.log.
+lto_ok=1; sh release/check-lto.sh > "$out/tests.log" 2>&1 || lto_ok=0
+TOMATO_TEST_REQUIRE_LTO=$lto_ok sh tests/run.sh >> "$out/tests.log" 2>&1; rc=$?
+[ "$lto_ok" = 1 ] || { echo 'FAIL Linux release toolchain does no link-time optimisation (release/check-lto.sh): 1 failed in addition to the tests above' >> "$out/tests.log"; rc=1; }
 echo "@@TESTS_RC=$rc"; echo "@@TESTS_SUMMARY=$(tail -1 "$out/tests.log")"
-if [ "$skip_bench" = 0 ]; then
+if [ "$skip_bench" = 0 ] && [ "$lto_ok" = 0 ]; then
+  echo "@@BENCH=skipped"; echo "@@COUNT=skipped"
+elif [ "$skip_bench" = 0 ]; then
   echo "$newver" > VERSION   # the tests ran on the commit before the bump (they compare VERSION with site/latest.json); the results are for the new version
   sh benchmarks/run.sh --runs "$runs" --seed "$seed" --out "$out" > "$out/bench.log" 2>&1 && ! grep -q "outputs differ" "$out/bench.log" && echo "@@BENCH=ok" || echo "@@BENCH=failed"
   sh benchmarks/count.sh --guest --runs 2 > "$out/instructions.md" 2> "$out/count.log" && echo "@@COUNT=ok" || echo "@@COUNT=failed"
@@ -436,13 +443,14 @@ step_linux() {
   b="$(mk BENCH)"; c="$(mk COUNT)"
   if [ "$skip_bench" = 1 ]; then st_set linux "tests only (--skip-bench)"
   else
-    [ "$b" = ok ] && grep -q "\"tomato\": \"$v\"" "$fo/results.json" 2>/dev/null || b=failed
+    if [ "$b" = ok ] && ! grep -q "\"tomato\": \"$v\"" "$fo/results.json" 2>/dev/null; then b=failed; fi   # (a skipped run stays skipped)
     if [ "$b" = ok ]; then   # fresh numbers replace the committed ones, all of them
       rm -rf "$lo"; mkdir -p "$lo"; cp "$fo/results.json" "$fo/results.md" "$lo/"
       if [ "$c" = ok ]; then cp "$fo/instructions.md" "$lo/"; fi
     fi
     st_set linux "tests $(mk TESTS_RC | sed 's/^0$/passed/; s/^[1-9].*/FAILED/'); benchmarks ${b:-n/a}; instruction counts ${c:-n/a}"
-    [ "$b" = ok ] || printf 'WARNING: the Linux benchmarks failed on %s (see %s); the release goes on without fresh Linux numbers.\n' "$linux_host" "$logs/linux.log" >&2
+    [ "$b" = skipped ] && printf 'WARNING: the Linux benchmarks were skipped on %s: its toolchain does no link-time optimisation (release/check-lto.sh; see %s)\n' "$linux_host" "$logs/linux-tests.log" >&2
+    [ "$b" = ok ] || [ "$b" = skipped ] || printf 'WARNING: the Linux benchmarks failed on %s (see %s); the release goes on without fresh Linux numbers.\n' "$linux_host" "$logs/linux.log" >&2
   fi
   if [ "$(mk TESTS_RC)" != 0 ]; then
     st_set linux_tests "FAILED: $(mk TESTS_SUMMARY)"

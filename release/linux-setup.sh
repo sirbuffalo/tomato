@@ -3,14 +3,15 @@
 # clang (LLVM prebuilt), Go, Rust (rustup, minimal profile), Valgrind (built from source). Run it ON the Linux machine:
 #   ssh biggie.davismcd.com 'sh -s' < release/linux-setup.sh        (or copy it there)
 # Environment: TOMATO_LINUX_TOOLS (default ~/.tomato-release/linux-tools), LLVM_VERSION (21.1.8), GO_VERSION (1.27.4),
-# VALGRIND_VERSION (3.26.0). Re-running skips what is already installed. Needs curl, tar, xz, bzip2, gcc and make.
-# Checksums: Go is verified against go.dev's published sha256, rustup-init against static.rust-lang.org's; LLVM and Valgrind come
+# VALGRIND_VERSION (3.26.0). Re-running skips what is already installed. Needs curl, tar, xz, bzip2, gcc, make and nm (binutils), and cmake when libxml2 has to be built.
+# Checksums: Go is verified against go.dev's published sha256, rustup-init against static.rust-lang.org's, libxml2 (built for lld) against
+# the .sha256sum that download.gnome.org publishes beside it; LLVM and Valgrind come
 # over https from their official download locations and their sha256 is written to SHA256SUMS in the folder for later comparison.
 set -e
 prefix="${TOMATO_LINUX_TOOLS:-$HOME/.tomato-release/linux-tools}"
 llvm="${LLVM_VERSION:-21.1.8}"; gov="${GO_VERSION:-1.27.4}"; vg="${VALGRIND_VERSION:-3.26.0}"
 [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || { echo "error: this installs Linux x86-64 tools" >&2; exit 1; }
-for t in curl tar xz bzip2 gcc make; do command -v "$t" >/dev/null 2>&1 || { echo "error: $t is needed to install the toolchains" >&2; exit 1; }; done
+for t in curl tar xz bzip2 gcc make nm; do command -v "$t" >/dev/null 2>&1 || { echo "error: $t is needed to install the toolchains" >&2; exit 1; }; done
 mkdir -p "$prefix/bin" "$prefix/dl"; cd "$prefix/dl"
 log() { printf '== %s\n' "$*"; }
 record() { shasum -a 256 "$1" 2>/dev/null >> "$prefix/SHA256SUMS" || sha256sum "$1" >> "$prefix/SHA256SUMS"; }
@@ -38,15 +39,43 @@ if ! command -v rustc >/dev/null 2>&1; then
 fi
 rustc --version
 
-if ! command -v clang >/dev/null 2>&1 || ! clang --version | grep -q "version $llvm"; then
+# (The wrapper below runs $prefix/llvm/bin/clang, so a matching clang elsewhere is not enough.)
+if [ ! -x "$prefix/llvm/bin/clang" ] || ! "$prefix/llvm/bin/clang" --version | grep -q "version $llvm"; then
   log "clang $llvm (LLVM prebuilt)"
   f="LLVM-$llvm-Linux-X64.tar.xz"; curl -fsSL -o "$f" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvm/$f"
   record "$prefix/dl/$f" 2>/dev/null || true
   rm -rf "$prefix/llvm"; mkdir -p "$prefix/llvm"; tar -C "$prefix/llvm" --strip-components=1 -xJf "$f"
-  ln -sf "$prefix/llvm/bin/clang" "$prefix/bin/clang"
   rm -f "$f"
 fi
+# The LLVM prebuilt lld needs libxml2.so.2, absent on newer Ubuntu releases. Build that ABI locally, and use lld explicitly:
+# the LLVM archive does not include the LLVMgold plugin needed by the system linker. Wrappers keep the library path local to lld.
+if [ ! -f "$prefix/libxml2/lib/libxml2.so.2" ]; then
+  log "libxml2 2.13.9 (for lld)"
+  command -v cmake >/dev/null 2>&1 || { echo "error: cmake is needed to build libxml2 for lld" >&2; exit 1; }
+  f="libxml2-2.13.9.tar.xz"; curl -fsSL -o "$f" "https://download.gnome.org/sources/libxml2/2.13/$f"
+  want="$(curl -fsSL "https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.9.sha256sum" | awk -v f="$f" '$2 == f { print $1 }')"
+  got="$(sha256sum "$f" 2>/dev/null || shasum -a 256 "$f")"; got="${got%% *}"
+  [ -n "$want" ] && [ "$want" = "$got" ] || { echo "error: $f does not match the sha256 that download.gnome.org publishes" >&2; rm -f "$f"; exit 1; }
+  record "$prefix/dl/$f"
+  rm -rf src-libxml2; mkdir src-libxml2; tar -C src-libxml2 --strip-components=1 -xJf "$f"
+  cmake -S src-libxml2 -B src-libxml2/build -DCMAKE_INSTALL_PREFIX="$prefix/libxml2" -DCMAKE_INSTALL_LIBDIR=lib -DLIBXML2_WITH_PYTHON=OFF -DLIBXML2_WITH_LZMA=OFF -DLIBXML2_WITH_ICONV=OFF -DLIBXML2_WITH_TESTS=OFF > src-libxml2/configure.log 2>&1
+  cmake --build src-libxml2/build -j 2 > src-libxml2/build.log 2>&1
+  cmake --install src-libxml2/build > src-libxml2/install.log 2>&1
+fi
+rm -f "$prefix/bin/clang" "$prefix/bin/ld.lld"
+printf '#!/bin/sh\nexec "%s/llvm/bin/clang" -Wno-unused-command-line-argument --ld-path="%s/bin/ld.lld" "$@"\n' "$prefix" "$prefix" > "$prefix/bin/clang"
+printf '#!/bin/sh\nLD_LIBRARY_PATH="%s/libxml2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "%s/llvm/bin/ld.lld" "$@"\n' "$prefix" "$prefix" > "$prefix/bin/ld.lld"
+chmod +x "$prefix/bin/clang" "$prefix/bin/ld.lld"
+hash -r
 clang --version | head -1
+probe="$(mktemp -d)"
+printf 'int value(void) { return 42; }\n' > "$probe/a.c"
+printf 'int value(void); int main(void) { return value() != 42; }\n' > "$probe/b.c"
+# (the same probe as release/check-lto.sh, which cannot be read here: this script is piped over ssh; change both together)
+if ! clang -O2 -flto "$probe/a.c" "$probe/b.c" -o "$probe/test" || ! "$probe/test" || ! nm "$probe/test" | grep -q ' main$' || nm "$probe/test" | grep -q ' value$'; then
+  rm -rf "$probe"; echo "error: clang did not perform cross-module LTO" >&2; exit 1
+fi
+rm -rf "$probe"
 
 if ! command -v valgrind >/dev/null 2>&1 || ! valgrind --version | grep -q "$vg"; then
   log "Valgrind $vg (from source)"

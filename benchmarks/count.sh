@@ -79,7 +79,11 @@ for b in $benchmarks; do
   for l in $langs; do
     src="$here/$b/$b.$(ext "$l")"; bin="$work/$b.$l"
     case "$l" in
-      tomato) "$home/bin/tomato" build "$src" -o "$bin" --mode "$release_mode" >&2 ;;
+      tomato) "$home/bin/tomato" build "$src" -o "$bin" --mode "$release_mode" > "$work/build.err" 2>&1; rc=$?
+        cat "$work/build.err" >&2
+        # a Tomato that lost link-time optimisation would give wrong counts (v0.51's Linux column did): refuse, except in a smoke run
+        if [ "$smoke" != 1 ] && grep -q 'warning: LTO link failed' "$work/build.err"; then say "the Tomato build lost link-time optimisation ($b): fix the toolchain (release/check-lto.sh, release/linux-setup.sh)"; exit 1; fi
+        [ "$rc" = 0 ] ;;
       go) go build -ldflags=-linkmode=external -o "$bin" "$src" ;;
       rust) if [ -f "$here/$b/Cargo.toml" ]; then
           cargo build --release --locked --quiet --manifest-path "$here/$b/Cargo.toml" --target-dir "$work/cargo" && cp "$work/cargo/release/$b" "$bin"

@@ -685,7 +685,25 @@ t_cli_release_like_debug() { cli_setup; check "release mode runs $1 like debug" 
 t_cli_no_lto() { # a clang whose linker has no LLVM plugin (-flto fails when linking): clang merges the runtime into the program instead
   cli_setup   # (a part for each mode: debug, release)
   mkdir -p "$work/nolto"; printf '#!/bin/sh\ncase " $* " in *" -flto "*) case " $* " in *" -c "*) ;; *) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v clang)" > "$work/nolto/clang"; chmod +x "$work/nolto/clang"
-  m="$1"; check "without link-time optimisation in the linker ($m)" "$(cat tests/expected/int_fast_paths.main.out)" "$(PATH="$work/nolto:$PATH" $t run tests/programs/int_fast_paths.tom --mode $m 2>&1)"
+  m="$1"; PATH="$work/nolto:$PATH" $t run tests/programs/int_fast_paths.tom --mode "$m" > "$work/out" 2> "$work/err"
+  check "without link-time optimisation in the linker ($m)" "$(cat tests/expected/int_fast_paths.main.out)" "$(cat "$work/out")"
+  check "LTO fallback is visible ($m)" 'warning: LTO link failed; using clang bitcode merge instead' "$(cat "$work/err")"
+  # Also force the merge to fail: the plain link must announce its loss of cross-module optimization.
+  printf '#!/bin/sh\ncase " $* " in *" -mlink-bitcode-file "*) exit 1 ;; *" -flto "*) case " $* " in *" -c "*) ;; *) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v clang)" > "$work/nolto/clang"
+  PATH="$work/nolto:$PATH" $t run tests/programs/int_fast_paths.tom --mode "$m" > "$work/out" 2> "$work/err"
+  check "plain link output ($m)" "$(cat tests/expected/int_fast_paths.main.out)" "$(cat "$work/out")"
+  check "plain link warning ($m)" 'warning: LTO link failed; linking without cross-module optimization' "$(cat "$work/err")"
+}
+t_cli_require_lto() { # Release gate: the real Tomato build must take the successful LTO link path.
+  [ "${TOMATO_TEST_REQUIRE_LTO:-0}" = 1 ] || return 0
+  cli_setup; mkdir -p "$work/spy"
+  printf '#!/bin/sh\ncase " $* " in *" -flto "*) case " $* " in *" -c "*) ;; *) echo link >> "%s/lto-links" ;; esac ;; esac\nexec "%s" "$@"\n' "$work" "$(command -v clang)" > "$work/spy/clang"
+  chmod +x "$work/spy/clang"
+  for m in release debug; do   # (each mode has its own flags and its own runtime in the cache)
+    rm -f "$work/lto-links" "$work/lto-program"
+    PATH="$work/spy:$PATH" $t build tests/programs/int_fast_paths.tom --mode "$m" -o "$work/lto-program" > "$work/out" 2> "$work/err"
+    if [ -x "$work/lto-program" ] && [ -s "$work/lto-links" ] && [ ! -s "$work/err" ]; then ok "Tomato $m build used LTO"; else bad "Tomato $m build used LTO" "$(cat "$work/err")"; fi
+  done
 }
 t_cli_runtime_cache() { # the compiled runtime is kept in the cache folder: a hit, a miss for every change of key, concurrent runs, no cache
   # three parts, each with a cache folder of its own: 1 the entries (a hit, release is another entry), 2 the changes of the key (the runtime
@@ -926,6 +944,7 @@ done
 spawn_cli t_cli_release_no_leak
 spawn_cli t_cli_no_lto debug
 spawn_cli t_cli_no_lto release
+spawn_cli t_cli_require_lto
 spawn_first t_cli_runtime_cache 1   # (not the installed command: it only needs the compiler)
 spawn_first t_cli_runtime_cache 2
 spawn_first t_cli_runtime_cache 3

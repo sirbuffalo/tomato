@@ -121,8 +121,13 @@ for b in $benchmarks; do
     if [ $# -gt 0 ]; then
       echo "BUILD $b $l" >> "$work/clang.log"
       PATH="$work/shim:$PATH" "$work/measure" "$work/build.log" "$@" 2> "$work/m" < /dev/null
-      read -r wall user sys rss code < "$work/m"
-      [ "$code" = 0 ] || { say "build failed: $b $l"; cat "$work/build.log" >&2; exit 1; }
+      # measure prints its numbers as the last line of stderr; the build's own stderr (a warning, say) comes before it
+      read -r wall user sys rss code <<EOF
+$(tail -n 1 "$work/m")
+EOF
+      [ "$code" = 0 ] || { say "build failed: $b $l"; cat "$work/build.log" "$work/m" >&2; exit 1; }
+      # numbers from a Tomato whose link-time optimisation was lost would be wrong ones (v0.51's Linux column was): refuse, except in a smoke run (a check of the harness)
+      case "$l" in tomato|tomato-debug) [ "$smoke" = 1 ] || ! grep -q 'warning: LTO link failed' "$work/m" || { say "the Tomato build lost link-time optimisation ($b $l): fix the toolchain (release/check-lto.sh, release/linux-setup.sh)"; cat "$work/m" >&2; exit 1; } ;; esac
       printf '%s %s %s %s\n' "$b" "$l" "$wall" "$(size_of "$l" "$bin" "$b")" >> "$work/build.tsv"
     fi
     i=1; limit=$runs; case "$l" in python|php) limit=$python_runs ;; esac; [ $smoke = 1 ] && limit=1

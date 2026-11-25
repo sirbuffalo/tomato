@@ -39,6 +39,8 @@ Tomato v0.51, on macOS 27.0.1, Apple M3 Pro (12 cores), 36 GB RAM, a laptop on b
 
 ## Linux x86-64 snapshot (2026-11-24)
 
+**Note: measured with a clang that could not do link-time optimisation, so Tomato's times are too slow; being re-measured (see the TODO item "Publish the LTO Linux timings"). The instruction counts below the v0.51 snapshot are with LTO.**
+
 Tomato v0.51, on Ubuntu 26.04.1 LTS, AMD Ryzen Threadripper 3990X (64 physical cores, 128 logical CPUs), 247 GB RAM. Each program ran ten times in one shuffled order (seed 1); values are median wall-clock seconds. The shared machine was heavily loaded: one-, five-, and fifteen-minute load averages were 71.60, 75.50, 75.93 before and 61.07, 63.62, 66.26 after. Treat small differences cautiously. Full measurements are in `benchmarks/results/linux-x86_64/results.md` and `raw.tsv`; earlier website numbers were measured on an Apple M1 Mac and are not directly comparable.
 
 | Benchmark | Tomato (s) | Tomato ÷ Go | Tomato ÷ Rust | Tomato ÷ Python |
@@ -73,6 +75,8 @@ Tomato v0.51, on Ubuntu 26.04.1 LTS, AMD Ryzen Threadripper 3990X (64 physical c
 
 v0.51, median of 10 runs per program (Python too), all runs in one shuffled order (seed 1), Apple M1, load average (1, 5 and 15 minutes) 1.40 1.97 2.33 before and 3.00 2.56 2.39 after. Written by `release/perf-snapshot.sh` from `benchmarks/results/results.md`, which has the full tables. Seconds (release mode): fib 0.156, sieve 0.068, matmul 0.144, mandelbrot 0.102, collatz 0.206, strings 0.178, sort 0.111, wordcount 0.207, bigint 0.111, objects 0.113.
 
+**Note: the Linux seconds and the Linux columns here were measured with a clang that could not do link-time optimisation, so they are too slow (the instruction ratios below are with LTO). They are being re-measured; see the TODO item "Publish the LTO Linux timings".**
+
 Linux x86-64 (`benchmarks/results/linux-x86_64/results.md`): AMD Ryzen Threadripper 3990X 64-Core Processor, 128 cores, median of 10 runs, seed 1, load average 77.33 before and 73.50 after (a shared machine: read its times with that load in mind). Seconds (release mode): fib 0.721, sieve 1.511, matmul 0.808, mandelbrot 0.305, collatz 0.284, strings 2.030, sort 0.518, wordcount 0.440, bigint 0.164, objects 1.627.
 
 Tomato's time divided by each language's time (below 1.0 Tomato is faster, above 1.0 it is slower):
@@ -92,18 +96,20 @@ Tomato's time divided by each language's time (below 1.0 Tomato is faster, above
 
 Instructions executed (deterministic, `benchmarks/count.sh`, callgrind), Tomato's count divided by each language's (below 1.0 Tomato executes fewer): arm64 in a Linux VM on the Mac, and x86-64 on the Linux machine.
 
-| benchmark | Tomato ÷ Go (arm64) | Tomato ÷ Rust (arm64) | Tomato ÷ Python (arm64) | Tomato ÷ Go (x86-64) | Tomato ÷ Rust (x86-64) | Tomato ÷ Python (x86-64) |
+| benchmark | Tomato ÷ Go (arm64) | Tomato ÷ Rust (arm64) | Tomato ÷ Python (arm64) | Tomato ÷ Go (x86-64, LTO) | Tomato ÷ Rust (x86-64, LTO) | Tomato ÷ Python (x86-64, LTO) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| fib | 1.15 | 2.16 | 0.04 | 3.32 | 5.09 | 0.10 |
-| sieve | 1.93 | 1.75 | 0.02 | 4.25 | 3.99 | 0.04 |
-| matmul | 2.51 | 2.38 | 0.02 | 6.91 | 6.99 | 0.07 |
-| mandelbrot | 1.96 | 2.19 | 0.01 | 2.67 | 3.50 | 0.01 |
-| collatz | 1.51 | 1.52 | 0.01 | 1.33 | 1.53 | 0.01 |
-| strings | 1.18 | 1.33 | 0.16 | 1.20 | 1.35 | 0.22 |
-| sort | 1.10 | 1.99 | 0.05 | 1.41 | 1.98 | 0.07 |
-| wordcount | 0.74 | 0.57 | 0.14 | 0.96 | 0.77 | 0.20 |
-| bigint | 2.03 | 0.95 | 0.39 | 1.57 | 1.34 | 0.27 |
-| objects | 1.21 | 1.90 | 0.04 | 1.52 | 2.62 | 0.08 |
+| fib | 1.15 | 2.16 | 0.04 | 1.78 | 2.73 | 0.05 |
+| sieve | 1.93 | 1.75 | 0.02 | 2.12 | 1.99 | 0.02 |
+| matmul | 2.51 | 2.38 | 0.02 | 2.47 | 2.50 | 0.03 |
+| mandelbrot | 1.96 | 2.19 | 0.01 | 2.07 | 2.72 | 0.01 |
+| collatz | 1.51 | 1.52 | 0.01 | 1.32 | 1.52 | 0.01 |
+| strings | 1.18 | 1.33 | 0.16 | 1.00 | 1.13 | 0.19 |
+| sort | 1.10 | 1.99 | 0.05 | 1.01 | 1.42 | 0.05 |
+| wordcount | 0.74 | 0.57 | 0.14 | 0.81 | 0.65 | 0.17 |
+| bigint | 2.03 | 0.95 | 0.39 | 1.56 | 1.34 | 0.27 |
+| objects | 1.21 | 1.90 | 0.04 | 1.09 | 1.88 | 0.05 |
+
+The x86-64 columns are the v0.51 tree (`14b191e3`) built with link-time optimisation: Tomato's counts were re-measured with the fixed toolchain (`benchmarks/results/linux-x86_64/lto-effect.md`), Go's, Rust's and Python's counts are from the published v0.51 run (Tomato's link does not change them). The first published v0.51 Linux counts (fib 3.32, sieve 4.25, matmul 6.91 times Go) were taken with a clang that could not do LTO and silently linked without it; they are kept in `instructions-v0.51-no-lto.md`. `benchmarks/results/linux-x86_64/instructions.md` has the counts of all 25 benchmarks on a later tree (`d83f43b0`, v0.51 plus 25 runtime and compiler changes), also with LTO; on that tree LTO alone changes little, because the compiler now emits most of the fast paths itself (`lto-effect.md`). The wall-clock Linux snapshot above and the Linux time columns are **still from the non-LTO build** and are being re-measured on a quiet machine.
 
 ## v0.50 snapshot (earlier)
 

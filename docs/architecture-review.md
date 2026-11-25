@@ -300,6 +300,11 @@ What is left, and why:
   not affected. `docs/performance.md` on `main` still prints the wrong Linux column; the website's `benchmarks.json` has no
   Linux numbers. The Linux gate passed because no test checks that LTO happened. Any user whose clang lacks the plugin gets
   the same slowdown of 1.9 to 2.8 times, with no message.
+  *Update (Linux LTO task).* `native/tomato` now warns when the LTO link fails (and which fallback it uses), `release/check-lto.sh`
+  proves that the toolchain does cross-module LTO and `release/release.sh` runs it before the Linux tests, which also require
+  an LTO link (`TOMATO_TEST_REQUIRE_LTO`). `release/linux-setup.sh` builds libxml2 locally for `lld` and installs a `clang` wrapper
+  that uses it. Release counts on Linux with LTO, built from `d83f43b0` (v0.51 plus 25 later runtime and compiler changes, so the drop from the figures above is LTO plus those changes; `benchmarks/results/linux-x86_64/lto-effect.md` isolates LTO: at the v0.51 tree it is 1.86 times fewer instructions on fib, 2.00 on sieve and 2.79 on matmul, which confirms the figures above, while at `d83f43b0` the compiler's own fast paths leave LTO little to do): fib 123.5 M, sieve 30.3 M, matmul 83.9 M (`benchmarks/results/linux-x86_64/instructions.md`;
+  the non-LTO counts are kept in `instructions-v0.51-no-lto.md`).
 - **`tomato run` recompiles the runtime every time** [M]. For a 6-line program the front end takes 0.05 s. The LTO link
   with `tomato_rt.c` took 1.5 to 1.75 s in most runs, up to 6.5 s under load. Linking a runtime compiled once
   (`clang -O1 -flto -c`) took 0.4 to 0.6 s, up to 1.4 s, and gave a **byte-identical binary**. The repl already compiles the
