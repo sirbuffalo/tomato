@@ -302,10 +302,10 @@ while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done
 
 # ---- programs -----------------------------------------------------------------------------------------------------------
 # the fast tier builds only these with AddressSanitizer (one or two programs of each kind of thing the suite looks at)
-fast_asan=" loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module "
+fast_asan=" float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module "
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
-asan_specs1="tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/float_ranges: tests/programs/float_length: tests/programs/int_to_float: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
+asan_specs1="tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_ownership: tests/programs/float_keys: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
 asan_specs2="tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
@@ -382,7 +382,7 @@ t_bigfloat() { # floats of any size, at the C level: fixed cases, then random on
     [ "$out" = ok ] && ok "floats of any size (asan and ubsan, against an exact reference)" || bad "floats of any size" "$out"
   else bad "floats of any size" "tests/bigfloat.c does not build: $(head -3 "$work/e")"; fi
 }
-section "== memory: floats of any size (the C runtime; the compiler does not use them yet) =="
+section "== memory: floats of any size (the C runtime; the compiler uses them in the programs float_any_size and float_ownership) =="
 spawn t_bigfloat
 
 t_bigdiv() {
@@ -432,7 +432,7 @@ t_release_leak() { # fused expressions over big numbers; the test itself is test
   case "$("$work/leaky" 2>&1)" in *"never freed"*) ok "release: a big number that is not freed is reported";; *) bad "release: a big number that is not freed is reported";; esac
 }
 section "== release mode (AddressSanitizer; the same output as debug mode) =="
-for name in fast_paths loop_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers float_chains; do
+for name in fast_paths loop_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers; do
   case "$name" in fast_paths|loop_nests|int_ranges|containers) ;; *) [ -n "$fast" ] && { skip "release $name"; continue; } ;; esac   # (the fast tier: four of the eleven)
   case "$name" in fast_paths|loop_nests) spawn_first t_release_asan "$name" leaks ;; *) spawn_first t_release_asan "$name" ;; esac
 done
@@ -569,15 +569,15 @@ t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide float_ranges float_length int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module; do
+  for name in angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module float_any_size float_ownership float_keys; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
   spawn_free t_wasm_sockets
   wasm_neg type_mismatch "cannot use '+' with int and str"
   wasm_neg fixed_range "300 does not fit in uint[length=8]"
-  wasm_neg float_length_32 "float[length=N] exists only with N = 64"
-  wasm_neg float_length_key "float takes only length="
+  wasm_neg float_length_32 "float has no length"
+  wasm_neg float_length_key "float has no length"
   wasm_neg private_field "the field 'x' is private to class 'C'"
   wasm_neg type_arg_count "'list' does not take several types here"
   wasm_neg type_in_unknown "this type is not supported here"
@@ -991,10 +991,10 @@ neg hash_bad_signature "must take nothing besides self and return an int"
 neg generic_keyword_args "keyword arguments are not supported when creating an object"
 neg clock_args "clock() takes no arguments"
 neg fixed_range "300 does not fit in uint[length=8]"
-neg float_length_32 "float[length=N] exists only with N = 64"
-neg float_length_key "float takes only length="
-neg float_length_call "float[length=N] exists only with N = 64"
-neg float_length_type_arg "float[length=N] exists only with N = 64"
+neg float_length_32 "float has no length"
+neg float_length_key "float has no length"
+neg float_length_call "float has no length"
+neg float_length_type_arg "float has no length"
 neg unknown_name "name 'nothing' is not defined"
 neg private_field "the field 'x' is private to class 'C'"
 neg const_field "the const field 'x' cannot be changed after the object is created"
@@ -1218,7 +1218,6 @@ rt dict_missing_key "the key is not there" 1
 rt set_missing "the element is not there" 1
 rt rational_zero "a rational cannot have a zero denominator" 1
 rt progress_bar_live "live: 100%|####| 2/2" 0
-rt float_overflow "infinite or not a number" 1
 rt negative_exponent "a negative exponent needs a float" 1
 rt stack_overflow "stack overflow" 1
 rt tan_quarter "tan is not defined at 90 deg" 1

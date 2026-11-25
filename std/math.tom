@@ -196,7 +196,7 @@ export def lcm(a: int, b: int) -> int:
 
 def _f(x: int | float) -> float:
     if x in int:
-        return float(x)
+        return float(x)                  # (the libm functions below take a double: a float too large for one stops at the call)
     return x
 
 def _fmt(x: float) -> str:
@@ -621,32 +621,33 @@ export def trunc(x: int | float) -> int:
         return x
     return int(x)
 
-# an int or float as a float; an int beyond the largest float raises an OverflowError, as in Python
-def _float_of(x: int | float) -> float:
-    v = _f(x)
-    if !tomato_is_finite(v) == 0:
-        raise OverflowError('an int is too large to be a float', 'E436')
-    return v
+# a float as it is, an int as a float (of any size)
+def _num(x: int | float) -> float:
+    if x in int:
+        return float(x)
+    return x
 
 export def isnan(x: int | float) -> bool:
-    v = _float_of(x)
+    v = _num(x)
     return v != v
 
 export def isinf(x: int | float) -> bool:
-    v = _float_of(x)
-    return !tomato_is_finite(v) == 0 and v == v
+    text = str(_num(x))
+    return text == 'inf' or text == '-inf'
 
 export def isfinite(x: int | float) -> bool:
-    return !tomato_is_finite(_float_of(x)) != 0
+    v = _num(x)
+    text = str(v)
+    return v == v and text != 'inf' and text != '-inf'
 
 # x with the sign of y (a -0.0 counts as negative)
 export def copysign(x: int | float, y: int | float) -> float:
-    magnitude = _float_of(x)
+    magnitude = _num(x)
     if magnitude < 0.0:
         magnitude = 0.0 - magnitude          # 0.0 - x, so that the magnitude of -0.0 is 0.0 and not -0.0
     elif magnitude == 0.0:
         magnitude = 0.0
-    sign_source = _float_of(y)
+    sign_source = _num(y)
     negative = sign_source < 0.0 or str(sign_source).startswith('-')
     if negative:
         return -magnitude

@@ -106,6 +106,7 @@
   function hexDouble(h) {
     var b = new DataView(new ArrayBuffer(8)); b.setBigUint64(0, BigInt(h)); return b.getFloat64(0);
   }
+  var bitsView = new DataView(new ArrayBuffer(8));
   var mask = function (bits, v) { return BigInt.asUintN(bits, v); };
   var signed = function (bits, v) { return BigInt.asIntN(bits, v); };
 
@@ -433,6 +434,12 @@
             case "fptosi": case "fptoui": r = (v !== v || !isFinite(v)) ? 0n : mask(dt.bits, BigInt(Math.trunc(v))); break;
             case "ptrtoint": r = mask(dt.bits, BigInt(v)); break;
             case "inttoptr": r = Number(mask(32, v)); break;
+            case "bitcast":
+              // a float word and a double have the same bits (a float is an i64 at rest, a double while it is worked on)
+              if (st2.k === "f" && dt.k === "i") { bitsView.setFloat64(0, v, true); r = bitsView.getBigUint64(0, true); }
+              else if (st2.k === "i" && dt.k === "f") { bitsView.setBigUint64(0, v, true); r = bitsView.getFloat64(0, true); }
+              else r = v;
+              break;
             default: r = v;
           }
           f.r[dest] = r;

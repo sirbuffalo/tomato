@@ -25,15 +25,15 @@ silent. What it skips:
 
 | Where | Full runs | `--fast` runs | Skipped |
 | --- | --- | --- | --- |
-| memory (AddressSanitizer builds of programs) | 101 | 38 (`fast_asan` in `tests/run.sh`) | 63 |
-| release mode (AddressSanitizer) | 11 programs | 4: `fast_paths`, `loop_nests`, `int_ranges`, `containers` | 7 |
+| memory (AddressSanitizer builds of programs) | 111 | 42 (`fast_asan` in `tests/run.sh`) | 69 |
+| release mode (AddressSanitizer) | 10 programs | 4: `fast_paths`, `loop_nests`, `int_ranges`, `containers` | 6 |
 | WebAssembly (programs, rejected programs, runtime errors) | 109 | 36 (`fast_wasm`) | 73 |
 | command line: release mode runs like debug mode | 10 programs | 3: `int_boundary`, `containers`, `cycle` | 7 |
 | benchmarks smoke | 25 benchmarks, each in Tomato and go, rust, python, c, javascript | 6 (`fib sieve strings sort wordcount hof`), each in Tomato and c, python | 19 benchmarks (and, for the six, go, rust, javascript) |
 
-That is 795 checks in the full suite and 626 in the fast tier (169 skipped); the fast tier takes a little over half the CPU time.
-Everything else runs in both tiers: the compiler and its fixed point, the install, the 14 examples, all 160 programs with expected output,
-the 78 rejected programs and 76 error messages, the 63 runtime errors, the input, error-id, known-gaps, highlighter and release-file checks, and
+That is 755 checks in the full suite and 654 in the fast tier (101 skipped); the fast tier takes a little over half the CPU time.
+Everything else runs in both tiers: the compiler and its fixed point, the install, the 14 examples, all 171 programs with expected output,
+the 103 rejected programs and 76 error messages, the 63 runtime errors, the input, error-id, known-gaps, highlighter and release-file checks, and
 the rest of the command line (the update, the runtime cache, `explain`, the repl, colors, warnings, modes). Which tests were skipped is printed at the
 end of every `--fast` run, as `SECTION: NAME`.
 

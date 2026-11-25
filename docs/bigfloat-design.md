@@ -1,8 +1,10 @@
 # Arbitrary-size floats: design
 
-Status: **approved by Davis with all recommended answers** (the eight questions at the end). Stage 0 (the rounding
-fixes) is its own task; stage 1 (`float[length=64]` as a name for today's double) is built; stages 2 to 5 of the Plan are not
-started. The decision entry is D77a in `docs/decisions.md`.
+Status: **approved by Davis with all recommended answers** (the eight questions at the end). Built: stage 0 (the rounding
+fixes), stage 1 (`float[length=64]` as a name, removed again in D77c), stage 2 (the C runtime, `docs/bigfloat-runtime.md`) and stage 3 (the compiler: D77b
+in `docs/decisions.md`). Not built: stage 4 (the library and the formats) and stage 5 (the fast loop copy). One answer changed from the text below:
+floats stay valid dict keys, set members and `hash()` arguments (D78a), which this design had assumed away (Davis, in the stage 3 task). The decision
+entries are D77a, D77b and D77c. **D77c: Davis removed `float[length=64]`, so wherever this document says `float[length=64]` there is none: one float type, and a program cannot ask for the plain double.**
 
 ## The requirement
 
@@ -273,7 +275,7 @@ the rules above disappear. It is simpler, faster, and asymmetric: `x * y` never 
 - **Zero** keeps its sign rules (D05ai). An underflow to zero can no longer happen, so the only zeros are exact.
 - **Sorting, `min`, `max`, `sum`**: `sorted(list[float])` maps the bits to a sortable integer; it needs a "does any item
   have a box" scan first, with a comparison sort otherwise, as the int sort already does.
-- **Equality and hashing**: floats cannot be dict keys or set items (E324, E160), so there is no hash to define.
+- **Equality and hashing**: floats stay dict keys and set items (D78a; Davis, in the stage 3 task). Equal floats hash alike, `0.0` and `-0.0` are one key, and a whole float hashes as the equal `int`; a box is hashed from its significand and exponent.
 
 ## Conversions
 
@@ -314,7 +316,7 @@ argument holds. A program that wants a float or nothing can use `try`, or a help
 - **JSON**: reading a number outside the double range works (`Number out of range` goes); writing one gives `1e+400`,
   which is legal JSON but few other readers hold it. **MessagePack** has only 64-bit floats, so a boxed value is an
   encode error. **TOML** `inf` and `nan` stay in `special`.
-- **`time`, `sleep`, `requests` timeouts**, `clock()`: use `float[length=64]` inside; a boxed argument is a ValueError.
+- **`time`, `sleep`, `requests` timeouts**, `clock()`: use `float[length=64]` inside; a boxed argument is a ValueError. **Built differently (D77b, stage 3):** every `!` declaration that takes a `float` converts it to the nearest double at the call and stops with an `OverflowError` ("a float is too large for a float[length=64]", or "too small" for a tiny one that would come out as zero), not a `ValueError`; Davis confirmed the `OverflowError` for both messages in the stage 3 task; stage 4 replaces most of these paths.
 - **LLVM `!f(x: float)`** (D27b maps `float` to `double`): the declaration should say `float[length=64]`; a plain
   `float` would need a conversion that can raise. Breaking for existing `!` declarations (`std/math.tom`,
   `std/json.tom`, `std/time.tom`, `examples/mathlib.tom`, and user code).

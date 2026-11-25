@@ -20,6 +20,10 @@ def _abs_float(x: float) -> float:
 
 # round(x) for a float: the nearest int, a tie goes to the even one (round(0.5) is 0, round(1.5) is 2, round(2.5) is 2)
 def _round_float0(x: float) -> int:
+    if x > -0.25 and x < 0.25:
+        return 0                                 # (also a float too small for a double)
+    if x >= 4.503599627370496e15 or x <= -4.503599627370496e15:
+        return int(x)                            # whole already, whatever its size
     return int(_round_float(x, 0))
 
 # round(x, ndigits) for a float: the float nearest to x with ndigits digits after the decimal point (before it when

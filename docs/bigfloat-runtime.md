@@ -1,7 +1,7 @@
 # Floats of any size: the runtime API
 
 Stage 2 of `docs/bigfloat-design.md`: the C functions (`runtime/tomato_rt.c`, the sections from "floats of any size" to the end) that
-stage 3 of the compiler will call. **Nothing calls them yet**: a Tomato `float` is still a double. Tests: `tests/bigfloat.c`.
+the compiler calls since stage 3 (D77b): a Tomato `float` is this word. Tests: `tests/bigfloat.c`, and the programs `float_any_size` and `float_ownership`.
 
 ## The word
 
@@ -42,7 +42,7 @@ Results are the exact value rounded once, to nearest, ties to even (D05ae), exce
 | `i64 tomato_bf_from_f64(double d)` | a finite double (the same as a bitcast) |
 | `i64 tomato_bf_from_int(i64 n, i32 m)` | any `int`, rounded once |
 | `i64 tomato_bf_to_int(i64 x, i32 m)` | the whole part towards zero, exact |
-| `i32 tomato_bf_fits_f64(i64 x)` | 1 when `to_f64` gives a finite double. A `float[length=64](x)` conversion raises OverflowError on 0 |
+| `i32 tomato_bf_fits_f64(i64 x)` | 1 when `to_f64` gives a finite double. The compiler stops a float handed to C with an OverflowError on 0 |
 | `double tomato_bf_to_f64(i64 x)` | the nearest double; a tiny value becomes a subnormal or a signed zero |
 | `i64 tomato_bf_int_div(i64 x, i64 y, i32 m)` | `int / int` of any size; `y` is not zero |
 | **comparison** | -1, 0 or 1, always exact |
@@ -83,7 +83,7 @@ the C library's, on scaled operands. `sin`, `cos` and `tan` of a box above `2^10
   does), then the exponent in full: `1.5e+1000000`, `-3e-12345678901234567890`.
 - When the **binary exponent has more than 4096 bits**: the exact `0x1.8p+E`, with `E` in decimal.
 - **A subnormal double prints more digits than today** when it is a `float`: `2^-1074` is `4.9406564584124654e-324`, because `5e-324` is now a different
-  float. (`float[length=64]` keeps printing `5e-324`.) Every normal double prints as today.
+  float. Every normal double prints as today.
 - `tomato_bf_text` reads both forms, any number of digits and any exponent. `inf`, `nan`, and hex without a `p` exponent are not numbers, as today.
 
 ## How it works

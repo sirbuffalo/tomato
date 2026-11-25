@@ -1,6 +1,7 @@
-# Stage 0 of docs/bigfloat-design.md: a whole number becomes a float rounded once to the nearest (ties to even), a whole
-# number too big for a float stops the program (OverflowError, an infinity is never made), and int / int rounds the exact
-# quotient once, however large the operands are (D05ad). tests/run.sh runs it under AddressSanitizer too.
+# Stage 0 of docs/bigfloat-design.md: a whole number becomes a float rounded once to the nearest (ties to even), and int / int
+# rounds the exact quotient once, however large the operands are (D05ad). Since stage 3 a float has no largest value, so a
+# huge whole number is a float of its own size (an infinity is never made).
+# tests/run.sh runs it under AddressSanitizer too.
 from math import sqrt
 
 def to_float(n: int) -> str:
@@ -65,18 +66,13 @@ def main():
     print(to_float(2 ** 1024 - 2 ** 970))
     print(to_float(-(2 ** 1024 - 2 ** 970)))
     print(to_float(2 ** 1024))
-    # an int that does not fit is an error, not infinity
+    # an int beyond the range of a double is a float of any size
     print(to_float(10 ** 400))
     print(to_float(-10 ** 400))
-    print(show_sqrt(10 ** 400))
     print(show_sqrt(10 ** 20))
     print(mixed(10 ** 400, 1.5))
     print(mixed(10 ** 20, 1.5))
     print(mixed(-10 ** 400, 1.5))
-    try:
-        print(f'{10 ** 400:.2f}')
-    catch OverflowError as e:
-        print('format: ' + e.message)
     try:
         x = 1.0 / float(10 ** 400)
         print(x)

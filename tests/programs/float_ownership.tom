@@ -1,0 +1,301 @@
+# Floats of any size (docs/bigfloat-design.md, stage 3) held, copied and let go in every place a program can keep a float: variables,
+# fields, list items, dict keys and values, sets, tuples, unions, generators, async frames, closures-free function values, cycles,
+# and the paths that leave an expression half done by an error. A box that is not freed makes the runtime report "never freed" at
+# the end of the run (and AddressSanitizer runs it too), so the expected output has no such line.
+class Holder:
+    x: float = 0.0
+    xs: list[float] = []
+
+    @init
+    def make(self, x: float):
+        self.x = x
+        self.xs = [x, x * 2.0]
+
+    def scaled(self, k: float) -> float:
+        return self.x * k
+
+def pass_through(x: float) -> float:
+    return x
+
+def make_pair(x: float) -> tuple[float, int]:
+    return (x, 3)
+
+def pick(v: float | str) -> str:
+    if v in str:
+        return 'text'
+    return 'num ' + str(v)
+
+def generator(n: int) -> float:
+    x = 1e300
+    for i in range(n):
+        x = x * 1e300
+        yield x
+
+def part_containers():
+    big = 1e300 * 1e300
+    h = Holder(big)
+    print(h.x, h.xs, h.scaled(2.0))
+    h.x = h.x * big
+    h.xs[0] = h.xs[0] * big
+    h.xs.append(big)
+    print(h.x, h.xs)
+    print(pass_through(big), make_pair(big))
+    d = {1: big, 2: big * big}
+    d[3] = d[1] + d[2]
+    print(d)
+    s = {big, big, big * 2.0}
+    print(len(s), big in s, big * 3.0 in s)
+    k = {big: 'a', big * big: 'b'}
+    print(k[big], k[big * big], len(k))
+    k.remove(big)
+    print(len(k))
+    print(pick(big), pick('a'))
+    u: float | str = big
+    print(u)
+    lst = [big, big * big, 1.0]
+    lst2 = lst + [big]
+    print(lst2, sorted(lst2), max(lst2), min(lst2), sum(lst2))
+    for v in generator(3):
+        print(v)
+    t = (big, big)
+    a, b = t
+    print(a == b, a, b)
+    xs = [big * float(i) for i in range(1, 4)]
+    print(xs)
+    ys = xs[1:]
+    print(ys)
+    z = big
+    z = z * z
+    z = z * z
+    print(z)
+    w = [z, z]
+    w.reverse()
+    w.insert(1, big)
+    w.pop()
+    print(w)
+    m: dict[float, int] = {}
+    for i in range(3):
+        m[float(i) * big] = i
+    print(m)
+    print(hash(big) == hash(big), hash(1e300 * 1e300 * 1e300) != 0)
+    print(str(big) + '!', f'{big}')
+    print(int(big) > 10 ** 599, abs(-big))
+
+class Cell:
+    v: float = 0.0
+    other: Cell | None = None
+    vs: list[float] = []
+    m: dict[str, float] = {}
+
+    @init
+    def make(self, v: float):
+        self.v = v
+        self.vs = [v, v * 2.0]
+        self.m = {'a': v}
+
+def churn(n: int) -> float:
+    big = 1e300 * 1e300
+    a = Cell(big)
+    b = Cell(big * 3.0)
+    a.other = b
+    b.other = a
+    a.vs.append(big * big)
+    b.m['z'] = big * big * big
+    b.m['a'] = b.m['a'] + 1.0
+    total = 0.0
+    for i in range(n):
+        c = Cell(big * float(i + 1))
+        c.other = a if i % 2 == 0 else c
+        total = total + c.v
+    return total
+
+def nested(n: int) -> float:
+    big = 1e300 * 1e300
+    grid: list[list[float]] = []
+    for i in range(n):
+        row = [big * float(i), big, 1.0]
+        grid.append(row)
+    pairs: list[tuple[float, int]] = []
+    for i in range(n):
+        pairs.append((big * float(i + 1), i))
+    d: dict[str, list[float]] = {}
+    d['x'] = grid[0]
+    d['y'] = [big] * 3
+    t = 0.0
+    for row in grid:
+        t += row[0] + row[1]
+    for p in pairs:
+        t += p[0]
+    for k in d:
+        for v in d[k]:
+            t += v
+    return t
+
+def early(n: int) -> float:
+    big = 1e300 * 1e300
+    x = big * 2.0
+    for i in range(n):
+        y = x * big
+        if i == 2:
+            return y
+    return x
+
+def raises(flag: bool) -> float:
+    big = 1e300 * 1e300
+    _xs = [big, big * 2.0]
+    z = big * big
+    if flag:
+        zero = 0.0
+        return z / zero
+    return z
+
+def part_cells_and_keys():
+    print(churn(5))
+    print(nested(4))
+    print(early(5), early(1))
+    try:
+        print(raises(True))
+    catch ZeroDivisionError as e:
+        print('caught', e.message)
+    print(raises(False))
+    d: dict[float, float] = {}
+    big = 1e300 * 1e300
+    for i in range(4):
+        d[big * float(i)] = big * float(i + 10)
+    d[big * 2.0] = 7.5
+    for k in d:
+        print(k, d[k])
+    d.remove(big * 3.0)
+    print(len(d), list(d.keys()), list(d.values()))
+    s = {big, big * 2.0, big}
+    s.remove(big)
+    print(len(s), big in s, big * 2.0 in s)
+
+def two(a: float, b: float) -> float:
+    return a + b
+
+class Wrapper:
+    x: float = 0.0
+
+    @init
+    def make(self, x: float):
+        self.x = x
+
+def risky(zero: float) -> list[float]:
+    big = 1e300 * 1e300
+    out: list[float] = []
+    try:
+        print(big * big + big / zero)
+    catch ZeroDivisionError as e:
+        out.append(big * 2.0)
+    try:
+        xs = [big * 2.0, big / zero, big]
+        print(xs)
+    catch ZeroDivisionError as e:
+        out.append(big * 3.0)
+    try:
+        print(two(big * big, 1.0 / zero))
+    catch ZeroDivisionError as e:
+        out.append(big * 4.0)
+    try:
+        b = Wrapper(big * 5.0)
+        b.x = big * 6.0 + big / zero
+    catch ZeroDivisionError as e:
+        out.append(big * 7.0)
+    try:
+        d = {big * 8.0: big * 9.0, big / zero: 1.0}
+        print(d)
+    catch ZeroDivisionError as e:
+        out.append(big * 10.0)
+    try:
+        t = (big * 11.0, big / zero)
+        print(t)
+    catch ZeroDivisionError as e:
+        out.append(big * 12.0)
+    try:
+        print(-(big * big) * (big / zero))
+    catch ZeroDivisionError as e:
+        out.append(big * 13.0)
+    try:
+        print(big * 14.0 > big / zero)
+    catch ZeroDivisionError as e:
+        out.append(big * 15.0)
+    try:
+        print(f'{big * 16.0} {big / zero}')
+    catch ZeroDivisionError as e:
+        out.append(big * 17.0)
+    finally:
+        out.append(big * 18.0)
+    return out
+
+def part_errors():
+    print(risky(0.0))
+    big = 1e300 * 1e300
+    plain: dict[str, float] = {'a': 1.5, 'b': big}
+    print(plain.get('a', 0.0), plain.get('b', 0.0), plain.get('c', 0.0), plain.get('c', big * 2.0), plain.get('b', big * 3.0))
+
+class Link:
+    value: float = 0.0
+    next: Link | None = None
+
+    @init
+    def make(self, value: float):
+        self.value = value
+
+async def slow(x: float) -> float:
+    y = x * x
+    await sleep(0.001)
+    return y * 2.0
+
+async def pump(n: int) -> float yields float:
+    x = 1e200
+    for i in range(n):
+        x = x * 1e200
+        yield x
+    return x
+
+def apply_fn(f: fn(float) -> float, x: float) -> float:
+    return f(x)
+
+async def part_async():
+    t = await slow(1e300)
+    print(t)
+    tasks = [start slow(1e200), start slow(2e200)]
+    for task in tasks:
+        print(await task)
+    g = start pump(3)
+    print(await g)
+    big = 1e300 * 1e300
+    print(apply_fn(x -> x * x, big))
+    n = Link(big)
+    n.next = Link(big * 2.0)
+    print(n.value, n.next.value if n.next is not None else 0.0)
+    u: float | int = big
+    print(u)
+    v: float | int = 3
+    print(v)
+    fl = [big, big]
+    fl.extend([big * 3.0])
+    print(fl, fl.pop(), fl, len(fl))
+    fl.sort()
+    print(fl[0] == fl[1], fl * 2)
+    zero = 0.0
+    try:
+        print(big / zero)
+    catch ZeroDivisionError as e:
+        print('caught', e.message)
+    try:
+        print(big * (1.0 / zero))
+    catch ZeroDivisionError as e:
+        print('caught', e.message)
+    xs = [big, 2.0, big * big]
+    vs = {1: big, 2: big * 2.0}
+    print(sorted(xs), list(vs.values()), vs.items(), max(xs), min(xs))
+    print(big ** 2.0, 2.0 ** 3)
+
+@main
+async def main():
+    part_containers()
+    part_cells_and_keys()
+    part_errors()
+    await part_async()

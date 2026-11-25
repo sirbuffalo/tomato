@@ -103,10 +103,8 @@ bit_chunks
 compact_lists
 compact_fuzz
 int_fast_paths
-float_chains
 int_ranges
 range_wide
-float_ranges
 fast_ranges
 json_files
 msgpack_files
@@ -164,9 +162,11 @@ int_to_float
 set_discard
 fast_paths
 loop_nests
-float_length
 tuple_compare
 chained_keywords
 int_keyed_dict
 async_finally_generator
 async_self_wait
+float_any_size
+float_ownership
+float_keys

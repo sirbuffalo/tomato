@@ -18,3 +18,7 @@
   collatz executes 17% (plain or LTO link) to 24% (bitcode-merge link) more instructions at d83f43b0 than at v0.51 (70.3 M to 82–87 M, counting input, Linux x86-64). Compare the emitted IR at the two trees. Numbers: `benchmarks/results/linux-x86_64/lto-effect.md`.
 - Check why fib executes more instructions with the runtime inlined
   fib executes 9% more instructions with the runtime inlined (bitcode merge or LTO) than with a plain link at d83f43b0 (123.5 M vs 113.0 M). Check the inliner's choices and whether the Linux timings agree. Numbers: `benchmarks/results/linux-x86_64/lto-effect.md`.
+- Floats of any size in the library and the formats (stage 4 of docs/bigfloat-design.md)
+  Make std/math, round(x, n), f-string float formats, JSON, TOML and MessagePack handle floats outside the double range (the runtime already has tomato_bf_math1/2, tomato_bf_round, tomato_bf_format), with a decision entry for each visible change.
+- Fast loop copy for float loops (stage 5 of docs/bigfloat-design.md)
+  Fast loop copy for float loops, float interval facts for the word type (reusing or replacing the now-idle float interval code), and measurements on the M1, Linux and the browser.

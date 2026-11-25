@@ -75,8 +75,6 @@ def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
         is_float = True
         j += 1
         while j < n and is_digit(raw[j]):
-            if j - i > 17:
-                raise LexError('this number has too many digits for a float\nwrite fewer significant digits (about 17 fit)', ln, i + 1)
             value = value * 10 + digit_value(raw[j])
             frac += 1
             j += 1
@@ -89,8 +87,6 @@ def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
         if k < n and is_digit(raw[k]):
             is_float = True
             while k < n and is_digit(raw[k]):
-                if k - j > 4:
-                    raise LexError('this number has too large an exponent for a float\nuse an exponent between about -330 and 330', ln, i + 1)
                 exp = exp * 10 + digit_value(raw[k])
                 k += 1
             if negative:
@@ -102,8 +98,6 @@ def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
             while word_end < n and is_name_char(raw[word_end]):
                 word_end += 1
             raise LexError('a number cannot be followed by letters: ' + raw[i:word_end] + '\nput a space or an operator between the number and the name', ln, i + 1)
-        if value > 9007199254740992 or frac - exp > 330 or frac - exp < -330:
-            raise LexError('this number is too large or too precise for a float\nwrite it with fewer digits or a smaller exponent', ln, i + 1)
         tok = make_token('FLOAT', raw[i:j], value, ln)
         tok.scale = frac - exp
         toks.append(tok)

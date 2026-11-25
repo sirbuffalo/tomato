@@ -1,0 +1,56 @@
+# Floats of any size as dict keys, set members and hash() arguments (D78a stays; D77b): equal floats are one key whatever their size,
+# 0.0 and -0.0 are one key, a whole float hashes as the equal int, and a table keeps its own copy of a key that is a box.
+# tests/run.sh runs it under AddressSanitizer too.
+from math import sqrt
+
+def key_of(x: float, y: float) -> float:
+    return x * y
+
+@main
+def main():
+    big = 1e300 * 1e300
+    d: dict[float, str] = {}
+    d[big] = 'big'
+    d[big * 2.0] = 'twice'
+    d[key_of(1e300, 1e300)] = 'again'
+    d[0.5] = 'half'
+    d[0.0] = 'zero'
+    d[-0.0] = 'minus zero'
+    d[1e-400] = 'tiny'
+    d[key_of(1e-200, 1e-200)] = 'tiny again'
+    print(len(d), d[big], d[big * 2.0], d[0.0], d[1e-400], d.get(2.0, 'none'), d.get(big * 3.0, 'none'))
+    print(list(d.keys()))
+    d.remove(big * 2.0)
+    d.remove(0.0)
+    print(len(d), big in d, big * 2.0 in d, -0.0 in d)
+    print(hash(2.0) == hash(2), hash(0.5) == hash(0.5), hash(0.0) == hash(-0.0), hash(big) == hash(key_of(1e300, 1e300)))
+    print(hash(float(2 ** 2000)) == hash(2 ** 2000), hash(float(10 ** 400)) == hash(10 ** 400), hash(big * 2.0) == hash(big), hash(1e-400) == hash(key_of(1e-200, 1e-200)))
+    s = {big, big * 2.0, big, 1e-400, 3.0}
+    print(len(s), big in s, 1e-400 in s, 2.0 in s)
+    s.remove(big)
+    print(len(s), big in s)
+    counts: dict[float, int] = {}
+    for i in range(12):
+        k = float(i % 4) * big
+        counts[k] = counts.get(k, 0) + 1
+    print(counts)
+    pairs: dict[tuple[float, int], float] = {}
+    pairs[(big, 1)] = big * 2.0
+    pairs[(big * 1.0, 1)] = big * 3.0
+    pairs[(big, 2)] = 0.5
+    print(len(pairs), pairs[(big, 1)])
+    mixed: dict[float | str, int] = {}
+    mixed[big] = 1
+    mixed['a'] = 2
+    mixed[big] = 3
+    print(len(mixed), mixed[big])
+    # sorting and the functions that look at every item
+    xs = [big * 3.0, 2.0, big, 1e-400, -big, 0.0, 1e-300]
+    print(sorted(xs))
+    print(sorted(xs, key=x -> -x))
+    print(max(xs), min(xs), sum([big, big, 1.0]), sum([1e-400, 1e-400]))
+    ys = list(xs)
+    ys.sort()
+    print(ys == sorted(xs), ys[0] < ys[-1], xs.pop() == 1e-300)
+    print(sorted([2.0, 1.0, 3.0]), sorted([1.5, -0.5, 1e-300]))
+    print(sqrt(2.25), sqrt(float(4)))

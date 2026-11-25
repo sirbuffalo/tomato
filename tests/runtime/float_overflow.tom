@@ -1,3 +1,0 @@
-@main
-def main():
-    print(int(1e300 * 1e300))

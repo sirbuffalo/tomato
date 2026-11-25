@@ -142,10 +142,39 @@ def main():
     print(b2['bin'].as_bytes(), b2['ext'].ext_type(), b2['ext'].as_bytes(), b2['ts'].seconds(), b2['ts'].nanos(), b2['list'][0].kind(), b2['list'][1].seconds())
     print(hexs(dumps_msgpack(b2)) == hexs(dumps_msgpack(bytes_doc)))
     print('-- NaN and infinity: valid MessagePack, kept as floats, and refused by JSON text')
-    for h in ['cb7ff8000000000000', 'cbfff0000000000000', 'ca7f800000']:
+    for h in ['cb7ff8000000000000', 'cbfff0000000000000', 'ca7f800000', 'cb7ff8000000000001', 'ca7fc00001', 'cbfff8000000000001', 'cb7ff0000000000001']:
         f = loads_msgpack(unhex(h))
         print(f.kind(), hexs(dumps_msgpack(f)))
         try:
             print(dumps(f))
         catch JSONEncodeError as e:
             print(e.message)
+    print('-- they are not numbers to calculate with: arithmetic stops, int() stops, comparisons follow IEEE')
+    inf = loads_msgpack(unhex('cb7ff0000000000000')).as_float()
+    ninf = loads_msgpack(unhex('cbfff0000000000000')).as_float()
+    nan = loads_msgpack(unhex('cb7ff8000000000000')).as_float()
+    for which in range(9):
+        try:
+            if which == 0:
+                print(inf * 2.0)
+            elif which == 1:
+                print(inf + 1.0)
+            elif which == 2:
+                print(2.0 - nan)
+            elif which == 3:
+                print(inf // 2.0)
+            elif which == 4:
+                print(inf ** 2.0)
+            elif which == 5:
+                print(2.0 ** inf)
+            elif which == 6:
+                print(int(inf))
+            elif which == 7:
+                print(int(nan))
+            else:
+                print(1.0 / ninf)
+        catch RuntimeError as e:
+            print(which, e.message)
+    print(inf > 10 ** 30, ninf < -(10 ** 30), inf > 5.0, ninf < 5.0, inf == inf, inf > ninf, inf < ninf, ninf != inf)
+    print(nan == nan, nan != nan, nan < 5.0, nan > 5.0, nan <= 5.0, nan >= 5.0, 5.0 < nan, nan == 3, nan > 3, nan != 3)
+    print(-inf, -ninf, str(nan))

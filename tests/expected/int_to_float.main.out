@@ -16,18 +16,16 @@
 1.2345678901234568e+38
 1.7976931348623157e+308
 1.7976931348623157e+308
-OverflowError: an int is too large to be a float
-OverflowError: an int is too large to be a float
-OverflowError: an int is too large to be a float
-OverflowError: an int is too large to be a float
-OverflowError: an int is too large to be a float
-OverflowError: an int is too large to be a float
+1.797693134862316e+308
+-1.797693134862316e+308
+1.797693134862316e+308
+1e+400
+-1e+400
 10000000000.0
-mul: an int is too large to be a float | cmp: an int is too large to be a float | div: an int is too large to be a float
+1.5e+400 | False | 1.5e-400
 1.5e+20 | False | 1.5e-20
-mul: an int is too large to be a float | cmp: an int is too large to be a float | div: an int is too large to be a float
-format: an int is too large to be a float
-reciprocal: an int is too large to be a float
+-1.5e+400 | True | -1.5e-400
+1.0000000000000001e-400
 10.0
 1.0
 -1.0
@@ -36,21 +34,21 @@ reciprocal: an int is too large to be a float
 4.2255020007607644e+29
 1e+20
 1e-30
-OverflowError: the float result is infinite or not a number
-OverflowError: the float result is infinite or not a number
-OverflowError: the float result is infinite or not a number
-0.0
+3.333333333333333e+399
+-3.333333333333333e+399
+1e+400
+1e-400
 5e-320
 -5e-320
 1e-323
-0.0
-5e-324
-5e-324
-0.0
-1e-323
-0.0
+1e-324
+3e-324
+4.9406564584124654e-324
+2.4703282292062327e-324
+7.410984687618698e-324
+1.2351641146031164e-324
 1.7976931348623157e+308
-OverflowError: the float result is infinite or not a number
+1.797693134862316e+308
 0.0
 -0.0
 -7e-30

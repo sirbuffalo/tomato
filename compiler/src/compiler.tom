@@ -225,7 +225,7 @@ def box_kind(member: str) -> int:
     if member == 'int':
         return 1
     if member == 'float':
-        return 3
+        return 7
     if member == 'str':
         return 4
     if member == 'bool':
@@ -254,6 +254,44 @@ def is_fixed(t: str) -> bool:
 
 def is_numeric(t: str) -> bool:
     return t == 'int' or is_fixed(t)
+
+# a float is one word: the bits of a double, or a box that holds a number a double cannot (docs/bigfloat-runtime.md). The compiler's
+# type 'f64' is not a type of the language: it is the plain double a float becomes when it is handed to C (bf_to_f64)
+def float_lit_plain(mantissa: int, scale: int) -> bool:
+    # is the float literal mantissa * 10^-scale, once rounded to 53 bits, a normal double? (Then it is a plain float word.)
+    digits = len(str(mantissa))
+    mag = digits - scale            # the value is at least 10^(mag-1) and below 10^mag
+    return mantissa == 0 or (digits <= 17 and mag <= 308 and mag - 1 >= -307)
+
+def float_lit_pow2(mantissa: int, scale: int) -> bool:
+    # is the float literal a power of two that is at least 1? A product with it is exact (it can only overflow). A literal with a
+    # positive decimal exponent (1e5) has a factor 5, so it is none.
+    if scale < 0:
+        return False
+    v = mantissa
+    if scale > 0:
+        if mantissa % 10 ** scale != 0:
+            return False
+        v = mantissa // 10 ** scale
+    return v >= 1 and v & (v - 1) == 0
+
+def is_float(t: str) -> bool:
+    return t == 'float'
+
+# the numbers that own what they hold: a big int, and a boxed float (copied with tomato_int_dup / tomato_bf_dup, freed with
+# tomato_int_free / tomato_bf_free)
+def owns_num(t: str) -> bool:
+    return t == 'int' or t == 'float'
+
+def dup_fn(t: str) -> str:
+    if t == 'float':
+        return 'tomato_bf_dup'
+    return 'tomato_int_dup'
+
+def free_fn(t: str) -> str:
+    if t == 'float':
+        return 'tomato_bf_free'
+    return 'tomato_int_free'
 
 def bits_of(t: str) -> int:
     if t == 'int':
@@ -444,12 +482,14 @@ def shown(t: str) -> str:
         if t.startswith('i'):
             return 'int[length=' + t[1:] + ']'
         return 'uint[length=' + t[1:] + ']'
+    if t == 'f64':
+        return 'double'
     return t
 
 def llvm_type(t: str) -> str:
     if is_rc(t) or t == 'File' or is_fn(t):
         return 'ptr'
-    if t == 'float':
+    if t == 'f64':
         return 'double'
     if is_fixed(t):
         return 'i' + t[1:]
@@ -461,8 +501,6 @@ def zero_of(t: str) -> str:
         return '1'
     if is_rc(t) or is_fn(t):
         return 'null'
-    if t == 'float':
-        return '0.0'
     return '0'
 
 # a class or interface name that nothing declares or imports
@@ -473,10 +511,9 @@ class Ex:
     # a compiled expression: the register or constant that holds it, and its Tomato type
     reg: str = ''
     ty: str = ''
-    fresh: bool = False       # an int that the code holding it owns (it frees it or moves it into a place that keeps it), not one borrowed from a variable
-    small: bool = False       # an int known to be in the small form, which owns nothing
+    fresh: bool = False       # an int or float that the code holding it owns (it frees it or moves it into a place that keeps it), not one borrowed from a variable
+    small: bool = False       # an int known to be in the small form, or a float known to be a plain double: it owns nothing
     list_name: str = ''     # the local list this was read from, when its length and data are kept in registers (see keep_lists)
-    unchecked: str = ''     # a float result of + - * whose finite check is left to the operator that uses it (the check on that one covers it)
 
 def ex(reg: str, ty: str) -> Ex:
     e = Ex()
@@ -497,8 +534,8 @@ def exs(reg: str, ty: str) -> Ex:
     return e
 
 def ret_ex(reg: str, ty: str) -> Ex:
-    # what a call gave back: the callee hands over a value of its own, so an int is owned
-    if ty == 'int':
+    # what a call gave back: the callee hands over a value of its own, so an int or a float is owned
+    if owns_num(ty):
         return exf(reg, ty)
     return ex(reg, ty)
 
@@ -507,11 +544,14 @@ def small_text(reg: str) -> bool:
     return reg != '' and (reg[0].isdigit() or reg[0] == '-')
 
 def elem_rc(t: str) -> str:
-    # the runtime's flag for list items and table values of type t: 1 reference counted, 2 an int (a big number is copied), 0 plain
+    # the runtime's flag for list items and table values of type t: 1 reference counted, 2 an int (a big number is copied), 3 a float
+    # (a boxed one is copied), 0 plain
     if is_rc(t):
         return '1'
     if t == 'int':
         return '2'
+    if t == 'float':
+        return '3'
     return '0'
 
 def item_width(t: str) -> int:
@@ -2097,12 +2137,6 @@ class Mod:
             if name == 'int':
                 return f'i{length.fields[0].num}'
             return f'u{length.fields[0].num}'
-        if name == 'float' and t.fields[1].tag == 'n':
-            # float[length=64] is the plain double that float is today (D05aj, docs/bigfloat-design.md); no other length exists yet
-            length = val_node(t.fields[1])
-            if length.kind != 'IntLit' or length.fields[0].num != 64:
-                raise CompileError('float[length=N] exists only with N = 64, as in float[length=64]\nit is the plain 64-bit double, and an overflow is an error', t.line)
-            return 'float'
         if name == 'fn' and t.fields[1].tag == 'z' and t.fields[2].tag != 'n' and t.fields[2].tag != 'z':
             return self.fn_type(t)
         if name == 'union':
@@ -2270,6 +2304,9 @@ class Gen:
     held: list[Ex] = []           # owned temporaries waiting while the rest of an expression is evaluated: a failing check releases them
     flat_slots: list[str] = []    # the rc_slots whose type can never be in a cycle (released with tomato_release_flat)
     int_slots: list[str] = []     # the places that own an int (a big number in one is freed with the function)
+    float_slots: list[str] = []   # the places that own a float (a boxed one is freed with the function)
+    chain_checks: list[str] = []  # while a float chain is compiled (bf_chain): the tests of its products, which must all hold
+    no_chain: int = 0             # above 0 while the general copy of a float chain is compiled: no chain starts inside it
     assigned: list[str] = []      # the names of variables that are written (a name given to slot()) after the parameters were set up
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
@@ -2283,8 +2320,6 @@ class Gen:
     nest_off: bool = False       # inside a statement that a nest compiles whole: no new nest starts there
     nest_names: list[str] = []   # the int variables that are small all through the fast copy
     nest_count: int = 0          # the statements of the fast copy that were compiled as such
-    grouping: bool = False       # a run of float assignments is being compiled: its finite checks wait in group_checks (the value and the difference that is not a number when it is wrong)
-    group_checks: list[list[str]] = []
     nest_slots: dict[str, str] = {}      # the hidden slots of its loops, which both copies use
     nest_keeps: dict[str, list[str]] = {}    # the lists whose length and data each of its loops keeps
     nest_plain: list[int] = []   # its small-int loops, which have a fast copy of their own
@@ -2325,7 +2360,6 @@ class Gen:
     fresh_frame: bool = False  # the last call made a new task frame
     fresh_reg: str = ''        # the register that frame is in
     lifted: int = 0            # how many awaits were moved into statements of their own
-    defer_float: bool = False  # the binop about to be compiled is an operand of a float + - *, so it may leave its finite check to that operator
     facts: Facts = facts_new()      # the integer ranges known at the point being compiled (see range_of)
     facts_off: int = 0              # inside a try, a generator or another place whose statements can be entered from more than one point
     for_body: Facts = facts_new()   # the facts at the start of each pass through the body of the for loop being compiled
@@ -2372,7 +2406,7 @@ class Gen:
         ok = self.label('inside')
         waiting = False
         for e in live + self.held:
-            if not e.reg.startswith('%bl.') and (is_rc(e.ty) or (e.ty == 'int' and e.fresh and not e.small)):
+            if not e.reg.startswith('%bl.') and (is_rc(e.ty) or (owns_num(e.ty) and e.fresh and not e.small)):
                 waiting = True
         if not waiting:
             self.cold_br(c, self.bail, ok)
@@ -2437,6 +2471,8 @@ class Gen:
                     self.flat_slots.append(reg)
             elif ty == 'int':
                 self.int_slots.append(reg)
+            elif ty == 'float':
+                self.float_slots.append(reg)
             return
         self.allocas.append(f'  {reg} = alloca {llvm_type(ty)}')
         if is_rc(ty):
@@ -2447,6 +2483,9 @@ class Gen:
         elif ty == 'int':
             self.allocas.append(f'  store i64 0, ptr {reg}')
             self.int_slots.append(reg)
+        elif ty == 'float':
+            self.allocas.append(f'  store i64 0, ptr {reg}')
+            self.float_slots.append(reg)
 
     def new_slot(self, name: str, ty: str) -> str:
         self.slot_count += 1
@@ -2466,6 +2505,11 @@ class Gen:
         self.make_slot(reg, 'int')
         return reg
 
+    def hidden_float_slot(self, hint: str) -> str:
+        reg = self.tmp(hint)
+        self.make_slot(reg, 'float')
+        return reg
+
     def hidden_rc_slot(self, hint: str) -> str:
         reg = self.tmp(hint)
         self.make_slot(reg, 'str')
@@ -2477,6 +2521,9 @@ class Gen:
         # be shared, so e becomes a copy that we own.
         if is_rc(e.ty):
             self.emit(f'call void @tomato_retain(ptr {e.reg})')
+        elif e.ty == 'float':
+            e.reg = self.bf_dup(e.reg)
+            e.fresh = True
         elif e.ty == 'int':
             d = self.tmp('dup')
             self.emit(f'{d} = call i64 @tomato_int_dup(i64 {e.reg})')
@@ -2497,11 +2544,50 @@ class Gen:
         # a borrowed read of a local (see expr_b) holds no reference of its own, so there is nothing to release
         if is_rc(e.ty) and not e.reg.startswith('%bl.'):
             self.emit(f'call void @{self.release_fn(e.ty)}(ptr {e.reg})')
+        elif e.ty == 'float' and e.fresh and not e.small and not small_text(e.reg):
+            self.bf_free(e.reg)
         elif e.ty == 'int' and e.fresh and not e.small and not small_text(e.reg):
             self.emit(f'call void @tomato_int_free(i64 {e.reg})')
 
+    def bf_boxed(self, w: str) -> str:
+        # an i1: is this float word a box? (a plain double never has all of these bits set: the top 13 are a NaN, with the sign clear)
+        top = self.tmp('ftop')
+        self.emit(f'{top} = lshr i64 {w}, 51')
+        boxed = self.tmp('fboxed')
+        self.emit(f'{boxed} = icmp eq i64 {top}, 4095')
+        return boxed
+
+    def bf_free(self, w: str):
+        # free a float that this code owns: a plain double needs nothing, so the runtime is called for a box only
+        free = self.label('bffree')
+        join = self.label('bfkept')
+        self.cold_br(self.bf_boxed(w), free, join)
+        self.place(free)
+        self.emit(f'call void @tomato_bf_free(i64 {w})')
+        self.br(join)
+        self.place(join)
+
+    def bf_dup(self, w: str) -> str:
+        # a copy of a float word: the same word for a plain double, a new box for a box
+        copy = self.label('bfcopy')
+        same = self.label('bfsame')
+        join = self.label('bfjoin')
+        self.cold_br(self.bf_boxed(w), copy, same)
+        self.place(copy)
+        d = self.tmp('dup')
+        self.emit(f'{d} = call i64 @tomato_bf_dup(i64 {w})')
+        self.br(join)
+        self.place(same)
+        self.br(join)
+        self.place(join)
+        r = self.tmp('dup')
+        self.emit(f'{r} = phi i64 [ {w}, %{same} ], [ {d}, %{copy} ]')
+        return r
+
     def owned(self, e: Ex) -> Ex:
         # e as a value the caller may keep: an int borrowed from a variable is copied, everything else is already owned
+        if e.ty == 'float' and not e.fresh and not e.small and not small_text(e.reg):
+            return exf(self.bf_dup(e.reg), 'float')
         if e.ty == 'int' and not e.fresh and not e.small and not small_text(e.reg):
             d = self.tmp('dup')
             self.emit(f'{d} = call i64 @tomato_int_dup(i64 {e.reg})')
@@ -2882,7 +2968,7 @@ class Gen:
             self.emit(f'{old} = load ptr, ptr {slot}')
             self.emit(f'store ptr {e.reg}, ptr {slot}')
             self.emit(f'call void @{self.slot_release(slot)}(ptr {old})')
-        elif e.ty == 'int':
+        elif owns_num(e.ty):
             v = self.owned(e)                 # copied first: it may be the very number the slot is about to drop
             if old_small:
                 self.emit(f'store i64 {v.reg}, ptr {slot}')
@@ -2890,7 +2976,10 @@ class Gen:
             old = self.tmp('old')
             self.emit(f'{old} = load i64, ptr {slot}')
             self.emit(f'store i64 {v.reg}, ptr {slot}')
-            self.emit(f'call void @tomato_int_free(i64 {old})')
+            if e.ty == 'float':
+                self.bf_free(old)
+            else:
+                self.emit(f'call void @tomato_int_free(i64 {old})')
         else:
             self.emit(f'store {llvm_type(e.ty)} {e.reg}, ptr {slot}')
 
@@ -3217,8 +3306,8 @@ class Gen:
             inner = self.peek_type(val_node(n.fields[1]))
             if n.fields[0].text == 'not':
                 return 'bool' if inner == 'bool' else ''
-            if n.fields[0].text == '-' and inner == 'float':
-                return 'float'
+            if n.fields[0].text == '-' and is_float(inner):
+                return inner
             return 'int' if n.fields[0].text == '-' and val_node(n.fields[1]).kind == 'IntLit' and inner == 'int' else ''
         if k == 'FloatLit':
             return 'float'
@@ -3260,15 +3349,18 @@ class Gen:
                 return 'bool' if op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>=' else ''
             if lt == 'bool' and rt2 == 'bool':
                 return 'bool' if op == '==' or op == '!=' else ''
-            if not (lt == 'int' or lt == 'float') or not (rt2 == 'int' or rt2 == 'float'):
+            if not (lt == 'int' or is_float(lt)) or not (rt2 == 'int' or is_float(rt2)):
                 return ''
             if op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>=':
                 return 'bool'
+            fl = 'float'
             if op == '+' or op == '-' or op == '*':
-                return 'int' if lt == 'int' and rt2 == 'int' else 'float'
+                return 'int' if lt == 'int' and rt2 == 'int' else fl
             if op == '//' or op == '%' or op == '&' or op == '|' or op == '^' or op == '>>' or op == '<<':
                 return 'int' if lt == 'int' and rt2 == 'int' else ''
-            return 'float' if op == '/' else ''
+            if op == '/' and lt == 'int' and rt2 == 'int':
+                return 'float'
+            return fl if op == '/' else ''
         if k == 'Call':
             f = val_node(n.fields[0])
             if f.kind == 'Name' and f.fields[0].text == 'len' and 'len' not in self.slots:
@@ -3772,149 +3864,436 @@ class Gen:
             return self.convert_explicit(exf(r, 'int'), t, line)
         return exf(r, 'int')
 
-    def as_double(self, e: Ex, live: list[Ex] = []) -> str:
+    # ---- floats of any size (docs/bigfloat-runtime.md). A float is one i64 word: the bits of a double, or a NaN pattern that holds
+    # the address of a box (a number no double can hold). A box has one owner, like a big int: fresh, small, owned, release and
+    # retain work as they do for ints (small here means "a plain double", which owns nothing). Arithmetic is done on the double
+    # first; a result that is not final (it is not finite, or for * and / it is zero or subnormal, or an operand was a box, which
+    # is a NaN) is done again by the runtime's tomato_bf_ function, which also frees the operands the caller gives up (the mask m).
+    def bf_double(self, w: str) -> str:
+        d = self.tmp('fd')
+        self.emit(f'{d} = bitcast i64 {w} to double')
+        return d
+
+    def bf_plain(self, d: str) -> Ex:
+        # a double as a float word: the same bits, owning nothing
+        w = self.tmp('fw')
+        self.emit(f'{w} = bitcast double {d} to i64')
+        e = ex(w, 'float')
+        e.small = True
+        return e
+
+    def bf_word(self, e: Ex) -> Ex:
+        # e as a float word. A float is itself; an int is rounded (a big one may need a box)
         if e.ty == 'float':
-            return e.reg
-        return self.to_double(e, live)
-
-    def finite_known(self, n: Node | None) -> bool:
-        # the result of the float operation n is known to be finite, so it needs no check
-        if n is None or not self.tracking():
-            return False
-        r = self.range_of(n, self.facts)
-        return r is not None and r.fl and frng_bounded(r)
-
-    def float_op(self, op: str, a: Ex, b: Ex, line: int, defer: bool = False, node: Node | None = None) -> Ex:
-        # arithmetic and comparison when either side is a float: the other side is converted to a float. node: the whole expression
-        if not (a.ty == 'float' or is_numeric(a.ty)) or not (b.ty == 'float' or is_numeric(b.ty)):
-            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", line)
-        x = self.as_double(a, [b])
-        y = self.as_double(b)
-        if op == '+' or op == '-' or op == '*':
-            ins = 'fadd'
-            if op == '-':
-                ins = 'fsub'
-            elif op == '*':
-                ins = 'fmul'
-            r = self.tmp('f')
-            self.emit(f'{r} = {ins} double {x}, {y}')
-            # inf and NaN never become finite again under + - *, so one check on the last result of a chain covers the whole chain
-            result = ex(r, 'float')
-            if not self.finite_known(node):
-                if defer:
-                    result.unchecked = r
-                else:
-                    self.check_finite(r)
-            return result
-        if op == '/' or op == '//' or op == '%':
-            zero = self.tmp('fzero')
-            self.emit(f'{zero} = fcmp oeq double {y}, 0.0')
-            if op == '%':
-                self.fail_if(zero, 'modulo by zero')
+            return e
+        d = self.tmp('fp')
+        if e.ty == 'int':
+            if small_text(e.reg):
+                self.emit(f'{d} = sitofp i64 {str((int(e.reg) - 1) // 2)} to double')
+            elif e.small:
+                v = self.arith('ashr', e.reg, '1')
+                self.emit(f'{d} = sitofp i64 {v} to double')
             else:
-                self.fail_if(zero, 'division by zero')
-            r = self.tmp('f')
-            if op == '/':
-                self.emit(f'{r} = fdiv double {x}, {y}')
-            elif op == '//':
-                self.emit(f'{r} = call double @tomato_floor_div_f64(double {x}, double {y})')
-            else:
-                self.emit(f'{r} = call double @tomato_mod_f64(double {x}, double {y})')
-            if not self.finite_known(node):
-                self.check_finite(r)
-            return ex(r, 'float')
-        if op == '**':
-            r = self.tmp('f')
-            self.emit(f'{r} = call double @tomato_pow_f64(double {x}, double {y})')
-            self.check_finite(r)
-            return ex(r, 'float')
-        cc = ''
-        if op == '==':
-            cc = 'oeq'
-        elif op == '!=':
-            cc = 'une'
-        elif op == '<':
-            cc = 'olt'
-        elif op == '<=':
-            cc = 'ole'
-        elif op == '>':
-            cc = 'ogt'
-        elif op == '>=':
-            cc = 'oge'
+                r = self.tmp('bfi')
+                m = '1' if e.fresh else '0'
+                self.emit(f'{r} = call i64 @tomato_bf_from_int(i64 {e.reg}, i32 {m})')
+                e.fresh = False
+                return exf(r, 'float')
+            return self.bf_plain(d)
+        op = 'sitofp' if is_signed(e.ty) else 'uitofp'
+        self.emit(f'{d} = {op} {llvm_type(e.ty)} {e.reg} to double')
+        return self.bf_plain(d)
+
+    def bf_mask(self, x: Ex, y: Ex) -> str:
+        # which operands a tomato_bf_ function frees: those this code owns and that may hold a box
+        m = 0
+        if x.fresh and not x.small and not small_text(x.reg):
+            m += 1
+        if y.fresh and not y.small and not small_text(y.reg):
+            m += 2
+        return str(m)
+
+    def bf_finite_check(self, x: Ex, y: Ex):
+        # a word that is no box and no finite double (an infinity or NaN that MessagePack carried in) stops the operation, as an
+        # infinite double always did (E13)
+        bad = self.tmp('fnonfinite')
+        c = self.tmp('fnf')
+        self.emit(f'{c} = call i32 @tomato_bf_nonfinite(i64 {x.reg}, i64 {y.reg})')
+        self.emit(f'{bad} = icmp ne i32 {c}, 0')
+        self.fail_if(bad, 'the float result is infinite or not a number', [x, y])
+
+    def bf_join(self, bad: str, fast_word: str, slow_call: str, used: list[Ex], guard: bool = True) -> Ex:
+        # fast_word when bad is false, else the result of slow_call (which frees the operands in used)
+        fast = self.label('bffast')
+        slow = self.label('bfslow')
+        join = self.label('bfjoin')
+        self.cold_br(bad, slow, fast)
+        self.place(fast)
+        self.br(join)
+        self.place(slow)
+        if guard and len(used) == 2:
+            self.bf_finite_check(used[0], used[1])
+        sw = self.tmp('bfs')
+        self.emit(f'{sw} = {slow_call}')
+        landed = self.label('bflanded')
+        self.br(landed)
+        self.place(landed)
+        self.br(join)
+        self.place(join)
+        w = self.tmp('bfr')
+        self.emit(f'{w} = phi i64 [ {fast_word}, %{fast} ], [ {sw}, %{landed} ]')
+        for u in used:
+            u.fresh = False
+        return exf(w, 'float')
+
+    def bf_unfinal(self, d: str, tiny: bool) -> tuple[str, str]:
+        # the bits of the double d, and a test that is true when d is not a final result: not finite, or (tiny) too small to be
+        # sure that the hardware rounded it right. 2^-1022 itself, subnormals and zero are not sure.
+        bits = self.tmp('fbits')
+        self.emit(f'{bits} = bitcast double {d} to i64')
+        mag = self.tmp('fmag')
+        self.emit(f'{mag} = and i64 {bits}, 9223372036854775807')
+        bad = self.tmp('funfinal')
+        if tiny:
+            off = self.tmp('foff')
+            self.emit(f'{off} = sub i64 {mag}, 4503599627370497')
+            self.emit(f'{bad} = icmp uge i64 {off}, 9214364837600034815')
         else:
-            raise CompileError(f"'{op}' does not work on floats\nuse it on integers, or use / // or ** on floats", line)
-        c = self.tmp('fcmp')
-        self.emit(f'{c} = fcmp {cc} double {x}, {y}')
-        return self.bool_of(c)
+            self.emit(f'{bad} = icmp uge i64 {mag}, 9218868437227405312')
+        return bits, bad
 
-    def flush_unchecked(self, e: Ex):
-        if e.unchecked != '':
-            self.check_finite(e.unchecked)
-            e.unchecked = ''
+    def bf_arith(self, op: str, x: Ex, y: Ex) -> Ex:
+        xd = self.bf_double(x.reg)
+        yd = self.bf_double(y.reg)
+        ins = 'fadd'
+        name = 'add'
+        if op == '-':
+            ins = 'fsub'
+            name = 'sub'
+        elif op == '*':
+            ins = 'fmul'
+            name = 'mul'
+        r = self.tmp('f')
+        self.emit(f'{r} = {ins} double {xd}, {yd}')
+        bits, bad = self.bf_unfinal(r, op == '*')
+        m = self.bf_mask(x, y)
+        return self.bf_join(bad, bits, f'call i64 @tomato_bf_{name}(i64 {x.reg}, i64 {y.reg}, i32 {m})', [x, y])
 
-    def float_chain(self, n: Node) -> bool:
-        # a + - * expression, whose finite check may be left to the + - * that uses it
-        if n.kind != 'BinOp':
-            return False
-        op = n.fields[0].text
-        return op == '+' or op == '-' or op == '*'
+    def bf_divide(self, x: Ex, y: Ex, message: str = 'division by zero') -> Ex:
+        yd = self.bf_double(y.reg)
+        zero = self.tmp('fzero')
+        self.emit(f'{zero} = fcmp oeq double {yd}, 0.0')
+        self.fail_if(zero, message, [x, y])
+        xd = self.bf_double(x.reg)
+        r = self.tmp('f')
+        self.emit(f'{r} = fdiv double {xd}, {yd}')
+        bits, bad = self.bf_unfinal(r, True)
+        m = self.bf_mask(x, y)
+        return self.bf_join(bad, bits, f'call i64 @tomato_bf_div(i64 {x.reg}, i64 {y.reg}, i32 {m})', [x, y])
 
-    def float_pure(self, n: Node) -> int:
-        # 2: a float read or float arithmetic that can fail only with infinity or NaN; 1: an integer read or literal;
-        # 0: anything else. A class operand can call a custom operator, and an optional operand can fail when unwrapped.
-        # (An int operand is converted by to_double, which stops with "an int is too large to be a float" when it does not fit,
-        # so it never brings infinity into a chain.)
+    def bf_call2(self, name: str, x: Ex, y: Ex) -> Ex:
+        # an operation that always goes to the runtime
+        self.bf_finite_check(x, y)
+        r = self.tmp('bfc')
+        self.emit(f'{r} = call i64 @tomato_bf_{name}(i64 {x.reg}, i64 {y.reg}, i32 {self.bf_mask(x, y)})')
+        x.fresh = False
+        y.fresh = False
+        return exf(r, 'float')
+
+    def bf_negate(self, x: Ex) -> Ex:
+        # a plain double is negated by flipping its sign bit; a box goes to the runtime (the sign bit of its word is not its sign)
+        top = self.tmp('ftop')
+        self.emit(f'{top} = lshr i64 {x.reg}, 51')
+        boxed = self.tmp('fboxed')
+        self.emit(f'{boxed} = icmp eq i64 {top}, 4095')
+        flipped = self.tmp('fneg')
+        self.emit(f'{flipped} = xor i64 {x.reg}, -9223372036854775808')
+        m = '1' if x.fresh and not x.small and not small_text(x.reg) else '0'
+        return self.bf_join(boxed, flipped, f'call i64 @tomato_bf_neg(i64 {x.reg}, i32 {m})', [x], False)
+
+    # A chain of float + - * over variables and plain literals (a * b - c * d + e) is worked out on doubles with one test at the
+    # end: the result is finite and every product is above 2^-1022 (a product by a power of two that is at least 1 is exact, so
+    # it needs no test). A box is a NaN, so it makes the result fail the test; infinity and NaN stay so through + - *; a product
+    # that lost digits is tested where it is made. When the test fails, the whole chain is done again with the runtime's
+    # functions, one operation at a time: the leaves are plain reads, so doing them twice changes nothing.
+    def chain_ops(self, n: Node) -> int:
         k = n.kind
         if k == 'FloatLit':
-            return 2
-        if k == 'IntLit':
-            return 1
+            return 0 if float_lit_plain(n.fields[0].num, n.fields[1].num) else -1
         if k == 'Name':
             name = n.fields[0].text
-            if name not in self.slots:
+            if name in self.slots and self.types[name] == 'float' and name not in self.narrowed and name not in self.settled:
                 return 0
-            ty = self.types[name]
-            if ty == 'float':
-                return 2
-            return 1 if is_numeric(ty) else 0
-        if self.bail != '' and (k == 'Attr' or k == 'Index') and self.calm(n):
-            return 2 if self.peek_type(n) == 'float' else 1      # (a failing read leaves the fast copy, whatever was checked before it)
-        if k == 'BinOp' and self.float_chain(n):
-            x = self.float_pure(val_node(n.fields[1]))
-            y = self.float_pure(val_node(n.fields[2]))
-            if x > 0 and y > 0 and (x == 2 or y == 2):
-                return 2
-        return 0
+            return -1
+        if k == 'BinOp':
+            op = n.fields[0].text
+            if op != '+' and op != '-' and op != '*':
+                return -1
+            x = self.chain_ops(val_node(n.fields[1]))
+            y = self.chain_ops(val_node(n.fields[2]))
+            if x < 0 or y < 0:
+                return -1
+            return x + y + 1
+        return -1
 
-    def check_finite(self, r: str, message: str = 'the float result is infinite or not a number', live: list[Ex] = []):
-        # a float result that is infinite or not a number stops the program (P58). live: operands the failure path must free
-        if self.mod.mode == 2 and len(live) == 0 and message == 'the float result is infinite or not a number':
-            # one comparison: x - x is not a number when x is infinite or not a number, and 0 otherwise
-            none = self.tmp('diff')
-            self.emit(f'{none} = fsub double {r}, {r}')
-            if self.grouping:
-                self.group_checks.append([r, none])
-                return
-            wrong = self.tmp('notfinite')
-            self.emit(f'{wrong} = fcmp uno double {none}, 0.0')
-            self.fail_if(wrong, message)
-            return
-        d = self.tmp('diff')
-        self.emit(f'{d} = fsub double {r}, {r}')
-        ok = self.tmp('finite')
-        self.emit(f'{ok} = fcmp oeq double {d}, 0.0')
-        bad = self.tmp('notfinite')
+    def chain_exact(self, n: Node) -> bool:
+        return n.kind == 'FloatLit' and float_lit_pow2(n.fields[0].num, n.fields[1].num)
+
+    def chain_value(self, n: Node) -> str:
+        k = n.kind
+        if k == 'FloatLit':
+            m = n.fields[0].num
+            sc = n.fields[1].num
+            return f'{m}.0e-{sc}' if sc > 0 else f'{m}.0e+{-sc}'
+        if k == 'Name':
+            r = self.tmp('cl')
+            self.emit(f'{r} = load i64, ptr {self.slots[n.fields[0].text]}')
+            return self.bf_double(r)
+        left = val_node(n.fields[1])
+        right = val_node(n.fields[2])
+        x = self.chain_value(left)
+        y = self.chain_value(right)
+        op = n.fields[0].text
+        ins = 'fadd'
+        if op == '-':
+            ins = 'fsub'
+        elif op == '*':
+            ins = 'fmul'
+        r = self.tmp('cf')
+        self.emit(f'{r} = {ins} double {x}, {y}')
+        if op == '*' and not (self.chain_exact(left) or self.chain_exact(right)):
+            bits = self.tmp('cbits')
+            self.emit(f'{bits} = bitcast double {r} to i64')
+            mag = self.tmp('cmag')
+            self.emit(f'{mag} = and i64 {bits}, 9223372036854775807')
+            off = self.tmp('coff')
+            self.emit(f'{off} = sub i64 {mag}, 4503599627370497')
+            ok = self.tmp('cok')
+            self.emit(f'{ok} = icmp ult i64 {off}, 9214364837600034815')
+            self.chain_checks.append(ok)
+        return r
+
+    def bf_chain(self, n: Node) -> Ex:
+        saved = self.chain_checks
+        self.chain_checks = []
+        d = self.chain_value(n)
+        bits = self.tmp('cbits')
+        self.emit(f'{bits} = bitcast double {d} to i64')
+        mag = self.tmp('cmag')
+        self.emit(f'{mag} = and i64 {bits}, 9223372036854775807')
+        ok = self.tmp('cfin')
+        self.emit(f'{ok} = icmp ult i64 {mag}, 9218868437227405312')
+        for c in self.chain_checks:
+            both = self.tmp('call')
+            self.emit(f'{both} = and i1 {ok}, {c}')
+            ok = both
+        self.chain_checks = saved
+        bad = self.tmp('cbad')
         self.emit(f'{bad} = xor i1 {ok}, true')
-        self.fail_if(bad, message, live)
+        fast = self.label('chfast')
+        slow = self.label('chslow')
+        join = self.label('chjoin')
+        self.cold_br(bad, slow, fast)
+        self.place(fast)
+        self.br(join)
+        self.place(slow)
+        self.no_chain += 1
+        e = self.expr(n)
+        self.no_chain -= 1
+        landed = self.label('chland')
+        self.br(landed)
+        self.place(landed)
+        self.br(join)
+        self.place(join)
+        w = self.tmp('chr')
+        self.emit(f'{w} = phi i64 [ {bits}, %{fast} ], [ {e.reg}, %{landed} ]')
+        return exf(w, 'float')
+
+    def bf_op(self, op: str, a: Ex, b: Ex, line: int, node: Node | None = None) -> Ex:
+        # arithmetic and comparison when either side is a float: the other side may be a whole number
+        if not (is_float(a.ty) or is_numeric(a.ty)) or not (is_float(b.ty) or is_numeric(b.ty)):
+            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", line)
+        is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
+        if is_compare and (is_numeric(a.ty) or is_numeric(b.ty)):
+            return self.bf_compare_int(op, a, b, line)
+        x = self.bf_word(a)
+        y = self.bf_word(b)
+        if op == '+' or op == '-' or op == '*':
+            return self.bf_arith(op, x, y)
+        if op == '/':
+            return self.bf_divide(x, y)
+        if op == '//' or op == '%':
+            yd = self.bf_double(y.reg)
+            zero = self.tmp('fzero')
+            self.emit(f'{zero} = fcmp oeq double {yd}, 0.0')
+            self.fail_if(zero, 'modulo by zero' if op == '%' else 'division by zero', [x, y])
+            return self.bf_call2('floordiv' if op == '//' else 'mod', x, y)
+        if op == '**':
+            self.bf_finite_check(x, y)
+            code = self.tmp('powcheck')
+            self.emit(f'{code} = call i32 @tomato_bf_pow_check(i64 {x.reg}, i64 {y.reg})')
+            none = self.tmp('powzero')
+            self.emit(f'{none} = icmp eq i32 {code}, 1')
+            self.fail_if(none, 'zero cannot be raised to a negative power', [x, y])
+            nowhole = self.tmp('powneg')
+            self.emit(f'{nowhole} = icmp eq i32 {code}, 2')
+            self.fail_if(nowhole, 'a negative number cannot be raised to a power that is not a whole number', [x, y])
+            return self.bf_call2('pow', x, y)
+        if is_compare:
+            return self.bf_compare(op, x, y)
+        raise CompileError(f"'{op}' does not work on floats\nuse it on integers, or use / // or ** on floats", line)
+
+    def bf_compare(self, op: str, x: Ex, y: Ex) -> Ex:
+        cc = ''
+        sc = ''
+        if op == '==':
+            cc = 'oeq'
+            sc = 'eq'
+        elif op == '!=':
+            cc = 'une'
+            sc = 'ne'
+        elif op == '<':
+            cc = 'olt'
+            sc = 'slt'
+        elif op == '<=':
+            cc = 'ole'
+            sc = 'sle'
+        elif op == '>':
+            cc = 'ogt'
+            sc = 'sgt'
+        else:
+            cc = 'oge'
+            sc = 'sge'
+        xd = self.bf_double(x.reg)
+        yd = self.bf_double(y.reg)
+        ordered = self.tmp('fordered')
+        self.emit(f'{ordered} = fcmp ord double {xd}, {yd}')
+        unordered = self.tmp('fboxed')
+        self.emit(f'{unordered} = xor i1 {ordered}, true')
+        fast = self.label('bffast')
+        slow = self.label('bfslow')
+        join = self.label('bfjoin')
+        self.cold_br(unordered, slow, fast)
+        self.place(fast)
+        c1 = self.tmp('fcmp')
+        self.emit(f'{c1} = fcmp {cc} double {xd}, {yd}')
+        w1 = self.tmp('fres')
+        self.emit(f'{w1} = zext i1 {c1} to i64')
+        self.br(join)
+        self.place(slow)
+        s = self.tmp('bfcmp')
+        self.emit(f'{s} = call i32 @tomato_bf_cmp(i64 {x.reg}, i64 {y.reg}, i32 {self.bf_mask(x, y)})')
+        c2 = self.bf_order_test(sc, s)
+        w2 = self.tmp('fres')
+        self.emit(f'{w2} = zext i1 {c2} to i64')
+        self.br(join)
+        self.place(join)
+        w = self.tmp('fres')
+        self.emit(f'{w} = phi i64 [ {w1}, %{fast} ], [ {w2}, %{slow} ]')
+        x.fresh = False
+        y.fresh = False
+        return ex(w, 'bool')
+
+    def bf_order_test(self, cc: str, s: str) -> str:
+        # an i1: the runtime's answer s (-1, 0, 1, or 2 for a NaN, which has no order) satisfies cc against 0. `ne` holds for 2; `eq`,
+        # `slt` and `sle` do not; `sgt` and `sge` must be told that 2 is no order
+        c = self.tmp('fcmp')
+        self.emit(f'{c} = icmp {cc} i32 {s}, 0')
+        if cc == 'sgt' or cc == 'sge':
+            ordered = self.tmp('fordered')
+            self.emit(f'{ordered} = icmp ne i32 {s}, 2')
+            both = self.tmp('fcmp')
+            self.emit(f'{both} = and i1 {c}, {ordered}')
+            return both
+        return c
+
+    def bf_compare_int(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # a float against a whole number, compared exactly: no rounding of the whole number first
+        flip = False
+        if is_numeric(a.ty):
+            flip = True
+            a, b = b, a
+        n = b
+        if n.ty != 'int':
+            n = self.resize(n, 'int')
+        f = self.bf_word(a)
+        cc = ''
+        if flip:
+            cc = signed_cc(flip_compare(op))
+        else:
+            cc = signed_cc(op)
+        if small_text(n.reg):
+            v = (int(n.reg) - 1) // 2
+            if v >= -9007199254740992 and v <= 9007199254740992:
+                # the constant is a double exactly
+                d = self.tmp('fp')
+                self.emit(f'{d} = sitofp i64 {str(v)} to double')
+                nf = self.bf_plain(d)
+                if flip:
+                    return self.bf_compare(flip_compare(op), f, nf)
+                return self.bf_compare(op, f, nf)
+        s = self.tmp('bfcmpi')
+        m = 0
+        if f.fresh and not f.small and not small_text(f.reg):
+            m += 1
+        if n.fresh and not n.small and not small_text(n.reg):
+            m += 2
+        self.emit(f'{s} = call i32 @tomato_bf_cmp_int(i64 {f.reg}, i64 {n.reg}, i32 {str(m)})')
+        f.fresh = False
+        n.fresh = False
+        if op == '==' or op == '!=':
+            cc = 'eq' if op == '==' else 'ne'
+        return self.bool_of(self.bf_order_test(cc, s))
+
+    def bf_to_f64(self, e: Ex, live: list[Ex] = [], strict: bool = False) -> Ex:
+        # a float as the nearest double, for C. A float too large for a double stops the program. strict (a float handed to C, a
+        # library function or a format, which would silently work with the wrong number): a tiny one stops the program too
+        d = self.bf_double(e.reg)
+        boxed = self.bf_boxed(e.reg)
+        fast = self.label('bffast')
+        slow = self.label('bfslow')
+        join = self.label('bfjoin')
+        self.cold_br(boxed, slow, fast)
+        self.place(fast)
+        self.br(join)
+        self.place(slow)
+        fits = self.tmp('ffits')
+        self.emit(f'{fits} = call i32 @tomato_bf_fits_f64(i64 {e.reg})')
+        wrong = self.tmp('fbig')
+        self.emit(f'{wrong} = icmp eq i32 {fits}, 0')
+        self.fail_if(wrong, 'a float is too large for a double', live + [e])
+        sd = self.tmp('fnear')
+        self.emit(f'{sd} = call double @tomato_bf_to_f64(i64 {e.reg})')
+        if strict:
+            # a nonzero float (a box is one) that comes out as zero would be handed over as the wrong number; one that comes out as a
+            # subnormal is the double it always was
+            zero = self.tmp('fzero')
+            self.emit(f'{zero} = fcmp oeq double {sd}, 0.0')
+            lost = self.tmp('flost')
+            real = self.tmp('freal')
+            self.emit(f'{real} = call i32 @tomato_bf_is_boxed(i64 {e.reg})')
+            boxed2 = self.tmp('fisbox')
+            self.emit(f'{boxed2} = icmp ne i32 {real}, 0')
+            self.emit(f'{lost} = and i1 {zero}, {boxed2}')
+            self.fail_if(lost, 'a float is too small for a double', live + [e])
+        landed = self.label('bflanded')
+        self.br(landed)
+        self.place(landed)
+        self.br(join)
+        self.place(join)
+        r = self.tmp('f64')
+        self.emit(f'{r} = phi double [ {d}, %{fast} ], [ {sd}, %{landed} ]')
+        self.release(e)
+        return ex(r, 'f64')
 
     def float_call(self, v: Ex, line: int) -> Ex:
-        # float(x): a whole number or a float as a float, or text written as a number
+        # float(x): a whole number or a float as a float (any size), or text written as a number
         if v.ty == 'str':
             return self.text_to_float(v)
         if v.ty == 'float':
             return v
         if is_numeric(v.ty):
-            return ex(self.to_double(v), 'float')
+            return self.bf_word(v)
         raise CompileError(f'float() takes a number, but this is {shown(v.ty)}', line)
 
     def text_to_int(self, v: Ex) -> Ex:
@@ -3929,54 +4308,44 @@ class Gen:
         return exf(r, 'int')
 
     def text_to_float(self, v: Ex) -> Ex:
-        ok = self.tmp('isfloat')
-        self.emit(f'{ok} = call i32 @tomato_text_float_ok(ptr {v.reg})')
-        bad = self.tmp('notfloat')
-        self.emit(f'{bad} = icmp eq i32 {ok}, 0')
+        # float(text): the runtime reads any size; the word 0x7FF0000000000000 (no float) says it is not a number
         r = self.tmp('parsed')
-        self.emit(f'{r} = call double @tomato_text_float(ptr {v.reg})')
+        self.emit(f'{r} = call i64 @tomato_bf_text(ptr {v.reg})')
         self.release(v)
+        bad = self.tmp('notfloat')
+        self.emit(f'{bad} = icmp eq i64 {r}, 9218868437227405312')
         self.fail_if(bad, 'the text is not a number')
-        return ex(r, 'float')
+        return exf(r, 'float')
 
     def float_to_int(self, v: Ex, line: int) -> Ex:
-        # int(x) on a float: the whole part, towards zero (P58); infinity and NaN stop
-        d = self.tmp('diff')
-        self.emit(f'{d} = fsub double {v.reg}, {v.reg}')
-        ok = self.tmp('finite')
-        self.emit(f'{ok} = fcmp oeq double {d}, 0.0')
-        bad = self.tmp('notfinite')
-        self.emit(f'{bad} = xor i1 {ok}, true')
-        self.fail_if(bad, 'a float that is infinite or not a number cannot become an int')
+        # int(x) on a float: the whole part towards zero, exact and of any size. (An infinity or NaN a data format brought in stops, E14)
+        nf = self.tmp('fnf')
+        self.emit(f'{nf} = call i32 @tomato_bf_nonfinite(i64 {v.reg}, i64 {v.reg})')
+        nfb = self.tmp('fnonfinite')
+        self.emit(f'{nfb} = icmp ne i32 {nf}, 0')
+        self.fail_if(nfb, 'a float that is infinite or not a number cannot become an int', [v])
         r = self.tmp('whole')
-        self.emit(f'{r} = call i64 @tomato_f64_to_int(double {v.reg})')
+        self.emit(f'{r} = call i64 @tomato_bf_to_int(i64 {v.reg}, i32 {"1" if v.fresh and not v.small and not small_text(v.reg) else "0"})')
+        v.fresh = False
         return exf(r, 'int')
 
     def float_literal(self, mantissa: int, scale: int) -> Ex:
-        # the digits as a decimal constant, which LLVM rounds to the nearest float
+        # the digits as a decimal constant, which LLVM rounds to the nearest double. A float literal is a plain double when its
+        # value is in a normal double's range, else the runtime reads its digits
         text = f'{mantissa}.0e'
         if scale > 0:
             text += f'-{scale}'
         else:
             text += f'+{-scale}'
-        return ex(text, 'float')
+        plain = float_lit_plain(mantissa, scale)
+        if plain:
+            return self.bf_plain(text)
+        r = self.tmp('flit')
+        self.emit(f'{r} = call i64 @tomato_bf_text(ptr {self.mod.intern(f"{mantissa}e{-scale}")})')
+        return exf(r, 'float')
 
-    def to_double(self, e: Ex, live: list[Ex] = []) -> str:
-        # a whole number as a float, rounded once to the nearest (ties to even). An int that does not fit stops the program
-        # (P58, D05af). live: other owned operands of the same operation, which the failure path frees
-        if e.ty == 'int' and e.small and not small_text(e.reg):
-            # a small number is the tagged word 2v+1: v is one shift away
-            v = self.arith('ashr', e.reg, '1')
-            d = self.tmp('fp')
-            self.emit(f'{d} = sitofp i64 {v} to double')
-            return d
-        if e.ty == 'int':
-            d = self.tmp('fp')
-            self.emit(f'{d} = call double @tomato_int_to_f64(i64 {e.reg})')
-            self.release(e)
-            if not small_text(e.reg):
-                self.check_finite(d, 'an int is too large to be a float', live)
-            return d
+    def to_double(self, e: Ex) -> str:
+        # a fixed-width integer as a double (every one of at most 32 bits is exact; wider ones round once, to the nearest)
         r = self.tmp('fp')
         op = 'sitofp' if is_signed(e.ty) else 'uitofp'
         self.emit(f'{r} = {op} {llvm_type(e.ty)} {e.reg} to double')
@@ -3991,21 +4360,19 @@ class Gen:
             self.fail_if(zero, 'division by zero', [a, b])
             q = self.tmp('div')
             self.emit(f'{q} = fdiv double {self.to_double(a)}, {self.to_double(b)}')
-        else:
-            x = self.resize(a, 'int')
-            y = self.resize(b, 'int')
-            self.int_zero_check(y, 'division by zero', [x, y])
-            q = self.int_quotient(x, y)
-            self.release(x)
-            self.release(y)
-        if not self.finite_known(node):
-            self.check_finite(q)
-        return ex(q, 'float')
+            return self.bf_plain(q)
+        x = self.resize(a, 'int')
+        y = self.resize(b, 'int')
+        self.int_zero_check(y, 'division by zero', [x, y])
+        w = self.int_quotient(x, y)
+        self.release(x)
+        self.release(y)
+        return exf(w, 'float')
 
     def int_quotient(self, x: Ex, y: Ex) -> str:
-        # x / y of two ints (y not zero) as a double, rounded once. Two small numbers of at most 53 bits are exact as doubles, so
-        # the division itself is that one rounding; anything else goes to the runtime, which divides the exact values
-        # (infinite when the quotient is too large: the caller checks)
+        # x / y of two ints (y not zero) as a float word, rounded once. Two small numbers of at most 53 bits are exact as doubles, so
+        # the division itself is that one rounding; anything else goes to the runtime, which divides the exact values and gives
+        # a box when the quotient is out of the range of a double. The operands stay the caller's.
         tests: list[str] = []
         both = ''
         if not (small_text(x.reg) or x.small) and not (small_text(y.reg) or y.small):
@@ -4056,14 +4423,16 @@ class Gen:
         self.emit(f'{fy} = sitofp i64 {vy} to double')
         fq = self.tmp('div')
         self.emit(f'{fq} = fdiv double {fx}, {fy}')
+        fw = self.tmp('divw')
+        self.emit(f'{fw} = bitcast double {fq} to i64')
         self.br(join)
         self.place(slow)
         sq = self.tmp('div')
-        self.emit(f'{sq} = call double @tomato_int_div_f64(i64 {x.reg}, i64 {y.reg})')
+        self.emit(f'{sq} = call i64 @tomato_bf_int_div(i64 {x.reg}, i64 {y.reg}, i32 0)')
         self.br(join)
         self.place(join)
         q = self.tmp('div')
-        self.emit(f'{q} = phi double [ {fq}, %{fast} ], [ {sq}, %{slow} ]')
+        self.emit(f'{q} = phi i64 [ {fw}, %{fast} ], [ {sq}, %{slow} ]')
         return q
 
     def convert_explicit(self, v: Ex, target: str, line: int) -> Ex:
@@ -4216,7 +4585,9 @@ class Gen:
                 return e
             if ty == 'int' and self.fact_small(name):
                 e.small = True         # its interval is inside the small range: a tagged word that owns nothing
-            if ty != 'int':
+            if ty == 'float':
+                pass                   # a float is lent like an int
+            elif ty != 'int':
                 self.retain(e)         # an int is lent: whoever keeps it copies it (see owned)
             elif self.take_name == name:
                 e.fresh = True         # `x = x + 1`: the operation frees this number itself if it is big, so the store need not
@@ -4231,9 +4602,7 @@ class Gen:
                 return self.invert_op(n)
             v = self.expr(val_node(n.fields[1]), expected)
             if op == '-' and v.ty == 'float':
-                negated = self.tmp('fneg')
-                self.emit(f'{negated} = fneg double {v.reg}')
-                return ex(negated, 'float')
+                return self.bf_negate(v)
             if op == '-':
                 if not is_numeric(v.ty):
                     raise CompileError(f"cannot use '-' on {shown(v.ty)}\nonly numbers can be negated", n.line)
@@ -4289,6 +4658,8 @@ class Gen:
             res = self.hidden_rc_slot('cond')
         elif a.ty == 'int':
             res = self.hidden_int_slot('cond')
+        elif a.ty == 'float':
+            res = self.hidden_float_slot('cond')
         self.store_owned(res, a)
         self.br(end)
         self.place(no)
@@ -4490,12 +4861,12 @@ class Gen:
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {lst.reg}, i64 0, i64 0, i64 -1, i32 4, i32 {rc})')
             self.release(lst)
             return ex(r, lst.ty)
-        if not (elem == 'int' or elem == 'float' or (elem == 'str' and name != 'sum')):
+        if not (elem == 'int' or is_float(elem) or (elem == 'str' and name != 'sum')):
             wanted = 'numbers or text' if name != 'sum' else 'numbers'
             raise CompileError(f'{name}() needs a list of {wanted}, but this is {shown(lst.ty)}', line)
         if name == 'sorted':
             # the runtime sorts a copy: 0 = int, 1 = float, 2 = str
-            kind = '0' if elem == 'int' else ('1' if elem == 'float' else '2')
+            kind = '0' if elem == 'int' else ('3' if elem == 'float' else '2')
             r = self.tmp('sorted')
             self.emit(f'{r} = call ptr @tomato_list_sorted(ptr {lst.reg}, i32 {kind})')
             self.release(lst)
@@ -4571,14 +4942,14 @@ class Gen:
         if len(params) != 1 or params[0] != elem:
             raise CompileError(f'key= needs a function of one {shown(elem)} item, but this is {shown(fv.ty)}', line)
         kt = fn_result(fv.ty)
-        if kt != 'int' and kt != 'float' and kt != 'str':
+        if kt != 'int' and not is_float(kt) and kt != 'str':
             raise CompileError(f'the key function must return an int, a float or text, but this one returns {shown(kt)}', line)
         # the keys are worked out here, once per item; the runtime sorts them (stable) and builds the result
         info = self.mod.instance_func(self.mod.resolve('_keys'), [elem, kt], line)
         keys = self.tmp('keys')
         self.emit(f'{keys} = call ptr {function_symbol(self.mod, info)}(ptr {lst.reg}, ptr {fv.reg})')
         self.check_error([lst])
-        kind = '0' if kt == 'int' else ('1' if kt == 'float' else '2')
+        kind = '0' if kt == 'int' else ('3' if kt == 'float' else '2')
         r = self.tmp('sortedby')
         self.emit(f'{r} = call ptr @tomato_list_sorted_by(ptr {lst.reg}, ptr {keys}, i32 {kind}, i32 {list_flags(lst.ty)})')
         self.release(ex(keys, f'list[{kt}]'))
@@ -4702,7 +5073,7 @@ class Gen:
             self.check_field_access(obj, name, False, n.line)
         addr = self.field_addr(obj, name, n.line)
         ft = self.field_type(obj, name, n.line)
-        lent = obj.reg.startswith('%bl.') and ((lend and ft == 'int') or (as_base and is_rc(ft)))
+        lent = obj.reg.startswith('%bl.') and ((lend and owns_num(ft)) or (as_base and is_rc(ft)))
         v = self.tmp('bl' if lent else 'f')
         self.emit(f'{v} = load {llvm_type(ft)}, ptr {addr}')
         e = ex(v, ft)
@@ -4844,9 +5215,7 @@ class Gen:
     def key_word(self, k: Ex) -> str:
         # a key as the 64-bit word the runtime stores: the number itself, a float's bits, or an object's (or text's) address
         if k.ty == 'float':
-            fb = self.tmp('kw')
-            self.emit(f'{fb} = call i64 @tomato_float_bits(double {k.reg})')     # (the browser's IR interpreter has no double-to-integer bitcast)
-            return fb
+            return k.reg                       # the table copies a box it keeps
         if is_fixed(k.ty):
             return self.widen(k, 64)           # sign- or zero-extended, so equal numbers are equal words
         if llvm_type(k.ty) != 'ptr':
@@ -5077,14 +5446,11 @@ class Gen:
         return False
 
     def type_call(self, n: Node) -> Ex:
-        # int[length=8](x), uint[length=8](x) and float[length=64](x): an explicit conversion that stops when the number does not fit
+        # int[length=8](x) and uint[length=8](x): an explicit conversion that stops when the number does not fit
         t = val_node(n.fields[0])
         target = self.mod.type_name(vn(t))
-        if target == 'float':
-            # float[length=64](x) is float(x)
-            return self.float_call(self.expr(val_nodes(n.fields[1])[0]), n.line)
         if not is_fixed(target):
-            raise CompileError('this conversion is not supported\nonly int(), float(), str(), int[length=N], uint[length=N] and float[length=64] conversions exist', n.line)
+            raise CompileError('this conversion is not supported\nonly int(), float(), str(), int[length=N] and uint[length=N] conversions exist', n.line)
         args = val_nodes(n.fields[1])
         v = self.expr(args[0])
         return self.convert_explicit(v, target, n.line)
@@ -5100,7 +5466,7 @@ class Gen:
             if name not in self.slots:
                 return False
             t = self.types[name]
-            return t == 'float' or t == 'bool' or is_numeric(t)
+            return is_float(t) or t == 'bool' or is_numeric(t)
         if k == 'Attr':
             b = val_node(n.fields[0])
             if b.kind != 'Name' or b.fields[0].text not in self.slots or not is_class(self.types[b.fields[0].text]):
@@ -5110,7 +5476,7 @@ class Gen:
             if at < 0:
                 return False
             t2 = c.fields[at].ty
-            return t2 == 'float' or t2 == 'bool' or is_numeric(t2)
+            return is_float(t2) or t2 == 'bool' or is_numeric(t2)
         if k == 'UnOp':
             return self.plain_num(val_node(n.fields[1]))
         if k == 'BinOp':
@@ -5120,14 +5486,14 @@ class Gen:
             return self.plain_num(val_node(n.fields[1])) and self.plain_num(val_node(n.fields[2]))
         return False
 
-    def operand(self, n: Node, lend: bool) -> Ex:
+    def operand(self, n: Node, lend: bool, expected: str = '') -> Ex:
         # an operand of an arithmetic or comparison operator. With lend, a number read from a field or a list item of a local is
         # not copied: nothing runs between the read and the operator that uses it up, so nothing can change what it points at.
         if lend and n.kind == 'Attr':
             return self.field_get(n, True)
         if lend and n.kind == 'Index':
             return self.index(n, True)
-        return self.expr(n)
+        return self.expr(n, expected)
 
     def index(self, n: Node, lend: bool = False, as_base: bool = False) -> Ex:
         base = val_node(n.fields[0])
@@ -5178,7 +5544,7 @@ class Gen:
             li = self.want(li, 'int', n.line, 'an index')
             self.drop_held(held_before)
             addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li, [s]), val_node(n.fields[1])), 'int'), [s])
-            lent = s.reg.startswith('%bl.') and ((lend and elem_of(s.ty) == 'int') or (as_base and is_rc(elem_of(s.ty))))
+            lent = s.reg.startswith('%bl.') and ((lend and owns_num(elem_of(s.ty))) or (as_base and is_rc(elem_of(s.ty))))
             item = self.load_item(s.ty, addr, 'bl' if lent else 'item')
             e = ex(item, elem_of(s.ty))
             if self.bail != '' and e.ty == 'int':
@@ -5483,12 +5849,12 @@ class Gen:
 
     def binop(self, n: Node, expected: str) -> Ex:
         op = n.fields[0].text
-        defer = self.defer_float
-        self.defer_float = False
         if op == 'and' or op == 'or':
             return self.logic(n, op)
         if not is_fixed(expected) and self.fusable(n):
             return self.fused(n)
+        if self.no_chain == 0 and (op == '+' or op == '-' or op == '*') and self.chain_ops(n) >= 2:
+            return self.bf_chain(n)
         if op == '+':
             chain: list[Node] = []
             self.concat_parts(n, chain)
@@ -5550,18 +5916,9 @@ class Gen:
             self.hold(a)
             b = self.operand(right, True)
         else:
-            can_defer = op == '+' or op == '-' or op == '*'
-            self.defer_float = can_defer and self.float_chain(left) and self.float_pure(right) > 0
             a = self.operand(left, pure_read(right) or self.plain_num(right))
             self.hold(a)                       # freed by the error path if the right side raises
-            # A custom operator or an optional left operand cannot absorb the right operand's check.
-            self.defer_float = can_defer and (a.ty == 'float' or is_numeric(a.ty)) and self.float_chain(right)
             b = self.operand(right, True)
-            self.defer_float = False
-        covered = a.unchecked != '' or b.unchecked != ''
-        if covered and not ((op == '+' or op == '-' or op == '*') and (a.ty == 'float' or b.ty == 'float') and (a.ty == 'float' or is_numeric(a.ty)) and (b.ty == 'float' or is_numeric(b.ty))):
-            self.flush_unchecked(a)
-            self.flush_unchecked(b)
         self.drop_held(held_before)
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
         if op == 'in':
@@ -5608,7 +5965,7 @@ class Gen:
             b = self.want(b, 'bool', n.line, 'the right side of ' + op)
             return ex(self.arith(op, a.reg, b.reg), 'bool')
         if a.ty == 'float' or b.ty == 'float':
-            return self.float_op(op, a, b, n.line, defer, n)
+            return self.bf_op(op, a, b, n.line, n)
         if is_compare and a.ty == 'bool' and b.ty == 'bool':
             if op != '==' and op != '!=':
                 raise CompileError('bool values cannot be ordered with < or >\nuse == or != to compare them', n.line)
@@ -5686,7 +6043,7 @@ class Gen:
                 if not self.list_comparable(m):
                     return False
             return True
-        return t == 'str' or t == 'bool' or t == 'float' or is_numeric(t) or (is_class(t) and self.mod.has_op(t[1:], 'eq'))
+        return t == 'str' or t == 'bool' or is_float(t) or is_numeric(t) or (is_class(t) and self.mod.has_op(t[1:], 'eq'))
 
     def invert_op(self, n: Node) -> Ex:
         # ~x on an object whose class has a method marked @invert (taking nothing besides self)
@@ -5786,7 +6143,7 @@ class Gen:
                 raise CompileError('clock() takes no arguments', n.line)
             c = self.tmp('clock')
             self.emit(f'{c} = call double @tomato_clock()')
-            return ex(c, 'float')
+            return self.bf_plain(c)
         if name == 'sleep' and name not in self.slots and self.mod.resolve(name) == '':
             raise CompileError("sleep() is async, so it must be awaited\nwrite: await sleep(seconds)  inside an async def", n.line)
         if name == '_http_wait' and name not in self.slots and self.mod.resolve(name) == '':
@@ -5816,7 +6173,7 @@ class Gen:
             return self.float_call(self.expr(args[0]), n.line)
         if name == 'int' and len(args) == 1:
             conv = self.expr(args[0])
-            if conv.ty == 'float':
+            if is_float(conv.ty):
                 return self.float_to_int(conv, n.line)
             return self.convert_explicit(conv, 'int', n.line)
         # these do no type checks: only the compiler's own helpers (key_helper_source), which are compiled in the module builtin, may use them
@@ -6014,9 +6371,9 @@ class Gen:
         v = self.expr(args[0])
         if is_fixed(v.ty):
             v = self.convert_explicit(v, 'int', line)
-        if v.ty != 'str' and v.ty != 'int' and v.ty != 'float':
+        if v.ty != 'str' and v.ty != 'int' and not is_float(v.ty):
             raise CompileError(f'a format spec needs a text, an int or a float, but this value is {shown(v.ty)}\nleave the spec out, or make text with str() first', line)
-        what = 'text' if v.ty == 'str' else v.ty
+        what = 'text' if v.ty == 'str' else shown(v.ty)
         if v.ty == 'str':
             if spec.sign != '':
                 raise CompileError(f"a format spec for text cannot have a sign\nremove '{spec.sign}'", line)
@@ -6026,7 +6383,7 @@ class Gen:
                 raise CompileError(f"the format type '{spec.kind}' is for numbers, but this value is text\nuse s, or leave the type out", line)
         elif spec.kind == 's':
             raise CompileError(f"the format type 's' is for text, but this value is {what}\nleave the type out, or use d, f, e or g", line)
-        elif v.ty == 'float' and spec.kind == 'd':
+        elif is_float(v.ty) and spec.kind == 'd':
             raise CompileError("the format type 'd' is for whole numbers, but this value is float\nuse f, e or g, or leave the type out", line)
         elif v.ty == 'int' and spec.precision >= 0 and spec.kind not in ['f', 'e', 'g']:
             raise CompileError("a format spec for an int cannot have a precision unless its type is f, e or g\nremove the '.' and the digits after it", line)
@@ -6040,8 +6397,13 @@ class Gen:
             return self.builtin_call('_fmt_str', [v, fill, align, zero, width, self.tag_small(str(spec.precision))], line)
         if v.ty == 'int' and spec.kind not in ['f', 'e', 'g']:
             return self.builtin_call('_fmt_int', [v, fill, align, sign, zero, width, comma], line)
+        if v.ty == 'float' and spec.kind == '' and spec.precision < 0 and spec.sign == '' and not spec.zero and not spec.comma:
+            # only a fill, an alignment and a width (numbers align right unless told): the text str() shows, padded; it needs no double
+            text = self.text_of(v, line)
+            at = spec.align if spec.align != '' else '>'
+            return self.builtin_call('_fmt_str', [text, fill, ex(self.mod.intern(at), 'str'), zero, width, self.tag_small(str(spec.precision))], line)
         if v.ty == 'int':
-            v = self.float_call(v, line)
+            v = self.bf_word(v)
         kind = ex(self.mod.intern(spec.kind), 'str')
         return self.builtin_call('_fmt_float', [v, fill, align, sign, zero, width, comma, self.tag_small(str(spec.precision)), kind], line)
 
@@ -6055,7 +6417,7 @@ class Gen:
         if len(nodes) < 1 or len(nodes) > 2:
             raise CompileError('round() takes a number and optionally ndigits: round(x) or round(x, ndigits)', line)
         x = self.expr(nodes[0])
-        if x.ty != 'int' and x.ty != 'float':
+        if x.ty != 'int' and not is_float(x.ty):
             raise CompileError(f'round() takes an int or a float, but this is {shown(x.ty)}', line)
         if len(nodes) == 1:
             if x.ty == 'int':
@@ -6065,7 +6427,9 @@ class Gen:
         self.hold(x)
         digits = self.want(self.expr(nodes[1]), 'int', line, 'ndigits of round')
         self.drop_held(held_before)
-        return self.builtin_call('_round_' + x.ty, [x, digits], line)
+        if x.ty == 'int':
+            return self.builtin_call('_round_int', [x, digits], line)
+        return self.builtin_call('_round_float', [x, digits], line)
 
     # a call of a function of the built-ins (std/builtin/) under the built-in name `public` (messages and keywords use it); when recv
     # is a value, it is the first parameter of the function (the object of a text method) and the others are `args`
@@ -6110,9 +6474,10 @@ class Gen:
             self.release(v)
             return exf(r2, 'int')
         if v.ty == 'float':
-            r3 = self.tmp('hash')
-            self.emit(f'{r3} = call i64 @tomato_hash_float(double {v.reg})')
-            return exf(r3, 'int')
+            r4 = self.tmp('hash')
+            self.emit(f'{r4} = call i64 @tomato_hash_bf(i64 {v.reg})')
+            self.release(v)
+            return exf(r4, 'int')
         self.key_check(v.ty, line)
         return self.call_helper(self.mod.helper('hash', v.ty, line), [v])
 
@@ -6262,6 +6627,8 @@ class Gen:
         # how an LLVM function sees a Tomato type: a bool is one bit there
         if t == 'bool':
             return 'i1'
+        if t == 'float':
+            return 'double'            # (a float is converted at the call: see bf_to_f64)
         return llvm_type(t)
 
     def llvm_call(self, n: Node, name: str) -> Ex:
@@ -6280,6 +6647,8 @@ class Gen:
         for k, a in enumerate(args):
             v = self.expr(a, info.ptypes[k])
             v = self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of !' + name)
+            if v.ty == 'float':
+                v = self.bf_to_f64(v, [], True)            # a C function takes the nearest double; a float too large or too small for one stops the program
             reg = v.reg
             if v.ty == 'bool':
                 reg = self.tmp('bit')
@@ -6310,6 +6679,17 @@ class Gen:
             return ex(w, 'bool')
         if info.ret == 'int':
             return self.int_from_machine(r, True)
+        if info.ret == 'float':
+            # a C function may return a NaN that carries a payload, which would pass for the address of a box: keep the sign and
+            # drop the payload (a quiet NaN with the sign clear and a payload is what a box looks like)
+            raw = self.tmp('raw')
+            self.emit(f'{raw} = bitcast double {r} to i64')
+            boxed = self.bf_boxed(raw)
+            clean = self.tmp('clean')
+            self.emit(f'{clean} = select i1 {boxed}, i64 9221120237041090560, i64 {raw}')
+            result = ex(clean, 'float')
+            result.small = True
+            return result
         return ex(r, info.ret)
 
     # a named function used as a value (D-fn): its address, with the type fn(parameters) -> result
@@ -6802,9 +7182,9 @@ class Gen:
                 raise CompileError(f"sort() has no parameter named '{kname}'\nit takes key= (a function giving what to sort by) or cmp= (a function comparing two items)", line)
             copy = self.sorted_keyed(obj, keywords, line)
         else:
-            if not (elem == 'int' or elem == 'float' or elem == 'str'):
+            if not (elem == 'int' or is_float(elem) or elem == 'str'):
                 raise CompileError(f'sort() needs a list of numbers or text, but this is {shown(obj.ty)}\nuse sort(key=...) or sort(cmp=...) for other items', line)
-            kind = '0' if elem == 'int' else ('1' if elem == 'float' else '2')
+            kind = '0' if elem == 'int' else ('3' if elem == 'float' else '2')
             r = self.tmp('sorted')
             self.emit(f'{r} = call ptr @tomato_list_sorted(ptr {obj.reg}, i32 {kind})')
             copy = ex(r, obj.ty)
@@ -6886,12 +7266,15 @@ class Gen:
             got = ex(found, vt)
             self.retain(got)
             self.release(fallback)
+            hit_end = self.label('gotend')       # (retain and release of a float add blocks of their own: the phi names the last one)
+            self.br(hit_end)
+            self.place(hit_end)
             self.br(join)
             self.place(miss)
             self.br(join)
             self.place(join)
             r = self.tmp('got')
-            self.emit(f'{r} = phi {llvm_type(vt)} [{got.reg}, %{hit}], [{fallback.reg}, %{miss}]')
+            self.emit(f'{r} = phi {llvm_type(vt)} [{got.reg}, %{hit_end}], [{fallback.reg}, %{miss}]')
             self.release(k)
             self.release(d)
             return ret_ex(r, vt)
@@ -7309,11 +7692,10 @@ class Gen:
         if len(args) != 1:
             raise CompileError('sleep() takes the number of seconds to wait: await sleep(1.5)', line)
         v = self.expr(args[0])
-        if not (v.ty == 'float' or is_numeric(v.ty)):
+        if not (is_float(v.ty) or is_numeric(v.ty)):
             raise CompileError(f'sleep() takes a number of seconds, but this is {shown(v.ty)}', line)
+        v = self.bf_to_f64(self.bf_word(v), [], True)
         secs = v.reg
-        if v.ty != 'float':
-            secs = self.to_double(v)
         self.check_unread()
         self.emit(f'call void @tomato_sleep_wait(ptr %frame, double {secs})')
         self.release(v)
@@ -7955,7 +8337,8 @@ class Gen:
         elif is_union(v.ty):
             return self.union_text(v, False, line)
         elif v.ty == 'float':
-            self.emit(f'{r} = call ptr @tomato_str_from_f64(double {v.reg})')
+            self.emit(f'{r} = call ptr @tomato_bf_str(i64 {v.reg})')
+            self.release(v)
         else:
             w = self.tmp('w')
             self.emit(f'{w} = trunc i64 {v.reg} to i32')
@@ -8001,9 +8384,10 @@ class Gen:
                 self.emit(f'call void @tomato_release(ptr {t})')
             elif v.ty == 'float':
                 t = self.tmp('text')
-                self.emit(f'{t} = call ptr @tomato_str_from_f64(double {v.reg})')
+                self.emit(f'{t} = call ptr @tomato_bf_str(i64 {v.reg})')
                 self.emit(f'call void @tomato_print_strobj(ptr {t})')
                 self.emit(f'call void @tomato_release(ptr {t})')
+                self.release(v)
             elif is_list(v.ty) or is_dict(v.ty) or is_set(v.ty) or is_mtuple(v.ty):
                 shown_list = self.show_text(v, self.line)
                 self.emit(f'call void @tomato_print_strobj(ptr {shown_list.reg})')
@@ -8031,13 +8415,8 @@ class Gen:
         depth = len(self.after)
         k = 0
         while k < len(body):
-            run = 1
-            if self.nest_fast and self.nest != '':
-                run = self.float_run(body, k)
-            if run == 1 or not self.float_group(body[k:k + run]):
-                for i in range(k, k + run):
-                    self.stmt(body[i])
-            k += run
+            self.stmt(body[k])
+            k += 1
         self.end_block_narrowing(depth)
 
     def push_loop(self, brk: str, cont: str):
@@ -8147,7 +8526,7 @@ class Gen:
             if name not in self.slots:
                 return False
             t = self.types[name]
-            if not (t == 'list[int]' or t == 'list[float]' or t == 'list[bool]') or name in self.narrowed or name in self.settled:
+            if not (t == 'list[int]' or t == 'list[bool]') or name in self.narrowed or name in self.settled:
                 return False
         return True
 
@@ -8331,144 +8710,6 @@ class Gen:
         if not self.terminated:
             self.facts = self.small_facts(self.facts)
 
-    # A run of float assignments in the fast copy of a nest (to variables and fields) is checked once, at its end: their values are
-    # worked out first, then one test finds whether any of them is infinite or not a number, and only then are they stored. Until
-    # the stores nothing has happened, so anything that goes wrong in the run goes to the first of its statements in the
-    # general copy.
-    def float_run(self, body: list[Node], k: int) -> int:
-        fields: list[str] = []      # the names of the fields the run assigns
-        n = 0
-        while k + n < len(body) and n < 16:
-            s = body[k + n]
-            if s.kind != 'Assign' or s.spot == 0:
-                break
-            t = val_node(s.fields[0])
-            if not (t.kind == 'Name' or (t.kind == 'Attr' and val_node(t.fields[0]).kind == 'Name')):
-                break
-            v = val_node(s.fields[1])
-            if self.peek_type(v) != 'float' or not self.float_flat(v, fields, n == 0) or not self.nest_fastable(s):
-                break
-            if t.kind == 'Attr':
-                fields.append(t.fields[1].text)
-            n += 1
-        return n if n > 1 else 1
-
-    def float_flat(self, n: Node, fields: list[str], calls: bool) -> bool:
-        # n is + - * / of variables, constants, fields and list items (and calls that only compute), and reads none of the fields
-        k = n.kind
-        if k == 'FloatLit' or k == 'IntLit':
-            return True
-        if k == 'Name':
-            return n.fields[0].text in self.slots and (self.types[n.fields[0].text] == 'float' or self.types[n.fields[0].text] == 'int')
-        if k == 'Attr':
-            return n.fields[1].text not in fields and val_node(n.fields[0]).kind == 'Name' and self.peek_type(n) == 'float'
-        if k == 'Index':
-            return self.peek_type(n) == 'float' and val_node(n.fields[0]).kind == 'Name' and (val_node(n.fields[1]).kind == 'Name' or val_node(n.fields[1]).kind == 'IntLit')
-        if k == 'UnOp':
-            return n.fields[0].text == '-' and self.peek_type(n) == 'float' and self.float_flat(val_node(n.fields[1]), fields, calls)
-        if k == 'BinOp':
-            op = n.fields[0].text
-            if not (op == '+' or op == '-' or op == '*' or op == '/') or self.peek_type(n) != 'float':
-                return False
-            return self.float_flat(val_node(n.fields[1]), fields, calls) and self.float_flat(val_node(n.fields[2]), fields, calls)
-        if k == 'Call' and calls and self.peek_type(n) == 'float':
-            for a in val_nodes(n.fields[1]):        # (an argument that is worked out would have to be checked before the call)
-                if a.kind != 'Name' and a.kind != 'FloatLit' and a.kind != 'IntLit':
-                    return False
-            return True
-        return False
-
-    def float_group(self, run: list[Node]) -> bool:
-        # compile the run; False (and nothing is compiled) when it did not come out as expected
-        before = self.facts
-        line = self.line
-        start = len(self.lines)
-        saved = self.bail
-        self.bail = f'{self.nest}_{run[0].spot}'
-        self.grouping = True
-        self.group_checks = []
-        addrs: list[str] = []           # the stores that wait, in order
-        regs: list[str] = []
-        ok = not self.terminated
-        for s in run:
-            self.line = s.line
-            self.facts = self.small_facts(self.facts)
-            mark = len(self.lines)
-            self.stmt_kind(s)
-            fresh = self.lines[mark:]
-            self.lines = self.lines[:mark]
-            for text in fresh:
-                if text.startswith('  store double '):
-                    cut = text.find(', ptr ')
-                    regs.append(text[15:cut])
-                    addrs.append(text[cut + 6:])
-                    continue
-                if text.startswith('  store '):
-                    ok = False
-                cut2 = text.find(' = load double, ptr ')
-                if cut2 >= 0:
-                    addr = text[cut2 + 20:]
-                    for i in range(len(addrs) - 1, -1, -1):
-                        if addrs[i] == addr:
-                            text = f'{text[:cut2]} = bitcast double {regs[i]} to double'
-                            break
-                self.lines.append(text)
-        self.grouping = False
-        if ok and not self.terminated:
-            acc = ''
-            for c in self.group_checks:
-                if not self.shown_later(c[0], start):
-                    acc = c[1] if acc == '' else self.arith_f('fadd', acc, c[1])
-            if acc != '':
-                wrong = self.tmp('notfinite')
-                self.emit(f'{wrong} = fcmp uno double {acc}, 0.0')
-                self.bail_if(wrong)
-            for i in range(len(addrs)):
-                self.emit(f'store double {regs[i]}, ptr {addrs[i]}')
-            self.nest_count += len(run)
-            self.facts = self.small_facts(self.facts)
-        else:
-            self.lines = self.lines[:start]
-            self.terminated = False
-            self.facts = before
-            self.line = line
-            ok = False
-        self.bail = saved
-        return ok
-
-    def arith_f(self, op: str, a: str, b: str) -> str:
-        r = self.tmp('f')
-        self.emit(f'{r} = {op} double {a}, {b}')
-        return r
-
-    def shown_later(self, r: str, start: int) -> bool:
-        # true if a float r that is infinite or not a number makes another float of the run so, which is checked: r is an operand
-        # of a + - * (or the left one of a division) whose result is checked or shows in turn
-        for i in range(start, len(self.lines)):
-            text = self.lines[i]
-            cut = text.find(' = ')
-            if cut < 0:
-                continue
-            q = text[2:cut]
-            op = text[cut + 3:]
-            if q.startswith('%diff.') or not (op.startswith('fadd ') or op.startswith('fsub ') or op.startswith('fmul ') or op.startswith('fneg ') or op.startswith('fdiv ') or op.startswith('bitcast ')):
-                continue
-            if op.startswith('bitcast '):
-                if not op.startswith(f'bitcast double {r} '):
-                    continue
-            else:
-                comma = op.find(', ')
-                first = op[12:] if comma < 0 else op[12:comma]
-                second = '' if comma < 0 or op.startswith('fdiv ') else op[comma + 2:]
-                if r != first and r != second:
-                    continue
-            for c in self.group_checks:
-                if c[0] == q:
-                    return True
-            if self.shown_later(q, start):
-                return True
-        return False
-
     def stmt_plain(self, s: Node):
         if s.mark > 0 and self.mark_prefix != '':
             lbl = f'{self.mark_prefix}_{s.mark}'
@@ -8581,10 +8822,8 @@ class Gen:
             if self.tracking():
                 after = facts_kill(self.facts, [s.fields[0].text])
                 name = s.fields[0].text
-                if ty == 'int' or ty == 'float':
-                    after = self.assign_facts(self.facts, name, val_node(s.fields[2]))
-                    if name in after.m and after.m[name].fl != (ty == 'float'):
-                        after = facts_kill(after, [name])          # an int literal in a float variable
+                if ty == 'int':
+                    after = self.assign_facts(self.facts, name, val_node(s.fields[2]), ty)
             v = self.expr(val_node(s.fields[2]), ty)
             v = self.want(v, ty, s.line, 'the value')
             self.store_owned(self.slot(s.fields[0].text, ty, s.line), v, self.bail != '' and ty == 'int' and s.fields[0].text in self.nest_names)
@@ -8817,8 +9056,8 @@ class Gen:
             self.emit(f'{old} = load ptr, ptr {addr}')
             self.emit(f'store ptr {v.reg}, ptr {addr}')
             self.emit(f'call void @tomato_release(ptr {old})')
-        elif v.ty == 'int':
-            self.store_owned(addr, v, self.old_is_small(addr, [v, lst]))
+        elif v.ty == 'int' or v.ty == 'float':
+            self.store_owned(addr, v, v.ty == 'int' and self.old_is_small(addr, [v, lst]))
         else:
             self.store_item(lst.ty, v, addr)
         self.release(lst)
@@ -9230,14 +9469,18 @@ class Gen:
             return facts_dead()
         return facts_set(f, name, rng(lo, hi))
 
-    def assign_facts(self, f: Facts, name: str, value: Node) -> Facts:
-        # the facts after `name = value` (computed with the facts from before the assignment)
+    def assign_facts(self, f: Facts, name: str, value: Node, declared: str = '') -> Facts:
+        # the facts after `name = value` (computed with the facts from before the assignment). declared: the type of a variable
+        # that is being declared
         g = facts_kill(f, [name])
-        if name in self.slots and self.types[name] != 'int' and self.types[name] != 'float':
+        ty = declared
+        if name in self.slots:
+            ty = self.types[name]
+        if ty != '' and ty != 'int':
             return g
         r = self.range_of(value, f)
-        if r is None or (name in self.slots and r.fl != (self.types[name] == 'float')):
-            return g
+        if r is None or r.fl:
+            return g              # (a float is of any size: it has no interval to remember)
         g.m[name] = r
         return g
 
@@ -10129,7 +10372,7 @@ class Gen:
                         self.bail = h[1]
                 e = self.need_small(e)
                 self.bail = ''
-            self.store_owned(var, e, True)
+            self.store_owned(var, e, elem == 'int')
         else:
             self.retain(e)
             self.store_owned(var, e)
@@ -10451,6 +10694,10 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str):
         o = g.tmp('free')
         g.lines.append(f'  {o} = load i64, ptr {reg}')
         g.lines.append(f'  call void @tomato_int_free(i64 {o})')
+    for reg in g.float_slots:
+        o = g.tmp('free')
+        g.lines.append(f'  {o} = load i64, ptr {reg}')
+        g.lines.append(f'  call void @tomato_bf_free(i64 {o})')
     llvm_ret = 'void'
     if ret != '':
         llvm_ret = llvm_type(ret)
@@ -10673,9 +10920,9 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo, small: bool = False):
     for k, name in enumerate(names):
         reg = g.slot(name, types[k], f.line)
         sig.append(f'{llvm_type(types[k])} %arg.{name}')
-        if types[k] == 'int':
+        if owns_num(types[k]):
             lent.append([name, reg, str(len(g.lines))])
-            g.emit(f'%arg.{name}.own = call i64 @tomato_int_dup(i64 %arg.{name})')    # the caller only lent it
+            g.emit(f'%arg.{name}.own = call i64 @{dup_fn(types[k])}(i64 %arg.{name})')    # the caller only lent it
             g.emit(f'store i64 %arg.{name}.own, ptr {reg}')
             continue
         g.emit(f'store {llvm_type(types[k])} %arg.{name}, ptr {reg}')
@@ -10697,10 +10944,11 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo, small: bool = False):
         if pl[0] not in g.assigned:
             g.lines[int(pl[2])] = '  ; the parameter ' + pl[0] + ' is only lent'
             g.rc_slots = [r for r in g.rc_slots if r != pl[1]]
-            if g.types[pl[0]] == 'int':
+            if owns_num(g.types[pl[0]]):
                 # the slot holds the caller's number: no copy, and nothing to free
                 g.lines[int(pl[2]) + 1] = '  store i64 %arg.' + pl[0] + ', ptr ' + pl[1]
                 g.int_slots = [r for r in g.int_slots if r != pl[1]]
+                g.float_slots = [r for r in g.float_slots if r != pl[1]]
     end_body(g, f, info)
     if restart:
         g.place('restart')
@@ -10813,6 +11061,9 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     for reg in g.int_slots:
         o = g.tmp('free')
         text += f'  {o} = load i64, ptr {reg}\n  call void @tomato_int_free(i64 {o})\n  store i64 0, ptr {reg}\n'
+    for reg in g.float_slots:
+        o = g.tmp('free')
+        text += f'  {o} = load i64, ptr {reg}\n  call void @tomato_bf_free(i64 {o})\n  store i64 0, ptr {reg}\n'
     text += '  %ex.p = load ptr, ptr @tomato_exc\n  %ex.has = icmp ne ptr %ex.p, null\n  br i1 %ex.has, label %failed, label %succeeded\n'
     text += f'failed:\n  %e.p = getelementptr {cls}, ptr %frame, i32 0, i32 12\n  store ptr %ex.p, ptr %e.p\n'
     text += f'  %el = load i32, ptr @tomato_exc_line\n  %el64 = zext i32 %el to i64\n  %el.p = getelementptr {cls}, ptr %frame, i32 0, i32 6\n  store i64 %el64, ptr %el.p\n'
@@ -10829,8 +11080,8 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     text += f'  %rf = getelementptr {cls}, ptr %f, i32 0, i32 2\n  store ptr {sym}.resume, ptr %rf\n'
     for k, name in enumerate(names):
         text += f'  %pf{k} = getelementptr {cls}, ptr %f, i32 0, i32 {str(FRAME_FIXED + k + 2)}\n'
-        if types[k] == 'int':
-            text += f'  %arg.{name}.own = call i64 @tomato_int_dup(i64 %arg.{name})\n  store i64 %arg.{name}.own, ptr %pf{k}\n'
+        if owns_num(types[k]):
+            text += f'  %arg.{name}.own = call i64 @{dup_fn(types[k])}(i64 %arg.{name})\n  store i64 %arg.{name}.own, ptr %pf{k}\n'
         else:
             text += f'  store {llvm_type(types[k])} %arg.{name}, ptr %pf{k}\n'
         if is_rc(types[k]):
@@ -10959,6 +11210,10 @@ def runtime_tables(mod: Mod) -> str:
             if code[4:] == 'int':
                 offs.append('i32 16')           # the number it holds belongs to the box
             offs.append('i32 -1')
+            if code[4:] == 'float':
+                offs.append('i32 16')           # (a float, in a list of its own after the ints: bit 8192)
+                offs.append('i32 -1')
+                kinds[slot] = 'i32 8193'
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
         elif is_class(code):
@@ -10977,6 +11232,14 @@ def runtime_tables(mod: Mod) -> str:
                 if fld.ty == 'int':
                     offs.append(f'i32 trunc (i64 ptrtoint (ptr getelementptr (%class.{slot}, ptr null, i32 0, i32 {str(j + 2)}) to i64) to i32)')
             offs.append('i32 -1')
+            has_float = False
+            for j, fld in enumerate(c.fields):
+                if fld.ty == 'float':
+                    offs.append(f'i32 trunc (i64 ptrtoint (ptr getelementptr (%class.{slot}, ptr null, i32 0, i32 {str(j + 2)}) to i64) to i32)')
+                    has_float = True
+            if has_float:
+                offs.append('i32 -1')
+                kinds[slot] = 'i32 ' + str(int(kinds[slot][4:]) + 8192)
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
             if mod.mode == 1:
@@ -10995,16 +11258,26 @@ def runtime_tables(mod: Mod) -> str:
                 if it == 'int':
                     offs.append(f'i32 {16 + 8 * pos}')
             offs.append('i32 -1')
+            has_float = False
+            for pos, it in enumerate(parts):
+                if it == 'float':
+                    offs.append(f'i32 {16 + 8 * pos}')
+                    has_float = True
+            if has_float:
+                offs.append('i32 -1')
+                kinds[slot] = 'i32 8193'
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
         elif is_set(code):
             kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(is_rc(set_elem(code))) + 4096 * int_of_bool(key_holds_refs(set_elem(code))))      # 256: its keys are heap values (text, objects, tuples); a set of ints says so in its key kind
         elif is_dict(code):
-            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(is_rc(dict_key(code))) + 512 * int_of_bool(is_rc(dict_value(code))) + 2048 * int_of_bool(dict_value(code) == 'int') + 4096 * int_of_bool(key_holds_refs(dict_key(code))))
+            kinds[slot] = 'i32 ' + str(3 + 256 * int_of_bool(is_rc(dict_key(code))) + 512 * int_of_bool(is_rc(dict_value(code))) + 2048 * int_of_bool(dict_value(code) == 'int') + 8192 * int_of_bool(dict_value(code) == 'float') + 4096 * int_of_bool(key_holds_refs(dict_key(code))))
         elif elem_of(code) == 'str' or is_rc(elem_of(code)):
             kinds[slot] = 'i32 258'          # a list: 2, plus 256 when its items are reference counted
         elif elem_of(code) == 'int':
             kinds[slot] = 'i32 2050'         # plus 2048 when its items are ints, whose big numbers it frees
+        elif elem_of(code) == 'float':
+            kinds[slot] = 'i32 8194'         # plus 8192 when its items are floats, whose boxes it frees
         else:
             kinds[slot] = 'i32 2'
         k += 1
@@ -11055,9 +11328,32 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_list_sorted_cmp(ptr, ptr, ptr, i32)\n'
     d += 'declare ptr @tomato_str_from_i64(i64)\n'
     d += 'declare ptr @tomato_str_from_bool(i32)\n'
-    d += 'declare ptr @tomato_str_from_f64(double)\n'
     d += 'declare ptr @tomato_box_str(ptr)\n'
     d += 'declare ptr @tomato_box_repr(ptr)\n'
+    d += 'declare i64 @tomato_bf_dup(i64)\n'
+    d += 'declare void @tomato_bf_free(i64)\n'
+    d += 'declare i64 @tomato_bf_from_int(i64, i32)\n'
+    d += 'declare i64 @tomato_bf_to_int(i64, i32)\n'
+    d += 'declare i32 @tomato_bf_fits_f64(i64)\n'
+    d += 'declare double @tomato_bf_to_f64(i64)\n'
+    d += 'declare i32 @tomato_bf_is_boxed(i64)\n'
+    d += 'declare i32 @tomato_bf_nonfinite(i64, i64)\n'
+    d += 'declare i64 @tomato_bf_int_div(i64, i64, i32)\n'
+    d += 'declare i32 @tomato_bf_cmp(i64, i64, i32)\n'
+    d += 'declare i32 @tomato_bf_cmp_int(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_bf_add(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_bf_sub(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_bf_mul(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_bf_div(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_bf_floordiv(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_bf_mod(i64, i64, i32)\n'
+    d += 'declare i32 @tomato_bf_pow_check(i64, i64)\n'
+    d += 'declare i64 @tomato_bf_pow(i64, i64, i32)\n'
+    d += 'declare i64 @tomato_bf_neg(i64, i32)\n'
+    d += 'declare ptr @tomato_bf_str(i64)\n'
+    d += 'declare i64 @tomato_bf_text(ptr)\n'
+    d += 'declare i64 @tomato_bf_parse_cstr(ptr, i32)\n'
+    d += 'declare i64 @tomato_hash_bf(i64)\n'
     d += 'declare i64 @tomato_int_dup(i64)\n'
 
     for op in ['add', 'sub', 'mul', 'floordiv', 'mod', 'shl', 'shr']:
@@ -11087,21 +11383,14 @@ def declarations(mod: Mod) -> str:
     d += 'declare i32 @tomato_int_in_range(i64, i32, i32)\n'
     d += 'declare i64 @tomato_range_late(i64, i64, i64)\n'
     d += 'declare i64 @tomato_range_cut(i64, i64, i64)\n'
-    d += 'declare double @tomato_int_to_f64(i64)\n'
-    d += 'declare double @tomato_int_div_f64(i64, i64)\n'
     d += 'declare double @tomato_clock()\n'
     d += 'declare ptr @tomato_int_str(i64)\n'
     d += 'declare i64 @tomato_int_parse(ptr)\n'
     d += 'declare i64 @tomato_int_parse_cstr(ptr, i32)\n'
     d += 'declare i64 @tomato_int_bitop(i64, i64, i32)\n'
     d += 'declare i64 @tomato_int_not(i64)\n'
-    d += 'declare i64 @tomato_f64_to_int(double)\n'
-    d += 'declare double @tomato_parse_f64(ptr, i32)\n'
     d += 'declare i32 @tomato_ipow_check(i64, i64)\n'
     d += 'declare i64 @tomato_ipow(i64, i64)\n'
-    d += 'declare double @tomato_floor_div_f64(double, double)\n'
-    d += 'declare double @tomato_mod_f64(double, double)\n'
-    d += 'declare double @tomato_pow_f64(double, double)\n'
     d += 'declare void @tomato_print_strobj(ptr)\n'
     d += 'declare ptr @tomato_alloc(i64, i64)\n'
     d += 'declare i32 @tomato_is_subclass(i64, i64)\n'
@@ -11117,9 +11406,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare i32 @tomato_dict_delete_h(ptr, i64, i64)\n'
     d += 'declare i64 @tomato_hash_word(i64)\n'
     d += 'declare i64 @tomato_hash_int(i64)\n'
-    d += 'declare i64 @tomato_float_bits(double)\n'
     d += 'declare i64 @tomato_hash_str(ptr)\n'
-    d += 'declare i64 @tomato_hash_float(double)\n'
     d += 'declare i64 @tomato_hash_mix(i64, i64)\n'
     d += 'declare void @tomato_usage(i32, i32)\n'
     d += 'declare i64 @tomato_parse_i64(ptr, i32)\n'
@@ -11157,8 +11444,6 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_input(ptr)\n'
     d += 'declare ptr @tomato_str_split_next(ptr, ptr, ptr)\n'
     d += 'declare i64 @tomato_text_int(ptr)\n'
-    d += 'declare i32 @tomato_text_float_ok(ptr)\n'
-    d += 'declare double @tomato_text_float(ptr)\n'
     d += 'declare void @tomato_q_push(ptr)\n'
     d += 'declare ptr @tomato_q_pop()\n'
     d += 'declare void @tomato_input_wait(ptr, ptr)\n'
@@ -11217,6 +11502,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     args: list[str] = []
     owned: list[str] = []
     owned_ints: list[str] = []
+    owned_floats: list[str] = []
     for i, t in enumerate(info.ptypes):
         si = str(i)
         optional = i >= low
@@ -11243,7 +11529,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             else:
                 out += f'  %a{si}.v = add i64 %a{si}.w, 0\n'
         elif t == 'float':
-            out += f'  %a{si}.v = call double @tomato_parse_f64(ptr %a{si}.s, i32 {str(i + 1)})\n'
+            out += f'  %a{si}.v = call i64 @tomato_bf_parse_cstr(ptr %a{si}.s, i32 {str(i + 1)})\n'
         elif t == 'bool':
             out += f'  %a{si}.w = call i32 @tomato_parse_bool(ptr %a{si}.s, i32 {str(i + 1)})\n'
             out += f'  %a{si}.v = zext i32 %a{si}.w to i64\n'
@@ -11256,7 +11542,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
                 if dflt.kind != 'StrLit':
                     raise CompileError('the default of a text input must be a plain text such as "abc"', dflt.line)
                 out += f'  %a{si} = phi ptr [ %a{si}.v, %p{si} ], [ {mod.intern(dflt.fields[0].text)}, %d{si} ]\n'
-            elif t == 'float':
+            elif is_float(t):
                 raise CompileError('a program input cannot have a float default', dflt.line)
             else:
                 out += f'  %a{si} = phi {llvm_type(t)} [ %a{si}.v, %p{si} ], [ {literal_text(dflt, t)}, %d{si} ]\n'
@@ -11265,12 +11551,12 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
         if t == 'str':
             args.append(f'ptr {reg}')
             owned.append(reg)
-        elif t == 'float':
-            args.append(f'double {reg}')
         else:
             args.append(f'{llvm_type(t)} {reg}')
             if t == 'int' and not optional:
                 owned_ints.append(reg)
+            if t == 'float' and not optional:
+                owned_floats.append(reg)
     if info.is_async:
         out += '  %fr = call ptr @tomato.async.' + info.key + '(' + ', '.join(args) + ')\n  call void @tomato.sched.run(ptr %fr)\n'
     else:
@@ -11283,6 +11569,8 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
         out += f'  call void @tomato_release(ptr {reg})\n'
     for reg in owned_ints:
         out += f'  call void @tomato_int_free(i64 {reg})\n'
+    for reg in owned_floats:
+        out += f'  call void @tomato_bf_free(i64 {reg})\n'
     out += '  call void @tomato_leak_check()\n  %rc = call i32 @tomato_exit_code()\n  ret i32 %rc\n}\n'
     return out
 
@@ -11471,7 +11759,7 @@ def key_problem(mod: Mod, t: str) -> str:
 
 def is_showable(mod: Mod, t: str) -> bool:
     # can a value of this type be shown inside a printed container (what show_item accepts)?
-    if is_numeric(t) or t == 'bool' or t == 'float' or t == 'str' or is_union(t):
+    if is_numeric(t) or t == 'bool' or is_float(t) or t == 'str' or is_union(t):
         return True
     if is_class(t):
         return mod.has_op(t[1:], 'str')
@@ -11503,7 +11791,7 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
     if is_class(et):
         if not mod.has_op(et[1:], 'str'):
             raise CompileError("'" + et[1:] + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
-    elif not (is_numeric(et) or et == 'bool' or et == 'float' or is_union(et)):
+    elif not (is_numeric(et) or et == 'bool' or is_float(et) or is_union(et)):
         raise CompileError(f'a list of {shown(et)} cannot be printed\nprint its items one by one instead', line)
     if is_union(et):
         return f'_repr_box({e})'
@@ -11599,10 +11887,10 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
         et = iter_elem(mod, ty)
         if kind == 'tolist':
             return f'{head}    out: list[{shown(et)}] = []\n    for v in x:\n        out.append(v)\n    return out\n'
-        if not (et == 'int' or et == 'float' or (et == 'str' and kind != 'sum')):
+        if not (et == 'int' or is_float(et) or (et == 'str' and kind != 'sum')):
             wanted = '' if kind == 'sum' else ' or text'
             raise CompileError(f'{kind}() needs something that gives numbers{wanted}, but {shown(ty)} gives {shown(et)}', line)
-        zero = '0.0' if et == 'float' else '0'
+        zero = '0.0' if is_float(et) else '0'
         if et == 'str':
             zero = "''"
         if kind == 'sum':
@@ -11641,7 +11929,7 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
             body += "    if len(x) == 1:\n        out = out + ','\n"
         return f"{head}{body}    return out + '{close_text}'\n"
     if kind == 'sum':
-        zero = '0.0' if elem_of(ty) == 'float' else '0'
+        zero = '0.0' if is_float(elem_of(ty)) else '0'
         return f'{head}    total: {shown(elem_of(ty))} = {zero}\n    for v in x:\n        total = total + v\n    return total\n'
     if kind == 'min' or kind == 'max':
         better = '>' if kind == 'max' else '<'

@@ -6,8 +6,9 @@
  *   ./bigfloat --eval   reads "op x y" lines and writes the results, for a comparison with another implementation. A float is
  *   written MANTISSA:EXPONENT, a whole number in hex times a power of two in decimal: 3:-1 is 1.5. */
 #include "../runtime/tomato_rt.c"
-const int32_t tomato_kinds[8];
-const int32_t *const tomato_offsets[8];
+const int32_t tomato_kinds[8] = { [5] = 1 | 8192, [6] = 2 | 8192, [7] = 3 | 8192 };
+static const int32_t float_object_offsets[] = { -1, -1, 16, -1 };
+const int32_t *const tomato_offsets[8] = { [5] = float_object_offsets };
 int64_t tomato_parents[8];
 const char *tomato_class_names[8];
 int32_t tomato_exc_seen;
@@ -759,6 +760,40 @@ static void test_known(void) {
     }
 }
 
+/* A copied container must own an independent box, and every destruction path must free it. */
+static void test_container_ownership(void) {
+    what = "container ownership";
+    List *a = tomato_list_new(6);
+    *(int64_t *)tomato_list_push(a, 8) = tomato_bf_literal("1e400");
+    List *b = tomato_list_slice(a, 0, 1, 1, 0, 3);
+    List *c = tomato_list_concat(a, b, 3);
+    List *repeat = tomato_list_repeat(a, 2, 3);
+    tomato_list_extend(repeat, a, 3);
+    tomato_release(a);
+    if (tomato_bf_cmp(LIST_SLOT(b, 0, int64_t), LIST_SLOT(c, 0, int64_t), 0) != 0) fail("slice or concat copy");
+    if (repeat->len != 3 || tomato_bf_cmp(LIST_SLOT(b, 0, int64_t), LIST_SLOT(repeat, 2, int64_t), 0) != 0) fail("repeat or extend copy");
+    tomato_release(b);
+    tomato_release(c);
+    tomato_release(repeat);
+
+    Dict *d = tomato_dict_new(7, 8, 0);
+    *(int64_t *)tomato_dict_insert(d, 42, 0) = tomato_bf_literal("1e400");
+    List *values = tomato_dict_values(d, 6, 8, 3);
+    tomato_release(d);
+    if (!tomato_bf_is_boxed(LIST_SLOT(values, 0, int64_t))) fail("dictionary value copy");
+    tomato_release(values);
+
+    Hdr *obj = tomato_alloc(24, 5);
+    *(int64_t *)((char *)obj + 16) = tomato_bf_literal("1e400");
+    tomato_release(obj);
+    /* Cycle collection uses free_internals instead of destroy_one. */
+    obj = tomato_alloc(24, 5);
+    *(int64_t *)((char *)obj + 16) = tomato_bf_literal("1e400");
+    free_internals(obj);
+    *(int64_t *)((char *)obj + 16) = 0;
+    tomato_release(obj);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--eval")) return eval();
     int64_t rounds = argc > 1 ? atoll(argv[1]) : 2000;
@@ -767,6 +802,7 @@ int main(int argc, char **argv) {
     test_text_fixed();
     test_known();
     test_too_big();
+    test_container_ownership();
     for (int64_t i = 0; i < rounds; i++) { test_arithmetic(); test_ints(); if (i % 8 == 0) { test_print(); test_parse(); test_pow(); } if (i % 256 == 0) { test_round_trip((int)below(200)); test_round_trip(4000 + (int)below(200)); } }
     what = "memory";
     if (live_bigs != 0) fail("big numbers were never freed");

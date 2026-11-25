@@ -1,0 +1,84 @@
+# Floats of any size (docs/bigfloat-design.md, stage 3): a float has a 53-bit significand and an exponent of any size, so no
+# operation overflows or underflows, a float is a plain double whenever it fits one, and the answers inside the range of a
+# double are the ones a double gives. Every printed number was checked against exact arithmetic (Python's fractions, rounded to
+# 53 bits after each operation). tests/run.sh runs it under AddressSanitizer too.
+from math import sqrt, isnan, isinf, isfinite, copysign
+
+def half(x: float) -> float:
+    return x / 2.0
+
+def chain(a: float, b: float, c: float) -> float:
+    return a * b - b * c + a * c * 2.0 - c
+
+def caught(text: str) -> str:
+    try:
+        return str(float(text))
+    catch ValueError as e:
+        return 'ValueError: ' + e.message
+
+@main
+def main():
+    # past the largest double
+    x = 1e300
+    y = x * x
+    z = y * y
+    print(y, z, z / y, 1.0 / z, -z, z - z, y + 1.0 == y)
+    print(z > y, z < y, z == z, y != z, y >= 1.0, -y < 1.0)
+    print(float(10 ** 400), 10 ** 400 / 10 ** 399, 10 ** 500 / 3)
+    print(2.0 ** 2000.0, 10.0 ** 400.0, y ** 0.5, 2.0 ** -2000.0)
+    print(half(z), chain(y, y, 2.0), chain(1.5, 2.25, -0.125))
+    # past the smallest
+    t = 1e-300 * 1e-300
+    print(t, t * 1e300 * 1e300, t / 1e300, 1e-400 + 1e-400, 1e-310 * 1e-10)
+    print(1e400, 1e-400, 1.5e1000000, -2.5e-1000000, 1e5000 * 1e-4999)
+    # a plain double stays a plain double
+    print(0.1 + 0.2, 1e308 + 1e308 - 1e308 * 1.5, 1e-300 * 1e-8, 5e-324, 2.2250738585072014e-308 / 2.0)
+    # whole numbers compare with floats exactly
+    big = float(10 ** 400)
+    print(big == 10 ** 400, big < 10 ** 401, big > 10 ** 399, 2 ** 53 + 1 == float(2 ** 53), 2 ** 53 + 1 > float(2 ** 53), 3 == 3.0)
+    print(int(big) > 10 ** 399, len(str(int(1e400))), int(2.9), int(-2.9), int(1e30), int(0.0 - big) < 0)
+    # text
+    print(float('1e5000'), float('-2.5e-500'), float(' 4.25 '), float('3'), float('0.1e1'))
+    print(caught('abc'), caught(''), caught('1e'), caught('0x1p4'))
+    print(str(y) + '!', f'{y} {1.5:.3f} {1234.5:>10.1f}')
+    print(f'[{y:>25}] [{y:<25}] [{y:^25}] [{y:*>25}] [{1.5:8}] [{2.25:<8}]')
+    # a float that is too large or too small for a double stops where C would otherwise get the wrong number
+    for which in range(6):
+        try:
+            if which == 0:
+                print(sqrt(y))
+            elif which == 1:
+                print(sqrt(t))
+            elif which == 2:
+                print(f'{t:e}')
+            elif which == 3:
+                print(f'{y:.2f}')
+            elif which == 4:
+                print(round(t, 2))
+            else:
+                print(sqrt(1e-300 * 1e300))
+        catch OverflowError as e:
+            print(which, 'OverflowError:', e.message)
+    # what needs no double works at any size
+    print(round(z) > 10 ** 1199, round(-z) == -round(z), round(t), round(2.5), round(3.5), round(-0.3), round(1e20))
+    print(isnan(y), isinf(y), isfinite(y), isfinite(t), copysign(y, -1.0), copysign(2.5, -y), copysign(t, -1.0))
+    # errors that remain
+    zero = 0.0
+    for op in range(4):
+        try:
+            if op == 0:
+                print(y / zero)
+            elif op == 1:
+                print(y // zero)
+            elif op == 2:
+                print(y % zero)
+            else:
+                print(zero ** -1.0)
+        catch ZeroDivisionError as e:
+            print(op, 'ZeroDivisionError:', e.message)
+    try:
+        print((-y) ** 0.5)
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    # zero
+    print(zero == -zero, -zero, zero * -1.0, y * zero, zero / y, abs(-zero))

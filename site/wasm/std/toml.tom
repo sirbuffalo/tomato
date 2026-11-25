@@ -669,6 +669,8 @@ class _Parser:
                 v.real = float(sign + clean)
             catch RuntimeError as e:
                 self.fail_at('Float is out of range', self.ln, at)
+            if v.real > 1.7976931348623157e308 or v.real < -1.7976931348623157e308:
+                self.fail_at('Float is out of range', self.ln, at)      # (TOML floats are 64-bit)
             return v
         x = int(sign + clean)
         if x > 9223372036854775807 or x < -9223372036854775808:

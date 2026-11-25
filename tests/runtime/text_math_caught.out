@@ -8,7 +8,7 @@ ValueError: factorial needs a number that is not negative, but got -3
 ValueError: comb needs numbers that are not negative, but got -3 and 2
 ValueError: perm needs numbers that are not negative, but got 3 and -2
 ValueError: isqrt needs a number that is not negative, but got -3
-OverflowError: an int is too large to be a float
-OverflowError: an int is too large to be a float
-OverflowError: an int is too large to be a float
+True
+1.5
+OverflowError: a float is too large for a double
 0 0 xxabc (3, 1)

@@ -1,0 +1,28 @@
+1.0000000000000001e+600 1.0000000000000003e+1200 1.0000000000000001e+600 9.999999999999997e-1201 -1.0000000000000003e+1200 0.0 True
+True False True True True True
+1e+400 10.0 3.333333333333333e+499
+1.1481306952742545e+602 1e+400 1e+300 8.709809816217217e-603
+5.000000000000002e+1199 1.0000000000000003e+1200 3.40625
+1e-600 1.0 1e-900 2e-400 1.0000000000000001e-320
+1e+400 1e-400 1.5e+1000000 -2.5e-1000000 9.999999999999998
+0.30000000000000004 5e+307 1e-308 5e-324 1.1125369292536007e-308
+False True True False True True
+True 400 2 -2 1000000000000000019884624838656 True
+1e+5000 -2.5e-500 4.25 3.0 1.0
+ValueError: the text is not a number ValueError: the text is not a number ValueError: the text is not a number 16.0
+1.0000000000000001e+600! 1.0000000000000001e+600 1.500     1234.5
+[  1.0000000000000001e+600] [1.0000000000000001e+600  ] [ 1.0000000000000001e+600 ] [**1.0000000000000001e+600] [     1.5] [2.25    ]
+0 OverflowError: a float is too large for a double
+1 OverflowError: a float is too small for a double
+2 OverflowError: a float is too small for a double
+3 OverflowError: a float is too large for a double
+4 OverflowError: a float is too small for a double
+1.0
+True True 0 2 4 0 100000000000000000000
+False False True True -1.0000000000000001e+600 -2.5 -1e-600
+0 ZeroDivisionError: division by zero
+1 ZeroDivisionError: division by zero
+2 ZeroDivisionError: modulo by zero
+3 ZeroDivisionError: zero cannot be raised to a negative power
+ValueError: a negative number cannot be raised to a power that is not a whole number
+True -0.0 -0.0 0.0 0.0 0.0
