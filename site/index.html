@@ -22,7 +22,7 @@ def main():
 <div class="card"><h3>Exact where it matters</h3><p>Whole numbers grow without limit or use a fixed width with overflow errors. <code>float</code> is 64-bit; <code>rational</code> (a library module) is exact.</p></div>
 </div>
 <h2>Speed</h2>
-<p>The <a href="benchmarks.html">Benchmarks</a> page compares Tomato with Go, Rust, Python and other languages on 25 benchmarks, with the method and caveats. The published results were measured on Linux x86-64 with an AMD Ryzen Threadripper 3990X; times are medians of ten shuffled runs per program, including process startup.</p>
+<p>Twenty-five benchmarks, each written in Tomato, Go, Rust, Python and eight other languages and checked to print the same answer, are on the <a href="benchmarks.html">Benchmarks</a> page, with the method and the caveats. Tomato is young: in the v0.51 results (an Apple M3 Pro Mac) it beats Python on all 25 (by 4× to 91×), is faster than Rust on three of them (wordcount, revcomp and strings), within 5% of it on five more, and 1.1× to 2.8× slower than Rust on the other seventeen.</p>
 <h2>Version</h2>
 <p>The current version is <strong>v<span id="version2"></span></strong>: the compiler written in Tomato, the only implementation. The command is <code>tomato</code>.</p>
 </main><script src="config.js"></script><script src="site.js"></script></body></html>

@@ -2,8 +2,40 @@
 
 What the benchmarks (`benchmarks/`, results on the website's Benchmarks page) say about the compiler and runtime, and
 what has been done about it. Every change below was measured with `benchmarks/run.sh` (wall-clock seconds, release mode,
-median) or `benchmarks/count.sh` (instructions executed), mostly on the same Apple M1 (the Linux checks say so), and kept
+median) or `benchmarks/count.sh` (instructions executed), mostly on the same Apple M1 (the Linux checks say so; the newest Mac numbers, on an M3 Pro, are in the first snapshot below), and kept
 only when it helped.
+
+## Mac (Apple M3 Pro) snapshot (2026-11-25)
+
+Tomato v0.51, on macOS 27.0.1, Apple M3 Pro (12 cores), 36 GB RAM, a laptop on battery power. All 25 benchmarks in all twelve languages (Tomato in release and debug mode, Go, Rust, Python, C, C++, Java, C#, Swift, JavaScript, TypeScript and PHP) ran ten times in one shuffled order (seed 1); values are median wall-clock seconds. The Mac had restarted a few minutes before the run, so the load averages were 18.41, 45.54, 46.58 before (still settling; 3 to 7 while the programs ran) and 3.43, 4.20, 8.29 after. Node 26.13.1, PHP 8.6.0 and .NET 10.0.404 were not installed on the Mac and came from private, user-local installs. Full measurements are in `benchmarks/results/results.md` and `raw.tsv`; the website's Benchmarks page draws them from `site/benchmarks.json`. They replace the Apple M1 numbers (ten benchmarks, four languages) that the page showed before; the v0.51 snapshot below keeps those.
+
+| Benchmark | Tomato (s) | Tomato ÷ Go | Tomato ÷ Rust | Tomato ÷ Python |
+| --- | ---: | ---: | ---: | ---: |
+| fib | 0.175 | 1.12 | 1.23 | 0.05 |
+| sieve | 0.069 | 1.03 | 0.97 | 0.01 |
+| matmul | 0.123 | 2.15 | 1.91 | 0.02 |
+| mandelbrot | 0.093 | 0.95 | 0.99 | 0.01 |
+| collatz | 0.158 | 0.71 | 1.05 | 0.01 |
+| strings | 0.111 | 0.76 | 0.90 | 0.15 |
+| sort | 0.099 | 0.36 | 1.16 | 0.03 |
+| wordcount | 0.227 | 0.86 | 0.62 | 0.19 |
+| bigint | 0.123 | 1.65 | 1.01 | 0.18 |
+| objects | 0.061 | 0.68 | 0.99 | 0.02 |
+| nbody | 0.105 | 0.78 | 1.43 | 0.02 |
+| spectral_norm | 0.089 | 1.48 | 2.26 | 0.02 |
+| fannkuch | 0.233 | 1.16 | 1.29 | 0.01 |
+| nqueens | 0.049 | 1.03 | 1.11 | 0.11 |
+| binary_trees | 0.294 | 3.87 | 2.38 | 0.23 |
+| levenshtein | 0.091 | 2.37 | 1.83 | 0.01 |
+| knapsack | 0.077 | 2.03 | 2.11 | 0.01 |
+| life | 0.109 | 1.83 | 1.94 | 0.03 |
+| dijkstra | 0.045 | 1.14 | 1.90 | 0.04 |
+| quicksort | 0.184 | 1.18 | 1.27 | 0.05 |
+| kmers | 0.236 | 2.42 | 2.80 | 0.18 |
+| revcomp | 0.027 | 0.25 | 0.63 | 0.07 |
+| tokenize | 0.100 | 0.96 | 1.33 | 0.08 |
+| crc32 | 0.095 | 0.99 | 1.24 | 0.03 |
+| hof | 0.072 | 0.36 | 1.29 | 0.04 |
 
 ## Linux x86-64 snapshot (2026-11-24)
 

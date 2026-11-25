@@ -59,7 +59,7 @@ The results and caveats are on the website's Benchmarks page, and what they say 
 
 ## Results
 
-`results/linux-x86_64/results.json` and `results.md` contain the latest Linux run; `site/benchmarks.json` is a copy of the JSON. `raw.tsv` records the individual measurements. The earlier Mac run remains in `results/results.json` and `results/results.md`. Instruction counts in `instructions.md` are separate measurements and may be older. `release/perf-snapshot.sh` can turn release results into a section of `docs/performance.md`.
+`results/results.json` and `results.md` contain the latest Mac run (Apple M3 Pro, 2026-11-25); `site/benchmarks.json` is a copy of that JSON. `results/linux-x86_64/` has the latest Linux run. `raw.tsv` in each records the individual measurements. The earlier Mac run (Apple M1, ten benchmarks, four languages) is in the git history and summarized in `docs/performance.md`. Instruction counts in `instructions.md` are separate measurements and may be older. `release/perf-snapshot.sh` can turn release results into a section of `docs/performance.md`.
 
 When `--max-minutes` expires or the timing loop receives SIGINT or SIGTERM, the runner summarizes completed measurements. The JSON marks incomplete runs with `partial: true` and records each program's run count. An interruption during the build phase does not produce partial results.
 

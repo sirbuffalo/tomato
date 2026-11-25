@@ -8,8 +8,6 @@
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
 - Re-run the Linux benchmarks on a quieter biggie
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
-- Rerun the benchmark suite on the Mac with the new languages installed
-  `benchmarks/run.sh --site` there, so the live page gets the new Tomato numbers, the fifteen newer benchmarks and the eight added languages; then update the page's text, which still describes the v0.51 numbers.
 - Stop retaining the loop item in `for x in xs` when the body cannot change any list
   Needs a whole-program check of which functions change lists; about 8 of the instructions per item in `objects`.
 - Use `epoll`/`kqueue` for descriptor waits
