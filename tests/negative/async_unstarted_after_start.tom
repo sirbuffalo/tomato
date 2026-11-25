@@ -1,0 +1,9 @@
+async def work() -> int:
+    return 1
+
+async def other() -> int:
+    return 5
+
+@main
+async def main():
+    print(await [start other(), work()][0])

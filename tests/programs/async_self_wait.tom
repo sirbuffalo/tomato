@@ -1,0 +1,47 @@
+# a task that waits for itself, or for a task that waits for it, gets an error at once instead of waiting forever
+import asyncio
+
+class Box:
+    tasks: list[task[int]] = []
+
+async def alone(b: Box) -> int:
+    await sleep(0)
+    try:
+        return await b.tasks[0]
+    catch RuntimeError as e:
+        print('await: ' + e.message)
+    try:
+        await asyncio.wait_for(b.tasks[0], 5)
+    catch Error as e:
+        print('wait_for: ' + e.message)
+    try:
+        await asyncio.gather([b.tasks[0]])
+    catch Error as e:
+        print('gather: ' + e.message)
+    return 1
+
+async def other(b: Box) -> int:
+    await sleep(0)
+    try:
+        return await b.tasks[2]
+    catch RuntimeError as e:
+        print('other: ' + e.message)
+    return 2
+
+async def first(b: Box) -> int:
+    await sleep(0)
+    try:
+        return await b.tasks[1]
+    catch RuntimeError as e:
+        print('first: ' + e.message)
+    return 3
+
+@main
+async def main():
+    b = Box()
+    b.tasks.append(start alone(b))
+    print(await b.tasks[0])
+    b.tasks.append(start other(b))
+    b.tasks.append(start first(b))
+    print(await b.tasks[1])
+    print(await b.tasks[2])

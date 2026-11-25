@@ -1,0 +1,10 @@
+async def work() -> int:
+    return 1
+
+async def other() -> int:
+    return 5
+
+@main
+async def main():
+    ts = [start other(), start other()]
+    print(await ts[len([work()]) - 1])

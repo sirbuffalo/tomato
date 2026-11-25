@@ -52,7 +52,7 @@ finally:
     lock.release()
 ```
 
-`LockError(RuntimeError)` is the new error (ids E478 and E479 in `std/errors.txt`, following P88's id scheme `[V]` `docs/provisional.md:96`). It is raised by `release()` on a lock that is not held, and by nothing else.
+`LockError(RuntimeError)` is the new error (ids E479 and E480 in `std/errors.txt`, following P88's id scheme `[V]` `docs/provisional.md:96`). It is raised by `release()` on a lock that is not held, and by nothing else.
 
 ### Companions (same wait primitive, same rules)
 

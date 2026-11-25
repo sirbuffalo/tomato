@@ -2254,12 +2254,23 @@ static int cancelled_before_wait(void *me) {
     return 1;
 }
 
+/* 1 when me waiting for h would never end: h is me, or h waits (through awaits, which are recorded at byte 80) for me. A wait for a
+ * task made with start is refused first, and the generated code raises an error instead (tomato_task_wait is not called). */
+int32_t tomato_task_cycle(void *h, void *me) {
+    for (void *x = h; x; x = (void *)(uintptr_t)*(uint64_t *)((char *)x + 80))
+        if (x == me) return 1;
+    return 0;
+}
+
 void tomato_task_wait(void *h, void *me) {
     int pass_on = 0;
     if (((Hdr *)me)->type & F_CANCEL) {
         if (((Hdr *)h)->type & F_INLINE) { ((Hdr *)me)->type &= ~F_CANCEL; pass_on = 1; }    /* D76b: into the call it awaits */
         else { tomato_q_push(me); return; }
     }
+    /* an awaited call runs before its caller waits for it, so the cycle can only close here: in await wait_for(me, 5) the call is
+     * already waiting for me. It is cancelled, which breaks the cycle at once (the caller sees CancelledError from it). */
+    int cycle = (((Hdr *)h)->type & F_INLINE) && tomato_task_cycle(h, me);
     PtrVec *v = *(PtrVec **)((char *)h + 40);
     if (!v) { v = calloc(1, sizeof *v); if (!v) out_of_memory(); *(PtrVec **)((char *)h + 40) = v; }
     if (v->n == v->cap) {
@@ -2270,7 +2281,7 @@ void tomato_task_wait(void *h, void *me) {
     tomato_retain(me);
     v->items[v->n++] = me;
     *(uint64_t *)((char *)me + 80) = (uint64_t)(uintptr_t)h;     /* what it waits for, in case it is cancelled */
-    if (pass_on) tomato_task_cancel(h);
+    if (pass_on || cycle) tomato_task_cancel(h);
 }
 
 void tomato_wake_waiters(void *h) {

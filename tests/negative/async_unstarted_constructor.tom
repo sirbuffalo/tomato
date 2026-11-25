@@ -1,0 +1,19 @@
+class Pair:
+    a: task[int]
+    b: task[int]
+    @init
+    def make(self, a: task[int], b: task[int]):
+        self.a = a
+        self.b = b
+    def first(self) -> task[int]:
+        return self.a
+
+async def work() -> int:
+    return 1
+
+async def other() -> int:
+    return 5
+
+@main
+async def main():
+    print(await Pair(start other(), work()).first())

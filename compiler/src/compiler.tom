@@ -4169,6 +4169,15 @@ class Gen:
         self.br(self.unwind_target())
 
     # ---- expressions
+    # an expression that is not directly under await or start, such as an index: a call of an async function there would make a
+    # task that nothing runs
+    def expr_plain(self, n: Node, expected: str = '') -> Ex:
+        outer_ok = self.async_ok
+        self.async_ok = False
+        r = self.expr(n, expected)
+        self.async_ok = outer_ok
+        return r
+
     def expr(self, n: Node, expected: str = '') -> Ex:
         k = n.kind
         if k == 'Await':
@@ -5131,7 +5140,7 @@ class Gen:
         held_before = len(self.held)
         self.hold(s)                              # a fresh base is freed by the error path if the index expression raises
         if is_dict(s.ty):
-            k = self.expr(val_node(n.fields[1]), dict_key(s.ty))
+            k = self.expr_plain(val_node(n.fields[1]), dict_key(s.ty))
             k = self.want(k, dict_key(s.ty), n.line, 'a dict key')
             self.drop_held(held_before)
             slot = self.dict_find(s, k, [k, s], n.line)
@@ -5161,11 +5170,11 @@ class Gen:
             g = self.mod.find_op(s.ty[1:], 'get')
             if g is None or len(g.ptypes) != 1 or g.ret == '':
                 raise CompileError("'" + s.ty[1:] + "' objects cannot be indexed\nadd a method marked @get that takes the index and returns the item", n.line)
-            gi = self.want(self.expr(val_node(n.fields[1]), g.ptypes[0]), g.ptypes[0], n.line, 'an index')
+            gi = self.want(self.expr_plain(val_node(n.fields[1]), g.ptypes[0]), g.ptypes[0], n.line, 'an index')
             self.drop_held(held_before)
             return self.marker_call(s, g, [gi], n.line)
         if is_list(s.ty):
-            li = self.expr(val_node(n.fields[1]))
+            li = self.expr_plain(val_node(n.fields[1]))
             li = self.want(li, 'int', n.line, 'an index')
             self.drop_held(held_before)
             addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li, [s]), val_node(n.fields[1])), 'int'), [s])
@@ -5182,7 +5191,7 @@ class Gen:
             self.release(s)
             return e
         s = self.want(s, 'str', n.line, 'the value being indexed')
-        i = self.expr(val_node(n.fields[1]))
+        i = self.expr_plain(val_node(n.fields[1]))
         i = self.want(i, 'int', n.line, 'an index')
         self.drop_held(held_before)
         r = self.tmp('ch')
@@ -5744,6 +5753,7 @@ class Gen:
         if f.kind == 'Index' and val_node(f.fields[0]).kind == 'Name' and val_node(f.fields[0]).fields[0].text not in self.slots and self.mod.resolve(val_node(f.fields[0]).fields[0].text) in self.mod.generics:
             return self.explicit_call(self.mod.resolve(val_node(f.fields[0]).fields[0].text), n, f, val_nodes(n.fields[1]))
         if f.kind == 'Index' or f.kind == 'Call':
+            self.async_ok = False
             self.kw = n.fields[2].items
             callee = self.expr(f)
             if is_fn(callee.ty):
@@ -5757,8 +5767,11 @@ class Gen:
             raise CompileError(f"'{name}' does not take keyword arguments", n.line)
         args = val_nodes(n.fields[1])
         if name in self.slots and is_fn(self.types[name]):
+            self.async_ok = False
             self.kw = n.fields[2].items
             return self.call_value(self.expr(f), args, n.line, "the function value '" + name + "'")
+        if self.mod.resolve(name) == '' and name not in self.slots:
+            self.async_ok = False       # builtins are plain calls; their arguments are not awaited
         if name == 'print':
             if not statement:
                 raise CompileError("print() gives no value, so it cannot be used inside an expression", n.line)
@@ -5842,6 +5855,7 @@ class Gen:
         if key in self.mod.generics:
             return self.generic_call(key, n, args)
         if self.mod.has_class(key):
+            self.async_ok = False       # constructors are plain calls
             if len(n.fields[2].items) > 0:
                 raise CompileError('keyword arguments are not supported when creating an object\npass the arguments by position', n.line)
             return self.construct(self.mod.find_class(key, n.line), args, n.line)
@@ -6373,6 +6387,7 @@ class Gen:
 
     # call a function value: the callee only borrows its arguments, like any call
     def call_value(self, fv: Ex, args: list[Node], line: int, what: str) -> Ex:
+        self.async_ok = False
         if len(self.kw) > 0:
             self.kw = []
             raise CompileError('a function value does not take keyword arguments\npass the arguments by position', line)
@@ -6645,11 +6660,14 @@ class Gen:
         recv = val_node(f.fields[0])
         kw = self.kw                          # the receiver may itself be a call, which would take these keyword arguments as its own
         self.kw = []
+        outer_ok = self.async_ok
+        self.async_ok = False
         if recv.kind == 'Name' and recv.fields[0].text in self.slots and self.borrowable_receiver(self.types[recv.fields[0].text], name):
             obj = self.unwrap(self.expr_b(recv, args), n.line)
         else:
             obj = self.unwrap(self.expr(recv), n.line)
         self.kw = kw
+        self.async_ok = outer_ok if is_class(obj.ty) or is_iface(obj.ty) else False
         return self.method_on(obj, n, name, args)
 
     def method_on(self, obj: Ex, n: Node, name: str, args: list[Node]) -> Ex:
@@ -7177,6 +7195,14 @@ class Gen:
         self.br(self.unwind_target())
         self.place(ok)
 
+    def cycle_check(self, h: str):
+        # a task that waits for itself, or for a task that is waiting for it, would never wake: it raises instead of waiting
+        cyc = self.tmp('cycle')
+        self.emit(f'{cyc} = call i32 @tomato_task_cycle(ptr {h}, ptr %frame)')
+        bad = self.tmp('iscycle')
+        self.emit(f'{bad} = icmp ne i32 {cyc}, 0')
+        self.fail_with(bad, 'RuntimeError', 'a task cannot wait for itself, so this wait would never end')
+
     def await_handle(self, holder: str, result: str, inline: bool) -> Ex:
         # the task in the slot `holder` (owned): wait until it is done, then take its result, or raise its error. When only this
         # task waits on it (await f(...)), a cancel reaches that call itself (D76b); one that comes after it finished must not
@@ -7198,6 +7224,8 @@ class Gen:
         self.emit(f'{done} = icmp ne i64 {st}, 0')
         self.cond_br(done, take, wait)
         self.place(wait)
+        if not inline:
+            self.cycle_check(h)
         self.emit(f'call void @tomato_task_wait(ptr {h}, ptr %frame)')
         self.suspend_here(not inline)
         self.br(chk)
@@ -7333,6 +7361,7 @@ class Gen:
         self.emit(f'{done} = icmp ne i64 {st}, 0')
         self.cond_br(done, end, wait)
         self.place(wait)
+        self.cycle_check(h)
         self.emit(f'call void @tomato_task_wait(ptr {h}, ptr %frame)')
         self.suspend_here()
         self.br(chk)
@@ -7416,13 +7445,10 @@ class Gen:
         inner = val_node(n.fields[0])
         if inner.kind != 'Call':
             raise CompileError("'start' needs a call of an async function, such as start work()", n.line)
-        # a start can be an argument of the call an await or start is about to make (await gather([start f()])), so the
-        # permission of that call is given back afterwards
-        outer_ok = self.async_ok
         self.async_ok = True
         self.fresh_frame = False
         t = self.expr(inner)
-        self.async_ok = outer_ok
+        self.async_ok = False           # the start used it: another call beside it, as in [start f(), g()][0], has none
         if not is_task(t.ty) or not self.fresh_frame or t.reg != self.fresh_reg:
             raise CompileError("'start' needs a call of an async function, such as start work()", n.line)
         self.fresh_frame = False
@@ -7500,6 +7526,7 @@ class Gen:
         self.emit(f'{fin} = icmp ne i64 {st}, 0')
         self.cond_br(fin, end, wait)
         self.place(wait)
+        self.cycle_check(h)
         self.emit(f'call void @tomato_task_wait(ptr {h}, ptr %frame)')
         self.suspend_here()
         self.br(head)
@@ -8565,7 +8592,7 @@ class Gen:
                 self.facts = after
         elif k == 'AsyncFor':
             self.async_for(s)
-        elif k == 'Yield' and self.is_async:
+        elif k == 'Yield' and self.is_async and self.gen_n == 0:
             self.async_yield(s)
         elif k == 'Yield':
             self.yield_stmt(s)
@@ -8727,15 +8754,15 @@ class Gen:
         # an error is leaving the statement: park it while the finally block runs, then keep propagating
         self.place(info.prop_l)
         if info.has_final:
-            hold = self.tmp('hold')
-            self.make_slot(hold, 'File')
+            hold = self.hidden_rc_slot('hold')
             held = self.tmp('pending')
             self.emit(f'{held} = load ptr, ptr @tomato_exc')
-            self.emit(f'store ptr {held}, ptr {hold}')
+            self.store_owned(hold, ex(held, '@Error'))
             self.emit('store ptr null, ptr @tomato_exc')
             self.block(info.final)
             back = self.tmp('back')
             self.emit(f'{back} = load ptr, ptr {hold}')
+            self.emit(f'store ptr null, ptr {hold}')
             self.emit(f'store ptr {back}, ptr @tomato_exc')
         self.br(self.unwind_target())
         self.place(end_l)
@@ -11137,6 +11164,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare void @tomato_input_wait(ptr, ptr)\n'
     d += 'declare i32 @tomato_sched_idle()\n'
     d += 'declare void @tomato_task_wait(ptr, ptr)\n'
+    d += 'declare i32 @tomato_task_cycle(ptr, ptr)\n'
     d += 'declare void @tomato_task_retrieved(ptr)\n'
     d += 'declare i32 @tomato_task_cancelled(ptr)\n'
     d += 'declare void @tomato_task_cancel(ptr)\n'

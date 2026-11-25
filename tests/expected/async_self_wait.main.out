@@ -1,0 +1,7 @@
+await: a task cannot wait for itself, so this wait would never end
+wait_for: the task was cancelled
+gather: the task was cancelled
+1
+first: a task cannot wait for itself, so this wait would never end
+3
+3

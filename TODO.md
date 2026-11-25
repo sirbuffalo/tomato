@@ -8,8 +8,6 @@
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
 - Use `epoll`/`kqueue` for descriptor waits
   With 4,000 idle sockets a round trip takes about 20 ms, because `poll` itself is slow.
-- Fix small async bugs found in the sockets reviews
-  An error raised in a `finally` that replaces another leaks the first one; un-started async calls are accepted in some positions and never run; a generator cannot be used in an async function; a task that calls `wait_for` on itself deadlocks.
 - Re-measure the full tier on a quiet biggie (load below 32) with `-j 64` and put the real number in tests/README.md
   The test-suite speed-up was measured only at load 70-120 (full tier 125-267 s wall, 2,464-3,849 CPU s), so the one-minute target is not demonstrated. Run `tests/run.sh --times -j 64` when biggie is quiet and record wall, CPU and load.
 - Confirm the split bootstrap build on the Mac

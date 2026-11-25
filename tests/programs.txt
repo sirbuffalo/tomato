@@ -168,3 +168,5 @@ float_length
 tuple_compare
 chained_keywords
 int_keyed_dict
+async_finally_generator
+async_self_wait

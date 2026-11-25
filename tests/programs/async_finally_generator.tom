@@ -1,0 +1,20 @@
+def numbers(n: int) -> int:
+    for i in range(n):
+        yield i
+
+async def exercise():
+    for x in numbers(3):
+        await sleep(0)
+        print(x)
+    try:
+        try:
+            raise Error('first')
+        finally:
+            await sleep(0)
+            raise Error('second')
+    catch Error as e:
+        print(e.message)
+
+@main
+async def main():
+    await exercise()

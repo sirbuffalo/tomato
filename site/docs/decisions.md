@@ -1680,6 +1680,13 @@ The earlier public decision page, its password-protected chat and the chat bridg
 - A socket call that does not need to wait still lets other tasks and timers run once in 16 calls, so a peer that is always ready cannot keep them waiting. `listen` uses the first address of the name that can be used. Waiting for a line of input (D50a) is part of the same wait, so sockets and timeouts keep running while a line is incomplete (native only; the browser still asks for input synchronously).
 - At acceptance: name lookup blocked every task; UDP and public `getaddrinfo` were deferred. D76d adds them. No TLS or destructors; a socket nobody closes stays open until the program ends.
 
+### D76d — small async fixes from the sockets reviews: accepted
+
+- An error raised in a `finally` block that replaces the error being passed on no longer leaks the first one: the parked error is held in a reference-counted slot and released when the second takes over.
+- A generator (`yield` in a plain function) can be used by a `for` loop inside an async function; `yield` in an async function still means a status for the task's reader, but not inside a generator.
+- An async call that is not the one being awaited or started is no longer accepted where nothing would run it: a second call beside a `start` (`await [start f(), g()][0]`), an index (`await ts[len([g()]) - 1]`), an argument of a constructor, builtin or function value. It says `'g' is async, so it must be awaited or started`. The call that is the awaited value itself (`await [g()][0]`, `await f()`) still works.
+- A task that waits for itself, or for a task that waits for it, raises `RuntimeError` ("a task cannot wait for itself, so this wait would never end") at the wait instead of waiting for ever. A wait through an awaited call (`await wait_for(me, 5)`) is found when the caller registers its wait, and the call is cancelled, so the caller sees `CancelledError` at once. Implementation: `tomato_task_cycle` follows the "waiting for" word of each frame.
+
 ### D77a — arbitrary-size `float`, and `float[length=64]` for the plain double: accepted (stage 1 built)
 
 - Evidence: Davis approved `docs/bigfloat-design.md` with all of its recommended answers: converting a huge `int` to `float` must not overflow, and **float exponents are arbitrary size**.

@@ -245,10 +245,10 @@ export class Lock:
 
     def release(self):
         if not self.held:
-            raise LockError('cannot release an unlocked lock', 'E478')
+            raise LockError('cannot release an unlocked lock', 'E479')
         if len(self.line.claims) > 0:
             # the lock was handed to a waiter that has not run yet, so no task holds it that could release it
-            raise LockError('cannot release a lock that was already handed to a waiting task', 'E480')
+            raise LockError('cannot release a lock that was already handed to a waiting task', 'E481')
         self.taken_at[0] = 0         # the next holder sets it when it runs; until then no line is better than the old holder's
         if not self.line.wake():
             self.held = False
@@ -261,7 +261,7 @@ export class Semaphore:
     @init
     def make(self, value: int = 1):
         if value < 0:
-            raise ValueError('a Semaphore value cannot be negative', 'E475')
+            raise ValueError('a Semaphore value cannot be negative', 'E476')
         self.limit = value
 
     def locked(self) -> bool:
@@ -287,7 +287,7 @@ export class Semaphore:
 
     def release(self):
         if self.held == 0:
-            raise LockError('cannot release a semaphore above its initial value', 'E479')
+            raise LockError('cannot release a semaphore above its initial value', 'E480')
         self.held -= 1
         self.line.wake()
 
