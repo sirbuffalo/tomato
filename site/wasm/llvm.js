@@ -498,6 +498,8 @@
     }
     if (name === "llvm.floor.f64") return Math.floor(vals[0]);
     if (name === "llvm.pow.f64") return Math.pow(vals[0], vals[1]);
+    if (name === "llvm.fabs.f64") return Math.abs(vals[0]);
+    if (name === "llvm.sqrt.f64") return Math.sqrt(vals[0]);   // (the fast copy of a loop nest; JavaScript's square root is the correctly rounded one too)
     if (name === "llvm.assume") return undefined;
     if (name === "llvm.trap") throw new Error("the program trapped");
     if (name === "printf") return this.printf(vals);

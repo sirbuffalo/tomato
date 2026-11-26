@@ -1,0 +1,207 @@
+# Float loops in the fast copy of a loop nest (release mode; docs/bigfloat-design.md, stage 5). The fast copy holds every float
+# variable of the nest as a finite double and leaves for the general copy when a result would need a box (too large, or too small
+# to be sure of), when a float it reads from a field, a list or a call is a box, or for an error; the general copy then does the
+# statement again with floats of any size. tests/run.sh runs this in debug mode and in release mode (with AddressSanitizer and
+# the leak check), and both must print the same: what the compiler printed before it had the fast copy (stage 3, whose float
+# operations float_any_size checks against exact arithmetic). two_terms also compares each chain with the same operations done
+# one at a time. main() only calls run(), so that a release program holds nothing at its end.
+from math import sqrt
+
+class P:
+    x: float
+    v: float
+
+    @init
+    def make(self, x: float, v: float):
+        self.x = x
+        self.v = v
+
+def walk(steps: int, f: float) -> list[float]:
+    # x crosses the edge of the double range and the sums come back inside it
+    x = 1.0
+    back = 0.0
+    out: list[float] = []
+    for i in range(steps):
+        x = x * f
+        back = back + x / f / f
+        if i % 2 == 1:
+            out.append(x)
+    out.append(back)
+    return out
+
+def mandel(cr: float, ci: float) -> int:
+    zr = 0.0
+    zi = 0.0
+    i = 0
+    while i < 50 and zr * zr + zi * zi <= 4.0:
+        t = zr * zr - zi * zi + cr
+        zi = 2.0 * zr * zi + ci
+        zr = t
+        i += 1
+    return i
+
+def lcg(s: int) -> int:
+    return (s * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+
+def two_terms(n: int) -> list[int]:
+    # products near the bottom of the double range, in chains and one operation at a time: they must agree (the two-term rule)
+    seed = 12345
+    wrong = 0
+    lost = 0
+    small = 0
+    check = 0.0
+    for k in range(n):
+        seed = lcg(seed)
+        a = 1.0 + float(seed % 1000003) / 1000003.0
+        seed = lcg(seed)
+        b = (1.0 + float(seed % 999983) / 999983.0) * 2.0 ** (0 - 1030 - seed % 40)
+        seed = lcg(seed)
+        c = (1.0 + float(seed % 1000033) / 1000033.0) * 2.0 ** (0 - 930 - seed % 140)
+        seed = lcg(seed)
+        d = (1.0 + float(seed % 999979) / 999979.0) * 2.0 ** (0 - 1 - seed % 4)
+        if seed % 3 == 0:
+            c = 0.0 - c
+        if seed % 7 == 0:
+            b = 0.0
+        r1 = a * b + c
+        p = a * b
+        r2 = p + c
+        r3 = a * b - c * d
+        q = c * d
+        r4 = p - q
+        r5 = (a * b - c * d) + c
+        r6 = r4 + c
+        if r1 != r2 or r3 != r4 or r5 != r6:
+            wrong += 1
+        if p != 0.0 and p < 2.0 ** -1022:
+            lost += 1                     # (the double product lost digits)
+        if r1 < 2.0 ** -960 and r1 > 0.0 - 2.0 ** -960:
+            small += 1                    # (below the two-term test)
+        check = check + r1 * 2.0 ** 1000 + r4 * 2.0 ** 1040
+    return [wrong, lost, small, int(check * 2.0 ** 70)]
+
+def fields(ps: list[P], times: int) -> float:
+    total = 0.0
+    for t in range(times):
+        for i in range(len(ps)):
+            p = ps[i]
+            p.x = p.x * 0.5 + p.v
+            p.v = p.v - p.x * 1e-3
+            total = total + p.x * p.v
+    return total
+
+def overwrite(ps: list[P]):
+    # a field that holds a box is written over in the fast copy: the box must be freed (the leak check would say so)
+    for i in range(len(ps)):
+        ps[i].x = 3.0
+        ps[i].v = ps[i].v * 1e-300 * 1e-300
+
+def items(xs: list[float], times: int) -> float:
+    s = 0.0
+    for t in range(times):
+        for i in range(len(xs)):
+            s = s + xs[i] * 2.0
+            xs[i] = xs[i] * 0.5
+    return s
+
+def roots(xs: list[float]) -> float:
+    t = 0.0
+    for i in range(len(xs)):
+        t += sqrt(xs[i]) + sqrt(i)
+    return t
+
+def quotients(xs: list[float]) -> float:
+    t = 1.0
+    for i in range(len(xs)):
+        t = t + 1.0 / xs[i]
+    return t
+
+def exact_compare() -> int:
+    # a float against an int above 2^53 is compared exactly (the int is not rounded first)
+    x = 9007199254740988.0
+    k = 0
+    while x < 9007199254740993:
+        x = x + 2.0
+        k += 1
+    return k
+
+def counted(x: float) -> float:
+    print('counted', x)
+    return x * 1e200
+
+def mixed(n: int) -> list[float]:
+    x = 0.5
+    y = 0.0
+    z = 0.0
+    for i in range(n):
+        x = 0.0 - x * 1.5 + i
+        y = y + 2.0 * i / n - x / 3
+        if i == 3:
+            z = counted(y)
+        z = z * 1e100
+        y = -y
+    return [x, y, z]
+
+def first_over(limit: float) -> float:
+    x = 1.0
+    while True:
+        x = x * 3.0
+        if x > limit:
+            return x
+
+def stopped() -> list[float]:
+    x = 1.0
+    y = 0.0
+    for i in range(100):
+        x = x * 2.0
+        y = y + x
+        if y > 1e3:
+            break
+    return [x, y]
+
+def signs() -> list[float]:
+    a = 0.0
+    b = 0.0
+    c = 0.0
+    for i in range(3):
+        a = -0.0 * (i + 1.0)
+        b = (0.0 - 2.0) * a
+        c = a * a - b * b + a
+    return [a, b, c, 1.0 / (1e300 * 1e10)]
+
+def run():
+    print(walk(8, 1e100))
+    print(walk(8, 1e-100))
+    print(walk(3, 1e300))
+    print([mandel(-0.75, 0.0), mandel(0.0, 0.0), mandel(0.3, 0.5), mandel(-2.0, 0.0), mandel(0.25, 0.0), mandel(1.0, 1.0)])
+    print(two_terms(4000))
+    ps = [P(1.0, 2.0), P(1e400, 2.0), P(1e-400, 1e-300), P(-3.0, 1e300 * 1e300)]
+    print(fields(ps, 3))
+    print(ps[0].x, ps[1].x, ps[2].x, ps[3].v)
+    overwrite(ps)
+    print(ps[0].x, ps[1].v, ps[2].v, ps[3].x)
+    xs = [1.0, 1e400, 2.0, 1e-400, 0.0 - 1e300 * 1e300]
+    print(items(xs, 2), xs)
+    print(roots([4.0, 9.0, 2.0]))
+    try:
+        print(roots([4.0, 9.0, -1.0]))
+    catch ValueError as e:
+        print('ValueError:', e.message)
+    try:
+        print(roots([4.0, 1e400]))
+    catch OverflowError as e:
+        print('OverflowError:', e.message)
+    print(quotients([2.0, 4.0, 1e400, 1e-400]))
+    try:
+        print(quotients([2.0, 0.0]))
+    catch ZeroDivisionError as e:
+        print('ZeroDivisionError:', e.message)
+    print(exact_compare())
+    print(mixed(8))
+    print(first_over(1e5), first_over(1e400))
+    print(stopped())
+    print(signs())
+
+@main
+def main():
+    run()

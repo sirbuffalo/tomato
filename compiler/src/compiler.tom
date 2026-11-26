@@ -263,6 +263,14 @@ def float_lit_plain(mantissa: int, scale: int) -> bool:
     mag = digits - scale            # the value is at least 10^(mag-1) and below 10^mag
     return mantissa == 0 or (digits <= 17 and mag <= 308 and mag - 1 >= -307)
 
+def literal_far(n: Node) -> bool:
+    # a float literal that is a double of at least 1e-281 (so far above 2^-1022 * 2^64), not 0
+    if n.kind != 'FloatLit':
+        return False
+    m = n.fields[0].num
+    sc = n.fields[1].num
+    return m != 0 and float_lit_plain(m, sc) and len(str(m)) - sc - 1 >= -281
+
 def float_lit_pow2(mantissa: int, scale: int) -> bool:
     # is the float literal a power of two that is at least 1? A product with it is exact (it can only overflow). A literal with a
     # positive decimal exponent (1e5) has a factor 5, so it is none.
@@ -513,6 +521,7 @@ class Ex:
     ty: str = ''
     fresh: bool = False       # an int or float that the code holding it owns (it frees it or moves it into a place that keeps it), not one borrowed from a variable
     small: bool = False       # an int known to be in the small form, or a float known to be a plain double: it owns nothing
+    fin: bool = False         # a float known to be a finite double (so also small): no box, no infinity, no NaN
     list_name: str = ''     # the local list this was read from, when its length and data are kept in registers (see keep_lists)
 
 def ex(reg: str, ty: str) -> Ex:
@@ -525,6 +534,13 @@ def exf(reg: str, ty: str) -> Ex:
     # an owned value: a number that nobody else holds (the result of arithmetic or of a call)
     e = ex(reg, ty)
     e.fresh = True
+    return e
+
+def exfin(reg: str) -> Ex:
+    # a float that is a finite double: it owns nothing
+    e = ex(reg, 'float')
+    e.small = True
+    e.fin = True
     return e
 
 def exs(reg: str, ty: str) -> Ex:
@@ -659,9 +675,12 @@ def val_has_comp(v: Val) -> bool:
 # of a function. A local with no entry may hold anything, including the word 0 of a slot nothing has written yet: only a
 # local last assigned an int that the program computed (a literal, arithmetic, a range loop's variable) gets an entry, and
 # refining a local by a condition never creates one, so an entry inside the small range always means a tagged small int.
-# A float local can have an entry too (fl is True): its value is then certainly finite (no infinity, no NaN) and lies in the
-# interval, whose bounds are whole numbers rounded outwards (see frng). A bound at FLOAT_INF or beyond, on either side, means
-# only "finite". The real bound is 2^1024; the cap is far below it, so a result inside the cap needs no finite check.
+# A float local can have an entry too (fl is True): its value, whatever form it has (a double or a box), lies in the interval,
+# whose bounds are whole numbers rounded outwards (see frng); an entry means the local was last assigned a number the program
+# computed, so it is never a NaN. A bound at FLOAT_INF or beyond, on either side, means no bound. The largest double is near
+# 2^1024; the cap is far below it, so in the fast copy of a loop nest, where every float is a double, a result inside the cap
+# needs no test for being too large (see fast_bounded). Nothing bounds a float away from 0, so the test for a result too small
+# to be sure of stays.
 const RANGE_INF = 18446744073709551616
 const SMALL_LO = -4611686018427387904
 const SMALL_HI = 4611686018427387903
@@ -2307,6 +2326,9 @@ class Gen:
     int_slots: list[str] = []     # the places that own an int (a big number in one is freed with the function)
     float_slots: list[str] = []   # the places that own a float (a boxed one is freed with the function)
     chain_checks: list[str] = []  # while a float chain is compiled (bf_chain): the tests of its products, which must all hold
+    chain_prods: list[list[str]] = []     # and each of its products that can lose digits: [product, factor, factor] (doubles)
+    raw_float: bool = False       # the field or list item being compiled is a leaf of a chain in the fast copy (see raw_read)
+    chain_raw: list[str] = []     # the fields (local.field) that chains have read that way
     no_chain: int = 0             # above 0 while the general copy of a float chain is compiled: no chain starts inside it
     assigned: list[str] = []      # the names of variables that are written (a name given to slot()) after the parameters were set up
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
@@ -2320,6 +2342,9 @@ class Gen:
     nest_fast: bool = False      # its fast copy is being compiled
     nest_off: bool = False       # inside a statement that a nest compiles whole: no new nest starts there
     nest_names: list[str] = []   # the int variables that are small all through the fast copy
+    nest_floats: list[str] = []  # the float variables that are finite doubles all through the fast copy
+    nest_shadow: dict[str, str] = {}     # for each, the slot of type double that holds it in the fast copy (see shadow_out)
+    nest_outs: dict[str, str] = {}       # the labels of the general copy that the fast copy goes to: the label that goes there
     nest_count: int = 0          # the statements of the fast copy that were compiled as such
     nest_slots: dict[str, str] = {}      # the hidden slots of its loops, which both copies use
     nest_keeps: dict[str, list[str]] = {}    # the lists whose length and data each of its loops keeps
@@ -2440,6 +2465,48 @@ class Gen:
         self.emit(f'{c} = icmp eq i64 {bit}, 0')
         self.bail_if(c, live + [e] if e.fresh else live)
         return exs(e.reg, 'int')
+
+    def fast_sqrt(self, arg: Node) -> Ex:
+        # math.sqrt in the fast copy of a loop nest: the hardware's square root of a finite double that is not negative is the
+        # answer (correctly rounded, never too large or too small); a negative one leaves for the general copy, which raises
+        x = self.need_fin(self.bf_word(self.expr(arg)))
+        d = self.bf_double(x.reg)
+        neg = self.tmp('fneg')
+        self.emit(f'{neg} = fcmp olt double {d}, 0.0')
+        self.bail_if(neg)
+        self.mod.declare('declare double @llvm.sqrt.f64(double)')
+        r = self.tmp('sqrt')
+        self.emit(f'{r} = call double @llvm.sqrt.f64(double {d})')
+        return exfin(self.bf_plain(r).reg)
+
+    def raw_read(self, addr: str) -> Ex:
+        # a float word read in place, unchecked, for a leaf of a chain in the fast copy of a loop nest (see chain_value): it is
+        # loaded as a double (one move fewer), and a box (a NaN) or an infinity in it makes the chain fail its tests
+        d = self.tmp('raw')
+        self.emit(f'{d} = load double, ptr {addr}')
+        w = self.tmp('raw')
+        self.emit(f'{w} = bitcast double {d} to i64')
+        return ex(w, 'float')
+
+    def need_fin(self, e: Ex, live: list[Ex] = []) -> Ex:
+        # in the fast copy of a loop nest every float is a finite double; one that may not be (from a list, a field, a call, or a
+        # box) leaves it
+        if self.bail == '' or e.ty != 'float' or e.fin:
+            return e
+        x = self.arith('and', e.reg, '9218868437227405312')
+        c = self.tmp('notfin')
+        self.emit(f'{c} = icmp eq i64 {x}, 9218868437227405312')
+        self.bail_if(c, live + [e] if e.fresh else live)
+        return exfin(e.reg)
+
+    def old_is_plain(self, addr: str, live: list[Ex]) -> bool:
+        # in the fast copy of a loop nest, a float place that is about to be overwritten must hold a plain double (it frees nothing)
+        if self.bail == '':
+            return False
+        old = self.tmp('was')
+        self.emit(f'{old} = load i64, ptr {addr}')
+        self.bail_if(self.bf_boxed(old), live)
+        return True
 
     def unwind_target(self) -> str:
         # where an error raised here goes: the innermost try's catch (or its finally once past the body), else out of
@@ -3232,6 +3299,12 @@ class Gen:
         self.emit(f'{r} = {op} i64 {a}, {b}')
         return r
 
+    def bit_op(self, op: str, a: str, b: str) -> str:
+        # and, or of two i1
+        r = self.tmp('t')
+        self.emit(f'{r} = {op} i1 {a}, {b}')
+        return r
+
     def icmp(self, cc: str, a: str, b: str) -> Ex:
         c = self.tmp('cmp')
         self.emit(f'{c} = icmp {cc} i64 {a}, {b}')
@@ -4010,10 +4083,10 @@ class Gen:
                 self.emit(f'{r} = call i64 @tomato_bf_from_int(i64 {e.reg}, i32 {m})')
                 e.fresh = False
                 return exf(r, 'float')
-            return self.bf_plain(d)
+            return exfin(self.bf_plain(d).reg)        # (below 2^63: a finite double)
         op = 'sitofp' if is_signed(e.ty) else 'uitofp'
         self.emit(f'{d} = {op} {llvm_type(e.ty)} {e.reg} to double')
-        return self.bf_plain(d)
+        return exfin(self.bf_plain(d).reg)
 
     def bf_mask(self, x: Ex, y: Ex) -> str:
         # which operands a tomato_bf_ function frees: those this code owns and that may hold a box
@@ -4027,18 +4100,38 @@ class Gen:
     def bf_finite_check(self, x: Ex, y: Ex):
         # a word that is no box and no finite double (an infinity or NaN that MessagePack carried in) stops the operation, as an
         # infinite double always did (E13)
+        if x.fin and y.fin:
+            return
         bad = self.tmp('fnonfinite')
         c = self.tmp('fnf')
         self.emit(f'{c} = call i32 @tomato_bf_nonfinite(i64 {x.reg}, i64 {y.reg})')
         self.emit(f'{bad} = icmp ne i32 {c}, 0')
         self.fail_if(bad, 'the float result is infinite or not a number', [x, y])
 
-    def bf_join(self, bad: str, fast_word: str, slow_call: str, used: list[Ex], guard: bool = True) -> Ex:
-        # fast_word when bad is false, else the result of slow_call (which frees the operands in used)
+    def bf_join(self, bad: str, fast_word: str, slow_call: str, used: list[Ex], guard: bool = True, d: str = '', zeros: list[str] = [], divisor: str = '') -> Ex:
+        # fast_word when bad is false, else the result of slow_call (which frees the operands in used). With zeros: fast_word too
+        # when one of those doubles is 0 and the result d (and the divisor, which may be an infinity that MessagePack carried in) is
+        # finite: an exact 0 from a product or quotient
         fast = self.label('bffast')
         slow = self.label('bfslow')
         join = self.label('bfjoin')
-        self.cold_br(bad, slow, fast)
+        if len(zeros) > 0:
+            check = self.label('bfzero')
+            self.cold_br(bad, check, fast)
+            self.place(check)
+            acc = ''
+            for z in zeros:
+                c = self.tmp('fz')
+                self.emit(f'{c} = fcmp oeq double {z}, 0.0')
+                acc = c if acc == '' else self.bit_op('or', acc, c)
+            fine = self.bit_op('and', acc, self.f_range(d, 0, 9218868437227405312, 'cfin'))
+            if divisor != '':
+                fine = self.bit_op('and', fine, self.f_range(divisor, 0, 9218868437227405312, 'cfin'))
+            lost = self.tmp('flost')
+            self.emit(f'{lost} = xor i1 {fine}, true')
+            self.cold_br(lost, slow, fast)
+        else:
+            self.cold_br(bad, slow, fast)
         self.place(fast)
         self.br(join)
         self.place(slow)
@@ -4073,7 +4166,34 @@ class Gen:
             self.emit(f'{bad} = icmp uge i64 {mag}, 9218868437227405312')
         return bits, bad
 
-    def bf_arith(self, op: str, x: Ex, y: Ex) -> Ex:
+    # In the fast copy of a loop nest (self.bail is set) a float is a finite double. An operation there has no slow path: a result
+    # that is not final leaves the fast copy for the same statement of the general copy, which does it again with boxes.
+    def fast_unfinal(self, bad: str, zeros: list[str]):
+        # leave the fast copy when bad, unless one of the doubles in zeros is 0: a product or quotient that is 0 because a factor
+        # (the dividend) is 0 is exact, and needs no box (mandelbrot starts every point at 0.0)
+        if len(zeros) == 0:
+            self.bail_if(bad)
+            return
+        zero = self.label('fzero')
+        go = self.label('fgo')
+        self.cold_br(bad, zero, go)
+        self.place(zero)
+        acc = ''
+        for z in zeros:
+            c = self.tmp('fz')
+            self.emit(f'{c} = fcmp oeq double {z}, 0.0')
+            acc = c if acc == '' else self.bit_op('or', acc, c)
+        lost = self.tmp('flost')
+        self.emit(f'{lost} = xor i1 {acc}, true')
+        self.bail_if(lost)
+        self.br(go)
+        self.place(go)
+
+    def bf_arith(self, op: str, x: Ex, y: Ex, bounded: bool = False) -> Ex:
+        # bounded: in the fast copy of a loop nest, the result is known to lie in a bounded interval (see fast_bounded)
+        if self.bail != '':
+            x = self.need_fin(x, [y])
+            y = self.need_fin(y, [x])
         xd = self.bf_double(x.reg)
         yd = self.bf_double(y.reg)
         ins = 'fadd'
@@ -4086,11 +4206,26 @@ class Gen:
             name = 'mul'
         r = self.tmp('f')
         self.emit(f'{r} = {ins} double {xd}, {yd}')
+        if self.bail != '' and bounded:
+            bits0 = self.tmp('fbits')
+            self.emit(f'{bits0} = bitcast double {r} to i64')
+            if op == '*':
+                lost0 = self.tmp('flost')
+                self.emit(f'{lost0} = xor i1 {self.f_above(r, "0x0010000000000000", True, "fok")}, true')
+                self.fast_unfinal(lost0, [xd, yd])
+            return exfin(bits0)
         bits, bad = self.bf_unfinal(r, op == '*')
+        if self.bail != '':
+            self.fast_unfinal(bad, [xd, yd] if op == '*' else [])
+            return exfin(bits)
         m = self.bf_mask(x, y)
-        return self.bf_join(bad, bits, f'call i64 @tomato_bf_{name}(i64 {x.reg}, i64 {y.reg}, i32 {m})', [x, y])
+        return self.bf_join(bad, bits, f'call i64 @tomato_bf_{name}(i64 {x.reg}, i64 {y.reg}, i32 {m})', [x, y], True, r, [xd, yd] if op == '*' else [])
 
-    def bf_divide(self, x: Ex, y: Ex, message: str = 'division by zero') -> Ex:
+    def bf_divide(self, x: Ex, y: Ex, message: str = 'division by zero', bounded: bool = False, known: bool = False) -> Ex:
+        # known: the quotient of two finite doubles is known to be a normal double (see bf_op)
+        if self.bail != '':
+            x = self.need_fin(x, [y])
+            y = self.need_fin(y, [x])
         yd = self.bf_double(y.reg)
         zero = self.tmp('fzero')
         self.emit(f'{zero} = fcmp oeq double {yd}, 0.0')
@@ -4098,9 +4233,21 @@ class Gen:
         xd = self.bf_double(x.reg)
         r = self.tmp('f')
         self.emit(f'{r} = fdiv double {xd}, {yd}')
+        if known and x.fin:
+            return exfin(self.bf_plain(r).reg)
+        if self.bail != '' and bounded:
+            bits0 = self.tmp('fbits')
+            self.emit(f'{bits0} = bitcast double {r} to i64')
+            lost0 = self.tmp('flost')
+            self.emit(f'{lost0} = xor i1 {self.f_above(r, "0x0010000000000000", True, "fok")}, true')
+            self.fast_unfinal(lost0, [xd])
+            return exfin(bits0)
         bits, bad = self.bf_unfinal(r, True)
+        if self.bail != '':
+            self.fast_unfinal(bad, [xd])
+            return exfin(bits)
         m = self.bf_mask(x, y)
-        return self.bf_join(bad, bits, f'call i64 @tomato_bf_div(i64 {x.reg}, i64 {y.reg}, i32 {m})', [x, y])
+        return self.bf_join(bad, bits, f'call i64 @tomato_bf_div(i64 {x.reg}, i64 {y.reg}, i32 {m})', [x, y], True, r, [xd], yd)
 
     def bf_call2(self, name: str, x: Ex, y: Ex) -> Ex:
         # an operation that always goes to the runtime
@@ -4113,6 +4260,12 @@ class Gen:
 
     def bf_negate(self, x: Ex) -> Ex:
         # a plain double is negated by flipping its sign bit; a box goes to the runtime (the sign bit of its word is not its sign)
+        if self.bail != '':
+            x = self.need_fin(x)
+        if x.fin:
+            flip = self.tmp('fneg')
+            self.emit(f'{flip} = xor i64 {x.reg}, -9223372036854775808')
+            return exfin(flip)
         top = self.tmp('ftop')
         self.emit(f'{top} = lshr i64 {x.reg}, 51')
         boxed = self.tmp('fboxed')
@@ -4122,49 +4275,95 @@ class Gen:
         m = '1' if x.fresh and not x.small and not small_text(x.reg) else '0'
         return self.bf_join(boxed, flipped, f'call i64 @tomato_bf_neg(i64 {x.reg}, i32 {m})', [x], False)
 
-    # A chain of float + - * over variables and plain literals (a * b - c * d + e) is worked out on doubles with one test at the
-    # end: the result is finite and every product is above 2^-1022 (a product by a power of two that is at least 1 is exact, so
-    # it needs no test). A box is a NaN, so it makes the result fail the test; infinity and NaN stay so through + - *; a product
-    # that lost digits is tested where it is made. When the test fails, the whole chain is done again with the runtime's
-    # functions, one operation at a time: the leaves are plain reads, so doing them twice changes nothing.
+    # A chain of float + - * (a * b - c * d + e) is worked out on doubles with a few tests, and done again with the runtime's
+    # functions, one operation at a time, when a test fails. Its leaves are variables and plain literals, which can be read twice;
+    # in the fast copy of a loop nest, which leaves for the general copy instead of doing anything again, a leaf is any float or
+    # int expression. A box is a NaN, so it makes the result fail the tests; infinity and NaN stay so through + - *.
+    # The tests (docs/bigfloat-design.md, "Tiny numbers"): a product is right when it is above 2^-1022 (or a factor is 0, or one
+    # is a power of two that is at least 1); + and - of doubles never lose digits. Two terms `p + c` or `p - c`, where p is a
+    # product and c a leaf or another product, need only one test, that the result is at least 2^-960: if p lost digits it is
+    # below a quarter of the last place of c, so neither the true p nor the hardware's changes c. The chain's result must be
+    # finite. When the cheap tests fail, the exact tests (each product above 2^-1022 or with a factor 0, the result finite)
+    # are made before the chain is given up: a product that is 0 because a factor is 0 is exact.
+    def chain_node(self, n: Node) -> bool:
+        # an operation of the chain (else a leaf)
+        if n.kind != 'BinOp':
+            return False
+        op = n.fields[0].text
+        if op != '+' and op != '-' and op != '*':
+            return False
+        return self.bail == '' or self.peek_type(n) == 'float'
+
     def chain_ops(self, n: Node) -> int:
         k = n.kind
         if k == 'FloatLit':
             return 0 if float_lit_plain(n.fields[0].num, n.fields[1].num) else -1
-        if k == 'Name':
-            name = n.fields[0].text
-            if name in self.slots and self.types[name] == 'float' and name not in self.narrowed and name not in self.settled:
-                return 0
-            return -1
-        if k == 'BinOp':
-            op = n.fields[0].text
-            if op != '+' and op != '-' and op != '*':
-                return -1
+        if self.chain_node(n):
             x = self.chain_ops(val_node(n.fields[1]))
             y = self.chain_ops(val_node(n.fields[2]))
             if x < 0 or y < 0:
                 return -1
             return x + y + 1
+        if self.bail != '':
+            t = self.peek_type(n)
+            if t == 'float' or t == 'int':
+                return 0
+            return -1
+        if k == 'Name':
+            name = n.fields[0].text
+            if name in self.slots and self.types[name] == 'float' and name not in self.narrowed and name not in self.settled:
+                return 0
         return -1
 
     def chain_exact(self, n: Node) -> bool:
         return n.kind == 'FloatLit' and float_lit_pow2(n.fields[0].num, n.fields[1].num)
 
-    def chain_value(self, n: Node) -> str:
+    def chain_product(self, n: Node) -> bool:
+        # a product of the chain that can lose digits
+        return self.chain_node(n) and n.fields[0].text == '*' and not (self.chain_exact(val_node(n.fields[1])) or self.chain_exact(val_node(n.fields[2])))
+
+    def two_terms(self, n: Node) -> bool:
+        # p + c or p - c of the rule above
+        if not self.chain_node(n) or n.fields[0].text == '*':
+            return False
+        x = val_node(n.fields[1])
+        y = val_node(n.fields[2])
+        xp = self.chain_product(x)
+        yp = self.chain_product(y)
+        return (xp or yp) and (xp or not self.chain_node(x) or x.fields[0].text == '*') and (yp or not self.chain_node(y) or y.fields[0].text == '*')
+
+    def chain_value(self, n: Node, covered: bool = False) -> str:
+        # the double of n, adding its tests to chain_checks and its products to chain_prods. covered: n is a product whose test
+        # the two-term test of the sum above it makes
         k = n.kind
         if k == 'FloatLit':
             m = n.fields[0].num
             sc = n.fields[1].num
             return f'{m}.0e-{sc}' if sc > 0 else f'{m}.0e+{-sc}'
-        if k == 'Name':
-            r = self.tmp('cl')
-            self.emit(f'{r} = load i64, ptr {self.slots[n.fields[0].text]}')
-            return self.bf_double(r)
+        if not self.chain_node(n):
+            if k == 'Name' and self.shadowed(n.fields[0].text):
+                d = self.tmp('cl')
+                self.emit(f'{d} = load double, ptr {self.nest_shadow[n.fields[0].text]}')
+                return d
+            if k == 'Name' and n.fields[0].text in self.slots and self.types[n.fields[0].text] == 'float':
+                r = self.tmp('cl')
+                self.emit(f'{r} = load i64, ptr {self.slots[n.fields[0].text]}')
+                return self.bf_double(r)
+            # (the fast copy of a loop nest only: any leaf. A field or list item is read in place: see raw_read)
+            self.raw_float = k == 'Attr' or k == 'Index'
+            e = self.expr(n)
+            self.raw_float = False
+            if e.ty == 'float' and not e.fresh and not e.fin:
+                if k == 'Attr' and val_node(n.fields[0]).kind == 'Name':
+                    self.chain_raw.append(val_node(n.fields[0]).fields[0].text + '.' + n.fields[1].text)
+                return self.bf_double(e.reg)
+            return self.bf_double(self.need_fin(self.bf_word(e)).reg)
         left = val_node(n.fields[1])
         right = val_node(n.fields[2])
-        x = self.chain_value(left)
-        y = self.chain_value(right)
         op = n.fields[0].text
+        two = self.two_terms(n)
+        x = self.chain_value(left, two and self.chain_product(left))
+        y = self.chain_value(right, two and self.chain_product(right))
         ins = 'fadd'
         if op == '-':
             ins = 'fsub'
@@ -4172,39 +4371,101 @@ class Gen:
             ins = 'fmul'
         r = self.tmp('cf')
         self.emit(f'{r} = {ins} double {x}, {y}')
-        if op == '*' and not (self.chain_exact(left) or self.chain_exact(right)):
-            bits = self.tmp('cbits')
-            self.emit(f'{bits} = bitcast double {r} to i64')
-            mag = self.tmp('cmag')
-            self.emit(f'{mag} = and i64 {bits}, 9223372036854775807')
-            off = self.tmp('coff')
-            self.emit(f'{off} = sub i64 {mag}, 4503599627370497')
-            ok = self.tmp('cok')
-            self.emit(f'{ok} = icmp ult i64 {off}, 9214364837600034815')
-            self.chain_checks.append(ok)
+        bounded = self.fast_bounded(n)
+        if op == '*' and self.chain_product(n):
+            self.chain_prods.append([r, x, y])
+            if not covered:
+                if bounded:
+                    self.chain_checks.append(self.f_above(r, '0x0010000000000000', True, 'cok'))
+                else:
+                    self.chain_checks.append(self.f_range(r, 4503599627370497, 9214364837600034815, 'cok'))
+        if two:
+            # at least 2^-960 (the bits 63 << 52) and finite
+            if bounded:
+                self.chain_checks.append(self.f_above(r, '0x03F0000000000000', False, 'ctwo'))
+            else:
+                self.chain_checks.append(self.f_range(r, 283726776524341248, 8935141660703064064, 'ctwo'))
         return r
 
-    def bf_chain(self, n: Node) -> Ex:
-        saved = self.chain_checks
-        self.chain_checks = []
-        d = self.chain_value(n)
+    def fast_bounded(self, n: Node | None) -> bool:
+        # in the fast copy of a loop nest: the value of n lies in a bounded interval (see range_of), so with leaves that are
+        # finite doubles no operation in it can overflow, and a test needs only its lower side
+        if self.bail == '' or n is None or not self.tracking():
+            return False
+        r = self.range_of(n, self.facts)
+        if r is None:
+            return False
+        fr = frng_of(r)
+        return fr is not None and frng_bounded(fr)
+
+    def f_above(self, d: str, bound: str, strict: bool, hint: str) -> str:
+        # an i1: the magnitude of the finite double d is above bound (a double constant), or at least bound
+        self.mod.declare('declare double @llvm.fabs.f64(double)')
+        a = self.tmp('fabs')
+        self.emit(f'{a} = call double @llvm.fabs.f64(double {d})')
+        ok = self.tmp(hint)
+        self.emit(f'{ok} = fcmp {"ogt" if strict else "oge"} double {a}, {bound}')
+        return ok
+
+    def f_range(self, d: str, lo: int, span: int, hint: str) -> str:
+        # an i1: the magnitude of the double d, as bits, lies in [lo, lo + span)
         bits = self.tmp('cbits')
         self.emit(f'{bits} = bitcast double {d} to i64')
         mag = self.tmp('cmag')
         self.emit(f'{mag} = and i64 {bits}, 9223372036854775807')
-        ok = self.tmp('cfin')
-        self.emit(f'{ok} = icmp ult i64 {mag}, 9218868437227405312')
+        off = self.tmp('coff')
+        self.emit(f'{off} = sub i64 {mag}, {lo}')
+        ok = self.tmp(hint)
+        self.emit(f'{ok} = icmp ult i64 {off}, {span}')
+        return ok
+
+    def chain_exactly(self, d: str, prods: list[list[str]]) -> str:
+        # an i1: the exact tests of a chain whose result is the double d and whose products are prods (each [product, x, y])
+        fine = self.f_range(d, 0, 9218868437227405312, 'cfin')
+        for p in prods:
+            c = self.f_range(p[0], 4503599627370497, 9214364837600034815, 'cok')
+            z1 = self.tmp('fz')
+            self.emit(f'{z1} = fcmp oeq double {p[1]}, 0.0')
+            z2 = self.tmp('fz')
+            self.emit(f'{z2} = fcmp oeq double {p[2]}, 0.0')
+            fine = self.bit_op('and', fine, self.bit_op('or', c, self.bit_op('or', z1, z2)))
+        return fine
+
+    def bf_chain(self, n: Node) -> Ex:
+        saved = self.chain_checks
+        saved_prods = self.chain_prods
+        self.chain_checks = []
+        self.chain_prods = []
+        d = self.chain_value(n)
+        bits = self.tmp('cbits')
+        self.emit(f'{bits} = bitcast double {d} to i64')
+        ok = ''
+        if not self.two_terms(n) and not self.fast_bounded(n):
+            ok = self.f_range(d, 0, 9218868437227405312, 'cfin')     # (the two-term test of the top sum says it is finite)
         for c in self.chain_checks:
-            both = self.tmp('call')
-            self.emit(f'{both} = and i1 {ok}, {c}')
-            ok = both
+            ok = c if ok == '' else self.bit_op('and', ok, c)
+        prods = self.chain_prods
         self.chain_checks = saved
+        self.chain_prods = saved_prods
+        if ok == '':
+            return exfin(bits)          # (the fast copy of a loop nest: a bounded sum of finite doubles)
         bad = self.tmp('cbad')
         self.emit(f'{bad} = xor i1 {ok}, true')
+        check = self.label('chcheck')
         fast = self.label('chfast')
+        self.cold_br(bad, check, fast)
+        self.place(check)
+        lost = self.tmp('clost')
+        self.emit(f'{lost} = xor i1 {self.chain_exactly(d, prods)}, true')
+        if self.bail != '':
+            # the fast copy of a loop nest: the general copy does the statement again
+            self.bail_if(lost)
+            self.br(fast)
+            self.place(fast)
+            return exfin(bits)
         slow = self.label('chslow')
         join = self.label('chjoin')
-        self.cold_br(bad, slow, fast)
+        self.cold_br(lost, slow, fast)
         self.place(fast)
         self.br(join)
         self.place(slow)
@@ -4230,9 +4491,12 @@ class Gen:
         x = self.bf_word(a)
         y = self.bf_word(b)
         if op == '+' or op == '-' or op == '*':
-            return self.bf_arith(op, x, y)
+            return self.bf_arith(op, x, y, self.fast_bounded(node))
         if op == '/':
-            return self.bf_divide(x, y)
+            # a float literal of at least 1e-281 over a whole number below 2^64 (not 0): the quotient lies between 1e-281 / 2^64
+            # and the literal, so the double the hardware gives is the answer (1.0 / n)
+            known = node is not None and y.fin and (b.ty == 'int' or (is_fixed(b.ty) and digits_value(b.ty[1:]) <= 64)) and literal_far(val_node(node.fields[1]))
+            return self.bf_divide(x, y, 'division by zero', self.fast_bounded(node), known)
         if op == '//' or op == '%':
             yd = self.bf_double(y.reg)
             zero = self.tmp('fzero')
@@ -4275,6 +4539,16 @@ class Gen:
         else:
             cc = 'oge'
             sc = 'sge'
+        if self.bail != '':
+            x = self.need_fin(x, [y])
+            y = self.need_fin(y, [x])
+        if x.fin and y.fin:
+            # two finite doubles: the hardware's comparison is the answer
+            c0 = self.tmp('fcmp')
+            self.emit(f'{c0} = fcmp {cc} double {self.bf_double(x.reg)}, {self.bf_double(y.reg)}')
+            w0 = self.tmp('fres')
+            self.emit(f'{w0} = zext i1 {c0} to i64')
+            return ex(w0, 'bool')
         xd = self.bf_double(x.reg)
         yd = self.bf_double(y.reg)
         ordered = self.tmp('fordered')
@@ -4339,10 +4613,23 @@ class Gen:
                 # the constant is a double exactly
                 d = self.tmp('fp')
                 self.emit(f'{d} = sitofp i64 {str(v)} to double')
-                nf = self.bf_plain(d)
+                nf = exfin(self.bf_plain(d).reg)
                 if flip:
                     return self.bf_compare(flip_compare(op), f, nf)
                 return self.bf_compare(op, f, nf)
+        if self.bail != '' and (n.small or small_text(n.reg)):
+            # the fast copy of a loop nest: a small int up to 2^53 is a double exactly; a larger one leaves it
+            nv = self.arith('ashr', n.reg, '1')
+            off = self.arith('add', nv, '9007199254740992')
+            big = self.tmp('fbig')
+            self.emit(f'{big} = icmp ugt i64 {off}, 18014398509481984')
+            self.bail_if(big, [f])
+            d2 = self.tmp('fp')
+            self.emit(f'{d2} = sitofp i64 {nv} to double')
+            nf2 = exfin(self.bf_plain(d2).reg)
+            if flip:
+                return self.bf_compare(flip_compare(op), f, nf2)
+            return self.bf_compare(op, f, nf2)
         s = self.tmp('bfcmpi')
         m = 0
         if f.fresh and not f.small and not small_text(f.reg):
@@ -4450,7 +4737,7 @@ class Gen:
             text += f'+{-scale}'
         plain = float_lit_plain(mantissa, scale)
         if plain:
-            return self.bf_plain(text)
+            return exfin(self.bf_plain(text).reg)
         r = self.tmp('flit')
         self.emit(f'{r} = call i64 @tomato_bf_text(ptr {self.mod.intern(f"{mantissa}e{-scale}")})')
         return exf(r, 'float')
@@ -4687,6 +4974,11 @@ class Gen:
                 raise CompileError(f"name '{name}' is not defined{self.name_hint(name)}", n.line)
             ty = self.types[name]
             r = self.tmp('l')
+            if self.shadowed(name):
+                d = self.tmp('sh')
+                self.emit(f'{d} = load double, ptr {self.nest_shadow[name]}')
+                self.emit(f'{r} = bitcast double {d} to i64')
+                return exfin(r)
             self.emit(f'{r} = load {llvm_type(ty)}, ptr {self.slots[name]}')
             e = ex(r, ty)
             if ty == 'int' and self.bail != '':
@@ -5175,6 +5467,8 @@ class Gen:
         # In both cases a value read from a local (or from something lent) is not copied: the local stays alive and nothing runs
         # in between, so nothing can change what it points at.
         base = val_node(n.fields[0])
+        raw = self.raw_float
+        self.raw_float = False
         if (lend or as_base or self.bail != '') and (base.kind == 'Attr' or base.kind == 'Index'):
             obj = self.unwrap(self.lent_base(base), n.line)
         else:
@@ -5186,10 +5480,18 @@ class Gen:
         ft = self.field_type(obj, name, n.line)
         lent = obj.reg.startswith('%bl.') and ((lend and owns_num(ft)) or (as_base and is_rc(ft)))
         v = self.tmp('bl' if lent else 'f')
+        if self.bail != '' and ft == 'float' and raw:
+            e = self.raw_read(addr)
+            self.release(obj)
+            return e
         self.emit(f'{v} = load {llvm_type(ft)}, ptr {addr}')
         e = ex(v, ft)
         if self.bail != '' and ft == 'int':
             e = self.need_small(e, [obj])
+            self.release(obj)
+            return e
+        if self.bail != '' and ft == 'float':
+            e = self.need_fin(e, [obj])
             self.release(obj)
             return e
         if lent:
@@ -5204,10 +5506,21 @@ class Gen:
         if is_class(obj.ty):
             self.check_field_access(obj, name, True, s.line)
         ft = self.field_type(obj, name, s.line)
+        self.chain_raw = []
+        held_before = len(self.held)
+        self.hold(obj)                        # (freed by the error path, or when the fast copy of a loop nest leaves, if the value does)
         v = self.expr(val_node(s.fields[1]), ft)
         v = self.want(v, ft, s.line, 'the assigned value')
+        self.drop_held(held_before)
         addr = self.field_addr(obj, name, s.line)
-        self.store_owned(addr, v, v.ty == 'int' and self.old_is_small(addr, [v, obj]))
+        base = val_node(target.fields[0])
+        if self.bail != '' and v.ty == 'float' and v.fin and base.kind == 'Name' and base.fields[0].text + '.' + name in self.chain_raw:
+            # b.x = b.x + ... in the fast copy of a loop nest: the chain read the old value as one of its leaves, and its result
+            # is finite only when that was a finite double, which owns nothing
+            self.store_owned(addr, v, True)
+            self.release(obj)
+            return
+        self.store_owned(addr, v, (v.ty == 'int' and self.old_is_small(addr, [v, obj])) or (v.ty == 'float' and self.old_is_plain(addr, [v, obj])))
         self.release(obj)
 
     def list_lit(self, n: Node, expected: str) -> Ex:
@@ -5608,6 +5921,8 @@ class Gen:
 
     def index(self, n: Node, lend: bool = False, as_base: bool = False) -> Ex:
         base = val_node(n.fields[0])
+        raw = self.raw_float
+        self.raw_float = False
         if (lend or as_base) and (base.kind == 'Attr' or base.kind == 'Index') and (pure_read(val_node(n.fields[1])) or self.plain_num(val_node(n.fields[1]))):
             s = self.unwrap(self.lent_base(base), n.line)
         elif self.bail != '' and (base.kind == 'Attr' or base.kind == 'Index'):
@@ -5655,11 +5970,19 @@ class Gen:
             li = self.want(li, 'int', n.line, 'an index')
             self.drop_held(held_before)
             addr = self.list_slot(s, ex(self.norm_index(s, self.int_raw(li, [s]), val_node(n.fields[1])), 'int'), [s])
+            if self.bail != '' and raw and elem_of(s.ty) == 'float':
+                e = self.raw_read(addr)
+                self.release(s)
+                return e
             lent = s.reg.startswith('%bl.') and ((lend and owns_num(elem_of(s.ty))) or (as_base and is_rc(elem_of(s.ty))))
             item = self.load_item(s.ty, addr, 'bl' if lent else 'item')
             e = ex(item, elem_of(s.ty))
             if self.bail != '' and e.ty == 'int':
                 e = self.need_small(e, [s])
+                self.release(s)
+                return e
+            if self.bail != '' and e.ty == 'float':
+                e = self.need_fin(e, [s])
                 self.release(s)
                 return e
             if lent:
@@ -5964,7 +6287,7 @@ class Gen:
             return self.logic(n, op)
         if not is_fixed(expected) and self.fusable(n):
             return self.fused(n)
-        if self.no_chain == 0 and (op == '+' or op == '-' or op == '*') and self.chain_ops(n) >= 2:
+        if self.no_chain == 0 and (op == '+' or op == '-' or op == '*') and self.chain_ops(n) >= (1 if self.bail != '' else 2):
             return self.bf_chain(n)
         if op == '+':
             chain: list[Node] = []
@@ -6240,6 +6563,8 @@ class Gen:
             return self.call_value(self.expr(f), args, n.line, "the function value '" + name + "'")
         if self.mod.resolve(name) == '' and name not in self.slots:
             self.async_ok = False       # builtins are plain calls; their arguments are not awaited
+        if self.bail != '' and name not in self.slots and self.mod.resolve(name) == 'math.sqrt' and len(args) == 1 and len(n.fields[2].items) == 0 and (self.peek_type(args[0]) == 'float' or self.peek_type(args[0]) == 'int'):
+            return self.fast_sqrt(args[0])
         if name == 'print':
             if not statement:
                 raise CompileError("print() gives no value, so it cannot be used inside an expression", n.line)
@@ -8742,23 +9067,38 @@ class Gen:
         names_read(s, names)
         bound_names(s, names)
         self.nest_names = []
+        self.nest_floats = []
         for name in names:
-            if name in self.slots and self.types[name] == 'int' and name not in self.narrowed and name not in self.settled and name not in self.nest_names:
-                self.nest_names.append(name)
+            if name in self.slots and name not in self.narrowed and name not in self.settled:
+                if self.types[name] == 'int' and name not in self.nest_names:
+                    self.nest_names.append(name)
+                elif self.types[name] == 'float' and name not in self.nest_floats:
+                    self.nest_floats.append(name)
         done = self.label('nestdone')
         self.br(done)
         mark = len(self.lines)
         # (a small-int loop inside has a fast copy of its own, which is better than this one for what it does)
-        use = len(self.nest_names) > 0 and len(self.nest_heads) > 0 and len(self.nest_plain) == 0
+        use = len(self.nest_names) + len(self.nest_floats) > 0 and len(self.nest_heads) > 0 and len(self.nest_plain) == 0
         if use:
             # the code in front of the outer loop is not reached: the fast copy is entered at the loop heads
             self.place(self.label('nestfront'))
             self.nest_fast = True
             self.nest_count = 0
+            self.nest_shadow = {}
+            self.nest_outs = {}
+            for name in self.nest_floats:
+                sh = self.tmp('sh')
+                self.allocas.append(f'  {sh} = alloca double')
+                self.nest_shadow[name] = sh
             self.facts = self.small_facts(before)
             self.nest_stmt(s)
             if not self.terminated:
+                self.shadow_out(self.nest_floats)
                 self.br(done)
+            for target in self.nest_outs:
+                self.place(self.nest_outs[target])
+                self.shadow_out(self.nest_floats)
+                self.br(target)
             self.nest_fast = False
             if self.nest_count == 0:
                 self.lines = self.lines[:mark]
@@ -8769,25 +9109,84 @@ class Gen:
                 self.lines[int(head[0])] = f'  br label %{head[1]}'
                 continue
             text: list[str] = []
-            acc = ''
-            for name in self.nest_names:
-                w = self.tmp('sm')
-                text.append(f'  {w} = load i64, ptr {self.slots[name]}')
-                if acc == '':
-                    acc = w
-                else:
-                    both = self.tmp('sm')
-                    text.append(f'  {both} = and i64 {acc}, {w}')
-                    acc = both
-            bit = self.tmp('sm')
-            small = self.tmp('sm')
-            text.append(f'  {bit} = and i64 {acc}, 1')
-            text.append(f'  {small} = icmp ne i64 {bit}, 0')
-            text.append(f'  br i1 {small}, label %{prefix}_h{head[2]}, label %{head[1]}')
+            fit = self.nest_test(self.nest_names, self.nest_floats, text)
+            if len(self.nest_floats) == 0:
+                text.append(f'  br i1 {fit}, label %{prefix}_h{head[2]}, label %{head[1]}')
+            else:
+                into = self.label('nestin')
+                text.append(f'  br i1 {fit}, label %{into}, label %{head[1]}')
+                text.append(f'{into}:')
+                self.shadow_in(self.nest_floats, text)
+                text.append(f'  br label %{prefix}_h{head[2]}')
             self.lines[int(head[0])] = '\n'.join(text)
         self.nest = ''
         nest_number(s, counter, False)
         self.facts = after
+
+    # In the fast copy, a float variable of the nest is kept in a slot of type double of its own, its shadow, so that LLVM keeps it
+    # in a floating-point register (a loop that carries an i64 moves it between kinds of register on every pass). The shadows are
+    # filled from the variables where the fast copy is entered, and written back wherever it goes to the general copy (each such
+    # label gets a block that does that: nest_out), at its end, and around a statement that it compiles the ordinary way.
+    def shadow_in(self, names: list[str], text: list[str]):
+        for name in names:
+            w = self.tmp('shw')
+            text.append(f'  {w} = load i64, ptr {self.slots[name]}')
+            d = self.tmp('shd')
+            text.append(f'  {d} = bitcast i64 {w} to double')
+            text.append(f'  store double {d}, ptr {self.nest_shadow[name]}')
+
+    def shadow_out(self, names: list[str]):
+        for name in names:
+            d = self.tmp('shd')
+            self.emit(f'{d} = load double, ptr {self.nest_shadow[name]}')
+            w = self.tmp('shw')
+            self.emit(f'{w} = bitcast double {d} to i64')
+            self.emit(f'store i64 {w}, ptr {self.slots[name]}')
+
+    def nest_out(self, target: str) -> str:
+        # the label that the fast copy jumps to for the label target of the general copy
+        if len(self.nest_floats) == 0:
+            return target
+        if target not in self.nest_outs:
+            self.nest_outs[target] = self.label('nestout')
+        return self.nest_outs[target]
+
+    def shadowed(self, name: str) -> bool:
+        return self.nest_fast and name in self.nest_shadow
+
+    def nest_test(self, ints: list[str], floats: list[str], text: list[str]) -> str:
+        # an i1 that is true when each int variable named holds a small number and each float variable a finite double (the
+        # exponent bits of a box, an infinity and a NaN are all set). The code is added to text, as lines.
+        acc = ''
+        for name in ints:
+            w = self.tmp('sm')
+            text.append(f'  {w} = load i64, ptr {self.slots[name]}')
+            if acc == '':
+                acc = w
+            else:
+                both = self.tmp('sm')
+                text.append(f'  {both} = and i64 {acc}, {w}')
+                acc = both
+        fit = ''
+        if acc != '':
+            bit = self.tmp('sm')
+            fit = self.tmp('sm')
+            text.append(f'  {bit} = and i64 {acc}, 1')
+            text.append(f'  {fit} = icmp ne i64 {bit}, 0')
+        for name in floats:
+            w = self.tmp('fin')
+            text.append(f'  {w} = load i64, ptr {self.slots[name]}')
+            e = self.tmp('fin')
+            text.append(f'  {e} = and i64 {w}, 9218868437227405312')
+            c = self.tmp('fin')
+            text.append(f'  {c} = icmp ne i64 {e}, 9218868437227405312')
+            if fit == '':
+                fit = c
+            else:
+                both = self.tmp('fin')
+                text.append(f'  {both} = and i1 {fit}, {c}')
+                fit = both
+        return fit
 
     def small_facts(self, f: Facts) -> Facts:
         # the facts f in the fast copy of a loop nest: every int variable of the nest is small
@@ -8858,12 +9257,12 @@ class Gen:
             self.stmt_kind(s)
         elif self.nest_fastable(s):
             saved = self.bail
-            self.bail = f'{self.nest}_{s.spot}'
+            self.bail = self.nest_out(f'{self.nest}_{s.spot}')
             if k == 'While':
                 # its condition is tested behind the test that enters the fast copy, or the two copies would take turns for ever
                 for h in self.nest_heads:
                     if h[2] == str(s.spot):
-                        self.bail = h[1]
+                        self.bail = self.nest_out(h[1])
             if k == 'Assign' or k == 'Declare':
                 self.nest_count += 1
             if k == 'For':
@@ -8874,6 +9273,7 @@ class Gen:
         else:
             nest = self.nest
             saved2 = self.bail
+            self.shadow_out(self.nest_floats)       # (the ordinary code reads and writes the variables themselves)
             self.nest = ''
             self.nest_fast = False
             self.nest_off = True
@@ -8886,19 +9286,28 @@ class Gen:
             if not self.terminated:
                 names: list[str] = []
                 bound_names(s, names)
-                acc = ''
+                ints: list[str] = []
+                floats: list[str] = []
                 for name in self.nest_names:
                     if name in names:
-                        w = self.tmp('sm')
-                        self.emit(f'{w} = load i64, ptr {self.slots[name]}')
-                        acc = w if acc == '' else self.arith('and', acc, w)
-                if acc != '':
-                    bit = self.arith('and', acc, '1')
-                    c = self.tmp('notsmall')
-                    self.emit(f'{c} = icmp eq i64 {bit}, 0')
+                        ints.append(name)
+                for name in self.nest_floats:
+                    if name in names:
+                        floats.append(name)
+                if len(ints) + len(floats) > 0:
+                    text: list[str] = []
+                    fit = self.nest_test(ints, floats, text)
+                    for line in text:
+                        self.emit(line[2:])
+                    unfit = self.tmp('notsmall')
+                    self.emit(f'{unfit} = xor i1 {fit}, true')
                     ok = self.label('inside')
-                    self.cold_br(c, f'{self.nest}_{s.spot}e', ok)
+                    self.cold_br(unfit, f'{self.nest}_{s.spot}e', ok)
                     self.place(ok)
+                    back: list[str] = []
+                    self.shadow_in(floats, back)
+                    for line in back:
+                        self.emit(line[2:])
         if not self.terminated:
             self.facts = self.small_facts(self.facts)
 
@@ -8998,6 +9407,14 @@ class Gen:
                 slot_type = self.types[name]
             if slot_type == 'None' or slot_type == '':
                 raise CompileError(f"the type of '{name}' cannot be guessed from None\ndeclare it, such as: {name}: Item | None = None", s.line)
+            if self.shadowed(name):
+                v = self.need_fin(v)           # (the fast copy keeps every float variable a finite double, in its shadow)
+                sd = self.tmp('sh')
+                self.emit(f'{sd} = bitcast i64 {v.reg} to double')
+                self.emit(f'store double {sd}, ptr {self.nest_shadow[name]}')
+                if track:
+                    self.facts = after
+                return
             self.store_owned(self.slot(name, slot_type, s.line), v, old_small)
             if track:
                 self.facts = after
@@ -9014,11 +9431,17 @@ class Gen:
             if self.tracking():
                 after = facts_kill(self.facts, [s.fields[0].text])
                 name = s.fields[0].text
-                if ty == 'int':
+                if ty == 'int' or ty == 'float':
                     after = self.assign_facts(self.facts, name, val_node(s.fields[2]), ty)
             v = self.expr(val_node(s.fields[2]), ty)
             v = self.want(v, ty, s.line, 'the value')
-            self.store_owned(self.slot(s.fields[0].text, ty, s.line), v, self.bail != '' and ty == 'int' and s.fields[0].text in self.nest_names)
+            if ty == 'float' and self.shadowed(s.fields[0].text):
+                v = self.need_fin(v)
+                sd = self.tmp('sh')
+                self.emit(f'{sd} = bitcast i64 {v.reg} to double')
+                self.emit(f'store double {sd}, ptr {self.nest_shadow[s.fields[0].text]}')
+            else:
+                self.store_owned(self.slot(s.fields[0].text, ty, s.line), v, self.bail != '' and ty == 'int' and s.fields[0].text in self.nest_names)
             if self.tracking():
                 self.facts = after
         elif k == 'AsyncFor':
@@ -9249,7 +9672,7 @@ class Gen:
             self.emit(f'store ptr {v.reg}, ptr {addr}')
             self.emit(f'call void @tomato_release(ptr {old})')
         elif v.ty == 'int' or v.ty == 'float':
-            self.store_owned(addr, v, v.ty == 'int' and self.old_is_small(addr, [v, lst]))
+            self.store_owned(addr, v, (v.ty == 'int' and self.old_is_small(addr, [v, lst])) or (v.ty == 'float' and self.old_is_plain(addr, [v, lst])))
         else:
             self.store_item(lst.ty, v, addr)
         self.release(lst)
@@ -9668,11 +10091,13 @@ class Gen:
         ty = declared
         if name in self.slots:
             ty = self.types[name]
-        if ty != '' and ty != 'int':
+        if ty != '' and ty != 'int' and ty != 'float':
             return g
         r = self.range_of(value, f)
-        if r is None or r.fl:
-            return g              # (a float is of any size: it has no interval to remember)
+        if r is not None and ty == 'float':
+            r = frng_of(r)
+        if r is None or (r.fl and ty == 'int'):
+            return g
         g.m[name] = r
         return g
 
@@ -10619,7 +11044,7 @@ class Gen:
             if elem == 'int':
                 for h in self.nest_heads:            # a big number: the general copy takes this pass over, from behind its entry test
                     if h[2] == str(s.spot):
-                        self.bail = h[1]
+                        self.bail = self.nest_out(h[1])
                 e = self.need_small(e)
                 self.bail = ''
             self.store_owned(var, e, elem == 'int')

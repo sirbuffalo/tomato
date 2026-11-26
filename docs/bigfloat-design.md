@@ -1,10 +1,10 @@
 # Arbitrary-size floats: design
 
 Status: **approved by Davis with all recommended answers** (the eight questions at the end). Built: stage 0 (the rounding
-fixes), stage 1 (`float[length=64]` as a name, removed again in D77c), stage 2 (the C runtime, `docs/bigfloat-runtime.md`) stage 3 (the compiler: D77b
-in `docs/decisions.md`) and stage 4 (the library and the formats: D77d). Not built: stage 5 (the fast loop copy). One answer changed from the text below:
+fixes), stage 1 (`float[length=64]` as a name, removed again in D77c), stage 2 (the C runtime, `docs/bigfloat-runtime.md`), stage 3 (the compiler: D77b
+in `docs/decisions.md`), stage 4 (the library and the formats: D77d) and stage 5 (the fast loop copy: D77e, and "Stage 5 as built" at the end). One answer changed from the text below:
 floats stay valid dict keys, set members and `hash()` arguments (D78a), which this design had assumed away (Davis, in the stage 3 task). The decision
-entries are D77a, D77b, D77c and D77d (stage 4: JSON and TOML reading cap an exponent at 4,300 digits, Davis). **D77c: Davis removed `float[length=64]`, so wherever this document says `float[length=64]` there is none: one float type, and a program cannot ask for the plain double.**
+entries are D77a, D77b, D77c, D77d (stage 4: JSON and TOML reading cap an exponent at 4,300 digits, Davis) and D77e (stage 5). **D77c: Davis removed `float[length=64]`, so wherever this document says `float[length=64]` there is none: one float type, and a program cannot ask for the plain double.**
 
 ## The requirement
 
@@ -406,3 +406,91 @@ to 1.6 times applies to most float code until it does.
 8. **Is stage 0 worth doing now**, before any of this? It fixes the silent `inf`, the wrong rounding and `10**400 /
    10**399`. *Recommended: yes, as its own task. It needs no new type, but it makes `float(10**400)` raise until stage
    3.*
+
+## Stage 5 as built
+
+**Where the fast copy is.** Release mode already compiled a loop nest twice (`Gen.nest_loop`): a fast copy that assumes every
+int variable is small and, when one is not, jumps to the start of the same statement in the general copy, which does it again.
+Stage 5 puts floats into that copy instead of building a second mechanism. Every float variable of the nest is a finite double
+all through the fast copy: the entry test at each loop head of the general copy checks it (the exponent bits of a box, an
+infinity and a NaN are all set), and a statement the fast copy compiles the ordinary way (a call that is not pure, a print) is
+followed by the same test for the variables it assigned. So in the fast copy a float operation has no slow path and no
+ownership code: a result that is not final, a box read from a field, a list or a call, or an error, leaves for the general
+copy. The int-only `small_loop` (both modes) is unchanged, so **debug mode and the browser, which compiles in debug mode, get
+no float fast copy**.
+
+**What the fast copy does with floats:**
+
+- Each float variable of the nest lives in a slot of type `double` of its own (its shadow) inside the fast copy, filled where
+  the fast copy is entered and written back wherever it leaves. Without it LLVM carried a loop's floats as `i64` and moved them
+  between the integer and the floating-point registers on every pass: mandelbrot's loop had only four tests left and still ran
+  at 0.17 to 0.20 s, against 0.10 s with the shadows. (This is the risk the design named: "LLVM may keep some bitcasts in
+  general registers".)
+- `+ - *` chains use the two-term rule of "Tiny numbers": `p + c` and `p - c`, with `p` a product and `c` a leaf or another
+  product, need one test, that the result is at least 2^-960 and finite; any other product is tested on its own (above 2^-1022);
+  the chain's result must be finite. In the fast copy any float or int expression can be a leaf of a chain (the general copy
+  needs leaves it can read twice), so even a single operation is a chain.
+- When the tests fail, the exact tests are made before giving up: each product is above 2^-1022 or has a factor 0 (then it is
+  an exact 0), and the result is finite. Mandelbrot starts every point at 0.0, and a zero product would otherwise send the first
+  pass of every point to the general copy. Both copies use the two-term rule and this re-check.
+- A field or list item that is only a leaf of a chain is read without its own box test: a box is a NaN and an infinity stays one
+  under `+ - *`, so either fails the chain's last test. In `b.x = b.x + ...` the old value is then known to be a double, so the
+  store needs no box test either.
+- Comparisons of two finite doubles are a bare `fcmp`; a float against an int compares exactly as before, through a double when
+  the int is at most 2^53 in size, else in the general copy.
+- `math.sqrt` is the hardware square root (a negative argument leaves for the general copy, which raises).
+- A float literal of at least 1e-281 divided by a whole number below 2^64 needs no test in either copy (the quotient lies between
+  1e-281 / 2^64 and the literal): `1.0 / n` in spectral_norm.
+
+**Float facts.** The idle float interval code is used again, with a new meaning: an interval bounds a float's value whatever its
+form, a box included (the rules only use that rounding keeps order). The stage 3 compiler had stopped recording intervals for
+floats; they are recorded again for every float local. They cannot remove a test in the general copy, where a leaf may be a box,
+but in the fast copy, where every float is a double, a result whose interval is bounded (the cap is 2^256) cannot overflow: a
+`+` or `-` needs no test at all and a product or a two-term sum only the lower half of its test (a floating-point compare of the
+magnitude). Nothing bounds a value away from 0, so the lower half stays, as the design expected. In mandelbrot the three tests
+left per pass are those lower halves.
+
+**Measurements** (median wall-clock seconds, release builds made the way `tomato build --mode release` makes them; "before" is
+the parent of the stage 3 commit, "stage 3" is the tree this started from):
+
+| | Linux x86-64: before | stage 3 | stage 5 | Apple M3 Pro: before | stage 3 | stage 5 | C (M3 Pro) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| mandelbrot 1000 | 0.10 | 0.28 | **0.10** | 0.108 | 0.293 | **0.126** | 0.095 |
+| nbody 1500000 | 0.21 | 0.70 | **0.33** | 0.112 | 0.398 | **0.211** | 0.081 |
+| spectral_norm 1000 | 0.11 | 0.23 | **0.16** | 0.103 | 0.205 | **0.128** | 0.070 |
+
+Linux: AMD Threadripper 3990X, clang 21, one core pinned on a machine with a load of about 70, 3 to 5 runs. Instructions executed
+(callgrind, at the inputs of `benchmarks/count.sh`): mandelbrot 33.6 M / 272.8 M / 76.0 M, nbody 113.8 M / 412.3 M / 244.8 M,
+spectral_norm 76.9 M / 134.2 M / 102.2 M. Mac: Davis's MacBook Pro (Apple M3 Pro, Apple clang 21, on battery power, load about
+5), four runs after a first one that macOS slows by checking the new program; no M1 was available. The M3 Pro gains less on
+mandelbrot than the x86 core (1.17 times the time before stage 3 against 1.0): its loop-carried chain is shorter, so the three
+tests left show.
+
+What is left in nbody (about 1.9 times before stage 3 on the M3 Pro, 1.6 times on Linux): its arithmetic is on fields, which have
+no intervals, so every chain in the inner loop keeps a whole test, as it did with the plain double, and the products add tests the
+plain double did not need (a tiny test for `dx * c.mass` in each of the six velocity updates, a two-term test for each update).
+spectral_norm (1.2 to 1.5 times): the result of `a(i, j)`, a function call, is tested for a box, and `s + a(i, j) * v[j]` has its
+two-term test.
+
+**The browser** runs the IR of debug mode in an interpreter (`site/wasm/llvm.js`), so it has no fast copy; it gains only from the
+two-term rule and the zero re-check. Seconds under Node 22 (`native/tomato-jsc.js`, compile included; mandelbrot 100, nbody 3000,
+spectral_norm 80; median of three, on the loaded Linux machine, so about ±20%):
+
+| | before | stage 3 | stage 5 | stage 5 compiled in release mode |
+| --- | ---: | ---: | ---: | ---: |
+| mandelbrot | 2.0 | 6.8 | 5.8 | 4.4 |
+| nbody | 4.1 | 6.6 | 6.4 | 5.0 |
+| spectral_norm | 7.8 | 9.1 | 8.9 | 16.8 |
+
+Compiling for the browser in release mode would help the first two and hurt spectral_norm (release mode was already slower there
+in the interpreter before this change); the website still compiles in debug mode. `llvm.js` now knows `llvm.fabs.f64` and
+`llvm.sqrt.f64`, which only release-mode IR uses.
+
+**Checks.** `tests/programs/float_loops.tom` (debug mode, release mode under AddressSanitizer with the leak check, and the
+browser) crosses the edges of the double range inside loops, keeps boxes and tiny numbers in fields and list items, raises from
+the middle of a loop, and compares 4,000 chains of tiny products with the same operations done one at a time. It found one leak:
+a field assignment did not free the object it wrote into (`ps[i].x = ...`, where `ps[i]` is retained) when its value raised or
+left the fast copy. All test programs print the same with the stage 3 compiler and this one in both modes, and 978 random float
+loop nests (literals near 2^-960, 2^-1022 and beyond the double range, fields, list items, int and float mixed, division by zero)
+print the same under the stage 3 compiler in debug mode and this one in release mode.
+
