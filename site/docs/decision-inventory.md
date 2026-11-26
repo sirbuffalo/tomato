@@ -230,7 +230,8 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 202. D79a is accepted: the pure-Tomato `re` module, its Python-style syntax subset, typed match results, flags, and a configurable backtracking step limit (Wave 2 pack C).
 203. D80a is accepted: `sys`, `os`, `ospath` and `io` (Wave 2 pack A): the process, environment, directories, stat, whole-file helpers, POSIX path text functions and `StringIO`; files v2 (`readline`, `readlines`, `writelines`, `flush`, `for line in f`, text modes `r w a x` with `+`); `IOError` subclasses such as `FileNotFoundError`; `*args` on entry points. `sys.exit` ends the process at once (no `finally`); the `with` statement and automatic closing are deferred.
 204. D81a is accepted: `assert condition[, message]` (always on, `AssertionError` a direct subclass of `Error`), the `testing` module, repeatable `@test` with the generated driver and `tomato test FILE...` (Wave 2 pack B); no async tests in version 1.
-205. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+205. D82a is accepted: `for line in open(path):` closes the file it opened however the loop is left (the end, `break`, `return` or an error); a file in a variable is still closed by the program (A-Q7).
+206. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
 
 203. D76d is accepted: UDP datagram sockets and public asynchronous `getaddrinfo` return numeric address records; name resolution lets other tasks run.
 204. D76e is accepted: `asyncio.Lock`, bounded `Semaphore` and `Event` with FIFO hand-off, `LockError`, `wait_for` timeouts, and a deadlock report that names each task waiting in `Lock.acquire`.

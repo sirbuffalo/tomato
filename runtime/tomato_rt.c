@@ -2144,34 +2144,34 @@ void *tomato_file_error(void *path, int64_t code);
 void *tomato_open_error(void *path) { return tomato_file_error(path, 1); }
 
 /* A file opened with + both reads and writes one C stream, and C needs a flush or a seek between a read and a write on it (otherwise the
- * behavior is undefined and, with glibc, the written data can be lost). Only files opened with + are remembered here; the file functions
- * below call file_to_reading and file_to_writing at the start, which do nothing for any other file, so a loop that only reads or only
- * writes a plain file pays nothing on any platform. Where the C library can say what the stream did last (glibc, musl, WASI) the seek
- * happens only on a switch; elsewhere (macOS) it happens at every call on a + file, which is correct but slower. */
-static FILE **plus_files;
+ * behavior is undefined and, with glibc, the written data can be lost). Only files opened with + are remembered here, each with what it
+ * did last (nothing, reading or writing); the file functions below call file_to_reading and file_to_writing at the start, which do
+ * nothing for any other file, so a loop that only reads or only writes a plain file pays nothing. The seek happens only when a + file
+ * switches from one to the other. The record is kept here, not read from the stream (glibc's __freading and __fwriting), so the same
+ * code serves every C library; macOS has neither. Nothing else moves the position of a File, so the record cannot go stale. */
+typedef struct { FILE *f; int last; } PlusFile;   /* last: 0 nothing yet, 1 reading, 2 writing */
+static PlusFile *plus_files;
 static int64_t plus_count, plus_cap;
 static void plus_register(FILE *f) {
     if (plus_count == plus_cap) { plus_cap = plus_cap ? plus_cap * 2 : 8; plus_files = realloc(plus_files, (size_t)plus_cap * sizeof *plus_files); if (!plus_files) out_of_memory(); }
-    plus_files[plus_count++] = f;
+    plus_files[plus_count].f = f;
+    plus_files[plus_count++].last = 0;
 }
 static void plus_forget(FILE *f) {
     for (int64_t k = 0; k < plus_count; k++)
-        if (plus_files[k] == f) { plus_files[k] = plus_files[--plus_count]; return; }
+        if (plus_files[k].f == f) { plus_files[k] = plus_files[--plus_count]; return; }
 }
-static int plus_is(FILE *f) {
-    for (int64_t k = 0; k < plus_count; k++) if (plus_files[k] == f) return 1;
-    return 0;
+/* the file is going to do what (1 reading, 2 writing); a seek in place first when it did the other thing last */
+static void file_switch(FILE *f, int what) {
+    for (int64_t k = 0; k < plus_count; k++)
+        if (plus_files[k].f == f) {
+            if (plus_files[k].last != 0 && plus_files[k].last != what) fseek(f, 0, SEEK_CUR);
+            plus_files[k].last = what;
+            return;
+        }
 }
-#ifdef __APPLE__
-#define file_was_writing(f) 1
-#define file_was_reading(f) 1
-#else
-#include <stdio_ext.h>
-#define file_was_writing(f) __fwriting(f)
-#define file_was_reading(f) __freading(f)
-#endif
-static void file_to_reading(FILE *f) { if (plus_count > 0 && plus_is(f) && file_was_writing(f)) fseek(f, 0, SEEK_CUR); }
-static void file_to_writing(FILE *f) { if (plus_count > 0 && plus_is(f) && file_was_reading(f)) fseek(f, 0, SEEK_CUR); }
+static void file_to_reading(FILE *f) { if (plus_count > 0) file_switch(f, 1); }
+static void file_to_writing(FILE *f) { if (plus_count > 0) file_switch(f, 2); }
 
 static int read_errno;
 /* read() gives the rest of the file, or NULL when the read fails (a directory, say) */

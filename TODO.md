@@ -4,8 +4,6 @@
   Run `tests/run.sh` on the Mac (and the full tier) to confirm `build-object.sh` takes the split path under macOS's BWK awk and Apple ld rather than the fallback.
 - Widen the loop-item borrowing further
   Let proven methods take object, text or list parameters (`a.absorb(b)`), and let borrowed bodies hold nested range loops (`Gen.lent_loop_body`, `lent_method_info`; see "borrowed loop items" in `docs/performance.md`).
-- Review the compiler changes (`for_file`, `open_call` class switch, `entry_wrapper` `*args`) and the runtime changes on macOS too
-  `st_mtimespec` and `extern char **environ` in `runtime/tomato_rt.c` are untested there (only Linux native and WASI were built), and so is the read/write switch for files opened with `+` (`file_to_reading` and `file_to_writing`, which seek at every call on a `+` file on macOS because `__freading` and `__fwriting` do not exist there; read the stdio flags or track the last operation to avoid the extra seeks).
 - Run the release script's `bump` step once on a scratch clone
   Confirm it rewrites `std/sys.tom` and `site/wasm/std/sys.tom` and that the commit step accepts the extra file.
 - Floats of any size in the library and the formats (stage 4 of docs/bigfloat-design.md)
