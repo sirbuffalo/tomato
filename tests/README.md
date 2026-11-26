@@ -117,6 +117,15 @@ the end of the first run, because another account's ~58 long-running `prst` jobs
 - The Linux step of `release/release.sh`, run as the release runs it: the script `release.sh` pipes to biggie (`linux_remote_script`), on a `git archive` of the tree, with `10` runs, seed `1`, the default 300 s wait for load 32 (it went on with the load warning). `check-lto.sh`, then `tests/run.sh` with LTO required (`@@TESTS_RC=0`, **842 passed, 0 failed**), then `benchmarks/run.sh` (1,760 runs, `@@BENCH=ok`) and `benchmarks/count.sh --guest` (`@@COUNT=ok`, no differing outputs).
   The `release.sh` driver itself runs on the signing Mac, so the ssh, fetch and gate parts of the step were not exercised here; the next release does that.
 
+## Full tier on macOS
+
+25 November 2026, on an Apple M-series MacBook Pro (arm64, 12 cores, macOS 27, Apple clang 21, BWK awk 20200816, Apple ld), from a fresh clone of the tree, with the arm64-macos WASI SDK 24 (`WASI_SDK=~/wasi-sdk-24.0-arm64-macos`), macOS's own jsc and `expect`; no node, Go 1.27, Rust and Python present, no JavaScript benchmark runtime. Not otherwise idle (load about 3.5, on battery).
+
+- `tests/run.sh --times`: **993 passed, 0 failed**, 3 min 50 s wall at the default `-j` (12 cores; the first, failing run took 237 s and 604 test CPU seconds). That includes the checks that need the WASI SDK ("wasm files rebuild identically": the wasm built on this Mac is byte for byte the committed one, so the Linux-built files are the same bytes) and the jsc and `expect` ones (WebAssembly runs, repl history).
+- The first run had two failures, both test assumptions that only macOS exposed, fixed in the tests (no change to the toolchain): `os_files` made files `B` and `b` in one folder, which are one file on macOS's case-insensitive file system (`B` is now `C`); and the `--entry=test` wasm check compared standard output and error together, and real jsc's `read()` prints `Could not open file: ...` on standard error for each standard-library module it looks for beside the program (even when the script catches the error; `tomato-repl` already drops that line), so the check drops it too.
+- `compiler/bootstrap/build-object.sh` on this Mac took the split path (no "the split build failed" message; 8 parts, 3.7 s wall) under BWK awk and Apple ld.
+- Not covered here: the checks that need LTO required (`TOMATO_TEST_REQUIRE_LTO=1`), and an AddressSanitizer-and-LTO run on the complete toolchain.
+
 ## WebAssembly checks under load
 
 The wasm path interprets the program in JavaScript with a time limit. `tests/run.sh` gives it 30 s (the website's 5 s is too short on a

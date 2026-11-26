@@ -34,8 +34,8 @@ def main(dir: str = '/tmp'):
     print(os.read_text(f), ospath.getsize(f), ospath.isfile(f), ospath.isdir(f))
     os.write_text(base + '/empty', '')
     print(repr_size(base + '/empty'))
-    # listdir is sorted by bytes whatever the order the system gives
-    for n in ['b', 'a', 'B', 'a.txt2', '_x', 'é', 'Z', '10', '9']:
+    # listdir is sorted by bytes whatever the order the system gives (no two names differ only in case: macOS's file system would make them one file)
+    for n in ['b', 'a', 'C', 'a.txt2', '_x', 'é', 'Z', '10', '9']:
         os.write_text(base + '/' + n, n)
     os.mkdir(base + '/dir')
     print(show(os.listdir(base)))

@@ -566,7 +566,7 @@ no udp: E446
 no lookup: E446" "$r"; }
 t_wasm_test_entry() { # the entry name `test` in the browser path: the driver runs the @test functions, with the line, and the status is 1
   printf 'from testing import assert_equal, skip\n\n@test\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test\ndef lookup():\n    skip("no network")\n' > "$work/wt.tom"
-  m="$(tjsc site/wasm run "$work/wt.tom" --entry=test 2>&1)"
+  m="$(tjsc site/wasm run "$work/wt.tom" --entry=test 2>&1 | grep -v '^Could not open file: ')"   # real jsc's read() prints that on standard error for each std module it looks for beside the program, caught or not (tomato-repl drops it too)
   case "$m" in "ok   adds
 FAIL fails
      expected 3, got 2  (raised on line 9)
