@@ -1,0 +1,156 @@
+# Floats in loop nests, which release mode compiles twice (a fast copy in which every float variable of the nest is a plain
+# double, and the general copy): values that become boxes (beyond the double range) and come back, exact zero products and
+# quotients, fields and list items that hold boxes, and statements that leave the fast copy halfway. Release mode must print
+# what debug mode prints, and free every box (tests/run.sh runs it in both, the release build with AddressSanitizer).
+
+class P:
+    v: float
+
+    @init
+    def make(self, v: float):
+        self.v = v
+
+def big(i: int) -> float:
+    if i % 3 == 0:
+        return 1e300 * 1e300
+    return float(i)
+
+def up_and_down():
+    x = 1e300
+    for i in range(6):
+        x = x * 1e10
+        print(i, x)
+    for i in range(6):
+        x = x / 1e10
+        print(i, x)
+    y = 1e-300
+    for i in range(4):
+        y = y * 1e-10
+    print('tiny', y)
+    for i in range(4):
+        y = y * 1e10
+    print('back', y, y == 1e-300)
+
+def zeros():
+    z = 0.0
+    w = 5.0
+    n = -0.0
+    for i in range(3):
+        a = z * w
+        b = w * z
+        c = n * w
+        d = z * -5.0
+        e = z / 3.0
+        f = n / 3.0
+        g = z / -3.0
+        print(a, b, c, d, e, f, g)
+    t = 1e-200
+    for i in range(2):
+        u = t * t
+        q = t / 1e200
+        print('underflow', u, q, u > 0.0, q > 0.0)
+
+def float_only():
+    f = 1.0
+    while f < 1e320:
+        f = f * 1e50
+    print('float only', f)
+    g = 1e-320
+    h = 0.0
+    while g > 1e-400:
+        g = g / 1e10
+        h = h + 1.0
+    print(g, h)
+
+def fields():
+    p = P(1e300)
+    q = P(2.0)
+    r = P(0.0)
+    for i in range(4):
+        p.v *= 1e10
+        q.v = p.v
+        r.v = r.v + q.v * 0.0
+        print(i, p.v, q.v, r.v)
+    for i in range(4):
+        p.v = p.v * q.v - p.v * q.v + 1.5
+        print(i, p.v)
+
+def lists():
+    xs = [1.0, 1e300, 2.0, 1e-300]
+    for i in range(len(xs)):
+        xs[i] = xs[i] * 1e100
+    print(xs)
+    s = 0.0
+    for i in range(len(xs)):
+        s = s + xs[i]
+    print(s)
+    for i in range(len(xs)):
+        xs[i] = xs[i] / 1e100
+    print(xs)
+
+def compares():
+    x = 1e305
+    count = 0
+    for i in range(8):
+        if x > 1e308:
+            count += 1
+        if x == x:
+            count += 10
+        x = x * 10.0
+        x = -x
+    print(count, x)
+
+def calls():
+    total = 0.0
+    for i in range(7):
+        v = big(i)
+        total = total + v
+        print(i, v)
+    print(total)
+
+def swaps():
+    a = 1e400
+    b = 2.0
+    for i in range(3):
+        a, b = b, a
+        print(i, a, b)
+
+def mandel(n: int) -> int:
+    total = 0
+    for py in range(n):
+        ci = 2.0 * py / n - 1.0
+        for px in range(n):
+            cr = 3.0 * px / n - 2.0
+            zr = 0.0
+            zi = 0.0
+            i = 0
+            while i < 50 and zr * zr + zi * zi <= 4.0:
+                t = zr * zr - zi * zi + cr
+                zi = 2.0 * zr * zi + ci
+                zr = t
+                i += 1
+            total += i
+    return total
+
+def divide(xs: list[float]) -> float:
+    s = 0.0
+    for i in range(len(xs)):
+        s = s + 1.0 / xs[i]
+    return s
+
+@main
+def main():
+    up_and_down()
+    zeros()
+    float_only()
+    fields()
+    lists()
+    compares()
+    calls()
+    swaps()
+    print(mandel(40))
+    try:
+        print(divide([1.0, 2.0, 0.0]))
+    catch ZeroDivisionError as e:
+        print('caught', e.message)
+    print(divide([1e-400, 4.0]))

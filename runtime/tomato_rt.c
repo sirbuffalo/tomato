@@ -6911,12 +6911,11 @@ static int64_t bf_box(double m, int64_t e) {
     return BF_BOX | (int64_t)(uintptr_t)b;
 }
 int32_t tomato_bf_is_boxed(int64_t x) { return bf_boxed(x); }
-int64_t tomato_bf_dup(int64_t x) { return bf_boxed(x) ? bf_box(bf_ptr(x)->m, tomato_int_dup(bf_ptr(x)->e)) : x; }
-void tomato_bf_free(int64_t x) {
-    if (!bf_boxed(x)) return;
-    tomato_int_free(bf_ptr(x)->e);
-    free(bf_ptr(x)); BIG_ADJUST(-1);
-}
+/* a copy, and a free, of a float: a plain double is the word itself and owns nothing, so only the test is inline (as for an int) */
+COLD static int64_t bf_dup_slow(int64_t x) { return bf_box(bf_ptr(x)->m, tomato_int_dup(bf_ptr(x)->e)); }
+COLD static void bf_free_slow(int64_t x) { tomato_int_free(bf_ptr(x)->e); free(bf_ptr(x)); BIG_ADJUST(-1); }
+ALWAYS int64_t tomato_bf_dup(int64_t x) { return __builtin_expect(bf_boxed(x), 0) ? bf_dup_slow(x) : x; }
+ALWAYS void tomato_bf_free(int64_t x) { if (__builtin_expect(bf_boxed(x), 0)) bf_free_slow(x); }
 /* A word that is no box and no finite double (an infinity or a NaN that MessagePack carried in) is not a float: arithmetic on it stops
  * as it did when a float was a double, and a comparison follows IEEE. */
 #define BF_NONFINITE(w) (!bf_boxed(w) && !isfinite(bf_double(w)))
@@ -7383,7 +7382,8 @@ static void *bf_join(const char *head, const char *mark, int64_t e) {
 /* a float as print shows it, the shortest decimal that reads back as the same float: for a box 1.5e+1000000, or, when its
  * exponent has more than 4096 bits, the exact 0x1.8p+E (reading that back needs no logarithm). A subnormal double takes the
  * digits a float needs, not the fewer that a double needs: 2^-1074 is 4.9406564584124654e-324, because 5e-324 is another float. */
-void *tomato_bf_str(int64_t x) {
+NOINLINE void *tomato_bf_str(int64_t x) {   /* (not inlined: a program that formats a float once, such as an error message, keeps
+                                              * the function that does it short enough to be inlined itself, as math.sqrt) */
     if (!bf_boxed(x) && (!isfinite(bf_double(x)) || fabs(bf_double(x)) >= 2.2250738585072014e-308 || bf_double(x) == 0)) return tomato_str_from_f64(bf_double(x));
     BigFloat b = bf_open(x);
     char digits[24], head[40];
