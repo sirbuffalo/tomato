@@ -10,3 +10,5 @@
   `tomato_int_str` divides the whole number by 10^9 once per 9 digits. 2^20 bits (315,653 digits) takes 1.75 s, 2^22 28 s, 2^24 over 120 s (estimated 450 s), 2^28 over 90 s (estimated 30 hours); Python 3.14 takes 0.07 s, 0.28 s, 1.4 s and 32 s. A divide-and-conquer conversion (split by 10^(2^k)) needs fast multiply and divide first. Decimal parsing (`int('9' * n)`, big literals) is quadratic too, by the same note in `docs/architecture-review.md`; it was not timed here.
 - Re-run the 25 Linux wall-clock benchmarks on a quiet host now that the float slowdown is reduced
   The published Linux snapshot in `docs/performance.md` is the pre-bigfloat tree `c1fae360` (first labelled `f533dbd0`), so its float programs do not show stage 3 or stage 5.
+- Decide the seed registry design and record it (stage 0 of docs/package-registry-design.md)
+  Answer the five open questions at the end of `docs/package-registry-design.md` (human power over the registry, key-only owners, how `.tom` files name a seed, an `os.run` in `std`, whether `tomato run` may fetch), then record a decision entry (D-number) for seeds in `docs/decisions.md` and a short section in `docs/specification.md`.
