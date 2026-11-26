@@ -250,8 +250,12 @@
         var pre = a + "/", moved = [];
         Object.keys(h.files).forEach(function (k) { if (k.indexOf(pre) === 0) moved.push([k, b + k.slice(a.length), true]); });
         Object.keys(h.dirs).forEach(function (k) { if (k.indexOf(pre) === 0) moved.push([k, b + k.slice(a.length), false]); });
-        moved.forEach(function (m) { if (m[2]) { h.files[m[1]] = h.files[m[0]]; delete h.files[m[0]]; } else { h.dirs[m[1]] = true; delete h.dirs[m[0]]; } });
-        delete h.dirs[a]; h.dirs[b] = true; return ERRNO.SUCCESS;
+        moved.push([a, b, false]);
+        moved.forEach(function (m) {
+          if (m[2]) { h.files[m[1]] = h.files[m[0]]; delete h.files[m[0]]; } else { h.dirs[m[1]] = true; delete h.dirs[m[0]]; }
+          if (h.mtimes[m[0]] !== undefined) { h.mtimes[m[1]] = h.mtimes[m[0]]; delete h.mtimes[m[0]]; }
+        });
+        h.dirs[b] = true; return ERRNO.SUCCESS;
       },
       path_unlink_file: function (dirfd, ptr, len) {
         var p = h.at(dirfd, ptr, len);

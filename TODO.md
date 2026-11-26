@@ -16,8 +16,6 @@
   Fast loop copy for float loops, float interval facts for the word type (reusing or replacing the now-idle float interval code), and measurements on the M1, Linux and the browser.
 - Make counted repeats `{m,n}` around a group that can match the empty string give Python's results
   The group's recorded span and, in rare cases, the overall match span differ from Python, for example `(a??){,2}` on `'a'` and `(.|(\s{,2})??){,2}` with `finditer` on `'\na'`. Stop a repeat after an empty iteration instead of unrolling plain optional copies, and add those cases as corpus rows (`docs/regex.md` documents the difference).
-- Fix `path_rename` in `site/wasm/wasi.js` for files under a moved directory
-  It moves the directory entries but leaves the `mtimes` entries of the files under the moved directory behind. Check and fix it when the browser tests run.
 - Make refresh.sh use the split bootstrap build
   Make `compiler/bootstrap/refresh.sh` use `build-object.sh` (split build) and skip rebuilding a compiler that is already up to date. Expected 75 s to about 30-35 s (measured at load 63-77: two single-clang compiles of the 14.5 MB IR took about 62 s of the 75 s; the split build takes about 9 s).
 - Design a non-LTO debug build path for tomato build and run
