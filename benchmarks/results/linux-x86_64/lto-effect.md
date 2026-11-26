@@ -66,8 +66,8 @@ arithmetic programs the three links differ by a few percent (matmul, sort, crc32
 Programs that call across the runtime still gain (objects 1.34, tokenize 1.57, kmers 1.31, wordcount 1.17 for plain against LTO), and **the merge fallback
 recovers nearly all of that** (objects 1.02, nbody 0.99, binary_trees 0.99, hof 1.03 against LTO; tokenize 1.25 and kmers 1.12 are what it does not
 recover). Two programs go the other way: fib needs 9% more instructions with the merge or LTO than with a plain link (123.5 M against 113.0 M), the same
-for both, so it is the inlining of the runtime into the program, not the LTO linker; the instruction count does not say whether time follows (the
-Linux timings will). collatz needs 17% (plain, LTO) to 24% (merge) more instructions than at v0.51: a change since v0.51, not a link effect.
+for both, so it is the inlining of the runtime into the program, not the LTO linker, and it is a code-generation effect in one function, not a bad inlining
+decision (the next section); time does not follow it consistently. collatz needs 17% (plain, LTO) to 24% (merge) more instructions than at v0.51: a change since v0.51, not a link effect.
 
 **Why collatz executes more instructions (found 2026-11-25).** It is a deliberate trade, made by commit `12f64cb4` ("Speed up generated code and runtime"):
 instructions went up and the time went down. Building the compiler at `12f64cb4~1` and at `12f64cb4` gives exactly 70,331,052 and 82,122,779
@@ -82,3 +82,45 @@ The Linux timings show the trade paying off: collatz at 1,000,000 takes 0.166 s 
 The extra 7 percentage points of the merge link (87.15 M) are one instruction per step: with the runtime merged as bitcode `tomato.main` is not inlined into `main` and the
 multiply by 3 comes out as `lea rax,[r13*2]` plus `add rax,r13` instead of one `lea rax,[rbx+rbx*2]`, an instruction-selection difference of that link (not traced further) and not a
 change in the emitted IR.
+
+## Why fib executes more instructions when the runtime is inlined (checked 2026-11-25 on `da596c95`; same counts as at `d83f43b0`)
+
+Every call of `tomato.fib.small` (the all-small-integer copy of `fib`; about 7.05 M calls, half of them leaves) is the whole program. Callgrind: plain
+112.96 M (`tomato.fib.small` 84.6 M plus the out-of-line `tomato_int_add_c` 28.2 M), LTO 123.53 M, merge 123.54 M (all in `tomato.fib.small`).
+
+The inliner did what it should: it put the 8-instruction small-number path of `tomato_int_add_c` into `fib.small` (the slow path stays a call to
+`tomato_int_add_slow`). The extra instructions come from what that does to the register allocator's frame:
+
+- **Plain.** The last thing `fib.small` does is `tail call tomato_int_add_c`, so it ends in `jmp tomato_int_add_c`, and the leaf (`n < 2`) has a
+  return of its own. LLVM shrink-wraps the frame: a leaf call executes `cmp; jg; mov; ret`, 4 instructions, with no pushes.
+- **Inlined.** The add's fast path, its slow-path tail call and the leaf all end in one shared `ret` block (`common.ret`), and that block is where the
+  frame is torn down. The frame can no longer be shrink-wrapped away from the leaf: it executes `push r14; push rbx; push rax` before the compare and
+  `add rsp; pop; pop; ret` after it, 10 instructions (+6 for each of the 3.52 M leaves). An internal call is 3 instructions cheaper (the add costs
+  7 inline against 8 plus the `jmp`, and `add_c`'s `mov edx, 3` and the call overhead go): 28 plain, 25 inlined.
+  3.52 M × (+6 − 3) = +10.6 M, which is the 123.53 M against 112.96 M difference.
+
+To see it: `opt -O2` on the program's and runtime's bitcode gives the `common.ret` block with three predecessors (leaf, fast add, slow add) for the
+inlined build, and a block with two (leaf, the tail call) for the plain build; `llvm-objdump -d` on the binaries shows the two prologues.
+
+**Timing.** Not a consistent loss. `fib 38`, `taskset` to one CPU, interleaved plain / LTO / merge runs, minimum of 15 to 40 runs of CPU seconds, on the
+Threadripper 3990X while the box was at a load of about 70 (so these are indicative; each CPU's own plain-against-LTO ordering was stable):
+
+| CPU | plain (s) | LTO (s) | merge (s) | LTO ÷ plain |
+| ---: | ---: | ---: | ---: | ---: |
+| 10 | 0.225 | 0.210 | | 0.93× |
+| 30 | 0.227 | 0.209 | | 0.92× |
+| 45 | 0.225 | 0.209 | | 0.93× |
+| 60 | 0.226 | 0.208 | 0.203 | 0.92× |
+| 75 | 0.278 | 0.283 | | 1.02× |
+| 90 | 0.271 | 0.278 | | 1.03× |
+| 100 | 0.265 | 0.274 | 0.276 | 1.03× |
+| 110 | 0.268 | 0.275 | | 1.02× |
+| 120 | 0.293 | 0.332 | | 1.13× |
+
+On CPUs 10 to 60 the inlined build is about 7% faster despite executing 9% more instructions (the pushes and pops are cheap stores and loads that
+overlap, while the plain build pays a `jmp` into a separate function on every internal call); on CPUs 75 to 120 (slower, probably busier: the same
+program takes 20% longer there) it is 2 to 3% slower, 13% on CPU 120. The published fib time (0.225 s, LTO) is on the fast side of this. So the 9% in
+the instruction count does not say that fib is slower with the runtime inlined, and nothing here suggests a change to the inliner, the runtime or
+the compiler: LLVM's shrink-wrapping is the only thing that differs, and it would need a different IR shape (for instance a leaf test in a
+function of its own) to change.
+
