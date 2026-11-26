@@ -5387,7 +5387,7 @@ ALWAYS int64_t tomato_int_mul(int64_t x, int64_t y) { return tomato_int_mul_c(x,
 
 /* magnitude division (Knuth algorithm D), in base 2^64. Storage remains 32-bit limbs.
  * q has un limbs, r has vn limbs; v is nonzero and both inputs are normalized. */
-static void mag_divmod(const uint32_t *u, int64_t un, const uint32_t *v, int64_t vn, uint32_t *q, uint32_t *r) {
+static void mag_divmod_base(const uint32_t *u, int64_t un, const uint32_t *v, int64_t vn, uint32_t *q, uint32_t *r) {
     typedef unsigned __int128 u128;
     memset(q, 0, (size_t)un * 4); memset(r, 0, (size_t)vn * 4);
     if (mag_cmp(u, un, v, vn) < 0) { memcpy(r, u, (size_t)un * 4); return; }
@@ -5469,6 +5469,132 @@ static void mag_divmod(const uint32_t *u, int64_t un, const uint32_t *v, int64_t
         r[i] = (uint32_t)(x >> (32 * (i % 2)));
     }
     free(uu); free(vv);
+}
+
+/* Division by a long divisor: Burnikel-Ziegler, recursive division on top of the Karatsuba product (about twice the cost of a
+ * multiplication of the divisor's length per divisor-length of quotient, against Knuth D's quadratic work). The functions work in
+ * place on a normalized divisor (the top bit of its top limb set), as GMP's dcpi1 division does: dividing np (nn limbs) by dp (dn)
+ * writes the low nn - dn limbs of the quotient to qp, returns its top limb (0 or 1), and leaves the remainder in np[0, dn); the
+ * limbs of np above dn are left with any contents. Below DIV_DC_T limbs of divisor or of quotient, Knuth D does it. */
+#ifndef DIV_DC_T
+#define DIV_DC_T 160
+#endif
+
+/* r -= t, both n limbs; the borrow out of the top (0 or 1) */
+static int64_t mag_sub_n_borrow(uint32_t *r, const uint32_t *t, int64_t n) {
+    uint64_t borrow = 0;
+    int64_t i = 0;
+    for (; i + 2 <= n; i += 2) {
+        uint64_t s, u;
+        uint64_t c1 = __builtin_sub_overflow(limb2(r + i), limb2(t + i), &s), c2 = __builtin_sub_overflow(s, borrow, &u);
+        limb2_put(r + i, u); borrow = c1 | c2;
+    }
+    for (; i < n; i++) { uint64_t s = (uint64_t)r[i] - t[i] - borrow; r[i] = (uint32_t)s; borrow = s >> 63; }
+    return (int64_t)borrow;
+}
+
+/* r -= 1 in n limbs; the borrow out of the top */
+static uint32_t mag_dec(uint32_t *r, int64_t n) {
+    for (int64_t i = 0; i < n; i++) if (r[i]-- != 0) return 0;
+    return 1;
+}
+
+/* the base case: Knuth D (mag_divmod_base) on a copy */
+static uint32_t div_qr_base(uint32_t *qp, uint32_t *np, int64_t nn, const uint32_t *dp, int64_t dn) {
+    uint32_t *top = np + nn - dn, qh = mag_cmp(top, dn, dp, dn) >= 0;
+    if (qh) mag_sub(top, dn, dp, dn, top);
+    int64_t qn = nn - dn, un = nn;
+    if (qn == 0) return qh;
+    while (un > 0 && np[un - 1] == 0) un--;
+    memset(qp, 0, (size_t)qn * 4);
+    if (un < dn) return qh;                                  /* below the divisor: quotient 0, the remainder is np as it is */
+    uint32_t buf[4 * DIV_DC_T + 8], *q = buf, *r;
+    if (un + dn > (int64_t)(sizeof buf / 4)) { q = malloc((size_t)(un + dn) * 4); if (!q) out_of_memory(); }
+    r = q + un;
+    mag_divmod_base(np, un, dp, dn, q, r);
+    memcpy(qp, q, (size_t)(un - dn + 1 < qn ? un - dn + 1 : qn) * 4);   /* the quotient has at most un - dn + 1 limbs */
+    memcpy(np, r, (size_t)dn * 4);
+    if (q != buf) free(q);
+    return qh;
+}
+
+/* tp = a * b (an + bn limbs) */
+static void div_mul(uint32_t *tp, const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn) {
+    memset(tp, 0, (size_t)(an + bn) * 4);
+    mag_mul(a, an, b, bn, tp);
+}
+
+/* np has 2n limbs: the quotient's n limbs and its top limb as above. The top hi limbs of the quotient come from dividing the top
+ * 2 hi limbs of np by the top hi limbs of dp; the rest of dp times that is subtracted, and while the result is negative the
+ * quotient was too big (by at most a few): it goes down by one and dp is added back. The same again for the low lo limbs.
+ * tp has n limbs of scratch. */
+static uint32_t div_qr_n(uint32_t *qp, uint32_t *np, const uint32_t *dp, int64_t n, uint32_t *tp) {
+    int64_t lo = n / 2, hi = n - lo;
+    uint32_t qh, ql;
+    int64_t cy;
+    qh = hi < DIV_DC_T ? div_qr_base(qp + lo, np + 2 * lo, 2 * hi, dp + lo, hi) : div_qr_n(qp + lo, np + 2 * lo, dp + lo, hi, tp);
+    div_mul(tp, qp + lo, hi, dp, lo);
+    cy = mag_sub_n_borrow(np + lo, tp, n);
+    if (qh) cy += mag_sub_n_borrow(np + n, dp, lo);
+    while (cy > 0) {
+        qh -= mag_dec(qp + lo, hi);
+        cy -= mag_add_in(np + lo, n, dp, n);
+    }
+    ql = lo < DIV_DC_T ? div_qr_base(qp, np + hi, 2 * lo, dp + hi, lo) : div_qr_n(qp, np + hi, dp + hi, lo, tp);
+    div_mul(tp, dp, hi, qp, lo);
+    cy = mag_sub_n_borrow(np, tp, n);
+    if (ql) cy += mag_sub_n_borrow(np + lo, dp, hi);
+    while (cy > 0) {
+        mag_dec(qp, lo);
+        cy -= mag_add_in(np, n, dp, n);
+    }
+    return qh;
+}
+
+/* any lengths (nn >= dn). A quotient at least as long as the divisor is made a divisor-length at a time from the top, each a
+ * 2n/n division of the remainder so far and the next dn limbs (the first takes the odd part). A shorter quotient (qn limbs)
+ * depends little on the divisor's low limbs: the top 2 qn limbs of np are divided by the top qn limbs of dp, and the rest is
+ * corrected as in div_qr_n. tp has dn limbs. */
+static uint32_t div_qr(uint32_t *qp, uint32_t *np, int64_t nn, const uint32_t *dp, int64_t dn, uint32_t *tp) {
+    int64_t qn = nn - dn;
+    if (qn < DIV_DC_T || dn < DIV_DC_T) return div_qr_base(qp, np, nn, dp, dn);
+    if (qn < dn) {
+        int64_t k = dn - qn;                                 /* the divisor's limbs left out of the estimate */
+        uint32_t qh = div_qr_n(qp, np + k, dp + k, qn, tp);
+        div_mul(tp, qp, qn, dp, k);
+        int64_t cy = mag_sub_n_borrow(np, tp, dn);
+        if (qh) cy += mag_sub_n_borrow(np + qn, dp, k);
+        while (cy > 0) {
+            qh -= mag_dec(qp, qn);
+            cy -= mag_add_in(np, dn, dp, dn);
+        }
+        return qh;
+    }
+    int64_t b = qn % dn;
+    uint32_t qh;
+    if (b) qh = div_qr(qp + qn - b, np + qn - b, dn + b, dp, dn, tp);
+    else { b = dn; qh = div_qr_n(qp + qn - dn, np + qn - dn, dp, dn, tp); }
+    for (int64_t i = qn - b - dn; i >= 0; i -= dn) div_qr_n(qp + i, np + i, dp, dn, tp);   /* each top half is a remainder: no top limb */
+    return qh;
+}
+
+/* q has un limbs, r has vn limbs (as mag_divmod_base); a long divisor and quotient go to div_qr */
+static void mag_divmod(const uint32_t *u, int64_t un, const uint32_t *v, int64_t vn, uint32_t *q, uint32_t *r) {
+    if (vn < DIV_DC_T || un - vn < DIV_DC_T) { mag_divmod_base(u, un, v, vn, q, r); return; }
+    int s = __builtin_clz(v[vn - 1]);
+    uint32_t *d = malloc((size_t)(vn + un + 1 + vn) * 4), *n = d + vn, *tp = n + un + 1;
+    if (!d) out_of_memory();
+    for (int64_t i = vn - 1; i > 0; i--) d[i] = s ? v[i] << s | v[i - 1] >> (32 - s) : v[i];
+    d[0] = v[0] << s;
+    n[un] = s ? u[un - 1] >> (32 - s) : 0;
+    for (int64_t i = un - 1; i > 0; i--) n[i] = s ? u[i] << s | u[i - 1] >> (32 - s) : u[i];
+    n[0] = u[0] << s;
+    int64_t nn = un + (n[un] != 0), qn = nn - vn;
+    memset(q, 0, (size_t)un * 4);
+    uint32_t qh = div_qr(q, n, nn, d, vn, tp);
+    if (qh) q[qn] = qh;                                      /* then the quotient has qn + 1 <= un limbs */
+    for (int64_t i = 0; i < vn; i++) r[i] = s ? n[i] >> s | (i + 1 < vn ? n[i + 1] << (32 - s) : 0) : n[i];
+    free(d);
 }
 
 int32_t tomato_int_sign(int64_t x) {

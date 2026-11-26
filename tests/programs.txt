@@ -103,6 +103,7 @@ int_bitwise_big
 big_shift
 big_karatsuba
 big_ntt
+big_division
 bit_chunks
 compact_lists
 compact_fuzz

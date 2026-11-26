@@ -1,0 +1,83 @@
+# Big-number division long enough for Burnikel-Ziegler (divisor and quotient of 160 limbs of 32 bits and up): lengths around
+# the threshold and its doubles, quotients shorter and longer than the divisor (and many times as long), all four signs (floor
+# division: the remainder takes the divisor's sign), exact quotients, the largest remainder, and divisor patterns that make the
+# quotient estimates too big (a lone top bit, all-ones limbs, B^k - 1 above zero limbs). Expected output computed with Python 3.
+def mix(h: int, r: int) -> int:
+    return (h * 1000003 + r % 1000000007) % 2305843009213693951
+
+# a dense number of exactly this many 32-bit limbs, from a 64-bit LCG: 32 limbs at a time, joined by halves
+def num(limbs: int, seed: int) -> int:
+    if limbs > 32:
+        h = limbs // 2
+        return (num(h, seed * 3 + 1) << (32 * (limbs - h))) | num(limbs - h, seed * 3 + 2)
+    s = seed
+    v = 0
+    for i in range(limbs):
+        s = (s * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+        v = (v << 32) + ((s >> 32) | 1)
+    return v
+
+# a number's fingerprint: three residues
+def fp(x: int) -> str:
+    return f'{x % 1000000007} {x % 2305843009213693951} {x % 18446744073709551557}'
+
+# divides a by b with every sign; checks the identities, and folds the results into h
+def check(name: str, a: int, b: int, h: int) -> int:
+    bad = False
+    for sa in [1, -1]:
+        for sb in [1, -1]:
+            x = a * sa
+            y = b * sb
+            q, r = divmod(x, y)
+            if q != x // y or r != x % y or q * y + r != x:
+                bad = True
+            if (sb > 0 and (r < 0 or r >= y)) or (sb < 0 and (r > 0 or r <= y)):
+                bad = True
+            h = mix(mix(h, q), r)
+    if bad:
+        print('BAD', name)
+    return h
+
+@main
+def main():
+    h = 0
+    seed = 1
+    # the divisor's length against the quotient's: around the threshold (160), its double, and far apart
+    dlen: list[int] = [159, 160, 161, 320, 321, 700]
+    qlen: list[int] = [1, 159, 160, 161, 320, 321, 500, 1100]
+    for i in range(len(dlen)):
+        b = num(dlen[i], seed)
+        seed += 1
+        for j in range(len(qlen)):
+            a = num(dlen[i] + qlen[j], seed)
+            seed += 1
+            q = a // b
+            r = a % b
+            print(f'div {dlen[i]} {qlen[j]}', fp(q), fp(r))
+            h = check(f'{dlen[i]} {qlen[j]}', a, b, h)
+    print('dense', h)
+    # exact quotients and the largest remainder: a = q b and a = q b + (b - 1)
+    for n in [160, 197, 400, 1280]:
+        b = num(n, seed)
+        q = num(n + 37, seed + 1)
+        seed += 2
+        print(n, (q * b) // b == q, (q * b) % b == 0, (q * b + b - 1) // b == q, (q * b + b - 1) % b == b - 1, (-(q * b) - 1) // b == -q - 1)
+        h = check(f'exact {n}', q * b + b - 1, b, h)
+    # divisors that make the estimates too big: a lone top bit, B^k - 1 (all-ones limbs), all ones above zero limbs, and just
+    # above a power of two; dividends of all-ones limbs, a lone top bit and dense ones
+    for n in [160, 161, 321, 600]:
+        divisors: list[int] = [1 << (32 * n - 1), (1 << (32 * n)) - 1, ((1 << (16 * n)) - 1) << (16 * n), (1 << (32 * n - 1)) + 1, (1 << (32 * n - 1)) + (1 << (16 * n))]
+        for k in range(len(divisors)):
+            b = divisors[k]
+            dividends: list[int] = [(1 << (32 * (2 * n + 5))) - 1, 1 << (32 * 3 * n), num(2 * n, seed), (b << (32 * n)) - 1, b * b - 1, (b - 1) * (b + 1) * b]
+            seed += 1
+            for m in range(len(dividends)):
+                a = dividends[m]
+                h = check(f'pattern {n} {k} {m}', a, b, h)
+            print(f'pattern {n} {k}', fp(dividends[0] // b), fp(dividends[3] % b))
+    print('patterns', h)
+    # shorter than the divisor, equal, and one limb short of it
+    b = num(500, 7)
+    print(5 // b, -5 // b, fp(5 % -b), b // b, (b - 1) // b, fp((-b + 1) % b), (b + 1) % b, divmod(b * 2, -b)[0], divmod(b * 2, -b)[1])
+    # one exact quotient printed in full
+    print(num(200, 3) // num(90, 5))

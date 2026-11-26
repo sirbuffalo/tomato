@@ -632,8 +632,8 @@ With x = 2^bits (the case first timed in the TODO note: 2^20 bits 0.28 s, 2^24 9
 Tests: `tests/bigmul.c` (12,000 random products and squares around the thresholds, uneven lengths, all-ones and zero-half operands,
 against a plain 32-bit schoolbook product, under AddressSanitizer and UBSan) and the program `big_karatsuba` (output computed with Python; also run under AddressSanitizer and through `site/wasm`).
 
-*Not done here:* Toom-3. Division (Knuth D) and decimal conversion are still quadratic; a subquadratic division (Newton or
-Burnikel-Ziegler) and a divide-and-conquer `str(int)` can build on this multiplication. The next section adds the transform product
+*Not done here:* Toom-3. Decimal conversion is still quadratic; a divide-and-conquer `str(int)` can build on this multiplication
+(division: see "big-integer division" below). The next section adds the transform product
 that Karatsuba's n^1.585 (a dense 2^28-bit square would still take about 3 minutes) called for.
 
 ## What was done (big-integer multiplication by a number-theoretic transform, unreleased)
@@ -679,7 +679,58 @@ with Python; also under AddressSanitizer and through `site/wasm`). Outside the s
 random, even and uneven, were compared with Python 3 (the exact product up to 2^25 bits, residues modulo eight moduli above that, with `ulimit -v 4000000`).
 
 *Not done:* a truncated (half-size) transform for the low or high half of a product, the transform of a shared operand reused across the
-pieces of an uneven product, a faster 2^28-bit time with more tuning (AVX2/Montgomery in vectors), and a subquadratic division.
+pieces of an uneven product, and a faster 2^28-bit time with more tuning (AVX2/Montgomery in vectors).
+
+## What was done (big-integer division, unreleased)
+
+`mag_divmod` was Knuth algorithm D only (in 64-bit words), so dividing a 2n-limb number by an n-limb one took about n² limb
+products. Now a divisor and a quotient both of `DIV_DC_T` (160) limbs or more go to **Burnikel-Ziegler** recursive division, built on
+the Karatsuba product, in the in-place form GMP uses (`dcpi1`):
+
+* `div_qr_n` divides 2n limbs by n (the divisor normalized: top bit set). The top half of the quotient comes from dividing the top
+  half of the dividend by the top half of the divisor (recursively); the low half of the divisor times that is subtracted, and while
+  the result is negative the quotient goes down by one and the divisor is added back (at most a few times). The same again for the
+  low half. Cost: about two products of n/2 limbs per level, so the same order as a multiplication.
+* `div_qr` takes any lengths: a quotient at least as long as the divisor is made one divisor-length at a time from the top (the
+  first piece takes the odd part); a shorter quotient (q limbs) is estimated from the top 2q limbs of the dividend and the top q
+  limbs of the divisor, then corrected the same way.
+* Below 160 limbs of divisor or of quotient the old Knuth D (`mag_divmod_base`) does the work, also as the recursion's base case.
+  The threshold was measured on x86-64 (a shared, loaded machine): times are flat from 100 to 240 limbs, and at 160 the recursive
+  path is never measurably slower than Knuth D.
+
+The callers (`//`, `%`, `divmod`, true division of big ints) are unchanged: `mag_divmod` keeps its arguments.
+
+Dividing a 2^(k+1)-bit number by a 2^k-bit one (dense random limbs), in C with the runtime at `-O2`, best of several runs, load
+average about 75 from other work:
+
+| divisor bits | Knuth D | Burnikel-Ziegler |
+| --- | --- | --- |
+| 2^16 | 1.3 ms | 0.61 ms |
+| 2^18 | 21 ms | 5.7 ms |
+| 2^20 | 0.35 s | 0.054 s |
+| 2^22 | 5.7 s | 0.50 s |
+
+`divmod(a, b)` in a release-mode program, a of 2^m bits and b of 2^(m-1) bits, against Python 3.14 on the same machine in the same
+session (the quotients and remainders agree, checked by residues):
+
+| a bits | Tomato | Python |
+| --- | --- | --- |
+| 2^20 | 0.029 s | 0.073 s |
+| 2^22 | 0.29 s | 0.63 s |
+| 2^24 | 2.5 s | 3.3 s |
+| 2^26 | 39 s | 80 s |
+| 2^28 | 316 s (peak memory 374 MB, `ulimit -v` 16 GB) | 678 s |
+
+Tests: `tests/bigdiv.c` (the bitwise long-division check, now with the recursion threshold at 6 limbs so short numbers take the
+recursive path too, and 1,500 long divisions up to 3,000 limbs checked by multiplying back: random, all-ones, lone-top-bit and
+half-zero patterns, the largest remainder, under AddressSanitizer and UBSan; every correction branch is taken) and the program
+`big_division` (also under AddressSanitizer and through `site/wasm`: lengths around the threshold, quotients shorter and much longer than the divisor, all four signs, exact quotients,
+divisor patterns that make the estimates too big; output computed with Python).
+
+The times above were measured with the Karatsuba product. The division's products go through `mag_mul`, so since the transform
+product (previous section) they use it from 6000 limbs as well.
+
+*Not done:* a Newton reciprocal (with the transform product it could beat the recursive division at the largest sizes).
 
 ## What was done (range loops and float intervals, unreleased)
 

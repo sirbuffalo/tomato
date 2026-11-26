@@ -142,7 +142,8 @@ show a diff of it [V].
 - **Big integers** [V]: schoolbook multiplication (no Karatsuba), Knuth division, O(n²) decimal conversion and parsing,
   and shifts implemented as `pow(2, n)` followed by a multiply or floor division (`:4103-4125`). *Since then:* shifts and
   `2**n` are linear, and multiplication is Karatsuba above 48 limbs with its own squaring path (`docs/performance.md`,
-  "big-integer multiplication"); division, decimal conversion and parsing are still quadratic.
+  "big-integer multiplication"), and division by a long divisor is Burnikel-Ziegler over it ("big-integer division");
+  decimal conversion and parsing are still quadratic.
 - **Errors** [V]: a pending error lives in IR globals (`@tomato_exc`, line, kind); the compiler emits a load and branch
   after every call that can raise, freeing the expression's held temporaries on the way to the nearest `catch`,
   `finally` or the function epilogue. `finally` bodies are compiled once per exit path. There is no LLVM unwinding.
