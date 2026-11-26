@@ -31,7 +31,7 @@ The same tree, rebuilt with the working toolchain:
 This confirms `docs/architecture-review.md` section 3.3 (fib 183.46 M with LTO against 342.05 M without, reproduced as 183.45 M): at v0.51 the lost
 LTO made fib, sieve and matmul 1.9 to 2.8 times too slow.
 
-## At `d83f43b0` (v0.51 plus 25 later runtime and compiler changes; the tree of `instructions.md`)
+## At `d83f43b0` (v0.51 plus 25 later runtime and compiler changes; the tree of `instructions-d83f43b0.md`)
 
 | benchmark | v0.51 LTO | plain | merge | LTO | plain ÷ LTO | merge ÷ LTO |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
