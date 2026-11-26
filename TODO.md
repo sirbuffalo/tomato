@@ -4,8 +4,6 @@
   After stage 5 (D77e) mandelbrot is back to its time before stage 3, but nbody runs 1.6x (Linux) / 1.9x (M3 Pro) and spectral_norm 1.45x / 1.24x their times before it, and the browser (debug mode, no fast copy) 1.1-2.9x; see "Stage 5 as built" in `docs/bigfloat-design.md`. nbody's chains are on fields, which have no intervals; spectral_norm tests the result of `a(i, j)` for a box.
 - Run `release/release.sh --dry-run` on the signing Mac once to exercise the real Linux step
   Use `--dry-run` (or `--from linux`) so ssh, copy-back, the publish gate and the snapshot are exercised end to end, with `--linux-host` reachable from the Mac. The Linux step's remote script alone ran fine on biggie: the full tier passed 842 tests with `TOMATO_TEST_REQUIRE_LTO=1` at load about 62 (not quiet).
-- Keep the digits of small negative angles in `sin` and `tan`
-  Small negative angles lose all their digits in `sin`/`tan`, for example `sin(rad(-1e-20))` is `0.0`. `_quarter` in `std/math.tom` computes `t - t // 1.0`, which rounds `-tiny + 1` to `1.0`. This predates the bigfloat stage 4 task and affects plain doubles too.
 - Decide whether huge-exponent math and the `f` format should refuse a result beyond some size
   Decide whether `exp`, `expm1`, `sinh`, `cosh`, `**`, `int(x)` and the `f` format should refuse a result whose exponent is beyond some size, with a clear error. Today they take time or memory that grows with the exponent: `exp(1e100000)` takes about 16 s, and `f'{1e10000000:.2f}'` writes ten million digits. JSON can now bring such a value in from a 12-byte document. This is a language decision, since the design says the only limit is memory.
 - Add Karatsuba (or better) multiplication for big integers

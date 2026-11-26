@@ -435,14 +435,16 @@ export def gradians(x: int | float) -> Angle:
 # Trigonometry reduces the angle to a quarter turn first (in turns, which are exact for degrees and gradians), so the
 # multiples of a quarter turn come out exactly: sin(deg(180)) is 0.0, cos(deg(90)) is 0.0 and sin(deg(90)) is 1.0.
 # k is which quarter turn the angle is nearest (0 to 3); x is the small remainder in radians, -pi/4 up to pi/4.
+# The turns are reduced to the nearest whole turn (-0.5 up to 0.5), not to 0 up to 1, so that a tiny negative angle keeps its
+# digits: t - floor(t) would round -1e-20 + 1 to 1.0 and lose them all. Subtracting a whole number is exact here.
 def _quarter(a: Angle) -> list[float]:
     t = a.turn()
-    t = t - (t // 1.0)
+    t = t - ((t + 0.5) // 1.0)
     q = t * 4.0
     k = (q + 0.5) // 1.0
     x = (q - k) * (3.141592653589793 / 2.0)
-    if k >= 4.0:
-        k = 0.0
+    if k < 0.0:
+        k = k + 4.0
     return [k, x]
 
 export def sin(a: Angle) -> float:
