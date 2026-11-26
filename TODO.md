@@ -1,9 +1,7 @@
-- Publish the LTO Linux timings
-  The v0.51 Linux wall-clock snapshot and Linux time columns in `docs/performance.md` (and `site/benchmarks.json`, which has no Linux numbers) were measured without LTO; the instruction counts are already re-measured (`benchmarks/results/linux-x86_64/instructions.md`). After the "Re-run the Linux benchmarks on a quieter biggie" item lands (use `~/.tomato-release/linux-tools/bin` first on PATH; run `release/check-lto.sh` first), replace the timing numbers and remove the non-LTO notes in `docs/performance.md`. Also run the full tier of `tests/run.sh` once on a quiet biggie with `TOMATO_TEST_REQUIRE_LTO=1`, and one real `release/release.sh` Linux step (the fast tier with it set passed, 630 tests; the release path was not run).
+- Run the LTO release checks on a quiet biggie
+  The Linux wall-clock numbers in `docs/performance.md` are now with LTO (measured 2026-11-25 at load about 65, pinned to 6 idle CPUs: not quiet, spread 50% or more; the `benchmarks/results/linux-x86_64/results.md` and `v0.51-lto/` runs). Still to do: run the full tier of `tests/run.sh` once on a quiet biggie with `TOMATO_TEST_REQUIRE_LTO=1`, and one real `release/release.sh` Linux step (the fast tier with it set passed, 630 tests; the release path was not run). Use `~/.tomato-release/linux-tools/bin` first on PATH and run `release/check-lto.sh` first.
 - Test unattended release signing on the iMac
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
-- Re-run the Linux benchmarks on a quieter biggie
-  The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
 - Confirm the split bootstrap build on the Mac
   Run `tests/run.sh` on the Mac (and the full tier) to confirm `build-object.sh` takes the split path under macOS's BWK awk and Apple ld rather than the fallback.
 - Measure the per-item instruction saving of borrowed loop items on `objects`
