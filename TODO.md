@@ -23,5 +23,3 @@
 - Run tests/run.sh on macOS (with the wasi-sdk arm64-macos toolchain) to cover the untested platform.
   The full suite passed on Linux x86_64 on the merged Wave 2 tree (984 passed, 0 failed); macOS is the platform still untested.
 - Run the full suite with ASan, LTO and the WASI SDK on a complete toolchain (or the Mac) to confirm the new test also passes under AddressSanitizer.
-- Run `site/build.sh` to bring the site docs back in sync with docs/
-  `site/docs/specification.md`, `decisions.md` and `decision-inventory.md` differ from `docs/` (3 fast-tier failures in the "release files" section of `tests/run.sh` that were already there before the `Pattern.match`/`search` task).
