@@ -6047,7 +6047,16 @@ COLD static int64_t int_bitop_slow(int64_t x, int64_t y, int32_t op) {
     BIG_ADJUST(1);
     uint32_t *r = out->d;
     uint64_t ca = 1, cb = 1;                                     /* the carries of the two's complements */
-    for (int64_t i = 0; i < n; i++) {
+    int64_t i = 0, both = a.n < b.n ? a.n : b.n;
+    for (; i + 2 <= both; i += 2) {                              /* two limbs at a time while both operands have them */
+        uint64_t u, v;
+        memcpy(&u, a.d + i, 8); memcpy(&v, b.d + i, 8);
+        if (na) { uint64_t t = ~u + ca; ca = ca & (t == 0); u = t; }
+        if (nb) { uint64_t t = ~v + cb; cb = cb & (t == 0); v = t; }
+        uint64_t w = op == 0 ? (u & v) : (op == 1 ? (u | v) : (u ^ v));
+        memcpy(r + i, &w, 8);
+    }
+    for (; i < n; i++) {
         uint32_t u = i < a.n ? a.d[i] : 0, v = i < b.n ? b.d[i] : 0;
         if (na) { uint64_t s = (uint64_t)(uint32_t)~u + ca; u = (uint32_t)s; ca = s >> 32; }
         if (nb) { uint64_t s = (uint64_t)(uint32_t)~v + cb; v = (uint32_t)s; cb = s >> 32; }
@@ -6055,7 +6064,13 @@ COLD static int64_t int_bitop_slow(int64_t x, int64_t y, int32_t op) {
     }
     if (nr) {                                                    /* negative: the magnitude is the two's complement of r */
         uint64_t c = 1;
-        for (int64_t i = 0; i < n; i++) { uint64_t s = (uint64_t)(uint32_t)~r[i] + c; r[i] = (uint32_t)s; c = s >> 32; }
+        i = 0;
+        for (; i + 2 <= n && c; i += 2) {
+            uint64_t w; memcpy(&w, r + i, 8);
+            w = ~w + 1; c = (w == 0); memcpy(r + i, &w, 8);
+        }
+        for (; i + 2 <= n; i += 2) { uint64_t w; memcpy(&w, r + i, 8); w = ~w; memcpy(r + i, &w, 8); }
+        for (; i < n; i++) { uint64_t s = (uint64_t)(uint32_t)~r[i] + c; r[i] = (uint32_t)s; c = s >> 32; }
     }
     return int_finish(out, nr ? -1 : 1, n);
 }
