@@ -4,8 +4,6 @@
   Run `tests/run.sh` on the Mac (and the full tier) to confirm `build-object.sh` takes the split path under macOS's BWK awk and Apple ld rather than the fallback.
 - Widen the loop-item borrowing further
   Let proven methods take object, text or list parameters (`a.absorb(b)`), and let borrowed bodies hold nested range loops (`Gen.lent_loop_body`, `lent_method_info`; see "borrowed loop items" in `docs/performance.md`).
-- Run the release script's `bump` step once on a scratch clone
-  Confirm it rewrites `std/sys.tom` and `site/wasm/std/sys.tom` and that the commit step accepts the extra file.
 - Floats of any size in the library and the formats (stage 4 of docs/bigfloat-design.md)
   Make std/math, round(x, n), f-string float formats, JSON, TOML and MessagePack handle floats outside the double range (the runtime already has tomato_bf_math1/2, tomato_bf_round, tomato_bf_format), with a decision entry for each visible change.
 - Fast loop copy for float loops (stage 5 of docs/bigfloat-design.md)
