@@ -79,9 +79,22 @@ check, `lea`, `mov`, `sar`, `or`, `test`, `mov`, `cmovne`, the counter's `add` a
 Whether a number is even is as unpredictable as a coin toss, so v0.51 paid a branch misprediction on about half the steps, which valgrind does not count.
 The Linux timings show the trade paying off: collatz at 1,000,000 takes 0.166 s now (`results.md`) against 0.296 s at v0.51 with LTO
 (`v0.51-lto/results.md`); a pinned back-to-back rerun of the two binaries gave 0.292 s and 0.170 s (median of 25, the host loaded). Nothing to fix.
-The extra 7 percentage points of the merge link (87.15 M) are one instruction per step: with the runtime merged as bitcode `tomato.main` is not inlined into `main` and the
-multiply by 3 comes out as `lea rax,[r13*2]` plus `add rax,r13` instead of one `lea rax,[rbx+rbx*2]`, an instruction-selection difference of that link (not traced further) and not a
-change in the emitted IR.
+The extra 7 percentage points of the merge link (87.15 M) are one instruction per step, and **not an inlining effect** (traced 2026-11-25, same clang 21.1.8, collatz at 50000
+reproduced exactly: merge 87,153,618, LTO 82,122,815). The multiply by 3 comes out as `lea rax,[2*r13]` plus `add rax,r13` in the merge link and as one `lea rax,[rbx+2*rbx]` with LTO.
+The chain:
+
+- `tomato.main` is *not* inlined into `main` in the merge link, and the inliner says why: `cost=3225, threshold=225`. The program's functions keep external linkage when the runtime is
+  merged with `-mlink-bitcode-file` (clang only links the bitcode in; nothing is internalized), so the inliner gets neither the last-call-to-a-local-function bonus nor a chance to delete the callee. With LTO the linker
+  internalizes everything but `main`, so `tomato.main` has one caller and is inlined (cost -11775 once it is internal).
+- That is **not** what costs the instruction: with `tomato.main` made `internal` in the IR, the merge link does inline it into `main` and still executes 87,153,662 instructions.
+- The instruction comes from register allocation plus LLVM's *slow 3-operand LEA* tuning (on in the generic x86-64 tuning). The loop-carried `x` lives in `r13` in the merge build (`rbp` when `tomato.main` is
+  inlined) and in `rbx` with LTO. `lea rax,[r13+2*r13]` (like `rbp`) has no short encoding, since a base of `rbp` or `r13` needs an explicit zero displacement, so it is a three-component LEA, and the `X86FixupLEAs`
+  pass turns it into `lea` + `add`. With `rbx` it is a two-component LEA and stays one instruction. Which of the callee-saved registers `x` gets depends on the rest of the (differently inlined) function, so it
+  is allocation luck, not a property of the merge link. Building the merge link with `-Xclang -target-feature -Xclang -slow-3ops-lea` gives 82,128,667, within 6 thousand instructions of the LTO build.
+- Not a regression in time to chase: on the Intel cores that have the slow-LEA tuning a three-component `lea` has 3 cycles of latency, so `lea`+`add` (2 cycles) is no slower; the instruction count rises, the
+  dependent-chain length does not. No change to the compiler, runtime or link was made.
+
+(The same external linkage limits the merge link generally, since every program function has a threshold of 225 instead of the single-caller bonus: that may be part of what the merge does not recover on tokenize 1.25 and kmers 1.12. Not measured here.)
 
 ## Why fib executes more instructions when the runtime is inlined (checked 2026-11-25 on `da596c95`; same counts as at `d83f43b0`)
 

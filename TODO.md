@@ -16,8 +16,6 @@
   mandelbrot executes 7.6x, nbody 3.4x and spectral_norm 1.7x more instructions at `bf46a4ee` than at its parent (callgrind, `benchmarks/count.sh --guest`; numbers in `docs/performance.md` and `benchmarks/results/linux-x86_64/results-f533dbd0.md`). Compare the emitted IR before and after the bigfloat stage 3 commit. The Linux snapshot in `docs/performance.md` was measured at the same tree label (`f533dbd0`) without the slowdown, so first find out why the two runs differ.
 - Run `release/release.sh --dry-run` on the signing Mac once to exercise the real Linux step
   Use `--dry-run` (or `--from linux`) so ssh, copy-back, the publish gate and the snapshot are exercised end to end, with `--linux-host` reachable from the Mac. The Linux step's remote script alone ran fine on biggie: the full tier passed 842 tests with `TOMATO_TEST_REQUIRE_LTO=1` at load about 62 (not quiet).
-- Trace why the bitcode-merge link leaves `tomato.main` un-inlined
-  With the runtime merged as bitcode (`-mlink-bitcode-file`), `tomato.main` is not inlined into `main` and `x*3` comes out as `lea`+`add` instead of one `lea` on collatz: 1 instruction per step (87.15 M against 82.12 M with LTO). The IR is the same; find the cause in the merge link's inlining or instruction selection. Numbers: `benchmarks/results/linux-x86_64/lto-effect.md`.
 - Run tests/run.sh on macOS (with the wasi-sdk arm64-macos toolchain) to cover the untested platform.
   The full suite passed on Linux x86_64 on the merged Wave 2 tree (984 passed, 0 failed); macOS is the platform still untested.
 - Run the full suite with ASan, LTO and the WASI SDK on a complete toolchain (or the Mac) to confirm the new test also passes under AddressSanitizer.
