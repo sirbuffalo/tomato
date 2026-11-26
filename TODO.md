@@ -8,8 +8,6 @@
   `st_mtimespec` and `extern char **environ` in `runtime/tomato_rt.c` are untested there (only Linux native and WASI were built), and so is the read/write switch for files opened with `+` (`file_to_reading` and `file_to_writing`, which seek at every call on a `+` file on macOS because `__freading` and `__fwriting` do not exist there; read the stdio flags or track the last operation to avoid the extra seeks).
 - Run the release script's `bump` step once on a scratch clone
   Confirm it rewrites `std/sys.tom` and `site/wasm/std/sys.tom` and that the commit step accepts the extra file.
-- Run the full `tests/run.sh` once on the merged Wave 2 result
-  Run it with `WASI_SDK` set so ASan and the wasm rebuild check run, and with node or jsc for the browser checks. The builders ran the full suite on identical trees, but nobody ran it on the final merged tree, and macOS is untested.
 - Decide the lifetime of a File opened in a `for` loop header (A-Q7)
   `for line in open(path):` never closes its file, so each use leaks a descriptor and a program that does it often hits EMFILE; using or closing a File after `close()` is also undefined. Choose one: close the temporary on every loop exit, warn when a loop header calls `open(...)`, or give File a closed flag so misuse raises `ValueError`. Add a test that counts open descriptors.
 - Make `Pattern.match`/`search` with an advancing `pos` linear
@@ -34,3 +32,5 @@
   Use `--dry-run` (or `--from linux`) so ssh, copy-back, the publish gate and the snapshot are exercised end to end, with `--linux-host` reachable from the Mac. The Linux step's remote script alone ran fine on biggie: the full tier passed 842 tests with `TOMATO_TEST_REQUIRE_LTO=1` at load about 62 (not quiet).
 - Trace why the bitcode-merge link leaves `tomato.main` un-inlined
   With the runtime merged as bitcode (`-mlink-bitcode-file`), `tomato.main` is not inlined into `main` and `x*3` comes out as `lea`+`add` instead of one `lea` on collatz: 1 instruction per step (87.15 M against 82.12 M with LTO). The IR is the same; find the cause in the merge link's inlining or instruction selection. Numbers: `benchmarks/results/linux-x86_64/lto-effect.md`.
+- Run tests/run.sh on macOS (with the wasi-sdk arm64-macos toolchain) to cover the untested platform.
+  The full suite passed on Linux x86_64 on the merged Wave 2 tree (984 passed, 0 failed); macOS is the platform still untested.
