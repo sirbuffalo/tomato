@@ -213,10 +213,12 @@ case "$mode" in
   *) die_id E282 "the mode must be debug or release, not '$mode'" ;;
 esac
 # debug links at -O1 and keeps readable errors and the leak report; release links at -O2 (and prints short error codes, without the
-# leak report). Both use link-time optimisation, so the runtime's small-number and reference-count fast paths are inlined into the
-# program (without it, debug mode made a call for every integer operation). Where the linker cannot do LTO (many Linux systems have a
-# clang without the linker's LLVM plugin), clang itself merges the runtime into the program before optimising it, which inlines
-# the same fast paths; if that fails too, both modes fall back to a plain link.
+# leak report). Release links with link-time optimisation, which inlines the runtime's small-number and reference-count fast paths into
+# the program; where the linker cannot do LTO (many Linux systems have a clang without the linker's LLVM plugin), clang itself merges the
+# runtime into the program before optimising it, which inlines the same fast paths, and if that fails too, release falls back to a plain
+# link. Debug mode does not use LTO at all (it costs about a second per build, most of the time of a small program, and with clang 21 on
+# Linux inlined nothing at -O1): runtime/tomato_inline.ll, small inline copies of those fast paths, is put in front of the program IR
+# (inline_merge below), so an ordinary -O1 compile inlines them and the runtime is linked as a plain object.
 opt=-O1; ltoflags="-flto"; nolto=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; nolto="-DTOMATO_RELEASE"; }
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -229,12 +231,14 @@ fi
 exe="$tmp/program"
 [ "$cmd" = build ] && exe="${out:-$(basename "${file%.tom}")}"
 # The runtime is compiled once per mode, clang and runtime source, and kept in the cache folder (native/rtcache.sh); each run then
-# links the stored object (bitcode) instead of compiling the 5,000 lines of C again. Without a usable object (the compile or the
-# cache failed) the runtime source is linked, as before.
-rtobj="$(rtcache_get "$tmp" bc "$runtime" $opt $ltoflags -pthread)" || rtobj=""
+# links the stored object (release: bitcode, for link-time optimisation) instead of compiling the 8,000 lines of C again. Without a
+# usable object (the compile or the cache failed) the runtime source is linked, as before.
+if [ "$mode" = release ]; then rtobj="$(rtcache_get "$tmp" bc "$runtime" $opt $ltoflags -pthread)" || rtobj=""
+else rtobj="$(rtcache_get "$tmp" o "$runtime" $opt -pthread -w)" || rtobj=""; fi
+prog="$tmp/program.ll"
 link() {   # a function has its own "$@", so the run inputs survive; $1 holds the extra clang flags (release: LTO), $2 the runtime
   extra="$1"; rt="${2:-$runtime}"
-  set -- clang $opt $extra -Wno-override-module -o "$exe" "$tmp/program.ll"
+  set -- clang $opt $extra -Wno-override-module -o "$exe" "$prog"
   OLDIFS="$IFS"; IFS="$nl"
   for f in $llvm; do set -- "$@" "$f"; done
   IFS="$OLDIFS"
@@ -242,8 +246,26 @@ link() {   # a function has its own "$@", so the run inputs survive; $1 holds th
 }
 merge() {   # no LTO in the linker: the runtime as LLVM bitcode, merged into the program by clang (not with extra .ll files: each would get a copy)
   [ -n "$rtobj" ] || return 1
-  clang $opt -Xclang -mlink-bitcode-file -Xclang "$rtobj" -Wno-override-module -o "$exe" "$tmp/program.ll" \
+  clang $opt -Xclang -mlink-bitcode-file -Xclang "$rtobj" -Wno-override-module -o "$exe" "$prog" \
     -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl)
+}
+# inline_merge INLINE PROGRAM: the program IR with the inline fast paths added. INLINE defines internal alwaysinline functions called
+# tomato_inl_X (runtime/tomato_inline.ll); every call of the runtime function tomato_X in the program becomes a call of the copy, and
+# the copies and the declarations they need (the ones the program does not already make) go at the end.
+inline_merge() {
+  awk 'function name(s) { return match(s, /@[^( ]*\(/) ? substr(s, RSTART, RLENGTH - 1) : "" }
+    NR == FNR { pre[++np] = $0; if ($0 ~ /^define /) { n = name($0); if (n ~ /^@tomato_inl_/) real["@tomato_" substr(n, 13)] = n }; next }
+    /^declare / { seen[name($0)] = 1; print; next }
+    index($0, "@tomato_") && !/^define / {
+      line = $0; out = ""
+      while (match(line, /@tomato_[A-Za-z0-9_]*\(/)) {
+        n = substr(line, RSTART, RLENGTH - 1)
+        out = out substr(line, 1, RSTART - 1) ((n in real) ? real[n] : n)
+        line = substr(line, RSTART + RLENGTH - 1)
+      }
+      print out line; next }
+    { print }
+    END { for (i = 1; i <= np; i++) if (!(pre[i] ~ /^declare / && (name(pre[i]) in seen))) print pre[i] }' "$1" "$2"
 }
 # A lost LTO link is never silent (it costs 2 to 3 times the speed). The warning comes only once a fallback has produced the program (a
 # program that is itself wrong gets just its own error, not a toolchain warning), and shows what the linker said, if it printed anything
@@ -251,7 +273,23 @@ merge() {   # no LTO in the linker: the runtime as LLVM bitcode, merged into the
 # run with such a clang, and a test that captures stderr will show it: there is deliberately no switch to silence it, because a quiet
 # fallback is the bug this warning exists for (the suite wants an LTO toolchain; release/check-lto.sh tells you whether you have one).
 lto_warn() { echo "warning: LTO link failed; $1" >&2; [ -s "$tmp/lto-error" ] && sed -n '1,5s/^/  the linker said: /p' "$tmp/lto-error" >&2; return 0; }
-if ! link "$ltoflags" "${rtobj:-$runtime}" 2>"$tmp/lto-error"; then
+if [ "$mode" = debug ]; then
+  # no LTO: the inline fast paths in front of the program, the runtime as a plain object. Should that not work (the IR file is missing,
+  # or this clang does not take it), the program is linked as it is, slower, and a warning says so (like a lost LTO link below).
+  inline="$home/runtime/tomato_inline.ll"
+  rm -f "$tmp/inline-error"
+  if [ ! -f "$inline" ]; then echo "missing: $inline" > "$tmp/inline-error"
+  elif inline_merge "$inline" "$tmp/program.ll" > "$tmp/program.inl.ll" 2>"$tmp/inline-error"; then
+    rm -f "$tmp/inline-error"; prog="$tmp/program.inl.ll"
+    link "" "${rtobj:-$runtime}" 2>"$tmp/inline-error" && rm -f "$tmp/inline-error"
+  fi
+  if [ -f "$tmp/inline-error" ]; then
+    prog="$tmp/program.ll"
+    link "" "${rtobj:-$runtime}" || exit 1
+    echo "warning: the inline fast paths could not be used; linked without them (slower)" >&2
+    sed -n '1,5s/^/  /p' "$tmp/inline-error" >&2
+  fi
+elif ! link "$ltoflags" "${rtobj:-$runtime}" 2>"$tmp/lto-error"; then
   if [ -z "$llvm" ] && merge 2>"$tmp/merge-error"; then
     lto_warn "using clang bitcode merge instead"
   else

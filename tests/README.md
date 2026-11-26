@@ -58,6 +58,7 @@ The fast tier still builds the compiler and the installed `tomato` and runs the 
 * **One compiler.** `c1`, the compiler the tests use, is built from `compiler/bootstrap/tomatoc.ll` by `c0`; when `c0` reproduces the
   checked-in IR (the normal case, which `fixed_point` checks) `c1` is the same program as `c0`, so it is not built a second time. When
   the IR is stale, `c1` is built as before and the tests use it. The benchmark smoke runs use it too, instead of each building its own.
+* **The debug link is tested apart from the plain one.** Most tests link the compiled IR with `clang -O1` and the runtime object directly; `tomato run`'s debug mode puts `runtime/tomato_inline.ll` (inline copies of the integer and refcount fast paths) in front of the program first. `cli debug_link` checks what that link does (no `-flto`, calls renamed, a warning when the inline file cannot be used), and `cli inline_paths NAME` runs programs about the edges of the small-number range through it and compares with the plain link's expected output. The `no_lto` and LTO-requirement tests are for release mode only.
 * **One build for two tests.** A program that is both a "decided rules" program and an AddressSanitizer test (90 of them) is compiled
   once, with AddressSanitizer, and run for both tests: the output check compares the output of that build (the same IR at `-O1` with
   the sanitizer's checks added), and the memory check looks at its standard error. This is the one place where a check is made on a

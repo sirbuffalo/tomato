@@ -636,7 +636,7 @@ Changes (language semantics unchanged: an overflow still becomes a big integer):
 1. The slow paths are `cold` (`COLD` in the runtime): the hot loop is now straight-line code and the big-number calls sit out of line. collatz 0.50 → 0.45 s alone.
 2. `x // 2^k` and `x % 2^k` with a constant power-of-two divisor compile to `tomato_int_floordivp2_c` / `tomato_int_modp2_c`: on a tagged word `(w >> k) | 1` and `(w & mask) | 1` (the floor modulo of a power of two is never negative, so no sign fix). A constant non-zero divisor no longer emits the zero check.
 3. `+ - *` work on the tagged words and use the overflow flag of the 64-bit operation as the range check (`x + (y - 1)`, `x - (y - 1)`, `(x - 1) * (y >> 1)`): for a tagged word 2v+1 the 64-bit overflow is exactly "the result leaves -2^62 .. 2^62 - 1". Comparisons of two odd words compare the words.
-4. **Debug mode links with `-flto` too** (still `-O1`, still the leak check and full error text), so the runtime fast paths inline into the program in both modes; it falls back to a plain link when clang has no LTO. Debug compile and link time did not grow (0.6 s → 0.4 s on collatz).
+4. **Debug mode links with `-flto` too** (still `-O1`, still the leak check and full error text), so the runtime fast paths inline into the program in both modes; it falls back to a plain link when clang has no LTO. Debug compile and link time did not grow (0.6 s → 0.4 s on collatz). *(Superseded: debug mode no longer links with LTO; see "Debug builds without LTO" at the end.)*
 
 Measured on a loaded machine (load average 2.5 to 3), alternating runs, medians of 11 (user seconds): collatz release 0.51 → 0.28 s (Tomato ÷ Go 2.7 → 1.47, Tomato ÷ Rust 3.9 → 2.15 against the Go 0.19 s and Rust 0.13 s of the same session), collatz debug 1.60 → 0.27 s, fib debug 0.60 → 0.15 s, sieve debug 0.24 → 0.21 s; release fib 0.23 → 0.15 s, matmul 0.17 → 0.14 s, sieve unchanged (memory-bound). Test: `int_fast_paths` (constant and variable divisors agree on negative numbers, 0 and the 2^62 edge; `+ - *` across the edge; comparisons).
 
@@ -831,3 +831,26 @@ gave these whole-process instruction counts (millions), comparing unweighted err
 Weights of 1:100, 1:1000 and 1:100000 had different tradeoffs; in this run 1:100 increased sieve's count by 3.8%,
 while 1:100000 increased it by 0.26%. These counts measure instructions, not elapsed time, and are not a universal
 performance guarantee.
+
+## Debug builds without LTO
+
+**Why.** The profile of `tomato build` (a small program, debug mode) showed that clang is about 90% of the time and most of that is the LTO link: fib took 1.15 to 1.4 s, of which `tomatoc` is 0.28 s and the `-O1 -flto` link about 1.0 s. On Linux (clang 21, lld) that link did not even inline the runtime's fast paths: its instruction counts equal a plain `-O1` link (fib 303 M, collatz 82 M, strings 100 M, sort 46 M, matmul 191 M). On the Mac (Apple clang 21, arm64) LTO does inline them, and a plain link without them ran 1.1 to 2.5 times slower (fib 0.045 s → 0.114 s).
+
+**What changed.** Debug mode (the default of `tomato run`, `tomato build` and `tomato test`) no longer uses LTO or the bitcode merge. `native/tomato` puts `runtime/tomato_inline.ll` in front of the program IR (an `awk` step, `inline_merge`) and links with plain `clang -O1` against the runtime compiled as an ordinary object (cached like before, but a `.o` instead of bitcode). The IR file holds `internal alwaysinline` copies of the runtime's integer fast paths (`tomato_int_add_c`, `sub`, `mul`, `floordiv`, `mod`, the power-of-two forms, `cmp`, `shl`, `shr`, `not`, `raw`, `dup`, `free`) and `tomato_retain`; the program's calls of `tomato_X` become calls of `tomato_inl_X`, and anything a copy does not decide itself (a big number, an overflow) calls the real `tomato_X`, which repeats the test and takes the slow path. Nothing in the compiler or the runtime changed, so the bootstrap IR and the wasm files are untouched. Release mode is unchanged (`-O2`, LTO, and the bitcode-merge and plain-link fallbacks with their warning). If the IR file is missing or clang rejects the merged program, the program is linked without the copies and a warning says so.
+
+**Measured** (Linux x86-64 on the shared biggie at load 70 to 120, so the build times are CPU seconds of the whole `tomato build`, minimum of five, and only comparable with each other; instruction counts are exact, Callgrind, whole process, the counting inputs of `benchmarks/sizes.txt`; Mac: wall seconds, minimum of five, Apple clang 21 on an M-series MacBook Pro that was quiet):
+
+| benchmark | build old → new, Linux CPU s | run old → new, Linux M instr | build old → new, Mac s | run old → new, Mac s |
+| --- | ---: | ---: | ---: | ---: |
+| fib | 1.29 → 0.69 | 303 → 232 | 0.71 → 0.39 | 0.045 → 0.068 |
+| collatz | 1.57 → 0.86 | 82 → 82 | 0.76 → 0.39 | 0.077 → 0.077 |
+| strings | 1.68 → 0.71 | 100 → 94 | 0.77 → 0.39 | 0.043 → 0.053 |
+| objects | 2.10 → 0.84 | 106 → 90 | 0.78 → 0.39 | 0.042 → 0.053 |
+| sort | 1.50 → 0.76 | 46 → 33 | 0.83 → 0.40 | 0.027 → 0.028 |
+| matmul | 1.82 → 1.68 (noisy) | 191 → 152 | 0.80 → 0.42 | 0.070 → 0.074 |
+| quicksort | 1.56 → 0.83 | 179 → 110 | | |
+| hof | 1.42 → 0.64 | 90 → 55 | | |
+
+So a debug build is about 2 times faster to build on both machines (the build of a small program is `tomatoc` 0.28 s plus a link that went from about 1.0 s to about 0.4 s). Debug programs run as fast as before or faster on Linux. On the Mac they are still up to 1.5 times slower than the LTO build on call-heavy code (fib, objects, strings), because the copies cover the integer and retain fast paths only: `tomato_release`, `tomato_alloc` and the list and string helpers stay real calls (they use the runtime's static state), where LTO inlined them. That is still faster than a plain link (fib 0.114 s). Two alternatives were measured and not taken: `-O0` for debug (links in 0.13 s, but programs run 1.1 to 2.9 times slower: collatz 82 → 193 M instructions) and a plain `-O1` link without the copies (the same build time, but the Mac slowdown above).
+
+**Keeping the copies right.** `runtime/tomato_inline.ll` is hand-written IR that mirrors the C functions it replaces (the `ALWAYS` functions in `tomato_rt.c`); if one of those changes, change its copy. `tests/run.sh` runs ten programs about the edges of the small-number range through the debug link and compares them with the outputs made by the plain link (`debug link runs NAME like the plain link`), and `debug link:` tests check that no `-flto` is used, that the calls are renamed and that the fallback warns.

@@ -17,7 +17,7 @@ objs="$(mktemp -d)"; trap 'rm -rf "$objs"' EXIT
 clang -O1 -pthread -Wno-override-module -c -o "$objs/rt.o" "$root/runtime/tomato_rt.c"
 wait "$ir_pid"
 clang -O1 -Wno-override-module -o "$home/bin/tomatoc" "$objs/tomatoc.o" "$objs/rt.o" -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl)
-cp "$root/runtime/tomato_rt.c" "$home/runtime/"
+cp "$root/runtime/tomato_rt.c" "$root/runtime/tomato_inline.ll" "$home/runtime/"
 rm -rf "$home/std"; mkdir -p "$home/std"; cp "$root/std/"*.tom "$root/std/errors.txt" "$home/std/"; cp -R "$root/std/builtin" "$home/std/"
 rm -rf "$home/examples"; cp -R "$root/examples" "$home/examples"
 cp "$root/VERSION" "$home/VERSION"

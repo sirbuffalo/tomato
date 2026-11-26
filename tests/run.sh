@@ -242,12 +242,10 @@ run_all() {
 . "$root/native/rtcache.sh"
 ( p="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -pthread -w)" || p="$root/runtime/tomato_rt.c"; echo "$p" > "$shared/rt_o.tmp"; mv "$shared/rt_o.tmp" "$shared/rt_o.path" ) > /dev/null 2>&1 &
 ( p="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -pthread -w -g -fsanitize=address)" || p=""; echo "$p" > "$shared/rt_asan.tmp"; mv "$shared/rt_asan.tmp" "$shared/rt_asan.path" ) > /dev/null 2>&1 &
-# the runtime that `tomato run` links (bitcode, for link-time optimisation: debug and release), for the command-line tests: made now, while the
-# install is running, so that when it is done they all find it, instead of each of them compiling it at the same time (a cold cache)
-for rt_flags in "-O1 -flto" "-O2 -flto -DTOMATO_RELEASE"; do
-  # shellcheck disable=SC2086
-  ( rtcache_get "$shared" bc "$root/runtime/tomato_rt.c" $rt_flags -pthread > /dev/null 2>&1 ) &
-done
+# the runtimes that `tomato run` links, for the command-line tests: release's is bitcode (for link-time optimisation), debug's is the plain
+# object that the tests above already made (the same flags as $rt_o). Made now, while the install is running, so that when it is done they
+# all find it, instead of each of them compiling it at the same time (a cold cache)
+( rtcache_get "$shared" bc "$root/runtime/tomato_rt.c" -O2 -flto -DTOMATO_RELEASE -pthread > /dev/null 2>&1 ) &
 use_asan() { await_file "$shared/rt_asan.path"; rt_asan="$(cat "$shared/rt_asan.path")"; }
 cc() { clang -O1 -w -o "$1" "$2" "$rt_o" -pthread -lm; }
 c1="$shared/c1"
@@ -698,10 +696,10 @@ t_cli_modes() {
 }
 # release links with LTO and an inlined runtime: the same programs must print exactly what debug mode prints
 t_cli_release_like_debug() { cli_setup; check "release mode runs $1 like debug" "$(cat "tests/expected/$1.main.out")" "$($t run "tests/programs/$1.tom" --mode release 2>&1)"; }
-t_cli_no_lto() { # a clang whose linker has no LLVM plugin (-flto fails when linking): clang merges the runtime into the program instead
-  cli_setup   # (a part for each mode: debug, release)
+t_cli_no_lto() { # release with a clang whose linker has no LLVM plugin (-flto fails when linking): clang merges the runtime into the program instead
+  cli_setup
   mkdir -p "$work/nolto"; printf '#!/bin/sh\ncase " $* " in *" -flto "*) case " $* " in *" -c "*) ;; *) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v clang)" > "$work/nolto/clang"; chmod +x "$work/nolto/clang"
-  m="$1"; PATH="$work/nolto:$PATH" $t run tests/programs/int_fast_paths.tom --mode "$m" > "$work/out" 2> "$work/err"
+  m=release; PATH="$work/nolto:$PATH" $t run tests/programs/int_fast_paths.tom --mode "$m" > "$work/out" 2> "$work/err"
   check "without link-time optimisation in the linker ($m)" "$(cat tests/expected/int_fast_paths.main.out)" "$(cat "$work/out")"
   check "LTO fallback is visible ($m)" 'warning: LTO link failed; using clang bitcode merge instead' "$(cat "$work/err")"
   # Also force the merge to fail: the plain link must announce its loss of cross-module optimization.
@@ -715,11 +713,29 @@ t_cli_require_lto() { # Release gate: the real Tomato build must take the succes
   cli_setup; mkdir -p "$work/spy"
   printf '#!/bin/sh\ncase " $* " in *" -flto "*) case " $* " in *" -c "*) ;; *) echo link >> "%s/lto-links" ;; esac ;; esac\nexec "%s" "$@"\n' "$work" "$(command -v clang)" > "$work/spy/clang"
   chmod +x "$work/spy/clang"
-  for m in release debug; do   # (each mode has its own flags and its own runtime in the cache)
+  for m in release; do   # (debug mode does not use LTO: t_cli_debug_link)
     rm -f "$work/lto-links" "$work/lto-program"
     PATH="$work/spy:$PATH" $t build tests/programs/int_fast_paths.tom --mode "$m" -o "$work/lto-program" > "$work/out" 2> "$work/err"
     if [ -x "$work/lto-program" ] && [ -s "$work/lto-links" ] && [ ! -s "$work/err" ]; then ok "Tomato $m build used LTO"; else bad "Tomato $m build used LTO" "$(cat "$work/err")"; fi
   done
+}
+t_cli_debug_link() { # debug mode links without LTO: the inline fast paths (runtime/tomato_inline.ll) are put in front of the program and its calls renamed
+  cli_setup; mkdir -p "$work/spy"
+  printf '#!/bin/sh\nfor a in "$@"; do case "$a" in *.inl.ll) cp "$a" "%s/merged.ll"; [ -n "$FAIL_INLINE" ] && exit 1 ;; esac; done\necho "$*" >> "%s/args"\nexec "%s" "$@"\n' "$work" "$work" "$(command -v clang)" > "$work/spy/clang"
+  chmod +x "$work/spy/clang"
+  PATH="$work/spy:$PATH" $t run tests/programs/int_fast_paths.tom > "$work/out" 2> "$work/err"
+  check "debug link: the program runs right" "$(cat tests/expected/int_fast_paths.main.out)" "$(cat "$work/out")"
+  check "debug link: no warning" "" "$(cat "$work/err")"
+  check "debug link: no LTO and no bitcode merge" "0" "$(grep -c -e '-flto' -e 'mlink-bitcode' "$work/args")"
+  check "debug link: the inline fast paths are in the program" "yes" "$(grep -q '^define internal i64 @tomato_inl_int_add_c' "$work/merged.ll" && grep -q 'call i64 @tomato_inl_int_sub_c(' "$work/merged.ll" && echo yes)"
+  check "debug link: the program no longer calls the runtime's own copies" "0" "$(grep -v '^  *%.* = call i64 @tomato_int_[a-z0-9_]*_c(i64 %x, i64 %y, i32 %m)$' "$work/merged.ll" | grep -c 'call i64 @tomato_int_\(add\|sub\|mul\)_c(')"
+  rm -f "$work/merged.ll"
+  FAIL_INLINE=1 PATH="$work/spy:$PATH" $t run tests/programs/int_fast_paths.tom > "$work/out" 2> "$work/err"
+  check "debug link: without the inline fast paths the program still runs right" "$(cat tests/expected/int_fast_paths.main.out)" "$(cat "$work/out")"
+  check "debug link: ... and says so" "warning: the inline fast paths could not be used; linked without them (slower)" "$(sed -n 1p "$work/err")"
+}
+t_cli_inline_paths() { # the inline copies must do what the runtime's functions do: programs about the edges of the small number range, in the debug link
+  cli_setup; check "debug link runs $1 like the plain link" "$(cat "tests/expected/$1.main.out")" "$($t run "tests/programs/$1.tom" 2>&1)"
 }
 t_cli_runtime_cache() { # the compiled runtime is kept in the cache folder: a hit, a miss for every change of key, concurrent runs, no cache
   # three parts, each with a cache folder of its own: 1 the entries (a hit, release is another entry), 2 the changes of the key (the runtime
@@ -1036,9 +1052,13 @@ for name in int_boundary big_numbers bitwise floor_divide_power containers cycle
   spawn_cli t_cli_release_like_debug "$name"
 done
 spawn_cli t_cli_release_no_leak
-spawn_cli t_cli_no_lto debug
-spawn_cli t_cli_no_lto release
+spawn_cli t_cli_no_lto
 spawn_cli t_cli_require_lto
+spawn_cli t_cli_debug_link
+for name in int_fast_paths int_boundary bitwise floor_divide_power big_numbers numbers_rules small_int_loops fast_paths compound_ops fixed_width; do
+  case "$name" in int_fast_paths|int_boundary|bitwise) ;; *) [ -n "$fast" ] && { skip "debug link runs $name like the plain link"; continue; } ;; esac   # (the fast tier: three of the ten)
+  spawn_cli t_cli_inline_paths "$name"
+done
 spawn_first t_cli_runtime_cache 1   # (not the installed command: it only needs the compiler)
 spawn_first t_cli_runtime_cache 2
 spawn_first t_cli_runtime_cache 3
