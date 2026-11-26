@@ -1,7 +1,5 @@
 - Run the LTO release checks through the real `release/release.sh` and on a quiet biggie
   Done on 2026-11-25 at load about 65 (not quiet): `release/check-lto.sh`, the full tier with `TOMATO_TEST_REQUIRE_LTO=1` (842 passed, 0 failed) and the release's Linux remote script piped to biggie by hand (tests, benchmarks and instruction counts all fine); see `tests/README.md`. Still to do: one real `release/release.sh` Linux step from the Mac (the ssh, fetch-back and publish-gate parts were not exercised; the next release does it), and the full tier timed once on a quiet biggie (load never fell below 32; another account's `prst` jobs). Use `~/.tomato-release/linux-tools/bin` first on PATH and run `release/check-lto.sh` first.
-- Confirm the split bootstrap build on the Mac
-  Run `tests/run.sh` on the Mac (and the full tier) to confirm `build-object.sh` takes the split path under macOS's BWK awk and Apple ld rather than the fallback.
 - Widen the loop-item borrowing further
   Let proven methods take object, text or list parameters (`a.absorb(b)`), and let borrowed bodies hold nested range loops (`Gen.lent_loop_body`, `lent_method_info`; see "borrowed loop items" in `docs/performance.md`).
 - Floats of any size in the library and the formats (stage 4 of docs/bigfloat-design.md)
@@ -18,3 +16,7 @@
   Use `--dry-run` (or `--from linux`) so ssh, copy-back, the publish gate and the snapshot are exercised end to end, with `--linux-host` reachable from the Mac. The Linux step's remote script alone ran fine on biggie: the full tier passed 842 tests with `TOMATO_TEST_REQUIRE_LTO=1` at load about 62 (not quiet).
 - Run tests/run.sh on macOS (with the wasi-sdk arm64-macos toolchain) to cover the untested platform.
   The full suite passed on Linux x86_64 on the merged Wave 2 tree (984 passed, 0 failed); macOS is the platform still untested.
+- Make `program os_files` not depend on a case-sensitive filesystem
+  The test creates both `b` and `B`, which a case-insensitive macOS volume merges, so the full tier fails there; make it clean on macOS.
+- Make the wasm `--entry=test` check ignore jsc's stderr noise
+  `tests/run.sh` merges stderr, and jsc's `read()` prints `Could not open file` for the std-module probe in `native/tomato-jsc.js`; ignore it or skip std names in the probe.
