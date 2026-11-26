@@ -1280,6 +1280,7 @@ class Mod:
     bodies: list[Body] = []                # the functions compiled so far
     pure_cache: dict[str, bool] = {}       # pure answers, by function key
     lent_pure_cache: dict[str, bool] = {}  # pure calls whose raise expressions cannot run user code
+    lent_method_cache: dict[str, bool] = {}  # methods proven unable to change a list (see Gen.lent_method_info), by Class.method
     float_cache: dict[str, str] = {}       # the copies made by float_copy
     small_cache: dict[str, bool] = {}      # has_small answers, by function symbol
     override_cache: dict[str, bool] = {}   # overridden answers, by class and method name
@@ -2711,8 +2712,8 @@ class Gen:
 
     def lent_loop_body(self, body: list[Node], name: str) -> bool:
         # This deliberately accepts only a small, verifiable subset. lent_safe() proves an expression runs no user code (no
-        # protocol method, no operator on an object) and lent_pure() follows calls to pure numeric functions through the
-        # whole program; unknown calls, other methods, list writes and nested control flow remain owning loops.
+        # protocol method, no operator on an object) except methods that lent_method() proves, and lent_pure() follows calls to
+        # pure numeric functions through the whole program; unknown calls, list writes and nested loops remain owning loops.
         bound: list[str] = []
         for s in body:
             bound_names(s, bound)
@@ -2730,7 +2731,7 @@ class Gen:
                 if not self.lent_safe(val_node(s.fields[0])):
                     return False
             elif k == 'ExprStmt':
-                if not self.lent_method(val_node(s.fields[0]), name):
+                if not self.lent_method(val_node(s.fields[0])):
                     return False
             elif k == 'If':
                 for branch in s.fields[0].items:
@@ -2742,30 +2743,46 @@ class Gen:
                 return False
         return True
 
-    def lent_method(self, call: Node, name: str) -> bool:
-        # A deliberately small method proof: a non-overridden method may update only numeric fields of its receiver,
-        # using numeric expressions and the same verified numeric callees. Other methods keep the owning loop.
+    def lent_method(self, call: Node) -> bool:
+        # A call of a method that cannot change a list: the receiver is an object that lent_safe reads, the method is the one
+        # every object of the receiver's class uses (no class below overrides it), its arguments are numbers, and its body is
+        # proven by lent_method_info. Other method calls keep the owning loop.
         if call.kind != 'Call' or len(call.fields[2].items) != 0:
             return False
         f = val_node(call.fields[0])
         if f.kind != 'Attr':
             return False
         recv = val_node(f.fields[0])
-        if recv.kind != 'Name' or recv.fields[0].text != name:
+        if recv.kind == 'Name' and recv.fields[0].text not in self.slots:
+            return False                         # a module's function, or a method called through its class
+        ty = self.peek_type(recv)
+        if not is_class(ty) or is_optional(ty) or not self.mod.has_class(ty[1:]) or not self.lent_safe(recv):
             return False
-        ty = self.types[name]
-        if not is_class(ty) or not self.mod.has_class(ty[1:]) or self.mod.overridden(ty[1:], f.fields[1].text):
-            return False
-        info = self.mod.lookup_method(ty[1:], f.fields[1].text)
-        if info is None or info.is_async or info.is_gen or info.stars != 0 or len(info.defaults) != 0:
+        cls = ty[1:]
+        mname = f.fields[1].text
+        if field_position(self.mod.find_class(cls, call.line), mname) >= 0 or self.mod.overridden(cls, mname):
+            return False                         # (a field holding a function value runs code that is not known here)
+        info = self.mod.lookup_method(cls, mname)
+        if info is None or len(val_nodes(call.fields[1])) != len(info.ptypes) or not self.lent_method_info(info):
             return False
         for arg in val_nodes(call.fields[1]):
             if not self.lent_safe(arg) or not pure_number(self.peek_type(arg)):
                 return False
+        return True
+
+    def lent_method_info(self, info: FuncInfo) -> bool:
+        # Can this method run without changing any list or running user code that lent_safe does not accept? Its parameters are
+        # numbers and its body is made of what lent_method_body accepts, which includes calls of other proven methods. The answer
+        # is kept for the whole program; a method that calls itself, directly or through others, is not looked into.
+        key = f'{info.owner}.{info.name}'
+        if key in self.mod.lent_method_cache:
+            return self.mod.lent_method_cache[key]
+        self.mod.lent_method_cache[key] = False
+        if info.owner == '' or info.is_async or info.is_gen or info.stars != 0 or len(info.defaults) != 0:
+            return False
         for t in info.ptypes:
             if not pure_number(t):
                 return False
-        node = self.mod.node_of(info)
         check = Gen()
         check.mod = self.mod
         check.slots['self'] = 'self'
@@ -2775,20 +2792,52 @@ class Gen:
             check.types[p] = info.ptypes[k]
         saved = self.mod.cur
         self.mod.cur = info.module
-        ok = True
-        for s in val_nodes(node.fields[3]):
-            if s.kind != 'Assign':
-                ok = False
-                break
-            target = val_node(s.fields[0])
-            if target.kind != 'Attr' or val_node(target.fields[0]).kind != 'Name' or val_node(target.fields[0]).fields[0].text != 'self':
-                ok = False
-                break
-            if not pure_number(check.peek_type(target)) or not check.lent_safe(val_node(s.fields[1])):
-                ok = False
-                break
+        ok = check.lent_method_body(val_nodes(self.mod.node_of(info).fields[3]))
         self.mod.cur = saved
+        self.mod.lent_method_cache[key] = ok
         return ok
+
+    def lent_method_body(self, body: list[Node]) -> bool:
+        # the statements of a method that lent_method_info accepts (self is the scratch Gen that holds the method's variables):
+        # assignments to locals and to number fields of self, calls of proven methods, ifs and returns, all made of expressions
+        # that lent_safe accepts. A raise is refused, as in lent_pure: making the error object may run user code.
+        for s in body:
+            k = s.kind
+            if k == 'Pass':
+                continue
+            if k == 'Assign':
+                target = val_node(s.fields[0])
+                value = val_node(s.fields[1])
+                if not self.lent_safe(value):
+                    return False
+                if target.kind == 'Name':
+                    local = target.fields[0].text
+                    t = self.peek_type(value)
+                    if local == 'self' or (local in self.types and self.types[local] != t):
+                        return False
+                    self.slots[local] = local
+                    self.types[local] = t
+                elif target.kind == 'Attr':
+                    base = val_node(target.fields[0])
+                    if base.kind != 'Name' or base.fields[0].text != 'self' or not pure_number(self.peek_type(target)):
+                        return False
+                else:
+                    return False
+            elif k == 'ExprStmt':
+                if not self.lent_method(val_node(s.fields[0])):
+                    return False
+            elif k == 'Return':
+                if s.fields[0].tag == 'n' and not self.lent_safe(val_node(s.fields[0])):
+                    return False
+            elif k == 'If':
+                for branch in s.fields[0].items:
+                    if not self.lent_safe(val_node(branch.items[0])) or not self.lent_method_body(val_nodes(branch.items[1])):
+                        return False
+                if s.fields[1].tag == 'l' and not self.lent_method_body(val_nodes(s.fields[1])):
+                    return False
+            else:
+                return False
+        return True
 
     def lent_safe(self, n: Node) -> bool:
         # Can this expression be evaluated without running any user code and without changing any list? The borrowed loop item
@@ -2818,6 +2867,8 @@ class Gen:
             return self.lent_safe(val_node(n.fields[0])) and self.lent_safe(val_node(n.fields[1]))
         if k == 'Call':
             f = val_node(n.fields[0])
+            if f.kind == 'Attr':
+                return self.lent_method(n)
             if f.kind != 'Name' or f.fields[0].text in self.slots or len(n.fields[2].items) > 0:
                 return False
             args = val_nodes(n.fields[1])
@@ -2849,7 +2900,7 @@ class Gen:
         self.cond_br(flag, take, done)
         self.place(take)
         value = self.tmp('lent.item')
-        self.emit(f'{value} = load ptr, ptr {borrowed}')
+        self.emit(f'{value} = load {llvm_type(ty)}, ptr {borrowed}')
         e = ex(value, ty)
         self.retain(e)
         self.store_owned(owned_slot, e)
@@ -10447,12 +10498,12 @@ class Gen:
         used = ''
         unwind = ''
         previous_unwind = ''
-        if vals is None and is_class(elem) and not self.is_async and self.gen_n == 0 and not in_nest and self.nest == '' and self.bail == '' and self.borrowed_unwind == '':
+        if vals is None and (is_rc(elem) or owns_num(elem)) and not self.is_async and self.gen_n == 0 and not in_nest and self.nest == '' and self.bail == '' and self.borrowed_unwind == '':
             lent = self.lent_loop_body(stmts, s.fields[0].text)
         if lent:
             borrowed = self.tmp('lent.slot')
             used = self.tmp('lent.flag')
-            self.allocas.append(f'  {borrowed} = alloca ptr')
+            self.allocas.append(f'  {borrowed} = alloca {llvm_type(elem)}')
             self.allocas.append(f'  {used} = alloca i1')
             self.emit(f'store i1 false, ptr {used}')
             previous_unwind = self.unwind_target()
@@ -10481,7 +10532,7 @@ class Gen:
         item = self.load_item(lst.ty, addr, 'item')
         e = ex(item, elem)
         if lent:
-            self.emit(f'store ptr {item}, ptr {borrowed}')
+            self.emit(f'store {llvm_type(elem)} {item}, ptr {borrowed}')
             self.emit(f'store i1 true, ptr {used}')
         elif in_nest and self.nest_fast:
             if elem == 'int':

@@ -1,4 +1,4 @@
-# borrowed loops: 6
+# borrowed loops: 17
 # Borrowed loop values must be made owned on every exit, and mutation must keep the ordinary owning path.
 class Box:
     n: int
@@ -36,6 +36,63 @@ class Cell:
 
     def bump(self):
         self.n = self.n + 1
+
+    def outer(self):
+        self.bump()
+
+# methods that call other methods: proven ones keep the loop borrowing, others (through a list change, an override or a call of
+# itself) keep it owning
+class Acc:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    def add(self, k: int):
+        self.n = self.n + k
+
+    def add_twice(self, k: int):
+        self.add(k)
+        if k > 1:
+            self.add(k)
+        else:
+            pass
+
+    def doubled(self) -> int:
+        return self.n * 2
+
+    def score(self, k: int) -> int:
+        d = self.doubled()
+        if d > 10:
+            return d + k
+        return self.doubled() - k
+
+    def countdown(self, k: int):
+        if k > 0:
+            self.countdown(k - 1)
+
+    def fail(self) -> int:
+        return 1 // (self.n - 6)
+
+class Pool:
+    n: int
+    pool: list[Pool] = []
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    def drop(self):
+        self.pool.pop(0)
+
+    def step(self):
+        self.n = self.n + 1
+        self.drop()
+
+    def peek(self) -> int:
+        self.drop()
+        return self.n
 
 class Drain(Cell):
     pool: list[Cell] = []
@@ -130,3 +187,97 @@ def main():
         x = Box(x.n + 1)
     qs = []
     print(x.n)
+
+    # methods that call proven methods, as statements and inside expressions
+    accs = [Acc(1), Acc(2)]
+    a = Acc(0)
+    for a in accs:
+        a.add_twice(3)
+    total = 0
+    for a in accs:
+        total = total + a.score(1) + a.doubled()
+    accs = []
+    print(total, a.n)
+
+    # items that are not objects (big numbers, text, lists, floats): the last item must be owned once the list is gone
+    big = 10 ** 30
+    nums = [big, big + 1, big + 2]
+    n = 0
+    total = 0
+    for n in nums:
+        total = total + n
+    nums = []
+    print(total, n)
+
+    words = ['ab', 'cde', 'f']
+    s = 'start'
+    count = 0
+    for s in words:
+        count = count + len(s)
+        if s == 'cde':
+            break
+    words = []
+    print(count, s)
+
+    no_words: list[str] = []
+    for s in no_words:
+        count = 0
+    print(s)
+
+    rows = [[1, 2], [3, 4, 5]]
+    row: list[int] = []
+    for row in rows:
+        count = count + row[0] + len(row)
+    rows = []
+    print(count, row)
+
+    fs = [1e300 * 1e300, 2.5]
+    fx = 0.0
+    for fx in fs:
+        pass
+    fs = []
+    print(fx)
+
+    print([k * 2 for k in [big, big + 1]])
+    print([t for t in ['x', 'yz']])
+
+    # an error out of a borrowed loop over big numbers, raised directly and inside a proven method
+    vals = [big, 6, big]
+    try:
+        for n in vals:
+            total = 1 // (n - 6)
+    catch RuntimeError:
+        vals = []
+        print(n)
+    fails = [Acc(7), Acc(6)]
+    try:
+        for a in fails:
+            total = total + a.fail()
+    catch RuntimeError:
+        fails = []
+        print(a.n)
+
+    # a method that calls a method that changes a list: the loops must keep the item alive
+    pools = [Pool(1), Pool(2)]
+    pools[0].pool = pools
+    pl = Pool(0)
+    for pl in pools:
+        pl.step()
+    print(pl.n, len(pools))
+    pools = [Pool(3), Pool(4)]
+    pools[0].pool = pools
+    total = 0
+    for pl in pools:
+        total = total + pl.peek()
+    print(total, len(pools))
+
+    # a method that calls an overridden method, which changes the list
+    cells = drained()
+    for c in cells:
+        c.outer()
+    print(c.n, len(cells))
+
+    # a method that calls itself is not looked into
+    for a in [Acc(1)]:
+        a.countdown(3)
+    print(a.n)

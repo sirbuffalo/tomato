@@ -417,6 +417,23 @@ every program of `tests/programs.txt` in release mode under AddressSanitizer.
 tests, three tags and two overflow tests per step). The loop item of `for x in xs` is still retained and released. Division
 of big integers still goes 32 bits at a time.
 
+## What was done (borrowed loop items, unreleased)
+
+`for x in xs` no longer retains the item (nor copies a big int or a boxed float) when the compiler can prove that the body
+cannot change any list: the item is read straight from the list, which the loop already holds, and made owned only when the
+loop ends or an error leaves it (`Gen.lent_loop_body`, `lent_safe`, `lent_method`). The body may assign locals, append to a
+comprehension's own list, use `if`, `break` and `continue`, read fields, items and lengths, use operators on numbers and text,
+call numeric functions that `Mod.lent_pure` proves, and call methods that `lent_method_info` proves: not overridden below the
+receiver's class, number parameters, and a body of assignments to locals and to number fields of `self`, `if`, `return` and
+calls of other proven methods (as statements or inside expressions such as `total = total + p.area()`). A method that calls
+itself, a `raise`, any other call and any list method keep the loop owning. The item may be of any type that is reference
+counted (objects, text, lists, ...) or an `int` or `float`. Test: `loop_lifetime` (its first line gives how many of its loops
+borrow, which `tests/run.sh` checks; AddressSanitizer runs it too).
+
+Measured with cachegrind (instructions, deterministic) on a program that walks a 1,000,000-item list ten times, linked at
+`-O2`, the setup subtracted: per item, `total = total + n` over `list[int]` 33.4 → 20.1, `total = total + len(w)` over
+`list[str]` 48.0 → 30.4, and `total = total + p.norm1()` over objects (a method returning `self.x + self.y`) 62.2 → 38.2.
+
 ## What was done (text indexing and fused f-strings, v0.51)
 
 **`s[i]`.** ASCII text was already indexed directly (the character number is the byte offset), but each `s[i]` allocated a one-character string, and text with any non-ASCII character was scanned from the start on every index (quadratic loops). Now: (1) `s[i]` on an ASCII character returns one of 128 shared immortal one-character strings (no allocation, no release work); (2) a string of 256 or more characters that is not all ASCII gets a chunked index (D17c) on its first indexed use: the byte offset of every 64th character, so an index scans at most 63 characters. The index lives in a side table of 4 strings (`chunk_cache` in the runtime, oldest dropped first), not in the string object, so the string layout, string constants and the wasm interpreter are unchanged; the table holds a reference to each indexed string (strings are immutable, so the address cannot be reused) and it is released before the debug-mode leak check. Slices, `find` from a position and extended slices use the same offsets. More than 4 long non-ASCII strings in use at once fall back to the plain scan. Measured with a loop reading every character of a 100,000 character non-ASCII text next to an ASCII one (release mode, user time, machine load average about 35 to 55 from other work): old 27.2 s, new 0.01 s; 300,000 characters take 0.05 s.
