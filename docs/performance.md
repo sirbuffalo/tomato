@@ -422,17 +422,24 @@ of big integers still goes 32 bits at a time.
 `for x in xs` no longer retains the item (nor copies a big int or a boxed float) when the compiler can prove that the body
 cannot change any list: the item is read straight from the list, which the loop already holds, and made owned only when the
 loop ends or an error leaves it (`Gen.lent_loop_body`, `lent_safe`, `lent_method`). The body may assign locals, append to a
-comprehension's own list, use `if`, `break` and `continue`, read fields, items and lengths, use operators on numbers and text,
-call numeric functions that `Mod.lent_pure` proves, and call methods that `lent_method_info` proves: not overridden below the
-receiver's class, number parameters, and a body of assignments to locals and to number fields of `self`, `if`, `return` and
-calls of other proven methods (as statements or inside expressions such as `total = total + p.area()`). A method that calls
-itself, a `raise`, any other call and any list method keep the loop owning. The item may be of any type that is reference
-counted (objects, text, lists, ...) or an `int` or `float`. Test: `loop_lifetime` (its first line gives how many of its loops
-borrow, which `tests/run.sh` checks; AddressSanitizer runs it too).
+comprehension's own list, use `if`, `break` and `continue`, hold `for i in range(...)` loops of the builtin `range` (`lent_range`)
+made of the same statements, read fields, items and lengths, use operators on numbers and text, call numeric functions that
+`Mod.lent_pure` proves, and call methods that `lent_method_info` proves: not overridden below the receiver's class, parameters
+that are numbers, text, or lists and objects that are not optional (`lent_param`; an argument has the parameter's type, or a
+class below it, and is itself read as above, as in `a.absorb(b)`), and a body of assignments to locals and to number fields of
+`self`, `if`, range loops, `return` and calls of other proven methods (as statements or inside expressions such as
+`total = total + p.area()`). Field writes stay number-only: replacing an object or list held in a field may free it, and the
+body only reads its parameters. A method that calls itself, a `raise`, other loops, any other call and any list method keep
+the loop owning. The item may be of any type that is reference counted (objects, text, lists, ...) or an `int` or `float`.
+Test: `loop_lifetime` (its first line gives how many of its loops borrow, which `tests/run.sh` checks; AddressSanitizer runs
+it too, including loops whose callee removes the item through a list parameter, a range loop or an override).
 
 Measured with cachegrind (instructions, deterministic) on a program that walks a 1,000,000-item list ten times, linked at
 `-O2`, the setup subtracted: per item, `total = total + n` over `list[int]` 33.4 → 20.1, `total = total + len(w)` over
 `list[str]` 48.0 → 30.4, and `total = total + p.norm1()` over objects (a method returning `self.x + self.y`) 62.2 → 38.2.
+The same way (release mode, `-O2`, runtime not inlined), the two loops `acc.absorb(v)` (an object parameter) and
+`for i in range(2): total = total + v.x * i` (a nested range loop) over a list of objects together take 164.6 → 119.6
+instructions per item (slope between 100,000 and 200,000 items, ten passes).
 
 ## What was done (text indexing and fused f-strings, v0.51)
 

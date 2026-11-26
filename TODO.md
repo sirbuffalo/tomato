@@ -1,7 +1,5 @@
 - Run the LTO release checks through the real `release/release.sh` and on a quiet biggie
   Done on 2026-11-25 at load about 65 (not quiet): `release/check-lto.sh`, the full tier with `TOMATO_TEST_REQUIRE_LTO=1` (842 passed, 0 failed) and the release's Linux remote script piped to biggie by hand (tests, benchmarks and instruction counts all fine); see `tests/README.md`. Still to do: one real `release/release.sh` Linux step from the Mac (the ssh, fetch-back and publish-gate parts were not exercised; the next release does it), and the full tier timed once on a quiet biggie (load never fell below 32; another account's `prst` jobs). Use `~/.tomato-release/linux-tools/bin` first on PATH and run `release/check-lto.sh` first.
-- Widen the loop-item borrowing further
-  Let proven methods take object, text or list parameters (`a.absorb(b)`), and let borrowed bodies hold nested range loops (`Gen.lent_loop_body`, `lent_method_info`; see "borrowed loop items" in `docs/performance.md`).
 - Floats of any size in the library and the formats (stage 4 of docs/bigfloat-design.md)
   Make std/math, round(x, n), f-string float formats, JSON, TOML and MessagePack handle floats outside the double range (the runtime already has tomato_bf_math1/2, tomato_bf_round, tomato_bf_format), with a decision entry for each visible change.
 - Fast loop copy for float loops (stage 5 of docs/bigfloat-design.md)

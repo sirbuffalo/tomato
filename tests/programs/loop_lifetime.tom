@@ -1,4 +1,4 @@
-# borrowed loops: 17
+# borrowed loops: 25
 # Borrowed loop values must be made owned on every exit, and mutation must keep the ordinary owning path.
 class Box:
     n: int
@@ -104,6 +104,65 @@ class Drain(Cell):
     override def bump(self):
         self.pool.pop(0)
         self.n = self.n + 10
+
+# methods that take objects, text and lists, and range loops: proven ones keep the loop borrowing
+class Vec:
+    x: int
+    y: int
+    tag: str = ''
+    pool: list[Vec] = []
+
+    @init
+    def make(self, x: int, y: int):
+        self.x = x
+        self.y = y
+
+    def absorb(self, other: Vec):
+        self.x = self.x + other.x
+        self.y = self.y + other.y
+
+    def dot(self, other: Vec) -> int:
+        return self.x * other.x + self.y * other.y
+
+    def weigh(self, ws: list[int]) -> int:
+        total = 0
+        for i in range(len(ws)):
+            if ws[i] < 0:
+                break
+            total = total + ws[i] * self.x
+        return total
+
+    def named(self, s: str) -> bool:
+        return self.tag == s
+
+    def poke(self):
+        self.x = self.x + 1
+
+    def nudge(self, other: Vec):
+        other.poke()
+
+    # the ones below change a list (directly, through a list parameter, in a range loop, or through an override)
+    def take(self, vs: list[Vec]) -> int:
+        vs.pop(0)
+        return 1
+
+    def drain(self, n: int):
+        for i in range(n):
+            self.pool.pop(0)
+
+    def adopt(self, other: Vec):
+        self.pool = [other]
+
+class Spill(Vec):
+    @init
+    def start(self, x: int, y: int):
+        Vec.make(self, x, y)
+
+    override def poke(self):
+        self.pool.pop(0)
+
+def vecs() -> list[Vec]:
+    return [Vec(1, 2), Vec(3, 4), Vec(5, 6)]
 
 def drained() -> list[Cell]:
     d = Drain(1)
@@ -281,3 +340,105 @@ def main():
     for a in [Acc(1)]:
         a.countdown(3)
     print(a.n)
+
+    # methods with object, text and list parameters
+    vs = vecs()
+    acc = Vec(0, 0)
+    v = Vec(0, 0)
+    for v in vs:
+        acc.absorb(v)
+    total = 0
+    for v in vs:
+        total = total + v.dot(acc) + acc.dot(v)
+    ws = [2, 3, -1, 4]
+    for v in vs:
+        total = total + v.weigh(ws)
+    vs[1].tag = 'b'
+    count = 0
+    for v in vs:
+        if v.named('b'):
+            count = count + 1
+    for v in vs:
+        acc.nudge(v)
+    vs = []
+    print(acc.x, acc.y, total, count, v.x)
+
+    # range loops inside a borrowed loop, over objects and big numbers, with break and continue
+    vs = vecs()
+    total = 0
+    for v in vs:
+        for i in range(3):
+            if i == 1:
+                continue
+            total = total + v.x * i
+        for j in range(10, 0, -4):
+            if j < v.x:
+                break
+            total = total + j
+    vs = []
+    print(total, v.x)
+    nums = [big, big + 1]
+    total = 0
+    for n in nums:
+        for i in range(1, 3):
+            total = total + n * i
+    nums = []
+    print(total, n)
+
+    # an error inside a range loop inside a borrowed loop, and a zero step: the item must be owned when the error leaves
+    vs = vecs()
+    try:
+        for v in vs:
+            for i in range(2):
+                total = 1 // (v.x - 3)
+    catch RuntimeError:
+        vs = []
+        print(v.x)
+    vs = vecs()
+    try:
+        for v in vs:
+            for i in range(0, 3, v.x - 3):
+                total = total + i
+    catch RuntimeError:
+        vs = []
+        print(v.x)
+
+    # a list parameter that the method changes: the loop must keep the item alive
+    vs = vecs()
+    total = 0
+    for v in vs:
+        total = total + acc.take(vs) + v.x
+    print(total, v.x, len(vs))
+
+    # a range loop in a method that changes a list
+    vs = vecs()
+    vs[0].pool = vs
+    vs[1].pool = vs
+    vs[2].pool = vs
+    for v in vs:
+        v.drain(1)
+        total = v.x
+    print(total, v.x, len(vs))
+
+    # a range loop in the borrowed body that changes the list
+    vs = vecs()
+    for v in vs:
+        for i in range(1):
+            vs.pop(0)
+        total = v.x
+    print(total, v.x, len(vs))
+
+    # an object parameter whose method is overridden below its class by one that changes the list
+    vs = [Spill(7, 8), Vec(9, 10)]
+    vs[0].pool = vs
+    for v in vs:
+        acc.nudge(v)
+        total = v.x
+    print(total, v.x, len(vs))
+
+    # a method that stores an object in a field
+    vs = vecs()
+    for v in vs:
+        acc.adopt(v)
+    vs = []
+    print(v.x, acc.pool[0].x)

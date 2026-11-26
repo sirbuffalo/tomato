@@ -2713,7 +2713,8 @@ class Gen:
     def lent_loop_body(self, body: list[Node], name: str) -> bool:
         # This deliberately accepts only a small, verifiable subset. lent_safe() proves an expression runs no user code (no
         # protocol method, no operator on an object) except methods that lent_method() proves, and lent_pure() follows calls to
-        # pure numeric functions through the whole program; unknown calls, list writes and nested loops remain owning loops.
+        # pure numeric functions through the whole program; unknown calls, list writes and loops other than range loops remain
+        # owning loops. The caller empties calm_types around it (lent_range gives the variables of range loops their type there).
         bound: list[str] = []
         for s in body:
             bound_names(s, bound)
@@ -2739,14 +2740,54 @@ class Gen:
                         return False
                 if s.fields[1].tag == 'l' and not self.lent_loop_body(val_nodes(s.fields[1]), name):
                     return False
+            elif k == 'For':
+                if not self.lent_range(s) or not self.lent_loop_body(val_nodes(s.fields[2]), name):
+                    return False
             else:
                 return False
         return True
 
+    def lent_range(self, s: Node) -> bool:
+        # the head of a `for i in range(...)` loop inside a borrowed body: the builtin range (not a function, generator or import
+        # of the module's own), whole-number bounds that lent_safe accepts and a variable that is an int. A variable that is not yet a
+        # local is given its type in calm_types, so that the body can use it. (A zero step and a bound outside the small numbers
+        # raise errors that the runtime makes, which run no user code.)
+        it = val_node(s.fields[1])
+        if len(s.fields) != 3 or s.fields[0].tag != 's' or it.kind != 'Call' or len(it.fields[2].items) != 0:
+            return False
+        f = val_node(it.fields[0])
+        if f.kind != 'Name' or f.fields[0].text != 'range' or 'range' in self.slots or self.mod.binding(self.mod.cur, 'range') is not None:
+            return False                         # (the builtin range is a class of std/builtin/range.tom, not bound in a module)
+        bounds = val_nodes(it.fields[1])
+        if len(bounds) < 1 or len(bounds) > 3:
+            return False
+        for b in bounds:
+            if self.peek_type(b) != 'int' or not self.lent_safe(b):
+                return False
+        var = s.fields[0].text
+        if var in self.slots:
+            return self.types[var] == 'int'
+        if var in self.calm_types and self.calm_types[var] != 'int':
+            return False
+        self.calm_types[var] = 'int'
+        return True
+
+    def lent_param(self, t: str) -> bool:
+        # a parameter type that a proven method may take: a number, text, or a list (or tuple) or object that is not optional,
+        # which lent_safe reads without running user code
+        if pure_number(t) or t == 'str':
+            return True
+        if is_optional(t):
+            return False
+        if is_class(t):
+            return self.mod.has_class(t[1:])
+        return is_list(t)
+
     def lent_method(self, call: Node) -> bool:
         # A call of a method that cannot change a list: the receiver is an object that lent_safe reads, the method is the one
-        # every object of the receiver's class uses (no class below overrides it), its arguments are numbers, and its body is
-        # proven by lent_method_info. Other method calls keep the owning loop.
+        # every object of the receiver's class uses (no class below overrides it), its arguments are values that lent_safe reads
+        # (numbers for number parameters, otherwise of the parameter's own type or, for an object, of a class below it), and its
+        # body is proven by lent_method_info. Other method calls keep the owning loop.
         if call.kind != 'Call' or len(call.fields[2].items) != 0:
             return False
         f = val_node(call.fields[0])
@@ -2765,15 +2806,25 @@ class Gen:
         info = self.mod.lookup_method(cls, mname)
         if info is None or len(val_nodes(call.fields[1])) != len(info.ptypes) or not self.lent_method_info(info):
             return False
-        for arg in val_nodes(call.fields[1]):
-            if not self.lent_safe(arg) or not pure_number(self.peek_type(arg)):
+        args = val_nodes(call.fields[1])
+        for k, arg in enumerate(args):
+            at = self.peek_type(arg)
+            pt = info.ptypes[k]
+            if not self.lent_safe(arg):
+                return False
+            if pure_number(pt):
+                if not pure_number(at):
+                    return False
+            elif at != pt and not (is_class(pt) and self.mod.subclass(at, pt)):
                 return False
         return True
 
     def lent_method_info(self, info: FuncInfo) -> bool:
         # Can this method run without changing any list or running user code that lent_safe does not accept? Its parameters are
-        # numbers and its body is made of what lent_method_body accepts, which includes calls of other proven methods. The answer
-        # is kept for the whole program; a method that calls itself, directly or through others, is not looked into.
+        # of the types lent_param accepts (numbers, text, lists and objects, which its body can only read: field writes are to
+        # number fields of self) and its body is made of what lent_method_body accepts, which includes calls of other proven
+        # methods. The answer is kept for the whole program; a method that calls itself, directly or through others, is not
+        # looked into.
         key = f'{info.owner}.{info.name}'
         if key in self.mod.lent_method_cache:
             return self.mod.lent_method_cache[key]
@@ -2781,7 +2832,7 @@ class Gen:
         if info.owner == '' or info.is_async or info.is_gen or info.stars != 0 or len(info.defaults) != 0:
             return False
         for t in info.ptypes:
-            if not pure_number(t):
+            if not self.lent_param(t):
                 return False
         check = Gen()
         check.mod = self.mod
@@ -2799,11 +2850,11 @@ class Gen:
 
     def lent_method_body(self, body: list[Node]) -> bool:
         # the statements of a method that lent_method_info accepts (self is the scratch Gen that holds the method's variables):
-        # assignments to locals and to number fields of self, calls of proven methods, ifs and returns, all made of expressions
-        # that lent_safe accepts. A raise is refused, as in lent_pure: making the error object may run user code.
+        # assignments to locals and to number fields of self, calls of proven methods, ifs, range loops and returns, all made of
+        # expressions that lent_safe accepts. A raise is refused, as in lent_pure: making the error object may run user code.
         for s in body:
             k = s.kind
-            if k == 'Pass':
+            if k == 'Pass' or k == 'Break' or k == 'Continue':
                 continue
             if k == 'Assign':
                 target = val_node(s.fields[0])
@@ -2834,6 +2885,15 @@ class Gen:
                     if not self.lent_safe(val_node(branch.items[0])) or not self.lent_method_body(val_nodes(branch.items[1])):
                         return False
                 if s.fields[1].tag == 'l' and not self.lent_method_body(val_nodes(s.fields[1])):
+                    return False
+            elif k == 'For':
+                if not self.lent_range(s):
+                    return False
+                var = s.fields[0].text
+                if var not in self.slots:
+                    self.slots[var] = var
+                    self.types[var] = 'int'
+                if not self.lent_method_body(val_nodes(s.fields[2])):
                     return False
             else:
                 return False
@@ -10511,7 +10571,10 @@ class Gen:
         unwind = ''
         previous_unwind = ''
         if vals is None and (is_rc(elem) or owns_num(elem)) and not self.is_async and self.gen_n == 0 and not in_nest and self.nest == '' and self.bail == '' and self.borrowed_unwind == '':
+            saved_calm = self.calm_types
+            self.calm_types = {}
             lent = self.lent_loop_body(stmts, s.fields[0].text)
+            self.calm_types = saved_calm
         if lent:
             borrowed = self.tmp('lent.slot')
             used = self.tmp('lent.flag')
