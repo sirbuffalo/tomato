@@ -10,8 +10,6 @@
   Confirm it rewrites `std/sys.tom` and `site/wasm/std/sys.tom` and that the commit step accepts the extra file.
 - Run the full `tests/run.sh` once on the merged Wave 2 result
   Run it with `WASI_SDK` set so ASan and the wasm rebuild check run, and with node or jsc for the browser checks. The builders ran the full suite on identical trees, but nobody ran it on the final merged tree, and macOS is untested.
-- Investigate why `tests/run.sh --fast -j 8` and `-j 16` exit with status 144 at the compiler step
-  On the builder's machine the suite passes without `-j`. One guess is the memory use of parallel clang runs on the 14 MB `tomatoc.ll`.
 - Decide the lifetime of a File opened in a `for` loop header (A-Q7)
   `for line in open(path):` never closes its file, so each use leaks a descriptor and a program that does it often hits EMFILE; using or closing a File after `close()` is also undefined. Choose one: close the temporary on every loop exit, warn when a loop header calls `open(...)`, or give File a closed flag so misuse raises `ValueError`. Add a test that counts open descriptors.
 - Make `Pattern.match`/`search` with an advancing `pos` linear
