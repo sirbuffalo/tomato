@@ -573,9 +573,30 @@ Profile first (callgrind in the Lima VM, release mode, `benchmarks/count.sh` inp
 | strings | 140.4 | 117.1 | 0.83 |
 | matmul | 131.5 | 131.5 | 1.00 |
 
-Not done, with the profile's reason: **list indexing** is already a bounds check plus a load in matmul's inner loop (about 28 instructions per iteration, none of them reference counting; the rest is tag tests, the overflow check on `+`/`*` and two bounds checks), so there is nothing refcount-related left there. The loop item of `for x in xs` is still retained and released (about 13 of the 35 instructions per item in `objects`): dropping it needs proof that the body cannot remove the item from the list, which a method call can do through an alias.
+Not done, with the profile's reason: **list indexing** is already a bounds check plus a load in matmul's inner loop (about 28 instructions per iteration, none of them reference counting; the rest is tag tests, the overflow check on `+`/`*` and two bounds checks), so there is nothing refcount-related left there. The loop item of `for x in xs` is still retained and released (about 13 of the 35 instructions per item in `objects`; it was in fact 16 of 51, see "borrowed loop items, measured"): dropping it needs proof that the body cannot remove the item from the list, which a method call can do through an alias (done later for simple bodies, see that section).
 
 Also in this change: a failing check now frees the temporaries waiting in its expression (see D05av in `docs/decisions.md` and the `temp_unwind` test), and the big-number leak check is strict after errors again.
+
+## What was done (borrowed loop items, measured)
+
+Commit `1a3a342e` stopped retaining the loop item of `for p in xs` when the body provably cannot change a list (`Gen.lent_loop_body`); this is what it saves per item in `objects`, whose two loops over `particles` both qualify (`p.step(round)`, 10 times per particle, and `total += p.x`, once).
+
+**Method.** Same tree (`da596c95`), same runtime, same toolchain (clang 21.1.8, release mode, LTO working); two compilers differing in one line (the borrow gate `lent = self.lent_loop_body(...)` replaced by `lent = False`). `valgrind --tool=callgrind` (3.26.0), instructions executed by the whole process, Linux x86-64. `perf stat` was not available (`perf_event_paranoid` 4, no root). The count does not depend on machine load (load average was about 64 on 128 cores), so "quiet machine" matters for timing, not for this. Both programs print the same checksum. Per-item numbers are slopes between runs that differ only in `n` or in the number of rounds, so start-up (172.6 K instructions) and the build loop cancel.
+
+| `objects` at n = 100000 | instructions |
+| --- | ---: |
+| loop item retained (before) | 60,534,589 |
+| loop item borrowed (after) | 42,734,740 |
+| saved | 17,799,849 (29.4%) |
+
+| loop | saved per item | loop body per item, before → after |
+| --- | ---: | ---: |
+| `p.step(round)` (10 rounds, 1,000,000 items) | 16.0 (steady state, rounds 3 to 10) | 51 → 35 instructions |
+| `total += p.x` (100,000 items) | 17.0 | |
+
+Per particle (all 11 items): 601.1 → 423.1 instructions, 178.0 saved (the 10 rounds are 160.0 of that). The 16 instructions in the step loop are exactly the disassembled difference: a null test, a load, a sign test, an increment and a store to retain the new item (7), the same plus a branch to release the previous one (8), and one register move. With the borrow the item is just loaded from the list's data pointer.
+
+The 13-of-35 estimate under "Not done" in the refcount bookkeeping section was low: the retain and release were 16 of 51.
 
 ## What was done (collatz and small-int arithmetic)
 

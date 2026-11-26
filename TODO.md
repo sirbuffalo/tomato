@@ -4,8 +4,6 @@
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
 - Confirm the split bootstrap build on the Mac
   Run `tests/run.sh` on the Mac (and the full tier) to confirm `build-object.sh` takes the split path under macOS's BWK awk and Apple ld rather than the fallback.
-- Measure the per-item instruction saving of borrowed loop items on `objects`
-  Measure it on a quiet machine (perf stat or valgrind).
 - Widen the loop-item borrowing
   Cover methods that call other proven list-safe methods, and loops over non-class items.
 - Find why collatz executes more instructions than at v0.51
