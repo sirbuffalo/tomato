@@ -8,7 +8,7 @@
 `./install-native.sh` does that and installs the `tomato` command. After you change anything in `compiler/src/` or the
 runtime, refresh the file with `compiler/bootstrap/refresh.sh`; a test fails while the file is out of date.
 
-Native installation and the test suite compile the IR in eight parallel parts with
+`refresh.sh`, native installation and the test suite compile the IR in eight parallel parts with
 `build-object.sh`. `split.awk` retains one shared definition of every global and
 distributes complete functions; the canonical IR remains unchanged for fixed-point
 checks and WebAssembly. The helper requires clang, awk and the platform linker.
