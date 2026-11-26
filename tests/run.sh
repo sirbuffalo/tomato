@@ -587,7 +587,7 @@ t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser string_io assert_ok testing_lib float_any_size float_ownership float_loops float_keys float_nests float_library; do
+  for name in wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser string_io assert_ok testing_lib float_any_size float_ownership float_loops float_keys float_nests float_library float_limits; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -1368,6 +1368,7 @@ rt tan_quarter "tan is not defined at 90 deg" 1
 rt sqrt_negative "sqrt needs a number that is not negative, but got -4.0" 1
 rt asin_domain "asin needs a number from -1 to 1, but got 1.5" 1
 rt atan2_origin "atan2(0, 0) has no angle" 1
+rt float_pow_too_large "the result is too large to calculate: its exponent would have more than 65536 bits" 1
 rt exp_large "1.970071114017047e+434" 0
 rt log_zero "log needs a positive number, but got 0.0" 1
 rt log_base_zero "a logarithm base must be positive and not 1, but got 0.0" 1

@@ -172,6 +172,7 @@ async_finally_generator
 async_self_wait
 float_any_size
 float_library
+float_limits
 float_ownership
 float_loops
 float_keys

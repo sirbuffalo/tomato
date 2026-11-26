@@ -1,0 +1,4 @@
+@main
+def main():
+    x = float('1e30000')
+    print(10.0 ** x)

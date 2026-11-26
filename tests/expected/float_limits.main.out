@@ -1,0 +1,25 @@
+exp 3019
+exp the result is too large to calculate: its exponent would have more than 65536 bits
+exp the result is too large to calculate: its exponent would have more than 65536 bits
+sinh 3019
+sinh the result is too large to calculate: its exponent would have more than 65536 bits
+sinh the result is too large to calculate: its exponent would have more than 65536 bits
+cosh 3019
+cosh the result is too large to calculate: its exponent would have more than 65536 bits
+cosh the result is too large to calculate: its exponent would have more than 65536 bits
+pow 3020
+pow the result is too large to calculate: its exponent would have more than 65536 bits
+pow the result is too large to calculate: its exponent would have more than 65536 bits
+exp the result is too large to calculate: its exponent would have more than 65536 bits
+expm1 True
+expm1 the result is too large to calculate: its exponent would have more than 65536 bits
+pow2 30006
+pow1 1.0
+exp 320
+f 100003
+f the number is too large to write with f: it has more than 100000 digits before the point
+f the number is too large to write with f: it has more than 100000 digits before the point
+f the number is too large to write with f: it has more than 100000 digits before the point
+1.000e+100001 1e+100001
+100000 311
+True True

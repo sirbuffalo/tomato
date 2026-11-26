@@ -105,7 +105,13 @@ the C library's, on scaled operands. `sin`, `cos` and `tan` of a box above `2^10
 
 - `exp` and `**` need as many bits of log 2 as the result's exponent has, in quadratic time: an exponent of 100,000 bits takes about a second. A
   result whose exponent would need more than 2^31 bits (or a whole part, a digit string or a power of ten of more than 2^31 bits) is "out of memory". Powers of two to a whole power (`2.0 ** y`) are exact and quick.
-- `int(x)`, `round` and the `f` format of a box build every digit, so they need memory in proportion to the exponent's value.
+- **Refused beyond a size (D77f).** The time of `exp`, `expm1`, `sinh`, `cosh` and `**` grows with the square of the number of bits of the result's exponent
+  (`exp(1e100000)`, 332,000 bits: 7.7 s on a loaded machine), so a result whose exponent needs more than `BF_MAX_EXP_BITS` (65,536) bits is an `OverflowError`
+  (E528) before any work: `tomato_bf_exp_check` for the four functions (called by `std/math.tom` when the argument is above 1e300 in size) and the code 3 of
+  `tomato_bf_pow_check` for `**` (the compiler raises it). The `f` format writes every digit of the whole part, in time in the square of their number
+  (100,000 digits 0.2 s, 1,000,000 digits 24 s), so more than `BF_MAX_FORMAT_DIGITS` (100,000) digits before the point is an `OverflowError` (E529;
+  `tomato_bf_digits_check`, called by `std/builtin/format.tom`). A double never reaches either limit. The constants are to become configurable from a TOML file.
+- `int(x)` and `round(x)` of a box are binary and fast (a 332-million-bit int: 0.2 s, 42 MB) and need memory in proportion to the exponent's value, up to the 2^31-bit limit above; the `e` and `g` formats and `str()` write few digits and are not limited.
 
 ## Testing
 

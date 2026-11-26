@@ -4526,6 +4526,9 @@ class Gen:
             nowhole = self.tmp('powneg')
             self.emit(f'{nowhole} = icmp eq i32 {code}, 2')
             self.fail_if(nowhole, 'a negative number cannot be raised to a power that is not a whole number', [x, y])
+            toobig = self.tmp('powbig')
+            self.emit(f'{toobig} = icmp eq i32 {code}, 3')
+            self.fail_if(toobig, 'the result is too large to calculate: its exponent would have more than 65536 bits', [x, y])
             return self.bf_call2('pow', x, y)
         if is_compare:
             return self.bf_compare(op, x, y)

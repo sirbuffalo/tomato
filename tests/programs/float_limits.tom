@@ -1,0 +1,51 @@
+# The limits on huge results (D77f): exp, expm1, sinh, cosh and ** stop with an OverflowError when the exponent of the result would
+# have more than 65536 bits, and the f format when the whole part would have more than 100000 digits. Everything below stays
+# quick: the arguments that work are small, and the others stop before any calculation.
+from math import exp, expm1, sinh, cosh
+
+def size(x: float) -> int:
+    return len(str(x))
+
+def attempt(name: str, x: float) -> str:
+    try:
+        if name == 'exp':
+            return f'exp {size(exp(x))}'
+        if name == 'expm1':
+            return f'expm1 {expm1(x) == -1.0}'
+        if name == 'sinh':
+            return f'sinh {size(sinh(x))}'
+        if name == 'cosh':
+            return f'cosh {size(cosh(x))}'
+        if name == 'pow':
+            return f'pow {size(10.0 ** x)}'
+        if name == 'pow2':
+            return f'pow2 {size(2.0 ** x)}'
+        if name == 'pow1':
+            return f'pow1 {1.0 ** x}'
+        return f'f {len(f"{x:.2f}")}'
+    catch OverflowError as e:
+        return f'{name} {e.message}'
+
+@main
+def main():
+    small = float('1e3000')
+    big = float('1e19800')                  # its exponent would need 65,769 bits
+    huge = float('1e30000')
+    for name in ['exp', 'sinh', 'cosh', 'pow']:
+        print(attempt(name, small))
+        print(attempt(name, big))
+        print(attempt(name, huge))
+    print(attempt('exp', -big))
+    print(attempt('expm1', -huge))          # -1.0 at once, as before
+    print(attempt('expm1', big))
+    print(attempt('pow2', huge))            # a power of two is exact and quick
+    print(attempt('pow1', huge))
+    print(attempt('exp', 1e300))            # a double: far below the limit
+    print(attempt('f', float('1e99999')))   # 100,000 digits
+    print(attempt('f', float('1e100000')))  # 100,001
+    print(attempt('f', float('1e1000000000000')))
+    print(attempt('f', -float('1e100000')))
+    print(f'{float("1e100001"):.3e} {float("1e100001"):g}')   # e and g write few digits
+    print(f'{1e308:.1f}'[:6], len(f'{1e308:.1f}'))
+    x = float('1e100000')
+    print(int(x) % 1024 == 0, round(x) % 1024 == 0)
