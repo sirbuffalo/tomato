@@ -1,31 +1,57 @@
 # Drives `tomato repl` in a pty (no Python): a multi-line block must come back from the up arrow as one entry that runs
 # whole, and the history file must hold only typed input. Usage: expect tests/repl_history.exp   (needs `tomato` on PATH)
-set timeout 20
+# No fixed sleeps: every key is sent only after the prompt it answers has been drawn (readline prints ESC[?2004h, bracketed
+# paste on, right before it starts reading), so a loaded machine only makes the session slower, not different.
+set timeout 120
 match_max 100000
 set home [exec mktemp -d]
 set env(HOME) $home
 set env(TERM) xterm
 set env(TOMATO_HISTORY) $home/hist
+log_user 0   ;# the session is not echoed: the last line printed is the verdict
 spawn bash [file dirname [info script]]/../native/tomato-repl
-proc line {s} { send "$s\r"; sleep 0.8 }
-line "for i in range(2):"
-line "\tprint(i)"
-line ""
-line "x = 5"
-line "print(1 + \"a\")"
-send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3   ;# print(1+"a"), x = 5, then the block
-send "\r"; sleep 0.8          ;# the block is shown as real lines with the run/edit prompt
-send "\r"; sleep 1.5          ;# Enter runs it whole
-send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3; send "\033\[A"; sleep 0.3; send "\r"; sleep 0.8   ;# the block again
-send "e\r"; sleep 0.5; send "\r"; sleep 0.5   ;# edit: keep line 1
-send "\033\[A"; sleep 0.3; send "\b * 10)\r"; sleep 0.5   ;# line 2: up arrow recalls it, change it
-send "\r"; sleep 1.5          ;# no more lines: run
-line ":quit"
+set bv [exec bash -c {echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}}]
+set old_bash [expr {[lindex $bv 0] < 4}]
+# readline 8.1 (bash 5.1) and later prints ESC[?2004h (bracketed paste on) right before it starts reading: the surest sign that
+# the prompt is live, not merely echoed. Older readlines (macOS bash 3.2) print nothing, so there the prompt text alone is matched.
+if {[lindex $bv 0] > 5 || ([lindex $bv 0] == 5 && [lindex $bv 1] >= 1)} { set P "\033\\\[\\?2004h" } else { set P "" }
+# await_prompt REGEXP: wait for readline to show a prompt matching it (REGEXP follows the marker); fail if it never does
+set all ""
+proc await_prompt {re} {
+  global P all
+  expect {
+    -re "$P$re" { append all $expect_out(buffer) }
+    timeout { puts "FAIL: timed out waiting for prompt: $re"; exit 1 }
+    eof { puts "FAIL: repl exited while waiting for prompt: $re"; exit 1 }
+  }
+}
+proc line {s next} { send "$s\r"; await_prompt $next }
+await_prompt {>>> }
+line "for i in range(2):" {\.\.\. +}
+line "\tprint(i)" {\.\.\. +}
+line "" {>>> }
+line "x = 5" {>>> }
+line "print(1 + \"a\")" {>>> }
+send "\033\[A\033\[A\033\[A"   ;# print(1+"a"), x = 5, then the block
+send "\r"; await_prompt {\[Enter\] run  \[e\] edit: }   ;# the block is shown as real lines with the run/edit prompt
+send "\r"; await_prompt {>>> }                          ;# Enter runs it whole
+send "\033\[A\033\[A\033\[A\r"; await_prompt {\[Enter\] run  \[e\] edit: }   ;# the block again
+# bash 4+ shows each line prefilled in the editor; bash 3.2 shows an empty prompt (Enter keeps the line, Up recalls it)
+if {$old_bash} { set p1 {>>> }; set p2 {\.\.\. } } else { set p1 {>>> for i in range\(2\):}; set p2 {\.\.\. +print\(i\)} }
+send "e\r"; await_prompt $p1       ;# edit: line 1
+send "\r"; await_prompt $p2        ;# keep line 1; line 2 comes next
+# line 2: bash 3.2 (macOS) cannot prefill the editor, so the up arrow recalls the line; from bash 4 on it is already there (and
+# the up arrow would go on to older history). Either way, change it.
+if {$old_bash} { send "\033\[A" }
+send "\b * 10)\r"; await_prompt {\.\.\. }
+send "\r"; await_prompt {>>> }                          ;# no more lines: run
+send ":quit\r"
 expect eof
+append all $expect_out(buffer)
 set hist [exec cat $home/hist]
 set bad ""
-if {[regexp -all {0\r\n1\r\n} $expect_out(buffer)] < 2} { append bad "recalled block did not run whole; " }
-if {![regexp {0\r\n10\r\n} $expect_out(buffer)]} { append bad "edited block did not run; " }
+if {[regexp -all {0\r\n1\r\n} $all] < 2} { append bad "recalled block did not run whole; " }
+if {![regexp {0\r\n10\r\n} $all]} { append bad "edited block did not run; " }
 if {![string match "*for i in range(2):⏎*print(i)*" $hist]} { append bad "block not stored as one entry: $hist; " }
 if {[regexp {\nprint\(i\)} $hist]} { append bad "body stored as its own entry; " }
 if {[string match "*Error*" $hist]} { append bad "error text in history; " }

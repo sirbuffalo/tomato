@@ -907,7 +907,7 @@ hi Ann" "$(printf "name = await input('Name? ')\nAnn\nprint('hi', name)\n:quit\n
   check "repl: leave() leaves" "a" "$(printf "print('a')\nleave()\nprint('b')\n" | $t repl)"
   fi
 }
-t_cli_repl_history() {   # the pty session sleeps between keys: it is its own job, so it does not hold up the others
+t_cli_repl_history() {   # the pty session is slow (it compiles after each line): it is its own job, so it does not hold up the others
   cli_setup
   if command -v expect >/dev/null 2>&1; then check "repl: up-arrow recalls a multi-line block as one history entry" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/repl_history.exp 2>&1 | tail -1)"; fi
 }

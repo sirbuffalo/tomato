@@ -6,8 +6,6 @@
   Fast loop copy for float loops, float interval facts for the word type (reusing or replacing the now-idle float interval code), and measurements on the M1, Linux and the browser.
 - Design a non-LTO debug build path for tomato build and run
   Keep the runtime's inline fast paths (alwaysinline IR emitted or prepended by tomatoc) so the debug link needs no LTO merge. Expected debug builds 1.8-2.3x faster (fib 1.15 s to about 0.5 s; the LTO link is about 1.0 s of 1.15 s), which also speeds the test suite; needs a full test run and a wasm rebuild.
-- Make the `repl: up-arrow recalls a multi-line block as one history entry` check robust under load
-  `tests/repl_history.exp` is sleep-driven (0.3 to 1.5 s between keys) and failed in both full-tier runs on biggie at load 65-100, where `expect` is a hand-unpacked package. Find out whether the load or that `expect` is the cause (run it alone on a quiet machine and with a normal `expect`), and make the check wait for the prompts instead of sleeping.
 - Fix the float performance regression from `bf46a4ee`
   mandelbrot executes 7.6x, nbody 3.4x and spectral_norm 1.7x more instructions at `bf46a4ee` than at its parent (callgrind, `benchmarks/count.sh --guest`; numbers in `docs/performance.md` and `benchmarks/results/linux-x86_64/results-f533dbd0.md`). Compare the emitted IR before and after the bigfloat stage 3 commit. The Linux snapshot in `docs/performance.md` was measured at the same tree label (`f533dbd0`) without the slowdown, so first find out why the two runs differ.
 - Run `release/release.sh --dry-run` on the signing Mac once to exercise the real Linux step
