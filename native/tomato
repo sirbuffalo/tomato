@@ -6,7 +6,9 @@
 #   tomato test FILE... [--filter TEXT] [--mode MODE]                run the functions marked @test in each file (ok/FAIL lines and a summary; exit 1 if any test failed)
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato repl [FILE ...]                                            type Tomato one piece at a time
-#   tomato update                                                     install the newest release
+#   tomato update [--minor] [--pre]                                   install the newest release: patch releases (1.0.x) at once; a new
+#                                                                     minor or major version (1.1.0, 2.0.0), which may change behaviour, only
+#                                                                     with --minor; pre-releases (1.1.0-rc.1) only with --pre or when one is installed
 #   tomato version                                                    print the version (also --version)
 # Options for every command: --color=auto|always|never (red errors on a terminal; also TOMATO_COLOR, and NO_COLOR turns it off),
 # --no-warnings (hide the warnings the compiler gives about code that runs but looks wrong; also TOMATO_WARNINGS=off).
@@ -49,6 +51,32 @@ paint() {
 show_error() { if want_color; then paint >&2; else cat >&2; fi; }
 die() { printf 'error: %s\n' "$*" | show_error; exit 1; }
 die_id() { id="$1"; shift; printf 'error[%s]: %s\n' "$id" "$*" | show_error; exit 1; }
+# SemVer 2.0 precedence of two version texts: prints -1, 0 or 1 (the first below, equal to or above the second). MAJOR.MINOR.PATCH
+# by number, a missing part counting as 0 (the old 0.NN numbers are 0.NN.0); then a -PRERELEASE is below the release itself,
+# its dot-separated identifiers compared in turn (numbers by value and below words, words in ASCII order, a longer list above
+# its prefix: 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-beta < 1.0.0-rc.2 < 1.0.0-rc.10 < 1.0.0); +BUILD is ignored.
+# The same text is in native/tomato and release/release.sh; tests/run.sh checks that they agree.
+semver_cmp() {
+  LC_ALL=C awk -v a="$1" -v b="$2" '
+    function part(v, i,   c) { c = v; sub(/[-+].*/, "", c); split(c, w, "."); return w[i] + 0 }
+    function pre(v) { sub(/\+.*/, "", v); return index(v, "-") ? substr(v, index(v, "-") + 1) : "" }
+    function cmp(x, y,   i, xp, yp, n, m, xn, yn) {
+      for (i = 1; i <= 3; i++) if (part(x, i) != part(y, i)) return part(x, i) < part(y, i) ? -1 : 1
+      xp = pre(x); yp = pre(y)
+      if (xp == yp) return 0
+      if (xp == "") return 1
+      if (yp == "") return -1
+      n = split(xp, u, "."); m = split(yp, t, ".")
+      for (i = 1; i <= n && i <= m; i++) {
+        xn = u[i] ~ /^[0-9]+$/; yn = t[i] ~ /^[0-9]+$/
+        if (xn && yn) { if (u[i] + 0 != t[i] + 0) return u[i] + 0 < t[i] + 0 ? -1 : 1 }
+        else if (xn != yn) return xn ? -1 : 1
+        else if ((u[i] "") != (t[i] "")) return (u[i] "") < (t[i] "") ? -1 : 1
+      }
+      return n == m ? 0 : n < m ? -1 : 1
+    }
+    BEGIN { print cmp(a, b) }'
+}
 # update downloads use https only, including after redirects (file:// only for tests, with the override)
 curl_safe() {
   if [ -n "$TOMATO_UPDATE_ALLOW_ANY_URL" ] || [ -n "$TOMATO_UPDATE_ALLOW_FILE" ]; then curl -fsSL "$@"; else curl -fsSL --proto '=https' --proto-redir '=https' "$@"; fi
@@ -75,19 +103,35 @@ case "$cmd" in
   help|--help|-h) sed -n '2p' "$src" | sed 's/^# \{0,1\}//'; commands; exit 0 ;;
   version|--version|-V) echo "Tomato v$(cat "$home/VERSION" 2>/dev/null || echo 0) (compiler written in Tomato)"; exit 0 ;;
   update)
-    # tomato update: read the manifest, and if a newer release exists download it and run its installer
+    # tomato update: read the manifest, and if a newer release exists download it and run its installer. site/latest.json names
+    # the latest stable release only; a pre-release (1.1.0-rc.1) is in site/latest-pre.json, read only with --pre or when the
+    # installed version is itself a pre-release, so a stable install is never moved to an rc unasked, while an rc install moves to
+    # a later rc or to the release. Patch releases keep programs working (docs/releasing.md, Version numbers), so they install at
+    # once; a newer MAJOR.MINOR from 1.0 on needs --minor, because a minor version may change behaviour.
+    minor=0; pre=0
+    for a in "$@"; do case "$a" in --minor) minor=1 ;; --pre) pre=1 ;; *) die "tomato update takes --minor and --pre, not $a" ;; esac; done
     url="${TOMATO_UPDATE_URL:-https://tomato.davismcd.com/latest.json}"
+    pre_url="${TOMATO_UPDATE_PRE_URL:-https://tomato.davismcd.com/latest-pre.json}"
     have="$(cat "$home/VERSION" 2>/dev/null || echo 0)"
     command -v curl >/dev/null || die "tomato update needs curl"
     # the site's own HTTPS may not be ready (GitHub issues its certificate after DNS is set up), so fall back to the
-    # same manifest attached to the latest GitHub release (not the main branch); plain HTTP is never used because the manifest carries the checksum
+    # same manifest attached to the latest GitHub release (not the main branch, and never a pre-release: GitHub's "latest"
+    # skips them); plain HTTP is never used because the manifest carries the checksum
     manifest="$(curl_safe "$url" 2>/dev/null)" || manifest="$(curl_safe "${TOMATO_UPDATE_FALLBACK:-https://github.com/sirbuffalo/tomato/releases/latest/download/latest.json}" 2>/dev/null)" || die "cannot read $url"
-    latest="$(printf '%s' "$manifest" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -1)"
+    mversion() { printf '%s' "$1" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -1; }
+    latest="$(mversion "$manifest")"
+    case "$have" in *-*) pre=1 ;; esac
+    if [ "$pre" = 1 ] && pmanifest="$(curl_safe "$pre_url" 2>/dev/null)" && platest="$(mversion "$pmanifest")" && [ -n "$platest" ]; then
+      if [ -z "$latest" ] || [ "$(semver_cmp "$platest" "$latest")" = 1 ]; then manifest="$pmanifest"; latest="$platest"; fi
+    fi
     archive="$(printf '%s' "$manifest" | sed -n 's/.*"url" *: *"\([^"]*\)".*/\1/p' | head -1)"
     [ -n "$latest" ] && [ -n "$archive" ] || die "the manifest at $url is not understood"
     # only upgrade: an older or equal version (a stale cache, a rolled-back manifest) is left alone
-    newer="$(printf '%s\n%s\n' "$have" "$latest" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
-    if [ "$latest" = "$have" ] || [ "$newer" != "$latest" ]; then echo "tomato v$have is the latest"; exit 0; fi
+    if [ "$(semver_cmp "$latest" "$have")" != 1 ]; then echo "tomato v$have is the latest"; exit 0; fi
+    if [ "$minor" = 0 ] && [ "${have%%.*}" != 0 ] && [ "$(semver_cmp "$(echo "$latest" | cut -d. -f1,2).0" "$(echo "$have" | cut -d. -f1,2).0")" = 1 ]; then
+      echo "tomato v$latest is out, a new minor or major version: it may change how programs behave (see its release notes)."
+      echo "You have v$have. Install it with: tomato update --minor$(case "$latest" in *-*) echo " --pre" ;; esac)"; exit 0
+    fi
     echo "updating v$have -> v$latest"
     work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
     want="$(printf '%s' "$manifest" | sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' | head -1)"
@@ -230,6 +274,7 @@ fi
 [ "$cmd" = compile ] && { grep -v '^;! ' "$tmp/program.ll"; exit 0; }
 exe="$tmp/program"
 [ "$cmd" = build ] && exe="${out:-$(basename "${file%.tom}")}"
+[ "$cmd" = build ] && [ "$exe" -ef "$file" ] && die "the program would overwrite its own source $file: name it with -o"
 # The runtime is compiled once per mode, clang and runtime source, and kept in the cache folder (native/rtcache.sh); each run then
 # links the stored object (release: bitcode, for link-time optimisation) instead of compiling the 8,000 lines of C again. Without a
 # usable object (the compile or the cache failed) the runtime source is linked, as before.

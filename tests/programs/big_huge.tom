@@ -1,0 +1,58 @@
+# Products and quotients past the sizes the other big-number tests reach: a transform longer than its twiddle table (the two
+# numbers have more than about 131,000 limbs of 32 bits between them), a transform that is not a power-of-two multiple of the
+# block size, a long number in pieces against a short one, and Burnikel-Ziegler division whose inner products are
+# done by the transform (divisor of 6000 limbs and more), with signs, and str/int of a number that long. Expected output from Python 3.
+def mix(h: int, r: int) -> int:
+    return (h * 1000003 + r % 1000000007) % 2305843009213693951
+
+def num(limbs: int, seed: int) -> int:
+    if limbs > 32:
+        h = limbs // 2
+        return (num(h, seed * 3 + 1) << (32 * (limbs - h))) | num(limbs - h, seed * 3 + 2)
+    s = seed
+    v = 0
+    for i in range(limbs):
+        s = (s * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+        v = (v << 32) + ((s >> 32) | 1)
+    return v
+
+def fp(x: int) -> str:
+    return f'{x % 1000000007} {x % 2305843009213693951} {x % 18446744073709551557}'
+
+@main
+def main():
+    a = num(66000, 1)
+    b = num(66001, 2)
+    c = num(70000, 3)
+    # 132,001 limbs: a transform of 2^17 words (above the 2^16 twiddle table); a square, a product, with signs
+    print('sq', fp(a * a))
+    print('mul', fp(a * b), fp((-a) * b), fp((-a) * (-c)))
+    print('sq2', fp(c * c))
+    # all ones at that size
+    ones = (1 << (32 * 70000)) - 1
+    print(ones * ones == (1 << (32 * 140000)) - (1 << (32 * 70000 + 1)) + 1)
+    # a long number in pieces against a transform-sized one
+    d = num(300000, 4)
+    print('pieces', fp(d * num(7000, 5)), fp(d * a))
+    # division with a transform-sized divisor: quotient a bit longer, equal, and shorter than the divisor
+    v = num(6500, 6)
+    for qn in [100, 161, 6500, 7001, 13000]:
+        u = num(6500 + qn, 7 + qn)
+        q = u // v
+        r = u % v
+        print('div', qn, fp(q), fp(r), q * v + r == u, r >= 0 and r < v)
+        q2, r2 = divmod(-u, v)
+        q3, r3 = divmod(u, -v)
+        print(fp(q2), fp(r2), fp(q3), fp(r3), q2 * v + r2 == -u)
+    # the largest remainder and an exact quotient
+    w = num(6200, 8)
+    e = num(6300, 9)
+    print((e * w + w - 1) // w == e, (e * w + w - 1) % w == w - 1, (e * w) % w, (-(e * w)) // w == -e)
+    # text both ways for 20,000 limbs and for one with 70,000 (a transform at every level)
+    h = 0
+    for n in [20000, 70000]:
+        x = num(n, 10 + n)
+        s = str(x)
+        h = mix(h, len(s))
+        print(n, len(s), s[:15], s[len(s) - 15:], int(s) == x, int('-' + s) == -x, x % 1000000007)
+    print(h)

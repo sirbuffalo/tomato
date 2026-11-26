@@ -87,7 +87,7 @@ Three flat modules, Python names where the languages agree:
 | `write_stdout` | `write_stdout(text: str) -> None` | Same for standard output; interleaves correctly with `print` because both use stdio |
 | `flush` | `flush() -> None` | Flushes standard output and error |
 | `platform` | `platform() -> str` | `'linux'`, `'darwin'` or `'wasi'` (browser build) |
-| `version` | `version() -> str` | The Tomato version text, e.g. `'0.52'`, from the same source as `tomato version` |
+| `version` | `version() -> str` | The Tomato version text, e.g. `'1.0.0'`, from the same source as `tomato version` |
 
 **Raw `argv` versus typed entry points (Davis A-Q3).** `tomato run FILE ENTRY INPUTS` parses each input into the entry's parameter type, and a wrong count stops with E352 (`tomato_usage`, `tomato_rt.c:216`) `[V]`; the native entry wrapper (`compiler.tom:7348-7425`) handles only `int`, `bool`, `str`, `float` and fixed-width parameters and has **no branch for `*args`/`**kwargs`** `[V]` even though D39a decided them for entries `[I: not tested]`. So `sys.argv()` can only see words the entry point accepted. Options: (1) *recommended*: implement `*args: tuple[str]` for entry points (D39a, compiler S) and have `argv()` return everything regardless; a program that wants flags takes `*args` and reads them. (2) `argv()` only, and relax the arity check for entries marked `@main(raw)` — new syntax. (3) Do nothing: `argv()` is then only useful for `argv()[0]`.
 

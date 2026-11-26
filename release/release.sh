@@ -8,7 +8,10 @@
 # It works in a private clone of the repository (never your own checkout) and runs these steps in order, stopping at the first failure:
 #   preflight  a private clone of the repository (clean, on main, equal to origin), signing identities and a test signature,
 #              the notary profile, WASI SDK and toolchains, GitHub CLI login and push rights, a quiet machine
-#   version    the next version number (or --version X); refuses a version that already has a tag or a GitHub release
+#   version    the next version number, MAJOR.MINOR.PATCH or a SemVer pre-release such as 1.1.0-rc.1 (--version X, or --bump
+#              major|minor|patch from VERSION; patch by default); refuses a version that already has a tag or a GitHub release, or
+#              is not newer than VERSION by SemVer precedence. A pre-release is published as a GitHub pre-release and in
+#              site/latest-pre.json; site/latest.json and site/config.js keep naming the latest stable release
 #   test       tests/run.sh with the WASI SDK (so the wasm files are rebuilt and compared too)
 #   bump       VERSION, site/config.js and std/sys.tom (sys.version)
 #   linux      the same tests (tests/run.sh) and benchmarks (plus callgrind instruction counts) on a Linux x86-64 machine over ssh, from the
@@ -34,7 +37,13 @@
 #                        private clone only. Notarization still happens (it is the real test).
 #   --skip-bench         no benchmarks (and no performance snapshot); needs no Go, Rust or Python
 #   --no-push            publish, but leave the release commit unpushed in the clone and say so
-#   --version X          release X instead of the next version
+#   --version X          release X instead of the next version: X.Y.Z (three whole numbers; 1.0.0 after the old 0.NN numbers) or a
+#                        pre-release X.Y.Z-ID[.ID...] (1.0.0-rc.1, 1.1.0-beta.2: letters, digits and hyphens, numbers without leading zeros)
+#   --bump PART          the next version from VERSION: major (1.4.2 -> 2.0.0), minor (1.4.2 -> 1.5.0) or patch (1.4.2 -> 1.4.3, the
+#                        default); an old two-part VERSION such as 0.51 counts as 0.51.0, so --bump major gives 1.0.0. After a
+#                        pre-release VERSION, name the next version with --version (the release itself or the next pre-release)
+#   --next-version CUR   print the version a run would choose from a VERSION of CUR with the other flags, and stop (no clone, no checks
+#                        of tags or GitHub; for tests)
 #   --resume             continue after a failure, at the first step not finished
 #   --from STEP          continue at STEP (an earlier run's state is kept); steps before it are taken as done
 #   --restart            throw away an unfinished run (and the clone's local changes) and begin again
@@ -63,10 +72,56 @@ STEPS="preflight version test bump linux bench snapshot build sign commit publis
 usage() { sed -n '2,/^# No Python/p' "$0" | sed 's/^# \{0,1\}//'; }
 here="$(cd "$(dirname "$0")" && pwd)"
 q() { printf "'%s'" "$(printf %s "$1" | sed "s/'/'\\\\''/g")"; }   # one argument, quoted for a shell on the other side
+# SemVer 2.0 precedence of two version texts: prints -1, 0 or 1 (the first below, equal to or above the second). MAJOR.MINOR.PATCH
+# by number, a missing part counting as 0 (the old 0.NN numbers are 0.NN.0); then a -PRERELEASE is below the release itself,
+# its dot-separated identifiers compared in turn (numbers by value and below words, words in ASCII order, a longer list above
+# its prefix: 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-beta < 1.0.0-rc.2 < 1.0.0-rc.10 < 1.0.0); +BUILD is ignored.
+# The same text is in native/tomato and release/release.sh; tests/run.sh checks that they agree.
+semver_cmp() {
+  LC_ALL=C awk -v a="$1" -v b="$2" '
+    function part(v, i,   c) { c = v; sub(/[-+].*/, "", c); split(c, w, "."); return w[i] + 0 }
+    function pre(v) { sub(/\+.*/, "", v); return index(v, "-") ? substr(v, index(v, "-") + 1) : "" }
+    function cmp(x, y,   i, xp, yp, n, m, xn, yn) {
+      for (i = 1; i <= 3; i++) if (part(x, i) != part(y, i)) return part(x, i) < part(y, i) ? -1 : 1
+      xp = pre(x); yp = pre(y)
+      if (xp == yp) return 0
+      if (xp == "") return 1
+      if (yp == "") return -1
+      n = split(xp, u, "."); m = split(yp, t, ".")
+      for (i = 1; i <= n && i <= m; i++) {
+        xn = u[i] ~ /^[0-9]+$/; yn = t[i] ~ /^[0-9]+$/
+        if (xn && yn) { if (u[i] + 0 != t[i] + 0) return u[i] + 0 < t[i] + 0 ? -1 : 1 }
+        else if (xn != yn) return xn ? -1 : 1
+        else if ((u[i] "") != (t[i] "")) return (u[i] "") < (t[i] "") ? -1 : 1
+      }
+      return n == m ? 0 : n < m ? -1 : 1
+    }
+    BEGIN { print cmp(a, b) }'
+}
+# MAJOR.MINOR.PATCH with an optional SemVer pre-release (no +build part, numbers without leading zeros)
+version_ok() { printf %s "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'; }
+is_pre() { case "$1" in *-*) return 0 ;; esac; return 1; }
+# pick_version CUR AHEAD: the version a run releases from a VERSION of CUR, from --version or --bump; AHEAD=1 when VERSION is
+# not released yet (no tag, no GitHub release), so it is used as it is. Prints it, or an error starting "error:".
+pick_version() {
+  cur="$1"
+  if [ -z "$version$bump" ] && ! printf %s "$cur" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+    echo "error: VERSION is $cur, an old 0.NN number: name the first three-part version, e.g. --version 1.0.0 (or --bump major|minor|patch)"; return
+  fi
+  if [ -n "$version" ]; then new="$version"
+  elif [ -z "$bump" ] && [ "$2" = 1 ]; then new="$cur"   # VERSION was bumped ahead of its release
+  elif is_pre "$cur"; then echo "error: VERSION is the pre-release $cur: name the next version with --version (the release ${cur%%-*} or the next pre-release)"; return
+  else new="$(printf %s "$cur" | awk -F. -v part="${bump:-patch}" '{ if (NF == 2) $3 = 0
+      if (part == "major") { $1++; $2 = 0; $3 = 0 } else if (part == "minor") { $2++; $3 = 0 } else $3++
+      printf "%d.%d.%d", $1, $2, $3 }')"; fi
+  version_ok "$new" || { echo "error: '$new' is not a version number like 1.0.0 or 1.0.0-rc.1 (MAJOR.MINOR.PATCH, three whole numbers, then an optional -pre-release)"; return; }
+  [ "$new" != "$cur" ] && [ "$(semver_cmp "$new" "$cur")" != 1 ] && { echo "error: $new is not newer than the current $cur"; return; }
+  echo "$new"
+}
 step_known() { case " $STEPS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # ---------------------------------------------------------------- arguments (the same in the driver and on the signing Mac)
-host=""; on_host=0; dry=0; skip_bench=0; no_push=0; version=""; resume=0; from=""; restart=0; seed=1; runs=10
+host=""; on_host=0; dry=0; skip_bench=0; no_push=0; version=""; bump=""; next_from=""; resume=0; from=""; restart=0; seed=1; runs=10
 max_load=2.0; wait_quiet=900; load_check=1; branch=""; origin=""; work_dir=""; wasi=""; skip_notarize=0; no_sign=0; unlock=0; no_linux=0; ignore_linux=0; linux_host=biggie.davismcd.com; linux_tools="~/.tomato-release/linux-tools"; linux_max_load=32; linux_wait=300; invoked=""
 conf="$here/release.conf"
 if [ -f "$conf" ]; then   # key=value lines; read, never executed
@@ -93,6 +148,8 @@ while [ $# -gt 0 ]; do
     --skip-bench) skip_bench=1; shift ;;
     --no-push) no_push=1; shift ;;
     --version) version="$2"; shift 2 ;;
+    --bump) bump="$2"; shift 2 ;;
+    --next-version) next_from="$2"; shift 2 ;;
     --resume) resume=1; shift ;;
     --from) from="$2"; shift 2 ;;
     --restart) restart=1; shift ;;
@@ -121,6 +178,9 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$branch" ] || branch=main
 [ -n "$origin" ] || origin="git@github.com:sirbuffalo/tomato.git"
+case "$bump" in ""|major|minor|patch) ;; *) echo "error: --bump takes major, minor or patch, not '$bump'" >&2; exit 2 ;; esac
+if [ -n "$version" ] && [ -n "$bump" ]; then echo "error: use only one of --version and --bump" >&2; exit 2; fi
+if [ -n "$next_from" ]; then r="$(pick_version "$next_from" 0)"; echo "$r"; case "$r" in error:*) exit 1 ;; esac; exit 0; fi
 if [ -n "$from" ] && ! step_known "$from"; then echo "error: unknown step '$from' (steps: $STEPS)" >&2; exit 2; fi
 if [ "$skip_notarize" = 1 ] && [ "$dry" = 0 ]; then echo "error: --skip-notarize and --no-sign are only allowed with --dry-run (an un-notarized package must never be published)" >&2; exit 2; fi
 if [ "$resume$restart" = 11 ] || { [ -n "$from" ] && [ "$restart" = 1 ]; } || { [ -n "$from" ] && [ "$resume" = 1 ]; }; then echo "error: use only one of --resume, --from and --restart" >&2; exit 2; fi
@@ -309,16 +369,14 @@ release_exists() { # TAG: 0 yes, 1 no; stops on any other gh failure (network, a
 step_version() {
   banner version "choose the number"
   in_clone; cur="$(cat VERSION)"
-  if [ -n "$version" ]; then new="$version"
-  elif [ -n "$slug" ] && ! release_exists "v$cur" && ! git rev-parse -q --verify "refs/tags/v$cur" > /dev/null; then new="$cur"   # VERSION was bumped ahead of its release
-  else new="$(printf %s "$cur" | awk -F. -v OFS=. '{ $NF = $NF + 1; print }')"; fi
-  printf %s "$new" | grep -Eq '^[0-9]+(\.[0-9]+)+$' || die "'$new' is not a version number like 0.51"
+  # Versions are MAJOR.MINOR.PATCH (with an optional SemVer pre-release) since 1.0.0; the releases before it were 0.NN (0.NN.0 here).
+  ahead=0; [ -n "$slug" ] && ! release_exists "v$cur" && ! git rev-parse -q --verify "refs/tags/v$cur" > /dev/null && ahead=1
+  new="$(pick_version "$cur" "$ahead")"; case "$new" in error:*) die "${new#error: }" ;; esac
   if [ -n "$slug" ] && [ -z "$(st_get published)" ]; then
     release_exists "v$new" && die "GitHub already has a release v$new"
   fi
   git rev-parse -q --verify "refs/tags/v$new" > /dev/null && [ -z "$(st_get published)" ] && die "tag v$new already exists"
-  [ "$new" != "$cur" ] && [ "$(printf '%s\n%s\n' "$cur" "$new" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" != "$new" ] && die "$new is not newer than the current $cur"
-  st_set version "$new"; say "releasing Tomato $new (current VERSION is $cur)"
+  st_set version "$new"; say "releasing Tomato $new$(is_pre "$new" && echo ", a pre-release") (current VERSION is $cur)"
 }
 
 step_test() {
@@ -337,11 +395,12 @@ step_bump() {
   banner bump "VERSION, site/config.js and std/sys.tom"
   in_clone; v="$(st_get version)"
   printf '%s\n' "$v" > VERSION
-  sed "s/window.TOMATO_VERSION = \".*\"/window.TOMATO_VERSION = \"$v\"/" site/config.js > site/config.js.new && mv site/config.js.new site/config.js
+  # the website names the latest stable release, so a pre-release leaves site/config.js alone
+  is_pre "$v" || { sed "s/window.TOMATO_VERSION = \".*\"/window.TOMATO_VERSION = \"$v\"/" site/config.js > site/config.js.new && mv site/config.js.new site/config.js; }
   for f in std/sys.tom site/wasm/std/sys.tom; do   # sys.version() returns the version as text (tests/run.sh t_sys_version checks it against VERSION)
-    sed "s/^    return '[0-9.]*'\$/    return '$v'/" "$f" > "$f.new" && mv "$f.new" "$f"
+    sed "s/^    return '[0-9A-Za-z.-]*'\$/    return '$v'/" "$f" > "$f.new" && mv "$f.new" "$f"
   done
-  note "VERSION, site/config.js and std/sys.tom now say $v"
+  note "VERSION$(is_pre "$v" || echo ', site/config.js') and std/sys.tom now say $v"
 }
 
 step_bench() {
@@ -554,12 +613,14 @@ step_commit() {
   [ "$(shasum -a 256 "release/out/tomato-$v.pkg" | cut -d' ' -f1)" = "$sum" ] || die "release/out/tomato-$v.pkg is not the package that was signed"
   sh site/build.sh > "$logs/site-build.log" 2>&1 || { cat "$logs/site-build.log" >&2; die "site/build.sh failed"; }
   [ "$(cat VERSION)" = "$v" ] || die "VERSION is not $v"
-  [ "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)" = "$v" ] || die "site/latest.json is not version $v"
-  [ "$(sed -n 's/.*"pkg_sha256" *: *"\([^"]*\)".*/\1/p' site/latest.json)" = "$sum" ] || die "site/latest.json pkg_sha256 is not $sum"
+  man=site/latest.json; is_pre "$v" && man=site/latest-pre.json   # site/build.sh writes a pre-release's manifest to latest-pre.json
+  [ "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$man")" = "$v" ] || die "$man is not version $v"
+  [ "$(sed -n 's/.*"pkg_sha256" *: *"\([^"]*\)".*/\1/p' "$man")" = "$sum" ] || die "$man pkg_sha256 is not $sum"
   dsum="$(st_get dmg_sha256)"; [ -n "$dsum" ] || die "no disk image yet (the sign step has not finished)"
   [ "$(shasum -a 256 "release/out/tomato-$v.dmg" | cut -d' ' -f1)" = "$dsum" ] || die "release/out/tomato-$v.dmg is not the disk image that was signed"
-  [ "$(sed -n 's/.*"dmg_sha256" *: *"\([^"]*\)".*/\1/p' site/latest.json)" = "$dsum" ] || die "site/latest.json dmg_sha256 is not $dsum"
-  [ "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)" = "$v" ] || die "site/config.js is not $v"
+  [ "$(sed -n 's/.*"dmg_sha256" *: *"\([^"]*\)".*/\1/p' "$man")" = "$dsum" ] || die "$man dmg_sha256 is not $dsum"
+  if is_pre "$v"; then [ -z "$(git status --porcelain -- site/latest.json site/config.js)" ] || die "a pre-release must not change site/latest.json or site/config.js"
+  else [ "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)" = "$v" ] || die "site/config.js is not $v"; fi
   bad="$(git status --porcelain | sed 's/^...//' | grep -v -e '^VERSION$' -e '^std/sys.tom$' -e '^site/' -e '^benchmarks/results/' -e '^docs/performance.md$' || true)"
   [ -z "$bad" ] || die "unexpected changed files, not committing: $(echo "$bad" | head -5 | tr '\n' ' ')"
   if [ -z "$(git config user.email)" ]; then   # the author is the logged-in GitHub account (its noreply address), so nothing personal is configured here
@@ -577,6 +638,7 @@ step_commit() {
 step_publish() {
   banner publish "tag, GitHub release, assets, verification"
   in_clone; v="$(st_get version)"; sum="$(st_get pkg_sha256)"; tsum="$(st_get tar_sha256)"; dsum="$(st_get dmg_sha256)"; o=release/out; tag="v$v"; c="$(st_get commit_sha)"
+  man=site/latest.json; prerel=""; is_pre "$v" && { man=site/latest-pre.json; prerel="--prerelease"; }   # a pre-release is never GitHub's "latest"
   [ -n "$c" ] && [ "$(git rev-parse HEAD)" = "$c" ] || die "HEAD is not the release commit; run the commit step"
   # the Linux gate: a real release needs a recorded passing Linux run; a skipped, unreachable or failed one needs the explicit
   # override. It is checked before the dry-run exit too, so a dry run shows what a real one would do.
@@ -587,7 +649,7 @@ step_publish() {
   elif [ "$(st_get linux_passed)" = "$v" ]; then note "Linux gate: passed ($lt)"
   else note "Linux gate: OVERRIDDEN by --ignore-linux-failures (linux tests: ${lt:-none})"; fi
   if [ "$dry" = 1 ]; then
-    say "DRY RUN: would push tag $tag ($(git rev-parse --short HEAD)), create the GitHub release $tag on $slug with"
+    say "DRY RUN: would push tag $tag ($(git rev-parse --short HEAD)), create the GitHub ${prerel:+pre-}release $tag on $slug with"
     ls -l "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" "$o/tomato-$v.tar.gz" "$o/latest.json" | awk '{ print "   " $NF " (" $5 " bytes)" }'
     say "and then download them and compare sha256 $sum (package), $dsum (disk image)."; return 0
   fi
@@ -599,7 +661,7 @@ step_publish() {
     note "release $tag exists (resuming): uploading the assets again"
     gh release upload "$tag" "$o/tomato-$v.tar.gz" "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" "$o/latest.json" --clobber --repo "$slug" || die "gh release upload failed"
   else
-    gh release create "$tag" "$o/tomato-$v.tar.gz" "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" "$o/latest.json" --verify-tag --title "Tomato $v" --generate-notes --repo "$slug" || die "gh release create failed. Nothing is on the site yet; to undo a half-made release: gh release delete $tag --cleanup-tag -y --repo $slug"
+    gh release create "$tag" "$o/tomato-$v.tar.gz" "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" "$o/latest.json" --verify-tag --title "Tomato $v" --generate-notes $prerel --repo "$slug" || die "gh release create failed. Nothing is on the site yet; to undo a half-made release: gh release delete $tag --cleanup-tag -y --repo $slug"
   fi
   st_set published yes
   d="$(mktemp -d)"
@@ -607,11 +669,11 @@ step_publish() {
   [ "$(shasum -a 256 "$d/tomato-$v.pkg" | cut -d' ' -f1)" = "$sum" ] || die "the PUBLISHED package's sha256 differs from $sum. The site is not updated (main is not pushed). Delete the release: gh release delete $tag --cleanup-tag -y --repo $slug"
   [ "$(shasum -a 256 "$d/tomato-$v.tar.gz" | cut -d' ' -f1)" = "$tsum" ] || die "the PUBLISHED tarball's sha256 differs from $tsum (main is not pushed)"
   [ "$(shasum -a 256 "$d/tomato-$v.dmg" | cut -d' ' -f1)" = "$dsum" ] || die "the PUBLISHED disk image's sha256 differs from $dsum (main is not pushed)"
-  cmp -s "$d/latest.json" site/latest.json || die "the published latest.json differs from site/latest.json (main is not pushed)"
-  url="$(sed -n 's/.*"pkg_url" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
+  cmp -s "$d/latest.json" "$man" || die "the published latest.json differs from $man (main is not pushed)"
+  url="$(sed -n 's/.*"pkg_url" *: *"\([^"]*\)".*/\1/p' "$man")"
   curl -fsSL -o "$d/public.pkg" "$url" || die "cannot download $url"
   [ "$(shasum -a 256 "$d/public.pkg" | cut -d' ' -f1)" = "$sum" ] || die "$url serves a different file than the signed package"
-  durl="$(sed -n 's/.*"dmg_url" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
+  durl="$(sed -n 's/.*"dmg_url" *: *"\([^"]*\)".*/\1/p' "$man")"
   curl -fsSL -o "$d/public.dmg" "$durl" || die "cannot download $durl"
   [ "$(shasum -a 256 "$d/public.dmg" | cut -d' ' -f1)" = "$dsum" ] || die "$durl serves a different file than the signed disk image"
   rm -rf "$d"; st_set release_url "https://github.com/$slug/releases/tag/$tag"
@@ -672,10 +734,12 @@ else
   rm -f "$state"; start=preflight; mode=fresh
   st_set status running; st_set run_started "$started"; st_set mode "$([ "$dry" = 1 ] && echo dry || echo real)"
   [ -z "$version" ] || st_set requested_version "$version"
+  [ -z "$bump" ] || st_set requested_bump "$bump"
 fi
 [ -n "$(st_get run_started)" ] || st_set run_started "$started"
 # a version given on the command line wins; otherwise the state's
 [ -n "$version" ] || version="$(st_get requested_version)"
+[ -n "$version$bump" ] || bump="$(st_get requested_bump)"
 say "release run: $(st_get mode), branch $branch, origin $origin, work dir $work_dir"
 say "steps: $STEPS; starting at $start"
 running=0

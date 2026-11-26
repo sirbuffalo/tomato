@@ -20,7 +20,7 @@ case "$out" in *.dmg) ;; *) echo "error: OUT must end in .dmg" >&2; exit 2 ;; es
 appsign="${TOMATO_APP_SIGN:-Developer ID Application: Davis McDowell (39BK8TGQ26)}"
 profile="${TOMATO_NOTARY_PROFILE:-tomato-notary}"
 ver="$(basename "$pkg" .pkg)"; ver="${ver#tomato-}"; ver="${ver%.signed}"
-printf %s "$ver" | grep -Eq '^[0-9]+(\.[0-9]+)+$' || { echo "error: cannot read the version from the package name $pkg (want tomato-VERSION.pkg)" >&2; exit 1; }
+printf %s "$ver" | grep -Eq '^[0-9]+(\.[0-9]+)+(-[0-9A-Za-z.-]+)?$' || { echo "error: cannot read the version from the package name $pkg (want tomato-VERSION.pkg)" >&2; exit 1; }
 name="tomato-$ver.pkg"
 rm -f "$out"
 work="$(mktemp -d)"; mnt=""

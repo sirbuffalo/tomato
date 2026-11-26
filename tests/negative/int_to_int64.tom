@@ -1,0 +1,7 @@
+def id64(a: int[length=64]) -> int[length=64]:
+    return a
+
+@main
+def main():
+    m = 10 ** 30
+    print(id64(m))

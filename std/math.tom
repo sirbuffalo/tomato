@@ -448,7 +448,16 @@ def _quarter(a: Angle) -> list[float]:
         k = k + 4.0
     return [k, x]
 
+# A radian angle of double size goes straight to the C library (D77d: a double gets the C library's answer), whose
+# argument reduction is exact over the whole double range. The quarter-turn reduction above divides by 2 pi first, which
+# rounds: sin(rad(10.0)) came out 14 units in the last place off and sin(rad(1e10)) right to only 6 digits. The other
+# units keep it, so their multiples of a quarter turn stay exact; a radian angle beyond a double's range keeps it too.
+def _c_rad(a: Angle) -> bool:
+    return a.unit() == 'rad' and a.value <= 1.7976931348623157e308 and a.value >= -1.7976931348623157e308
+
 export def sin(a: Angle) -> float:
+    if _c_rad(a):
+        return !tomato_bf_math1(5, a.value, 0)
     p = _quarter(a)
     k = int(p[0])
     x = p[1]
@@ -461,6 +470,8 @@ export def sin(a: Angle) -> float:
     return 0.0 - !tomato_bf_math1(6, x, 0)
 
 export def cos(a: Angle) -> float:
+    if _c_rad(a):
+        return !tomato_bf_math1(6, a.value, 0)
     p = _quarter(a)
     k = int(p[0])
     x = p[1]
@@ -474,6 +485,8 @@ export def cos(a: Angle) -> float:
 
 # tan is undefined at a quarter turn and three quarters (90 and 270 degrees)
 export def tan(a: Angle) -> float:
+    if _c_rad(a):
+        return !tomato_bf_math1(7, a.value, 0)
     p = _quarter(a)
     k = int(p[0])
     x = p[1]

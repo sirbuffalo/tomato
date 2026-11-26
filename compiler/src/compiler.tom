@@ -296,11 +296,6 @@ def dup_fn(t: str) -> str:
         return 'tomato_bf_dup'
     return 'tomato_int_dup'
 
-def free_fn(t: str) -> str:
-    if t == 'float':
-        return 'tomato_bf_free'
-    return 'tomato_int_free'
-
 def bits_of(t: str) -> int:
     if t == 'int':
         return 64
@@ -311,6 +306,8 @@ def is_signed(t: str) -> bool:
 
 def contains(outer: str, inner: str) -> bool:
     # every value of integer type inner is a value of outer
+    if inner == 'int' and outer != 'int':
+        return False                         # an int has no size limit, so no fixed-width type holds all of it
     if is_signed(outer):
         if is_signed(inner):
             return bits_of(outer) >= bits_of(inner)
@@ -3903,8 +3900,13 @@ class Gen:
             r = self.tmp('urem')
             self.emit(f'{r} = urem {llt} {x.reg}, {y.reg}')
             return ex(r, t)
+        # srem of the least value by -1 is undefined in LLVM (the answer is 0): divide by 1 instead when the divisor is -1
+        isminus = self.tmp('isminus')
+        self.emit(f'{isminus} = icmp eq {llt} {y.reg}, -1')
+        safe = self.tmp('safe')
+        self.emit(f'{safe} = select i1 {isminus}, {llt} 1, {llt} {y.reg}')
         r = self.tmp('srem')
-        self.emit(f'{r} = srem {llt} {x.reg}, {y.reg}')
+        self.emit(f'{r} = srem {llt} {x.reg}, {safe}')
         mix = self.tmp('mix')
         self.emit(f'{mix} = xor {llt} {r}, {y.reg}')
         differ = self.tmp('differ')

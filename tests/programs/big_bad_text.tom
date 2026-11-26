@@ -1,0 +1,17 @@
+# int(text) of long digit strings that are not whole numbers (the digits are checked before the divide and conquer parse starts),
+# and of long valid ones with a plus sign, spaces around them and a minus; around the 18-digit and 1000-digit cutoffs.
+def attempt(t: str) -> str:
+    try:
+        v = int(t)
+        return f'ok {v % 1000000007}'
+    catch ValueError:
+        return 'bad'
+
+@main
+def main():
+    lens: list[int] = [17, 18, 19, 999, 1000, 1001, 2305, 3000, 20000]
+    for n in lens:
+        good = '7' * n
+        print(n, attempt(good), attempt('-' + good), attempt('+' + good), attempt('  ' + good + '\n'), attempt('--' + good), attempt('+-' + good), attempt('-+' + good))
+        print(n, attempt('x' + good), attempt(good + 'x'), attempt(good[:n // 2] + 'x' + good[n // 2:]), attempt(good[:n // 2] + ' ' + good[n // 2:]), attempt(good[:n // 2] + '.' + good[n // 2:]), attempt(good + '-'), attempt(good + '\0'))
+    print(attempt(''), attempt('-'), attempt('+'), attempt(' '), attempt('0' * 5000), attempt('-' + '0' * 5000), attempt('0' * 5000 + '1'))

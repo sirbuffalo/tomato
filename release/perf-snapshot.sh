@@ -80,10 +80,10 @@ awk -v v="$version" '
   $0 ~ "^## v" v " snapshot" { skip = 1; next }
   /^## / { skip = 0 }
   skip { next }
-  /^## v[0-9.]+ snapshot$/ { print $0 " (earlier)"; next }
+  /^## v[0-9A-Za-z.-]+ snapshot$/ { print $0 " (earlier)"; next }
   { print }' "$doc" > "$work/rest"
 awk -v sec="$work/section" '
-  !done && /^## v[0-9.]+ snapshot/ { while ((getline line < sec) > 0) print line; done = 1 }
+  !done && /^## v[0-9A-Za-z.-]+ snapshot/ { while ((getline line < sec) > 0) print line; done = 1 }
   { print }' "$work/rest" > "$work/new"
 grep -q "^## v$version snapshot\$" "$work/new" || { echo "error: no earlier snapshot heading in $doc to insert before" >&2; exit 1; }
 cp "$work/new" "$doc"

@@ -210,3 +210,8 @@ string_io
 string_io_bulk
 assert_ok
 testing_lib
+big_huge
+int_bitwise_runs
+big_bad_text
+int64_convert
+trig_radians

@@ -1,0 +1,66 @@
+# & | ^ and ~ on long ints (the runtime works two 32-bit limbs at a time): odd and even limb counts up to 300 limbs, a long run
+# of zero limbs under the number (the carry of a two's complement crosses many limbs and 64-bit pairs), all-ones limbs, results that
+# are negative and need negating across zero runs, a small operand against a long negative one, and results that shrink back to small.
+def mix(h: int, r: int) -> int:
+    return (h * 1000003 + r % 1000000007) % 2305843009213693951
+
+def lcg(s: int) -> int:
+    return (s * 6364136223846793005 + 1442695040888963407) % (1 << 64)
+
+# a dense number of exactly this many 32-bit limbs
+def num(limbs: int, seed: int) -> int:
+    s = seed
+    v = 0
+    for i in range(limbs):
+        s = lcg(s)
+        v = (v << 32) + ((s >> 32) | 1)
+    return v
+
+# the shapes: dense, zero low limbs, all ones, a lone bit, ones above zeros
+def shape(limbs: int, seed: int, kind: int) -> int:
+    if kind == 0:
+        return num(limbs, seed)
+    if kind == 1:
+        return num(limbs, seed) << (32 * (limbs // 2 + 1))
+    if kind == 2:
+        return (1 << (32 * limbs)) - 1
+    if kind == 3:
+        return 1 << (32 * limbs - 7)
+    return ((1 << (32 * limbs)) - 1) << (32 * limbs)
+
+@main
+def main():
+    sizes: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 65, 129, 130, 300]
+    h = 0
+    bad = 0
+    count = 0
+    for i in range(len(sizes)):
+        for j in range(len(sizes)):
+            for k in range(5):
+                a = shape(sizes[i], i + 1, k)
+                b = shape(sizes[j], j + 50, (k + i + j) % 5)
+                for s in range(4):
+                    x = -a if s % 2 == 1 else a
+                    y = -b if s >= 2 else b
+                    n = x & y
+                    o = x | y
+                    e = x ^ y
+                    h = mix(mix(mix(h, n), o), e)
+                    count += 1
+                    if n + o != x + y or o - n != e or ~(x & y) != (~x | ~y) or (x ^ -1) != ~x:
+                        bad += 1
+    print(count, 'cases', bad, 'failures', h)
+    # one negative number with a long zero run against others: the sums and the results are checked exactly
+    z = -(1 << 3200)
+    print((z & (-(1 << 6400))) % 1000000007, z | (-(1 << 6400)) == z, (z ^ -(1 << 6400)) == (1 << 6400) - (1 << 3200), (z & ((1 << 3300) - 1)) == (1 << 3200) * 0)
+    print((z & -(1 << 3200)) == z, (z | 5) % 1000000007, (z ^ 5) % 1000000007, (5 & z), (-5 & z) % 1000000007, (~z) % 1000000007)
+    # a small operand against a long negative one, and the other way round
+    m = -num(90, 7)
+    for v in [0, 1, -1, 5, -5, (1 << 62) - 1, -(1 << 62), 1 << 40]:
+        print(v & m, v | m, v ^ m, m & v, m | v, m ^ v)
+    # results that fall back to the small range
+    big = (1 << 300) + 12345
+    print((big & 65535) == 12345 & 65535, type_small(big & 255), (big ^ (1 << 300)) == 12345, type_small(big ^ (1 << 300)), type_small(-big & -(1 << 300)), (-big | big) == -1 + 0 * big)
+
+def type_small(v: int) -> bool:
+    return v < (1 << 62) and v > -(1 << 62)

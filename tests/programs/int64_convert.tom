@@ -1,0 +1,26 @@
+# int[length=64] and int: an int has no size limit, so it becomes an int[length=64] only by an explicit conversion, which
+# checks the range; int[length=64] mixed with int is int arithmetic. And % of the least value by -1 is 0 at every width.
+def to64(x: int) -> int[length=64]:
+    return int[length=64](x)
+
+def m8(a: int[length=8], b: int[length=8]) -> int[length=8]:
+    return a % b
+
+def m64(a: int[length=64], b: int[length=64]) -> int[length=64]:
+    return a % b
+
+@main
+def main():
+    n = 5
+    print(int[length=64](n), to64(n), to64(-n), to64(2 ** 62), to64(-2 ** 63), to64(2 ** 63 - 1))
+    for big in [2 ** 63, -2 ** 63 - 1, 10 ** 30]:
+        try:
+            print(to64(big))
+        catch OverflowError as e:
+            print('overflow')
+    x: int[length=64] = 5
+    k = 10 ** 20
+    print(x + k, x * k, k - x, x < k, x + n)
+    print(m8(-128, -1), m8(-128, 3), m8(127, -1), m8(-7, 2))
+    p: int[length=64] = -9223372036854775807 - 1
+    print(m64(p, -1), m64(p, 7), m64(-7, 2), m64(7, -2))

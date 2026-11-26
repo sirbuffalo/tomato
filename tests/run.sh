@@ -106,7 +106,7 @@ await_object() { # waits for the bootstrap object t_compiler_build makes; fails 
 job_run() { # id, function and arguments: runs it in a folder of its own
   id="$1"; shift; work="$shared/j$id"; mkdir -p "$work"; eval "section_name=\$sec_$id"
   case "$1" in   # (the ones that do not link a program with the runtime do not wait for it)
-    t_install|t_compiler_build|t_cli_update|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
+    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_release_versions|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
     *) await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")" ;;
   esac
   if [ -n "$times" ]; then
@@ -303,7 +303,7 @@ while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done
 fast_asan=" float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module re_api re_limits sys_args os_files file_lines file_loop_close string_io assert_ok testing_lib "
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
-asan_specs1="tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/big_shift: tests/programs/int_bitwise_big: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/big_decimal: tests/programs/big_karatsuba: tests/programs/big_ntt: tests/programs/big_division: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_ownership: tests/programs/float_loops: tests/programs/float_keys: tests/programs/float_nests: tests/programs/float_library: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
+asan_specs1="tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/big_shift: tests/programs/int_bitwise_big: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/big_decimal: tests/programs/big_karatsuba: tests/programs/big_ntt: tests/programs/big_division: tests/programs/int_bitwise_runs: tests/programs/big_bad_text: tests/programs/int64_convert: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_ownership: tests/programs/float_loops: tests/programs/float_keys: tests/programs/float_nests: tests/programs/float_library: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
 asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_loop_close:WORK tests/programs/file_modes:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
@@ -596,7 +596,7 @@ t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser string_io assert_ok testing_lib float_any_size float_ownership float_loops float_keys float_nests float_library float_limits; do
+  for name in trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser string_io assert_ok testing_lib float_any_size float_ownership float_loops float_keys float_nests float_library float_limits; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -803,6 +803,12 @@ t_cli_runtime_cache() { # the compiled runtime is kept in the cache folder: a hi
   check "runtime cache: the program is the same with and without the cache" "$(TOMATO_CACHE=off $h/bin/tomato build "$work/echo.tom" -o "$work/e_off" >/dev/null 2>&1; "$work/e_off" a b 2>&1)" "$("$work/echo_d" a b 2>&1)"
   fi
 }
+t_cli_build_keeps_source() { # tomato build of a file without .tom (or -o naming the source) must not overwrite the source
+  cli_setup; mkdir -p "$work/bk"; printf '@main\ndef main():\n    print(7)\n' > "$work/bk/noext"; cp "$work/bk/noext" "$work/bk/p q.tom"
+  (cd "$work/bk" && $t build noext > /dev/null 2>&1); r1=$?
+  $t build "$work/bk/p q.tom" -o "$work/bk/p q.tom" > /dev/null 2>&1; r2=$?
+  check "build refuses to overwrite its own source" "1 1 2" "$r1 $r2 $(cat "$work/bk/noext" "$work/bk/p q.tom" | grep -c 'print(7)')"
+}
 t_cli_release_no_leak() { cli_setup; $t build tests/programs/cycle.tom -o "$work/cyc_rel" --mode release > /dev/null 2>&1; check "release mode does not print a leak report" "$(cat tests/expected/cycle.main.out)" "$("$work/cyc_rel" 2>&1)"; }
 t_cli_explain() {
   cli_setup
@@ -978,6 +984,33 @@ t_cli_update() {
   manifest_sum="$(sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' "$fake/out/latest.json")"
   check "release manifest names its own archive's checksum" "$(sha256 "$fake/out/tomato-$(cat VERSION).tar.gz" | cut -d' ' -f1)" "$manifest_sum"
 }
+t_cli_update_versions() { # tomato update: SemVer order (old 0.NN numbers too), the pre-release channel and the gate for a new minor version
+  h="$work/h"; mkdir -p "$h/bin"; cp native/tomato native/rtcache.sh "$h/bin/"; chmod +x "$h/bin/tomato"
+  upd() { # HAVE STABLE PRE [FLAGS]: what update does: same, minor (stops at the gate) or the version it starts to install
+    echo "$1" > "$h/VERSION"; sum="$(printf '%064d' 0)"
+    printf '{"version":"%s","url":"file:///nonexistent_dir_for_tomato/t.tar.gz","sha256":"%s"}' "$2" "$sum" > "$work/m.json"
+    if [ -n "$3" ]; then printf '{"version":"%s","url":"file:///nonexistent_dir_for_tomato/p.tar.gz","sha256":"%s"}' "$3" "$sum" > "$work/p.json"; else rm -f "$work/p.json"; fi
+    have="$1"; shift 3
+    r="$(TOMATO_UPDATE_URL="file://$work/m.json" TOMATO_UPDATE_PRE_URL="file://$work/p.json" TOMATO_UPDATE_ALLOW_ANY_URL=1 "$h/bin/tomato" update "$@" 2>&1)"
+    case "$r" in *"is the latest"*) echo same ;; *"update --minor"*) echo minor ;; *"updating v$have -> v"*) echo "$r" | sed -n 's/.*-> v//p' | head -1 ;; *) echo "? $r" ;; esac
+  }
+  got=""; for pair in 0.51:1.0.0 0.9:0.51 1.0.9:1.0.10 1.0.0:1.0.0 1.0.0:0.52 1.0.10:1.0.9 2.0.0:1.99.99 1.0.0:1.0 1.0.0-rc.1:1.0.0 1.0.0:1.0.0-rc.1; do
+    got="$got $(upd "${pair%%:*}" "${pair#*:}" "")"; done
+  check "update orders versions by number, part by part, a pre-release below its release" " 1.0.0 0.51 1.0.10 same same same same same 1.0.0 same" "$got"
+  check "update: a new minor or major version needs --minor; patches install at once" "minor minor 1.1.0 2.0.0 1.0.3" "$(upd 1.0.2 1.1.0 "") $(upd 1.4.0 2.0.0 "") $(upd 1.0.2 1.1.0 "" --minor) $(upd 1.9.0 2.0.0 "" --minor) $(upd 1.0.2 1.0.3 "")"
+  check "update: a stable install gets a pre-release only with --pre" "1.0.1 1.0.1-rc.1 1.0.1" "$(upd 1.0.0 1.0.1 1.0.2-rc.1) $(upd 1.0.0 1.0.0 1.0.1-rc.1 --pre) $(upd 1.0.0 1.0.1 1.0.1-rc.1 --pre)"
+  r="$(upd 1.0.0 1.0.0 1.1.0-rc.1 --pre) $(TOMATO_UPDATE_URL="file://$work/m.json" TOMATO_UPDATE_PRE_URL="file://$work/p.json" TOMATO_UPDATE_ALLOW_ANY_URL=1 "$h/bin/tomato" update --pre 2>&1 | grep -c 'tomato update --minor --pre$') $(upd 1.0.0 1.0.0 1.1.0-rc.1 --pre --minor)"
+  check "update: the gate's hint for a new minor pre-release keeps --pre, and that command installs it" "minor 1 1.1.0-rc.1" "$r"
+  check "update: a pre-release install gets a later pre-release or the release" "1.0.0-rc.10 1.0.0 same 1.0.0-beta" "$(upd 1.0.0-rc.2 0.51 1.0.0-rc.10) $(upd 1.0.0-rc.10 1.0.0 1.0.0-rc.10) $(upd 1.0.0-rc.1 0.51 1.0.0-beta.9) $(upd 1.0.0-alpha.1 0.51 1.0.0-beta)"
+  check "update: tomato and release.sh share one SemVer comparison" "$(sed -n '/^semver_cmp() {/,/^}/p' native/tomato)" "$(sed -n '/^semver_cmp() {/,/^}/p' release/release.sh)"
+}
+t_release_versions() { # the version release/release.sh picks (--next-version: no clone, no tag or GitHub checks), and the ones it refuses
+  nv() { cur="$1"; shift; r="$(sh release/release.sh "$@" --next-version "$cur" 2>&1)" && echo "$r" || echo refused; }
+  check "release.sh picks MAJOR.MINOR.PATCH and SemVer pre-releases" "refused 1.0.0 1.0.0-rc.1 1.0.0 1.0.1 1.1.0 2.0.0 refused 1.0.0 1.0.0-rc.2 1.0.0-rc.10" \
+    "$(nv 0.51) $(nv 0.51 --version 1.0.0) $(nv 0.51 --version 1.0.0-rc.1) $(nv 0.51 --bump major) $(nv 1.0.0) $(nv 1.0.0 --bump minor) $(nv 1.4.2 --bump major) $(nv 1.0.0-rc.1) $(nv 1.0.0-rc.1 --version 1.0.0) $(nv 1.0.0-rc.1 --version 1.0.0-rc.2) $(nv 1.0.0-rc.9 --version 1.0.0-rc.10)"
+  check "release.sh refuses older, malformed and build-tagged versions" "refused refused refused refused refused refused refused" \
+    "$(nv 1.0.0-rc.2 --version 1.0.0-rc.1) $(nv 1.0.0 --version 1.0.0-rc.1) $(nv 1.0.0 --version 0.99.0) $(nv 1.0.0 --version 1.0.1+b) $(nv 1.0.0 --version 1.0.1-rc.01) $(nv 1.0.0 --version 1.0) $(nv 1.0.0-rc.1 --bump patch)"
+}
 t_cli_test() { # tomato test: the ok/FAIL lines and summary on standard output, the status, --filter, --mode, several files, errors (pack B)
   part="${1:-1}"; cli_setup
   printf 'from testing import assert_equal, skip\n\n@test\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test\ndef lookup():\n    skip("no network")\n' > "$work/t3.tom"
@@ -1069,6 +1102,9 @@ for name in int_boundary big_numbers bitwise floor_divide_power containers cycle
   spawn_cli t_cli_release_like_debug "$name"
 done
 spawn_cli t_cli_release_no_leak
+spawn_cli t_cli_build_keeps_source
+spawn_free t_cli_update_versions
+spawn_free t_release_versions
 spawn_cli t_cli_no_lto
 spawn_cli t_cli_require_lto
 spawn_cli t_cli_debug_link
@@ -1125,6 +1161,7 @@ neg hash_bad_signature "must take nothing besides self and return an int"
 neg generic_keyword_args "keyword arguments are not supported when creating an object"
 neg clock_args "clock() takes no arguments"
 neg fixed_range "300 does not fit in uint[length=8]"
+neg int_to_int64 "argument 1 of 'id64' (the parameter 'a') has type int, but int[length=64] is expected"
 neg float_length_32 "float has no length"
 neg float_length_key "float has no length"
 neg float_length_call "float has no length"
@@ -1527,9 +1564,12 @@ t_benchmark() { # name, the languages
 }
 t_versions() {
   cmp -s docs/provisional.md site/docs/PROVISIONAL.md && ok "site/docs/PROVISIONAL.md is in sync" || bad "site/docs/PROVISIONAL.md is in sync" "run site/build.sh"
-  check "VERSION matches site/latest.json" "$(cat VERSION)" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)"
-  check "VERSION matches std/sys.tom (sys.version)" "$(cat VERSION)" "$(sed -n "s/^    return '\\([0-9.]*\\)'\$/\\1/p" std/sys.tom | tail -1)"
-  check "VERSION matches site/config.js" "$(cat VERSION)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
+  # a stable VERSION is in site/latest.json and site/config.js; a pre-release (1.1.0-rc.1) in site/latest-pre.json, while those two keep
+  # the latest stable release (docs/releasing.md, Version numbers)
+  man=site/latest.json; case "$(cat VERSION)" in *-*) man=site/latest-pre.json ;; esac
+  check "VERSION matches $man" "$(cat VERSION)" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$man" 2>/dev/null)"
+  check "VERSION matches std/sys.tom (sys.version)" "$(cat VERSION)" "$(sed -n "s/^    return '\\([0-9A-Za-z.-]*\\)'\$/\\1/p" std/sys.tom | tail -1)"
+  check "site/config.js matches site/latest.json" "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' site/latest.json)" "$(sed -n 's/.*TOMATO_VERSION = "\([^"]*\)".*/\1/p' site/config.js)"
   check "site/wasm matches the compiler IR and runtime" "$(cat compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c | sha256 | cut -d' ' -f1)" "$(sed -n 1p site/wasm/SOURCE.sha256 2>/dev/null)"
   check "the checked-in wasm files are the ones that were built" "$(sed -n 2,3p site/wasm/SOURCE.sha256)" "$(sha256 site/wasm/tomatoc.wasm site/wasm/runtime.wasm | cut -d' ' -f1)"
 }

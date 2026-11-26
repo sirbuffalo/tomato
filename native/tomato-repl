@@ -23,7 +23,7 @@ jsc="${TOMATO_JSC:-/System/Library/Frameworks/JavaScriptCore.framework/Versions/
 wasmdir="${TOMATO_WASM:-}"
 fast=0
 if [ -x "$jsc" ] && [ -f "$wasmdir/tomatoc.wasm" ] && [ -f "$wasmdir/current" ] && [ -f "${TOMATO_JSC_JS:-}" ]; then fast=2   # no new native program per line (see tomato-jsc.js)
-elif [ -x "$tomatoc" ] && [ -f "$runtime" ] && clang -O0 -w -c -o "$S/rt.o" "$runtime" 2>/dev/null; then fast=1; fi
+elif [ -x "$tomatoc" ] && [ -f "$runtime" ] && clang -O0 -w -pthread -c -o "$S/rt.o" "$runtime" 2>/dev/null; then fast=1; fi
 : > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; seq=0
 
 say() { printf '%s\n' "$*"; }
@@ -87,7 +87,7 @@ try_once() {
     if ! "$tomatoc" "$S/try.tom" main "$std" > "$S/try.ll" 2> "$S/err"; then
       : > "$S/out"; return 1
     fi
-    clang -O0 -w -o "$S/try" "$S/try.ll" "$S/rt.o" -lm 2> "$S/err" || return 1
+    clang -O0 -w -o "$S/try" "$S/try.ll" "$S/rt.o" -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl) 2> "$S/err" || return 1   # -ldl as native/tomato links: older glibc keeps dlopen in libdl
     TOMATO_INPUT_ASK=1 "$S/try" < "$S/inputs.try" > "$S/out" 2> "$S/err"; rc=$?
     RUN_RC=$rc
     sed -e 's/ (raised on line [0-9]*)//' -e '/^  at /d' -e '/^  \.\.\. and /d' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
