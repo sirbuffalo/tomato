@@ -578,9 +578,54 @@ With x = 2^bits (the case first timed in the TODO note: 2^20 bits 0.28 s, 2^24 9
 Tests: `tests/bigmul.c` (12,000 random products and squares around the thresholds, uneven lengths, all-ones and zero-half operands,
 against a plain 32-bit schoolbook product, under AddressSanitizer and UBSan) and the program `big_karatsuba` (output computed with Python; also run under AddressSanitizer and through `site/wasm`).
 
-*Not done:* Toom-3 and an FFT/NTT product. Karatsuba is n^1.585, so a dense 2^28-bit square, 81 times the 2^24 one, is still about
-3 minutes. Division (Knuth D) and decimal conversion are still quadratic; a subquadratic division (Newton or Burnikel-Ziegler) and a
-divide-and-conquer `str(int)` can build on this multiplication.
+*Not done here:* Toom-3. Division (Knuth D) and decimal conversion are still quadratic; a subquadratic division (Newton or
+Burnikel-Ziegler) and a divide-and-conquer `str(int)` can build on this multiplication. The next section adds the transform product
+that Karatsuba's n^1.585 (a dense 2^28-bit square would still take about 3 minutes) called for.
+
+## What was done (big-integer multiplication by a number-theoretic transform, unreleased)
+
+From 6000 limbs (32-bit) in the shorter operand, `mag_mul` multiplies with a number-theoretic transform (`ntt_mul`) instead of
+Karatsuba:
+
+* **Coefficients are 64-bit words** (two limbs), the numbers being polynomials in 2^64. A coefficient of the product is below
+  min(words) * 2^128, so it is found exactly from its residues modulo three primes between 2^62 and 2^63 (`87 * 2^56 + 1`,
+  `131 * 2^55 + 1`, `197 * 2^55 + 1`; the product of the three is above 2^187, so the length may reach 2^59 words, and each has a
+  2-power order of at least 2^55, so a transform of any length that fits in memory exists) with the Chinese remainder theorem (Garner's
+  form, one multiply-add chain per word, carries handled in 128 bits). Half the transform length that 32-bit coefficients would need.
+* **One prime at a time**, with Montgomery arithmetic (R = 2^64, branch-free modular add and subtract: a compiler turned the
+  conditional version into unpredictable branches, 2 to 3 times slower). A decimation-in-frequency forward transform gives
+  bit-reversed order, the pointwise product needs no reordering, and a decimation-in-time inverse takes that order: no bit-reversal
+  pass. Both recurse radix 4 (two levels per pass over memory) down to blocks of 4096 words done level by level, with twiddle tables
+  for lengths up to 65,536 (forward and inverse) and twiddles stepped as they go above that. A square does one forward transform per
+  prime instead of two. Memory: 3 (4 for a product) arrays of the transform length, 8 bytes each: 200 MB for a 2^28-bit square.
+* **Uneven lengths:** a much longer operand (more than four times the shorter) is cut into pieces of four times the shorter one, each
+  multiplied by transform and added in (a short last piece by `mag_mul`), so the memory and the transform length stay near the size of the
+  shorter number.
+* **The cutoff, 6000 limbs, was measured** (x86-64, Threadripper 3990X, loaded machine): below 2000 limbs Karatsuba is 2 times faster, from
+  4000 to 6000 the two are within 20% of each other (the transform length is a power of two, so its time steps up there), at 8000 the
+  transform is 2 times faster, at 16,000 2.5 times, at 500,000 limbs 6 times (squares: 7). That is far below the 10^5 limbs first
+  guessed.
+
+`x * x` and `x * (x + 1)` with x = 2^bits // 3 (dense), release-mode compiler and runtime, wall time, load average 70 to 100 from other
+work on the 128-thread machine; Python 3.14 on the same machine:
+
+| bits | Karatsuba `x*x` | NTT `x*x` | NTT `x*(x+1)` | Python `x*x` | Python `x*(x+1)` |
+| --- | --- | --- | --- | --- | --- |
+| 2^20 | 0.03 s | 0.02 s | 0.03 s | 0.065 s | 0.096 s |
+| 2^22 | 0.49 s | 0.10 s | 0.13 s | 0.59 s | 0.88 s |
+| 2^24 | 2.4 s | 0.43 s | 0.60 s | 5.4 s | 10.3 s |
+| 2^26 | (about 20 s) | 1.4 s | 1.8 s | (about 80 s) | |
+| 2^28 | (about 3 minutes) | 5.2 s | 8.0 s | (about 12 minutes) | |
+
+(The Karatsuba column is the previous section's measurement; the parenthesised times are extrapolated at n^1.585, not run.)
+
+Tests: `tests/bigmul.c` checks `ntt_mul` against Karatsuba (squares, uneven lengths, all-ones and zero-half operands, lengths around the
+powers of two and 6000, and `mag_mul` through its cutoff and the pieces) under AddressSanitizer and UBSan, and the program `big_ntt` (output computed
+with Python; also under AddressSanitizer and through `site/wasm`). Outside the suite: products and squares of 2^25 to 2^28 bits, all-ones and
+random, even and uneven, were compared with Python 3 (the exact product up to 2^25 bits, residues modulo eight moduli above that, with `ulimit -v 4000000`).
+
+*Not done:* a truncated (half-size) transform for the low or high half of a product, the transform of a shared operand reused across the
+pieces of an uneven product, a faster 2^28-bit time with more tuning (AVX2/Montgomery in vectors), and a subquadratic division.
 
 ## What was done (range loops and float intervals, unreleased)
 

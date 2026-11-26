@@ -1,0 +1,56 @@
+# Big-number products long enough for the number-theoretic transform (6000 limbs of 32 bits in the shorter number and up): lengths
+# around that and the powers of two where the transform length doubles, uneven lengths (a much longer number is cut into pieces),
+# squares, all-ones limbs, zero low limbs and signs. Expected output computed with Python 3.
+def num(limbs: int, seed: int) -> int:
+    s = seed
+    v = 0
+    for i in range(limbs):
+        s = (s * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+        v = (v << 32) + ((s >> 32) | 1)
+    return v
+
+# a product's fingerprint: two residues and its top 40 bits
+def show(name: str, p: int, bits: int):
+    top = p >> (bits - 40)
+    print(name, p % 1000000007, p % 2305843009213693951, top)
+
+@main
+def main():
+    sizes: list[int] = [5999, 6000, 6001, 8192, 8193]
+    nums: list[int] = []
+    for i in range(len(sizes)):
+        nums.append(num(sizes[i], i + 1))
+    for i in range(len(sizes)):
+        a = nums[i]
+        sq = a * a
+        show(f'sq {sizes[i]}', sq, 64 * sizes[i])
+        for j in range(i, len(sizes)):
+            b = nums[j]
+            p = a * b
+            show(f'mul {sizes[i]} {sizes[j]}', p, 32 * (sizes[i] + sizes[j]))
+            if p != b * a or (-a) * b != -p or (-a) * (-b) != p:
+                print('BAD sign or order', sizes[i], sizes[j])
+            s = a + b
+            if s * s != sq + 2 * p + b * b:
+                print('BAD binomial', sizes[i], sizes[j])
+    # a long number times a short one (cut into pieces of four times the short one; the last is shorter, here 11,200 limbs and 5)
+    c = num(6100, 50)
+    d = num(8000, 51)
+    for k in range(7):
+        d = (d << 256000) + num(8000, 52 + k)
+    show('mul 6100 64000', c * d, 32 * 70100)
+    d = num(8000, 60)
+    for k in range(5):
+        d = (d << 256000) + num(8000, 61 + k)
+    d = (d << 25760) + 12345
+    show('mul 6100 48805', c * d, 32 * 54905)
+    # all-ones limbs: (B^n - 1)^2 = B^2n - 2 B^n + 1, and (B^n - 1)(B^m - 1)
+    for n in [6000, 8192]:
+        ones = (1 << (32 * n)) - 1
+        print(n, ones * ones == (1 << (64 * n)) - (1 << (32 * n + 1)) + 1, ones * ((1 << (32 * n + 96)) - 1) == (1 << (64 * n + 96)) - (1 << (32 * n)) - (1 << (32 * n + 96)) + 1)
+    # zero low limbs: the product of the shifted numbers is the shifted product
+    a = nums[1]
+    b = nums[4]
+    print((a << 3200) * (b << 64) == (a * b) << 3264, (a << 3200) * (a << 3200) == (a * a) << 6400)
+    print(((1 << 300000) + 1) * ((1 << 300000) - 1) == (1 << 600000) - 1)
+    print((3 ** 400000) % 1000000007, (7 ** 300001) % 2305843009213693951)

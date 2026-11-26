@@ -5098,6 +5098,201 @@ static void kara_sqr(const uint32_t *a, int64_t n, uint32_t *out, uint32_t *scra
     mag_add_in(out + lo, 2 * n - lo, mid, mn);
 }
 
+/* Number-theoretic transform product, for operands too long for Karatsuba. The numbers are taken as 64-bit words, the
+ * coefficients of two polynomials whose product, evaluated at 2^64, is the product of the numbers. Each coefficient of the
+ * polynomial product is below min(words) 2^128, so it is found exactly from its residues modulo three primes between 2^62 and
+ * 2^63 (whose product is above 2^187) by the Chinese remainder theorem. Modulo each prime the polynomial product is a cyclic
+ * convolution of a power-of-two length L, at least the product's word count, done by transforms: a decimation-in-frequency
+ * forward transform (its output in bit-reversed order), the pointwise product, and a decimation-in-time inverse transform
+ * (which takes that order). Both recurse on halves down to a block that fits in cache, so no pass over the whole array but the
+ * top levels'. Arithmetic is Montgomery (R = 2^64). The primes are c 2^k + 1 with k >= 55: lengths up to 2^55 words. */
+typedef struct { uint64_t p, pinv, r1, r2; } NttMod;      /* the prime, 1/p mod R, R mod p, R^2 mod p */
+static const uint64_t ntt_primes[3][2] = {                 /* the prime and a generator of its multiplicative group */
+    { 0x5700000000000001u, 5 }, { 0x4180000000000001u, 3 }, { 0x6280000000000001u, 3 },
+};
+/* a b / R mod p, in [0, p): a < 2^64 and b < p (so a b < p R) */
+static inline uint64_t ntt_mul_mod(uint64_t a, uint64_t b, NttMod m) {
+    typedef unsigned __int128 u128;
+    u128 t = (u128)a * b;
+    uint64_t q = (uint64_t)t * m.pinv;                     /* q p = t mod R: t - q p is a multiple of R */
+    uint64_t hi = (uint64_t)(t >> 64), qp = (uint64_t)(((u128)q * m.p) >> 64);
+    return hi - qp + (m.p & -(uint64_t)(hi < qp));
+}
+/* x + y and x - y mod p for x, y < p < 2^63, with masks: a compiler may make a conditional a branch, here unpredictable */
+static inline uint64_t ntt_add(uint64_t x, uint64_t y, uint64_t p) { uint64_t s = x + y - p; return s + (p & -(s >> 63)); }
+static inline uint64_t ntt_sub(uint64_t x, uint64_t y, uint64_t p) { uint64_t d = x - y; return d + (p & -(d >> 63)); }
+static NttMod ntt_mod(uint64_t p) {
+    typedef unsigned __int128 u128;
+    NttMod m = { p, p, 0, 0 };
+    for (int i = 0; i < 5; i++) m.pinv *= 2 - p * m.pinv;  /* Newton: 3, 6, 12, 24, 48, 96 correct bits */
+    m.r1 = (0 - p) % p;
+    m.r2 = (uint64_t)((u128)m.r1 * m.r1 % p);
+    return m;
+}
+/* x^e with x in Montgomery form (x R mod p), and the result too */
+static uint64_t ntt_pow(uint64_t x, uint64_t e, NttMod m) {
+    uint64_t r = m.r1;
+    for (; e; e >>= 1) { if (e & 1) r = ntt_mul_mod(r, x, m); x = ntt_mul_mod(x, x, m); }
+    return r;
+}
+
+/* The twiddle tables: tw[h + j] = w^j and itw[h + j] = w^-j for each half length h < NTT_TW (a power of two) and j < h, where
+ * w is the root of unity of order 2h, in Montgomery form. Longer levels make their twiddles as they go. Blocks up to NTT_BLOCK
+ * are done level by level in place (NTT_BLOCK <= NTT_TW); above it each pass over memory does two levels (radix 4). */
+#define NTT_TW 65536
+#define NTT_BLOCK 4096
+/* from this many limbs in the shorter operand, a product is made by transforms (measured on x86-64: the two take the same time
+ * at 4000 to 6000 limbs, and the transforms are 2 times faster at 8000 and 6 times at 500,000) */
+#define NTT_MIN 6000
+typedef struct { NttMod m; const uint64_t *tw, *itw; uint64_t root[64], iroot[64]; } NttCtx;  /* root[k]: of order 2^k */
+
+/* the forward butterfly (x, y) -> (x + y, (x - y) w), and the inverse one (x, y) -> (x + y w, x - y w) */
+static inline void ntt_bf(uint64_t *x, uint64_t *y, uint64_t w, NttMod m) {
+    uint64_t u = *x, v = *y;
+    *x = ntt_add(u, v, m.p); *y = ntt_mul_mod(ntt_sub(u, v, m.p), w, m);
+}
+static inline void ntt_ibf(uint64_t *x, uint64_t *y, uint64_t w, NttMod m) {
+    uint64_t u = *x, v = ntt_mul_mod(*y, w, m);
+    *x = ntt_add(u, v, m.p); *y = ntt_sub(u, v, m.p);
+}
+
+/* a[0..n) in place, n a power of two; the output is in bit-reversed order */
+static void ntt_dif(uint64_t *a, int64_t n, const NttCtx *c) {
+    NttMod m = c->m;
+    if (n <= NTT_BLOCK) {
+        for (int64_t h = n / 2; h >= 1; h /= 2)
+            for (int64_t s = 0; s < n; s += 2 * h)
+                for (int64_t j = 0; j < h; j++) ntt_bf(a + s + j, a + s + h + j, c->tw[h + j], m);
+        return;
+    }
+    /* levels n and n / 2: (a0, a2) by w^j and (a1, a3) by w^(j + q), w of order n; then (a0, a1) and (a2, a3) by w^2j */
+    int64_t q = n / 4;
+    if (2 * q < NTT_TW) {
+        const uint64_t *w1 = c->tw + 2 * q, *w2 = c->tw + q;
+        for (int64_t j = 0; j < q; j++) {
+            uint64_t *x = a + j;
+            ntt_bf(x, x + 2 * q, w1[j], m); ntt_bf(x + q, x + 3 * q, w1[j + q], m);
+            ntt_bf(x, x + q, w2[j], m); ntt_bf(x + 2 * q, x + 3 * q, w2[j], m);
+        }
+    } else {
+        int k = __builtin_ctzll((uint64_t)n);
+        uint64_t w = m.r1, step = c->root[k], i4 = c->root[2];
+        for (int64_t j = 0; j < q; j++) {
+            uint64_t *x = a + j, w2 = ntt_mul_mod(w, w, m);
+            ntt_bf(x, x + 2 * q, w, m); ntt_bf(x + q, x + 3 * q, ntt_mul_mod(w, i4, m), m);
+            ntt_bf(x, x + q, w2, m); ntt_bf(x + 2 * q, x + 3 * q, w2, m);
+            w = ntt_mul_mod(w, step, m);
+        }
+    }
+    for (int i = 0; i < 4; i++) ntt_dif(a + i * q, q, c);
+}
+/* the inverse of ntt_dif, times n: bit-reversed input, natural output */
+static void ntt_dit(uint64_t *a, int64_t n, const NttCtx *c) {
+    NttMod m = c->m;
+    if (n <= NTT_BLOCK) {
+        for (int64_t h = 1; h < n; h *= 2)
+            for (int64_t s = 0; s < n; s += 2 * h)
+                for (int64_t j = 0; j < h; j++) ntt_ibf(a + s + j, a + s + h + j, c->itw[h + j], m);
+        return;
+    }
+    int64_t q = n / 4;
+    for (int i = 0; i < 4; i++) ntt_dit(a + i * q, q, c);
+    if (2 * q < NTT_TW) {
+        const uint64_t *w1 = c->itw + 2 * q, *w2 = c->itw + q;
+        for (int64_t j = 0; j < q; j++) {
+            uint64_t *x = a + j;
+            ntt_ibf(x, x + q, w2[j], m); ntt_ibf(x + 2 * q, x + 3 * q, w2[j], m);
+            ntt_ibf(x, x + 2 * q, w1[j], m); ntt_ibf(x + q, x + 3 * q, w1[j + q], m);
+        }
+    } else {
+        int k = __builtin_ctzll((uint64_t)n);
+        uint64_t w = m.r1, step = c->iroot[k], i4 = c->iroot[2];
+        for (int64_t j = 0; j < q; j++) {
+            uint64_t *x = a + j, w2 = ntt_mul_mod(w, w, m);
+            ntt_ibf(x, x + q, w2, m); ntt_ibf(x + 2 * q, x + 3 * q, w2, m);
+            ntt_ibf(x, x + 2 * q, w, m); ntt_ibf(x + q, x + 3 * q, ntt_mul_mod(w, i4, m), m);
+            w = ntt_mul_mod(w, step, m);
+        }
+    }
+}
+
+/* word i of the number d of n limbs (32-bit), as an unsigned 64-bit number reduced modulo p */
+static void ntt_load(uint64_t *f, int64_t L, const uint32_t *d, int64_t n, NttMod m) {
+    int64_t i = 0;
+    for (; 2 * i + 1 < n; i++) f[i] = ntt_mul_mod(limb2(d + 2 * i), m.r1, m);     /* x R / R */
+    if (2 * i < n) { f[i] = d[2 * i] % m.p; i++; }
+    memset(f + i, 0, (size_t)(L - i) * 8);
+}
+
+/* out = a * b by transforms (a == b, an == bn: a square, one forward transform per prime); out has an + bn limbs, all zero */
+static void ntt_mul(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
+    typedef unsigned __int128 u128;
+    int square = a == b && an == bn;
+    int64_t wa = (an + 1) / 2, wb = (bn + 1) / 2, L = 1;
+    while (L < wa + wb - 1) L *= 2;
+    int64_t tn = L < NTT_TW ? L : NTT_TW;
+    if (tn < 2) tn = 2;
+    uint64_t *res = malloc((size_t)(3 + !square) * (size_t)L * 8), *tw = malloc((size_t)tn * 16), *itw = tw + tn;
+    if (!res || !tw) out_of_memory();
+    uint64_t *g = square ? NULL : res + 3 * L;
+    NttMod mods[3];
+    for (int k = 0; k < 3; k++) {
+        NttCtx c;
+        NttMod m = c.m = mods[k] = ntt_mod(ntt_primes[k][0]);
+        uint64_t p = m.p, gen = ntt_mul_mod(ntt_primes[k][1], m.r2, m);
+        for (int e = 0; e <= __builtin_ctzll(p - 1); e++) {
+            c.root[e] = ntt_pow(gen, (p - 1) >> e, m);
+            c.iroot[e] = ntt_pow(c.root[e], (1ull << e) - 1, m);
+        }
+        for (int d = 0; d < 2; d++) {                     /* the top table level, then each level from the one above */
+            uint64_t *t = d ? itw : tw, step = (d ? c.iroot : c.root)[__builtin_ctzll((uint64_t)tn)];
+            int64_t h = tn / 2;
+            t[h] = m.r1;
+            for (int64_t j = 1; j < h; j++) t[h + j] = ntt_mul_mod(t[h + j - 1], step, m);
+            for (h /= 2; h >= 1; h /= 2) for (int64_t j = 0; j < h; j++) t[h + j] = t[2 * h + 2 * j];
+        }
+        c.tw = tw; c.itw = itw;
+        uint64_t *f = res + k * L;
+        ntt_load(f, L, a, an, m);
+        ntt_dif(f, L, &c);
+        /* f g / R, times R^2 / L: the inverse transform's factor L divided out */
+        uint64_t scale = ntt_mul_mod(ntt_mul_mod(p - (p - 1) / (uint64_t)L, m.r2, m), m.r2, m);
+        if (square) for (int64_t i = 0; i < L; i++) f[i] = ntt_mul_mod(ntt_mul_mod(f[i], f[i], m), scale, m);
+        else {
+            ntt_load(g, L, b, bn, m);
+            ntt_dif(g, L, &c);
+            for (int64_t i = 0; i < L; i++) f[i] = ntt_mul_mod(ntt_mul_mod(f[i], g[i], m), scale, m);
+        }
+        ntt_dit(f, L, &c);
+    }
+    /* Garner: c = x1 + x2 p1 + x3 p1 p2 with x1 = r1, x2 = (r2 - x1) / p1 mod p2, x3 = ((r3 - x1) / p1 - x2) / p2 mod p3 */
+    NttMod m2 = mods[1], m3 = mods[2];
+    uint64_t p1 = mods[0].p, p2 = m2.p, p3 = m3.p;
+    uint64_t i12 = ntt_pow(ntt_mul_mod(p1 % p2, m2.r2, m2), p2 - 2, m2);           /* 1/p1 R mod p2 */
+    uint64_t i13 = ntt_pow(ntt_mul_mod(p1 % p3, m3.r2, m3), p3 - 2, m3);           /* 1/p1 R mod p3 */
+    uint64_t i23 = ntt_pow(ntt_mul_mod(p2 % p3, m3.r2, m3), p3 - 2, m3);           /* 1/p2 R mod p3 */
+    u128 p12 = (u128)p1 * p2;
+    uint64_t p12lo = (uint64_t)p12, p12hi = (uint64_t)(p12 >> 64);
+    u128 carry = 0;
+    int64_t on = an + bn;
+    for (int64_t i = 0; 2 * i < on; i++) {
+        uint64_t r1 = 0, r2 = 0, r3 = 0;
+        if (i < L) { r1 = res[i]; r2 = res[L + i]; r3 = res[2 * L + i]; }    /* the top word, past the convolution, is the carry */
+        uint64_t x1 = r1;
+        uint64_t x2 = ntt_mul_mod(ntt_sub(r2, x1 >= p2 ? x1 - p2 : x1, p2), i12, m2);
+        uint64_t t = ntt_mul_mod(ntt_sub(r3, x1 >= p3 ? x1 - p3 : x1, p3), i13, m3);
+        uint64_t x3 = ntt_mul_mod(ntt_sub(t, x2 >= p3 ? x2 - p3 : x2, p3), i23, m3);
+        u128 v = (u128)x2 * p1 + x1;                       /* below 2^127 */
+        u128 lo = (u128)x3 * p12lo, hi = (u128)x3 * p12hi + (uint64_t)(lo >> 64);
+        u128 s0 = (u128)(uint64_t)lo + (uint64_t)v + (uint64_t)carry;
+        u128 s1 = hi + (uint64_t)(v >> 64) + (uint64_t)(carry >> 64) + (uint64_t)(s0 >> 64);   /* below 2^189 / 2^64 */
+        out[2 * i] = (uint32_t)s0;
+        if (2 * i + 1 < on) out[2 * i + 1] = (uint32_t)((uint64_t)s0 >> 32);
+        carry = s1;
+    }
+    free(tw); free(res);
+}
+
 /* out = a * b; out has an + bn limbs, all zero, and is neither operand. Short operands use the schoolbook method, equal ones
  * Karatsuba (kara_sqr when they are the same number); a long one times a shorter one is cut into pieces as long as the
  * shorter one, each multiplied by Karatsuba and added in at its place. */
@@ -5113,6 +5308,20 @@ static void mag_mul(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn
     if (an > bn) { const uint32_t *t = a; a = b; b = t; int64_t tn = an; an = bn; bn = tn; }
     if (square && an <= KARA_SQR_T) { mag_sqr_base(a, an, out); return; }
     if (an < KARA_MUL_T) { mag_mul_base(a, an, b, bn, out); return; }
+    if (an >= NTT_MIN) {
+        /* a much longer b is cut into pieces of 4 an limbs, so that the transforms (and their memory) stay near the size of a */
+        if (bn <= 4 * an || square) { ntt_mul(a, an, b, bn, out); return; }
+        uint32_t *piece = malloc((size_t)(5 * an) * 4);
+        if (!piece) out_of_memory();
+        for (int64_t at = 0; at < bn; at += 4 * an) {
+            int64_t pn = bn - at < 4 * an ? bn - at : 4 * an;
+            memset(piece, 0, (size_t)(an + pn) * 4);
+            if (pn >= NTT_MIN) ntt_mul(a, an, b + at, pn, piece); else mag_mul(b + at, pn, a, an, piece);
+            mag_add_in(out + at, an + bn - at, piece, an + pn);
+        }
+        free(piece);
+        return;
+    }
     int64_t ks = kara_scratch(an);
     uint32_t *scratch = malloc((size_t)(ks + 2 * an + 2) * 4);
     if (!scratch) out_of_memory();

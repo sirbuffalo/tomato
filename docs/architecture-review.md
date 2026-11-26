@@ -283,7 +283,7 @@ What is left, and why:
   counts make the same trick possible (`rc == 1`) [I].
 - **The collector rescans live data**: 17% of the self-compile's instructions went to 94 collections [M]. Long-lived
   trees of class objects are the worst case, and every compiler-like program is one.
-- **Big integers**: schoolbook multiplication, O(n^2) printing, shifts through `pow` [V]. Fine at today's sizes. (Since then: Karatsuba multiplication and linear shifts; printing and division are still O(n^2).)
+- **Big integers**: schoolbook multiplication, O(n^2) printing, shifts through `pow` [V]. Fine at today's sizes. (Since then: Karatsuba and number-theoretic-transform multiplication and linear shifts; printing and division are still O(n^2).)
 
 ### 3.3 Compile time, build and reproducibility
 
