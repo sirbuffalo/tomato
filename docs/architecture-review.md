@@ -140,7 +140,9 @@ show a diff of it [V].
 - **Allocation** [V]: 16 size classes up to 256 bytes on free lists carved from 64 KB chunks (never returned to the
   OS), `malloc` above that; ASan builds and `-DTOMATO_NO_POOL` use `malloc` for exact checking.
 - **Big integers** [V]: schoolbook multiplication (no Karatsuba), Knuth division, O(n²) decimal conversion and parsing,
-  and shifts implemented as `pow(2, n)` followed by a multiply or floor division (`:4103-4125`).
+  and shifts implemented as `pow(2, n)` followed by a multiply or floor division (`:4103-4125`). *Since then:* shifts and
+  `2**n` are linear, and multiplication is Karatsuba above 48 limbs with its own squaring path (`docs/performance.md`,
+  "big-integer multiplication"); division, decimal conversion and parsing are still quadratic.
 - **Errors** [V]: a pending error lives in IR globals (`@tomato_exc`, line, kind); the compiler emits a load and branch
   after every call that can raise, freeing the expression's held temporaries on the way to the nearest `catch`,
   `finally` or the function epilogue. `finally` bodies are compiled once per exit path. There is no LLVM unwinding.
@@ -281,7 +283,7 @@ What is left, and why:
   counts make the same trick possible (`rc == 1`) [I].
 - **The collector rescans live data**: 17% of the self-compile's instructions went to 94 collections [M]. Long-lived
   trees of class objects are the worst case, and every compiler-like program is one.
-- **Big integers**: schoolbook multiplication, O(n^2) printing, shifts through `pow` [V]. Fine at today's sizes.
+- **Big integers**: schoolbook multiplication, O(n^2) printing, shifts through `pow` [V]. Fine at today's sizes. (Since then: Karatsuba multiplication and linear shifts; printing and division are still O(n^2).)
 
 ### 3.3 Compile time, build and reproducibility
 

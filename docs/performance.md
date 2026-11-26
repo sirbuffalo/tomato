@@ -543,6 +543,45 @@ Mandelbrot's wall time barely moves, although it executes 22% fewer instructions
 
 The three finite checks per iteration, which this left, are gone now: see "range loops and float intervals" below.
 
+## What was done (big-integer multiplication, unreleased)
+
+`mag_mul` in the runtime was the schoolbook method only, so a product of two n-limb numbers took n² limb products. Now:
+
+* **Karatsuba** (`kara_mul`) when the shorter operand has 48 limbs (32-bit) or more: three half-size products instead of four, with the
+  middle term made as `a0 b0 + a1 b1 - (a0 - a1)(b0 - b1)` from the absolute differences (no carry limbs in the halves). One scratch
+  buffer, sized by `kara_scratch`, is allocated per product and used by the whole recursion; below 48 limbs the old 64-bit-word schoolbook
+  loop is the base case.
+* **Squares** (`kara_sqr`, when both operands are the same number, as in `x * x` and the repeated squaring of `**`): Karatsuba with
+  `(a0 - a1)²`, which is never negative, over a schoolbook square (`mag_sqr_base`, up to 64 limbs) that computes each cross product once
+  and doubles the sum: about half the work of a product.
+* **Uneven lengths**: the longer operand is cut into pieces as long as the shorter one; each piece is a balanced Karatsuba product
+  added in at its place.
+* **Zero limbs** at either end of an operand are skipped (the result pointer moves instead), so `(1 << k) * y` and products of
+  numbers with many zero low limbs cost what their nonzero part costs.
+
+The thresholds were measured on x86-64 (a shared, loaded machine): the product time is flat from 40 to 64 limbs, the square time
+from 48 to 128.
+
+`x * x` and `x * (x + 1)` with x = 2^bits // 3 (dense: every limb nonzero), release mode, wall time, load average about 75 from
+other work; Python 3 timed on the same machine in the same session, around the product only:
+
+| bits | old `x*x` | new `x*x` | new `x*(x+1)` | Python `x*x` | Python `x*(x+1)` |
+| --- | --- | --- | --- | --- | --- |
+| 2^20 | 0.29 s | 0.03 s | 0.03 s | 0.065 s | 0.065 s |
+| 2^22 | 14.4 s | 0.49 s | 0.27 s | 1.03 s | 0.98 s |
+| 2^24 | (96 s, TODO note) | 2.4 s | 4.4 s | 9.2 s | 15.4 s |
+
+With x = 2^bits (the case first timed in the TODO note: 2^20 bits 0.28 s, 2^24 96 s), the product is now linear and takes no measurable time.
+
+`3 ** 20000000` (31.7 million bits, repeated squaring): old 124 s, new 4.3 s, Python 7.9 s; `3 ** 2000000`: old 1.07 s, new 0.23 s, Python 0.20 s.
+
+Tests: `tests/bigmul.c` (12,000 random products and squares around the thresholds, uneven lengths, all-ones and zero-half operands,
+against a plain 32-bit schoolbook product, under AddressSanitizer and UBSan) and the program `big_karatsuba` (output computed with Python; also run under AddressSanitizer and through `site/wasm`).
+
+*Not done:* Toom-3 and an FFT/NTT product. Karatsuba is n^1.585, so a dense 2^28-bit square, 81 times the 2^24 one, is still about
+3 minutes. Division (Knuth D) and decimal conversion are still quadratic; a subquadratic division (Newton or Burnikel-Ziegler) and a
+divide-and-conquer `str(int)` can build on this multiplication.
+
 ## What was done (range loops and float intervals, unreleased)
 
 Three follow-ups of the integer ranges above.

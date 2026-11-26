@@ -4968,8 +4968,8 @@ static int64_t mag_mul_word(const uint32_t *a, int64_t an, uint64_t m, uint32_t 
     return i;
 }
 
-/* out = a * b; out has an + bn limbs, all zero, and is neither operand */
-static void mag_mul(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
+/* out = a * b by the schoolbook method; out has an + bn limbs, all zero, and is neither operand */
+static void mag_mul_base(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
     typedef unsigned __int128 u128;
     if (an > bn) { const uint32_t *t = a; a = b; b = t; int64_t tn = an; an = bn; bn = tn; }     /* the longer number in the inner loop */
     int64_t i = 0;
@@ -4992,6 +4992,142 @@ static void mag_mul(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn
         }
         out[i + bn] += (uint32_t)carry;
     }
+}
+
+/* Below these many limbs (32-bit), the schoolbook method beats Karatsuba (measured on x86-64): for a product, in the shorter
+ * operand; for a square, which takes about half the schoolbook work, in the number. */
+#define KARA_MUL_T 48
+#define KARA_SQR_T 64
+
+/* out = a * a by the schoolbook method, each cross product once (then doubled). out has 2n limbs (any contents), n <= KARA_SQR_T.
+ * The limbs are taken as 64-bit words (an odd count gets a zero top limb). */
+static void mag_sqr_base(const uint32_t *a, int64_t n, uint32_t *out) {
+    typedef unsigned __int128 u128;
+    uint64_t w[KARA_SQR_T / 2 + 1], r[KARA_SQR_T + 2];
+    int64_t m = (n + 1) / 2;
+    w[m - 1] = 0;
+    memcpy(w, a, (size_t)n * 4);
+    memset(r, 0, (size_t)(2 * m) * 8);
+    for (int64_t i = 0; i + 1 < m; i++) {
+        uint64_t carry = 0;
+        for (int64_t j = i + 1; j < m; j++) {
+            u128 t = (u128)w[i] * w[j] + r[i + j] + carry;
+            r[i + j] = (uint64_t)t; carry = (uint64_t)(t >> 64);
+        }
+        r[i + m] = carry;
+    }
+    for (int64_t i = 2 * m - 1; i > 0; i--) r[i] = (r[i] << 1) | (r[i - 1] >> 63);   /* the cross sum is below 2^(128m-1): no bit lost */
+    r[0] <<= 1;
+    uint64_t carry = 0;
+    for (int64_t i = 0; i < m; i++) {
+        u128 sq = (u128)w[i] * w[i];
+        u128 lo = (u128)r[2 * i] + (uint64_t)sq + carry;
+        r[2 * i] = (uint64_t)lo;
+        u128 hi = (u128)r[2 * i + 1] + (uint64_t)(sq >> 64) + (uint64_t)(lo >> 64);
+        r[2 * i + 1] = (uint64_t)hi; carry = (uint64_t)(hi >> 64);
+    }
+    memcpy(out, r, (size_t)(2 * n) * 4);                   /* the limbs past 2n are zero */
+}
+
+/* r += t where r has rn >= tn limbs; the carry out of r's top limb */
+static uint32_t mag_add_in(uint32_t *r, int64_t rn, const uint32_t *t, int64_t tn) {
+    uint64_t carry = 0;
+    int64_t i = 0;
+    for (; i + 2 <= tn; i += 2) {
+        uint64_t s, u;
+        uint64_t c1 = __builtin_add_overflow(limb2(r + i), limb2(t + i), &s), c2 = __builtin_add_overflow(s, carry, &u);
+        limb2_put(r + i, u); carry = c1 | c2;
+    }
+    for (; i < tn; i++) { uint64_t s = (uint64_t)r[i] + t[i] + carry; r[i] = (uint32_t)s; carry = s >> 32; }
+    for (; carry && i < rn; i++) carry = ++r[i] == 0;
+    return (uint32_t)carry;
+}
+
+/* out = |a - b| in n limbs, where a has an <= n limbs (zero-extended) and b has n; 1 when a < b */
+static int mag_absdiff(const uint32_t *a, int64_t an, const uint32_t *b, int64_t n, uint32_t *out) {
+    int64_t top = n;
+    while (top > an && b[top - 1] == 0) top--;
+    int less = top > an || mag_cmp(a, an, b, an) < 0;
+    if (less) mag_sub(b, n, a, an, out);
+    else { mag_sub(a, an, b, an, out); memset(out + an, 0, (size_t)(n - an) * 4); }
+    return less;
+}
+
+/* Karatsuba: with a = a1 B^h + a0 (lo = n/2 limbs in a0, h = n - lo in a1) and the same for b,
+ *   a b = a1 b1 B^2lo + (a0 b0 + a1 b1 - (a0 - a1)(b0 - b1)) B^lo + a0 b0,
+ * three half-size products instead of four. a0 b0 and a1 b1 go straight into out; the middle term is made in scratch and added in.
+ * The scratch a call needs (its own part, 6h + 2 limbs, and its recursion's) is kara_scratch(n). */
+static int64_t kara_scratch(int64_t n) {
+    int64_t s = 0;
+    while (n >= KARA_MUL_T || n > KARA_SQR_T) { int64_t h = n - n / 2; s += 6 * h + 2; n = h; }
+    return s;
+}
+/* out = a * b, both n limbs; out has 2n limbs (any contents) and is neither operand */
+static void kara_mul(const uint32_t *a, const uint32_t *b, int64_t n, uint32_t *out, uint32_t *scratch) {
+    if (n < KARA_MUL_T) { memset(out, 0, (size_t)(2 * n) * 4); mag_mul_base(a, n, b, n, out); return; }
+    int64_t lo = n / 2, h = n - lo;
+    uint32_t *da = scratch, *db = da + h, *z1 = db + h, *mid = z1 + 2 * h, *next = mid + 2 * h + 2;
+    int neg = mag_absdiff(a, lo, a + lo, h, da) ^ mag_absdiff(b, lo, b + lo, h, db);
+    kara_mul(da, db, h, z1, next);                          /* |a0 - a1| |b0 - b1| */
+    kara_mul(a, b, lo, out, next);                          /* a0 b0 */
+    kara_mul(a + lo, b + lo, h, out + 2 * lo, next);        /* a1 b1 */
+    mid[2 * h] = 0; mid[2 * h + 1] = 0;
+    memcpy(mid, out + 2 * lo, (size_t)(2 * h) * 4);
+    mag_add_in(mid, 2 * h + 2, out, 2 * lo);                /* a0 b0 + a1 b1 */
+    if (neg) mag_add_in(mid, 2 * h + 2, z1, 2 * h);         /* (a0 - a1)(b0 - b1) < 0 */
+    else mag_sub(mid, 2 * h + 2, z1, 2 * h, mid);
+    int64_t mn = 2 * h + 2;
+    while (mn > 0 && mid[mn - 1] == 0) mn--;                /* a0 b1 + a1 b0 < 2 B^n: it fits in the n + h limbs above lo */
+    mag_add_in(out + lo, 2 * n - lo, mid, mn);
+}
+/* out = a * a, a has n limbs; the same with (a0 - a1)^2, which is never negative */
+static void kara_sqr(const uint32_t *a, int64_t n, uint32_t *out, uint32_t *scratch) {
+    if (n <= KARA_SQR_T) { mag_sqr_base(a, n, out); return; }
+    int64_t lo = n / 2, h = n - lo;
+    uint32_t *da = scratch, *z1 = da + 2 * h, *mid = z1 + 2 * h, *next = mid + 2 * h + 2;
+    mag_absdiff(a, lo, a + lo, h, da);
+    kara_sqr(da, h, z1, next);
+    kara_sqr(a, lo, out, next);
+    kara_sqr(a + lo, h, out + 2 * lo, next);
+    mid[2 * h] = 0; mid[2 * h + 1] = 0;
+    memcpy(mid, out + 2 * lo, (size_t)(2 * h) * 4);
+    mag_add_in(mid, 2 * h + 2, out, 2 * lo);
+    mag_sub(mid, 2 * h + 2, z1, 2 * h, mid);
+    int64_t mn = 2 * h + 2;
+    while (mn > 0 && mid[mn - 1] == 0) mn--;
+    mag_add_in(out + lo, 2 * n - lo, mid, mn);
+}
+
+/* out = a * b; out has an + bn limbs, all zero, and is neither operand. Short operands use the schoolbook method, equal ones
+ * Karatsuba (kara_sqr when they are the same number); a long one times a shorter one is cut into pieces as long as the
+ * shorter one, each multiplied by Karatsuba and added in at its place. */
+static void mag_mul(const uint32_t *a, int64_t an, const uint32_t *b, int64_t bn, uint32_t *out) {
+    int square = a == b && an == bn;
+    while (an > 0 && a[an - 1] == 0) an--;                 /* zero limbs at either end (a piece of a longer number, or 2^k) are skipped */
+    while (bn > 0 && b[bn - 1] == 0) bn--;
+    int64_t za = 0, zb = 0;
+    while (za < an && a[za] == 0) za++;
+    while (zb < bn && b[zb] == 0) zb++;
+    if (za == an || zb == bn) return;
+    a += za; an -= za; b += zb; bn -= zb; out += za + zb;
+    if (an > bn) { const uint32_t *t = a; a = b; b = t; int64_t tn = an; an = bn; bn = tn; }
+    if (square && an <= KARA_SQR_T) { mag_sqr_base(a, an, out); return; }
+    if (an < KARA_MUL_T) { mag_mul_base(a, an, b, bn, out); return; }
+    int64_t ks = kara_scratch(an);
+    uint32_t *scratch = malloc((size_t)(ks + 2 * an + 2) * 4);
+    if (!scratch) out_of_memory();
+    uint32_t *piece = scratch + ks;
+    if (square) kara_sqr(a, an, out, scratch);
+    else {
+        kara_mul(a, b, an, out, scratch);
+        for (int64_t at = an; at < bn; at += an) {
+            int64_t pn = bn - at < an ? bn - at : an;
+            if (pn == an) kara_mul(a, b + at, an, piece, scratch);
+            else { memset(piece, 0, (size_t)(an + pn) * 4); mag_mul(b + at, pn, a, an, piece); }
+            mag_add_in(out + at, an + bn - at, piece, an + pn);
+        }
+    }
+    free(scratch);
 }
 
 COLD static int64_t int_mul_slow(int64_t x, int64_t y) {

@@ -1,0 +1,61 @@
+# Big-number products long enough for Karatsuba (48 limbs of 32 bits and up; squares from 65 limbs): lengths around the
+# thresholds and their doubles, uneven lengths (a long number cut into pieces as long as the short one), squares (x * x and x ** n),
+# all-ones limbs (every carry and borrow runs the whole way), zero low limbs and powers of two. Expected output computed with Python 3.
+def mix(h: int, r: int) -> int:
+    return (h * 1000003 + r % 1000000007) % 2305843009213693951
+
+# a dense number of exactly this many 32-bit limbs, from a 64-bit LCG
+def num(limbs: int, seed: int) -> int:
+    s = seed
+    v = 0
+    for i in range(limbs):
+        s = (s * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+        v = (v << 32) + ((s >> 32) | 1)
+    return v
+
+# a product's fingerprint: two residues and its top 40 bits
+def show(name: str, p: int, bits: int):
+    top = p >> (bits - 40) if bits > 40 else p
+    print(name, p % 1000000007, p % 2305843009213693951, top)
+
+@main
+def main():
+    sizes: list[int] = [3, 47, 48, 49, 64, 65, 66, 95, 96, 97, 128, 131, 257, 600, 1031, 2500]
+    nums: list[int] = []
+    for i in range(len(sizes)):
+        nums.append(num(sizes[i], i + 1))
+    h = 0
+    for i in range(len(sizes)):
+        a = nums[i]
+        sq = a * a
+        show(f'sq {sizes[i]}', sq, 64 * sizes[i])
+        if sq != a ** 2:
+            print('BAD square', sizes[i])
+        for j in range(len(sizes)):
+            b = nums[j]
+            p = a * b
+            h = mix(h, p)
+            if j >= i:
+                show(f'mul {sizes[i]} {sizes[j]}', p, 32 * (sizes[i] + sizes[j]))
+            if p != b * a or (-a) * b != -p or (-a) * (-b) != p:
+                print('BAD sign or order', sizes[i], sizes[j])
+            if sizes[i] <= 600 and sizes[j] <= 600 and (p // b != a or p % b != 0):
+                print('BAD division', sizes[i], sizes[j])
+            s = a + b
+            if s * s != sq + 2 * p + b * b:
+                print('BAD binomial', sizes[i], sizes[j])
+    print('all products', h)
+    # all-ones limbs: (B^n - 1)^2 = B^2n - 2 B^n + 1, and (B^n - 1)(B^m - 1)
+    for n in [48, 65, 97, 200, 1000]:
+        ones = (1 << (32 * n)) - 1
+        print(n, ones * ones == (1 << (64 * n)) - (1 << (32 * n + 1)) + 1, ones * ((1 << (32 * n + 96)) - 1) == (1 << (64 * n + 96)) - (1 << (32 * n)) - (1 << (32 * n + 96)) + 1)
+    # zero low limbs and powers of two: the product of the shifted numbers is the shifted product
+    a = nums[10]
+    b = nums[12]
+    print((a << 3200) * (b << 64) == (a * b) << 3264, (a << 3200) * (a << 3200) == (a * a) << 6400, (1 << 100000) * (1 << 70000) == 1 << 170000)
+    print(((1 << 100000) + 1) * ((1 << 100000) - 1) == (1 << 200000) - 1, (1 << 64000) * a == a << 64000)
+    # powers: repeated squaring of a big base
+    c = num(70, 99)
+    print(c ** 5 == c * c * c * c * c, (c ** 16) % 1000000007, (c ** 17) % 2305843009213693951, (3 ** 100000) % 1000000007, (7 ** 77777) % 2305843009213693951)
+    # one exact product printed in full
+    print(nums[3] * nums[5])
