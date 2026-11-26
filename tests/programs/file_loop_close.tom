@@ -1,0 +1,84 @@
+# A-Q7: `for line in open(path):` closes the File it opened however the loop is left (the end, break, return, an error), so a
+# program that does it many times keeps the same number of open descriptors. The test counts the entries of /dev/fd before and
+# after each kind of exit (listdir opens one descriptor of its own, the same each time). tests/run.sh passes a work directory.
+import os
+
+def open_count() -> int:
+    return len(os.listdir('/dev/fd'))
+
+def finish(path: str) -> int:
+    n = 0
+    for line in open(path):
+        n += len(line)
+    return n
+
+def stop_early(path: str) -> int:
+    n = 0
+    for line in open(path):
+        n += 1
+        if n == 2:
+            break
+    return n
+
+def return_inside(path: str) -> str:
+    for line in open(path):
+        if line.startswith('b'):
+            return line
+    return 'none'
+
+def fail_inside(path: str) -> int:
+    for line in open(path):
+        raise ValueError('stop at ' + line.strip())
+    return 0
+
+def nested(path: str) -> int:
+    n = 0
+    for a in open(path):
+        for b in open(path):
+            n += 1
+            if n % 2 == 0:
+                continue
+    return n
+
+def next_to_a_named_file(path: str) -> int:
+    f = open(path)
+    n = 0
+    for line in open(path):
+        n += len(f.readline()) + len(line)
+    f.close()
+    return n
+
+@main
+def main(dir: str = '/tmp'):
+    path = dir + '/tomato_file_loop_close.txt'
+    os.write_text(path, 'alpha\nbeta\ngamma\n')
+    before = open_count()
+    total = 0
+    for k in range(3000):
+        total += finish(path)
+        total += stop_early(path)
+        total += len(return_inside(path))
+        total += nested(path) + next_to_a_named_file(path)
+        try:
+            fail_inside(path)
+        catch ValueError as e:
+            total += len(e.message)
+    print(total)
+    print('descriptors still open after 15000 loops:', open_count() - before)
+    # a loop over a file the program named does not close it: the program does, once
+    f = open(path)
+    for line in f:
+        pass
+    print('named file still open:', open_count() - before)
+    f.close()
+    print('after close:', open_count() - before)
+    # a file that cannot be opened raises before any loop, and leaves nothing open
+    try:
+        for line in open(dir + '/no_such_file'):
+            print('never')
+    catch IOError as e:
+        print('open failed, descriptors:', open_count() - before)
+    # the loop body can use its variable after the loop
+    for line in open(path):
+        last = line
+    print(last.strip(), open_count() - before)

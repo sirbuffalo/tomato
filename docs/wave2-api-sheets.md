@@ -188,7 +188,7 @@ Size **M**. A1 (`sys`, `os`, `ospath`, byte/text helpers, exit, errors) S–M; A
 4. **A-Q4 File error classes.** Add `FileNotFoundError` & co. as `IOError` subclasses (recommended) or keep one `IOError`.
 5. **A-Q5 `listdir` order.** Sorted (recommended: same on every platform) or the OS order.
 6. **A-Q6 Binary files.** `read_bytes`/`write_bytes` functions (recommended; wraps runtime code that exists) versus waiting for a `bytes` type to allow `open(path, 'rb')`.
-7. **A-Q7 `File` lifetime.** I did not verify that a `File` that is dropped is closed `[I]` (`File` is a raw pointer, not a counted object `[V]` `compiler.tom:397`). Is closing on scope exit, or a `with` statement, to be designed? Until then the new helpers use `try/finally`, and `File` stays a non-interface built-in (so `StringIO` cannot substitute for it).
+7. **A-Q7 `File` lifetime** (decided for a `for` loop header in D82a; the rest stays as written). I did not verify that a `File` that is dropped is closed `[I]` (`File` is a raw pointer, not a counted object `[V]` `compiler.tom:397`). Is closing on scope exit, or a `with` statement, to be designed? Until then the new helpers use `try/finally`, and `File` stays a non-interface built-in (so `StringIO` cannot substitute for it).
 8. **A-Q8 Playground.** Implement the directory and rename host calls in `wasi.js` (recommended) or raise "not available in the browser".
 9. **A-Q9 Environment.** `getenv` raising `ValueError` on a bad name, `environ()` a snapshot, `putenv`/`unsetenv` as functions (recommended) versus a live `environ` object (needs a class with `@get`/`@set` markers and module state).
 

@@ -10401,8 +10401,20 @@ class Gen:
         self.release(obj)
         self.for_value(s, ex(ks, kl), ex(vs_, vl))
 
+    # for line in open(path): the loop owns the File it opened, so it closes it however the loop is left (the end, break, return or an
+    # error), A-Q7 (D80a). It is written as the statements a program would write: the file in a variable no program can name, and
+    # a try with a finally around a loop over that variable. A close() that fails raises the IOError, as an explicit close() does.
+    def for_open(self, s: Node, it: Node):
+        name = '.openfor' + str(self.tmp('f')[1:])
+        line = s.line
+        held = mk('Name', line, [vs(name)])
+        close = mk('ExprStmt', line, [vn(mk('Call', line, [vn(mk('Attr', line, [vn(held), vs('close')])), vnodes([]), vlist([])]))])
+        loop = mk('For', line, [s.fields[0], vn(held), s.fields[2]])
+        guarded = mk('Try', line, [vnodes([loop]), vlist([]), vz(), vnodes([close])])
+        self.block([mk('Assign', line, [vn(mk('Name', line, [vs(name)])), vn(it)]), guarded])
+
     def for_file(self, s: Node, f: Ex):
-        # for line in f: the lines of a text file, each with its \n, read one at a time (a large file is never loaded whole); the loop never closes f (a File opened in the loop header needs the lifetime rule A-Q7 left to Davis, see D80a)
+        # for line in f: the lines of a text file, each with its \n, read one at a time (a large file is never loaded whole); the loop does not close f (a loop over open(...) is rewritten by for_open, which closes it)
         holder = self.hidden_slot('for.file')
         self.emit(f'store ptr {f.reg}, ptr {holder}')
         var = self.slot(s.fields[0].text, 'str', s.line)
@@ -10652,6 +10664,9 @@ class Gen:
 
     def for_stmt(self, s: Node):
         it = val_node(s.fields[1])
+        if len(s.fields) == 3 and it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'open' and 'open' not in self.slots and len(it.fields[2].items) == 0:
+            self.for_open(s, it)
+            return
         if len(s.fields) > 3:
             self.for_items(s, it)
             return
