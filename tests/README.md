@@ -77,13 +77,35 @@ The fast tier still builds the compiler and the installed `tomato` and runs the 
 
 ## What bounds the wall time
 
-Test CPU time is what the machine pays: 2,500 to 3,800 CPU seconds for the full suite and 1,900 to 2,500 for `--fast` (before this work:
+Test CPU time is what the machine pays: 2,500 to 4,100 CPU seconds for the full suite (the top of the range is a run with node and expect installed, which adds the WebAssembly
+and repl-history checks; see the measurement below) and 1,900 to 2,500 for `--fast` (before this work:
 5,900), the range being how much slower clang runs on the shared 128-core machine when other work keeps the load average near 100. With
 `-j N` the wall time cannot be below the CPU time divided by N, plus what cannot be spread: **the compiler's IR (13 MB) is compiled once** (one core: 25 s on a quiet machine, up to 85 s on a busy one; the installs reuse its object),
 then the longest command-line part that follows the install (5 to 15 s), and the update test, which compiles it once more from the release
 archive. So the chain is about an IR compile plus one command-line part, and the rest is CPU divided by the jobs. `--times` shows both:
 `compiler_build`, `install` and `cli_update` at the top of the slowest list are the chain; the per-section table gives wall and CPU
 seconds. Compare wall times with the load average (`uptime`), and CPU seconds with CPU seconds.
+
+## Measured full-tier time
+
+`tests/run.sh --times -j 64` on the shared 128-core Linux machine (biggie), 25 November 2026, with clang 21, node 22 and expect on
+`PATH` (Go is not installed, so the Go versions in the benchmark smoke are skipped). **The machine was not quiet**: another account's
+58 CPU-bound jobs kept the load average at about 65 before each run, and the run itself pushes it to about 100, so these are
+loaded numbers, not the quiet-machine number (one single-core benchmark run of another task also overlapped them) (the load never fell below 32 in the days this was tried).
+
+| Run | Load average at start, peak | Wall | CPU (user + system) | Result |
+| --- | --- | --- | --- | --- |
+| Full, `-j 64` | 65, 107 | **112 s** | 4,123 s (3,442 + 681) | 846 passed, 1 failed |
+| Full, `-j 64` (repeat) | 82 (the tail of the run before), 98 | 110 s | 4,114 s (3,420 + 694) | 846 passed, 1 failed |
+
+The one failure, both times, is `repl: up-arrow recalls a multi-line block as one history entry`: its `expect` session sleeps between
+keys, and here `expect` is a hand-unpacked package, so it is not known whether the cause is the load or that `expect`; every other check passed. It is a known failure that has not been
+diagnosed yet, so a red `repl: up-arrow` line in a full run on a busy machine is not necessarily a regression.
+Wall time is the elapsed time of `/usr/bin/time -v`; CPU is its user and system time (the `--times` footer's summed test CPU was 4,000 s).
+
+So the full tier took about **1 min 50 s** at load 65 to 100, which is not the one-minute target. The numbers fit the bound above: 4,100 CPU
+seconds over 64 jobs is 64 s, and the compiler's IR compile plus the command-line chain add to that; with the machine's other jobs taking cores the
+wall time is longer still. The one-minute target needs either a quiet machine or less CPU; it is not demonstrated here.
 
 ## WebAssembly checks under load
 

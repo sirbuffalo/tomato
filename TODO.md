@@ -4,8 +4,6 @@
   Test signing after a restart, from an ssh session and after sleep, and run a `--no-linux` release attempt that must be refused at publish. v0.51 only showed prompt-free signing from byre sessions; the gate's refusal was only tested with stubbed state.
 - Re-run the Linux benchmarks on a quieter biggie
   The v0.51 Linux x86-64 numbers were taken at load about 75; run them again when biggie's load is below 32.
-- Re-measure the full tier on a quiet biggie (load below 32) with `-j 64` and put the real number in tests/README.md
-  The test-suite speed-up was measured only at load 70-120 (full tier 125-267 s wall, 2,464-3,849 CPU s), so the one-minute target is not demonstrated. Run `tests/run.sh --times -j 64` when biggie is quiet and record wall, CPU and load.
 - Confirm the split bootstrap build on the Mac
   Run `tests/run.sh` on the Mac (and the full tier) to confirm `build-object.sh` takes the split path under macOS's BWK awk and Apple ld rather than the fallback.
 - Measure the per-item instruction saving of borrowed loop items on `objects`
@@ -40,3 +38,5 @@
   Make `compiler/bootstrap/refresh.sh` use `build-object.sh` (split build) and skip rebuilding a compiler that is already up to date. Expected 75 s to about 30-35 s (measured at load 63-77: two single-clang compiles of the 14.5 MB IR took about 62 s of the 75 s; the split build takes about 9 s).
 - Design a non-LTO debug build path for tomato build and run
   Keep the runtime's inline fast paths (alwaysinline IR emitted or prepended by tomatoc) so the debug link needs no LTO merge. Expected debug builds 1.8-2.3x faster (fib 1.15 s to about 0.5 s; the LTO link is about 1.0 s of 1.15 s), which also speeds the test suite; needs a full test run and a wasm rebuild.
+- Make the `repl: up-arrow recalls a multi-line block as one history entry` check robust under load
+  `tests/repl_history.exp` is sleep-driven (0.3 to 1.5 s between keys) and failed in both full-tier runs on biggie at load 65-100, where `expect` is a hand-unpacked package. Find out whether the load or that `expect` is the cause (run it alone on a quiet machine and with a normal `expect`), and make the check wait for the prompts instead of sleeping.
