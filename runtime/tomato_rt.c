@@ -4702,6 +4702,69 @@ static int64_t int_make(int sign, const uint32_t *d, int64_t n) {
     return (int64_t)(uintptr_t)b;
 }
 
+/* A result built in place, for the operations that know its size (shifts, 2^n, a single-limb quotient): big_alloc gives storage
+ * for n limbs (written by the caller, no limit on their order); big_done trims leading zero limbs and returns the number with that
+ * sign, in the storage (small when it fits, and then the storage is freed). No copy of the limbs is made. */
+static Big *big_alloc(int64_t n) {
+    Big *b = malloc(sizeof(Big) + (size_t)(n ? n : 1) * 4);
+    if (!b) out_of_memory();
+    BIG_ADJUST(1);
+    return b;
+}
+static int64_t big_done(Big *b, int sign, int64_t n) {
+    while (n > 0 && b->d[n - 1] == 0) n--;
+    if (n <= 2) { int64_t w = int_make(sign, b->d, n); free(b); BIG_ADJUST(-1); return w; }
+    b->sign = sign; b->n = n;
+    return (int64_t)(uintptr_t)b;
+}
+
+/* x << c and x >> c for a count c >= 0 that is checked already, in one pass over the limbs: a shift by whole limbs and one by the
+ * bits left over. >> rounds towards minus infinity: a negative number's magnitude is rounded up when a bit is lost. */
+static int64_t int_shl_limbs(int64_t x, int64_t c) {
+    IntView a; int_view(x, &a);
+    if (a.n == 0) return int_mk_small(0);
+    int64_t w = c / 32, n = a.n + w + 1;
+    int b = (int)(c % 32);
+    Big *r = big_alloc(n);
+    memset(r->d, 0, (size_t)w * 4);
+    uint32_t *o = r->d + w, carry = 0;
+    if (b) {
+        for (int64_t i = 0; i < a.n; i++) { o[i] = (a.d[i] << b) | carry; carry = a.d[i] >> (32 - b); }
+    } else memcpy(o, a.d, (size_t)a.n * 4);
+    o[a.n] = carry;
+    return big_done(r, a.sign, n);
+}
+static int64_t int_shr_limbs(int64_t x, int64_t c) {
+    IntView a; int_view(x, &a);
+    if (a.n == 0) return int_mk_small(0);
+    int64_t w = c / 32;
+    int b = (int)(c % 32);
+    if (w >= a.n) return int_mk_small(a.sign < 0 ? -1 : 0);
+    int64_t n = a.n - w;
+    int lost = 0;                                            /* does a nonzero bit fall off the bottom? (only a negative number cares) */
+    if (a.sign < 0) {
+        lost = b && (a.d[w] & (((uint32_t)1 << b) - 1));
+        for (int64_t i = 0; !lost && i < w; i++) lost = a.d[i] != 0;
+    }
+    Big *r = big_alloc(n + 1);
+    const uint32_t *s = a.d + w;
+    if (b) {
+        for (int64_t i = 0; i + 1 < n; i++) r->d[i] = (s[i] >> b) | (s[i + 1] << (32 - b));
+        r->d[n - 1] = s[n - 1] >> b;
+    } else memcpy(r->d, s, (size_t)n * 4);
+    r->d[n] = 0;
+    for (int64_t i = 0; lost && ++r->d[i] == 0; i++) {}      /* round the magnitude up */
+    return big_done(r, a.sign, n + 1);
+}
+/* sign * 2^bits, for bits >= 0 */
+static int64_t int_pow2(int sign, int64_t bits) {
+    int64_t n = bits / 32 + 1;
+    Big *r = big_alloc(n);
+    memset(r->d, 0, (size_t)(n - 1) * 4);
+    r->d[n - 1] = (uint32_t)1 << (bits % 32);
+    return big_done(r, sign, n);
+}
+
 /* a copy of a number: the word itself when it is small, else a new Big with the same limbs */
 COLD static int64_t int_dup_slow(int64_t x) {
     if (x == 0) return 0;                          /* the word 0 is a small zero too (zeroed memory), but only the low bit is tested inline */
@@ -5098,8 +5161,39 @@ static void int_floordivmod(int64_t x, int64_t y, int64_t *quot, int64_t *rem) {
     *quot = qw; *rem = rw;
 }
 
-COLD static int64_t int_floordiv_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(r); return q; }
-COLD static int64_t int_mod_slow(int64_t x, int64_t y) { int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(q); return r; }
+/* x // y or x % y (want_q: the quotient) when the divisor is one limb (|y| < 2^32) and x is not zero: one pass over x from the top,
+ * with no remainder array, no quotient for %, and the quotient written where it stays. The same floor rules as int_floordivmod. */
+static int64_t int_divlimb(int64_t x, int64_t y, int want_q) {
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    uint64_t d = b.d[0], rem = 0;
+    int differ = a.sign != b.sign;
+    if (!want_q) {
+        for (int64_t i = a.n; i-- > 0;) rem = (rem << 32 | a.d[i]) % d;
+        if (differ && rem) rem = d - rem;                     /* takes the divisor's sign (also when they agree) */
+        uint32_t l = (uint32_t)rem;
+        return int_make(b.sign, &l, 1);
+    }
+    Big *q = big_alloc(a.n + 1);
+    for (int64_t i = a.n; i-- > 0;) {
+        uint64_t cur = rem << 32 | a.d[i];
+        q->d[i] = (uint32_t)(cur / d); rem = cur % d;
+    }
+    q->d[a.n] = 0;
+    for (int64_t i = 0; differ && rem && ++q->d[i] == 0; i++) {}   /* floor: one more in magnitude when the signs differ and it was not exact */
+    return big_done(q, differ ? -1 : 1, a.n + 1);
+}
+static int int_is_limb_divisor(int64_t x, int64_t y) {
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    return b.n == 1 && a.n > 0;
+}
+COLD static int64_t int_floordiv_slow(int64_t x, int64_t y) {
+    if (int_is_limb_divisor(x, y)) return int_divlimb(x, y, 1);
+    int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(r); return q;
+}
+COLD static int64_t int_mod_slow(int64_t x, int64_t y) {
+    if (int_is_limb_divisor(x, y)) return int_divlimb(x, y, 0);
+    int64_t q, r; int_floordivmod(x, y, &q, &r); tomato_int_free(q); return r;
+}
 /* Python-style floor division and remainder of two small numbers, inline (the caller has checked the divisor is not zero). */
 COLD int64_t tomato_int_floordiv_slow(int64_t x, int64_t y, int32_t m) { int64_t r = int_floordiv_slow(x, y); INT_CONSUME(m, x, y); return r; }
 COLD int64_t tomato_int_mod_slow(int64_t x, int64_t y, int32_t m) { int64_t r = int_mod_slow(x, y); INT_CONSUME(m, x, y); return r; }
@@ -5123,8 +5217,15 @@ ALWAYS int64_t tomato_int_mod_c(int64_t x, int64_t y, int32_t m) {
 }
 /* x // 2^k and x % 2^k (k is a constant from 1 to 61, chosen by the compiler): a shift and a mask on a small number. A tagged word is 2v+1, so
  * (w >> k) | 1 is floor(v / 2^k) tagged, and w & ((2^k - 1) << 1) | 1 is v mod 2^k tagged (the floor modulo of a power of two is never negative). */
-COLD static int64_t int_floordivp2_slow_c(int64_t x, int32_t k, int32_t m) { int64_t y = int_mk_small((int64_t)1 << k); int64_t r = int_floordiv_slow(x, y); INT_CONSUME(m, x, 0); return r; }
-COLD static int64_t int_modp2_slow_c(int64_t x, int32_t k, int32_t m) { int64_t y = int_mk_small((int64_t)1 << k); int64_t r = int_mod_slow(x, y); INT_CONSUME(m, x, 0); return r; }
+COLD static int64_t int_floordivp2_slow_c(int64_t x, int32_t k, int32_t m) { int64_t r = int_shr_limbs(x, k); INT_CONSUME(m, x, 0); return r; }
+COLD static int64_t int_modp2_slow_c(int64_t x, int32_t k, int32_t m) {
+    IntView a; int_view(x, &a);                              /* the low 64 bits of the magnitude; a negative number's remainder is 2^k minus them */
+    uint64_t low = (a.n > 0 ? a.d[0] : 0) | (a.n > 1 ? (uint64_t)a.d[1] << 32 : 0), mask = ((uint64_t)1 << k) - 1;
+    low &= mask;
+    if (a.sign < 0 && low) low = (mask + 1) - low;
+    INT_CONSUME(m, x, 0);
+    return int_mk_small((int64_t)low);
+}
 ALWAYS int64_t tomato_int_floordivp2_c(int64_t x, int32_t k, int32_t m) {
     if (__builtin_expect(x & 1, 1)) return (x >> k) | 1;
     return int_floordivp2_slow_c(x, k, m);
@@ -5568,6 +5669,14 @@ int64_t tomato_int_pow(int64_t base, int64_t exp) {
     /* the exponent is not negative (the caller checked) and small enough to count */
     if (!int_is_small(exp)) tomato_fail_id(344, "the exponent is too big");
     int64_t e = int_small_val(exp), result = int_mk_small(1), b = base;
+    if ((base & 1) && e > 0) {                        /* a base of 2^k (or -(2^k)): the result is a single bit, set in one pass */
+        int64_t v = int_small_val(base);
+        uint64_t m = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
+        if (m > 1 && (m & (m - 1)) == 0) {
+            if (e > ((int64_t)1 << 40)) out_of_memory();     /* 2^40 bits is 128 GB: no room for it anyway (and k * e cannot overflow) */
+            return int_pow2(v < 0 && (e & 1) ? -1 : 1, (int64_t)__builtin_ctzll(m) * e);
+        }
+    }
     int own_b = 0;                                    /* b is the caller's base until it is squared for the first time */
     while (e > 0) {
         if (e & 1) { int64_t r = tomato_int_mul(result, b); tomato_int_free(result); result = r; }
@@ -5589,10 +5698,7 @@ static int64_t int_shift_count(int64_t n) {
     return c;
 }
 COLD static int64_t int_shl_slow_c(int64_t x, int64_t n, int32_t m) {
-    int64_t c = int_shift_count(n);
-    int64_t p = tomato_int_pow(int_mk_small(2), int_mk_small(c));
-    int64_t r = tomato_int_mul(x, p);
-    tomato_int_free(p);
+    int64_t r = int_shl_limbs(x, int_shift_count(n));
     INT_CONSUME(m, x, n);
     return r;
 }
@@ -5605,10 +5711,7 @@ ALWAYS int64_t tomato_int_shl_c(int64_t x, int64_t n, int32_t m) {
     return int_shl_slow_c(x, n, m);
 }
 COLD static int64_t int_shr_slow_c(int64_t x, int64_t n, int32_t m) {
-    int64_t c = int_shift_count(n);
-    int64_t p = tomato_int_pow(int_mk_small(2), int_mk_small(c));
-    int64_t r = tomato_int_floordiv(x, p);
-    tomato_int_free(p);
+    int64_t r = int_shr_limbs(x, int_shift_count(n));
     INT_CONSUME(m, x, n);
     return r;
 }

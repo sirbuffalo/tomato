@@ -99,6 +99,7 @@ msgpack_basic
 msgpack_errors
 msgpack_fuzz
 int_shift
+big_shift
 bit_chunks
 compact_lists
 compact_fuzz
