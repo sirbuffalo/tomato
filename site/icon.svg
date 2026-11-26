@@ -1,1 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="93.38000000000000000000 93.38000000000000000000 266.78000000000000000000 266.78000000000000000000"><g fill="none" stroke="#e45d2c" stroke-width="37" stroke-linecap="round" stroke-linejoin="round"><path d="M226.77 113.39V340.16M113.39 226.77V340.16M340.16 226.77V340.16M113.39 226.77H340.16"/><circle cx="226.77" cy="226.77" r="113.39"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="340" height="340" viewBox="-9 6 340 340" role="img" aria-labelledby="t">
+  <title id="t">tomato</title>
+  <g fill="none" stroke="#EB3C27" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke-width="32.3" d="M95 138C32 184 34 260 85 305M229 138C284 184 287 260 234 305"/>
+    <path stroke-width="16.7" d="M121 277L201 170"/>
+    <circle cx="128" cy="191" r="23" stroke-width="16.7"/>
+    <circle cx="198" cy="257" r="23" stroke-width="16.7"/>
+  </g>
+  <path fill="#009639" d="M163 138C139 116 96 102 83 88C67 68 115 64 146 86C145 59 160 32 182 30C207 27 181 58 182 85C210 68 244 68 244 83C242 97 190 115 163 138Z"/>
+</svg>
