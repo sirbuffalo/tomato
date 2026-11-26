@@ -68,3 +68,17 @@ recovers nearly all of that** (objects 1.02, nbody 0.99, binary_trees 0.99, hof 
 recover). Two programs go the other way: fib needs 9% more instructions with the merge or LTO than with a plain link (123.5 M against 113.0 M), the same
 for both, so it is the inlining of the runtime into the program, not the LTO linker; the instruction count does not say whether time follows (the
 Linux timings will). collatz needs 17% (plain, LTO) to 24% (merge) more instructions than at v0.51: a change since v0.51, not a link effect.
+
+**Why collatz executes more instructions (found 2026-11-25).** It is a deliberate trade, made by commit `12f64cb4` ("Speed up generated code and runtime"):
+instructions went up and the time went down. Building the compiler at `12f64cb4~1` and at `12f64cb4` gives exactly 70,331,052 and 82,122,779
+instructions (50000 input, LTO), so that commit is the whole 17%. The loop body `if x % 2 == 0: x //= 2 else: x = 3 * x + 1` has two short arms that assign the
+same variable, which `fast_choice` in `compiler/src/compiler.tom` now emits as a `select`: both arms are worked out every step and one is chosen, with one
+range check on `3 * x` that covers the odd arm. At v0.51 the loop branched: an even step ran 13 instructions and an odd step 15 (the checked multiply and add), 13.96 on average
+over the 5,024,987 steps of this input. Now every step runs the same 16 instructions (`lea`, `cmp`, `jb` for the range
+check, `lea`, `mov`, `sar`, `or`, `test`, `mov`, `cmovne`, the counter's `add` and `jo`, `mov`, `cmp`, `jne`) with no data-dependent branch, 2.0 more per step.
+Whether a number is even is as unpredictable as a coin toss, so v0.51 paid a branch misprediction on about half the steps, which valgrind does not count.
+The Linux timings show the trade paying off: collatz at 1,000,000 takes 0.166 s now (`results.md`) against 0.296 s at v0.51 with LTO
+(`v0.51-lto/results.md`); a pinned back-to-back rerun of the two binaries gave 0.292 s and 0.170 s (median of 25, the host loaded). Nothing to fix.
+The extra 7 percentage points of the merge link (87.15 M) are one instruction per step: with the runtime merged as bitcode `tomato.main` is not inlined into `main` and the
+multiply by 3 comes out as `lea rax,[r13*2]` plus `add rax,r13` instead of one `lea rax,[rbx+rbx*2]`, an instruction-selection difference of that link (not traced further) and not a
+change in the emitted IR.

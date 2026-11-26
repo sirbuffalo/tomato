@@ -6,8 +6,6 @@
   Run `tests/run.sh` on the Mac (and the full tier) to confirm `build-object.sh` takes the split path under macOS's BWK awk and Apple ld rather than the fallback.
 - Widen the loop-item borrowing
   Cover methods that call other proven list-safe methods, and loops over non-class items.
-- Find why collatz executes more instructions than at v0.51
-  collatz executes 17% (plain or LTO link) to 24% (bitcode-merge link) more instructions at d83f43b0 than at v0.51 (70.3 M to 82–87 M, counting input, Linux x86-64). Compare the emitted IR at the two trees. Numbers: `benchmarks/results/linux-x86_64/lto-effect.md`.
 - Check why fib executes more instructions with the runtime inlined
   fib executes 9% more instructions with the runtime inlined (bitcode merge or LTO) than with a plain link at d83f43b0 (123.5 M vs 113.0 M). Check the inliner's choices and whether the Linux timings agree. Numbers: `benchmarks/results/linux-x86_64/lto-effect.md`.
 - Review the compiler changes (`for_file`, `open_call` class switch, `entry_wrapper` `*args`) and the runtime changes on macOS too
@@ -40,3 +38,5 @@
   mandelbrot executes 7.6x, nbody 3.4x and spectral_norm 1.7x more instructions at `bf46a4ee` than at its parent (callgrind, `benchmarks/count.sh --guest`; numbers in `docs/performance.md` and `benchmarks/results/linux-x86_64/results-f533dbd0.md`). Compare the emitted IR before and after the bigfloat stage 3 commit. The Linux snapshot in `docs/performance.md` was measured at the same tree label (`f533dbd0`) without the slowdown, so first find out why the two runs differ.
 - Run `release/release.sh --dry-run` on the signing Mac once to exercise the real Linux step
   Use `--dry-run` (or `--from linux`) so ssh, copy-back, the publish gate and the snapshot are exercised end to end, with `--linux-host` reachable from the Mac. The Linux step's remote script alone ran fine on biggie: the full tier passed 842 tests with `TOMATO_TEST_REQUIRE_LTO=1` at load about 62 (not quiet).
+- Trace why the bitcode-merge link leaves `tomato.main` un-inlined
+  With the runtime merged as bitcode (`-mlink-bitcode-file`), `tomato.main` is not inlined into `main` and `x*3` comes out as `lea`+`add` instead of one `lea` on collatz: 1 instruction per step (87.15 M against 82.12 M with LTO). The IR is the same; find the cause in the merge link's inlining or instruction selection. Numbers: `benchmarks/results/linux-x86_64/lto-effect.md`.
