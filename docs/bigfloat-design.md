@@ -494,3 +494,57 @@ left the fast copy. All test programs print the same with the stage 3 compiler a
 loop nests (literals near 2^-960, 2^-1022 and beyond the double range, fields, list items, int and float mixed, division by zero)
 print the same under the stage 3 compiler in debug mode and this one in release mode.
 
+
+## After stage 5: what is left of the slowdown, and the browser
+
+Measured again on Linux x86-64 (Threadripper 3990X, clang 21, release mode, load about 70 from other users' jobs; instructions by callgrind at the counting inputs of `benchmarks/count.sh`, seconds are the fastest of 15 alternating runs, one core): "before" is `bf46a4ee^`, "start" the tree this task began from, "now" this tree.
+
+| | instructions before | start | now | seconds before | start | now |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| mandelbrot 1000 | 35.5 M | 75.6 M | 75.4 M | 0.08 | 0.09 | 0.09 |
+| nbody 1500000 | 115.6 M | 236.3 M | 222.1 M | 0.20 | 0.30 | 0.29 |
+| spectral_norm 1000 | 75.9 M | 102.1 M | 90.5 M | 0.100 | 0.140 | 0.130 |
+
+**Where nbody's time goes.** An experiment that leaves out every float test of the fast copy (unsound, only to see the floor) executes
+129.5 M instructions and takes the time before stage 3 (0.21 s). So the slowdown is the tests and nothing else: the inner loop runs 205
+instructions per pair of bodies against 92 before stage 3, and about 100 of the 113 extra are the 22 tests of a pair (three
+finite tests for `dx`, `dy`, `dz`; four for `d2`; the product and the quotient of `mag`; and for each of the six velocity updates a
+tiny test of `dx * c.mass` and the two-term test of the update). The old loop was also vectorised by LLVM into packed multiplies,
+which the branches of the tests prevent. Each test is already about as cheap as it gets (a move out of the vector register, a mask,
+an add and a compare, 4 to 6 instructions; the same test on the double itself costs the same, which was tried), and none can be left
+out without knowing something about the fields, which have no intervals. Ways to remove them that were considered and not built:
+a range guard on each field read (about as many guards as tests); testing a group of statements once before their first store
+(it needs a check that `b` and `c` are different objects, and a second copy of the group); or a per-class invariant on the range
+of a field, kept by a test at every store (it moves the cost to the stores of the general copy). nbody's 1.5 times is the price of
+this design, not a loose end.
+
+**What was changed** (about 3 % of nbody's and 9 % of spectral_norm's instructions; the instruction columns "now" were counted after merging `main`'s cold raise helpers, which took a further 2 % off each, the seconds before the merge):
+
+- A float that a call made is a leaf of a chain without a box test of its own (`s + a(i, j) * v[j]`): a box is a NaN, so the chain's
+  last test fails; the result is held (`Gen.hold`) until then, so a chain that fails frees the box before the general copy does the
+  statement again. `tests/programs/float_nests.tom` has `call_leaves`, whose calls return boxes, and runs it under AddressSanitizer.
+- Only the root of a chain tests that its result is finite. An infinity or a NaN stays one through `+ - *`, so the tests of the
+  products and sums below the root look at the lower end only (`f_lower`: one compare instead of an add and a compare), and a root
+  that is a product, whose own test already says finite, has no separate finite test.
+
+**The browser.** The slowdown there was mostly the interpreter, `site/wasm/llvm.js`: it kept the registers of a function in an
+object keyed by name, looked every block and callee up by name, and made a closure call for every operand. It now turns a function
+into JavaScript the first time it is called: registers are local variables (a value that lives in one block shares a variable
+with the other such values of its kind, so the frame stays small and a deep recursion still fits the stack), the blocks are the
+cases of a loop, calls to runtime functions and intrinsics are direct, and `bitcast` between `i64` and `double` goes through two
+typed arrays. Integers are still BigInts. Seconds under Node 22 for the IR of debug mode (the website's mode), compile left
+out (`native/jsc-on-node.js`'s interpreter run alone), median of three, mandelbrot 100, nbody 3000, spectral_norm 80:
+
+| | old interpreter, IR before stage 3 | old interpreter, IR at start | new interpreter, IR before stage 3 | new interpreter, IR at start | new interpreter, IR now |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| mandelbrot | 1.55 | 4.90 | 0.12 | 0.81 | 0.80 |
+| nbody | 2.68 | 5.36 | 0.29 | 0.94 | 0.90 |
+| spectral_norm | 6.30 | 7.73 | 0.51 | 0.74 | 0.61 |
+
+The float IR of stage 3 is still 3 to 7 times the plain-double IR on the same interpreter (every float variable is an `i64` word in
+memory, so a BigInt is made at each read, bitcast and store), but the browser is now 2 to 10 times faster than it was before stage 3
+on all three programs. Release-mode IR is still slower than debug-mode IR in the interpreter (mandelbrot 3.7 s against 2.0 s,
+spectral_norm 1.9 s against 1.2 s on a loaded machine), so the website still compiles in debug mode. Of the 206 programs of
+`tests/programs.txt`, 187 print their expected output through the new interpreter; the other 19 fail the same way under the old
+one (they need files, sockets or standard streams the browser has not) or run for minutes in either (regular expressions over
+3.6 million characters, hash vectors), and the WebAssembly tier of `tests/run.sh` does not run them.

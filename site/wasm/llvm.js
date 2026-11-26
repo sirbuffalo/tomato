@@ -264,7 +264,7 @@
     var parsed = fdefs.map(function (ls) { return self.parseFunction(ls); });
     parsed.forEach(function (f) { self.funcs[f.name] = f; });
     layouts.forEach(function (x) { self.writeInit(x[0], x[1], x[2]); });
-    parsed.forEach(function (f) { self.compileFunction(f); });
+    parsed.forEach(function (f) { self.compileFunction(f); });   // (each becomes JavaScript when it is first called)
     // the runtime reads the generated tables through pointers
     if (this.ex.tomato_set_tables && this.globals.tomato_kinds !== undefined)
       this.ex.tomato_set_tables(this.globals.tomato_kinds, this.globals.tomato_offsets, this.globals.tomato_parents, this.globals.tomato_class_names);
@@ -290,204 +290,356 @@
     return { name: h[2], params: params, ret: rt, blocks: blocks, order: order };
   };
 
-  // ---- compiling instructions to closures
-  Machine.prototype.operand = function (type, text) {
-    var self = this; text = text.trim();
-    if (text[0] === "%") { var n = text; return function (f) { return f.r[n]; }; }
-    var v = this.constValue(type, text);
-    return function () { return v; };
+  // ---- compiling a function to JavaScript. The function is turned into JavaScript source the first time it is called (a
+  // program calls few of the functions in the IR), with its registers as local variables and its blocks as the cases of a
+  // loop; integers stay BigInts (held unsigned within their width), floats are numbers, pointers are numbers.
+  var f64Word = new Float64Array(1), u64Word = new BigUint64Array(f64Word.buffer);
+  function bcFI(v) { f64Word[0] = v; return u64Word[0]; }   // a double's bits as an i64
+  function bcIF(v) { u64Word[0] = v; return f64Word[0]; }   // i64 bits as a double (a float word and a double have the same bits)
+  function fpToInt(v, bits) { return (v !== v || !isFinite(v)) ? 0n : BigInt.asUintN(bits, BigInt(Math.trunc(v))); }
+  function divZero() { throw new Error("division by zero"); }
+  function badPhi() { throw new Error("bad phi"); }
+  function overflowOp(sg, bits, op, x, y) {   // llvm.{s,u}{add,sub,mul}.with.overflow.iN
+    var a = sg ? signed(bits, x) : x, b = sg ? signed(bits, y) : y;
+    var r = op === "add" ? a + b : op === "sub" ? a - b : a * b;
+    var ok = sg ? (r >= -(1n << BigInt(bits - 1)) && r < (1n << BigInt(bits - 1))) : (r >= 0n && r < (1n << BigInt(bits)));
+    return [mask(bits, r), ok ? 0n : 1n];
+  }
+
+  Machine.prototype.u8 = function () {
+    if (!this._u8 || this._u8buf !== this.mem.buffer) { this._u8buf = this.mem.buffer; this._u8 = new Uint8Array(this._u8buf); }
+    return this._u8;
   };
+  Machine.prototype.alloca = function (sz, al) {
+    var s = Math.ceil(this.sp / al) * al; this.sp = s + sz;
+    if (this.sp > this.stackEnd) throw new Error("the program used too much stack");
+    this.u8().fill(0, s, s + sz);
+    return s;
+  };
+  Machine.prototype.tick = function () { if (this.deadline && Date.now() > this.deadline) throw { timeout: true }; };
+  Machine.prototype.callPtr = function (addr, vals, rt) { return this.invoke(this.fnByAddr[addr], vals, rt); };
+  Machine.prototype.missing = function (name) { throw new Error("the program calls @" + name + ", which is not available in the browser"); };
 
   Machine.prototype.compileFunction = function (fn) {
-    var self = this, L = this.layout;
-    fn.compiled = {};
-    fn.order.forEach(function (b) {
-      b.code = b.text.map(function (t) { return self.compileInstr(t); });
-    });
+    var self = this;
+    fn.js = function () {
+      self.genFunction(fn);
+      return fn.js.apply(null, arguments);
+    };
   };
 
-  function cmpInt(pred, bits, a, b) {
-    switch (pred) {
-      case "eq": return a === b; case "ne": return a !== b;
-      case "ult": return a < b; case "ule": return a <= b; case "ugt": return a > b; case "uge": return a >= b;
-    }
-    var x = signed(bits, a), y = signed(bits, b);
-    switch (pred) { case "slt": return x < y; case "sle": return x <= y; case "sgt": return x > y; case "sge": return x >= y; }
-    throw new Error("unsupported icmp " + pred);
-  }
-  function cmpFloat(pred, a, b) {
-    var un = a !== a || b !== b;
-    switch (pred) {
-      case "oeq": return !un && a === b; case "one": return !un && a !== b;
-      case "olt": return !un && a < b; case "ole": return !un && a <= b; case "ogt": return !un && a > b; case "oge": return !un && a >= b;
-      case "une": return un || a !== b; case "ueq": return un || a === b; case "uno": return un; case "ord": return !un;
-      case "ult": return un || a < b; case "ule": return un || a <= b; case "ugt": return un || a > b; case "uge": return un || a >= b;
-    }
-    throw new Error("unsupported fcmp " + pred);
-  }
+  var FCMP = {
+    oeq: "A === B", one: "(A < B || A > B)", olt: "A < B", ole: "A <= B", ogt: "A > B", oge: "A >= B",
+    une: "A !== B", ueq: "(A === B || A !== A || B !== B)", uno: "(A !== A || B !== B)", ord: "(A === A && B === B)",
+    ult: "!(A >= B)", ule: "!(A > B)", ugt: "!(A <= B)", uge: "!(A < B)"
+  };
 
-  Machine.prototype.compileInstr = function (text) {
-    var self = this, L = this.layout, m, dest = null, body = text;
-    if ((m = /^(%[\w.$]+) = (.*)$/.exec(text))) { dest = m[1]; body = m[2]; }
-    var set = dest ? function (f, v) { f.r[dest] = v; } : function () {};
-    var word = /^([a-z]+)/.exec(body)[1];
-    var rest = body.slice(word.length).replace(/^\s+/, "");
-
-    switch (word) {
-      case "ret": {
-        if (rest === "void") return { ret: function () { return undefined; } };
-        var rr = parseType(rest, 0), val = self.operand(rr[0], rest.slice(rr[1]));
-        return { ret: function (f) { return val(f); } };
-      }
-      case "br": {
-        if (rest.startsWith("label")) { var to = rest.replace(/^label\s+%/, ""); return { br: function () { return to; } }; }
-        // Branch weights guide native LLVM optimizations; they do not affect interpretation.
-        var mm = /^i1\s+(\S+),\s*label\s+%([\w.$]+),\s*label\s+%([\w.$]+)(?:,\s*!prof\s+!\d+)?$/.exec(rest);
-        var c = self.operand({ k: "i", bits: 1 }, mm[1]), a = mm[2], b = mm[3];
-        return { br: function (f) { return c(f) ? a : b; } };
-      }
-      case "switch": {
-        var sm = /^(i\d+)\s+(\S+),\s*label\s+%(\S+)\s*\[(.*)\]$/.exec(rest);
-        var st = parseType(sm[1], 0)[0], sv = self.operand(st, sm[2]), def = sm[3], cases = {};
-        var re = /i\d+\s+(-?\d+),\s*label\s+%(\S+)/g, cm;
-        while ((cm = re.exec(sm[4]))) cases[mask(st.bits, BigInt(cm[1])).toString()] = cm[2];
-        return { br: function (f) { var k = sv(f).toString(); return k in cases ? cases[k] : def; } };
-      }
-      case "unreachable": return { br: function () { throw new Error("the program reached unreachable code"); } };
-      case "alloca": {
-        var at = parseType(rest, 0)[0], sz = L.size(at), al = Math.max(L.align(at), 1);
-        return { op: function (f) {
-          var s = Math.ceil(self.sp / al) * al; self.sp = s + sz;
-          if (self.sp > self.stackEnd) throw new Error("the program used too much stack");
-          new Uint8Array(self.mem.buffer, s, sz).fill(0); f.r[dest] = s;
-        } };
-      }
-      case "load": {
-        var lp = splitTop(rest), lt = parseType(lp[0], 0)[0], ptr = self.operand({ k: "p" }, lp[1].replace(/^ptr\s+/, ""));
-        return { op: function (f) { f.r[dest] = self.load(lt, ptr(f)); } };
-      }
-      case "store": {
-        var sp = splitTop(rest), vr = parseType(sp[0], 0), stype = vr[0];
-        var sval = self.operand(stype, sp[0].slice(vr[1])), sptr = self.operand({ k: "p" }, sp[1].replace(/^ptr\s+/, ""));
-        return { op: function (f) { self.store(stype, sptr(f), sval(f)); } };
-      }
-      case "getelementptr": {
-        var gp = splitTop(rest.replace(/^inbounds\s+/, "")), gt = parseType(gp[0], 0)[0];
-        var base = self.operand({ k: "p" }, gp[1].replace(/^ptr\s+/, ""));
-        var idx = gp.slice(2).map(function (x) {
-          var r = parseType(x, 0); var bits = L.resolve(r[0]).bits; return { v: self.operand(r[0], x.slice(r[1])), bits: bits };
+  Machine.prototype.genFunction = function (fn) {
+    var self = this, L = this.layout, names = {}, regs = [], K = [], temps = 0, hasAlloca = false;
+    // Registers. A value used only in the block that defines it shares a variable with other such values of the same kind
+    // (once its last use is past), so a function with hundreds of values has a small frame and a deep recursion fits the
+    // stack; the rest (used in other blocks, phi nodes, parameters) each have a variable of their own.
+    function kindOfType(t) { t = L.resolve(t); return t.k === "i" ? "i" : t.k === "f" ? "f" : t.k === "p" ? "p" : "a"; }
+    function kindOfDef(body) {
+      var w = /^([a-z]+)/.exec(body)[1], rest = body.slice(w.length).replace(/^\s+/, ""), m;
+      try {
+        switch (w) {
+          case "load": return kindOfType(parseType(splitTop(rest)[0], 0)[0]);
+          case "alloca": case "getelementptr": return "p";
+          case "icmp": case "fcmp": case "add": case "sub": case "mul": case "sdiv": case "udiv": case "srem": case "urem": case "and": case "or": case "xor": case "shl": case "lshr": case "ashr": return "i";
+          case "fadd": case "fsub": case "fmul": case "fdiv": case "frem": case "fneg": return "f";
+          case "sext": case "zext": case "trunc": case "sitofp": case "uitofp": case "fptosi": case "fptoui": case "ptrtoint": case "inttoptr": case "bitcast":
+            m = /\s+to\s+(\S+)\s*$/.exec(rest); return kindOfType(parseType(m[1], 0)[0]);
+          case "select": return kindOfType(parseType(splitTop(rest)[1], 0)[0]);
+          case "call": case "tail": m = /^(?:tail\s+)?(?:call\s+)?(.*?)\s*(@[\w.$]+|%[\w.$]+)\(/s.exec(body.replace(/^tail\s+/, "").replace(/^call\s+/, "")); return m ? kindOfType(parseType(m[1].replace(/\s*\(.*\)\s*$/, ""), 0)[0]) : "a";
+        }
+      } catch (e) { }
+      return "a";
+    }
+    var NAMES = /%[\w.$]+/g;
+    (function plan() {
+      var defBlock = {}, cross = {}, info = [];
+      fn.params.forEach(function (p) { if (p.name) cross[p.name] = true; });
+      fn.order.forEach(function (b, bi) {
+        var rows = [];
+        b.text.forEach(function (t, i) {
+          var m = /^(%[\w.$]+) = (.*)$/.exec(t), def = m ? m[1] : null, body = m ? m[2] : t, uses = body.match(NAMES) || [];
+          if (def) defBlock[def] = bi;
+          if (/^phi /.test(body)) { if (def) cross[def] = true; uses.forEach(function (u) { cross[u] = true; }); uses = []; }
+          rows.push({ def: def, uses: uses, kind: def ? kindOfDef(body) : "" });
         });
-        return { op: function (f) {
-          var ix = idx.map(function (d) { return Number(signed(d.bits, d.v(f))); });
-          f.r[dest] = self.gep(gt, base(f), ix);
-        } };
-      }
-      case "icmp": {
-        var im = /^(\w+)\s+(.*)$/.exec(rest), ip = splitTop(im[2]), ir = parseType(ip[0], 0), it = L.resolve(ir[0]);
-        var ia = self.operand(it, ip[0].slice(ir[1])), ib = self.operand(it, ip[1]), pred = im[1], bits = it.k === "i" ? it.bits : 32;
-        if (it.k === "p") return { op: function (f) { f.r[dest] = cmpInt(pred, 32, BigInt(ia(f)), BigInt(ib(f))) ? 1n : 0n; } };
-        return { op: function (f) { f.r[dest] = cmpInt(pred, bits, ia(f), ib(f)) ? 1n : 0n; } };
-      }
-      case "fcmp": {
-        var fm = /^(\w+)\s+(.*)$/.exec(rest), fp = splitTop(fm[2]), fr = parseType(fp[0], 0);
-        var fa = self.operand(fr[0], fp[0].slice(fr[1])), fb = self.operand(fr[0], fp[1]), fpred = fm[1];
-        return { op: function (f) { f.r[dest] = cmpFloat(fpred, fa(f), fb(f)) ? 1n : 0n; } };
-      }
-      case "add": case "sub": case "mul": case "sdiv": case "udiv": case "srem": case "urem": case "and": case "or": case "xor":
-      case "shl": case "lshr": case "ashr": {
-        var br2 = rest.replace(/^(?:(?:nsw|nuw|exact)\s+)+/, ""), bp = splitTop(br2), brr = parseType(bp[0], 0), bt = L.resolve(brr[0]);
-        var ba = self.operand(bt, bp[0].slice(brr[1])), bb = self.operand(bt, bp[1]), bits2 = bt.bits;
-        return { op: function (f) {
-          var x = ba(f), y = bb(f), r;
-          switch (word) {
-            case "add": r = x + y; break; case "sub": r = x - y; break; case "mul": r = x * y; break;
-            case "sdiv": if (y === 0n) throw new Error("division by zero"); r = signed(bits2, x) / signed(bits2, y); break;
-            case "udiv": if (y === 0n) throw new Error("division by zero"); r = x / y; break;
-            case "srem": if (y === 0n) throw new Error("division by zero"); r = signed(bits2, x) % signed(bits2, y); break;
-            case "urem": if (y === 0n) throw new Error("division by zero"); r = x % y; break;
-            case "and": r = x & y; break; case "or": r = x | y; break; case "xor": r = x ^ y; break;
-            case "shl": r = x << y; break; case "lshr": r = x >> y; break; case "ashr": r = signed(bits2, x) >> y; break;
+        info.push(rows);
+      });
+      info.forEach(function (rows, bi) {
+        rows.forEach(function (r) { r.uses.forEach(function (u) { if (u in defBlock && defBlock[u] !== bi) cross[u] = true; }); });
+      });
+      var gcount = 0, maxk = {};
+      info.forEach(function (rows, bi) {
+        var last = {}, free = { i: [], f: [], p: [], a: [] }, used = { i: 0, f: 0, p: 0, a: 0 };
+        rows.forEach(function (r, i) { r.uses.forEach(function (u) { last[u] = i; }); if (r.def && !(r.def in last)) last[r.def] = i; });
+        rows.forEach(function (r, i) {
+          if (r.def && !(r.def in names)) {
+            if (cross[r.def]) { names[r.def] = "g" + (gcount++); regs.push(names[r.def]); }
+            else {
+              var k = r.kind, pool = free[k], slot = pool.length ? pool.pop() : k + (used[k]++);
+              names[r.def] = slot; r.slot = slot; r.k = k;
+              if (used[k] > (maxk[k] || 0)) maxk[k] = used[k];
+            }
           }
-          f.r[dest] = mask(bits2, r);
-        } };
+          // slots whose value is last used here can be taken by the next definition
+          r.uses.concat(r.def ? [r.def] : []).forEach(function (u) {
+            if (last[u] === i && !cross[u] && names[u] !== undefined && /^[ifpa]\d+$/.test(names[u])) {
+              var kk = names[u][0]; if (free[kk].indexOf(names[u]) < 0) free[kk].push(names[u]);
+            }
+          });
+        });
+      });
+      ["i", "f", "p", "a"].forEach(function (k) { for (var j = 0; j < (maxk[k] || 0); j++) regs.push(k + j); });
+    })();
+    function reg(n) { var r = names[n]; if (r === undefined) { r = names[n] = "g" + regs.length; regs.push(r); } return r; }
+    function konst(x) { K.push(x); return "K[" + (K.length - 1) + "]"; }
+    function lit(v) {
+      if (typeof v === "bigint") return v < 0n ? "(" + v + "n)" : v + "n";
+      if (typeof v === "number") {
+        if (v !== v) return "NaN";
+        if (v === Infinity) return "Infinity"; if (v === -Infinity) return "(-Infinity)";
+        if (v === 0 && 1 / v < 0) return "(-0)";
+        return v < 0 ? "(" + v + ")" : String(v);
       }
-      case "fadd": case "fsub": case "fmul": case "fdiv": case "frem": {
-        var fp2 = splitTop(rest), fr2 = parseType(fp2[0], 0);
-        var xa = self.operand(fr2[0], fp2[0].slice(fr2[1])), xb = self.operand(fr2[0], fp2[1]);
-        return { op: function (f) {
-          var x = xa(f), y = xb(f);
-          f.r[dest] = word === "fadd" ? x + y : word === "fsub" ? x - y : word === "fmul" ? x * y : word === "fdiv" ? x / y : x % y;
-        } };
-      }
-      case "fneg": { var nr = parseType(rest, 0), na = self.operand(nr[0], rest.slice(nr[1])); return { op: function (f) { f.r[dest] = -na(f); } }; }
-      case "sext": case "zext": case "trunc": case "sitofp": case "uitofp": case "fptosi": case "fptoui": case "ptrtoint": case "inttoptr": case "bitcast": {
-        var cm2 = /^(.*)\s+to\s+(\S+)$/.exec(rest), cr = parseType(cm2[1], 0), st2 = L.resolve(cr[0]), dt = L.resolve(parseType(cm2[2], 0)[0]);
-        var cv = self.operand(st2, cm2[1].slice(cr[1]));
-        return { op: function (f) {
-          var v = cv(f), r;
-          switch (word) {
-            case "zext": r = v; break;
-            case "sext": r = mask(dt.bits, signed(st2.bits, v)); break;
-            case "trunc": r = mask(dt.bits, v); break;
-            case "sitofp": r = Number(signed(st2.bits, v)); break;
-            case "uitofp": r = Number(v); break;
-            case "fptosi": case "fptoui": r = (v !== v || !isFinite(v)) ? 0n : mask(dt.bits, BigInt(Math.trunc(v))); break;
-            case "ptrtoint": r = mask(dt.bits, BigInt(v)); break;
-            case "inttoptr": r = Number(mask(32, v)); break;
-            case "bitcast":
-              // a float word and a double have the same bits (a float is an i64 at rest, a double while it is worked on)
-              if (st2.k === "f" && dt.k === "i") { bitsView.setFloat64(0, v, true); r = bitsView.getBigUint64(0, true); }
-              else if (st2.k === "i" && dt.k === "f") { bitsView.setBigUint64(0, v, true); r = bitsView.getFloat64(0, true); }
-              else r = v;
-              break;
-            default: r = v;
-          }
-          f.r[dest] = r;
-        } };
-      }
-      case "select": {
-        var slp = splitTop(rest), sc = self.operand({ k: "i", bits: 1 }, slp[0].replace(/^i1\s+/, ""));
-        var s1 = parseType(slp[1], 0), s2 = parseType(slp[2], 0);
-        var sa = self.operand(s1[0], slp[1].slice(s1[1])), sb = self.operand(s2[0], slp[2].slice(s2[1]));
-        return { op: function (f) { f.r[dest] = sc(f) ? sa(f) : sb(f); } };
-      }
-      case "phi": {
-        var pr = parseType(rest, 0), pt = pr[0], arms = [], re2 = /\[\s*([^,\]]+),\s*%([\w.$]+)\s*\]/g, pm;
-        while ((pm = re2.exec(rest.slice(pr[1])))) arms.push([pm[2], self.operand(pt, pm[1])]);
-        return { phi: true, op: function (f) { for (var i = 0; i < arms.length; i++) if (arms[i][0] === f.prev) { f.r[dest] = arms[i][1](f); return; } throw new Error("bad phi"); } };
-      }
-      case "extractvalue": {
-        var ep = splitTop(rest), er = parseType(ep[0], 0), ev = self.operand(er[0], ep[0].slice(er[1])), ei = +ep[1];
-        return { op: function (f) { f.r[dest] = ev(f)[ei]; } };
-      }
-      case "tail": case "call": return self.compileCall(dest, body.replace(/^tail\s+/, ""));
+      return konst(v);
     }
-    throw new Error("unsupported instruction in IR: " + text.slice(0, 80));
-  };
-
-  Machine.prototype.compileCall = function (dest, body) {
-    var self = this, L = this.layout;
-    var m = /^call\s+(.*?)\s*(@[\w.$]+|%[\w.$]+)\((.*)\)\s*$/s.exec(body);
-    if (!m) throw new Error("cannot read call: " + body.slice(0, 80));
-    var retText = m[1].replace(/\s*\(.*\)\s*$/, ""), rtype = parseType(retText, 0)[0], callee = m[2];
-    var args = splitTop(m[3]).map(function (a) {
-      var r = parseType(a, 0); var t = L.resolve(r[0]);
-      return { type: t, val: self.operand(t, a.slice(r[1]).replace(/^(?:(?:noundef|signext|zeroext)\s+)+/, "")) };
+    function opnd(type, text) {
+      text = text.trim();
+      if (text[0] === "%") return reg(text);
+      return lit(self.constValue(type, text));
+    }
+    var blockIdx = {};
+    fn.order.forEach(function (b, i) { blockIdx[b.label] = i; });
+    function target(label) {
+      if (!(label in blockIdx)) throw new Error("branch to an unknown block %" + label);
+      return blockIdx[label];
+    }
+    function loadExpr(t, p) {
+      if (t.k === "i") {
+        if (t.bits <= 8) return "(BigInt(dv.getUint8(" + p + ")) & " + (t.bits === 1 ? "1n" : "255n") + ")";
+        if (t.bits <= 16) return "BigInt(dv.getUint16(" + p + ", true))";
+        if (t.bits <= 32) return "BigInt(dv.getUint32(" + p + ", true))";
+        return "dv.getBigUint64(" + p + ", true)";
+      }
+      if (t.k === "p") return "dv.getUint32(" + p + ", true)";
+      if (t.k === "f") return t.bits === 64 ? "dv.getFloat64(" + p + ", true)" : "dv.getFloat32(" + p + ", true)";
+      throw new Error("cannot load this type");
+    }
+    function storeStmt(t, p, v) {
+      if (t.k === "i") {
+        if (t.bits <= 8) return "dv.setUint8(" + p + ", Number(" + v + " & 255n));";
+        if (t.bits <= 16) return "dv.setUint16(" + p + ", Number(" + v + " & 65535n), true);";
+        if (t.bits <= 32) return "dv.setUint32(" + p + ", Number(" + v + " & 0xffffffffn), true);";
+        return "dv.setBigUint64(" + p + ", BigInt.asUintN(64, " + v + "), true);";
+      }
+      if (t.k === "p") return "dv.setUint32(" + p + ", " + v + " >>> 0, true);";
+      if (t.k === "f") return t.bits === 64 ? "dv.setFloat64(" + p + ", " + v + ", true);" : "dv.setFloat32(" + p + ", " + v + ", true);";
+      throw new Error("cannot store this type");
+    }
+    // returns {code, term}: a JavaScript statement, and whether it ends the block
+    function instr(text, bi) {
+      var m, dest = null, body = text;
+      if ((m = /^(%[\w.$]+) = (.*)$/.exec(text))) { dest = m[1]; body = m[2]; }
+      var d = dest ? reg(dest) : null;
+      var word = /^([a-z]+)/.exec(body)[1];
+      var rest = body.slice(word.length).replace(/^\s+/, "");
+      switch (word) {
+        case "ret": {
+          if (rest === "void") return { code: "return undefined;", term: true };
+          var rr = parseType(rest, 0);
+          return { code: "return " + opnd(rr[0], rest.slice(rr[1])) + ";", term: true };
+        }
+        case "br": {
+          if (rest.startsWith("label")) return { code: "prev = " + bi + "; b = " + target(rest.replace(/^label\s+%/, "")) + "; continue;", term: true };
+          var mm = /^i1\s+(\S+),\s*label\s+%([\w.$]+),\s*label\s+%([\w.$]+)(?:,\s*!prof\s+!\d+)?$/.exec(rest);
+          return { code: "prev = " + bi + "; b = " + opnd({ k: "i", bits: 1 }, mm[1]) + " ? " + target(mm[2]) + " : " + target(mm[3]) + "; continue;", term: true };
+        }
+        case "switch": {
+          var sm = /^(i\d+)\s+(\S+),\s*label\s+%(\S+)\s*\[(.*)\]$/.exec(rest);
+          var st = parseType(sm[1], 0)[0], sv = opnd(st, sm[2]);
+          var code = "prev = " + bi + "; sw = " + sv + "; ", re = /i\d+\s+(-?\d+),\s*label\s+%(\S+)/g, cm;
+          while ((cm = re.exec(sm[4]))) code += "if (sw === " + lit(mask(st.bits, BigInt(cm[1]))) + ") b = " + target(cm[2]) + "; else ";
+          return { code: code + "b = " + target(sm[3]) + "; continue;", term: true };
+        }
+        case "unreachable": return { code: 'throw new Error("the program reached unreachable code");', term: true };
+        case "alloca": {
+          var at = parseType(rest, 0)[0];
+          hasAlloca = true;
+          return { code: d + " = M.alloca(" + L.size(at) + ", " + Math.max(L.align(at), 1) + ");" };
+        }
+        case "load": {
+          var lp = splitTop(rest), lt = L.resolve(parseType(lp[0], 0)[0]);
+          return { code: d + " = " + loadExpr(lt, opnd({ k: "p" }, lp[1].replace(/^ptr\s+/, ""))) + ";" };
+        }
+        case "store": {
+          var sp = splitTop(rest), vr = parseType(sp[0], 0), stype = L.resolve(vr[0]);
+          return { code: storeStmt(stype, opnd({ k: "p" }, sp[1].replace(/^ptr\s+/, "")), opnd(stype, sp[0].slice(vr[1]))) };
+        }
+        case "getelementptr": {
+          var gp = splitTop(rest.replace(/^inbounds\s+/, "")), gt = parseType(gp[0], 0)[0];
+          var base = opnd({ k: "p" }, gp[1].replace(/^ptr\s+/, "")), c = 0, terms = [];
+          var add = function (x, size, isConst, bits) {
+            if (isConst) c += Number(signed(bits, BigInt(x))) * size;
+            else terms.push("Number(BigInt.asIntN(" + bits + ", " + x + ")) * " + size);
+          };
+          var t = L.resolve(gt);
+          for (var i = 2; i < gp.length; i++) {
+            var r = parseType(gp[i], 0), bits = L.resolve(r[0]).bits, tx = gp[i].slice(r[1]).trim(), isC = tx[0] !== "%";
+            var val = isC ? self.constValue(r[0], tx) : opnd(r[0], tx);
+            if (i === 2) { add(val, L.size(gt), isC, bits); continue; }
+            if (t.k === "s") {
+              if (!isC) throw new Error("bad getelementptr");
+              var k = Number(signed(bits, BigInt(val)));
+              c += L.offsets(t).offs[k]; t = L.resolve(t.f[k]);
+            } else if (t.k === "a") { add(val, L.size(t.t), isC, bits); t = L.resolve(t.t); }
+            else throw new Error("bad getelementptr");
+          }
+          return { code: d + " = ((" + base + (c ? " + " + c : "") + terms.map(function (x) { return " + " + x; }).join("") + ") >>> 0);" };
+        }
+        case "icmp": {
+          var im = /^(\w+)\s+(.*)$/.exec(rest), ip = splitTop(im[2]), ir = parseType(ip[0], 0), it = L.resolve(ir[0]);
+          var A = opnd(it, ip[0].slice(ir[1])), B = opnd(it, ip[1]), pred = im[1], bits2 = it.k === "i" ? it.bits : 32, e;
+          var ops = { eq: "===", ne: "!==", ult: "<", ule: "<=", ugt: ">", uge: ">=", slt: "<", sle: "<=", sgt: ">", sge: ">=" };
+          if (!(pred in ops)) throw new Error("unsupported icmp " + pred);
+          if (pred[0] === "s") e = it.k === "p" ? "(" + A + " | 0) " + ops[pred] + " (" + B + " | 0)" : "BigInt.asIntN(" + bits2 + ", " + A + ") " + ops[pred] + " BigInt.asIntN(" + bits2 + ", " + B + ")";
+          else e = A + " " + ops[pred] + " " + B;
+          return { code: d + " = (" + e + ") ? 1n : 0n;" };
+        }
+        case "fcmp": {
+          var fm = /^(\w+)\s+(.*)$/.exec(rest), fp = splitTop(fm[2]), fr = parseType(fp[0], 0);
+          if (!(fm[1] in FCMP)) throw new Error("unsupported fcmp " + fm[1]);
+          var fa = opnd(fr[0], fp[0].slice(fr[1])), fb = opnd(fr[0], fp[1]);
+          return { code: d + " = (" + FCMP[fm[1]].replace(/A/g, fa).replace(/B/g, fb) + ") ? 1n : 0n;" };
+        }
+        case "add": case "sub": case "mul": case "sdiv": case "udiv": case "srem": case "urem": case "and": case "or": case "xor":
+        case "shl": case "lshr": case "ashr": {
+          var br2 = rest.replace(/^(?:(?:nsw|nuw|exact)\s+)+/, ""), bp = splitTop(br2), brr = parseType(bp[0], 0), bt = L.resolve(brr[0]);
+          var X = opnd(bt, bp[0].slice(brr[1])), Y = opnd(bt, bp[1]), W = bt.bits, e2;
+          var U = function (s) { return "BigInt.asUintN(" + W + ", " + s + ")"; }, S = function (s) { return "BigInt.asIntN(" + W + ", " + s + ")"; };
+          switch (word) {
+            case "add": e2 = U(X + " + " + Y); break; case "sub": e2 = U(X + " - " + Y); break; case "mul": e2 = U(X + " * " + Y); break;
+            case "sdiv": e2 = "(" + Y + " === 0n ? divZero() : " + U(S(X) + " / " + S(Y)) + ")"; break;
+            case "udiv": e2 = "(" + Y + " === 0n ? divZero() : " + X + " / " + Y + ")"; break;
+            case "srem": e2 = "(" + Y + " === 0n ? divZero() : " + U(S(X) + " % " + S(Y)) + ")"; break;
+            case "urem": e2 = "(" + Y + " === 0n ? divZero() : " + X + " % " + Y + ")"; break;
+            case "and": e2 = X + " & " + Y; break; case "or": e2 = X + " | " + Y; break; case "xor": e2 = X + " ^ " + Y; break;
+            case "shl": e2 = U(X + " << " + Y); break; case "lshr": e2 = X + " >> " + Y; break; case "ashr": e2 = U(S(X) + " >> " + Y); break;
+          }
+          return { code: d + " = " + e2 + ";" };
+        }
+        case "fadd": case "fsub": case "fmul": case "fdiv": case "frem": {
+          var fp2 = splitTop(rest), fr2 = parseType(fp2[0], 0);
+          var xa = opnd(fr2[0], fp2[0].slice(fr2[1])), xb = opnd(fr2[0], fp2[1]);
+          var fop = { fadd: "+", fsub: "-", fmul: "*", fdiv: "/", frem: "%" }[word];
+          return { code: d + " = " + xa + " " + fop + " " + xb + ";" };
+        }
+        case "fneg": { var nr = parseType(rest, 0); return { code: d + " = -" + opnd(nr[0], rest.slice(nr[1])) + ";" }; }
+        case "sext": case "zext": case "trunc": case "sitofp": case "uitofp": case "fptosi": case "fptoui": case "ptrtoint": case "inttoptr": case "bitcast": {
+          var cm2 = /^(.*)\s+to\s+(\S+)$/.exec(rest), cr = parseType(cm2[1], 0), st2 = L.resolve(cr[0]), dt = L.resolve(parseType(cm2[2], 0)[0]);
+          var V = opnd(st2, cm2[1].slice(cr[1])), e3;
+          switch (word) {
+            case "zext": e3 = V; break;
+            case "sext": e3 = "BigInt.asUintN(" + dt.bits + ", BigInt.asIntN(" + st2.bits + ", " + V + "))"; break;
+            case "trunc": e3 = "BigInt.asUintN(" + dt.bits + ", " + V + ")"; break;
+            case "sitofp": e3 = "Number(BigInt.asIntN(" + st2.bits + ", " + V + "))"; break;
+            case "uitofp": e3 = "Number(" + V + ")"; break;
+            case "fptosi": case "fptoui": e3 = "fpToInt(" + V + ", " + dt.bits + ")"; break;
+            case "ptrtoint": e3 = "BigInt.asUintN(" + dt.bits + ", BigInt(" + V + "))"; break;
+            case "inttoptr": e3 = "Number(BigInt.asUintN(32, " + V + "))"; break;
+            default:   // bitcast
+              if (st2.k === "f" && dt.k === "i") e3 = "bcFI(" + V + ")";
+              else if (st2.k === "i" && dt.k === "f") e3 = "bcIF(" + V + ")";
+              else e3 = V;
+          }
+          return { code: d + " = " + e3 + ";" };
+        }
+        case "select": {
+          var slp = splitTop(rest), s1 = parseType(slp[1], 0), s2 = parseType(slp[2], 0);
+          return { code: d + " = " + opnd({ k: "i", bits: 1 }, slp[0].replace(/^i1\s+/, "")) + " ? " + opnd(s1[0], slp[1].slice(s1[1])) + " : " + opnd(s2[0], slp[2].slice(s2[1])) + ";" };
+        }
+        case "extractvalue": {
+          var ep = splitTop(rest), er = parseType(ep[0], 0);
+          return { code: d + " = " + opnd(er[0], ep[0].slice(er[1])) + "[" + (+ep[1]) + "];" };
+        }
+        case "tail": case "call": return call(d, body.replace(/^tail\s+/, ""));
+      }
+      throw new Error("unsupported instruction in IR: " + text.slice(0, 80));
+    }
+    function call(d, body) {
+      var m = /^call\s+(.*?)\s*(@[\w.$]+|%[\w.$]+)\((.*)\)\s*$/s.exec(body);
+      if (!m) throw new Error("cannot read call: " + body.slice(0, 80));
+      var rtype = parseType(m[1].replace(/\s*\(.*\)\s*$/, ""), 0)[0], callee = m[2], rt = L.resolve(rtype);
+      var args = splitTop(m[3]).map(function (a) {
+        var r = parseType(a, 0), t = L.resolve(r[0]);
+        return { type: t, val: opnd(t, a.slice(r[1]).replace(/^(?:(?:noundef|signext|zeroext)\s+)+/, "")) };
+      });
+      var vals = args.map(function (a) { return a.val; });
+      var set = d ? d + " = " : "", after = " dv = M.dv();";   // (a call may have grown the memory)
+      if (callee[0] === "%") return { code: set + "M.callPtr(" + reg(callee) + ", [" + vals.join(", ") + "], " + konst(rt) + ");" + after };
+      var name = callee.slice(1), f = self.funcs[name], mo;
+      if (f) return { code: set + konst(f) + ".js(" + vals.join(", ") + ");" + after };
+      if ((mo = /^llvm\.([su])(add|sub|mul)\.with\.overflow\.i(\d+)$/.exec(name))) return { code: set + "overflowOp(" + (mo[1] === "s") + ", " + mo[3] + ", " + JSON.stringify(mo[2]) + ", " + vals[0] + ", " + vals[1] + ");" };
+      if (name === "llvm.floor.f64") return { code: set + "Math.floor(" + vals[0] + ");" };
+      if (name === "llvm.pow.f64") return { code: set + "Math.pow(" + vals[0] + ", " + vals[1] + ");" };
+      if (name === "llvm.fabs.f64") return { code: set + "Math.abs(" + vals[0] + ");" };
+      if (name === "llvm.sqrt.f64") return { code: set + "Math.sqrt(" + vals[0] + ");" };   // (the fast copy of a loop nest; JavaScript's square root is the correctly rounded one too)
+      if (name === "llvm.assume") return { code: "" };
+      if (name === "llvm.trap") return { code: 'throw new Error("the program trapped");' };
+      if (name === "printf") return { code: set + "M.printf([" + vals.join(", ") + "]);" + after };
+      if (name === "putchar") return { code: "M.ex.putchar(Number(" + vals[0] + "));" + (d ? " " + d + " = " + vals[0] + ";" : "") + after };
+      var ex = self.ex[name];
+      if (typeof ex !== "function") return { code: "M.missing(" + JSON.stringify(name) + ");" };
+      var conv = args.map(function (a) { var t = a.type; return t.k === "i" && t.bits > 32 ? a.val : t.k === "i" ? "Number(" + a.val + ")" : a.val; });
+      var call = konst(ex) + "(" + conv.join(", ") + ")", e;
+      if (rt.k === "v") return { code: call + ";" + after };
+      if (rt.k === "i") e = "BigInt.asUintN(" + rt.bits + ", BigInt(" + call + "))";
+      else if (rt.k === "p") e = call + " >>> 0";
+      else e = call;
+      return { code: set + e + ";" + after };
+    }
+    // the parameters first, then the blocks
+    var params = fn.params.map(function (p, i) { return "p" + i; });
+    var head = [];
+    fn.params.forEach(function (p, i) { if (p.name) head.push(reg(p.name) + " = p" + i + ";"); });
+    var cases = [];
+    fn.order.forEach(function (b, bi) {
+      var out = ["case " + bi + ":"], i = 0, phis = [];
+      for (; i < b.text.length; i++) {      // phi nodes read the values from before this block began: evaluate them first
+        var pm = /^(%[\w.$]+) = phi (.*)$/.exec(b.text[i]);
+        if (!pm) break;
+        var pr = parseType(pm[2], 0), pt = pr[0], arms = [], re2 = /\[\s*([^,\]]+),\s*%([\w.$]+)\s*\]/g, am, tmp = "ph" + (temps++);
+        var sw = "switch (prev) {";
+        while ((am = re2.exec(pm[2].slice(pr[1])))) sw += " case " + target(am[2]) + ": " + tmp + " = " + opnd(pt, am[1]) + "; break;";
+        out.push(sw + " default: badPhi(); }");
+        phis.push([reg(pm[1]), tmp]);
+      }
+      phis.forEach(function (p) { out.push(p[0] + " = " + p[1] + ";"); });
+      var ended = false;
+      for (; i < b.text.length && !ended; i++) {
+        var r = instr(b.text[i], bi);
+        if (r.code) out.push(r.code);
+        ended = !!r.term;
+      }
+      if (!ended) out.push('throw new Error("a block ended without a branch");');
+      cases.push(out.join("\n"));
     });
-    var rt = L.resolve(rtype);
-    var st = function (f, v) { if (dest) f.r[dest] = v; };
-    if (callee[0] === "%") {
-      var fp = callee;
-      return { op: function (f) { var name = self.fnByAddr[f.r[fp]]; st(f, self.invoke(name, args.map(function (a) { return a.val(f); }), rt)); } };
-    }
-    var name = callee.slice(1);
-    return { op: function (f) { st(f, self.invoke(name, args.map(function (a) { return a.val(f); }), rt, args)); } };
+    var src = "var " + regs.concat(["prev = -1", "b = 0", "sw", "dv = M.dv()"]).concat(Array.apply(null, Array(temps)).map(function (_, i) { return "ph" + i; })).join(", ") + ";\n" +
+      head.join("\n") + "\n" + (hasAlloca ? "var sp0 = M.sp;\ntry {\n" : "") +
+      "for (;;) {\nif ((++M.steps & 4095) === 0) M.tick();\nswitch (b) {\n" + cases.join("\n") + "\ndefault: throw new Error(\"bad block\");\n}\n}\n" +
+      (hasAlloca ? "} finally { M.sp = sp0; }\n" : "");
+    fn.js = new Function("M", "K", "bcFI", "bcIF", "fpToInt", "divZero", "badPhi", "overflowOp",
+      "return function (" + params.join(", ") + ") {\n" + src + "};")(self, K, bcFI, bcIF, fpToInt, divZero, badPhi, overflowOp);
   };
 
   // ---- calling
   Machine.prototype.invoke = function (name, vals, rt, args) {
     var fn = this.funcs[name];
-    if (fn) return this.exec(fn, vals);
+    if (fn) return fn.js.apply(null, vals);
     var m;
     if ((m = /^llvm\.([su])(add|sub|mul)\.with\.overflow\.i(\d+)$/.exec(name))) {
       var bits = +m[3], x = vals[0], y = vals[1], sg = m[1] === "s";
@@ -536,30 +688,7 @@
     return 0n;
   };
 
-  Machine.prototype.exec = function (fn, vals) {
-    var f = { r: {}, prev: null }, i, savedSp = this.sp;
-    for (i = 0; i < fn.params.length; i++) if (fn.params[i].name) f.r[fn.params[i].name] = vals[i];
-    var blk = fn.order[0], self = this;
-    try {
-      for (;;) {
-        var code = blk.code, next = null, j, ins;
-        // phi nodes read the values from before this block began, so evaluate them first
-        for (j = 0; j < code.length; j++) {
-          ins = code[j];
-          if (ins.phi) ins.op(f); else break;
-        }
-        for (; j < code.length; j++) {
-          ins = code[j];
-          if (this.deadline && (++this.steps & 0xfff) === 0 && Date.now() > this.deadline) throw { timeout: true };
-          if (ins.op) ins.op(f);
-          else if (ins.ret) return ins.ret(f);
-          else { next = ins.br(f); break; }
-        }
-        if (next === null) throw new Error("a block ended without a branch");
-        f.prev = blk.label; blk = fn.blocks[next];
-      }
-    } finally { this.sp = savedSp; }
-  };
+  Machine.prototype.exec = function (fn, vals) { return fn.js.apply(null, vals); };
 
   // ---------------------------------------------------------------- running a program
   // Runs the IR's @main with the given inputs; returns the exit code. Output goes through the WASI host.

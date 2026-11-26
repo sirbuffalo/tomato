@@ -4354,9 +4354,10 @@ class Gen:
         yp = self.chain_product(y)
         return (xp or yp) and (xp or not self.chain_node(x) or x.fields[0].text == '*') and (yp or not self.chain_node(y) or y.fields[0].text == '*')
 
-    def chain_value(self, n: Node, covered: bool = False) -> str:
+    def chain_value(self, n: Node, covered: bool = False, root: bool = False) -> str:
         # the double of n, adding its tests to chain_checks and its products to chain_prods. covered: n is a product whose test
-        # the two-term test of the sum above it makes
+        # the two-term test of the sum above it makes. root: n is the whole chain, whose result is also tested to be finite; an
+        # infinity or a NaN stays one through + - *, so the tests of the operations below it need only their lower side
         k = n.kind
         if k == 'FloatLit':
             m = n.fields[0].num
@@ -4379,6 +4380,12 @@ class Gen:
                 if k == 'Attr' and val_node(n.fields[0]).kind == 'Name':
                     self.chain_raw.append(val_node(n.fields[0]).fields[0].text + '.' + n.fields[1].text)
                 return self.bf_double(e.reg)
+            if self.bail != '' and e.ty == 'float' and e.fresh and not e.small and not small_text(e.reg):
+                # a float that a call made, which may be a box that this code owns: it is not tested here either (a box is a NaN, so
+                # the chain's last test fails). It is held until then, so that a chain that fails frees it before the general copy
+                # does the statement again.
+                self.hold(e)
+                return self.bf_double(e.reg)
             return self.bf_double(self.need_fin(self.bf_word(e)).reg)
         left = val_node(n.fields[1])
         right = val_node(n.fields[2])
@@ -4399,14 +4406,18 @@ class Gen:
             if not covered:
                 if bounded:
                     self.chain_checks.append(self.f_above(r, '0x0010000000000000', True, 'cok'))
-                else:
+                elif root:
                     self.chain_checks.append(self.f_range(r, 4503599627370497, 9214364837600034815, 'cok'))
+                else:
+                    self.chain_checks.append(self.f_lower(r, 4503599627370497, 'cok'))
         if two:
             # at least 2^-960 (the bits 63 << 52) and finite
             if bounded:
                 self.chain_checks.append(self.f_above(r, '0x03F0000000000000', False, 'ctwo'))
-            else:
+            elif root:
                 self.chain_checks.append(self.f_range(r, 283726776524341248, 8935141660703064064, 'ctwo'))
+            else:
+                self.chain_checks.append(self.f_lower(r, 283726776524341248, 'ctwo'))
         return r
 
     def fast_bounded(self, n: Node | None) -> bool:
@@ -4441,6 +4452,17 @@ class Gen:
         self.emit(f'{ok} = icmp ult i64 {off}, {span}')
         return ok
 
+    def f_lower(self, d: str, lo: int, hint: str) -> str:
+        # an i1: the magnitude of the double d, as bits, is at least lo (an infinity and a NaN pass: the test of the whole chain
+        # catches them)
+        bits = self.tmp('cbits')
+        self.emit(f'{bits} = bitcast double {d} to i64')
+        mag = self.tmp('cmag')
+        self.emit(f'{mag} = and i64 {bits}, 9223372036854775807')
+        ok = self.tmp(hint)
+        self.emit(f'{ok} = icmp uge i64 {mag}, {lo}')
+        return ok
+
     def chain_exactly(self, d: str, prods: list[list[str]]) -> str:
         # an i1: the exact tests of a chain whose result is the double d and whose products are prods (each [product, x, y])
         fine = self.f_range(d, 0, 9218868437227405312, 'cfin')
@@ -4454,16 +4476,22 @@ class Gen:
         return fine
 
     def bf_chain(self, n: Node) -> Ex:
+        held_before = len(self.held)
+        e = self.bf_chain_tests(n)
+        self.drop_held(held_before)             # (a chain that got to its end held plain doubles only)
+        return e
+
+    def bf_chain_tests(self, n: Node) -> Ex:
         saved = self.chain_checks
         saved_prods = self.chain_prods
         self.chain_checks = []
         self.chain_prods = []
-        d = self.chain_value(n)
+        d = self.chain_value(n, False, True)
         bits = self.tmp('cbits')
         self.emit(f'{bits} = bitcast double {d} to i64')
         ok = ''
-        if not self.two_terms(n) and not self.fast_bounded(n):
-            ok = self.f_range(d, 0, 9218868437227405312, 'cfin')     # (the two-term test of the top sum says it is finite)
+        if not self.two_terms(n) and not self.fast_bounded(n) and not (n.fields[0].text == '*' and self.chain_product(n)):
+            ok = self.f_range(d, 0, 9218868437227405312, 'cfin')     # (the two-term test of the top sum, and the test of a top product, say it is finite)
         for c in self.chain_checks:
             ok = c if ok == '' else self.bit_op('and', ok, c)
         prods = self.chain_prods

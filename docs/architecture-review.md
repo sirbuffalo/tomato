@@ -200,8 +200,8 @@ built-in modules is in `docs/next-features.md`, section 4.
 ```
    native                                         browser / repl fast path
    ------                                         ------------------------
-   program.ll + tomato_rt.c --clang -flto-->      program.ll --llvm.js parse--> closures per instruction
-   one optimised executable                        |  every i64 is a JS BigInt, registers are object properties
+   program.ll + tomato_rt.c --clang -flto-->      program.ll --llvm.js--> JavaScript per function (made at its first call)
+   one optimised executable                        |  every i64 is a JS BigInt, registers are local variables
    runtime fast paths inlined                      |  unknown callees -> exports of runtime.wasm
    C callback sort, libcurl, real sleep            |  no callbacks into the program (Tomato merge sort instead)
    SIGSEGV guard -> E350                           |  JS RangeError -> E350, 5 s deadline every 4096 instructions

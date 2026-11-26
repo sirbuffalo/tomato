@@ -108,6 +108,22 @@ def calls():
         print(i, v)
     print(total)
 
+def call_leaves():
+    # the results of calls are leaves of a chain; some are boxes, which the chain's last test must catch (and free)
+    total = 0.0
+    for i in range(7):
+        total = total + big(i) * 0.5
+        print(i, total)
+    s = 0.0
+    for i in range(7):
+        s = s + big(i) - 3.0 * big(i + 1)
+        print(i, s)
+    p = 1.0
+    for i in range(1, 6):
+        p = p * big(i) * big(i + 1)
+        print(i, p)
+    print(total, s, p)
+
 def swaps():
     a = 1e400
     b = 2.0
@@ -147,6 +163,7 @@ def main():
     lists()
     compares()
     calls()
+    call_leaves()
     swaps()
     print(mandel(40))
     try:
