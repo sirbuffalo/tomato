@@ -188,6 +188,60 @@ Notes on the comparison:
   while other work ran); Tomato release runs 25% to 100%. The medians of 10 shuffled runs are much less affected than the
   extremes, and two full runs agreed.
 
+## What was done (raises out of line, so short functions inline; unreleased)
+
+Goal: `math.sqrt` and the other short std functions that `raise` and use `!` conversions are inlined into their callers in
+release mode. Found with clang's inline remarks (`-Rpass=inline -Rpass-missed=inline`, and `-Wl,-plugin-opt=-pass-remarks=inline`
+for the LTO link) on a plain function that calls 20 `math` functions:
+
+- **Building the error message counted as the function's size.** `math.log` costs 815 against the 325 that `inlinehint` allows:
+  its `raise ValueError(f'... {v}', 'E53')` is an f-string, a text of a float, a concatenation, an error object, four releases and
+  four stores, all inline. `sqrt` (260) was inlined only because its message was already in a helper (`_bad_sqrt`).
+- **The test for an error after each call had no branch weights**, and clang predicts that `tomato_exc != null` is *usually
+  true* (a pointer compared with null). After about four calls the rest of the caller looked as if it rarely ran, the
+  threshold there dropped to 45, and even `exp`, `cbrt`, `hypot` and `pow` (cost 145 to 295) were not inlined.
+
+**What changed (release mode only; debug mode and the website are unchanged):**
+
+1. `Gen.check_error` and the test after `@init` branch with the weight of a loop bailout (1:100000).
+2. `raise ERROR` is compiled into a function of its own, `@tomato.raise.N` (`Gen.outline_raise`), marked `cold noinline`. It is passed
+   the values of the variables ERROR reads, makes the error and sets it pending (or leaves the error that making it raised); the
+   raise site is the loads, one call and the branch to the handler or the epilogue. ERROR is compiled with the function's own state
+   (types, narrowing, facts), so the code is what it would have been inline; if it needs anything else of the function (a
+   register, a label, a write to a variable, an async frame, a loop nest's fast copy) the raise is compiled inline as before.
+3. A runtime error of the compiler's own checks (`Gen.fail_with`: an overflow, a float division by zero) is one call to a shared
+   `@tomato.fail.N` (`Gen.fail_call`), one per error and list of types of the values to free, which frees those values, makes
+   the error and sets it pending.
+
+**Inline decisions in that function** (cost / threshold; before → after):
+
+| function | before | after |
+| --- | --- | --- |
+| `sqrt` | inlined, 260 / 325 | inlined, 240 / 325 |
+| `log`, `log2`, `log10`, `log1p`, `acosh` | not, 815 / 325 (45 after the fourth call) | inlined, 240 / 325 |
+| `atanh` | not, 885 / 45 | inlined, 310 / 325 |
+| `exp`, `cbrt`, `hypot` | not, 145 / 45 | inlined, 145 / 325 |
+| `pow` | not, 295 / 45 | inlined, 295 / 325 |
+| `log_base` | not, 1415 | not, 605 / 225 |
+| `asin`, `acos` (make an `Angle`) | not, 1135 | not, 560 |
+| `isqrt`, `factorial`, `comb`, `perm` (loops, big numbers) | not, 1725 to 2375 | not, 805 to 1660 |
+
+**Instructions** (callgrind, Linux x86-64, clang 21, release LTO, the counting inputs; before → after): fannkuch 293.4 → 263.6 M
+(−10.2%), levenshtein −3.2%, nbody −2.0%, spectral_norm −1.9%, life −1.8%, hof −1.5%, kmers −1.1%, revcomp −0.6%, quicksort −0.5%;
+matmul 83.8 → 87.3 M (+4.2%), dijkstra +1.3%, tokenize +0.5%, nqueens +0.5%, binary_trees +0.4%; the other 11 within ±0.01%.
+Every benchmark prints the same. Matmul's `main` became short enough to be inlined into the runtime's `main`, where its loop
+is compiled with one more instruction per pass; marking the entry function `noinline` brought matmul back (+0.16%) but cost
+collatz +6.1% and half of fannkuch's gain, so it was not kept. Dijkstra's +1.3% is the weights (+0.4% without them); 1:10, the
+weight of the runtime error branches, gave dijkstra +0.85% but lost spectral_norm's and part of hof's gains.
+
+Test: `raise_paths` (debug; release under AddressSanitizer with the leak check), raises with f-strings, fields, comprehensions, big
+numbers, `finally`, re-raises inside `catch`, an error whose `@init` raises, and runtime errors with values to free. Outside the
+suite: every program of `tests/programs.txt`, `tests/runtime/` and `examples/` (302) built in release mode under AddressSanitizer
+with the old and the new compiler gave the same output, exit status and leak report (two differ from run to run with either
+compiler); and the compiler itself built in release mode (437 raises moved out, 2 left inline, 207 `@tomato.fail` functions)
+reproduces `compiler/bootstrap/tomatoc.ll` exactly. The website's IR interpreter (`site/wasm/llvm.js`) reads the `cold` and
+`noinline` attributes, for release IR run in it (`wasm interpreter runs weighted error branches`).
+
 ## What was done (the suite's average at the speed goal, unreleased)
 
 The second step toward the goal below, which is about the average over the suite (Tomato ÷ Go 1.11, Tomato ÷ Rust 1.33): **the averages over the

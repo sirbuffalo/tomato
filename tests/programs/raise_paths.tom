@@ -1,0 +1,271 @@
+# Raise statements and runtime errors in every kind of place. In release mode each raise is made by a cold function of its
+# own (@tomato.raise.N, passed the values of the variables it reads), and each runtime error by @tomato.fail.N, which frees
+# the values the failing operation held; tests/run.sh runs this program in release mode too (under AddressSanitizer with the
+# leak check), and the output must be the same as in debug mode.
+import math
+
+class AppError(Error):
+    code: int = 0
+
+    @init
+    def make_app(self, message: str, code: int):
+        Error.start(self, message, 'E-app')
+        self.code = code
+
+# an error whose @init itself raises: the raise statement then leaves that error instead
+class PickyError(Error):
+    @init
+    def make_picky(self, message: str):
+        if message == '':
+            raise ValueError('a PickyError needs a message')
+        Error.start(self, message)
+
+class Account:
+    owner: str = ''
+    balance: int = 0
+    history: list[int] = []
+
+    @init
+    def open(self, owner: str, balance: int):
+        self.owner = owner
+        self.balance = balance
+
+    def take(self, amount: int) -> int:
+        if amount > self.balance:
+            raise AppError(f'{self.owner} has {self.balance}, not {amount} (after {len(self.history)} moves)', amount - self.balance)
+        self.balance -= amount
+        self.history.append(-amount)
+        return self.balance
+
+def check_root(x: float) -> float:
+    return math.sqrt(x) + math.log(x + 1.0)
+
+def need_positive(n: int, label: str) -> int:
+    doubled = n * 2
+    if n <= 0:
+        raise ValueError(f'{label} must be positive, but is {n} (twice that is {doubled})', 'E-pos')
+    return doubled
+
+def picky(word: str) -> int:
+    raise PickyError(word)
+
+def big_message(n: int) -> int:
+    xs = [k * k for k in range(n)]
+    if n > 2:
+        raise RuntimeError(f'too many squares: {[x + 1 for x in xs]} and {sum(xs)}')
+    return len(xs)
+
+def stored(n: int) -> int:
+    e = AppError(f'stored {n}', n)
+    if n > 0:
+        raise e
+    return 0
+
+def rethrow(n: int) -> int:
+    try:
+        return need_positive(n, 'inner')
+    catch ValueError as e:
+        raise AppError(f'again: {e.message}', n)
+
+def in_loop(xs: list[int]) -> int:
+    total = 0
+    for i in range(len(xs)):
+        if xs[i] < 0:
+            raise IndexError(f'item {i} is {xs[i]} after a total of {total}')
+        total += xs[i]
+    return total
+
+def with_finally(n: int) -> int:
+    try:
+        if n > 1:
+            raise AppError(f'finally {n}', n)
+        return n
+    finally:
+        print('  finally ran for', n)
+
+def caught_here(n: int) -> str:
+    label = 'local'
+    try:
+        if n % 2 == 1:
+            raise ValueError(f'{label} odd {n}')
+        return f'{label} even {n}'
+    catch ValueError as e:
+        return 'caught ' + e.message
+
+def big_int(n: int) -> int:
+    big = 2 ** 200 + n
+    if n > 0:
+        raise AppError(f'big {big}', n)
+    return big % 7
+
+def divide(a: float, b: float) -> float:
+    return (a * 2.0) / (b - b)
+
+def fixed(n: int) -> int:
+    small: uint[length=8] = uint[length=8](n)
+    top: uint[length=8] = 250
+    return int(small + top)
+
+def text_index(s: str, k: int) -> str:
+    return (s + '!')[k]
+
+def cases() -> list[str]:
+    return ['sqrt', 'sqrt -1', 'log -1', 'log10 0', 'acosh 0.5', 'atanh 1', 'log_base', 'log_base 1', 'positive', 'positive -3',
+        'take 4', 'take 40', 'picky', 'picky empty', 'squares 2', 'squares 4', 'stored', 'rethrow 5', 'rethrow -5', 'loop', 'loop -1',
+        'finally 1', 'finally 2', 'big 0', 'big 1', 'divide', 'fixed 3', 'fixed 9', 'index 2', 'index 9']
+
+def run(k: int, a: Account) -> str:
+    if k == 0:
+        return str(check_root(4.0))
+    if k == 1:
+        return str(check_root(-1.0))
+    if k == 2:
+        return str(math.log(-1))
+    if k == 3:
+        return str(math.log10(0.0))
+    if k == 4:
+        return str(math.acosh(0.5))
+    if k == 5:
+        return str(math.atanh(1.0))
+    if k == 6:
+        return str(math.log_base(8.0, 2.0))
+    if k == 7:
+        return str(math.log_base(8.0, 1.0))
+    if k == 8:
+        return str(need_positive(4, 'n'))
+    if k == 9:
+        return str(need_positive(-3, 'n'))
+    if k == 10:
+        return str(a.take(4))
+    if k == 11:
+        return str(a.take(40))
+    if k == 12:
+        return str(picky('fussy'))
+    if k == 13:
+        return str(picky(''))
+    if k == 14:
+        return str(big_message(2))
+    if k == 15:
+        return str(big_message(4))
+    if k == 16:
+        return str(stored(3))
+    if k == 17:
+        return str(rethrow(5))
+    if k == 18:
+        return str(rethrow(-5))
+    if k == 19:
+        return str(in_loop([1, 2, 3]))
+    if k == 20:
+        return str(in_loop([1, 2, -7, 3]))
+    if k == 21:
+        return str(with_finally(1))
+    if k == 22:
+        return str(with_finally(2))
+    if k == 23:
+        return str(big_int(0))
+    if k == 24:
+        return str(big_int(1))
+    if k == 25:
+        return str(divide(1.5, 2.0))
+    if k == 26:
+        return str(fixed(3))
+    if k == 27:
+        return str(fixed(9))
+    if k == 28:
+        return text_index('abc', 2)
+    return text_index('abc', 9)
+
+# an error with many fields built from many locals, then an error from one local: the second raise must not reuse the names the
+# first one used for the values it passes to its function
+class Wide(Error):
+    total: int = 0
+
+    @init
+    def make_wide(self, a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int, i: int, j: int, k: int, l: int, m: int, n: int, o: int, p: int):
+        Error.start(self, "wide")
+        self.total = a + b + c + d + e + f + g + h + i + j + k + l + m + n + o + p
+
+def narrow(k: int, word: str) -> int:
+    a = k + 1
+    b = k + 2
+    c = k + 3
+    d = k + 4
+    e = k + 5
+    f = k + 6
+    g = k + 7
+    h = k + 8
+    i = k + 9
+    j = k + 10
+    k2 = k + 11
+    l = k + 12
+    m = k + 13
+    n = k + 14
+    o = k + 15
+    p = k + 16
+    if k == 1:
+        raise Wide(a, b, c, d, e, f, g, h, i, j, k2, l, m, n, o, p)
+    if k == 2:
+        raise ValueError(word)
+    if k == 3:
+        raise Wide(p, o, n, m, l, k2, j, i, h, g, f, e, d, c, b, a)
+    if k == 4:
+        raise ValueError(word)
+    return a + p
+
+def many(k: int) -> int:
+    a = k + 1
+    b = k + 2
+    c = k + 3
+    d = k + 4
+    e = k + 5
+    f = k + 6
+    g = k + 7
+    if k == 1:
+        raise ValueError(f"{a} {b} {c} {d} {e} {f} {g}")
+    if k == 2:
+        raise ValueError(f"{g}")
+    if k == 3:
+        raise ValueError(f"{a}{b}{c}{d}")
+    if k == 4:
+        raise ValueError(f"{e}{f}")
+    if k == 5:
+        raise ValueError(f"{a}{g}{c}{e}{b}{d}{f}")
+    return a + b + c + d + e + f + g
+
+def work():
+    for k in range(5):
+        try:
+            print("narrow", narrow(k, "w" + str(k)))
+        catch Wide as e:
+            print("narrow", k, "wide", e.total)
+        catch ValueError as e:
+            print("narrow", k, e.message)
+    for k in range(7):
+        try:
+            print("many", many(k))
+        catch ValueError as e:
+            print("many", k, e.message)
+    a = Account('ann', 10)
+    names = cases()
+    for k in range(len(names)):
+        try:
+            print(names[k], '->', run(k, a))
+        catch AppError as e:
+            print(names[k], '-> AppError', e.message, e.code, e.id)
+        catch Error as e:
+            print(names[k], '->', e.message, e.id)
+    for n in range(4):
+        print('caught_here', caught_here(n))
+    # many raises in a row, each a separate function call
+    hits = 0
+    for k in range(-50, 50):
+        try:
+            need_positive(k, 'k')
+        catch ValueError:
+            hits += 1
+    print('hits', hits)
+
+# (release mode does not free what main itself holds when the program ends, so the work is in a function of its own)
+@main
+def main():
+    work()

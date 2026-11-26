@@ -10,7 +10,5 @@
   `tomato_int_str` divides the whole number by 10^9 once per 9 digits. 2^20 bits (315,653 digits) takes 1.75 s, 2^22 28 s, 2^24 over 120 s (estimated 450 s), 2^28 over 90 s (estimated 30 hours); Python 3.14 takes 0.07 s, 0.28 s, 1.4 s and 32 s. A divide-and-conquer conversion (split by 10^(2^k)) needs fast multiply and divide first. Decimal parsing (`int('9' * n)`, big literals) is quadratic too, by the same note in `docs/architecture-review.md`; it was not timed here.
 - Make division by a big divisor subquadratic (Newton reciprocal or Burnikel-Ziegler on top of Karatsuba)
   `mag_divmod` is Knuth algorithm D, O(n*m). Build a Newton reciprocal or Burnikel-Ziegler division on the Karatsuba multiplication. The divide-and-conquer `str(int)` item (split by 10^(2^k)) needs it too.
-- Make `math.sqrt` (and other short std functions with `raise` + `!` conversions) inlinable
-  E.g. compile runtime-error raises as one call to a cold helper instead of an inline error construction plus 4 stores, which would cut every raise site's inline cost. (Inside a float loop nest's fast copy `math.sqrt` is already the hardware square root since stage 5; this is for the calls outside it.)
 - Re-run the 25 Linux wall-clock benchmarks on a quiet host now that the float slowdown is reduced
   The published Linux snapshot in `docs/performance.md` is the pre-bigfloat tree `c1fae360` (first labelled `f533dbd0`), so its float programs do not show stage 3 or stage 5.

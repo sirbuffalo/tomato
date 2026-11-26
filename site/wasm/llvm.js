@@ -271,7 +271,7 @@
   };
 
   Machine.prototype.parseFunction = function (ls) {
-    var h = /^define\s+(.*?)\s*@([\w.$]+)\((.*)\)\s*(?:(?:#\d+|inlinehint)\s*)?\{$/.exec(ls[0]);
+    var h = /^define\s+(.*?)\s*@([\w.$]+)\((.*)\)\s*(?:(?:#\d+|inlinehint|cold|noinline)\s*)*\{$/.exec(ls[0]);
     if (!h) throw new Error("cannot read function header: " + ls[0].slice(0, 80));
     var params = splitTop(h[3]).map(function (p) {
       var r = parseType(p, 0); var nm = /%[\w.$]+/.exec(p.slice(r[1]));

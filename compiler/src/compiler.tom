@@ -1280,6 +1280,8 @@ class Mod:
     helpers: dict[str, FuncInfo] = {}  # functions the compiler writes for itself (printing a list, sorted, ...), by kind and type
     extra_funcs: list[Node] = []
     lambda_count: int = 0
+    raise_count: int = 0          # the functions that raise statements were moved into (see Gen.outline_raise)
+    fails: dict[str, str] = {}    # those of the runtime errors (see Gen.fail_call), by error and types
     func_nodes: list[Node] = []   # the FuncDef of each entry of infos, in the same order
     sources: dict[str, str] = {}  # the source text of each module loaded (for showing an error's line)
     helper_count: int = 0
@@ -2352,6 +2354,7 @@ class Gen:
     nest_entries: list[str] = [] # the loops of the fast copy, by number
     nest_heads: list[list[str]] = []     # the loop heads of the general copy: line, label that goes on, number of the loop
     short: bool = False          # the function is short enough to ask to be inlined
+    attrs: str = ''                # more attributes of the function (after its parameters)
     bail: str = ''               # where the fast copy goes when a number is not small, an index is out of range, ...
     fast_over: str = ''          # whether an operation worked out ahead overflowed (see fast_choice)
     fuse_at: int = 0             # the next leaf of the fused expression being compiled (see fused)
@@ -2607,6 +2610,12 @@ class Gen:
         if self.mod.flat_type(ty):
             return 'tomato_release_flat'
         return 'tomato_release'
+
+    def owns_some(self, e: Ex) -> bool:
+        # does release(e) free anything?
+        if is_rc(e.ty):
+            return not e.reg.startswith('%bl.')
+        return (e.ty == 'float' or e.ty == 'int') and e.fresh and not e.small and not small_text(e.reg)
 
     def release(self, e: Ex):
         # a borrowed read of a local (see expr_b) holds no reference of its own, so there is nothing to release
@@ -4928,14 +4937,54 @@ class Gen:
         ok = self.label('ok')
         self.cold_br(bad, stop, ok, True)
         self.place(stop)
-        for v in live:
-            self.release(v)
-        self.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)))
+        if self.mod.mode == 2:
+            self.fail_call(cls, message, live)
+        else:
+            for v in live:
+                self.release(v)
+            self.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)))
         self.place(ok)
 
-    def raise_here(self, cls: str, text: str, owned: bool, id: str):
+    def fail_call(self, cls: str, message: str, live: list[Ex]):
+        # release mode: the error of fail_with is raised by a function of its own, @tomato.fail.N, one for each error and each
+        # list of types of the values to free (live, then the held temporaries), which it frees first. It is marked cold and is
+        # never inlined, so a check costs a function only a branch and a call when clang decides whether to inline it.
+        values: list[Ex] = []
+        for v in live:
+            if self.owns_some(v):
+                values.append(v)
+        for e in reversed(self.held):
+            if self.owns_some(e):
+                values.append(e)
+        key = cls + ' ' + message
+        for v in values:
+            key += ' ' + v.ty
+        if key not in self.mod.fails:
+            self.mod.raise_count += 1
+            symbol = f'@tomato.fail.{self.mod.raise_count}'
+            self.mod.fails[key] = symbol
+            h = Gen()
+            h.mod = self.mod
+            sig: list[str] = []
+            for k, v in enumerate(values):
+                sig.append(f'{llvm_type(v.ty)} %val.{k}')
+                given = ex(f'%val.{k}', v.ty)
+                given.fresh = True
+                h.release(given)
+            sig.append('i32 %line')
+            h.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)), '%line')
+            h.attrs = 'cold noinline'
+            finish_function(h, symbol, sig, '')
+        args: list[str] = []
+        for v in values:
+            args.append(f'{llvm_type(v.ty)} {v.reg}')
+        args.append(f'i32 {self.line}')
+        self.emit(f'call void {self.mod.fails[key]}(' + ', '.join(args) + ')')
+        self.br(self.unwind_target())
+
+    def raise_here(self, cls: str, text: str, owned: bool, id: str, at: str = ''):
         # raise a runtime failure of class cls with the message text (a text value; owned: released once the error holds it) and
-        # leave the function
+        # leave the function; at is the register that holds the line, if not this line
         self.release_held()
         err = self.tmp('err')
         args = 'ptr ' + text
@@ -4945,11 +4994,130 @@ class Gen:
         if owned:
             self.emit(f'call void @tomato_release(ptr {text})')
         self.emit(f'store ptr {err}, ptr @tomato_exc')
-        self.emit(f'store i32 {self.line}, ptr @tomato_exc_line')
+        where = at if at != '' else str(self.line)
+        self.emit(f'store i32 {where}, ptr @tomato_exc_line')
         self.emit('store i32 1, ptr @tomato_exc_rt')
         self.trace(True)
         self.emit('store i32 1, ptr @tomato_exc_seen')
         self.br(self.unwind_target())
+
+    def outline_raise(self, s: Node) -> bool:
+        # release mode: `raise ERROR` becomes a call of a function of its own, @tomato.raise.N, that makes the error and sets it
+        # pending (or leaves the error that making it raised); it is marked cold and is never inlined, and it is passed the values
+        # of the variables that ERROR reads. So building an error message costs a function nothing when clang decides whether
+        # to inline it (a short std function such as math.log that raises with an f-string can be inlined), and the branch to a
+        # raise counts as rarely taken. The error is compiled as it would be here, with the same facts and types; if its code
+        # needs anything of this function but the values of some variables (a register, a label, a write to a variable), it
+        # is compiled here after all. Returns whether it was moved.
+        if self.terminated:
+            return False          # unreachable code (the statement before it left): the inline path starts a dead block for it
+        if self.mod.mode != 2 or self.is_async or self.nest_fast or (self.bail != '' and self.bail != 'restart') or len(self.held) > 0 or len(self.comps) > 0:
+            return False
+        line = s.line
+        saved_lines = self.lines
+        saved_allocas = self.allocas
+        saved_rc = self.rc_slots
+        saved_flat = self.flat_slots
+        saved_int = self.int_slots
+        saved_float = self.float_slots
+        saved_slots: dict[str, str] = {}
+        saved_types: dict[str, str] = {}
+        for key in self.slots:
+            saved_slots[key] = self.slots[key]
+            saved_types[key] = self.types[key]
+        saved_facts = self.facts
+        saved_unwind = self.borrowed_unwind
+        saved_bail = self.bail
+        saved_assigned = len(self.assigned)
+        self.lines = []
+        self.allocas = []
+        self.rc_slots = []
+        self.flat_slots = []
+        self.int_slots = []
+        self.float_slots = []
+        self.borrowed_unwind = 'epilogue'     # an error raised while the error is made leaves the new function
+        self.bail = ''
+        v = self.expr(val_node(s.fields[0]))
+        if not self.mod.subclass(v.ty, '@Error'):
+            raise CompileError(f'raise needs an error object, but this is {shown(v.ty)}\nwrite raise Error("message") or raise one of your Error subclasses', line)
+        self.emit('store ptr ' + v.reg + ', ptr @tomato_exc')            # the pending error owns the reference
+        self.emit(f'store i32 {line}, ptr @tomato_exc_line')
+        self.emit('store i32 0, ptr @tomato_exc_rt')
+        self.emit('store i32 1, ptr @tomato_exc_seen')
+        self.br('epilogue')
+        body = self.lines
+        h = Gen()
+        h.mod = self.mod
+        h.n = self.n
+        h.allocas = self.allocas
+        h.rc_slots = self.rc_slots
+        h.flat_slots = self.flat_slots
+        h.int_slots = self.int_slots
+        h.float_slots = self.float_slots
+        self.lines = saved_lines
+        self.allocas = saved_allocas
+        self.rc_slots = saved_rc
+        self.flat_slots = saved_flat
+        self.int_slots = saved_int
+        self.float_slots = saved_float
+        self.slots = saved_slots
+        self.types = saved_types
+        self.facts = saved_facts
+        self.borrowed_unwind = saved_unwind
+        self.bail = saved_bail
+        self.terminated = False
+        self.held = []
+        # the slots of this function that the code reads: each must be a plain stack slot, and only loaded
+        kinds: dict[str, str] = {}
+        for a in saved_allocas:
+            at = a.find(' = alloca ')
+            if a.startswith('  %') and at > 0:
+                kinds[a[2:at]] = a[at + 10:]
+        texts: list[str] = []          # (an entry of lines can hold several lines)
+        for entry in body:
+            for text in entry.split('\n'):
+                texts.append(text)
+        defined: list[str] = ['%epilogue']
+        for text in texts + h.allocas:
+            if text.startswith('  %') and ' = ' in text:
+                defined.append(text[2:text.find(' = ')])
+            elif not text.startswith(' ') and text.endswith(':'):
+                defined.append('%' + text[:-1])
+        caps: list[str] = []
+        for text in texts:
+            for r in ir_locals(text):
+                if r not in defined and r not in caps:
+                    if r not in kinds or kinds[r] not in ['i64', 'ptr', 'double', 'i32', 'i8', 'i1']:
+                        self.assigned = self.assigned[:saved_assigned]
+                        return False
+                    caps.append(r)
+        for text in texts:
+            names = ir_locals(text)
+            for r in caps:
+                if r in names and not (' = load ' in text and text.endswith(', ptr ' + r) and len(names) == 2 and names[1] == r):
+                    self.assigned = self.assigned[:saved_assigned]
+                    return False
+        self.mod.raise_count += 1
+        symbol = f'@tomato.raise.{self.mod.raise_count}'
+        sig: list[str] = []
+        args: list[str] = []
+        starts: list[str] = []
+        for k, r in enumerate(caps):
+            sig.append(f'{kinds[r]} %cap.{k}')
+            starts.append(f'  {r} = alloca {kinds[r]}')
+            starts.append(f'  store {kinds[r]} %cap.{k}, ptr {r}')
+            c = self.tmp('cap')
+            self.emit(f'{c} = load {kinds[r]}, ptr {r}')
+            args.append(f'{kinds[r]} {c}')
+        h.allocas = starts + h.allocas
+        h.lines = body
+        h.attrs = 'cold noinline'
+        finish_function(h, symbol, sig, '')
+        if h.n > self.n:        # (the capture loads above took numbers from self.n too: never go back below them)
+            self.n = h.n
+        self.emit(f'call void {symbol}(' + ', '.join(args) + ')')
+        self.br(self.unwind_target())
+        return True
 
     # ---- expressions
     # an expression that is not directly under await or start, such as an index: a call of an async function there would make a
@@ -7416,7 +7584,9 @@ class Gen:
             self.emit(f'{has} = icmp ne ptr {ex1}, null')
         bad = self.label('raised')
         fine = self.label('fine')
-        self.cond_br(has, bad, fine)
+        # unlikely (release mode): unweighted, clang guesses that a pointer is usually not null, so that after a few calls the
+        # rest of the function looked rarely run, and the calls there were not inlined
+        self.cold_br(has, bad, fine)
         self.place(bad)
         self.trace(False)
         for v in values:
@@ -9489,6 +9659,8 @@ class Gen:
             self.run_finallies(self.try_depth)
             self.br('epilogue')
         elif k == 'Raise':
+            if self.outline_raise(s):
+                return
             v = self.expr(val_node(s.fields[0]))
             if not self.mod.subclass(v.ty, '@Error'):
                 raise CompileError(f'raise needs an error object, but this is {shown(v.ty)}\nwrite raise Error("message") or raise one of your Error subclasses', s.line)
@@ -11363,6 +11535,19 @@ def function_symbol(mod: Mod, info: FuncInfo) -> str:
     return '@tomato.m.' + str(mod.code_of('@' + info.owner)) + '.' + info.name
 
 # the program functions a line of IR mentions: @tomato.NAME (the runtime's are @tomato_NAME)
+def ir_locals(line: str) -> list[str]:
+    # the local names (%name: registers, slots and labels) in a line of LLVM IR, in order, as often as they appear
+    out: list[str] = []
+    at = line.find('%')
+    while at >= 0:
+        end = at + 1
+        while end < len(line) and (line[end].isalpha() or line[end].isdigit() or line[end] == '.' or line[end] == '_' or line[end] == '-' or line[end] == '$'):
+            end += 1
+        if end > at + 1 and not line[at:end].startswith('%class.'):     # (not a type)
+            out.append(line[at:end])
+        at = line.find('%', end)
+    return out
+
 def mentions(line: str, out: list[str]):
     at = line.find('@tomato.')
     while at >= 0:
@@ -11400,7 +11585,7 @@ def finish_function(g: Gen, symbol: str, sig: list[str], ret: str):
         g.lines.append(f'  ret {llvm_ret} {r}')
     else:
         g.lines.append('  ret void')
-    text = 'define ' + llvm_ret + ' ' + symbol + '(' + ', '.join(sig) + ')' + (' inlinehint' if g.short and g.mod.mode == 2 else '') + ' {\nentry:\n'
+    text = 'define ' + llvm_ret + ' ' + symbol + '(' + ', '.join(sig) + ')' + (' inlinehint' if g.short and g.mod.mode == 2 else '') + (' ' + g.attrs if g.attrs != '' else '') + ' {\nentry:\n'
     if ret != '':
         text += f'  %retval = alloca {llvm_ret}\n  store {llvm_ret} {zero_of(ret)}, ptr %retval\n'
     if len(g.allocas) > 0:
@@ -11840,7 +12025,7 @@ def compile_constructor(c: ClassInfo, mod: Mod):
         g.emit(f'{has} = icmp ne ptr {pending}, null ; {init}')
         bad = g.label('initfailed')
         ok = g.label('initok')
-        g.cond_br(has, bad, ok)
+        g.cold_br(has, bad, ok)
         g.place(bad)
         g.emit('call void @tomato_release(ptr ' + obj + ')')          # an @init that raised leaves no object behind
         g.br('epilogue')

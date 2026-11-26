@@ -1,0 +1,41 @@
+# Raises that can never run (after a return, a raise or a break) are still compiled, and in release mode a raise is a call of a
+# function of its own: the dead raise must not break the block structure of the function. The compiler warns about this code, so
+# the program is not in tests/programs.txt; tests/run.sh runs it in release mode under AddressSanitizer ("release raise_dead").
+def after_return(n: int) -> int:
+    return n + 1
+    raise ValueError(f'never {n}')
+
+def after_raise(n: int) -> int:
+    if n > 0:
+        raise ValueError(f'first {n}')
+        raise ValueError(f'second {n}')
+    return n
+
+def after_break(n: int) -> int:
+    total = 0
+    for i in range(n):
+        if i == 3:
+            break
+            raise ValueError(f'dead {i}')
+        total += i
+    return total
+
+def after_continue(n: int) -> int:
+    total = 0
+    for i in range(n):
+        if i % 2 == 0:
+            continue
+            raise ValueError(f'dead {i}')
+        total += i
+    return total
+
+def work():
+    print(after_return(1), after_break(10), after_continue(10), after_raise(0))
+    try:
+        after_raise(2)
+    catch ValueError as e:
+        print(e.message)
+
+@main
+def main():
+    work()

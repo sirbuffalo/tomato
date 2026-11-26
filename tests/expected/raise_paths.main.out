@@ -1,0 +1,49 @@
+narrow 17
+narrow 1 wide 152
+narrow 2 w2
+narrow 3 wide 184
+narrow 4 w4
+many 28
+many 1 2 3 4 5 6 7 8
+many 2 9
+many 3 4567
+many 4 910
+many 5 6128107911
+many 70
+sqrt -> 3.6094379124341005
+sqrt -1 -> sqrt needs a number that is not negative, but got -1.0 E51
+log -1 -> log needs a positive number, but got -1.0 E53
+log10 0 -> log10 needs a positive number, but got 0.0 E57
+acosh 0.5 -> acosh needs a number of at least 1, but got 0.5 E59
+atanh 1 -> atanh needs a number between -1 and 1, but got 1.0 E60
+log_base -> 3.0
+log_base 1 -> a logarithm base must be positive and not 1, but got 1.0 E55
+positive -> 8
+positive -3 -> n must be positive, but is -3 (twice that is -6) E-pos
+take 4 -> 6
+take 40 -> AppError ann has 6, not 40 (after 1 moves) 34 E-app
+picky -> fussy 
+picky empty -> a PickyError needs a message 
+squares 2 -> 2
+squares 4 -> too many squares: [1, 2, 5, 10] and 14 
+stored -> AppError stored 3 3 E-app
+rethrow 5 -> 10
+rethrow -5 -> AppError again: inner must be positive, but is -5 (twice that is -10) -5 E-app
+loop -> 6
+loop -1 -> item 2 is -7 after a total of 3 
+  finally ran for 1
+finally 1 -> 1
+  finally ran for 2
+finally 2 -> AppError finally 2 2 E-app
+big 0 -> 4
+big 1 -> AppError big 1606938044258990275541962092341162602522202993782792835301377 1 E-app
+divide -> division by zero E01
+fixed 3 -> 253
+fixed 9 -> integer overflow E03
+index 2 -> c
+index 9 -> index out of range E04
+caught_here local even 0
+caught_here caught local odd 1
+caught_here local even 2
+caught_here caught local odd 3
+hits 51

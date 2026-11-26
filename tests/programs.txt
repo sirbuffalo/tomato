@@ -178,6 +178,7 @@ float_ownership
 float_loops
 float_keys
 float_nests
+raise_paths
 re_api
 re_errors
 re_limits

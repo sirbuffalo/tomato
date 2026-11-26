@@ -438,9 +438,9 @@ t_release_leak() { # fused expressions over big numbers; the test itself is test
   case "$("$work/leaky" 2>&1)" in *"never freed"*) ok "release: a big number that is not freed is reported";; *) bad "release: a big number that is not freed is reported";; esac
 }
 section "== release mode (AddressSanitizer; the same output as debug mode) =="
-for name in fast_paths loop_nests float_loops float_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers; do
-  case "$name" in fast_paths|loop_nests|float_loops|float_nests|int_ranges|containers) ;; *) [ -n "$fast" ] && { skip "release $name"; continue; } ;; esac   # (the fast tier: six of the twelve)
-  case "$name" in fast_paths|loop_nests|float_loops|float_nests) spawn_first t_release_asan "$name" leaks ;; *) spawn_first t_release_asan "$name" ;; esac
+for name in fast_paths loop_nests float_loops float_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers raise_paths raise_dead; do
+  case "$name" in fast_paths|loop_nests|float_loops|float_nests|int_ranges|containers|raise_paths|raise_dead) ;; *) [ -n "$fast" ] && { skip "release $name"; continue; } ;; esac   # (the fast tier: eight of the fourteen)
+  case "$name" in fast_paths|loop_nests|float_loops|float_nests|raise_paths|raise_dead) spawn_first t_release_asan "$name" leaks ;; *) spawn_first t_release_asan "$name" ;; esac
 done
 spawn_first t_release_leak
 spawn_first t_lock_gc
