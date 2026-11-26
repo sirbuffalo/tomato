@@ -632,8 +632,8 @@ With x = 2^bits (the case first timed in the TODO note: 2^20 bits 0.28 s, 2^24 9
 Tests: `tests/bigmul.c` (12,000 random products and squares around the thresholds, uneven lengths, all-ones and zero-half operands,
 against a plain 32-bit schoolbook product, under AddressSanitizer and UBSan) and the program `big_karatsuba` (output computed with Python; also run under AddressSanitizer and through `site/wasm`).
 
-*Not done here:* Toom-3. Decimal conversion is still quadratic; a divide-and-conquer `str(int)` can build on this multiplication
-(division: see "big-integer division" below). The next section adds the transform product
+*Not done here:* Toom-3. Decimal conversion builds on this multiplication (see "decimal text of long integers"), division too
+(see "big-integer division" below). The next section adds the transform product
 that Karatsuba's n^1.585 (a dense 2^28-bit square would still take about 3 minutes) called for.
 
 ## What was done (big-integer multiplication by a number-theoretic transform, unreleased)
@@ -731,6 +731,46 @@ The times above were measured with the Karatsuba product. The division's product
 product (previous section) they use it from 6000 limbs as well.
 
 *Not done:* a Newton reciprocal (with the transform product it could beat the recursive division at the largest sizes).
+
+## What was done (decimal text of long integers, unreleased)
+
+`str(x)` divided the whole number by 10^9 once per 9 digits, and `int(text)` (and long literals) multiplied by 10 once per digit:
+both quadratic. Now both are divide and conquer on the Karatsuba and transform products above (`runtime/tomato_rt.c`, the "decimal
+text of long numbers" block):
+
+- **`str(x)`** splits by powers 10^(9e) whose exponents are chosen from the top, as GMP does: e0 is half the 9-digit groups of x
+  and e(i+1) = ceil(e(i)/2), so every split is near the middle (a first version with the table 10^(9·2^k) paid a whole extra level
+  just above each table power: 2.0 s instead of 0.91 s at 2^22 bits). Each split is a Barrett division, two products with the
+  level's reciprocal mu; the one with mu is made as t (mu - B^n) + t B^n, so that for numbers of 2^k limbs it does not land one limb
+  over a power of two of limbs (which doubled the transform). The top level's reciprocal comes from Newton's iteration (from the
+  reciprocal of the top half, recursively), corrected to the exact floor; each level below derives its own from the level above
+  with one product (1/p = p / p^2), which cut the reciprocal time by 60%. The division corrects its estimate in both directions, so
+  the digits never depend on an estimate (a counter in the C check saw at most one correction per division). Below 40 limbs the
+  plain loop writes the digits. A profile at 2^22 bits, before the derived reciprocals: reciprocals 40%, divisions 60%, the plain
+  loop 1%: it is all multiplication.
+- **`int(text)`** joins halves as `high * 10^(9·2^k) + low` (the powers by squaring); up to 1,000 digits it adds 9 digits per pass.
+
+Checked against the plain loops at the C level (`tests/bigdec.c`, under AddressSanitizer and UBSan, also built with tiny cutoffs so
+small numbers go many levels deep), by `tests/programs/big_decimal.tom` (its expected output is Python's for the same steps) and by
+random products, squares, `str` and round trips up to 150,000 limbs against Python 3.14 (identical).
+
+Times (release build, x a dense number 3^k of about the given size, each run pinned to one core of biggie at load average 65 to 100
+from other work; Python 3.14.4; "before" is the tree before this work):
+
+| bits | `str(x)` before | `str(x)` | Python `str` | `int(text)` before | `int(text)` | Python `int` |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2^20 | 1.79 s | 0.080 s | 0.17 s | 4.9 s | 0.028 s | 0.093 s |
+| 2^22 | 28 s | 0.49 s | 0.83 s | | 0.17 s | 0.84 s |
+| 2^24 | (450 s) | 2.85 s | 4.5 s | | 0.88 s | 6.7 s |
+| 2^26 | | 16 s | 23 s | | 4.9 s | 38 s |
+| 2^28 | (30 hours) | 88 s | 188 s | | 31 s | 289 s |
+
+"Before" figures in parentheses are the stress task's estimates, and its 2^22 figure was for x = 2^bits; the Python 2^28 row was
+taken earlier in the day at load about 85. A power of two is the one case where Python's `str` stays ahead: `str(1 << n)` takes
+2.6 s at 2^24 bits, 15 s at 2^26 and 100 s at 2^28 here, against Python's 1.7, 7.7 and 45 s. Python 3.12 and later convert huge
+numbers with the `decimal` module, splitting by bits (high and low halves, each converted and joined with a decimal product), so
+the zero low halves of 2^n cost nothing; converting by division by powers of ten cannot see that. Doing the same would need a
+decimal-limb product.
 
 ## What was done (range loops and float intervals, unreleased)
 

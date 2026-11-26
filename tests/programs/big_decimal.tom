@@ -1,0 +1,60 @@
+# Long numbers: Karatsuba multiplication and squaring, and decimal text both ways (divide and conquer), across the cutoffs
+# (48 limbs to multiply, 64 to square, 6000 for the transform, 40 for str, 1000 digits to parse). The expected output was made by Python 3 running
+# the same steps; each number is summed up by its length, ends and remainders, so the file stays small.
+def next_seed(s: int) -> int:
+    return (s * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+
+# a number of n 32-bit limbs from the seed (kind 1: all ones, kind 2: a power of two, kind 3: zero low half)
+def limbs(n: int, seed: int, kind: int) -> int:
+    if kind == 1:
+        return 2 ** (32 * n) - 1
+    if kind == 2:
+        return 2 ** (32 * n - 1 - seed % 32)
+    x = 0
+    s = seed
+    for i in range(n):
+        s = next_seed(s)
+        x = x * 4294967296 + s // 4294967296
+    x = x + 2 ** (32 * n - 1)
+    if kind == 3:
+        x = x // 2 ** (16 * n) * 2 ** (16 * n)
+    return x
+
+def show(name: str, x: int):
+    s = str(x)
+    back = int(s) == x
+    padded = int('000' + s) == x if x >= 0 else True
+    print(name, len(s), s[:12], s[len(s) - 12:], x % 1000000007, x % 4294967291, back, padded)
+
+@main
+def main():
+    sizes = [1, 2, 3, 15, 16, 17, 31, 59, 60, 61, 63, 64, 65, 66, 120, 127, 128, 129, 130, 131, 200, 257, 500, 1000, 1500]
+    seed = 12345
+    for n in sizes:
+        for kind in range(4):
+            seed = next_seed(seed)
+            x = limbs(n, seed, kind)
+            y = limbs(n * 3 // 4 + 1, seed + 1, (kind + 1) % 4)
+            z = limbs(n * 5 // 2 + 1, seed + 2, 0)
+            show(f'sq {n} {kind}', x * x)
+            show(f'mul {n} {kind}', x * y)
+            show(f'neg {n} {kind}', -(x * z))
+            print((x + 1) * (x - 1) == x * x - 1, (x * y) // y == x, (x * z) % z, (x * y) * z == x * (y * z))
+    # powers of ten at the split points and next to them, powers of two, and a few short ones
+    for e in [18, 19, 36, 72, 144, 288, 576, 1152, 2304, 4608, 9216]:
+        p = 10 ** e
+        for d in [-1, 0, 1]:
+            show(f'ten {e} {d}', p + d)
+            show(f'ten2 {e} {d}', p * p + d)
+    for b in [64, 1000, 2047, 2048, 4096, 30000]:
+        show(f'two {b}', 2 ** b)
+        show(f'-two {b}', -(2 ** b) + 1)
+    show('zero', limbs(3, 1, 0) - limbs(3, 1, 0))
+    # text to number: long digit strings, with leading zeros and a minus
+    digits = '1234567890' * 400
+    for cut in [17, 18, 19, 999, 1000, 1001, 2304, 2305, 4000]:
+        t = digits[:cut]
+        v = int(t)
+        print(cut, v % 1000000007, int('-' + t) == -v, int('0000' + t) == v, str(v) == t)
+    nines = int('9' * 3000)
+    print(nines + 1 == 10 ** 3000, len(str(nines)), str(nines * nines)[:5], str(nines * nines)[2995:3005])

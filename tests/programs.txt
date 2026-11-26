@@ -19,6 +19,7 @@ tuples
 unions
 big_numbers
 big_mul
+big_decimal
 unlimited_int
 keyword_args
 float_more

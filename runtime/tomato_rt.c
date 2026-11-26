@@ -6361,26 +6361,180 @@ double tomato_int_div_f64(int64_t x, int64_t y) {
     return sg * v;
 }
 
-void *tomato_int_str(int64_t x) {
-    if (int_is_small(x)) return tomato_str_from_i64(int_small_val(x));
-    IntView a; int_view(x, &a);
-    uint32_t *t = malloc((size_t)a.n * 4);
-    char *buf = malloc((size_t)a.n * 10 + 3);
-    if (!t || !buf) out_of_memory();
-    memcpy(t, a.d, (size_t)a.n * 4);
-    int64_t n = a.n, len = 0;
+/* ---- decimal text of long numbers, both ways, by divide and conquer ----
+ * str(x) splits x by a power of ten 10^(9e) near its square root and writes each half the same way (tomato_int_str chooses
+ * the exponents); int(text) joins the two halves of the text as high * 10^(9 * 2^k) + low. With Karatsuba both are
+ * O(n^1.6 log n) instead of O(n^2) (with the NTT, O(n log^2 n)). The division is Barrett's (a multiplication by a reciprocal,
+ * then a few corrections); the top level's reciprocal is made by Newton's iteration and each level below derives its own from
+ * the one above. The remainder is always brought into [0, p), so only the speed depends on the estimates, never the digits.
+ * Numbers up to DEC_BASE_LIMBS limbs (and texts up to DEC_PARSE_DIGITS digits) take the plain loops. */
+#ifndef DEC_BASE_LIMBS
+#define DEC_BASE_LIMBS 40
+#endif
+#ifndef DEC_PARSE_DIGITS
+#define DEC_PARSE_DIGITS 1000
+#endif
+#ifndef DEC_RECIP_LIMBS
+#define DEC_RECIP_LIMBS 40
+#endif
+_Static_assert(DEC_BASE_LIMBS >= 8, "the powers of ten that divide must be big numbers");
+
+/* *x = v, freeing the old *x (v is usually made from it) */
+static void dec_set(int64_t *x, int64_t v) { tomato_int_free(*x); *x = v; }
+
+/* floor(B^(2n) / v) for v of n limbs whose top bit is set: Newton's step from the reciprocal of the top half of v, then made exact */
+static int64_t dec_recip(const uint32_t *v, int64_t n) {
+    if (n <= DEC_RECIP_LIMBS) {
+        uint32_t *u = calloc((size_t)(2 * n + 1), 4), *q = malloc((size_t)(2 * n + 1) * 4), *r = malloc((size_t)n * 4);
+        if (!u || !q || !r) out_of_memory();
+        u[2 * n] = 1;
+        mag_divmod(u, 2 * n + 1, v, n, q, r);
+        int64_t w = int_make(1, q, 2 * n + 1);
+        free(u); free(q); free(r);
+        return w;
+    }
+    int64_t h = (n + 1) / 2, l = n - h;
+    int64_t xh = dec_recip(v + l, h), V = int_make(1, v, n);          /* x0 = xh B^l is about B^(2n) / v */
+    /* B^(2n) - v x0 = B^l e, and e is about B^n; the step adds x0 (B^(2n) - v x0) / B^(2n) = xh e / B^(2h), for which the top
+     * limbs of e are enough (dropping h - 2 of them changes it by less than 1/B) */
+    int64_t e = int_pow2(1, 32 * (n + h)), t = tomato_int_mul(V, xh), drop = h > 2 ? h - 2 : 0;
+    dec_set(&e, tomato_int_sub(e, t));
+    int64_t et = int_shr_limbs(e, 32 * drop);
+    dec_set(&t, tomato_int_mul(xh, et));
+    int64_t c = int_shr_limbs(t, 32 * (2 * h - drop));
+    int64_t x = int_shl_limbs(xh, 32 * l);
+    dec_set(&x, tomato_int_add(x, c));
+    /* the remainder B^(2n) - v x = B^l e - v c must be in [0, v) */
+    int64_t r = int_shl_limbs(e, 32 * l);
+    dec_set(&t, tomato_int_mul(V, c));
+    dec_set(&r, tomato_int_sub(r, t));
+    while (tomato_int_sign(r) < 0) { dec_set(&r, tomato_int_add(r, V)); dec_set(&x, tomato_int_sub(x, int_mk_small(1))); }
+    while (tomato_int_cmp(r, V) >= 0) { dec_set(&r, tomato_int_sub(r, V)); dec_set(&x, tomato_int_add(x, int_mk_small(1))); }
+    tomato_int_free(r); tomato_int_free(V); tomato_int_free(t); tomato_int_free(c); tomato_int_free(et); tomato_int_free(e); tomato_int_free(xh);
+    return x;
+}
+
+/* one level of str(x): the power p = 10^(9e) it splits by; v = p 2^s has its top bit set, mu = floor(B^(2n) / v), which is
+ * B^n + mu_low with mu_low below B^n (the n + 1 limbs of mu would put t mu just over a power of two of limbs, doubling the
+ * transform when n is one) */
+typedef struct { int64_t e, p, v, mu_low, n; int s; } DecLevel;
+/* up is the level above (its power is p^2, or p^2 / 10^9), or NULL. Once the top level has its reciprocal by Newton's iteration,
+ * each level below takes its own from it with one multiplication: 1/p = p / (c up_p) with c = 1 or 10^9, and up_mu is about
+ * B^(2N) / (up_p 2^S), so mu is p times the top n + 3 limbs of up_mu, scaled. That mu is within a few units of the floor, not
+ * always on it, so the division below corrects in both directions. */
+static void dec_level_init(DecLevel *d, const DecLevel *up) {
+    IntView a; int_view(d->p, &a);
+    d->n = a.n; d->s = __builtin_clz(a.d[a.n - 1]);
+    d->v = int_shl_limbs(d->p, d->s);
+    int64_t mu;
+    if (up && up->v) {
+        int64_t N = up->n, k = N + 1 - (d->n + 3) > 0 ? N + 1 - (d->n + 3) : 0;
+        int64_t up_mu = tomato_int_add_c(up->mu_low, int_pow2(1, 32 * N), 2);
+        mu = int_shr_limbs(up_mu, 32 * k);
+        tomato_int_free(up_mu);
+        dec_set(&mu, tomato_int_mul(d->p, mu));
+        if (up->e < 2 * d->e) dec_set(&mu, int_divlimb(mu, int_mk_small(1000000000), 1));
+        int64_t bits = 32 * (2 * d->n - 2 * N + k) + up->s - d->s;
+        dec_set(&mu, bits >= 0 ? int_shl_limbs(mu, bits) : int_shr_limbs(mu, -bits));
+    } else mu = dec_recip(((Big *)(uintptr_t)d->v)->d, d->n);
+    d->mu_low = tomato_int_sub_c(mu, int_pow2(1, 32 * d->n), 3);
+}
+/* x = q p + r with 0 <= r < p, for 0 <= x < p^2 (Barrett: with the exact mu the estimate of q is at most two too small; with
+ * a derived one it can be a few off either way) */
+static void dec_divmod(const DecLevel *d, int64_t x, int64_t *q, int64_t *r) {
+    int64_t u = int_shl_limbs(x, d->s);                                 /* below v^2 <= B^(2n) */
+    int64_t t = int_shr_limbs(u, 32 * (d->n - 1)), tm = tomato_int_mul(t, d->mu_low);
+    dec_set(&t, tomato_int_add_c(tm, int_shl_limbs(t, 32 * d->n), 3)); /* t mu */
+    int64_t qq = int_shr_limbs(t, 32 * (d->n + 1));
+    dec_set(&t, tomato_int_mul(qq, d->v));
+    int64_t rr = tomato_int_sub(u, t);
+    tomato_int_free(t); tomato_int_free(u);
+    while (tomato_int_sign(rr) < 0) { dec_set(&rr, tomato_int_add(rr, d->v)); dec_set(&qq, tomato_int_sub(qq, int_mk_small(1))); }
+    while (tomato_int_cmp(rr, d->v) >= 0) { dec_set(&rr, tomato_int_sub(rr, d->v)); dec_set(&qq, tomato_int_add(qq, int_mk_small(1))); }
+    *q = qq;
+    *r = int_shr_limbs(rr, d->s);
+    tomato_int_free(rr);
+}
+
+/* the magnitude a (n limbs) as exactly width digits, zero-padded on the left (it fits): 9 digits per pass over the limbs */
+static void dec_base(const uint32_t *a, int64_t n, char *out, int64_t width) {
+    uint32_t *t = malloc((size_t)(n ? n : 1) * 4);
+    if (!t) out_of_memory();
+    memcpy(t, a, (size_t)n * 4);
+    char *p = out + width;
+    while (n > 0 && t[n - 1] == 0) n--;
     while (n > 0) {
         uint64_t rem = 0;
         for (int64_t i = n - 1; i >= 0; i--) { uint64_t cur = (rem << 32) | t[i]; t[i] = (uint32_t)(cur / 1000000000u); rem = cur % 1000000000u; }
         while (n > 0 && t[n - 1] == 0) n--;
-        for (int k = 0; k < 9; k++) { buf[len++] = (char)('0' + rem % 10); rem /= 10; if (n == 0 && rem == 0) break; }
+        for (int k = 0; k < 9 && p > out; k++) { *--p = (char)('0' + rem % 10); rem /= 10; }
     }
-    if (a.sign < 0) buf[len++] = '-';
-    for (int64_t i = 0, j = len - 1; i < j; i++, j--) { char c = buf[i]; buf[i] = buf[j]; buf[j] = c; }
-    void *s = str_new(buf, len);
-    free(t); free(buf);
+    memset(out, '0', (size_t)(p - out));
+    free(t);
+}
+
+/* x (0 <= x < 10^width, and below the square of level i's power) as exactly width digits */
+static void dec_emit(DecLevel *lv, int nlv, int64_t x, int i, char *out, int64_t width) {
+    IntView a; int_view(x, &a);
+    if (a.n <= DEC_BASE_LIMBS || i >= nlv) { dec_base(a.d, a.n, out, width); return; }
+    int64_t low = 9 * lv[i].e;
+    if (width <= low) { dec_emit(lv, nlv, x, i + 1, out, width); return; }      /* below the power already */
+    if (!lv[i].v) dec_level_init(&lv[i], i > 0 ? &lv[i - 1] : NULL);
+    int64_t q, r;
+    dec_divmod(&lv[i], x, &q, &r);
+    dec_emit(lv, nlv, q, i + 1, out, width - low);
+    dec_emit(lv, nlv, r, i + 1, out + width - low, low);
+    tomato_int_free(q); tomato_int_free(r);
+}
+
+void *tomato_int_str(int64_t x) {
+    if (int_is_small(x)) return tomato_str_from_i64(int_small_val(x));
+    IntView a; int_view(x, &a);
+    /* at most digits digits, in groups of 9: g groups. Level i splits by 10^(9 e_i), e_0 = ceil(g / 2) and e_(i+1) = ceil(e_i / 2),
+     * so each split is near the middle of the digits; below the last level the numbers are short enough for the plain loop */
+    int64_t bits = 32 * a.n - __builtin_clz(a.d[a.n - 1]), digits = bits * 30103 / 100000 + 1, g = (digits + 8) / 9, width = 9 * g;
+    DecLevel lv[64];
+    int nlv = 0;
+    if (a.n > DEC_BASE_LIMBS)
+        for (int64_t e = (g + 1) / 2; nlv == 0 || 18 * lv[nlv - 1].e > 9 * DEC_BASE_LIMBS; e = (e + 1) / 2) {
+            memset(&lv[nlv], 0, sizeof lv[nlv]);
+            lv[nlv++].e = e;
+        }
+    /* the powers, from the smallest up: 10^(9 e_i) is the square of 10^(9 e_(i+1)), divided by 10^9 when e_i is odd */
+    for (int i = nlv - 1; i >= 0; i--) {
+        if (i == nlv - 1) {
+            lv[i].p = int_mk_small(1);
+            for (int64_t k = 0; k < lv[i].e; k++) dec_set(&lv[i].p, tomato_int_mul(lv[i].p, int_mk_small(1000000000)));
+        } else {
+            lv[i].p = tomato_int_mul(lv[i + 1].p, lv[i + 1].p);
+            if (lv[i].e < 2 * lv[i + 1].e) dec_set(&lv[i].p, int_divlimb(lv[i].p, int_mk_small(1000000000), 1));
+        }
+    }
+    char *buf = malloc((size_t)width + 1);
+    if (!buf) out_of_memory();
+    int64_t m = int_make(1, a.d, a.n);
+    dec_emit(lv, nlv, m, 0, buf + 1, width);
+    tomato_int_free(m);
+    for (int i = 0; i < nlv; i++) {
+        tomato_int_free(lv[i].p);
+        if (lv[i].v) { tomato_int_free(lv[i].v); tomato_int_free(lv[i].mu_low); }
+    }
+    int64_t pos = 1;
+    while (pos < width && buf[pos] == '0') pos++;
+    if (a.sign < 0) buf[--pos] = '-';
+    void *s = str_new(buf + pos, width + 1 - pos);
+    free(buf);
     return s;
 }
+
+/* the powers 10^(9 * 2^k) that int(text) joins by, made by squaring as they are needed */
+typedef struct { int64_t pw[64]; int n; } DecPowers;
+static int64_t dec_power(DecPowers *t, int k) {
+    if (t->n == 0) { t->pw[0] = int_mk_small(1000000000); t->n = 1; }
+    while (t->n <= k) { t->pw[t->n] = tomato_int_mul(t->pw[t->n - 1], t->pw[t->n - 1]); t->n++; }
+    return t->pw[k];
+}
+static void dec_powers_free(DecPowers *t) { for (int k = 0; k < t->n; k++) tomato_int_free(t->pw[k]); }
 
 /* A fused chain of text joins and str() calls, such as 'w' + str(i) + '-' (an f-string): one allocation, no intermediate
  * strings. p holds n pairs {kind, word}: kind 0 a text object, 1 an int (a small number or a big one), 2 a signed machine
@@ -6421,6 +6575,35 @@ void *tomato_str_cat(int64_t n, const int64_t *p) {
     return r;
 }
 
+/* the number len decimal digits write (they were checked): up to DEC_PARSE_DIGITS digits 9 at a time, else the high digits
+ * times 10^(9 * 2^k) plus the low 9 * 2^k digits */
+static int64_t dec_parse(DecPowers *t, const char *s, int64_t len) {
+    if (len <= DEC_PARSE_DIGITS) {
+        uint32_t *d = calloc((size_t)(len / 9 + 2), 4);
+        if (!d) out_of_memory();
+        int64_t n = 0;
+        for (int64_t i = 0; i < len;) {
+            int64_t take = i == 0 && len % 9 ? len % 9 : 9;
+            uint64_t carry = 0, mult = 1;
+            for (int64_t k = 0; k < take; k++) { carry = carry * 10 + (uint64_t)(s[i + k] - '0'); mult *= 10; }
+            i += take;
+            for (int64_t k = 0; k < n; k++) { uint64_t v = (uint64_t)d[k] * mult + carry; d[k] = (uint32_t)v; carry = v >> 32; }
+            if (carry) d[n++] = (uint32_t)carry;
+        }
+        int64_t w = int_make(1, d, n);
+        free(d);
+        return w;
+    }
+    int k = 0;
+    while (((int64_t)9 << (k + 1)) < len) k++;
+    int64_t low = (int64_t)9 << k;
+    int64_t hi = dec_parse(t, s, len - low), lo = dec_parse(t, s + len - low, low);
+    int64_t r = tomato_int_mul(hi, dec_power(t, k));
+    dec_set(&r, tomato_int_add(r, lo));
+    tomato_int_free(hi); tomato_int_free(lo);
+    return r;
+}
+
 /* decimal text, optionally with a leading minus (the compiler writes big literals this way; entry inputs use the checked form) */
 static int64_t int_from_digits(const char *s, int64_t len, int *ok) {
     int neg = 0; int64_t i = 0;
@@ -6436,18 +6619,11 @@ static int64_t int_from_digits(const char *s, int64_t len, int *ok) {
         *ok = 1;
         return int_mk_small(neg ? -v : v);
     }
-    int64_t cap = len / 9 + 2;
-    uint32_t *d = calloc((size_t)cap, 4);
-    if (!d) out_of_memory();
-    int64_t n = 0;
-    for (; i < len; i++) {
-        if (s[i] < '0' || s[i] > '9') { free(d); *ok = 0; return 0; }
-        uint64_t carry = (uint64_t)(s[i] - '0');
-        for (int64_t k = 0; k < n; k++) { uint64_t t = (uint64_t)d[k] * 10 + carry; d[k] = (uint32_t)t; carry = t >> 32; }
-        if (carry) d[n++] = (uint32_t)carry;
-    }
-    int64_t w = int_make(neg ? -1 : 1, d, n);
-    free(d);
+    for (int64_t k = i; k < len; k++) if (s[k] < '0' || s[k] > '9') { *ok = 0; return 0; }
+    DecPowers t; memset(&t, 0, sizeof t);
+    int64_t w = dec_parse(&t, s + i, len - i);
+    dec_powers_free(&t);
+    if (neg) dec_set(&w, tomato_int_neg(w));
     *ok = 1;
     return w;
 }
