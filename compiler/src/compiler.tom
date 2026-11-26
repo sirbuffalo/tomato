@@ -3971,11 +3971,32 @@ class Gen:
                 code = '1'
             elif op == '^':
                 code = '2'
+            # the tag test and the small-int word operation are inline (what tomato_int_bitop does first); big numbers take the call
+            xs = x.small or small_text(x.reg)
+            ys = y.small or small_text(y.reg)
+            test = y.reg if xs else (x.reg if ys else self.arith('and', x.reg, y.reg))
+            bit = self.arith('and', test, '1')
+            both = self.tmp('small')
+            self.emit(f'{both} = icmp ne i64 {bit}, 0')
+            fast = self.label('bitfast')
+            slow = self.label('bitslow')
+            join = self.label('bitjoin')
+            self.cond_br(both, fast, slow)
+            self.place(fast)
+            word = self.arith('and' if op == '&' else ('or' if op == '|' else 'xor'), x.reg, y.reg)
+            if op == '^':
+                word = self.arith('or', word, '1')
+            self.br(join)
+            self.place(slow)
             r = self.tmp('bit')
             self.emit(f'{r} = call i64 @tomato_int_bitop(i64 {x.reg}, i64 {y.reg}, i32 {code})')
             self.release(x)
             self.release(y)
-            return exf(r, 'int')
+            self.br(join)
+            self.place(join)
+            out = self.tmp('bits')
+            self.emit(f'{out} = phi i64 [ {word}, %{fast} ], [ {r}, %{slow} ]')
+            return exf(out, 'int')
         ins = 'and'
         if op == '|':
             ins = 'or'

@@ -14,5 +14,3 @@
   E.g. compile runtime-error raises as one call to a cold helper instead of an inline error construction plus 4 stores, which would cut every raise site's inline cost. (Inside a float loop nest's fast copy `math.sqrt` is already the hardware square root since stage 5; this is for the calls outside it.)
 - Re-run the 25 Linux wall-clock benchmarks on a quiet host now that the float slowdown is reduced
   The published Linux snapshot in `docs/performance.md` is the pre-bigfloat tree `c1fae360` (first labelled `f533dbd0`), so its float programs do not show stage 3 or stage 5.
-- Emit an inline small-int fast path for `&`, `|`, `^` on dynamic ints in the compiler
-  Optional: emit the tag check and the inline and/or/xor for dynamic ints in `num_bitwise` (`compiler/src/compiler.tom`), instead of relying on LTO to inline `tomato_int_bitop`, if a release benchmark ever shows a cost.
