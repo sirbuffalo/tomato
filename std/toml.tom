@@ -11,7 +11,7 @@
 #     'array'     items (list of Toml, of any kinds, as TOML 1.0 allows)
 #     'string'    text
 #     'integer'   num (an unlimited int, but loads accepts only the 64-bit range TOML requires)
-#     'float'     real; for inf and nan, which a Tomato float cannot hold, `special` is 'inf', '-inf' or 'nan'
+#     'float'     real (a float of any size); for inf and nan, which a Tomato float cannot hold, `special` is 'inf', '-inf' or 'nan'
 #     'boolean'   flag
 #     'datetime'  moment (an offset date-time), 'local-datetime', 'local-date' and 'local-time' likewise
 #
@@ -662,15 +662,16 @@ class _Parser:
             if rest.startswith('+') or rest.startswith('-'):
                 esign = rest[:1]
                 rest = rest[1:]
-            clean += 'e' + esign + self.digits_only(rest, 0, '0123456789', 'number', at)
+            edigits = self.digits_only(rest, 0, '0123456789', 'number', at)
+            if len(edigits) > 4300:
+                # reading an exponent takes time in the square of its length: more than 4300 digits (Python's limit on the digits
+                # of an int read from text) is refused, so that one number cannot stall the reader (D77d). That bounds each number
+                # to about 40 ms, not a document, whose time still grows with how many it holds: limit the size of untrusted text
+                self.fail_at('Float is out of range', self.ln, at)
+            clean += 'e' + esign + edigits
         if is_float:
             v.kind = 'float'
-            try:
-                v.real = float(sign + clean)
-            catch RuntimeError as e:
-                self.fail_at('Float is out of range', self.ln, at)
-            if v.real > 1.7976931348623157e308 or v.real < -1.7976931348623157e308:
-                self.fail_at('Float is out of range', self.ln, at)      # (TOML floats are 64-bit)
+            v.real = float(sign + clean)          # a float of any size (D77d): 1e400 is 1e+400, 1e-400 is not 0.0
             return v
         x = int(sign + clean)
         if x > 9223372036854775807 or x < -9223372036854775808:
@@ -1016,10 +1017,13 @@ def _path_text(path: list[str]) -> str:
         parts.append(_key_text(p))
     return '.'.join(parts)
 
+# a float as str() writes it (1e+400 beyond a double, D77d); 0x1.8p+E (an exponent of more than 4096 bits) is not TOML
 def _float_text(v: Toml) -> str:
     if v.special != '':
         return v.special
     s = str(v.real)
+    if 'x' in s:
+        raise ValueError(f'the float {s} has an exponent too large to write in decimal, as TOML needs', 'E527')
     if '.' not in s and 'e' not in s and 'E' not in s:
         s += '.0'
     return s

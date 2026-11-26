@@ -6075,6 +6075,8 @@ static int jstring(JScan *j, int64_t *ip) {
     return 1;
 }
 
+static int64_t bf_parse(const char *s, int64_t n);
+
 static int jnumber(JScan *j, int64_t *ip) {
     const char *s = j->s; int64_t n = j->n, st = *ip, i = st;
 #define JDIGIT(k) ((k) < n && s[k] >= '0' && s[k] <= '9')
@@ -6093,7 +6095,11 @@ static int jnumber(JScan *j, int64_t *ip) {
         i++;
         if (i < n && (s[i] == '+' || s[i] == '-')) i++;
         if (!JDIGIT(i)) return jerr(j, i, "Expecting digits in the exponent");
+        int64_t e0 = i;
         while (JDIGIT(i)) i++;
+        /* reading an exponent takes time in the square of its length: more than 4300 digits (Python's limit on the digits of an int
+         * read from text) is refused, so that a small hostile document cannot stall the reader (D77d) */
+        if (i - e0 > 4300) return jerr(j, st, "Number out of range");
         isf = 1;
     }
     if (!isf) {
@@ -6109,11 +6115,14 @@ static int jnumber(JScan *j, int64_t *ip) {
         char *buf = len < 64 ? small : malloc((size_t)len + 1);
         if (!buf) out_of_memory();
         memcpy(buf, s + st, (size_t)len); buf[len] = 0;
+        /* a float of any size (D77d): the double when the number is in a normal double's range, else what float(text) gives */
         double d = strtod(buf, NULL);
+        int64_t w;
+        if (isfinite(d) && fabs(d) > 2.2250738585072014e-308) memcpy(&w, &d, 8);
+        else w = bf_parse(buf, len);
         if (buf != small) free(buf);
-        if (isinf(d)) return jerr(j, st, "Number out of range");
         jtape(j, JT_FLOAT);
-        *(double *)tomato_list_push(j->nums, 8) = d;
+        *(int64_t *)tomato_list_push(j->nums, 8) = w;
     }
     *ip = i;
     return 1;
@@ -6242,36 +6251,6 @@ void *tomato_json_quote(void *text, int64_t ascii) {
     void *r = str_new(out, o);
     free(out);
     return r;
-}
-
-/* a finite float as the shortest text that reads back as the same float, written as Python's repr does: 1500.0, 0.0001, 1e-05, 1.5e+22 */
-void *tomato_json_float(double x) {
-    char e[40], b[64];
-    int p;
-    for (p = 1; p <= 17; p++) {
-        snprintf(e, sizeof e, "%.*e", p - 1, x);
-        if (strtod(e, NULL) == x) break;
-    }
-    /* e is [-]d[.ddd]e[+-]XX */
-    char digits[24]; int nd = 0, neg = 0, k = 0;
-    if (e[k] == '-') { neg = 1; k++; }
-    for (; e[k] && e[k] != 'e'; k++) if (e[k] != '.') digits[nd++] = e[k];
-    int ex = atoi(e + k + 1);
-    int o = 0;
-    if (neg) b[o++] = '-';
-    if (ex >= -4 && ex < 16) {
-        if (ex < 0) { b[o++] = '0'; b[o++] = '.'; for (int z = 0; z < -ex - 1; z++) b[o++] = '0'; for (int d = 0; d < nd; d++) b[o++] = digits[d]; }
-        else {
-            for (int d = 0; d <= ex; d++) b[o++] = d < nd ? digits[d] : '0';
-            b[o++] = '.';
-            if (nd > ex + 1) for (int d = ex + 1; d < nd; d++) b[o++] = digits[d]; else b[o++] = '0';
-        }
-    } else {
-        b[o++] = digits[0];
-        if (nd > 1) { b[o++] = '.'; for (int d = 1; d < nd; d++) b[o++] = digits[d]; }
-        o += snprintf(b + o, 12, "e%c%02d", ex < 0 ? '-' : '+', ex < 0 ? -ex : ex);
-    }
-    return str_new(b, o);
 }
 
 /* ---- round() and f-string number formats (std/builtin/numbers.tom and format.tom) ---- */
@@ -7660,9 +7639,14 @@ static double bf_cbrt(double f) {
     return copysign(ldexp((double)r, -52), f);
 }
 
+/* the C library's result for an argument that is an infinity or a NaN (a word that JSON or MessagePack brought in, which is not a float
+ * to calculate with): as it always was, with a NaN's payload dropped so that it cannot pass for a box */
+static int64_t bf_libm_word(double r) { return bf_bits(isnan(r) ? copysign(NAN, r) : r); }
+
 static int64_t bf_math1(int64_t op, int64_t x) {
     if (!bf_boxed(x)) {
         double d = bf_double(x), r = tomato_math1(op, d);
+        if (!isfinite(d)) return bf_libm_word(r);
         /* only the exponentials leave the range of a double (log, asin, sqrt of a tiny number and the like do not) */
         if (op == 1 ? bf_normal(r) : isfinite(r)) return bf_bits(r);
         if (isnan(r) || (op != 1 && op != 11 && op != 12 && op != 17)) tomato_fail_id(13, "the float result is infinite or not a number");
@@ -7711,7 +7695,16 @@ static int64_t bf_math1(int64_t op, int64_t x) {
 int64_t tomato_bf_math1(int64_t op, int64_t x, int32_t m) { int64_t r = bf_math1(op, x); BF_CONSUME(m, x, 0); return r; }
 
 /* hypot and atan2 of x and y. Both are scaled by one power of two, so that the larger is in [1, 2), for the C library. */
+/* a double that stands in for a float beside an infinity or a NaN: itself when plain, else the largest or the smallest double of
+ * its sign, which the C library treats as a box would be (hypot and atan2 depend only on the sizes being finite and far apart) */
+static double bf_stand_in(int64_t w) {
+    if (!bf_boxed(w)) return bf_double(w);
+    BigFloat *b = bf_ptr(w);
+    return copysign(tomato_int_sign(b->e) > 0 ? 0x1.fffffffffffffp+1023 : 0x1p-1074, b->m);
+}
+
 static int64_t bf_math2(int64_t op, int64_t x, int64_t y) {
+    if (BF_NONFINITE(x) || BF_NONFINITE(y)) return bf_libm_word(tomato_math2(op, bf_stand_in(x), bf_stand_in(y)));
     if (!bf_boxed(x) && !bf_boxed(y)) {
         double r = tomato_math2(op, bf_double(x), bf_double(y));
         if (bf_normal(r) || bf_double(y) == 0) return bf_bits(r);
@@ -7754,7 +7747,7 @@ static int64_t bf_scaled(BigFloat x, int64_t j) {
 int64_t tomato_bf_round(int64_t x, int64_t ndigits, int32_t m) {
     if (!bf_boxed(x)) {
         double r = tomato_float_round(bf_double(x), ndigits);
-        if (bf_normal(r) || r == 0) return bf_bits(r);
+        if (bf_normal(r) || r == 0 || !isfinite(bf_double(x))) return bf_bits(r);      /* (an infinity or a NaN is itself) */
     }
     BigFloat b = bf_open(x);
     /* 10^-ndigits is 2^u: it is under a quarter of x's last place, or more than twice x, or the work is done exactly */
@@ -7804,7 +7797,10 @@ static Str *bf_digits(BigFloat x, int64_t n, int64_t *k) {
 
 /* x as C's %.*f, %.*e or %.*g would write it (kind is the letter), a leading '-' included */
 void *tomato_bf_format(int64_t x, int64_t prec, int64_t kind) {
-    if (!bf_boxed(x)) return tomato_float_format(bf_double(x), prec, kind);
+    if (!bf_boxed(x)) {
+        double d = bf_double(x);
+        return tomato_float_format(isnan(d) ? fabs(d) : d, prec, kind);   /* a NaN prints as nan whatever its sign, as str() and Python print it */
+    }
     BigFloat b = *bf_ptr(x);
     int64_t n = prec, k = bi(0), point;                       /* the digits, and how many come before the point */
     Str *s;

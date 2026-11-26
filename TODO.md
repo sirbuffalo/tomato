@@ -1,7 +1,5 @@
 - Run the LTO release checks through the real `release/release.sh` and on a quiet biggie
   Done on 2026-11-25 at load about 65 (not quiet): `release/check-lto.sh`, the full tier with `TOMATO_TEST_REQUIRE_LTO=1` (842 passed, 0 failed) and the release's Linux remote script piped to biggie by hand (tests, benchmarks and instruction counts all fine); see `tests/README.md`. Still to do: one real `release/release.sh` Linux step from the Mac (the ssh, fetch-back and publish-gate parts were not exercised; the next release does it), and the full tier timed once on a quiet biggie (load never fell below 32; another account's `prst` jobs). Use `~/.tomato-release/linux-tools/bin` first on PATH and run `release/check-lto.sh` first.
-- Floats of any size in the library and the formats (stage 4 of docs/bigfloat-design.md)
-  Make std/math, round(x, n), f-string float formats, JSON, TOML and MessagePack handle floats outside the double range (the runtime already has tomato_bf_math1/2, tomato_bf_round, tomato_bf_format), with a decision entry for each visible change.
 - Fast loop copy for float loops (stage 5 of docs/bigfloat-design.md)
   Fast loop copy for float loops, float interval facts for the word type (reusing or replacing the now-idle float interval code), and measurements on the M1, Linux and the browser.
 - Design a non-LTO debug build path for tomato build and run
@@ -10,3 +8,7 @@
   mandelbrot executes 7.6x, nbody 3.4x and spectral_norm 1.7x more instructions at `bf46a4ee` than at its parent (callgrind, `benchmarks/count.sh --guest`; numbers in `docs/performance.md` and `benchmarks/results/linux-x86_64/results-f533dbd0.md`). Compare the emitted IR before and after the bigfloat stage 3 commit. The Linux snapshot in `docs/performance.md` was measured at the same tree label (`f533dbd0`) without the slowdown, so first find out why the two runs differ.
 - Run `release/release.sh --dry-run` on the signing Mac once to exercise the real Linux step
   Use `--dry-run` (or `--from linux`) so ssh, copy-back, the publish gate and the snapshot are exercised end to end, with `--linux-host` reachable from the Mac. The Linux step's remote script alone ran fine on biggie: the full tier passed 842 tests with `TOMATO_TEST_REQUIRE_LTO=1` at load about 62 (not quiet).
+- Keep the digits of small negative angles in `sin` and `tan`
+  Small negative angles lose all their digits in `sin`/`tan`, for example `sin(rad(-1e-20))` is `0.0`. `_quarter` in `std/math.tom` computes `t - t // 1.0`, which rounds `-tiny + 1` to `1.0`. This predates the bigfloat stage 4 task and affects plain doubles too.
+- Decide whether huge-exponent math and the `f` format should refuse a result beyond some size
+  Decide whether `exp`, `expm1`, `sinh`, `cosh`, `**`, `int(x)` and the `f` format should refuse a result whose exponent is beyond some size, with a clear error. Today they take time or memory that grows with the exponent: `exp(1e100000)` takes about 16 s, and `f'{1e10000000:.2f}'` writes ten million digits. JSON can now bring such a value in from a 12-byte document. This is a language decision, since the design says the only limit is memory.

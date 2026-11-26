@@ -11,19 +11,21 @@
 #     built = JsonDict({'ok': JsonBool(True), 'ids': JsonList([JsonInt(1), JsonNull(), JsonFloat(0.5)])})
 #
 # loads(text) returns a Json: one of JsonNull, JsonBool, JsonInt, JsonFloat, JsonStr, JsonList, JsonDict. A number with no
-# fraction and no exponent is an int of any size, any other number is a float (a literal too big for a float is an error).
+# fraction and no exponent is an int of any size, any other number is a float of any size (as float(text) reads it), with an
+# exponent of at most 4300 digits (more is a JSONDecodeError, D77d). Such an exponent takes about 40 ms to read, so the time for
+# a document grows with how many it holds (a 1 MB body of them about 8 s): limit the size of untrusted text.
 # Objects keep the order of the document; a repeated key keeps its first place and its last value. The parser is strict:
 # no trailing commas, comments, leading zeros, NaN or Infinity, single quotes, raw control characters in strings, lone
 # surrogate escapes or invalid UTF-8, and at most 512 levels of nesting. A mistake raises JSONDecodeError.
 #
 # dumps(value, indent=0, sort_keys=False, ensure_ascii=False): compact text by default; indent=N puts each item on its own
 # line indented by N spaces per level (an empty list or object stays `[]` or `{}`); sort_keys orders keys by code point;
-# ensure_ascii writes every non-ASCII character as \uXXXX. A float that is nan or infinite cannot be JSON: JSONEncodeError.
+# ensure_ascii writes every non-ASCII character as \uXXXX. A float is written as str() writes it (1e+400 beyond a double); one
+# that is nan or infinite, or whose binary exponent has more than 4096 bits (str() gives 0x1.8p+E), cannot be JSON: JSONEncodeError.
 
 !tomato_json_scan(text: str, tape: list[int], strs: list[str], nums: list[float]) -> int
 !tomato_json_quote(text: str, ascii: int) -> str
-!tomato_json_float(x: float) -> str
-!tomato_is_finite(x: float) -> int
+!tomato_bf_is_boxed(x: float) -> int[length=32]
 !tomato_msgpack_scan(data: list[int], tape: list[int], strs: list[str], nums: list[float]) -> int
 !tomato_mp_head(out: list[int], kind: int, n: int)
 !tomato_mp_str(out: list[int], text: str)
@@ -227,12 +229,23 @@ export class JsonFloat(Json):
     override def as_float(self) -> float:
         return self.v
 
+    # written as str() writes it, so that it reads back as the same float, whatever its size (D77d): 1e+400, and a subnormal
+    # double with the digits a float needs (4.9406564584124654e-324)
     override def dump_to(self, w: Writer, depth: int):
-        if !tomato_is_finite(self.v) == 0:
-            raise JSONEncodeError(f'the float {self.v} is not valid JSON', 'E81')
-        w.out.append(!tomato_json_float(self.v))
+        text = str(self.v)
+        if text == 'nan' or text == 'inf' or text == '-inf':
+            raise JSONEncodeError(f'the float {text} is not valid JSON', 'E81')
+        if 'x' in text:
+            raise JSONEncodeError(f'the float {text} has an exponent too large to write in decimal, as JSON needs', 'E525')
+        w.out.append(text)
 
+    # MessagePack has only 64-bit floats (D77d): one in the subnormal range is written as the nearest double, as float64 holds it;
+    # one beyond the largest double, or so small that it would become 0.0, does not fit. A number read from JSON text is a 53-bit
+    # float first (1e-310 is a float of its own, not the subnormal double), so in rare cases it packs one unit of the last place away
+    # from the double C's strtod reads from the same text, and a text just above 2 ** -1075 (2.4703282292062328e-324) is E526
     override def pack_to(self, out: list[int], depth: int):
+        if !tomato_bf_is_boxed(self.v) != 0 and (abs(self.v) > 1.7976931348623157e308 or abs(self.v) <= 2.0 ** -1075):
+            raise MsgpackError(f'the float {self.v} does not fit in a 64-bit float, the largest MessagePack has', -1, 'E526')
         !tomato_mp_f64(out, self.v)
 
 export class JsonStr(Json):
@@ -546,7 +559,8 @@ export def dumps(value: Json, indent: int = 0, sort_keys: bool = False, ensure_a
 # MessagePack. The bytes are a list of ints from 0 to 255. Decoding gives the same Json values as loads, plus JsonBin,
 # JsonExt and JsonTimestamp; map keys must be text; NaN and infinite floats are kept (JSON text refuses them); an
 # invalid UTF-8 str, a byte 0xc1, truncated or trailing data and more than 512 levels of nesting are a MsgpackError.
-# Encoding writes each int in its shortest form (up to 64 bits, signed or unsigned), floats as float64, text as str, a
+# Encoding writes each int in its shortest form (up to 64 bits, signed or unsigned), floats as float64 (one in the subnormal range
+# as the nearest double; one beyond the largest double or below half the smallest is a MsgpackError), text as str, a
 # JsonBin as bin, a JsonExt as ext and a JsonTimestamp as the shortest timestamp.
 export def loads_msgpack(data: list[int]) -> Json:
     b = Builder()

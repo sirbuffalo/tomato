@@ -13,10 +13,9 @@ def _abs_float(x: float) -> float:
         return 0.0
     return x
 
-# round() and divmod() (D75a). The C runtime rounds a float exactly (the same code natively and in the browser);
-# format.tom uses tomato_is_finite too.
-!tomato_float_round(x: float, ndigits: int) -> float
-!tomato_is_finite(x: float) -> int
+# round() and divmod() (D75a). The C runtime rounds a float of any size exactly (the same code natively and in the browser,
+# D77d)
+!tomato_bf_round(x: float, ndigits: int, m: int[length=32]) -> float
 
 # round(x) for a float: the nearest int, a tie goes to the even one (round(0.5) is 0, round(1.5) is 2, round(2.5) is 2)
 def _round_float0(x: float) -> int:
@@ -27,12 +26,10 @@ def _round_float0(x: float) -> int:
     return int(_round_float(x, 0))
 
 # round(x, ndigits) for a float: the float nearest to x with ndigits digits after the decimal point (before it when
-# ndigits is negative), judged on the exact value of x, so round(2.675, 2) is 2.67 and round(0.125, 2) is 0.12
+# ndigits is negative), judged on the exact value of x, so round(2.675, 2) is 2.67 and round(0.125, 2) is 0.12. It is a float of
+# any size: round(1.7976931348623157e308, -308) is 2e+308
 def _round_float(x: float, ndigits: int) -> float:
-    r = !tomato_float_round(x, ndigits)
-    if !tomato_is_finite(r) == 0:
-        raise OverflowError('the rounded value is too large to be a float', 'E417')
-    return r
+    return !tomato_bf_round(x, ndigits, 0)
 
 # round(n, ndigits) for an int: a negative ndigits rounds to tens, hundreds and so on, ties to even (round(25, -1) is 20)
 def _round_int(n: int, ndigits: int) -> int:

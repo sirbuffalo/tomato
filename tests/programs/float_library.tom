@@ -1,0 +1,88 @@
+# Floats of any size in the library and the formats (docs/bigfloat-design.md, stage 4; D77d): std/math, round(x, n), the f/e/g
+# format specs, JSON, TOML and MessagePack take floats outside the range of a double. Every number printed was checked against
+# exact arithmetic (Python's decimal at 1000 digits and fractions, rounded to 53 bits with an exponent of any size).
+# tests/run.sh runs it under AddressSanitizer and in the browser's interpreter too.
+from math import sqrt, cbrt, exp, expm1, log, log2, log10, log1p, log_base, sinh, cosh, tanh, asinh, acosh, atan, atan2, hypot
+from math import sin, cos, tan, asin, rad
+from json import loads, dumps, JsonFloat, JsonList, loads_msgpack, dumps_msgpack, JSONDecodeError, JSONEncodeError, MsgpackError
+import toml
+
+def json_error(text: str) -> str:
+    try:
+        return dumps(loads(text))
+    catch JSONDecodeError as e:
+        return 'JSONDecodeError: ' + e.message
+
+@main
+def main():
+    big = 1e400
+    tiny = 1e-400
+    # roots, exponentials and logarithms
+    print('sqrt', sqrt(big), sqrt(tiny), sqrt(2e601), sqrt(10 ** 401))
+    print('cbrt', cbrt(big), cbrt(-8e-900), cbrt(3e1000))
+    print('exp', exp(1000), exp(-1000), exp(100000), exp(-745.5), exp(10 ** 6))
+    print('expm1', expm1(1000), expm1(-1000), expm1(tiny))
+    print('log', log(big), log(tiny), log2(2.0 ** 5000), log2(big), log10(tiny), log10(1e-5000), log1p(big))
+    print('log_base', log_base(big, 10), log_base(10 ** 1000, 2))
+    print('hyp', sinh(1000), sinh(-1000), cosh(-1000), tanh(big), tanh(-tiny), asinh(big), asinh(-big), acosh(big))
+    print('hypot', hypot(3e400, 4e400), hypot(tiny, 0), hypot(3e-400, 4e-400), hypot(big, 1.0))
+    print('angles', atan(big), atan(-big), atan(tiny), atan2(big, 1.0), atan2(1.0, big), atan2(tiny, -1.0), atan2(-big, -1.0))
+    print('trig', sin(rad(tiny)), cos(rad(tiny)), tan(rad(tiny)), asin(tiny))
+    # what a double gives stays what it gave
+    print('plain', sqrt(2), exp(1), log(10), hypot(3, 4), atan2(1, 1))      # (what the C library gives: correctly rounded in each one tested)
+    # round(x, n)
+    print('round', round(big, 2), round(1.7976931348623157e308, -308), round(-2.5e400, -400), round(1.23456e-400, 402))
+    print('round', round(1.5e-400, 400), round(tiny, 300), round(3e1000, -999), round(big, -10 ** 6))
+    # the f, e and g formats
+    print(f'e: {big:.3e} {-1.5e-400:e} {10 ** 400:e} {2.5e-1000000:.2e} {big:>14.2e}|{tiny:<12.1e}|')
+    print(f'g: {big:.5g} {1.5e-400:g} {123456789e400:.4} {tiny:.3} {-big:+.2g}')
+    print(f'f: {tiny:.2f} {-tiny:.3f} {big * 0.0:.1f}')
+    print(len(f'{big:.2f}'), f'{big:.2f}'[:5], f'{2.0 ** 1100:.0f}' == str(2 ** 1100), f'{2.0 ** 1100:,.0f}'[:9])
+    # JSON reads any size and writes as str() does, so a float reads back as itself
+    j = loads('[1e400, -2.5e-400, 1e-320, 4.9406564584124654e-324, 5e-324, 1.5e+1000000, 0.0, -0.0, 1e-5]')
+    print(dumps(j))
+    print(dumps(loads(dumps(j))) == dumps(j), j[3].as_float() == 2.0 ** -1074, j[4].as_float() == 2.0 ** -1074)
+    print(dumps(JsonList([JsonFloat(big), JsonFloat(exp(1000)), JsonFloat(2.0 ** -1074), JsonFloat(0.1)])))
+    print(json_error('[1e' + '0' * 4299 + '1]'), json_error('[2e-' + '0' * 4298 + '17]'))
+    print(json_error('[1e' + '0' * 4300 + '1]'), json_error('-1e-' + '1' * 4301))
+    huge = 2.0 ** (2.0 ** 4100)
+    try:
+        print(dumps(JsonFloat(huge)))
+    catch JSONEncodeError as e:
+        print('JSONEncodeError', e.id, e.message[:30])
+    # MessagePack has only 64-bit floats
+    print(dumps_msgpack(JsonFloat(2.0 ** -1074)), dumps_msgpack(JsonFloat(1.5)))
+    # one in the subnormal range is written as the nearest double: 1e-310 read from JSON text is a float of its own
+    print(dumps_msgpack(loads('[1e-310, 2.5e-320]')), dumps_msgpack(JsonFloat(1.5 * 2.0 ** -1075)))
+    # rounded twice (to 53 bits when read, then to a double): one unit of the last place above the double strtod reads (2 ** -1074)
+    print(dumps_msgpack(loads('[7.4109846876186981e-324]')))
+    for x in [big, tiny, -exp(1000), 2.0 ** -1075]:
+        try:
+            print(dumps_msgpack(JsonFloat(x)))
+        catch MsgpackError as e:
+            print('MsgpackError', e.id, e.message)
+    # TOML too
+    doc = toml.loads('a = 1e400\nb = -1.5e-400\nc = 0.5\nd = 1e' + '0' * 4299 + '3\n')
+    print(toml.dumps(doc).replace('\n', ' | '))
+    print(doc['a'].as_float() == big, doc['b'].as_float() < 0.0, doc['d'].as_float())
+    for text in ['x = 1e' + '0' * 4300 + '1', 'x = 1e400_0']:
+        try:
+            print(toml.dumps(toml.loads(text)))
+        catch toml.TOMLDecodeError as e:
+            print('TOMLDecodeError', e.message)
+    t = toml.table()
+    t.put('h', toml.real(huge))
+    try:
+        print(toml.dumps(t))
+    catch ValueError as e:
+        print('ValueError', e.id, e.message[:30])
+    # an infinity or a NaN that MessagePack brought in is passed through as the C library treats it
+    nan = loads_msgpack([203, 127, 248, 0, 0, 0, 0, 0, 0]).as_float()
+    inf = loads_msgpack([203, 127, 240, 0, 0, 0, 0, 0, 0]).as_float()
+    minus_inf = loads_msgpack([203, 255, 240, 0, 0, 0, 0, 0, 0]).as_float()
+    minus_nan = loads_msgpack([203, 255, 248, 0, 0, 0, 0, 0, 0]).as_float()
+    print('nan', sqrt(nan), exp(inf), exp(minus_inf), log(inf), hypot(inf, nan), atan2(1.0, inf), round(nan, 2), round(inf, -3))
+    # beside a float that is not a double: what the C library gives for a huge or tiny double of the same sign
+    print('box', hypot(big, nan), hypot(big, inf), hypot(tiny, minus_inf), atan2(big, inf), atan2(nan, big), atan2(tiny, inf), atan2(inf, -tiny), atan2(-big, minus_inf))
+    print(f'-nan {minus_nan:+.2f} {minus_nan:10.2e}|{minus_nan:.0f} [{minus_nan:08.1f}] {minus_nan:.3}', str(minus_nan))
+    print(f'nan {nan:.2f} {inf:e} {minus_inf:g} {inf:.3} [{nan:>6.1f}]')

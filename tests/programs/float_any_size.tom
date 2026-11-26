@@ -42,7 +42,7 @@ def main():
     print(caught('abc'), caught(''), caught('1e'), caught('0x1p4'))
     print(str(y) + '!', f'{y} {1.5:.3f} {1234.5:>10.1f}')
     print(f'[{y:>25}] [{y:<25}] [{y:^25}] [{y:*>25}] [{1.5:8}] [{2.25:<8}]')
-    # a float that is too large or too small for a double stops where C would otherwise get the wrong number
+    # the library and the formats take any size too (stage 4, D77d; tests/programs/float_library.tom has more)
     for which in range(6):
         try:
             if which == 0:

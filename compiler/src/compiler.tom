@@ -1780,7 +1780,7 @@ class Mod:
                 return False
         f = val_node(n.fields[0])
         if f.kind == 'LlvmRef':
-            return f.fields[0].text == 'tomato_math1' or f.fields[0].text == 'tomato_math2' or f.fields[0].text == 'tomato_is_finite'
+            return f.fields[0].text in ['tomato_bf_math1', 'tomato_bf_math2', 'tomato_math1', 'tomato_math2', 'tomato_is_finite']
         if f.kind != 'Name':
             return False
         if f.fields[0].text == 'float' or f.fields[0].text == 'int':
@@ -6734,11 +6734,12 @@ class Gen:
         self.release(v)
         return self.tag_small(r)
 
-    def llvm_type_of(self, t: str) -> str:
-        # how an LLVM function sees a Tomato type: a bool is one bit there
+    def llvm_type_of(self, t: str, word: bool = False) -> str:
+        # how an LLVM function sees a Tomato type: a bool is one bit there. word: a runtime function of floats of any size
+        # (tomato_bf_*), which takes and gives the float itself
         if t == 'bool':
             return 'i1'
-        if t == 'float':
+        if t == 'float' and not word:
             return 'double'            # (a float is converted at the call: see bf_to_f64)
         return llvm_type(t)
 
@@ -6748,6 +6749,9 @@ class Gen:
         if len(found) == 0:
             raise CompileError(f"the LLVM function '!{name}' is not declared\nadd a line like '!{name}(a: int) -> int' at the top level of the file", n.line)
         info = found[0]
+        # the runtime's functions of floats of any size (docs/bigfloat-runtime.md) take the float word itself, borrowed, and
+        # give a float word the caller owns: std/math.tom, round() and the formats use them for floats outside a double's range
+        word = name.startswith('tomato_bf_')
         args = val_nodes(n.fields[1])
         if len(args) != len(info.ptypes):
             raise CompileError("the LLVM function '!" + name + "' takes " + plural(len(info.ptypes), 'argument') + ', but ' + str(len(args)) + ' given', n.line)
@@ -6758,7 +6762,7 @@ class Gen:
         for k, a in enumerate(args):
             v = self.expr(a, info.ptypes[k])
             v = self.want(v, info.ptypes[k], n.line, 'argument ' + str(k + 1) + ' of !' + name)
-            if v.ty == 'float':
+            if v.ty == 'float' and not word:
                 v = self.bf_to_f64(v, [], True)            # a C function takes the nearest double; a float too large or too small for one stops the program
             reg = v.reg
             if v.ty == 'bool':
@@ -6768,10 +6772,10 @@ class Gen:
                 reg = self.int_raw(v)          # the arguments before it are held, so a failure here frees them too
             held.append(v)
             self.hold(v)                        # freed by the error path if a later argument raises
-            parts.append(f'{self.llvm_type_of(v.ty)} {reg}')
-            types.append(self.llvm_type_of(v.ty))
+            parts.append(f'{self.llvm_type_of(v.ty, word)} {reg}')
+            types.append(self.llvm_type_of(v.ty, word))
         self.drop_held(held_before)
-        ret = self.llvm_type_of(info.ret) if info.ret != '' else 'void'
+        ret = self.llvm_type_of(info.ret, word) if info.ret != '' else 'void'
         self.mod.declare('declare ' + ret + ' @' + name + '(' + ', '.join(types) + ')')
         text = 'call ' + ret + ' @' + name + '(' + ', '.join(parts) + ')'
         r = ''
@@ -6790,6 +6794,8 @@ class Gen:
             return ex(w, 'bool')
         if info.ret == 'int':
             return self.int_from_machine(r, True)
+        if info.ret == 'float' and word:
+            return exf(r, 'float')
         if info.ret == 'float':
             # a C function may return a NaN that carries a payload, which would pass for the address of a box: keep the sign and
             # drop the payload (a quiet NaN with the sign clear and a payload is what a box looks like)
@@ -11731,7 +11737,8 @@ def declarations(mod: Mod) -> str:
     d += '@.fmt.int = private constant [5 x i8] c"%lld\\00"\n'
     d += '@.fmt.uint = private constant [5 x i8] c"%llu\\00"\n'
     for extra in mod.decls:
-        d += f'{extra}\n'
+        if f'\n{extra}\n' not in d:            # (a runtime function the compiler declares itself, such as tomato_bf_is_boxed)
+            d += f'{extra}\n'
     d += 'declare ptr @tomato_str_from_u64(i64)\n'
     return d
 

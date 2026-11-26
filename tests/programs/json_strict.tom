@@ -51,8 +51,8 @@ def main():
     check('NaN')
     check('Infinity')
     check('-Infinity')
-    check('[1e999]')
-    check('-1e999')
+    check('[1e' + '9' * 4301 + ']')           # an exponent of more than 4300 digits (D77d)
+    check('-1e-' + '1' * 4301)
     # literals
     check('True')
     check('nul')

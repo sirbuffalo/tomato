@@ -1,7 +1,10 @@
 # Floats of any size: the runtime API
 
 Stage 2 of `docs/bigfloat-design.md`: the C functions (`runtime/tomato_rt.c`, the sections from "floats of any size" to the end) that
-the compiler calls since stage 3 (D77b): a Tomato `float` is this word. Tests: `tests/bigfloat.c`, and the programs `float_any_size` and `float_ownership`.
+the compiler calls since stage 3 (D77b): a Tomato `float` is this word. Since stage 4 (D77d) the standard library calls the math, rounding and
+format functions itself: a `!` declaration of a function whose name starts with `tomato_bf_` takes and gives the float word (`i64`), borrowed, and
+its float result is the caller's, where any other `!` function gets the nearest double (`std/math.tom`, `std/builtin/numbers.tom` and
+`format.tom` declare them, with `m: int[length=32]` passed as 0). Tests: `tests/bigfloat.c`, and the programs `float_any_size` and `float_ownership`.
 
 ## The word
 
@@ -67,7 +70,9 @@ Results are the exact value rounded once, to nearest, ties to even (D05ae), exce
 | `i64 tomato_bf_math1(i64 op, i64 x, i32 m)` | the `op` numbers of `tomato_math1` |
 | `i64 tomato_bf_math2(i64 op, i64 x, i64 y, i32 m)` | the `op` numbers of `tomato_math2`: 0 is `atan2(y, x)`, 1 is `hypot` |
 
-They are all total on what they accept, so a call never raises a catchable error. A zero divisor, a power without a value and a math argument
+They are all total on what they accept, so a call never raises a catchable error. An infinity or a NaN word (which JSON or MessagePack can bring in,
+D77b) given to `tomato_bf_math1`, `tomato_bf_math2`, `tomato_bf_round` or `tomato_bf_format` gives what the C library gives for it, with a NaN's
+payload dropped. A zero divisor, a power without a value and a math argument
 outside its domain stop the program (E01, E13): the caller tests them first, as it does now. What cannot be allocated is E349 "out of memory".
 
 **Plain operands with a plain result give exactly what they give today**: the hardware's `+ - * /`, `fmod`, `floor(x / y)`, the C library's `pow`

@@ -1,0 +1,6 @@
+from math import exp
+
+# exp of a large number is a float of any size (D77d; it was OverflowError E44)
+@main
+def main():
+    print(exp(1000))

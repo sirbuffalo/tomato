@@ -1,4 +1,4 @@
-from math import exp
+from math import sqrt
 
 class EmptyError(IndexError):
     pass
@@ -30,8 +30,8 @@ def main():
     catch ZeroDivisionError as e:
         print("caught", e.message, e.id)
     try:
-        print(exp(1000))
-    catch OverflowError as e:
+        print(sqrt(-1))
+    catch ValueError as e:
         print("caught", e.message, e.id)
     try:
         ys: list[int] = []

@@ -1,10 +1,10 @@
 # Arbitrary-size floats: design
 
 Status: **approved by Davis with all recommended answers** (the eight questions at the end). Built: stage 0 (the rounding
-fixes), stage 1 (`float[length=64]` as a name, removed again in D77c), stage 2 (the C runtime, `docs/bigfloat-runtime.md`) and stage 3 (the compiler: D77b
-in `docs/decisions.md`). Not built: stage 4 (the library and the formats) and stage 5 (the fast loop copy). One answer changed from the text below:
+fixes), stage 1 (`float[length=64]` as a name, removed again in D77c), stage 2 (the C runtime, `docs/bigfloat-runtime.md`) stage 3 (the compiler: D77b
+in `docs/decisions.md`) and stage 4 (the library and the formats: D77d). Not built: stage 5 (the fast loop copy). One answer changed from the text below:
 floats stay valid dict keys, set members and `hash()` arguments (D78a), which this design had assumed away (Davis, in the stage 3 task). The decision
-entries are D77a, D77b and D77c. **D77c: Davis removed `float[length=64]`, so wherever this document says `float[length=64]` there is none: one float type, and a program cannot ask for the plain double.**
+entries are D77a, D77b, D77c and D77d (stage 4: JSON and TOML reading cap an exponent at 4,300 digits, Davis). **D77c: Davis removed `float[length=64]`, so wherever this document says `float[length=64]` there is none: one float type, and a program cannot ask for the plain double.**
 
 ## The requirement
 

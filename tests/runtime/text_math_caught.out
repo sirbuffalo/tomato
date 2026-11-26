@@ -10,5 +10,5 @@ ValueError: perm needs numbers that are not negative, but got 3 and -2
 ValueError: isqrt needs a number that is not negative, but got -3
 True
 1.5
-OverflowError: a float is too large for a double
+1.000000e+400
 0 0 xxabc (3, 1)

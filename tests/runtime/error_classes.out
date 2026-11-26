@@ -2,7 +2,7 @@ caught index out of range E04
 caught the key is not there E06
 caught the text is not a whole number E17
 caught division by zero E01
-caught exp(1000) is too large to be a float E44
+caught sqrt needs a number that is not negative, but got -1.0 E51
 caught pop from an empty list E21
 caught negative shift count E346
 caught the shift count is too big E345

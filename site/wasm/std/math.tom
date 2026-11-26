@@ -189,14 +189,18 @@ export def lcm(a: int, b: int) -> int:
 # once on Angle; a unit only says how many of itself make a full turn. Printing, + - * / and the result of a method keep
 # the unit.
 
-# libm, reached through the C runtime (the same code runs natively and in the browser)
-!tomato_math1(op: int, x: float) -> float
-!tomato_math2(op: int, x: float, y: float) -> float
-!tomato_is_finite(x: float) -> int
+# The math functions of the C runtime for floats of any size (D77d): a float that is a double and gives a double gets the C
+# library's answer, any other is correctly rounded (hypot and atan2: as exactly as the C library's), so nothing overflows or
+# underflows. op numbers: 0 sqrt, 1 exp, 2 log, 3 log2, 4 log10, 5 sin, 6 cos, 7 tan, 8 asin, 9 acos, 10 atan, 11 sinh,
+# 12 cosh, 13 tanh, 14 asinh, 15 acosh, 16 atanh, 17 expm1, 18 log1p, 19 cbrt; for two: 0 atan2(y, x) (x first), 1 hypot.
+# The domain is checked here first (the runtime stops the program on an argument outside it). The same code runs natively
+# and in the browser.
+!tomato_bf_math1(op: int, x: float, m: int[length=32]) -> float
+!tomato_bf_math2(op: int, x: float, y: float, m: int[length=32]) -> float
 
 def _f(x: int | float) -> float:
     if x in int:
-        return float(x)                  # (the libm functions below take a double: a float too large for one stops at the call)
+        return float(x)                  # (an int of any size is a float of that size)
     return x
 
 def _fmt(x: float) -> str:
@@ -204,13 +208,6 @@ def _fmt(x: float) -> str:
     if s.endswith('.0'):
         return s[:-2]
     return s
-
-# a libm call whose answer must be an ordinary number: infinity (an overflow) is reported instead of passed along
-def _call1(op: int, x: float, what: str) -> float:
-    r = !tomato_math1(op, x)
-    if !tomato_is_finite(r) == 0:
-        raise OverflowError(f'{what} is too large to be a float', 'E44')
-    return r
 
 # constants, not functions: write pi, not pi(). (Literals here have at most 16 digits, so these are the nearest floats
 # to the true values.)
@@ -453,24 +450,24 @@ export def sin(a: Angle) -> float:
     k = int(p[0])
     x = p[1]
     if k == 0:
-        return !tomato_math1(5, x)
+        return !tomato_bf_math1(5, x, 0)
     if k == 1:
-        return !tomato_math1(6, x)
+        return !tomato_bf_math1(6, x, 0)
     if k == 2:
-        return 0.0 - !tomato_math1(5, x)
-    return 0.0 - !tomato_math1(6, x)
+        return 0.0 - !tomato_bf_math1(5, x, 0)
+    return 0.0 - !tomato_bf_math1(6, x, 0)
 
 export def cos(a: Angle) -> float:
     p = _quarter(a)
     k = int(p[0])
     x = p[1]
     if k == 0:
-        return !tomato_math1(6, x)
+        return !tomato_bf_math1(6, x, 0)
     if k == 1:
-        return 0.0 - !tomato_math1(5, x)
+        return 0.0 - !tomato_bf_math1(5, x, 0)
     if k == 2:
-        return 0.0 - !tomato_math1(6, x)
-    return !tomato_math1(5, x)
+        return 0.0 - !tomato_bf_math1(6, x, 0)
+    return !tomato_bf_math1(5, x, 0)
 
 # tan is undefined at a quarter turn and three quarters (90 and 270 degrees)
 export def tan(a: Angle) -> float:
@@ -478,26 +475,26 @@ export def tan(a: Angle) -> float:
     k = int(p[0])
     x = p[1]
     if k % 2 == 0:
-        return !tomato_math1(7, x)
+        return !tomato_bf_math1(7, x, 0)
     if x == 0.0:
         raise ValueError(f'tan is not defined at {a}: the cosine is zero there', 'E47')
-    return 0.0 - !tomato_math1(6, x) / !tomato_math1(5, x)
+    return 0.0 - !tomato_bf_math1(6, x, 0) / !tomato_bf_math1(5, x, 0)
 
 # the inverses give an angle in radians: asin and atan between -pi/2 and pi/2, acos between 0 and pi
 export def asin(x: int | float) -> Angle:
     v = _f(x)
     if v < -1.0 or v > 1.0:
         raise ValueError(f'asin needs a number from -1 to 1, but got {v}', 'E48')
-    return Radians(!tomato_math1(8, v))
+    return Radians(!tomato_bf_math1(8, v, 0))
 
 export def acos(x: int | float) -> Angle:
     v = _f(x)
     if v < -1.0 or v > 1.0:
         raise ValueError(f'acos needs a number from -1 to 1, but got {v}', 'E49')
-    return Radians(!tomato_math1(9, v))
+    return Radians(!tomato_bf_math1(9, v, 0))
 
 export def atan(x: int | float) -> Angle:
-    return Radians(!tomato_math1(10, _f(x)))
+    return Radians(!tomato_bf_math1(10, _f(x), 0))
 
 # atan2(y, x): the angle of the point (x, y) from the positive x axis, in -pi up to and including pi. Note y comes
 # first. atan2(0, 0) is an error rather than a silent 0.
@@ -506,7 +503,7 @@ export def atan2(y: int | float, x: int | float) -> Angle:
     b = _f(x)
     if a == 0.0 and b == 0.0:
         raise ValueError('atan2(0, 0) has no angle: the point is the origin', 'E50')
-    return Radians(!tomato_math2(0, b, a))
+    return Radians(!tomato_bf_math2(0, b, a, 0))
 
 # (made in a function of its own, so that sqrt stays short enough to be inlined)
 def _bad_sqrt(v: float) -> ValueError:
@@ -516,29 +513,27 @@ export def sqrt(x: int | float) -> float:
     v = _f(x)
     if v < 0.0:
         raise _bad_sqrt(v)
-    return !tomato_math1(0, v)
+    return !tomato_bf_math1(0, v, 0)
 
 export def cbrt(x: int | float) -> float:
-    return !tomato_math1(19, _f(x))
+    return !tomato_bf_math1(19, _f(x), 0)
 
 export def hypot(x: int | float, y: int | float) -> float:
-    r = !tomato_math2(1, _f(x), _f(y))
-    if !tomato_is_finite(r) == 0:
-        raise OverflowError('hypot is too large to be a float', 'E52')
-    return r
+    return !tomato_bf_math2(1, _f(x), _f(y), 0)
 
+# exp, expm1, sinh and cosh of a large number are floats of any size: exp(1000) is 1.970071114017047e+434
 export def exp(x: int | float) -> float:
-    return _call1(1, _f(x), f'exp({x})')
+    return !tomato_bf_math1(1, _f(x), 0)
 
 export def expm1(x: int | float) -> float:
-    return _call1(17, _f(x), f'expm1({x})')
+    return !tomato_bf_math1(17, _f(x), 0)
 
 # the natural logarithm
 export def log(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
         raise ValueError(f'log needs a positive number, but got {v}', 'E53')
-    return !tomato_math1(2, v)
+    return !tomato_bf_math1(2, v, 0)
 
 # the logarithm to a base, which must be positive and not 1 (a separate function so that a base of 0 is an error, not
 # "no base")
@@ -549,50 +544,50 @@ export def log_base(x: int | float, base: int | float) -> float:
     b = _f(base)
     if b <= 0.0 or b == 1.0:
         raise ValueError(f'a logarithm base must be positive and not 1, but got {b}', 'E55')
-    return !tomato_math1(2, v) / !tomato_math1(2, b)
+    return !tomato_bf_math1(2, v, 0) / !tomato_bf_math1(2, b, 0)
 
 export def log2(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
         raise ValueError(f'log2 needs a positive number, but got {v}', 'E56')
-    return !tomato_math1(3, v)
+    return !tomato_bf_math1(3, v, 0)
 
 export def log10(x: int | float) -> float:
     v = _f(x)
     if v <= 0.0:
         raise ValueError(f'log10 needs a positive number, but got {v}', 'E57')
-    return !tomato_math1(4, v)
+    return !tomato_bf_math1(4, v, 0)
 
 export def log1p(x: int | float) -> float:
     v = _f(x)
     if v <= -1.0:
         raise ValueError(f'log1p needs a number above -1, but got {v}', 'E58')
-    return !tomato_math1(18, v)
+    return !tomato_bf_math1(18, v, 0)
 
 # hyperbolic functions take and give plain numbers (the argument is not an angle)
 export def sinh(x: int | float) -> float:
-    return _call1(11, _f(x), f'sinh({x})')
+    return !tomato_bf_math1(11, _f(x), 0)
 
 export def cosh(x: int | float) -> float:
-    return _call1(12, _f(x), f'cosh({x})')
+    return !tomato_bf_math1(12, _f(x), 0)
 
 export def tanh(x: int | float) -> float:
-    return !tomato_math1(13, _f(x))
+    return !tomato_bf_math1(13, _f(x), 0)
 
 export def asinh(x: int | float) -> float:
-    return !tomato_math1(14, _f(x))
+    return !tomato_bf_math1(14, _f(x), 0)
 
 export def acosh(x: int | float) -> float:
     v = _f(x)
     if v < 1.0:
         raise ValueError(f'acosh needs a number of at least 1, but got {v}', 'E59')
-    return !tomato_math1(15, v)
+    return !tomato_bf_math1(15, v, 0)
 
 export def atanh(x: int | float) -> float:
     v = _f(x)
     if v <= -1.0 or v >= 1.0:
         raise ValueError(f'atanh needs a number between -1 and 1, but got {v}', 'E60')
-    return !tomato_math1(16, v)
+    return !tomato_bf_math1(16, v, 0)
 
 # ---------------------------------------------------------------------------------------------------------------------
 # floor, ceil, trunc, isnan, isinf, isfinite, copysign, factorial, comb, perm, isqrt, fsum and prod (D75d). A float in

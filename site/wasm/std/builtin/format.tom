@@ -5,8 +5,9 @@
 # align are '' when not written, sign is '', '+', '-' or ' ', width is 0 and precision -1 when not written, and kind is
 # '', 'f', 'e' or 'g'. They follow Python.
 
-# C's %.*f, %.*e or %.*g of a float (exact, ties to even), with its sign; kind is the code of the letter
-!tomato_float_format(x: float, precision: int, kind: int) -> str
+# C's %.*f, %.*e or %.*g of a float of any size (exact, ties to even), with its sign; kind is the code of the letter. Beyond
+# a double the exponent has as many digits as it needs (1.000e+400), and f writes every digit of the whole part (D77d)
+!tomato_bf_format(x: float, precision: int, kind: int) -> str
 
 # the digits of a whole number with a comma before each group of three from the right
 def _group3(digits: str) -> str:
@@ -89,12 +90,14 @@ def _fmt_repr_digits(x: float, precision: int) -> str:
     p = precision
     if p < 1:
         p = 1
-    text = !tomato_float_format(x, p - 1, 101)
+    text = !tomato_bf_format(x, p - 1, 101)
     sign = ''
     if text.startswith('-'):
         sign = '-'
         text = text[1:]
     e = text.find('e')
+    if e < 0:
+        return sign + text              # inf or nan, which a data format brought in
     exponent = int(text[e + 1:])
     digits = text[:e].replace('.', '').rstrip('0')
     if digits == '':
@@ -109,10 +112,8 @@ def _fmt_repr_digits(x: float, precision: int) -> str:
         return sign + digits + '0' * (exponent + 1 - len(digits)) + '.0'
     return sign + digits[:exponent + 1] + '.' + digits[exponent + 1:]
 
-# (an int beyond the largest float arrives here as infinity, and stops)
+# (an int of any size arrives here as the float nearest to it)
 def _fmt_float(x: float, fill: str, align: str, sign: str, zero: bool, width: int, comma: bool, precision: int, kind: str) -> str:
-    if !tomato_is_finite(x) == 0:
-        raise OverflowError('an int is too large to be a float', 'E436')
     text = ''
     if kind == '' and precision < 0:
         text = str(x)
@@ -122,7 +123,7 @@ def _fmt_float(x: float, fill: str, align: str, sign: str, zero: bool, width: in
         p = precision
         if p < 0:
             p = 6
-        text = !tomato_float_format(x, p, ord(kind))
+        text = !tomato_bf_format(x, p, ord(kind))
     negative = text.startswith('-')
     if negative:
         text = text[1:]

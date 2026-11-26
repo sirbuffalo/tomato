@@ -41,7 +41,7 @@ ZeroDivisionError a rational cannot have a zero denominator
 ValueError pow needs a non-negative exponent
 ValueError prev_prime needs n > 2
 ValueError nth_prime needs k >= 1
-OverflowError a libm result is too large to be a float
+OverflowError (retired: a libm result is too large to be a float; exp, expm1, sinh and cosh give a float of any size since D77d; the id stays so that later ids do not move)
 RuntimeError Angle is a base class
 ZeroDivisionError an angle cannot be divided by zero
 ValueError tan is not defined at
@@ -49,7 +49,7 @@ ValueError asin needs a number from -1 to 1
 ValueError acos needs a number from -1 to 1
 ValueError atan2(0, 0) has no angle
 ValueError sqrt needs a number that is not negative
-OverflowError hypot is too large to be a float
+OverflowError (retired: hypot is too large to be a float; hypot gives a float of any size since D77d; the id stays so that later ids do not move)
 ValueError log needs a positive number
 ValueError log_base needs a positive number
 ValueError a logarithm base must be positive and not 1
@@ -414,7 +414,7 @@ ValueError the placeholder is too large for the width {}
 ValueError statistics needs at least one data point
 ValueError statistics needs at least two data points
 ValueError quantiles needs n of at least 1, but got {}
-OverflowError the rounded value is too large to be a float
+OverflowError (retired: the rounded value is too large to be a float; round(x, n) gives a float of any size since D77d; the id stays so that later ids do not move)
 ValueError partition needs a separator that is not empty
 ValueError a fill character must be exactly one character
 ValueError factorial needs a number that is not negative
@@ -433,7 +433,7 @@ CompileError the format type 'd' is for whole numbers, but this value is float
 CompileError the format type '{}' is for numbers, but this value is text
 CompileError the format type 's' is for text, but this value is {}
 CompileError this width or precision in a format spec is too large
-OverflowError an int is too large to be a float
+OverflowError (retired: an int is too large to be a float; an int of any size is a float since D77b and D77d; the id stays so that later ids do not move)
 CompileError '{}' does not take several types here
 TimeoutError the task took longer than its timeout
 ValueError a Queue maxsize cannot be negative
@@ -522,3 +522,6 @@ CompileError the function '{}' is marked @test, so it must take no parameters an
 CompileError no function is marked @test
 SkipTest the test was skipped
 ValueError a tolerance must not be negative
+JSONEncodeError the float {} has an exponent too large to write in decimal, as JSON needs
+MsgpackError the float {} does not fit in a 64-bit float, the largest MessagePack has
+ValueError the float {} has an exponent too large to write in decimal, as TOML needs
