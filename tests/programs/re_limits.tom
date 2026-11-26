@@ -45,8 +45,9 @@ def main():
             print('sequence', count, 'ok')
         catch RegexError as e:
             print('sequence', count, e.id, e.message)
-    # match with pos converts the text once, not once per call
-    text = 'ab ' * 40000
+    # match and search with an advancing pos over one text convert it once and do not compare it with the kept copy again
+    # (the same text object is recognised at once): this loop used to take time proportional to calls times text length
+    text = 'ab ' * 150000
     pos = 0
     tokens = 0
     word = compile('[a-z]+')
@@ -57,6 +58,15 @@ def main():
         else:
             tokens += 1
             pos = m.end()
+    print(tokens)
+    pos = 0
+    tokens = 0
+    while pos < len(text):
+        m = word.search(text, pos)
+        if m is None:
+            break
+        tokens += 1
+        pos = m.end()
     print(tokens)
     # a backreference compare costs the characters it looks at: this used to run for minutes instead of reaching the limit
     big = 'a' * 100000

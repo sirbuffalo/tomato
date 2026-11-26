@@ -17,6 +17,7 @@ alternatives 10000 ok
 sequence 10000 ok
 alternatives 10001 E491 too many alternatives
 sequence 10001 E491 pattern sequence is too long
-40000
+150000
+150000
 backreference E493
 True

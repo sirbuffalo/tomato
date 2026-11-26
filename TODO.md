@@ -8,8 +8,6 @@
   `st_mtimespec` and `extern char **environ` in `runtime/tomato_rt.c` are untested there (only Linux native and WASI were built), and so is the read/write switch for files opened with `+` (`file_to_reading` and `file_to_writing`, which seek at every call on a `+` file on macOS because `__freading` and `__fwriting` do not exist there; read the stdio flags or track the last operation to avoid the extra seeks).
 - Run the release script's `bump` step once on a scratch clone
   Confirm it rewrites `std/sys.tom` and `site/wasm/std/sys.tom` and that the commit step accepts the extra file.
-- Make `Pattern.match`/`search` with an advancing `pos` linear
-  Each call compares the whole text with the cached copy, so a loop of `search(text, pos)` over one long text is quadratic (documented in `docs/regex.md`). It needs a cheap way to tell that the same text was passed again, such as a runtime string-identity test, or a scanning iterator.
 - Floats of any size in the library and the formats (stage 4 of docs/bigfloat-design.md)
   Make std/math, round(x, n), f-string float formats, JSON, TOML and MessagePack handle floats outside the double range (the runtime already has tomato_bf_math1/2, tomato_bf_round, tomato_bf_format), with a decision entry for each visible change.
 - Fast loop copy for float loops (stage 5 of docs/bigfloat-design.md)
@@ -27,3 +25,5 @@
 - Run tests/run.sh on macOS (with the wasi-sdk arm64-macos toolchain) to cover the untested platform.
   The full suite passed on Linux x86_64 on the merged Wave 2 tree (984 passed, 0 failed); macOS is the platform still untested.
 - Run the full suite with ASan, LTO and the WASI SDK on a complete toolchain (or the Mac) to confirm the new test also passes under AddressSanitizer.
+- Run `site/build.sh` to bring the site docs back in sync with docs/
+  `site/docs/specification.md`, `decisions.md` and `decision-inventory.md` differ from `docs/` (3 fast-tier failures in the "release files" section of `tests/run.sh` that were already there before the `Pattern.match`/`search` task).

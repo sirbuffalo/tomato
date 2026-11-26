@@ -506,6 +506,7 @@ int64_t tomato_str_len(void *s) { return ((Str *)s)->chars; }
 
 /* Compares by bytes, which for UTF-8 is the same as comparing code points (D17b). Returns <0, 0 or >0. */
 int tomato_str_cmp(void *a, void *b) {
+    if (a == b) return 0;                  /* the same text object: equal without reading it (std/re relies on this) */
     Str *x = a, *y = b;
     int64_t n = x->bytes < y->bytes ? x->bytes : y->bytes;
     int r = memcmp(x->data, y->data, (size_t)n);
