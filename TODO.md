@@ -14,8 +14,6 @@
   Make std/math, round(x, n), f-string float formats, JSON, TOML and MessagePack handle floats outside the double range (the runtime already has tomato_bf_math1/2, tomato_bf_round, tomato_bf_format), with a decision entry for each visible change.
 - Fast loop copy for float loops (stage 5 of docs/bigfloat-design.md)
   Fast loop copy for float loops, float interval facts for the word type (reusing or replacing the now-idle float interval code), and measurements on the M1, Linux and the browser.
-- Make counted repeats `{m,n}` around a group that can match the empty string give Python's results
-  The group's recorded span and, in rare cases, the overall match span differ from Python, for example `(a??){,2}` on `'a'` and `(.|(\s{,2})??){,2}` with `finditer` on `'\na'`. Stop a repeat after an empty iteration instead of unrolling plain optional copies, and add those cases as corpus rows (`docs/regex.md` documents the difference).
 - Design a non-LTO debug build path for tomato build and run
   Keep the runtime's inline fast paths (alwaysinline IR emitted or prepended by tomatoc) so the debug link needs no LTO merge. Expected debug builds 1.8-2.3x faster (fib 1.15 s to about 0.5 s; the LTO link is about 1.0 s of 1.15 s), which also speeds the test suite; needs a full test run and a wasm rebuild.
 - Make the `repl: up-arrow recalls a multi-line block as one history entry` check robust under load

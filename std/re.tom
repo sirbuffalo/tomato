@@ -540,6 +540,24 @@ class _Compiler:
             return w * low
         return -1
 
+    # Can the expression match the empty string? Assertions and references count as able to (a safe answer for the caller).
+    def nullable(self, index: int) -> bool:
+        at = index * 6
+        kind = self.nodes[at]
+        a = self.nodes[at + 1]
+        b = self.nodes[at + 2]
+        if kind == 1 or kind == 2 or kind == 3 or kind == 9:
+            return False
+        if kind == 8:
+            return self.nullable(a)
+        if kind == 5:
+            return self.nullable(a) and self.nullable(b)
+        if kind == 6:
+            return self.nullable(a) or self.nullable(b)
+        if kind == 7:
+            return self.nodes[at + 3] == 0 or self.nullable(a)
+        return True
+
     def build(self, index: int, next: int) -> int:
         at = index * 6
         kind = self.nodes[at]
@@ -576,9 +594,21 @@ class _Compiler:
                 self.code[branch * 4 + 2] = guard if lazy else next
                 result = branch
             else:
+                # As in Python, once the required copies are done, an optional copy is not started where the previous optional copy
+                # started (that one matched the empty string), so the repeat stops after an empty iteration; this only matters when
+                # the body can match the empty string.
+                guard_index = -1
+                if hi > lo and self.nullable(a):
+                    guard_index = self.guards
+                    self.guards += 1
+                # the copies are nested, so skipping a copy skips all the later ones
                 for i in range(hi - lo):
                     inside = self.build(a, result)
-                    result = self.emit(6, result if lazy else inside, inside if lazy else result)
+                    if guard_index >= 0:
+                        inside = self.emit(12, guard_index, inside)
+                    result = self.emit(6, next if lazy else inside, inside if lazy else next)
+                if guard_index >= 0:
+                    result = self.emit(14, guard_index, result)
             for i in range(lo):
                 result = self.build(a, result)
             return result
@@ -745,6 +775,9 @@ def _run(code: list[int], classes: list[list[int]], entry: int, chars: list[int]
             pc = a
         elif op == 8:
             slots[a] = pos
+            pc = b
+        elif op == 14:
+            slots[(groups + 1) * 2 + a] = -1
             pc = b
         elif op == 12:
             guard = (groups + 1) * 2 + a
