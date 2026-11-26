@@ -52,10 +52,6 @@ def main():
     catch OverflowError as e:
         print("caught", e.message, e.id)
     try:
-        print(huge & 1)
-    catch OverflowError as e:
-        print("caught", e.message, e.id)
-    try:
         print([1][huge])
     catch OverflowError as e:
         print("caught", e.message, e.id)

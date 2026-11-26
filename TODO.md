@@ -12,9 +12,11 @@
   `mag_mul` is schoolbook (already noted in `docs/architecture-review.md`). `x * x` with x = 2^bits: 2^20 bits 0.28 s, 2^22 4.6 s, 2^24 96 s, 2^28 over 90 s (estimated 5 hours); Python (Karatsuba) takes 0.005 s, 0.02 s, 0.13 s and 5.2 s. Squaring needs its own faster path too. Also unblocks `**` on big bases and division by a big divisor (Knuth D, also quadratic).
 - Make `str(int)` subquadratic for big integers
   `tomato_int_str` divides the whole number by 10^9 once per 9 digits. 2^20 bits (315,653 digits) takes 1.75 s, 2^22 28 s, 2^24 over 120 s (estimated 450 s), 2^28 over 90 s (estimated 30 hours); Python 3.14 takes 0.07 s, 0.28 s, 1.4 s and 32 s. A divide-and-conquer conversion (split by 10^(2^k)) needs fast multiply and divide first. Decimal parsing (`int('9' * n)`, big literals) is quadratic too, by the same note in `docs/architecture-review.md`; it was not timed here.
-- Support `&`, `|`, `^` on integers beyond 62 bits
-  `x = 1 << 70; print(x & 3)` stops with E348 "the bitwise operators & | ^ do not work on very large integers" (`runtime/tomato_rt.c`, near `tomato_fail_id(348`), so any integer that is not small is rejected, not only huge ones; Python accepts them. Two's complement semantics for negatives, linear time. `~x`, `<<` and `>>` already work.
 - Make `math.sqrt` (and other short std functions with `raise` + `!` conversions) inlinable
   E.g. compile runtime-error raises as one call to a cold helper instead of an inline error construction plus 4 stores, which would cut every raise site's inline cost. (Inside a float loop nest's fast copy `math.sqrt` is already the hardware square root since stage 5; this is for the calls outside it.)
 - Re-run the 25 Linux wall-clock benchmarks on a quiet host now that the float slowdown is reduced
   The published Linux snapshot in `docs/performance.md` is the pre-bigfloat tree `c1fae360` (first labelled `f533dbd0`), so its float programs do not show stage 3 or stage 5.
+- Speed up the bitwise operators on huge ints with a 64-bit-limb inner loop
+  Optional: a 64-bit-limb or word-pair inner loop for `tomato_int_bitop` (`int_bitop_slow` in `runtime/tomato_rt.c`) would be about 2x faster on huge operands; the 32-bit loop already does 2^28-bit operands in well under a second.
+- Emit an inline small-int fast path for `&`, `|`, `^` on dynamic ints in the compiler
+  Optional: emit the tag check and the inline and/or/xor for dynamic ints in `num_bitwise` (`compiler/src/compiler.tom`), instead of relying on LTO to inline `tomato_int_bitop`, if a release benchmark ever shows a cost.

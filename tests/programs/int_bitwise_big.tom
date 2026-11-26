@@ -1,0 +1,97 @@
+# & | ^ and ~ on ints of any size: Python's rules (a negative number is its infinite two's complement), results normalised
+def show(a: int, b: int):
+    print(a & b, a | b, a ^ b)
+
+def lcg(s: int) -> int:
+    return (s * 6364136223846793005 + 1442695040888963407) % (1 << 64)
+
+# a pseudo-random int of about `bits` bits, negative when `neg`
+def make(seed: int, bits: int, neg: bool) -> int:
+    x = 0
+    s = seed
+    n = 0
+    while n < bits:
+        s = lcg(s)
+        x = (x << 32) | (s >> 32)
+        n += 32
+    x = x >> (n - bits)
+    if neg:
+        return -x
+    return x
+
+@main
+def main():
+    x = 1 << 70
+    print(x & 3)
+    print(x | 3)
+    print(x ^ 3)
+    print((-5) & ((1 << 100) - 1))
+    print((-1) ^ (1 << 80))
+    print((-(1 << 70)) & (-(1 << 65)))
+    print((-(1 << 70)) | (-(1 << 65)))
+    print((-(1 << 70)) ^ (-(1 << 65)))
+    print((-(1 << 70)) & (1 << 70))
+    print((-(1 << 70)) | (1 << 70))
+    print((-(1 << 70)) ^ (1 << 70))
+    show(1 << 62, 1 << 62)
+    show(-(1 << 62) - 1, 1 << 62)
+    show(-(1 << 63), (1 << 63) - 1)
+    show(-(1 << 64), -1)
+    show((1 << 64) - 1, -(1 << 64))
+    show((1 << 100) + 12345, -(1 << 100) - 678)
+    show(0, 1 << 90)
+    show(0, -(1 << 90))
+    show(-1, -(1 << 90))
+    show(-1, 1 << 90)
+    print(~(1 << 70), ~(-(1 << 70)), ~((1 << 62) - 1), ~(-(1 << 62)))
+    print(((1 << 100) | 1) & ~1 == 1 << 100)
+    # a result that falls back into the small range
+    print(type_of_small((1 << 80) & 7), (1 << 80) & 7)
+    print((1 << 80) - 1 & -(1 << 80) + 5)
+    y = 1 << 90
+    y |= 5
+    y &= ~1
+    y ^= 1 << 90
+    print(y)
+    # identities over many sizes and signs
+    bad = 0
+    count = 0
+    sizes = [1, 31, 32, 33, 61, 62, 63, 64, 65, 95, 96, 97, 127, 128, 129, 200, 513]
+    for i in range(len(sizes)):
+        for j in range(len(sizes)):
+            for k in range(4):
+                a = make(i * 7 + 1, sizes[i], k % 2 == 1)
+                b = make(j * 11 + 2, sizes[j], k >= 2)
+                n = a & b
+                o = a | b
+                e = a ^ b
+                count += 1
+                if n + o != a + b:
+                    bad += 1
+                if o - n != e:
+                    bad += 1
+                if ~a != -a - 1:
+                    bad += 1
+                if a & -1 != a:
+                    bad += 1
+                if a | 0 != a:
+                    bad += 1
+                if a ^ a != 0:
+                    bad += 1
+                if a ^ -1 != ~a:
+                    bad += 1
+                if (a & b) != (b & a):
+                    bad += 1
+                if ~(a & b) != (~a | ~b):
+                    bad += 1
+                if ~(a | b) != (~a & ~b):
+                    bad += 1
+    print(count, "cases,", bad, "failures")
+    # a few exact values from the generator, for comparison with Python
+    for bits in [64, 100, 130]:
+        a = make(5, bits, True)
+        b = make(9, bits + 40, False)
+        show(a, b)
+
+def type_of_small(v: int) -> bool:
+    return v < (1 << 62)

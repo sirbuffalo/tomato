@@ -3963,15 +3963,7 @@ class Gen:
         x = self.resize(a, t)
         y = self.resize(b, t)
         if t == 'int':
-            if not ((x.small or small_text(x.reg)) and (y.small or small_text(y.reg))):
-                both = self.tmp('bittags')
-                tag = self.tmp('bittag')
-                large = self.tmp('bitlarge')
-                self.emit(f'{both} = and i64 {x.reg}, {y.reg}')
-                self.emit(f'{tag} = and i64 {both}, 1')
-                self.emit(f'{large} = icmp eq i64 {tag}, 0')
-                self.fail_if(large, 'the bitwise operators & | ^ do not work on very large integers', [x, y])
-            else:                             # tagged words 2v+1: the tags take care of themselves, except that ^ clears them
+            if (x.small or small_text(x.reg)) and (y.small or small_text(y.reg)):   # tagged words 2v+1: the tags take care of themselves, except that ^ clears them
                 word = self.arith('and' if op == '&' else ('or' if op == '|' else 'xor'), x.reg, y.reg)
                 return exs(self.arith('or', word, '1') if op == '^' else word, 'int')
             code = '0'
@@ -3983,7 +3975,7 @@ class Gen:
             self.emit(f'{r} = call i64 @tomato_int_bitop(i64 {x.reg}, i64 {y.reg}, i32 {code})')
             self.release(x)
             self.release(y)
-            return exs(r, 'int')
+            return exf(r, 'int')
         ins = 'and'
         if op == '|':
             ins = 'or'

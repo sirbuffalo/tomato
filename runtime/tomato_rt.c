@@ -6029,11 +6029,42 @@ int64_t tomato_int_parse_cstr(const char *text, int position) {
     return w;
 }
 
-/* & | ^ on small numbers (two's complement); very large numbers are not supported */
-int64_t tomato_int_bitop(int64_t x, int64_t y, int32_t op) {
-    if (!(int_is_small(x) && int_is_small(y))) tomato_fail_id(348, "the bitwise operators & | ^ do not work on very large integers");
-    int64_t a = int_small_val(x), b = int_small_val(y);
-    return int_mk_small(op == 0 ? (a & b) : (op == 1 ? (a | b) : (a ^ b)));
+/* & | ^ on ints of any size, with Python's rules: a negative number acts as its infinite two's complement (…1111 followed by the
+ * bits of -x-1), so the result is what the operator gives on those bit strings. One pass over the limbs, with each negative
+ * operand's two's complement made on the fly (~limb plus a carry that starts at 1 and is dropped at the first nonzero limb);
+ * past the end of an operand come its sign limbs (0, or all ones when negative). The result is written in two's complement
+ * and, when it is negative, negated in place (a second pass over the result). The result has at most one limb more than the
+ * longer operand, and for & with a non-negative operand no more than that operand's limbs. */
+COLD static int64_t int_bitop_slow(int64_t x, int64_t y, int32_t op) {
+    IntView a, b; int_view(x, &a); int_view(y, &b);
+    int na = a.sign < 0 && a.n > 0, nb = b.sign < 0 && b.n > 0;      /* negative operands (a zero has no sign) */
+    int nr = op == 0 ? (na & nb) : (op == 1 ? (na | nb) : (na ^ nb));   /* the sign of the result */
+    int64_t n = a.n > b.n ? a.n : b.n;
+    if (op == 0) { if (!na && !nb) n = a.n < b.n ? a.n : b.n; else if (!na) n = a.n; else if (!nb) n = b.n; else n++; }
+    else if (na | nb) n++;
+    Big *out = malloc(sizeof(Big) + (size_t)(n ? n : 1) * 4);
+    if (!out) out_of_memory();
+    BIG_ADJUST(1);
+    uint32_t *r = out->d;
+    uint64_t ca = 1, cb = 1;                                     /* the carries of the two's complements */
+    for (int64_t i = 0; i < n; i++) {
+        uint32_t u = i < a.n ? a.d[i] : 0, v = i < b.n ? b.d[i] : 0;
+        if (na) { uint64_t s = (uint64_t)(uint32_t)~u + ca; u = (uint32_t)s; ca = s >> 32; }
+        if (nb) { uint64_t s = (uint64_t)(uint32_t)~v + cb; v = (uint32_t)s; cb = s >> 32; }
+        r[i] = op == 0 ? (u & v) : (op == 1 ? (u | v) : (u ^ v));
+    }
+    if (nr) {                                                    /* negative: the magnitude is the two's complement of r */
+        uint64_t c = 1;
+        for (int64_t i = 0; i < n; i++) { uint64_t s = (uint64_t)(uint32_t)~r[i] + c; r[i] = (uint32_t)s; c = s >> 32; }
+    }
+    return int_finish(out, nr ? -1 : 1, n);
+}
+ALWAYS int64_t tomato_int_bitop(int64_t x, int64_t y, int32_t op) {
+    if (__builtin_expect(x & y & 1, 1)) {                        /* both small: the operators on the 63-bit values never leave the small range */
+        int64_t a = int_small_val(x), b = int_small_val(y);
+        return int_mk_small(op == 0 ? (a & b) : (op == 1 ? (a | b) : (a ^ b)));
+    }
+    return int_bitop_slow(x, y, op);
 }
 
 /* int(x) on a float: the whole part towards zero, as an int of any size (the caller checked the float is finite) */

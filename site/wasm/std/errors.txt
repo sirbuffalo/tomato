@@ -345,7 +345,7 @@ OverflowError the exponent is too big
 OverflowError the shift count is too big
 ValueError negative shift count
 OverflowError the number is too big here
-OverflowError the bitwise operators & | ^ do not work on very large integers
+OverflowError (retired: the bitwise operators & | ^ on a very large int; they work on an int of any size since D81a; the id stays so that later ids do not move)
 RuntimeError out of memory
 RuntimeError stack overflow: a function calls itself too deeply
 ValueError input {} must be {}, found '{}'

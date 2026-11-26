@@ -7,7 +7,6 @@ caught pop from an empty list E21
 caught negative shift count E346
 caught the shift count is too big E345
 caught the exponent is too big E344
-caught the bitwise operators & | ^ do not work on very large integers E348
 caught the number is too big here E347
 caught slice the number is too big here E347
 caught mine []
