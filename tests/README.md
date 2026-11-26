@@ -107,6 +107,16 @@ So the full tier took about **1 min 50 s** at load 65 to 100, which is not the o
 seconds over 64 jobs is 64 s, and the compiler's IR compile plus the command-line chain add to that; with the machine's other jobs taking cores the
 wall time is longer still. The one-minute target needs either a quiet machine or less CPU; it is not demonstrated here.
 
+## Full tier and the release's Linux step with LTO required
+
+25 November 2026, on biggie with `~/.tomato-release/linux-tools/bin` first on `PATH` (clang 21, no node or expect, so the wasm and repl-history checks are not
+part of the count). `release/check-lto.sh` passed ("LTO cross-module optimization verified"). **Not quiet**: the load average was 65 before and 102 at
+the end of the first run, because another account's ~58 long-running `prst` jobs keep it near 65 and it never fell to the 32 that the release's Linux step waits for.
+
+- `TOMATO_TEST_REQUIRE_LTO=1 tests/run.sh --times -j 64`: **842 passed, 0 failed**, 1 min 26 s wall, 3,135 CPU seconds (2,477 user + 658 system). "Tomato release build used LTO" and "Tomato debug build used LTO" passed.
+- The Linux step of `release/release.sh`, run as the release runs it: the script `release.sh` pipes to biggie (`linux_remote_script`), on a `git archive` of the tree, with `10` runs, seed `1`, the default 300 s wait for load 32 (it went on with the load warning). `check-lto.sh`, then `tests/run.sh` with LTO required (`@@TESTS_RC=0`, **842 passed, 0 failed**), then `benchmarks/run.sh` (1,760 runs, `@@BENCH=ok`) and `benchmarks/count.sh --guest` (`@@COUNT=ok`, no differing outputs).
+  The `release.sh` driver itself runs on the signing Mac, so the ssh, fetch and gate parts of the step were not exercised here; the next release does that.
+
 ## WebAssembly checks under load
 
 The wasm path interprets the program in JavaScript with a time limit. `tests/run.sh` gives it 30 s (the website's 5 s is too short on a
