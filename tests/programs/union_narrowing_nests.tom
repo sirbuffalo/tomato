@@ -1,7 +1,7 @@
-# D55a (union narrowing by `x in T`) in release-mode loop nests. A narrowed union holds its member in a slot of its own, and the two
+# D55a (union narrowing by `x is T`) in release-mode loop nests. A narrowed union holds its member in a slot of its own, and the two
 # copies of a loop nest (the fast copy, which has no big-number code, and the general copy) have a slot each. The fast copy goes to the
 # start of the statement in the general copy when a number is big, so the general copy's slot has to be filled again there; it was
-# empty (0, or null) after `if k in str: continue` when the fast copy had made the narrowing, and the nest then used 0 for the
+# empty (0, or null) after `if k is str: continue` when the fast copy had made the narrowing, and the nest then used 0 for the
 # member in release mode (debug mode has one copy and was right). Each function is a nest of the shapes that matter, and each
 # is called with small numbers only and with a big one in the table, which leaves the fast copy at a different statement.
 class Tag:
@@ -12,7 +12,7 @@ def settled_int(xs: list[int], k: int | str) -> int:
     t = 0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in str:
+            if k is str:
                 continue
             t += xs[i] * xs[j] + k
     return t
@@ -22,9 +22,9 @@ def settled_three(xs: list[int], k: int | str | float) -> int:
     t = 0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in str:
+            if k is str:
                 continue
-            if k in float:
+            if k is float:
                 continue
             t += xs[i] * xs[j] + k
     return t
@@ -34,7 +34,7 @@ def settled_text(xs: list[int], k: int | str) -> int:
     t = 0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in int:
+            if k is int:
                 continue
             t += xs[i] * xs[j] + len(k)
     return t
@@ -43,7 +43,7 @@ def settled_float(xs: list[int], k: float | str) -> float:
     t = 0.0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in str:
+            if k is str:
                 continue
             t += k * xs[j] + xs[i]
     return t
@@ -52,7 +52,7 @@ def settled_object(xs: list[int], k: Tag | str) -> int:
     t = 0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in str:
+            if k is str:
                 continue
             t += xs[i] * xs[j] + k.n
     return t
@@ -62,7 +62,7 @@ def branches(xs: list[int], k: int | str) -> int:
     t = 0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in int:
+            if k is int:
                 t += xs[i] * xs[j] + k
             else:
                 t += len(k) + xs[i]
@@ -72,7 +72,7 @@ def branches(xs: list[int], k: int | str) -> int:
 def outer_narrow(xs: list[int], k: int | str) -> int:
     t = 0
     for i in range(len(xs)):
-        if k in str:
+        if k is str:
             continue
         for j in range(len(xs)):
             t += xs[i] * xs[j] + k
@@ -83,7 +83,7 @@ def used_twice(xs: list[int], k: int | str) -> int:
     t = 0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in str:
+            if k is str:
                 break
             t += xs[i] * xs[j]
             t += k * 2
@@ -96,7 +96,7 @@ def while_nest(xs: list[int], k: int | str) -> int:
     while i < len(xs):
         j = 0
         while j < len(xs):
-            if k in str:
+            if k is str:
                 j += 1
                 continue
             t += xs[i] * xs[j] + k
@@ -109,7 +109,7 @@ def with_optional(xs: list[int], k: int | str, c: int | None) -> int:
     t = 0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in str:
+            if k is str:
                 continue
             if c is None:
                 continue
@@ -121,9 +121,9 @@ def narrowed_twice(xs: list[int], k: int | str | float) -> int:
     t = 0
     for i in range(len(xs)):
         for j in range(len(xs)):
-            if k in str:
+            if k is str:
                 continue
-            if k in float:
+            if k is float:
                 continue
             t += xs[i] * xs[j] + k
     return t

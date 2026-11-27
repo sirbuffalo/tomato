@@ -1,5 +1,5 @@
 @main
 def main():
     x: int | str = 1
-    if x in list[int, str]:
+    if x is list[int, str]:
         print(1)

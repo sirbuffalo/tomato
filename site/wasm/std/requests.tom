@@ -162,7 +162,7 @@ export async def request(method: str, url: str, params: dict[str, str] = {}, dat
     body = ''
     has_body = 0
     json_given = False
-    if json in str:
+    if json is str:
         if json != '':
             json_given = True
             body = json

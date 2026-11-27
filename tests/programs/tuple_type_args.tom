@@ -14,16 +14,16 @@ def first[T](xs: list[T]) -> T:
     return xs[0]
 
 def describe(x: int | tuple[str, int]) -> str:
-    if x in tuple[str, int]:
+    if x is tuple[str, int]:
         return f'pair {x[0]} {x[1] + 1}'
     return f'number {x + 1}'
 
 def kind(x: int | tuple[str, int] | tuple[int, bool] | list[int]) -> str:
-    if x in tuple[str, int]:
+    if x is tuple[str, int]:
         return 'str-int pair'
-    elif x in tuple[int, bool]:
+    elif x is tuple[int, bool]:
         return 'int-bool pair'
-    elif x in list[int]:
+    elif x is list[int]:
         return f'list of {len(x)}'
     return 'int'
 
@@ -32,9 +32,9 @@ def main():
     print(describe(3), describe(('a', 1)))
     print(kind(1), kind(('a', 1)), kind((2, True)), kind([5, 6, 7]))
     u: int | tuple[str, int] = ('z', 26)
-    print(u in tuple[str, int], u in int, u in tuple[int, bool])
+    print(u is tuple[str, int], u is int, u is tuple[int, bool])
     u = 5
-    print(u in tuple[str, int], u in int)
+    print(u is tuple[str, int], u is int)
 
     # explicit generic arguments
     b = Box[tuple[str, int]](('a', 1))

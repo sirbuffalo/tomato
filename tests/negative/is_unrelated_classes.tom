@@ -1,0 +1,12 @@
+class A:
+    x: int = 0
+
+class B:
+    y: int = 0
+
+def same(a: A, b: B) -> bool:
+    return a is b
+
+@main
+def main():
+    print(same(A(), B()))

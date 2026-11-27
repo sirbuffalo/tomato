@@ -1,0 +1,6 @@
+@main
+def main():
+    x: int | str = 1
+    if x is not int:
+        return
+    x = 3

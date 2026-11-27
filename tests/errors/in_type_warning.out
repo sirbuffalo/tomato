@@ -1,0 +1,12 @@
+warning: 'in' with a type is the old spelling of the type test
+ --> tests/errors/in_type_warning.tom:2:10
+  |
+2 |     if x in int:
+  |          ^^
+  = help: write x is T, and x is not T for the opposite ('in' stays for membership, as in x in items)
+warning: 'in' with a type is the old spelling of the type test
+ --> tests/errors/in_type_warning.tom:7:18
+  |
+7 |     return x not in str
+  |                  ^^
+  = help: write x is T, and x is not T for the opposite ('in' stays for membership, as in x in items)

@@ -201,7 +201,7 @@ export def lcm(a: int, b: int) -> int:
 !tomato_bf_math2(op: int, x: float, y: float, m: int[length=32]) -> float
 
 def _f(x: int | float) -> float:
-    if x in int:
+    if x is int:
         return float(x)                  # (an int of any size is a float of that size)
     return x
 
@@ -652,7 +652,7 @@ export def atanh(x: int | float) -> float:
 
 # floor(x), ceil(x) and trunc(x): the whole number below, above or toward zero from x. An int is its own answer.
 export def floor(x: int | float) -> int:
-    if x in int:
+    if x is int:
         return x
     t = int(x)
     if x < float(t):
@@ -660,7 +660,7 @@ export def floor(x: int | float) -> int:
     return t
 
 export def ceil(x: int | float) -> int:
-    if x in int:
+    if x is int:
         return x
     t = int(x)
     if x > float(t):
@@ -668,13 +668,13 @@ export def ceil(x: int | float) -> int:
     return t
 
 export def trunc(x: int | float) -> int:
-    if x in int:
+    if x is int:
         return x
     return int(x)
 
 # a float as it is, an int as a float (of any size)
 def _num(x: int | float) -> float:
-    if x in int:
+    if x is int:
         return float(x)
     return x
 

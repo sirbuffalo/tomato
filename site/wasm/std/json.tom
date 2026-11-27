@@ -282,7 +282,7 @@ export class JsonList(Json):
 
     @get
     override def at(self, key: int | str) -> Json:
-        if key in str:
+        if key is str:
             raise JSONTypeError(f'a list needs an int index, but got the text {key}', 'E72')
         if key >= len(self.items) or key < -len(self.items):
             raise JSONTypeError(f'index {key} is out of range for a list of {len(self.items)}', 'E73')
@@ -335,7 +335,7 @@ export class JsonDict(Json):
 
     @get
     override def at(self, key: int | str) -> Json:
-        if key in int:
+        if key is int:
             raise JSONTypeError(f'a dict needs a text key, but got the int {key}', 'E74')
         if key not in self.fields:
             raise JSONTypeError(f'the key {key} is not in this dict', 'E75')

@@ -61,7 +61,7 @@ table in `docs/specification.md`). When a rule here and the language disagree, t
 - `dict[str, V]` to find things by name, instead of a search through a list (or two lists kept side by side).
 - `tuple[T]` for a fixed group of values of one type that will not change. A pair or group of different types is a mixed tuple, `tuple[str, int]` (a fixed length, indexed by a written number such as `p[1]`; `a, b = p` takes it apart).
 - `a, b = b, a` to swap and `low, high = bounds(xs)` to take a tuple apart, not a pile of temporaries or indexes.
-- Narrow a union with `if x in T:`; after `if x in T: return` the rest of the function sees the other members.
+- Test a type with `x is T` (and `x is not T`); `in` is only membership. Narrow a union with `if x is T:`; after `if x is T: return` the rest of the function sees the other members, and after `if x is not T: return` it sees `T`. `a is b` on two objects, lists, dicts or sets asks whether they are the same one; compare numbers and text with `==`.
 - `T | None` and `is None` / `is not None` for "no value", not a sentinel like `-1` or `''` or a list of zero or one items.
   `and`/`or` stop early, so `x is None or x.size == 0` is safe.
 

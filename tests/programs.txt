@@ -44,6 +44,9 @@ angles
 angle_lists
 constants
 union_narrowing
+type_is
+type_in_old
+type_is_nests
 union_narrowing_nests
 union_len_for
 fstrings

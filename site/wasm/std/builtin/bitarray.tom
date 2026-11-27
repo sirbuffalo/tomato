@@ -74,11 +74,11 @@ export class bitarray:
 
     @init
     def make(self, value: int | str | list[bool] | bitarray = 0, width: int = 0):
-        if value in bitarray:
+        if value is bitarray:
             for w in value.words:
                 self.words.append(w)
             self.n = value.n
-        elif value in int:
+        elif value is int:
             if value < 0:
                 raise ValueError('a bitarray cannot be made from a negative number', 'E30')
             # the digits: whole chunks of 32 bits, then the bits of the top chunk
@@ -104,7 +104,7 @@ export class bitarray:
             for j in range(count):
                 self.words[count - 1 - j] = rest % 4294967296
                 rest = rest >> 32
-        elif value in str:
+        elif value is str:
             for ch in value:
                 if ch == '0':
                     self.append(False)
@@ -440,11 +440,11 @@ export class frozenbitarray:
 
     @init
     def make(self, value: int | str | list[bool] | bitarray = 0, width: int = 0):
-        if value in bitarray:
+        if value is bitarray:
             self.bits = value.copy()
-        elif value in int:
+        elif value is int:
             self.bits = bitarray(value, width)
-        elif value in str:
+        elif value is str:
             self.bits = bitarray(value)
         else:
             self.bits = bitarray(value)

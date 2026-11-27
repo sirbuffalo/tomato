@@ -6596,7 +6596,7 @@ class Gen:
         return ex(r, 'bool')
 
     def type_operand(self, n: Node) -> str:
-        # the right side of `x in Type` (D23f): a type name that is not a variable; '' when it is something else
+        # the right side of `x is Type` (D23f, spelled `in` before D23i): a type name that is not a variable; '' when it is something else
         if n.kind == 'Index':
             # a type with type arguments: tuple[str, int], list[int], set[str] or dict[str, int]
             base = val_node(n.fields[0])
@@ -6624,8 +6624,38 @@ class Gen:
             return f'%{key}'
         return ''
 
-    def type_test(self, left: Node, tt: str, line: int) -> Ex:
-        # x in Type: true when the value's type is Type (a class name also matches its subclasses)
+    def warn_old_type_test(self, line: int):
+        # `x in T` still works in 1.0.x, with this warning (a default of D23i that Davis may change): once per line, not for a seed's code
+        mod = self.mod
+        module = mod.cur
+        if module in mod.seed_used or module not in mod.sources:
+            return
+        src = mod.sources[module]
+        lines = src.split('\n')
+        if 1 <= line and line <= len(lines) and 'allow: type-test' in lines[line - 1]:
+            return
+        text = format_error("'in' with a type is the old spelling of the type test\nwrite x is T, and x is not T for the opposite ('in' stays for membership, as in x in items)", line, 0, src, source_path(mod, module), 'warning')
+        if text not in mod.warnings:
+            mod.warnings.append(text)
+
+    def identity(self, op: str, a: Ex, b: Ex, line: int) -> Ex:
+        # `a is b` for two objects, lists, dicts or sets (or an optional of one): true when they are the same one (D23i), whatever
+        # their contents. Text, tuples, numbers and bools are values, not things with an identity: `==` compares them.
+        for e in [a, b]:
+            t = strip_optional(e.ty)
+            if is_value_optional(e.ty) or not (is_class(t) or is_iface(t) or t.startswith('list[') or is_dict(t) or is_set(t)):
+                raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\n'is' tells whether two objects, lists, dicts or sets are the same one; a value of type {shown(e.ty)} has no identity, so compare it with ==", line)
+        if not (self.mod.assignable(strip_optional(a.ty), strip_optional(b.ty)) or self.mod.assignable(strip_optional(b.ty), strip_optional(a.ty))):
+            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\nthey can never be the same object", line)
+        cc = 'ne' if op == 'is not' else 'eq'
+        c = self.tmp('same')
+        self.emit(f'{c} = icmp {cc} ptr {a.reg}, {b.reg}')
+        self.release(a)
+        self.release(b)
+        return self.bool_of(c)
+
+    def type_test(self, left: Node, tt: str, line: int, negate: bool = False) -> Ex:
+        # x is Type: true when the value's type is Type (a class name also matches its subclasses); with negate (`x is not Type`) the opposite
         a = self.expr(left)
         acc = ''
         c = ''
@@ -6657,6 +6687,10 @@ class Gen:
             else:
                 self.emit(f'{acc} = icmp ne i64 0, 0')
         self.release(a)
+        if negate:
+            flipped = self.tmp('not')
+            self.emit(f'{flipped} = xor i1 {acc}, true')
+            acc = flipped
         return self.bool_of(acc)
 
     def binop(self, n: Node, expected: str) -> Ex:
@@ -6683,8 +6717,14 @@ class Gen:
                 total = -total
             if not fits_literal(total, expected, negative_total):
                 raise CompileError(f'the constant {self.const_eval(n)} does not fit in {shown(expected)}', n.line)
-        if op == 'in' and self.type_operand(right) != '':
-            return self.type_test(left, self.type_operand(right), n.line)
+        if op == 'in' or op == 'is' or op == 'is not':
+            tt = self.type_operand(right)
+            if tt != '' and (op == 'in' or tt != 'None'):
+                # `x is T` (D23i; `x in T` is the old spelling, D23f): the type test. `x is None` stays a pointer test below, which
+                # also says what a value that is never None cannot be compared with.
+                if op == 'in':
+                    self.warn_old_type_test(n.line)
+                return self.type_test(left, tt, n.line, op == 'is not')
         if op == '==' or op == '!=':
             if self.char_of(right) and self.peek_type(left) == 'str':
                 return self.char_equal(op, left, right, False, n.line)
@@ -6738,6 +6778,8 @@ class Gen:
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
         if op == 'in':
             return self.membership(a, b, n.line)
+        if (op == 'is' or op == 'is not') and a.ty != 'None' and b.ty != 'None':
+            return self.identity(op, a, b, n.line)
         if not ((op == 'is' or op == 'is not' or op == '==' or op == '!=') and (a.ty == 'None' or b.ty == 'None')):
             a = self.unwrap(a, n.line, [b])
             b = self.unwrap(b, n.line, [a])
@@ -10188,19 +10230,29 @@ class Gen:
         self.release(lst)
 
     def narrow_target(self, cond: Node) -> list[str]:
-        # `x in Type` where x is a union variable and Type is one of its members: [x, Type]; else []
-        if cond.kind != 'BinOp' or cond.fields[0].text != 'in':
+        # `x is Type` (or the old `x in Type`) where x is a union variable and Type is one of its members: [x, Type, '']; `x is not Type`,
+        # `x not in Type` and `not (x is Type)` give [x, Type, '!'] (the opposite); else []
+        negated = False
+        while cond.kind == 'UnOp' and cond.fields[0].text == 'not':
+            negated = not negated
+            cond = val_node(cond.fields[1])
+        if cond.kind != 'BinOp':
             return []
+        op = cond.fields[0].text
+        if op != 'in' and op != 'is' and op != 'is not':
+            return []
+        if op == 'is not':
+            negated = not negated
         l = val_node(cond.fields[1])
         if l.kind != 'Name':
             return []
         name = l.fields[0].text
         tt = self.type_operand(val_node(cond.fields[2]))
-        if tt == '' or name not in self.slots:
+        if tt == '' or tt == 'None' and op != 'in' or name not in self.slots:
             return []
         if not is_union(self.types[name]) or tt not in union_members(self.types[name]):
             return []
-        return [name, tt]
+        return [name, tt, '!' if negated else '']
 
     def enter_narrow(self, name: str, member: str) -> list[str]:
         # inside the branch the variable is the member's own type: a copy of the value taken out of the box.
@@ -10290,6 +10342,12 @@ class Gen:
                 self.opt_names(left, False, out)
                 self.opt_names(right, False, out)
             return
+        if op == 'in' or op == 'is' or op == 'is not':
+            # `x is T` (T a type but not None) found true, or `x is not T` found false: a value of a type is not None
+            if (op != 'is not') == truth and left.kind == 'Name' and left.fields[0].text in self.slots and is_optional(self.types[left.fields[0].text]):
+                tt = self.type_operand(right)
+                if tt != '' and tt != 'None' and self.mod.assignable(strip_optional(self.types[left.fields[0].text]), tt) and left.fields[0].text not in out:
+                    out.append(left.fields[0].text)
         if (op != 'is' and op != 'is not') or (op == 'is not') != truth:
             return
         name = self.none_test_name(left, right)
@@ -10440,6 +10498,19 @@ class Gen:
             opt_base = len(self.opts)
             self.opt_push_all(opt_cum)
             target = self.narrow_target(val_node(branch.items[0]))
+            inner: list[str] = []      # the members the tested variable can be in the branch: the one tested, or (is not) the others
+            if len(target) > 0:
+                avail = union_members(self.types[target[0]])
+                if var != '' and target[0] == var:
+                    avail = left
+                if target[2] == '':
+                    inner = [target[1]]
+                else:
+                    inner = [m for m in avail if m != target[1]]
+                if target[2] != '' and (target[1] not in avail or len(inner) == 0):
+                    # (an earlier branch has settled it: this one always or never runs, and nothing is narrowed in it)
+                    inner = []
+                    target = []
             if k == 0 and len(target) > 0:
                 var = target[0]
                 members = union_members(self.types[var])
@@ -10463,7 +10534,7 @@ class Gen:
             if rest_known:
                 saved_rest = self.narrow_to(var, left)
             if len(target) > 0:
-                saved = self.enter_narrow(target[0], target[1])
+                saved = self.narrow_to(target[0], inner)
             self.block(val_nodes(branch.items[1]))
             if len(target) > 0:
                 self.leave_narrow(target[0], saved)
@@ -10482,11 +10553,14 @@ class Gen:
                     outs = facts_join(outs, self.facts)
                 self.br(end)
                 if var != '' and len(target) > 0 and target[0] == var:
-                    kept.append(target[1])
+                    kept = kept + inner
                 elif var != '':
                     kept = kept + left
             if var != '' and len(target) > 0 and target[0] == var:
-                left = [m for m in left if m != target[1]]
+                if target[2] == '':
+                    left = [m for m in left if m != target[1]]
+                else:
+                    left = [target[1]]
             self.place(nxt)
         if s.fields[1].tag == 'l':
             # `else:` knows the variable is one of the members no condition above matched
@@ -12202,8 +12276,8 @@ def pure_number(t: str) -> bool:
     return t == 'int' or t == 'float' or t == 'bool' or t == 'U:float;int'
 
 def asks_type(n: Node) -> bool:
-    # is there a test such as `x in int` (or any other `in`) in the tree?
-    if n.kind == 'BinOp' and n.fields[0].text == 'in':
+    # is there a test such as `x is int` (or any `in`, or an `is` that is not a test for None) in the tree?
+    if n.kind == 'BinOp' and (n.fields[0].text == 'in' or ((n.fields[0].text == 'is' or n.fields[0].text == 'is not') and not (val_node(n.fields[2]).kind == 'Name' and val_node(n.fields[2]).fields[0].text == 'None'))):
         return True
     for f in n.fields:
         if asks_type_val(f):

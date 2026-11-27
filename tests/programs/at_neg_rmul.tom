@@ -1,5 +1,5 @@
 def num(k: int | float) -> float:
-    if k in int:
+    if k is int:
         return float(k)
     return k
 

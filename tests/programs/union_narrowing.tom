@@ -6,57 +6,57 @@ class Cat:
 
 # after `if x in T: return` the variable is the other members
 def after_return(x: int | str) -> str:
-    if x in int:
+    if x is int:
         return 'number ' + str(x + 1)
     return 'text ' + x
 
 def after_raise(x: str | int) -> int:
-    if x in str:
+    if x is str:
         raise RuntimeError('wanted a number, got ' + x)
     return x * 2
 
 # three members: the rest is still a union, which a second test narrows again
 def three(x: int | str | float) -> str:
-    if x in int:
+    if x is int:
         return 'int ' + str(x)
-    if x in str:
+    if x is str:
         return 'str ' + x
     return 'float ' + str(x + 0.5)
 
 def either(x: int | str | float) -> str:
-    if x in float:
+    if x is float:
         return 'float'
     y: int | str | float = x  # allow: unused
-    return 'int or str ' + str(x in int)
+    return 'int or str ' + str(x is int)
 
 # else knows the members not tested, and an else that leaves narrows what follows
 def with_else(x: int | str | float) -> str:
-    if x in int:
+    if x is int:
         return 'int ' + str(x)
     else:
-        if x in float:
+        if x is float:
             return 'float ' + str(x)
         return 'str ' + x
 
 def else_leaves(x: int | str) -> int:
-    if x in str:
+    if x is str:
         pass
     else:
         return x + 100
     return len(x)
 
 def chain(x: Dog | Cat | int) -> str:
-    if x in Dog:
+    if x is Dog:
         return 'dog ' + x.name
-    elif x in Cat:
+    elif x is Cat:
         return 'cat ' + x.name
     else:
         return 'int ' + str(x)
 
 def chain_out(x: Dog | Cat | int) -> str:
-    if x in Dog:
+    if x is Dog:
         return 'dog ' + x.name
-    elif x in int:
+    elif x is int:
         return 'int ' + str(x)
     return 'cat ' + x.name
 
@@ -64,13 +64,13 @@ def chain_out(x: Dog | Cat | int) -> str:
 def loop(items: list[int | str]) -> int:
     total = 0
     for item in items:
-        if item in str:
+        if item is str:
             continue
         total += item
     return total
 
 def pass_on(x: int | str | float) -> str:
-    if x in float:
+    if x is float:
         return 'float'
     return either(x)
 

@@ -239,7 +239,7 @@ of magnitude is not in doubt. Safari's engine was not measured.
   compiles and stops with `error[E10]: None where a value is needed` [V, probe `r1`]. So does `a.v` on an `A | None`
   [V, probe `u2`]. This is P30's documented
   placeholder, but it sits badly with D04a/D33a ("reject known type mismatches before running") and is the biggest gap I
-  found in static checking. Narrowing exists only for unions via `x in T` (D55a), not for `is None`.
+  found in static checking. Narrowing exists only for unions via `x in T` (D55a), not for `is None` (since then D102a narrows optionals and D23i spells the union test `x is T`).
 - **Wrong output from a range near the small-int edge.** `for i in range(n + 5, n + 2, -1)` with n = 2^62 - 4 prints
   -4611686018427387903 as its first value, with no error [V, probe `s3`]. It is in `TODO.md` now (`tag_small` wraps). Few
   programs reach it, but a language whose promise is unlimited integers should not print a wrong one silently.

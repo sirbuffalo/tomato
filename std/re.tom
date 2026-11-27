@@ -1098,7 +1098,7 @@ export class Match:
         self.slots = slots
 
     def private index(self, key: int | str) -> int:
-        if key in str:
+        if key is str:
             if key not in self.re.groupindex:
                 raise IndexError(f'no such group {key}', 'E496')
             return self.re.groupindex[key]

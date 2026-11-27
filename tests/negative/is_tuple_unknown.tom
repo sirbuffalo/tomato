@@ -1,0 +1,6 @@
+def f(x: int | str) -> bool:
+    return x is tuple[str, nothing]
+
+@main
+def main():
+    print(f(1))

@@ -1,5 +1,5 @@
 @main
 def main():
     x: int | str = 1
-    if x in int:
+    if x is int:
         x = 2

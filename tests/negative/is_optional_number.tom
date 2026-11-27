@@ -1,0 +1,6 @@
+def same(a: int | None, b: int | None) -> bool:
+    return a is b
+
+@main
+def main():
+    print(same(1, None))

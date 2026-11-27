@@ -1,0 +1,14 @@
+def kind(x: int | str) -> str:
+    if x in int:
+        return 'number'
+    return x
+
+def other(x: int | str) -> bool:
+    return x not in str
+
+def quiet(x: int | str) -> bool:
+    return x in int  # allow: type-test
+
+@main
+def main():
+    print(kind(1), other(2), quiet(3), 3 in [1, 2, 3])

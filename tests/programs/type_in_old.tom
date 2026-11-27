@@ -1,0 +1,40 @@
+# `x in T` is the old spelling of the type test (D23f): in 1.0.x it still works, with a warning (D23i), and narrows as `x is T`.
+# `in` with a list, set, dict or text is still membership.
+class Dog:
+    name: str = 'rex'
+
+class Cat:
+    name: str = 'tom'
+
+def kind(x: int | str | float) -> str:
+    if x in int:  # allow: type-test
+        return 'int ' + str(x + 1)
+    elif x in str:  # allow: type-test
+        return 'str ' + x
+    return 'float ' + str(x * 2.0)
+
+def pet(x: Dog | Cat) -> str:
+    if x in Dog:  # allow: type-test
+        return 'dog ' + x.name
+    return 'cat ' + x.name
+
+def optional(x: int | None, s: str | None) -> str:
+    out = ''
+    if x in None:  # allow: type-test
+        out += 'none'
+    if x in int:  # allow: type-test
+        out += 'int' + str(x + 1)
+    if s in str and len(s) > 1:  # allow: type-test
+        out += s
+    return out
+
+def opposite(x: int | str) -> str:
+    if not (x in int):  # allow: type-test
+        return 'text ' + x
+    return 'int ' + str(x)
+
+@main
+def main():
+    print(kind(1), kind('a'), kind(1.5), pet(Dog()), pet(Cat()))
+    print(optional(None, None), optional(2, 'ab'), opposite(3), opposite('b'))
+    print(2 in [1, 2], 'a' in 'abc', 3 not in {1, 2}, 'k' in {'k': 1})

@@ -16,9 +16,9 @@ def main():
     print(j['none'].is_null(), j['n'].is_null(), j['none'].kind(), j['f'].kind(), j['ok'].kind(), j['tags'].kind(), j['name'].kind())
     # get gives None for a missing key
     g = j.get('missing')
-    print(g in None)
+    print(g is None)
     h = j.get('n')
-    if h in None:
+    if h is None:
         print('no')
     else:
         print(h.as_int())
@@ -75,7 +75,7 @@ def main():
         print('error:', e.message)
     try:
         g2 = j['n'].get('a')
-        print(g2 in None)
+        print(g2 is None)
     catch JSONTypeError as e:
         print('error:', e.message)
     # a JSONDecodeError carries its parts and is a RuntimeError

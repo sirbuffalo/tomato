@@ -2,9 +2,9 @@ class Dog:
     name: str = 'rex'
 
 def describe(x: int | str) -> str:
-    if x in int:
+    if x is int:
         return 'number ' + str(x + 1)
-    elif x in str:
+    elif x is str:
         return 'text ' + x
     return 'other'
 
@@ -17,15 +17,15 @@ def pick(flag: bool) -> int | str:
 def main():
     print(describe(3), describe('hi'))
     v: int | str | float = 2.5
-    print(v, v in float, v in int)
+    print(v, v is float, v is int)
     v = 'now text'
     print(v)
     p = pick(True)
     q = pick(False)
-    print(p, q, p in str, q in str)
+    print(p, q, p is str, q is str)
     n = 3
-    print(n in int, n in str)
+    print(n is int, n is str)
     for i in range(3):
         w: int | str = i
-        if w in int:
+        if w is int:
             print(w * 2)

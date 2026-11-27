@@ -64,7 +64,7 @@ export class Clock:
 # one key part as text: the length of its `str` text, a colon and the text
 def part[T](x: T) -> str:
     s = str(x)
-    if x in float:
+    if x is float:
         if s == '-0.0':
             s = '0.0'           # a dict treats -0.0 and 0.0 as one key, and so does a cache
     return f'{len(s)}:{s}'

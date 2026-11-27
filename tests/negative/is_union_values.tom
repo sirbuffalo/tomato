@@ -1,0 +1,6 @@
+def same(a: int | str, b: int | str) -> bool:
+    return a is b
+
+@main
+def main():
+    print(same(1, 'a'))

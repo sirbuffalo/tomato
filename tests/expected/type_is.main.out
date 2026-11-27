@@ -1,0 +1,20 @@
+int 2 str s float 5.0
+int 1 text t float 2.0
+number 2 not a number: t number 3 text u 3
+b 3 a x num 3 text y int 5 str z
+int 1 str s float 1.5
+dog rex cat tom int 7
+list 2 pair a3 int 5
+8 int str float
+TrueFalseTrueTrueTrueFalseTrueTrueTrueFalseTrueTrueTrueTrueTrue
+i2sabc0f3.0 ninsN i4c0
+none a! a3
+True False True
+6 2 0
+TrueFalseTrueTrueFalseFalseTrueFalseTrueTrueTrueFalse
+FalseTrueTrueFalseTrueTrueFalseTrueTrueFalseTrueTrue
+False True True True
+TrueFalseTrue FalseTrueTrue
+TrueTrueTrueFalse FalseTrueTrueTrue
+TrueTrueFalseFalse FalseFalseFalseTrue
+True False True

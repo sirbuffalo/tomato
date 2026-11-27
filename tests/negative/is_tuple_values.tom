@@ -1,0 +1,6 @@
+def same(a: tuple[int], b: tuple[int]) -> bool:
+    return a is b
+
+@main
+def main():
+    print(same((1, 2), (1, 2)))

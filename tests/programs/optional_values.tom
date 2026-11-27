@@ -141,7 +141,7 @@ def main():
         print(z)
     catch RuntimeError as err:
         print('caught:', err.message)
-    print(x in int, r in None, r in int)
+    print(x is int, r is None, r is int)
     # a big number as an optional key: hash() and the dict and set helpers see the narrowed number without freeing it (third audit)
     obig: int | None = 10 ** 40
     print(hash(obig) == hash(10 ** 40))

@@ -1,5 +1,5 @@
 def f(x: int | str, y: bool) -> str:
-    if x in int:
+    if x is int:
         return 'i'
     elif y:
         x = 5

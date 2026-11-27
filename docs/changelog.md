@@ -17,6 +17,7 @@ on an older install moves to 1.0.0 as usual.
 
 ### Breaking changes
 
+- The type test is written `x is T` (and `x is not T`), not `x in T` (D23i): `if v is Circle:`, `if x is int:`, `if s is None:`. `x in T` with a type on the right still works in 1.0.x and prints a warning (`type-test`, `# allow: type-test` silences it); membership stays `in` (`if a in items:`). `a is b` on two objects, lists, dicts or sets is now identity (it was an error); on numbers, text and tuples it is an error that says to use `==`.
 - A program built by `tomato build` takes `[ENTRY [INPUTS...]]` as its arguments (D94b): no word runs `main`, a first word that names an entry
   runs that entry with the words after it, and any other first word is an error that lists the entries. What was `./prog 30` for a
   `main(n: int)` is now `./prog main 30`; `tomato build FILE --entry NAME` still makes a program with that one entry that takes only its inputs.

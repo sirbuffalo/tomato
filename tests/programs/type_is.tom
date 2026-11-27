@@ -1,0 +1,218 @@
+# `x is T` is the type test (D23i) and `x is not T` its opposite; `a is b` between two objects, lists, dicts or sets is
+# identity (the same one). `x is None` is the type test for None.
+class Shape:
+    sides: int = 0
+
+class Circle(Shape):
+    r: int = 1
+
+class Square(Shape):
+    w: int = 2
+
+class Dog:
+    name: str = 'rex'
+
+class Cat:
+    name: str = 'tom'
+
+interface Named:
+    def label(self) -> str
+
+class Tag implements Named:
+    text: str = 't'
+
+    def label(self) -> str:
+        return self.text
+
+# ---- the type test on a union: the same narrowing as the old `x in T` has, and the opposite form
+def kind(x: int | str | float) -> str:
+    if x is int:
+        return 'int ' + str(x + 1)
+    elif x is str:
+        return 'str ' + x
+    else:
+        return 'float ' + str(x * 2.0)
+
+def not_kind(x: int | str | float) -> str:
+    if x is not int:
+        if x is str:
+            return 'text ' + x
+        return 'float ' + str(x + 0.5)
+    return 'int ' + str(x)
+
+# an early exit on the opposite form narrows the rest of the block to the member that was tested
+def exit_not(x: int | str) -> str:
+    if x is not int:
+        return 'not a number: ' + x
+    return 'number ' + str(x + 1)
+
+def exit_not_raise(x: str | int) -> int:
+    if x is not str:
+        raise RuntimeError('wanted text, got ' + str(x))
+    return len(x)
+
+def exit_is(x: int | str) -> str:
+    if x is int:
+        return 'number ' + str(x + 1)
+    return 'text ' + x
+
+def with_not(x: int | str) -> str:
+    if not (x is int):
+        return 'a ' + x
+    return 'b ' + str(x)
+
+def not_not(x: int | str) -> str:
+    if not x is not int:
+        return 'num ' + str(x + 2)
+    return 'text ' + x
+
+def else_branch(x: int | str) -> str:
+    if x is not str:
+        y = x + 1
+        return 'int ' + str(y)
+    else:
+        return 'str ' + x
+
+def three_way(x: int | str | float) -> str:
+    if x is not int:
+        if x is not str:
+            return 'float ' + str(x)
+        return 'str ' + x
+    return 'int ' + str(x)
+
+def classes(x: Dog | Cat | int) -> str:
+    if x is Dog:
+        return 'dog ' + x.name
+    elif x is not int:
+        return 'cat ' + x.name
+    else:
+        return 'int ' + str(x)
+
+def containers(x: list[int] | tuple[str, int] | int) -> str:
+    if x is list[int]:
+        return 'list ' + str(len(x))
+    elif x is tuple[str, int]:
+        return 'pair ' + x[0] + str(x[1])
+    return 'int ' + str(x)
+
+def in_loop(items: list[int | str]) -> int:
+    total = 0
+    for item in items:
+        if item is not int:
+            total += len(item)
+            continue
+        total += item
+    return total
+
+def again(x: int | str | float) -> str:
+    if x is not float:
+        if x is not str:
+            return 'int'
+        return 'str'
+    return 'float'
+
+# ---- a value tested by its type, whatever the variable
+def plain(n: int, s: str, f: float, b: bool, c: Circle) -> str:
+    out = ''
+    out += str(n is int) + str(n is not int) + str(s is str) + str(f is float) + str(b is bool)
+    out += str(n is str) + str(s is not int) + str(c is Circle) + str(c is Shape) + str(c is not Shape)
+    out += str(5 is int) + str('a' is str) + str(2.5 is float) + str(True is bool) + str(None is None)
+    return out
+
+def optional_value(x: int | None, s: str | None, c: Shape | None, f: float | None) -> str:
+    out = ''
+    if x is int:
+        out += 'i' + str(x + 1)
+    if x is not int:
+        out += 'ni'
+    if s is str and len(s) > 1:
+        out += 's' + s
+    if not (s is str):
+        out += 'ns'
+    if c is Shape:
+        out += 'c' + str(c.sides)
+    if f is float:
+        out += 'f' + str(f * 2.0)
+    if x is None:
+        out += 'N'
+    return out
+
+def optional_exit(s: str | None, n: int | None) -> str:
+    if s is not str:
+        return 'none'
+    if n is not int:
+        return s + '!'
+    return s + str(n + 1)
+
+def optional_or(s: str | None) -> bool:
+    return s is not str or len(s) > 2
+
+def optional_while(items: list[str | None]) -> int:
+    n = 0
+    k = 0
+    cur = items[0]
+    while cur is str:
+        n += len(cur)
+        k += 1
+        if k < len(items):
+            cur = items[k]
+        else:
+            cur = None
+    return n
+
+# ---- identity
+def make() -> Shape:
+    return Shape()
+
+def same(held: list[Shape]) -> Shape:
+    return held[0]
+
+def identity(a: Shape, b: Shape, c: Shape | None, l: list[int], m: list[int], d: dict[str, int], e: dict[str, int]) -> str:
+    out = ''
+    out += str(a is b) + str(a is not b) + str(a is a) + str(c is a) + str(c is None) + str(a is not c)
+    out += str(l is m) + str(l is not m) + str(l is l)
+    out += str(d is e) + str(d is d) + str(d is not e)
+    return out
+
+def sets(a: set[int], b: set[int]) -> str:
+    return str(a is b) + str(a is not b) + str(a is a)
+
+def named(a: Named, b: Named, t: Tag) -> str:
+    return str(a is b) + str(a is t) + str(t is a) + str(b is not t)
+
+def related(c: Circle, s: Shape, q: Square) -> str:
+    return str(c is s) + str(s is c) + str(s is q) + str(c is not s)
+
+@main
+def main():
+    print(kind(1), kind('s'), kind(2.5))
+    print(not_kind(1), not_kind('t'), not_kind(1.5))
+    print(exit_not(1), exit_not('t'), exit_is(2), exit_is('u'), exit_not_raise('abc'))
+    print(with_not(3), with_not('x'), not_not(1), not_not('y'), else_branch(4), else_branch('z'))
+    print(three_way(1), three_way('s'), three_way(1.5))
+    print(classes(Dog()), classes(Cat()), classes(7))
+    print(containers([1, 2]), containers(('a', 3)), containers(5))
+    print(in_loop([1, 'abc', 2, 'de']), again(1), again('a'), again(1.0))
+    print(plain(1, 'a', 1.5, True, Circle()))
+    print(optional_value(1, 'ab', Circle(), 1.5), optional_value(None, None, None, None), optional_value(3, 'a', Shape(), None))
+    print(optional_exit(None, None), optional_exit('a', None), optional_exit('a', 2))
+    print(optional_or(None), optional_or('ab'), optional_or('abc'))
+    print(optional_while(['ab', 'c', 'def']), optional_while(['ab', None, 'c']), optional_while([None]))
+    sh = Shape()
+    l = [1]
+    d = {'a': 1}
+    print(identity(sh, sh, sh, l, l, d, d))
+    print(identity(sh, Shape(), None, l, [1], d, {'a': 1}))
+    held = [Shape()]
+    print(make() is make(), same(held) is same(held), make() is not same(held), held[0] is same(held))
+    s1 = {1}
+    print(sets(s1, s1), sets(s1, {1}))
+    t = Tag()
+    n: Named = t
+    print(named(n, n, t), named(t, Tag(), t))
+    c = Circle()
+    print(related(c, c, Square()), related(c, Circle(), Square()))
+    # a copy shares the object, an equal one does not
+    copy = l
+    other = [1]
+    print(copy is l, other is l, other == l)

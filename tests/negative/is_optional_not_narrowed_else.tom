@@ -1,0 +1,8 @@
+def f(s: str | None) -> str:
+    if s is str:
+        return s
+    return s + '!'
+
+@main
+def main():
+    print(f('a'))

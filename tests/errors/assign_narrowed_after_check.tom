@@ -1,5 +1,5 @@
 def f(x: int | str) -> int:
-    if x in str:
+    if x is str:
         return 0
     x = 5
     return x

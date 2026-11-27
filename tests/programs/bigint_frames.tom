@@ -85,7 +85,7 @@ async def main():
     print(bs[0].item == bs[1].item)
     m = maybe(24)
     n = maybe(0)
-    if m in int:
+    if m is int:
         print(m > 0)
     print(n)
     print(depth(25, 1) > 0)

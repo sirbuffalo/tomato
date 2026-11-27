@@ -1,0 +1,6 @@
+def same(a: int, b: int) -> bool:
+    return a is b
+
+@main
+def main():
+    print(same(1, 1))

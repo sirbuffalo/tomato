@@ -21,7 +21,7 @@ def make_pair(x: float) -> tuple[float, int]:
     return (x, 3)
 
 def pick(v: float | str) -> str:
-    if v in str:
+    if v is str:
         return 'text'
     return 'num ' + str(v)
 

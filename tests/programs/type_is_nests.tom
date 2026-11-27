@@ -1,0 +1,90 @@
+# `x is not T` (D23i) in release-mode loop nests: the member the opposite test leaves is held in a slot of its own, and the two copies
+# of a nest (see union_narrowing_nests) each have to fill it. Debug mode has one copy; release mode must print the same.
+class Tag:
+    n: int = 3
+
+def exit_int(xs: list[int], k: int | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k is not int:
+                continue
+            t += xs[i] * xs[j] + k
+    return t
+
+def exit_text(xs: list[int], k: int | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k is not str:
+                continue
+            t += xs[i] * xs[j] + len(k)
+    return t
+
+def exit_three(xs: list[int], k: int | str | float) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k is not int:
+                continue
+            t += xs[i] * xs[j] + k
+    return t
+
+def exit_object(xs: list[int], k: Tag | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k is not Tag:
+                continue
+            t += xs[i] * xs[j] + k.n
+    return t
+
+def branch_not(xs: list[int], k: int | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k is not int:
+                t += len(k)
+            else:
+                t += xs[i] * xs[j] + k
+    return t
+
+def optional_nest(xs: list[int], k: int | None) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k is not int:
+                continue
+            t += xs[i] * xs[j] + k
+    return t
+
+def while_nest(xs: list[int], k: int | str) -> int:
+    t = 0
+    i = 0
+    while i < len(xs):
+        for j in range(len(xs)):
+            if k is not int:
+                break
+            t += xs[i] * xs[j] + k
+        i += 1
+    return t
+
+def table(big: int) -> list[int]:
+    xs = [1, 2, 3, 4]
+    if big >= 0:
+        xs[big % 4] = 4611686018427387904 * 4 + big * 7
+    return xs
+
+def run(big: int, k: int, text: str) -> str:
+    xs = table(big)
+    a = f'{exit_int(xs, k)} {exit_int(xs, text)} {exit_text(xs, text)} {exit_text(xs, k)} {exit_three(xs, k)} {exit_three(xs, 1.5)}'
+    b = f'{exit_object(xs, Tag())} {exit_object(xs, text)} {branch_not(xs, k)} {branch_not(xs, text)}'
+    c = f'{optional_nest(xs, k)} {optional_nest(xs, None)} {while_nest(xs, k)} {while_nest(xs, text)}'
+    return a + '\n' + b + '\n' + c
+
+@main
+def main():
+    for big in range(-1, 4):
+        print(run(big, 5, 'abc'))
+    print(run(2, 2 ** 70 + 9, 'q'))
+    print(run(0, -(2 ** 65), 'wxyz'))

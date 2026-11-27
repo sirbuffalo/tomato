@@ -124,7 +124,7 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 
 84. Weak references: not language syntax; the runtime frees cycles automatically (D29d, reading to confirm), and a weak reference may exist in the standard library (D29e). Open: that library type's design and runtime support, when the collector runs, its cost, and its use with threads.
 
-85. Checking before running (D40a, reading to confirm): the check pass is partial (P54; the compiler finds type mismatches and constant division by zero in dead code, not `rational(1, 0)` or constant `uint[length=8](300)`). Open: narrowing after `x in Type` or a `None` check, types of collection literals and methods in the pass, and whether the interpreter should also stop on code it cannot type.
+85. Checking before running (D40a, reading to confirm): the check pass is partial (P54; the compiler finds type mismatches and constant division by zero in dead code, not `rational(1, 0)` or constant `uint[length=8](300)`). Open: narrowing after `x is Type` (written `x in Type` then) or a `None` check, types of collection literals and methods in the pass, and whether the interpreter should also stop on code it cannot type.
 
 86. Floats and the new operators (D41a, reading to confirm): float literal grammar (`1.` and `.5` are not literals), mixing `rational` with `float`, typing fixed-width results of `//` and `**` from literals, and the compiler written in Tomato, which has float literals with exponents, `//`, `**`, mixed arithmetic, `float(x)` and the infinite/NaN stop (v0.17-v0.23).
 

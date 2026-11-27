@@ -125,7 +125,7 @@ export def mktime(t: Time) -> int:
 # the parts of a moment given as seconds since the epoch, an int or a float (the fraction of a second is dropped,
 # rounding down); a ValueError when `seconds` is more than about 292 billion years from the epoch
 export def gmtime(seconds: int | float) -> Time:
-    if seconds in int:
+    if seconds is int:
         if seconds > 9000000000000000000 or seconds < -9000000000000000000:
             raise ValueError(f'gmtime needs seconds within about 292 billion years of 1970, but got {seconds}', 'E387')
         return _parts(seconds)
@@ -137,7 +137,7 @@ export def gmtime(seconds: int | float) -> Time:
     return _parts(whole)
 
 def _float_of(n: int | float) -> float:
-    if n in int:
+    if n is int:
         return float(n)
     return n
 
@@ -252,7 +252,7 @@ def _format(fmt: str, t: Time) -> str:
 
 # the moment as text by the directives of `fmt` (see the top of this file); `moment` is a `Time` or seconds since the epoch
 export def strftime(fmt: str, moment: Time | int | float) -> str:
-    if moment in Time:
+    if moment is Time:
         return _format(fmt, moment)
     return _format(fmt, gmtime(moment))
 
@@ -279,7 +279,7 @@ export def isoformat(seconds: int | float) -> str:
 # rounded. There is no limit: an int of any size is split exactly, but a float above 2**53 seconds has no exact
 # seconds to show.
 export def format_duration(length: int | float) -> str:
-    if length in int:
+    if length is int:
         if length < 0:
             return '-' + format_duration(-length)
         if length >= 60:

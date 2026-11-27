@@ -1,0 +1,6 @@
+error[E190]: cannot use 'is' with str and str
+ --> tests/errors/is_value_help.tom:2:14
+  |
+2 |     return a is b
+  |              ^^
+  = help: 'is' tells whether two objects, lists, dicts or sets are the same one; a value of type str has no identity, so compare it with ==

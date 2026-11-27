@@ -79,7 +79,7 @@ async def _ring[T](t: task[T], seconds: float, alarm: _Alarm):
         t.cancel()
 
 def _seconds(seconds: int | float) -> float:
-    if seconds in int:
+    if seconds is int:
         return float(seconds)
     return seconds
 

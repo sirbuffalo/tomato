@@ -200,7 +200,9 @@ builtins can then accept angles without special cases.
 **Cost.** Proposal 1 is small (the parser and the entry-point lookup) and breaks programs that use other entry names
 (in this repository only `examples/args.tom`, with `@greet` and `@prime`). Proposal 2 is a medium compiler change and only adds; *Do soon*.
 
-### 2.2 `x in Type` for type tests (Blocks 1.0)
+### 2.2 `x in Type` for type tests (Blocks 1.0) — decided and built (D23i, 2026-11-27)
+
+**Decided.** Davis chose the proposal below on 2026-11-27: the type test is `x is T` (and `x is not T`), replacing `x in T`. He added the meaning: `is` checks equivalence at the pointer (identity) level and also checks whether something is a type, so `a is b` on two reference values is identity, `x is T` with a type name is the type test, and `x is None` is the type test for `None`. Built as D23i: identity works on objects, interface values, lists, dicts, sets and their optionals (numbers, text and tuples are a compile error that points at `==`); the narrowing of D55a, D102a and D102b is the same for `is`, with `is not T` added for unions; `x in T` still works in 1.0.x with a warning (`# allow: type-test`; the transition is a default, not yet decided by Davis). The text below is the audit's original problem and proposal.
 
 **Problem.** `if x in int:`, `if shape in Circle:` (D23f) use the same word as membership (`if a in angles:`), and the
 two read alike. For example `if v in Angle:` is a type test, while `if v in angles:` searches a list. A type name that
@@ -319,7 +321,7 @@ constant operand times a fixed-width value can overflow its range.
 
 **Cost.** Small. No compatibility risk.
 
-### 3.5 `==` on unions, dicts and sets; `x in Type` on generic and fixed-width types (Do soon)
+### 3.5 `==` on unions, dicts and sets; `x is Type` on generic and fixed-width types (Do soon)
 
 Listed as "not yet" in the specification's status table. They only add, but `==` on unions is basic enough to come
 before most new std modules.
@@ -577,7 +579,7 @@ In the order I would take them, with my recommendation for each. The first eight
 2. **Release-mode error output (1.3).** Print the class and message of every uncaught error in release mode.
 3. **Builtins versus user names (1.4).** A module's own definitions shadow builtins.
 4. **The `@` namespace and the type test (2.1, 2.2).** Entry points other than `main` as `@entry`; type tests as
-   `x is T`.
+   `x is T` (2.2 decided and built, D23i).
 5. **`bytes` (8.1).** A `bytes` type before 1.0, or at least `list[uint[length=8]]` in every binary std signature.
 6. **`File` safety (5.1).** A closed flag, an idempotent `close()`, close on the last reference (built as a default, D93a, for Davis to confirm or change); `with` soon after.
 7. **Module names (9.1).** Reserve std's future names, warn when a project file shadows std, add `import ... as`.

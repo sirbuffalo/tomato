@@ -42,6 +42,7 @@ before it runs. The checks are:
 | `unassigned` | a variable is read where some path to it did not give it a value | `'label' might not have a value here, because some paths above do not give it one` |
 | `shadow` | a variable has the name of a built-in, or of a function, class or constant of the same file | `the variable 'len' has the same name as a function or class, which it hides here` |
 | `loop-change` | a list is changed (`append`, `pop`, `remove` ...) inside a `for` loop that goes through it | `'xs' is changed while the loop goes through it` |
+| `type-test` | `x in T` with a type on the right, the old spelling of the type test `x is T` (D23i); it still works in 1.0.x | `'in' with a type is the old spelling of the type test` |
 
 To silence one, write `# allow: KIND` as a comment on the line the warning points at (`total = 0  # allow: unused`). A name
 that starts with `_` is meant to be unused, and loop variables, `catch` variables and parameters are never reported as unused.
@@ -150,7 +151,7 @@ Other messages that used to be rough:
 
 | Written | Message |
 | --- | --- |
-| `-u` with `u: Angle \| int` | `cannot use '-' on a value that can be math.Angle \| int, because a union has no '-' of its own` (E549), and the help shows `if u in Angle: ... -u` |
+| `-u` with `u: Angle \| int` | `cannot use '-' on a value that can be math.Angle \| int, because a union has no '-' of its own` (E549), and the help shows `if u is Angle: ... -u` |
 | `min(1, 2.5)`, `max(1, 2.5)` | `min() was given a value of type int first and then one of type float` (E553): the first value sets the type, so put the float first or write `float(...)` around the int (`min(2.5, 1)` works) |
 | `a, b = None` | `cannot unpack None into 2 variables` (E185); the hidden variable of the unpack is never named |
 | a wrong argument, or an unknown method, of `Cache[Point, int]` | the type is written as the program wrote it, `cache.Cache[Point, int]`, never with the compiler's internal `@Point` |
