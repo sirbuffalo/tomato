@@ -611,3 +611,4 @@ CompileError None is written more than once in this union
 CompileError the function '!{}' belongs to the runtime and cannot be used here
 ConfigError {}: a seed declares a runtime function (!tomato_*), which only the standard library may use
 CompileError '@{}' uses a name the language reserves for its own markers ('{}')
+CompileError 'raise' with no error can only be used inside a 'catch' block

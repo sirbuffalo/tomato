@@ -265,6 +265,7 @@ export class Parser:
     unpacks: int = 0        # how many multiple assignments have been read (they name their hidden variables)
     yields: int = 0         # how many yield statements have been read so far (a function with any is a generator)
     own: list[str] = []     # the names the module defines or imports at its top level (see top_level_names)
+    catches: list[int] = []  # the catch blocks being read in this function, innermost last: 1 once a bare `raise` has been seen in one (D114a)
 
     def cur(self) -> Token:
         return self.toks[self.p]
@@ -620,7 +621,10 @@ export class Parser:
             return self.with_params(mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker), vb(False), vb(is_async), yt]), tparams)
         self.expect_op(':')
         before = self.yields
+        outer_catches = self.catches
+        self.catches = []                   # a bare `raise` belongs to a catch block of the same function
         body = self.block()
+        self.catches = outer_catches
         return self.with_params(mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker), vb(self.yields > before), vb(is_async), yt]), tparams)
 
     # `[T]` or `[K, V]` after the name of a function or class: its type parameters (D60a)
@@ -838,6 +842,13 @@ export class Parser:
             return mk('Continue', t.line, [])
         if self.is_kw('raise'):
             self.adv()
+            if self.cur().kind == 'NEWLINE':
+                # a bare `raise` raises again the error the innermost enclosing `catch` caught (D114a); anywhere else there is none
+                if len(self.catches) == 0:
+                    raise ParseError("'raise' with no error can only be used inside a 'catch' block\nthere it raises the caught error again; elsewhere write raise ErrorClass('message')", t.line, t.col)
+                self.catches[len(self.catches) - 1] = 1
+                self.adv()
+                return mk('Raise', t.line, [vn(mk('Reraise', t.line, []))])
             v = self.expr()
             self.expect('NEWLINE')
             return mk('Raise', t.line, [vn(v)])
@@ -981,7 +992,10 @@ export class Parser:
             if self.accept_kw('as'):
                 var = vs(self.expect('NAME').text)
             self.expect_op(':')
-            handlers.append(vtuple([vs(cls), var, vnodes(self.block())]))
+            self.catches.append(0)
+            hbody = self.block()
+            again = self.catches.pop()      # 1 when the block has a bare `raise`: the compiler keeps the caught error for it
+            handlers.append(vtuple([vs(cls), var, vnodes(hbody), vb(again == 1)]))
         if self.is_kw('else'):
             if len(handlers) == 0:
                 raise ParseError("'else' after 'try' needs a 'catch' block before it", self.cur().line, self.cur().col)

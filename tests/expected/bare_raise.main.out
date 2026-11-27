@@ -1,0 +1,25 @@
+passes_on saw plain
+main 0 plain 
+passes_on saw mine
+main 1 mine E77
+passes_on saw index out of range
+main 2 index out of range E04
+passes_on saw down
+main 3 down E9
+no variable needed
+finally ran
+main mine E77
+counted mine
+0
+outer caught mine
+inner caught index out of range
+main nested index out of range E04
+inner handled
+main after_inner mine E77
+re-caught mine
+main in_try_body mine E77
+swallowed mine
+main conditional mine
+same object True
+passes_on saw mine
+done

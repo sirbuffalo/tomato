@@ -436,11 +436,10 @@ export def assert_close(actual: float, expected: float, rel_tol: float = 1e-9, a
 # tomato_error_is knows names only, not objects of a class).
 def _error_names() -> list[str]:
     return ['SkipTest', 'AssertionError', 'FileNotFoundError', 'FileExistsError', 'PermissionError', 'IsADirectoryError', 'NotADirectoryError',
-            'ZeroDivisionError', 'OverflowError', 'IndexError', 'KeyError', 'StructError', 'ValueError', 'EOFError', 'CancelledError',
-            'JSONDecodeError', 'JSONEncodeError', 'JSONTypeError', 'MsgpackError', 'TOMLDecodeError', 'ProcessTimeout', 'ProcessError',
-            'TerminalError', 'ConnectionRefusedError', 'ConnectionResetError', 'AddressError', 'SocketError', 'ConnectionError',
-            'InvalidURL', 'TooManyRedirects', 'HTTPError', 'RequestError', 'TimeoutError', 'LockError', 'RegexError', 'CacheMiss',
-            'IOError', 'RuntimeError', 'Error']
+            'ZeroDivisionError', 'OverflowError', 'IndexError', 'CacheMiss', 'KeyError', 'StructError', 'JSONDecodeError', 'JSONEncodeError',
+            'JSONTypeError', 'MsgpackError', 'TOMLDecodeError', 'RegexError', 'ValueError', 'EOFError', 'CancelledError', 'ProcessTimeout',
+            'ProcessError', 'TerminalError', 'ConnectionRefusedError', 'ConnectionResetError', 'AddressError', 'SocketError', 'ConnectionError',
+            'TimeoutError', 'InvalidURL', 'TooManyRedirects', 'HTTPError', 'RequestError', 'LockError', 'IOError', 'RuntimeError', 'Error']
 
 # The name of an error's class for a message: the most specific class above that the standard library has (an error class of the
 # program's own shows as its nearest parent in that list, usually 'Error').

@@ -1,0 +1,13 @@
+@main
+def main():
+    try:
+        deep(1)
+    catch ValueError:
+        print('seen')
+        raise
+
+def deep(n: int):
+    shallow(n)
+
+def shallow(n: int):
+    raise ValueError('bad value')

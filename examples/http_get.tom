@@ -15,7 +15,7 @@ async def main(url: str = 'https://example.com'):
         r.raise_for_status()
     catch requests.HTTPError as e:
         print('the server said no:', e.message)
-    catch requests.RequestError as e:
+    catch IOError as e:
         print('could not fetch', url + ':', e.message)
 
     # requests started together run at the same time

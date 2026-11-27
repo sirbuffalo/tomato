@@ -1,0 +1,10 @@
+@main
+def main():
+    try:
+        half(0)
+    catch ZeroDivisionError:
+        print('seen')
+        raise
+
+def half(n: int) -> int:
+    return 10 // n

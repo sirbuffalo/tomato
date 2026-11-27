@@ -61,6 +61,10 @@ static int trace_caught = 0;
  * was at), so the entry before the last is the function the catch called and the line that function was at when the error left it:
  * kept for tomato_caught_line, which the test runner reports (the line in the test, not in testing.tom). */
 void tomato_trace_clear(void) { trace_caught = (trace_n >= 2 && trace_more == 0) ? trace_line[trace_n - 2] : 0; trace_n = 0; trace_more = 0; }
+/* A catch block with a bare `raise` keeps what its error was when it was caught: the line it was raised on, who raised it (the program
+ * or the runtime) and the call trace so far (D110a). tomato_catch_restore puts them back when the block raises the error again, so
+ * the error leaves as if nothing had caught it. The state is a text object, so the compiler's slots free it with the function. */
+typedef struct { int32_t line, rt, n, more; int32_t lines[TRACE_MAX]; const char *fns[TRACE_MAX]; } CatchState;
 /* The line the error that was last caught was at in the function the catch called: in debug mode only, which keeps the call trace
  * (0 in release mode, or when the trace was too long to keep). */
 int64_t tomato_caught_line(void) { return trace_caught; }
@@ -502,6 +506,24 @@ static Str *str_new(const char *bytes, int64_t n) {
 }
 
 void *tomato_str_from_cstr(const char *c) { return str_new(c, (int64_t)strlen(c)); }
+
+/* see CatchState, near the call trace */
+void *tomato_catch_save(int32_t line, int32_t rt) {
+    CatchState c;
+    memset(&c, 0, sizeof c);
+    c.line = line; c.rt = rt; c.n = trace_n; c.more = trace_more;
+    for (int i = 0; i < trace_n; i++) { c.lines[i] = trace_line[i]; c.fns[i] = trace_fn[i]; }
+    Str *s = str_alloc((int64_t)sizeof c);
+    memcpy(s->data, &c, sizeof c);
+    return s;
+}
+void tomato_catch_restore(void *state, int32_t *line, int32_t *rt) {
+    CatchState c;
+    memcpy(&c, ((Str *)state)->data, sizeof c);
+    *line = c.line; *rt = c.rt;
+    trace_n = c.n; trace_more = c.more;
+    for (int i = 0; i < c.n; i++) { trace_line[i] = c.lines[i]; trace_fn[i] = c.fns[i]; }
+}
 
 void *tomato_str_concat(void *a, void *b) {
     Str *x = a, *y = b;

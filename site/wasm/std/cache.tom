@@ -54,7 +54,7 @@
 # are declared one after the other under one name, each with its own number of type parameters, and the compiler picks
 # the one that has as many type arguments as the use writes.
 
-export class CacheMiss(RuntimeError):
+export class CacheMiss(KeyError):
     pass
 
 export class Clock:

@@ -1,0 +1,8 @@
+@main
+def main():
+    try:
+        print(1)
+    catch Error:
+        print(2)
+    finally:
+        raise

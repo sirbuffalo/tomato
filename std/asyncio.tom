@@ -34,8 +34,8 @@
 # The waits use three internal waits of the language (`_settle`, `_park`, `_unpark`; see await_settle in the compiler),
 # so a waiting task costs nothing while it waits: nothing polls.
 
-# A wait_for ran out of time.
-export class TimeoutError(RuntimeError):
+# A wait_for ran out of time. A subclass of the built-in TimeoutError, so `catch TimeoutError` handles this one and requests' too (D114a).
+export class TimeoutError(TimeoutError):
     pass
 
 export async def gather[T](given: list[task[T]]) -> list[T]:

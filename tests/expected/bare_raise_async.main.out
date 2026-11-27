@@ -1,0 +1,15 @@
+watcher one
+task caught async bad
+task finally 1
+main async bad E7
+task finally 2
+main async down E8
+task finally 3
+3
+timeout the task took longer than 0.05 seconds E438
+main timeout the task took longer than 0.05 seconds
+task caught async bad
+task finally 1
+a async bad
+task finally 2
+b async down

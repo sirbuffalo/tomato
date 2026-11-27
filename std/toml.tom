@@ -21,7 +21,7 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # errors and date/time values
 
-export class TOMLDecodeError(RuntimeError):
+export class TOMLDecodeError(ValueError):
     reason: str = ''
     line: int = 0
     column: int = 0

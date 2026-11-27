@@ -1,0 +1,5 @@
+@main
+def main():
+    x = 1
+    if x == 1:
+        raise

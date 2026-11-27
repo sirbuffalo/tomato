@@ -22,3 +22,5 @@
   It failed in this task's full run (expects the old 'release mode keeps no call trace' note after main's 0a5e7d6f); main's 1ec06ab0 ("Fix failing release-mode contract check on main") looks like the fix, so check that the case passes on main and close this.
 - Update the `test --mode release` expectation in the contract test messages
   `tests/cli_contract/cases/test_messages.sh`: the check "test --mode release: a failed check says that there is no trace" failed against the compiler after D34c (0a5e7d6f). Main's 1ec06ab0 may already have fixed it; check on a clean main and remove this item if so.
+- Fix the `unreachable` lint after a `try` whose catch clauses do not cover every error class
+  The linter says the statement after a `try` whose body always raises can never run even when no `catch` clause covers every error class: a function ending `try: raise e` with `catch TimeoutError: return 1`, followed by `return 0`, gets "this code can never run". Minor and pre-existing (found while writing `tests/programs/error_tree.tom`, D114a); the check is in `compiler/src/lint.tom` and the `exits` function of `compiler/src/compiler.tom`.

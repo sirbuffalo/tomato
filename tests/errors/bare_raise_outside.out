@@ -1,0 +1,6 @@
+error[E614]: 'raise' with no error can only be used inside a 'catch' block
+ --> tests/errors/bare_raise_outside.tom:5:9
+  |
+5 |         raise
+  |         ^^^^^
+  = help: there it raises the caught error again; elsewhere write raise ErrorClass('message')

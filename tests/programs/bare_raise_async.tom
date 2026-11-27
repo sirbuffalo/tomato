@@ -1,0 +1,67 @@
+# A bare `raise` in an async function: the error is kept across awaits inside the catch block, and a task that re-raises it
+# fails with the original error for whoever awaits it (D114a).
+import asyncio
+
+async def slow() -> int:
+    await sleep(1.0)
+    return 1
+
+async def work(n: int) -> int:
+    try:
+        await sleep(0.01)
+        if n == 1:
+            raise ValueError('async bad', 'E7')
+        if n == 2:
+            raise ConnectionError('async down', 'E8')
+        return n
+    catch ValueError as e:
+        print('task caught', e.message)
+        await sleep(0.01)                   # other tasks run while the error waits
+        raise
+    catch IOError:
+        await sleep(0.01)
+        raise
+    finally:
+        print('task finally', n)
+
+async def watcher(label: str):
+    await sleep(0.005)
+    print('watcher', label)
+
+async def timeout_again() -> str:
+    try:
+        await asyncio.wait_for(start slow(), 0.05)
+    catch TimeoutError as e:
+        print('timeout', e.message, e.id)
+        raise
+    return 'unreached'
+
+@main
+async def main():
+    w = start watcher('one')
+    t = start work(1)
+    try:
+        await t
+    catch ValueError as e:
+        print('main', e.message, e.id)
+    await w
+    try:
+        await work(2)
+    catch ConnectionError as e:
+        print('main', e.message, e.id)
+    print(await work(3))
+    try:
+        await timeout_again()
+    catch asyncio.TimeoutError as e:
+        print('main timeout', e.message)
+    # two tasks fail at once; each keeps its own error
+    a = start work(1)
+    b = start work(2)
+    try:
+        await a
+    catch ValueError as e:
+        print('a', e.message)
+    try:
+        await b
+    catch ConnectionError as e:
+        print('b', e.message)

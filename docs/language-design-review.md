@@ -345,7 +345,15 @@ before most new std modules.
 
 ## 4. Errors
 
-### 4.1 Keep exceptions; fix the hierarchy before 1.0 (Blocks 1.0 for the class names)
+### 4.1 Keep exceptions; fix the hierarchy before 1.0 (Blocks 1.0 for the class names; decided and built, D114a)
+
+> **Status (2026-11-27).** Davis decided: one tree, as proposed. Built as D114a in `docs/decisions.md`: the built-in classes
+> `TimeoutError` and `ConnectionError` are under `IOError` (the name `IOError` is kept, there is no `OSError`); `asyncio` and
+> `requests` timeouts and `requests`' connection error extend them, and the `socket` family moves under `ConnectionError`;
+> `json`, `toml` and `re` errors are `ValueError`s and `CacheMiss` a `KeyError`; the file errors stay `IOError`s (D80a). A
+> bare `raise` in a `catch` raises the innermost caught error again with its line and trace, and is the compile error E614
+> anywhere else (outside a `catch`, in the `try` body or `finally`, in a function a `catch` calls). The text below is the
+> problem as found.
 
 **Assessment.** Exceptions (`raise`, `try`/`catch`) suit a Python-like language. Go-style result types would fight
 the syntax, and Rust's `Result` with `?` needs sum types the language does not have (D21a: no enums or variants). Keep
@@ -601,7 +609,7 @@ In the order I would take them, with my recommendation for each. The first eight
 6. **`File` safety (5.1).** A closed flag, an idempotent `close()`, close on the last reference (built as a default, D93a, for Davis to confirm or change); `with` soon after.
 7. **Module names (9.1).** Reserve std's future names, warn when a project file shadows std, add `import ... as`.
 8. **The `!` C interface (1.6).** Decided and built (D112a): open for any symbol except `tomato_*`, which only `std/` may use.
-9. **The error class tree (4.1).** One `TimeoutError` and `ConnectionError` that module errors subclass; bare `raise`
+9. **The error class tree (4.1; decided and built, D114a).** One `TimeoutError` and `ConnectionError` that module errors subclass; bare `raise`
    rethrows.
 10. **The sleep clock (6.1).** Real time natively, with the logical clock as the test and browser mode.
 11. **`tomato run` inputs (11.1).** `--entry NAME` as `build` has, inputs positional.

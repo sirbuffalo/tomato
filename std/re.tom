@@ -22,7 +22,7 @@ export def escape(text: str) -> str:
         parts.append(c)
     return ''.join(parts)
 
-export class RegexError(RuntimeError):
+export class RegexError(ValueError):
     pos: int = 0
 
     @init

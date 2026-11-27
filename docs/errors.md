@@ -186,6 +186,7 @@ The language raises these classes, all of them a `RuntimeError` (so `catch Runti
 | `ZeroDivisionError` | `/`, `//` or `%` by zero |
 | `OverflowError` | integer overflow, a number that does not fit its type, a float result that is infinite |
 | `IOError`, `EOFError`, `CancelledError` | files, the end of input, a cancelled task |
+| `TimeoutError`, `ConnectionError` | a wait that ran out of time, a connection that failed; both are `IOError`s, and the libraries' own timeouts and connection failures are their subclasses (below, D114a) |
 | `AssertionError` | a failed `assert` statement or `testing` assertion; **not** a `RuntimeError`, a direct subclass of `Error` (E519), so `catch RuntimeError` does not catch it |
 | `FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError` | the `IOError`s that say why a file or directory call failed (`open()`, `os`, `ospath`); each is an `IOError`, so `catch IOError` still catches them |
 | `ProcessError`, `ProcessTimeout` (`sys`) | what `sys.run` and `sys.run_async` raise about a program that ran: `ProcessError` (E588) for `check=True` and a status other than 0, `ProcessTimeout` (E589, a `ProcessError`) for a program killed after its `timeout`; both are `RuntimeError`s (not `IOError`s) with the fields `program`, `status`, `signal`, `stdout` and `stderr`, and a message such as `'clang' exited with status 1: ` followed by the end of its standard error; a program that cannot be started is a `FileNotFoundError` (E505), `PermissionError` (E507) or other `IOError` (E515) saying `could not run 'NAME': REASON`, and an empty `args`, a NUL, a bad `env` name or a `timeout` of 0 or less is a `ValueError` (E585, E511, E512, E587; E586 for an empty `cwd`) (D98a); `sys.spawn` and its `Process` raise the same errors for a program that cannot be started and for a bad argument, and `ValueError` E595 for a stream of a program started with `capture=False`, E596 for `write` on an input that is not a pipe or is closed, E597 for a signal number outside 1 to 64, and `IOError` (E515) for a write to a program that has closed its input (D98b) |
@@ -200,9 +201,45 @@ A closed file is not an `IOError`: `close()` a second time does nothing, and `re
 
 `open()` raises the class that matches the reason (`FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError`, else a plain `IOError`) and keeps the id E25; the `os` and `ospath` functions raise the same classes with E505 to E509 (`IOError` E515 for another reason) and the text `could not list the directory 'PATH': REASON`. A mode other than `r`, `w`, `a` or `x` with an optional `+` is a `ValueError` (E510). Reading a file that cannot be read (a file opened for writing) is E381.
 
-The libraries raise subclasses of their own, each also a `RuntimeError`: `JSONDecodeError`, `JSONEncodeError`, `JSONTypeError` and
-`MsgpackError` (`json`), `TOMLDecodeError` (`toml`), `CacheMiss` (`cache`), and `requests.RequestError` (an `IOError`) with
-`ConnectionError`, `TimeoutError`, `InvalidURL`, `TooManyRedirects` and `HTTPError`. They have ids too (`std/errors.txt`).
+**One tree (D114a).** The libraries raise subclasses of their own, each also a `RuntimeError`, and the tree has one place for each:
+
+```
+Error
+  AssertionError                       a failed assert (not a RuntimeError)
+  RuntimeError
+    IndexError, ZeroDivisionError, OverflowError, EOFError, CancelledError, LockError (asyncio)
+    KeyError            CacheMiss (cache)
+    ValueError          StructError (struct), JSONDecodeError, JSONEncodeError, JSONTypeError, MsgpackError (json),
+                        TOMLDecodeError (toml), RegexError (re)
+    IOError             FileNotFoundError, FileExistsError, PermissionError, IsADirectoryError, NotADirectoryError,
+                        TerminalError (terminal), requests.RequestError (InvalidURL, TooManyRedirects, HTTPError)
+      TimeoutError      asyncio.TimeoutError, requests.TimeoutError
+      ConnectionError   requests.ConnectionError, socket.SocketError (ConnectionRefusedError, ConnectionResetError, AddressError)
+    ProcessError (sys)  ProcessTimeout
+```
+
+`catch TimeoutError` handles a timeout from `asyncio.wait_for` and from `requests` alike, `catch ConnectionError` a refused or reset
+socket and a failed request, and `catch IOError` all of these and the file errors; `catch asyncio.TimeoutError` still handles only
+asyncio's. The rule: a failure of the world outside the program (files, the network, the terminal) is an `IOError`; text or data a
+function was given that it cannot accept is a `ValueError`; a lookup that finds nothing is a `KeyError`; the rest is a `RuntimeError`.
+`requests.TimeoutError` and `requests.ConnectionError` are not `RequestError`s (a class has one parent). A library class may have the name of the class it extends (`class
+TimeoutError(TimeoutError)` in `asyncio`). They have ids too (`std/errors.txt`), unchanged by the move.
+
+**Raising again.** A bare `raise` in the body of a `catch` raises the caught error again (the innermost `catch` it is in): the same object, with
+its class, id, message, the line it was first raised on and, in debug mode, its call trace, so an error that goes through a handler that
+only logs it looks as if nothing had caught it:
+
+```
+try:
+    load(path)
+catch IOError as e:
+    print('could not load', path)
+    raise
+```
+
+Anywhere else a bare `raise` is a compile error, E614 (`'raise' with no error can only be used inside a 'catch' block`): outside any
+`catch`, in the `try` body or its `finally`, and in a function that a `catch` calls (give that function the error as an argument and
+`raise e`; `raise e` makes the error leave from that line, with a trace that starts there).
 
 Write your own with `class MyError(RuntimeError)`. A class that declares no fields of its own inherits its parent's `@init`
 (D93b), so `class NotFound(Error): pass` is made with `NotFound('no such user')` or `NotFound('no such user', 'E7')` (message,
@@ -224,7 +261,7 @@ shows the class and message without a file. A line of zero means the runtime has
 input is invalid or the machine runs out of memory. These process failures and stack exhaustion print `error[ID]: message`
 (no line) and terminate.
 
-A mistake in a configuration file (`tomato.toml` or `config.toml`, see `tomato config`) stops `tomato run`, `build`, `compile` and `config` with a `ConfigError` id: E539 the file cannot be read, E540 it is not valid TOML, E541 `limits` is not a table, E542 an unknown setting in `[limits]`, E543 a setting is not a whole number in its range. The manifest checks add E555 to E568 (unknown tables and keys, missing or mistyped settings, versions, names, the `tomato` minimum, `[build]`) and the seed commands E569 to E580 (E570 is retired) and E598 to E606 (git, the seed store, the foreign symbols, the edits of `tomato seed add` and `remove`, D101a, and `tomato seed verify`, D103a), with E581, E607 and E611 as compile errors (E611: a `!tomato_*` runtime function used outside `std/`, D112a; E612 is the seed command's refusal of the same) (a module of the project with the name of a module of a seed, D107a), and E590 for a table below `[seeds]` or `[test-seeds]` (D94b); `docs/manifest.md` lists them all. A built program started with a first word that is no entry stops with E591, and an entry input of type `File` that cannot be opened stops it with E592. A definition that takes the name of a built-in type (`def str`, `class list`, `const int`; D107a) is E608, and calling a constant (`const len = 4` then `len(x)`) is E609; any other name of a built-in may be defined and then wins in that module.
+A mistake in a configuration file (`tomato.toml` or `config.toml`, see `tomato config`) stops `tomato run`, `build`, `compile` and `config` with a `ConfigError` id: E539 the file cannot be read, E540 it is not valid TOML, E541 `limits` is not a table, E542 an unknown setting in `[limits]`, E543 a setting is not a whole number in its range. The manifest checks add E555 to E568 (unknown tables and keys, missing or mistyped settings, versions, names, the `tomato` minimum, `[build]`) and the seed commands E569 to E580 (E570 is retired) and E598 to E606 (git, the seed store, the foreign symbols, the edits of `tomato seed add` and `remove`, D101a, and `tomato seed verify`, D103a), with E581, E607 and E611 as compile errors (E611: a `!tomato_*` runtime function used outside `std/`, D112a; E612 is the seed command's refusal of the same) (a module of the project with the name of a module of a seed, D107a), and E590 for a table below `[seeds]` or `[test-seeds]` (D94b); `docs/manifest.md` lists them all. A built program started with a first word that is no entry stops with E591, and an entry input of type `File` that cannot be opened stops it with E592. A definition that takes the name of a built-in type (`def str`, `class list`, `const int`; D107a) is E608, and calling a constant (`const len = 4` then `len(x)`) is E609; any other name of a built-in may be defined and then wins in that module. A bare `raise` outside a `catch` block is E614 (D114a).
 
 To add an error, append a line in the form `Class text` to `std/errors.txt` and keep the existing line numbers (the promise about ids, classes and wording is in `docs/releasing.md`, Compatibility). An id that is no longer raised is never deleted or reused: its line becomes `Class (retired: why; the id stays so that later ids do not move)`. Pass that ID when
 raising an error in the standard library. For a compiler-emitted runtime check, the table text is a prefix of the message.

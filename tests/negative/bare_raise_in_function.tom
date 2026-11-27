@@ -1,0 +1,9 @@
+def again():
+    raise
+
+@main
+def main():
+    try:
+        print(1 // 0)
+    catch ZeroDivisionError:
+        again()

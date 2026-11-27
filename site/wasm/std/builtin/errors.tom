@@ -54,10 +54,20 @@ class ZeroDivisionError(RuntimeError):
 class OverflowError(RuntimeError):
     pass
 
+# Everything that fails because of the world outside the program: files, the network, the terminal, a program that cannot be started.
 class IOError(RuntimeError):
     @init
     def make_io(self, message: str = "", id: str = ""):
         RuntimeError.make(self, message, id)
+
+# One tree for the failures every library shares (D114a): a wait that ran out of time, and a connection that failed. The libraries
+# that can raise them define subclasses of their own (asyncio.TimeoutError, requests.TimeoutError, requests.ConnectionError, the
+# socket errors), so `catch TimeoutError` or `catch ConnectionError` handles the failure whichever library it came from.
+class TimeoutError(IOError):
+    pass
+
+class ConnectionError(IOError):
+    pass
 
 # The file and directory failures that say why (os, ospath and open() raise them; each is an IOError, so catch IOError still
 # catches them): the path is not there, is already there, may not be used, is a directory, or goes through something that is not one.

@@ -70,8 +70,9 @@
 !tomato_sock_peer_host(fd: int) -> str
 !tomato_sock_peer_port(fd: int) -> int
 
-# Everything this library raises is a SocketError, so `catch SocketError` handles any failure of a socket.
-export class SocketError(IOError):
+# Everything this library raises is a SocketError, so `catch SocketError` handles any failure of a socket. It is a ConnectionError, so
+# `catch ConnectionError` handles a socket failure and a failed request alike (D114a).
+export class SocketError(ConnectionError):
     pass
 
 # Nothing listens at that address and port.

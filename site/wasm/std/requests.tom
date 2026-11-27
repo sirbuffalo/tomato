@@ -27,17 +27,20 @@ from json import loads, dumps, Json
 !tomato_http_text(id: int) -> str
 !tomato_http_free(id: int)
 
-# Everything this library raises is a RequestError, so `catch RequestError` handles any failure of a request.
+# Every failure of a request is an IOError, so `catch IOError` handles any of them. A failure that is not about the connection or
+# the time it took is a RequestError (below). The two that are, ConnectionError and TimeoutError, extend the built-in classes of those
+# names instead, so `catch ConnectionError` and `catch TimeoutError` handle them together with the other libraries' (D114a); a class
+# has one parent, so they are not RequestErrors.
 export class RequestError(IOError):
     pass
 
 # The server could not be reached: its name was not found, it refused, the connection dropped, or the TLS handshake
 # failed.
-export class ConnectionError(RequestError):
+export class ConnectionError(ConnectionError):
     pass
 
 # The request took longer than its timeout.
-export class TimeoutError(RequestError):
+export class TimeoutError(TimeoutError):
     pass
 
 # The url is not an http:// or https:// address, or another part of the request cannot be sent.

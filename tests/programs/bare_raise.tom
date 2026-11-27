@@ -1,0 +1,129 @@
+# A bare `raise` inside a `catch` raises the caught error again, the same object (class, id, message and the line it was raised on) (D114a).
+class MyError(ValueError):
+    pass
+
+def fail(n: int):
+    if n == 1:
+        raise MyError('mine', 'E77')
+    if n == 2:
+        raise IndexError('index out of range', 'E04')
+    if n == 3:
+        raise ConnectionError('down', 'E9')
+    raise Error('plain')
+
+def passes_on(n: int):
+    try:
+        fail(n)
+    catch Error as e:
+        print('passes_on saw', e.message)
+        raise
+
+def with_finally(n: int):
+    try:
+        fail(n)
+    catch RuntimeError:
+        print('no variable needed')
+        raise
+    finally:
+        print('finally ran')
+
+def counted(n: int) -> int:
+    seen = 0
+    for i in range(3):
+        try:
+            if i == n:
+                fail(1)
+        catch MyError as e:
+            seen += 1
+            if i == 2:
+                raise
+    return seen
+
+def nested(n: int):
+    try:
+        fail(n)
+    catch Error as outer:
+        print('outer caught', outer.message)
+        try:
+            fail(2)
+        catch IndexError as inner:
+            print('inner caught', inner.message)
+            raise                          # the innermost: the IndexError
+    # not reached
+
+def after_inner(n: int):
+    try:
+        fail(n)
+    catch Error as outer:
+        try:
+            fail(2)
+        catch IndexError:
+            print('inner handled')
+        raise                              # the inner catch is over: the outer error again
+
+def in_try_body(n: int):
+    try:
+        fail(n)
+    catch Error:
+        try:
+            raise                          # a try inside a catch: still the outer catch's error
+        catch MyError as e:
+            print('re-caught', e.message)
+            raise
+
+def conditional(n: int, again: bool):
+    try:
+        fail(n)
+    catch Error as e:
+        if again:
+            raise
+        print('swallowed', e.message)
+
+@main
+def main():
+    for n in range(4):
+        try:
+            passes_on(n)
+        catch Error as e:
+            print('main', n, e.message, e.id)
+    try:
+        with_finally(1)
+    catch MyError as e:
+        print('main', e.message, e.id)
+    try:
+        counted(2)
+    catch MyError as e:
+        print('counted', e.message)
+    print(counted(5))
+    try:
+        nested(1)
+    catch Error as e:
+        print('main nested', e.message, e.id)
+    try:
+        after_inner(1)
+    catch Error as e:
+        print('main after_inner', e.message, e.id)
+    try:
+        in_try_body(1)
+    catch Error as e:
+        print('main in_try_body', e.message, e.id)
+    conditional(1, False)
+    try:
+        conditional(1, True)
+    catch Error as e:
+        print('main conditional', e.message)
+    # the same object, not a copy
+    saved = Error('same')
+    try:
+        try:
+            raise saved
+        catch Error:
+            raise
+    catch Error as e:
+        print('same object', e is saved)
+    # an error that is handled leaves nothing behind
+    try:
+        passes_on(1)
+    catch ValueError:
+        pass
+    print('done')

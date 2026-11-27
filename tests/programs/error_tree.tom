@@ -1,0 +1,117 @@
+# One error class tree (D114a): TimeoutError and ConnectionError are built-in classes under IOError, and the libraries' own timeouts and
+# connection failures extend them, so one catch handles the failure whichever library it came from. The classes keep their ids and messages.
+import asyncio
+import requests
+import socket
+import json
+import toml
+import re
+import struct
+import cache
+
+# the most specific of the classes asked about that the error belongs to (a catch is the class test of an error)
+def kind(e: Error) -> str:
+    try:
+        raise e
+    catch TimeoutError:
+        return 'TimeoutError'
+    catch ConnectionError:
+        return 'ConnectionError'
+    catch IOError:
+        return 'IOError'
+    catch ValueError:
+        return 'ValueError'
+    catch KeyError:
+        return 'KeyError'
+    catch RuntimeError:
+        return 'RuntimeError'
+    catch Error:
+        return 'Error'
+
+def raise_it(n: int):
+    if n == 0:
+        raise asyncio.TimeoutError('wait ran out', 'E438')
+    if n == 1:
+        raise requests.TimeoutError('request ran out', 'E360')
+    if n == 2:
+        raise requests.ConnectionError('no route', 'E364')
+    if n == 3:
+        raise socket.ConnectionRefusedError('refused', 'E442')
+    if n == 4:
+        raise socket.ConnectionResetError('reset', 'E443')
+    if n == 5:
+        raise socket.AddressError('bad address', 'E444')
+    if n == 6:
+        raise socket.SocketError('closed', 'E445')
+    if n == 7:
+        raise requests.RequestError('not sent', 'E363')
+    if n == 8:
+        raise requests.InvalidURL('bad url', 'E361')
+    if n == 9:
+        raise FileNotFoundError('no file', 'E505')
+    if n == 10:
+        raise TimeoutError('plain timeout')
+    if n == 11:
+        raise ConnectionError('plain connection')
+    raise IOError('plain io')
+
+@main
+def main():
+    names = ['asyncio.TimeoutError', 'requests.TimeoutError', 'requests.ConnectionError', 'ConnectionRefusedError', 'ConnectionResetError',
+             'AddressError', 'SocketError', 'requests.RequestError', 'requests.InvalidURL', 'FileNotFoundError', 'TimeoutError',
+             'ConnectionError', 'IOError']
+    for n in range(13):
+        row = names[n] + ':'
+        try:
+            raise_it(n)
+        catch TimeoutError as e:
+            row += f' TimeoutError({e.id},{e.message})'
+        catch ConnectionError as e:
+            row += f' ConnectionError({e.id},{e.message})'
+        catch IOError as e:
+            row += f' IOError({e.id},{e.message})'
+        print(row)
+    # every one of them is also an IOError and a RuntimeError, and only the matching one is a TimeoutError or a ConnectionError
+    for n in range(13):
+        try:
+            raise_it(n)
+        catch RuntimeError as e:
+            print(names[n], kind(e))
+    # the other libraries' errors under their natural parents
+    try:
+        json.loads('{')
+    catch ValueError as e:
+        print('json', kind(e), e.id)
+    try:
+        toml.loads('a = ')
+    catch ValueError as e:
+        print('toml', kind(e), e.id)
+    try:
+        re.compile('(')
+    catch ValueError as e:
+        print('re', kind(e), e.id)
+    try:
+        struct.int_to_bytes(1, 1, 'weird')
+    catch ValueError as e:
+        print('struct', kind(e), e.id)
+    c = cache.Cache[int, int](2)
+    try:
+        c[5]
+    catch KeyError as e:
+        print('cache', kind(e), e.id)
+    try:
+        open('/no/such/file/at/all')
+    catch IOError as e:
+        print('open', kind(e), e.id)
+    # a catch of the library's own class still works, and does not catch the other library's
+    try:
+        try:
+            raise requests.TimeoutError('request ran out', 'E360')
+        catch asyncio.TimeoutError as e:
+            print('wrong: asyncio.TimeoutError caught a requests error')
+    catch TimeoutError as e:
+        print('right: only the built-in catches both', e.message)
+    try:
+        raise asyncio.TimeoutError('mine', 'E438')
+    catch asyncio.TimeoutError as e:
+        print('own class', e.message)

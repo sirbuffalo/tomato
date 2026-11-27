@@ -1531,6 +1531,15 @@ class Mod:
             raise not_found('class', name, line)
         return key
 
+    def parent_key(self, own: str, written: str, line: int) -> str:
+        # the class a `class own(written)` extends. A class cannot extend itself, so when the module's class has the same name as its
+        # parent (`class TimeoutError(TimeoutError)` in asyncio) the parent is the built-in class of that name (D114a)
+        if written == own:
+            found = self.binding('builtin', written)
+            if found is not None and self.has_class(found.key):
+                return found.key
+        return self.class_key(written, line)
+
     def iface_key(self, name: str, line: int) -> str:
         key = self.resolve(name)
         if key == '' or not self.has_iface(key):
@@ -2075,7 +2084,7 @@ class Mod:
         saved = self.cur
         self.cur = c.module
         if node.fields[1].tag == 's':
-            c.parent = self.class_key(node.fields[1].text, node.line)
+            c.parent = self.parent_key(node.fields[0].text, node.fields[1].text, node.line)
         for iv in node.fields[2].items:
             c.ifaces.append(self.iface_key(iv.text, node.line))
         self.cur = saved
@@ -2457,6 +2466,7 @@ class CompCtx:
 class Gen:
     # one function being compiled
     comps: list[CompCtx] = []     # the list comprehensions being compiled, innermost last
+    catch_stack: list[list[str]] = []   # the catch blocks being compiled, innermost last: the slots of the caught error and of its saved state, or [] when the block has no bare raise (D114a)
     borrowed_unwind: str = ''     # restore a borrowed loop variable before propagating an error
     mod: Mod = Mod()
     lines: list[str] = []
@@ -10224,6 +10234,9 @@ class Gen:
             self.run_finallies(self.try_depth)
             self.br('epilogue')
         elif k == 'Raise':
+            if val_node(s.fields[0]).kind == 'Reraise':
+                self.reraise(s)
+                return
             if self.outline_raise(s):
                 return
             v = self.expr(val_node(s.fields[0]))
@@ -10259,6 +10272,39 @@ class Gen:
             pass
         else:
             raise CompileError(f'this kind of statement ({k}) is not supported here', s.line)
+
+    def keep_caught(self, pending: str) -> list[str]:
+        # a catch block with a bare `raise` (D114a) keeps the error it caught (a reference of its own) and where and how it was raised (the line,
+        # who raised it, the call trace), in two slots that are freed with the function; the bare raise puts them back. Returns the two slots.
+        self.mod.declare('declare ptr @tomato_catch_save(i32, i32)')
+        self.mod.declare('declare void @tomato_catch_restore(ptr, ptr, ptr)')
+        err_slot = self.hidden_rc_slot('caught')
+        self.emit(f'call void @tomato_retain(ptr {pending})')
+        self.store_owned(err_slot, ex(pending, '@Error'))
+        line = self.tmp('cline')
+        self.emit(f'{line} = load i32, ptr @tomato_exc_line')
+        rt = self.tmp('crt')
+        self.emit(f'{rt} = load i32, ptr @tomato_exc_rt')
+        saved = self.tmp('csaved')
+        self.emit(f'{saved} = call ptr @tomato_catch_save(i32 {line}, i32 {rt})')
+        state_slot = self.hidden_rc_slot('caughtstate')
+        self.store_owned(state_slot, ex(saved, 'str'))
+        return [err_slot, state_slot]
+
+    def reraise(self, s: Node):
+        # a bare `raise`: the error of the innermost catch block, again, with the line and the trace it had (D114a)
+        if len(self.catch_stack) == 0 or len(self.catch_stack[len(self.catch_stack) - 1]) == 0:
+            raise CompileError("'raise' with no error can only be used inside a 'catch' block\nthere it raises the caught error again; elsewhere write raise ErrorClass('message')", s.line)
+        kept = self.catch_stack[len(self.catch_stack) - 1]
+        e = self.tmp('again')
+        self.emit(f'{e} = load ptr, ptr {kept[0]}')
+        self.emit(f'call void @tomato_retain(ptr {e})')
+        self.emit(f'store ptr {e}, ptr @tomato_exc')                      # the pending error owns the new reference
+        st = self.tmp('againstate')
+        self.emit(f'{st} = load ptr, ptr {kept[1]}')
+        self.emit(f'call void @tomato_catch_restore(ptr {st}, ptr @tomato_exc_line, ptr @tomato_exc_rt)')
+        self.emit('store i32 1, ptr @tomato_exc_seen')
+        self.br(self.unwind_target())
 
     def tries_in_loop(self) -> int:
         # how many of the innermost try statements sit inside the current loop
@@ -10329,6 +10375,9 @@ class Gen:
             self.cond_br(hit, match, nxt)
             self.place(match)
             self.emit('store ptr null, ptr @tomato_exc')             # handled: the catch variable takes the reference
+            kept: list[str] = []
+            if len(h.items) > 3 and h.items[3].flag:
+                kept = self.keep_caught(pending)
             if self.mod.mode == 1:
                 self.emit('call void @tomato_trace_clear()')
             if h.items[1].tag == 's':
@@ -10341,7 +10390,9 @@ class Gen:
                 self.store_owned(reg, ex(pending, '@' + cname))
             else:
                 self.emit(f'call void @tomato_release(ptr {pending})')
+            self.catch_stack.append(kept)
             self.block(val_nodes(h.items[2]))
+            self.catch_stack.pop()
             if not self.terminated:
                 self.br(handled_l)
             self.place(nxt)
@@ -14450,7 +14501,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         elif item.kind == 'ClassDef':
             c = mod.find_class(mod.key_for(top.module, item.fields[0].text), item.line)
             if item.fields[1].tag == 's':
-                c.parent = mod.class_key(item.fields[1].text, item.line)
+                c.parent = mod.parent_key(item.fields[0].text, item.fields[1].text, item.line)
             for iv in item.fields[2].items:
                 c.ifaces.append(mod.iface_key(iv.text, item.line))
         elif item.kind == 'Implements':

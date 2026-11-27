@@ -1,0 +1,34 @@
+asyncio.TimeoutError: TimeoutError(E438,wait ran out)
+requests.TimeoutError: TimeoutError(E360,request ran out)
+requests.ConnectionError: ConnectionError(E364,no route)
+ConnectionRefusedError: ConnectionError(E442,refused)
+ConnectionResetError: ConnectionError(E443,reset)
+AddressError: ConnectionError(E444,bad address)
+SocketError: ConnectionError(E445,closed)
+requests.RequestError: IOError(E363,not sent)
+requests.InvalidURL: IOError(E361,bad url)
+FileNotFoundError: IOError(E505,no file)
+TimeoutError: TimeoutError(,plain timeout)
+ConnectionError: ConnectionError(,plain connection)
+IOError: IOError(,plain io)
+asyncio.TimeoutError TimeoutError
+requests.TimeoutError TimeoutError
+requests.ConnectionError ConnectionError
+ConnectionRefusedError ConnectionError
+ConnectionResetError ConnectionError
+AddressError ConnectionError
+SocketError ConnectionError
+requests.RequestError IOError
+requests.InvalidURL IOError
+FileNotFoundError IOError
+TimeoutError TimeoutError
+ConnectionError ConnectionError
+IOError IOError
+json ValueError E88
+toml ValueError E356
+re ValueError E488
+struct ValueError E499
+cache KeyError E90
+open IOError E25
+right: only the built-in catches both request ran out
+own class mine

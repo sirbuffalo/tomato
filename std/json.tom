@@ -38,7 +38,7 @@
 !tomato_file_write_bytes(path: str, data: list[int]) -> int
 !tomato_file_error(path: str, code: int) -> str
 
-export class JSONDecodeError(RuntimeError):
+export class JSONDecodeError(ValueError):
     reason: str = ''
     line: int = 0
     column: int = 0
@@ -52,15 +52,15 @@ export class JSONDecodeError(RuntimeError):
         self.line = line
         self.column = column
 
-export class JSONEncodeError(RuntimeError):
+export class JSONEncodeError(ValueError):
     pass
 
 # Raised when a Json is used as the wrong kind: j['a'] on a list, as_int() on text, a missing key or an index out of range.
-export class JSONTypeError(RuntimeError):
+export class JSONTypeError(ValueError):
     pass
 
 # Raised by loads_msgpack on bad data (pos is the byte offset) and by dumps_msgpack on a value MessagePack cannot hold.
-export class MsgpackError(RuntimeError):
+export class MsgpackError(ValueError):
     pos: int = 0
 
     @init
