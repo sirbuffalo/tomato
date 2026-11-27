@@ -18,8 +18,6 @@
   Golden files in `tests/cli_contract/` for `tomato help`, `explain`, `config`, the error texts, exit statuses and environment variables, written against main after the project-layout and test-library tasks land. A later rewrite of the `tomato` command in Tomato must pass them unchanged (`docs/shell-to-tomato-plan.md`, sections 6 and 12).
 - Check the shell-to-Tomato plan's open Mac points on a Mac
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
-- Make `tomato test` read its options only before the entry
-  So that inputs such as `-v` or `--filter` can be passed through `tomato test FILE ENTRY INPUTS` (the raw-input rule of D94b item 6: everything after the entry is input; `tomato run` and a built program already do this, but `tomato test` reads `--filter`, `--mode`, `--timeout` and `-v` anywhere on its line). `tomato run FILE ENTRY -- INPUTS` does it today.
 - Change `datetime.replace` part parameters from `int | bool = False` to `int | None = None`
   `datetime.replace` still takes year, month, day, hour, minute, second and microsecond as `int | bool = False`; convert them to `int | None = None` like `offset_minutes` (D94a), and update the callers, docs and tests.
 - Replace a redeclared repl variable in place

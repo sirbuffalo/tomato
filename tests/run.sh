@@ -1094,7 +1094,7 @@ tomato = "0.51"
   printf '%s[build]\nmode = "release"\n[build.test]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
   r="$(noconf $t test "$P/sub/prog.tom" 2>&1)"
   case "$r" in "ok   $P/sub/prog.tom  (1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "build tables: tomato test reads [build.test]";; *) bad "build tables: tomato test reads [build.test]" "$r";; esac
-  r="$(noconf $t test "$P/sub/prog.tom" --mode release 2>&1)"
+  r="$(noconf $t test --mode release "$P/sub/prog.tom" 2>&1)"
   case "$r" in *"(1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "build tables: tomato test --mode release still runs";; *) bad "build tables: tomato test --mode release still runs" "$r";; esac
   # output
   printf '%s[build]\noutput = "out/app"\n[build.crash]\noutput = "/dev/null/never"\n' "$head" > "$P/tomato.toml"
@@ -1552,7 +1552,7 @@ t_cli_repl_1() {
   check "-- passes flag-like inputs" "[-o][--entry]" "$($t run "$work/echo.tom" -- main -o --entry)"
   r="$(sh native/tomato update 2>&1)"; case "$r" in *"is not one (run ./install-native.sh in a checkout)"*) ok "update refuses to run from a checkout (it would replace its native/ folder)";; *) bad "update refuses to run from a checkout (it would replace its native/ folder)" "$r";; esac
   # an option at the end without its value is a usage error (it once took a word moved to the end as its value: `build f x -o` wrote x)
-  check "an option at the end without its value is a usage error" "2 2 2 none" "$(cd "$work" && { $t run echo.tom --color > /dev/null 2>&1; a=$?; $t build echo.tom -o > /dev/null 2>&1; b=$?; $t test echo.tom echo.tom --filter > /dev/null 2>&1; c=$?; [ -e x ] && w=made || w=none; echo "$a $b $c $w"; })"
+  check "an option at the end without its value is a usage error" "2 2 2 none" "$(cd "$work" && { $t run echo.tom --color > /dev/null 2>&1; a=$?; $t build echo.tom -o > /dev/null 2>&1; b=$?; $t test --filter > /dev/null 2>&1; c=$?; [ -e x ] && w=made || w=none; echo "$a $b $c $w"; })"
   check "repl: variables, functions, new output only" "7
 9
 hi" "$(printf 'x = 3\nx + 4\ndef sq(n: int) -> int:\n    return n * n\n\nsq(x)\nprint("hi")\n:quit\n' | $t repl)"
@@ -2026,17 +2026,17 @@ ok   tests/e_group.tom  (2 passed, 1 skipped)
 tomato test: 2 files, 2 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
-  r="$($t test tests/a_pass.tom --mode release 2>&1)"; rc=$?
+  r="$($t test --mode release tests/a_pass.tom 2>&1)"; rc=$?
   check "tomato test --mode release runs the file in release mode" "ok   tests/a_pass.tom
 tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
-  r="$($t test tests --filter pass 2>&1)"; rc=$?
+  r="$($t test --filter pass tests 2>&1)"; rc=$?
   check "tomato test --filter keeps the files whose name contains the text; a folder stands for its test files" "ok   tests/a_pass.tom
 tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
-  r="$($t test tests/a_pass.tom --filter zzz 2>&1)"; rc=$?
+  r="$($t test --filter zzz tests/a_pass.tom 2>&1)"; rc=$?
   check "tomato test --filter that keeps no file says so and the status stays 0" "warning: no file name contains 'zzz'
 tomato test: 0 files, 0 passed, 0 failed, 0 skipped: ok
 0" "$r
@@ -2047,7 +2047,7 @@ skip tests/c_skip.tom  (no network)
 tomato test: 2 files, 1 passed, 0 failed, 1 skipped: ok
 0" "$(printf '%s\n' "$r" | lines)
 $rc"
-  r="$($t test tests/c_skip.tom --mode release 2>&1)"
+  r="$($t test --mode release tests/c_skip.tom 2>&1)"
   check "tomato test: a skipped file in release mode" "skip tests/c_skip.tom
 tomato test: 1 files, 0 passed, 0 failed, 1 skipped: ok" "$(printf '%s\n' "$r" | lines)"
   fi; if step 2; then
@@ -2085,14 +2085,14 @@ $rc"
 $rc"
   cd "$work/proj"
   r="$($t test --bogus 2>&1)"; rc=$?
-  check "tomato test: an unknown option is an error" "error: unknown option '--bogus' for 'tomato test' (run 'tomato help')
+  check "tomato test: an unknown option is an error" "error: unknown option '--bogus' for 'tomato test' (options go before the files: the words after a file or its entry are not options; run 'tomato help')
 1" "$r
 $rc"
-  r="$($t test tests/a_pass.tom --timeout x 2>&1)"; rc=$?
+  r="$($t test --timeout x tests/a_pass.tom 2>&1)"; rc=$?
   check "tomato test: --timeout takes whole seconds" "error: --timeout takes a whole number of seconds above 0, not 'x'
 1" "$r
 $rc"
-  case "$($t help)" in *"tomato test [FILE]... | FILE ENTRY [INPUTS...] [--filter TEXT] [--timeout SECONDS] [-v]"*) ok "tomato help lists the test command";; *) bad "tomato help lists the test command" "$($t help | grep 'tomato test')";; esac
+  case "$($t help)" in *"tomato test [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] [FILE]... | FILE ENTRY [INPUTS...]"*) ok "tomato help lists the test command";; *) bad "tomato help lists the test command" "$($t help | grep 'tomato test')";; esac
   # the inputs of main have defaults: a bare tomato test can always run it
   printf 'from testing import assert_equal\n\n@main\ndef main(n: int = 3, word: str = "w"):\n    print("n =", n, "word =", word)\n    assert_equal(n, 3)\n' > tests/f_defaults.tom
   printf '@main\ndef main(n: int):\n    print(n)\n' > "$work/tneeds.tom"
@@ -2118,6 +2118,41 @@ $rc"
   printf '@main\ndef main(n: int = 3):\n    assert n < 0\n' > "$work/tneg.tom"
   r="$($t test "$work/tneg.tom" main -5 2>&1)"; rc=$?
   check "tomato test FILE ENTRY -5: a word that starts with - after a file is an input, as for tomato run" "ok   $work/tneg.tom
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  # options are read only before the files: after a file or its entry every word is raw input, even --filter
+  printf '@main\ndef main(a: str = "", b: str = "", c: str = ""):\n    print(f"inputs {a} {b} {c}".strip())\n' > "$work/tinp.tom"
+  r="$($t test -v "$work/tinp.tom" main --filter -v --mode 2>&1)"; rc=$?
+  check "tomato test FILE ENTRY --filter -v --mode: the words after the entry are inputs, no option is read there" "ok   $work/tinp.tom
+    inputs --filter -v --mode
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  r="$($t test -v "$work/tinp.tom" main -- --filter 2>&1)"
+  check "tomato test FILE ENTRY -- --filter: a -- after the entry is an input too" "ok   $work/tinp.tom
+    inputs -- --filter
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+  r="$($t test --filter tinp -v --mode release "$work/tinp.tom" main --timeout 5 2>&1)"; rc=$?
+  check "tomato test: options before the file still work, and --timeout after the entry is an input" "ok   $work/tinp.tom
+    inputs --timeout 5
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  r="$($t test -v -- "$work/tinp.tom" main --filter x 2>&1)"
+  check "tomato test -- FILE: the separator ends the options, the next word is the file" "ok   $work/tinp.tom
+    inputs --filter x
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+  r="$($t test -v -- --filter 2>&1)"; rc=$?
+  check "tomato test -- --filter: after the separator an option-like word is no option (it is not a file either)" "error: '--filter' is not a file: write tomato test --filter.tom (or tests/--filter.tom); a word that is not a file is only accepted right after a file, as the entry to run in it (tomato test x.tom --filter)
+1" "$r
+$rc"
+  r="$($t test "$work/tinp.tom" --filter x 2>&1)"; rc=$?
+  check "tomato test FILE --filter: an option after the file is refused, not read" "error: '--filter' comes after a file, so it is not an option (options go before the files: tomato test --filter $work/tinp.tom); it can only be an input of an entry (tomato test $work/tinp.tom ENTRY --filter)
+1" "$r
+$rc"
+  r="$($t test "$work/tinp.tom" main --color never -v 2>&1)"; rc=$?
+  check "tomato test FILE ENTRY: --color and -v after the entry are inputs" "ok   $work/tinp.tom
 tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
@@ -2165,13 +2200,13 @@ $rc"
   r="$($t test "$work/e130.tom" 2>&1)"
   check "tomato test: an exit status above 128 is not called a signal for sure" "FAIL $work/e130.tom  (exit status 130 (killed by signal 2, or sys.exit(130)))
 tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
-  r="$($t test "$work/hang.tom" tests/a_pass.tom --timeout 2 2>&1)"; rc=$?
+  r="$($t test --timeout 2 "$work/hang.tom" tests/a_pass.tom 2>&1)"; rc=$?
   check "tomato test --timeout: a file that runs too long is stopped and named, the next file runs" "FAIL $work/hang.tom  (timed out after 2 seconds)
 ok   tests/a_pass.tom
 tomato test: 2 files, 1 passed, 1 failed, 0 skipped: FAILED
 1" "$r
 $rc"
-  r="$($t test tests/a_pass.tom --timeout 30 2>&1)"; rc=$?
+  r="$($t test --timeout 30 tests/a_pass.tom 2>&1)"; rc=$?
   check "tomato test --timeout: a file that finishes in time is unaffected" "ok   tests/a_pass.tom
 tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
 0" "$r

@@ -5,7 +5,7 @@
 #                                                                     other is an ENTRY of it; MODE: debug or release, debug is the default). Everything after the entry is raw input
 #   tomato build [FILE] [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]   write a native program, by default builds/NAME from src/main.tom; it takes [ENTRY [INPUTS...]]
 #   tomato compile [FILE] [--entry NAME] [--mode MODE]                print the LLVM IR
-#   tomato test [FILE]... | FILE ENTRY [INPUTS...] [--filter TEXT] [--timeout SECONDS] [-v]   run each file as a test (no word: every tests/*.tom; FILE ENTRY INPUTS... as in `tomato run`; a bare word before a file is an error); one line per file and a summary; exit 1 if any failed
+#   tomato test [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] [FILE]... | FILE ENTRY [INPUTS...]   run each file as a test (no word: every tests/*.tom; FILE ENTRY INPUTS... as in `tomato run`; a bare word before a file is an error); one line per file and a summary; exit 1 if any failed
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
 #   tomato seed install [--locked]                                    lock the seeds of tomato.toml ({ path = "../x" } seeds only) into tomato.lock; --locked checks without writing
@@ -113,7 +113,7 @@ cmd="$1"; [ -n "$cmd" ] || usage; shift
 # the options every command takes are read first, from anywhere before a `--`: --color=auto|always|never, --no-warnings
 color=""; warnings="${TOMATO_WARNINGS:-on}"
 n=$#; stop=0
-[ "$cmd" = run ] && n=0      # (run reads its options itself: they stop at the entry, and what follows it is raw input)
+[ "$cmd" = run ] || [ "$cmd" = test ] && n=0      # (run and test read their options themselves: they stop at the entry, and what follows it is raw input)
 while [ $n -gt 0 ]; do
   n=$((n - 1))
   if [ $stop = 1 ]; then set -- "$@" "$1"; shift; continue; fi
@@ -334,7 +334,7 @@ case "$cmd" in
     else echo "next: tomato run, tomato build, tomato test"; fi
     exit 0 ;;
   test)
-    # tomato test [FILE]... [FILE ENTRY [INPUTS...]] [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] (D81a, D97a). Each file in a tests/ folder is one test: a
+    # tomato test [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] [FILE]... | FILE ENTRY [INPUTS...] (D81a, D97a). Each file in a tests/ folder is one test: a
     # program that passes when it ends with status 0 (nothing was raised) and fails otherwise; a file with functions marked
     # @test.NAME is run through the driver of the entry `test` (even if it has a @main), and passes when all of them do. Every file is built once and run as a
     # process of its own, so a sys.exit, a crash or a hang ends only that file. The words: one that ends in .tom or has a / is a file (a
@@ -346,23 +346,24 @@ case "$cmd" in
     # more than N seconds; -v also shows the output of the files that pass. One line for each file, then one line for CI; the status is
     # 1 when any file failed (did not compile, raised, ended with another status, timed out), else 0.
     tfilter=""; tmode=""; ttimeout=""; tverbose=0
-    n=$#
-    seen_file=0     # a file has been read: an unknown word that starts with - (-5) is then an input of its entry, as for `tomato run`
-    stop=0          # after `--` every word is a word of the command, not an option
-    while [ $n -gt 0 ]; do
-      n=$((n - 1))
-      if [ $stop = 1 ]; then set -- "$@" "$1"; shift; continue; fi
+    # the options are read only before the first FILE (or ENTRY) word; the first word that is not an option ends them, and everything
+    # after it is a file, the entry or raw input, even a word that starts with - (`tomato test x.tom e --filter` passes --filter to e).
+    # `--` ends the options earlier, and the next word is still the first file.
+    while [ $# -gt 0 ]; do
       case "$1" in
-        --) stop=1; shift ;;
-        --filter) [ $n -ge 1 ] || usage; tfilter="$2"; shift 2; n=$((n - 1)) ;;
-        --mode) [ $n -ge 1 ] || usage; tmode="$2"; shift 2; n=$((n - 1)) ;;
-        --timeout) [ $n -ge 1 ] || usage; ttimeout="$2"; shift 2; n=$((n - 1)) ;;
+        --) shift; break ;;
+        --filter) [ $# -ge 2 ] || usage; tfilter="$2"; shift 2 ;;
+        --mode) [ $# -ge 2 ] || usage; tmode="$2"; shift 2 ;;
+        --timeout) [ $# -ge 2 ] || usage; ttimeout="$2"; shift 2 ;;
+        --color=*) color="${1#--color=}"; shift ;;
+        --color) [ $# -ge 2 ] || usage; color="$2"; shift 2 ;;
+        --no-warnings) warnings=off; shift ;;
         -v|--verbose) tverbose=1; shift ;;
-        -*) if [ "$seen_file" = 1 ]; then set -- "$@" "$1"; shift; else die "unknown option '$1' for 'tomato test' (run 'tomato help')"; fi ;;
-        *.tom|*/*) seen_file=1; set -- "$@" "$1"; shift ;;
-        *) set -- "$@" "$1"; shift ;;
+        -?*) die "unknown option '$1' for 'tomato test' (options go before the files: the words after a file or its entry are not options; run 'tomato help')" ;;
+        *) break ;;
       esac
     done
+    check_color
     case "$ttimeout" in
       "") ;;
       *[!0-9]*|0|00*) die "--timeout takes a whole number of seconds above 0, not '$ttimeout'" ;;
@@ -395,6 +396,7 @@ case "$cmd" in
         [ "$any" = 1 ] || die "no test file in $a (each $a/NAME.tom is one test; a name that starts with _ is a helper module, not a test)"
       elif file_word "$a"; then
         add_file "$a"
+        case "${1-}" in -?*) die "'$1' comes after a file, so it is not an option (options go before the files: tomato test $1 $a); it can only be an input of an entry (tomato test $a ENTRY $1)" ;; esac
         # FILE [ENTRY [INPUTS...]]: a word that is not a file is the entry to run, and every word after it an input of that entry's function
         if [ $# -gt 0 ] && ! file_word "$1" && [ ! -d "$1" ]; then
           printf '%s\n' "$1" > "$tmpd/entry.$k"; shift

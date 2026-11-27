@@ -32,10 +32,12 @@ Because each file is its own process, a `sys.exit`, a crash or a hang in one tes
 ## The command
 
 ```
-tomato test                              every tests/*.tom
-tomato test FILE...                      these files
-tomato test FILE ENTRY [INPUTS...]       one file, an entry of it, and the inputs of that entry's function
+tomato test [OPTIONS]                              every tests/*.tom
+tomato test [OPTIONS] FILE...                      these files
+tomato test [OPTIONS] FILE ENTRY [INPUTS...]       one file, an entry of it, and the inputs of that entry's function
 ```
+
+**Options go first.** `tomato test` reads its options (below, and `--color`, `--no-warnings`) only **before the first file**; the first word that is not an option ends them, and everything after the file or its entry is read as it is, even a word that starts with `--`: `tomato test a.tom check --filter` runs `check` with the input `--filter`. An option after a file (`tomato test a.tom --filter x`) is an error that says so (it could only be an input, which needs an entry first). `--` ends the options earlier, and the next word is the first file. This is the rule of `tomato run FILE ENTRY INPUTS...` and of a built program (D94b item 6).
 
 How the words are read: a word that ends in `.tom` or contains a `/` is a file (a folder stands for its `*.tom` files, except those whose name starts with `_`). A word that is not a file is accepted only **right after a file**, as its `ENTRY`; every word after the entry is an input, as in `tomato run FILE ENTRY INPUTS...` (the same compile and the same way of passing the words). A bare word anywhere else is an error that suggests the file: `tomato test parse` says `write tomato test parse.tom (or tests/parse.tom)`; nothing is looked up in `tests/` by name.
 
