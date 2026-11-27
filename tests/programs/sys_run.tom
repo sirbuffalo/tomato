@@ -108,6 +108,33 @@ def sections_inherit():
     r = sys.run(['cat'], capture=False, stdin='given to cat\n')
     print('inherit with input', r.status)
 
+# the descriptors the program has open, as the numbers /dev/fd lists (a shell lists its own standard streams, and the one it reads the folder with)
+def fds_seen() -> list[int]:
+    r = sys.run(['sh', '-c', 'for f in /dev/fd/*; do echo ${f##*/}; done'])
+    seen: list[int] = []
+    for word in r.stdout.split('\n'):
+        if word != '':
+            seen.append(int(word))
+    return seen
+
+# the program gets its standard streams and nothing else: the files this program holds open are closed in it (D98b)
+def sections_fds(work: str):
+    base = fds_seen()
+    held: list[File] = []
+    for i in range(4):
+        held.append(open(f'{work}/held{i}.txt', 'w'))
+    parent = open_files() - len(base)          # the descriptors this program has beyond the child's own
+    print('parent holds', parent >= 4)
+    inside = fds_seen()
+    print('child sees the same', inside == base, 'and none above 3', max(inside) <= 3)
+    # also with an input pipe and with a directory to run in
+    r = sys.run(['sh', '-c', 'for f in /dev/fd/*; do [ ${f##*/} -gt 3 ] && echo open ${f##*/}; done; exit 0'], stdin='x')
+    print('input given', show(r.stdout))
+    r = sys.run(['sh', '-c', 'for f in /dev/fd/*; do [ ${f##*/} -gt 3 ] && echo open ${f##*/}; done; exit 0'], cwd=work)
+    print('cwd given', show(r.stdout))
+    for f in held:
+        f.close()
+
 def sections_errors(work: str):
     for args in [['no-such-program-xyz'], ['./no-such-file-xyz'], ['/nonexistent-dir-xyz/prog']]:
         try:
@@ -200,6 +227,7 @@ def everything(folder: str):
     sections_big()
     sections_options(work)
     sections_inherit()
+    sections_fds(work)
     sections_errors(work)
     sections_timeout()
     # nothing is left behind: no child still running as a zombie, and no descriptor kept by the failed and timed-out runs above

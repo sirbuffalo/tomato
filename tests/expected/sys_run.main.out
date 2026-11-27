@@ -32,6 +32,10 @@ written without a newline, the child writes this
 inherit status 2
 given to cat
 inherit with input 0
+parent holds True
+child sees the same True and none above 3 True
+input given 
+cwd given 
 missing E505 could not run 'no-such-program-xyz': No such file or directory
 missing E505 could not run './no-such-file-xyz': No such file or directory
 missing E505 could not run '/nonexistent-dir-xyz/prog': No such file or directory

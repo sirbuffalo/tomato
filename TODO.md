@@ -12,21 +12,17 @@
   D95a builds `install`, `check` and `hash` only: a project's `tomato.toml` is edited by hand. `seed add --path DIR` and `seed remove NAME` must rewrite the manifest keeping its comments and order (std/toml's `dumps` would lose them), then re-lock; `seed vendor` and `[seed-store] vendor` (read and checked, unused) copy the locked seeds to `vendor/` (design section 6).
 - Make `tomato seed add` list the foreign symbols a seed declares and ask once
   D94b (a default Davis leaned to, "like in Python you can have C"): a seed's modules may use `!name(...)` declarations and nothing rejects them. `tomato seed add` and `update` must list the `!name(...)` symbols the seed's modules declare (found by parsing, as the seed checks of design section 11 do) and ask once; the answer is recorded in `tomato.lock` (`symbols`), so a new symbol in an update asks again, and the index listing records the symbols. A seed still cannot ship C or run build scripts in 1.0 (open, after 1.0: C sources or objects in a seed).
-- Stop `inline_merge` in `native/tomato` rewriting `@tomato_` text inside string constants
-  Building the compiler itself in debug mode (`tomato build ctool.tom --entry compile`) prints `constant expression type mismatch` from clang for `@.str.N = private constant ... c"call void @tomato_inl_retain(ptr \00"` and falls back to the link without the inline fast paths (the program is correct, only slower): the `awk` rewrite of `@tomato_X(` also changes the text of a string constant (a line starting with `@.str`). Skip constant lines, with a test that compiles a program holding such a string.
 - Flow narrowing of optionals by `is None` / `is not None`
   Applies to all optionals, not just `int | None`, `float | None` and `bool | None`: `s + "!"` and `abs(x)` after a check should need no runtime unwrap. Today `s + "literal"` on a `str | None` is also E190 (an existing quirk).
 - Write CLI contract tests for the shell-to-Tomato plan (stage 0)
   Golden files in `tests/cli_contract/` for `tomato help`, `explain`, `config`, the error texts, exit statuses and environment variables, written against main after the project-layout and test-library tasks land. A later rewrite of the `tomato` command in Tomato must pass them unchanged (`docs/shell-to-tomato-plan.md`, sections 6 and 12).
 - Check the shell-to-Tomato plan's open Mac points on a Mac
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
-- Add an async `sys.run` and a `Popen`-style object with pipes
-  On the scheduler's descriptor waits (`docs/next-features.md` item 15): today `run` blocks the whole program, so other tasks do not run while a child does.
-- Close the other open descriptors in the child of `sys.run`
-  Close (or mark close-on-exec) them: the child inherits this program's open files and sockets that are not close-on-exec, which Python avoids with `close_fds`.
 - Make `tomato test` read its options only before the entry
   So that inputs such as `-v` or `--filter` can be passed through `tomato test FILE ENTRY INPUTS` (the raw-input rule of D94b item 6: everything after the entry is input; `tomato run` and a built program already do this, but `tomato test` reads `--filter`, `--mode`, `--timeout` and `-v` anywhere on its line). `tomato run FILE ENTRY -- INPUTS` does it today.
 - Change `datetime.replace` part parameters from `int | bool = False` to `int | None = None`
   `datetime.replace` still takes year, month, day, hour, minute, second and microsecond as `int | bool = False`; convert them to `int | None = None` like `offset_minutes` (D94a), and update the callers, docs and tests.
 - Replace a redeclared repl variable in place
   A redeclared variable moves to the end of the session's statements, so an earlier line that used it (`print(x)` between `x: int = 1` and `x: int = 2`) fails with 'name x is not defined'. Pre-existing; replace the declaration in place instead.
+- Run the new `sys_async` test on macOS
+  Check the kqueue wait on pipes and the `/dev/fd` listing (`tests/programs/sys_async.tom`, and the open-files check in `tests/programs/sys_run.tom`); everything of D98b was tested on Linux only.

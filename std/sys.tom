@@ -1,6 +1,7 @@
 # The process: the command-line words, ending the program, the standard streams, the platform and the version, and starting
-# another program (run). Functions and classes only, no module-level values (D49b). Works natively and in the browser playground
-# (Wave 2, pack A), except run, which needs a process to start and raises RuntimeError there (D98a).
+# another program (run, run_async and spawn). Functions and classes only, no module-level values (D49b). Works natively and in the
+# browser playground (Wave 2, pack A), except run, run_async and spawn, which need a process to start and raise RuntimeError there
+# (D98a, D98b).
 !tomato_args(out: list[str]) -> int
 !tomato_exit(code: int) -> int
 !tomato_write_fd(fd: int, text: str) -> int
@@ -8,6 +9,18 @@
 !tomato_platform() -> str
 !tomato_run(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, text: str, capture: int, timeout_ms: int, out: list[str], info: list[int]) -> int
 !tomato_os_error(what: str) -> str
+!tomato_proc_spawn(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, flags: int, info: list[int]) -> int
+!tomato_proc_text_size(text: str) -> int
+!tomato_proc_write(fd: int, text: str, off: int) -> int
+!tomato_proc_close(fd: int)
+!tomato_proc_poll(pid: int, info: list[int]) -> int
+!tomato_proc_reap(pid: int, info: list[int]) -> int
+!tomato_proc_kill(pid: int, sig: int) -> int
+!tomato_pstream_close(h: int)
+!tomato_pstream_fd(h: int) -> int
+!tomato_pstream_fill(h: int) -> int
+!tomato_pstream_line(h: int, out: list[str]) -> int
+!tomato_pstream_take(h: int, out: list[str]) -> int
 
 # All the words of the command line: argv()[0] is the program as it was started, then the inputs. An entry point that takes
 # `*args: tuple[str]` receives the inputs after its fixed ones.
@@ -102,27 +115,9 @@ def _how_it_ended(program: str, status: int, signal: int) -> str:
         return f"'{program}' was ended by signal {signal}"
     return f"'{program}' exited with status {status}"
 
-# Runs the program args[0] with the arguments args[1:] and waits for it. There is no shell: every word is passed as it is, so no
-# quoting is needed and nothing in a word is special. A program without a '/' is looked for in the PATH (of the environment the
-# program gets, see env). The result has the exit status and what the program wrote to standard output and error.
-#   capture    True: standard output and error are read into the result (the program's standard input is empty unless stdin is given).
-#              False: the program uses this program's own standard streams (this program's buffered output is written first, so the
-#              order on the screen is the order of the calls), and stdout and stderr in the result are empty.
-#   cwd        the directory the program runs in (this program's directory is not changed)
-#   env        variables added to the environment the program gets, which is this program's environment otherwise (a name that is
-#              already set is replaced)
-#   stdin      the text sent to the program's standard input; when it is not given, standard input is this program's own with
-#              capture=False and empty (end of file at once) with capture=True
-#   check      True: a program that does not succeed (status other than 0) raises ProcessError
-#   timeout    seconds; a program that has not ended by then is killed (SIGKILL) and run() raises ProcessTimeout. The program's own
-#              children are not killed. Without a timeout run() waits as long as it takes.
-# A program that cannot be started raises FileNotFoundError, PermissionError or another IOError, with a message that names the
-# program (or the directory, when cwd cannot be entered). The program is always waited for, so none is left running or as a zombie.
-# run() blocks the whole program, as the functions of os do: other tasks do not run until the program ends. In the browser
-# playground there are no processes: run() raises RuntimeError.
-export def run(args: list[str], capture: bool = True, cwd: str | None = None, env: dict[str, str] | None = None, stdin: str = '', check: bool = False, timeout: float | None = None) -> RunResult:
-    if platform() == 'wasi':
-        raise RuntimeError('run is not available in the browser playground (it cannot start a process)', 'E514')
+# The checks that run, run_async and spawn share. Returns the "NAME=value" words of env, the directory ('' for none) and the timeout in
+# milliseconds (-1 for none).
+def _prepare(args: list[str], cwd: str | None, env: dict[str, str] | None, stdin: str, timeout: float | None) -> tuple[list[str], str, int]:
     if len(args) == 0 or args[0] == '':
         raise ValueError('run needs the program to start as the first word of args', 'E585')
     for word in args:
@@ -149,6 +144,34 @@ export def run(args: list[str], capture: bool = True, cwd: str | None = None, en
         limit = int(timeout * 1000.0)
         if limit < 1:
             limit = 1
+    return (extra, where, limit)
+
+# Runs the program args[0] with the arguments args[1:] and waits for it. There is no shell: every word is passed as it is, so no
+# quoting is needed and nothing in a word is special. A program without a '/' is looked for in the PATH (of the environment the
+# program gets, see env). The result has the exit status and what the program wrote to standard output and error.
+#   capture    True: standard output and error are read into the result (the program's standard input is empty unless stdin is given).
+#              False: the program uses this program's own standard streams (this program's buffered output is written first, so the
+#              order on the screen is the order of the calls), and stdout and stderr in the result are empty.
+#   cwd        the directory the program runs in (this program's directory is not changed)
+#   env        variables added to the environment the program gets, which is this program's environment otherwise (a name that is
+#              already set is replaced)
+#   stdin      the text sent to the program's standard input; when it is not given, standard input is this program's own with
+#              capture=False and empty (end of file at once) with capture=True
+#   check      True: a program that does not succeed (status other than 0) raises ProcessError
+#   timeout    seconds; a program that has not ended by then is killed (SIGKILL) and run() raises ProcessTimeout. The program's own
+#              children are not killed. Without a timeout run() waits as long as it takes.
+# A program that cannot be started raises FileNotFoundError, PermissionError or another IOError, with a message that names the
+# program (or the directory, when cwd cannot be entered). The program is always waited for, so none is left running or as a zombie.
+# The program gets only its standard streams: every other file and socket this program has open is closed in it (D98b).
+# run() blocks the whole program, as the functions of os do: other tasks do not run until the program ends (run_async does not
+# block them). In the browser playground there are no processes: run() raises RuntimeError.
+export def run(args: list[str], capture: bool = True, cwd: str | None = None, env: dict[str, str] | None = None, stdin: str = '', check: bool = False, timeout: float | None = None) -> RunResult:
+    if platform() == 'wasi':
+        raise RuntimeError('run is not available in the browser playground (it cannot start a process)', 'E514')
+    prepared = _prepare(args, cwd, env, stdin, timeout)
+    extra = prepared[0]
+    where = prepared[1]
+    limit = prepared[2]
     out: list[str] = []
     info: list[int] = []
     kind = !tomato_run(args, extra, where, 1 if cwd is not None else 0, stdin, 1 if capture else 0, limit, out, info)
@@ -171,6 +194,337 @@ def _failure_text(what: str, stderr: str) -> str:
     if len(text) > 2000:
         text = '...' + text[-2000:]
     return what + ': ' + text
+
+# One output stream (standard output or standard error) of a program started with spawn(): text as the program writes it, read without
+# blocking the other tasks. It reads UTF-8 (bytes that are not valid become U+FFFD). Read a stream from one task at a time. Only the
+# stream that is being read is emptied: a program that writes more than a pipe holds (about 64 KB) to a stream nobody is reading
+# waits until someone does, so when it can write much to both, read them in two tasks (`t = start p.stderr.read()`, then
+# `out = await p.stdout.read()` and `err = await t`), or use run_async, which does that. The stream is closed when everything was read
+# up to its end; close() closes it earlier and drops what was not read.
+export class PipeReader:
+    name: str = ''
+    piped: bool = False          # False for a stream of a program started with capture=False: it has nothing to read
+    private h: int = 0           # the runtime's handle, 0 once the stream is closed
+
+    @init
+    def make(self, name: str, h: int):
+        self.name = name
+        self.h = h
+        self.piped = h != 0
+
+    def private check(self):
+        if not self.piped:
+            raise ValueError(f"the program's {self.name} was not captured (start it with capture=True)", 'E595')
+
+    # The next line with its '\n' (the last line may have none), or '' at the end of the stream: the program has closed it (it ended, or
+    # closed its output) and all of it was read. Waits, without blocking other tasks, until a whole line has come.
+    async def read_line(self) -> str:
+        self.check()
+        while self.h != 0:
+            out: list[str] = []
+            r = !tomato_pstream_line(self.h, out)
+            if r == 1:
+                return out[0]
+            if r == 2:
+                self.close()
+                return ''
+            r = !tomato_pstream_fill(self.h)
+            if r == 0:
+                await _fd_wait(!tomato_pstream_fd(self.h), 1)
+            elif r < 0:
+                raise IOError(!tomato_os_error(f"read the {self.name} of the program"), 'E515')
+        return ''
+
+    # Everything up to the end of the stream (the program has closed it: usually when it ends), as one text. Waits, without blocking
+    # other tasks. Gives '' when everything was read before.
+    async def read(self) -> str:
+        self.check()
+        turns = 0
+        while self.h != 0:
+            r = !tomato_pstream_fill(self.h)
+            if r == 2:
+                break
+            if r == 0:
+                await _fd_wait(!tomato_pstream_fd(self.h), 1)
+            elif r < 0:
+                raise IOError(!tomato_os_error(f"read the {self.name} of the program"), 'E515')
+            else:
+                turns += 1
+                if turns >= 16:
+                    turns = 0
+                    await sleep(0)
+        if self.h == 0:
+            return ''
+        out: list[str] = []
+        _r = !tomato_pstream_take(self.h, out)
+        self.close()
+        return out[0]
+
+    # What the program has written and was not read yet, without waiting ('' when there is nothing; a character that has not come
+    # in full stays for the next call). A cancelled read() leaves what it had gathered here.
+    def read_available(self) -> str:
+        self.check()
+        while self.h != 0:
+            r = !tomato_pstream_fill(self.h)
+            if r < 0:
+                raise IOError(!tomato_os_error(f"read the {self.name} of the program"), 'E515')
+            if r != 1:
+                break
+        if self.h == 0:
+            return ''
+        out: list[str] = []
+        _r = !tomato_pstream_take(self.h, out)
+        return out[0]
+
+    # Takes what the pipe holds into the stream without waiting, so that a program that has ended and written all it will write gives
+    # up its pipe (Process.wait() does it for both streams). Nothing is lost: it is still there to read.
+    def pull(self):
+        if self.h != 0:
+            while !tomato_pstream_fill(self.h) == 1:
+                pass
+
+    # Closes the stream and drops what was not read; a task waiting to read it is woken and gets ''.
+    def close(self):
+        if self.h != 0:
+            h = self.h
+            self.h = 0
+            !tomato_pstream_close(h)
+
+# A program started with spawn(), running while this program goes on. Its standard output and error are PipeReaders (stdout and
+# stderr), its input is written with write() and ended with close_stdin(), and wait() gives its status. After wait(), `status` and
+# `signal` are the same as in a RunResult (status is 128 plus the signal when a signal ended it).
+# Every Process must be waited for (wait(), or done() until it says True): a program that is not is a zombie until this one ends. When it
+# has ended, its input pipe is closed and its streams are emptied into this program (what it wrote is still there to read, and the
+# descriptors are given back); a stream that is never read to its end, or a program that is never waited for, keeps its memory until close().
+# The program is not stopped when this one ends or when the Process is no longer used; kill() it.
+export class Process:
+    pid: int = 0
+    stdout: PipeReader = PipeReader('standard output', 0)
+    stderr: PipeReader = PipeReader('standard error', 0)
+    status: int = 0
+    signal: int = 0
+    private fd_in: int = -1      # the write end of its standard input; -1 once closed or when it is not a pipe
+    private pipe_in: bool = False
+    private ended: bool = False
+
+    @init
+    def make(self, pid: int, fd_in: int, out_h: int, err_h: int):
+        self.pid = pid
+        self.fd_in = fd_in
+        self.pipe_in = fd_in >= 0
+        self.stdout = PipeReader('standard output', out_h)
+        self.stderr = PipeReader('standard error', err_h)
+
+    # Sends all of text (as UTF-8) to the program's standard input, waiting without blocking the other tasks while the pipe is full.
+    # Only for a program started with stdin=True, and before close_stdin(). A program that has closed its input raises IOError.
+    async def write(self, text: str):
+        if not self.pipe_in or self.fd_in < 0:
+            raise ValueError("the program's standard input is not open for writing (start it with stdin=True, and write before close_stdin())", 'E596')
+        size = !tomato_proc_text_size(text)
+        done = 0
+        while done < size:
+            if self.fd_in < 0:
+                raise ValueError("the program's standard input is not open for writing (start it with stdin=True, and write before close_stdin())", 'E596')
+            n = !tomato_proc_write(self.fd_in, text, done)
+            if n >= 0:
+                done += n
+            elif n == -1:
+                await _fd_wait(self.fd_in, 2)
+            elif n == -2:
+                raise IOError('could not write to the program: it has closed its standard input', 'E515')
+            else:
+                raise IOError(!tomato_os_error('write to the program'), 'E515')
+
+    # Ends the program's standard input (it reads end of file). Does nothing when it is already closed or was not a pipe.
+    def close_stdin(self):
+        if self.fd_in >= 0:
+            fd = self.fd_in
+            self.fd_in = -1
+            !tomato_proc_close(fd)
+
+    def private reap(self) -> bool:
+        if self.ended:
+            return True
+        info: list[int] = []
+        r = !tomato_proc_poll(self.pid, info)
+        if r == 1:
+            self.status = info[0]
+            self.signal = info[1]
+            self.ended = True
+        elif r < 0:
+            self.status = 255          # it was waited for by something else: its status is not known
+            self.ended = True
+        if self.ended:
+            self.close_stdin()         # nothing reads it any more
+            if self.stdout.piped:
+                self.stdout.pull()
+                self.stderr.pull()
+        return self.ended
+
+    # True when the program has ended (and is waited for: status and signal are set), without waiting.
+    def done(self) -> bool:
+        return self.reap()
+
+    # Waits, without blocking the other tasks, until the program has ended, and gives its status. It does not wait for the output to be
+    # read: what the program wrote stays in stdout and stderr. (There is no way to be told that a program ended without looking: wait()
+    # looks again every few milliseconds, more rarely the longer it waits, up to every 20.)
+    async def wait(self) -> int:
+        nap = 0.0005
+        while not self.reap():
+            await sleep(nap)
+            if nap < 0.02:
+                nap = nap * 2.0
+        return self.status
+
+    # Sends the signal (a number from 1 to 64; 9, SIGKILL, ends the program for sure, 15 asks it to end) to the program. Does nothing
+    # when it has ended and been waited for. It does not wait for it to end: wait() does.
+    def kill(self, signal: int = 9):
+        if signal < 1 or signal > 64:
+            raise ValueError('a signal number is from 1 to 64', 'E597')
+        if not self.reap():
+            _r = !tomato_proc_kill(self.pid, signal)
+
+    # Ends the program (SIGKILL) if it is still running, waits for it, and closes the pipes. For clean-up: it does not give other tasks a
+    # turn.
+    def stop(self):
+        if not self.reap():
+            _r = !tomato_proc_kill(self.pid, 9)
+            info: list[int] = []
+            if !tomato_proc_reap(self.pid, info) == 1:
+                self.status = info[0]
+                self.signal = info[1]
+            self.ended = True
+        self.close()
+
+    # Closes the standard input and both streams (what was not read is dropped). It does not stop or wait for the program.
+    def close(self):
+        self.close_stdin()
+        if self.stdout.piped:
+            self.stdout.close()
+        if self.stderr.piped:
+            self.stderr.close()
+
+# Starts the program args[0] with the arguments args[1:] and goes on at once: the Process gives its pid, pipes and exit. The arguments
+# are those of run (no shell, cwd, env, PATH lookup; the same errors for a program that cannot be started and for a bad argument),
+# except:
+#   capture    True (the default): stdout and stderr are pipes to read; False: the program uses this program's own standard streams
+#   stdin      True: the program's standard input is a pipe that is written with p.write(text) and ended with p.close_stdin();
+#              False (the default): as in run, this program's own standard input with capture=False and empty with capture=True
+# The program gets only its standard streams: every other file and socket this program has open is closed in it. Not available in the
+# browser playground (RuntimeError).
+export def spawn(args: list[str], capture: bool = True, cwd: str | None = None, env: dict[str, str] | None = None, stdin: bool = False) -> Process:
+    if platform() == 'wasi':
+        raise RuntimeError('spawn is not available in the browser playground (it cannot start a process)', 'E514')
+    prepared = _prepare(args, cwd, env, '', None)
+    where = prepared[1]
+    flags = 0
+    if stdin:
+        flags = 1
+    elif capture:
+        flags = 8
+    if capture:
+        flags += 6
+    info: list[int] = []
+    kind = !tomato_proc_spawn(args, prepared[0], where, 1 if cwd is not None else 0, flags, info)
+    if kind != 0:
+        if info[0] == 1:
+            _raise(kind, !tomato_os_error(f"change to the directory '{where}' to run '{args[0]}'"))
+        _raise(kind, !tomato_os_error(f"run '{args[0]}'"))
+    return Process(info[0], info[1], info[2], info[3])
+
+# collects what a stream writes, for run_async
+async def _collect(r: PipeReader) -> str:
+    return await r.read()
+
+async def _feed(p: Process, text: str) -> str:
+    try:
+        await p.write(text)
+    catch IOError:
+        pass                       # the program does not read its input (or ended): not an error of the run
+    p.close_stdin()
+    return ''
+
+async def _expire(p: Process, seconds: float, running: list[task[str]], fired: list[int]) -> str:
+    await sleep(seconds)
+    if p.done():
+        return ''
+    fired.append(1)
+    p.kill()
+    for t in running:
+        if not t.done():
+            t.cancel()
+    return ''
+
+# the text a collecting task gathered: its result, or (when it was cancelled by the timeout) what had come
+async def _text(t: task[str], r: PipeReader) -> str:
+    try:
+        return await t
+    catch CancelledError:
+        return r.read_available()
+
+# run() that does not block the other tasks while the program runs: the same arguments, the same RunResult and the same errors
+# (ProcessError for check=True, ProcessTimeout after the timeout, the os classes for a program that cannot be started), as
+# `r = await sys.run_async(['clang', ...], timeout=60.0)`. Several can run at once: `await asyncio.gather([start sys.run_async(a), start
+# sys.run_async(b)])`. When the task is cancelled, the program is killed (SIGKILL) and waited for, so none is left behind. There is no
+# way to be told that a program ended without looking: the wait looks every few milliseconds, more rarely the longer it waits (up to
+# every 20), and costs nothing in between.
+export async def run_async(args: list[str], capture: bool = True, cwd: str | None = None, env: dict[str, str] | None = None, stdin: str = '', check: bool = False, timeout: float | None = None) -> RunResult:
+    if platform() == 'wasi':
+        raise RuntimeError('run_async is not available in the browser playground (it cannot start a process)', 'E514')
+    prepared = _prepare(args, cwd, env, stdin, timeout)
+    where = prepared[1]
+    flags = 0
+    if stdin != '':
+        flags = 1
+    elif capture:
+        flags = 8
+    if capture:
+        flags += 6
+    info: list[int] = []
+    kind = !tomato_proc_spawn(args, prepared[0], where, 1 if cwd is not None else 0, flags, info)
+    if kind != 0:
+        if info[0] == 1:
+            _raise(kind, !tomato_os_error(f"change to the directory '{where}' to run '{args[0]}'"))
+        _raise(kind, !tomato_os_error(f"run '{args[0]}'"))
+    p = Process(info[0], info[1], info[2], info[3])
+    readers: list[task[str]] = []
+    feeders: list[task[str]] = []
+    timers: list[task[str]] = []
+    fired: list[int] = []
+    try:
+        if stdin != '':
+            feeders.append(start _feed(p, stdin))
+        if capture:
+            readers.append(start _collect(p.stdout))
+            readers.append(start _collect(p.stderr))
+        running = readers + feeders
+        if timeout is not None:
+            timers.append(start _expire(p, timeout, running, fired))
+        for t in running:
+            await _settle(t)
+        status = await p.wait()
+        out = ''
+        err = ''
+        if capture:
+            out = await _text(readers[0], p.stdout)
+            err = await _text(readers[1], p.stderr)
+        if len(fired) > 0:
+            raise ProcessTimeout(_failure_text(f"'{args[0]}' did not finish within {timeout} seconds and was killed", err), args[0], status, p.signal, out, err, 'E589')
+        if check and status != 0:
+            raise ProcessError(_failure_text(_how_it_ended(args[0], status, p.signal), err), args[0], status, p.signal, out, err, 'E588')
+        return RunResult(status, p.signal, out, err)
+    finally:
+        everything: list[task[str]] = readers + feeders + timers
+        for t in everything:
+            if not t.done():
+                t.cancel()
+        p.stop()
+        for t in everything:               # every task is finished and its error (usually the cancel) taken, so none is reported as unread
+            await _settle(t)
+            try:
+                await t
+            catch Error:
+                pass
 
 # The version of Tomato, the same text as `tomato version`. tests/run.sh (t_sys_version) checks the literal below against the VERSION file,
 # and the release script's bump step writes it (release/release.sh).

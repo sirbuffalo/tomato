@@ -110,8 +110,7 @@ Read from the source (nothing here is new behavior):
 - **The `tomato` command is a POSIX shell script** (`native/tomato`) that calls `bin/tomatoc`, then clang. `tomato update`
   already downloads over https only, with a pinned sha256 (`curl_safe`, `native/tomato:52-55`), using `curl`, `tar` and
   `shasum`/`sha256sum`.
-- **The standard library could not start a process when this was written** (it can now: `sys.run`, D98a, 2026-11-27; no
-  `popen` or async form yet). `std/os.tom` has files, folders, environment and `stat` (with a
+- **The standard library could not start a process when this was written** (it can now: `sys.run`, D98a, and `sys.run_async` and `sys.spawn`, D98b, 2026-11-27). `std/os.tom` has files, folders, environment and `stat` (with a
   `mode`); `std/sys.tom` has argv, exit and `run`. `std/toml.tom` (TOML v1.0.0),
   `std/hashlib.tom` (sha256 in Tomato) and `std/requests.tom` (libcurl through `dlopen`, native only) exist.
 - **The browser** (`site/wasm/tomato.js`) has a fixed list of standard modules and no project folder; its `compile`

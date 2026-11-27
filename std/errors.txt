@@ -592,3 +592,6 @@ ValueError this program has no entry '{}' (its entries are: {}); the first word 
 IOError input {} must be a file that can be read, but '{}' cannot be opened: {}
 CompileError a File input cannot have a default: its word is the path of a file to read (or - for standard input), and there is no file to fall back on
 CompileError cannot import 'main': it is the name the program itself has
+ValueError the program's {} was not captured (start it with capture=True)
+ValueError the program's standard input is not open for writing (start it with stdin=True, and write before close_stdin())
+ValueError a signal number is from 1 to 64

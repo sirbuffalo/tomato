@@ -1,0 +1,328 @@
+# sys.run_async and sys.spawn (D98b): a program that runs while other tasks go on, with pipes. Native only. The first input is a folder
+# for this test's files. Nothing here writes to standard error (the AddressSanitizer tests treat any text there as a report), and nothing
+# depends on how fast the machine is: where a program must wait for another task, it waits for a file that task makes, so a run that blocked
+# the other tasks would hang instead of passing.
+# The programs started are the ones every Unix has (sh, echo, printf, cat, ls, head, tr, sleep, true, false, kill, ps).
+import asyncio
+import os
+import sys
+
+def show(text: str) -> str:
+    return text.replace('\n', '|')
+
+def open_files() -> int:
+    return len(os.listdir('/dev/fd'))
+
+# the zombie children of this process: ps's table of (parent, state) lines
+def zombies() -> int:
+    r = sys.run(['ps', '-A', '-o', 'ppid=,stat='])
+    mine = os.getpid()
+    n = 0
+    for line in r.stdout.split('\n'):
+        text = line.strip()
+        gap = text.find(' ')
+        if gap > 0 and text[:gap] == str(mine) and text[gap:].strip().startswith('Z'):
+            n += 1
+    return n
+
+async def attempt(args: list[str], capture: bool = True, check: bool = False) -> str:
+    try:
+        r = await sys.run_async(args, capture=capture, check=check)
+        return f'{r.status} {r.signal} out={show(r.stdout)} err={show(r.stderr)}'
+    catch sys.ProcessError as e:
+        return f'ProcessError {e.status} {e.signal} {show(e.message)}'
+
+# ---- run_async
+
+# the same answers as run: status, signal, both streams, check
+async def sections_basic():
+    print('echo', await attempt(['echo', 'hello']))
+    print('words', (await sys.run_async(['printf', '[%s]', 'a b', "it's", '$HOME', '*', '', 'x"y'])).stdout)
+    print('exit 3', await attempt(['sh', '-c', 'exit 3']))
+    print('both streams', await attempt(['sh', '-c', 'echo out; echo err >&2; echo out2']))
+    print('check ok', await attempt(['true'], check=True))
+    print('check fails', await attempt(['sh', '-c', 'echo oops >&2; exit 4'], check=True))
+    print('signal', await attempt(['sh', '-c', 'kill -TERM $$']))
+    print('signal check', await attempt(['sh', '-c', 'kill -TERM $$'], check=True))
+    try:
+        await sys.run_async(['sh', '-c', 'echo to-stdout; echo to-stderr >&2; exit 9'], check=True)
+    catch sys.ProcessError as e:
+        print('fields', e.program, e.status, e.signal, show(e.stdout), show(e.stderr), e.id)
+    r = await sys.run_async(['printf', '\\377ab'])
+    print('bad utf-8', len(r.stdout), ord(r.stdout[0]), r.stdout[1:])
+    print('inherit', await attempt(['sh', '-c', 'exit 2'], capture=False))
+
+async def sections_big():
+    # more than a pipe holds on both streams, in both orders, and 1 MB of input echoed back
+    r = await sys.run_async(['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" y >&2; head -c 300000 /dev/zero | tr "\\0" x'])
+    print('stderr first', len(r.stdout), len(r.stderr), r.stdout[:3], r.stderr[-3:])
+    r = await sys.run_async(['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" x; head -c 300000 /dev/zero | tr "\\0" y >&2'])
+    print('stdout first', len(r.stdout), len(r.stderr))
+    big = 'abcdefghi\n' * 100000
+    r = await sys.run_async(['cat'], stdin=big)
+    print('echoed big input', len(r.stdout), r.stdout == big)
+    r = await sys.run_async(['sleep', '0'], stdin=big)
+    print('input never read', r.status)
+    r = await sys.run_async(['cat'], stdin='line one\nline two\n')
+    print('input', show(r.stdout))
+    r = await sys.run_async(['cat'])
+    print('no input is end of file at once', repr_text(r.stdout), r.status)
+
+def repr_text(text: str) -> str:
+    return "'" + text + "'"
+
+async def sections_options(work: str):
+    os.mkdir(work + '/sub')
+    os.write_text(work + '/sub/inner.txt', 'x')
+    r = await sys.run_async(['ls'], cwd=work + '/sub')
+    print('cwd', show(r.stdout))
+    r = await sys.run_async(['sh', '-c', 'echo "[$TOMATO_ASYNC_A] [$TOMATO_ASYNC_B]"'], env={'TOMATO_ASYNC_A': '1', 'TOMATO_ASYNC_B': 'two words'})
+    print('env', r.stdout.strip())
+    r = await sys.run_async(['sh', '-c', 'echo $PATH'], env={'PATH': '/usr/bin:/bin'})
+    print('PATH', r.stdout.strip())
+
+async def sections_errors(work: str):
+    for args in [['no-such-program-xyz'], ['./no-such-file-xyz']]:
+        try:
+            await sys.run_async(args)
+        catch FileNotFoundError as e:
+            print('missing', e.id, e.message)
+    os.write_text(work + '/plain.txt', 'not a program')
+    try:
+        await sys.run_async([work + '/plain.txt'])
+    catch PermissionError as e:
+        print('not executable', e.id)
+    try:
+        await sys.run_async(['ls'], cwd='/nonexistent-dir-xyz')
+    catch FileNotFoundError as e:
+        print('cwd', e.id, e.message)
+    try:
+        await sys.run_async([])
+    catch ValueError as e:
+        print('no program', e.id)
+    try:
+        await sys.run_async(['echo', 'a' + chr(0)])
+    catch ValueError as e:
+        print('NUL', e.id)
+    try:
+        await sys.run_async(['echo'], env={'A=B': 'x'})
+    catch ValueError as e:
+        print('env name', e.id)
+    try:
+        await sys.run_async(['echo'], cwd='')
+    catch ValueError as e:
+        print('empty cwd', e.id)
+    try:
+        await sys.run_async(['echo'], timeout=0.0)
+    catch ValueError as e:
+        print('timeout', e.id)
+
+async def sections_timeout():
+    r = await sys.run_async(['echo', 'in time'], timeout=30.0)
+    print('in time', r.status, show(r.stdout))
+    try:
+        await sys.run_async(['sh', '-c', 'echo started; echo warning >&2; exec sleep 30'], timeout=3.0)
+    catch sys.ProcessTimeout as e:
+        print('timeout', e.status, e.signal, show(e.stdout), show(e.stderr), e.id)
+        print(e.message)
+    try:
+        await sys.run_async(['sh', '-c', 'exec 1>&- 2>&-; exec sleep 30'], timeout=0.3)
+    catch sys.ProcessError as e:
+        print('closed streams', e.status, e.signal, e.id)
+    try:
+        await sys.run_async(['sleep', '30'], capture=False, timeout=0.3)
+    catch sys.ProcessTimeout as e:
+        print('inherit timeout', e.status)
+    try:
+        await sys.run_async(['sleep', '30'], stdin='x' * 1000000, timeout=0.3)
+    catch sys.ProcessTimeout as e:
+        print('input timeout', e.status)
+
+# a program that waits for a file that another task makes: it only finishes when the other tasks run while it does
+async def make_later(path: str):
+    await sleep(0.1)
+    os.write_text(path, 'go')
+
+async def sections_concurrent(work: str):
+    marker = work + '/marker'
+    t = start make_later(marker)
+    r = await sys.run_async(['sh', '-c', f'while [ ! -f {marker} ]; do sleep 0.01; done; echo saw the marker'])
+    await t
+    print('other tasks run meanwhile', r.stdout.strip())
+    # three programs at once, each waiting for the others' files
+    for n in range(3):
+        os.write_text(f'{work}/start{n}', '')
+    jobs: list[task[sys.RunResult]] = []
+    for n in range(3):
+        jobs.append(start sys.run_async(['sh', '-c', f'echo job {n}; sleep 0.05; echo end {n}']))
+    results = await asyncio.gather(jobs)
+    for r in results:
+        print('gathered', show(r.stdout))
+
+# cancelling the task that runs it kills the program and leaves no zombie
+async def sections_cancel(work: str):
+    pidfile = work + '/cancel.pid'
+    try:
+        await asyncio.wait_for(start sys.run_async(['sh', '-c', f'echo $$ > {pidfile}; exec sleep 30']), 1.0)
+    catch asyncio.TimeoutError:
+        print('cancelled by wait_for')
+    pid = os.read_text(pidfile).strip()
+    r = await sys.run_async(['kill', '-0', pid])
+    print('the program is gone', r.status != 0)
+    # an error in the middle of a gather does not leave a program behind either
+    t = start sys.run_async(['sleep', '30'])
+    await sleep(0.05)
+    t.cancel()
+    try:
+        await t
+    catch CancelledError:
+        print('cancelled task')
+
+# ---- spawn and Process
+
+async def sections_process(work: str):
+    # a conversation with cat: each line comes back before the next is sent (the program streams, no pipe is waited on to its end)
+    p = sys.spawn(['cat'], stdin=True)
+    for word in ['one', 'two', 'three']:
+        await p.write(word + '\n')
+        print('echoed', show(await p.stdout.read_line()))
+    await p.write('no newline at the end')
+    p.close_stdin()
+    print('rest', show(await p.stdout.read_line()), repr_text(await p.stdout.read_line()))
+    print('wait', await p.wait(), p.status, p.signal, p.done())
+    print('still closed', repr_text(await p.stdout.read()))
+    # read(): everything, both streams, and the exit status
+    p = sys.spawn(['sh', '-c', 'echo out1; echo err1 >&2; echo out2; exit 6'])
+    print('read', show(await p.stdout.read()), show(await p.stderr.read()), await p.wait())
+    # the output is kept after the program ended
+    p = sys.spawn(['sh', '-c', 'echo late'])
+    print('wait first', await p.wait(), show(await p.stdout.read()))
+    # more than a pipe holds on the error stream while the output is read: the error stream is read by a task of its own
+    p = sys.spawn(['sh', '-c', 'echo begin; head -c 300000 /dev/zero | tr "\\0" e >&2; echo end'])
+    errors = start p.stderr.read()
+    print('read all of stdout', show(await p.stdout.read()))
+    print('and stderr', len(await errors), await p.wait())
+    # many lines, one at a time: the buffer follows the reader (a program that writes 100,000 lines, 590 KB)
+    p = sys.spawn(['seq', '1', '100000'])
+    count = 0
+    last = ''
+    line = await p.stdout.read_line()
+    while line != '':
+        count += 1
+        last = line
+        line = await p.stdout.read_line()
+    print('lines', count, show(last), await p.wait())
+    # kill: a program that sleeps, SIGKILL and SIGTERM
+    p = sys.spawn(['sleep', '30'])
+    print('running', p.done())
+    p.kill()
+    print('killed', await p.wait(), p.signal, p.done())
+    p.kill()
+    p = sys.spawn(['sleep', '30'])
+    p.kill(15)
+    print('terminated', await p.wait(), p.signal)
+    # read_available: what is there, without waiting, and a character that has not come in full stays for the next call
+    p = sys.spawn(['sh', '-c', f'printf "ab\\303"; while [ ! -f {work}/more ]; do sleep 0.01; done; printf "\\251c\\n"'])
+    first = ''
+    while first == '':
+        await sleep(0.01)
+        first = p.stdout.read_available()
+    print('available', first, len(first))
+    os.write_text(work + '/more', '')
+    print('the rest', show(await p.stdout.read()), await p.wait())
+    # the standard streams of the program, not captured
+    p = sys.spawn(['true'], capture=False)
+    print('not captured', p.stdout.piped, p.stderr.piped, await p.wait())
+    # a program that closes its input: writing raises
+    p = sys.spawn(['sh', '-c', 'exec 0<&-; sleep 0.3'], stdin=True)
+    try:
+        await p.write('x' * 1000000)
+    catch IOError as e:
+        print('broken pipe', e.id, e.message)
+    p.kill()
+    await p.wait()
+    p.close()          # (the sleep it started holds the pipes for a while: close() gives them up now)
+    # the program's own directory and environment
+    p = sys.spawn(['sh', '-c', 'echo "$TOMATO_P in $(pwd | tr -d "\\n" | tail -c 3)"'], cwd=work + '/sub', env={'TOMATO_P': 'spawned'})
+    print('options', show(await p.stdout.read()), await p.wait())
+    # the errors
+    try:
+        sys.spawn(['no-such-program-xyz'])
+    catch FileNotFoundError as e:
+        print('missing', e.id, e.message)
+    p = sys.spawn(['true'], capture=False)
+    try:
+        await p.stdout.read()
+    catch ValueError as e:
+        print('not captured', e.id, e.message)
+    try:
+        await p.stderr.read_line()
+    catch ValueError as e:
+        print('not captured', e.id)
+    try:
+        await p.write('x')
+    catch ValueError as e:
+        print('no input pipe', e.id)
+    try:
+        p.kill(0)
+    catch ValueError as e:
+        print('signal', e.id, e.message)
+    print(await p.wait())
+    p = sys.spawn(['cat'], stdin=True)
+    p.close_stdin()
+    try:
+        await p.write('late')
+    catch ValueError as e:
+        print('input closed', e.id)
+    await p.wait()
+    p.close_stdin()
+
+# ---- what the programs started do not inherit
+
+async def sections_inheritance(work: str):
+    # A runs for a while with its pipes open in this program. B is started and run to its end after that: it must not hold A's input
+    # pipe, or A would not see the end of its input until B ended; B only ends when A has, so a B that held it would hang.
+    a = sys.spawn(['cat'], stdin=True)
+    marker = work + '/a-done'
+    b = start sys.run_async(['sh', '-c', f'while [ ! -f {marker} ]; do sleep 0.01; done; echo b ends'])
+    await sleep(0.1)
+    await a.write('x\n')
+    a.close_stdin()
+    print('a sees its input end', show(await a.stdout.read()), await a.wait())
+    os.write_text(marker, '')
+    print('b', show((await b).stdout))
+    # and what B sees open: only its three streams
+    a = sys.spawn(['cat'], stdin=True)
+    r = await sys.run_async(['sh', '-c', 'for f in /dev/fd/*; do [ ${f##*/} -gt 3 ] && echo open ${f##*/}; done; exit 0'])
+    print('descriptors in b', show(r.stdout))
+    a.close_stdin()
+    await a.wait()
+    a.close()
+
+async def everything(folder: str):
+    work = folder + '/sys_async_files'
+    os.mkdir(work)
+    await sys.run_async(['sh', '-c', 'sleep 0.2; echo x'])      # (the first wait for a descriptor makes the scheduler's own, which stays open: it is not counted below)
+    ready = open_files()
+    await sections_basic()
+    await sections_big()
+    await sections_options(work)
+    await sections_errors(work)
+    await sections_timeout()
+    await sections_concurrent(work)
+    await sections_cancel(work)
+    await sections_process(work)
+    await sections_inheritance(work)
+    print('zombies', zombies())
+    print('descriptors kept', open_files() - ready)
+    for i in range(40):
+        await sys.run_async(['true'])
+    for i in range(20):
+        p = sys.spawn(['echo', 'x'])
+        await p.stdout.read()
+        await p.wait()
+    print('zombies after 60 runs', zombies(), 'descriptors kept', open_files() - ready)
+
+@main
+async def main(folder: str):
+    await everything(folder)

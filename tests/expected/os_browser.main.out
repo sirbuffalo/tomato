@@ -5,6 +5,7 @@ unsetenv E514 unsetenv is not available in the browser playground
 chdir E514 chdir is not available in the browser playground
 getpid E514 getpid is not available in the browser playground
 run E514 run is not available in the browser playground (it cannot start a process)
+spawn E514 spawn is not available in the browser playground (it cannot start a process)
 / /x b
 True True False []
 one|two| 8 True

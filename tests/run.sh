@@ -300,11 +300,11 @@ while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done
 
 # ---- programs -----------------------------------------------------------------------------------------------------------
 # the fast tier builds only these with AddressSanitizer (one or two programs of each kind of thing the suite looks at)
-fast_asan=" at_neg_rmul float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module re_api re_limits sys_args sys_run os_files file_lines file_loop_close file_closed file_drop_loop string_io assert_ok testing_lib testing_diff "
+fast_asan=" at_neg_rmul float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module re_api re_limits sys_args sys_run sys_async os_files file_lines file_loop_close file_closed file_drop_loop string_io assert_ok testing_lib testing_diff "
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
 asan_specs1="tests/programs/at_neg_rmul: tests/programs/angle_lists: tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/sort_field: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/big_shift: tests/programs/int_bitwise_big: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/big_decimal: tests/programs/big_karatsuba: tests/programs/big_ntt: tests/programs/big_division: tests/programs/int_bitwise_runs: tests/programs/big_bad_text: tests/programs/int64_convert: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_case_full: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/optional_values: tests/programs/optional_lookups: tests/programs/optional_error_paths: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_floor_mod: tests/programs/float_ownership: tests/programs/float_loops: tests/programs/float_keys: tests/programs/float_nests: tests/programs/float_library: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
-asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/sys_run:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_loop_close:WORK tests/programs/file_modes:WORK tests/programs/file_closed:WORK tests/programs/file_drop_loop:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib: tests/programs/testing_diff:"
+asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/sys_run:WORK tests/programs/sys_async:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_loop_close:WORK tests/programs/file_modes:WORK tests/programs/file_closed:WORK tests/programs/file_drop_loop:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib: tests/programs/testing_diff:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
   want="$(sed -n '1s/^# borrowed loops: //p' "tests/programs/$2.tom")"
@@ -315,7 +315,7 @@ t_program() {
   "$c1" "tests/programs/$name.tom" main std/ > "$work/p.ll" 2> "$work/e"
   if grep -q '^;! ' "$work/p.ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
   lent_loops_ok "$work/p.ll" "$name" || { echo "FAIL program $name: the number of loops that borrow their item changed"; echo x >> "$shared/failed"; return; }
-  arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics|os_files|file_lines|file_loop_close|file_modes|file_closed|file_drop_loop|bytes_files|sys_run) arg="$work" ;; sys_basics) arg="alpha" ;; sys_args) arg="7 b c" ;; esac   # they write files: into this test's own folder, not a shared /tmp; the sys programs take inputs
+  arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics|os_files|file_lines|file_loop_close|file_modes|file_closed|file_drop_loop|bytes_files|sys_run|sys_async) arg="$work" ;; sys_basics) arg="alpha" ;; sys_args) arg="7 b c" ;; esac   # they write files: into this test's own folder, not a shared /tmp; the sys programs take inputs
   # shellcheck disable=SC2086
   [ -s "$work/p.ll" ] && clang -O1 -w -o "$work/p" "$work/p.ll" "$rt_o" -pthread -lm && "$work/p" $arg > "$work/out" 2>&1
   if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$shared/passed"; else echo "FAIL program $name"; { head -3 "$work/e"; diff "$work/out" "tests/expected/$name.main.out" | head -5; } | sed 's/^/     /'; echo x >> "$shared/failed"; fi
@@ -326,7 +326,7 @@ t_program_asan() { # the same test as t_program, for a program that an AddressSa
   asan_build "tests/programs/$name"
   if grep -q '^;! ' "$asan_ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
   lent_loops_ok "$asan_ll" "$name" || { echo "FAIL program $name: the number of loops that borrow their item changed"; echo x >> "$shared/failed"; return; }
-  arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics|os_files|file_lines|file_loop_close|file_modes|file_closed|file_drop_loop|bytes_files|sys_run) arg="$work" ;; sys_basics) arg="alpha" ;; sys_args) arg="7 b c" ;; esac   # they write files: into this test's own folder, not a shared /tmp; the sys programs take inputs
+  arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics|os_files|file_lines|file_loop_close|file_modes|file_closed|file_drop_loop|bytes_files|sys_run|sys_async) arg="$work" ;; sys_basics) arg="alpha" ;; sys_args) arg="7 b c" ;; esac   # they write files: into this test's own folder, not a shared /tmp; the sys programs take inputs
   # shellcheck disable=SC2086
   [ -x "$asan_exe" ] && "$asan_exe" $arg > "$work/out" 2>&1
   if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$shared/passed"; else echo "FAIL program $name"; { head -3 "$asan_err"; diff "$work/out" "tests/expected/$name.main.out" | head -5; } | sed 's/^/     /'; echo x >> "$shared/failed"; fi
@@ -430,7 +430,7 @@ t_lock_gc() {
 }
 t_release_asan() { # program, "leaks" to look for leaks too
   use_asan
-  arg=""; case "$1" in file_closed|sys_run) arg="$work" ;; esac   # it writes files: into this test's own folder
+  arg=""; case "$1" in file_closed|sys_run|sys_async) arg="$work" ;; esac   # it writes files: into this test's own folder
   "$c1" "tests/programs/$1.tom" main std/ release > "$work/p.ll" 2> "$work/e"
   if clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" "$rt_asan" -pthread -lm 2>/dev/null; then
     if [ "$2" = leaks ]; then "$work/rel" $arg > "$work/out" 2> "$work/e"; cat "$work/e" >> "$work/out"
@@ -448,9 +448,9 @@ t_release_leak() { # fused expressions over big numbers; the test itself is test
   case "$("$work/leaky" 2>&1)" in *"never freed"*) ok "release: a big number that is not freed is reported";; *) bad "release: a big number that is not freed is reported";; esac
 }
 section "== release mode (AddressSanitizer; the same output as debug mode) =="
-for name in fast_paths loop_nests float_loops float_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers raise_paths raise_dead file_closed sys_run; do
+for name in fast_paths loop_nests float_loops float_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers raise_paths raise_dead file_closed sys_run sys_async; do
   case "$name" in fast_paths|loop_nests|float_loops|float_nests|int_ranges|containers|raise_paths|raise_dead|file_closed) ;; *) [ -n "$fast" ] && { skip "release $name"; continue; } ;; esac   # (the fast tier: nine of the fifteen)
-  case "$name" in fast_paths|loop_nests|float_loops|float_nests|raise_paths|raise_dead|sys_run) spawn_first t_release_asan "$name" leaks ;; *) spawn_first t_release_asan "$name" ;; esac
+  case "$name" in fast_paths|loop_nests|float_loops|float_nests|raise_paths|raise_dead|sys_run|sys_async) spawn_first t_release_asan "$name" leaks ;; *) spawn_first t_release_asan "$name" ;; esac
 done
 spawn_first t_release_leak
 spawn_first t_lock_gc
@@ -793,6 +793,23 @@ t_cli_debug_link() { # debug mode links without LTO: the inline fast paths (runt
   FAIL_INLINE=1 PATH="$work/spy:$PATH" $t run tests/programs/int_fast_paths.tom > "$work/out" 2> "$work/err"
   check "debug link: without the inline fast paths the program still runs right" "$(cat tests/expected/int_fast_paths.main.out)" "$(cat "$work/out")"
   check "debug link: ... and says so" "warning: the inline fast paths could not be used; linked without them (slower)" "$(sed -n 1p "$work/err")"
+  # text that looks like a call of a runtime function, inside string constants, must not be renamed (it made clang reject the merged program,
+  # and the build fell back to the link without the inline copies)
+  cat > "$work/inl_strings.tom" <<'EOS'
+@main
+def main():
+    print('call void @tomato_retain(ptr')
+    print('x @tomato_x(1) and @tomato_int_add_c(2) "q" @tomato_retain(')
+    n = 0
+    for i in range(3):
+        n += i
+    print(f'@tomato_int_dup({n})')
+EOS
+  rm -f "$work/merged.ll" "$work/args"
+  PATH="$work/spy:$PATH" $t run "$work/inl_strings.tom" > "$work/out" 2> "$work/err"
+  check "debug link: a program with @tomato_ text in strings runs right" "$(printf 'call void @tomato_retain(ptr\nx @tomato_x(1) and @tomato_int_add_c(2) "q" @tomato_retain(\n@tomato_int_dup(3)')" "$(cat "$work/out")"
+  check "debug link: ... without a warning" "" "$(cat "$work/err")"
+  check "debug link: ... the strings are kept as written, the calls are renamed" "yes" "$(grep -q 'c"call void @tomato_retain(ptr' "$work/merged.ll" && ! grep -q 'c".*@tomato_inl_' "$work/merged.ll" && grep -q 'call i64 @tomato_inl_int_add_c(' "$work/merged.ll" && echo yes)"
 }
 t_cli_inline_paths() { # the inline copies must do what the runtime's functions do: programs about the edges of the small number range, in the debug link
   cli_setup; check "debug link runs $1 like the plain link" "$(cat "tests/expected/$1.main.out")" "$($t run "tests/programs/$1.tom" 2>&1)"

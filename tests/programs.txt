@@ -205,6 +205,7 @@ struct_extreme
 sys_basics
 sys_args
 sys_run
+sys_async
 os_env
 os_files
 ospath_text

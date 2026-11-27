@@ -8130,10 +8130,29 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
     push_int(info, 0);
     return os_fail(ENOSYS);
 }
+int64_t tomato_proc_spawn(void *argv, void *extra_env, void *cwd, int64_t has_cwd, int64_t flags, void *info) {
+    (void)argv; (void)extra_env; (void)cwd; (void)has_cwd; (void)flags;
+    push_int(info, 0);
+    return os_fail(ENOSYS);
+}
+int64_t tomato_proc_text_size(void *text) { return ((Str *)text)->bytes; }
+int64_t tomato_proc_write(int64_t fd, void *text, int64_t off) { (void)fd; (void)text; (void)off; return -3; }
+void tomato_proc_close(int64_t fd) { (void)fd; }
+void tomato_pstream_close(int64_t h) { (void)h; }
+int64_t tomato_pstream_fd(int64_t h) { (void)h; return -1; }
+int64_t tomato_pstream_fill(int64_t h) { (void)h; return 2; }
+int64_t tomato_pstream_line(int64_t h, void *out) { (void)h; (void)out; return 2; }
+int64_t tomato_pstream_take(int64_t h, void *out) { (void)h; (void)out; return 0; }
+int64_t tomato_proc_poll(int64_t pid, void *info) { (void)pid; (void)info; return -1; }
+int64_t tomato_proc_reap(int64_t pid, void *info) { (void)pid; (void)info; return -1; }
+int64_t tomato_proc_kill(int64_t pid, int64_t sig) { (void)pid; (void)sig; return -1; }
 #else
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/wait.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 typedef struct { char *p; size_t n, cap; } RunBuf;
 static void run_buf_add(RunBuf *b, const char *s, size_t n) {
     if (b->n + n + 1 > b->cap) {
@@ -8218,38 +8237,75 @@ static char *run_find(const char *prog, char **env, const char *cwd) {
     errno = denied ? EACCES : ENOENT;
     return NULL;
 }
-int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void *input, int64_t capture, int64_t timeout_ms, void *out, void *info) {
-    List *words = argv;
-    Str *in = input;
-    const char *dir = has_cwd ? ((Str *)cwd)->data : NULL;
-    char **cargv = malloc(((size_t)words->len + 1) * sizeof *cargv);
-    if (!cargv) out_of_memory();
-    for (int64_t k = 0; k < words->len; k++) cargv[k] = LIST_SLOT(words, k, Str *)->data;
-    cargv[words->len] = NULL;
-    char **env = run_env(extra_env);
+/* The descriptors above 2 that this process has open, found in the parent before a fork (the child must not look: opendir and malloc are
+ * not safe there): /dev/fd lists them on macOS and Linux (/proc/self/fd where /dev/fd is not there); with neither, every number up to the
+ * limit (at most 65536) is tried. */
+static int *run_open_fds(int *count) {
+    int cap = 64, n = 0;
+    int *list = malloc((size_t)cap * sizeof *list);
+    if (!list) out_of_memory();
+    DIR *d = opendir("/dev/fd");
+    if (!d) d = opendir("/proc/self/fd");
+    if (d) {
+        int self = dirfd(d);
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            char *end;
+            long v = strtol(e->d_name, &end, 10);
+            if (end == e->d_name || *end || v <= 2 || v == self || v > INT32_MAX) continue;
+            if (n == cap) { cap *= 2; list = realloc(list, (size_t)cap * sizeof *list); if (!list) out_of_memory(); }
+            list[n++] = (int)v;
+        }
+        closedir(d);
+    } else {
+        struct rlimit rl;
+        long lim = 65536;
+        if (getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY && (long)rl.rlim_cur < lim) lim = (long)rl.rlim_cur;
+        for (int fd = 3; fd < lim; fd++) {
+            if (fcntl(fd, F_GETFD) < 0) continue;
+            if (n == cap) { cap *= 2; list = realloc(list, (size_t)cap * sizeof *list); if (!list) out_of_memory(); }
+            list[n++] = fd;
+        }
+    }
+    *count = n;
+    return list;
+}
+/* In the child, after the fork: close every descriptor above 2 but keep (the pipe that reports a failed start; it is close-on-exec). The
+ * listed ones are closed one by one (only close(), which is safe here); where Linux has close_range, everything else above 2 is closed
+ * with it as well, which also takes a descriptor that another thread opened after the list was made. */
+static void run_close_others(const int *list, int n, int keep) {
+    for (int i = 0; i < n; i++) if (list[i] != keep) close(list[i]);
+#if defined(__linux__) && defined(SYS_close_range)
+    if (keep > 3) syscall(SYS_close_range, 3u, (unsigned)(keep - 1), 0u);
+    syscall(SYS_close_range, (unsigned)(keep >= 3 ? keep + 1 : 3), ~0u, 0u);
+#endif
+}
+/* what the parent holds of a started program: its pid and its ends of the pipes (-1 for a stream that is not a pipe) */
+typedef struct { pid_t pid; int in_w, out_r, err_r; } RunProc;
+enum { RS_IN = 1, RS_OUT = 2, RS_ERR = 4, RS_NULL_IN = 8 };     /* pipes for standard input, output and error; standard input from /dev/null */
+/* Starts the program (cargv, extra environment, directory or NULL) with the standard streams that flags say, and closes every other
+ * descriptor in the child. Returns 0 with p filled, or the errno that kept the program from running (*stage is then 1 when it was the
+ * directory that could not be entered); nothing is left running or open. The pipes are close-on-exec and above 2 in this process. */
+static int run_spawn(char **cargv, List *extra, const char *dir, int flags, RunProc *p, int *stage) {
+    char **env = run_env(extra);
     char *exe = run_find(cargv[0], env, dir);
-    int fail = 0, stage = 0;                    /* fail: the errno that kept the program from running */
+    int fail = 0;
     int ep[2] = { -1, -1 }, in_fd[2] = { -1, -1 }, out_fd[2] = { -1, -1 }, err_fd[2] = { -1, -1 }, devnull = -1;
-    RunBuf ob = { NULL, 0, 0 }, eb = { NULL, 0, 0 };
-    int status = 0, sig = 0, timed_out = 0;
+    int *open_fds = NULL, n_open = 0;
     pid_t pid = -1;
-    struct sigaction ign, old_pipe;
-    int pipe_saved = 0;
-    int use_in = in->bytes > 0;
+    *stage = 0;
+    p->pid = -1; p->in_w = p->out_r = p->err_r = -1;
     if (!exe) { fail = errno; goto done; }
-    if (run_pipe(ep) != 0 || (use_in && run_pipe(in_fd) != 0) || (capture && (run_pipe(out_fd) != 0 || run_pipe(err_fd) != 0))) { fail = errno; goto done; }
-    if (capture && !use_in) {
+    if (run_pipe(ep) != 0 || ((flags & RS_IN) && run_pipe(in_fd) != 0) || ((flags & RS_OUT) && run_pipe(out_fd) != 0) || ((flags & RS_ERR) && run_pipe(err_fd) != 0)) { fail = errno; goto done; }
+    if (flags & RS_NULL_IN) {
         int nul = open("/dev/null", O_RDONLY | O_CLOEXEC);
         if (nul < 0) { fail = errno; goto done; }
         devnull = fcntl(nul, F_DUPFD_CLOEXEC, 3);      /* above 2, as the pipes are (this process may have closed its own standard input) */
         if (devnull < 0) { fail = errno; close(nul); goto done; }
         close(nul);
     }
+    open_fds = run_open_fds(&n_open);
     fflush(NULL);                               /* what this process has printed must come before what the child prints */
-    memset(&ign, 0, sizeof ign);
-    ign.sa_handler = SIG_IGN;
-    sigemptyset(&ign.sa_mask);
-    pipe_saved = sigaction(SIGPIPE, &ign, &old_pipe) == 0;   /* a child that does not read its input must not kill this process */
     pid = fork();
     if (pid < 0) { fail = errno; goto done; }
     if (pid == 0) {
@@ -8261,10 +8317,12 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
         sigset_t none;
         sigemptyset(&none);
         sigprocmask(SIG_SETMASK, &none, NULL);
-        if (use_in) dup2(in_fd[0], 0); else if (devnull >= 0) dup2(devnull, 0);
-        if (capture) { dup2(out_fd[1], 1); dup2(err_fd[1], 2); }
+        if (flags & RS_IN) dup2(in_fd[0], 0); else if (devnull >= 0) dup2(devnull, 0);
+        if (flags & RS_OUT) dup2(out_fd[1], 1);
+        if (flags & RS_ERR) dup2(err_fd[1], 2);
         int rec[2];
         if (dir && chdir(dir) != 0) { rec[0] = 1; rec[1] = errno; if (write(ep[1], rec, sizeof rec) < 0) { /* nothing more to do */ } _exit(127); }
+        run_close_others(open_fds, n_open, ep[1]);     /* the program gets only its standard streams, not this program's files and sockets */
         execve(exe, cargv, env);
         rec[0] = 0; rec[1] = errno;
         if (write(ep[1], rec, sizeof rec) < 0) { /* nothing more to do */ }
@@ -8277,15 +8335,57 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
         do got = read(ep[0], rec, sizeof rec); while (got < 0 && errno == EINTR);
         run_close(&ep[0]);
         if (got > 0) {
-            if (got == (ssize_t)sizeof rec) { stage = rec[0]; fail = rec[1]; } else fail = EIO;
+            if (got == (ssize_t)sizeof rec) { *stage = rec[0]; fail = rec[1]; } else fail = EIO;
             int ws;
             while (waitpid(pid, &ws, 0) < 0 && errno == EINTR) { }
             pid = -1;
             goto done;
         }
     }
+    p->pid = pid; p->in_w = in_fd[1]; p->out_r = out_fd[0]; p->err_r = err_fd[0];
+    in_fd[1] = out_fd[0] = err_fd[0] = -1;      /* now the caller's */
+    pid = -1;
+done:
+    if (pid > 0) { kill(pid, SIGKILL); while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) { } }
+    run_close(&ep[0]); run_close(&ep[1]); run_close(&in_fd[0]); run_close(&in_fd[1]); run_close(&out_fd[0]); run_close(&out_fd[1]);
+    run_close(&err_fd[0]); run_close(&err_fd[1]); run_close(&devnull);
+    free(open_fds); free(env); free(exe);
+    return fail;
+}
+static char **run_argv(List *words) {
+    char **cargv = malloc(((size_t)words->len + 1) * sizeof *cargv);
+    if (!cargv) out_of_memory();
+    for (int64_t k = 0; k < words->len; k++) cargv[k] = LIST_SLOT(words, k, Str *)->data;
+    cargv[words->len] = NULL;
+    return cargv;
+}
+int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void *input, int64_t capture, int64_t timeout_ms, void *out, void *info) {
+    Str *in = input;
+    const char *dir = has_cwd ? ((Str *)cwd)->data : NULL;
+    char **cargv = run_argv(argv);
+    int fail = 0, stage = 0;                    /* fail: the errno that kept the program from running */
+    int in_fd = -1, out_fd = -1, err_fd = -1;
+    RunBuf ob = { NULL, 0, 0 }, eb = { NULL, 0, 0 };
+    int status = 0, sig = 0, timed_out = 0;
+    pid_t pid = -1;
+    struct sigaction ign, old_pipe;
+    int pipe_saved = 0;
+    int use_in = in->bytes > 0;
+    RunProc pr;
+    memset(&ign, 0, sizeof ign);
+    ign.sa_handler = SIG_IGN;
+    sigemptyset(&ign.sa_mask);
+    pipe_saved = sigaction(SIGPIPE, &ign, &old_pipe) == 0;   /* a child that does not read its input must not kill this process */
+    fail = run_spawn(cargv, extra_env, dir, (use_in ? RS_IN : 0) | (capture ? RS_OUT | RS_ERR : 0) | (capture && !use_in ? RS_NULL_IN : 0), &pr, &stage);
+    free(cargv);
+    if (fail) {
+        if (pipe_saved) sigaction(SIGPIPE, &old_pipe, NULL);
+        push_int(info, stage);
+        return os_fail(fail);
+    }
+    pid = pr.pid; in_fd = pr.in_w; out_fd = pr.out_r; err_fd = pr.err_r;
     {
-        int fds[3] = { in_fd[1], out_fd[0], err_fd[0] };
+        int fds[3] = { in_fd, out_fd, err_fd };
         for (int k = 0; k < 3; k++) if (fds[k] >= 0) fcntl(fds[k], F_SETFL, fcntl(fds[k], F_GETFL) | O_NONBLOCK);
     }
     {
@@ -8295,9 +8395,9 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
         for (;;) {
             struct pollfd pf[3];
             int which[3], np = 0;
-            if (in_fd[1] >= 0) { pf[np].fd = in_fd[1]; pf[np].events = POLLOUT; pf[np].revents = 0; which[np++] = 0; }
-            if (out_fd[0] >= 0) { pf[np].fd = out_fd[0]; pf[np].events = POLLIN; pf[np].revents = 0; which[np++] = 1; }
-            if (err_fd[0] >= 0) { pf[np].fd = err_fd[0]; pf[np].events = POLLIN; pf[np].revents = 0; which[np++] = 2; }
+            if (in_fd >= 0) { pf[np].fd = in_fd; pf[np].events = POLLOUT; pf[np].revents = 0; which[np++] = 0; }
+            if (out_fd >= 0) { pf[np].fd = out_fd; pf[np].events = POLLIN; pf[np].revents = 0; which[np++] = 1; }
+            if (err_fd >= 0) { pf[np].fd = err_fd; pf[np].events = POLLIN; pf[np].revents = 0; which[np++] = 2; }
             if (np == 0) break;
             int wait = -1;
             if (deadline >= 0) {
@@ -8311,11 +8411,11 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
                 if (!pf[i].revents) continue;
                 if (which[i] == 0) {
                     int64_t left = in->bytes - sent;
-                    ssize_t n = write(in_fd[1], in->data + sent, (size_t)(left > (int64_t)sizeof chunk ? (int64_t)sizeof chunk : left));
+                    ssize_t n = write(in_fd, in->data + sent, (size_t)(left > (int64_t)sizeof chunk ? (int64_t)sizeof chunk : left));
                     if (n > 0) sent += n;
-                    if ((n < 0 && errno != EAGAIN && errno != EINTR) || sent >= in->bytes) run_close(&in_fd[1]);   /* all sent, or the child does not read */
+                    if ((n < 0 && errno != EAGAIN && errno != EINTR) || sent >= in->bytes) run_close(&in_fd);   /* all sent, or the child does not read */
                 } else {
-                    int *fd = which[i] == 1 ? &out_fd[0] : &err_fd[0];
+                    int *fd = which[i] == 1 ? &out_fd : &err_fd;
                     ssize_t n = read(*fd, chunk, sizeof chunk);
                     if (n > 0) run_buf_add(which[i] == 1 ? &ob : &eb, chunk, (size_t)n);
                     else if (n == 0 || (errno != EAGAIN && errno != EINTR)) run_close(fd);
@@ -8342,17 +8442,15 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
         pid = -1;
         if (WIFSIGNALED(ws)) { sig = WTERMSIG(ws); status = 128 + sig; } else status = WEXITSTATUS(ws);
         for (int k = 1; k <= 2; k++) {          /* what the program wrote before it ended and was not read yet (not past a grandchild that holds the pipe) */
-            int *fd = k == 1 ? &out_fd[0] : &err_fd[0];
+            int *fd = k == 1 ? &out_fd : &err_fd;
             ssize_t n;
             while (*fd >= 0 && (n = read(*fd, chunk, sizeof chunk)) > 0) run_buf_add(k == 1 ? &ob : &eb, chunk, (size_t)n);
         }
     }
 done:
     if (pid > 0) { kill(pid, SIGKILL); while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) { } }
-    run_close(&ep[0]); run_close(&ep[1]); run_close(&in_fd[0]); run_close(&in_fd[1]); run_close(&out_fd[0]); run_close(&out_fd[1]);
-    run_close(&err_fd[0]); run_close(&err_fd[1]); run_close(&devnull);
+    run_close(&in_fd); run_close(&out_fd); run_close(&err_fd);
     if (pipe_saved) sigaction(SIGPIPE, &old_pipe, NULL);
-    free(cargv); free(env); free(exe);
     if (fail) {
         free(ob.p); free(eb.p);
         push_int(info, stage);
@@ -8366,6 +8464,147 @@ done:
     push_int(info, timed_out);
     return 0;
 }
+
+/* ---- a program that runs while this one goes on (std/sys.tom spawn(), run_async(), D98b). tomato_proc_spawn starts it as tomato_run does
+ * (the same arguments, then flags: 1 a pipe for its standard input, 2 for its output, 4 for its error, 8 its input from /dev/null) and
+ * puts [pid, the write end of its input (or -1), a handle for its output (or 0), a handle for its error (or 0)] in info. An output
+ * handle is a PStream: the read end (not blocking) and what has been read from it and not yet given out. The library waits for a
+ * descriptor with _fd_wait and calls tomato_pstream_fill when it can be read; nothing here ever blocks. On failure it is the kind of
+ * tomato_os_error, as for tomato_run (info[0] is 1 when it was the directory). */
+typedef struct { int fd; RunBuf b; size_t off; int eof; } PStream;
+static PStream **pstream_t; static int64_t pstream_n;
+static int64_t pstream_new(int fd) {
+    PStream *s = calloc(1, sizeof *s);
+    if (!s) out_of_memory();
+    s->fd = fd;
+    for (int64_t i = 0; i < pstream_n; i++) if (!pstream_t[i]) { pstream_t[i] = s; return i + 1; }
+    pstream_t = realloc(pstream_t, (size_t)(pstream_n + 1) * sizeof *pstream_t);
+    if (!pstream_t) out_of_memory();
+    pstream_t[pstream_n++] = s;
+    return pstream_n;
+}
+static PStream *pstream_get(int64_t h) { return h >= 1 && h <= pstream_n ? pstream_t[h - 1] : NULL; }
+int64_t tomato_proc_spawn(void *argv, void *extra_env, void *cwd, int64_t has_cwd, int64_t flags, void *info) {
+    char **cargv = run_argv(argv);
+    RunProc pr;
+    int stage = 0;
+    int fail = run_spawn(cargv, extra_env, has_cwd ? ((Str *)cwd)->data : NULL, (int)flags, &pr, &stage);
+    free(cargv);
+    if (fail) { push_int(info, stage); return os_fail(fail); }
+    int fds[3] = { pr.in_w, pr.out_r, pr.err_r };
+    for (int k = 0; k < 3; k++) if (fds[k] >= 0) fcntl(fds[k], F_SETFL, fcntl(fds[k], F_GETFL) | O_NONBLOCK);
+    push_int(info, pr.pid);
+    push_int(info, pr.in_w);
+    push_int(info, pr.out_r >= 0 ? pstream_new(pr.out_r) : 0);
+    push_int(info, pr.err_r >= 0 ? pstream_new(pr.err_r) : 0);
+    return 0;
+}
+int64_t tomato_proc_text_size(void *text) { return ((Str *)text)->bytes; }
+/* writes text from byte offset off to the pipe: the count written, -1 when it would block, -2 when the program has closed its input
+ * (a broken pipe, which does not kill this process), -3 for another failure (the reason is kept for tomato_os_error) */
+int64_t tomato_proc_write(int64_t fd, void *text, int64_t off) {
+    Str *t = text;
+    struct sigaction ign, old;
+    memset(&ign, 0, sizeof ign);
+    ign.sa_handler = SIG_IGN;
+    sigemptyset(&ign.sa_mask);
+    int saved = sigaction(SIGPIPE, &ign, &old) == 0;
+    int64_t left = t->bytes - off;
+    ssize_t n = write((int)fd, t->data + off, (size_t)(left > 65536 ? 65536 : left));
+    int e = errno;
+    if (saved) sigaction(SIGPIPE, &old, NULL);
+    if (n >= 0) return n;
+    if (e == EAGAIN || e == EINTR) return -1;
+    if (e == EPIPE) return -2;
+    os_fail(e);
+    return -3;
+}
+/* closes a descriptor of a program (the input pipe) or an output handle; tasks still waiting on it are made ready first */
+void tomato_proc_close(int64_t fd) { tomato_sock_close(fd); }
+void tomato_pstream_close(int64_t h) {
+    PStream *s = pstream_get(h);
+    if (!s) return;
+    pstream_t[h - 1] = NULL;
+    if (s->fd >= 0) tomato_sock_close(s->fd);
+    free(s->b.p); free(s);
+}
+int64_t tomato_pstream_fd(int64_t h) { PStream *s = pstream_get(h); return s ? s->fd : -1; }
+/* reads what is there into the buffer: 1 for some bytes, 0 when there are none yet, 2 at the end of the stream (the descriptor is closed then),
+ * -1 for a failure */
+int64_t tomato_pstream_fill(int64_t h) {
+    PStream *s = pstream_get(h);
+    if (!s || s->eof) return 2;
+    char chunk[65536];
+    ssize_t n = read(s->fd, chunk, sizeof chunk);
+    if (n > 0) {
+        if (s->off > 65536 && s->off * 2 > s->b.n) { memmove(s->b.p, s->b.p + s->off, s->b.n - s->off); s->b.n -= s->off; s->off = 0; }   /* what was given out is not kept */
+        run_buf_add(&s->b, chunk, (size_t)n);
+        return 1;
+    }
+    if (n == 0) { s->eof = 1; tomato_sock_close(s->fd); s->fd = -1; return 2; }     /* the end: the descriptor is no longer needed, what is buffered stays */
+    if (errno == EAGAIN || errno == EINTR) return 0;
+    os_fail(errno);
+    return -1;
+}
+/* the next line (with its newline) as text, 1; a last line without one once the stream has ended, 1; 0 when more must be read; 2 when the
+ * stream has ended and nothing is left */
+int64_t tomato_pstream_line(int64_t h, void *out) {
+    PStream *s = pstream_get(h);
+    if (!s) return 2;
+    size_t avail = s->b.n - s->off;
+    const char *p = s->b.p ? s->b.p + s->off : "";
+    const char *nl = avail ? memchr(p, '\n', avail) : NULL;
+    if (!nl && !(s->eof && avail)) return s->eof ? 2 : 0;
+    size_t len = nl ? (size_t)(nl - p) + 1 : avail;
+    *(void **)tomato_list_push(out, 8) = utf8_lossy((const unsigned char *)p, (int64_t)len);
+    s->off += len;
+    if (s->off == s->b.n) { s->off = 0; s->b.n = 0; }
+    return 1;
+}
+/* everything read so far, as text; before the end of the stream a character whose last bytes have not arrived is kept for the next call */
+int64_t tomato_pstream_take(int64_t h, void *out) {
+    PStream *s = pstream_get(h);
+    size_t avail = s ? s->b.n - s->off : 0;
+    size_t use = avail;
+    if (s && !s->eof) {
+        const unsigned char *p = (const unsigned char *)s->b.p + s->off;
+        for (size_t back = 1; back <= 3 && back <= avail; back++) {
+            unsigned char c = p[avail - back];
+            if ((c & 0xC0) == 0x80) continue;                       /* a continuation byte: look further back for the start */
+            size_t need = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+            if (need > back) use = avail - back;                    /* the character is not complete yet */
+            break;
+        }
+    }
+    *(void **)tomato_list_push(out, 8) = utf8_lossy((const unsigned char *)(use ? s->b.p + s->off : ""), (int64_t)use);
+    if (s) { s->off += use; if (s->off == s->b.n) { s->off = 0; s->b.n = 0; } }
+    return 0;
+}
+/* the exit of the program, without waiting: 1 when it ended (info gets [status, signal], as for tomato_run), 0 while it runs, -1 when pid is not
+ * a child of ours */
+int64_t tomato_proc_poll(int64_t pid, void *info) {
+    int ws = 0;
+    pid_t w;
+    do w = waitpid((pid_t)pid, &ws, WNOHANG); while (w < 0 && errno == EINTR);
+    if (w == 0) return 0;
+    if (w < 0) return -1;
+    int sig = WIFSIGNALED(ws) ? WTERMSIG(ws) : 0;
+    push_int(info, sig ? 128 + sig : WEXITSTATUS(ws));
+    push_int(info, sig);
+    return 1;
+}
+/* waits for the program to end (after it was killed, in clean-up code that cannot wait in a task) */
+int64_t tomato_proc_reap(int64_t pid, void *info) {
+    int ws = 0;
+    pid_t w;
+    while ((w = waitpid((pid_t)pid, &ws, 0)) < 0 && errno == EINTR) { }
+    if (w < 0) return -1;
+    int sig = WIFSIGNALED(ws) ? WTERMSIG(ws) : 0;
+    push_int(info, sig ? 128 + sig : WEXITSTATUS(ws));
+    push_int(info, sig);
+    return 1;
+}
+int64_t tomato_proc_kill(int64_t pid, int64_t sig) { return kill((pid_t)pid, (int)sig) == 0 ? 0 : -1; }
 #endif
 
 /* ---- the terminal (std/terminal.tom, docs/repl-editor-design.md section 5). Calls return a count or 0, or -errno for a failure;

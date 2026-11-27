@@ -86,6 +86,10 @@ keys and `memoize` handles functions of several arguments. The builtin names mov
 `sys.run(args, ...)` starts a program (no shell) and returns its exit status and what it wrote to standard output and
 error (D98a). It takes `capture`, `cwd`, `env`, `stdin`, `check` and `timeout`, raises `ProcessError` and
 `ProcessTimeout`, and works natively only (the browser playground raises `RuntimeError`).
+The program it starts gets only its standard streams (every other open file and socket of the parent is closed in it).
+`await sys.run_async(args, ...)` is `run` that lets the other tasks go on while the program runs, and `sys.spawn(args, ...)` starts a
+program and returns a `Process` with `write`, `close_stdin`, `wait`, `done`, `kill` and `stdout` / `stderr` readers (`read_line`,
+`read`, `read_available`) (D98b). The debug link no longer fails on a program whose strings contain text such as `@tomato_retain(`.
 
 `terminal` (D86a, native only): raw keys, window size and resize, colors and styles, and the width of characters, for programs that
 draw on a terminal; the first part of the repl line editor. See `docs/terminal-api.md`.

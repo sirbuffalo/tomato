@@ -657,16 +657,18 @@ merge() {   # no LTO in the linker: the runtime as LLVM bitcode, merged into the
 }
 # inline_merge INLINE PROGRAM: the program IR with the inline fast paths added. INLINE defines internal alwaysinline functions called
 # tomato_inl_X (runtime/tomato_inline.ll); every call of the runtime function tomato_X in the program becomes a call of the copy, and
-# the copies and the declarations they need (the ones the program does not already make) go at the end.
+# the copies and the declarations they need (the ones the program does not already make) go at the end. Only references to symbols change:
+# the same text inside a quoted string (a string constant of the program, c"...") is left as it is.
 inline_merge() {
   awk 'function name(s) { return match(s, /@[^( ]*\(/) ? substr(s, RSTART, RLENGTH - 1) : "" }
     NR == FNR { pre[++np] = $0; if ($0 ~ /^define /) { n = name($0); if (n ~ /^@tomato_inl_/) real["@tomato_" substr(n, 13)] = n }; next }
     /^declare / { seen[name($0)] = 1; print; next }
     index($0, "@tomato_") && !/^define / {
-      line = $0; out = ""
+      line = $0; out = ""; q = 0
       while (match(line, /@tomato_[A-Za-z0-9_]*\(/)) {
         n = substr(line, RSTART, RLENGTH - 1)
-        out = out substr(line, 1, RSTART - 1) ((n in real) ? real[n] : n)
+        head = substr(line, 1, RSTART - 1); q += gsub(/"/, "&", head)   # an odd number of quotes so far: the text is inside a string constant
+        out = out substr(line, 1, RSTART - 1) ((q % 2 == 0 && (n in real)) ? real[n] : n)
         line = substr(line, RSTART + RLENGTH - 1)
       }
       print out line; next }

@@ -1,0 +1,74 @@
+echo 0 0 out=hello| err=
+words [a b][it's][$HOME][*][][x"y]
+exit 3 3 0 out= err=
+both streams 0 0 out=out|out2| err=err|
+check ok 0 0 out= err=
+check fails ProcessError 4 0 'sh' exited with status 4: oops
+signal 143 15 out= err=
+signal check ProcessError 143 15 'sh' was ended by signal 15
+fields sh 9 0 to-stdout| to-stderr| E588
+bad utf-8 3 65533 ab
+inherit 2 0 out= err=
+stderr first 300000 300000 xxx yyy
+stdout first 300000 300000
+echoed big input 1000000 True
+input never read 0
+input line one|line two|
+no input is end of file at once '' 0
+cwd inner.txt|
+env [1] [two words]
+PATH /usr/bin:/bin
+missing E505 could not run 'no-such-program-xyz': No such file or directory
+missing E505 could not run './no-such-file-xyz': No such file or directory
+not executable E507
+cwd E505 could not change to the directory '/nonexistent-dir-xyz' to run 'ls': No such file or directory
+no program E585
+NUL E511
+env name E512
+empty cwd E586
+timeout E587
+in time 0 in time|
+timeout 137 9 started| warning| E589
+'sh' did not finish within 3.0 seconds and was killed: warning
+closed streams 137 9 E589
+inherit timeout 137
+input timeout 137
+other tasks run meanwhile saw the marker
+gathered job 0|end 0|
+gathered job 1|end 1|
+gathered job 2|end 2|
+cancelled by wait_for
+the program is gone True
+cancelled task
+echoed one|
+echoed two|
+echoed three|
+rest no newline at the end ''
+wait 0 0 0 True
+still closed ''
+read out1|out2| err1| 6
+wait first 0 late|
+read all of stdout begin|end|
+and stderr 300000 0
+lines 100000 100000| 0
+running False
+killed 137 9 True
+terminated 143 15
+available ab 2
+the rest éc| 0
+not captured False False 0
+broken pipe E515 could not write to the program: it has closed its standard input
+options spawned in sub| 0
+missing E505 could not run 'no-such-program-xyz': No such file or directory
+not captured E595 the program's standard output was not captured (start it with capture=True)
+not captured E595
+no input pipe E596
+signal E597 a signal number is from 1 to 64
+0
+input closed E596
+a sees its input end x| 0
+b b ends|
+descriptors in b 
+zombies 0
+descriptors kept 0
+zombies after 60 runs 0 descriptors kept 0
