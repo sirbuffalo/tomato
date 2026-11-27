@@ -66,6 +66,12 @@ def main():
         if a < best:
             best = a
     print(best, angles)
+    # angles as dict keys and set members: equal by turns, whatever the unit
+    by_angle = {deg(90): 'a', deg(180): 'b'}
+    by_angle[turn(0.25)] = 'c'
+    print(len(by_angle), by_angle[deg(90)], by_angle[turn(0.5)])
+    uniq = {deg(360), turn(1), grad(400), deg(0)}
+    print(len(uniq), deg(180) in uniq, deg(90) in {grad(100)})
 
 def a_list() -> list[Angle]:
     return [deg(1), rad(2)]

@@ -329,6 +329,11 @@ export class Angle:
     def same(self, other: Angle) -> bool:
         return self.turn() == other.turn()
 
+    # by turns, like @eq, so equal angles in different units (deg(90) and turn(0.25)) are the same key
+    @hash
+    def hashed(self) -> int:
+        return hash(self.turn())
+
     @lt
     def less(self, other: Angle) -> bool:
         return self.turn() < other.turn()

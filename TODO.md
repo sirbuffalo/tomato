@@ -6,8 +6,6 @@
   Answer the five open questions at the end of `docs/package-registry-design.md` (human power over the registry, key-only owners, how `.tom` files name a seed, an `os.run` in `std`, whether `tomato run` may fetch), then record a decision entry (D-number) for seeds in `docs/decisions.md` and a short section in `docs/specification.md`.
 - Make `sum()`, `min()`, `max()` and `sorted()` work on a list of angles
   They are compile errors today (the builtins take numbers or text only); make them work on anything with `@lt`/`@add`, or give `Angle` helpers.
-- Give `Angle` a `@hash` so angles can be dict keys and set elements
-  Consistent with `@eq`, which compares by turns; today `{deg(30): 1}` is a compile error.
 - Rerun the terminal pty test on the Mac after the review fixes, and under Rosetta or on an Intel Mac
   `tests/terminal_pty.exp` (run through `tests/run.sh`, or `expect tests/terminal_pty.exp PROGRAM` with PROGRAM built from `tests/terminal_pty.tom`) passed on Davis's MacBook (arm64) before the review fixes (a lone Escape flushed 100 ms after it arrives, `Terminal.close` only closing a descriptor `open()` made, colors 256 to 16777215 ignored); it has not been rerun there since, nor under Rosetta or on an Intel Mac (design section 11, item 5 of `docs/repl-editor-design.md`).
 - Give the other release scripts INT/TERM/HUP traps like `pkg.sh`
