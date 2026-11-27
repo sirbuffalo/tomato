@@ -262,7 +262,7 @@ the rules above disappear. It is simpler, faster, and asymmetric: `x * y` never 
 - **`/`**: as now a zero divisor raises ZeroDivisionError (D05ab); otherwise the rounded exact quotient, never out of
   range. `int / int` rounds the exact quotient once (D05ad), whatever the size of the operands.
 - **`//` and `%`**: floor division and a remainder with the divisor's sign, as now, on any size. `%` of hugely different
-  exponents uses modular exponentiation of two, not a shift by the difference. `//` gives a rounded float.
+  exponents uses modular exponentiation of two, not a shift by the difference. `//` gives the floor of the exact quotient rounded to a float (D87a; the first version took the floor of the rounded quotient, which is one too big for `3.7 // 1e-5`).
 - **`**`**: a whole-number power uses repeated squaring with guard bits; otherwise `exp(y * log x)` with extra
   precision. `2.0 ** 10.0**18` is fine (the exponent is a small `int`); `10.0 ** 10.0**100` is fine (its exponent has
   about 335 bits). A tower that needs an exponent too big for memory raises the existing "out of memory" error. A

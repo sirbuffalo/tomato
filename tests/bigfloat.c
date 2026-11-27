@@ -245,16 +245,25 @@ static Val ref_div(Val x, Val y) {
     nat_divmod(&a, &b, &q, &r);
     return ref_round(x.neg != y.neg, &q, x.E - y.E - 120, r.n != 0);
 }
-static Val ref_floor(Val v) {
-    static Nat a;
-    Val zero = { 0, 0, 0 }, one = { 1, (uint64_t)1 << 52, 0 };
-    if (v.M == 0 || v.E >= 52) return v;
-    if (v.E < 0) return v.neg ? one : zero;
-    int drop = (int)(52 - v.E);
-    uint64_t t = v.M >> drop;
-    if (v.neg && t << drop != v.M) t++;
-    nat_set(&a, t);
-    return ref_round(v.neg, &a, 0, 0);
+/* x // y: the floor of the exact quotient (its magnitude's ceiling when negative), rounded once. Up to 400 places above the divisor
+ * the whole quotient is divided out; beyond that only the top 120 bits and whether anything is left over decide the rounding. */
+static Val ref_floordiv(Val x, Val y) {
+    static Nat a, b, q, r, one;
+    int neg = x.neg != y.neg;
+    Val zero = { neg, 0, 0 };
+    if (x.M == 0) return zero;
+    i128 d = x.E - y.E;
+    if (d < 0) { Val m1 = { 1, (uint64_t)1 << 52, 0 }; return neg ? m1 : zero; }
+    nat_set(&a, x.M); nat_set(&b, y.M);
+    if (d <= 400) {
+        nat_shl(&a, (int)d);
+        nat_divmod(&a, &b, &q, &r);
+        if (neg && r.n) { nat_set(&one, 1); nat_add(&q, &one); }
+        return ref_round(neg, &q, 0, 0);
+    }
+    nat_shl(&a, 120);
+    nat_divmod(&a, &b, &q, &r);
+    return ref_round(neg, &q, d - 120, r.n != 0);
 }
 static Val ref_mod(Val x, Val y) {
     Val r = x;
@@ -265,6 +274,7 @@ static Val ref_mod(Val x, Val y) {
         nat_set(&a, t);
         r = ref_round(x.neg, &a, y.E - 52, 0);
     }
+    if (r.M == 0) r.neg = y.neg;                                                  /* a zero takes the divisor's sign */
     return r.M && r.neg != y.neg ? ref_add(r, y) : r;
 }
 static int ref_cmp(Val x, Val y) {
@@ -286,7 +296,9 @@ static void test_arithmetic(void) {
     nat_set(&p, x.M); nat_set(&q, y.M); nat_mul(&r, &p, &q);
     what = "mul"; expect(tomato_bf_mul(GIVE(a, m, 1), GIVE(b, m, 2), m), ref_round(x.neg != y.neg, &r, x.E + y.E - 104, 0), x, y);
     what = "div"; expect(tomato_bf_div(GIVE(a, m, 1), GIVE(b, m, 2), m), ref_div(x, y), x, y);
-    what = "floordiv"; expect(tomato_bf_floordiv(GIVE(a, m, 1), GIVE(b, m, 2), m), ref_floor(ref_div(x, y)), x, y);
+    /* Two plain doubles give what Python gives, which rounds x - fmod(x, y) and so can be a unit off the exact floor once the quotient has
+     * more than about 50 bits; the quotient of two plain doubles of that size is checked against Python by tests/run.sh instead */
+    what = "floordiv"; if (!(is_double(x.M, x.E) && is_double(y.M, y.E) && x.E - y.E > 40)) expect(tomato_bf_floordiv(GIVE(a, m, 1), GIVE(b, m, 2), m), ref_floordiv(x, y), x, y);
     if (x.E - y.E < 3000) { what = "mod"; expect(tomato_bf_mod(GIVE(a, m, 1), GIVE(b, m, 2), m), ref_mod(x, y), x, y); }
     what = "cmp"; if (tomato_bf_cmp(GIVE(a, m, 1), GIVE(b, m, 2), m) != ref_cmp(x, y)) fail("wrong order");
     n = x; n.neg = !n.neg;
@@ -752,7 +764,8 @@ static void test_known(void) {
         what = "pow of doubles";
         if (tomato_bf_pow(bf_bits(fabs(x)), b, 0) != bf_bits(pow(fabs(x), y))) fail("not the C library's");
         what = "mod and floordiv of doubles";
-        if (tomato_bf_mod(a, b, 0) != bf_bits(tomato_mod_f64(x, y)) || tomato_bf_floordiv(a, b, 0) != bf_bits(tomato_floor_div_f64(x, y))) fail("changed");
+        double fd = tomato_floor_div_f64(x, y);
+        if (tomato_bf_mod(a, b, 0) != bf_bits(tomato_mod_f64(x, y)) || (isfinite(fd) && tomato_bf_floordiv(a, b, 0) != bf_bits(fd))) fail("changed");
         Str *s = tomato_bf_str(a), *t = tomato_str_from_f64(x);
         what = "text of doubles";
         if (strcmp(s->data, t->data)) fail(s->data);

@@ -54,8 +54,8 @@ Results are the exact value rounded once, to nearest, ties to even (D05ae), exce
 | `i32 tomato_bf_sign(i64 x)` | -1, 0 or 1 |
 | **arithmetic** | |
 | `i64 tomato_bf_add / _sub / _mul / _div(i64 x, i64 y, i32 m)` | `/`: `y` is not zero (the compiler tests it, as today) |
-| `i64 tomato_bf_floordiv(i64 x, i64 y, i32 m)` | the floor of the *rounded* quotient, as a float: what `//` on doubles gives today |
-| `i64 tomato_bf_mod(i64 x, i64 y, i32 m)` | the exact remainder with the sign of `y`, as `%` on doubles gives today |
+| `i64 tomato_bf_floordiv(i64 x, i64 y, i32 m)` | `x // y` as Python gives it: two doubles use Python's `float_divmod` (`fmod`, then `(x - r) / y`, corrected: D87a); a box, or a quotient beyond a double, gets the floor of the exact quotient (its magnitude's ceiling when negative) rounded once. `y` is not zero |
+| `i64 tomato_bf_mod(i64 x, i64 y, i32 m)` | the exact remainder with the sign of `y` (a zero too: `-6.0 % 2.0` is `0.0`, `6.0 % -2.0` is `-0.0`), as Python gives it |
 | `i32 tomato_bf_pow_check(i64 x, i64 y)` | 0 when `x ** y` has a value, 1 for zero to a negative power (ZeroDivisionError), 2 for a negative number to a power that is not whole (ValueError) |
 | `i64 tomato_bf_pow(i64 x, i64 y, i32 m)` | call the check first |
 | `i64 tomato_bf_neg / _abs(i64 x, i32 m)` | use these, not `fneg`, which would break a box |
@@ -75,7 +75,7 @@ D77b) given to `tomato_bf_math1`, `tomato_bf_math2`, `tomato_bf_round` or `tomat
 payload dropped. A zero divisor, a power without a value and a math argument
 outside its domain stop the program (E01, E13): the caller tests them first, as it does now. What cannot be allocated is E349 "out of memory".
 
-**Plain operands with a plain result give exactly what they give today**: the hardware's `+ - * /`, `fmod`, `floor(x / y)`, the C library's `pow`
+**Plain operands with a plain result give exactly what they give today**: the hardware's `+ - * /`, `fmod` and Python's `float_divmod` steps for `//` and `%` (`tomato_floor_div_f64`, `tomato_mod_f64`), the C library's `pow`
 and math functions. So the functions can be called with any operands, not only boxed ones.
 
 For the rest: a boxed `sqrt`, `cbrt`, `exp`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, and `**` with a boxed

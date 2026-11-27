@@ -5015,10 +5015,21 @@ static void possible_root(Hdr *h) {
 
 /* ---- ** and // helpers (the compiler declares these; see compiler.tom num_power and float_op) */
 int32_t tomato_ipow_check(int64_t base, int64_t exp) { tomato_ipow(base, exp); return tomato_pow_overflow; }
-double tomato_floor_div_f64(double x, double y) { return floor(x / y); }
+/* x // y and x % y on doubles as Python computes them (float_divmod): the remainder is fmod's, exact, moved to the divisor's sign (a zero
+ * takes the divisor's sign too), and the quotient is the whole (x - r) / y, corrected when it is not a whole number. So
+ * (x // y) * y + x % y == x holds where floor(x / y) of the rounded quotient is sometimes one too big. y is not 0. */
+double tomato_floor_div_f64(double x, double y) {
+    double r = fmod(x, y), q = (x - r) / y;
+    if (r != 0 && ((r < 0) != (y < 0))) q -= 1.0;
+    if (q == 0) return copysign(0.0, x / y);
+    double f = floor(q);
+    if (q - f > 0.5) f += 1.0;
+    return f;
+}
 double tomato_mod_f64(double x, double y) {
     double r = fmod(x, y);
-    if (r != 0 && ((r < 0) != (y < 0))) r += y;
+    if (r == 0) return copysign(0.0, y);
+    if ((r < 0) != (y < 0)) r += y;
     return r;
 }
 double tomato_pow_f64(double x, double y) { return pow(x, y); }
@@ -8676,16 +8687,47 @@ static int64_t bf_div(int64_t x, int64_t y) {
 }
 int64_t tomato_bf_div(int64_t x, int64_t y, int32_t m) { BF_NEED_FINITE(x, y); int64_t r = bf_div(x, y); BF_CONSUME(m, x, y); return r; }
 
-/* x // y: the rounded quotient, rounded down, as a float (what a double does: floor(x / y)) */
+/* x // y of floats that are not both plain, or whose plain quotient is out of the range of a double: the floor of the exact quotient
+ * (the ceiling of its magnitude when the sign is negative), rounded once to 53 bits. With the significands as whole numbers mx and my
+ * (53 bits), the quotient is mx * 2^d / my: below 1 in size when d < 0; for 0 <= d <= 63 a 128-bit division gives the whole part; above
+ * that the top 65 bits q0 of the quotient come from mx * 2^64 / my, and the bits below them only decide a tie (a sticky bit). */
+static int64_t bf_floordiv_exact(int64_t x, int64_t y) {
+    BigFloat a = bf_open(x), b = bf_open(y);
+    int neg = signbit(a.m) != signbit(b.m);
+    if (a.m == 0) return bf_bits(neg ? -0.0 : 0.0);
+    int64_t d = tomato_int_sub(a.e, b.e);
+    if (tomato_int_sign(d) < 0) { tomato_int_free(d); return bf_bits(neg ? -1.0 : 0.0); }
+    unsigned __int128 mx = (uint64_t)ldexp(fabs(a.m), 52), my = (uint64_t)ldexp(fabs(b.m), 52);
+    if (int_is_small(d) && int_small_val(d) <= 63) {
+        unsigned __int128 n = mx << int_small_val(d), q = n / my;
+        if (neg && n % my) q++;
+        double f = (double)q;
+        return bf_bits(neg ? -f : f);
+    }
+    int64_t s = int_is_small(d) ? int_small_val(d) - 64 : 1000;       /* the bits of the quotient below q0, if d is huge only how many */
+    unsigned __int128 n = mx << 64, q0 = n / my, rem = n % my;
+    int carry = 0, sticky = 0;
+    if (rem) {
+        unsigned __int128 u = neg ? my - rem : rem;                       /* the part of a unit below q0, or what is left of it */
+        int below = s >= 60 || (u << s) >= my;                             /* u * 2^s >= my */
+        if (!neg) sticky = below;
+        else { carry = !below; sticky = below; }
+    }
+    double f = (double)((q0 + carry) | sticky);
+    return bf_make(neg ? -f : f, bi_sub(d, bi(64)));
+}
+
+/* x // y: the floor of the quotient, as a float, as Python gives it (see tomato_floor_div_f64); y is not zero */
 int64_t tomato_bf_floordiv(int64_t x, int64_t y, int32_t m) {
     BF_NEED_FINITE(x, y);
-    int64_t q = bf_div(x, y);
+    int64_t r;
+    if (!bf_boxed(y) && bf_double(y) == 0) tomato_fail_id(1, "division by zero");
+    if (!bf_boxed(x) && !bf_boxed(y)) {
+        double f = tomato_floor_div_f64(bf_double(x), bf_double(y));
+        r = isfinite(f) ? bf_bits(f) : bf_floordiv_exact(x, y);
+    } else r = bf_floordiv_exact(x, y);
     BF_CONSUME(m, x, y);
-    if (!bf_boxed(q)) return bf_bits(floor(bf_double(q)));
-    if (tomato_int_sign(bf_ptr(q)->e) > 0) return q;           /* 2^1024 and above: whole */
-    int neg = bf_ptr(q)->m < 0;
-    tomato_bf_free(q);
-    return bf_bits(neg ? -1.0 : 0.0);
+    return r;
 }
 
 /* x % y, with the sign of y: the remainder of the exact division. When x is the larger one it is mx * 2^d mod my (the
@@ -8696,8 +8738,8 @@ int64_t tomato_bf_mod(int64_t x, int64_t y, int32_t m) {
     BigFloat a = bf_open(x), b = bf_open(y);
     if (b.m == 0) tomato_fail_id(1, "division by zero");
     int64_t d = tomato_int_sub(a.e, b.e);
-    if (!bf_boxed(x) && !bf_boxed(y)) r = bf_bits(fmod(bf_double(x), bf_double(y)));
-    else if (a.m == 0 || tomato_int_sign(d) < 0) r = tomato_bf_dup(x);
+    if (!bf_boxed(x) && !bf_boxed(y)) { tomato_int_free(d); r = bf_bits(tomato_mod_f64(bf_double(x), bf_double(y))); BF_CONSUME(m, x, y); return r; }
+    if (a.m == 0 || tomato_int_sign(d) < 0) r = tomato_bf_dup(x);
     else {
         uint64_t mx = (uint64_t)ldexp(fabs(a.m), 52), my = (uint64_t)ldexp(fabs(b.m), 52), p = 1;
         IntView v; int_view(d, &v);
@@ -8710,7 +8752,8 @@ int64_t tomato_bf_mod(int64_t x, int64_t y, int32_t m) {
     }
     tomato_int_free(d);
     int s = tomato_bf_sign(r);
-    if (s != 0 && s != bf_sign_of(b.m)) { int64_t t = bf_add(r, y); tomato_bf_free(r); r = t; }
+    if (s == 0) r = bf_bits(copysign(0.0, b.m));                                  /* a zero takes the divisor's sign */
+    else if (s != bf_sign_of(b.m)) { int64_t t = bf_add(r, y); tomato_bf_free(r); r = t; }
     BF_CONSUME(m, x, y);
     return r;
 }

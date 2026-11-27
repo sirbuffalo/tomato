@@ -176,6 +176,7 @@ int_keyed_dict
 async_finally_generator
 async_self_wait
 float_any_size
+float_floor_mod
 float_library
 float_limits
 float_ownership
