@@ -431,7 +431,7 @@ checked `//`, `%`, the formats and the library against exact fractions. Three co
 
 1. **The limits depend on a file.** `exp`, `**` and the `f` format stop with E528/E529 at limits set in a
    `tomato.toml` or in `~/.tomato/config.toml` (D77g). Those limits are written into the program when it is built. So
-   the same source can behave differently on two machines, and a project's `tomato.toml` that only has `[package]`
+   the same source can behave differently on two machines, and a project's `tomato.toml` that only has `[project]`
    hides the user's `[limits]`. D77g is marked "defaults chosen by the task; to be confirmed by Davis".
 2. **Interoperability.** JSON writes `1e+400`, which other parsers read as infinity or reject. MessagePack refuses it.
    The C interface maps `float` to `double` (1.6).
@@ -547,8 +547,9 @@ scripts, so this is as hard to change after 1.0 as the language.
 ### 11.2 Configuration typos are silent (Do soon)
 
 `[Limits]` or `[limit]` in `tomato.toml` is ignored without a word (floats audit), because unknown tables are skipped
-so that `[package]` and future seed tables can live in the same file. Warn about unknown tables, except a reserved list
-(`package`, `seed`, `dependencies`).
+so that `[project]`, `[seed]` and the other manifest tables can live in the same file. Reject unknown tables (an error, as
+section 2 of `docs/package-registry-design.md` says), except the known list of the file in question (a project's `tomato.toml`: `project`, `seed`, `seeds`, `dev-seeds`,
+`seed-store`, `limits`, `build`; the user's `config.toml` also has `registry`, `registries` and `aliases`, section 13).
 
 ### 11.3 `tomato update` trusts HTTPS and a checksum in the same manifest (Do soon)
 
