@@ -44,8 +44,11 @@
 #                        pre-release VERSION, name the next version with --version (the release itself or the next pre-release)
 #   --next-version CUR   print the version a run would choose from a VERSION of CUR with the other flags, and stop (no clone, no checks
 #                        of tags or GitHub; for tests)
-#   --resume             continue after a failure, at the first step not finished
-#   --from STEP          continue at STEP (an earlier run's state is kept); steps before it are taken as done
+#   --resume             continue after a failure, at the first step not finished (a clone left dirty by a failed preflight is reset)
+#   --from STEP          go back to STEP and continue there: every step before it must be finished (nothing is skipped); STEP and
+#                        the later steps count as not done again and what they changed is undone (the clone returns to the commit the
+#                        run started from for a step up to bump, the release commit is taken off for a later one up to commit).
+#                        Not once the tag is pushed: then only publish, push and summary can be run again
 #   --restart            throw away an unfinished run (and the clone's local changes) and begin again
 #   --seed N, --runs N   benchmark shuffle seed (default 1) and runs per program (default 10)
 #   --max-load N         refuse to start (and to benchmark) while the 1- or 5-minute load average is above N (default 2.0);
@@ -216,7 +219,8 @@ fi
 # ================================================================ on the signing Mac
 case "$0" in /tmp/tomato-release.*) trap 'rm -f "$0"' EXIT ;; esac
 exec < /dev/null
-PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/go/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"; export PATH
+# TOMATO_RELEASE_TEST_BIN (tests/release_resume.sh only): a folder of stand-ins for the Mac, gh and the signing tools, searched first
+PATH="${TOMATO_RELEASE_TEST_BIN:+$TOMATO_RELEASE_TEST_BIN:}/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/go/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"; export PATH
 command -v caffeinate >/dev/null 2>&1 && { caffeinate -i -w $$ & }   # no idle sleep while the release runs
 [ -n "$work_dir" ] || work_dir="$HOME/.tomato-release"
 clone="$work_dir/tomato"; state="$work_dir/state"; logs="$work_dir/logs"
@@ -260,10 +264,16 @@ find_wasi() {
 }
 ratio_table() { awk -F'|' '/^Tomato.s time divided by/ { t = 1; next } t && /^\| / { printf "|%s|%s|%s|%s|\n", $2, $3, $4, $5; n++; next } t && n { exit }' "$clone/benchmarks/results/results.md"; }
 in_clone() { cd "$clone" || die "no clone at $clone"; }
-verify_state_tree() { # a resumed run must still be on the commit the run started from, with only release files changed
+verify_state_tree() { # a resumed run must still be on the commit it started from (or its own release commit), with only release files changed
   in_clone
-  base="$(st_get base_sha)"; [ -n "$base" ] || return 0
-  git merge-base --is-ancestor "$base" HEAD 2>/dev/null || die "the clone is no longer based on $base (state says so). Use --restart."
+  vb="$(st_get base_sha)"; [ -n "$vb" ] || return 0
+  vc="$(st_get commit_sha)"; vh="$(git rev-parse HEAD)"
+  if [ -n "$vc" ]; then   # the release commit was made: HEAD is it (or a merge made on top of it by hand), and nothing is left uncommitted
+    git merge-base --is-ancestor "$vc" HEAD 2>/dev/null || die "the clone is at $vh, but the release commit of this run is $vc (state says so). Use --restart."
+    [ -z "$(git status --porcelain)" ] || die "uncommitted changes in $clone after the release commit: $(git status --short | head -5 | tr '\n' ' ')"
+  else
+    [ "$vh" = "$vb" ] || die "the clone is at $vh, not at $vb where this run started (state says so). Use --restart."
+  fi
   bad="$(git status --porcelain | sed 's/^...//' | grep -v -e '^VERSION$' -e '^std/sys.tom$' -e '^site/' -e '^benchmarks/results/' -e '^docs/performance.md$' || true)"
   [ -z "$bad" ] || die "unexpected changes in $clone: $(echo "$bad" | head -5 | tr '\n' ' ')"
 }
@@ -342,7 +352,7 @@ step_preflight() {
     git rev-parse --verify --quiet "origin/$branch" > /dev/null || die "origin has no branch $branch"
     dirty="$(git status --porcelain)"; ahead="$(git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)"
     if [ -n "$dirty" ] || [ "$ahead" != 0 ] || [ "$(git rev-parse --abbrev-ref HEAD)" != "$branch" ]; then
-      if [ "$restart" = 1 ] || { [ "$prev_status" = finished ] && [ "$prev_mode" = dry ]; }; then
+      if [ "$(st_get reset_clone)" = yes ]; then   # allowed when the run began (--restart, or after a finished dry run); kept in the state so a --resume after a failed preflight may reset too
         note "resetting the clone to origin/$branch (discarding: $(git status --short | wc -l | tr -d ' ') changed files, $ahead unpushed commits from the last unfinished or dry run)"
         git checkout -q -f -B "$branch" "origin/$branch" && git clean -fdxq || die "could not reset the clone"
       else
@@ -352,8 +362,9 @@ step_preflight() {
     git merge --ff-only -q "origin/$branch" || die "cannot fast-forward the clone to origin/$branch"
     [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$branch")" ] || die "the clone is not equal to origin/$branch"
     git clean -fdxq   # untracked and ignored leftovers (release/out) never leak into a release
-    st_set base_sha "$(git rev-parse HEAD)"; note "clone: $branch at $(git rev-parse --short HEAD), equal to origin"
+    note "clone: $branch at $(git rev-parse --short HEAD), equal to origin"
     if [ -n "$slug" ]; then git push --dry-run -q origin "HEAD:refs/heads/$branch" > "$logs/push-check.txt" 2>&1 || { cat "$logs/push-check.txt" >&2; die "git push to origin would fail (ssh key for GitHub on this Mac?)"; }; note "git push access to origin works"; fi
+    st_set base_sha "$(git rev-parse HEAD)"; st_set reset_clone ""   # last: a preflight that failed before this point is redone in full by --resume
   else
     verify_state_tree; note "resuming in $clone at $(git rev-parse --short HEAD)"
   fi
@@ -382,7 +393,7 @@ step_version() {
 step_test() {
   banner test "tests/run.sh with the WASI SDK"
   in_clone; verify_state_tree
-  [ "$(cat VERSION)" = "$(st_get version)" ] && [ "$(cat VERSION)" != "$(git show HEAD:VERSION)" ] && die "VERSION is already bumped; tests must run on the unbumped tree (use --from bump, or --restart)"
+  [ "$(cat VERSION)" = "$(st_get version)" ] && [ "$(cat VERSION)" != "$(git show HEAD:VERSION)" ] && die "VERSION is already bumped; tests must run on the unbumped tree (use --from test, which resets the clone to the start of this run, or --restart)"
   if tee_run "$logs/test.log" env WASI_SDK="$(st_get wasi)" sh tests/run.sh; then :; else
     grep '^FAIL' "$logs/test.log" | head -10 >&2; die "tests failed (full output: $logs/test.log on the signing Mac)"
   fi
@@ -400,6 +411,9 @@ step_bump() {
   for f in std/sys.tom site/wasm/std/sys.tom; do   # sys.version() returns the version as text (tests/run.sh t_sys_version checks it against VERSION)
     sed "s/^    return '[0-9A-Za-z.-]*'\$/    return '$v'/" "$f" > "$f.new" && mv "$f.new" "$f"
   done
+  # a sed that matched nothing would leave an old number in a file that the tests (which ran before) never see again
+  [ "$(cat VERSION)" = "$v" ] && grep -qF "    return '$v'" std/sys.tom && grep -qF "    return '$v'" site/wasm/std/sys.tom || die "the bump did not take: VERSION, std/sys.tom and site/wasm/std/sys.tom must all say $v"
+  is_pre "$v" || grep -qF "window.TOMATO_VERSION = \"$v\"" site/config.js || die "the bump did not take: site/config.js does not say $v"
   note "VERSION$(is_pre "$v" || echo ', site/config.js') and std/sys.tom now say $v"
 }
 
@@ -535,6 +549,7 @@ step_build() {
   in_clone; verify_state_tree
   tee_run "$logs/build.log" sh -c 'sh release/build.sh && sh release/pkg.sh' || die "building the release files failed (see $logs/build.log)"
   v="$(st_get version)"; [ -f "release/out/tomato-$v.pkg" ] && [ -f "release/out/tomato-$v.tar.gz" ] && [ -f release/out/latest.json ] || die "release/out lacks the expected files"
+  st_set pkg_built_sha256 "$(shasum -a 256 "release/out/tomato-$v.pkg" | cut -d' ' -f1)"   # the unsigned package: the only one the sign step may sign
 }
 
 check_pkg() { # the signed package: signature, staple, Gatekeeper, binaries, install layout
@@ -575,16 +590,19 @@ step_sign() {
   [ "$skip_notarize" = 1 ] && export TOMATO_SKIP_NOTARIZE=1
   # a resume after a disk-image failure keeps the package signed and checked by this run: re-signing would repack it (a new
   # hash) and cost another notarization; a rebuilt (unsigned) package has another hash, so it is signed again
-  psig="$(st_get pkg_signed_sha256)"
-  if [ -n "$psig" ] && [ "$(shasum -a 256 "$o/tomato-$v.pkg" | cut -d' ' -f1)" = "$psig" ]; then
+  psig="$(st_get pkg_signed_sha256)"; pcur="$(shasum -a 256 "$o/tomato-$v.pkg" | cut -d' ' -f1)"
+  if [ -n "$psig" ] && [ "$pcur" = "$psig" ]; then
     note "the package was already signed, notarized and checked in this release run (sha256 $psig): only the disk image is redone"
   else
+  [ "$pcur" = "$(st_get pkg_built_sha256)" ] || die "$o/tomato-$v.pkg is neither the package this run built nor the one it signed (sha256 $pcur); signing is only done on a package this run built: use --from build"
   rm -f "$o/tomato-$v.signed.pkg"
   TOMATO_APP_SIGN="$app_sign" TOMATO_PKG_SIGN="$pkg_sign" TOMATO_NOTARY_PROFILE="$profile" TOMATO_LATEST_JSON="$o/latest.json" \
     tee_run "$logs/sign.log" sh release/sign-pkg.sh "$o/tomato-$v.pkg" "$o/tomato-$v.signed.pkg" || die "signing or notarizing failed (see $logs/sign.log; Apple's log is printed above on a rejection)"
-  mv "$o/tomato-$v.signed.pkg" "$o/tomato-$v.pkg"
-  check_pkg "$o/tomato-$v.pkg" "$v"
-  st_set pkg_signed_sha256 "$(shasum -a 256 "$o/tomato-$v.pkg" | cut -d' ' -f1)"
+  # checked before it replaces the built package: a failed check then leaves the unsigned package in place, which a resume signs again
+  # (a signed package must never be fed to sign-pkg.sh a second time)
+  check_pkg "$o/tomato-$v.signed.pkg" "$v"
+  signed_sum="$(shasum -a 256 "$o/tomato-$v.signed.pkg" | cut -d' ' -f1)"
+  mv "$o/tomato-$v.signed.pkg" "$o/tomato-$v.pkg"; st_set pkg_signed_sha256 "$signed_sum"
   fi
   sum="$(shasum -a 256 "$o/tomato-$v.pkg" | cut -d' ' -f1)"
   grep -q "\"pkg_sha256\": \"$sum\"" "$o/latest.json" || die "latest.json's pkg_sha256 is not the signed package's hash $sum"
@@ -609,6 +627,7 @@ step_sign() {
 step_commit() {
   banner commit "site files and one local release commit"
   in_clone; verify_state_tree; v="$(st_get version)"; sum="$(st_get pkg_sha256)"
+  [ -z "$(st_get commit_sha)" ] || die "the release commit $(st_get commit_sha) exists already; to make it again use --from commit (it undoes the commit first)"
   [ -n "$sum" ] || die "no signed package yet (the sign step has not finished)"
   [ "$(shasum -a 256 "release/out/tomato-$v.pkg" | cut -d' ' -f1)" = "$sum" ] || die "release/out/tomato-$v.pkg is not the package that was signed"
   sh site/build.sh > "$logs/site-build.log" 2>&1 || { cat "$logs/site-build.log" >&2; die "site/build.sh failed"; }
@@ -632,12 +651,13 @@ step_commit() {
     git commit -q -m "Release Tomato $v" -m "Signed and notarized package sha256 $sum, disk image sha256 $dsum." || die "git commit failed"
   fi
   [ "$(git rev-parse HEAD)" != "$(st_get base_sha)" ] || die "nothing was committed"
+  [ "$(git rev-parse HEAD^)" = "$(st_get base_sha)" ] || die "the release commit is not directly on $(st_get base_sha), the commit the tests ran on"
   st_set commit_sha "$(git rev-parse HEAD)"; note "committed $(git rev-parse --short HEAD) \"Release Tomato $v\" in $clone (not pushed)"
 }
 
 step_publish() {
   banner publish "tag, GitHub release, assets, verification"
-  in_clone; v="$(st_get version)"; sum="$(st_get pkg_sha256)"; tsum="$(st_get tar_sha256)"; dsum="$(st_get dmg_sha256)"; o=release/out; tag="v$v"; c="$(st_get commit_sha)"
+  in_clone; verify_state_tree; v="$(st_get version)"; sum="$(st_get pkg_sha256)"; tsum="$(st_get tar_sha256)"; dsum="$(st_get dmg_sha256)"; o=release/out; tag="v$v"; c="$(st_get commit_sha)"
   man=site/latest.json; prerel=""; is_pre "$v" && { man=site/latest-pre.json; prerel="--prerelease"; }   # a pre-release is never GitHub's "latest"
   [ -n "$c" ] && [ "$(git rev-parse HEAD)" = "$c" ] || die "HEAD is not the release commit; run the commit step"
   # the Linux gate: a real release needs a recorded passing Linux run; a skipped, unreachable or failed one needs the explicit
@@ -654,10 +674,18 @@ step_publish() {
     say "and then download them and compare sha256 $sum (package), $dsum (disk image)."; return 0
   fi
   [ -n "$slug" ] || die "origin is not a GitHub repository"
-  [ -n "$dsum" ] && [ -f "$o/tomato-$v.dmg" ] && [ "$(shasum -a 256 "$o/tomato-$v.dmg" | cut -d" " -f1)" = "$dsum" ] || die "the signed disk image $o/tomato-$v.dmg is missing or changed; nothing is published without it"
+  # every file that goes out is the one that was signed, checked and committed (a resume must not upload a rebuilt or changed file)
+  [ -n "$sum" ] && [ -n "$tsum" ] && [ -n "$dsum" ] || die "the sign step has not recorded the sha256 of every asset; nothing is published without them"
+  [ "$(shasum -a 256 "$o/tomato-$v.pkg" 2>/dev/null | cut -d" " -f1)" = "$sum" ] || die "$o/tomato-$v.pkg is missing or is not the package that was signed; nothing is published"
+  [ "$(shasum -a 256 "$o/tomato-$v.tar.gz" 2>/dev/null | cut -d" " -f1)" = "$tsum" ] || die "$o/tomato-$v.tar.gz is missing or changed; nothing is published"
+  [ "$(shasum -a 256 "$o/tomato-$v.dmg" 2>/dev/null | cut -d" " -f1)" = "$dsum" ] || die "the signed disk image $o/tomato-$v.dmg is missing or changed; nothing is published without it"
+  cmp -s "$o/latest.json" "$man" || die "$o/latest.json is not $man in the release commit; nothing is published"
   if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then [ "$(git rev-parse "$tag^{commit}")" = "$c" ] || die "tag $tag exists locally on another commit"; else git tag "$tag" "$c"; fi
+  st_set tagging "$tag"   # from here on the commit is (or may be) public: no step up to commit can be redone (see rewind)
   git push -q origin "refs/tags/$tag" || die "pushing the tag failed"
-  if gh release view "$tag" --repo "$slug" > /dev/null 2>&1; then
+  rtag="$(git ls-remote origin "refs/tags/$tag^{}" "refs/tags/$tag" | awk 'END { print $1 }')"   # the peeled line comes last for an annotated tag
+  [ "$rtag" = "$c" ] || die "origin's tag $tag is ${rtag:-missing}, not the release commit $c; nothing is uploaded"
+  if release_exists "$tag"; then
     note "release $tag exists (resuming): uploading the assets again"
     gh release upload "$tag" "$o/tomato-$v.tar.gz" "$o/tomato-$v.pkg" "$o/tomato-$v.dmg" "$o/latest.json" --clobber --repo "$slug" || die "gh release upload failed"
   else
@@ -682,12 +710,20 @@ step_publish() {
 
 step_push() {
   banner push "the release commit to $branch"
-  in_clone; c="$(st_get commit_sha)"
-  if [ "$dry" = 1 ]; then say "DRY RUN: would push $(git rev-parse --short HEAD) to origin/$branch."; return 0; fi
-  if [ "$no_push" = 1 ]; then say "--no-push: the release commit $(git rev-parse --short HEAD) stays unpushed in $clone on the signing Mac. Push it with: git -C $clone push origin HEAD:$branch"; st_set pushed no; return 0; fi
-  git push origin "HEAD:refs/heads/$branch" || die "pushing $branch failed (someone pushed meanwhile?). The release is published; the commit is in $clone: fetch, rebase it, and push by hand: git -C $clone pull --no-rebase origin $branch && git -C $clone push origin HEAD:$branch (a merge, not a rebase: the published tag must stay an ancestor of main)"
-  git fetch -q origin; [ "$(git rev-parse "origin/$branch")" = "$c" ] || die "origin/$branch is not the release commit after the push"
-  st_set pushed yes; note "pushed $(git rev-parse --short HEAD) to origin/$branch"
+  in_clone; verify_state_tree; c="$(st_get commit_sha)"
+  [ -n "$c" ] || die "no release commit is recorded (the commit step has not finished)"
+  if [ "$dry" = 1 ]; then say "DRY RUN: would push $(git rev-parse --short "$c") to origin/$branch."; return 0; fi
+  # only a release whose assets were published and verified (publish sets release_url last) may change what the site shows
+  [ -n "$(st_get release_url)" ] || die "the publish step has not finished: main is pushed only after the assets are live and verified"
+  if [ "$no_push" = 1 ]; then say "--no-push: the release commit $(git rev-parse --short "$c") stays unpushed in $clone on the signing Mac. Push it with: git -C $clone push origin $c:refs/heads/$branch"; st_set pushed no; return 0; fi
+  git fetch -q origin || die "git fetch origin failed"
+  if git merge-base --is-ancestor "$c" "origin/$branch" 2>/dev/null; then   # an earlier push got through (or it was merged and pushed by hand): nothing to push
+    st_set pushed yes; note "the release commit $(git rev-parse --short "$c") is already on origin/$branch"; return 0
+  fi
+  # exactly the recorded release commit, never whatever HEAD is now
+  git push origin "$c:refs/heads/$branch" || die "pushing $branch failed (someone pushed meanwhile?). The release is published; the commit is in $clone: merge origin/$branch into it and push by hand: git -C $clone pull --no-rebase origin $branch && git -C $clone push origin HEAD:$branch (a merge, not a rebase: the published tag must stay an ancestor of main), then run this again with --resume"
+  git fetch -q origin; git merge-base --is-ancestor "$c" "origin/$branch" || die "origin/$branch does not contain the release commit after the push"
+  st_set pushed yes; note "pushed $(git rev-parse --short "$c") to origin/$branch"
 }
 
 step_summary() {
@@ -716,6 +752,46 @@ step_summary() {
 }
 
 # ---------------------------------------------------------------- run the steps
+step_pos() { n=0; for s in $STEPS; do n=$((n + 1)); [ "$s" = "$1" ] && { echo $n; return; }; done; }
+# --from STEP: continue at STEP as if the run had just stopped there. Every step before it must be finished (--from does not skip
+# anything: what a skipped step would have left undone could not be told from what is done); STEP and the steps after it are
+# forgotten, so a later --resume goes back to STEP if this run fails; and what they changed is undone: up to the bump the clone goes
+# back to the commit the run started from, up to the commit step the release commit is taken off again (its changes stay).
+# Once the tag is pushed the release commit is public, so only publish, push and summary can be run again.
+rewind() {
+  r="$1"; unfinished=""
+  for s in $STEPS; do
+    [ "$s" = "$r" ] && break
+    case " $(st_get done) " in *" $s "*) ;; *) unfinished="$unfinished $s" ;; esac
+  done
+  [ -z "$unfinished" ] || die "--from $r: the earlier step(s)$unfinished did not finish, and --from does not skip them (a later --resume could not tell what was left undone). Use --resume to continue at the first unfinished step; --skip-bench, --no-linux and the other flags turn steps into no-ops."
+  rp="$(step_pos "$r")"
+  if [ "$rp" -le "$(step_pos commit)" ] && [ -n "$(st_get tagging)$(st_get published)" ]; then
+    die "--from $r: the release commit of v$(st_get version) was tagged and pushed (or published): steps before publish cannot be run again. Continue with --resume or --from publish|push|summary; to start over, undo the release first (gh release delete v$(st_get version) --cleanup-tag -y --repo $slug) and use --restart."
+  fi
+  rb="$(st_get base_sha)"
+  if [ "$rp" -le "$(step_pos commit)" ] && [ -n "$rb" ]; then
+    in_clone
+    if [ "$rp" -le "$(step_pos bump)" ]; then git reset -q --hard "$rb" && git clean -fdxq || die "could not reset the clone to $rb"; note "--from $r: the clone is back at $(git rev-parse --short "$rb"), where this run started"
+    elif [ -n "$(st_get commit_sha)" ]; then git reset -q --mixed "$rb" || die "could not take the release commit off the clone"; note "--from $r: the release commit is taken off again; its changes stay in the clone"; fi
+  fi
+  keep=""; forget=""; hit=0
+  for s in $STEPS; do
+    [ "$s" = "$r" ] && hit=1
+    if [ $hit = 0 ]; then keep="$keep $s"; continue; fi
+    case "$s" in
+      test) forget="$forget tests" ;;
+      linux) forget="$forget linux linux_tests linux_passed linux_machine linux_load_warn" ;;   # (linux_fetched stays: the finished remote run is of the same commit)
+      bench) forget="$forget bench counts" ;;
+      build) forget="$forget pkg_built_sha256 pkg_signed_sha256" ;;   # (a package this run signed stays signed for --from sign: only a build makes an unsigned one)
+      sign) forget="$forget pkg_sha256 dmg_sha256 tar_sha256 notarization" ;;
+      commit) forget="$forget commit_sha" ;;
+      push) forget="$forget pushed" ;;
+    esac
+  done
+  for k in $forget; do st_set "$k" ""; done
+  st_set done "${keep# }"; st_set failed_step ""
+}
 if [ "$resume" = 1 ] || [ -n "$from" ]; then
   [ -f "$state" ] || die "no earlier run to resume (no $state)"
   [ "$(st_get status)" = finished ] && [ "$resume" = 1 ] && die "the last run finished; start a new one"
@@ -723,7 +799,7 @@ if [ "$resume" = 1 ] || [ -n "$from" ]; then
   if [ "$resume" = 1 ]; then
     start=""; for s in $STEPS; do case " $(st_get done) " in *" $s "*) ;; *) start="$s"; break ;; esac; done
     [ -n "$start" ] || start=summary
-  else start="$from"; fi
+  else rewind "$from"; start="$from"; fi
   [ "$(st_get status)" = finished ] && st_set status running
   mode=resume
 else
@@ -733,6 +809,9 @@ else
   prev_status="$(st_get status)"; prev_mode="$(st_get mode)"   # what the last run left in the clone decides whether preflight may reset it
   rm -f "$state"; start=preflight; mode=fresh
   st_set status running; st_set run_started "$started"; st_set mode "$([ "$dry" = 1 ] && echo dry || echo real)"
+  # leftovers of an earlier run may be thrown away from the clone only after --restart or a finished dry run; recorded, so that a
+  # --resume after a preflight that failed before the clone was synced still may (it dies on a clone it has no right to reset)
+  if [ "$restart" = 1 ] || { [ "$prev_status" = finished ] && [ "$prev_mode" = dry ]; }; then st_set reset_clone yes; fi
   [ -z "$version" ] || st_set requested_version "$version"
   [ -z "$bump" ] || st_set requested_bump "$bump"
 fi

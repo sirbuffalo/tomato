@@ -76,6 +76,8 @@ The fast tier still builds the compiler and the installed `tomato` and runs the 
   13 MB is compiled once, not three times; the runtime compile and the link in the installer are still done for real. A separate test
   checks that the release archive ships the script and `split.awk` and that the unpacked `split.awk` splits its IR.
 
+* **`release/release.sh` is tested after a failure, in a sandbox** (`tests/release_resume.sh`, one test of the suite): the script's resume paths (`--resume`, `--from`, `--restart`, a failed sign, publish or push) run against a local bare repository standing in for GitHub, with stand-ins for `gh`, `curl`, `codesign`, `pkgutil`, `xcrun` and the other Mac tools (the script's `TOMATO_RELEASE_TEST_BIN` puts them first on its `PATH`) and fake build and sign scripts in the repository, with failures injected per step. No network, no signing, nothing is published; it takes a few seconds on a quiet machine. Run it alone with `sh tests/release_resume.sh DIR`.
+
 ## What bounds the wall time
 
 Test CPU time is what the machine pays: 2,500 to 4,100 CPU seconds for the full suite (the top of the range is a run with node and expect installed, which adds the WebAssembly

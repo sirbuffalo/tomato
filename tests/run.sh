@@ -106,7 +106,7 @@ await_object() { # waits for the bootstrap object t_compiler_build makes; fails 
 job_run() { # id, function and arguments: runs it in a folder of its own
   id="$1"; shift; work="$shared/j$id"; mkdir -p "$work"; eval "section_name=\$sec_$id"
   case "$1" in   # (the ones that do not link a program with the runtime do not wait for it)
-    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
+    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_release_resume|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
     *) await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")" ;;
   esac
   if [ -n "$times" ]; then
@@ -1119,6 +1119,12 @@ t_release_versions() { # the version release/release.sh picks (--next-version: n
   check "release.sh refuses older, malformed and build-tagged versions" "refused refused refused refused refused refused refused" \
     "$(nv 1.0.0-rc.2 --version 1.0.0-rc.1) $(nv 1.0.0 --version 1.0.0-rc.1) $(nv 1.0.0 --version 0.99.0) $(nv 1.0.0 --version 1.0.1+b) $(nv 1.0.0 --version 1.0.1-rc.01) $(nv 1.0.0 --version 1.0) $(nv 1.0.0-rc.1 --bump patch)"
 }
+t_release_resume() { # release/release.sh after a failure (--resume, --from, --restart), in a sandbox: tests/release_resume.sh has the fake Mac tools and a local "origin", so nothing is signed, published or pushed anywhere
+  sh tests/release_resume.sh "$work/rr" > "$work/rr.out" 2>&1; rc=$?
+  while IFS= read -r l; do case "$l" in "ok   "*) echo x >> "$shared/passed" ;; "FAIL "*) echo x >> "$shared/failed" ;; esac; done < "$work/rr.out"
+  cat "$work/rr.out"
+  [ "$rc" = 0 ] || [ -n "$(grep '^FAIL' "$work/rr.out")" ] || bad "release resume sandbox tests ran (status $rc)"
+}
 t_cli_test() { # tomato test: the ok/FAIL lines and summary on standard output, the status, --filter, --mode, several files, errors (pack B)
   part="${1:-1}"; cli_setup
   printf 'from testing import assert_equal, skip\n\n@test\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test\ndef lookup():\n    skip("no network")\n' > "$work/t3.tom"
@@ -1215,6 +1221,7 @@ spawn_free t_cli_update_versions
 spawn_free t_atomic_install
 spawn_free t_atomic_update
 spawn_free t_release_versions
+spawn_free t_release_resume
 spawn_cli t_cli_no_lto
 spawn_cli t_cli_require_lto
 spawn_cli t_cli_debug_link
