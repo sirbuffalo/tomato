@@ -1,0 +1,4 @@
+# D113a: '@add.fast' as a top-level marker uses a name the language reserves, so it is an error (rename it, e.g. @add_fast)
+@add.fast
+def f():
+    print('f')

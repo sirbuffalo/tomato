@@ -1,0 +1,24 @@
+# D113a: names that only start with a reserved name, or contain one, are ordinary entry names
+@bench_sort
+def bench_sort():
+    print('bench_sort')
+
+@benchmark
+def benchmark():
+    print('benchmark')
+
+@setup_db.fast
+def setup_fast():
+    print('setup_fast')
+
+@hash_it
+def hash_it():
+    print('hash_it')
+
+@tests.one
+def tests_one():
+    print('tests_one')
+
+@main
+def main():
+    print('ok')

@@ -670,6 +670,8 @@ if [ -n "$have_js" ]; then
   wasm_neg float_length_32 "float has no length"
   wasm_neg float_length_key "float has no length"
   wasm_neg private_field "the field 'x' is private to class 'C'"
+  wasm_neg entry_reserved_bench "uses a name the language reserves"
+  wasm_neg entry_reserved_operator_dotted "uses a name the language reserves"
   wasm_neg type_arg_count "'list' does not take several types here"
   wasm_neg type_in_unknown "this type is not supported here"
   wasm_neg is_int_values "cannot use 'is' with int and int"
@@ -2923,6 +2925,10 @@ def quiet():
 def other():
     print('other')
 
+@bench_sort
+def bench_sort():
+    print('bench_sort')
+
 @calc.add
 def add(n: int = 2):
     print(n + 1)
@@ -2935,6 +2941,7 @@ TG
 HELLO
 hello..." "$($t run "$work/tg.tom" greet 2>&1)"
   check "entry greet.loud runs only that function" "HELLO" "$($t run "$work/tg.tom" greet.loud 2>&1)"
+  check "an entry that only starts with a reserved name is an ordinary entry" "bench_sort" "$($t run "$work/tg.tom" bench_sort 2>&1)"
   check "entry greet does not run @greetx (a dot, not a prefix)" "other" "$($t run "$work/tg.tom" greetx 2>&1)"
   check "entry calc selects one function, which takes its inputs" "6" "$($t run "$work/tg.tom" calc 5 2>&1)"
   check "entry calc.add runs it with the default input" "3" "$($t run "$work/tg.tom" calc.add 2>&1)"
@@ -3323,6 +3330,27 @@ neg entry_group_result "an entry point (a function marked with @main or similar)
 neg entry_dotted_unmatched "no function is marked @greet.whisper" greet.whisper
 neg entry_dotted_unmatched_test "no function is marked @test.missing" test.missing
 neg entry_marker_dot_end "expected a name" greet
+neg entry_reserved_bench "'@bench' uses a name the language reserves for its own markers"
+neg entry_reserved_example "'@example' uses a name the language reserves for its own markers"
+neg entry_reserved_setup "'@setup' uses a name the language reserves for its own markers"
+neg entry_reserved_teardown "'@teardown' uses a name the language reserves for its own markers"
+neg entry_reserved_deprecated "'@deprecated' uses a name the language reserves for its own markers"
+neg entry_reserved_dotted "'@bench.sort' uses a name the language reserves for its own markers"
+neg entry_reserved_operator_dotted "'@add.fast' uses a name the language reserves for its own markers"
+neg entry_reserved_main_dotted "'@main.extra' uses a name the language reserves for its own markers"
+neg entry_reserved_init_dotted "'@init.fast' uses a name the language reserves for its own markers"
+neg entry_reserved_hash_dotted "'@hash.cache' uses a name the language reserves for its own markers"
+# every reserved name, dotted, is refused at the top level (D113a), and each operator name bare too (E96)
+t_reserved_all() {
+  bad_names=""
+  for n in bench example setup teardown deprecated main init add sub mul div floordiv mod pow eq lt le gt ge str iter len get slice contains reversed static bitarray set bitand bitor bitxor invert neg rmul hash; do
+    printf '@%s.x\ndef f():\n    print(1)\n\n@main\ndef main():\n    pass\n' "$n" > "$work/res.tom"
+    msg="$("$c1" "$work/res.tom" main std/ 2>&1 >/dev/null)"
+    case "$msg" in *"'@$n.x' uses a name the language reserves"*) ;; *) bad_names="$bad_names $n";; esac
+  done
+  [ -z "$bad_names" ] && ok "every reserved marker name is refused when dotted" || bad "every reserved marker name is refused when dotted" "not refused:$bad_names"
+}
+spawn t_reserved_all
 
 # ---- input --------------------------------------------------------------------------------------------------------------
 t_input() {

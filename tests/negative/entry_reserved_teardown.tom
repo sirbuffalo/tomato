@@ -1,0 +1,4 @@
+# D113a: '@teardown' as a top-level marker uses a name the language reserves, so it is an error (rename it, e.g. @teardown_db)
+@teardown
+def f():
+    print('f')

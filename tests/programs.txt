@@ -246,3 +246,4 @@ shadow_classes
 shadow_std
 str_dispatch
 optional_field_fused
+entry_reserved_ok

@@ -1,0 +1,4 @@
+# D113a: '@hash.cache' as a top-level marker uses a name the language reserves, so it is an error (rename it, e.g. @hash_cache)
+@hash.cache
+def f():
+    print('f')

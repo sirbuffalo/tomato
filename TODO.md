@@ -20,3 +20,5 @@
   `def f(n: Named | None)` called with a `Named` value or a `Tag` (a class that implements `Named`) is E324 ("has type Named, but Named | None is expected"), and so is `tag: Named | None = Tag()`; found while testing D110a (`x is Class` checks the dynamic class), whose tests could not cover an `is` test on such an optional beyond a parameter.
 - Confirm the `cli contract: test_messages: test --mode release` case on a clean main
   It failed in this task's full run (expects the old 'release mode keeps no call trace' note after main's 0a5e7d6f); main's 1ec06ab0 ("Fix failing release-mode contract check on main") looks like the fix, so check that the case passes on main and close this.
+- Update the `test --mode release` expectation in the contract test messages
+  `tests/cli_contract/cases/test_messages.sh`: the check "test --mode release: a failed check says that there is no trace" failed against the compiler after D34c (0a5e7d6f). Main's 1ec06ab0 may already have fixed it; check on a clean main and remove this item if so.

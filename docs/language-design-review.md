@@ -177,7 +177,9 @@ or a std-only note.
 
 ## 2. Surface syntax
 
-### 2.1 Operator markers versus dunders or interfaces (keep the markers; fix the `@` namespace: Blocks 1.0)
+### 2.1 Operator markers versus dunders or interfaces (keep the markers; fix the `@` namespace) — problem 1 decided and built (D107a, 2026-11-27)
+
+**Decided (problem 1).** Davis decided on 2026-11-27: marker names stay unique within a program (one function per marker, E583), and a short reserved list of built-in marker names (`main`, `test`, `bench`, `example`, `setup`, `teardown`, `deprecated`, `init` and every operator and protocol marker) may not be used as a program's own top-level entry name; a dotted entry under a reserved root is allowed only where the language defines it (`@test.NAME`), and `@` is never a user-defined decorator. This replaces Proposal 1's `@entry` form. Built as D113a (compile error E613); problem 2 (structural interfaces) is not decided. The text below is the audit's original.
 
 **Assessment.** `@add` above `def plus(self, o)` (D12k) compares well with the alternatives:
 

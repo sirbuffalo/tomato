@@ -225,6 +225,12 @@ export def is_operator_marker(name: str) -> bool:
     return name in ['add', 'sub', 'mul', 'div', 'floordiv', 'mod', 'pow', 'eq', 'lt', 'le', 'gt', 'ge', 'str',
                     'iter', 'len', 'get', 'slice', 'contains', 'reversed', 'static', 'bitarray', 'set', 'bitand', 'bitor', 'bitxor', 'invert', 'neg', 'rmul', 'hash']
 
+# the marker names the language keeps for itself (D113a): a program's own top-level entry may not be, or start with, one of them, so a marker the
+# language adds later (after 1.0) never takes a name a program already uses. The language defines at top level only `@main`, `@test` and `@test.NAME`;
+# `init` and the operator markers mark methods
+export def is_reserved_marker(name: str) -> bool:
+    return name == 'init' or is_operator_marker(name) or name in ['main', 'test', 'bench', 'example', 'setup', 'teardown', 'deprecated']
+
 def is_none_name(n: Node) -> bool:
     return n.kind == 'Name' and n.fields[0].text == 'None'
 
@@ -409,6 +415,11 @@ export class Parser:
                     self.err(f"expected a name right after '@{marker}.' (a dotted marker is one word, with no spaces)")
                 last = self.expect('NAME')
                 marker = marker + '.' + last.text
+            root = marker.split('.')[0]
+            if is_reserved_marker(root) and marker != 'main' and marker != 'test' and not (root == 'test' and '.' in marker):
+                rest = marker[len(root) + 1:].replace('.', '_')
+                better = f'{root}_{rest}' if rest != '' else f'run_{root}'
+                raise ParseError(f"'@{marker}' uses a name the language reserves for its own markers ('{root}')\nrename the entry, for example @{better}; the reserved names are listed in docs/specification.md", m.line, m.col - 1)
             self.expect('NEWLINE')
             if not self.is_def():
                 if self.is_kw('export'):

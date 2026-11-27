@@ -1,0 +1,4 @@
+# D113a: '@example' as a top-level marker uses a name the language reserves, so it is an error (rename it, e.g. @example_one)
+@example
+def f():
+    print('f')
