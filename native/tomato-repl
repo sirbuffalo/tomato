@@ -308,7 +308,7 @@ submit_piece() {   # one piece of source text in $1
     if printf '%s' "$first" | grep -qvE '^(print|for|while|if|elif|else|try|catch|finally|raise|assert|return|pass|break|continue)([ (:]|$)' \
        && ! printf '%s' "$first" | grep -qE '^[A-Za-z_][A-Za-z_0-9]*( *:[^=]+)? *([-+*/%&|^]|//|\*\*)?= *[^=]' \
        && [ "$(wc -l < "$S/cb" | tr -d ' ')" = 1 ] && ! printf '%s' "$first" | grep -q ':$'; then
-      printf 'print(%s)\n' "$first" > "$S/ce"
+      printf '_core_print(%s)\n' "$first" > "$S/ce"
       if try_run "$S/cd" "$S/ce"; then new_output; end_open_line; commit "$S/cd"; return; fi
     fi
   fi

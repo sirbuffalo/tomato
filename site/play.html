@@ -131,7 +131,7 @@ function submit(text, echoed) {
   if (text === ":program") { log("out", program()); return Promise.resolve(); }
   if (text[0] === ":") { log("e", "commands here: :reset, :program"); return Promise.resolve(); }
   var asExpr = !isDef(text) && !isBlock(text) && !/^\w+(\s*:\s*[\w\[\], |]+)?\s*[-+*\/]?=[^=]/.test(text) && !/^(print|for|while|if|try|raise|return|pass|break|continue)\b/.test(text);
-  var attempt = asExpr ? ["print(" + text + ")", text] : [text];
+  var attempt = asExpr ? ["_core_print(" + text + ")", text] : [text];
   var firstError = "";
   function tryOne(k) {
     var t = attempt[k], isD = isDef(t);

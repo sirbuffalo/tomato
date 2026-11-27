@@ -18,8 +18,6 @@
   `def b(o: Box | None, t: int) -> int: return (t * 2) + o.n * 3` gives E339 "the class 'Box?' does not exist", while `return t + o.n` compiles and raises None at run time. The message is wrong in either direction (a clear 'None where a value is needed' at run time, or a proper type error).
 - Decide whether `x is Subclass` should check the dynamic class
   The type test on a class-typed value uses its static type: with `v: Shape` holding a `Circle`, `v is Circle` is False (same as `x in Circle` always was), so `is` cannot downcast. Only unions, optionals and interface values are tested by content (D23i).
-- Make the repl and playground echo of a bare expression immune to a user's `print`
-  The repl (`native/tomato-repl`) and the website playground (`site/play.html`) show a bare expression by running the text `print(expr)`, so a session that defines its own `print` shows values through it (D108a). Make the echo immune, e.g. a core spelling of `print` that the lexer accepts only from tools.
 - Decide whether local variables and parameters shadow builtins in calls
   Ask Davis whether local variables and parameters should shadow builtins in calls too (Python's rule). Today the `shadow` warning says a local 'hides' the name, but a call `len(x)` still reaches the builtin. Changing it could break programs that have a local `len` and call `len(x)`.
 - Warn when a program uses one of the unstable features of `docs/provisional.md`

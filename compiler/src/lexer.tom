@@ -440,7 +440,11 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
         elif is_alpha(c) or c == '_':
             j = name_end(raw, i)
             w = raw[i:j]
-            toks.append(make_token('KW' if is_keyword(w) else 'NAME', w, 0, ln))
+            if w == '_core_print':
+                # the spelling the repl and the playground give a bare expression's echo: the built-in print, whatever the session defines
+                toks.append(make_token('NAME', 'print', 1, ln))
+            else:
+                toks.append(make_token('KW' if is_keyword(w) else 'NAME', w, 0, ln))
             i = j
         elif c == '"' or c == "'":
             s = scan_string(raw, i)

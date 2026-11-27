@@ -599,6 +599,11 @@ t_wasm_repl_import() {
   jsc tests/repl_wrap.js -- 'from itertools import progress_bar' > "$work/imp2.tom" 2>&1
   m="$(tjsc site/wasm run "$work/imp2.tom" 2>&1)"
   case "$m" in *"~rc 0"*) ok "wasm repl: a good import alone runs";; *) bad "wasm repl: a good import alone runs" "$m";; esac
+  # the echo of a bare expression (site/play.html) is _core_print(...): the built-in, even where the session defines print
+  printf 'def print(x: int):\n    _core_print("mine", x)\n\n@main\ndef m():\n    _core_print(6 * 7)\n    print(5)\n' > "$work/echo.tom"
+  m="$(tjsc site/wasm run "$work/echo.tom" 2>&1)"
+  case "$m" in "42
+mine 5"*"~rc 0"*) ok "wasm repl: the echo uses the built-in print when the session defines print";; *) bad "wasm repl: the echo uses the built-in print when the session defines print" "$m";; esac
 }
 t_wasm_sockets() { r="$(tjsc site/wasm run tests/programs/socket_browser.tom 2>&1 | grep '^no ')"; check "wasm sockets raise SocketError" "no sockets: True E446
 no listening: E446
@@ -2171,6 +2176,9 @@ False" "$(printf 'from math import is_prime\nfrom itertools import progress_bar\
   = help: standard modules: $(ls std/*.tom std/builtin/bitarray.tom | sed 's#.*/##; s#\.tom$##' | sort | paste -sd, - | sed 's/,/, /g')" "$(printf 'import itertoolz\n:quit\n' | $t repl 2>&1)"
   check "repl: an import alone is accepted, and a later line uses it" "ok
 2" "$(printf 'import datetime\nfrom itertools import progress_bar\nprint("ok")\nfrom math import isqrt\nisqrt(5)\n:quit\n' | $t repl 2>&1)"
+  check "repl: a bare expression is echoed with the built-in print when the session defines print" "42
+mine 5
+hi" "$(printf 'def print(x: int):\n    _core_print("mine", x)\n\n6 * 7\nprint(5)\n"hi"\n:quit\n' | $t repl 2>&1)"
   check "repl: :load runs a program that has its own @main" "$(cat tests/expected/shapes.main.out)" "$(printf ':load examples/shapes.tom\n:quit\n' | $t repl)"
   check "repl: a block, then a failing line, then a good one" "9
 error[E190]: cannot use '+' with int and str
@@ -2301,7 +2309,7 @@ def tomato_repl_main():
 def tomato_repl_main():
     x: float = 2.5
     print(x)
-    print(x)" "$(printf 'x: int = 1\nprint(x)\nx: float = 2.5\nx\n:program\n:quit\n' | $t repl 2>&1)"
+    _core_print(x)" "$(printf 'x: int = 1\nprint(x)\nx: float = 2.5\nx\n:program\n:quit\n' | $t repl 2>&1)"
   check "repl: a redeclaration an earlier line does not fit is refused at that line, with a hint, and the old variable and its value stay" "error[E190]: cannot use '+' with str and int
  --> session:2:7
   |
@@ -2404,6 +2412,15 @@ t_repl_progress() { # tomato repl on a pseudo-terminal shows the bar on the term
 }
 spawn_cli t_progress_streams
 spawn_cli t_progress_break
+t_repl_echo() { # the echo of a bare expression is immune to a session's own print
+  cli_setup
+  if ! command -v expect >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "repl echo test" "expect is required in CI" || echo "skip: expect is not installed, so the repl echo test did not run"
+    return
+  fi
+  check "repl: a bare expression is echoed with the built-in print on a terminal even when the session defines print" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/repl_echo.exp 2>&1 | tail -1)"
+}
+spawn_cli t_repl_echo
 spawn_cli t_repl_progress
 t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, layout, frames, whole sessions on a FakeTerminal), debug and release
   cli_setup

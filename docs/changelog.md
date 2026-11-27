@@ -17,6 +17,7 @@ on an older install moves to 1.0.0 as usual.
 
 ### Breaking changes
 
+- The repl and the website playground show a bare expression with the built-in `print` even when the session defines its own `print` (the echo is written `_core_print`, which the lexer reads as the built-in).
 - In `--mode release` an uncaught error prints one line with the class and the message, and the line, with no call trace (D34c):
   `error[E11]: ValueError: config file missing key port (line 3)`, or `error[E01]: division by zero (line 4)` for the language's own
   failures. It printed only `error E11:3` and `error E01:4`. `tomato explain` still takes `E01:4`.

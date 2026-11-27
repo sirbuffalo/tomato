@@ -1,0 +1,28 @@
+# Drives the real `tomato repl` on a pseudo-terminal: a bare expression is echoed with the built-in print even when the session
+# defines its own `print` (the echo is written as _core_print, which the lexer reads as the built-in; D108a).
+# Usage: expect tests/repl_echo.exp   (needs `tomato` on PATH; the last line printed is `ok` or `FAIL: ...`)
+set timeout 180
+log_user 0
+set env(TERM) dumb
+set env(TOMATO_REPL_EDIT) /nonexistent
+spawn tomato repl
+proc fail {msg} { puts "FAIL: $msg"; exit 1 }
+proc want {re what} {
+  expect {
+    -re $re {}
+    timeout { fail "timed out waiting for $what" }
+    eof { fail "the session ended while waiting for $what" }
+  }
+}
+want {>>> } "the first prompt"
+send "def print(x: int):\r"
+send "    _core_print('mine', x)\r\r"
+want {>>> } "the definition"
+send "6 * 7\r"
+want {\n42\r\n} "the echo of 6 * 7 (the built-in print, not the session's)"
+want {>>> } "the next prompt"
+send "print(5)\r"
+want {mine 5} "the user's own print"
+send "quit()\r"
+expect eof
+puts ok
