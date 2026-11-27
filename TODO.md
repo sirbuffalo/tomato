@@ -8,8 +8,6 @@
   Answer the open questions in section 19 of `docs/package-registry-design.md` (1 to 11). The local part is built (D95a, `docs/manifest.md`: the strict manifest reader, `[build]`, path seeds, `tomato.lock`, `tomato seed install/check/hash`, no helper program); what is left is the registry, signatures, the index client and everything under "Not built yet" in the sheet.
 - Settle the compatibility-promise items of docs/language-design-review.md before tagging 1.0.0
   Its ranked list ("Decisions to make, ranked"): triage `docs/provisional.md`, release-mode error messages, builtin shadowing, the `@` namespace and `x is T`, `bytes`, `File` safety, reserved std module names and the `!` interface. Each needs Davis's decision, then a decision entry and the change.
-- Make `tomato seed check` warn about an entry table with no matching entry
-  `tomato seed check` should warn when a `[seeds.ENTRY]` names an entry with no matching `@` marker (it would catch a typo such as `[seeds.tset]`, which is otherwise a valid table); see D92b in `docs/decisions.md`.
 - Install seeds from git and keep them in a store
   D95a reports `{ git, rev }` seeds as E570 (not supported yet). Stage 3 of `docs/package-registry-design.md`: the hardened `git` fetch of section 6 in `native/tomato` (a scratch repository, `git ls-tree` and `cat-file`, no checkout), the content hash checked before a seed is put in `~/.tomato/seeds/store/`, `source = "git"` with `git` and `commit` in `tomato.lock`, and a build that re-checks a stored seed (a path seed is deliberately not re-hashed). The compiler's module map and lock reader already take any source.
 - Add `tomato seed add`, `remove` and `vendor` for local seeds
