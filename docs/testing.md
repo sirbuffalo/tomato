@@ -21,7 +21,7 @@ def main():
     assert_raises(bad, 'ValueError')
 ```
 
-`tomato test` runs every `tests/*.tom`, each as a process of its own:
+(`numbers_lib` is `src/numbers_lib.tom`, whose functions are marked `export def`.) `tomato test` runs every `tests/*.tom`, each as a process of its own:
 
 - the file **passes** when it ends with status 0, which means that nothing was raised (a failed `assert`, a failed check, any uncaught error) and nothing called `sys.exit` with another status;
 - it **fails** otherwise: an error, an exit status that is not 0, a crash, a stack overflow, a hang past the time limit, a file that does not compile or has no `@main`;
@@ -67,20 +67,22 @@ ok   tests/parse_numbers.tom
 FAIL tests/render.tom  (exit status 1)
     error[E519]: AssertionError: lists differ at [1]: expected 3, got 2
       expected: [1, 3]
-      actual:   [1, 2] (raised on line 5)
+      actual:   [1, 2] (raised on line 306)
+      at _fail (line 306)
+      at assert_equal (line 375)
       at main (line 5)
 skip tests/network.tom  (no network)
 FAIL tests/slow.tom  (timed out after 10 seconds)
 tomato test: 4 files, 1 passed, 2 failed, 1 skipped: FAILED
 ```
 
-A failed file shows what it printed (its output and its error, with the trace in debug mode) under its line, indented; a file that passes shows nothing but its line unless `-v` is given. A file that does not compile shows the compiler's message. The last line ends with `: ok` or `: FAILED`; a CI job is `tomato test`, and nothing else.
+A failed file shows what it printed (its output and its error, with the trace in debug mode) under its line, indented (a check of `testing` raises inside `std/testing.tom`, so the trace starts there, at lines of that file; the test's own line is the last one, `at main (line 5)`); a file that passes shows nothing but its line unless `-v` is given. A file that does not compile shows the compiler's message. The last line ends with `: ok` or `: FAILED`; a CI job is `tomato test`, and nothing else.
 
 **Exit status.** 0 when every file passed or was skipped, 1 when any failed or the command line could not be used (an unreadable file, an unknown option, a bare word), 2 for the usage message (an option with no value).
 
 ## Several tests in one file: `@test` functions
 
-A file that has plain functions (no parameters, no result, not `async`) marked `@test` (or `@test.NAME`, D92a) is run through a driver instead of as a program (even if it also has a `@main`, which stays for `tomato run`; the tables `[build.test]` and `[seeds.test]` of `tomato.toml` apply to it, as the entry is `test`): the entry `test` runs every one of them, in the order written, in one process, and `test.parse` runs those marked `@test.parse` or below it. The file counts as one test and passes when all of them do:
+A file that has plain functions (no parameters, no result, not `async`) marked `@test` (or `@test.NAME`, D92a) is run through a driver instead of as a program (even if it also has a `@main`, which stays for `tomato run`; the table `[build.test]` and the seeds of `[test-seeds]` apply to it, as the entry is `test`): the entry `test` runs every one of them, in the order written, in one process, and `test.parse` runs those marked `@test.parse` or below it. The file counts as one test and passes when all of them do:
 
 ```
 from testing import assert_equal, skip

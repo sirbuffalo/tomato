@@ -26,3 +26,6 @@ caught: None where a value is needed
 caught: None where a value is needed
 caught: None where a value is needed
 True True False
+True
+1 True True 2
+True 3

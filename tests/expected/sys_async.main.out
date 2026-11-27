@@ -48,6 +48,7 @@ wait 0 0 0 True
 still closed ''
 read out1|out2| err1| 6
 wait first 0 late|
+wait before a big read 0 300000 200000
 read all of stdout begin|end|
 and stderr 300000 0
 lines 100000 100000| 0

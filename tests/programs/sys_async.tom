@@ -197,6 +197,9 @@ async def sections_process(work: str):
     # the output is kept after the program ended
     p = sys.spawn(['sh', '-c', 'echo late'])
     print('wait first', await p.wait(), show(await p.stdout.read()))
+    # more than a pipe holds on both streams, and wait() before any read: wait() empties the pipes, so the program is not stopped
+    p = sys.spawn(['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" a; head -c 200000 /dev/zero | tr "\\0" b >&2'])
+    print('wait before a big read', await p.wait(), len(await p.stdout.read()), len(await p.stderr.read()))
     # more than a pipe holds on the error stream while the output is read: the error stream is read by a task of its own
     p = sys.spawn(['sh', '-c', 'echo begin; head -c 300000 /dev/zero | tr "\\0" e >&2; echo end'])
     errors = start p.stderr.read()

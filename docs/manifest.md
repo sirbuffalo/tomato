@@ -14,7 +14,7 @@ tomato.lock          written by tomato seed install, committed
 ```
 
 `tomato init` makes it (below). A program imports another module of its project by name: `import util` finds `util.tom` next to the
-program, then in the project's `src/` (so a test in `tests/` imports the modules of `src/`), then in the seeds, then in `std/`. The
+program, then in the project's `src/` (so a test in `tests/` imports the modules of `src/`), then in the seeds, then in `std/`; what a module shares is marked `export` (`export def parse(...)`). The
 program `src/main.tom` cannot itself be imported (`main` is its own name): shared code goes in another file.
 (The Tomato repository's own folders are not laid out this way yet.)
 
@@ -40,7 +40,7 @@ builds/NAME [ENTRY [INPUTS...]]      the program: no word runs main; an entry na
 
 - NAME is the project's `name` for its `src/main.tom`, else the file's name without `.tom`; `builds/` is in the project's folder (the
   current folder with no project). `[build.ENTRY] output` and `mode` (D92c) and the flags `-o` and `--mode` still apply, the flags winning.
-- A `main` that takes inputs must give each one a default, so that `tomato run` and `builds/NAME` with no words always work; a missing
+- A `main` that takes inputs should give each one a default (a `float` or `File` input cannot have one), so that `tomato run` and `builds/NAME` with no words always work; a missing
   one stops the program with "the entry point takes N input(s), got 0 (an input can be left out only if it has a default ...)".
 - In the built program a first word that is no entry is the error E591, which lists the entries. An entry is every `@` marker and every
   dotted beginning of one (`greet` for `@greet.loud`, which runs all `@greet.*`, as `tomato run FILE greet` does), except the tests; a
@@ -134,7 +134,7 @@ paths) is E564. As for `[seeds]`, a `[seed]` manifest cannot use `git` or `path`
   and `compile` ignore it). The order of the settings is the flag (`--mode`, `-o`), then the most specific `[build.ENTRY]` that is the
   entry or a prefix of it, then `[build]`, then the user's `[build] mode` (below), then `debug`. A `tomato build` that holds every
   entry settles its mode and output as for `main`.
-- **The user's `~/.tomato/config.toml`** may hold `[build] mode = "debug" | "release"`, the default of every build on the machine,
+- **The user's `~/.tomato/config.toml`** (`$TOMATO_HOME/config.toml` when `TOMATO_HOME` is set) may hold `[build] mode = "debug" | "release"`, the default of every build on the machine,
   under the project's `[build]` and `[build.ENTRY]` and the flags (D99a). It may hold nothing else of `[build]`: `output` and
   `[build.ENTRY]` belong to a project (the path would have no folder to be relative to), and any other key is E558, a bad mode E565.
   It applies with no project and with a seed's folder (a seed's own `[build]` is ignored, not the user's default). `tomato config` shows it.
@@ -299,9 +299,14 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E579 | a seed module has a standard module's name |
 | E580 | `tomato seed check`: the owner is not one a registry accepts |
 | E581 | (a compile error) a module is in a seed and in the standard library |
+| E582 | (a compile error) a file of a seed cannot be read |
+| E583 | (a compile error) the same entry marker on two functions (D96a) |
+| E584 | (a compile error) an entry that runs several functions has one that takes inputs or is `async` (D96a) |
 | E590 | a table below `[seeds]` or `[test-seeds]` (`[seeds.test]`): use `[test-seeds]` |
 | E591 | (a runtime error of a built program) its first word is no entry |
 | E592 | (a runtime error) a `File` input cannot be opened |
+| E593 | (a compile error) a `File` input has a default |
+| E594 | (a compile error) `import main`: a module cannot be named `main` |
 | E598 | a git URL, rev, tag, branch or path that cannot be used (a scheme, `ext::`, a leading hyphen, a rev that is not a full commit id, a `..` in a path) |
 | E599 | `git` failed (or is not installed), or the store folder cannot be made |
 | E600 | a git tree that cannot be a seed (a link, a submodule, an unsafe path, a file too large, a module that does not parse) |

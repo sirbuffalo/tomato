@@ -15,7 +15,7 @@
 # update() draws the bar on standard error (so it does not mix with what the program prints); render() returns the
 # same line as text, which is what the tests check. An empty list gives a total of 0, which shows only the count.
 # When standard error is a terminal the bar is one line that is redrawn in place ('\r'). When it is not (a pipe, a file, closed),
-# a plain line is written at each new tenth of the percentage (0%, 10%, ...) and once at the end, and nothing fails if the stream is closed.
+# a plain line is written at the first update and then at each new tenth of the percentage (10%, 20%, ...) and once at the end, and nothing fails if the stream is closed.
 # The repl runs your code with standard error captured, so it sets TOMATO_PROGRESS_TTY=1 and the bar then draws on the
 # controlling terminal (/dev/tty) when there is one.
 # Looping over the bar itself (its @iter method) draws as it goes and ends the line when the loop is done.
@@ -52,7 +52,7 @@ export class progress_bar[T]:
         prefix = f'{self.label}: ' if self.label != '' else ''
         if self.total == 0:
             return f'{prefix}{self.count}it'
-        shown = min(self.count, self.total)
+        shown = max(0, min(self.count, self.total))     # (a count that went below 0 with update(-n) shows as 0%)
         filled = shown * self.width // self.total
         pct = str(shown * 100 // self.total)
         pct = ' ' * (3 - len(pct)) + pct          # right-aligned in three places
@@ -84,7 +84,7 @@ export class progress_bar[T]:
         if self.live:
             self.emit(f'\r{line}{end}')
             return
-        pct = min(self.count, self.total) * 100 // self.total if self.total > 0 else -1
+        pct = max(0, min(self.count, self.total)) * 100 // self.total if self.total > 0 else -1
         if end == '\n':
             if line != self.last_line:
                 self.emit(f'{line}\n')

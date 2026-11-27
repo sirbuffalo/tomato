@@ -73,7 +73,7 @@ on an older install moves to 1.0.0 as usual.
 - **Dotted entry markers** (D96a): every `@` entry marker marks exactly one function and may be
   dotted: `@test.parse_empty` marks one test, `tomato test FILE` runs every `@test.*`, and `tomato test FILE
   test.parse_empty` (or `tomato run FILE test.parse_empty`) runs one; `tomato run FILE greet` runs every
-  `@greet.*` and `greet.loud` runs one. The same marker on two functions is an error (E587).
+  `@greet.*` and `greet.loud` runs one. The same marker on two functions is an error (E583).
 - **`assert`, `tomato test` and `testing`** (D81a, D97a): a file in `tests/` is one test (a program that passes when it ends with status 0); `tomato test` runs every `tests/*.tom`, each file as a process of its own, so a `sys.exit`, crash or hang ends only that file; one line for each file and a summary line for CI; `tomato test [OPTIONS] FILE ENTRY INPUTS...` (options only before the first file; every word after the file or entry is an input, even `--filter`), `--filter`, `--timeout`, `-v`; `assert_equal` shows where the first difference is in long text, lists and dicts; `assert_less` and friends; `@test` functions in one file still work. See `docs/testing.md`.
 - **`@neg` and `@rmul`** (D85a): `-x` and `number * x` on objects of any class. `math.Angle` uses them (`-deg(30)` is
   `-30 deg`, `3 * deg(30)` is `90 deg`) and has an `@hash`, so angles are dict keys and set elements.
@@ -158,14 +158,19 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
   `tomato init [NAME] [--seed]` makes it; `tomato run` with no word runs `src/main.tom`; `tomato build` with no word builds it; a test in
   `tests/` imports the modules of `src/` by name. Entry inputs are raw (`*args: tuple[str]`), and an entry parameter typed `File`
   is opened for reading from its word (`-` is standard input) before the entry runs, with a message that names the input when it cannot be.
-  A seed's modules may use `!name(...)` foreign declarations (nothing rejects them; `tomato seed add`, not built yet, will list them).
+  A seed's modules may use `!name(...)` foreign declarations (nothing rejects them; `tomato seed add` lists them and asks to accept them).
 - `tomato.toml` is a manifest (D95a, `docs/manifest.md`): `[project]` or `[seed]` with `name`, `version` and `tomato` (the oldest
   compiler that builds it, checked against `tomato version`), `[seeds]` and `[test-seeds]`, `[build]` and
   `[build.ENTRY]` (`mode`, `output`), `[limits]`. Unknown tables and keys are errors, so a typo is caught; a project's
   `tomato.toml` is now checked by every command. `[build]` gives `--mode` and `-o` their defaults (the flags win).
 - Local seeds: `tomato seed install` locks `{ path = "../folder" }` seeds into `tomato.lock` with a sha256 content hash, and a program
   can import their modules (found between the program's folder and `std/`); `tomato seed check` and `tomato seed hash` check a seed
-  and print its hash. There is no registry and no network use yet; `git` and version seeds say they are not supported yet.
+  and print its hash. Version seeds (a registry) are not built yet and say so.
+- Seeds from git and the seed commands (D101a, `docs/manifest.md`): `{ git = "URL", rev = "COMMIT" }` seeds are fetched into a
+  content-addressed store (`~/.tomato/seeds`) and locked with their hash; `tomato seed add --path DIR | --git URL --rev COMMIT [--test]`
+  lists a seed and locks it, `tomato seed remove NAME` drops it, `tomato seed vendor` copies the locked seeds into `vendor/`, and
+  `install`, `add` and `vendor` take `--offline` (never run git). `seed add` lists the `!name(...)` foreign symbols a seed declares
+  and asks to accept them (`--yes` does not ask).
 
 ### Performance
 
@@ -196,6 +201,18 @@ and eight more comparison languages; Linux x86-64 results are published next to 
   it is a usage error. `tomato update` refuses to run from a source checkout.
 - `set.discard(x)` compiled wrongly; async exceptions and scheduling had several bugs; `wasi.js` `path_rename`
   lost file times under renamed folders; regex `{m,n}` repeats around empty-matching groups now match Python.
+- `progress_bar` opened `/dev/stderr` for each redraw and ended the program with `could not open '/dev/stderr'` where that path
+  is not there (in the repl on macOS, with standard error closed); it writes through the standard error stream now (D105a).
+- A big number as an `int | None` or `float | None` dict key, set element or `hash()` argument (`d[10 ** 40] = 1` on a
+  `dict[int | None, int]`) was freed twice and crashed the program; it works now.
+- `await p.wait()` on a `sys.spawn` program that wrote more than a pipe holds (about 64 KB) before anything read it waited
+  forever; `wait()` (and `done()`) now take what the program wrote as they wait.
+- `tomato test --timeout` stopped a test that ran too long but not the programs it had started with `sys.run` or `sys.spawn`;
+  they are stopped too. A test reads no input: its standard input is empty, with or without `--timeout` (before, without it a test
+  that asked for input waited on the terminal).
+- A big number given to an entry input that has a default (`tomato run f.tom main 99999999999999999999999` for `main(n: int = 3)`)
+  printed `warning: 1 big number(s) were never freed`.
+- `@greet . loud` (spaces around the dot) was taken as `@greet.loud`; a dotted entry marker is one word (E335 otherwise).
 
 ### Known issues
 

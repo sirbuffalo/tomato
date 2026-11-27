@@ -362,10 +362,10 @@ export class datetime:
     def minus(self, delta: timedelta) -> datetime:
         return self + timedelta(0, 0, -_delta_micros(delta))
 
-    # a copy with the parts you give (by name, such as dt.replace(hour=0)) changed and the rest kept; the result is checked
+    # a copy with the parts you give (by name, such as dt.replace(hour=0)) changed and the rest kept (a part left out or None is kept); the result is checked
     # like a new datetime. offset_minutes makes a naive value aware (or moves the offset of an aware one without changing
     # its clock), as replace(tzinfo=...) does in Python; there is no way to make an aware value naive again
-    def replace(self, year: int | bool = False, month: int | bool = False, day: int | bool = False, hour: int | bool = False, minute: int | bool = False, second: int | bool = False, microsecond: int | bool = False, offset_minutes: int | None = None) -> datetime:
+    def replace(self, year: int | None = None, month: int | None = None, day: int | None = None, hour: int | None = None, minute: int | None = None, second: int | None = None, microsecond: int | None = None, offset_minutes: int | None = None) -> datetime:
         y = self.year
         mo = self.month
         d = self.day
@@ -373,19 +373,19 @@ export class datetime:
         mi = self.minute
         s = self.second
         us = self.microsecond
-        if year in int:
+        if year is not None:
             y = year
-        if month in int:
+        if month is not None:
             mo = month
-        if day in int:
+        if day is not None:
             d = day
-        if hour in int:
+        if hour is not None:
             h = hour
-        if minute in int:
+        if minute is not None:
             mi = minute
-        if second in int:
+        if second is not None:
             s = second
-        if microsecond in int:
+        if microsecond is not None:
             us = microsecond
         if offset_minutes is not None:
             return datetime(y, mo, d, h, mi, s, us, offset_minutes)

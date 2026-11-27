@@ -345,6 +345,9 @@ export class Process:
     def private reap(self) -> bool:
         if self.ended:
             return True
+        if self.stdout.piped:          # take what it wrote so far, so that a program writing more than a pipe holds is not stopped by a
+            self.stdout.pull()         # full pipe while wait() or done() is waiting for it to end
+            self.stderr.pull()
         info: list[int] = []
         r = !tomato_proc_poll(self.pid, info)
         if r == 1:
@@ -366,7 +369,8 @@ export class Process:
         return self.reap()
 
     # Waits, without blocking the other tasks, until the program has ended, and gives its status. It does not wait for the output to be
-    # read: what the program wrote stays in stdout and stderr. (There is no way to be told that a program ended without looking: wait()
+    # read: what the program wrote stays in stdout and stderr (while it waits, the pipes are emptied into them, so a program that writes
+    # more than a pipe holds still ends). (There is no way to be told that a program ended without looking: wait()
     # looks again every few milliseconds, more rarely the longer it waits, up to every 20.)
     async def wait(self) -> int:
         nap = 0.0005

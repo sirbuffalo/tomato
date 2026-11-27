@@ -401,7 +401,10 @@ case "$cmd" in
         [ "$any" = 1 ] || die "no test file in $a (each $a/NAME.tom is one test; a name that starts with _ is a helper module, not a test)"
       elif file_word "$a"; then
         add_file "$a"
-        case "${1-}" in -?*) die "'$1' comes after a file, so it is not an option (options go before the files: tomato test $1 $a); it can only be an input of an entry (tomato test $a ENTRY $1)" ;; esac
+        case "${1-}" in
+          --filter|--timeout|--mode|-v|--verbose|--color|--color=*|--no-warnings) die "'$1' comes after a file, so it is not an option (options go before the files: tomato test $1 $a); it can only be an input of an entry (tomato test $a ENTRY $1)" ;;
+          -?*) die "'$1' comes after a file, so it is not an option (and tomato test has no option '$1': run 'tomato help'); it can only be an input of an entry (tomato test $a ENTRY $1)" ;;
+        esac
         # FILE [ENTRY [INPUTS...]]: a word that is not a file is the entry to run, and every word after it an input of that entry's function
         if [ $# -gt 0 ] && ! file_word "$1" && [ ! -d "$1" ]; then
           printf '%s\n' "$1" > "$tmpd/entry.$k"; shift
@@ -416,15 +419,20 @@ case "$cmd" in
     done < "$tmpd/list"
     prog="$tmpd/prog"; progress="$tmpd/progress"; out="$tmpd/out"
     nfiles=0; npassed=0; nfailed=0; nskipped=0; status=0
-    # run_prog: the program and its words, the output in $out, with the time limit when there is one; sets prc (its status) and timed_out
+    # run_prog: the program and its words, the output in $out, with the time limit when there is one; sets prc (its status) and timed_out.
+    # A test reads no input: its standard input is /dev/null, with or without --timeout (a test that asks for input sees the end of it
+    # at once instead of waiting on the terminal).
+    # proc_tree PID: PID and every process below it (what a test started with sys.run or sys.spawn), so that a time-out stops them too
+    proc_tree() { echo "$1"; for c in $(pgrep -P "$1" 2>/dev/null); do proc_tree "$c"; done; }
     run_prog() {
       timed_out=0
-      if [ -z "$ttimeout" ]; then "$@" >> "$out" 2>&1; prc=$?; return 0; fi
-      "$@" >> "$out" 2>&1 </dev/stdin &
+      if [ -z "$ttimeout" ]; then "$@" >> "$out" 2>&1 </dev/null; prc=$?; return 0; fi
+      "$@" >> "$out" 2>&1 </dev/null &
       job=$!
-      # (the watcher's own sleep is stopped with it: a TERM to the subshell would leave the sleep running until its time is up)
+      # (the watcher's own sleep is stopped with it: a TERM to the subshell would leave the sleep running until its time is up; the
+      # processes are listed once, before the TERM, so that one whose parent has ended by the KILL is still found)
       ( sleep "$ttimeout" & nap=$!; trap 'kill "$nap" 2>/dev/null; exit 0' TERM; wait "$nap"
-        : > "$tmpd/timeout"; kill -TERM "$job" 2>/dev/null; sleep 1; kill -KILL "$job" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+        : > "$tmpd/timeout"; pids="$(proc_tree "$job")"; kill -TERM $pids 2>/dev/null; sleep 1; kill -KILL $pids 2>/dev/null ) >/dev/null 2>&1 </dev/null &
       watcher=$!
       { wait "$job"; } 2>/dev/null; prc=$?
       kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
@@ -438,7 +446,7 @@ case "$cmd" in
       nfiles=$((nfiles + 1))
       rm -f "$prog" "$progress" "$tmpd/timeout"; : > "$out"
       # what runs: the entry named after the file, else the file as a whole: the functions marked @test (the entry test, through the
-      # driver, whatever else the file has: its [build.test] and [seeds.test] apply), or, with none, the program (@main; a file
+      # driver, whatever else the file has: its [build.test] and [test-seeds] apply), or, with none, the program (@main; a file
       # with neither says what is missing)
       entry="$(cat "$tmpd/entry.$k")"
       if [ -n "$entry" ]; then
@@ -572,6 +580,7 @@ case "$cmd" in
       install|add|remove|vendor|update|verify)
         [ -t 0 ] && seedopt tty
         errf="$(mktemp "${TMPDIR:-/tmp}/tomato-seed.XXXXXX")" || die "cannot make a temporary file"
+        trap 'rm -f "$errf"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP   # (also on Ctrl-C at the prompt or during a git fetch)
         if TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$sub" --seed "$std" "$arg" "$project_cfg" "$rev" "$sflags" 2> "$errf"; then
           cat "$errf" >&2; rm -f "$errf"; exit 0
         fi

@@ -567,7 +567,7 @@ ConfigError {}: {}.target is reserved for a later version and cannot be set yet
 ConfigError {}: [{}] needs a [project] table (a program) or a [seed] table (a package) in the same file
 ConfigError {}: {} must be a version such as "1.2.0", or a table { git = "URL", rev = "COMMIT" } or { path = "../folder" }, not {}
 ConfigError {}: tomato.lock is missing or does not hold what tomato.toml needs (a seed, its source or its version): run tomato seed install
-ConfigError (retired: git seeds are installed now (D99a), so this is no longer raised; the id stays so that later ids do not move)
+ConfigError (retired: git seeds are installed now (D101a), so this is no longer raised; the id stays so that later ids do not move)
 ConfigError {}: the seed {} {} would come from a registry, and there is none yet
 ConfigError {}: the seed folder or manifest is not usable: it is missing, has no tomato.toml, or has no [seed] table
 ConfigError {}: "{}" is listed with the path "{}", but the seed there is called "{}"

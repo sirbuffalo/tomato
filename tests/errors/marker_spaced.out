@@ -1,0 +1,5 @@
+error[E335]: expected the end of the line after @greet (a dotted marker is one word, with no spaces: @greet.name), but found '.'
+ --> tests/errors/marker_spaced.tom:2:8
+  |
+2 | @greet . loud
+  |        ^

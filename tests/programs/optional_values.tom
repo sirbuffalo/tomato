@@ -142,3 +142,15 @@ def main():
     catch RuntimeError as err:
         print('caught:', err.message)
     print(x in int, r in None, r in int)
+    # a big number as an optional key: hash() and the dict and set helpers see the narrowed number without freeing it (third audit)
+    obig: int | None = 10 ** 40
+    print(hash(obig) == hash(10 ** 40))
+    obd: dict[int | None, int] = {}
+    obd[10 ** 40] = 1
+    obd[None] = 2
+    obs: set[int | None] = {10 ** 40, 2}
+    print(obd[10 ** 40], 10 ** 40 in obd, 10 ** 40 in obs, len(obs))
+    obf: float | None = 10.0 ** 400
+    obfd: dict[float | None, int] = {}
+    obfd[10.0 ** 400] = 3
+    print(hash(obf) == hash(10.0 ** 400), obfd[10.0 ** 400])

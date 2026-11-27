@@ -7314,6 +7314,8 @@ class Gen:
                     member = self.unbox_value(held0, want)
                     self.release(held0)
                     return ret_ex(member.reg, member.ty)
+                if held0.ty == want:
+                    return held0           # already a T (an optional narrowed by `is None`, D102a): it keeps its ownership, a borrowed int is not freed
                 return ret_ex(held0.reg, want)
             if is_union(held0.ty):
                 yes = self.box_is(held0, want)
@@ -12961,6 +12963,10 @@ def entry_wrapper(info: FuncInfo, mod: Mod, symbol: str = '') -> str:
                 raise CompileError('a program input cannot have a float default', dflt.line)
             else:
                 out += f'  %a{si} = phi {llvm_type(t)} [ %a{si}.v, %p{si} ], [ {literal_text(dflt, t)}, %d{si} ]\n'
+                if t == 'int':
+                    # what to free after the entry: the parsed number (a big one is allocated), never the default (0 frees nothing)
+                    out += f'  %a{si}.own = phi i64 [ %a{si}.v, %p{si} ], [ 0, %d{si} ]\n'
+                    owned_ints.append(f'%a{si}.own')
         else:
             reg = f'%a{si}.v'
         if t == 'str' or t == 'File':

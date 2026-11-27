@@ -1,0 +1,4 @@
+# an entry marker is one word: no spaces around its dots
+@greet . loud
+def loud():
+    print(1)

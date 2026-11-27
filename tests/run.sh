@@ -884,6 +884,8 @@ t_cli_explain() {
   check "explain rejects a malformed source line" "1" "$($t explain 'E04:4abc' "$work/dz.tom" >/dev/null 2>&1; echo $?)"
   check "run with inputs" "17 True" "$($t run examples/args.tom prime 17)"
   check "run with inputs and *args" "$(printf '8 2 True\nb\nc')" "$($t run tests/programs/sys_args.tom main 7 b c)"
+  printf '@main\ndef main(n: int = 3):\n    print(n)\n' > "$work/bigin.tom"
+  check "a big number given to an input with a default is freed" "99999999999999999999999" "$($t run "$work/bigin.tom" main 99999999999999999999999 2>&1)"
   check "--version is version" "$($t version)" "$($t --version)"
   case "$($t help)" in *"tomato explain"*"tomato version"*) ok "help lists every command";; *) bad "help lists every command" "$($t help)";; esac
   check "explain says when the line is not in the file" "error[E01]: ZeroDivisionError: division by zero

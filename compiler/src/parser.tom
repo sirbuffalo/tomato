@@ -355,10 +355,17 @@ export class Parser:
             if (m.text == 'init' or is_operator_marker(m.text)) and not self.is_op('.'):
                 raise ParseError(f"'@{m.text}' marks a method, so it belongs inside a class\nmove this function into a class, or remove the marker", m.line, m.col - 1)
             marker = m.text
+            last = m
             while self.is_op('.'):
-                # a dotted entry name, @greet.loud (D96a): the entry `greet` runs every @greet.*, `greet.loud` runs one
-                self.adv()
-                marker = marker + '.' + self.expect('NAME').text
+                # a dotted entry name, @greet.loud (D96a): the entry `greet` runs every @greet.*, `greet.loud` runs one; it is one
+                # word, with no spaces around its dots
+                if self.cur().line != last.line or self.cur().col != last.col + len(last.text):
+                    self.err(f'expected the end of the line after @{marker} (a dotted marker is one word, with no spaces: @{marker}.name)')
+                dot = self.adv()
+                if self.cur().kind == 'NAME' and (self.cur().line != dot.line or self.cur().col != dot.col + 1):
+                    self.err(f"expected a name right after '@{marker}.' (a dotted marker is one word, with no spaces)")
+                last = self.expect('NAME')
+                marker = marker + '.' + last.text
             self.expect('NEWLINE')
             if not self.is_def():
                 self.err(f'expected a function after @{marker}')

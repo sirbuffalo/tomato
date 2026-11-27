@@ -1,6 +1,7 @@
 # Seeds: packages and a registry for Tomato: design
 
-Status: **proposal for Davis to review. Nothing is built, and no language rule changes until Davis answers the questions
+Status: **proposal for Davis to review. The local part is built (the manifest, path and git seeds, the store and the `tomato seed`
+commands: D95a, D101a); the registry, signatures and the index client are not, and no language rule changes until Davis answers the questions
 at the end.** It records the decisions Davis has already made (the first section), settles what can be settled, and lists the
 few real forks. The source facts about the compiler were read on `main` at `a58ae90b` (v0.51).
 
