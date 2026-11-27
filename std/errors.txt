@@ -88,7 +88,7 @@ MsgpackError the ext type {} must be from -128 to 127 and not -1
 JSONDecodeError the text is not valid JSON
 MsgpackError the bytes are not valid MessagePack
 CacheMiss a key is not in the cache
-CompileError '**{}' needs a dict type, such as dict[int]
+CompileError (retired: '**{}' needs a dict type, such as dict[int]; the compiler says E466 instead; never emitted; the id stays so that later ids do not move)
 CompileError '*args' must come before '**kwargs', and both must be last in the parameter list
 CompileError '*{}' needs a tuple type, such as tuple[int]
 CompileError '@init' cannot be async
@@ -141,8 +141,8 @@ CompileError a for loop can loop over a range(), a list, a tuple, a set, a dict,
 CompileError a for loop cannot loop over a '{}
 CompileError a for loop cannot loop over a value of type Sized
 CompileError a for loop over '{}' needs the same item type in every member of {}, but the items are {} and {}
-CompileError a for loop with several variables needs enumerate(...) or zip(...)
-CompileError a for loop with two variables is not supported here
+CompileError (retired: a for loop with several variables needs enumerate(...) or zip(...); never emitted; the id stays so that later ids do not move)
+CompileError (retired: a for loop with two variables is not supported here; never emitted; the id stays so that later ids do not move)
 CompileError a function value ({}) cannot be converted to text
 CompileError a function value ({}) cannot be printed
 CompileError a function value does not take keyword arguments
@@ -157,7 +157,7 @@ CompileError a positional argument cannot follow a keyword argument
 CompileError a program input (a parameter of the @main function) must be an int, bool or str
 CompileError a program input cannot have a float default
 CompileError '{}' is not a format option that is supported
-CompileError a set can hold only int, bool or str values
+CompileError (retired: a set can hold only int, bool or str values; sets hold any hashable type since D78a; never emitted; the id stays so that later ids do not move)
 CompileError a tab cannot be used for indentation
 CompileError a task has no method '{}'
 CompileError a task method takes no arguments: t.{}()
@@ -203,7 +203,7 @@ CompileError extend() needs a list of the same type, {}, but this is {}
 CompileError extend() takes one list: extend(other)
 CompileError float() takes a number, but this is {}
 CompileError generators are nested too deeply here
-CompileError get() takes a key and a default value: get(key, default)
+CompileError (retired: get() takes a key and a default value; get() takes a key and optionally a default value (E379) now; never emitted; the id stays so that later ids do not move)
 CompileError input() is async, so it must be awaited
 CompileError input() takes an optional prompt as text: await input() or await input(prompt)
 CompileError insert() takes an index and an item: insert(index, item)
@@ -213,7 +213,7 @@ CompileError internal compiler error: class {} has no declaration
 CompileError internal compiler error: no definition for '{}'
 CompileError internal compiler error: no helper of kind {}
 CompileError internal compiler error: no method table slot for {}
-CompileError items() is not available for a dict whose values are {}
+CompileError (retired: items() is not available for a dict whose values are {}; never emitted; the id stays so that later ids do not move)
 CompileError join() takes exactly one list[str]
 CompileError key= needs a function of one {} item, but this is {}
 CompileError keyword arguments are not supported when creating an object
@@ -307,9 +307,9 @@ CompileError this kind of statement ({}) is not supported here
 CompileError this lambda takes {}
 CompileError this line ends with ':' but no indented block follows
 CompileError this line is indented differently from the block it belongs to
-CompileError this number has too large an exponent for a float
-CompileError this number has too many digits for a float
-CompileError this number is too large or too precise for a float
+CompileError (retired: a float literal with too large an exponent; literals of any size are legal since D77b; never emitted; the id stays so that later ids do not move)
+CompileError (retired: a float literal with too many digits; literals of any size are legal since D77b; never emitted; the id stays so that later ids do not move)
+CompileError (retired: a float literal too large or too precise; literals of any size are legal since D77b; never emitted; the id stays so that later ids do not move)
 CompileError this parameter type is not supported
 CompileError this return type is not supported
 CompileError this text has an unknown escape '{}'
@@ -457,7 +457,7 @@ CompileError float has no length: there is one float type, with an exponent of a
 CompileError (retired: float[length=N], a stage 1 type that D77c removed; the id stays so that later ids do not move)
 CompileError a union cannot hold None together with two or more other types
 CompileError '{}' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None
-CompileError dict keys other than str are not supported yet, so dict[{}, ...] cannot be built
+CompileError (retired: dict keys other than str; any hashable type is a dict key since D78a; never emitted; the id stays so that later ids do not move)
 CompileError a dict key must be an int, bool, float, text, tuple of those, or an object with a method marked @hash
 CompileError a set element must be an int, bool, float, text, tuple of those, or an object with a method marked @hash
 CompileError hash() cannot take a value of type {}

@@ -164,7 +164,7 @@ where the error was raised. `tomato explain E04:12 prog.tom` shows the diagnosti
 shows the class and message without a file. A line of zero means the runtime has no source location, for example when startup
 input is invalid or the machine runs out of memory. These process failures and stack exhaustion report an ID and terminate.
 
-To add an error, append a line in the form `Class text` to `std/errors.txt` and keep the existing line numbers. Pass that ID when
+To add an error, append a line in the form `Class text` to `std/errors.txt` and keep the existing line numbers. An id that is no longer raised is never deleted or reused: its line becomes `Class (retired: why; the id stays so that later ids do not move)`. Pass that ID when
 raising an error in the standard library. For a compiler-emitted runtime check, the table text is a prefix of the message.
 For a compile diagnostic, use `CompileError template`, with `{}` for dynamic parts of the first line. The compiler uses the
 most specific matching template and falls back to E368 for unrecognized messages.
