@@ -517,8 +517,8 @@ ValueError the StringIO is closed
 ValueError a StringIO position cannot be negative
 ValueError no path specified
 AssertionError assertion failed
-CompileError the function '{}' is marked @test, but it is async, and async tests are not supported yet
-CompileError the function '{}' is marked @test, so it must take no parameters and return nothing
+CompileError the function '{}' is marked @{}, but it is async, and async tests are not supported yet
+CompileError the function '{}' is marked @{}, so it must take no parameters and return nothing
 CompileError no function is marked @test
 SkipTest the test was skipped
 ValueError a tolerance must not be negative
@@ -580,3 +580,5 @@ ConfigError {}: the module '{}' has the name of a standard module, so imports of
 ConfigError {}: the owner "{}" is not one a registry accepts: it is a domain name with a dot (acme.example) or k- and a key hash
 CompileError the module '{}' is in the seed {} and in the standard library, so the import is ambiguous
 CompileError cannot read the file {} of the seed {}
+CompileError '{}' and '{}' are both marked @{}
+CompileError the function '{}' is marked @{}, and the entry '{}' runs several functions, so it must take no inputs and cannot be async

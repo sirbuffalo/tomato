@@ -352,12 +352,17 @@ export class Parser:
         if self.is_op('@'):
             self.adv()
             m = self.expect('NAME')
-            if m.text == 'init' or is_operator_marker(m.text):
+            if (m.text == 'init' or is_operator_marker(m.text)) and not self.is_op('.'):
                 raise ParseError(f"'@{m.text}' marks a method, so it belongs inside a class\nmove this function into a class, or remove the marker", m.line, m.col - 1)
+            marker = m.text
+            while self.is_op('.'):
+                # a dotted entry name, @greet.loud (D96a): the entry `greet` runs every @greet.*, `greet.loud` runs one
+                self.adv()
+                marker = marker + '.' + self.expect('NAME').text
             self.expect('NEWLINE')
             if not self.is_def():
-                self.err(f'expected a function after @{m.text}')
-            return self.funcdef(False, 'entry:' + m.text, False, True)
+                self.err(f'expected a function after @{marker}')
+            return self.funcdef(False, 'entry:' + marker, False, True)
         if self.is_def():
             return self.funcdef(False, '', False, True)
         if self.is_kw('class'):

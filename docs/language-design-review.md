@@ -179,7 +179,7 @@ decision.
 - A top-level `@anything` makes an entry point (D16a): `@bench def b():` runs with `tomato run f.tom bench`.
 - On methods, `@add`, `@hash` and the others are operator and protocol markers. At the top level they are refused:
   `@hash def h():` gives E96, "marks a method".
-- `@test` (D81a) is a top-level marker with its own meaning.
+- `@test` (D81a) is a top-level marker with its own meaning; since D96a it is written `@test.NAME`, one marker per function, and any marker may be dotted.
 
 So every new top-level marker takes a name some program may already use for an entry point. D81a's `@test` already did
 that before 1.0. After 1.0, adding `@bench`, `@example` or `@setup` would be a breaking change.

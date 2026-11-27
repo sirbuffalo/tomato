@@ -29,7 +29,7 @@
   "repository": {
     "comment": { "name": "comment.line.number-sign.tomato", "match": "#.*$" },
     "decorator": {
-      "match": "^\\s*(@)([A-Za-z_][A-Za-z0-9_]*)",
+      "match": "^\\s*(@)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)",
       "captures": { "1": { "name": "punctuation.definition.decorator.tomato" }, "2": { "name": "entity.name.function.decorator.tomato" } }
     },
     "llvm-declaration": {

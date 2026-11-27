@@ -47,7 +47,10 @@ on an older install moves to 1.0.0 as usual.
 - **Bitwise `&`, `|`, `^`, `~` on integers of any size** with Python's two's-complement rules; shifts, `2 ** n` and
   single-limb division of big integers are now linear time.
 - **A `File` opened in a `for` loop header is closed when the loop is left** (D82a).
-- **`assert` and `@test`** with `tomato test` (D81a).
+- **`assert` and `@test`** with `tomato test` (D81a). Every `@` entry marker marks exactly one function and may be
+  dotted (D96a): `@test.parse_empty` marks one test, `tomato test FILE` runs every `@test.*`, and `tomato test FILE
+  --entry test.parse_empty` (or `tomato run FILE test.parse_empty`) runs one; `tomato run FILE greet` runs every
+  `@greet.*` and `greet.loud` runs one. The same marker on two functions is an error (E587).
 - **`@neg` and `@rmul`** (D85a): `-x` and `number * x` on objects of any class. `math.Angle` uses them (`-deg(30)` is
   `-30 deg`, `3 * deg(30)` is `90 deg`) and has an `@hash`, so angles are dict keys and set elements.
 - `sum`, `min`, `max`, `sorted` and `list.sort()` take a list of objects whose class has `@add` (`sum`) or `@lt` (the

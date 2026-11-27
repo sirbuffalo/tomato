@@ -39,9 +39,9 @@ var args = Array.prototype.slice.call(arguments);
 // --timeout-ms=N anywhere in the arguments sets the run limit (jsc has no environment, so this is how the macOS test run passes TOMATO_WASM_TIMEOUT_MS)
 var argLimitMs = 0;
 args = args.filter(function (a) { var m = /^--timeout-ms=([0-9]+)$/.exec(a); if (m) argLimitMs = Number(m[1]); return !m; });
-// --entry=NAME anywhere in the arguments picks the entry point to compile (default main; `test` runs the functions marked @test)
+// --entry=NAME anywhere in the arguments picks the entry point to compile (default main; an entry NAME runs the functions marked @NAME or @NAME.*, so `test` runs the tests and `test.NAME` one of them)
 var entryName = "main";
-args = args.filter(function (a) { var m = /^--entry=([A-Za-z_][A-Za-z0-9_]*)$/.exec(a); if (m) entryName = m[1]; return !m; });
+args = args.filter(function (a) { var m = /^--entry=([A-Za-z_][A-Za-z0-9_.]*)$/.exec(a); if (m) entryName = m[1]; return !m; });
 // --config=FILE gives the compiler a tomato.toml (its [limits] table, as tomato.js's compile takes it)
 var configFile = "";
 args = args.filter(function (a) { var m = /^--config=(.+)$/.exec(a); if (m) configFile = m[1]; return !m; });

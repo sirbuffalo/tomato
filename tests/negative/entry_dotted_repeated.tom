@@ -1,0 +1,12 @@
+# the same full dotted marker on two functions (D96a)
+@greet.loud
+def loud():
+    print('HELLO')
+
+@greet.quiet
+def quiet():
+    print('hello')
+
+@greet.loud
+def shout():
+    print('HEY')

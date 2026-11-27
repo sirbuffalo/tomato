@@ -136,7 +136,7 @@ def agree(src: str, label: str):
 
 # ---- tests -----------------------------------------------------------------------------------------------------------------
 
-@test
+@test.every_file_of_the_repository
 def every_file_of_the_repository():
     files = repository_files()
     assert_true(len(files) > 300, f'the repository files were not found (the test runs in the repository: {len(files)} .tom files)')
@@ -153,7 +153,7 @@ def shape(src: str) -> str:
             parts.append(sp.kind + ':' + lines[sp.line - 1][sp.col:sp.end_col])
     return ' '.join(parts)
 
-@test
+@test.kinds_of_ordinary_code
 def kinds_of_ordinary_code():
     assert_equal(shape('x = 1'), 'name:x op:= number:1')
     assert_equal(shape('def f(a: int) -> str:'), 'keyword:def name:f op:( name:a op:: name:int op:) op:-> name:str op::')
@@ -163,7 +163,7 @@ def kinds_of_ordinary_code():
     assert_equal(shape('x //= 3 ** 2'), 'name:x op://= number:3 op:** number:2')
     assert_equal(shape('True and None'), 'keyword:True keyword:and name:None')
 
-@test
+@test.f_strings_are_text_with_code_in_the_fields
 def f_strings_are_text_with_code_in_the_fields():
     assert_equal(shape("f'hi'"), "string:f'hi'")
     assert_equal(shape("f'a{n}b'"), "string:f'a fstring-brace:{ name:n fstring-brace:} string:b'")
@@ -172,7 +172,7 @@ def f_strings_are_text_with_code_in_the_fields():
     assert_equal(shape("f'{d['k']}' + f\"{f'{1}'}\""), "string:f' fstring-brace:{ name:d op:[ string:'k' op:] fstring-brace:} string:' op:+ string:f\" fstring-brace:{ string:f' fstring-brace:{ number:1 fstring-brace:} string:' fstring-brace:} string:\"")
     assert_equal(shape("f'\\n{a}'"), "string:f'\\n fstring-brace:{ name:a fstring-brace:} string:'")
 
-@test
+@test.a_text_that_is_not_finished
 def a_text_that_is_not_finished():
     # the string goes to the end of the line, then an empty error span says where the closing quote was missing
     assert_equal(shape("print('hel"), "name:print op:( string:'hel error:")
@@ -187,7 +187,7 @@ def a_text_that_is_not_finished():
     assert_equal(st.error_line, 1)
     assert_equal(st.error_col, 6)
 
-@test
+@test.what_lex_refuses_is_an_error_span
 def what_lex_refuses_is_an_error_span():
     assert_equal(shape('x = $ + 1'), 'name:x op:= error:$ op:+ number:1')
     assert_equal(shape('12abc + 1'), 'number:12 error:abc op:+ number:1')
@@ -200,7 +200,7 @@ def what_lex_refuses_is_an_error_span():
     assert_equal(shape(chr(65279) + 'x'), 'error:' + chr(65279) + ' name:x')
     assert_equal(shape('if x:\n        a = 1\n    b = 2'), 'keyword:if name:x op:: name:a op:= number:1 error:     name:b op:= number:2')
 
-@test
+@test.comments_and_spaces_are_kept
 def comments_and_spaces_are_kept():
     assert_equal(shape('# a comment'), 'comment:# a comment')
     assert_equal(shape('    # indented'), 'comment:# indented')
@@ -208,7 +208,7 @@ def comments_and_spaces_are_kept():
     assert_equal(coverage_problem('x = 1   # c\n    \n\ny', spans), '')
     assert_equal(len(spans), 9)
 
-@test
+@test.the_state_says_what_is_open
 def the_state_says_what_is_open():
     st = lex_spans('x = 1')[1]
     assert_equal(st.depth, 0)
@@ -241,7 +241,7 @@ def the_state_says_what_is_open():
     assert_equal(st.indents, [0])
     assert_equal(st.message, '')
 
-@test
+@test.the_first_problem_is_the_one_lex_raises
 def the_first_problem_is_the_one_lex_raises():
     assert_equal(lex_spans('a = $\nb = \'x')[1].message, "unexpected character '$'\nTomato has no such symbol; remove it or put it inside a text")
     assert_equal(lex_spans('a = (\nb = \'x')[1].message, "this text is missing its closing quote '\nadd ' at the end of the text")
@@ -256,20 +256,20 @@ def corpus() -> list[str]:
         "class A implements B:\n    def f(self, *rest: tuple[int]) -> int | None:\n        return rest[0] if rest else None\n\nasync def g():\n    await h(f'{a!r}')\n",
     ]
 
-@test
+@test.every_prefix_of_every_line
 def every_prefix_of_every_line():
     for src in corpus():
         for line in src.split('\n'):
             for k in range(len(line) + 1):
                 agree(line[:k], f'the line <{line}> cut at {k}')
 
-@test
+@test.every_prefix_of_a_text
 def every_prefix_of_a_text():
     for src in corpus():
         for k in range(len(src) + 1):
             agree(src[:k], f'the text cut at {k}')
 
-@test
+@test.prefixes_of_real_programs
 def prefixes_of_real_programs():
     for path in ['compiler/src/repledit.tom', 'std/lineedit.tom', 'tests/programs/angles.tom']:
         text = os.read_text(path)
@@ -277,7 +277,7 @@ def prefixes_of_real_programs():
             for k in range(len(line) + 1):
                 agree(line[:k], f'{path}: <{line}> cut at {k}')
 
-@test
+@test.the_scanners_do_not_change_what_lex_makes
 def the_scanners_do_not_change_what_lex_makes():
     toks = lex("x = f'a{b}c' + 1.5e-2")
     kinds = ' '.join([t.kind for t in toks])

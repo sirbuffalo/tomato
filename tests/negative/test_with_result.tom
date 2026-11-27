@@ -1,4 +1,4 @@
 # a test returns nothing: run with the entry `test`
-@test
+@test.adds
 def adds() -> int:
     return 2

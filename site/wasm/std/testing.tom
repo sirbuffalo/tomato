@@ -3,12 +3,14 @@
 # "text: message". Pure Tomato, so it works natively and in the playground. No module-level values (D49b): the runner counts in a
 # small _Report object it passes around.
 #
-# A test file marks plain functions with no parameters and no result with @test and runs with `tomato test FILE`:
+# A test file marks plain functions with no parameters and no result with @test.NAME (every entry marker marks exactly one
+# function, so each test has a marker of its own: D96a) and runs with `tomato test FILE`:
 #     from testing import assert_equal
-#     @test
+#     @test.adds
 #     def adds():
 #         assert_equal(1 + 1, 2)
-# The compiler adds a driver that calls _run_all with the names and functions in the order they are written.
+# The entry `test` runs every @test and @test.* function; `tomato test FILE --entry test.adds` (or `tomato run FILE test.adds`)
+# runs one. The compiler adds a driver that calls _run_all with the names and functions in the order they are written.
 #
 # The generic helpers need the language to accept their operation for the type: assert_equal and assert_not_equal take types with ==
 # (not a class without an @eq method), and assert_none and assert_not_none take types that can be None (int, float, bool, text, lists,

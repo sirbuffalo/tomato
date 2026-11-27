@@ -3,7 +3,7 @@
 #   tomato run FILE [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]   compile, link and run (MODE: debug or release; debug is the default)
 #   tomato build FILE [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]   write a native program (--mode release for the optimised build)
 #   tomato compile FILE [--entry NAME] [--mode MODE]                  print the LLVM IR
-#   tomato test FILE... [--filter TEXT] [--mode MODE]                run the functions marked @test in each file (ok/FAIL lines and a summary; exit 1 if any test failed)
+#   tomato test FILE... [--entry test.NAME] [--filter TEXT] [--mode MODE]   run the functions marked @test.* in each file (ok/FAIL lines and a summary; exit 1 if any test failed)
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
 #   tomato seed install [--locked]                                    lock the seeds of tomato.toml ({ path = "../x" } seeds only) into tomato.lock; --locked checks without writing
@@ -225,29 +225,32 @@ case "$cmd" in
     printf '%s | %*s%s\n' "$pad" "$indent" '' "$(printf '%s' "$trimmed" | sed 's/./^/g')"
     exit 0 ;;
   test)
-    # tomato test FILE... [--filter TEXT] [--mode MODE]: compiles each file with the entry `test` (the compiler adds a driver that runs
-    # every function marked @test, in the order written: std/testing.tom) and runs it. --filter TEXT runs the tests whose name contains
-    # TEXT. The status is 1 when a file does not compile or any test failed, else 0. There is no discovery of files (B-Q2).
-    tfilter=""; tmode=""
+    # tomato test FILE... [--entry test.NAME] [--filter TEXT] [--mode MODE]: compiles each file with the entry `test` (the compiler adds a
+    # driver that runs every function marked @test or @test.NAME, in the order written: std/testing.tom) and runs it. --entry test.NAME
+    # runs only the functions marked @test.NAME (and @test.NAME.*); --filter TEXT runs the tests whose name contains TEXT. The status is
+    # 1 when a file does not compile or any test failed, else 0. There is no discovery of files (B-Q2).
+    tfilter=""; tmode=""; tentry="test"
     n=$#
     while [ $n -gt 0 ]; do
       n=$((n - 1))
       case "$1" in
         --filter) [ $n -ge 1 ] || usage; tfilter="$2"; shift 2; n=$((n - 1)) ;;
         --mode) [ $n -ge 1 ] || usage; tmode="$2"; shift 2; n=$((n - 1)) ;;
+        --entry) [ $n -ge 1 ] || usage; tentry="$2"; shift 2; n=$((n - 1)) ;;
         -*) die "unknown option '$1' for 'tomato test' (run 'tomato help')" ;;
         *) set -- "$@" "$1"; shift ;;
       esac
     done
+    case "$tentry" in test|test.?*) ;; *) die "the entry of 'tomato test' must be test or test.NAME (the name of a test marker), not '$tentry'" ;; esac
     [ $# -ge 1 ] || usage
     for f in "$@"; do [ -f "$f" ] || die "cannot read $f"; done
     nfiles=$#; status=0
     for f in "$@"; do
       [ "$nfiles" -gt 1 ] && printf '==> %s <==\n' "$f"
-      if [ -n "$tmode" ] && [ -n "$tfilter" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" test --mode "$tmode" --filter "$tfilter" || status=1
-      elif [ -n "$tmode" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" test --mode "$tmode" || status=1
-      elif [ -n "$tfilter" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" test --filter "$tfilter" || status=1
-      else TOMATO_WARNINGS="$warnings" "$invoked" run "$f" test || status=1; fi
+      if [ -n "$tmode" ] && [ -n "$tfilter" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" "$tentry" --mode "$tmode" --filter "$tfilter" || status=1
+      elif [ -n "$tmode" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" "$tentry" --mode "$tmode" || status=1
+      elif [ -n "$tfilter" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" "$tentry" --filter "$tfilter" || status=1
+      else TOMATO_WARNINGS="$warnings" "$invoked" run "$f" "$tentry" || status=1; fi
     done
     exit $status ;;
   config)

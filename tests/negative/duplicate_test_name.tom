@@ -1,10 +1,10 @@
-# two tests with the same name are two functions with the same name: run with the entry `test`
+# two tests with different markers but the same function name are two functions with the same name: run with the entry `test`
 from testing import assert_equal
 
-@test
+@test.adds_one
 def adds():
     assert_equal(1 + 1, 2)
 
-@test
+@test.adds_two
 def adds():
     assert_equal(2 + 2, 4)

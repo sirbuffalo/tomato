@@ -115,6 +115,7 @@ export class TomatoHighlighter implements Highlighter:
         line_first = True         # no span other than spaces and a comment has come yet on this line, and no bracket is open
         before = ''               # the text of the span before this one that is not a space or a comment
         decorated = False         # the span is the name of a decorator
+        dotted = 0                # how many of the next spans (a dot and a name) continue a dotted decorator name
         for index, sp in enumerate(spans):
             if sp.line != line:
                 line = sp.line
@@ -124,9 +125,17 @@ export class TomatoHighlighter implements Highlighter:
                 continue
             text = lines[sp.line - 1][sp.col:sp.end_col]
             style = self.style_of(sp, text, before)
-            if decorated:
+            if decorated or dotted > 0:
                 style = self.palette.definition
-                decorated = False
+                if decorated:
+                    decorated = False
+                else:
+                    dotted -= 1
+                if sp.kind == 'name' and index + 2 < len(spans):
+                    dot = spans[index + 1]
+                    tail = spans[index + 2]
+                    if dot.kind == 'op' and lines[dot.line - 1][dot.col:dot.end_col] == '.' and dot.line == sp.line and dot.col == sp.end_col and tail.kind == 'name' and tail.line == sp.line and tail.col == dot.end_col:
+                        dotted = 2          # @greet.loud: the dot and the next name belong to the marker (D96a)
             elif sp.kind == 'op' and text == '@' and line_first and index + 1 < len(spans):
                 nxt = spans[index + 1]
                 if nxt.kind == 'name' and nxt.line == sp.line and nxt.col == sp.end_col:

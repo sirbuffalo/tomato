@@ -581,7 +581,7 @@ no listening: E446
 no udp: E446
 no lookup: E446" "$r"; }
 t_wasm_test_entry() { # the entry name `test` in the browser path: the driver runs the @test functions, with the line, and the status is 1
-  printf 'from testing import assert_equal, skip\n\n@test\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test\ndef lookup():\n    skip("no network")\n' > "$work/wt.tom"
+  printf 'from testing import assert_equal, skip\n\n@test.adds\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test.fails\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test.lookup\ndef lookup():\n    skip("no network")\n' > "$work/wt.tom"
   m="$(tjsc site/wasm run "$work/wt.tom" --entry=test 2>&1 | grep -v '^Could not open file: ')"   # real jsc's read() prints that on standard error for each std module it looks for beside the program, caught or not (tomato-repl drops it too)
   case "$m" in "ok   adds
 FAIL fails
@@ -589,6 +589,10 @@ FAIL fails
 skip lookup  (no network)
 1 passed, 1 failed, 1 skipped
 ~rc 1") ok "wasm: the entry test runs the @test functions";; *) bad "wasm: the entry test runs the @test functions" "$m";; esac
+  m="$(tjsc site/wasm run "$work/wt.tom" --entry=test.adds 2>&1 | grep -v '^Could not open file: ')"
+  case "$m" in "ok   adds
+1 passed, 0 failed, 0 skipped
+~rc 0") ok "wasm: the entry test.adds runs one test";; *) bad "wasm: the entry test.adds runs one test" "$m";; esac
   m="$(tjsc site/wasm run "$work/wt.tom" 2>&1)"
   case "$m" in *"no function is marked @main"*"~rc 1") ok "wasm: a test file without @main is not a program";; *) bad "wasm: a test file without @main is not a program" "$m";; esac
 }
@@ -1691,11 +1695,11 @@ t_release_resume() { # release/release.sh after a failure (--resume, --from, --r
 }
 t_cli_test() { # tomato test: the ok/FAIL lines and summary on standard output, the status, --filter, --mode, several files, errors (pack B)
   part="${1:-1}"; cli_setup
-  printf 'from testing import assert_equal, skip\n\n@test\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test\ndef lookup():\n    skip("no network")\n' > "$work/t3.tom"
-  printf 'from testing import assert_equal\n\n@test\ndef one():\n    assert_equal(1, 1)\n\n@test\ndef two():\n    assert 2 > 1\n\n@test\ndef three():\n    assert_equal("a" + "b", "ab")\n' > "$work/tpass.tom"
-  printf 'from testing import assert_equal\n\n@test\ndef broken():\n    assert_equal(undefined_name, 1)\n' > "$work/tbad.tom"
-  printf '@test\ndef plain():\n    x = 2\n    assert x == 3, "x is not three"\n\n@test\ndef later():\n    print("later ran")\n' > "$work/tplain.tom"
-  printf 'import testing\n\n@test\ndef q():\n    testing.assert_equal(1, 1)\n    testing.assert_raises(boom, "ValueError")\n\ndef boom():\n    raise ValueError("x")\n' > "$work/timport.tom"
+  printf 'from testing import assert_equal, skip\n\n@test.adds\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test.fails\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test.lookup\ndef lookup():\n    skip("no network")\n' > "$work/t3.tom"
+  printf 'from testing import assert_equal\n\n@test.one\ndef one():\n    assert_equal(1, 1)\n\n@test.two\ndef two():\n    assert 2 > 1\n\n@test.three\ndef three():\n    assert_equal("a" + "b", "ab")\n' > "$work/tpass.tom"
+  printf 'from testing import assert_equal\n\n@test.broken\ndef broken():\n    assert_equal(undefined_name, 1)\n' > "$work/tbad.tom"
+  printf '@test.plain\ndef plain():\n    x = 2\n    assert x == 3, "x is not three"\n\n@test.later\ndef later():\n    print("later ran")\n' > "$work/tplain.tom"
+  printf 'import testing\n\n@test.q\ndef q():\n    testing.assert_equal(1, 1)\n    testing.assert_raises(boom, "ValueError")\n\ndef boom():\n    raise ValueError("x")\n' > "$work/timport.tom"
   if step 1; then
   r="$($t test "$work/t3.tom" 2>/dev/null)"; rc=$?
   check "tomato test: the lines and the summary are on standard output" "ok   adds
@@ -1763,7 +1767,98 @@ ok   later
   check "an uncaught failed assert has its release ID and line" "error E519:3" "$($t run tests/runtime/assert_failed.tom --mode release 2>&1)"
   r="$($t run "$work/t3.tom" 2>&1)"; rc=$?
   case "$r" in *"no function is marked @main"*) ok "tomato run on a test file without @main asks for @main";; *) bad "tomato run on a test file without @main" "$r";; esac
-  case "$($t help)" in *"tomato test FILE... [--filter TEXT] [--mode MODE]"*) ok "tomato help lists the test command";; *) bad "tomato help lists the test command";; esac
+  case "$($t help)" in *"tomato test FILE... [--entry test.NAME] [--filter TEXT] [--mode MODE]"*) ok "tomato help lists the test command";; *) bad "tomato help lists the test command";; esac
+  fi; if step 4; then
+  # dotted entry markers (D96a): every marker marks one function; the entry `x` runs @x and every @x.*, `x.y` runs that one
+  cat > "$work/tg.tom" <<'TG'
+@greet
+def hello():
+    print('hello')
+
+@greet.loud
+def loud():
+    print('HELLO')
+
+@greet.quiet
+def quiet():
+    print('hello...')
+
+@greetx
+def other():
+    print('other')
+
+@calc.add
+def add(n: int = 2):
+    print(n + 1)
+
+@main
+def main():
+    print('main')
+TG
+  check "entry greet runs @greet and every @greet.*, in the order written" "hello
+HELLO
+hello..." "$($t run "$work/tg.tom" greet 2>&1)"
+  check "entry greet.loud runs only that function" "HELLO" "$($t run "$work/tg.tom" greet.loud 2>&1)"
+  check "entry greet does not run @greetx (a dot, not a prefix)" "other" "$($t run "$work/tg.tom" greetx 2>&1)"
+  check "entry calc selects one function, which takes its inputs" "6" "$($t run "$work/tg.tom" calc 5 2>&1)"
+  check "entry calc.add runs it with the default input" "3" "$($t run "$work/tg.tom" calc.add 2>&1)"
+  check "the default entry is still @main" "main" "$($t run "$work/tg.tom" 2>&1)"
+  check "a group runs in release mode too" "hello
+HELLO
+hello..." "$($t run "$work/tg.tom" greet --mode release 2>&1)"
+  check "tomato build --entry greet.quiet writes a program that runs only that function" "hello..." "$($t build "$work/tg.tom" --entry greet.quiet -o "$work/tg_quiet" >/dev/null 2>&1 && "$work/tg_quiet" 2>&1)"
+  cat > "$work/tdot.tom" <<'TD'
+from testing import assert_equal
+
+@test
+def bare():
+    assert_equal(1, 1)
+
+@test.a.x
+def a_x():
+    assert_equal(2, 2)
+
+@test.a.y
+def a_y():
+    assert_equal(3, 3)
+
+@test.ab
+def ab():
+    assert_equal(4, 4)
+
+@test.fails
+def fails():
+    assert_equal(1, 2)
+TD
+  r="$($t test "$work/tdot.tom" 2>&1)"; rc=$?
+  check "tomato test runs @test and every @test.*, in the order written" "ok   bare
+ok   a_x
+ok   a_y
+ok   ab
+FAIL fails
+     expected 2, got 1  (raised on line 21)
+4 passed, 1 failed, 0 skipped" "$r"
+  check "that failing run exits 1" "1" "$rc"
+  r="$($t test "$work/tdot.tom" --entry test.a 2>&1)"; rc=$?
+  check "tomato test --entry test.a runs @test.a.x and @test.a.y, not @test.ab" "ok   a_x
+ok   a_y
+2 passed, 0 failed, 0 skipped" "$r"
+  check "a selected run that passes exits 0" "0" "$rc"
+  r="$($t test "$work/tdot.tom" --entry test.fails --mode release 2>&1)"; rc=$?
+  check "tomato test --entry test.fails runs that test alone, and exits 1" "FAIL fails
+     expected 2, got 1
+0 passed, 1 failed, 0 skipped 1" "$r $rc"
+  check "tomato test --entry test runs the same as no --entry" "$($t test "$work/tdot.tom" 2>&1)" "$($t test "$work/tdot.tom" --entry test 2>&1)"
+  r="$($t test "$work/tdot.tom" --entry test.a --filter y 2>&1)"
+  check "--filter works inside a selected entry" "ok   a_y
+1 passed, 0 failed, 0 skipped" "$r"
+  r="$($t run "$work/tdot.tom" test.ab 2>&1)"
+  check "tomato run FILE test.ab is the same selection" "ok   ab
+1 passed, 0 failed, 0 skipped" "$r"
+  r="$($t test "$work/tdot.tom" --entry test.zzz 2>&1)"; rc=$?
+  case "$r" in *"error[E228]: no function is marked @test.zzz"*) [ "$rc" = 1 ] && ok "tomato test --entry for a marker nothing has" || bad "tomato test --entry for a marker nothing has" "status $rc";; *) bad "tomato test --entry for a marker nothing has" "$r";; esac
+  r="$($t test "$work/tdot.tom" --entry main 2>&1)"; rc=$?
+  case "$r" in *"the entry of 'tomato test' must be test or test.NAME"*) [ "$rc" = 1 ] && ok "tomato test --entry main is refused" || bad "tomato test --entry main is refused" "status $rc";; *) bad "tomato test --entry main is refused" "$r";; esac
   fi
 }
 t_cli_compile() { cli_setup; check "compile writes IR" "yes" "$($t compile examples/shapes.tom | grep -q 'define i32 @main' && echo yes)"; }
@@ -1820,6 +1915,7 @@ spawn_cli t_cli_compile
 spawn_cli t_cli_test 1
 spawn_cli t_cli_test 2
 spawn_cli t_cli_test 3
+spawn_cli t_cli_test 4
 t_terminal_logic() { # std/terminal.tom: the pure parts as @test functions (the key decoder at every byte split, widths, SGR lowering, color depth), debug and release
   cli_setup
   for mode in debug release; do
@@ -1983,11 +2079,20 @@ neg type_in_unknown "this type is not supported here"
 neg assert_not_bool "a condition has type int, but bool is expected"
 neg assert_tuple "a condition has type tuple[bool, str], but bool is expected"
 neg assert_message_not_text "argument 1 of AssertionError has type int, but str is expected"
-neg test_on_async "is marked @test, but it is async, and async tests are not supported yet" test
-neg test_with_parameter "is marked @test, so it must take no parameters and return nothing" test
-neg test_with_result "is marked @test, so it must take no parameters and return nothing" test
+neg test_on_async "is marked @test.waits, but it is async, and async tests are not supported yet" test
+neg test_with_parameter "is marked @test.adds, so it must take no parameters and return nothing" test
+neg test_with_result "is marked @test.adds, so it must take no parameters and return nothing" test
 neg duplicate_test_name "'adds' is defined twice in module 'main'" test
 neg test_none_marked "no function is marked @test" test
+neg test_bare_repeated "'one' and 'two' are both marked @test" test
+neg entry_main_repeated "'first' and 'second' are both marked @main"
+neg entry_dotted_repeated "'loud' and 'shout' are both marked @greet.loud" greet
+neg entry_group_with_input "the function 'loud' is marked @greet.loud, and the entry 'greet' runs several functions, so it must take no inputs" greet
+neg entry_group_async "the function 'late' is marked @greet.late, and the entry 'greet' runs several functions, so it must take no inputs and cannot be async" greet
+neg entry_group_result "an entry point (a function marked with @main or similar) cannot return a value" greet
+neg entry_dotted_unmatched "no function is marked @greet.whisper" greet.whisper
+neg entry_dotted_unmatched_test "no function is marked @test.missing" test.missing
+neg entry_marker_dot_end "expected a name" greet
 
 # ---- input --------------------------------------------------------------------------------------------------------------
 t_input() {

@@ -1291,6 +1291,7 @@ class Mod:
     sources: dict[str, str] = {}  # the source text of each module loaded (for showing an error's line)
     helper_count: int = 0
     main_path: str = ''           # the file name shown for the main program
+    entry_alias: str = ''         # the name of the entry marker that compile_with looks for: the entry name, the full marker of the one function it selects, or that of a generated driver (entry_driver, D96a)
     exp_bits: int = 65536         # the limits on huge results (D77g): bits of a result's exponent, digits of an f format; the entry point sets them when they are not the defaults
     format_digits: int = 100000
     seed_files: dict[str, str] = {}    # the module map (design section 5): the file of each module of a seed the run uses, and the seed's label (`name version`)
@@ -13458,44 +13459,84 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
         for nm in ii.names:
             mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
 
-def test_driver(mod: Mod, src: str) -> str:
-    # tomato test (B-Q2): the entry name `test` runs every function marked @test, in the order they are written, one after another in one
-    # process. The functions are found in the main file, checked, and the source gets a driver function appended (as text, so no IR is
-    # written by hand): it passes the names and the functions themselves, as fn() values, to testing._run_all, which does the running
-    # and printing in Tomato (std/testing.tom). The driver is the entry point @test_main; the functions marked @test keep their own marker.
+def marker_selected(marker: str, entry_name: str) -> bool:
+    # D96a: an entry name selects the functions marked with it or with a dotted extension of it (`test` selects @test, @test.a and
+    # @test.a.b; `test.a` selects @test.a and @test.a.b, not @test.ab)
+    return marker == entry_name or marker.startswith(entry_name + '.')
+
+def entry_driver(mod: Mod, src: str, entry_name: str) -> str:
+    # D96a: every entry marker marks exactly one function (the same full marker on two functions is an error), and a marker may be
+    # dotted (@greet.loud). The entry name selects the functions whose marker it is or extends: `greet` runs @greet and every @greet.*,
+    # one after another, in the order they are written; `greet.loud` runs one. This looks at the main file's functions and gives
+    # mod.entry_alias the name that the entry lookup uses afterwards: the full marker of a lone function, or the marker of a driver
+    # that is appended as source (so no IR is written by hand) and calls the functions. For the entry `test` (and `test.NAME`) the
+    # driver passes the names and the functions themselves, as fn() values, to testing._run_all, which does the running and printing
+    # in Tomato (std/testing.tom) (tomato test, B-Q2); the functions marked @test keep their own marker.
     mod.sources['main'] = src
     mod.loading = 'main'
     top = val_nodes(parse(src).fields[0])
     mod.loading = ''
     mod.cur = 'main'
     imported = False       # set by `import testing`, which the parser stores as an import of every name (item `*`), or by a star import
-    names: list[str] = []
+    seen: dict[str, str] = {}
+    picked: list[Node] = []
     for item in top:
         if item.kind == 'Import' and item.fields[0].text == 'testing' and len(item.fields[1].items) == 1 and item.fields[1].items[0].text == '*':      # (how the parser writes a plain `import testing`; there is no `from testing import *`)
             imported = True
-        if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text == 'entry:test':
-            name = item.fields[0].text
-            if len(item.fields) > 8 and item.fields[8].flag:
-                raise CompileError(f"the function '{name}' is marked @test, but it is async, and async tests are not supported yet\nwrite the test as a plain function", item.line)
-            if len(item.fields[1].items) > 0 or item.fields[2].tag != 'z' or len(item.fields) > 10 or item.fields[7].flag:
-                raise CompileError(f"the function '{name}' is marked @test, so it must take no parameters and return nothing\nmove what it needs into the test, or into a helper function it calls", item.line)
-            names.append(name)
+        if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text.startswith('entry:'):
+            marker = item.fields[6].text[6:]
+            if marker in seen:
+                first = seen[marker]
+                second = item.fields[0].text
+                raise CompileError(f"'{first}' and '{second}' are both marked @{marker}\neach entry marker marks exactly one function: give the second a dotted name such as @{marker}.second", item.line)
+            seen[marker] = item.fields[0].text
+            if marker_selected(marker, entry_name):
+                picked.append(item)
+    is_test = entry_name == 'test' or entry_name.startswith('test.')
+    if not is_test:
+        mod.entry_alias = entry_name
+        if len(picked) == 1:
+            mod.entry_alias = picked[0].fields[6].text[6:]
+        elif len(picked) > 1:
+            lines: list[str] = []
+            for item in picked:
+                name = item.fields[0].text
+                marker = item.fields[6].text[6:]
+                if (len(item.fields) > 8 and item.fields[8].flag) or len(item.fields[1].items) > 0:
+                    raise CompileError(f"the function '{name}' is marked @{marker}, and the entry '{entry_name}' runs several functions, so it must take no inputs and cannot be async\nrun it by its own marker, or move what it needs into the function", item.line)
+                if item.fields[2].tag != 'z':
+                    raise CompileError('an entry point (a function marked with @main or similar) cannot return a value', item.line)
+                lines.append(f"    {name}()\n")
+            mod.entry_alias = 'group_main'
+            return src + "\n\n@group_main\ndef _tomato_group_driver():\n" + ''.join(lines)
+        return src
+    names: list[str] = []
+    for item in picked:
+        name = item.fields[0].text
+        marker = item.fields[6].text[6:]
+        if len(item.fields) > 8 and item.fields[8].flag:
+            raise CompileError(f"the function '{name}' is marked @{marker}, but it is async, and async tests are not supported yet\nwrite the test as a plain function", item.line)
+        if len(item.fields[1].items) > 0 or item.fields[2].tag != 'z' or len(item.fields) > 10 or item.fields[7].flag:
+            raise CompileError(f"the function '{name}' is marked @{marker}, so it must take no parameters and return nothing\nmove what it needs into the test, or into a helper function it calls", item.line)
+        names.append(name)
     if len(names) == 0:
-        raise CompileError('no function is marked @test\nwrite @test on the line above each function that is a test', 0)
+        if entry_name == 'test':
+            raise CompileError('no function is marked @test\nwrite @test.NAME on the line above each function that is a test', 0)
+        raise CompileError(f'no function is marked @{entry_name}\nwrite @{entry_name} on the line above the function that should start the program', 0)
     text = src + '\n\n'
     if not imported:
         text += 'import testing\n\n'
     text += "@test_main\ndef _tomato_test_driver(*args: tuple[str]):\n"
     text += "    testing._run_all([" + ', '.join([f"'{n}'" for n in names]) + "], [" + ', '.join(names) + "], args)\n"
+    mod.entry_alias = 'test_main'
     return text
 
 def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: str) -> str:
     table = open(f'{std}errors.txt')
     mod.errors = table.read().split('\n')
     table.close()
-    if entry_name == 'test':
-        src = test_driver(mod, src)
-        entry_name = 'test_main'
+    src = entry_driver(mod, src, entry_name)
+    entry_name = mod.entry_alias
     if mode == 'release':
         mod.mode = 2
     elif mode == 'normal':

@@ -9,7 +9,7 @@ from testing import assert_equal, assert_true, assert_false
 def complete(text: str) -> bool:
     return ReplValidator().complete(text)
 
-@test
+@test.single_lines_run_at_once
 def single_lines_run_at_once():
     assert_true(complete(''))
     assert_true(complete('x = 5'))
@@ -23,7 +23,7 @@ def single_lines_run_at_once():
     assert_true(complete('x = $'))
     assert_true(complete(')'))
 
-@test
+@test.blocks_end_at_an_empty_line
 def blocks_end_at_an_empty_line():
     # today's rule: a first line ending with ':' or starting with '@' opens a block, and an empty (or blank) last line ends it
     assert_false(complete('for i in range(2):'))
@@ -39,7 +39,7 @@ def blocks_end_at_an_empty_line():
     assert_false(complete("for i in r:\n    print('oops"))
     assert_true(complete("for i in r:\n    print('oops\n"))
 
-@test
+@test.open_brackets_go_on
 def open_brackets_go_on():
     # an open bracket goes on to the next line, as in Python (Davis's answer to question 5 of docs/repl-editor-design.md)
     assert_false(complete('x = (1,'))
@@ -56,13 +56,13 @@ def open_brackets_go_on():
     # a ':' inside brackets does not open a block
     assert_true(complete('d = {1:\n    2}'))
 
-@test
+@test.pasted_statements
 def pasted_statements():
     assert_true(complete('print(7)\nprint(8)'))
     assert_false(complete('x = 1\nfor i in r:\n    print(i)'))
     assert_true(complete('x = 1\nfor i in r:\n    print(i)\n'))
 
-@test
+@test.indent_of_a_new_line
 def indent_of_a_new_line():
     ind = ReplIndenter()
     assert_equal(ind.indent_after('for i in r:', ''), '    ')
@@ -74,7 +74,7 @@ def indent_of_a_new_line():
     assert_equal(code_part("a = 'x # y'  # c"), "a = 'x # y'")
     assert_equal(code_part('b = "q\\"#" # c'), 'b = "q\\"#"')
 
-@test
+@test.what_the_history_records
 def what_the_history_records():
     assert_true(worth_recording('x = 5', ''))
     assert_true(worth_recording('for i in r:\n    print(i)', 'x = 5'))
@@ -90,7 +90,7 @@ def what_the_history_records():
     assert_false(worth_recording('for i in r:\n    print(i)', 'for i in r:\n    print(i)'))
     assert_true(worth_recording('x = 5', 'y = 1'))
 
-@test
+@test.where_the_history_file_is
 def where_the_history_file_is():
     assert_equal(history_path('/tmp/given'), '/tmp/given')
     old = os.getenv('TOMATO_HISTORY')
@@ -116,14 +116,14 @@ def found(line: str) -> str:
     c = completer().complete(line, line)
     return f'{c.start}:' + ','.join(c.candidates)
 
-@test
+@test.names_the_session_uses
 def names_the_session_uses():
     # names that are not keywords and do not follow a dot (xs.append: append is not one), once each, in order; the repl's own wrapper is left out
     assert_equal(names_in(SESSION), ['area', 'w', 'int', 'h', 'main', 'total', 'xs', 'print'])
     assert_equal(names_in(''), [])
     assert_equal(names_in("x = 'unfinished"), ['x'])
 
-@test
+@test.inside_a_text_or_a_comment
 def inside_a_text_or_a_comment():
     assert_false(inside_text(''))
     assert_false(inside_text('print(x, '))
@@ -134,7 +134,7 @@ def inside_a_text_or_a_comment():
     assert_false(inside_text("x = '#'"))
     assert_true(inside_text("x = 'a\\' # c"))
 
-@test
+@test.completes_keywords_builtins_and_the_sessions_names
 def completes_keywords_builtins_and_the_sessions_names():
     assert_equal(found('pri'), '0:print,private')
     assert_equal(found('x = to'), '4:total')
@@ -147,7 +147,7 @@ def completes_keywords_builtins_and_the_sessions_names():
     assert_equal(found('Tr'), '0:True')
     assert_equal(found('sel'), '0:self')
 
-@test
+@test.completes_nothing_where_it_would_be_a_guess
 def completes_nothing_where_it_would_be_a_guess():
     assert_equal(found(''), '0:')
     assert_equal(found('print('), '6:')              # no word yet
@@ -157,7 +157,7 @@ def completes_nothing_where_it_would_be_a_guess():
     assert_equal(found('x = 12'), '4:')              # a number
     assert_equal(found('qqq'), '0:')                 # no such name
 
-@test
+@test.completes_modules_after_import_and_commands_at_the_start
 def completes_modules_after_import_and_commands_at_the_start():
     assert_equal(found('import '), '7:')             # nothing typed: no list of everything
     assert_equal(found('import l'), '7:lineedit')
@@ -168,7 +168,7 @@ def completes_modules_after_import_and_commands_at_the_start():
     assert_equal(found(':'), '0::help,:quit,:load,:save,:reset,:program,:compile')
     assert_equal(found(':load fi'), '8:')             # a file name is not completed
 
-@test
+@test.the_keywords_are_the_lexers
 def the_keywords_are_the_lexers():
     # every word of the list is one of the lexer's (the other way round is checked by tests/highlighter_lists.sh)
     cands = completer().complete('', '').candidates
@@ -179,7 +179,7 @@ def the_keywords_are_the_lexers():
         assert_equal(lex_spans(w)[0][0].kind, 'keyword')
         assert_true(w in completer().known())
 
-@test
+@test.the_standard_modules_are_the_files_of_a_folder
 def the_standard_modules_are_the_files_of_a_folder():
     names = module_names('std')
     assert_equal(module_names(''), [])

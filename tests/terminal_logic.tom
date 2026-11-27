@@ -48,7 +48,7 @@ def keys_are(data: list[int], want: str):
         assert_equal(two(data, at), want, f'{data} split at {at}')
     assert_equal(single(data), want, f'{data} one at a time')
 
-@test
+@test.plain_characters
 def plain_characters():
     keys_are([97], "char 'a'")
     keys_are([97, 98, 32, 126], "char 'a' | char 'b' | char ' ' | char '~'")
@@ -57,7 +57,7 @@ def plain_characters():
     keys_are([240, 159, 152, 128], "char '😀'")
     keys_are([228, 184, 173, 97], "char '中' | char 'a'")
 
-@test
+@test.control_keys
 def control_keys():
     keys_are([1], "char 'a' ctrl")
     keys_are([26], "char 'z' ctrl")
@@ -74,14 +74,14 @@ def control_keys():
     keys_are([127], 'key backspace')
     keys_are([8], 'key backspace')
 
-@test
+@test.crlf_is_one_enter
 def crlf_is_one_enter():
     # in one piece; split between the CR and the LF it cannot be told from an Enter followed by Ctrl-J
     assert_equal(whole([13, 10]), 'key enter')
     assert_equal(whole([13, 10, 97]), "key enter | char 'a'")
     assert_equal(single([13, 10]), 'key enter | key enter')
 
-@test
+@test.arrows_and_the_navigation_keys
 def arrows_and_the_navigation_keys():
     keys_are([27, 91, 65], 'key up')
     keys_are([27, 91, 66], 'key down')
@@ -106,7 +106,7 @@ def arrows_and_the_navigation_keys():
     keys_are([27, 91, 54, 126], 'key pagedown')
     keys_are([27, 91, 90], 'key backtab shift')
 
-@test
+@test.function_keys
 def function_keys():
     keys_are([27, 79, 80], 'key f1')
     keys_are([27, 79, 81], 'key f2')
@@ -124,7 +124,7 @@ def function_keys():
     keys_are([27, 91, 50, 51, 126], 'key f11')
     keys_are([27, 91, 50, 52, 126], 'key f12')
 
-@test
+@test.modifiers
 def modifiers():
     # the xterm parameter: 1 + shift + 2 alt + 4 ctrl + 8 meta
     keys_are([27, 91, 49, 59, 53, 67], 'key right ctrl')
@@ -145,7 +145,7 @@ def modifiers():
     keys_are([27, 91, 49, 51, 59, 50, 117], 'key enter shift')
     keys_are([27, 91, 50, 55, 117], 'key escape')
 
-@test
+@test.alt_and_the_lone_escape
 def alt_and_the_lone_escape():
     keys_are([27, 120], "char 'x' alt")
     keys_are([27, 195, 169], "char 'é' alt")
@@ -162,7 +162,7 @@ def alt_and_the_lone_escape():
     keys_are([27, 91, 49], '')
     keys_are([27, 91, 49, 59], '')
 
-@test
+@test.what_waits_for_more
 def what_waits_for_more():
     d = KeyDecoder()
     assert_false(d.pending())
@@ -188,7 +188,7 @@ def what_waits_for_more():
     assert_equal(shown(d.flush()), '')
     assert_false(d.pending())
 
-@test
+@test.bad_and_unknown_bytes_are_dropped
 def bad_and_unknown_bytes_are_dropped():
     keys_are([255, 97], "char 'a'")
     keys_are([254], '')
@@ -209,7 +209,7 @@ def bad_and_unknown_bytes_are_dropped():
     # a control character inside a sequence ends it
     keys_are([27, 91, 49, 1, 97], "char 'a' ctrl | char 'a'")
 
-@test
+@test.bracketed_paste
 def bracketed_paste():
     start = [27, 91, 50, 48, 48, 126]
     end = [27, 91, 50, 48, 49, 126]
@@ -236,7 +236,7 @@ def bracketed_paste():
     # an end marker outside a paste is nothing
     keys_are(end + [97], "char 'a'")
 
-@test
+@test.a_long_paste_in_small_pieces
 def a_long_paste_in_small_pieces():
     d = KeyDecoder()
     data: list[int] = [27, 91, 50, 48, 48, 126]
@@ -255,7 +255,7 @@ def a_long_paste_in_small_pieces():
     assert_equal(len(keys[0].text), 300 + 7)
     assert_equal(keys[0].text.count('\n'), 7)
 
-@test
+@test.key_fields_and_text
 def key_fields_and_text():
     d = KeyDecoder()
     keys = d.feed([27, 91, 49, 59, 53, 67, 1, 97])
@@ -275,7 +275,7 @@ def key_fields_and_text():
     assert_equal(str(Key('resize')), 'resize')
     assert_equal(str(Key('eof')), 'eof')
 
-@test
+@test.character_widths
 def character_widths():
     assert_equal(terminal.char_width(97), 1)
     assert_equal(terminal.char_width(32), 1)
@@ -321,7 +321,7 @@ def character_widths():
     assert_equal(terminal.char_width(78919), 0)      # an Egyptian hieroglyph modifier
     assert_equal(terminal.char_width(6863), 1)       # unassigned: one cell, not zero
 
-@test
+@test.text_widths
 def text_widths():
     assert_equal(terminal.text_width(''), 0)
     assert_equal(terminal.text_width('hello'), 5)
@@ -330,7 +330,7 @@ def text_widths():
     assert_equal(terminal.text_width(chr(128512) + chr(128512)), 4)
     assert_equal(terminal.text_width(chr(65039)), 0)
 
-@test
+@test.color_values
 def color_values():
     assert_equal(terminal.rgb(0, 0, 0), 16777216)
     assert_equal(terminal.rgb(1, 2, 3), 16777216 + 66051)
@@ -348,7 +348,7 @@ def bad_rgb(n: int):
 def bad_ansi(n: int):
     _c = terminal.ansi(n)
 
-@test
+@test.sgr_lowering_of_true_color
 def sgr_lowering_of_true_color():
     red = Style(terminal.rgb(235, 60, 39))
     green = Style(terminal.rgb(0, 150, 57))
@@ -372,7 +372,7 @@ def sgr_lowering_of_true_color():
     assert_equal(terminal.sgr(grey, 8), esc('[1;30m'))
     assert_equal(terminal.sgr(white, 8), esc('[1;37m'))
 
-@test
+@test.sgr_of_terminal_colors_and_the_palette
 def sgr_of_terminal_colors_and_the_palette():
     for colors in [8, 16, 256, 16777216]:
         assert_equal(terminal.sgr(Style(terminal.ansi(1)), colors), esc('[31m'), f'{colors} colors')
@@ -395,7 +395,7 @@ def sgr_of_terminal_colors_and_the_palette():
     assert_equal(terminal.sgr(Style(300, 16777215, True), 16), esc('[1m'))
     assert_equal(terminal.sgr(Style(300), 8), '')
 
-@test
+@test.sgr_attributes_and_the_rest
 def sgr_attributes_and_the_rest():
     assert_equal(terminal.sgr(Style(), 256), '')
     assert_equal(terminal.sgr(Style(terminal.ansi(1), -1, True), 0), '')
@@ -413,7 +413,7 @@ def sgr_attributes_and_the_rest():
     assert_equal(terminal.styled('x', Style(), 256), 'x')
     assert_equal(terminal.styled('', red, 16), esc('[1;31m') + esc('[0m'))
 
-@test
+@test.escape_helpers
 def escape_helpers():
     assert_equal(terminal.cursor_up(3), esc('[3A'))
     assert_equal(terminal.cursor_up(0), '')
@@ -430,7 +430,7 @@ def escape_helpers():
     assert_equal(terminal.bracketed_paste(True), esc('[?2004h'))
     assert_equal(terminal.bracketed_paste(False), esc('[?2004l'))
 
-@test
+@test.descriptors_that_are_not_terminals
 def descriptors_that_are_not_terminals():
     assert_false(terminal.is_tty(99))
     assert_false(terminal.is_tty(-1))
@@ -448,7 +448,7 @@ def depth(term: str, colorterm: str, program: str) -> int:
     set_env(term, colorterm, program, '-', '-')
     return terminal.color_depth('always', 2)
 
-@test
+@test.color_depth_from_the_environment
 def color_depth_from_the_environment():
     keep = [os.getenv('TERM'), os.getenv('COLORTERM'), os.getenv('TERM_PROGRAM'), os.getenv('NO_COLOR'), os.getenv('TOMATO_COLOR')]
     names = ['TERM', 'COLORTERM', 'TERM_PROGRAM', 'NO_COLOR', 'TOMATO_COLOR']
@@ -503,7 +503,7 @@ def color_depth_from_the_environment():
 def bad_mode(mode: str):
     _d = terminal.color_depth(mode, 2)
 
-@test
+@test.color_depth_checks_the_mode
 def color_depth_checks_the_mode():
     assert_raises_with(bad_mode, 'sometimes', 'ValueError')
     assert_raises_with(bad_mode, '', 'ValueError')

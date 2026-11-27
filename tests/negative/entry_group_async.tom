@@ -1,0 +1,8 @@
+# the entry `greet` runs every @greet.* one after another, so none may be async (D96a)
+@greet.quiet
+def quiet():
+    print('hello')
+
+@greet.late
+async def late():
+    print('later')

@@ -1,0 +1,4 @@
+# a dotted marker needs a name after every dot (D96a)
+@greet.
+def loud():
+    print('HELLO')

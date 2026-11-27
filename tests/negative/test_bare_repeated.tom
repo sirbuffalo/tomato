@@ -1,0 +1,10 @@
+# a bare @test may mark only one function: the second is the duplicate-marker error (D96a)
+from testing import assert_equal
+
+@test
+def one():
+    assert_equal(1, 1)
+
+@test
+def two():
+    assert_equal(2, 2)

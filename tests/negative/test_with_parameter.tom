@@ -1,6 +1,6 @@
 # a test takes no parameters: run with the entry `test`
 from testing import assert_equal
 
-@test
+@test.adds
 def adds(n: int):
     assert_equal(n + 1, 2)

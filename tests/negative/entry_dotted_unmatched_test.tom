@@ -1,0 +1,6 @@
+# the entry test.missing runs no test, because none is marked @test.missing (D96a)
+from testing import assert_equal
+
+@test.present
+def present():
+    assert_equal(1, 1)

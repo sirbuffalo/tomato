@@ -125,7 +125,7 @@ def temp_path(name: str) -> str:
 
 # ---- Buffer ----------------------------------------------------------------------------------------------------------------
 
-@test
+@test.buffer_insert_and_split
 def buffer_insert_and_split():
     b = Buffer()
     assert_true(b.is_empty())
@@ -142,7 +142,7 @@ def buffer_insert_and_split():
     b2.newline('    ')                       # the spaces after the cursor give way to the indent
     assert_equal(where(b2), '1:4 if x:|    y')
 
-@test
+@test.buffer_backspace_and_delete_join_lines
 def buffer_backspace_and_delete_join_lines():
     b = buf('ab\ncd', 1, 0)
     assert_true(b.backspace())
@@ -158,7 +158,7 @@ def buffer_backspace_and_delete_join_lines():
     b.backspace()
     assert_equal(where(b), '0:1 hllo')
 
-@test
+@test.buffer_moves_cross_line_ends
 def buffer_moves_cross_line_ends():
     b = buf('ab\ncd', 1, 0)
     assert_true(b.left())
@@ -171,7 +171,7 @@ def buffer_moves_cross_line_ends():
     b.col = 0
     assert_false(b.left())
 
-@test
+@test.buffer_up_down_keep_the_column
 def buffer_up_down_keep_the_column():
     b = buf('long line\nab\nanother', 0, 7)
     assert_true(b.down())
@@ -184,7 +184,7 @@ def buffer_up_down_keep_the_column():
     assert_false(b.up())
     assert_equal(b.row, 0)
 
-@test
+@test.buffer_words_and_kills
 def buffer_words_and_kills():
     b = buf('print(x)  + total', 0, 17)
     b.word_left()
@@ -212,7 +212,7 @@ def buffer_words_and_kills():
     assert_equal(b.kill_to_end(), '')         # within the line: it never joins lines
     assert_equal(b.text(), 'ab\ncd')
 
-@test
+@test.buffer_indents
 def buffer_indents():
     b = buf('        x', 0, 8)
     assert_true(b.dedent_back(4))
@@ -230,7 +230,7 @@ def buffer_indents():
     assert_equal(where(b), '0:1 x')
     assert_equal(lineedit.leading_spaces('   a  '), '   ')
 
-@test
+@test.buffer_set_text_puts_the_cursor_at_the_end
 def buffer_set_text_puts_the_cursor_at_the_end():
     b = Buffer()
     b.set_text('for i in r:\n    print(i)')
@@ -241,7 +241,7 @@ def buffer_set_text_puts_the_cursor_at_the_end():
 
 # ---- History ---------------------------------------------------------------------------------------------------------------
 
-@test
+@test.history_up_down_and_the_draft
 def history_up_down_and_the_draft():
     h = History(['one', 'two', 'three'], 1000)
     assert_false(h.recalled())
@@ -261,7 +261,7 @@ def history_up_down_and_the_draft():
     assert_equal(h.previous('new draft'), 'four')
     assert_equal(h.next(), 'new draft')
 
-@test
+@test.history_limit
 def history_limit():
     h = History(['a', 'b', 'c', 'd'], 3)
     assert_equal(', '.join(h.entries), 'b, c, d')
@@ -271,7 +271,7 @@ def history_limit():
     assert_true(e.previous('x') is None)
     assert_true(e.next() is None)
 
-@test
+@test.history_file_old_format
 def history_file_old_format():
     path = temp_path('old')
     # the file the bash repl wrote: ⏎ inside an entry, a trailing blank line, a tab, a CR and a control character
@@ -287,7 +287,7 @@ def history_file_old_format():
     os.remove(path)
     assert_equal(len(lineedit.read_history(path, '⏎')), 0)    # no file: no history
 
-@test
+@test.history_file_append_and_trim
 def history_file_append_and_trim():
     path = temp_path('dir') + '/sub/hist'
     lineedit.append_history(path, 'a = 1', '⏎', 3)              # the folders are made
@@ -312,7 +312,7 @@ def rows_of(lay: lineedit.Layout) -> str:
         parts.append(str(r))
     return ' '.join(parts) + f' @{lay.cursor_row},{lay.cursor_col}'
 
-@test
+@test.layout_rows_and_cursor
 def layout_rows_and_cursor():
     assert_equal(rows_of(lineedit.layout([''], '>>> ', '... ', 80, 0, 0)), '0:0-0 @0,4')
     assert_equal(rows_of(lineedit.layout(['for x:', '    y'], '>>> ', '... ', 80, 1, 2)), '0:0-6 1:0-5 @1,6')
@@ -320,7 +320,7 @@ def layout_rows_and_cursor():
     assert_equal(rows_of(lineedit.layout(['abcdefghijkl'], '>>> ', '... ', 10, 0, 8)), '0:0-6 0:6-12 @1,2')
     assert_equal(rows_of(lineedit.layout(['abcdefghijkl'], '>>> ', '... ', 10, 0, 6)), '0:0-6 0:6-12 @1,0')
 
-@test
+@test.layout_exactly_full_rows
 def layout_exactly_full_rows():
     # '>>> ' + 6 characters fill a 10-cell row: with the cursor at the end, it goes to a row of its own
     assert_equal(rows_of(lineedit.layout(['abcdef'], '>>> ', '... ', 10, 0, 6)), '0:0-6 0:6-6 @1,0')
@@ -330,7 +330,7 @@ def layout_exactly_full_rows():
     # two full rows
     assert_equal(rows_of(lineedit.layout(['abcdefghijklmnop'], '>>> ', '... ', 10, 0, 16)), '0:0-6 0:6-16 0:16-16 @2,0')
 
-@test
+@test.layout_wide_and_combining_characters
 def layout_wide_and_combining_characters():
     # 中 takes 2 cells: at column 9 of a 10-cell row it does not fit, so it starts the next row
     assert_equal(rows_of(lineedit.layout(['abcde中'], '>>> ', '... ', 10, 0, 6)), '0:0-5 0:5-6 @1,2')
@@ -339,7 +339,7 @@ def layout_wide_and_combining_characters():
     assert_equal(rows_of(lineedit.layout(['e' + chr(769) + 'x'], '>>> ', '... ', 80, 0, 3)), '0:0-3 @0,6')
     assert_equal(rows_of(lineedit.layout(['😀a'], '', '', 80, 0, 1)), '0:0-2 @0,2')
 
-@test
+@test.frame_text
 def frame_text():
     s = lineedit.Screen()
     f = s.frame(['for i in r:', '    print(i)'], [], '>>> ', '... ', 0, 3, False)
@@ -351,7 +351,7 @@ def frame_text():
     f = s.frame(['x'], [], '>>> ', '... ', 0, 1, False)
     assert_equal(spelled(f), '\\e[2A\\r\\e[J>>> x\\e[6G')
 
-@test
+@test.frame_tall_block_shows_a_window
 def frame_tall_block_shows_a_window():
     s = lineedit.Screen()
     s.height = 3
@@ -375,7 +375,7 @@ class Shout implements Highlighter:
             out.append(runs)
         return out
 
-@test
+@test.frame_with_runs_and_colors
 def frame_with_runs_and_colors():
     s = lineedit.Screen()
     s.colors = 16
@@ -389,7 +389,7 @@ def frame_with_runs_and_colors():
 
 # ---- whole sessions on a FakeTerminal --------------------------------------------------------------------------------------
 
-@test
+@test.session_type_and_submit
 def session_type_and_submit():
     result, term = session(Editor(), chars('1 + 2') + [enter()])
     assert_equal(result.status, 'text')
@@ -401,7 +401,7 @@ def session_type_and_submit():
     assert_true(out.startswith('\\e[?2004h\\r\\e[J>>> \\e[5G'), out)
     assert_true(out.endswith('\\r\\e[J>>> 1 + 2\\e[10G\\r\\n\\e[?2004l'), out)
 
-@test
+@test.session_block_with_auto_indent
 def session_block_with_auto_indent():
     keys = chars('for i in range(3):') + [enter()] + chars('print(i)') + [enter(), enter()]
     result, term = session(block_editor([]), keys)
@@ -410,7 +410,7 @@ def session_block_with_auto_indent():
     out = spelled(term.output())
     assert_true('>>> for i in range(3):\\r\\n...     print(i)\\r\\n...     \\e[9G\\r\\n' in out, out)
 
-@test
+@test.session_recall_and_edit_the_middle_line
 def session_recall_and_edit_the_middle_line():
     block = 'for i in range(2):\n    x = i\n    print(x)'
     # Up recalls the block with the cursor at its end; Up again goes to its middle line; End, then change it
@@ -419,7 +419,7 @@ def session_recall_and_edit_the_middle_line():
     assert_equal(result.status, 'text')
     assert_equal(result.text, 'for i in range(2):\n    x = i * 10\n    print(x)')
 
-@test
+@test.session_up_through_a_block_into_the_entry_before
 def session_up_through_a_block_into_the_entry_before():
     block = 'if a:\n    b'
     keys = [up(), up(), up()] + [enter()]
@@ -430,7 +430,7 @@ def session_up_through_a_block_into_the_entry_before():
     result2, _t2 = session(block_editor(['first = 1', block]), keys2)
     assert_equal(result2.text, 'draft')
 
-@test
+@test.session_edits_to_a_recalled_entry_are_dropped
 def session_edits_to_a_recalled_entry_are_dropped():
     keys = [up()] + chars(' changed') + [up(), down(), enter()]
     result, _term = session(Editor(), keys)
@@ -440,7 +440,7 @@ def session_edits_to_a_recalled_entry_are_dropped():
     result, _term = session(ed, [up()] + chars('!') + [up(), down(), enter()])
     assert_equal(result.text, 'two')
 
-@test
+@test.session_add_and_delete_lines
 def session_add_and_delete_lines():
     keys = [up()] + [enter()]          # Enter on the last line of an open block: a new line with its indent
     keys = keys + chars('y = 2') + [named('home'), named('backspace')]
@@ -453,13 +453,13 @@ def session_add_and_delete_lines():
     result, _term = session(block_editor(['if a:\n    x = 1\n    y = 2']), keys)
     assert_equal(result.text, 'if a:    x = 1\n    y = 2')
 
-@test
+@test.session_enter_inside_a_block_splits_the_line
 def session_enter_inside_a_block_splits_the_line():
     keys = [up(), up(), ctrl('e'), enter()] + chars('z = 0') + [ctrl('n'), ctrl('e'), enter(), enter()]
     result, _term = session(block_editor(['if a:\n    x = 1']), keys)
     assert_equal(result.text, 'if a:\n    z = 0\n    x = 1')
 
-@test
+@test.session_ctrl_c_and_ctrl_d
 def session_ctrl_c_and_ctrl_d():
     result, term = session(Editor(), chars('half') + [ctrl('c')])
     assert_equal(result.status, 'interrupt')
@@ -474,7 +474,7 @@ def session_ctrl_c_and_ctrl_d():
     result, term = session(Editor(), chars('abc'))
     assert_equal(result.status, 'eof')
 
-@test
+@test.session_paste
 def session_paste():
     paste = Key('paste', 'def f():\n\treturn 1\n' + chr(7))
     result, _term = session(block_editor([]), [paste, enter()])
@@ -483,14 +483,14 @@ def session_paste():
     result, _term = session(Editor(), [Key('paste', 'a\nb'), enter()])
     assert_equal(result.text, 'a\nb')
 
-@test
+@test.session_kills_and_yank
 def session_kills_and_yank():
     keys = chars('one two') + [ctrl('w'), ctrl('a')] + [ctrl('y')] + [ctrl('k'), ctrl('y'), ctrl('y'), enter()]
     result, _term = session(Editor(), keys)
     # Ctrl-W cuts 'two', Ctrl-Y at the start puts it back; Ctrl-K then cuts 'one ', and two Ctrl-Y put it back twice
     assert_equal(result.text, 'twoone one ')
 
-@test
+@test.session_tabs_and_shift_tab
 def session_tabs_and_shift_tab():
     keys = [named('tab'), named('tab')] + chars('x') + [Key('key', '', 'backtab', False, False, True), enter()]
     result, _term = session(Editor(), keys)
@@ -499,7 +499,7 @@ def session_tabs_and_shift_tab():
     result, _term = session(Editor(), keys)
     assert_equal(result.text, '    y')
 
-@test
+@test.session_resize_redraws_at_the_new_width
 def session_resize_redraws_at_the_new_width():
     ed = Editor()
     term = FakeTerminal()
@@ -514,20 +514,20 @@ def session_resize_redraws_at_the_new_width():
     assert_equal(frames[len(frames) - 5], '\\e[1A\\r\\e[J>>> abcdef\\r\\nghij\\e[5G')
     assert_equal(frames[len(frames) - 4], '\\e[1A\\r\\e[J>>> abcdef\\r\\nghijk\\e[6G')
 
-@test
+@test.session_ctrl_l_and_ignored_keys
 def session_ctrl_l_and_ignored_keys():
     keys = chars('a') + [ctrl('l'), ctrl('z'), named('f5'), named('escape'), Key('timeout'), Key('char', 'x', '', False, True), ch('b'), enter()]
     result, term = session(Editor(), keys)
     assert_equal(result.text, 'ab')
     assert_true('\\e[2J\\e[H\\r\\e[J>>> a\\e[6G' in spelled(term.output()))
 
-@test
+@test.session_alt_and_ctrl_word_moves
 def session_alt_and_ctrl_word_moves():
     keys = chars('one two') + [Key('char', 'b', '', False, True), ch('X'), Key('key', '', 'right', True), ch('Y'), Key('key', '', 'left', True), Key('char', 'f', '', False, True), ch('Z'), enter()]
     result, _term = session(Editor(), keys)
     assert_equal(result.text, 'one XtwoYZ')
 
-@test
+@test.session_wide_text
 def session_wide_text():
     result, term = session(Editor(), chars('中文 é') + [named('left'), named('backspace'), enter()])
     assert_equal(result.text, '中文é')
@@ -535,7 +535,7 @@ def session_wide_text():
 
 # ---- the kill ring ---------------------------------------------------------------------------------------------------------
 
-@test
+@test.kill_ring_keeps_the_newest_and_joins
 def kill_ring_keeps_the_newest_and_joins():
     r = KillRing()
     r.size = 3
@@ -562,7 +562,7 @@ def kill_ring_keeps_the_newest_and_joins():
 
 # ---- completion: the pieces ------------------------------------------------------------------------------------------------
 
-@test
+@test.common_prefix_of_words
 def common_prefix_of_words():
     assert_equal(lineedit.common_prefix([]), '')
     assert_equal(lineedit.common_prefix(['print']), 'print')
@@ -571,7 +571,7 @@ def common_prefix_of_words():
     assert_equal(lineedit.common_prefix(['ab', 'abc', 'ab']), 'ab')
     assert_equal(lineedit.common_prefix(['é1', 'é2']), 'é')
 
-@test
+@test.candidate_rows_in_columns
 def candidate_rows_in_columns():
     # down the first column, then the next, as ls does; two spaces between the columns
     rows = lineedit.candidate_rows(['apple', 'apricot', 'banana', 'cherry'], 30, 8)
@@ -584,7 +584,7 @@ def candidate_rows_in_columns():
     # wide characters count two cells
     assert_equal(lineedit.candidate_rows(['中文', 'ab'], 80, 8), ['中文  ab'])
 
-@test
+@test.candidate_rows_that_do_not_fit_say_how_many_are_left
 def candidate_rows_that_do_not_fit_say_how_many_are_left():
     names: list[str] = []
     for i in range(10):
@@ -593,7 +593,7 @@ def candidate_rows_that_do_not_fit_say_how_many_are_left():
     assert_equal(lineedit.candidate_rows(names, 11, 1), ['... 10 more'])
     assert_equal(len(lineedit.candidate_rows(names, 11, 5)), 5)
 
-@test
+@test.frame_lists_candidates_under_the_text
 def frame_lists_candidates_under_the_text():
     s = lineedit.Screen()
     s.menu = ['print', 'printf']
@@ -609,7 +609,7 @@ def frame_lists_candidates_under_the_text():
     f = s.frame(['pri'], [], '>>> ', '... ', 0, 3, True)
     assert_equal(spelled(f), '\\r\\e[J>>> pri\\e[8G')
 
-@test
+@test.frame_list_of_candidates_keeps_to_the_window
 def frame_list_of_candidates_keeps_to_the_window():
     s = lineedit.Screen()
     s.height = 4
@@ -668,7 +668,7 @@ def completing(words: list[str]) -> Editor:
     ed.completer = Words(words)
     return ed
 
-@test
+@test.session_tab_puts_in_the_only_candidate
 def session_tab_puts_in_the_only_candidate():
     result, _term = session(completing(['print', 'len', 'range']), chars('x = le') + [named('tab'), chars(')')[0], enter()])
     assert_equal(result.text, 'x = len)')
@@ -676,7 +676,7 @@ def session_tab_puts_in_the_only_candidate():
     result, _term = session(with_completer(Fixed(4, ['Print'])), chars('1 + pr') + [named('tab'), enter()])
     assert_equal(result.text, '1 + Print')
 
-@test
+@test.session_tab_adds_the_text_after_the_only_candidate
 def session_tab_adds_the_text_after_the_only_candidate():
     result, _term = session(with_completer(Fixed(0, ['add'], ' ')), chars('a') + [named('tab')] + chars('milk') + [enter()])
     assert_equal(result.text, 'add milk')
@@ -684,7 +684,7 @@ def session_tab_adds_the_text_after_the_only_candidate():
     result, _term = session(with_completer(Fixed(0, ['add', 'adjust'], ' ')), chars('a') + [named('tab'), enter()])
     assert_equal(result.text, 'ad')
 
-@test
+@test.session_tab_gives_the_common_start_and_then_the_list
 def session_tab_gives_the_common_start_and_then_the_list():
     ed = completing(['print', 'printf', 'prompt', 'len'])
     term = FakeTerminal()
@@ -702,7 +702,7 @@ def session_tab_gives_the_common_start_and_then_the_list():
     assert_equal(frames[7], '\\r\\e[J>>> print\\r\\nprint   printf\\e[1A\\e[10G')
     assert_equal(frames[8], '\\r\\e[J>>> print\\e[10G')                          # the last frame: no list, the text stays
 
-@test
+@test.session_the_list_goes_away_with_an_ignored_key_too
 def session_the_list_goes_away_with_an_ignored_key_too():
     term = FakeTerminal()
     term.keys = chars('p') + [named('tab'), named('tab'), named('f5'), enter()]
@@ -713,7 +713,7 @@ def session_the_list_goes_away_with_an_ignored_key_too():
     assert_true('p\\r\\npa  pb\\e[1A' in out)
     assert_true(out.endswith('>>> p\\e[6G\\r\\n\\e[?2004l'), out)
 
-@test
+@test.session_tab_with_no_candidates
 def session_tab_with_no_candidates():
     # in an indent Tab puts in the tab text, as before; after text it does nothing
     result, _term = session(completing(['print']), [named('tab')] + chars('zz') + [named('tab'), enter()])
@@ -724,7 +724,7 @@ def session_tab_with_no_candidates():
     result, _term = session(with_completer(Fixed(0, ['only'])), [named('tab'), enter()])
     assert_equal(result.text, 'only')
 
-@test
+@test.session_tab_in_the_middle_of_a_line_and_a_block
 def session_tab_in_the_middle_of_a_line_and_a_block():
     ed = completing(['value'])
     result, _term = session(ed, chars('x = va + 1') + [named('left')] * 4 + [named('tab'), enter()])
@@ -750,7 +750,7 @@ class Spy implements Completer:
 
 # ---- single-line mode ------------------------------------------------------------------------------------------------------
 
-@test
+@test.single_line_enter_always_submits
 def single_line_enter_always_submits():
     ed = Editor()
     ed.single_line = True
@@ -760,7 +760,7 @@ def single_line_enter_always_submits():
     result, _term = session(ed, [enter()])
     assert_equal(result.text, '')
 
-@test
+@test.single_line_paste_and_history_stay_on_one_line
 def single_line_paste_and_history_stay_on_one_line():
     ed = Editor()
     ed.single_line = True
@@ -776,7 +776,7 @@ def single_line_paste_and_history_stay_on_one_line():
     result, _term = session(ed, chars('d') + [up(), down(), enter()])
     assert_equal(result.text, 'd')
 
-@test
+@test.single_line_tab_does_not_indent
 def single_line_tab_does_not_indent():
     ed = Editor()
     ed.single_line = True
@@ -788,7 +788,7 @@ def single_line_tab_does_not_indent():
 
 # ---- the kill ring ---------------------------------------------------------------------------------------------------------
 
-@test
+@test.session_kill_ring_of_one_is_the_last_cut
 def session_kill_ring_of_one_is_the_last_cut():
     ed = Editor()
     result, _term = session(ed, chars('one two three') + [ctrl('w'), ctrl('w'), ctrl('y'), enter()])
@@ -797,7 +797,7 @@ def session_kill_ring_of_one_is_the_last_cut():
     result, _term = session(ed, chars('a b') + [ctrl('w'), ctrl('w'), ctrl('y'), Key('char', 'y', '', False, True), enter()])
     assert_equal(result.text, 'a ')
 
-@test
+@test.session_kill_ring_joins_cuts_in_a_row_and_alt_y_cycles
 def session_kill_ring_joins_cuts_in_a_row_and_alt_y_cycles():
     ed = Editor()
     ed.kill_ring = 3
@@ -813,7 +813,7 @@ def session_kill_ring_joins_cuts_in_a_row_and_alt_y_cycles():
     # the ring is ['cc', 'bb X'] (the cut of 'X' and the one of 'bb ' joined), the line 'aa ': Ctrl-Y puts back 'bb X', Alt-Y swaps in 'cc'
     assert_equal(result.text, 'aa cc')
 
-@test
+@test.session_alt_y_needs_a_yank_just_before_and_survives_reads
 def session_alt_y_needs_a_yank_just_before_and_survives_reads():
     ed = Editor()
     ed.kill_ring = 2

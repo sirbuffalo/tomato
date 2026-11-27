@@ -1,0 +1,8 @@
+# `tomato run FILE greet.whisper` finds no function marked @greet.whisper (D96a); @greet.loud does not match it
+@greet.loud
+def loud():
+    print('HELLO')
+
+@greet.loudest
+def loudest():
+    print('HELLO!!')

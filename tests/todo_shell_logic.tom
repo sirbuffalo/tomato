@@ -69,7 +69,7 @@ def texts(todos: Todos) -> str:
 
 # ---- the commands ----------------------------------------------------------------------------------------------------------
 
-@test
+@test.commands_change_the_list
 def commands_change_the_list():
     t = Todos()
     assert_equal(t.run('list'), 'nothing to do')
@@ -88,7 +88,7 @@ def commands_change_the_list():
     assert_equal(t.run('quit'), 'bye')
     assert_true(t.finished)
 
-@test
+@test.commands_say_what_is_wrong
 def commands_say_what_is_wrong():
     t = Todos()
     assert_equal(t.run('add'), 'add what? (add TEXT)')
@@ -107,7 +107,7 @@ def found(t: Todos, line: str) -> str:
     c = TodoCompleter(t).complete(line, line)
     return f'{c.start}:' + ','.join(c.candidates)
 
-@test
+@test.completer_offers_commands_and_item_numbers
 def completer_offers_commands_and_item_numbers():
     t = Todos()
     assert_equal(found(t, ''), '0:add,clear,done,help,list,quit,rm,undo')
@@ -130,7 +130,7 @@ def completer_offers_commands_and_item_numbers():
 
 # ---- whole sessions on a FakeTerminal --------------------------------------------------------------------------------------
 
-@test
+@test.shell_completes_and_runs_commands
 def shell_completes_and_runs_commands():
     keys = typed('ad') + [tab()] + typed('milk') + [enter()] + typed('li') + [tab(), enter()] + typed('quit') + [enter()]
     t, out = run_shell(keys)
@@ -145,7 +145,7 @@ def shell_completes_and_runs_commands():
             answers.append(w)
     assert_equal(answers, ['added 1: milk\\n', '  1 [ ] milk\\n', 'bye\\n'])
 
-@test
+@test.shell_lists_the_candidates_under_the_prompt
 def shell_lists_the_candidates_under_the_prompt():
     t = Todos()
     t.run('add a')
@@ -164,21 +164,21 @@ def shell_lists_the_candidates_under_the_prompt():
     # the next key takes the list away
     assert_equal(out[7], '\\r\\e[Jtodo> done x\\e[13G')
 
-@test
+@test.shell_history_brings_back_earlier_lines
 def shell_history_brings_back_earlier_lines():
     keys = typed('add milk') + [enter(), up(), enter()] + typed('add eggs') + [enter(), up(), up(), enter(), up(), up(), up()] + [Key('char', 'd', '', True)]
     t, _out = run_shell(keys)
     # the lines 'add milk', 'add milk' (recalled), 'add eggs', 'add milk' (two Ups), then nothing more
     assert_equal(texts(t), '- milk, - milk, - eggs, - milk')
 
-@test
+@test.shell_ctrl_c_drops_the_line_and_ctrl_d_leaves
 def shell_ctrl_c_drops_the_line_and_ctrl_d_leaves():
     keys = typed('add oops') + [Key('char', 'c', '', True)] + typed('add milk') + [enter(), Key('char', 'd', '', True)] + typed('add never') + [enter()]
     t, _out = run_shell(keys)
     assert_equal(texts(t), '- milk')
     assert_false(t.finished)                                 # Ctrl-D ended the shell, not a command
 
-@test
+@test.shell_pastes_stay_on_one_line
 def shell_pastes_stay_on_one_line():
     keys = [Key('paste', 'add one\nadd two'), enter()]
     t, _out = run_shell(keys)

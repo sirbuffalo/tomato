@@ -1,0 +1,8 @@
+# an entry point returns nothing, in a group too (D96a)
+@greet.quiet
+def quiet():
+    print('hello')
+
+@greet.count
+def count() -> int:
+    return 3

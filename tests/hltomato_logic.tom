@@ -42,7 +42,7 @@ def marked(lines: list[str]) -> list[str]:
 def one(line: str) -> str:
     return marked([line])[0]
 
-@test
+@test.keywords_names_and_numbers
 def keywords_names_and_numbers():
     assert_equal(one('def main():'), '{keyword|def} {definition|main}():')
     assert_equal(one('async def g():'), '{keyword|async} {keyword|def} {definition|g}():')
@@ -54,11 +54,16 @@ def keywords_names_and_numbers():
     assert_equal(one('return not False'), '{keyword|return} {keyword|not} {constant|False}')
     assert_equal(one('x //= 3 ** 2'), 'x //= {number|3} ** {number|2}')
 
-@test
+@test.decorators_and_builtins
 def decorators_and_builtins():
     assert_equal(one('@main'), '{definition|@main}')
     assert_equal(one('@init'), '{definition|@init}')
     assert_equal(one('    @test'), '    {definition|@test}')
+    # a dotted entry marker is one decorator (D96a): every name and dot of it
+    assert_equal(one('@test.parse_empty'), '{definition|@test.parse_empty}')
+    assert_equal(one('@greet.loud.twice'), '{definition|@greet.loud.twice}')
+    assert_equal(one('    @a.b'), '    {definition|@a.b}')
+    assert_equal(one('x = a.b.c'), 'x = a.b.c')
     assert_equal(one('print(len(xs), sorted(ys))'), '{builtin|print}({builtin|len}(xs), {builtin|sorted}(ys))')
     assert_equal(one('x = list[int]()'), 'x = {builtin|list}[{builtin|int}]()')
     assert_equal(one('raise ValueError("no")'), '{keyword|raise} {builtin|ValueError}({string|"no"})')
@@ -68,14 +73,14 @@ def decorators_and_builtins():
     assert_equal(marked(['f(', '@x)'])[1], '@x)')
     assert_equal(marked(['x = (1 +', '@y)'])[1], '@y)')
 
-@test
+@test.texts_and_f_strings
 def texts_and_f_strings():
     assert_equal(one("print('a#b', \"c\")"), "{builtin|print}({string|'a#b'}, {string|\"c\"})")
     assert_equal(one("s = f'a{n:>3}b'"), "s = {string|f'a}{brace|{}n:{number|>3}{brace|}}{string|b'}")
     assert_equal(one("t = f'{x + 1} and {len(y)}'"), "t = {string|f'}{brace|{}x + {number|1}{brace|}}{string| and }{brace|{}{builtin|len}(y){brace|}}{string|'}")
     assert_equal(one("u = 'é' + 'ü' + 2"), "u = {string|'é'} + {string|'ü'} + {number|2}")
 
-@test
+@test.half_typed_text_still_has_colors
 def half_typed_text_still_has_colors():
     assert_equal(one("print('open"), "{builtin|print}({string|'open}")
     assert_equal(one("x = f'a{b"), "x = {string|f'a}{error|{}{string|b}")
@@ -87,7 +92,7 @@ def half_typed_text_still_has_colors():
     assert_equal(one(''), '')
     assert_equal(one('    '), '    ')
 
-@test
+@test.blocks_are_colored_as_a_whole
 def blocks_are_colored_as_a_whole():
     got = marked(['for i in range(2):', '    if i:', '        print(i)  # shown', '    else:', '        pass', ''])
     assert_equal(got[0], '{keyword|for} i {keyword|in} {builtin|range}({number|2}):')
@@ -100,14 +105,14 @@ def blocks_are_colored_as_a_whole():
     got = marked(['xs = [1,', '      2, None]', 'y = 3'])
     assert_equal(got, ['xs = [{number|1},', '      {number|2}, {constant|None}]', 'y = {number|3}'])
 
-@test
+@test.builtin_names
 def builtin_names():
     for w in ['print', 'len', 'str', 'int', 'float', 'range', 'sorted', 'round', 'any', 'ValueError', 'File']:
         assert_true(is_builtin(w), w)
     for w in ['prin', 'printx', 'self', 'main', 'Print', '', ' ']:
         assert_false(is_builtin(w), w)
 
-@test
+@test.the_palette_at_every_depth
 def the_palette_at_every_depth():
     # the brand colors at 24 bits: the red #EB3C27 for keywords, the green #009639 for texts
     p = Palette(TRUE_COLOR)
@@ -141,7 +146,7 @@ def the_palette_at_every_depth():
     assert_equal(terminal.styled('def', Palette(16).keyword, 0), 'def')
     assert_equal(terminal.styled('def', Palette(16).keyword, 16), esc('[31m') + 'def' + esc('[0m'))
 
-@test
+@test.no_color_below_what_is_readable_on_both
 def no_color_below_what_is_readable_on_both():
     # the palette has no white, black or grey (they would vanish on one of the two backgrounds) and no background colors
     for colors in [TRUE_COLOR, 256, 16, 8]:

@@ -237,6 +237,8 @@ No fixtures, setup/teardown or parametrization in v1: a test that needs shared s
 
 ### 2.3 Layer 3: `@test` and `tomato test` (compiler + shell, M) — **Davis B-Q2**
 
+> **Changed by D96a (26 November 2026):** the text below is the proposal as approved. As built, `@test` does not repeat: every entry marker marks exactly one function, so each test is written `@test.NAME` (a dotted entry name), the entry `test` runs every `@test.*`, and `tomato test FILE --entry test.NAME` runs one. The example below was written with repeated `@test` and is not valid any more.
+
 ```
 from testing import assert_equal
 

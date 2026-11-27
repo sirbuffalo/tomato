@@ -1,0 +1,8 @@
+# the entry `greet` runs every @greet.* together, so each must take no inputs (D96a); `greet.loud` alone could take them
+@greet.loud
+def loud(times: int):
+    print('HELLO' * times)
+
+@greet.quiet
+def quiet():
+    print('hello')
