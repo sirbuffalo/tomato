@@ -50,9 +50,9 @@ def _str_rstrip_chars(s: str, chars: str) -> str:
 def _str_strip_chars(s: str, chars: str) -> str:
     return _str_rstrip_chars(_str_lstrip_chars(s, chars), chars)
 
-# The text methods splitlines, partition, rpartition, rsplit, zfill, ljust, rjust, center, title, capitalize, isalnum,
-# removeprefix and removesuffix (D75b). The compiler turns `s.zfill(5)` into _str_zfill(s, 5), and keeps the names and the
-# defaults of the parameters below for the messages and for keywords.
+# The text methods splitlines, partition, rpartition, rsplit, zfill, ljust, rjust, center, isalnum, removeprefix and
+# removesuffix (D75b; title and capitalize are in the runtime, with upper and lower). The compiler turns `s.zfill(5)` into
+# _str_zfill(s, 5), and keeps the names and the defaults of the parameters below for the messages and for keywords.
 
 # ends of a line for splitlines(): \n, \r, \v, \f, the separators \x1c to \x1e, NEL and the Unicode line and paragraph
 # separators (as in Python)
@@ -166,25 +166,6 @@ def _str_center(s: str, width: int, fillchar: str = ' ') -> str:
     if pad % 2 == 1 and width % 2 == 1:
         left += 1
     return fillchar * left + s + fillchar * (pad - left)
-
-# a letter that has an upper and a lower case (the case tables are the runtime's: see unicode_case)
-def _is_cased(c: str) -> bool:
-    return c.upper() != c.lower()
-
-# s.title(): each run of letters starts with an upper case letter and goes on in lower case
-def _str_title(s: str) -> str:
-    out: list[str] = []
-    after_letter = False
-    for c in s:
-        if after_letter:
-            out.append(c.lower())
-        else:
-            out.append(c.upper())
-        after_letter = _is_cased(c)
-    return ''.join(out)
-
-def _str_capitalize(s: str) -> str:
-    return s[:1].upper() + s[1:].lower()
 
 # s.isalnum(): not empty, and every character a letter or a digit (the runtime's Unicode tables, as isalpha and isdigit)
 def _str_isalnum(s: str) -> bool:

@@ -23,6 +23,9 @@ on an older install moves to 1.0.0 as usual.
   instead of `0.0`, and `tan` of a radian angle no longer raises E47 (D83a).
 - `float[length=64]` is not a type (it was added and removed again during this release; D77c).
 - `tomato update` stops before a new minor or major version unless given `--minor`.
+- `upper()`, `lower()`, `title()` and `capitalize()` use Python's full Unicode case mapping instead of the one-letter
+  one: `'ß'.upper()` is `'SS'`, `'ßa'.title()` is `'Ssa'`, `'ΌΣΟΣ'.lower()` ends in the final sigma `'ς'`, `'ǆ'.title()`
+  is `'ǅ'`, so the length of the result can differ from the text's (D17d).
 
 ### Language
 

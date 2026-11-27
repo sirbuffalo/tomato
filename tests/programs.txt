@@ -130,6 +130,7 @@ small_int_loops
 list_methods
 open_errors
 unicode_case
+unicode_case_full
 cache_expired
 utf8_invalid
 std_streams

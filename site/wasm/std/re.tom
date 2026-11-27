@@ -662,9 +662,29 @@ def _equal(a: int, b: int, flags: int) -> bool:
         return False
     if (flags & ASCII) != 0 and (a >= 128 or b >= 128):
         return False
-    x = chr(a)
-    y = chr(b)
-    return x.lower() == y.lower() or x.upper() == y.upper()
+    return _simple_lower(a) == _simple_lower(b) or _simple_upper(a) == _simple_upper(b)
+
+# Matching ignoring case uses the one-letter (simple) case mappings, as Python's re does; str.lower() and str.upper() use the
+# full mappings, which can be longer ('ß'.upper() is 'SS'). The simple lower case differs from lower() only for U+0130; the
+# simple upper case is upper() when that is one letter, else the titlecase when that is, else the letter itself (U+1F80 has
+# the simple upper case U+1F88, which is also its titlecase).
+def _simple_lower(c: int) -> int:
+    if c == 304:
+        return 105
+    s = chr(c).lower()
+    if len(s) == 1:
+        return ord(s)
+    return c
+
+def _simple_upper(c: int) -> int:
+    ch = chr(c)
+    s = ch.upper()
+    if len(s) == 1:
+        return ord(s)
+    s = ch.title()
+    if len(s) == 1:
+        return ord(s)
+    return c
 
 def _range_contains(spec: list[int], value: int) -> bool:
     # Ranges can overlap, so binary-search the last start <= value and retain
@@ -684,7 +704,7 @@ def _range_contains(spec: list[int], value: int) -> bool:
 def _class_match(spec: list[int], c: int, flags: int) -> bool:
     found = _range_contains(spec, c)
     if (flags & IGNORECASE) != 0 and ((flags & ASCII) == 0 or c < 128):
-        found = found or _range_contains(spec, ord(chr(c).lower())) or _range_contains(spec, ord(chr(c).upper()))
+        found = found or _range_contains(spec, _simple_lower(c)) or _range_contains(spec, _simple_upper(c))
     i = 1
     while i < len(spec) and spec[i] < 0:
         if _category(chr(c), -spec[i] - 1, flags):

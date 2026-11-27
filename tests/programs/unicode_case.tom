@@ -1,4 +1,6 @@
-# str.upper() and str.lower() use Unicode simple case mapping: one letter becomes one letter, so 'ß' stays and the length never changes.
+# str.upper(), lower(), title() and capitalize() use Python's full Unicode case mapping (Unicode 16.0): a letter may become two or
+# three ('ß' is 'SS'), a capital sigma becomes the final sigma at the end of a word, and title() uses titlecase forms. The output
+# is what Python 3.14 prints for the same lines (unicode_case_full.tom hashes every code point).
 @main
 def main():
     print('héllo wörld'.upper())
@@ -10,3 +12,15 @@ def main():
     print('日本語 abc 123 ✓'.upper())
     print(len("straße".upper()), len("ÀÉ".lower()), "İ".lower(), "ſ".upper(), "K".lower())
     print('MiXeD 1'.upper(), 'MiXeD 1'.lower(), ''.upper() == '')
+    print('straße'.upper(), 'STRASSE'.lower(), 'ß'.title(), 'ßa'.title(), 'ß'.capitalize(), 'ẞ'.lower(), len('ß'.upper()))
+    print('ŉ'.upper(), 'ǰ'.upper(), 'ΐ'.upper(), 'ﬁnal ﬂow ﬃ'.upper(), 'ﬁnal ﬂow ﬃ'.title(), 'ﬁnal'.capitalize())
+    print('ᾳ'.upper(), 'ᾀ'.upper(), 'ᾀ'.title(), 'ᾼ'.lower(), 'ᾷ'.upper(), 'ὐ'.upper(), 'ῷ'.title())
+    print('ǆungla ǉ ǌ ǳ'.title(), 'ǆungla'.capitalize(), 'ǅ'.upper(), 'ǅ'.lower(), 'Ǆ'.title(), 'ǆ'.upper())
+    print('ა'.upper(), 'ა'.title(), 'ა'.capitalize(), 'Ა'.lower(), 'აბგ'.upper(), 'ბ ბ'.title())
+    print('İ'.lower(), len('İ'.lower()), 'İstanbul'.lower(), 'i'.upper(), 'ı'.upper(), 'ſ'.upper(), 'K'.lower())
+    print('ΣΑΣ'.lower(), 'ΌΣΟΣ'.lower(), 'ΌΣΟΣ ΑΣ'.lower(), 'Σ'.lower(), 'aΣ'.lower(), 'Σa'.lower(), 'a Σ'.lower(), 'a.Σ'.lower(), 'a.Σ.b'.lower())
+    print('ὈΔΥΣΣΕΎΣ'.lower(), 'ὈΔΥΣΣΕΎΣ'.title(), 'ΑΣ'.capitalize(), 'σας ΣΑΣ'.title(), 'AΣͅ'.lower(), 'Σ'.upper(), 'ς'.upper())
+    print("they're here".title(), "o'neil".title(), 'one-two three_four 5six'.title(), 'ÉCOLE ǆ'.title(), 'ab́c d'.title())
+    print('hello wORLD'.capitalize(), 'élan VITAL'.capitalize(), 'ǆ'.capitalize(), ''.upper() + ''.lower() + ''.title() + ''.capitalize() == '')
+    print('Ａｂｃ'.title(), '𐐨𐐀 𐐨'.title(), '日本語 abc'.title(), 'x­Σ'.lower(), 'ʰΣ'.lower())
+    print('aß'.upper() + 'b', 'é'.upper() + 'ß'.upper() + 'ǆ'.title() + 'İ'.lower())

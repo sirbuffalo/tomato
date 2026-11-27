@@ -18,8 +18,6 @@
   `install-native.sh` replaces `tomatoc`, then `std/`, the runtime and the scripts in place, so a failure partway leaves a mixed install and a `tomato run` at the same moment can see a half-written `tomatoc`. `native/tomato`, `native/tomato-repl` and `release/pkg.sh` trap only `EXIT`, so Ctrl-C under dash leaves their `mktemp -d` folders behind.
 - Make the short async deadlines in tests robust under load
   `tests/programs/async_toolkit.tom` (lines 254-274: `wait_for` deadlines of 0.01-0.02 s against 0.01 s sleeps), `async_sync.tom:75` and `time_module.tom:95` race the wall clock like `socket_fair` did before the audit gave its timers one shared deadline. They passed at load 63 but have no margin.
-- Full Unicode case mapping for `upper`, `lower` and `title`
-  `'ß'.upper()` is `ß` (Python `SS`) and `'ßa'.title()` `ßa` (Python `Ssa`): the runtime's case tables map one character to one character. Decide whether to follow Python's SpecialCasing or document the difference.
 - Make `sum()`, `min()`, `max()` and `sorted()` work on a list of angles
   They are compile errors today (the builtins take numbers or text only); make them work on anything with `@lt`/`@add`, or give `Angle` helpers.
 - Give `Angle` a `@hash` so angles can be dict keys and set elements

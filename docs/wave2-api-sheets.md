@@ -345,7 +345,7 @@ Supported, following Python: literal characters and escapes (`\n \t \r \f \v \a 
 
 Stage 2 of the build (same sheet, after stage 1 passes): fixed-width lookbehind `(?<= ) (?<! )`, `VERBOSE`. **Not supported in v1** and raised as `RegexError('... is not supported')` at compile time, never silently ignored: possessive quantifiers `*+`, atomic groups `(?> )`, conditionals `(?(1)a|b)`, `\G`, Unicode property classes (Python has none either), `(?L)`/`(?u)` flag letters, `\N{name}`.
 
-Case-insensitive matching compares with the runtime's Unicode simple case mapping (`upper()`/`lower()` tables, D67a `[V]`), so `é` matches `É`; `ß` still does not match `SS` (one-to-one mapping), a documented difference from Python.
+Case-insensitive matching compares with the one-letter (simple) Unicode case mappings, derived from the runtime's `upper()`/`lower()`/`title()` tables in `std/re.tom` (D67a `[V]`), so `é` matches `É`; `ß` still does not match `SS` (one-to-one mapping), as in Python's `re`.
 
 ### 3.4 Engine design (builder guidance, so size and risk are visible)
 

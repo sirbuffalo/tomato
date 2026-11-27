@@ -8121,7 +8121,7 @@ class Gen:
             self.release(lst)
             self.release(obj)
             return ex(r, 'str')
-        if (name == 'upper' or name == 'lower' or name == 'strip') and len(args) == 0:
+        if (name == 'upper' or name == 'lower' or name == 'title' or name == 'capitalize' or name == 'strip') and len(args) == 0:
             r = self.tmp('changed')
             self.emit(f'{r} = call ptr @tomato_str_{name}(ptr {obj.reg})')
             self.release(obj)
@@ -9213,7 +9213,7 @@ class Gen:
         known: list[str] = []
         word = shown(ty)
         if ty == 'str':
-            known = ['find', 'rfind', 'count', 'startswith', 'endswith', 'replace', 'split', 'join', 'upper', 'lower', 'strip', 'lstrip', 'rstrip', 'isdigit', 'isalpha', 'isspace'] + text_helper_methods()
+            known = ['find', 'rfind', 'count', 'startswith', 'endswith', 'replace', 'split', 'join', 'upper', 'lower', 'strip', 'lstrip', 'rstrip', 'isdigit', 'isalpha', 'isspace', 'splitlines', 'partition', 'rpartition', 'rsplit', 'zfill', 'ljust', 'rjust', 'center', 'title', 'capitalize', 'isalnum', 'removeprefix', 'removesuffix']
             word = 'text'
         elif is_dict(ty):
             known = ['get', 'remove', 'keys', 'values', 'items']
@@ -11574,7 +11574,7 @@ def async_symbol(mod: Mod, info: FuncInfo) -> str:
 # the text methods that are written in Tomato, in std/builtin/text.tom as _str_NAME (the others are in the runtime or built in
 # to text_method)
 def text_helper_methods() -> list[str]:
-    return ['splitlines', 'partition', 'rpartition', 'rsplit', 'zfill', 'ljust', 'rjust', 'center', 'title', 'capitalize', 'isalnum', 'removeprefix', 'removesuffix']
+    return ['splitlines', 'partition', 'rpartition', 'rsplit', 'zfill', 'ljust', 'rjust', 'center', 'isalnum', 'removeprefix', 'removesuffix']
 
 def function_symbol(mod: Mod, info: FuncInfo) -> str:
     if info.is_async:
@@ -12362,6 +12362,8 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_join(ptr, ptr)\n'
     d += 'declare ptr @tomato_str_upper(ptr)\n'
     d += 'declare ptr @tomato_str_lower(ptr)\n'
+    d += 'declare ptr @tomato_str_title(ptr)\n'
+    d += 'declare ptr @tomato_str_capitalize(ptr)\n'
     d += 'declare ptr @tomato_str_strip(ptr)\n'
     d += 'declare ptr @tomato_file_open(ptr, ptr)\n'
     d += 'declare ptr @tomato_open_error(ptr)\n'

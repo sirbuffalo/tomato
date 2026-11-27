@@ -1,0 +1,31 @@
+# str.upper(), lower(), title() and capitalize() against Python 3.14 (Unicode 16.0) for every code point that can have a case:
+# the four methods of each code point from U+0080 to U+1EFFF, and lower() and title() of the code point in a few contexts
+# (final sigma, case ignorable characters), folded into one hash that Python gives too. unicode_case.tom has the readable cases.
+def fold(h: int, s: str) -> int:
+    for c in s:
+        h = (h * 131 + ord(c)) % 1000000007
+    return (h * 131 + 7) % 1000000007
+
+@main
+def main():
+    h = 17
+    n = 0
+    for cp in range(128, 126976):
+        if 55296 <= cp and cp < 57344:
+            continue
+        c = chr(cp)
+        a = c.upper()
+        b = c.lower()
+        t = c.title()
+        k = c.capitalize()
+        h = fold(h, a)
+        h = fold(h, b)
+        h = fold(h, t)
+        h = fold(h, k)
+        h = fold(h, ('Σ' + c + 'a').lower())
+        h = fold(h, ('A' + c + 'Σ').lower())
+        h = fold(h, ('AΣ' + c).lower())
+        h = fold(h, ('a' + c + 'b').title())
+        if a != c or b != c or t != c:
+            n += 1
+    print(n, h)
