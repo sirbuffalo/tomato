@@ -123,13 +123,13 @@ keep growing builtins.
 ### 1.5 The Unicode version is part of the behaviour (Do soon)
 
 **Problem.** `upper()`, `lower()`, `title()`, `isalpha()` and `isdigit()` follow Unicode 16.0 tables in the runtime
-(D17d, P89). The terminal width table is still Unicode 15.1 (a TODO item). A new Unicode version changes results: the
-audit found U+2630-2637 and U+4DC0-4DFF wide in 16 and narrow in 15.1, for example.
+(D17d, P89). The terminal width table was Unicode 15.1 until it was regenerated for 16.0 (`tools/gen_width_table.py`). A new Unicode
+version changes results: U+2630-2637 and U+4DC0-4DFF are wide in 16 and were narrow in 15.1, for example.
 
 **Proposal.** Say in the promise that the Unicode version changes only in minor releases and is named in the changelog
 (Python changes it in minor releases too *(general knowledge)*). Keep all tables on one version.
 
-**Cost.** One sentence, and a rule for whoever regenerates `tools/gen_case_table.py`'s output.
+**Cost.** One sentence, and a rule for whoever regenerates `tools/gen_case_table.py`'s or `tools/gen_width_table.py`'s output (both need Python 3.14, and the suite's "generated tables" check runs them with `--check`).
 
 ### 1.6 Calling C from any program (`!name`) makes the runtime's internals public (Blocks 1.0)
 

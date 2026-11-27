@@ -4,6 +4,9 @@
     python3 -I tools/gen_case_table.py runtime/tomato_rt.c           rewrites the tables in place
     python3 -I tools/gen_case_table.py --check runtime/tomato_rt.c   exits 1 when the file's tables are not the ones this makes
 
+Needs Python 3.14 (Unicode 16.0.0); under any other Python it exits 2 and says which Unicode version it found. The suite runs
+--check (tests/run.sh, "generated tables").
+
 The data is Python's own: str.upper, str.lower and str.title of every single code point (Python 3.14 = Unicode 16.0.0: the
 runtime's upper, lower, title and capitalize follow CPython's full case mapping, SpecialCasing included, so asking Python
 gives its answers by construction), the version of which is recorded in the generated text. Python has no API for the two
@@ -137,6 +140,10 @@ def main():
     if len(args) != 1:
         sys.stderr.write(__doc__)
         return 2
+    if unicodedata.unidata_version != "16.0.0":
+        sys.stderr.write("gen_case_table.py needs a Python whose unicodedata is Unicode 16.0.0 (Python 3.14); this is Python %s with Unicode %s\n"
+                         % (sys.version.split()[0], unicodedata.unidata_version))
+        return 2
     path = args[0]
     text = open(path, encoding="utf-8").read()
     a, b = text.find(BEGIN), text.find(END)
@@ -146,7 +153,7 @@ def main():
     new = text[:a] + generate() + text[b + len(END):]
     if check:
         if new != text:
-            sys.stderr.write("%s: the case tables are not what this generator makes (Python %s)\n" % (path, sys.version.split()[0]))
+            sys.stderr.write("%s: the case tables are not what tools/gen_case_table.py makes: run it without --check\n" % path)
             return 1
         return 0
     open(path, "w", encoding="utf-8").write(new)

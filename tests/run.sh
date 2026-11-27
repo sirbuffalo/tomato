@@ -1709,6 +1709,24 @@ ready? rc=75" "$out"
 spawn t_input_ask
 
 # ---- error ids ----------------------------------------------------------------------------------------------------------
+# The case tables and the width tables in runtime/tomato_rt.c are written by tools/gen_case_table.py and tools/gen_width_table.py
+# from Python's unicodedata (Unicode 16.0.0 = Python 3.14): each generator is run in --check mode and must find the file current.
+# A Python with another Unicode version cannot say (the generators exit 2 and name the version they need): that is a skip locally
+# and a failure in CI, as for jsc.
+t_generated_tables() {
+  py=""
+  for p in python3.14 python3; do
+    command -v "$p" >/dev/null 2>&1 && [ "$("$p" -I -c 'import unicodedata; print(unicodedata.unidata_version)' 2>/dev/null)" = "16.0.0" ] && { py="$p"; break; }
+  done
+  if [ -z "$py" ]; then
+    [ -n "$CI" ] && bad "generated tables" "a Python 3.14 (Unicode 16.0.0) is required in CI: the case and width tables cannot be checked" || echo "skip: no Python with Unicode 16.0.0 (Python 3.14) to check the generated case and width tables"
+    return
+  fi
+  for g in case width; do
+    if r="$("$py" -I "tools/gen_${g}_table.py" --check runtime/tomato_rt.c 2>&1)"; then ok "generated $g tables in runtime/tomato_rt.c are what tools/gen_${g}_table.py makes"
+    else bad "generated $g tables" "$r (rewrite with: python3.14 -I tools/gen_${g}_table.py runtime/tomato_rt.c)"; fi
+  done
+}
 t_error_templates() {
   tests/error_templates.sh | awk '{ l=$0; gsub(/\{\}/,"",l); if (length(l) >= 12) print }' > "$work/templates"
   missing=""
@@ -1757,6 +1775,7 @@ t_std_modules() { # std_modules() in the compiler (the help of "cannot find the 
 }
 section "== error ids =="
 spawn_free t_error_templates
+spawn_free t_generated_tables
 spawn_free t_error_raises
 spawn_free t_sys_version
 spawn_free t_builtin_folder

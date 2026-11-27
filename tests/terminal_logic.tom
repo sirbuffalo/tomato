@@ -312,6 +312,14 @@ def character_widths():
     assert_equal(terminal.char_width(127995), 2)       # an emoji skin tone
     assert_equal(terminal.char_width(131072), 2)       # a CJK extension B ideograph
     assert_equal(terminal.char_width(1114112), 1)      # beyond Unicode
+    assert_equal(terminal.char_width(9776), 2)       # Unicode 16: trigram for heaven, wide
+    assert_equal(terminal.char_width(19904), 2)       # a hexagram
+    assert_equal(terminal.char_width(119552), 2)      # a monogram for earth
+    assert_equal(terminal.char_width(129673), 2)      # a harp
+    assert_equal(terminal.char_width(73472), 0)      # a Kawi sign candrabindu
+    assert_equal(terminal.char_width(124140), 0)      # a Nag Mundari mark
+    assert_equal(terminal.char_width(78919), 0)      # an Egyptian hieroglyph modifier
+    assert_equal(terminal.char_width(6863), 1)       # unassigned: one cell, not zero
 
 @test
 def text_widths():
