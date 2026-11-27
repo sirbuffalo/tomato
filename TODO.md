@@ -26,3 +26,7 @@
   Design review 3.3: `class MyErr(ValueError): pass` then `raise MyErr("neg")` is E128, so every error class repeats a forwarding `@init` (`std/json.tom` lines 55-64), and `print(e)` is E375. Decide the text of `str(e)` (the message alone, as Python) before 1.0.
 - Fix `list.sort()` leaking on a list held in an object field
   Debug mode reports "N object(s) were never freed" when `self.names.sort()` sorts a list that is a field of an object, after appends; sorting a local list and assigning it to the field does not leak. Repro: a class with `names: list[str] = []`, append in a loop, then `self.names.sort()`. Worked around in `ReplCompleter.known` (`compiler/src/repledit.tom`); needs a runtime/compiler fix.
+- Let the config reader allow `seeds.*` sub-tables when it starts rejecting unknown tables
+  Config reader (`compiler/src/config.tom`) must allow `seeds.*` sub-tables (the per-entry tables of D92b, such as `[seeds.test]`) when unknown-table rejection is added; today it ignores unknown tables, so it accepts them.
+- Make `tomato seed check` warn about an entry table with no matching entry
+  `tomato seed check` should warn when a `[seeds.ENTRY]` names an entry with no matching `@` marker (it would catch a typo such as `[seeds.tset]`, which is otherwise a valid table); see D92b in `docs/decisions.md`.

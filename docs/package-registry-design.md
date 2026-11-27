@@ -110,6 +110,7 @@ Read from the source (nothing here is new behavior):
 | **index** | the registry's data: a git repository of signed TOML files |
 | **version entry** | the signed statement "version V of owner/name is commit C of git URL U with hash H" |
 | **store** | the user's local, content-addressed folder of fetched seeds (`~/.tomato/seeds/`) |
+| **entry table** | `[seeds.ENTRY]` in `tomato.toml`: seeds used only when running that entry point (`[seeds.test]` for `tomato test`); `[seeds]` is for every build |
 | **project** | a folder with a `tomato.toml` that has a `[project]` table (a program that uses seeds) |
 | **basket** | reserved for a bundle or workspace of seeds in one repository; not designed here (section 16) |
 
@@ -205,7 +206,7 @@ signs it; the owner then sends the change to the index and a program runs the ru
 4. **Append only.** Existing bytes never change: a statement can be added, never edited or removed. (`yank`, `moved`
    and a key rotation are new statements.) So a version, once published, is immutable in the index.
 5. **Source check** for each new `[[version]]`: the checker fetches the source (section 6) and recomputes the
-   content hash; reads `tomato.toml` at that commit and requires the same name, version, `[seeds]` and module
+   content hash; reads `tomato.toml` at that commit and requires the same name, version, top-level `[seeds]` (the entry tables are not in the index) and module
    list; and applies the seed checks of section 11 (size, file types, module names, no foreign declarations).
 6. **Names.** The name rules above, and one deterministic look-alike rule (section 1.8).
 7. **Rate limits.** At most a stated number of new versions per owner per day, a maximum size per seed, a maximum
@@ -331,7 +332,7 @@ sets rules for everyone and cannot touch one seed.
 
 ## 2. The manifest: `tomato.toml`
 
-One file for a seed and for a project (decision D92a, 2026-11-26). A folder has **either** `[seed]` (a published
+One file for a seed and for a project (decisions D92a and D92b, 2026-11-26). A folder has **either** `[seed]` (a published
 package) **or** `[project]` (a program that uses seeds), never both. Keys with a `/` are quoted, as TOML requires.
 
 ```toml
@@ -347,7 +348,7 @@ modules = ["json5", "json5_pretty"]    # optional: all of src/*.tom otherwise (s
 [seeds]                                # a minimum version of each seed it imports from
 "other.example/strutil" = "0.4.1"
 
-[dev-seeds]                            # used by `tomato test` in this seed only
+[seeds.test]                           # only when running entry `test` (`tomato test`) in this seed
 "other.example/fixtures" = "1.0.0"
 ```
 
@@ -363,7 +364,11 @@ tomato = "1.0"                         # the oldest compiler that builds it
 "dave.example/scratch" = { git = "https://git.example.net/dave/scratch.git", rev = "9f2c...40hex" }   # unregistered
 "local/thing" = { path = "../thing" }                                                                  # unregistered
 
-[dev-seeds]                            # test-only seeds
+[seeds.test]                           # only when running entry `test` (`tomato test`)
+"other.example/fixtures" = "1.0.0"
+
+[seeds.greet.loud]                     # only when running entry `greet.loud`
+"x.example/colors" = "0.2.0"
 
 [seed-store]
 vendor = "vendor"                      # use ./vendor instead of the store (section 6)
@@ -375,17 +380,27 @@ Rules:
   `description` and `license` are rewarded by the listing score of section 18.) `[project]` has `name`, `version` and `tomato`.
 - `[seed]` makes the folder publishable and gives the files a layout: the seed's modules are the `.tom` files directly in
   `src/` (the compiler's lookup is flat, section 5). A file or folder named `tests/` is not part of a build.
-- `[seeds]` lists the seeds used and `[dev-seeds]` those used only by `tomato test`. A requirement
+- `[seeds]` lists the seeds used by every build. `[seeds.ENTRY]` (D92b) lists those used only when running that entry point
+  (`[seeds.test]` for `tomato test`, `[seeds.greet.loud]` for the entry `greet.loud`); the entry names are the dotted
+  names of the `@` markers. Seed names always contain `/` and are quoted keys, so they never clash with a sub-table
+  name. A requirement
   `"acme.example/json5" = "1.2.0"` means **at least 1.2.0, and the same compatible line** (section 4). There is no range
   syntax, no `^`, no `<`.
+- **Which tables a run reads.** Running entry `x` (which runs every `@x.*`) uses `[seeds]`, every table that is `x` or a
+  prefix of it (`[seeds.test]` applies to a run of `test.parse` too), and (**proposed, not yet confirmed by Davis**) every table below `x` (a run of `test`
+  runs `test.parse`, so it needs `[seeds.test.parse]`). `build`, `compile` and `run` of a plain program read `[seeds]` only.
+- **The same seed in two tables** (say `[seeds]` and `[seeds.test]`): the higher minimum wins; if one table says
+  `git` or `path` and the other a version, or the two forms differ, it is an error.
+- **A published seed's `[seeds.ENTRY]` tables are read only by `tomato test` inside that seed**,
+  never by a user of the seed and never in the index entry.
 - The `git` and `path` forms are **unregistered**. They are accepted only in a project, and a seed's index check
   rejects them: a registered seed depends only on registered seeds, so the index is closed under its `[seeds]` and a
   seed's graph can always be resolved from signed statements.
 - `tomato` is also a minimum (`tomato version` is compared; an older compiler stops with a clear message).
-- Unknown top-level tables are an error, not ignored, so a typo in `[dev-seds]` is caught. `[limits]` and
+- Unknown top-level tables are an error, not ignored, so a typo in `[sedes]` is caught (a typo in an entry name, `[seeds.tset]`, is a valid table: `tomato seed check` warns when no `@tset` entry exists). `[limits]` and
   `[build]` are **reserved** for the configuration work (section 13), and `[seed-store]` holds the project's
   vendor folder (the former `[seeds] vendor`; `[seeds]` is now only the list of seeds).
-- In a **seed that is used**, only its `[seed]` and `[seeds]` are read. Its other tables (settings, `[limits]`) are
+- In a **seed that is used**, only its `[seed]` and its top-level `[seeds]` are read (not `[seeds.ENTRY]`). Its other tables (settings, `[limits]`) are
   ignored: a library cannot change how the program that uses it is built or limited.
 
 ## 3. The lockfile: `tomato.lock`
@@ -420,6 +435,17 @@ key = "SHA256:..."
 modules = ["strutil"]
 
 [[seed]]
+name = "other.example/fixtures"         # only in [seeds.test] of this manifest
+version = "1.0.0"
+source = "registry"
+git = "https://git.other.example/fixtures.git"
+commit = "..."
+hash = "sha256:..."
+key = "SHA256:..."
+modules = ["fixtures"]
+entries = ["test"]
+
+[[seed]]
 name = "dave.example/scratch"           # unregistered: no signature, no index
 version = "0.0.0"
 source = "git"
@@ -433,6 +459,9 @@ modules = ["scratch"]
   against a collision or a rewritten history; the content hash is sha256 over the files.
 - `commit` and `git` are *where it came from*, kept so the source can be fetched again; the build trusts `hash`.
   If a host lost the repository, any copy that produces the same hash is the same seed.
+- **`entries`** (D92b) appears only on a seed that not every build uses: the entry tables of the manifest that reach it
+  (`["test"]`, `["greet.loud", "test"]`). A seed that some `[seeds]` requirement reaches, directly or through another
+  seed, has no `entries` field. The lock holds all seeds, so `install`, `vendor` and `verify` cover every build.
 - `key` pins who signed it. `tomato seed update` refuses a new version signed by a key that is not in the owner's
   chain from this key, unless told `--accept-owner-change` (section 1.6).
 - A lock does **not** record the URL of the index, the compiler version, or any setting. It does record the registry's
@@ -482,10 +511,18 @@ also the only one of the two whose solver is small enough to write, test and tru
 - **Yanked versions** (section 17) are skipped by `add` and `update`. A requirement that names a yanked version still
   resolves to it, with a warning, so existing locks keep building; a yank of kind `malware` is an error unless
   `--allow-yanked` is given.
-- **`[dev-seeds]`** resolve with the same rules but only for `tomato test` of that seed; they never enter a
-  dependant's graph.
+- **Entry tables** (`[seeds.ENTRY]`, D92b) use the same rules. `tomato seed install`, `add` and `update` run MVS once, over
+  the **union** of all the tables, and the lock holds that result: **one version per seed, the same for every build**.
+  `tomato build`, `run` and `test` do not resolve again: the tables the run reads (section 2) only choose **which** locked
+  seeds (and their dependencies) are compiled in, and the build checks that each has a locked version that meets the build's
+  own minimum on the same line. So a test-only pin changes plain builds too: with `[seeds]` at 1.0.0 and `[seeds.test]` at
+  1.2.0 the lock holds 1.2.0 and `tomato build` compiles 1.2.0. A seed in the lock only for another entry is not compiled
+  in. Entry tables never enter a dependant's graph.
 
 ### Consequences to accept
+
+- A requirement in an entry table on a **different line** of a seed (`[seeds]` at 1.0.0, `[seeds.test]` at 2.0.0) is the
+  two-lines error of the union resolution, so it stops every `tomato build` and `run` of that manifest, not only `test`.
 
 - You cannot say "not 1.4.2, it is broken". The answer is that 1.4.3 is published and you require it, or the owner
   yanks 1.4.2.
@@ -768,9 +805,9 @@ signature = "..."
 - `tomato.toml` is valid; `[seed]` name, version and `tomato` are consistent with it and the tree;
 - every file in `src/` is `name.tom` or `name_*.tom`; nothing else is a module;
 - every module **parses** (the compiler's parser, not a regular expression) and uses no `!name(...)` declaration;
-- the seed imports only its own modules, `std`, and the seeds in `[seeds]` (from the imports found while parsing);
+- the seed imports only its own modules, `std`, and the seeds in `[seeds]` or in any `[seeds.ENTRY]` of its own manifest (from the imports found while parsing; a module that imports an entry-only seed is reached only by a build that imports that module, so users who do not import it never need that seed);
 - no symlink, submodule, file over 1 MB or tree over 5 MB (the numbers are settings in the index's `config.toml`);
-- `[seeds]` are registered seeds (no `git` or `path` form), and there is no `[project]` table;
+- `[seeds]` and every `[seeds.ENTRY]` are registered seeds (no `git` or `path` form), and there is no `[project]` table;
 - it compiles: `tomato compile` of a one-line program per module (this type-checks without running anything).
 
 The index's checker **never runs a seed's tests or code**. Running arbitrary code from a publisher inside the acceptor
