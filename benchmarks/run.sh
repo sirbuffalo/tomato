@@ -18,7 +18,7 @@
 #     --tomatoc F  use this compiler binary (built from compiler/bootstrap/tomatoc.ll) instead of building one: tests/run.sh,
 #                  which has just built it, runs one smoke run per benchmark at the same time, and passes it here
 # Tomato is built from this checkout (compiler/bootstrap/tomatoc.ll), so the numbers always describe the source tree.
-# Tomato is built twice: "tomato" in release mode (what Davis calls the real thing: no leak checks, short error codes) and
+# Tomato is built twice: "tomato" in release mode (what Davis calls the real thing: no leak checks, one-line errors with no trace) and
 # "tomato-debug" in debug mode (leak checks and full error text).
 # Needs: clang (for Tomato, the timing helper, C and C++); the rest are skipped, with a note, when missing: go, rustc with cargo
 # (bigint uses the num-bigint crate, fetched once), javac and java, dotnet 10 or newer (it builds a single .cs file), swiftc,

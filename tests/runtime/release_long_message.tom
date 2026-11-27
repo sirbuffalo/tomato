@@ -1,0 +1,5 @@
+# An uncaught error with a long message (10000 bytes): release mode prints it whole on one line, with the class and the line,
+# and no trace. Checked in release mode, and with AddressSanitizer (the line is built in a buffer of the runtime's own).
+@main
+def main():
+    raise ValueError("config file missing key " + "port " * 2000)

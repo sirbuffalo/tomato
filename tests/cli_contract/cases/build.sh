@@ -53,8 +53,8 @@ mkdir -p sub; cp prog.tom sub/other.tom
 try "build sub/other.tom: builds/other in the current folder, not in sub" 0 "wrote builds/other" "" build sub/other.tom
 # the mode
 printf '@main\ndef main():\n    x = 0\n    print(5 // x)\n' > dz.tom
-try "build --mode release: the program prints short error ids" 0 "wrote dz_rel" "" build dz.tom --mode release -o dz_rel
-check "build --mode release: its error is the id and the line" "1  | error E01:4" "$(runp ./dz_rel)"
+try "build --mode release: the program prints its error on one line, with no call trace" 0 "wrote dz_rel" "" build dz.tom --mode release -o dz_rel
+check "build --mode release: its error is the id, the message and the line" "1  | error[E01]: division by zero (line 4)" "$(runp ./dz_rel)"
 try "build (debug): the program prints the readable error" 0 "wrote dz_dbg" "" build dz.tom -o dz_dbg
 check "build: its error is the text and the function" "1  | error[E01]: division by zero
   at main (line 4)" "$(runp ./dz_dbg)"

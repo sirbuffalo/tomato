@@ -73,7 +73,7 @@ down in `docs/errors.md`.
 
 **Cost.** Documentation. Without it, every reworded message is arguably a breaking change.
 
-### 1.3 Release mode throws away the program's own error message (Blocks 1.0)
+### 1.3 Release mode throws away the program's own error message (Blocks 1.0) — settled and built 2026-11-27 (D34c): release prints `error[E11]: ValueError: config file missing key port (line 3)`
 
 **Problem.** `--mode release` is the optimised build, the one a server runs. Given
 

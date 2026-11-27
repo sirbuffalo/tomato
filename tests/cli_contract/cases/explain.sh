@@ -1,5 +1,5 @@
 # tier: any
-# `tomato explain CODE [FILE]`: decode an error id (E04, or E04:12 as a release build prints it), with the source line when given a file.
+# `tomato explain CODE [FILE]`: decode an error id (E04, or E04:12 as the id and line of a release build's error line), with the source line when given a file.
 . "$CONTRACT_DIR/lib.sh"
 
 try "explain E01: the id, the class and the message" 0 "error[E01]: ZeroDivisionError: division by zero" "" explain E01
@@ -30,7 +30,7 @@ if fast; then skip "explain decodes what a release build printed (a link: not in
 # the id the command prints is the one a release build prints with its line: run a failing program in release mode and decode it
 printf '@main\ndef main():\n    x = 0\n    print(5 // x)\n' > dz.tom
 "$TOMATO" run dz.tom --mode release > /dev/null 2> "$W/release.err"
-check "a release build prints the id and the line" "error E01:4" "$(cat "$W/release.err")"
-try "explain decodes what a release build printed" 0 @explain_release.txt "" explain "$(sed 's/^error //' "$W/release.err")" dz.tom
+check "a release build prints the id, the message and the line" "error[E01]: division by zero (line 4)" "$(cat "$W/release.err")"
+try "explain decodes what a release build printed" 0 @explain_release.txt "" explain "$(sed -n 's/^error\[\(E[0-9]*\)\].* (line \([0-9]*\))$/\1:\2/p' "$W/release.err")" dz.tom
 fi
 try "explain: --color=always paints nothing on standard output (the colors are for errors)" 0 "error[E01]: ZeroDivisionError: division by zero" "" explain E01 --color=always

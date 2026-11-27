@@ -57,11 +57,11 @@ try "run: sys.exit(3) is the exit status of tomato run" 3 "" "" run ent.tom exit
 try "run: an uncaught error: text and the call, status 1" 1 "" "error: ValueError: boom (raised on line 29)
   at boom (line 29)" run ent.tom boom
 try "run: after the entry, --mode release is two inputs, not options" 1 "" "error[E352]: the entry point takes 0 input(s), got 2" run ent.tom boom --mode release
-try "run: --mode release before the entry" 1 "" "error E11:29" run --mode release ent.tom boom
+try "run: --mode release before the entry" 1 "" "error[E11]: ValueError: boom (line 29)" run --mode release ent.tom boom
 printf '@main\ndef main():\n    x = 0\n    print(5 // x)\n' > dz.tom
 try "run: a runtime error in debug mode: id, message and the function with its line" 1 "" "error[E01]: division by zero
   at main (line 4)" run dz.tom
-try "run: the same in release mode" 1 "" "error E01:4" run dz.tom --mode release
+try "run: the same in release mode" 1 "" "error[E01]: division by zero (line 4)" run dz.tom --mode release
 try "run: --mode debug is the default" 1 "" "error[E01]: division by zero
   at main (line 4)" run dz.tom --mode debug
 printf '@main\ndef main():\n    x = 0\n    print(1)\n    print(1 // x)\n' > partial.tom

@@ -17,6 +17,9 @@ on an older install moves to 1.0.0 as usual.
 
 ### Breaking changes
 
+- In `--mode release` an uncaught error prints one line with the class and the message, and the line, with no call trace (D34c):
+  `error[E11]: ValueError: config file missing key port (line 3)`, or `error[E01]: division by zero (line 4)` for the language's own
+  failures. It printed only `error E11:3` and `error E01:4`. `tomato explain` still takes `E01:4`.
 - A function, class or constant that a program defines with the name of a built-in function or class (`print`, `open`, `len`, `range`, ...) is used in that module, where the built-in was used before and the definition ignored (D108a). A definition with the name of a built-in type (`def str`, `class list`) is a compile error (E608); it was ignored.
 - The type test is written `x is T` (and `x is not T`), not `x in T` (D23i): `if v is Circle:`, `if x is int:`, `if s is None:`. `x in T` with a type on the right still works in 1.0.x and prints a warning (`type-test`, `# allow: type-test` silences it); membership stays `in` (`if a in items:`). `a is b` on two objects, lists, dicts or sets is now identity (it was an error); on numbers, text and tuples it is an error that says to use `==`.
 - A program built by `tomato build` takes `[ENTRY [INPUTS...]]` as its arguments (D94b): no word runs `main`, a first word that names an entry

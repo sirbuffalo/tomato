@@ -448,12 +448,29 @@ t_release_leak() { # fused expressions over big numbers; the test itself is test
   clang -O1 -w -o "$work/leaky" "$work/p.ll" "$(rtcache_get "$work" o "$work/leaky.c" -O1 -pthread -w)" -pthread -lm   # (kept in the cache by what the file holds)
   case "$("$work/leaky" 2>&1)" in *"never freed"*) ok "release: a big number that is not freed is reported";; *) bad "release: a big number that is not freed is reported";; esac
 }
+# An uncaught error in release mode prints one line, `error[ID]: Class: message (line N)` (a runtime failure: no class), and no trace.
+# The long message is 10000 bytes; the same programs run under AddressSanitizer, whose runtime reports nothing.
+t_release_error_line() {
+  use_asan
+  long="$(awk 'BEGIN { s = "config file missing key "; for (i = 0; i < 2000; i++) s = s "port "; printf "error[E11]: ValueError: %s (line 5)", s }')"
+  for spec in "release_long_message:$long" "divide_by_zero:error[E01]: division by zero (line "; do
+    name="${spec%%:*}"; want="${spec#*:}"
+    "$c1" "tests/runtime/$name.tom" main std/ release > "$work/p.ll" 2> "$work/e"
+    if clang -O1 -w -g -fsanitize=address -o "$work/rel" "$work/p.ll" "$rt_asan" -pthread -lm 2>/dev/null; then
+      ASAN_OPTIONS=detect_leaks=0 "$work/rel" > "$work/out" 2> "$work/err"; rc=$?
+      lines="$(wc -l < "$work/err" | tr -d ' ')"
+      case "$(cat "$work/err")" in "$want"*) ok "release ASan: $name prints the class, the message and the line" ;; *) bad "release ASan: $name prints the class, the message and the line" "$(head -c 300 "$work/err")" ;; esac
+      check "release ASan: $name is one line, no trace, status 1" "1 1" "$lines $rc"
+    else bad "release ASan: $name" "does not build"; fi
+  done
+}
 section "== release mode (AddressSanitizer; the same output as debug mode) =="
 for name in fast_paths loop_nests float_loops float_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers raise_paths raise_dead file_closed sys_run sys_async optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests type_is type_is_nests shadow_functions shadow_classes; do
   case "$name" in fast_paths|loop_nests|float_loops|float_nests|int_ranges|containers|raise_paths|raise_dead|file_closed) ;; *) [ -n "$fast" ] && { skip "release $name"; continue; } ;; esac   # (the fast tier: nine of the fifteen)
   case "$name" in fast_paths|loop_nests|float_loops|float_nests|raise_paths|raise_dead|sys_run|sys_async|optional_compound_assign|union_narrowing_nests) spawn_first t_release_asan "$name" leaks ;; *) spawn_first t_release_asan "$name" ;; esac
 done
 spawn_first t_release_leak
+spawn t_release_error_line
 spawn_first t_lock_gc
 
 section "== sort: the heapsort fallback gives the same results =="
@@ -725,30 +742,34 @@ t_cli_modes() {
   check "version" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$($t version)"
   check "mode debug is readable" "error[E01]: division by zero
   at main (line 4)" "$($t run "$work/dz.tom" 2>&1)"
-  check "mode release prints a code" "error E01:4" "$($t run "$work/dz.tom" --mode release 2>&1)"
+  check "mode release prints the error on one line" "error[E01]: division by zero (line 4)" "$($t run "$work/dz.tom" --mode release 2>&1)"
   fi; if step 2; then
   check "release keeps caught messages and IDs" "$(cat tests/runtime/error_classes.out)" "$($t run tests/runtime/error_classes.tom --mode release 2>&1)"
   check "open error keeps its message and ID in release" "$(cat tests/expected/open_errors.main.out)" "$($t run tests/programs/open_errors.tom --mode release 2>&1)"
   fi; if step 3; then
   check "uncaught open error has its debug ID" "error[E25]: could not open '/nonexistent_dir_for_tomato/missing.txt': No such file or directory
   at main (line 3)" "$($t run tests/runtime/open_missing.tom 2>&1)"
-  check "uncaught open error has its release ID" "error E25:3" "$($t run tests/runtime/open_missing.tom --mode release 2>&1)"
+  check "release: a long message is printed whole on one line" "error[E11]: ValueError: config file missing key $(awk 'BEGIN { for (i = 0; i < 2000; i++) printf "port "; }') (line 5)" "$($t run tests/runtime/release_long_message.tom --mode release 2>&1)"
+  check "release: a runtime error keeps its message, and no trace" "error[E01]: division by zero (line 4)" "$($t run tests/runtime/divide_by_zero.tom --mode release 2>&1)"
+  check "uncaught open error has its release ID" "error[E25]: could not open '/nonexistent_dir_for_tomato/missing.txt': No such file or directory (line 3)" "$($t run tests/runtime/open_missing.tom --mode release 2>&1)"
   check "an uncaught use of a closed file has its debug ID and line" "error[E547]: I/O operation on a closed file
   at main (line 7)" "$($t run tests/runtime/file_closed_uncaught.tom 2>&1)"
-  check "an uncaught use of a closed file has its release ID and line" "error E547:7" "$($t run tests/runtime/file_closed_uncaught.tom --mode release 2>&1)"
+  check "an uncaught use of a closed file has its release ID and line" "error[E547]: I/O operation on a closed file (line 7)" "$($t run tests/runtime/file_closed_uncaught.tom --mode release 2>&1)"
   fi; if step 4; then
   r="$($t run tests/runtime/msgpack_missing.tom --mode release 2>&1)"
-  case "$r" in "error E25:"[1-9]*) ok "load_msgpack open error has its release ID";; *) bad "load_msgpack open error has its release ID" "$r";; esac
+  case "$r" in "error[E25]: IOError: could not open"*"(line "[1-9]*")") ok "load_msgpack open error has its release ID";; *) bad "load_msgpack open error has its release ID" "$r";; esac
   fi; if step 5; then
   r="$($t run tests/runtime/error_std_uncaught.tom --mode release 2>&1)"
-  case "$r" in "error E51:"[1-9]*) ok "release prints a library error ID and line";; *) bad "release prints a library error ID and line" "$r";; esac
+  case "$r" in "error[E51]: ValueError: sqrt needs"*"(line "[1-9]*")") ok "release prints a library error ID and line";; *) bad "release prints a library error ID and line" "$r";; esac
   check "mode normal was renamed to release" "error[E281]: the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" "$($t run "$work/dz.tom" --mode normal 2>&1)"
   check "unknown mode is refused" "error[E282]: the mode must be debug or release, not 'fast'" "$($t run "$work/dz.tom" --mode fast 2>&1)"
   fi; if step 6; then
-  $t build "$work/dz.tom" -o "$work/dz_rel" --mode release > /dev/null 2>&1; check "build --mode release makes a release binary" "error E01:4" "$("$work/dz_rel" 2>&1)"
+  $t build "$work/dz.tom" -o "$work/dz_rel" --mode release > /dev/null 2>&1; check "build --mode release makes a release binary" "error[E01]: division by zero (line 4)" "$("$work/dz_rel" 2>&1)"
   $t compile "$work/dz.tom" --mode release > "$work/dz_rel.ll" 2>&1
   grep -q tomato_report_uncaught "$work/dz_rel.ll" && ok "compile --mode release works" || bad "compile --mode release works" "$(head -3 "$work/dz_rel.ll")"
-  if grep -q '^@tomato.name\.' "$work/dz_rel.ll"; then bad "release omits class name metadata"; else ok "release omits class name metadata"; fi
+  printf 'class Point:\n    x: int = 0\n\nclass MyError(Error):\n    pass\n\n@main\ndef main():\n    p = Point()\n    print(p.x)\n    raise MyError("m")\n' > "$work/names.tom"
+  $t compile "$work/names.tom" --mode release > "$work/names_rel.ll" 2>&1
+  if grep -q 'c"Point\\00"' "$work/names_rel.ll" || ! grep -q 'c"MyError\\00"' "$work/names_rel.ll"; then bad "release names the error classes (an uncaught error prints its class) and no others"; else ok "release names the error classes (an uncaught error prints its class) and no others"; fi
   if grep -Eq 'br i1 .*label %stop\.[0-9]+, label %ok\.[0-9]+, !prof !1$' "$work/dz_rel.ll" && grep -q '^!1 = !{!"branch_weights", i32 1, i32 10}$' "$work/dz_rel.ll"; then ok "release marks error branches unlikely"; else bad "release marks error branches unlikely"; fi
   $t compile "$work/dz.tom" --mode debug > "$work/dz_debug.ll" 2>&1
   if grep -Eq 'br i1 .*label %stop\.[0-9]+, label %ok\.[0-9]+$' "$work/dz_debug.ll" && ! grep -q '!prof' "$work/dz_debug.ll"; then ok "debug error branches remain unweighted"; else bad "debug error branches remain unweighted"; fi
@@ -1081,14 +1102,14 @@ t_cli_build_tables() { # [build] and [build.ENTRY] (D92c): mode and output, the 
   P="$work/bproj"; mkdir -p "$P/sub" "$work/uh"
   here="$(cd "$P" && pwd -P)"
   noconf() { TOMATO_HOME="$work/uh" "$@"; }
-  # a program that fails: debug mode says what and where, release mode prints a short code
+  # a program that fails: debug mode says what and where, release mode prints the same on one line, with no trace
   printf '@main\ndef main():\n    print(1)\n\n@crash\ndef crash():\n    raise ValueError("boom")\n\n@other\ndef other():\n    raise ValueError("boom")\n\n@test\ndef a_test():\n    assert 1 + 1 == 2\n' > "$P/sub/prog.tom"
   head='[project]
 name = "demo"
 version = "0.3.0"
 tomato = "0.51"
 '
-  mode_of() { case "$("$@" 2>&1)" in "error E"*) echo release ;; "error: ValueError: boom"*) echo debug ;; *) echo other ;; esac; }
+  mode_of() { case "$("$@" 2>&1)" in "error[E"[0-9]*"]: "*" (line "[0-9]*")") echo release ;; "error: ValueError: boom"*) echo debug ;; *) echo other ;; esac; }
   printf '%s' "$head" > "$P/tomato.toml"
   check "build tables: no [build] means debug" "debug" "$(mode_of noconf $t run "$P/sub/prog.tom" crash)"
   printf '%s[build]\nmode = "release"\n' "$head" > "$P/tomato.toml"
@@ -1127,7 +1148,7 @@ tomato = "0.51"
   printf '@main\ndef main():\n    print(1)\n\n@oth.x\ndef x():\n    raise ValueError("boom")\n\n@grp.one\ndef one():\n    raise ValueError("boom")\n\n@grp.two\ndef two():\n    raise ValueError("boom")\n\n@test.t\ndef t():\n    assert 1 + 1 == 2\n' > "$P/sub/dot.tom"
   printf '%s[build]\nmode = "release"\n' "$head" > "$P/tomato.toml"
   noconf $t build "$P/sub/dot.tom" -o "$work/b_rel" > /dev/null 2>&1
-  check "build tables: build uses [build] mode (the built program prints a short code)" "release" "$(mode_of "$work/b_rel" grp.one)"
+  check "build tables: build uses [build] mode (the built program prints the release error line)" "release" "$(mode_of "$work/b_rel" grp.one)"
   noconf $t build "$P/sub/dot.tom" -o "$work/b_dbg" --mode debug > /dev/null 2>&1
   check "build tables: build --mode debug wins over [build] mode release" "debug" "$(mode_of "$work/b_dbg" grp.one)"
   printf '%s[build]\nmode = "release"\n[build.grp]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
@@ -2015,7 +2036,7 @@ quiet" "$(noconf $t run greet.loud 2>&1; noconf $t run greet 2>&1)"
   check "run: everything after the entry is raw input, options included" "4 ('a', '--mode', 'release', '-o')" "$(noconf $t run all a --mode release -o 2>&1)"
   check "run: -- ends the options, and the next word is still the entry" "2 ('-x', '--mode')" "$(noconf $t run -- all -x --mode 2>&1)"
   check "run: an option before the entry is read, and the entry still runs" "17 34" "$(noconf $t run --mode debug prime 17 2>&1)"
-  check "run: an option before the entry is read (--mode release makes the release error text)" "error E01:6" "$(printf '@main\ndef main():\n    half(0)\n\ndef half(n: int):\n    print(5 // n)\n' > src/zero.tom; noconf $t run --mode release src/zero.tom 2>&1)"
+  check "run: an option before the entry is read (--mode release makes the release error text)" "error[E01]: division by zero (line 6)" "$(printf '@main\ndef main():\n    half(0)\n\ndef half(n: int):\n    print(5 // n)\n' > src/zero.tom; noconf $t run --mode release src/zero.tom 2>&1)"
   check "run: an unknown option before the entry is refused" "error: unknown option '-x' for 'tomato run' (options go before the entry: the words after it are its inputs, read as they are; after -- no word is an option)" "$(noconf $t run -x 2>&1)"
   check "run: a second file word is refused with a hint" "error: 'src/util.tom' looks like a file, but the file is already src/main.tom: after it comes an entry name such as main (tomato run FILE [ENTRY [INPUTS...]])" "$(noconf $t run src/main.tom src/util.tom 2>&1)"
   r="$(noconf $t run nosuch 2>&1)"; case "$r" in "error[E"*"]: no function is marked @nosuch"*) ok "run: an entry that does not exist is a compile error";; *) bad "run: an entry that does not exist is a compile error" "$r";; esac
@@ -2672,7 +2693,7 @@ tomato test: 2 files, 1 passed, 0 failed, 1 skipped: ok
 0" "$(printf '%s\n' "$r" | lines)
 $rc"
   r="$($t test --mode release tests/c_skip.tom 2>&1)"
-  check "tomato test: a skipped file in release mode" "skip tests/c_skip.tom
+  check "tomato test: a skipped file in release mode" "skip tests/c_skip.tom  (no network)
 tomato test: 1 files, 0 passed, 0 failed, 1 skipped: ok" "$(printf '%s\n' "$r" | lines)"
   fi; if step 2; then
   # errors in the command line, a file that does not compile or has nothing to run

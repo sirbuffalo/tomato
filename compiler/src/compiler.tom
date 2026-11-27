@@ -12829,7 +12829,7 @@ def runtime_tables(mod: Mod) -> str:
                 kinds[slot] = 'i32 ' + str(int(kinds[slot][4:]) + 8192)
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
-            if mod.mode == 1 or 'testing' in mod.sources:      # (release mode names the classes only for testing.assert_raises)
+            if mod.mode == 1 or 'testing' in mod.sources or mod.subclass(code, '@Error'):      # (release mode names the error classes, which an uncaught error prints, and every class for testing.assert_raises)
                 extra += f'@tomato.name.{slot} = private constant [{str(len(c.display) + 1)} x i8] c"{c.display}\\00"\n'
                 names[slot] = f'ptr @tomato.name.{slot}'
         elif is_mtuple(code):

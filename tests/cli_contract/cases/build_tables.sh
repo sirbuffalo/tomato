@@ -1,7 +1,7 @@
 # tier: full
 # The [build] and [build.ENTRY] tables of tomato.toml (docs/manifest.md, D92c): the mode and the output they give, and that the flags win.
 # What this pins is what the command does today (the TODO item "Confirm how tomato run, test and build use the build tables" may refine it).
-# The mode of a program shows in its errors: debug prints "error: ValueError: boom (raised on line N)", release "error E11:N".
+# The mode of a program shows in its errors: debug prints "error: ValueError: boom (raised on line N)", release "error[E11]: ValueError: boom (line N)".
 . "$CONTRACT_DIR/lib.sh"
 
 mkdir -p p/sub; cd p || exit 1
@@ -14,7 +14,7 @@ version = \"0.3.0\"
 tomato = \"$minv\"
 "
 tmode_of() { r="$("$@" 2>&1)"; case "$r" in *"raised on line"*) echo debug ;; *"assertion failed"*) echo release ;; *) echo "other: $r" ;; esac; }
-mode_of() { r="$("$@" 2>&1)"; case "$r" in *"error E"[0-9]*) echo release ;; *"error: ValueError: boom"*|*"error[E"*) echo debug ;; *) echo "other: $r" ;; esac; }
+mode_of() { r="$("$@" 2>&1)"; case "$r" in *"raised on line"*|*"  at "*) echo debug ;; *"error[E"[0-9]*"]: "*" (line "[0-9]*")"*) echo release ;; *) echo "other: $r" ;; esac; }
 printf '%s' "$head" > tomato.toml
 check "no [build]: debug" "debug" "$(mode_of "$TOMATO" run sub/prog.tom crash)"
 printf '%s[build]\nmode = "release"\n' "$head" > tomato.toml

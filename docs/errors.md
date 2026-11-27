@@ -90,14 +90,19 @@ error[E01]: division by zero
 ```
 
 An error the program raises itself with `raise` and nobody catches prints `error: ClassName: message (raised on line N)` (no
-ID: the program made the message up) and then the same trace; in a release build its code is `E11`, "an error raised by the
-program". A `catch` that handles the error discards its trace. At
+ID: the program made the message up) and then the same trace; a release build prints it as `error[E11]: ClassName: message (line N)`
+with no trace (below), `E11` being the id of "an error raised by the program". A `catch` that handles the error discards its trace. At
 most 24 lines are kept; further ones are counted (`... and 3 more calls`).
 
 There are two modes (D34b). `--mode debug` (the default) prints the readable text above and reports objects that were never
-freed. `--mode release` prints no trace, only a short code such as `error E01:4` (error id E01, source line 4) that
-`tomato explain CODE [FILE]` turns back into the class, the message and, when a FILE is given, the source line (with a caret,
-like a compiler error); it also links the program with a higher optimisation level (`clang -O2` with link-time optimisation, so
+freed. `--mode release` prints the same head on **one line**, with the line where the error was raised and no trace (D34c):
+`error[E01]: division by zero (line 4)` for the language's own failures, and `error[E11]: ValueError: config file missing key port
+(line 3)` for an error the program raised (the class name is printed for these, as in debug mode, where the class is the only
+clue; an id that the program gave its own error is printed in place of `E11`). Debug mode writes `(raised on line N)` and puts the
+lines of the trace under it; release writes `(line N)` and nothing below. The message is whole, however long, and is the message
+of `std/errors.txt` for a runtime failure; a message of several lines is printed as it is. A failure of the runtime itself with no
+source location (out of memory, a stack overflow, invalid startup input) has no `(line N)`. `tomato explain CODE [FILE]` still
+decodes an id and, given the id and line as `E01:4`, shows the source line with a caret, like a compiler error; it also links the program with a higher optimisation level (`clang -O2` with link-time optimisation, so
 the runtime is inlined into the program, and no leak report or exit-time cycle collection; debug uses `-O1`). `tomato run`,
 `build` and `compile` all take `--mode`; `--mode normal` is an error that says it was renamed to `release`.
 
@@ -203,10 +208,12 @@ fields default to `""`.
 `f'{e}'` are `e.message`, with no class name and no id. An error nobody catches prints more, `error: ClassName: message (raised on
 line N)` (above), because there the class name is the only clue to what went wrong. Every error class inherits the `@str`; a
 class can give its own (one method marked `@str`, any name) and `print` then uses that, but the uncaught-error report does not: it
-always prints the class name and the `message` field. Release builds print `error E04:12` with the ID and the line
-where the error was raised. `tomato explain E04:12 prog.tom` shows the diagnostic and line from the supplied file. `tomato explain E04`
+always prints the class name and the `message` field. Release builds print the same on one line, with the line and no trace:
+`error[E11]: ClassName: message (line 12)`, or `error[E04]: index out of range (line 12)` for a runtime failure.
+`tomato explain E04:12 prog.tom` shows the diagnostic and line from the supplied file. `tomato explain E04`
 shows the class and message without a file. A line of zero means the runtime has no source location, for example when startup
-input is invalid or the machine runs out of memory. These process failures and stack exhaustion report an ID and terminate.
+input is invalid or the machine runs out of memory. These process failures and stack exhaustion print `error[ID]: message`
+(no line) and terminate.
 
 A mistake in a configuration file (`tomato.toml` or `config.toml`, see `tomato config`) stops `tomato run`, `build`, `compile` and `config` with a `ConfigError` id: E539 the file cannot be read, E540 it is not valid TOML, E541 `limits` is not a table, E542 an unknown setting in `[limits]`, E543 a setting is not a whole number in its range. The manifest checks add E555 to E568 (unknown tables and keys, missing or mistyped settings, versions, names, the `tomato` minimum, `[build]`) and the seed commands E569 to E580 (E570 is retired) and E598 to E606 (git, the seed store, the foreign symbols, the edits of `tomato seed add` and `remove`, D101a, and `tomato seed verify`, D103a), with E581 and E607 as compile errors (a module of the project with the name of a module of a seed, D107a), and E590 for a table below `[seeds]` or `[test-seeds]` (D94b); `docs/manifest.md` lists them all. A built program started with a first word that is no entry stops with E591, and an entry input of type `File` that cannot be opened stops it with E592. A definition that takes the name of a built-in type (`def str`, `class list`, `const int`; D107a) is E608, and calling a constant (`const len = 4` then `len(x)`) is E609; any other name of a built-in may be defined and then wins in that module.
 

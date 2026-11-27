@@ -478,7 +478,7 @@ other status is a failure, and the driver then falls back for the rest of the se
   and keep in step: the runtime cache (`rtcache.sh`: the runtime is compiled once per mode and clang), `-ldl` on Linux (the runtime loads libcurl with
   `dlopen`), the LTO link with its bitcode-merge and no-LTO fallbacks, and the build warnings. A copy in the installer would drift.
   **The mode is release on purpose:** the default debug mode prints a leak report and call traces on standard error, which would be drawn
-  over the editor's screen, while a release program prints a short error code; a crash of the helper then shows as the driver's
+  over the editor's screen, while a release program prints its error on one line (no trace); a crash of the helper then shows as the driver's
   one-line fallback note (above). The cost is the release runtime object (LTO bitcode) compiled once into the cache **[I]**: some seconds
   on the first install, then a cache hit; it must be measured in stage 2, and if it is too slow the helper may use the debug-mode link
   with the leak report silenced instead.

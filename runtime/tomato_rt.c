@@ -134,13 +134,11 @@ static void tty_restore_signal(void);   /* the same for a signal handler: it mus
 _Noreturn void tomato_fail_id(int kind, const char *message) {
     fflush(stdout);
     tty_restore_all();
-#ifdef TOMATO_RELEASE
-    (void)message;
-    fprintf(stderr, "error E%02d:0\n", kind);
-#else
+    /* release prints the same line (there is no source location here, so no line), and its trace is empty: it keeps none */
     char label[32];
     snprintf(label, sizeof label, "error[E%02d]", kind);
     print_head(label, C_RED, message, (int)strlen(message));
+#ifndef TOMATO_RELEASE
     print_trace();
 #endif
     exit(1);
@@ -156,13 +154,8 @@ static void on_fault(int sig, siginfo_t *info, void *ctx) {
     (void)ctx;
     char *at = (char *)info->si_addr;
     if (at >= stack_low - 65536 && at <= stack_top) {
-#ifdef TOMATO_RELEASE
-        static const char msg[] = "error E350:0\n";
-        static const char colored[] = "error E350:0\n";
-#else
         static const char msg[] = "error[E350]: stack overflow: a function calls itself too deeply\n";
         static const char colored[] = "\033[1;31merror[E350]:\033[0m \033[1mstack overflow: a function calls itself too deeply\033[0m\n";
-#endif
         fflush(stdout);
         tty_restore_signal();
         if (use_color() ? write(2, colored, sizeof colored - 1) < 0 : write(2, msg, sizeof msg - 1) < 0) { /* nothing more to do */ }
@@ -4644,29 +4637,29 @@ static void print_uncaught(void *obj, int line, int runtime, int mode, const cha
     Str *id = error->id;
     int coded = id && id->bytes >= 3 && id->bytes < 16 && id->data[0] == 'E';
     for (int i = 1; coded && i < id->bytes; ++i) coded = id->data[i] >= '0' && id->data[i] <= '9';
-    if (mode == 1) {
+    /* Debug (1) and release (2) print the same head. Debug adds the call trace and says "raised on line N"; release is the one line
+     * `error[ID]: Class: message (line N)` (an error the program made up has no id of its own and prints E11, "an error raised by
+     * the program"; a runtime failure prints no class, its message says what it was) and never a trace (D34b, decision of 2026-11-27). */
+    if (mode == 1 || mode == 2) {
         char label[32] = "error";
         if (coded) snprintf(label, sizeof label, "error[%.*s]", (int)id->bytes, id->data);
+        else if (mode == 2) snprintf(label, sizeof label, "error[E11]");
         const char *cls = tomato_class_names[((Hdr *)obj)->type & TYPE_MASK];
         size_t cl = strlen(cls);
         /* a Diagnostic is a finished compiler error message (compiler/src/diag.tom): shown as it is */
         if (!runtime && cl >= 10 && strcmp(cls + cl - 10, "Diagnostic") == 0) fprintf(stderr, "%.*s\n", (int)msg->bytes, msg->data);
-        else if (runtime) {
-            print_head(label, C_RED, msg->data, (int)msg->bytes);
-            print_trace();
-        }
         else {
-            size_t room = (size_t)msg->bytes + strlen(cls) + strlen(where) + 48;
+            size_t room = (size_t)msg->bytes + strlen(cls) + strlen(where) + 64;
             char *text = malloc(room);
             if (!text) out_of_memory();
-            snprintf(text, room, "%s: %.*s (raised on line %d)%s", cls, (int)msg->bytes, msg->data, line, where);
+            const char *at = mode == 2 ? "line" : "raised on line";
+            if (runtime && mode == 1) snprintf(text, room, "%.*s", (int)msg->bytes, msg->data);
+            else if (runtime) snprintf(text, room, "%.*s (line %d)%s", (int)msg->bytes, msg->data, line, where);
+            else snprintf(text, room, "%s: %.*s (%s %d)%s", cls, (int)msg->bytes, msg->data, at, line, where);
             print_head(label, C_RED, text, (int)strlen(text));
             free(text);
-            print_trace();
+            if (mode == 1) print_trace();
         }
-    } else if (mode == 2) {
-        if (coded) fprintf(stderr, "error %.*s:%d\n", (int)id->bytes, id->data, line);
-        else fprintf(stderr, "error E11:%d\n", line);
     }
 }
 
