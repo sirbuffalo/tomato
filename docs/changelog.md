@@ -17,6 +17,7 @@ on an older install moves to 1.0.0 as usual.
 
 ### Breaking changes
 
+- A function, class or constant that a program defines with the name of a built-in function or class (`print`, `open`, `len`, `range`, ...) is used in that module, where the built-in was used before and the definition ignored (D108a). A definition with the name of a built-in type (`def str`, `class list`) is a compile error (E608); it was ignored.
 - The type test is written `x is T` (and `x is not T`), not `x in T` (D23i): `if v is Circle:`, `if x is int:`, `if s is None:`. `x in T` with a type on the right still works in 1.0.x and prints a warning (`type-test`, `# allow: type-test` silences it); membership stays `in` (`if a in items:`). `a is b` on two objects, lists, dicts or sets is now identity (it was an error); on numbers, text and tuples it is an error that says to use `==`.
 - A program built by `tomato build` takes `[ENTRY [INPUTS...]]` as its arguments (D94b): no word runs `main`, a first word that names an entry
   runs that entry with the words after it, and any other first word is an error that lists the entries. What was `./prog 30` for a
@@ -40,6 +41,7 @@ on an older install moves to 1.0.0 as usual.
 
 ### Language
 
+- **A module's own definitions shadow the built-ins** (D108a): `def len(x: int) -> int` makes `len(3)` a call of the module's `len` (it was silently ignored: the built-in `len` won and `len(3)` was E324), and the same for `print`, `open`, `range`, `zip` and `enumerate` in `for`, the error classes and every other built-in function or class, for a function, class, interface or constant the module defines and a name it brings in with `from m import name`. Only that module is affected: another module, and the standard library, still see the built-in. f-strings, `assert`, unpacking, `enumerate` and `zip` loops and comprehensions keep using the built-ins in a module that shadows them. A built-in added in a later release therefore cannot break a program that has a function of that name. The names of the built-in types (`int`, `uint`, `float`, `bool`, `str`, `File`, `list`, `dict`, `set`, `tuple`) are reserved: defining one is a compile error (E608). A constant that is called is E609. A class of a program with the name of a class of the built-ins (`range`, `ValueError`) works now (it gave a confusing error). Local variables are as before.
 - **Error classes are easier to write** (D93b): a class that declares no fields inherits its parent's `@init`, so `class NotFound(Error): pass` takes `NotFound('message')` (and an optional id), and `print(e)`, `str(e)` and `f'{e}'` give an error's message alone. An uncaught error still prints its class name (`error: NotFound: message (raised on line N)`).
 - **Floats of any size** (D77a-e): `float` keeps a 53-bit significand but its exponent has no limit, so nothing
   overflows or underflows (`1e300 * 1e300` is `1.0000000000000001e+600`, `float(10 ** 400)` is `1e+400`). `int` and

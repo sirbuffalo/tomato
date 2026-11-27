@@ -1,0 +1,22 @@
+# A module may define its own print (D108a). It calls itself, and writes with sys.write_stdout. The built-in print is gone from this
+# module; assert, f-strings and loops are not affected.
+from sys import write_stdout
+
+def print(text: str, times: int = 1):
+    if times > 1:
+        print(text, times - 1)
+    write_stdout(f'[{text}]\n')
+
+def show(xs: list[int]):
+    for i, x in enumerate(xs):
+        print(f'{i}: {x:>3}')
+
+@main
+def main():
+    print('hello')
+    print('twice', 2)
+    show([5, 50, 500])
+    assert 1 + 1 == 2
+    names = [s.upper() for s in ['a', 'b']]
+    for n in names:
+        print(n)

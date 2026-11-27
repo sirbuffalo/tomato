@@ -1,0 +1,20 @@
+# for shadow_library.tom: defines len and open, and a private sum, which only this module sees; max is the built-in here
+export def len(n: int) -> int:
+    if n < 10:
+        return 1
+    return 1 + len(n // 10)
+
+export def open(name: str) -> str:
+    return 'opened ' + name
+
+def sum(a: int, b: int) -> int:
+    return a + b + 1000
+
+export def total(xs: list[int]) -> int:
+    t = 0
+    for x in xs:
+        t = sum(t, x)
+    return t
+
+export def biggest(xs: list[int]) -> int:
+    return max(xs)

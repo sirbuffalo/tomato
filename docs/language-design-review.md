@@ -96,7 +96,15 @@ If the reason for short ids was binary size, keep the short form only for the ru
 **Cost.** Small: `print_uncaught` in `runtime/tomato_rt.c` already has the message (`mode == 2` drops it). The tests of
 release-mode output change.
 
-### 1.4 Defining a builtin's name is silently ignored (Blocks 1.0)
+### 1.4 Defining a builtin's name is silently ignored (Blocks 1.0; decided and built, D108a)
+
+> **Status (2026-11-27).** Davis decided: a module's own definitions shadow the builtins (Python's rule, the first option
+> of the proposal). It is built as D108a in `docs/decisions.md`: a function, class, interface or constant a module defines,
+> and a name it brings in with `from m import name`, wins over a builtin of that name inside that module only; the code
+> the compiler writes for f-strings, `assert`, unpacking, `enumerate`/`zip` loops and comprehensions keeps the builtins;
+> the standard library is unaffected; the names of the built-in types (`int`, `uint`, `float`, `bool`, `str`, `File`,
+> `list`, `dict`, `set`, `tuple`) stay reserved, and defining one is a compile error (E608). The text below is the
+> original problem statement; the "today" in it is before D108a.
 
 **Problem.** A program can define its own top-level function `len`, and the builtin still wins. Nothing warns about it:
 
@@ -577,7 +585,7 @@ In the order I would take them, with my recommendation for each. The first eight
 1. **The compatibility promise's exceptions (1.1, 1.2).** Promote most `docs/provisional.md` rows to decided, keep a
    short named unstable list, and state that error ids and classes are stable while message text is not.
 2. **Release-mode error output (1.3).** Print the class and message of every uncaught error in release mode.
-3. **Builtins versus user names (1.4).** A module's own definitions shadow builtins.
+3. **Builtins versus user names (1.4).** A module's own definitions shadow builtins. *Decided by Davis on 2026-11-27 and built (D108a).*
 4. **The `@` namespace and the type test (2.1, 2.2).** Entry points other than `main` as `@entry`; type tests as
    `x is T` (2.2 decided and built, D23i).
 5. **`bytes` (8.1).** A `bytes` type before 1.0, or at least `list[uint[length=8]]` in every binary std signature.

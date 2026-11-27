@@ -5,7 +5,7 @@
 - Answer the seed registry open questions, then build the rest of stage 3 onward
   Answer the open questions in section 19 of `docs/package-registry-design.md` (1 to 11). The local part is built (D95a, `docs/manifest.md`: the strict manifest reader, `[build]`, path and git seeds with the store, `tomato.lock`, `tomato seed install/add/remove/vendor/check/hash`, the foreign-symbol question, D100a, no helper program); what is left is the registry, signatures, the index client and everything under "Not built yet" in the sheet.
 - Settle the compatibility-promise items of docs/language-design-review.md before tagging 1.0.0
-  Its ranked list ("Decisions to make, ranked"): triage `docs/provisional.md`, release-mode error messages, builtin shadowing, the `@` namespace, `bytes`, `File` safety, reserved std module names and the `!` interface. Each needs Davis's decision, then a decision entry and the change. (`x is T`, 2.2, is decided and built: D23i; Davis has still to confirm its defaults, the `x in T` warning above all.)
+  Its ranked list ("Decisions to make, ranked"): triage `docs/provisional.md`, release-mode error messages, the `@` namespace, `bytes`, `File` safety, reserved std module names and the `!` interface. Each needs Davis's decision, then a decision entry and the change. (`x is T`, 2.2, is decided and built: D23i; Davis has still to confirm its defaults, the `x in T` warning above all. Builtin shadowing, 1.4, is decided and built: D108a.)
 - Check the shell-to-Tomato plan's open Mac points on a Mac
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
 - Run the new `sys_async` test on macOS
@@ -18,3 +18,7 @@
   `def b(o: Box | None, t: int) -> int: return (t * 2) + o.n * 3` gives E339 "the class 'Box?' does not exist", while `return t + o.n` compiles and raises None at run time. The message is wrong in either direction (a clear 'None where a value is needed' at run time, or a proper type error).
 - Decide whether `x is Subclass` should check the dynamic class
   The type test on a class-typed value uses its static type: with `v: Shape` holding a `Circle`, `v is Circle` is False (same as `x in Circle` always was), so `is` cannot downcast. Only unions, optionals and interface values are tested by content (D23i).
+- Make the repl and playground echo of a bare expression immune to a user's `print`
+  The repl (`native/tomato-repl`) and the website playground (`site/play.html`) show a bare expression by running the text `print(expr)`, so a session that defines its own `print` shows values through it (D108a). Make the echo immune, e.g. a core spelling of `print` that the lexer accepts only from tools.
+- Decide whether local variables and parameters shadow builtins in calls
+  Ask Davis whether local variables and parameters should shadow builtins in calls too (Python's rule). Today the `shadow` warning says a local 'hides' the name, but a call `len(x)` still reaches the builtin. Changing it could break programs that have a local `len` and call `len(x)`.

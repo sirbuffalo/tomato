@@ -1,0 +1,24 @@
+len:a range:b abs:c hash:d sum:e min:f max:g sorted:h round:i
+chr:j ord:k any:l all:m map:n filter:o reversed:p
+{"a":[1,2,{"b":null}],"c":"text"} {
+  "a": [
+    1,
+    2,
+    {
+      "b": null
+    }
+  ],
+  "c": "text"
+}
+[['a', 'b', 'c,d'], ['1', '2', '3']]
+aaabb 2 7 b-c ['a', 'b', 'c']
+['the quick brown', 'fox jumps over', 'the lazy dog'] a
+b
+3.0 3.0
+2026-11-27 4
+8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 [1, 2] 258
+[[1, 2], [1, 3], [2, 1], [2, 3], [3, 1], [3, 2]] [1, 3, 6]
+aGk= a%20b 6 True 120
+boom
+0x
+1y

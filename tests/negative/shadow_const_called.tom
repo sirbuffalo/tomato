@@ -1,0 +1,7 @@
+# a constant that takes a built-in's name hides the built-in too: it is not a function (D108a)
+const len = 4
+
+@main
+def main():
+    print(len)
+    print(len([1, 2]))

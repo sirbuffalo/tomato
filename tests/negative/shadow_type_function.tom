@@ -1,0 +1,7 @@
+# a built-in type name is reserved: a function named str would change every `str` written in the module (D108a)
+def str(x: int) -> str:
+    return 'x'
+
+@main
+def main():
+    print(str(1))

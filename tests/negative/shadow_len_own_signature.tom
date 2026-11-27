@@ -1,0 +1,8 @@
+# a len of the module's own wins over the built-in (D108a): len('abc') is a call of it, and its parameter is an int
+def len(x: int) -> int:
+    return x + 1
+
+@main
+def main():
+    print(len(3))
+    print(len('abc'))

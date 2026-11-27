@@ -1,0 +1,8 @@
+# a print of the module's own wins over the built-in (D108a): it takes one text, so the built-in's many values are an error
+def print(text: str):
+    return
+
+@main
+def main():
+    print('one text')
+    print(1, 2)

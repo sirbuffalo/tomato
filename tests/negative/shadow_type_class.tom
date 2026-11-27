@@ -1,0 +1,7 @@
+# a class may not be called list: `list[int]` and `x in list` always mean the built-in type (D108a)
+class list:
+    n: int = 0
+
+@main
+def main():
+    print(list().n)

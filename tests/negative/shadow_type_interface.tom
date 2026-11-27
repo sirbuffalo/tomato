@@ -1,0 +1,7 @@
+# nor an interface called File (D108a)
+interface File:
+    def close(self)
+
+@main
+def main():
+    print(1)

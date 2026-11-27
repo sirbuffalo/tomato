@@ -32,6 +32,12 @@ export class CompileError(Error):
 def basic_type(name: str) -> bool:
     return name == 'int' or name == 'bool' or name == 'str' or name == 'File' or name == 'float'
 
+# the names of the built-in types: no module may define one of them (D108a). Every other built-in name, a function or a class, gives way to
+# a module's own definition of it; a type name written anywhere (a parameter, a field, `x in list`) means the built-in type, so a definition
+# of it could not change it for the whole module and would only make `x: str` and the text 'abc' two different types
+def reserved_type_name(name: str) -> bool:
+    return name in ['int', 'uint', 'float', 'bool', 'str', 'File', 'list', 'dict', 'set', 'tuple']
+
 def is_list(t: str) -> bool:
     return t.startswith('list[') or t.startswith('tuple[')
 
@@ -1489,6 +1495,25 @@ class Mod:
             return ''
         return found.key
 
+    def key_for(self, module: str, name: str) -> str:
+        # the program-wide name of a declaration (key_of), but a main-program declaration that has the name of one of the built-ins
+        # (a class `range` or `ValueError`, a function `_range1`) is `main.name`, so the two do not share a key (D108a)
+        if module == 'main' and self.binding('builtin', name) is not None:
+            return f'main.{name}'
+        return key_of(module, name)
+
+    def resolve_core(self, name: str) -> str:
+        # the key of the built-in a name written by the compiler's own desugaring stands for, whatever the module defines
+        found = self.binding('builtin', name)
+        if found is None:
+            return ''
+        return found.key
+
+    def shadows(self, name: str) -> bool:
+        # does the module being compiled define or import `name` at its top level? Then that wins over the built-in of the name, inside
+        # this module only (D108a). The built-ins themselves, and the helpers the compiler writes for them, are in the module `builtin`.
+        return self.cur != 'builtin' and self.binding(self.cur, name) is not None
+
     def binding(self, module: str, name: str) -> Binding | None:
         for b in self.scope:
             if b.module == module and b.name == name:
@@ -2785,7 +2810,7 @@ class Gen:
             f = val_node(n.fields[0])
             if f.kind != 'Name':
                 return False
-            if f.fields[0].text == 'len':
+            if self.is_builtin(f, 'len'):
                 return self.calm(val_nodes(n.fields[1])[0])
             if len(n.fields[2].items) > 0 or not self.pure_call(f):
                 return False
@@ -2838,7 +2863,7 @@ class Gen:
             return self.calm(val_node(s.fields[0])) and self.calm_block(val_nodes(s.fields[1]))
         if k == 'For':
             it = val_node(s.fields[1])
-            if len(s.fields) > 3 or it.kind != 'Call' or val_node(it.fields[0]).kind != 'Name' or val_node(it.fields[0]).fields[0].text != 'range':
+            if len(s.fields) > 3 or it.kind != 'Call' or not self.is_builtin(val_node(it.fields[0]), 'range'):
                 return False
             for b in val_nodes(it.fields[1]):
                 if not self.calm(b):
@@ -3624,7 +3649,7 @@ class Gen:
             return fl if op == '/' else ''
         if k == 'Call':
             f = val_node(n.fields[0])
-            if f.kind == 'Name' and f.fields[0].text == 'len' and 'len' not in self.slots:
+            if self.is_builtin(f, 'len') and 'len' not in self.slots:
                 args = val_nodes(n.fields[1])
                 at3 = self.peek_type(args[0]) if len(args) == 1 else ''
                 return 'int' if (is_list(at3) or at3 == 'str') and not is_optional(at3) else ''
@@ -6969,6 +6994,11 @@ class Gen:
             return ex(self.arith('xor', result.reg, '1'), 'bool')
         return result
 
+    def is_builtin(self, f: Node, name: str) -> bool:
+        # is f the name of the built-in `name`? Not where the module defines or imports a `name` of its own (D108a), unless the compiler's
+        # own desugaring wrote it (f.core)
+        return f.kind == 'Name' and f.fields[0].text == name and (f.core or not self.mod.shadows(name))
+
     def call(self, n: Node, statement: bool) -> Ex:
         f = val_node(n.fields[0])
         if f.kind == 'LlvmRef':
@@ -6994,56 +7024,60 @@ class Gen:
         if f.kind != 'Name':
             raise CompileError('only a function name can be called here\ncalling the result of another expression is not supported', n.line)
         name = f.fields[0].text
-        if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int', 'input', 'sleep']:
+        # a function or class the module defines or imports under a built-in's name wins over the built-in (D108a): `own`. A name the
+        # compiler's own desugaring wrote (f.core: the len of an enumerate loop, the str of an f-string) is always the built-in
+        own = name in ['print', 'open', 'len', 'range'] and not f.core and self.mod.shadows(name)
+        res = self.mod.resolve_core(name) if f.core else self.mod.resolve(name)
+        if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int', 'input', 'sleep'] and not own:
             raise CompileError(f"'{name}' does not take keyword arguments", n.line)
         args = val_nodes(n.fields[1])
         if name in self.slots and is_fn(self.types[name]):
             self.async_ok = False
             self.kw = n.fields[2].items
             return self.call_value(self.expr(f), args, n.line, "the function value '" + name + "'")
-        if self.mod.resolve(name) == '' and name not in self.slots:
+        if res == '' and name not in self.slots:
             self.async_ok = False       # builtins are plain calls; their arguments are not awaited
-        if self.bail != '' and name not in self.slots and self.mod.resolve(name) == 'math.sqrt' and len(args) == 1 and len(n.fields[2].items) == 0 and (self.peek_type(args[0]) == 'float' or self.peek_type(args[0]) == 'int'):
+        if self.bail != '' and name not in self.slots and res == 'math.sqrt' and len(args) == 1 and len(n.fields[2].items) == 0 and (self.peek_type(args[0]) == 'float' or self.peek_type(args[0]) == 'int'):
             return self.fast_sqrt(args[0])
-        if name == 'print':
+        if name == 'print' and not own:
             if not statement:
                 raise CompileError("print() gives no value, so it cannot be used inside an expression", n.line)
             self.print_call(args)
             return ex('', '')
-        if name == 'open':
+        if name == 'open' and not own:
             return self.open_call(args, n.line)
-        if name == 'input' and name not in self.slots and self.mod.resolve(name) == '':
+        if name == 'input' and name not in self.slots and res == '':
             return self.input_call(args, n.line)
-        if name == 'clock' and name not in self.slots and self.mod.resolve(name) == '':
+        if name == 'clock' and name not in self.slots and res == '':
             if len(args) > 0:
                 raise CompileError('clock() takes no arguments', n.line)
             c = self.tmp('clock')
             self.emit(f'{c} = call double @tomato_clock()')
             return self.bf_plain(c)
-        if name == 'sleep' and name not in self.slots and self.mod.resolve(name) == '':
+        if name == 'sleep' and name not in self.slots and res == '':
             raise CompileError("sleep() is async, so it must be awaited\nwrite: await sleep(seconds)  inside an async def", n.line)
-        if name == '_http_wait' and name not in self.slots and self.mod.resolve(name) == '':
+        if name == '_http_wait' and name not in self.slots and res == '':
             raise CompileError("_http_wait() is async, so it must be awaited\nwrite: await _http_wait(handle)  inside an async def", n.line)
-        if (name == '_settle' or name == '_park' or name == '_fd_wait') and name not in self.slots and self.mod.resolve(name) == '':
+        if (name == '_settle' or name == '_park' or name == '_fd_wait') and name not in self.slots and res == '':
             raise CompileError(f"{name}() is async, so it must be awaited\nwrite: await {name}(...)  inside an async def", n.line)
-        if name == '_unpark' and name not in self.slots and self.mod.resolve(name) == '':
+        if name == '_unpark' and name not in self.slots and res == '':
             return self.unpark_call(args, n.line)
-        if name == '_site' and name not in self.slots and self.mod.resolve(name) == '':
+        if name == '_site' and name not in self.slots and res == '':
             # the line where the async function running now was called (std/asyncio's Lock records where it was taken)
             if len(args) != 0 or not self.is_async:
                 raise CompileError('_site() takes no arguments and can only be used inside an async function', n.line)
             raw = self.tmp('site')
             self.emit(f'{raw} = load i64, ptr {self.frame_field("%frame", 4, "u64")}')
             return self.tag_small(raw)
-        if name == 'len':
+        if name == 'len' and not own:
             return self.len_call(args, n.line)
         if name == 'str':
             return self.str_call(args, n.line)
-        if name == '_repr_box' and len(args) == 1 and name not in self.slots and self.mod.resolve(name) == '':
+        if name == '_repr_box' and len(args) == 1 and name not in self.slots and res == '':
             # the text of a union value inside a printed container: text is quoted, as Python does
             bv = self.expr(args[0])
             return self.union_text(bv, True, n.line)
-        if name == '_format_spec' and len(args) == 2 and name not in self.slots and self.mod.resolve(name) == '':
+        if name == '_format_spec' and len(args) == 2 and name not in self.slots and res == '':
             return self.format_call(args, n.line)
         if name == 'float' and len(args) == 1:
             return self.float_call(self.expr(args[0]), n.line)
@@ -7053,9 +7087,9 @@ class Gen:
                 return self.float_to_int(conv, n.line)
             return self.convert_explicit(conv, 'int', n.line)
         # these do no type checks: only the compiler's own helpers (key_helper_source), which are compiled in the module builtin, may use them
-        if name in ['_hash_mix', '_dict_next', '_dict_key', '_same', '_isa', '_cast'] and self.mod.cur == 'builtin' and name not in self.slots and self.mod.resolve(name) == '':
+        if name in ['_hash_mix', '_dict_next', '_dict_key', '_same', '_isa', '_cast'] and self.mod.cur == 'builtin' and name not in self.slots and res == '':
             return self.hash_intrinsic(name, args, n.line)
-        key = self.mod.resolve(name)
+        key = res
         if key == '' and name == 'hash' and name not in self.slots:
             return self.hash_call(args, n.line)
         if key == '' and name in ['abs', 'chr', 'ord'] and name not in self.slots:
@@ -7073,7 +7107,7 @@ class Gen:
         if key == '' and name in ['sorted', 'reversed', 'sum', 'min', 'max']:
             self.kw = []
             return self.list_builtin(name, args, n.line)
-        if name == 'range' and name not in self.slots:
+        if name == 'range' and name not in self.slots and not own:
             # range(...) is a value of the builtin class `range` (std/builtin/range.tom); range(a, b, c) is its constructor
             if len(args) < 1 or len(args) > 3 or len(n.fields[2].items) > 0:
                 raise CompileError('range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', n.line)
@@ -7092,6 +7126,8 @@ class Gen:
             if len(n.fields[2].items) > 0:
                 raise CompileError('keyword arguments are not supported when creating an object\npass the arguments by position', n.line)
             return self.construct(self.mod.find_class(key, n.line), args, n.line)
+        if key in self.mod.consts and name not in self.slots:
+            raise CompileError(f"'{name}' is a constant, not a function, so it cannot be called", n.line)
         if self.mod.mode == 2 and self.mod.late and len(n.fields[2].items) == 0 and len(args) > 0:
             floats = True
             target2 = self.mod.find(key, n.line)
@@ -9565,6 +9601,8 @@ class Gen:
     def nest_start_ok(self, s: Node) -> bool:
         if self.mod.mode != 2 or self.nest != '' or self.nest_off or self.is_async or self.gen_n > 0 or self.facts_off > 0 or self.try_depth > 0:
             return False
+        if self.mod.shadows('range') or self.mod.shadows('len'):
+            return False                # nest_shape reads range loops by name, and the bounds are checked by what len is
         if node_count(s, NEST_NODES) > NEST_NODES or not nest_shape(s):
             return False
         lists: list[str] = []
@@ -10723,7 +10761,7 @@ class Gen:
         # len(xs) of a local list, tuple, dict, set or text: a count the runtime keeps, given back as a small number (len_of)
         f = val_node(n.fields[0])
         args = val_nodes(n.fields[1])
-        if f.kind != 'Name' or f.fields[0].text != 'len' or 'len' in self.slots or len(args) != 1 or len(n.fields[2].items) > 0:
+        if not self.is_builtin(f, 'len') or 'len' in self.slots or len(args) != 1 or len(n.fields[2].items) > 0:
             return None
         a = args[0]
         if a.kind != 'Name' or a.fields[0].text not in self.slots:
@@ -11490,7 +11528,7 @@ class Gen:
         args = val_nodes(it.fields[1])
         if f.kind == 'Name':
             name = f.fields[0].text
-            if name in self.slots or name == 'range':
+            if name in self.slots or self.is_builtin(f, 'range'):
                 return False
             key = self.mod.resolve(name)
             if key == '' or self.mod.has_class(key):
@@ -11973,7 +12011,7 @@ class Gen:
 
     def for_stmt(self, s: Node):
         it = val_node(s.fields[1])
-        if len(s.fields) == 3 and it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'open' and 'open' not in self.slots and len(it.fields[2].items) == 0:
+        if len(s.fields) == 3 and it.kind == 'Call' and self.is_builtin(val_node(it.fields[0]), 'open') and 'open' not in self.slots and len(it.fields[2].items) == 0:
             self.for_open(s, it)
             return
         if len(s.fields) == 3 and it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text not in self.slots and self.mod.resolve(val_node(it.fields[0]).fields[0].text) == 'itertools.progress_bar':
@@ -11987,7 +12025,7 @@ class Gen:
             return
         if self.gen_call(s, it):
             return
-        if not (it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'range'):
+        if not (it.kind == 'Call' and self.is_builtin(val_node(it.fields[0]), 'range')):
             self.for_each(s, it)
             return
         bounds = val_nodes(it.fields[1])
@@ -13218,7 +13256,7 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     info.line = item.line
     info.owner = owner
     info.module = mod.cur
-    info.key = key_of(mod.cur, info.name)
+    info.key = key_of(mod.cur, info.name) if owner != '' else mod.key_for(mod.cur, info.name)
     if len(item.fields) > 6:
         info.is_private = item.fields[4].flag
         info.is_async = len(item.fields) > 8 and item.fields[8].flag
@@ -13932,6 +13970,9 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
         item = top.node
         if item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'ConstDef':
             name = item.fields[0].text
+            if top.module != 'builtin' and reserved_type_name(name):
+                mod.cur = top.module
+                raise CompileError(f"'{name}' is the name of a built-in type, so it cannot be defined here\nchoose another name: a type name always means the built-in type", item.line)
             if is_generic_item(item):
                 # a generic class or function may be declared again with another number of type parameters (an overload)
                 gid = f'{top.module}.{name}'
@@ -13942,7 +13983,7 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
                 if gid not in arities:
                     arities[gid] = [count]
             mod.cur = top.module        # a name declared twice is reported in the module that declares it (not the last one loaded)
-            mod.declare_name(top.module, name, key_of(top.module, name), item.exported, item.line)
+            mod.declare_name(top.module, name, mod.key_for(top.module, name), item.exported, item.line)
     for ii in imports:
         mod.cur = ii.importer   # an error in an import is the importing module's, not that of the module loaded last
         if len(ii.names) == 1 and ii.names[0] == '*':
@@ -13952,7 +13993,7 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
                 if top.module == ii.module and item.exported and (item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'ConstDef'):
                     if is_generic_item(item) and mod.binding(ii.importer, ii.module + '.' + item.fields[0].text) is not None:
                         continue     # another overload of a generic name that is already bound
-                    mod.declare_name(ii.importer, ii.module + '.' + item.fields[0].text, key_of(top.module, item.fields[0].text), False, ii.line)
+                    mod.declare_name(ii.importer, ii.module + '.' + item.fields[0].text, mod.key_for(top.module, item.fields[0].text), False, ii.line)
             continue
         for nm in ii.names:
             mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
@@ -14108,7 +14149,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     plain: list[TopItem] = []
     for top in items:
         if is_generic_item(top.node):
-            gk = key_of(top.module, top.node.fields[0].text)
+            gk = mod.key_for(top.module, top.node.fields[0].text)
             if gk in mod.generics:
                 gk = f'{gk}#{len(top.node.fields[-1].items)}'     # an overload (see Mod.base_of)
             mod.generics[gk] = top.node
@@ -14121,13 +14162,13 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         mod.cur = top.module
         if item.kind == 'InterfaceDef':
             ifc = IfaceInfo()
-            ifc.name = key_of(top.module, item.fields[0].text)
+            ifc.name = mod.key_for(top.module, item.fields[0].text)
             ifc.module = top.module
             ifc.line = item.line
             mod.ifaces.append(ifc)
         elif item.kind == 'ClassDef':
             c = ClassInfo()
-            c.name = key_of(top.module, item.fields[0].text)
+            c.name = mod.key_for(top.module, item.fields[0].text)
             c.display = item.fields[0].text
             c.module = top.module
             c.node = item
@@ -14138,11 +14179,11 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         item = top.node
         mod.cur = top.module
         if item.kind == 'InterfaceDef':
-            target = mod.find_iface(key_of(top.module, item.fields[0].text), item.line)
+            target = mod.find_iface(mod.key_for(top.module, item.fields[0].text), item.line)
             for pv in item.fields[1].items:
                 target.parents.append(mod.iface_key(pv.text, item.line))
         elif item.kind == 'ClassDef':
-            c = mod.find_class(key_of(top.module, item.fields[0].text), item.line)
+            c = mod.find_class(mod.key_for(top.module, item.fields[0].text), item.line)
             if item.fields[1].tag == 's':
                 c.parent = mod.class_key(item.fields[1].text, item.line)
             for iv in item.fields[2].items:
@@ -14155,7 +14196,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         item = top.node
         mod.cur = top.module
         if item.kind == 'InterfaceDef':
-            target = mod.find_iface(key_of(top.module, item.fields[0].text), item.line)
+            target = mod.find_iface(mod.key_for(top.module, item.fields[0].text), item.line)
             for m in val_nodes(item.fields[2]):
                 target.reqs.append(function_info(m, mod, 'self'))
     funcs: list[Node] = []
@@ -14169,7 +14210,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             mod.func_nodes.append(item)
             funcs.append(item)
         elif item.kind == 'ClassDef':
-            c = mod.find_class(key_of(top.module, item.fields[0].text), item.line)
+            c = mod.find_class(mod.key_for(top.module, item.fields[0].text), item.line)
             for m in val_nodes(item.fields[4]):
                 info = function_info(m, mod, c.name)
                 mod.infos.append(info)
@@ -14185,7 +14226,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
                 cv = val_node(cv.fields[1])
             if not (cv.kind == 'IntLit' or cv.kind == 'FloatLit' or cv.kind == 'StrLit' or cv.kind == 'BoolLit'):
                 raise CompileError(f"the constant '{item.fields[0].text}' must be a number, text or True or False written out\na constant is not code: write its value as a literal, such as 3.14", item.line)
-            mod.consts[key_of(top.module, item.fields[0].text)] = val_node(item.fields[1])
+            mod.consts[mod.key_for(top.module, item.fields[0].text)] = val_node(item.fields[1])
         elif item.kind == 'LlvmDecl':
             decl = function_info(item, mod, '')
             for pt in decl.ptypes:

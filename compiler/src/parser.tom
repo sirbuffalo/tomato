@@ -24,14 +24,52 @@ export def val_node(v: Val) -> Node:
 export def val_nodes(v: Val) -> list[Node]:
     return [val_node(item) for item in v.items]
 
-def pairing_call(n: Node) -> str:
-    # enumerate or zip when this expression is a call of one, else ''
+def pairing_call(n: Node, own: list[str]) -> str:
+    # enumerate or zip when this expression is a call of one, else ''. A module that defines or imports a function of that name has
+    # its own: the call is an ordinary call, whose result the loop takes apart
     if n.kind != 'Call':
         return ''
     f = val_node(n.fields[0])
-    if f.kind == 'Name' and (f.fields[0].text == 'enumerate' or f.fields[0].text == 'zip'):
+    if f.kind == 'Name' and (f.fields[0].text == 'enumerate' or f.fields[0].text == 'zip') and f.fields[0].text not in own:
         return f.fields[0].text
     return ''
+
+def top_level_names(toks: list[Token]) -> list[str]:
+    # the names a module defines (def, class, interface, const) or imports (from m import a, b) at its top level, found before the
+    # parse because `for a, b in zip(x, y)` is written out as an index loop while it is parsed, unless the module has its own zip
+    out: list[str] = []
+    depth = 0
+    for i, t in enumerate(toks):
+        if t.kind == 'INDENT':
+            depth += 1
+        elif t.kind == 'DEDENT':
+            depth -= 1
+        elif depth == 0 and t.kind == 'KW' and (t.text == 'def' or t.text == 'class' or t.text == 'interface' or t.text == 'const') and i + 1 < len(toks) and toks[i + 1].kind == 'NAME':
+            out.append(toks[i + 1].text)
+        elif depth == 0 and t.kind == 'KW' and t.text == 'from':
+            seen_import = False
+            j = i + 1
+            while j < len(toks) and toks[j].kind != 'NEWLINE':
+                if toks[j].kind == 'KW' and toks[j].text == 'import':
+                    seen_import = True
+                elif seen_import and toks[j].kind == 'NAME':
+                    out.append(toks[j].text)
+                j += 1
+    return out
+
+# marks the names that stand for a function called in generated code (len, range, str, ValueError, AssertionError) as the built-ins
+def mark_core(v: Val):
+    if v.tag == 'n' and v.node is not None:
+        n = v.node
+        if n.kind == 'Call':
+            f = val_node(n.fields[0])
+            if f.kind == 'Name':
+                f.core = True
+        for item in n.fields:
+            mark_core(item)
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            mark_core(item)
 
 def path_text(n: Node) -> str:
     # a variable or a chain of fields written as text, or '' for any other expression
@@ -83,6 +121,7 @@ export class Node:
     mark: int = 0            # the compiler numbers the statements of a small-int loop here while it compiles that loop
     spot: int = 0            # the same for the statements of a loop nest (see Gen.nest_loop in compiler.tom)
     exported: bool = False
+    core: bool = False       # a name the compiler's own desugaring wrote (the len of an enumerate loop, the str of an f-string): it means the built-in, even where the module defines the same name
     fields: list[Val] = []
 
 export def vs(text: str) -> Val:
@@ -170,6 +209,8 @@ export def dump(n: Node) -> str:
     s = f'({n.kind} {n.line}'
     if n.exported:
         s += ' exported'
+    if n.core:
+        s += ' core'
     for v in n.fields:
         s += f' {dump_val(v)}'
     return f'{s})'
@@ -217,6 +258,7 @@ export class Parser:
     p: int = 0
     unpacks: int = 0        # how many multiple assignments have been read (they name their hidden variables)
     yields: int = 0         # how many yield statements have been read so far (a function with any is a generator)
+    own: list[str] = []     # the names the module defines or imports at its top level (see top_level_names)
 
     def cur(self) -> Token:
         return self.toks[self.p]
@@ -300,6 +342,7 @@ export class Parser:
 
     # module
     def module(self) -> Node:
+        self.own = top_level_names(self.toks)
         body: list[Node] = []
         while self.cur().kind != 'EOF':
             item = self.top_item()
@@ -696,6 +739,7 @@ export class Parser:
         q.toks = lex(f"if len({stem}) != {len(names)}:\n    raise ValueError('cannot unpack ' + str(len({stem})) + ' values into {plural_vars(len(names))}', 'E63')\n")
         check = q.statement()
         set_line(vn(check), line)
+        mark_core(vn(check))
         parts: list[Node] = [check]
         for k, nm in enumerate(names):
             item = mk('Index', line, [vn(mk('Name', line, [vs(stem)])), vn(mk('IntLit', line, [vi(k)]))])
@@ -708,9 +752,12 @@ export class Parser:
                 fields.append(vlist([vs(nm) for nm in names]))
         return mk('For', line, fields)
 
+    def pairing(self, it: Node) -> str:
+        return pairing_call(it, self.own)
+
     def pairs_for(self, line: int, names: list[str], it: Node, body: list[Node]) -> Node:
         # for i, x in enumerate(xs) and for a, b in zip(xs, ys) are written as ordinary index loops
-        which = pairing_call(it)
+        which = self.pairing(it)
         if which == '':
             return self.tuple_for(line, names, it, body)
         args = val_nodes(it.fields[1])
@@ -740,6 +787,7 @@ export class Parser:
         q = Parser()
         q.toks = lex(text)
         loop = q.statement()
+        mark_core(vn(loop))
         stmts = [m for m in val_nodes(loop.fields[2]) if m.kind != 'Pass']
         for m in stmts:
             m.line = line
@@ -788,7 +836,9 @@ export class Parser:
             if self.accept_op(','):
                 msg = self.expr()
             self.expect('NEWLINE')
-            err = mk('Call', t.line, [vn(mk('Name', t.line, [vs('AssertionError')])), vnodes([msg, mk('StrLit', t.line, [vs('E519')])]), vlist([])])
+            callee = mk('Name', t.line, [vs('AssertionError')])
+            callee.core = True          # the built-in class, even where the module defines an AssertionError of its own
+            err = mk('Call', t.line, [vn(callee), vnodes([msg, mk('StrLit', t.line, [vs('E519')])]), vlist([])])
             return mk('If', t.line, [vlist([vtuple([vn(cond), vnodes([mk('Pass', t.line, [])])])]), vnodes([mk('Raise', t.line, [vn(err)])])])
         if self.is_kw('yield'):
             self.adv()
@@ -817,7 +867,7 @@ export class Parser:
             it = self.expr()
             self.expect_op(':')
             body = self.block()
-            if len(names) > 1 or pairing_call(it) != '':
+            if len(names) > 1 or self.pairing(it) != '':
                 return self.pairs_for(t.line, names, it, body)
             return mk('For', t.line, [vs(names[0]), vn(it), vnodes(body)])
         if self.is_kw('while'):
@@ -896,6 +946,7 @@ export class Parser:
         q.toks = lex(text)
         check = q.statement()
         set_line(vn(check), t.line)         # the generated lines are numbered from 1; an error must point at the statement
+        mark_core(vn(check))
         stmts.append(check)
         for k, target in enumerate(targets):
             item = mk('Index', t.line, [vn(mk('Name', t.line, [vs(stem)])), vn(mk('IntLit', t.line, [vi(k)]))])
@@ -1183,7 +1234,7 @@ export class Parser:
             cond = self.or_()
             body = [mk('If', ln, [vlist([vtuple([vn(cond), vnodes(body)])]), vz()])]
         self.expect_op(']')
-        if len(names) > 1 or pairing_call(it) != '':
+        if len(names) > 1 or self.pairing(it) != '':
             return mk('ListComp', line, [vn(self.pairs_for(line, names, it, body))])
         return mk('ListComp', line, [vn(mk('For', line, [vs(names[0]), vn(it), vnodes(body)]))])
 
@@ -1214,7 +1265,9 @@ export class Parser:
                 self.expect_op(')')
                 return mk('TypeCall', t.line, [vn(ty), vnodes(args)])
             self.adv()
-            return mk('Name', t.line, [vs(t.text)])
+            name = mk('Name', t.line, [vs(t.text)])
+            name.core = t.num == 1       # the str and _format_spec the lexer wrote for an f-string
+            return name
         if self.is_op('('):
             self.adv()
             if self.accept_op(')'):

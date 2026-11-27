@@ -1,0 +1,13 @@
+# Only the module that defines a name sees it instead of the built-in (D108a): this program imports len and open from
+# shadow_library_lib, and has no max or sum of its own, so those are the built-ins here, while the library has its own sum.
+from shadow_library_lib import len, open, total, biggest
+
+@main
+def main():
+    print(len(5), len(12345), open('a'), open('b'))
+    print(total([1, 2, 3]), biggest([4, 9, 2]))
+    print(max(3, 8), max([1, 5, 2]), sum([1, 2, 3]), sorted([3, 1, 2]))
+    print(len(7) + len(100))
+    pair = [4, 5]
+    for i, x in enumerate(pair):
+        print(f'{i}={x}')

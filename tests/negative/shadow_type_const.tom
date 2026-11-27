@@ -1,0 +1,6 @@
+# a constant may not be called int either (D108a)
+const int = 3
+
+@main
+def main():
+    print(int)

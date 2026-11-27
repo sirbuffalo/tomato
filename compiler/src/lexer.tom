@@ -20,7 +20,7 @@ export class LexError(Error):
 export class Token:
     kind: str = ''       # INT, NAME, KW, STR, OP, NEWLINE, INDENT, DEDENT or EOF
     text: str = ''       # the source text, or the decoded text of a STR
-    num: int = 0         # the value of an INT
+    num: int = 0         # the value of an INT; 1 on a NAME the lexer wrote itself (the str of an f-string): the built-in, see Node.core
     scale: int = 0       # for a FLOAT: the digits after the point, less the exponent
     line: int = 0
     col: int = 0
@@ -396,10 +396,11 @@ def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
                 push_text(toks, buf, ln, col)
                 buf = ''
             push_op(toks, '+', ln, col)
+            # num 1 marks a name the lexer wrote itself: it means the built-in even where the module defines a `str` (see Node.core)
             if spec == '':
-                toks.append(make_token('NAME', 'str', 0, ln, col))
+                toks.append(make_token('NAME', 'str', 1, ln, col))
             else:
-                toks.append(make_token('NAME', '_format_spec', 0, ln, col))
+                toks.append(make_token('NAME', '_format_spec', 1, ln, col))
             push_op(toks, '(', ln, col)
             inner: list[Token] = []
             lex_line(source, ln, inner, 0)

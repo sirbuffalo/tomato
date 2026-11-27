@@ -237,3 +237,8 @@ optional_narrowing_assign
 optional_compound_assign
 optional_error_paths
 error_inherit_init
+shadow_functions
+shadow_print
+shadow_library
+shadow_classes
+shadow_std

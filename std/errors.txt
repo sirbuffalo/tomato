@@ -605,3 +605,5 @@ ConfigError {}: tomato seed add or remove cannot be used here: the file is not a
 ConfigError {}: --offline: the seed is not in the seed store or the vendor folder, and git is not run
 ConfigError {}: tomato seed verify found a seed that is missing or whose files do not match tomato.lock
 CompileError the module '{}' is in {} and in the seed {}, so the import is ambiguous
+CompileError '{}' is the name of a built-in type, so it cannot be defined here
+CompileError '{}' is a constant, not a function, so it cannot be called

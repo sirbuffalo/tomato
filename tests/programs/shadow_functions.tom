@@ -1,0 +1,84 @@
+# A module's own functions shadow the built-ins of the same name (D108a): this module has a len, a max, a zip, a range, an abs and
+# a sum of its own, each calling itself. What the compiler writes out for f-strings, assert, enumerate loops, unpacking and
+# comprehensions keeps using the real built-ins, so all of those work in the same module.
+
+# the number of digits of n
+def len(n: int) -> int:
+    if n < 10:
+        return 1
+    return 1 + len(n // 10)
+
+# the largest of the items from position i on
+def max(xs: list[int], i: int) -> int:
+    if i == count(xs) - 1:
+        return xs[i]
+    rest = max(xs, i + 1)
+    if xs[i] > rest:
+        return xs[i]
+    return rest
+
+def count(xs: list[int]) -> int:
+    n = 0
+    for _x in xs:
+        n += 1
+    return n
+
+# pairs from position i on
+def zip(a: list[int], b: list[int], i: int = 0) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    if i >= count(a) or i >= count(b):
+        return out
+    out.append((a[i], b[i]))
+    out.extend(zip(a, b, i + 1))
+    return out
+
+# the numbers n - 1 down to 0 (not the built-in range), by calling itself
+def range(n: int) -> list[int]:
+    if n <= 0:
+        return []
+    return [n - 1] + range(n - 1)
+
+def abs(x: int) -> str:
+    return 'abs of ' + str(x)
+
+def sum(xs: list[int]) -> int:
+    if count(xs) == 0:
+        return 0
+    return xs[0] + sum(xs[1:])
+
+@main
+def main():
+    # the module's own functions
+    print(len(12345), max([3, 9, 4], 0), range(4), abs(-5), sum([1, 2, 3, 4]))
+    # a function of the module is also a value, as any function is
+    f = len
+    print(f(99), f(1000))
+    # f-strings (str and _format_spec), assert, unpacking and comprehensions need the built-ins and still get them
+    n = 42
+    print(f'{n} has {len(n)} digits, {n:>6}|{n:<6}|{3.14159:.2f}')
+    assert len(n) == 2, f'{n}'
+    a, b = [1, 2]
+    c, d = 3, 4
+    e, g = [5, 6][0], [5, 6][1]
+    print(a + b + c + d + e + g)
+    print([x * 2 for x in range(3)], [x for x in range(5) if x % 2 == 0])
+    # for loops: over the module's range, and over enumerate, which is written out with the built-in range and len
+    total = 0
+    for i in range(4):
+        total = total * 10 + i
+    print(total)
+    names = ['ann', 'bob', 'cy']
+    for i, name in enumerate(names):
+        print(i, name)
+    # zip is the module's own: it makes a list of tuples, which a for loop takes apart
+    for p, q in zip([1, 2, 3], [10, 20, 30]):
+        print(p, q)
+    pairs = zip([7, 8], [9, 10])
+    print(pairs, pairs[1][0])
+    # a plain function call of a name the module does not define is still the built-in
+    print(sorted([3, 1, 2]), min(4, 2), round(2.5), chr(65), ord('a'), hash(3) == hash(3))
+    # unpacking checks the length with the built-in len and raises the built-in ValueError, whatever this module defines
+    try:
+        a, b = [1, 2, 3]
+    catch ValueError as err:
+        print(err.message)
