@@ -5493,7 +5493,7 @@ class Gen:
                     return self.marker_call(lst, rf, [], line)
             if not self.mod.has_op(lst.ty[1:], 'iter'):
                 raise CompileError(f'{name}() takes a list or an object with a method marked @iter, but this is {shown(lst.ty)}', line)
-            if name == 'sorted' or name == 'reversed':
+            if name == 'sorted' or name == 'reversed' or is_class(iter_elem(self.mod, lst.ty)):
                 lst = self.call_helper(self.mod.helper('tolist', lst.ty, line), [lst])
             else:
                 return self.call_helper(self.mod.helper(name, lst.ty, line), [lst])
@@ -5506,9 +5506,18 @@ class Gen:
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {lst.reg}, i64 0, i64 0, i64 -1, i32 4, i32 {rc})')
             self.release(lst)
             return ex(r, lst.ty)
-        if not (elem == 'int' or is_float(elem) or (elem == 'str' and name != 'sum')):
+        # objects work through their operator method: @add for sum, @lt for min, max and sorted (D85b)
+        by_op = is_class(elem) and self.mod.has_op(elem[1:], 'add' if name == 'sum' else 'lt')
+        if not (elem == 'int' or is_float(elem) or (elem == 'str' and name != 'sum') or by_op):
             wanted = 'numbers or text' if name != 'sum' else 'numbers'
-            raise CompileError(f'{name}() needs a list of {wanted}, but this is {shown(lst.ty)}', line)
+            marker = '@lt' if name != 'sum' else '@add'
+            more = f', or of objects of a class with a method marked {marker}'
+            hint = ''
+            if is_class(elem):
+                hint = f"\nadd a method marked {marker} to '{elem[1:]}'" + (' (it says whether one object is less than another)' if name != 'sum' else ' (it adds two objects)')
+            raise CompileError(f'{name}() needs a list of {wanted}{more}, but this is {shown(lst.ty)}{hint}', line)
+        if name == 'sorted' and by_op:
+            return self.call_helper(self.mod.instance_func(self.mod.resolve('_sorted_lt'), [elem], line), [lst])
         if name == 'sorted':
             # the runtime sorts a copy: 0 = int, 1 = float, 2 = str
             kind = '0' if elem == 'int' else ('3' if elem == 'float' else '2')
@@ -7886,9 +7895,11 @@ class Gen:
             if kname != 'key' and kname != 'cmp':
                 raise CompileError(f"sort() has no parameter named '{kname}'\nit takes key= (a function giving what to sort by) or cmp= (a function comparing two items)", line)
             copy = self.sorted_keyed(obj, keywords, line)
+        elif is_class(elem) and self.mod.has_op(elem[1:], 'lt'):
+            copy = self.call_helper(self.mod.instance_func(self.mod.resolve('_sorted_lt'), [elem], line), [obj])    # D85b
         else:
             if not (elem == 'int' or is_float(elem) or elem == 'str'):
-                raise CompileError(f'sort() needs a list of numbers or text, but this is {shown(obj.ty)}\nuse sort(key=...) or sort(cmp=...) for other items', line)
+                raise CompileError(f'sort() needs a list of numbers or text, or of objects of a class with a method marked @lt, but this is {shown(obj.ty)}\nuse sort(key=...) or sort(cmp=...) for other items', line)
             kind = '0' if elem == 'int' else ('3' if elem == 'float' else '2')
             r = self.tmp('sorted')
             self.emit(f'{r} = call ptr @tomato_list_sorted(ptr {obj.reg}, i32 {kind})')
@@ -12883,6 +12894,8 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     if is_class(ty):
         et = iter_elem(mod, ty)
         if kind == 'tolist':
+            if is_class(et):
+                return f'{head}    return [v for v in x]\n'      # (a class is named differently here than in the program: let the type come from the items)
             return f'{head}    out: list[{shown(et)}] = []\n    for v in x:\n        out.append(v)\n    return out\n'
         if not (et == 'int' or is_float(et) or (et == 'str' and kind != 'sum')):
             wanted = '' if kind == 'sum' else ' or text'
@@ -12925,12 +12938,18 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
         if ty.startswith('tuple['):
             body += "    if len(x) == 1:\n        out = out + ','\n"
         return f"{head}{body}    return out + '{close_text}'\n"
+    if kind == 'sum' and is_class(elem_of(ty)):
+        # objects: the first one is the start (there is no zero of a class), then @add of each next one
+        return f"{head}    if len(x) == 0:\n        raise ValueError('sum() of an empty list', 'E545')\n    total = x[0]\n    for i in range(1, len(x)):\n        total = total + x[i]\n    return total\n"
     if kind == 'sum':
         zero = '0.0' if is_float(elem_of(ty)) else '0'
         return f'{head}    total: {shown(elem_of(ty))} = {zero}\n    for v in x:\n        total = total + v\n    return total\n'
     if kind == 'min' or kind == 'max':
         better = '>' if kind == 'max' else '<'
-        return f"{head}    if len(x) == 0:\n        raise ValueError('{kind}() of an empty list', 'E{err}')\n    best = x[0]\n    for v in x:\n        if v {better} best:\n            best = v\n    return best\n"
+        test = f'v {better} best'
+        if is_class(elem_of(ty)) and kind == 'max':
+            test = 'best < v'               # objects need only @lt
+        return f"{head}    if len(x) == 0:\n        raise ValueError('{kind}() of an empty list', 'E{err}')\n    best = x[0]\n    for v in x:\n        if {test}:\n            best = v\n    return best\n"
     raise CompileError(f'internal compiler error: no helper of kind {kind}', line)
 
 def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):

@@ -1,0 +1,11 @@
+class Box:
+    n: int = 0
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+@main
+def main():
+    xs = [Box(2), Box(1)]
+    xs.sort()

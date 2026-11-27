@@ -241,7 +241,7 @@ CompileError sleep() is async, so it must be awaited
 CompileError sleep() takes a number of seconds, but this is {}
 CompileError sleep() takes the number of seconds to wait: await sleep(1.5)
 CompileError sort() has no parameter named '{}'
-CompileError sort() needs a list of numbers or text, but this is {}
+CompileError (retired: sort() needs a list of numbers or text, but this is {}; the compiler says E545 and E546 instead; never emitted; the id stays so that later ids do not move)
 CompileError sort() takes key= or cmp=, not both
 CompileError sort() takes no positional arguments, only key= or cmp=
 CompileError sorted() has no parameter named '{}'
@@ -325,7 +325,7 @@ CompileError {} has type {}, but {} is expected
 CompileError {}() does not take keyword arguments
 CompileError {}() in a for loop needs plain variables or fields
 CompileError {}() needs a function of one {} item, but this is {}
-CompileError {}() needs a list of {}, but this is {}
+CompileError (retired: {}() needs a list of {}, but this is {}; the compiler says E545 and E546 instead; never emitted; the id stays so that later ids do not move)
 CompileError {}() needs something that gives numbers{}, but {} gives {}
 CompileError {}() takes a function and a list: {}(f, xs)
 CompileError {}() takes a list or a range, but this is {}
@@ -541,3 +541,6 @@ ConfigError the configuration file {} is not valid TOML: {}
 ConfigError {}: limits must be a table ([limits]), not {}
 ConfigError {}: unknown setting limits.{} (the settings are exp_bits and format_digits)
 ConfigError {}: limits.{} must be a whole number from {} to {}, not {}
+ValueError sum() of an empty
+CompileError {}() needs a list of {}{}, but this is {}{}
+CompileError sort() needs a list of numbers or text, or of objects of a class with a method marked @lt, but this is {}

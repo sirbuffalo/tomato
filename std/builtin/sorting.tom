@@ -110,3 +110,15 @@ def _sorted_cmp[T](xs: list[T], cmp: fn(T, T) -> int) -> list[T]:
 
 def _keys[T, K](xs: list[T], key: fn(T) -> K) -> list[K]:
     return [key(x) for x in xs]
+
+# sorted(xs) of objects: the same stable sort, ordering the items by their class's @lt method (D85b). Two items that
+# neither is less than the other keep their order.
+def _lt_cmp[T](a: T, b: T) -> int:
+    if a < b:
+        return -1
+    if b < a:
+        return 1
+    return 0
+
+def _sorted_lt[T](xs: list[T]) -> list[T]:
+    return _sorted_cmp(xs, (a, b) -> _lt_cmp(a, b))

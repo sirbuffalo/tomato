@@ -1,0 +1,16 @@
+-45 deg 10 deg 50 grad 1 rad 90 deg 0.25 turn 
+90 deg 1 rad 0.25 turn -45 deg 50 grad 10 deg 
+-45 deg 90 deg 247.29577951308232 deg
+0.75 turn 30 deg 3 rad
+180 deg 180 deg 0.5 turn 0.5 turn
+10 deg 10 deg 180 deg 0.5 turn 200 grad 3.141592653589793 rad 
+10 deg 0.5 turn 180 deg 
+-45 deg 10 deg 50 grad 1 rad 90 deg 0.25 turn 
+1 deg  0
+1 deg 2 deg 3 deg 
+560abcd 10d 250a [10d, 50b, 250a, 250c]
+5x 5x
+560abcd 10d 250a [10d, 50b, 250a, 250c]
+caught min() of an empty list
+caught max() of an empty list
+caught sum() of an empty list

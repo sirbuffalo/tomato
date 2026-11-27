@@ -1,0 +1,84 @@
+from math import Angle, deg, rad, turn, grad
+
+# sum, min, max and sorted work on a list of objects whose class has @add (sum) or @lt (the others), D85b.
+
+class Money:
+    cents: int = 0
+    tag: str = ''
+
+    @init
+    def make(self, cents: int, tag: str = ''):
+        self.cents = cents
+        self.tag = tag
+
+    @add
+    def plus(self, other: Money) -> Money:
+        return Money(self.cents + other.cents, self.tag + other.tag)
+
+    @lt
+    def less(self, other: Money) -> bool:
+        return self.cents < other.cents
+
+    @str
+    def text(self) -> str:
+        return f'{self.cents}{self.tag}'
+
+# a class with @iter: the builtins work on what it gives
+class Run:
+    xs: list[Money] = []
+
+    @init
+    def make(self, xs: list[Money]):
+        self.xs = xs
+
+    @iter
+    def items(self) -> Money:
+        for m in self.xs:
+            yield m
+
+def show(xs: list[Angle]) -> str:
+    out = ''
+    for a in xs:
+        out = out + str(a) + ' '
+    return out
+
+@main
+def main():
+    none: list[Angle] = []
+    angles = [deg(90), rad(1), turn(0.25), deg(-45), grad(50), deg(10)]
+    print(show(sorted(angles)))
+    print(show(angles))                                  # the list itself is unchanged
+    print(min(angles), max(angles), sum(angles))
+    # sum keeps the unit of the first angle
+    print(sum([turn(0.25), deg(90), grad(100)]), sum([deg(30)]), sum([rad(1), rad(2)]))
+    # min and max of several angles; the first of equal angles wins, whatever its unit
+    print(min(deg(180), turn(0.5), rad(7)), max(deg(180), turn(0.5), rad(1)), min(turn(0.5), deg(180)), max(turn(0.5), deg(180)))
+    # sorted is stable: equal angles in different units stay in the order they were in
+    print(show(sorted([deg(180), turn(0.5), deg(10), grad(200), rad(3.141592653589793), deg(10)])))
+    print(show(sorted([turn(0.5), deg(180), deg(10)])))
+    # sorted with key= and cmp= still work, and so does an empty or one-item list
+    print(show(sorted(angles, key=a -> a.deg())))
+    print(show(sorted([deg(1)])), len(sorted(none)))
+    xs = [deg(3), deg(1), deg(2)]
+    xs.sort()
+    print(show(xs))
+    # a class of your own
+    wallet = [Money(250, 'a'), Money(50, 'b'), Money(250, 'c'), Money(10, 'd')]
+    print(sum(wallet), min(wallet), max(wallet), sorted(wallet))
+    print(max(Money(5, 'x'), Money(5, 'y')), min(Money(5, 'x'), Money(5, 'y')))
+    # something that can be looped over
+    r = Run(wallet)
+    print(sum(r), min(r), max(r), sorted(r))
+    # errors at run time
+    try:
+        print(min(none))
+    catch ValueError as err:
+        print("caught", err.message)
+    try:
+        print(max(none))
+    catch ValueError as err:
+        print("caught", err.message)
+    try:
+        print(sum(none))
+    catch ValueError as err:
+        print("caught", err.message)

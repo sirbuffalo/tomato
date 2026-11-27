@@ -240,6 +240,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 204. D76e is accepted: `asyncio.Lock`, bounded `Semaphore` and `Event` with FIFO hand-off, `LockError`, `wait_for` timeouts, and a deadlock report that names each task waiting in `Lock.acquire`.
 
 209. D85a is accepted: a class can mark a method `@neg` (taking nothing besides `self`) to make `-x` work on its objects and `@rmul` (taking one argument) to make `number * x` work; `Angle` uses them so `-deg(30)` and `3 * deg(30)` work. A number read from a field is now copied before an operator method receives it.
+210. D85b is accepted: `sum`, `min`, `max`, `sorted` and `list.sort()` work on a list of objects whose class has `@add` (`sum`) or `@lt` (the others), so they work on lists of angles; `sum` of an empty list of objects is a `ValueError`, since a class has no zero.
 211. D87a is accepted: float `//` and `%` are Python's (`float_divmod`: `fmod`, then the corrected `(x - r) / y`; a zero remainder takes the divisor's sign): `3.7 // 1e-5` is `369999.0`, `2.0 ** 64 % -1.0` is `-0.0`; a float beyond a double's range or a quotient beyond it is the exact floor rounded once.
 
 ## Later coverage pass
