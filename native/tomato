@@ -78,8 +78,9 @@ semver_cmp() {
     BEGIN { print cmp(a, b) }'
 }
 # update downloads use https only, including after redirects (file:// only for tests, with the override)
+# (only called in a subshell, a $(...) or a background job, where `exec` makes the subshell curl itself: a signal sent to the job stops curl)
 curl_safe() {
-  if [ -n "$TOMATO_UPDATE_ALLOW_ANY_URL" ] || [ -n "$TOMATO_UPDATE_ALLOW_FILE" ]; then curl -fsSL "$@"; else curl -fsSL --proto '=https' --proto-redir '=https' "$@"; fi
+  if [ -n "$TOMATO_UPDATE_ALLOW_ANY_URL" ] || [ -n "$TOMATO_UPDATE_ALLOW_FILE" ]; then exec curl -fsSL "$@"; else exec curl -fsSL --proto '=https' --proto-redir '=https' "$@"; fi
 }
 
 cmd="$1"; [ -n "$cmd" ] || usage; shift
@@ -133,22 +134,33 @@ case "$cmd" in
       echo "You have v$have. Install it with: tomato update --minor$(case "$latest" in *-*) echo " --pre" ;; esac)"; exit 0
     fi
     echo "updating v$have -> v$latest"
-    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+    # everything is downloaded and checked in a temporary folder, which goes on any exit, error or signal (Ctrl-C, SIGTERM): a
+    # download or the installer that is running is stopped first. The install itself is replaced as a whole by install-native.sh
+    # (staged beside the old one, then one rename), so an update that fails or is interrupted leaves the old install as it was.
+    work="$(mktemp -d)" || die "cannot make a temporary folder"; job=""
+    trap 'trap "" INT TERM HUP; [ -z "$job" ] || kill "$job" 2>/dev/null; wait 2>/dev/null; rm -rf "$work"' EXIT
+    trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
+    # run a command as a background job and wait for it: a signal then ends this script at once, not when the command ends
+    # (a background job of a script ignores SIGINT, so the trap above stops it with SIGTERM; the terminal's ^C reaches this script)
+    run() { "$@" & job=$!; if wait "$job"; then job=""; else rc=$?; job=""; return $rc; fi; }
     want="$(printf '%s' "$manifest" | sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' | head -1)"
     # fail closed: the manifest is the only integrity anchor, so it must carry a checksum and name an official download
     if [ "${#want}" -ne 64 ] || [ -n "$(printf '%s' "$want" | tr -d '0-9a-f')" ]; then die "the manifest has no valid sha256: not updating"; fi
     if [ -z "$TOMATO_UPDATE_ALLOW_ANY_URL" ]; then
       case "$archive" in https://github.com/sirbuffalo/tomato/releases/download/*) ;; *) die "the download is not an official release URL: not updating" ;; esac
     fi
-    curl_safe "$archive" -o "$work/tomato.tar.gz" || die "cannot download $archive"
+    run curl_safe "$archive" -o "$work/tomato.tar.gz" || die "cannot download $archive"
     if command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$work/tomato.tar.gz")"; else got="$(sha256sum "$work/tomato.tar.gz")"; fi   # macOS has shasum, some Linux systems only sha256sum
     got="${got%% *}"
     [ "$got" = "$want" ] || die "the download does not match its checksum"
     tar -xzf "$work/tomato.tar.gz" -C "$work" || die "the download is not a valid archive"
+    installer=""; for f in "$work"/tomato-*/install-native.sh; do [ -f "$f" ] && installer="$f" && break; done
+    [ -n "$installer" ] || die "the download has no installer: not updating"
     # the link directory: where this command was reached through a symlink, else the default (never the real bin folder)
     if [ -L "$invoked" ]; then bindir_for_update="$(cd "$(dirname "$invoked")" && pwd)"; else bindir_for_update="${TOMATO_BIN:-$HOME/.local/bin}"; fi
-    # reinstall where this copy lives, not into the default folders
-    TOMATO_HOME="${home%/native}" TOMATO_BIN="$bindir_for_update" "$work"/tomato-*/install-native.sh || die "the installer failed"
+    # reinstall where this copy lives, not into the default folders. This script is part of the install being replaced: the
+    # installer renames the old folder away and deletes it, and the shell keeps reading this file through its open descriptor.
+    run env TOMATO_HOME="${home%/native}" TOMATO_BIN="$bindir_for_update" sh "$installer" || die "the installer failed"
     exit 0 ;;
   explain)
     # tomato explain CODE [FILE]: an error id such as E04 (or E04:12 with the source line, as a release build prints it): the
@@ -265,7 +277,12 @@ esac
 # (inline_merge below), so an ordinary -O1 compile inlines them and the runtime is linked as a plain object.
 opt=-O1; ltoflags="-flto"; nolto=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; nolto="-DTOMATO_RELEASE"; }
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# the temporary folder goes on any exit and on Ctrl-C, SIGTERM and hangup (also under dash, where a signal skips an EXIT trap); a
+# cache file half written by the runtime compile goes with it. A signal that comes while a compile or link runs is taken once that
+# command ends (the terminal's ^C ends it at once, as it reaches the whole foreground group).
+tmp="$(mktemp -d)" || die "cannot make a temporary folder"
+trap 'rm -rf "$tmp" "${rtc_tmp:-}"' EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 if ! "$tomatoc" "$file" "$entry" "$std" "$mode" > "$tmp/program.ll" 2> "$tmp/errors"; then
   show_error < "$tmp/errors"        # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
   exit 1
@@ -344,4 +361,5 @@ elif ! link "$ltoflags" "${rtobj:-$runtime}" 2>"$tmp/lto-error"; then
   fi
 fi
 [ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }
+trap 'exit $?' INT     # ^C reaches the program too: its own exit status is the answer (130 when it died of the signal)
 "$exe" "$@"

@@ -10,6 +10,7 @@ version="$(cat "$root/VERSION")"
 out="${TOMATO_RELEASE_OUT:-$root/release/out}"
 [ "$(uname)" = Darwin ] || { echo "error: the .pkg is built on a Mac" >&2; exit 1; }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP      # (dash skips an EXIT trap on a signal)
 payload="$work/payload"; mkdir -p "$payload/usr/local/bin" "$out"
 # the usual install layout, into the payload
 TOMATO_HOME="$payload/usr/local/lib/tomato" TOMATO_BIN="$work/unused" sh "$root/install-native.sh" >/dev/null

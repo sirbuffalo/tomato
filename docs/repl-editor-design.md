@@ -445,10 +445,16 @@ other status is a failure, and the driver then falls back for the rest of the se
 - **Sources** live in the repository: `std/terminal.tom`, `std/lineedit.tom` (the generic library), and
   `compiler/src/lexer.tom`, `hltomato.tom`, `repledit.tom`. `repledit.tom` needs `lexer` and `hltomato` **next to it** (the module
   rule of `read_module`). To keep one copy of the lexer, `install-native.sh` copies those three files into a temporary build folder.
-- **`install-native.sh`** (installed case, also the tarball and `tomato update`): after it has copied the compiler, runtime, std and
-  scripts into `$home`, it copies the three files into a temporary folder and builds the helper **with the installed `tomato`**:
-  `"$home/bin/tomato" build "$tmp/repledit.tom" -o "$home/bin/.tomato-repl-edit.new" --mode release`, then `mv -f` onto
-  `$home/bin/tomato-repl-edit` (the temporary-name-then-`mv` pattern of the scripts, so a running `tomato update` is never overwritten in place).
+- **`install-native.sh`** (installed case, also the tarball and `tomato update`): the installer builds the whole new install in a
+  staging folder beside the old one (`$TOMATO_HOME/.native.new.PID`) and swaps it in with one rename at the end (docs/releasing.md,
+  How an update installs), so this step works on the **staging folder, not on `$home`**. After the compiler, runtime, std and scripts
+  are copied into it, the step copies the three files into a temporary folder inside the staging folder and builds the helper **with the
+  staged `tomato`** (it finds its own folder, so it works before the swap):
+  `run "$stage/bin/tomato" build "$tmp/repledit.tom" -o "$stage/bin/tomato-repl-edit" --mode release`, where `run` is the installer's
+  wrapper that runs a command as a background job and waits for it (so Ctrl-C or SIGTERM stops the build and removes the staging folder
+  at once). It goes after those copies and before the installer's check that the staged install runs, which precedes the swap. The old
+  temporary-name-then-`mv` pattern is not needed: nothing in the live install is written, so a running `tomato update` is never
+  overwritten in place.
   **Why `tomato build` and not a hand-written `tomatoc` and `clang` line:** it already owns everything that line would have to repeat
   and keep in step: the runtime cache (`rtcache.sh`: the runtime is compiled once per mode and clang), `-ldl` on Linux (the runtime loads libcurl with
   `dlopen`), the LTO link with its bitcode-merge and no-LTO fallbacks, and the build warnings. A copy in the installer would drift.

@@ -14,7 +14,9 @@
 #   :reset         forget everything                            :help      this text
 #   :quit          leave (also leave(), exit(), quit() and Ctrl-D)
 tomato="${TOMATO_CMD:-tomato}"
-S="$(mktemp -d)"; trap 'rm -rf "$S"' EXIT
+S="$(mktemp -d)" || { echo "error: cannot make a temporary folder" >&2; exit 1; }
+trap 'rm -rf "$S"' EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP      # the session folder goes on Ctrl-C, SIGTERM and hangup too
 mkdir -p "$S/d"
 # Speed: the runtime is compiled to an object once, and each line then costs one tomatoc run plus a quick unoptimized
 # link, instead of compiling the whole runtime with optimization on every line.

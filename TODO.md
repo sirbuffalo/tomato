@@ -8,8 +8,6 @@
   Answer the five open questions at the end of `docs/package-registry-design.md` (human power over the registry, key-only owners, how `.tom` files name a seed, an `os.run` in `std`, whether `tomato run` may fetch), then record a decision entry (D-number) for seeds in `docs/decisions.md` and a short section in `docs/specification.md`.
 - Harden `release/release.sh` resume paths
   `--from STEP` skips the earlier steps but does not record them done, so a later `--resume` can go back to them; `step_push` pushes `HEAD` rather than the recorded `commit_sha` and does not call `verify_state_tree`; a `--resume` after a preflight failure that left the clone dirty dies with "use --restart" instead of resetting it. None of these can publish in a dry run (the dry-run guards were audited and hold).
-- Make `tomato update` replace an install atomically and clean up on Ctrl-C
-  `install-native.sh` replaces `tomatoc`, then `std/`, the runtime and the scripts in place, so a failure partway leaves a mixed install and a `tomato run` at the same moment can see a half-written `tomatoc`. `native/tomato`, `native/tomato-repl` and `release/pkg.sh` trap only `EXIT`, so Ctrl-C under dash leaves their `mktemp -d` folders behind.
 - Make the short async deadlines in tests robust under load
   `tests/programs/async_toolkit.tom` (lines 254-274: `wait_for` deadlines of 0.01-0.02 s against 0.01 s sleeps), `async_sync.tom:75` and `time_module.tom:95` race the wall clock like `socket_fair` did before the audit gave its timers one shared deadline. They passed at load 63 but have no margin.
 - Make `sum()`, `min()`, `max()` and `sorted()` work on a list of angles
@@ -18,3 +16,5 @@
   Consistent with `@eq`, which compares by turns; today `{deg(30): 1}` is a compile error.
 - Rerun the terminal pty test on the Mac after the review fixes, and under Rosetta or on an Intel Mac
   `tests/terminal_pty.exp` (run through `tests/run.sh`, or `expect tests/terminal_pty.exp PROGRAM` with PROGRAM built from `tests/terminal_pty.tom`) passed on Davis's MacBook (arm64) before the review fixes (a lone Escape flushed 100 ms after it arrives, `Terminal.close` only closing a descriptor `open()` made, colors 256 to 16777215 ignored); it has not been rerun there since, nor under Rosetta or on an Intel Mac (design section 11, item 5 of `docs/repl-editor-design.md`).
+- Give the other release scripts INT/TERM/HUP traps like `pkg.sh`
+  `release/check-lto.sh` (line 6), `release/perf-snapshot.sh` (line 16) and `release/dmg.sh` (`trap cleanup EXIT`, line 28) trap only `EXIT`, so Ctrl-C under dash leaves their `mktemp -d` folders behind. Add the one-line `trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP` that `release/pkg.sh` has now (dmg.sh also has a mount to detach in its cleanup). Do the same in `release/sign-pkg.sh` when the signing setup may be edited.

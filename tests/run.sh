@@ -106,7 +106,7 @@ await_object() { # waits for the bootstrap object t_compiler_build makes; fails 
 job_run() { # id, function and arguments: runs it in a folder of its own
   id="$1"; shift; work="$shared/j$id"; mkdir -p "$work"; eval "section_name=\$sec_$id"
   case "$1" in   # (the ones that do not link a program with the runtime do not wait for it)
-    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_release_versions|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
+    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
     *) await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")" ;;
   esac
   if [ -n "$times" ]; then
@@ -1004,6 +1004,114 @@ t_cli_update_versions() { # tomato update: SemVer order (old 0.NN numbers too), 
   check "update: a pre-release install gets a later pre-release or the release" "1.0.0-rc.10 1.0.0 same 1.0.0-beta" "$(upd 1.0.0-rc.2 0.51 1.0.0-rc.10) $(upd 1.0.0-rc.10 1.0.0 1.0.0-rc.10) $(upd 1.0.0-rc.1 0.51 1.0.0-beta.9) $(upd 1.0.0-alpha.1 0.51 1.0.0-beta)"
   check "update: tomato and release.sh share one SemVer comparison" "$(sed -n '/^semver_cmp() {/,/^}/p' native/tomato)" "$(sed -n '/^semver_cmp() {/,/^}/p' release/release.sh)"
 }
+# The install is replaced as a whole and nothing is left behind when a command is stopped. These tests run the real install-native.sh,
+# native/tomato (update, run) and use stand-ins for clang, curl and mv (and a stand-in compiler) on the PATH, so no compile happens: a
+# stand-in hangs at the phase a test names, the test sends it Ctrl-C (SIGINT to the whole session, as a terminal does, to a command that
+# was not started in the background), SIGTERM or SIGHUP, and checks the old install and the folders afterwards.
+atomic_setup() { # sets $th (a TOMATO_HOME with an old install), $shim and $tmpd
+  th="$work/h"; shim="$work/shim"; tmpd="$work/tmp"; rm -rf "$th" "$tmpd"; mkdir -p "$th/native/bin" "$th/native/std" "$work/b" "$tmpd" "$shim"
+  echo OLD > "$th/native/VERSION"; echo old > "$th/native/std/old.tom"; echo old > "$th/native/bin/tomatoc"
+  [ -f "$shim/clang" ] && return 0
+  cat > "$shim/clang" <<'SH'
+#!/bin/sh
+# stand-in clang: writes an empty object or a small program to the -o file; stops (after saving its pid) when an argument list matches $FAKE_HANG
+out=""; prev=""; for a in "$@"; do [ "$prev" = -o ] && out="$a"; prev="$a"; done
+[ -n "$out" ] || exit 0
+case "$*" in *${FAKE_HANG:-@no-such-phase@}*) echo "$$" > "$FAKE_MARK"; exec sleep 60 ;; esac
+case "$*" in *" -c "*) echo object > "$out" ;; *) printf '%s\n' "#!/bin/sh" "${FAKE_PROGRAM:-echo program}" > "$out"; chmod +x "$out" ;; esac
+SH
+  cat > "$shim/curl" <<'SH'
+#!/bin/sh
+# stand-in curl: the real one, except that the archive download stops when $FAKE_HANG is set to download
+case "$*" in *.tar.gz*) [ "${FAKE_HANG:-}" = download ] && { echo "$$" > "$FAKE_MARK"; exec sleep 60; } ;; esac
+exec env PATH="$FAKE_REAL_PATH" curl "$@"
+SH
+  cat > "$shim/mv" <<'SH'
+#!/bin/sh
+# stand-in mv as BSD (macOS) has it: no --exchange; $FAKE_MV_FAIL makes moving the staged install into place fail
+[ -n "$FAKE_NO_EXCHANGE" ] && case "$1" in --exchange) echo "mv: illegal option" >&2; exit 64 ;; esac
+case "$1" in */.native.new.*) [ -n "$FAKE_MV_FAIL" ] && { echo "mv: stand-in failure" >&2; exit 1; } ;; esac
+exec env PATH="$FAKE_REAL_PATH" mv "$@"
+SH
+  chmod +x "$shim/clang" "$shim/curl" "$shim/mv"
+}
+sig_run() { # SIGNAL COMMAND...: runs it in a session of its own, sends the signal once it has stopped at the stand-in, sets $sig_rc and $sig_pid
+  s="$1"; shift; rm -f "$work/mark"
+  perl -e 'use POSIX; setsid(); $SIG{INT} = "DEFAULT"; $SIG{HUP} = "DEFAULT"; exec @ARGV' -- "$@" > "$work/sig.out" 2>&1 & sp=$!
+  i=0; until [ -s "$work/mark" ]; do nap; i=$((i + 1)); [ "$i" -gt 400 ] && break; done
+  kill -s "$s" -- "-$sp" 2>/dev/null
+  wait "$sp"; sig_rc=$?; sig_pid="$(cat "$work/mark" 2>/dev/null)"
+  i=0; while [ -n "$sig_pid" ] && kill -0 "$sig_pid" 2>/dev/null && [ "$i" -lt 100 ]; do nap; i=$((i + 1)); done
+  if [ -n "$sig_pid" ] && kill -0 "$sig_pid" 2>/dev/null; then sig_gone=no; kill "$sig_pid" 2>/dev/null; else sig_gone=yes; fi
+}
+t_atomic_install() {
+  command -v perl >/dev/null 2>&1 || { ok "atomic install: skipped (no perl)"; return 0; }
+  real_path="$PATH"; atomic_setup; echo object > "$work/c0.o"
+  export FAKE_REAL_PATH="$real_path" PATH="$shim:$real_path" FAKE_MARK="$work/mark" TOMATO_TEST_BOOTSTRAP_OBJECT="$work/c0.o" TOMATO_HOME="$th" TOMATO_BIN="$work/b"
+  # stopped while the runtime is compiled, and while the compiler is linked: the old install is untouched, nothing is left, nothing runs on
+  for phase in " -c " "bin/tomatoc"; do
+    for sg in INT TERM HUP; do
+      atomic_setup; FAKE_HANG="$phase"; export FAKE_HANG; sig_run "$sg" sh ./install-native.sh; unset FAKE_HANG
+      case "$sg" in INT) want=130 ;; TERM) want=143 ;; HUP) want=129 ;; esac
+      left="$(ls -A "$th" | tr '\n' ' ')"
+      check "install stopped by $sg at [$phase]: status $want, the old install intact, nothing left behind, the compile stopped" "$want OLD old native  yes" \
+        "$sig_rc $(cat "$th/native/VERSION") $(cat "$th/native/std/old.tom") $left $sig_gone"
+    done
+  done
+  # an install that completes replaces everything (no file of the old one stays) and leaves no folder of its own, with mv --exchange and without it
+  for variant in exchange rename; do
+    atomic_setup; [ $variant = rename ] && export FAKE_NO_EXCHANGE=1
+    sh ./install-native.sh > "$work/inst.out" 2>&1; rc=$?; unset FAKE_NO_EXCHANGE
+    check "install replaces the old one as a whole ($variant swap)" "0 $(cat VERSION) no 1" "$rc $(cat "$th/native/VERSION") $([ -e "$th/native/std/old.tom" ] && echo yes || echo no) $(ls -A "$th" | wc -l | tr -d ' ')"
+    check "install: the new compiler and scripts are in place ($variant swap)" "yes yes" "$([ -x "$th/native/bin/tomatoc" ] && [ "$(cat "$th/native/bin/tomatoc")" != old ] && echo yes) $([ -x "$th/native/bin/tomato" ] && [ -f "$th/native/std/errors.txt" ] && echo yes)"
+  done
+  # the second rename of the fallback swap fails: the old install is put back, and the failure is reported
+  atomic_setup; FAKE_NO_EXCHANGE=1 FAKE_MV_FAIL=1 sh ./install-native.sh > "$work/inst.out" 2>&1; rc=$?
+  check "install: a failed swap puts the old install back" "1 OLD native yes" "$rc $(cat "$th/native/VERSION") $(ls -A "$th" | tr '\n' ' ' | sed 's/ $//') $(grep -q 'old one is kept' "$work/inst.out" && echo yes)"
+  # leftovers of a dead installer (SIGKILL): removed by the next install, and an old install moved aside but never replaced comes back first
+  atomic_setup; mkdir "$th/.native.new.99999991"; mv "$th/native" "$th/.native.old.99999992"
+  sh ./install-native.sh > "$work/inst.out" 2>&1; rc=$?
+  check "install clears the leftovers of an installer that was killed" "0 $(cat VERSION) native" "$rc $(cat "$th/native/VERSION") $(ls -A "$th" | tr '\n' ' ' | sed 's/ $//')"
+  # a first install (nothing to swap)
+  rm -rf "$th"; sh ./install-native.sh > "$work/inst.out" 2>&1; rc=$?
+  check "install: a first install works" "0 $(cat VERSION) native" "$rc $(cat "$th/native/VERSION") $(ls -A "$th" | tr '\n' ' ' | sed 's/ $//')"
+}
+t_atomic_update() { # tomato update and tomato run, stopped at each phase: their temporary folders go, and what they started stops
+  command -v perl >/dev/null 2>&1 || { ok "atomic update: skipped (no perl)"; return 0; }
+  real_path="$PATH"; atomic_setup; uh="$work/u"; rh="$work/r"; arc="$work/arc"
+  export FAKE_REAL_PATH="$real_path" PATH="$shim:$real_path" FAKE_MARK="$work/mark" TMPDIR="$tmpd" TOMATO_CACHE_DIR="$work/cache"
+  # an installed command (the link in bin/ goes to native/bin/tomato) and a release archive whose installer stops at once
+  mkdir -p "$uh/native/bin" "$uh/bin" "$arc/tomato-1.0.1"; cp native/tomato native/rtcache.sh "$uh/native/bin/"; chmod +x "$uh/native/bin/tomato"
+  echo 1.0.0 > "$uh/native/VERSION"; ln -s "$uh/native/bin/tomato" "$uh/bin/tomato"
+  printf '#!/bin/sh\necho "$$" > "$FAKE_MARK"\nexec sleep 60\n' > "$arc/tomato-1.0.1/install-native.sh"; chmod +x "$arc/tomato-1.0.1/install-native.sh"
+  tar -czf "$arc/t.tar.gz" -C "$arc" tomato-1.0.1
+  printf '{"version":"1.0.1","url":"file://%s/t.tar.gz","sha256":"%s"}' "$arc" "$(sha256 "$arc/t.tar.gz" | cut -d' ' -f1)" > "$arc/m.json"
+  export TOMATO_UPDATE_URL="file://$arc/m.json" TOMATO_UPDATE_ALLOW_ANY_URL=1 TOMATO_HOME="$uh" TOMATO_BIN="$uh/bin"
+  for phase in download installer; do
+    for sg in INT TERM HUP; do
+      rm -rf "$tmpd"; mkdir "$tmpd"; FAKE_HANG=""; [ $phase = download ] && FAKE_HANG=download; export FAKE_HANG
+      sig_run "$sg" "$uh/bin/tomato" update; unset FAKE_HANG
+      case "$sg" in INT) want=130 ;; TERM) want=143 ;; HUP) want=129 ;; esac
+      check "update stopped by $sg during the $phase: status $want, no temporary folder left, the download or installer stopped, the install untouched" "$want  yes 1.0.0" "$sig_rc $(ls -A "$tmpd" | tr '\n' ' ') $sig_gone $(cat "$uh/native/VERSION")"
+    done
+  done
+  # tomato run: the compiler stopped, and the program stopped (^C reaches it too: its own exit status, 7 here, is the answer)
+  mkdir -p "$rh/bin" "$rh/runtime"; cp native/tomato native/rtcache.sh "$rh/bin/"; chmod +x "$rh/bin/tomato"; echo 1.0.0 > "$rh/VERSION"; echo "// runtime" > "$rh/runtime/tomato_rt.c"
+  printf '#!/bin/sh\nif [ -n "$FAKE_TOMATOC_HANG" ]; then echo "$$" > "$FAKE_MARK"; exec sleep 60; fi\necho "define i32 @main() { ret i32 0 }"\n' > "$rh/bin/tomatoc"; chmod +x "$rh/bin/tomatoc"
+  printf '@main\ndef main():\n    pass\n' > "$work/p.tom"
+  for sg in INT TERM HUP; do
+    rm -rf "$tmpd"; mkdir "$tmpd"; FAKE_TOMATOC_HANG=1; export FAKE_TOMATOC_HANG
+    sig_run "$sg" "$rh/bin/tomato" run "$work/p.tom"; unset FAKE_TOMATOC_HANG
+    case "$sg" in INT) want=130 ;; TERM) want=143 ;; HUP) want=129 ;; esac
+    check "run stopped by $sg during the compile: status $want, no temporary folder left, the compiler stopped" "$want  yes" "$sig_rc $(ls -A "$tmpd" | tr '\n' ' ') $sig_gone"
+  done
+  FAKE_PROGRAM='trap "exit 7" INT; echo "$$" > "$FAKE_MARK"; sleep 60 & p=$!; trap "kill $p; exit 7" INT; wait'; export FAKE_PROGRAM
+  for sg in INT TERM; do
+    rm -rf "$tmpd"; mkdir "$tmpd"; sig_run "$sg" "$rh/bin/tomato" run "$work/p.tom"
+    case "$sg" in INT) want=7 ;; TERM) want=143 ;; esac
+    check "run: $sg while the program runs: status $want, the program stopped, no temporary folder left" "$want  yes" "$sig_rc $(ls -A "$tmpd" | tr '\n' ' ') $sig_gone"
+  done
+}
 t_release_versions() { # the version release/release.sh picks (--next-version: no clone, no tag or GitHub checks), and the ones it refuses
   nv() { cur="$1"; shift; r="$(sh release/release.sh "$@" --next-version "$cur" 2>&1)" && echo "$r" || echo refused; }
   check "release.sh picks MAJOR.MINOR.PATCH and SemVer pre-releases" "refused 1.0.0 1.0.0-rc.1 1.0.0 1.0.1 1.1.0 2.0.0 refused 1.0.0 1.0.0-rc.2 1.0.0-rc.10" \
@@ -1104,6 +1212,8 @@ done
 spawn_cli t_cli_release_no_leak
 spawn_cli t_cli_build_keeps_source
 spawn_free t_cli_update_versions
+spawn_free t_atomic_install
+spawn_free t_atomic_update
 spawn_free t_release_versions
 spawn_cli t_cli_no_lto
 spawn_cli t_cli_require_lto
