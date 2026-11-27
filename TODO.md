@@ -38,3 +38,7 @@
   Beside the existing item for `[seeds.ENTRY]`: a typo such as `[build.mian]` is a valid table, so `tomato seed check` should warn when no `@mian` marker exists (D92c).
 - Confirm how `tomato run`, `tomato test` and `tomato build` use the build tables
   D92c (unconfirmed): `run` and `test` read `mode` from `[build.ENTRY]` (the example's `[build.test]` depends on it; D95a does so, `output` only for `build`), the base of `output` (the manifest's folder in the file, where the command runs for a flag), and what `tomato build` does in a seed's folder (D95a: its `[build]` is ignored).
+- Write CLI contract tests for the shell-to-Tomato plan (stage 0)
+  Golden files in `tests/cli_contract/` for `tomato help`, `explain`, `config`, the error texts, exit statuses and environment variables, written against main after the project-layout and test-library tasks land. A later rewrite of the `tomato` command in Tomato must pass them unchanged (`docs/shell-to-tomato-plan.md`, sections 6 and 12).
+- Check the shell-to-Tomato plan's open Mac points on a Mac
+  Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
