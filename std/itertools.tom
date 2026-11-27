@@ -12,9 +12,20 @@
 #         bar.update()
 #     bar.close()
 #
-# update() redraws the bar on standard error (so it does not mix with what the program prints); render() returns the
+# update() draws the bar on standard error (so it does not mix with what the program prints); render() returns the
 # same line as text, which is what the tests check. An empty list gives a total of 0, which shows only the count.
+# When standard error is a terminal the bar is one line that is redrawn in place ('\r'). When it is not (a pipe, a file, closed),
+# a plain line is written at each new tenth of the percentage (0%, 10%, ...) and once at the end, and nothing fails if the stream is closed.
+# The repl runs your code with standard error captured, so it sets TOMATO_PROGRESS_TTY=1 and the bar then draws on the
+# controlling terminal (/dev/tty) when there is one.
 # Looping over the bar itself (its @iter method) draws as it goes and ends the line when the loop is done.
+
+!tomato_tty_open(path: str) -> int
+!tomato_tty_close(fd: int) -> int
+!tomato_tty_is(fd: int) -> int
+!tomato_tty_write(fd: int, text: str) -> int
+!tomato_env_has(name: str) -> int
+!tomato_write_fd(fd: int, text: str) -> int
 
 export class progress_bar[T]:
     items: Iterable[T] & Sized
@@ -22,6 +33,11 @@ export class progress_bar[T]:
     count: int = 0
     label: str = ''
     width: int = 30
+    private tty: int = -1          # a terminal descriptor opened for drawing (the repl case), or -1
+    private tried: bool = False
+    private live: bool = False     # one redrawn line (standard error, or the terminal) instead of plain lines
+    private last_line: str = ''    # the last plain line written
+    private last_pct: int = -1
 
     @init
     def make(self, items: Iterable[T] & Sized, label: str = '', width: int = 30):
@@ -43,10 +59,39 @@ export class progress_bar[T]:
         bar = '#' * filled + '-' * (self.width - filled)
         return f'{prefix}{pct}%|{bar}| {self.count}/{self.total}'
 
+    # Where the bar goes, decided at the first draw: standard error when it is a terminal; else, in the repl, the controlling
+    # terminal; else standard error as plain lines.
+    def pick(self):
+        self.tried = True
+        if !tomato_tty_is(2) == 1:
+            self.live = True
+        elif !tomato_env_has('TOMATO_PROGRESS_TTY') == 1:
+            fd = !tomato_tty_open('/dev/tty')
+            if fd >= 0:
+                self.tty = fd
+                self.live = True
+
+    def emit(self, text: str):
+        if self.tty >= 0:
+            _r = !tomato_tty_write(self.tty, text)
+        else:
+            _r = !tomato_write_fd(2, text)
+
     def show(self, end: str):
-        f = open('/dev/stderr', 'w')
-        f.write(f'\r{self.render()}{end}')
-        f.close()
+        if not self.tried:
+            self.pick()
+        line = self.render()
+        if self.live:
+            self.emit(f'\r{line}{end}')
+            return
+        pct = min(self.count, self.total) * 100 // self.total if self.total > 0 else -1
+        if end == '\n':
+            if line != self.last_line:
+                self.emit(f'{line}\n')
+        elif pct >= 0 and pct // 10 != self.last_pct:
+            self.last_pct = pct // 10
+            self.last_line = line
+            self.emit(f'{line}\n')
 
     def update(self, n: int = 1):
         self.count += n
@@ -54,6 +99,9 @@ export class progress_bar[T]:
 
     def close(self):
         self.show('\n')
+        if self.tty >= 0:
+            _r = !tomato_tty_close(self.tty)
+            self.tty = -1
 
     @iter
     def each(self) -> T:

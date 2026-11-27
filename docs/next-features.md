@@ -195,7 +195,7 @@ Common to all items: an API decision step with Davis before building; tests in `
 
 ### 2. `os`/`sys` and files v2: M
 
-- **What**: `argv`, `environ`/`getenv`, `exit(code)`, `getcwd`, `listdir`, `mkdir`/`makedirs`, `remove`, `rename`, `exists`/`isfile`/`isdir`, `stat` (size, mtime), `getpid`; path helpers (`join`, `basename`, `dirname`, `splitext`) as functions or a `Path` class; file objects with `readline`, iteration (`for line in f`), `readlines`, append and binary modes, `StringIO`; stderr writing without opening `/dev/stderr`.
+- **What**: `argv`, `environ`/`getenv`, `exit(code)`, `getcwd`, `listdir`, `mkdir`/`makedirs`, `remove`, `rename`, `exists`/`isfile`/`isdir`, `stat` (size, mtime), `getpid`; path helpers (`join`, `basename`, `dirname`, `splitext`) as functions or a `Path` class; file objects with `readline`, iteration (`for line in f`), `readlines`, append and binary modes, `StringIO`.
 - **Why**: Today a Tomato program cannot read its environment, list a directory, exit with a status, or read a big file line by line `[V]`. This is the largest gap between "language demo" and "write real tools". It also gates `tempfile`, `shutil`, `glob`, `logging` to a file and `subprocess`.
 - **Size**: M (mostly small C functions in the runtime, each declared with `!tomato_...` as `requests` does).
 - **Dependencies**: runtime C (POSIX `stat`, `opendir`, `getenv`, `exit`); wasm: `argv`/`getenv`/`exit` need a story (WASI provides them), directory operations work on the page's in-memory files only `[I]`. Needs the bytes decision (D3) for binary mode.

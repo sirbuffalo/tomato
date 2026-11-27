@@ -27,6 +27,8 @@
 #   :reset         forget everything                            :help      this text
 #   :quit          leave (also leave(), exit(), quit() and Ctrl-D)
 tomato="${TOMATO_CMD:-tomato}"
+# the session runs with standard error captured (its errors are shown by the repl), so a progress bar draws on the terminal instead
+[ -t 2 ] && export TOMATO_PROGRESS_TTY=1
 S="$(mktemp -d)" || { echo "error: cannot make a temporary folder" >&2; exit 1; }
 trap 'rm -rf "$S"' EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP      # the session folder goes on Ctrl-C, SIGTERM and hangup too

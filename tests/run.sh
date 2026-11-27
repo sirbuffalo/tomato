@@ -1727,6 +1727,39 @@ t_cli_repl_history() {   # the pty session is slow (it compiles after each line)
   check "repl: the line editor on a pty (recall and edit a block, Ctrl-C, paste, UTF-8, resize, the history file, the fallbacks)" "ok" \
     "$(PATH="$(dirname "$t"):$PATH" TOMATO_REPL_EDIT="$edit" expect tests/repl_history.exp 2>&1 | tail -1)"
 }
+t_progress_streams() { # progress_bar never opens /dev/stderr: plain lines on a pipe, nothing breaks with stderr closed, stdout stays clean
+  cli_setup
+  cat > "$work/pb.tom" <<'EOT'
+from itertools import progress_bar
+@main
+def main():
+    for i in progress_bar(range(1, 21), 'p', 10):
+        if i % 10 == 0:
+            print(i)
+EOT
+  $t build "$work/pb.tom" -o "$work/pb" > "$work/e" 2>&1 || { bad "progress_bar streams: build" "$(head -5 "$work/e")"; return; }
+  check "progress_bar: stdout holds only the program's output (stderr to a file)" "10
+20" "$("$work/pb" 2> "$work/err")"
+  check "progress_bar: stderr to a pipe gets plain lines, no carriage returns" "p:   5%|#| 1/20
+p:  10%|#| 2/20
+p:  20%|#| 4/20" "$("$work/pb" 2>&1 > /dev/null | head -3 | sed 's/|[#-]*|/|#|/')"
+  check "progress_bar: no carriage return on a pipe" "0" "$("$work/pb" 2>&1 > /dev/null | grep -c "$(printf '\r')")"
+  check "progress_bar: the last line is the finished bar" "p: 100%|##########| 20/20" "$(cat "$work/err" | tail -1)"
+  "$work/pb" 2>&- > "$work/o"; rc=$?
+  check "progress_bar: stderr closed does not fail the program" "0 10 20" "$rc $(tr '\n' ' ' < "$work/o" | sed 's/ $//')"
+  "$work/pb" 2>/dev/full > "$work/o"; rc=$?
+  check "progress_bar: stderr that cannot be written does not fail the program" "0" "$rc"
+}
+t_repl_progress() { # tomato repl on a pseudo-terminal shows the bar on the terminal
+  cli_setup
+  if ! command -v expect >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "repl progress test" "expect is required in CI" || echo "skip: expect is not installed, so the repl progress test did not run"
+    return
+  fi
+  check "repl: a progress bar draws on the terminal and the loop output follows" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/repl_progress.exp 2>&1 | tail -1)"
+}
+spawn_cli t_progress_streams
+spawn_cli t_repl_progress
 t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, layout, frames, whole sessions on a FakeTerminal), debug and release
   cli_setup
   for mode in debug release; do

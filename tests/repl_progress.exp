@@ -1,0 +1,31 @@
+# Drives the real `tomato repl` on a pseudo-terminal: a progress bar in the session draws on the terminal (the session's own standard
+# error is captured by the repl), the loop's output is shown, and nothing says that /dev/stderr could not be opened.
+# Usage: expect tests/repl_progress.exp   (needs `tomato` on PATH; the last line printed is `ok` or `FAIL: ...`)
+set timeout 180
+log_user 0
+set env(TERM) dumb
+set env(TOMATO_REPL_EDIT) /nonexistent
+catch {unset env(TOMATO_PROGRESS_TTY)}
+spawn tomato repl
+proc fail {msg} { puts "FAIL: $msg"; exit 1 }
+proc want {re what} {
+  expect {
+    -re $re {}
+    timeout { fail "timed out waiting for $what" }
+    eof { fail "the session ended while waiting for $what" }
+  }
+}
+want {>>> } "the first prompt"
+send "from itertools import progress_bar\r"
+want {>>> } "the import"
+send "for i in progress_bar(range(1, 5), 'p', 4):\r"
+send "    print(i * 10)\r\r"
+want {p: 100%\|####\| 4/4} "the finished bar on the terminal"
+want {40} "the last printed value"
+want {>>> } "the next prompt"
+send "quit()\r"
+expect {
+  -re {could not open} { fail "the bar could not write" }
+  eof {}
+}
+puts ok
