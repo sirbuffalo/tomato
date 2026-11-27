@@ -559,7 +559,7 @@ scripts, so this is as hard to change after 1.0 as the language.
 `[Limits]` or `[limit]` in `tomato.toml` is ignored without a word (floats audit), because unknown tables are skipped
 so that `[project]`, `[seed]` and the other manifest tables can live in the same file. Reject unknown tables (an error, as
 section 2 of `docs/package-registry-design.md` says), except the known list of the file in question (a project's `tomato.toml`: `project`, `seed`, `seeds` (with its sub-tables `seeds.ENTRY`, D92b),
-`seed-store`, `limits`, `build`; the user's `config.toml` also has `registry`, `registries` and `aliases`, section 13).
+`seed-store`, `limits`, `build` (with `build.ENTRY`, D92c, whose only keys are `mode` and `output`); the user's `config.toml` also has `registry`, `registries` and `aliases`, section 13).
 
 ### 11.3 `tomato update` trusts HTTPS and a checksum in the same manifest (Do soon)
 

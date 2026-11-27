@@ -34,3 +34,9 @@
   Restore uses `TCSADRAIN` inside signal handlers (`TCSANOW` cannot block on a stuck output). A raw slot stays active if the descriptor is closed by other means, so a reused descriptor number is not made raw. An unterminated bracketed paste swallows every later key. `ESC[24;80R` (a cursor report) decodes as F3.
 - Check the isalpha/isdigit tables in the suite
   Check the tables from `tools/gen_ctype_table.c` against Python 3.14's `str.isalpha` and `str.isdigit`.
+- Confirm whether the user's `config.toml` may hold `[build]` defaults
+  D92c reads `[build]` only in a project's `tomato.toml` (the agent's reading of "only in a project", unconfirmed); section 13 of `docs/package-registry-design.md` says so.
+- Make `tomato seed check` warn about a `[build.ENTRY]` that names no entry
+  Beside the existing item for `[seeds.ENTRY]`: a typo such as `[build.mian]` is a valid table, so `tomato seed check` should warn when no `@mian` marker exists (D92c).
+- Confirm how `tomato run`, `tomato test` and `tomato build` use the build tables
+  D92c (unconfirmed): `run` and `test` read `mode` from `[build.ENTRY]` (the example's `[build.test]` depends on it; D95a does so, `output` only for `build`), the base of `output` (the manifest's folder in the file, where the command runs for a flag), and what `tomato build` does in a seed's folder (D95a: its `[build]` is ignored).

@@ -111,6 +111,7 @@ Read from the source (nothing here is new behavior):
 | **version entry** | the signed statement "version V of owner/name is commit C of git URL U with hash H" |
 | **store** | the user's local, content-addressed folder of fetched seeds (`~/.tomato/seeds/`) |
 | **entry table** | `[seeds.ENTRY]` in `tomato.toml`: seeds used only when running that entry point (`[seeds.test]` for `tomato test`); `[seeds]` is for every build |
+| **build table** | `[build]` (defaults) or `[build.ENTRY]` in a project's `tomato.toml`: `mode` and `output` of one entry point's build; the flags win |
 | **project** | a folder with a `tomato.toml` that has a `[project]` table (a program that uses seeds) |
 | **basket** | reserved for a bundle or workspace of seeds in one repository; not designed here (section 16) |
 
@@ -335,7 +336,7 @@ sets rules for everyone and cannot touch one seed.
 **Built (D95a, 2026-11-26): this section's reader, the `tomato` check, `[build]` and path seeds; see `docs/manifest.md` for what the
 code does today** (the registry, git, the store and everything that needs them are not built).
 
-One file for a seed and for a project (decisions D92a and D92b, 2026-11-26). A folder has **either** `[seed]` (a published
+One file for a seed and for a project (decisions D92a, D92b and D92c, 2026-11-26). A folder has **either** `[seed]` (a published
 package) **or** `[project]` (a program that uses seeds), never both. Keys with a `/` are quoted, as TOML requires.
 
 ```toml
@@ -373,6 +374,15 @@ tomato = "1.0"                         # the oldest compiler that builds it
 [seeds.greet.loud]                     # only when running entry `greet.loud`
 "x.example/colors" = "0.2.0"
 
+[build]                                # defaults for every build (D92c)
+mode = "release"
+
+[build.main]                           # only when building entry `main`
+output = "bin/todo"
+
+[build.test]
+mode = "debug"
+
 [seed-store]
 vendor = "vendor"                      # use ./vendor instead of the store (section 6)
 ```
@@ -400,10 +410,25 @@ Rules:
   rejects them: a registered seed depends only on registered seeds, so the index is closed under its `[seeds]` and a
   seed's graph can always be resolved from signed statements.
 - `tomato` is also a minimum (`tomato version` is compared; an older compiler stops with a clear message).
-- Unknown top-level tables are an error, not ignored, so a typo in `[sedes]` is caught (a typo in an entry name, `[seeds.tset]`, is a valid table: `tomato seed check` warns when no `@tset` entry exists). `[limits]` and
-  `[build]` are **reserved** for the configuration work (section 13), and `[seed-store]` holds the project's
+- **Build tables (D92c).** `[build]` holds defaults for every build and `[build.ENTRY]` (`[build.main]`, `[build.greet.loud]`)
+  holds the settings of one entry point, with the same dotted names as `[seeds.ENTRY]` and the `@` markers. 1.0 has **two
+  keys only**: `mode` (`"debug"` or `"release"`) and `output` (a path; in the file it is relative to the project folder, an `--output` flag is relative to where the command runs; the agent's choice, not yet confirmed by Davis). `target` (`native`,
+  `wasm`, ...) is **reserved** and not accepted yet: it waits until a WebAssembly build from a project is real. An unknown
+  key in the bare `[build]` and in every `[build.ENTRY]` is an error, and so is a reserved one, with a message that says so. A `[build.ENTRY]` that names no entry (`[build.mian]`) is a valid table, so `tomato seed check` warns about it as it does for `[seeds.tset]`. `tomato build` builds the
+  default entry (`@main`) and `tomato build ENTRY` that one. `tomato run` and `tomato test` read the same tables for the entry
+  they compile (`tomato test` is entry `test`, so `[build.test] mode = "debug"` applies to it) and use `mode`; `output` matters
+  only to `build`. (That `run` and `test` read the tables is the agent's reading, not yet confirmed by Davis.) Precedence for one build, highest first: the flags `--mode` and
+  `--output`, then `[build.ENTRY]`, then `[build]`, then the built-in default (`debug`, and the output path the front end
+  picks today). A table applies to entry `x` if it is `x` or a prefix of it (`[build.test]` covers `test.parse`), and the
+  most specific table wins, key by key. D92b's *proposed* extension, the tables **below** `x`, is **not** used here: `mode`
+  and `output` hold one value per build, so a build of `test` cannot also take them from `[build.test.parse]`. (So put
+  `output` in the exact entry's table; one in a prefix table gives every entry below it the same path.) `[build]` is read
+  only in a project's `tomato.toml`, **never in a seed** (neither a seed that a project uses nor a seed's own manifest;
+  a seed's `[build]` is ignored, so `tomato build` in a published seed's folder uses the flags and the built-in defaults; unconfirmed), the same rule as `[limits]` (D92a item 6). Whether the user's `config.toml` may also hold `[build]` defaults is unconfirmed (D92c item 5).
+- Unknown top-level tables are an error, not ignored, so a typo in `[sedes]` is caught (a typo in an entry name, `[seeds.tset]`, is a valid table: `tomato seed check` warns when no `@tset` entry exists). `[limits]` is
+  **reserved** for the configuration work (section 13), `[build]` is defined above, and `[seed-store]` holds the project's
   vendor folder (the former `[seeds] vendor`; `[seeds]` is now only the list of seeds).
-- In a **seed that is used**, only its `[seed]` and its top-level `[seeds]` are read (not `[seeds.ENTRY]`). Its other tables (settings, `[limits]`) are
+- In a **seed that is used**, only its `[seed]` and its top-level `[seeds]` are read (not `[seeds.ENTRY]`). Its other tables (settings, `[limits]`, `[build]`) are
   ignored: a library cannot change how the program that uses it is built or limited.
 
 ## 3. The lockfile: `tomato.lock`
@@ -886,12 +911,33 @@ needs no `tomato-seed config get`, because the compiler (written in Tomato) alre
   default. A dependency's `tomato.toml` is **never** consulted for settings (section 2).
 - **Tables** reserved now: `[registry]`/`[registries.NAME]` (default registry and index URLs; `only_listed`, user file only,
   section 18), `[aliases]` (user file
-  only), `[seed-store]` (vendor folder, offline), `[limits]` (the float limits and the like) and `[build]` (mode and flags).
-  Unknown tables and keys are errors, so a typo is not silently a default.
+  only), `[seed-store]` (vendor folder, offline), `[limits]` (the float limits and the like) and `[build]`/`[build.ENTRY]` (D92c: `mode` and `output`; `target` reserved; section 2).
+  Unknown tables and keys are errors, so a typo is not silently a default. `[build]` is read from a project's `tomato.toml` only
+  (not a seed's, and, taking "only in a project" at its word, not the user's file either; that last reading is not yet
+  confirmed by Davis, D92c item 5).
 - **Who reads TOML.** The `tomato` front end is a shell script and must not parse TOML in shell. The helper program of
   section 14 prints a setting (`tomato-seed config get limits.exp_bits`), so the front end can pass limits to the compile
   or to the runtime build, and so the float task uses the one reader instead of writing another. If the limits end up
   read by native programs at run time (the other TODO's question), `std/toml.tom` is already available to them.
+- **Build settings (D92c).** `tomato build` writes the default entry and `tomato build ENTRY` that one, with `--mode` and
+  `--output` over the file (today's front end already has `--mode`, spells the output option `-o` and takes a FILE and `--entry`;
+  `--output` and the manifest form are not built). For example, in a project's `tomato.toml`:
+
+  ```toml
+  [build]
+  mode = "release"
+
+  [build.main]
+  output = "bin/todo"
+
+  [build.test]
+  mode = "debug"
+  ```
+
+  `tomato run` and `tomato test` read `mode` from the same tables (section 2; unconfirmed). The tables follow the rule of section 2 (an entry table covers the entries below its name; most specific wins). The two keys
+  are part of the 1.0.x compatibility promise (D84a): a 1.0.x release must not rename or remove them or change what
+  they mean, and a new key or value (such as `target`) waits for a minor release. The manifest reader of D95a
+  (`compiler/src/manifest.tom`) reads and checks these tables today (`docs/manifest.md`).
 - **Example** user file:
 
   ```toml
