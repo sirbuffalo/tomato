@@ -1,0 +1,7 @@
+error[E128]: 'Coded' takes 0 arguments, but 1 given
+ --> tests/errors/error_subclass_fields.tom:6:11
+  |
+6 |     raise Coded('not found')
+  |           ^^^^^
+  = help: 'Coded' declares fields, so it does not inherit its parent's @init
+  = help: write an @init method for it

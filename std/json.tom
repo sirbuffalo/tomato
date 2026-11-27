@@ -53,15 +53,11 @@ export class JSONDecodeError(RuntimeError):
         self.column = column
 
 export class JSONEncodeError(RuntimeError):
-    @init
-    def make_encode(self, message: str, id: str = ''):
-        RuntimeError.make(self, message, id)
+    pass
 
 # Raised when a Json is used as the wrong kind: j['a'] on a list, as_int() on text, a missing key or an index out of range.
 export class JSONTypeError(RuntimeError):
-    @init
-    def make_type(self, message: str, id: str = ''):
-        RuntimeError.make(self, message, id)
+    pass
 
 # Raised by loads_msgpack on bad data (pos is the byte offset) and by dumps_msgpack on a value MessagePack cannot hold.
 export class MsgpackError(RuntimeError):

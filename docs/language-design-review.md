@@ -272,6 +272,8 @@ the collector (D29d).
 
 ### 3.3 Error classes do not inherit `@init`, and errors cannot be printed (Do soon, high)
 
+**Status (2026-11-26): done (D93b).** A class that declares no fields inherits its parent's `@init`, and `Error` has an `@str` giving the message alone. The text below is the problem as found.
+
 **Problem.** The first error class a user writes does not work:
 
 ```

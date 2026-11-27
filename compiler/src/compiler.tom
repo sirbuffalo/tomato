@@ -5044,7 +5044,7 @@ class Gen:
         self.release_held()
         err = self.tmp('err')
         args = 'ptr ' + text
-        if self.mod.has_class(cls) and len(self.mod.find_method(cls, self.mod.find_class(cls, self.line).init, self.line).ptypes) == 2:
+        if self.mod.has_class(cls) and len(init_method(self.mod, self.mod.find_class(cls, self.line)).ptypes) == 2:
             args += ', ptr ' + self.mod.intern(id if id != '' else 'E371')
         self.emit(err + ' = call ptr @tomato.new.' + str(self.mod.code_of('@' + cls)) + '(' + args + ')')
         if owned:
@@ -7688,14 +7688,17 @@ class Gen:
     def construct(self, c: ClassInfo, args: list[Node], line: int) -> Ex:
         # Name(args): allocate, set the declared defaults, run @init (the constructor function does all three)
         ptypes: list[str] = []
-        if c.init != '':
-            ptypes = self.mod.find_method(c.name, c.init, line).ptypes
         defaults: list[Node] = []
-        if c.init != '':
-            defaults = self.mod.find_method(c.name, c.init, line).defaults
+        init = init_method(self.mod, c)
+        if init is not None:
+            ptypes = init.ptypes
+            defaults = init.defaults
         required = len(ptypes) - len(defaults)
         if len(args) < required or len(args) > len(ptypes):
-            raise CompileError("'" + c.name + "' takes " + plural(len(ptypes), 'argument') + ', but ' + str(len(args)) + ' given', line)
+            help = ''
+            if init is None and c.parent != '' and has_init(self.mod, c):
+                help = "\n'" + c.display + "' declares fields, so it does not inherit its parent's @init\nwrite an @init method for it"
+            raise CompileError("'" + c.name + "' takes " + plural(len(ptypes), 'argument') + ', but ' + str(len(args)) + ' given' + help, line)
         values = self.args_with_defaults(args, ptypes, defaults, line, c.name)
         parts: list[str] = [f'{llvm_type(v.ty)} {v.reg}' for v in values]
         r = self.tmp('obj')
@@ -12146,8 +12149,9 @@ def compile_constructor(c: ClassInfo, mod: Mod):
     g.mod = mod
     code = str(mod.code_of('@' + c.name))
     ptypes: list[str] = []
-    if c.init != '':
-        ptypes = mod.find_method(c.name, c.init, c.line).ptypes
+    init_info = init_method(mod, c)
+    if init_info is not None:
+        ptypes = init_info.ptypes
     sig: list[str] = []
     for k, t in enumerate(ptypes):
         sig.append(f'{llvm_type(t)} %arg.{k}')
@@ -12163,11 +12167,11 @@ def compile_constructor(c: ClassInfo, mod: Mod):
             addr = g.tmp('fld')
             g.emit(f'{addr} = getelementptr %class.{code}, ptr {obj}, i32 0, i32 {str(k + 2)}')
             g.emit(f'store {llvm_type(v.ty)} {v.reg}, ptr {addr}')
-    if c.init != '':
+    if init_info is not None:
         parts: list[str] = ['ptr ' + obj]
         for k, t in enumerate(ptypes):
             parts.append(f'{llvm_type(t)} %arg.{k}')
-        init = '@tomato.m.' + str(mod.code_of('@' + mod.find_method(c.name, c.init, c.line).owner)) + '.' + c.init
+        init = '@tomato.m.' + str(mod.code_of('@' + init_info.owner)) + '.' + init_info.name
         g.emit(f'call void {init}(' + ', '.join(parts) + ')')
         pending = g.tmp('ex')
         g.emit(f'{pending} = load ptr, ptr @tomato_exc')
@@ -12775,6 +12779,21 @@ def check_class_shapes(mod: Mod):
             for fld in c.fields:
                 if fld.owner == c.name and fld.default is None:
                     raise CompileError(f"class '{c.display}' has no @init method, but the field '{fld.name}' has no starting value\ngive the field a value, or add an @init method that sets it", c.line)
+
+# the @init method that constructs c: its own, or (when c declares no fields of its own) the one its parent has, as in Python and
+# Kotlin (D93b); None when there is none
+def init_method(mod: Mod, c: ClassInfo) -> FuncInfo | None:
+    if c.init != '':
+        for f in mod.infos:
+            if f.name == c.init and f.owner == c.name:
+                return f
+        return None
+    if c.parent == '':
+        return None
+    for fld in c.fields:
+        if fld.owner == c.name:
+            return None
+    return init_method(mod, mod.find_class(c.parent, c.line))
 
 def has_init(mod: Mod, c: ClassInfo) -> bool:
     if c.init != '':

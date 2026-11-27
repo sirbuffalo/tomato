@@ -1,0 +1,6 @@
+class Coded(RuntimeError):
+    code: int = 404
+
+@main
+def main():
+    raise Coded('not found')

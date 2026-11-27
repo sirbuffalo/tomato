@@ -1463,6 +1463,7 @@ got:    $msg";; esac
 }
 neg() { spawn t_neg "$@"; }
 section "== rejected programs =="
+neg error_subclass_args "'NotFound' takes 2 arguments, but 3 given"
 neg int_or_none "'int' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None"
 neg list_of_int_or_none "'int' cannot be combined with None"
 neg param_int_or_none "'int' cannot be combined with None"
@@ -1751,6 +1752,7 @@ rt exp_large "1.970071114017047e+434" 0
 rt log_zero "log needs a positive number, but got 0.0" 1
 rt log_base_zero "a logarithm base must be positive and not 1, but got 0.0" 1
 rt caught_domain "caught sqrt needs a number that is not negative" 0
+rt error_subclass_uncaught "error: Missing: the file is gone (raised on line 9)" 1
 rt angle_base "Angle is a base class" 1
 rt chr_range "chr() takes a number from 0 to 1114111, not a surrogate" 1
 rt ord_length "ord() takes a text of exactly one character" 1

@@ -1,0 +1,47 @@
+# An error class that declares no fields inherits its parent's @init, and an error prints as its message (D93b).
+class NotFound(Error):
+    pass
+
+class Missing(NotFound):
+    pass
+
+class Detailed(ValueError):
+    @init
+    def make_d(self, what: str, n: int):
+        ValueError.make_value(self, f'{what} #{n}', 'E999')
+
+class Sub(Detailed):
+    pass
+
+class Shouting(Error):
+    @str
+    def loud(self) -> str:
+        return self.message.upper()
+
+class LoudChild(Shouting):
+    pass
+
+@main
+def main():
+    try:
+        raise NotFound('no such thing')
+    catch NotFound as e:
+        print(e)
+        print(str(e), e.message, e.id == '')
+        print(f'got {e}')
+    try:
+        raise Missing('gone', 'E7')
+    catch Error as e:
+        print(e, e.id)
+    e = Sub('thing', 3)
+    print(e, e.id)
+    print(LoudChild('hey'))
+    print(repr_empty(Missing()))
+    try:
+        xs = [1]
+        print(xs[5])
+    catch IndexError as ie:
+        print('caught:', ie)
+
+def repr_empty(e: Error) -> str:
+    return '[' + str(e) + ']'

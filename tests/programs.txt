@@ -220,3 +220,4 @@ int_bitwise_runs
 big_bad_text
 int64_convert
 trig_radians
+error_inherit_init

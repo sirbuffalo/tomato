@@ -1,0 +1,9 @@
+class NotFound(Error):
+    pass
+
+class Missing(NotFound):
+    pass
+
+@main
+def main():
+    raise Missing('the file is gone', 'E7')

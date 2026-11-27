@@ -167,8 +167,19 @@ The libraries raise subclasses of their own, each also a `RuntimeError`: `JSONDe
 `MsgpackError` (`json`), `TOMLDecodeError` (`toml`), `CacheMiss` (`cache`), and `requests.RequestError` (an `IOError`) with
 `ConnectionError`, `TimeoutError`, `InvalidURL`, `TooManyRedirects` and `HTTPError`. They have ids too (`std/errors.txt`).
 
-Write your own with `class MyError(RuntimeError)`. To accept a message, give the class an `@init` method that calls
-`RuntimeError.make(self, message)`. The `message` and `id` fields default to `""`. Release builds print `error E04:12` with the ID and the line
+Write your own with `class MyError(RuntimeError)`. A class that declares no fields of its own inherits its parent's `@init`
+(D93b), so `class NotFound(Error): pass` is made with `NotFound('no such user')` or `NotFound('no such user', 'E7')` (message,
+then an optional id; both may be left out, and the message is then `""`), and so is `class Missing(NotFound): pass`. The class can give its own `@init` to take other arguments,
+which calls the parent's with `Error.start(self, message, id)` (or `RuntimeError.make(self, message, id)` for a `RuntimeError`). A
+class that declares fields (`code: int = 404`) does not inherit `@init`, because the parent's would leave those fields unset;
+it needs an `@init` of its own, and `MyError('x')` without one is E128 with a help line saying so. The `message` and `id`
+fields default to `""`.
+
+**Printing an error.** `Error` has an `@str` that gives the message alone, as Python's `str(e)` does: `print(e)`, `str(e)` and
+`f'{e}'` are `e.message`, with no class name and no id. An error nobody catches prints more, `error: ClassName: message (raised on
+line N)` (above), because there the class name is the only clue to what went wrong. Every error class inherits the `@str`; a
+class can give its own (one method marked `@str`, any name) and `print` then uses that, but the uncaught-error report does not: it
+always prints the class name and the `message` field. Release builds print `error E04:12` with the ID and the line
 where the error was raised. `tomato explain E04:12 prog.tom` shows the diagnostic and line from the supplied file. `tomato explain E04`
 shows the class and message without a file. A line of zero means the runtime has no source location, for example when startup
 input is invalid or the machine runs out of memory. These process failures and stack exhaustion report an ID and terminate.

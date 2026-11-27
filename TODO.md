@@ -20,8 +20,6 @@
   Its ranked list ("Decisions to make, ranked"): triage `docs/provisional.md`, release-mode error messages, builtin shadowing, the `@` namespace and `x is T`, `bytes`, `File` safety, reserved std module names and the `!` interface. Each needs Davis's decision, then a decision entry and the change.
 - Allow `int | None`, `float | None` and `bool | None`
   Design review 3.1: today `x: int | None` is E459 and `d.get(k)` is E380 when the values are `int`; general unions already box their members, so the optional can use the same path, and `d.get(k)` then works for every value type.
-- Let error subclasses without fields inherit their parent's @init, and give Error an @str
-  Design review 3.3: `class MyErr(ValueError): pass` then `raise MyErr("neg")` is E128, so every error class repeats a forwarding `@init` (`std/json.tom` lines 55-64), and `print(e)` is E375. Decide the text of `str(e)` (the message alone, as Python) before 1.0.
 - Fix `list.sort()` leaking on a list held in an object field
   Debug mode reports "N object(s) were never freed" when `self.names.sort()` sorts a list that is a field of an object, after appends; sorting a local list and assigning it to the field does not leak. Repro: a class with `names: list[str] = []`, append in a loop, then `self.names.sort()`. Worked around in `ReplCompleter.known` (`compiler/src/repledit.tom`); needs a runtime/compiler fix.
 - Let the config reader allow `seeds.*` sub-tables when it starts rejecting unknown tables
@@ -30,3 +28,5 @@
   `tomato seed check` should warn when a `[seeds.ENTRY]` names an entry with no matching `@` marker (it would catch a typo such as `[seeds.tset]`, which is otherwise a valid table); see D92b in `docs/decisions.md`.
 - Find why the compiler reports "9 object(s) were never freed" on some programs that open and drop files
   Compiling a program with a function that opens a file and drops it inside a `for i in range(3)` loop (a small test of `open`, `write`, `close` and a second `close`) makes the compiler print `warning: 9 object(s) were never freed (a reference cycle or a missing release)` at exit. The compiler before the `File` change (D93a) does it too, so that change did not cause it: it looks like a leak in the compiler itself. Bisect the program (smaller variants did not show it) and fix the missing release.
+- Remove the remaining forwarding-only error `@init` methods in `std/`
+  Socket, requests, cache, asyncio and the built-in errors still repeat an `@init` that only forwards its arguments; a class that declares no fields now inherits its parent's `@init` (D93b), so those can go. Keep the `make_*` names that other code calls explicitly (`IOError.make_io(self, ...)`, `RuntimeError.make(self, ...)`), or change those callers too.

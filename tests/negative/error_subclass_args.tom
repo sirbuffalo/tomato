@@ -1,0 +1,6 @@
+class NotFound(Error):
+    pass
+
+@main
+def main():
+    raise NotFound('a', 'b', 'c')
