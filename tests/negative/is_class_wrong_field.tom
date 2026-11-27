@@ -1,0 +1,21 @@
+# inside `if a is Dog:` the variable is a Dog, which has no field `lives`
+class Animal:
+    name: str = 'animal'
+
+class Dog(Animal):
+    tricks: int = 3
+
+class Cat(Animal):
+    lives: int = 9
+
+class Shelf:
+    pet: Animal = Animal()
+
+def f(a: Animal) -> int:
+    if a is Dog:
+        return a.lives
+    return 0
+
+@main
+def main():
+    print(f(Dog()))

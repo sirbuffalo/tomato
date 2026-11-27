@@ -1,0 +1,301 @@
+# `x is Class` checks the class of the object the value holds, not the type the variable was declared with (D109a): with
+# `a: Animal` holding a Dog, `a is Dog` and `a is Animal` are True and `a is Cat` is False, as isinstance in Python. The test
+# is the same for classes, interface values, unions and optionals, `x is not Class` is its opposite, and `x in Class`, the old
+# spelling, agrees. A test that is true also tells the compiler what the variable is, so `a.tricks` works inside `if a is Dog`.
+class Animal:
+    name: str = 'animal'
+
+class Dog(Animal):
+    tricks: int = 3
+
+class Poodle(Dog):
+    fluff: int = 7
+
+class Cat(Animal):
+    lives: int = 9
+
+class Rock:
+    weight: int = 5
+
+interface Named:
+    def label(self) -> str
+
+interface Loud:
+    def noise(self) -> str
+
+class Tag implements Named:
+    def label(self) -> str:
+        return 'tag'
+
+class BigTag(Tag):
+    override def label(self) -> str:
+        return 'big tag'
+
+class Plate implements Named, Loud:
+    def label(self) -> str:
+        return 'plate'
+
+    def noise(self) -> str:
+        return 'clang'
+
+class Bell implements Loud:
+    def noise(self) -> str:
+        return 'ding'
+
+class Shelf:
+    pet: Animal = Animal()
+
+# ---- a variable of a base class that holds a subclass object, a base object and a sibling
+def kinds(a: Animal) -> str:
+    out = ''
+    out += 'A' if a is Animal else '-'
+    out += 'D' if a is Dog else '-'
+    out += 'P' if a is Poodle else '-'
+    out += 'C' if a is Cat else '-'
+    return out
+
+def kinds_not(a: Animal) -> str:
+    out = ''
+    out += 'A' if a is not Animal else '-'
+    out += 'D' if a is not Dog else '-'
+    out += 'P' if a is not Poodle else '-'
+    out += 'C' if a is not Cat else '-'
+    return out
+
+def kinds_not_op(a: Animal) -> str:
+    return str(not (a is Dog)) + str(not a is Cat)
+
+def kinds_of_dog(d: Dog) -> str:
+    # the static type is already a Dog: Animal and Dog are True whatever it holds, Poodle only for a Poodle, Cat never
+    return str(d is Animal) + str(d is Dog) + str(d is Poodle) + str(d is Cat)
+
+# ---- an optional of a base class
+def opt_kinds(a: Animal | None) -> str:
+    out = ''
+    out += 'N' if a is None else '-'
+    out += 'A' if a is Animal else '-'
+    out += 'D' if a is Dog else '-'
+    out += 'C' if a is Cat else '-'
+    out += 'x' if a is not Dog else '-'
+    return out
+
+# ---- unions with a class, a base class and an interface among their members
+def union_kinds(u: Animal | int) -> str:
+    out = ''
+    out += 'A' if u is Animal else '-'
+    out += 'D' if u is Dog else '-'
+    out += 'C' if u is Cat else '-'
+    out += 'i' if u is int else '-'
+    return out
+
+def union_pets(u: Dog | Cat | str) -> str:
+    out = ''
+    out += 'A' if u is Animal else '-'
+    out += 'D' if u is Dog else '-'
+    out += 'P' if u is Poodle else '-'
+    out += 's' if u is str else '-'
+    return out
+
+def union_named(u: Named | int) -> str:
+    out = ''
+    out += 'N' if u is Named else '-'
+    out += 'T' if u is Tag else '-'
+    out += 'B' if u is BigTag else '-'
+    out += 'L' if u is Loud else '-'
+    out += 'i' if u is int else '-'
+    return out
+
+# ---- interface values: a class test and an interface test on what the value holds
+def named_kinds(n: Named) -> str:
+    out = ''
+    out += 'N' if n is Named else '-'
+    out += 'T' if n is Tag else '-'
+    out += 'B' if n is BigTag else '-'
+    out += 'P' if n is Plate else '-'
+    out += 'L' if n is Loud else '-'
+    return out
+
+def loud_kinds(n: Loud) -> str:
+    out = ''
+    out += 'L' if n is Loud else '-'
+    out += 'N' if n is Named else '-'
+    out += 'P' if n is Plate else '-'
+    out += 'b' if n is Bell else '-'
+    return out
+
+# a class value tested for an interface that only a subclass implements
+def animal_named(a: Animal) -> str:
+    return str(a is Named) + str(a is Loud)
+
+class Pup(Dog) implements Named:
+    def label(self) -> str:
+        return 'pup'
+
+# ---- the variable becomes the class that was tested
+def dog_or_cat(a: Animal) -> str:
+    if a is Dog:
+        return 'dog ' + str(a.tricks)
+    elif a is Cat:
+        return 'cat ' + str(a.lives)
+    return 'animal ' + a.name
+
+def deepest(a: Animal) -> str:
+    if a is Poodle:
+        return 'poodle ' + str(a.fluff + a.tricks)
+    if a is Dog:
+        return 'dog ' + str(a.tricks)
+    return 'other ' + a.name
+
+def opt_dog(a: Animal | None) -> str:
+    if a is Dog:
+        return 'dog ' + str(a.tricks)
+    if a is None:
+        return 'none'
+    return 'animal ' + a.name
+
+def opt_dog_after_not_none(a: Animal | None) -> str:
+    if a is not None and a is Dog:
+        return 'dog ' + str(a.tricks) + a.name
+    if a is not None:
+        return 'animal ' + a.name
+    return 'none'
+
+def early_exit(a: Animal) -> str:
+    if a is not Dog:
+        return 'not a dog'
+    return 'dog ' + str(a.tricks)
+
+def early_raise(a: Animal) -> int:
+    if not (a is Dog):
+        raise RuntimeError('wanted a dog, got ' + a.name)
+    return a.tricks
+
+def with_and(a: Animal) -> str:
+    if a is Dog and a.tricks > 2:
+        return 'clever dog'
+    return 'other'
+
+def with_or(a: Animal) -> str:
+    if a is not Dog or a.tricks < 5:
+        return 'plain'
+    return 'show dog'
+
+def with_cond(a: Animal) -> int:
+    return a.tricks if a is Dog else -1
+
+def in_loop(a: Animal) -> str:
+    out = ''
+    k = 0
+    while a is Dog and k < 2:
+        out += str(a.tricks + k)
+        k += 1
+    return out + '.'
+
+def narrow_then_assign(a: Animal) -> str:
+    # an assignment ends the narrowing: the variable is an Animal again, and may be given any Animal
+    if a is Dog:
+        out = 'was ' + str(a.tricks)
+        a = Cat()
+        return out + ' now ' + a.name
+    return 'not a dog'
+
+def narrow_twice(a: Animal | None) -> str:
+    if a is not None:
+        if a is Dog:
+            return 'dog ' + str(a.tricks)
+        return 'animal ' + a.name
+    return 'none'
+
+def narrow_assign_opt(a: Animal | None) -> str:
+    if a is Dog:
+        a = None
+        return 'cleared'
+    return 'kept'
+
+def interface_to_class(n: Named) -> str:
+    if n is Tag:
+        return 'tag ' + n.label()
+    if n is Plate:
+        return 'plate ' + n.label()
+    return 'named ' + n.label()
+
+# ---- a field holds a base class: it is tested, though never narrowed
+def shelf_has(s: Shelf) -> str:
+    return str(s.pet is Dog) + str(s.pet is Animal)
+
+# ---- lists of base objects
+def count(zoo: list[Animal]) -> str:
+    dogs = 0
+    cats = 0
+    plain = 0
+    for a in zoo:
+        if a is Dog:
+            dogs += a.tricks
+        elif a is Cat:
+            cats += 1
+        else:
+            plain += 1
+    return str(dogs) + '/' + str(cats) + '/' + str(plain)
+
+# ---- the old spelling `in` agrees
+def old_spelling(a: Animal) -> str:
+    out = ''
+    out += 'D' if a in Dog else '-'  # allow: type-test
+    out += 'C' if a in Cat else '-'  # allow: type-test
+    if a in Dog:  # allow: type-test
+        out += str(a.tricks)
+    return out
+
+# ---- errors are classes too
+def error_kinds(e: Error) -> str:
+    return str(e is KeyError) + str(e is RuntimeError) + str(e is Error)
+
+def caught(k: int) -> str:
+    try:
+        if k == 0:
+            raise KeyError('k')
+        raise RuntimeError('r')
+    catch Error as e:
+        if e is KeyError:
+            return 'key'
+        return 'other'
+
+@main
+def main():
+    print(kinds(Animal()), kinds(Dog()), kinds(Poodle()), kinds(Cat()))
+    print(kinds_not(Animal()), kinds_not(Dog()), kinds_not(Poodle()), kinds_not(Cat()))
+    print(kinds_not_op(Dog()), kinds_not_op(Cat()), kinds_not_op(Poodle()))
+    print(kinds_of_dog(Dog()), kinds_of_dog(Poodle()))
+    print(opt_kinds(None), opt_kinds(Animal()), opt_kinds(Dog()), opt_kinds(Poodle()), opt_kinds(Cat()))
+    print(union_kinds(Animal()), union_kinds(Dog()), union_kinds(Cat()), union_kinds(4), union_kinds(Poodle()))
+    print(union_pets(Dog()), union_pets(Poodle()), union_pets(Cat()), union_pets('s'))
+    print(union_named(Tag()), union_named(BigTag()), union_named(Plate()), union_named(7))
+    print(named_kinds(Tag()), named_kinds(BigTag()), named_kinds(Plate()), named_kinds(Pup()))
+    print(loud_kinds(Plate()), loud_kinds(Bell()))
+    print(animal_named(Dog()), animal_named(Pup()), animal_named(Cat()))
+    print(dog_or_cat(Dog()), dog_or_cat(Cat()), dog_or_cat(Animal()), dog_or_cat(Poodle()), dog_or_cat(Pup()))
+    print(deepest(Poodle()), deepest(Dog()), deepest(Cat()), deepest(Pup()))
+    print(opt_dog(Dog()), opt_dog(None), opt_dog(Cat()), opt_dog(Poodle()))
+    print(opt_dog_after_not_none(Dog()), opt_dog_after_not_none(Cat()), opt_dog_after_not_none(None))
+    print(early_exit(Dog()), early_exit(Cat()), early_exit(Poodle()))
+    print(early_raise(Dog()), early_raise(Poodle()))
+    try:
+        early_raise(Cat())
+    catch RuntimeError as e:
+        print(e)
+    print(with_and(Dog()), with_and(Cat()), with_or(Dog()), with_or(Cat()))
+    print(with_cond(Dog()), with_cond(Cat()), with_cond(Poodle()))
+    print(in_loop(Dog()), in_loop(Cat()))
+    print(narrow_then_assign(Dog()), narrow_then_assign(Cat()))
+    print(narrow_twice(Dog()), narrow_twice(Cat()), narrow_twice(None))
+    print(narrow_assign_opt(Dog()), narrow_assign_opt(None), narrow_assign_opt(Cat()))
+    print(interface_to_class(Tag()), interface_to_class(BigTag()), interface_to_class(Plate()))
+    s = Shelf()
+    print(shelf_has(s))
+    s.pet = Poodle()
+    print(shelf_has(s))
+    zoo: list[Animal] = [Dog(), Cat(), Animal(), Poodle(), Cat()]
+    print(count(zoo))
+    print(old_spelling(Dog()), old_spelling(Cat()), old_spelling(Poodle()))
+    print(error_kinds(KeyError('x')), error_kinds(RuntimeError('y')))
+    print(caught(0), caught(1))

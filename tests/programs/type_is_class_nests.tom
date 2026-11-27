@@ -1,0 +1,122 @@
+# `x is Class` on the class an object really has (D109a) in release-mode loop nests. A nest is compiled twice (the fast copy, with no
+# big-number code, and the general copy; see union_narrowing_nests), and the fast copy goes to the start of a statement of the general
+# copy when a number is big. The test makes blocks of its own (the optional and union forms look at the object only when it is not
+# None or the box holds a class), and a variable narrowed to a subclass keeps its slot, which both copies share. Each function runs with
+# small numbers only and with a big one in the table; debug mode has one copy and must print the same.
+class Animal:
+    name: str = 'animal'
+
+class Dog(Animal):
+    tricks: int = 3
+
+class Cat(Animal):
+    lives: int = 9
+
+interface Named:
+    def label(self) -> str
+
+class Tag implements Named:
+    def label(self) -> str:
+        return 'tag'
+
+class Plate implements Named:
+    def label(self) -> str:
+        return 'plate'
+
+def down(a: Animal, xs: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if a is Dog:
+                t += xs[i] * xs[j] + a.tricks
+            else:
+                t += 1
+    return t
+
+def down_exit(a: Animal, xs: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if a is not Dog:
+                continue
+            t += xs[i] * xs[j] + a.tricks
+    return t
+
+def down_items(zoo: list[Animal], xs: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for a in zoo:
+            if a is not Dog:
+                continue
+            t += xs[i] * a.tricks
+    return t
+
+def down_optional(a: Animal | None, xs: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if a is Dog:
+                t += xs[i] + xs[j] + a.tricks
+            elif a is None:
+                t += 2
+            else:
+                t += 1
+    return t
+
+def test_union(u: Animal | int, xs: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if u is Dog:
+                t += xs[i] * xs[j]
+            elif u is int:
+                t += xs[i] - xs[j]
+            else:
+                t += 1
+    return t
+
+def test_iface(n: Named, xs: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if n is Tag:
+                t += xs[i] * xs[j]
+            elif n is Plate:
+                t += xs[i]
+    return t
+
+def test_assign(a: Animal, xs: list[int]) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if a is Dog:
+                t += xs[i] * a.tricks
+                a = Cat()
+            else:
+                t += xs[j]
+                a = Dog()
+    return t
+
+def run(xs: list[int]) -> str:
+    d: Animal = Dog()
+    c: Animal = Cat()
+    od: Animal | None = Dog()
+    oc: Animal | None = Cat()
+    on: Animal | None = None
+    ud: Animal | int = Dog()
+    ui: Animal | int = 5
+    uc: Animal | int = Cat()
+    tag: Named = Tag()
+    plate: Named = Plate()
+    zoo: list[Animal] = [Dog(), Cat(), Dog()]
+    out = str(down(d, xs)) + ' ' + str(down(c, xs)) + ' ' + str(down_exit(d, xs)) + ' ' + str(down_exit(c, xs)) + ' ' + str(down_items(zoo, xs))
+    out += '\n' + str(down_optional(od, xs)) + ' ' + str(down_optional(oc, xs)) + ' ' + str(down_optional(on, xs))
+    out += '\n' + str(test_union(ud, xs)) + ' ' + str(test_union(ui, xs)) + ' ' + str(test_union(uc, xs))
+    out += '\n' + str(test_iface(tag, xs)) + ' ' + str(test_iface(plate, xs)) + ' ' + str(test_assign(d, xs)) + ' ' + str(test_assign(c, xs))
+    return out
+
+@main
+def main():
+    print(run([1, 2, 3]))
+    print(run([1, 2, 2 ** 70, 3]))
+    print(run([2 ** 64, 7, -2 ** 65]))

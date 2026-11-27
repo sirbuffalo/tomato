@@ -1,0 +1,21 @@
+# the false branch of `a is Dog` says nothing: the variable is still an Animal
+class Animal:
+    name: str = 'animal'
+
+class Dog(Animal):
+    tricks: int = 3
+
+class Cat(Animal):
+    lives: int = 9
+
+class Shelf:
+    pet: Animal = Animal()
+
+def f(a: Animal) -> int:
+    if a is Dog:
+        return 1
+    return a.tricks
+
+@main
+def main():
+    print(f(Dog()))

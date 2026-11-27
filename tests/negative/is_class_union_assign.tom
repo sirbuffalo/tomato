@@ -1,0 +1,21 @@
+# `u is Dog` inside `if u is Animal:` does not make the union assignable: it is narrowed to Animal there
+class Animal:
+    name: str = 'animal'
+
+class Dog(Animal):
+    tricks: int = 3
+
+class Cat(Animal):
+    lives: int = 9
+
+class Shelf:
+    pet: Animal = Animal()
+
+def f(u: Animal | int):
+    if u is Animal:
+        if u is Dog:
+            u = Cat()
+
+@main
+def main():
+    f(Dog())

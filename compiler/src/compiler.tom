@@ -1326,6 +1326,7 @@ class Mod:
     float_cache: dict[str, str] = {}       # the copies made by float_copy
     small_cache: dict[str, bool] = {}      # has_small answers, by function symbol
     override_cache: dict[str, bool] = {}   # overridden answers, by class and method name
+    iface_tests: list[str] = []            # the interfaces that `x is Interface` tests an object for at run time (D109a), by key: iface_tests() writes one function each
 
     def code_of(self, t: str) -> int:
         if t in self.code_index:
@@ -2355,6 +2356,23 @@ class TryInfo:
     loop_depth: int = 0
     state: str = 'body'       # 'body' while compiling the try body, then 'post'
 
+def down_entry(name: str, ty: str) -> str:
+    # an entry of the lists of narrowed locals (opt_names and what uses it) for a local that `x is Dog` has narrowed to the class Dog: name:@Dog.
+    # An entry without a type is a local that is not None.
+    return name + ':' + ty
+
+def down_name(entry: str) -> str:
+    at = entry.find(':')
+    if at < 0:
+        return entry
+    return entry[:at]
+
+def down_type(entry: str) -> str:
+    at = entry.find(':')
+    if at < 0:
+        return ''
+    return entry[at + 1:]
+
 class OptNarrow:
     # an optional local that is known not to be None for a stretch of the code (D102a): the variable's slot and type before the
     # stretch began, put back when it ends, or at the statement that assigns the variable (on is then False)
@@ -2364,6 +2382,7 @@ class OptNarrow:
     on: bool = True
     shadow: str = ''        # an int, float or bool optional: the slot that holds its number while it is narrowed
     nested: bool = False    # made inside a loop nest (see opt_rederive)
+    to: str = ''            # for `x is Dog` on a variable of a base class (or an interface or an optional of one): the class it is narrowed to (D109a); '' for "not None"
 
 class UnionNarrow:
     # a union local that `x in T` has narrowed to one member T (D55a): its value is a copy taken out of the box into a slot of its
@@ -6679,15 +6698,85 @@ class Gen:
         self.release(b)
         return self.bool_of(c)
 
+    def dyn_possible(self, m: str, tt: str) -> bool:
+        # may a value whose static type m (a class or an interface) is not already a tt hold, at run time, an object that is one
+        # (D109a)? A class tt: when it is a descendant of the class m, or a class that implements the interface m. An interface tt:
+        # when some class below m (or implementing it) implements tt; which classes there are is known only when the program is
+        # written out, so the test calls a function made then (iface_tests).
+        if not (is_class(m) or is_iface(m)):
+            return False
+        if is_class(tt):
+            return self.mod.assignable(tt, m)
+        return is_iface(tt)
+
+    def class_code(self, reg: str) -> str:
+        # the type code of the object at reg (the class it was made from), read from its header as dispatch does
+        tp = self.tmp('tp')
+        self.emit(f'{tp} = getelementptr {{ i64, i64 }}, ptr {reg}, i32 0, i32 1')
+        raw = self.tmp('rawcode')
+        self.emit(f'{raw} = load i64, ptr {tp}')
+        code = self.tmp('code')
+        self.emit(f'{code} = and i64 {raw}, 4294967295')
+        return code
+
+    def dyn_is(self, reg: str, tt: str) -> str:
+        # an i1: is the object at reg (never null) of the class tt or a descendant of it, or, for an interface tt, of a class that
+        # implements it? It is read from the object itself, not from the static type of the variable that holds it
+        code = self.class_code(reg)
+        yes = self.tmp('isinst')
+        if is_class(tt):
+            isa = self.tmp('isa')
+            self.emit(f'{isa} = call i32 @tomato_is_subclass(i64 {code}, i64 {self.mod.code_of(tt)})')
+            self.emit(f'{yes} = icmp ne i32 {isa}, 0')
+            return yes
+        key = tt[1:]
+        at = 0
+        while at < len(self.mod.iface_tests) and self.mod.iface_tests[at] != key:
+            at += 1
+        if at == len(self.mod.iface_tests):
+            self.mod.iface_tests.append(key)
+        self.emit(f'{yes} = call i1 @tomato.isiface.{at}(i64 {code})')
+        return yes
+
+    def dyn_is_after(self, guard: str, reg: str, tt: str, in_box: bool) -> str:
+        # an i1: guard (an i1) and then dyn_is of the object at reg, which is read only when the guard holds (it may be None, or
+        # the payload of a union's box, which is an object only when the box holds a class or an interface member: in_box)
+        test = self.label('dyntest')
+        no = self.label('dynno')
+        join = self.label('dyndone')
+        self.cond_br(guard, test, no)
+        self.place(no)
+        self.br(join)
+        self.place(test)
+        obj = reg
+        if in_box:
+            pp = self.tmp('payload')
+            self.emit(f'{pp} = getelementptr i8, ptr {reg}, i64 16')
+            obj = self.tmp('inner')
+            self.emit(f'{obj} = load ptr, ptr {pp}')
+        got = self.dyn_is(obj, tt)
+        self.br(join)
+        self.place(join)
+        r = self.tmp('dyn')
+        self.emit(f'{r} = phi i1 [ false, %{no} ], [ {got}, %{test} ]')
+        return r
+
     def type_test(self, left: Node, tt: str, line: int, negate: bool = False) -> Ex:
-        # x is Type: true when the value's type is Type (a class name also matches its subclasses); with negate (`x is not Type`) the opposite
+        # x is Type: true when the object x holds is a Type (D23i; a class name also matches its subclasses). For a class or an
+        # interface value that is decided from the object's own class, not from the static type of the variable (D109a: `v: Shape`
+        # holding a Circle is a Circle, as isinstance in Python); with negate (`x is not Type`) the opposite
         a = self.expr(left)
         acc = ''
         c = ''
         if is_union(a.ty):
             for m in union_members(a.ty):
+                c = ''
                 if self.mod.assignable(m, tt):
                     c = self.box_is(a, m)
+                elif self.dyn_possible(m, tt):
+                    # the member is a class or an interface, so its payload (read only when the box holds it) is an object
+                    c = self.dyn_is_after(self.box_is(a, m), a.reg, tt, True)
+                if c != '':
                     if acc == '':
                         acc = c
                     else:
@@ -6703,12 +6792,18 @@ class Gen:
                 self.emit(f'{acc} = icmp eq ptr {a.reg}, null')
             elif self.mod.assignable(strip_optional(a.ty), tt):
                 self.emit(f'{acc} = icmp ne ptr {a.reg}, null')
+            elif self.dyn_possible(strip_optional(a.ty), tt):
+                some = self.tmp('some')
+                self.emit(f'{some} = icmp ne ptr {a.reg}, null')
+                acc = self.dyn_is_after(some, a.reg, tt, False)
             else:
                 self.emit(f'{acc} = icmp ne i64 0, 0')
         else:
             acc = self.tmp('static')
             if self.mod.assignable(a.ty, tt):
                 self.emit(f'{acc} = icmp eq i64 0, 0')
+            elif self.dyn_possible(a.ty, tt):
+                acc = self.dyn_is(a.reg, tt)
             else:
                 self.emit(f'{acc} = icmp ne i64 0, 0')
         self.release(a)
@@ -9954,7 +10049,7 @@ class Gen:
             if name in self.narrowed and self.opt_index(name) < 0:
                 raise CompileError(f"'{name}' is known to be {shown(self.types[name])} inside this check, so it cannot be assigned here\nassign to it outside the check", s.line)
             expected = self.types[name] if name in self.slots else ''
-            opt_at = self.opt_index(name)            # the variable is a narrowed optional: the value is worked out with it narrowed, then it is the optional again
+            opt_at = self.opt_first_index(name)      # the variable is a narrowed optional (or narrowed to a subclass): the value is worked out with it narrowed, then it is what it was declared as again
             if opt_at >= 0:
                 expected = self.opts[opt_at].ty
             track = self.tracking()
@@ -9972,7 +10067,7 @@ class Gen:
             self.take_name = ''
             not_none = self.not_none_type(v.ty)      # (an optional that is given such a value is narrowed from here)
             if opt_at >= 0:
-                self.opt_off(self.opts[opt_at])
+                self.opt_all_off(name)
             if self.taken.reg != '' and not self.taken.fresh and v.ty == 'int' and (v.fresh or v.small):
                 # the operation used the old number up (freeing it if it was big), so the slot takes the result and frees nothing
                 self.taken = ex('', '')
@@ -10382,10 +10477,17 @@ class Gen:
             return
         if op == 'in' or op == 'is' or op == 'is not':
             # `x is T` (T a type but not None) found true, or `x is not T` found false: a value of a type is not None
-            if (op != 'is not') == truth and left.kind == 'Name' and left.fields[0].text in self.slots and is_optional(self.types[left.fields[0].text]):
+            if (op != 'is not') == truth and left.kind == 'Name' and left.fields[0].text in self.slots:
+                lname = left.fields[0].text
+                lty = self.types[lname]
                 tt = self.type_operand(right)
-                if tt != '' and tt != 'None' and self.mod.assignable(strip_optional(self.types[left.fields[0].text]), tt) and left.fields[0].text not in out:
-                    out.append(left.fields[0].text)
+                if is_optional(lty) and tt != '' and tt != 'None' and self.mod.assignable(strip_optional(lty), tt) and lname not in out:
+                    out.append(lname)
+                # `x is Dog` found true on a Shape (or an optional or interface value of one): x is a Dog from here (D109a). The object
+                # is the same pointer, only the type the compiler uses changes; it ends where the variable can be assigned.
+                base = strip_optional(lty)
+                if tt != '' and is_class(tt) and (is_class(base) or is_iface(base)) and tt != base and self.mod.assignable(tt, base) and down_entry(lname, tt) not in out:
+                    out.append(down_entry(lname, tt))
         if (op != 'is' and op != 'is not') or (op == 'is not') != truth:
             return
         name = self.none_test_name(left, right)
@@ -10398,7 +10500,8 @@ class Gen:
         # left is a local that is narrowed (known not to be None) and none is the literal None
         if none.kind != 'Name' or none.fields[0].text != 'None' or 'None' in self.slots or left.kind != 'Name':
             return False
-        return self.opt_index(left.fields[0].text) >= 0
+        first = self.opt_first_index(left.fields[0].text)
+        return first >= 0 and is_optional(self.opts[first].ty)      # (a narrowing to a subclass of a variable that is never None says nothing about None)
 
     def opt_cond_names(self, c: Node, truth: bool, base: list[str]) -> list[str]:
         # base and the optionals that the condition c shows are not None when it is `truth`, except any that c itself assigns
@@ -10407,7 +10510,7 @@ class Gen:
         self.opt_names(c, truth, out)
         bound: list[str] = []
         bound_names(c, bound)
-        return [nm for nm in out if nm in base or nm not in bound]
+        return [nm for nm in out if nm in base or down_name(nm) not in bound]
 
     def opt_push(self, name: str):
         # from here the optional local `name` is known not to be None
@@ -10458,20 +10561,46 @@ class Gen:
         out: list[str] = []
         for e in self.opts:
             if e.on:
-                out.append(e.name)
+                if e.to == '':
+                    out.append(e.name)
+                else:
+                    out.append(down_entry(e.name, e.to))
         return out
 
     def opt_push_all(self, names: list[str]):
-        for name in names:
-            if name in self.slots and is_optional(self.types[name]):
-                self.opt_push(name)
+        for entry in names:
+            name = down_name(entry)
+            if name not in self.slots:
+                continue
+            to = down_type(entry)
+            if to == '':
+                if is_optional(self.types[name]):
+                    self.opt_push(name)
+            else:
+                base = strip_optional(self.types[name])
+                # (not a union that is narrowed to a member: its slot belongs to that narrowing, and a statement may not assign it)
+                if (is_class(base) or is_iface(base)) and to != base and self.mod.assignable(to, base) and (name not in self.narrowed or self.opt_first_index(name) >= 0):
+                    self.opt_push_down(name, to)
+
+    def opt_push_down(self, name: str, to: str):
+        # from here the local `name` (a class, an interface or an optional of one) is known to hold an object of the class `to`, a
+        # descendant of its type (D109a): the same pointer, so only the type changes, and it is not None
+        e = OptNarrow()
+        e.name = name
+        e.slot = self.slots[name]
+        e.ty = self.types[name]
+        e.to = to
+        e.nested = self.nest != '' or self.nest_off
+        self.types[name] = to
+        self.narrowed.append(name)
+        self.opts.append(e)
 
     def opt_push_in(self, names: list[str], region: Node):
         # the names, for an expression (the right side of and/or, a side of a conditional expression): not one that a list
         # comprehension inside it uses as its own loop variable
         used: list[str] = []
         bound_names(region, used)
-        self.opt_push_all([nm for nm in names if nm not in used])
+        self.opt_push_all([nm for nm in names if down_name(nm) not in used])
 
     def opt_off(self, e: OptNarrow):
         # the variable is the optional it was declared as again
@@ -10489,6 +10618,23 @@ class Gen:
             e = self.opts.pop()
             if e.on:
                 self.opt_off(e)
+
+    def opt_first_index(self, name: str) -> int:
+        # the first (outermost) narrowing of this local that is in force, or -1: its type is what the variable was declared as
+        k = 0
+        while k < len(self.opts):
+            if self.opts[k].on and self.opts[k].name == name:
+                return k
+            k += 1
+        return -1
+
+    def opt_all_off(self, name: str):
+        # every narrowing of this local ends, the innermost first, so that the variable is what it was declared as
+        k = len(self.opts) - 1
+        while k >= 0:
+            if self.opts[k].on and self.opts[k].name == name:
+                self.opt_off(self.opts[k])
+            k -= 1
 
     def opt_index(self, name: str) -> int:
         # the narrowing of this local that is in force, or -1
@@ -10510,14 +10656,14 @@ class Gen:
                 bound_names(val_node(branch.items[0]), names)
         else:
             bound_names(s, names)
-        k = 0
-        while k < len(self.opts):
+        k = len(self.opts) - 1                  # (the innermost first: a variable narrowed twice gets its declared type back)
+        while k >= 0:
             e = self.opts[k]
             if e.on and e.name in names:
                 simple = s.kind == 'Assign' and val_node(s.fields[0]).kind == 'Name' and val_node(s.fields[0]).fields[0].text == e.name
                 if not simple:
                     self.opt_off(e)
-            k += 1
+            k -= 1
 
     def if_stmt(self, s: Node):
         end = self.label('endif')
@@ -12773,6 +12919,21 @@ def int_of_bool(b: bool) -> int:
         return 1
     return 0
 
+def iface_tests(mod: Mod) -> str:
+    # `x is Interface` on a value that is not statically known to be one (D109a): one function per interface, from a class's type code
+    # to whether the class implements it, written once every class is known. A class that nothing was made from has no code and
+    # has no objects. (A switch rather than a walk of the parents: a class lists every interface it gets from its parents too.)
+    text = ''
+    for k, key in enumerate(mod.iface_tests):
+        cases: list[str] = []
+        for c in mod.classes:
+            if f'@{c.name}' in mod.code_index and key in mod.class_ifaces(c.name):
+                cases.append('i64 ' + str(mod.code_index['@' + c.name]) + ', label %yes')
+        text += f'define i1 @tomato.isiface.{k}(i64 %code) {{\n'
+        text += '  switch i64 %code, label %no [' + ' '.join(cases) + ']\n'
+        text += 'yes:\n  ret i1 true\nno:\n  ret i1 false\n}\n'
+    return text
+
 def runtime_tables(mod: Mod) -> str:
     n = len(mod.codes) + 2
     names = ['ptr null'] * n
@@ -14293,7 +14454,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         wrapper = entry_wrapper(mod.find(entry, 1), mod)
         bodies.append(finish_bodies(mod, f'@tomato.{mod.find(entry, 1).key}'))
     out: list[str] = ['; written by the Tomato compiler in Tomato (compiler/src/compiler.tom)\n']
-    out.append(declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod))
+    out.append(declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod) + iface_tests(mod))
     for j, s in enumerate(mod.strings):
         out.append(f'{string_global(j, s)}\n')
         out.append(f'{string_c(j, s)}\n')

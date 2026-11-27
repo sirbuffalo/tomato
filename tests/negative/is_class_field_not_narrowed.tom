@@ -1,0 +1,21 @@
+# a field is never narrowed (any call may change it): the test is made, but `s.pet` stays an Animal
+class Animal:
+    name: str = 'animal'
+
+class Dog(Animal):
+    tricks: int = 3
+
+class Cat(Animal):
+    lives: int = 9
+
+class Shelf:
+    pet: Animal = Animal()
+
+def f(s: Shelf) -> int:
+    if s.pet is Dog:
+        return s.pet.tricks
+    return 0
+
+@main
+def main():
+    print(f(Shelf()))

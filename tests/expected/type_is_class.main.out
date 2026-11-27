@@ -1,0 +1,31 @@
+A--- AD-- ADP- A--C
+-DPC --PC ---C -DP-
+FalseTrue TrueFalse FalseTrue
+TrueTrueFalseFalse TrueTrueTrueFalse
+N---x -A--x -AD-- -AD-- -A-Cx
+A--- AD-- A-C- ---i AD--
+AD-- ADP- A--- ---s
+NT--- NTB-- N--L- ----i
+NT--- NTB-- N--PL N----
+LNP- L--b
+FalseFalse TrueFalse FalseFalse
+dog 3 cat 9 animal animal dog 3 dog 3
+poodle 10 dog 3 other animal dog 3
+dog 3 none animal animal dog 3
+dog 3animal animal animal none
+dog 3 not a dog dog 3
+3 3
+wanted a dog, got animal
+clever dog other plain plain
+3 -1 3
+34. .
+was 3 now animal not a dog
+dog 3 animal animal none
+cleared kept kept
+tag tag tag big tag plate plate
+FalseTrue
+TrueTrue
+6/2/1
+D-3 -C D-3
+TrueTrueTrue FalseTrueTrue
+key other
