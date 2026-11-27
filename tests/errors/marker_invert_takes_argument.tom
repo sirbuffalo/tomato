@@ -1,0 +1,10 @@
+class Mask:
+    bits: int = 0
+
+    @invert
+    def flipped(self, width: int) -> Mask:
+        return Mask()
+
+@main
+def main():
+    print('never inverted')

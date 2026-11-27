@@ -1,0 +1,12 @@
+from cache import memoize
+
+class Point:
+    x: int = 0
+
+def area(p: Point) -> int:
+    return p.x * p.x
+
+@main
+def main():
+    m = memoize(area, 10)
+    print(m.call(Point()))

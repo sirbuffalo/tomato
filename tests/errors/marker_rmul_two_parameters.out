@@ -1,0 +1,5 @@
+error[E254]: the @rmul method 'times' must take exactly one argument besides self
+ --> tests/errors/marker_rmul_two_parameters.tom:5:9
+  |
+5 |     def times(self, left: int, extra: int) -> Money:
+  |         ^^^^^

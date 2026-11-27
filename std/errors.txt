@@ -546,3 +546,9 @@ CompileError {}() needs a list of {}{}, but this is {}{}
 CompileError sort() needs a list of numbers or text, or of objects of a class with a method marked @lt, but this is {}
 ValueError I/O operation on a closed file
 CompileError a file has no field '{}'
+CompileError cannot use '-' on a value that can be {}, because a union has no '-' of its own
+CompileError the @hash method '{}' must take nothing besides self and return an int
+CompileError the @{} method '{}' must return the result of the operation
+CompileError the @{} method '{}' must take nothing besides self and return the result
+CompileError {}() was given a value of type {} first and then one of type {}
+CompileError '{}' cannot be a dict key or set element: its @eq method '{}' compares with {}

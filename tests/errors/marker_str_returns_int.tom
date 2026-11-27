@@ -1,0 +1,10 @@
+class Money:
+    cents: int = 0
+
+    @str
+    def text(self) -> int:
+        return self.cents
+
+@main
+def main():
+    print('never printed')

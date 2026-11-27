@@ -1,0 +1,5 @@
+error[E115]: 'cache.Cache[Point, int]' has no method 'forget_everything'
+  --> tests/errors/cache_generic_no_method.tom:13:5
+   |
+13 |     c.forget_everything()
+   |     ^^^^^^^^^^^^^^^^^^^^^

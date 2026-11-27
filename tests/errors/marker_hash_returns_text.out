@@ -1,0 +1,6 @@
+error[E550]: the @hash method 'key' must take nothing besides self and return an int
+ --> tests/errors/marker_hash_returns_text.tom:5:9
+  |
+5 |     def key(self) -> str:
+  |         ^^^
+  = help: write -> int after the parameters

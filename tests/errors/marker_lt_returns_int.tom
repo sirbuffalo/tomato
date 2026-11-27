@@ -1,0 +1,10 @@
+class Money:
+    cents: int = 0
+
+    @lt
+    def less(self, other: Money) -> int:
+        return self.cents - other.cents
+
+@main
+def main():
+    print('never compared')

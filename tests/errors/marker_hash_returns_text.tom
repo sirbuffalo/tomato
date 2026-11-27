@@ -1,0 +1,10 @@
+class Point:
+    x: int = 0
+
+    @hash
+    def key(self) -> str:
+        return 'p'
+
+@main
+def main():
+    print('the class is never used as a key, and still has the mistake')

@@ -1,0 +1,9 @@
+from cache import Cache
+
+class Point:
+    x: int = 0
+
+@main
+def main():
+    c = Cache[tuple[Point, int], int](3)
+    print(len(c))

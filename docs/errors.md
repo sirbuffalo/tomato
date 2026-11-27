@@ -127,12 +127,34 @@ type that was already written. `tomato explain` shows the id and text of each.
 
 | `Box[str \| None](...)`, `Cache[int \| str, int](...)` | `a union cannot be a type argument written in a call` (E537) | leave the brackets out and pass a variable of the union type (`Box(x)`), or wrap the union in a class |
 | `Cache[Point, int](...)` where `Point` has no `@str` | `'Point' cannot be a cache key: it has no @str method` (E536, at the line that writes the cache) | add an `@str` method, or use a text or an int as the key |
+| `Cache[tuple[Point, int], int](...)`, `Cache[list[Point], int](...)`, `memoize(f, n)` with `f(p: Point)` | the same E536, also when the class is inside a tuple or list key and also for `Memo` and `memoize` (never a message from inside `std/cache.tom`) | the same |
 
 Two more messages name the mistake instead of a symptom: unpacking something that is not a tuple, list or text (`c, d = 5`,
 `for k, v, w in d` over ints) says `cannot unpack a value of type int into 2 variables` (E185), and a UTF-8 byte order mark at the
 start of a file says `unexpected byte order mark (U+FEFF), an invisible character` (E538) and asks for the file to be saved without one.
 
 Only a type the compiler has no reason for at all still gets `this variable cannot be given a type automatically`.
+
+## Operator methods, checked where they are written
+
+A method marked `@add`, `@neg`, `@hash`, `@lt` and the other operator and protocol markers must have the shape its use needs, and the
+compiler says so at the `def` line when it reads the class, whether or not the operator is ever used (an unused class with a wrong
+marker used to compile): `@add`, `@sub`, `@mul`, `@div`, `@floordiv`, `@mod`, `@pow`, `@bitand`, `@bitor`, `@bitxor` and `@rmul` take one
+argument besides `self` and return the result (E254, E551); `@eq`, `@lt`, `@le`, `@gt` and `@ge` take one argument and return `bool`
+(E254, E253); `@neg` and `@invert` take nothing and return the result (E531, E552); `@hash` takes nothing and returns an `int` (E550);
+`@str` takes nothing and returns `str` (E252). The caret is under the method's name and the help says what to write. A class whose
+`@eq` compares with another type (`def same_x(self, x: int) -> bool`) can still be used as it is, but not as a dict key or set element,
+where two keys are compared with each other: that says `its @eq method 'same_x' compares with int` (E554, at the line that makes the dict or set).
+
+Other messages that used to be rough:
+
+| Written | Message |
+| --- | --- |
+| `-u` with `u: Angle \| int` | `cannot use '-' on a value that can be math.Angle \| int, because a union has no '-' of its own` (E549), and the help shows `if u in Angle: ... -u` |
+| `min(1, 2.5)`, `max(1, 2.5)` | `min() was given a value of type int first and then one of type float` (E553): the first value sets the type, so put the float first or write `float(...)` around the int (`min(2.5, 1)` works) |
+| `a, b = None` | `cannot unpack None into 2 variables` (E185); the hidden variable of the unpack is never named |
+| a wrong argument, or an unknown method, of `Cache[Point, int]` | the type is written as the program wrote it, `cache.Cache[Point, int]`, never with the compiler's internal `@Point` |
+
 
 ## Error classes and ids
 

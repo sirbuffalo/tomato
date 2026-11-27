@@ -1,0 +1,10 @@
+class Money:
+    cents: int = 0
+
+    @neg
+    def negated(self, other: int) -> Money:
+        return Money()
+
+@main
+def main():
+    print('never negated')

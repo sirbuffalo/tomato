@@ -1,0 +1,6 @@
+error[E552]: the @invert method 'flipped' must take nothing besides self and return the result
+ --> tests/errors/marker_invert_takes_argument.tom:5:9
+  |
+5 |     def flipped(self, width: int) -> Mask:
+  |         ^^^^^^^
+  = help: write the type it returns after the parameters, such as -> Mask

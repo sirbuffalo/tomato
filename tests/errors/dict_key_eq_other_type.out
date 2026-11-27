@@ -1,0 +1,6 @@
+error[E554]: 'Point' cannot be a dict key or set element: its @eq method 'same_x' compares with int
+  --> tests/errors/dict_key_eq_other_type.tom:14:13
+   |
+14 |     seen = {Point(): 1}
+   |             ^^^^^
+   = help: make 'same_x' take another 'Point', because the keys are compared with each other

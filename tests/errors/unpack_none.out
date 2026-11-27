@@ -1,0 +1,6 @@
+error[E185]: cannot unpack None into 2 variables
+ --> tests/errors/unpack_none.tom:3:5
+  |
+3 |     low, high = None
+  |     ^^^^^^^^^^^^^^^^
+  = help: the right side of an unpack must be a tuple, a list or a text

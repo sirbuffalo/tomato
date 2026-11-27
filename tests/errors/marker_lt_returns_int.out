@@ -1,0 +1,6 @@
+error[E253]: the @lt method 'less' must return bool
+ --> tests/errors/marker_lt_returns_int.tom:5:9
+  |
+5 |     def less(self, other: Money) -> int:
+  |         ^^^^
+  = help: write -> bool after the parameters

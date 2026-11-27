@@ -1,0 +1,6 @@
+error[E252]: the @str method 'text' must take no argument besides self and return str
+ --> tests/errors/marker_str_returns_int.tom:5:9
+  |
+5 |     def text(self) -> int:
+  |         ^^^^
+  = help: write -> str after the parameters

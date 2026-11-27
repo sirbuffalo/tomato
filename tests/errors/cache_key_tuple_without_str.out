@@ -1,0 +1,6 @@
+error[E536]: 'Point' cannot be a cache key: it has no @str method
+ --> tests/errors/cache_key_tuple_without_str.tom:8:21
+  |
+8 |     c = Cache[tuple[Point, int], int](3)
+  |                     ^^^^^
+  = help: add a method marked @str that returns text that tells different keys apart, or use a text or an int as the key

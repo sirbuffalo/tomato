@@ -1,0 +1,10 @@
+class Money:
+    cents: int = 0
+
+    @rmul
+    def times(self, left: int, extra: int) -> Money:
+        return Money()
+
+@main
+def main():
+    print('never multiplied')

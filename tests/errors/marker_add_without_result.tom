@@ -1,0 +1,10 @@
+class Money:
+    cents: int = 0
+
+    @add
+    def plus(self, other: Money):
+        self.cents += other.cents
+
+@main
+def main():
+    print('never added')

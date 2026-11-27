@@ -1,0 +1,11 @@
+class Point:
+    x: int = 0
+
+    @hash
+    def key(self, seed: int) -> int:
+        return self.x + seed
+
+@main
+def main():
+    seen = {Point(): 1}
+    print(len(seen))

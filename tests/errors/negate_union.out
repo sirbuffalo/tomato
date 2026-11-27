@@ -1,0 +1,6 @@
+error[E549]: cannot use '-' on a value that can be math.Angle | int, because a union has no '-' of its own
+ --> tests/errors/negate_union.tom:6:11
+  |
+6 |     print(-turn)
+  |           ^
+  = help: say which type it holds first, as in: if turn in math.Angle: ... -turn

@@ -1,0 +1,6 @@
+from math import deg, Angle
+
+@main
+def main():
+    turn: Angle | int = deg(90.0)
+    print(-turn)

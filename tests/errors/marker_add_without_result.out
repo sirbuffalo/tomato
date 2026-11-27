@@ -1,0 +1,6 @@
+error[E551]: the @add method 'plus' must return the result of the operation
+ --> tests/errors/marker_add_without_result.tom:5:9
+  |
+5 |     def plus(self, other: Money):
+  |         ^^^^
+  = help: write the type it returns after the parameters, such as -> Money

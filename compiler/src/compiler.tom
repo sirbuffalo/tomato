@@ -65,7 +65,9 @@ def mtuple_items(t: str) -> list[str]:
 def unpack_count(n: Node) -> int:
     if n.kind != 'Name':
         return -1
-    name = n.fields[0].text
+    return unpack_count_of(n.fields[0].text)
+
+def unpack_count_of(name: str) -> int:
     if not (name.startswith('_unpack') or name.startswith('_pairs')) or name.rfind('x') < 0:
         return -1
     digits = name[name.rfind('x') + 1:]
@@ -1403,10 +1405,17 @@ class Mod:
         saved_vars = self.tvars
         self.tvars = {}
         self.declare_name('builtin', name, fkey, False, 0)
-        text = helper_source(self, name, kind, ty, line)
-        item = val_nodes(parse(text).fields[0])[0]
-        info = function_info(item, self, '')
-        helper_types(self, info, kind, ty)
+        try:
+            text = helper_source(self, name, kind, ty, line)
+            item = val_nodes(parse(text).fields[0])[0]
+            info = function_info(item, self, '')
+            helper_types(self, info, kind, ty)
+        catch CompileError as e:
+            # the error belongs to the line that needed the helper, in the module that is being compiled, not to the
+            # generated code: without this it is reported with no place at all
+            self.cur = saved
+            self.tvars = saved_vars
+            raise e
         self.cur = saved
         self.tvars = saved_vars
         self.helpers[key] = info
@@ -1460,7 +1469,7 @@ class Mod:
     def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
         found = self.lookup_method(cls, name)
         if found is None:
-            raise CompileError(f"'{cls}' has no method '{name}'", line)
+            raise CompileError(f"'{shown('@' + cls)}' has no method '{name}'", line)
         return found
 
     def resolve(self, name: str) -> str:
@@ -1845,7 +1854,7 @@ class Mod:
         k = field_position(c, name)
         if k >= 0:
             return k
-        raise CompileError(f"'{c.name}' has no field '{name}'", line)
+        raise CompileError(f"'{shown('@' + c.name)}' has no field '{name}'", line)
 
     def unsupported_type(self, v: Val) -> str:
         # why a written type has no built form: the error message (first line, then what to do instead), or '' when no
@@ -1961,6 +1970,16 @@ class Mod:
     def arg_key(self, args: list[str]) -> str:
         return ','.join(args)
 
+    # a key part of a Cache, a Memo or a memoize() is stored as its text: without @str (on the class itself, or on a class inside a
+    # list or tuple key) the error would point inside std/cache.tom
+    def check_cache_keys(self, gkey: str, args: list[str], line: int):
+        if self.generic_mods[gkey] != 'cache' or self.cur == 'cache' or len(args) < 2:
+            return
+        for a in args[:-1]:
+            bad = unshowable_class(self, a)
+            if bad != '':
+                raise CompileError(f"'{bad}' cannot be a cache key: it has no @str method\nadd a method marked @str that returns text that tells different keys apart, or use a text or an int as the key", line)
+
     # the copy of a generic class for these type arguments (made the first time it is asked for); returns its program-wide name
     def instance_class(self, gkey: str, args: list[str], line: int) -> str:
         tparams = self.type_params_of(gkey)
@@ -1970,11 +1989,7 @@ class Mod:
         key = f'{self.base_of(gkey)}[{self.arg_key(args)}]'
         if self.has_class(key):
             return key
-        if self.generic_mods[gkey] == 'cache' and self.cur != 'cache' and len(args) > 1:
-            # a key part is stored as its text: without @str the error would point inside std/cache.tom
-            for a in args[:-1]:
-                if is_class(a) and not self.has_op(a[1:], 'str'):
-                    raise CompileError(f"'{a[1:]}' cannot be a cache key: it has no @str method\nadd a method marked @str that returns text that tells different keys apart, or use a text or an int as the key", line)
+        self.check_cache_keys(gkey, args, line)
         c = ClassInfo()
         c.name = key
         c.display = shown('@' + key)
@@ -2041,6 +2056,7 @@ class Mod:
         name = f'{self.base_of(gkey)}[{self.arg_key(args)}]'
         if name in self.instance_funcs:
             return self.find(self.instance_funcs[name], line)
+        self.check_cache_keys(gkey, args, line)
         binds: dict[str, str] = {}
         for k, tp in enumerate(tparams):
             binds[tp] = args[k]
@@ -5269,6 +5285,12 @@ class Gen:
             if op == '-' and (is_class(v.ty) or (is_optional(v.ty) and is_class(strip_optional(v.ty)))):
                 return self.negate_op(self.unwrap(v, n.line), n.line)
             if op == '-':
+                if is_union(v.ty):
+                    # the members decide what - does, and a union holds one of them only at run time: narrow it first
+                    first_member = shown(union_members(v.ty)[0])
+                    operand = val_node(n.fields[1])
+                    shown_name = operand.fields[0].text if operand.kind == 'Name' else 'x'
+                    raise CompileError(f"cannot use '-' on a value that can be {shown(v.ty)}, because a union has no '-' of its own\nsay which type it holds first, as in: if {shown_name} in {first_member}: ... -{shown_name}", n.line)
                 if not is_numeric(v.ty):
                     raise CompileError(f"cannot use '-' on {shown(v.ty)}\nonly numbers can be negated", n.line)
                 if not is_signed(v.ty):
@@ -5468,7 +5490,7 @@ class Gen:
         # were written (1 start, 2 stop, 4 step), the numbers that were not written are 0
         f = self.mod.find_op(s.ty[1:], 'slice')
         if f is None or len(f.ptypes) != 4 or f.ret == '':
-            raise CompileError("'" + s.ty[1:] + "' objects cannot be sliced\nadd a method marked @slice that takes start, stop, step and flags (four ints)", n.line)
+            raise CompileError("'" + shown(s.ty) + "' objects cannot be sliced\nadd a method marked @slice that takes start, stop, step and flags (four ints)", n.line)
         flags = 0
         lo = ex('1', 'int')
         hi = ex('1', 'int')
@@ -5515,7 +5537,11 @@ class Gen:
             items: list[Ex] = [first]
             self.hold(first)                    # the values so far are freed by the error path if a later one raises
             for a in args[1:]:
-                items.append(self.want(self.expr(a), first.ty, line, 'every value given to ' + name + '()'))
+                later = self.expr(a)
+                if is_numeric(first.ty) and is_float(later.ty):
+                    # the first value fixes the type of the result, and a later one is wider: say so, not that "every value" has the wider type
+                    raise CompileError(f'{name}() was given a value of type {shown(first.ty)} first and then one of type {shown(later.ty)}\nthe first value sets the type, so put the {shown(later.ty)} value first, or convert the first one: write {shown(later.ty)}(...) around it', line)
+                items.append(self.want(later, first.ty, line, 'every value given to ' + name + '()'))
                 self.hold(items[-1])
             self.drop_held(held_before)
             lst = self.build_tuple(f'list[{first.ty}]', items)
@@ -6253,7 +6279,7 @@ class Gen:
         if is_class(s.ty):
             g = self.mod.find_op(s.ty[1:], 'get')
             if g is None or len(g.ptypes) != 1 or g.ret == '':
-                raise CompileError("'" + s.ty[1:] + "' objects cannot be indexed\nadd a method marked @get that takes the index and returns the item", n.line)
+                raise CompileError("'" + shown(s.ty) + "' objects cannot be indexed\nadd a method marked @get that takes the index and returns the item", n.line)
             gi = self.want(self.expr_plain(val_node(n.fields[1]), g.ptypes[0]), g.ptypes[0], n.line, 'an index')
             self.drop_held(held_before)
             return self.marker_call(s, g, [gi], n.line)
@@ -6366,7 +6392,7 @@ class Gen:
         if is_class(b.ty):
             cf = self.mod.find_op(b.ty[1:], 'contains')
             if cf is None or len(cf.ptypes) != 1 or cf.ret != 'bool':
-                raise CompileError("'in' does not work with '" + b.ty[1:] + "' objects\nadd a method marked @contains that takes the value and returns bool", line)
+                raise CompileError("'in' does not work with '" + shown(b.ty) + "' objects\nadd a method marked @contains that takes the value and returns bool", line)
             a = self.want(a, cf.ptypes[0], line, 'the left side of in')
             return self.marker_call(b, cf, [a], line)
         if b.ty == 'str':
@@ -6669,7 +6695,7 @@ class Gen:
         if op == '*' and is_class(b.ty) and not is_class(a.ty) and self.mod.has_op(b.ty[1:], 'rmul'):
             return self.operator_call(a, b, op, n.line, True)       # 3 * obj: the object's @rmul method gets the 3
         if op == '*' and is_class(b.ty) and not is_class(a.ty) and (is_numeric(a.ty) or is_float(a.ty)):
-            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\nadd a method marked @rmul to '{b.ty[1:]}' to multiply a number by one of its objects", n.line)
+            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\nadd a method marked @rmul to '{shown(b.ty)}' to multiply a number by one of its objects", n.line)
         if (op == '==' or op == '!=') and (a.ty.startswith('list[') or b.ty.startswith('list[')):
             return self.list_equal(op, a, b, n.line)
         if (op == '==' or op == '!=') and (is_mtuple(a.ty) or is_mtuple(b.ty)):
@@ -6791,14 +6817,14 @@ class Gen:
             raise CompileError(f"cannot use '~' on {shown(v.ty)}\nit works on whole numbers and on objects whose class has a method marked @invert", n.line)
         f = self.mod.find_op(v.ty[1:], 'invert')
         if f is None or len(f.ptypes) != 0 or f.ret == '':
-            raise CompileError("cannot use '~' on '" + v.ty[1:] + "' objects\nadd a method marked @invert that takes nothing and returns the result", n.line)
+            raise CompileError("cannot use '~' on '" + shown(v.ty) + "' objects\nadd a method marked @invert that takes nothing and returns the result", n.line)
         return self.marker_call(v, f, [], n.line)
 
     def negate_op(self, v: Ex, line: int) -> Ex:
         # -x on an object whose class has a method marked @neg (taking nothing besides self)
         f = self.mod.find_op(v.ty[1:], 'neg')
         if f is None or f.is_async:
-            raise CompileError("cannot use '-' on '" + v.ty[1:] + "' objects\nadd a method marked @neg that takes nothing and returns the result", line)
+            raise CompileError("cannot use '-' on '" + shown(v.ty) + "' objects\nadd a method marked @neg that takes nothing and returns the result", line)
         if len(f.ptypes) != 0 or f.ret == '':
             raise CompileError(f"the @neg method '{f.name}' must take nothing besides self and return the result", line)
         return self.marker_call(v, f, [], line)
@@ -6812,7 +6838,7 @@ class Gen:
             a, b = b, a                       # a is now the object and b its argument
         found = self.mod.find_op(a.ty[1:], marker)
         if found is None:
-            raise CompileError("cannot use '" + op + "' on '" + a.ty[1:] + "' objects\nadd a method marked @" + marker + ' to the class', line)
+            raise CompileError("cannot use '" + op + "' on '" + shown(a.ty) + "' objects\nadd a method marked @" + marker + ' to the class', line)
         info = found
         if len(info.ptypes) != 1:
             raise CompileError(f"the @{marker} method '{info.name}' must take exactly one argument besides self", line)
@@ -7741,8 +7767,8 @@ class Gen:
             help = ''
             if init is None and c.parent != '' and has_init(self.mod, c):
                 help = "\n'" + c.display + "' declares fields, so it does not inherit its parent's @init\nwrite an @init method for it"
-            raise CompileError("'" + c.name + "' takes " + plural(len(ptypes), 'argument') + ', but ' + str(len(args)) + ' given' + help, line)
-        values = self.args_with_defaults(args, ptypes, defaults, line, c.name)
+            raise CompileError("'" + shown('@' + c.name) + "' takes " + plural(len(ptypes), 'argument') + ', but ' + str(len(args)) + ' given' + help, line)
+        values = self.args_with_defaults(args, ptypes, defaults, line, shown('@' + c.name))
         parts: list[str] = [f'{llvm_type(v.ty)} {v.reg}' for v in values]
         r = self.tmp('obj')
         symbol = '@tomato.new.' + str(self.mod.code_of('@' + c.name))
@@ -7847,7 +7873,7 @@ class Gen:
         if is_iface(obj.ty):
             req = self.mod.requirement(obj.ty[1:], name)
             if req is None:
-                raise CompileError("the interface '" + obj.ty[1:] + "' has no method '" + name + "'", n.line)
+                raise CompileError("the interface '" + shown(obj.ty) + "' has no method '" + name + "'", n.line)
             return self.call_function(req, self.dispatch(obj, name), obj, args, n.line)
         if is_class(obj.ty) and field_position(self.mod.find_class(obj.ty[1:], n.line), name) >= 0 and is_fn(self.field_type(obj, name, n.line)):
             fvt = self.field_type(obj, name, n.line)
@@ -9015,7 +9041,7 @@ class Gen:
         if is_class(v.ty):
             f = self.mod.find_op(v.ty[1:], 'len')
             if f is None or len(f.ptypes) != 0 or f.ret != 'int':
-                raise CompileError("'" + v.ty[1:] + "' objects have no length\nadd a method marked @len that takes no argument and returns int", line)
+                raise CompileError("'" + shown(v.ty) + "' objects have no length\nadd a method marked @len that takes no argument and returns int", line)
             return self.marker_call(v, f, [], line)
         if is_mtuple(v.ty):
             self.release(v)
@@ -9035,7 +9061,7 @@ class Gen:
         # print and str() of an object whose class has a method marked @str: that method's text (P65)
         found = self.mod.find_op(v.ty[1:], 'str')
         if found is None:
-            raise CompileError("'" + v.ty[1:] + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
+            raise CompileError("'" + shown(v.ty) + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
         info = found
         if len(info.ptypes) != 0 or info.ret != 'str':
             raise CompileError(f"the @str method '{info.name}' must take no argument besides self and return str", line)
@@ -9795,6 +9821,11 @@ class Gen:
                 v = self.want(v, self.types[name], s.line, 'the assigned value')
                 slot_type = self.types[name]
             if slot_type == 'None' or slot_type == '':
+                count = unpack_count_of(name)
+                if count >= 0:
+                    # `a, b = None`: the parser holds the value in a hidden variable, which is not a name the user wrote
+                    what = 'None' if slot_type == 'None' else 'a call that gives no value'
+                    raise CompileError(f'cannot unpack {what} into {plural(count, "variable")}\nthe right side of an unpack must be a tuple, a list or a text', s.line)
                 raise CompileError(f"the type of '{name}' cannot be guessed from None\ndeclare it, such as: {name}: Item | None = None", s.line)
             if self.shadowed(name):
                 v = self.need_fin(v)           # (the fast copy keeps every float variable a finite double, in its shadow)
@@ -10034,7 +10065,7 @@ class Gen:
         if is_class(lst.ty):
             f = self.mod.find_op(lst.ty[1:], 'set')
             if f is None or len(f.ptypes) != 2 or f.ret != '':
-                raise CompileError("'" + lst.ty[1:] + "' objects cannot be assigned by index\nadd a method marked @set that takes the index and the new item", s.line)
+                raise CompileError("'" + shown(lst.ty) + "' objects cannot be assigned by index\nadd a method marked @set that takes the index and the new item", s.line)
             held_before = len(self.held)
             self.hold(lst)
             si = self.want(self.expr(val_node(target.fields[1]), f.ptypes[0]), f.ptypes[0], s.line, 'an index')
@@ -11346,7 +11377,7 @@ class Gen:
         if is_class(lst.ty):
             ai = self.mod.find_op(lst.ty[1:], 'iter')
             if ai is not None and ai.is_async:
-                raise CompileError("'" + lst.ty[1:] + "' loops over async statuses, so it needs async for\nwrite: async for " + s.fields[0].text + " in ...:", s.line)
+                raise CompileError("'" + shown(lst.ty) + "' loops over async statuses, so it needs async for\nwrite: async for " + s.fields[0].text + " in ...:", s.line)
         if is_class(lst.ty) and self.mod.has_op(lst.ty[1:], 'iter'):
             self.inline_gen(s, self.mod.find_op(lst.ty[1:], 'iter'), lst, [], s.line)
             return
@@ -11364,7 +11395,7 @@ class Gen:
             return
         if not is_list(lst.ty):
             if is_class(lst.ty):
-                raise CompileError("a for loop cannot loop over a '" + lst.ty[1:] + "' object\ngive the class a method marked @iter that yields the items, or loop over a list field of it such as obj.items", s.line)
+                raise CompileError("a for loop cannot loop over a '" + shown(lst.ty) + "' object\ngive the class a method marked @iter that yields the items, or loop over a list field of it such as obj.items", s.line)
             raise CompileError(f'a for loop can loop over a range(), a list, a tuple, a set, a dict, text or an object with an @iter method, but this is {shown(lst.ty)}', s.line)
         elem = elem_of(lst.ty)
         in_nest = self.nest != '' and s.spot > 0
@@ -12799,6 +12830,28 @@ def check_classes(mod: Mod):
                     if not same_signature(found, r):
                         raise CompileError(f"'{c.name}.{r.name}' must take and return exactly the types that interface '{j}' declares", c.line)
 
+# an operator or protocol method has the shape its use needs: said where the method is written, once the class is known, not at
+# the first use (which may never come, or be far from the method). The checks at the uses stay for what only they can see.
+def check_marker_shape(f: FuncInfo, c: ClassInfo):
+    m = f.op
+    if m in ['add', 'sub', 'mul', 'div', 'floordiv', 'mod', 'pow', 'bitand', 'bitor', 'bitxor', 'rmul', 'eq', 'lt', 'le', 'gt', 'ge']:
+        if len(f.ptypes) != 1:
+            raise CompileError(f"the @{m} method '{f.name}' must take exactly one argument besides self", f.line)
+        if m in ['eq', 'lt', 'le', 'gt', 'ge']:
+            if f.ret != 'bool':
+                raise CompileError(f"the @{m} method '{f.name}' must return bool\nwrite -> bool after the parameters", f.line)
+        elif f.ret == '':
+            raise CompileError(f"the @{m} method '{f.name}' must return the result of the operation\nwrite the type it returns after the parameters, such as -> {c.display}", f.line)
+    elif m == 'neg' or m == 'invert':
+        if len(f.ptypes) != 0 or f.ret == '':
+            raise CompileError(f"the @{m} method '{f.name}' must take nothing besides self and return the result\nwrite the type it returns after the parameters, such as -> {c.display}", f.line)
+    elif m == 'hash':
+        if len(f.ptypes) != 0 or f.ret != 'int':
+            raise CompileError(f"the @hash method '{f.name}' must take nothing besides self and return an int\nwrite -> int after the parameters", f.line)
+    elif m == 'str':
+        if len(f.ptypes) != 0 or f.ret != 'str':
+            raise CompileError(f"the @str method '{f.name}' must take no argument besides self and return str\nwrite -> str after the parameters", f.line)
+
 def check_class_shapes(mod: Mod):
     # one @init per class (D12aj); a class with no @init anywhere needs every field to have a value (D12af);
     # a method name and an operator marker are declared once; no class inherits from itself
@@ -12819,6 +12872,7 @@ def check_class_shapes(mod: Mod):
                         marker = '@' + f.op
                         raise CompileError(f"'{marker}' is defined twice in class '{c.display}'\nkeep the marker on one method", f.line)
                     markers.append(f.op)
+                    check_marker_shape(f, c)
                 if f.is_init:
                     inits += 1
         if inits > 1:
@@ -12876,6 +12930,10 @@ def key_problem(mod: Mod, t: str) -> str:
     if is_class(t):
         name = t[1:]
         if mod.has_op(name, 'hash'):
+            same = mod.find_op(name, 'eq')
+            if same is not None and len(same.ptypes) == 1 and not mod.assignable(t, same.ptypes[0]):
+                # two keys are compared with @eq, so it must take another object of the class
+                return f"'{shown(t)}' cannot be a dict key or set element: its @eq method '{same.name}' compares with {shown(same.ptypes[0])}\nmake '{same.name}' take another '{shown(t)}', because the keys are compared with each other"
             return ''
         if mod.has_op(name, 'eq'):
             return f"'{name}' has a method marked @eq but none marked @hash, so it cannot be a dict key or set element\nadd a method marked @hash that returns an int, the same for objects that are equal"
@@ -12900,6 +12958,27 @@ def key_problem(mod: Mod, t: str) -> str:
             why2 = key_problem(mod, item)
             if why2 != '':
                 return why2
+    return ''
+
+# the first class inside type t (t itself, or an item of a list, set, dict or tuple of it) that has no method marked @str, or ''
+def unshowable_class(mod: Mod, t: str) -> str:
+    if is_class(t):
+        return '' if mod.has_op(t[1:], 'str') else shown(t)
+    if is_optional(t):
+        return unshowable_class(mod, strip_optional(t))
+    parts: list[str] = []
+    if is_mtuple(t):
+        parts = mtuple_items(t)
+    elif is_list(t):
+        parts = [elem_of(t)]
+    elif is_set(t):
+        parts = [set_elem(t)]
+    elif is_dict(t):
+        parts = [dict_key(t), dict_value(t)]
+    for part in parts:
+        found = unshowable_class(mod, part)
+        if found != '':
+            return found
     return ''
 
 def is_showable(mod: Mod, t: str) -> bool:

@@ -1,0 +1,6 @@
+error[E531]: the @neg method 'negated' must take nothing besides self and return the result
+ --> tests/errors/marker_neg_takes_argument.tom:5:9
+  |
+5 |     def negated(self, other: int) -> Money:
+  |         ^^^^^^^
+  = help: write the type it returns after the parameters, such as -> Money
