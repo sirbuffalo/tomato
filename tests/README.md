@@ -25,9 +25,9 @@ silent. What it skips:
 
 | Where | Full runs | `--fast` runs | Skipped |
 | --- | --- | --- | --- |
-| memory (AddressSanitizer builds of programs) | 144 | 53 (`fast_asan` in `tests/run.sh`) | 91 |
-| release mode (AddressSanitizer) | 17 programs | 9: `fast_paths`, `loop_nests`, `float_loops`, `float_nests`, `int_ranges`, `containers`, `raise_paths`, `raise_dead`, `file_closed` | 8 |
-| WebAssembly (programs, rejected programs, runtime errors) | 109 | 36 (`fast_wasm`) | 73 |
+| memory (AddressSanitizer builds of programs) | 146 | 53 (`fast_asan` in `tests/run.sh`) | 93 |
+| release mode (AddressSanitizer) | 18 programs | 9: `fast_paths`, `loop_nests`, `float_loops`, `float_nests`, `int_ranges`, `containers`, `raise_paths`, `raise_dead`, `file_closed` | 9 |
+| WebAssembly (programs, rejected programs, runtime errors) | 111 | 36 (`fast_wasm`) | 75 |
 | command line: release mode runs like debug mode | 10 programs | 3: `int_boundary`, `containers`, `cycle` | 7 |
 | benchmarks smoke | 25 benchmarks, each in Tomato and go, rust, python, c, javascript | 6 (`fib sieve strings sort wordcount hof`), each in Tomato and c, python | 19 benchmarks (and, for the six, go, rust, javascript) |
 

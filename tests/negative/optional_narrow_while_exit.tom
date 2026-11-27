@@ -1,0 +1,8 @@
+def f(a: str | None) -> str:
+    while a is not None:
+        a = None
+    return a + '!'
+
+@main
+def main():
+    print(f('a'))

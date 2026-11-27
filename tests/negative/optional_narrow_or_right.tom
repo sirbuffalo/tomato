@@ -1,0 +1,6 @@
+def f(s: str | None) -> bool:
+    return s is not None or len(s) > 1 and s + '!' == 'a'
+
+@main
+def main():
+    print(f('a'))

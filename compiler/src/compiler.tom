@@ -2330,9 +2330,18 @@ class TryInfo:
     loop_depth: int = 0
     state: str = 'body'       # 'body' while compiling the try body, then 'post'
 
+class OptNarrow:
+    # an optional local that is known not to be None for a stretch of the code (D102a): the variable's slot and type before the
+    # stretch began, put back when it ends, or at the statement that assigns the variable (on is then False)
+    name: str = ''
+    slot: str = ''
+    ty: str = ''
+    on: bool = True
+
 class GenCtx:
     # one generator being compiled into a for loop: where the loop variable lives, the loop body, and the scope not currently in use
     var: str = ''
+    opts: list[OptNarrow] = []
     ty: str = ''
     body: list[Node] = []
     end: str = ''
@@ -2372,6 +2381,7 @@ class Gen:
     assigned: list[str] = []      # the names of variables that are written (a name given to slot()) after the parameters were set up
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
+    opts: list[OptNarrow] = []    # the optional locals that are known not to be None where the code being compiled is (D102a), innermost last
     take_name: str = ''           # `x = x + 1`: the int local whose one read in the right side hands its number over to the operation
     mark_prefix: str = ''        # inside a small-int loop: the prefix of the labels its fast copy jumps back to (see small_loop)
     list_lens: dict[str, str] = {}    # local lists that the loops being compiled cannot change: the register that holds the length
@@ -5353,7 +5363,12 @@ class Gen:
                     expected = other + '?'
         self.cond_br(c, yes, no)
         self.place(yes)
+        opt_base = len(self.opts)
+        known: list[str] = []
+        self.opt_names(val_node(n.fields[0]), True, known)
+        self.opt_push_in(known, val_node(n.fields[1]))
         a = self.expr(val_node(n.fields[1]), expected)
+        self.opt_pop_to(opt_base)
         wide = is_union(expected) or is_optional(expected)
         if wide:
             a = self.want(a, expected, n.line, 'the value of a conditional expression')
@@ -5373,7 +5388,11 @@ class Gen:
         hint = ty
         if ty == 'None':
             hint = expected
+        known = []
+        self.opt_names(val_node(n.fields[0]), False, known)
+        self.opt_push_in(known, val_node(n.fields[2]))
         b = self.expr(val_node(n.fields[2]), hint)
+        self.opt_pop_to(opt_base)
         if b.ty != ty:
             if ty == 'None' and (b.ty == 'str' or is_list(b.ty) or is_class(b.ty)):
                 ty = f'{b.ty}?'
@@ -6534,8 +6553,13 @@ class Gen:
         else:
             self.cond_br(c, end, rhs)
         self.place(rhs)
+        opt_base = len(self.opts)
+        known: list[str] = []
+        self.opt_names(val_node(n.fields[1]), op == 'and', known)       # (x is not None and ...: x is not None on the right)
+        self.opt_push_in(known, val_node(n.fields[2]))
         b = self.expr(val_node(n.fields[2]))
         b = self.want(b, 'bool', n.line, 'the right side of ' + op)
+        self.opt_pop_to(opt_base)
         self.emit(f'store i64 {b.reg}, ptr {res}')
         self.br(end)
         self.place(end)
@@ -6638,6 +6662,9 @@ class Gen:
                 return self.char_equal(op, left, right, False, n.line)
             if self.char_of(left) and (right.kind == 'StrLit' or (right.kind == 'Name' and self.peek_type(right) == 'str')):
                 return self.char_equal(op, right, left, True, n.line)
+        if (op == 'is' or op == 'is not' or op == '==' or op == '!=') and (self.narrowed_none_test(left, right) or self.narrowed_none_test(right, left)):
+            # `x is None` where x is known not to be None here: it is False (and `is not None` True), whatever x is held as
+            return ex('1' if (op == 'is not' or op == '!=') else '0', 'bool')
         a = ex('', '')
         b = ex('', '')
         held_before = len(self.held)
@@ -9354,10 +9381,12 @@ class Gen:
     # ---- statements
     def block(self, body: list[Node]):
         depth = len(self.after)
+        opt_depth = len(self.opts)
         k = 0
         while k < len(body):
             self.stmt(body[k])
             k += 1
+        self.opt_pop_to(opt_depth)
         self.end_block_narrowing(depth)
 
     def push_loop(self, brk: str, cont: str):
@@ -9431,6 +9460,8 @@ class Gen:
 
     def stmt_now(self, s: Node):
         self.line = s.line
+        if len(self.opts) > 0:
+            self.opt_assigned(s)
         if s.spot > 0 and self.nest != '':
             if self.nest_fast:
                 self.nest_stmt(s)
@@ -9803,19 +9834,27 @@ class Gen:
             name = target.fields[0].text
             if name in self.settled:
                 raise CompileError(f"'{name}' is known to be {shown(self.types[name])} after the check above, so it cannot be assigned here\nassign to it before the check", s.line)
-            if name in self.narrowed:
+            if name in self.narrowed and self.opt_index(name) < 0:
                 raise CompileError(f"'{name}' is known to be {shown(self.types[name])} inside this check, so it cannot be assigned here\nassign to it outside the check", s.line)
             expected = self.types[name] if name in self.slots else ''
+            opt_at = self.opt_index(name)            # the variable is a narrowed optional: the value is worked out with it narrowed, then it is the optional again
+            if opt_at >= 0:
+                expected = self.opts[opt_at].ty
             track = self.tracking()
             old_small = self.fact_small(name)        # the number the slot holds now owns nothing, so it needs no free
             after = self.facts
             if track:
-                after = self.assign_facts(self.facts, name, val_node(s.fields[1]))
-            if self.bail == '' and name in self.slots and self.types[name] == 'int' and (self_update(name, val_node(s.fields[1])) or self.fuse_update(name, val_node(s.fields[1]))):
+                if opt_at >= 0:
+                    after = facts_kill(self.facts, [name])
+                else:
+                    after = self.assign_facts(self.facts, name, val_node(s.fields[1]))
+            if opt_at < 0 and self.bail == '' and name in self.slots and self.types[name] == 'int' and (self_update(name, val_node(s.fields[1])) or self.fuse_update(name, val_node(s.fields[1]))):
                 self.take_name = name
                 self.taken = ex('', '')
             v = self.expr(val_node(s.fields[1]), expected)
             self.take_name = ''
+            if opt_at >= 0:
+                self.opt_off(self.opts[opt_at])
             if self.taken.reg != '' and not self.taken.fresh and v.ty == 'int' and (v.fresh or v.small):
                 # the operation used the old number up (freeing it if it was big), so the slot takes the result and frees nothing
                 self.taken = ex('', '')
@@ -10162,6 +10201,143 @@ class Gen:
             self.settled.pop()
             self.leave_narrow(entry[0], [entry[1], entry[2]])
 
+    # ---- optionals narrowed by `is None` / `is not None` (D102a). A local or parameter of type T | None that a condition has shown not to
+    # be None is of type T for the code that condition decides: the true branch of `x is not None`, the else of `x is None`,
+    # the right side of `x is not None and ...` and of `x is None or ...`, the sides of a conditional expression, a `while` body,
+    # and (after an `if` whose branches that do not leave all know it) the rest of the block. An optional that is not a number
+    # or bool is the same pointer as its T, so only the type changes; an int, float or bool optional is a box, and its number is
+    # taken out into a slot of its own, as for a union. The narrowing ends at a statement that can assign the variable (or when
+    # the region ends): the variable's own slot and type, which that statement leaves unchanged, are used again. A field, a
+    # global and any other expression are never narrowed.
+    def none_test_name(self, left: Node, right: Node) -> str:
+        # `x is None` where x is a local of an optional type: x; else ''
+        if right.kind == 'Name' and right.fields[0].text == 'None' and 'None' not in self.slots and left.kind == 'Name':
+            name = left.fields[0].text
+            if name in self.slots and is_optional(self.types[name]):
+                return name
+        return ''
+
+    def opt_names(self, c: Node, truth: bool, out: list[str]):
+        # the optional locals that are certainly not None where the condition c has been found `truth` (a sound subset)
+        if c.kind == 'UnOp' and c.fields[0].text == 'not':
+            self.opt_names(val_node(c.fields[1]), not truth, out)
+            return
+        if c.kind != 'BinOp':
+            return
+        op = c.fields[0].text
+        left = val_node(c.fields[1])
+        right = val_node(c.fields[2])
+        if op == 'and':
+            if truth:
+                self.opt_names(left, True, out)
+                self.opt_names(right, True, out)
+            return
+        if op == 'or':
+            if not truth:
+                self.opt_names(left, False, out)
+                self.opt_names(right, False, out)
+            return
+        if (op != 'is' and op != 'is not') or (op == 'is not') != truth:
+            return
+        name = self.none_test_name(left, right)
+        if name == '':
+            name = self.none_test_name(right, left)
+        if name != '' and name not in out:
+            out.append(name)
+
+    def narrowed_none_test(self, left: Node, none: Node) -> bool:
+        # left is a local that is narrowed (known not to be None) and none is the literal None
+        if none.kind != 'Name' or none.fields[0].text != 'None' or 'None' in self.slots or left.kind != 'Name':
+            return False
+        return self.opt_index(left.fields[0].text) >= 0
+
+    def opt_cond_names(self, c: Node, truth: bool, base: list[str]) -> list[str]:
+        # base and the optionals that the condition c shows are not None when it is `truth`, except any that c itself assigns
+        # (a list comprehension's loop variable)
+        out: list[str] = [nm for nm in base]
+        self.opt_names(c, truth, out)
+        bound: list[str] = []
+        bound_names(c, bound)
+        return [nm for nm in out if nm in base or nm not in bound]
+
+    def opt_push(self, name: str):
+        # from here the optional local `name` is known not to be None
+        t = self.types[name]
+        base = strip_optional(t)
+        e = OptNarrow()
+        e.name = name
+        e.slot = self.slots[name]
+        e.ty = t
+        if is_value_optional(t):
+            holder = self.tmp('whole')
+            self.emit(f'{holder} = load ptr, ptr {e.slot}')
+            inner = self.unbox_value(ex(holder, t), base)
+            shadow = self.new_slot(name, base)
+            self.store_owned(shadow, inner)
+        else:
+            self.types[name] = base
+        self.narrowed.append(name)
+        self.opts.append(e)
+
+    def opt_push_all(self, names: list[str]):
+        for name in names:
+            if name in self.slots and is_optional(self.types[name]):
+                self.opt_push(name)
+
+    def opt_push_in(self, names: list[str], region: Node):
+        # the names, for an expression (the right side of and/or, a side of a conditional expression): not one that a list
+        # comprehension inside it uses as its own loop variable
+        used: list[str] = []
+        bound_names(region, used)
+        self.opt_push_all([nm for nm in names if nm not in used])
+
+    def opt_off(self, e: OptNarrow):
+        # the variable is the optional it was declared as again
+        self.slots[e.name] = e.slot
+        self.types[e.name] = e.ty
+        k = len(self.narrowed) - 1
+        while k >= 0 and self.narrowed[k] != e.name:
+            k -= 1
+        if k >= 0:
+            self.narrowed.pop(k)
+        e.on = False
+
+    def opt_pop_to(self, depth: int):
+        while len(self.opts) > depth:
+            e = self.opts.pop()
+            if e.on:
+                self.opt_off(e)
+
+    def opt_index(self, name: str) -> int:
+        # the narrowing of this local that is in force, or -1
+        k = len(self.opts) - 1
+        while k >= 0:
+            if self.opts[k].on and self.opts[k].name == name:
+                return k
+            k -= 1
+        return -1
+
+    def opt_assigned(self, s: Node):
+        # a statement that can assign a narrowed local ends its narrowing before it. `x = value` keeps it while the value is worked
+        # out (`node = node.next`); the assignment ends it.
+        names: list[str] = []
+        bound_names(s, names)
+        k = 0
+        while k < len(self.opts):
+            e = self.opts[k]
+            if e.on and e.name in names:
+                simple = s.kind == 'Assign' and val_node(s.fields[0]).kind == 'Name' and val_node(s.fields[0]).fields[0].text == e.name
+                if not simple:
+                    self.opt_off(e)
+            k += 1
+
+    def opt_survivors(self, names: list[str], body: list[Node]) -> list[str]:
+        # the narrowed names that the end of a branch still has: those it does not assign
+        assigned: list[str] = []
+        for st in body:
+            bound_names(st, assigned)
+        return [nm for nm in names if nm not in assigned]
+
     def if_stmt(self, s: Node):
         end = self.label('endif')
         var = ''                       # the union variable the first condition tests, if it does
@@ -10172,7 +10348,12 @@ class Gen:
         track = self.tracking()
         cur = self.facts              # the facts where the next condition is tested (all the conditions before it were false)
         outs = facts_dead()           # the facts after the if, over the branches that do not leave
+        opt_cum: list[str] = []       # the optionals that are not None where the next condition is tested (D102a)
+        opt_end: list[str] = []       # the optionals that are not None at the end of every branch so far that does not leave
+        opt_first = True              # (no such branch yet)
         for k, branch in enumerate(branches):
+            opt_base = len(self.opts)
+            self.opt_push_all(opt_cum)
             target = self.narrow_target(val_node(branch.items[0]))
             if k == 0 and len(target) > 0:
                 var = target[0]
@@ -10188,6 +10369,8 @@ class Gen:
             if track:
                 self.facts = self.live_facts(self.refine(cur, val_node(branch.items[0]), True))
                 cur = self.refine(cur, val_node(branch.items[0]), False)
+            opt_now = self.opt_cond_names(val_node(branch.items[0]), True, opt_cum)
+            self.opt_push_all([nm for nm in opt_now if nm not in opt_cum])
             saved: list[str] = []
             # a later branch that does not test the variable still knows which members are left, so it cannot assign it
             rest_known = var != '' and k > 0 and not (len(target) > 0 and target[0] == var) and len(left) > 0 and len(left) < len(members)
@@ -10201,6 +10384,15 @@ class Gen:
                 self.leave_narrow(target[0], saved)
             if rest_known:
                 self.leave_narrow(var, saved_rest)
+            if not self.terminated:
+                survivors = self.opt_survivors(opt_now, val_nodes(branch.items[1]))
+                if opt_first:
+                    opt_end = survivors
+                else:
+                    opt_end = [nm for nm in opt_end if nm in survivors]
+                opt_first = False
+            self.opt_pop_to(opt_base)
+            opt_cum = self.opt_cond_names(val_node(branch.items[0]), False, opt_cum)
             if not self.terminated:
                 if track:
                     outs = facts_join(outs, self.facts)
@@ -10216,6 +10408,8 @@ class Gen:
             # `else:` knows the variable is one of the members no condition above matched
             narrowed_else = var != '' and len(left) > 0 and len(left) < len(members)
             saved = []
+            opt_base = len(self.opts)
+            self.opt_push_all(opt_cum)
             if narrowed_else:
                 saved = self.narrow_to(var, left)
             if track:
@@ -10224,11 +10418,24 @@ class Gen:
             if narrowed_else:
                 self.leave_narrow(var, saved)
             if not self.terminated:
+                survivors = self.opt_survivors(opt_cum, val_nodes(s.fields[1]))
+                if opt_first:
+                    opt_end = survivors
+                else:
+                    opt_end = [nm for nm in opt_end if nm in survivors]
+                opt_first = False
+            self.opt_pop_to(opt_base)
+            if not self.terminated:
                 kept = kept + left
                 if track:
                     outs = facts_join(outs, self.facts)
         else:
             kept = kept + left
+            if opt_first:
+                opt_end = opt_cum
+            else:
+                opt_end = [nm for nm in opt_end if nm in opt_cum]
+            opt_first = False
             if track:
                 outs = facts_join(outs, cur)
         if not self.terminated:
@@ -10236,6 +10443,8 @@ class Gen:
         self.place(end)
         if track:
             self.facts = self.live_facts(outs)
+        if not opt_first:
+            self.opt_push_all(opt_end)          # (to the end of the block, or until a statement assigns one)
         if var != '' and len(kept) > 0 and self.types[var] == union_type(members):
             keep: list[str] = [m for m in members if m in kept]
             if len(keep) < len(members):
@@ -11001,7 +11210,10 @@ class Gen:
         if track:
             self.facts = self.live_facts(self.refine(lf.head, val_node(s.fields[0]), True))
         self.push_loop(end, head)
+        opt_base = len(self.opts)
+        self.opt_push_all(self.opt_cond_names(val_node(s.fields[0]), True, []))
         self.block(val_nodes(s.fields[1]))
+        self.opt_pop_to(opt_base)
         self.loop_depth -= 1
         if not self.terminated:
             self.br(head)
@@ -11022,6 +11234,7 @@ class Gen:
         self.slots, c.slots = c.slots, self.slots
         self.types, c.types = c.types, self.types
         self.narrowed, c.narrowed = c.narrowed, self.narrowed
+        self.opts, c.opts = c.opts, self.opts
         self.settled, c.settled = c.settled, self.settled
         self.ret, c.ret = c.ret, self.ret
         self.owner, c.owner = c.owner, self.owner

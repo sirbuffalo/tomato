@@ -1,0 +1,15 @@
+class P:
+    name: str | None
+
+    @init
+    def make(self, name: str | None):
+        self.name = name
+
+    def shout(self) -> str:
+        if self.name is not None:
+            return self.name + '!'
+        return ''
+
+@main
+def main():
+    print(P('a').shout())

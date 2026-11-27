@@ -1,0 +1,214 @@
+# D102a: an optional local or parameter is narrowed by `is None` / `is not None`: the code that the test decides sees the
+# non-None type, so `s + '!'` and `x + 1` need no run-time unwrap (and `s + '!'` on a `str | None` would be E190 without it).
+class Node:
+    value: int
+    next: Node | None
+
+    @init
+    def make(self, value: int, next: Node | None = None):
+        self.value = value
+        self.next = next
+
+    def last(self) -> int:
+        cur = self
+        while True:
+            nxt = cur.next
+            if nxt is None:
+                return cur.value
+            cur = nxt
+
+    def depth(self) -> int:
+        n = self.next
+        if n is None:
+            return 1
+        return 1 + n.depth()
+
+class Dog:
+    def name(self) -> str:
+        return 'dog'
+
+# the true branch, the else branch, an early exit
+def true_branch(s: str | None) -> str:
+    if s is not None:
+        return s + '!'
+    else:
+        return 'none'
+
+def early_exit(s: str | None) -> str:
+    if s is None:
+        return 'none'
+    return s + '!'
+
+def else_branch(s: str | None) -> str:
+    if s is None:
+        return 'none'
+    else:
+        return s + '?'
+
+# all the optional types
+def numbers(a: int | None, b: float | None, c: bool | None) -> str:
+    if a is None or b is None or c is None:
+        return 'some none'
+    return f'{a + 1} {b * 2.0} {not c}'
+
+def big(x: int | None, y: float | None) -> str:
+    if x is None or y is None:
+        return 'none'
+    return f'{x * x} {y * y}'
+
+def collections(t: tuple[int, str] | None, d: dict[str, int] | None, st: set[int] | None, xs: list[int] | None, dog: Dog | None) -> str:
+    out = ''
+    if t is not None:
+        out += f'{t[0]} {t[1]} '
+    if d is not None:
+        out += f'{len(d)} '
+    if st is not None:
+        out += f'{len(st)} '
+    if xs is not None:
+        xs.append(1)
+        out += f'{len(xs)} '
+    if dog is not None:
+        out += dog.name()
+    return out
+
+# elif chains and what is known after them
+def elifs(a: int | None, b: str | None) -> str:
+    if a is None:
+        return 'a is None'
+    elif b is None:
+        return f'b is None, a={a + 1}'
+    else:
+        return f'{a + 1} {b + "?"}'
+
+def after_elif(a: int | None, b: str | None) -> int:
+    if a is None:
+        return 0
+    elif b is None:
+        return 1
+    return a + len(b)
+
+def elif_after(x: int | None, y: int | None) -> int:
+    if x is None:
+        pass
+    elif y is None:
+        return 7
+    else:
+        return 8
+    return 9
+
+def nested(a: int | None, b: int | None, c: int | None) -> int:
+    if a is not None:
+        if b is not None:
+            if c is not None:
+                return a + b + c
+            return a + b
+        return a
+    return 0
+
+# and, or, not
+def both(a: str | None, b: str | None) -> str:
+    if a is not None and b is not None:
+        return a + b
+    return 'x'
+
+def either(a: str | None, b: str | None) -> str:
+    if a is None or b is None:
+        return 'x'
+    return a + b
+
+def negated(a: str | None, b: str | None) -> str:
+    if not (a is not None and b is not None):
+        return 'x'
+    return a + b
+
+def not_is(a: str | None) -> str:
+    if not a is None:
+        return a + '1'
+    return 'x'
+
+def reversed_test(a: str | None) -> str:
+    if None is not a:
+        return a + '2'
+    return 'x'
+
+def right_side(x: str | None, y: str | None) -> str:
+    z = x is not None and len(x) > 1
+    w = y is None or len(y) > 1
+    return f'{z} {w}'
+
+# conditional expressions
+def ternary(a: str | None, b: str | None) -> str:
+    return a + b if a is not None and b is not None else 'q'
+
+def ternary_else(a: int | None) -> int:
+    return 0 if a is None else a + 1
+
+def ternary_float(x: float | None) -> float:
+    return abs(x) if x is not None else 0.0
+
+# loops
+def while_list(n: Node | None) -> int:
+    t = 0
+    while n is not None:
+        t = t + n.value
+        n = n.next
+    return t
+
+def while_and(a: Node | None) -> int:
+    t = 0
+    while a is not None and a.value > 0:
+        t += a.value
+        a = a.next
+    return t
+
+def skip_none(xs: list[str | None]) -> str:
+    out = ''
+    for x in xs:
+        if x is None:
+            continue
+        out += x + ','
+    return out
+
+def stop_at_none(xs: list[int | None]) -> int:
+    t = 0
+    for x in xs:
+        if x is None:
+            break
+        t += x
+    return t
+
+def comprehension(xs: list[str | None]) -> list[int]:
+    return [len(x) for x in xs if x is not None]
+
+# assert narrows too: it is an if that raises
+def asserted(s: str | None, k: int | None) -> str:
+    assert s is not None
+    assert k is not None and k > 0, 'k must be positive'
+    return s + '!' + str(k + 1)
+
+# a narrowed value goes on as an optional wherever one is wanted
+def take(x: int | None) -> str:
+    return str(x)
+
+def pass_on(x: int | None) -> str:
+    if x is None:
+        return take(x)
+    return take(x) + take(x + 1)
+
+@main
+def main():
+    print(true_branch('a'), true_branch(None), early_exit('a'), early_exit(None), else_branch('a'), else_branch(None))
+    print(numbers(1, 2.5, True), numbers(None, 1.0, False), numbers(1, None, False), numbers(1, 1.0, None))
+    print(big(10 ** 30, 1e200), big(None, 1.0))
+    print(collections((1, 'x'), {'a': 1}, {1, 2}, [5], Dog()), collections(None, None, None, None, None))
+    print(elifs(None, 'x'), elifs(1, None), elifs(1, 'x'))
+    print(after_elif(None, 'x'), after_elif(1, None), after_elif(1, 'xyz'))
+    print(elif_after(None, 1), elif_after(1, None), elif_after(1, 1))
+    print(nested(1, 2, 3), nested(1, 2, None), nested(1, None, 3), nested(None, 1, 1))
+    print(both('a', 'b'), both(None, 'b'), either('a', 'b'), either('a', None), negated('a', 'b'), negated('a', None))
+    print(not_is('z'), not_is(None), reversed_test('f'), reversed_test(None), right_side('ab', None), right_side(None, 'a'))
+    print(ternary('a', 'b'), ternary(None, 'b'), ternary_else(None), ternary_else(2), ternary_float(-2.5), ternary_float(None))
+    n = Node(1, Node(2, Node(3)))
+    print(n.last(), n.depth(), while_list(n), while_list(None), while_and(n), while_and(None))
+    print(skip_none(['a', None, 'b']), stop_at_none([1, 2, None, 4]), comprehension(['a', None, 'ccc']))
+    print(asserted('a', 4), pass_on(None), pass_on(5))

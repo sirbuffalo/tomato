@@ -1,0 +1,10 @@
+def f(s: str | None) -> str:
+    if s is None:
+        return ''
+    t = s
+    t = None
+    return 'x'
+
+@main
+def main():
+    print(f('a'))

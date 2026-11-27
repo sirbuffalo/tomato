@@ -12,8 +12,6 @@
   D95a builds `install`, `check` and `hash` only: a project's `tomato.toml` is edited by hand. `seed add --path DIR` and `seed remove NAME` must rewrite the manifest keeping its comments and order (std/toml's `dumps` would lose them), then re-lock; `seed vendor` and `[seed-store] vendor` (read and checked, unused) copy the locked seeds to `vendor/` (design section 6).
 - Make `tomato seed add` list the foreign symbols a seed declares and ask once
   D94b (a default Davis leaned to, "like in Python you can have C"): a seed's modules may use `!name(...)` declarations and nothing rejects them. `tomato seed add` and `update` must list the `!name(...)` symbols the seed's modules declare (found by parsing, as the seed checks of design section 11 do) and ask once; the answer is recorded in `tomato.lock` (`symbols`), so a new symbol in an update asks again, and the index listing records the symbols. A seed still cannot ship C or run build scripts in 1.0 (open, after 1.0: C sources or objects in a seed).
-- Flow narrowing of optionals by `is None` / `is not None`
-  Applies to all optionals, not just `int | None`, `float | None` and `bool | None`: `s + "!"` and `abs(x)` after a check should need no runtime unwrap. Today `s + "literal"` on a `str | None` is also E190 (an existing quirk).
 - Write CLI contract tests for the shell-to-Tomato plan (stage 0)
   Golden files in `tests/cli_contract/` for `tomato help`, `explain`, `config`, the error texts, exit statuses and environment variables, written against main after the project-layout and test-library tasks land. A later rewrite of the `tomato` command in Tomato must pass them unchanged (`docs/shell-to-tomato-plan.md`, sections 6 and 12).
 - Check the shell-to-Tomato plan's open Mac points on a Mac
@@ -24,3 +22,5 @@
   A redeclared variable moves to the end of the session's statements, so an earlier line that used it (`print(x)` between `x: int = 1` and `x: int = 2`) fails with 'name x is not defined'. Pre-existing; replace the declaration in place instead.
 - Run the new `sys_async` test on macOS
   Check the kqueue wait on pipes and the `/dev/fd` listing (`tests/programs/sys_async.tom`, and the open-files check in `tests/programs/sys_run.tom`); everything of D98b was tested on Linux only.
+- Narrow an optional by assignment of a non-None value
+  `if x is None: x = default` should leave `x` a `T` for the rest of the block, as Python's checkers do. D102a narrows only by tests: an assignment ends the narrowing and the variable is `T | None` again whatever was assigned. Make the end of an `if` know it when its branch assigns a value of type `T`, and extend it to a plain `x = value` of a `T` value, keeping the statement rule of D102a for everything else.

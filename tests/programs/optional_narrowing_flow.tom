@@ -1,0 +1,190 @@
+# D102a: how long a narrowing of an optional lasts. It ends at a statement that can assign the variable (or when the code the test
+# decided ends); a field is never narrowed. Programs that compile only if the narrowing is right; the rejected cases are in
+# tests/negative/optional_narrow_*.tom.
+class Box:
+    n: int | None
+    s: str | None
+
+    @init
+    def make(self, n: int | None, s: str | None):
+        self.n = n
+        self.s = s
+
+# a test of a variable that is known not to be None is still allowed (it is False, and `is not None` is True)
+def redundant(x: int | None, s: str | None) -> str:
+    if x is None:
+        return 'none'
+    if s is None:
+        return 'nos'
+    a = x is None
+    b = x is not None
+    c = s is None
+    d = s is not None
+    e = x == None
+    f = None is s
+    return f'{a} {b} {c} {d} {e} {f}'
+
+# `x = value` ends the narrowing; the value itself is worked out with the variable narrowed
+def reassign(x: int | None) -> str:
+    if x is None:
+        return 'none'
+    y = x + 1
+    x = None
+    if x is None:
+        return f'ended {y}'
+    return 'not reached'
+
+def incr(x: int | None) -> int:
+    if x is None:
+        return -1
+    x = x + 1
+    x = x * 2
+    return 0 if x is None else 1
+
+def advance(x: int | None) -> str:
+    if x is None:
+        return 'none'
+    x = x + 1
+    return str(x)
+
+def loop_assign(n: int | None) -> int:
+    if n is None:
+        return 0
+    count = 0
+    while count < 3:
+        count += 1
+        if count == 2:
+            n = None
+    return count
+
+# after an `if` whose branch assigns, the variable is the optional again
+def branch_assign(s: str | None) -> str:
+    if s is None:
+        s = 'default'
+    return str(len(s))
+
+def while_not_none(start: int | None) -> int:
+    x = start
+    steps = 0
+    while x is not None:
+        steps += 1
+        if x > 3:
+            x = None
+        else:
+            x = x + 1
+    return steps
+
+def while_break(n: int | None) -> int:
+    k = 0
+    while True:
+        k += 1
+        if n is None:
+            break
+        if k > 3:
+            break
+    return k
+
+def while_items(items: list[int | None]) -> int:
+    t = 0
+    i = 0
+    cur: int | None = None
+    while i < len(items):
+        cur = items[i]
+        i += 1
+        if cur is None:
+            continue
+        t += cur
+    return t
+
+def after_loop(x: int | None) -> int:
+    for i in range(3):
+        if x is None:
+            continue
+        x = x + 1
+    if x is None:
+        return -1
+    return x
+
+# a field is not narrowed: its value is checked when it is used
+def field_use(b: Box) -> int:
+    if b.n is not None:
+        return b.n + 1
+    return 0
+
+def in_try(x: int | None) -> int:
+    if x is None:
+        return 0
+    try:
+        y = x * 2
+        if y > 10:
+            raise Error('big')
+        return y
+    catch Error as e:
+        return x
+
+# a variable made from a narrowed one has the narrowed type
+def derived(x: str | None) -> str:
+    if x is None:
+        return 'n'
+    y = x
+    return y
+
+# release mode: loop nests that use a narrowed value
+def loop_nest(xs: list[int], k: int | None) -> int:
+    if k is None:
+        return 0
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            t += xs[i] * xs[j] + k
+    return t
+
+def float_loop(k: float | None) -> float:
+    if k is None:
+        return 0.0
+    t = 0.0
+    for i in range(10):
+        t += k * i
+    return t
+
+def while_ints(k: int | None) -> int:
+    t = 0
+    i = 0
+    while k is not None and i < 10:
+        t += k + i
+        i += 1
+    return t
+
+# a generator and an async function
+def doubled(xs: list[int | None]) -> int:
+    for v in xs:
+        if v is not None:
+            yield v * 10
+        else:
+            yield -1
+
+async def twice(x: int) -> int:
+    return x * 2
+
+async def slow(x: int | None, s: str | None) -> int:
+    if x is None:
+        return -1
+    t = await twice(2)
+    if s is not None:
+        return x + len(s) + t
+    return x + t
+
+@main
+async def main():
+    print(redundant(1, 'a'), redundant(None, 'a'), redundant(1, None))
+    print(reassign(3), reassign(None), incr(4), incr(None), advance(9), advance(None))
+    print(loop_assign(5), loop_assign(None), branch_assign(None), branch_assign('xyz'))
+    print(while_not_none(0), while_not_none(None), while_not_none(10), while_break(None), while_break(1))
+    print(while_items([1, None, 3, None, 5]), after_loop(1), after_loop(None))
+    print(field_use(Box(4, 'x')), field_use(Box(None, 'x')), in_try(3), in_try(30), in_try(None), derived('q'), derived(None))
+    print(loop_nest([1, 2, 3], 5), loop_nest([1], None), float_loop(1.5), float_loop(None), while_ints(2), while_ints(None))
+    out = ''
+    for v in doubled([1, None, 3]):
+        out += f'{v} '
+    print(out)
+    print(await slow(3, 'ab'), await slow(None, 'a'), await slow(3, None))

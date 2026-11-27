@@ -50,6 +50,13 @@ on an older install moves to 1.0.0 as usual.
 - **`int | None`, `float | None` and `bool | None`** (D94a) work like `str | None`: declarations, parameters, returns, fields,
   collections, generics, printing, and `d.get(key)` for a dict of any value type (it was a compile error for `int`,
   `float` and `bool` values). A `None` used as a number stops with a catchable "None where a value is needed".
+- **Optionals are narrowed by `is None` and `is not None`** (D102a): a local variable or parameter of type `T | None`
+  (text, lists, objects, `int`, `float`, `bool` and the rest) is a `T` where a test shows it is not `None`: in the true
+  branch of `x is not None`, in the `else` of `x is None`, in the right side of `and` / `or`, in a conditional
+  expression, in a `while` body, and to the end of the block after `if x is None: return` (or `raise`, `break`,
+  `continue`, or `assert x is not None`). So `s + '!'` and `abs(x)` need no check and cannot stop there. An assignment
+  to the variable ends the narrowing; fields (`self.x`) are never narrowed. A variable copied from a narrowed one
+  has the type `T`, so assigning `None` to the copy later is now a compile error.
 - **Dict keys and set elements of any hashable type** (D78a): `int`, `bool`, `float`, `str`, tuples of those,
   optionals, unions, and objects of classes with an `@hash` method; the builtin `hash(x)`.
 - **Bitwise `&`, `|`, `^`, `~` on integers of any size** with Python's two's-complement rules; shifts, `2 ** n` and

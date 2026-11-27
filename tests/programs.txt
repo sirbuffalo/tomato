@@ -227,5 +227,7 @@ int64_convert
 trig_radians
 optional_values
 optional_lookups
+optional_narrowing
+optional_narrowing_flow
 optional_error_paths
 error_inherit_init

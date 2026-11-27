@@ -243,7 +243,7 @@ fields of the same type this invites swapped arguments.
 
 ### 3.1 `int | None`, `float | None` and `bool | None` (Do soon, high)
 
-**Done (D94a, 2026-11-26).** The three optionals and `d.get(k)` for every value type are built, as a pointer to the union's box; the text below is the problem as found in the audit.
+**Done (D94a, 2026-11-26).** The three optionals and `d.get(k)` for every value type are built, as a pointer to the union's box; the text below is the problem as found in the audit. Narrowing by `is None` / `is not None`, which the audit also asked for, is D102a (2026-11-27).
 
 **Problem.** The most common optional value is a missing number, and it cannot be written:
 

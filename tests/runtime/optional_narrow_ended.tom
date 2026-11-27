@@ -1,0 +1,11 @@
+# the narrowing ends when the variable is assigned: using it as a value is checked again, so this stops
+def f(x: int | None) -> int:
+    if x is None:
+        return 0
+    y = x + 1
+    x = None
+    return x + y
+
+@main
+def main():
+    print(f(3))

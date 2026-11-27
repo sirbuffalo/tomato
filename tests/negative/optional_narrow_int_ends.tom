@@ -1,0 +1,9 @@
+def f(x: int | None) -> str:
+    if x is None:
+        return ''
+    x = None
+    return x + '!'
+
+@main
+def main():
+    print(f(1))
