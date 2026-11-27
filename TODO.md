@@ -24,3 +24,7 @@
   `'ß'.upper()` is `ß` (Python `SS`) and `'ßa'.title()` `ßa` (Python `Ssa`): the runtime's case tables map one character to one character. Decide whether to follow Python's SpecialCasing or document the difference.
 - Mention `tomato update --minor` and `--pre` on the website's download page once the rebrand task has landed
   `site/download.html` says `tomato update` "reinstalls when a newer version exists". Since D84a it installs a newer patch release at once, stops before a new minor or major version unless given `--minor`, and moves to a pre-release only with `--pre` or from an installed pre-release (`site/latest-pre.json`). The pre-release audit left the page alone while the rebrand task was editing the site; that task has now landed, so the page can say this (see `docs/releasing.md`, Version numbers).
+- Make `sum()`, `min()`, `max()` and `sorted()` work on a list of angles
+  They are compile errors today (the builtins take numbers or text only); make them work on anything with `@lt`/`@add`, or give `Angle` helpers.
+- Give `Angle` a `@hash` so angles can be dict keys and set elements
+  Consistent with `@eq`, which compares by turns; today `{deg(30): 1}` is a compile error.

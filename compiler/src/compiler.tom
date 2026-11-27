@@ -600,7 +600,7 @@ def pure_read(n: Node) -> bool:
     if n.kind == 'Attr':
         return pure_read(val_node(n.fields[0]))
     if n.kind == 'UnOp':
-        return pure_read(val_node(n.fields[1]))
+        return n.fields[0].text == '-' and (val_node(n.fields[1]).kind == 'IntLit' or val_node(n.fields[1]).kind == 'FloatLit')    # (not -x: x may be an object whose @neg runs user code)
     return False
 
 def self_update_leaves(name: str, n: Node) -> int:
@@ -5220,6 +5220,8 @@ class Gen:
             v = self.expr(val_node(n.fields[1]), expected)
             if op == '-' and v.ty == 'float':
                 return self.bf_negate(v)
+            if op == '-' and (is_class(v.ty) or (is_optional(v.ty) and is_class(strip_optional(v.ty)))):
+                return self.negate_op(self.unwrap(v, n.line), n.line)
             if op == '-':
                 if not is_numeric(v.ty):
                     raise CompileError(f"cannot use '-' on {shown(v.ty)}\nonly numbers can be negated", n.line)
@@ -6588,6 +6590,10 @@ class Gen:
             return self.bool_of(c)
         if is_class(a.ty) and operator_marker_of(op) != '' and (self.mod.has_op(a.ty[1:], operator_marker_of(op)) or not (op == '==' or op == '!=')):
             return self.operator_call(a, b, op, n.line)
+        if op == '*' and is_class(b.ty) and not is_class(a.ty) and self.mod.has_op(b.ty[1:], 'rmul'):
+            return self.operator_call(a, b, op, n.line, True)       # 3 * obj: the object's @rmul method gets the 3
+        if op == '*' and is_class(b.ty) and not is_class(a.ty) and (is_numeric(a.ty) or is_float(a.ty)):
+            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\nadd a method marked @rmul to '{b.ty[1:]}' to multiply a number by one of its objects", n.line)
         if (op == '==' or op == '!=') and (a.ty.startswith('list[') or b.ty.startswith('list[')):
             return self.list_equal(op, a, b, n.line)
         if (op == '==' or op == '!=') and (is_mtuple(a.ty) or is_mtuple(b.ty)):
@@ -6712,17 +6718,30 @@ class Gen:
             raise CompileError("cannot use '~' on '" + v.ty[1:] + "' objects\nadd a method marked @invert that takes nothing and returns the result", n.line)
         return self.marker_call(v, f, [], n.line)
 
-    def operator_call(self, a: Ex, b: Ex, op: str, line: int) -> Ex:
+    def negate_op(self, v: Ex, line: int) -> Ex:
+        # -x on an object whose class has a method marked @neg (taking nothing besides self)
+        f = self.mod.find_op(v.ty[1:], 'neg')
+        if f is None or f.is_async:
+            raise CompileError("cannot use '-' on '" + v.ty[1:] + "' objects\nadd a method marked @neg that takes nothing and returns the result", line)
+        if len(f.ptypes) != 0 or f.ret == '':
+            raise CompileError(f"the @neg method '{f.name}' must take nothing besides self and return the result", line)
+        return self.marker_call(v, f, [], line)
+
+    def operator_call(self, a: Ex, b: Ex, op: str, line: int, reflected: bool = False) -> Ex:
         # a + b on a class whose method is marked @add (and the same for the other operators): the method of the left
-        # operand runs with the right operand as its one argument (D12l)
-        marker = operator_marker_of(op)
+        # operand runs with the right operand as its one argument (D12l). Reflected (a number * an object): the method
+        # marked @rmul of the right operand runs with the left operand as its one argument.
+        marker = 'rmul' if reflected else operator_marker_of(op)
+        if reflected:
+            a, b = b, a                       # a is now the object and b its argument
         found = self.mod.find_op(a.ty[1:], marker)
         if found is None:
             raise CompileError("cannot use '" + op + "' on '" + a.ty[1:] + "' objects\nadd a method marked @" + marker + ' to the class', line)
         info = found
         if len(info.ptypes) != 1:
             raise CompileError(f"the @{marker} method '{info.name}' must take exactly one argument besides self", line)
-        b = self.want(b, info.ptypes[0], line, 'the right operand of ' + op)
+        b = self.owned(b)                     # a number read from a field is lent; the method may change that field, so it gets a copy
+        b = self.want(b, info.ptypes[0], line, 'the left operand of ' + op if reflected else 'the right operand of ' + op)
         values: list[Ex] = [a, b]
         symbol = self.method_symbol(a, info)
         text = f'call {self.ret_llvm(info)} {symbol}(ptr {a.reg}, {llvm_type(b.ty)} {b.reg})'

@@ -1,0 +1,7 @@
+class Box:
+    n: int = 0
+
+@main
+def main():
+    b = Box()
+    print(-b)

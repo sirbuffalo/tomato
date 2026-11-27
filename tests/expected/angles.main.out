@@ -4,6 +4,8 @@ True 0.5 100.0 360.0 45.0 180.0
 90.0 1.0 30.0 0.5
 0.25 turn 180 deg 3.141592653589793 rad 50 grad
 135 deg 180 deg 1 rad -90 deg 90 deg 15 deg 22.5 deg
+-30 deg -1.5 rad -0.25 turn 0 grad 30 deg True 0 deg 25 deg
+90 deg 1.5 rad 0.5 turn 100 grad True -90 deg -90 deg 13 deg
 True True True False True False False True
 10 deg 350 deg 0 deg 0.25 turn 350 grad
 -90 deg 180 deg 180 deg -170 deg -0.25 turn 90 deg -30 deg

@@ -180,9 +180,9 @@ def is_type_with_length(name: str) -> bool:
 const FLOAT_HAS_NO_LENGTH = 'float has no length: there is one float type, with an exponent of any size\nwrite float'
 
 export def is_operator_marker(name: str) -> bool:
-    # a method marked with an operator's name implements that operator for its class (D12j-l); names beyond @add are placeholders (P65)
+    # a method marked with an operator's name implements that operator for its class (D12j-l); names beyond @add are placeholders (P65); @neg is unary - and @rmul is a number on the left of *
     return name in ['add', 'sub', 'mul', 'div', 'floordiv', 'mod', 'pow', 'eq', 'lt', 'le', 'gt', 'ge', 'str',
-                    'iter', 'len', 'get', 'slice', 'contains', 'reversed', 'static', 'bitarray', 'set', 'bitand', 'bitor', 'bitxor', 'invert', 'hash']
+                    'iter', 'len', 'get', 'slice', 'contains', 'reversed', 'static', 'bitarray', 'set', 'bitand', 'bitor', 'bitxor', 'invert', 'neg', 'rmul', 'hash']
 
 def is_none_name(n: Node) -> bool:
     return n.kind == 'Name' and n.fields[0].text == 'None'

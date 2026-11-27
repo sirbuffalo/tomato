@@ -238,6 +238,8 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 203. D76d is accepted: UDP datagram sockets and public asynchronous `getaddrinfo` return numeric address records; name resolution lets other tasks run.
 204. D76e is accepted: `asyncio.Lock`, bounded `Semaphore` and `Event` with FIFO hand-off, `LockError`, `wait_for` timeouts, and a deadlock report that names each task waiting in `Lock.acquire`.
 
+209. D85a is accepted: a class can mark a method `@neg` (taking nothing besides `self`) to make `-x` work on its objects and `@rmul` (taking one argument) to make `number * x` work; `Angle` uses them so `-deg(30)` and `3 * deg(30)` work. A number read from a field is now copied before an operator method receives it.
+
 ## Later coverage pass
 
 Split each area into individual decisions as it comes into focus. Each decision should record acceptance evidence, alternatives, consequences, dependent decisions, and illustrative cases. Review cross-cutting topics such as portability, security, determinism, observability, accessibility of diagnostics, and implementation feasibility where relevant; they do not silently add requirements.

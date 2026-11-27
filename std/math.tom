@@ -187,7 +187,7 @@ export def lcm(a: int, b: int) -> int:
 # mistake. Angle is a base class; Degrees, Radians, Turns and Gradians are the four units, made by deg(), rad(), turn()
 # and grad() (longer spellings degrees(), radians(), turns() and gradians() do the same). Every method below is written
 # once on Angle; a unit only says how many of itself make a full turn. Printing, + - * / and the result of a method keep
-# the unit.
+# the unit. -a is the opposite angle, and a number goes on either side of *: 3 * deg(30) and deg(30) * 3 are the same.
 
 # The math functions of the C runtime for floats of any size (D77d): a float that is a double and gives a double gets the C
 # library's answer, any other is correctly rounded (hypot and atan2: as exactly as the C library's), so nothing overflows or
@@ -279,7 +279,9 @@ export class Angle:
             v -= full
         return self.like(v)
 
-    # 0.0 - value rather than -value, so the negation of 0 prints as 0, not -0
+    # -a and a.negated() are the same: the opposite angle, in the same unit. It is 0.0 - value rather than -value, so the
+    # negation of 0 prints as 0, not -0
+    @neg
     def negated(self) -> Angle:
         return self.like(0.0 - self.value)
 
@@ -308,6 +310,11 @@ export class Angle:
 
     @mul
     def times(self, k: int | float) -> Angle:
+        return self.like(self.value * _f(k))
+
+    # a number on the left: 3 * deg(30) is deg(30) * 3
+    @rmul
+    def scaled(self, k: int | float) -> Angle:
         return self.like(self.value * _f(k))
 
     @div

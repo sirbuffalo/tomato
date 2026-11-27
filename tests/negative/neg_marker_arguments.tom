@@ -1,0 +1,11 @@
+class Box:
+    n: int = 0
+
+    @neg
+    def flip(self, other: int) -> Box:
+        return Box()
+
+@main
+def main():
+    b = Box()
+    print(-b)

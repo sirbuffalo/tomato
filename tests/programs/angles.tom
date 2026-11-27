@@ -22,6 +22,9 @@ def main():
     print(deg(90).to_turn(), turn(0.5).to_deg(), turn(0.5).to_rad(), deg(45).to_grad())
     # arithmetic keeps the unit of the left side
     print(deg(90) + deg(45), deg(90) + turn(0.25), rad(1) + deg(0), deg(90) - turn(0.5), deg(30) * 3, deg(30) * 0.5, deg(90) / 4)
+    # unary minus keeps the unit (the same as negated()); a number may be on either side of *
+    print(-deg(30), -rad(1.5), -turn(0.25), -grad(0), -(-deg(30)), -deg(30) == deg(30).negated(), -deg(0), deg(-12.5) * -2)
+    print(3 * deg(30), 0.5 * rad(3), 2 * turn(0.25), 4 * grad(25), 3 * deg(30) == deg(30) * 3, 2 * -deg(45), -2 * deg(45), 1 * deg(7) + deg(3) * 2)
     # comparing is by size, whatever the unit
     print(deg(180) == turn(0.5), deg(180) == rad(pi), deg(90) < deg(91), deg(90) < turn(0.2), turn(0.25) >= deg(90), deg(1) > rad(1), deg(5) != deg(5), deg(90) <= grad(100))
     # normalising

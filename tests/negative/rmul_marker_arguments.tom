@@ -1,0 +1,11 @@
+class Box:
+    n: int = 0
+
+    @rmul
+    def times(self, a: int, b: int) -> Box:
+        return Box()
+
+@main
+def main():
+    b = Box()
+    print(3 * b)

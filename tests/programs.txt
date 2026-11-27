@@ -25,6 +25,7 @@ keyword_args
 float_more
 utf8_text
 at_add
+at_neg_rmul
 rational_library
 is_prime
 progress_bar
