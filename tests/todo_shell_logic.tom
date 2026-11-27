@@ -1,0 +1,185 @@
+# The worked example examples/todo_shell.tom without a terminal, as @test functions: its commands, its Completer, and whole sessions of
+# the shell on a FakeTerminal with scripted keys (single-line mode, Tab completion and its list, history). The example is a program
+# with its own @main, imported here from beside this file (tests/run.sh copies the two files into one folder); the real terminal is
+# tests/todo_shell_pty.exp.
+from terminal import Key
+from lineedit import TermIO
+from todo_shell import Todos, TodoCompleter, shell
+from testing import assert_equal, assert_true, assert_false
+
+# ---- helpers (the same fake terminal as tests/lineedit_logic.tom) ----------------------------------------------------------
+
+def spelled(text: str) -> str:
+    return text.replace(chr(27), '\\e').replace('\r', '\\r').replace('\n', '\\n')
+
+class FakeTerminal implements TermIO:
+    keys: list[Key] = []
+    writes: list[str] = []
+
+    def read_key(self, timeout: float = -1.0) -> Key:
+        if len(self.keys) == 0:
+            return Key('eof')
+        k = self.keys[0]
+        self.keys = self.keys[1:]
+        return k
+
+    def write(self, text: str):
+        self.writes.append(text)
+
+    def size(self) -> tuple[int, int]:
+        return 24, 80
+
+    def enter_raw(self):
+        pass
+
+    def leave(self):
+        pass
+
+def typed(text: str) -> list[Key]:
+    out: list[Key] = []
+    for c in text:
+        out.append(Key('char', c))
+    return out
+
+def tab() -> Key:
+    return Key('key', '', 'tab')
+
+def enter() -> Key:
+    return Key('key', '', 'enter')
+
+def up() -> Key:
+    return Key('key', '', 'up')
+
+# runs the shell over keys; the todos and every write, spelled out
+def run_shell(keys: list[Key]) -> tuple[Todos, list[str]]:
+    todos = Todos()
+    term = FakeTerminal()
+    term.keys = keys
+    shell(term, todos, 0)
+    out: list[str] = []
+    for w in term.writes:
+        out.append(spelled(w))
+    return todos, out
+
+def texts(todos: Todos) -> str:
+    out: list[str] = []
+    for item in todos.items:
+        out.append(('x ' if item.done else '- ') + item.text)
+    return ', '.join(out)
+
+# ---- the commands ----------------------------------------------------------------------------------------------------------
+
+@test
+def commands_change_the_list():
+    t = Todos()
+    assert_equal(t.run('list'), 'nothing to do')
+    assert_equal(t.run('add milk'), 'added 1: milk')
+    assert_equal(t.run('  add   two eggs  '), 'added 2: two eggs')
+    assert_equal(t.run('list'), '  1 [ ] milk\n  2 [ ] two eggs')
+    assert_equal(t.run('done 2'), '2 is done: two eggs')
+    assert_equal(t.run('list'), '  1 [ ] milk\n  2 [x] two eggs')
+    assert_equal(t.run('undo 2'), '2 is not done: two eggs')
+    assert_equal(t.run('done 1'), '1 is done: milk')
+    assert_equal(t.run('clear'), 'removed 1 done item(s)')
+    assert_equal(texts(t), '- two eggs')
+    assert_equal(t.run('rm 1'), 'removed 1: two eggs')
+    assert_equal(texts(t), '')
+    assert_false(t.finished)
+    assert_equal(t.run('quit'), 'bye')
+    assert_true(t.finished)
+
+@test
+def commands_say_what_is_wrong():
+    t = Todos()
+    assert_equal(t.run('add'), 'add what? (add TEXT)')
+    assert_equal(t.run('done 1'), 'there are no items')
+    t.run('add a')
+    assert_equal(t.run('done 2'), 'done which item? (1 to 1)')
+    assert_equal(t.run('rm x'), 'rm which item? (1 to 1)')
+    assert_equal(t.run('rm'), 'rm which item? (1 to 1)')
+    assert_equal(t.run('rm -1'), 'rm which item? (1 to 1)')
+    assert_equal(t.run('fly'), "unknown command 'fly' (try help)")
+    assert_equal(len(t.items), 1)
+
+# ---- the completer ---------------------------------------------------------------------------------------------------------
+
+def found(t: Todos, line: str) -> str:
+    c = TodoCompleter(t).complete(line, line)
+    return f'{c.start}:' + ','.join(c.candidates)
+
+@test
+def completer_offers_commands_and_item_numbers():
+    t = Todos()
+    assert_equal(found(t, ''), '0:add,clear,done,help,list,quit,rm,undo')
+    assert_equal(found(t, 'd'), '0:done')
+    assert_equal(found(t, 'u'), '0:undo')
+    assert_equal(found(t, 'x'), '0:')
+    assert_equal(found(t, 'add m'), '4:')                    # the text of an item is not completed
+    assert_equal(found(t, 'done '), '5:')                    # no items yet
+    t.run('add a')
+    t.run('add b')
+    t.run('add c')
+    t.run('done 2')
+    assert_equal(found(t, 'done '), '5:1,3')                 # the ones not done
+    assert_equal(found(t, 'undo '), '5:2')                   # the ones done
+    assert_equal(found(t, 'rm '), '3:1,2,3')
+    assert_equal(found(t, 'rm 2'), '3:2')
+    assert_equal(found(t, 'rm 4'), '3:')
+    assert_equal(found(t, 'list '), '5:')
+    assert_equal(found(t, 'done 1 '), '7:')                  # one number only
+
+# ---- whole sessions on a FakeTerminal --------------------------------------------------------------------------------------
+
+@test
+def shell_completes_and_runs_commands():
+    keys = typed('ad') + [tab()] + typed('milk') + [enter()] + typed('li') + [tab(), enter()] + typed('quit') + [enter()]
+    t, out = run_shell(keys)
+    assert_equal(texts(t), '- milk')
+    assert_true(t.finished)
+    # Tab put in `add` and the space after it, so what was typed next is the text of the item
+    assert_true('\\r\\e[Jtodo> add \\e[11G' in out, '\n'.join(out))
+    assert_true('\\r\\e[Jtodo> add milk\\e[15G' in out, '\n'.join(out))
+    answers: list[str] = []
+    for w in out:
+        if w == 'added 1: milk\\n' or w == '  1 [ ] milk\\n' or w == 'bye\\n':
+            answers.append(w)
+    assert_equal(answers, ['added 1: milk\\n', '  1 [ ] milk\\n', 'bye\\n'])
+
+@test
+def shell_lists_the_candidates_under_the_prompt():
+    t = Todos()
+    t.run('add a')
+    t.run('add b')
+    term = FakeTerminal()
+    term.keys = [tab()] + typed('do') + [tab(), tab()] + typed('x') + [Key('char', 'c', '', True)]
+    shell(term, t, 0)
+    out: list[str] = []
+    for w in term.writes:
+        out.append(spelled(w))
+    # nothing typed: the commands have nothing in common, so Tab lists them all under the prompt, in columns
+    assert_equal(out[2], '\\r\\e[Jtodo> \\r\\nadd    clear  done   help   list   quit   rm     undo\\e[1A\\e[7G')
+    # 'do' is only `done`: it is put in with a space, and Tab again lists the numbers of the items not done
+    assert_equal(out[5], '\\r\\e[Jtodo> done \\e[12G')
+    assert_equal(out[6], '\\r\\e[Jtodo> done \\r\\n1  2\\e[1A\\e[12G')
+    # the next key takes the list away
+    assert_equal(out[7], '\\r\\e[Jtodo> done x\\e[13G')
+
+@test
+def shell_history_brings_back_earlier_lines():
+    keys = typed('add milk') + [enter(), up(), enter()] + typed('add eggs') + [enter(), up(), up(), enter(), up(), up(), up()] + [Key('char', 'd', '', True)]
+    t, _out = run_shell(keys)
+    # the lines 'add milk', 'add milk' (recalled), 'add eggs', 'add milk' (two Ups), then nothing more
+    assert_equal(texts(t), '- milk, - milk, - eggs, - milk')
+
+@test
+def shell_ctrl_c_drops_the_line_and_ctrl_d_leaves():
+    keys = typed('add oops') + [Key('char', 'c', '', True)] + typed('add milk') + [enter(), Key('char', 'd', '', True)] + typed('add never') + [enter()]
+    t, _out = run_shell(keys)
+    assert_equal(texts(t), '- milk')
+    assert_false(t.finished)                                 # Ctrl-D ended the shell, not a command
+
+@test
+def shell_pastes_stay_on_one_line():
+    keys = [Key('paste', 'add one\nadd two'), enter()]
+    t, _out = run_shell(keys)
+    assert_equal(texts(t), '- one add two')

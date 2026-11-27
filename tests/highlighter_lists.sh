@@ -41,6 +41,11 @@ hl="$(grep -E '^const (BUILTINS|TYPES) ' compiler/src/hltomato.tom | sed "s/^[^'
 site_bi="$(grep 'var BI' $site | sed 's/.*\^(//; s/)\$.*//' | tr '|' '\n')"
 for w in $builtins $site_bi $site_types; do echo "$hl" | grep -qx "$w" || missing hltomato built-in "$w"; done
 for w in $hl; do { echo "$site_bi"; echo "$site_types"; } | grep -qx "$w" || { echo "hltomato.tom knows '$w', which the website does not"; bad=1; }; done
+# the repl's Tab completion (compiler/src/repledit.tom) offers the lexer's keywords, the contextual ones, and self: the same words
+rk="$(grep -E '^const KEYWORDS ' compiler/src/repledit.tom | sed "s/^[^']*'//; s/'.*//" | tr ' ' '\n' | grep .)"
+kwset=" $(echo $keywords $contextual self) "
+for w in $keywords $contextual self; do echo "$rk" | grep -qx "$w" || missing repledit keyword "$w"; done
+for w in $rk; do case "$kwset" in *" $w "*) ;; *) echo "repledit.tom completes the keyword '$w', which the lexer does not know"; bad=1 ;; esac; done
 # the standard library modules (std/NAME.tom) are colored after import/from
 for f in std/*.tom; do
   w="$(basename "$f" .tom)"

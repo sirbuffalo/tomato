@@ -2,7 +2,8 @@
 # depth), the indent of a new line, what goes into the history, and the history file's place. repledit.tom imports lexer.tom from beside
 # it, so tests/run.sh copies the three files into one folder and runs `tomato test` there (as install-native.sh builds the editor).
 import os
-from repledit import ReplValidator, ReplIndenter, worth_recording, code_part, history_path
+from repledit import ReplValidator, ReplIndenter, ReplCompleter, worth_recording, code_part, history_path, inside_text, names_in, module_names
+from lexer import lex_spans
 from testing import assert_equal, assert_true, assert_false
 
 def complete(text: str) -> bool:
@@ -103,3 +104,86 @@ def where_the_history_file_is():
         os.putenv('TOMATO_HISTORY', old)
     else:
         os.unsetenv('TOMATO_HISTORY')
+
+# ---- Tab completion --------------------------------------------------------------------------------------------------------
+
+const SESSION = 'def area(w: int, h: int) -> int:\n    return w * h\n\n@main\ndef tomato_repl_main():\n    total = 5\n    total = area(2, 3)\n    xs.append(total)\n    print(f"{total} # not a name")  # a comment: word\n'
+
+def completer() -> ReplCompleter:
+    return ReplCompleter(SESSION, ['json', 'lineedit', 'math'])
+
+def found(line: str) -> str:
+    c = completer().complete(line, line)
+    return f'{c.start}:' + ','.join(c.candidates)
+
+@test
+def names_the_session_uses():
+    # names that are not keywords and do not follow a dot (xs.append: append is not one), once each, in order; the repl's own wrapper is left out
+    assert_equal(names_in(SESSION), ['area', 'w', 'int', 'h', 'main', 'total', 'xs', 'print'])
+    assert_equal(names_in(''), [])
+    assert_equal(names_in("x = 'unfinished"), ['x'])
+
+@test
+def inside_a_text_or_a_comment():
+    assert_false(inside_text(''))
+    assert_false(inside_text('print(x, '))
+    assert_true(inside_text("print('ab"))
+    assert_true(inside_text('print("it\'s'))
+    assert_false(inside_text("print('ab') + "))
+    assert_true(inside_text('x = 1  # a comment'))
+    assert_false(inside_text("x = '#'"))
+    assert_true(inside_text("x = 'a\\' # c"))
+
+@test
+def completes_keywords_builtins_and_the_sessions_names():
+    assert_equal(found('pri'), '0:print,private')
+    assert_equal(found('x = to'), '4:total')
+    assert_equal(found('for i in ran'), '9:range')
+    assert_equal(found('wh'), '0:while')
+    assert_equal(found('ar'), '0:area')
+    assert_equal(found('print(ar'), '6:area')
+    assert_equal(found('Val'), '0:ValueError')
+    assert_equal(found('x = len(a'), '8:abs,all,and,any,area,as,assert,async,await')
+    assert_equal(found('Tr'), '0:True')
+    assert_equal(found('sel'), '0:self')
+
+@test
+def completes_nothing_where_it_would_be_a_guess():
+    assert_equal(found(''), '0:')
+    assert_equal(found('print('), '6:')              # no word yet
+    assert_equal(found('xs.ap'), '3:')               # after a dot: a field or a method
+    assert_equal(found("print('ar"), '7:')           # inside a text
+    assert_equal(found('x = 1  # ar'), '9:')         # inside a comment
+    assert_equal(found('x = 12'), '4:')              # a number
+    assert_equal(found('qqq'), '0:')                 # no such name
+
+@test
+def completes_modules_after_import_and_commands_at_the_start():
+    assert_equal(found('import '), '7:')             # nothing typed: no list of everything
+    assert_equal(found('import l'), '7:lineedit')
+    assert_equal(found('from j'), '5:json')
+    assert_equal(found('    import m'), '11:math')
+    assert_equal(found('from math import a'), '17:abs,all,and,any,area,as,assert,async,await')   # the names of a module are not known: the session's
+    assert_equal(found(':l'), '0::load')
+    assert_equal(found(':'), '0::help,:quit,:load,:save,:reset,:program,:compile')
+    assert_equal(found(':load fi'), '8:')             # a file name is not completed
+
+@test
+def the_keywords_are_the_lexers():
+    # every word of the list is one of the lexer's (the other way round is checked by tests/highlighter_lists.sh)
+    cands = completer().complete('', '').candidates
+    assert_equal(len(cands), 0)
+    for w in ['def', 'class', 'interface', 'implements', 'private', 'const', 'override', 'return', 'if', 'elif', 'else', 'while', 'for', 'in', 'pass', 'break',
+              'continue', 'try', 'catch', 'finally', 'raise', 'assert', 'yield', 'import', 'from', 'export', 'async', 'await', 'as', 'is', 'and', 'or', 'xor',
+              'not', 'True', 'False']:
+        assert_equal(lex_spans(w)[0][0].kind, 'keyword')
+        assert_true(w in completer().known())
+
+@test
+def the_standard_modules_are_the_files_of_a_folder():
+    names = module_names('std')
+    assert_equal(module_names(''), [])
+    assert_equal(module_names('/no/such/folder'), [])
+    if len(names) > 0:
+        assert_true('lineedit' in names)
+        assert_false('errors' in names)               # errors.txt is not a module

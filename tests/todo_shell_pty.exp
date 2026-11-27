@@ -1,0 +1,96 @@
+# Drives the worked example examples/todo_shell.tom, run with `tomato run`, on a pseudo-terminal: single-line editing, the prompt, Tab
+# completing a command and putting a space after it, the list of the commands under an empty prompt, the numbers of the items that
+# `done` and `undo` can take, the history (Up), Ctrl-C, a bracketed paste on one line, and Ctrl-D leaving with the terminal's settings
+# the same as before. The same example with piped input is checked by tests/examples.txt and tests/todo_shell_logic.tom runs the shell on a fake terminal.
+# Usage: expect tests/todo_shell_pty.exp     (needs `tomato` on PATH and the current folder the repository; the last line printed is `ok` or `FAIL: ...`)
+# TOMATO_TODO_TRANSCRIPT=FILE also writes the session, as the terminal got it, to FILE. No fixed sleeps: a key is sent after the prompt it answers.
+set timeout 180
+encoding system utf-8
+match_max 100000
+log_user 0
+set work [exec mktemp -d]
+proc fail {msg} { global work; puts "FAIL: $msg"; catch {exec rm -rf $work}; exit 1 }
+if {[info exists env(TOMATO_TODO_TRANSCRIPT)]} { log_file -a -noappend $env(TOMATO_TODO_TRANSCRIPT) }
+catch {unset env(COLORTERM)}
+catch {unset env(TOMATO_COLOR)}
+catch {unset env(LINES)}
+catch {unset env(COLUMNS)}
+set env(TERM) xterm
+set env(NO_COLOR) 1
+proc want {re what} {
+  expect {
+    -re $re {}
+    timeout { fail "timed out waiting for $what" }
+    eof { fail "the session ended while waiting for $what" }
+  }
+}
+proc normal {text} {   # stty -g without macOS's PENDIN bit (see tests/terminal_pty.exp)
+  if {[regexp {^(.*lflag=)([0-9a-f]+)(.*)$} $text -> head flags tail]} {
+    scan $flags %x bits
+    set text "$head[format %x [expr {$bits & ~0x20000000}]]$tail"
+  }
+  return $text
+}
+# the editor is reading keys: bracketed paste on, then the first frame (an empty prompt)
+proc prompt {what} { want {\x1b\[\?2004h\r\x1b\[Jtodo> \x1b\[7G} "the prompt ($what)" }
+proc ran {re what} { want $re $what; prompt "after $what" }
+
+spawn sh
+set slave $spawn_out(slave,name)
+exec stty rows 30 cols 80 < $slave
+send "stty -g > $work/before; tomato run examples/todo_shell.tom; echo EXIT=\$?; stty -g > $work/after\r"
+want {todo shell: add, done, undo, rm, list, clear, help, quit\r\n} "the banner"
+want {\(Tab completes, Up and Down bring back earlier lines\)\r\n} "the hint"
+prompt "start"
+# Tab completes the command and puts a space after it; the text of the item follows
+send "ad\t"
+want {todo> add \x1b\[11G} "add completed, with a space"
+send "milk\r"
+ran {added 1: milk\r\n} "the first item"
+send "ad\teggs\r"
+ran {added 2: eggs\r\n} "the second item"
+# an empty prompt: all the commands, listed in columns under it; the next key takes the list away
+send "\t"
+want {todo> \r\nadd    clear  done   help   list   quit   rm     undo\x1b\[1A\x1b\[7G} "the commands listed"
+send "d\t"
+want {todo> done \x1b\[12G} "done completed (the list gone)"
+# after done, the numbers of the items that are not done
+send "\t"
+want {todo> done \r\n1  2\x1b\[1A\x1b\[12G} "the numbers listed"
+send "2\r"
+ran {2 is done: eggs\r\n} "done 2"
+# now only item 2 is done: undo completes to it, and done to item 1
+send "undo \t"
+want {todo> undo 2\x1b\[13G} "undo completed to the only item that is done"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt"
+send "done \t"
+want {todo> done 1\x1b\[13G} "done completed to the only item not done"
+send "\r"
+ran {1 is done: milk\r\n} "done 1"
+# Up brings back the last line, and edits it; one more Up goes further back
+send "\033\[A"
+want {todo> done 1\x1b\[13G} "the last line recalled"
+send "\033\[A\033\[A\033\[A"
+want {todo> add milk\x1b\[15G} "the history walked back"
+send "\033\[B\033\[B\033\[B\033\[B"
+want {todo> \x1b\[7G} "the draft back after the newest"
+send "list\r"
+ran {  1 \[x\] milk\r\n  2 \[x\] eggs\r\n} "list"
+# a paste with line breaks stays on one line; Enter runs it
+send "\033\[200~add one\nadd two\033\[201~"
+want {todo> add one add two\x1b\[22G} "the paste on one line"
+send "\r"
+ran {added 3: one add two\r\n} "the pasted item"
+send "foo\r"
+ran {unknown command 'foo' \(try help\)\r\n} "an unknown command"
+# Ctrl-D leaves
+send "\004"
+want {EXIT=0\r\n} "the shell to leave"
+send "echo DO\"\"NE\r"
+want {DONE\r\n} "the shell after the program"
+if {[normal [exec cat $work/before]] ne [normal [exec cat $work/after]]} {
+  fail "the terminal settings changed: before '[normal [exec cat $work/before]]', after '[normal [exec cat $work/after]]'"
+}
+catch {exec rm -rf $work}
+puts ok

@@ -1075,6 +1075,36 @@ t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, lay
     case "$r" in *" passed, 0 failed, 0 skipped") ok "lineedit: the @test functions pass ($mode mode): $r";; *) bad "lineedit: the @test functions pass ($mode mode)" "$($t test tests/lineedit_logic.tom --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
   done
 }
+t_todo_shell_logic() { # the worked example examples/todo_shell.tom: its commands, its Completer and whole shell sessions on a FakeTerminal, debug and release (the files are copied together: the test imports the example from beside it)
+  cli_setup
+  cp examples/todo_shell.tom tests/todo_shell_logic.tom "$work/"
+  for mode in debug release; do
+    r="$($t test "$work/todo_shell_logic.tom" --mode $mode 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "todo_shell example: the @test functions pass ($mode mode): $r";; *) bad "todo_shell example: the @test functions pass ($mode mode)" "$($t test "$work/todo_shell_logic.tom" --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+  done
+  check "todo_shell example: piped input runs the commands" "todo shell: add, done, undo, rm, list, clear, help, quit
+added 1: milk
+  1 [ ] milk
+1 is done: milk
+bye" "$(printf 'add milk\nlist\ndone 1\nquit\nadd never\n' | $t run examples/todo_shell.tom 2>&1)"
+}
+t_todo_shell_pty() { # the worked example run with `tomato run` on a pty: Tab, the list of candidates, history, paste, Ctrl-D, and the terminal's settings the same afterwards
+  cli_setup
+  if ! command -v expect >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "todo_shell pty test" "expect is required in CI" || echo "skip: expect is not installed, so the todo_shell pty test did not run"
+    return
+  fi
+  check "todo_shell example: completion, history and paste on a pty" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/todo_shell_pty.exp 2>&1 | tail -1)"
+}
+t_std_sheets() { # every name that std/terminal.tom and std/lineedit.tom export is in its API sheet (docs/terminal-api.md, docs/lineedit-api.md)
+  for m in terminal lineedit; do
+    missing=""
+    for n in $(grep -E '^export (def|class|interface|const) ' "std/$m.tom" | sed -E 's/^export (def|class|interface|const) ([A-Za-z_0-9]+).*/\2/'); do
+      grep -qw -- "$n" "docs/$m-api.md" || missing="$missing $n"
+    done
+    [ -z "$missing" ] && ok "docs/$m-api.md names everything std/$m.tom exports" || bad "docs/$m-api.md names everything std/$m.tom exports" "missing from the sheet:$missing"
+  done
+}
 t_lexer_spans() { # lex_spans in compiler/src/lexer.tom: never raises, covers the text, agrees with lex over every .tom file and every prefix of some lines (the files are copied together, the repository is the current folder)
   cli_setup
   cp compiler/src/lexer.tom tests/lexer_spans.tom "$work/"
@@ -1417,6 +1447,9 @@ spawn_cli t_terminal_pty
 spawn_cli t_lineedit_logic
 spawn_cli t_repledit_logic
 spawn_cli t_lexer_spans
+spawn_cli t_todo_shell_logic
+spawn_cli t_todo_shell_pty
+spawn t_std_sheets
 
 # ---- rejected programs --------------------------------------------------------------------------------------------------
 t_neg() { # file, message that the compiler must report, and the entry name (default main; `test` for the @test checks)

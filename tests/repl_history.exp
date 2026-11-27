@@ -1,6 +1,6 @@
 # Drives the real `tomato repl` with its line editor (tomato-repl-edit, TOMATO_REPL_EDIT) on a pseudo-terminal, through a shell (no Python):
 # a block typed with auto-indent, recalled whole by the up arrow and edited in place (a middle line changed, a line added, a line
-# deleted), Ctrl-C, a bracketed paste, a UTF-8 line, a resize, Ctrl-D; the history file in its plain ⏎ format holding only what was
+# deleted), Ctrl-C, a bracketed paste, a UTF-8 line, a resize, Ctrl-D; Tab completion (the session's names, keywords, modules, commands); the history file in its plain ⏎ format holding only what was
 # typed; the terminal's settings (`stty -g`) the same after the session as before; and the fallbacks: a helper that fails (exit 1) or
 # is killed (SIGTERM) gives a one-line note and plain input, and TERM=dumb gives plain input with no note.
 # Usage: TOMATO_REPL_EDIT=HELPER expect tests/repl_history.exp   (needs `tomato` on PATH; the last line printed is `ok` or `FAIL: ...`)
@@ -147,6 +147,45 @@ if {[string match "*oops*" $hist]} { append bad "the text dropped by Ctrl-C is i
 if {[string match "*Error*" $hist] || [string match "*cannot use*" $hist]} { append bad "error text in the history; " }
 if {[llength [split [string trim $hist] "\n"]] != 9} { append bad "the history does not have 9 entries: $hist; " }
 if {$bad ne ""} { fail $bad }
+
+# ---- completion ------------------------------------------------------------------------------------------------------------
+# Tab completes the name before the cursor: what the session uses (total, below), a keyword or built-in (one candidate is put in; several
+# give their common start and then a list under the text, which the next key takes away), a standard module after import, and a :command;
+# in an indent it still inserts four spaces. Nothing is completed after a dot, and Tab after other text does nothing.
+start_repl 12 "TOMATO_HISTORY=$work/hist12"
+prompt "completion"
+send "total = 5\r"
+prompt "total = 5"
+send "print(tot\t"
+want {>>> print\(total\x1b\[16G} "the session's name completed"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (completion)"
+send "pri\t"
+want {>>> pri\r\nprint    private\x1b\[1A\x1b\[8G} "the list of the candidates under the text"
+send "n"
+want {\x1b\[J>>> prin\x1b\[9G} "the list gone with the next key"
+send "\t"
+want {>>> print\x1b\[10G} "print completed"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (print)"
+send "import ma\t"
+want {>>> import math\x1b\[16G} "a standard module completed after import"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (import)"
+send ":he\t"
+want {>>> :help\x1b\[10G} "a :command completed"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (:command)"
+send "xs.ap\tx"
+want {>>> xs\.apx\x1b\[11G} "nothing completed or inserted by Tab after a dot"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (dot)"
+send "for i in range(2):\r\t"
+want {\.\.\.         \x1b\[13G} "Tab in an indent inserts four more spaces"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (indent)"
+send "\004"
+ended 12 "completion"
 
 # ---- the colors ------------------------------------------------------------------------------------------------------------
 # The code is colored as it is typed, lowered to the terminal's colors: 24 bits (COLORTERM), 256 (TERM), 16. --color=always wins over

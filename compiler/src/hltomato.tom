@@ -21,6 +21,10 @@ from lexer import lex_spans, Span
 const BUILTINS = ' print len str int float rational range open input sleep clock min max sum abs chr ord round divmod any all hash sorted reversed enumerate zip map filter list dict set tuple bool '
 const TYPES = ' uint File Error RuntimeError IOError FileNotFoundError FileExistsError PermissionError IsADirectoryError NotADirectoryError IndexError KeyError ValueError ZeroDivisionError OverflowError EOFError CancelledError Sized bitarray frozenbitarray '
 
+# the names of the built-in functions and types, for the completion of names
+export def builtin_words() -> list[str]:
+    return BUILTINS.strip().split(' ') + TYPES.strip().split(' ')
+
 export def is_builtin(name: str) -> bool:
     key = ' ' + name + ' '
     return key in BUILTINS or key in TYPES

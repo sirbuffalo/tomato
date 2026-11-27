@@ -2,7 +2,7 @@
 # terminal with the std library `lineedit`, with the repl's rules for when Enter runs the piece and how a new line is indented, and its
 # history file, and prints the piece on standard output.
 #
-#   tomato-repl-edit [--history FILE] [--color=auto|always|never]
+#   tomato-repl-edit [--history FILE] [--session FILE] [--color=auto|always|never]
 #     exit 0:  the piece is on standard output (empty when Enter was pressed on an empty prompt)
 #     exit 10: end of input (Ctrl-D on an empty prompt)
 #     exit 11: Ctrl-C (the driver shows a new prompt)
@@ -11,6 +11,10 @@
 # The history file is $TOMATO_HISTORY, else ~/.tomato/repl_history_v2 (or --history): plain text, one entry per line, the lines of a
 # block joined by ⏎ (U+23CE), the newest 1000 kept; the format of the repl before this editor, so either one reads the other's file.
 # `:commands`, leave(), exit(), quit(), empty pieces and a piece equal to the newest entry are not recorded.
+#
+# Tab completes the name before the cursor (ReplCompleter): the keywords, the built-in names, the names the session so far uses (the file
+# of --session: the repl's program, which the driver writes before each prompt), and after `import` or `from` the standard modules (the
+# files of $TOMATO_STD); at the start of a line, a `:command`. Nothing is completed after a dot, inside a text or a comment.
 #
 # The text is colored while it is typed (hltomato.tom, on the tolerant mode of the compiler's own lexer) when the terminal has colors:
 # --color=always or never decides, else TOMATO_COLOR, NO_COLOR, TERM=dumb and the terminal's own depth (COLORTERM, TERM) do.
@@ -22,9 +26,9 @@ import ospath
 import sys
 import terminal
 import lineedit
-from lineedit import Editor, Validator, Indenter
+from lineedit import Editor, Validator, Indenter, Completer, Completion
 from lexer import lex_spans, Span
-from hltomato import TomatoHighlighter
+from hltomato import TomatoHighlighter, builtin_words
 
 const JOINER = '⏎'
 const LIMIT = 1000
@@ -102,6 +106,121 @@ export class ReplIndenter implements Indenter:
             indent += '    '
         return indent
 
+# the words the lexer calls keywords (is_keyword in lexer.tom; tests/highlighter_lists.sh checks the two lists agree), and the ones the
+# parser knows as such, self and None
+const KEYWORDS = ' def class interface implements private const override return if elif else while for in pass break continue try catch finally raise assert yield import from export async await as is and or xor not True False start yields self None '
+const COMMANDS = ' :help :quit :load :save :reset :program :compile '
+
+def words_of(table: str) -> list[str]:
+    return table.strip().split(' ')
+
+# whether the end of text is inside a quoted text or a comment (a quote inside a comment, or a '#' inside quotes, does not count)
+export def inside_text(text: str) -> bool:
+    quote = ''
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if quote != '':
+            if c == '\\':
+                i += 1
+            elif c == quote:
+                quote = ''
+        elif c == '"' or c == "'":
+            quote = c
+        elif c == '#':
+            return True
+        i += 1
+    return quote != ''
+
+# the names a piece of Tomato uses (the session's program): every name that is not a keyword and does not follow a dot (so not a field or
+# a method), once, in order
+export def names_in(text: str) -> list[str]:
+    lines = text.split('\n')
+    spans = lex_spans(text)[0]
+    seen: dict[str, bool] = {}
+    out: list[str] = []
+    after_dot = False
+    for sp in spans:
+        if sp.kind == 'space' or sp.kind == 'comment' or sp.end_col == sp.col:
+            continue
+        word = lines[sp.line - 1][sp.col:sp.end_col]
+        if sp.kind == 'name' and not after_dot and not word.startswith('tomato_repl') and word not in seen:
+            seen[word] = True
+            out.append(word)
+        after_dot = sp.kind == 'op' and word == '.'
+    return out
+
+# What Tab completes in the repl. `session` is the text of the session's program (names defined or used so far), `modules` the names of
+# the standard modules.
+export class ReplCompleter implements Completer:
+    session: str = ''
+    modules: list[str] = []
+    private names: list[str] = []
+    private loaded: bool = False
+
+    @init
+    def make(self, session: str, modules: list[str]):
+        self.session = session
+        self.modules = modules
+
+    # the keywords, the built-in names and the session's names, sorted, once each
+    def known(self) -> list[str]:
+        if not self.loaded:
+            self.loaded = True
+            seen: dict[str, bool] = {}
+            pool = words_of(KEYWORDS)
+            pool.extend(builtin_words())
+            pool.extend(names_in(self.session))
+            out: list[str] = []
+            for w in pool:
+                if w not in seen:
+                    seen[w] = True
+                    out.append(w)
+            out.sort()
+            self.names = out
+        return self.names
+
+    def complete(self, line: str, before: str) -> Completion:
+        if line.startswith(':'):
+            if ' ' in line:
+                return Completion(len(line), [])           # the arguments of a command (a file name) are not completed
+            return Completion(0, matching(words_of(COMMANDS), line))
+        start = len(line)
+        while start > 0 and (line[start - 1].isalnum() or line[start - 1] == '_'):
+            start -= 1
+        typed = line[start:]
+        if typed == '' or typed[0].isdigit() or inside_text(line[:start]):
+            return Completion(start, [])
+        if start > 0 and line[start - 1] == '.':
+            return Completion(start, [])
+        head = line[:start].lstrip(' ')
+        if head == 'import ' or head == 'from ':
+            return Completion(start, matching(self.modules, typed))
+        return Completion(start, matching(self.known(), typed))
+
+# the words that start with `typed`, in order
+export def matching(words: list[str], typed: str) -> list[str]:
+    out: list[str] = []
+    for w in words:
+        if w.startswith(typed):
+            out.append(w)
+    return out
+
+# the names of the standard modules: the .tom files of a folder, sorted ('' or a folder that cannot be read: none)
+export def module_names(folder: str) -> list[str]:
+    out: list[str] = []
+    if folder == '' or not ospath.isdir(folder):
+        return out
+    try:
+        for f in os.listdir(folder):
+            if f.endswith('.tom'):
+                out.append(f[:len(f) - 4])
+    catch IOError as _e:
+        return []
+    out.sort()
+    return out
+
 # whether a submitted piece goes into the history: not empty, not a `:command`, not one of the words that leave, and not the same as the
 # newest entry (a recalled piece run again unchanged; the repl before this editor did not record an unchanged recalled block either)
 export def worth_recording(text: str, newest: str) -> bool:
@@ -118,19 +237,32 @@ export def history_path(given: str) -> str:
         return env
     return ospath.expanduser('~/.tomato/repl_history_v2')
 
+# the session's program, or '' when there is none or it cannot be read (completion then knows no session names)
+def read_session(path: str) -> str:
+    if path == '' or not ospath.exists(path):
+        return ''
+    try:
+        return os.read_text(path)
+    catch IOError as _e:
+        return ''
+
 def usage():
-    sys.write_stderr('usage: tomato-repl-edit [--history FILE] [--color=auto|always|never]\n')
+    sys.write_stderr('usage: tomato-repl-edit [--history FILE] [--session FILE] [--color=auto|always|never]\n')
     sys.exit(2)
 
 @main
 def main(*args: tuple[str]):
     path = ''
+    session = ''
     color = 'auto'
     i = 0
     while i < len(args):
         a = args[i]
         if a == '--history' and i + 1 < len(args):
             path = args[i + 1]
+            i += 1
+        elif a == '--session' and i + 1 < len(args):
+            session = args[i + 1]
             i += 1
         elif a.startswith('--color='):
             color = a[8:]
@@ -149,6 +281,10 @@ def main(*args: tuple[str]):
     ed.history = lineedit.History(entries, LIMIT)
     ed.validator = ReplValidator()
     ed.indenter = ReplIndenter()
+    std = os.getenv('TOMATO_STD')
+    if std is None:
+        std = ''
+    ed.completer = ReplCompleter(read_session(session), module_names(std))
     term = terminal.open()
     colors = terminal.color_depth(color, term.fd)
     term.colors = colors

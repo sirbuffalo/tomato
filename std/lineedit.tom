@@ -1,6 +1,7 @@
 # The line editor: `import lineedit`. An editor for one line or a block of lines on a terminal, with history, the usual keys, a
 # screen region that is redrawn after every key, and hooks that a program fills in: whether Enter submits (Validator), the indent of a
-# new line (Indenter) and the colors of the text (Highlighter).
+# new line (Indenter), the colors of the text (Highlighter) and what Tab completes (Completer). `single_line` makes it a one-line
+# prompt, and read_line() is the shortest way to ask for a line with a history.
 #
 #     import terminal
 #     import lineedit
@@ -23,10 +24,12 @@
 # Ctrl-P, Ctrl-N move (Left and Right cross line ends; Up on the first line and Down on the last go through the history); Ctrl-Left,
 # Ctrl-Right, Alt-B and Alt-F move by word; Backspace and Delete (Ctrl-D on text that is not empty) delete, and join lines at a line's
 # start or end; Backspace in an indent goes back to the previous tab stop; Ctrl-K, Ctrl-U and Ctrl-W cut to the end of the line, to its
-# start and the word before the cursor, Ctrl-Y puts the last cut back; Tab inserts `tab`, Shift-Tab removes one indent; Enter adds a
-# line inside the text, and on the last line submits when the Validator says the text is complete (else adds a line, with the Indenter's
-# indent); Ctrl-L clears the screen; Ctrl-C gives 'interrupt', Ctrl-D on empty text 'eof'. A paste is inserted as it is (no indent added,
-# no submit). Other keys are ignored.
+# start and the word before the cursor, Ctrl-Y puts the last cut back (with `kill_ring` above 1, Alt-Y then swaps in the cut before it);
+# Tab asks the Completer (one candidate is put in, several give their common start and then a list under the text; with none, Tab
+# inserts `tab` in an indent), Shift-Tab removes one indent; Enter adds a line inside the text, and on the last line submits when the
+# Validator says the text is complete (else adds a line, with the Indenter's indent), or always in `single_line` mode; Ctrl-L clears
+# the screen; Ctrl-C gives 'interrupt', Ctrl-D on empty text 'eof'. A paste is inserted as it is (no indent added, no submit; in
+# `single_line` mode its line breaks become spaces). Other keys are ignored.
 #
 # Limits: one terminal region, redrawn whole after each key (a block is small); a block taller than the window shows the rows around the
 # cursor while editing; the width of a character is the terminal module's (a flag or a family emoji can be a cell off); after a resize
@@ -73,7 +76,27 @@ export interface Validator:
 export interface Indenter:
     def indent_after(self, line: str, before: str) -> str
 
-# The default hooks: no colors; Enter always submits (an editor of one line, unless a paste brings more); a new line keeps the indent.
+# What Tab can put in: the characters of the current line from `start` up to the cursor are replaced by one of the `candidates` (whole
+# words, not only the missing end). `after` is put after the word when it is the only candidate, such as the space after a command
+# (it is not part of what the list shows).
+export class Completion:
+    start: int = 0
+    candidates: list[str] = []
+    after: str = ''
+
+    @init
+    def make(self, start: int, candidates: list[str], after: str = ''):
+        self.start = start
+        self.candidates = candidates
+        self.after = after
+
+# What Tab completes: `line` is the current line up to the cursor, `before` all of the text up to the cursor (the lines above included),
+# and the answer says where the word being typed starts in `line` and what it can become. No candidates: Tab does nothing (or indents).
+export interface Completer:
+    def complete(self, line: str, before: str) -> Completion
+
+# The default hooks: no colors; Enter always submits (an editor of one line, unless a paste brings more); a new line keeps the indent;
+# nothing to complete.
 export class Plain implements Highlighter:
     def highlight(self, lines: list[str]) -> list[list[Run]]:
         out: list[list[Run]] = []
@@ -88,6 +111,10 @@ export class AlwaysComplete implements Validator:
 export class KeepIndent implements Indenter:
     def indent_after(self, line: str, before: str) -> str:
         return leading_spaces(line)
+
+export class NoCompletion implements Completer:
+    def complete(self, line: str, before: str) -> Completion:
+        return Completion(len(line), [])
 
 # the spaces at the start of a line
 export def leading_spaces(line: str) -> str:
@@ -304,6 +331,117 @@ export class Buffer:
         self.col = i
         return cut
 
+# ---- the kill ring ---------------------------------------------------------------------------------------------------------
+
+# What Ctrl-K, Ctrl-U and Ctrl-W cut, newest last. `size` is how many cuts it keeps (1: only the last one, as a plain editor does).
+# `add` with join True puts the text into the newest cut (before it when the cut was backwards) instead of making a new one, which is
+# how several cuts in a row come back with one Ctrl-Y. `top` is the cut Ctrl-Y puts back; `rotate` steps to the one before it (Alt-Y),
+# round to the newest again after the oldest.
+export class KillRing:
+    entries: list[str] = []
+    size: int = 1
+    private pos: int = 0
+
+    def add(self, text: str, backward: bool, join: bool):
+        if text == '':
+            return
+        if join and len(self.entries) > 0:
+            last = len(self.entries) - 1
+            if backward:
+                self.entries[last] = text + self.entries[last]
+            else:
+                self.entries[last] = self.entries[last] + text
+        else:
+            self.entries.append(text)
+            if self.size >= 1 and len(self.entries) > self.size:
+                self.entries = self.entries[len(self.entries) - self.size:]
+        self.pos = len(self.entries) - 1
+
+    def top(self) -> str:
+        if len(self.entries) == 0:
+            return ''
+        return self.entries[self.pos]
+
+    def rotate(self) -> str:
+        if len(self.entries) == 0:
+            return ''
+        self.pos -= 1
+        if self.pos < 0:
+            self.pos = len(self.entries) - 1
+        return self.entries[self.pos]
+
+# ---- completion ------------------------------------------------------------------------------------------------------------
+
+# the longest start that all the words share ('' for no words)
+export def common_prefix(words: list[str]) -> str:
+    if len(words) == 0:
+        return ''
+    first = words[0]
+    n = len(first)
+    for w in words[1:]:
+        k = 0
+        while k < n and k < len(w) and first[k] == w[k]:
+            k += 1
+        n = k
+    return first[:n]
+
+# the longest start of text that is at most `cells` wide
+def _fit(text: str, cells: int) -> str:
+    out = ''
+    used = 0
+    for c in text:
+        cw = terminal.char_width(ord(c))
+        if used + cw > cells:
+            break
+        out += c
+        used += cw
+    return out
+
+# The rows of the list of candidates shown under the text: the candidates in columns, down the first column and then the next (as `ls`
+# does), each row at most width - 1 cells wide, and at most max_rows rows; when they do not all fit, the last row says how many are left
+# out. max_rows is at least 1.
+export def candidate_rows(candidates: list[str], width: int, max_rows: int) -> list[str]:
+    room = width - 1
+    if room < 1:
+        room = 1
+    n = len(candidates)
+    widest = 0
+    for c in candidates:
+        w = terminal.text_width(c)
+        if w > widest:
+            widest = w
+    colw = widest + 2
+    if colw > room:
+        colw = room
+    per_row = room // colw
+    if per_row < 1:
+        per_row = 1
+    shown = candidates
+    more = 0
+    if (n + per_row - 1) // per_row > max_rows:
+        keep = (max_rows - 1) * per_row
+        shown = candidates[:keep]
+        more = n - keep
+    count = len(shown)
+    nrows = (count + per_row - 1) // per_row
+    rows: list[str] = []
+    for r in range(nrows):
+        row = ''
+        prev = ''
+        for k in range(per_row):
+            i = k * nrows + r
+            if i >= count:
+                break
+            word = _fit(shown[i], room)
+            if row != '':
+                row += ' ' * (colw - terminal.text_width(prev))
+            row += word
+            prev = word
+        rows.append(row)
+    if more > 0:
+        rows.append(f'... {more} more')
+    return rows
+
 # ---- history ---------------------------------------------------------------------------------------------------------------
 
 # The entries (oldest first) and where Up and Down are in them. Up from the text being typed (the draft) remembers it, Down past the
@@ -513,9 +651,11 @@ export class Screen:
     prompt_style: Style = Style()
     continuation_style: Style = Style()
     colors: int = 0
+    menu: list[str] = []      # candidates to list under the text in the next frame (not in the last one)
+    menu_rows: int = 8        # at most this many rows of them, and never more than fit under the text in the window
 
     # the text that redraws the region with lines (and their runs), the cursor at (row, col); with all_rows False a layout taller than the
-    # window shows only the rows around the cursor
+    # window shows only the rows around the cursor, and the candidates of `menu` are listed under the text
     def frame(self, lines: list[str], runs: list[list[Run]], prompt: str, continuation: str, row: int, col: int, all_rows: bool) -> str:
         lay = layout(lines, prompt, continuation, self.width, row, col)
         first = 0
@@ -542,7 +682,17 @@ export class Screen:
         cur = lay.cursor_row - first
         if cur < 0:
             cur = 0
-        parts.append(terminal.cursor_up(last - 1 - first - cur))
+        below = 0
+        if len(self.menu) > 0 and not all_rows:
+            room = self.height - (last - first)
+            if room > self.menu_rows:
+                room = self.menu_rows
+            if room > 0:
+                for m in candidate_rows(self.menu, self.width, room):
+                    parts.append('\r\n')
+                    parts.append(m)
+                    below += 1
+        parts.append(terminal.cursor_up(last - 1 - first - cur + below))
         parts.append(terminal.cursor_column(lay.cursor_col))
         self.cursor_row = cur
         return ''.join(parts)
@@ -586,6 +736,10 @@ export class Editor:
     highlighter: Highlighter = Plain()
     validator: Validator = AlwaysComplete()
     indenter: Indenter = KeepIndent()
+    completer: Completer = NoCompletion()
+    single_line: bool = False              # one line: Enter always submits, Up and Down go to the history, pasted line breaks become spaces
+    kill_ring: int = 1                     # how many cuts Ctrl-Y can bring back: 1 is the last one; more also joins cuts in a row and gives Alt-Y
+    menu_rows: int = 8                     # the most rows of candidates Tab lists under the text
     tab: str = '    '                      # what Tab inserts (and how much Shift-Tab and Backspace in an indent take away)
     colors: int = 0                        # 0: no colors; else as terminal.Terminal.colors (the highlighter's runs and the prompt styles)
     prompt_style: Style = Style()
@@ -593,7 +747,11 @@ export class Editor:
     interrupt_text: str = 'KeyboardInterrupt'    # written on its own line after Ctrl-C ('' for nothing)
     private buf: Buffer = Buffer()
     private screen: Screen = Screen()
-    private kill: str = ''
+    private ring: KillRing = KillRing()
+    private killed: bool = False           # the key before was a cut (the next cut joins it)
+    private yanked: int = -1               # the key before was Ctrl-Y or Alt-Y, which put back this many characters (else -1)
+    private menu: list[str] = []           # the candidates listed under the text now
+    private menu_shown: bool = False       # the key being handled found a list on the screen
 
     # Reads one text: draws the prompt, edits until Enter submits (or Ctrl-C, Ctrl-D), and gives the terminal back as it found it. The
     # text stays on the screen as it was typed, and the cursor ends at the start of the next line.
@@ -615,6 +773,10 @@ export class Editor:
         self.screen.colors = self.colors
         self.screen.prompt_style = self.prompt_style
         self.screen.continuation_style = self.continuation_style
+        self.screen.menu_rows = self.menu_rows
+        self.menu = []
+        self.killed = False
+        self.yanked = -1
         rows, cols = term.size()
         self.screen.height = rows
         self.screen.width = cols
@@ -623,6 +785,8 @@ export class Editor:
         while True:
             key = term.read_key()
             status = self._key(term, key)
+            if status == 'same' and self.menu_shown:
+                status = 'draw'                       # the list of candidates goes away with any key
             if status == 'submit':
                 text = strip_trailing_lines(self.buf.text())
                 self._finish(term, '')
@@ -653,9 +817,12 @@ export class Editor:
         runs: list[list[Run]] = []
         if self.colors > 0:
             runs = self.highlighter.highlight(self.buf.lines)
+        self.screen.menu = self.menu
         term.write(self.screen.frame(self.buf.lines, runs, self.prompt, self.continuation, self.buf.row, self.buf.col, all_rows))
 
     def _recall(self, text: str, at_end: bool):
+        if self.single_line:
+            text = text.replace('\n', ' ')
         self.buf.set_text(text)
         if not at_end:
             self.buf.row = 0
@@ -669,9 +836,15 @@ export class Editor:
     # does what a key says; gives 'submit', 'interrupt', 'eof', 'clear', 'same' (nothing to redraw) or 'draw'
     def _key(self, term: TermIO, key: Key) -> str:
         b = self.buf
+        was_killed = self.killed
+        was_yanked = self.yanked
+        self.menu_shown = len(self.menu) > 0
+        self.menu = []
+        self.killed = False
+        self.yanked = -1
         if key.kind == 'char':
             if key.ctrl:
-                return self._ctrl(key.text)
+                return self._ctrl(key.text, was_killed)
             if key.alt:
                 if key.text == 'b':
                     b.word_left()
@@ -679,11 +852,16 @@ export class Editor:
                 if key.text == 'f':
                     b.word_right()
                     return 'draw'
+                if key.text == 'y':
+                    return self._yank_pop(was_yanked)
                 return 'same'
             b.insert(clean_text(key.text, self.tab, False))
             return 'draw'
         if key.kind == 'paste':
-            b.insert(clean_text(key.text, self.tab, True))
+            if self.single_line:
+                b.insert(clean_text(key.text.replace('\r\n', ' ').replace('\n', ' '), self.tab, False))
+            else:
+                b.insert(clean_text(key.text, self.tab, True))
             return 'draw'
         if key.kind == 'resize':
             rows, cols = term.size()
@@ -699,8 +877,7 @@ export class Editor:
                 return 'same'
             return self._enter()
         if name == 'tab':
-            b.insert(self.tab)
-            return 'draw'
+            return self._tab()
         if name == 'backtab':
             b.dedent(self._tab_width())
             return 'draw'
@@ -735,7 +912,7 @@ export class Editor:
             return self._down()
         return 'same'
 
-    def _ctrl(self, c: str) -> str:
+    def _ctrl(self, c: str, was_killed: bool) -> str:
         b = self.buf
         if c == 'c':
             return 'interrupt'
@@ -757,13 +934,15 @@ export class Editor:
         elif c == 'n':
             return self._down()
         elif c == 'k':
-            self.kill = b.kill_to_end()
+            self._cut(b.kill_to_end(), False, was_killed)
         elif c == 'u':
-            self.kill = b.kill_to_start()
+            self._cut(b.kill_to_start(), True, was_killed)
         elif c == 'w':
-            self.kill = b.kill_word_back()
+            self._cut(b.kill_word_back(), True, was_killed)
         elif c == 'y':
-            b.insert(self.kill)
+            text = self.ring.top()
+            b.insert(text)
+            self.yanked = len(text)
         elif c == 'l':
             return 'clear'
         elif c == 'j' or c == 'm':
@@ -772,9 +951,59 @@ export class Editor:
             return 'same'
         return 'draw'
 
+    # a cut goes to the kill ring (into the newest cut when the key before was a cut too and the ring keeps more than one)
+    def _cut(self, text: str, backward: bool, was_killed: bool):
+        self.ring.size = self.kill_ring
+        self.ring.add(text, backward, was_killed and self.kill_ring > 1)
+        self.killed = True
+
+    # Alt-Y right after Ctrl-Y or Alt-Y: the text just put back gives way to the cut before it
+    def _yank_pop(self, was_yanked: int) -> str:
+        b = self.buf
+        if was_yanked < 0 or len(self.ring.entries) < 2 or b.col < was_yanked:
+            return 'same'
+        cur = b.line()
+        b.lines[b.row] = cur[:b.col - was_yanked] + cur[b.col:]
+        b.col -= was_yanked
+        text = self.ring.rotate()
+        b.insert(text)
+        self.yanked = len(text)
+        return 'draw'
+
+    # Tab: the Completer's candidates for the word before the cursor. One is put in; several give their common start, and when that adds
+    # nothing, they are listed under the text. With no candidate, Tab puts in `tab` when only spaces are before the cursor (not in
+    # single_line mode), else does nothing.
+    def _tab(self) -> str:
+        b = self.buf
+        line = b.line()[:b.col]
+        before = '\n'.join(b.lines[:b.row] + [line])
+        comp = self.completer.complete(line, before)
+        words = comp.candidates
+        start = comp.start
+        if start < 0 or start > b.col:
+            start = b.col
+        if len(words) == 0:
+            if self.single_line or line.strip(' ') != '':
+                return 'same'
+            b.insert(self.tab)
+            return 'draw'
+        typed = line[start:]
+        put = ''
+        if len(words) == 1:
+            put = words[0] + comp.after
+        else:
+            put = common_prefix(words)
+            if len(put) <= len(typed) or not put.startswith(typed):
+                self.menu = words
+                return 'draw'
+        cur = b.line()
+        b.lines[b.row] = cur[:start] + put + cur[b.col:]
+        b.col = start + len(put)
+        return 'draw'
+
     def _enter(self) -> str:
         b = self.buf
-        if b.on_last_line() and self.validator.complete(b.text()):
+        if self.single_line or (b.on_last_line() and self.validator.complete(b.text())):
             return 'submit'
         line = b.line()[:b.col]
         before = '\n'.join(b.lines[:b.row] + [line])
@@ -798,3 +1027,32 @@ export class Editor:
             return 'same'
         self._recall(entry, not self.history.recalled())
         return 'draw'
+
+# The shortest way to ask for a line on the terminal: a single-line Editor with `prompt`, and, when history_file is not '', the entries
+# of that file for Up and Down (read_history with no joiner; the file is made when it is missing) and the submitted line added to it
+# unless it is empty or the same as the newest entry. It needs a terminal (terminal.TerminalError when there is none): a program that
+# also runs with its input piped checks `terminal.is_tty(0)` and uses `await input(prompt)` otherwise.
+export def read_line(prompt: str, history_file: str = '') -> Result:
+    ed = Editor()
+    ed.prompt = prompt
+    ed.single_line = True
+    entries: list[str] = []
+    if history_file != '':
+        try:
+            entries = read_history(history_file, '')
+        catch IOError as _e:
+            pass                          # an unreadable history is an empty one
+        ed.history = History(entries, 1000)
+    term = terminal.open()
+    result = Result('eof')
+    try:
+        result = ed.read(term)
+    finally:
+        term.close()
+    if result.status == 'text' and history_file != '' and result.text.strip() != '':
+        newest = ''
+        if len(entries) > 0:
+            newest = entries[len(entries) - 1]
+        if result.text != newest:
+            append_history(history_file, result.text, '')
+    return result

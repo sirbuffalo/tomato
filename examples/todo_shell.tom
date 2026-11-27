@@ -1,0 +1,166 @@
+# A todo list shell, built on the line editor library (import lineedit): a prompt for one line with a history, and Tab completing the
+# command names and the numbers of the items they take. The pieces to look at:
+#   - lineedit.Editor with single_line = True: Enter always submits, and Up and Down walk through the history of this session;
+#   - a Completer of our own (TodoCompleter): a class with one method, given the line up to the cursor, that says where the word starts
+#     and what it can become; it reads the list of items, so what it offers changes as items are added and done;
+#   - shell(), which takes any TermIO (terminal.Terminal on a real terminal, or a fake with scripted keys in tests/todo_shell_logic.tom).
+# Run it with: tomato run examples/todo_shell.tom      (Tab on an empty line lists the commands; `help` says what they do)
+# With its input piped it reads plain lines instead, with no editing:  printf 'add milk\nlist\n' | tomato run examples/todo_shell.tom
+import terminal
+from lineedit import Editor, Completer, Completion, TermIO
+from terminal import Style
+
+# the commands (a list cannot be a constant)
+def commands() -> list[str]:
+    return ['add', 'clear', 'done', 'help', 'list', 'quit', 'rm', 'undo']
+
+const HELP = 'add TEXT   add an item\ndone N     mark item N done\nundo N     mark item N not done\nrm N       remove item N\nlist       show the items\nclear      remove the items that are done\nhelp       this text\nquit       leave (or Ctrl-D)'
+
+export class Item:
+    text: str = ''
+    done: bool = False
+
+    @init
+    def make(self, text: str):
+        self.text = text
+
+# the list of items, and the commands that change it
+export class Todos:
+    items: list[Item] = []
+    finished: bool = False
+
+    # runs one command line and gives what it prints ('' for nothing)
+    def run(self, line: str) -> str:
+        cmd, _sep, rest = line.strip().partition(' ')
+        arg = rest.strip()
+        if cmd == 'add':
+            if arg == '':
+                return 'add what? (add TEXT)'
+            self.items.append(Item(arg))
+            return f'added {len(self.items)}: {arg}'
+        if cmd == 'list':
+            return self.show()
+        if cmd == 'clear':
+            kept: list[Item] = []
+            for item in self.items:
+                if not item.done:
+                    kept.append(item)
+            gone = len(self.items) - len(kept)
+            self.items = kept
+            return f'removed {gone} done item(s)'
+        if cmd == 'help':
+            return HELP
+        if cmd == 'quit':
+            self.finished = True
+            return 'bye'
+        if cmd == 'done' or cmd == 'undo' or cmd == 'rm':
+            n = self.number(arg)
+            if n < 1 or n > len(self.items):
+                return f'{cmd} which item? (1 to {len(self.items)})' if len(self.items) > 0 else 'there are no items'
+            if cmd == 'rm':
+                taken = self.items[n - 1]
+                self.items = self.items[:n - 1] + self.items[n:]
+                return f'removed {n}: {taken.text}'
+            self.items[n - 1].done = cmd == 'done'
+            return f'{n} is {"done" if cmd == "done" else "not done"}: {self.items[n - 1].text}'
+        return f"unknown command '{cmd}' (try help)"
+
+    # the number an argument says, or 0
+    def number(self, arg: str) -> int:
+        if arg == '' or not arg.isdigit():
+            return 0
+        return int(arg)
+
+    def show(self) -> str:
+        if len(self.items) == 0:
+            return 'nothing to do'
+        rows: list[str] = []
+        for i, item in enumerate(self.items):
+            mark = ' '
+            if item.done:
+                mark = 'x'
+            rows.append(f'{i + 1:>3} [{mark}] {item.text}')
+        return '\n'.join(rows)
+
+# whether the command wants something after it
+def takes_argument(cmd: str) -> bool:
+    return cmd == 'add' or cmd == 'done' or cmd == 'undo' or cmd == 'rm'
+
+# What Tab completes: the command at the start of the line; after done, undo or rm, the numbers of the items that command can take
+# (done: the ones not done yet; undo: the ones done; rm: all); nothing after the other commands.
+export class TodoCompleter implements Completer:
+    todos: Todos = Todos()
+
+    @init
+    def make(self, todos: Todos):
+        self.todos = todos
+
+    def complete(self, line: str, before: str) -> Completion:
+        words = line.split(' ')
+        typed = words[len(words) - 1]
+        start = len(line) - len(typed)
+        found: list[str] = []
+        after = ''
+        if len(words) == 1:
+            for c in commands():
+                if c.startswith(typed):
+                    found.append(c)
+            if len(found) == 1 and takes_argument(found[0]):
+                after = ' '                          # a command that needs more: Tab leaves the cursor ready for it
+        elif len(words) == 2 and takes_argument(words[0]) and words[0] != 'add':
+            for i, item in enumerate(self.todos.items):
+                if words[0] == 'done' and item.done or words[0] == 'undo' and not item.done:
+                    continue
+                n = str(i + 1)
+                if n.startswith(typed):
+                    found.append(n)
+        return Completion(start, found, after)
+
+# the editor of the shell: one line, a prompt in green when there are colors, the history of the session, and the completer
+export def make_editor(todos: Todos, colors: int) -> Editor:
+    ed = Editor()
+    ed.single_line = True
+    ed.prompt = 'todo> '
+    ed.colors = colors
+    ed.prompt_style = Style(terminal.ansi(2))
+    ed.completer = TodoCompleter(todos)
+    return ed
+
+# Reads and runs commands from the terminal until `quit`, Ctrl-D or the end of the keys. Ctrl-C drops the line being typed.
+export def shell(term: TermIO, todos: Todos, colors: int):
+    ed = make_editor(todos, colors)
+    while not todos.finished:
+        result = ed.read(term)
+        if result.status == 'eof':
+            break
+        if result.status == 'interrupt':
+            continue
+        if result.text.strip() == '':
+            continue
+        ed.history.add(result.text)
+        term.write(todos.run(result.text) + '\n')
+
+# the same commands from plain lines (input piped, no terminal): no prompt, only the answers
+async def piped(todos: Todos):
+    while not todos.finished:
+        line = ''
+        try:
+            line = await input('')
+        catch EOFError as _e:
+            break
+        if line.strip() != '':
+            print(todos.run(line))
+
+@main
+async def main():
+    todos = Todos()
+    print('todo shell: add, done, undo, rm, list, clear, help, quit')
+    if terminal.is_tty(0):
+        print('(Tab completes, Up and Down bring back earlier lines)')
+        term = terminal.open()
+        try:
+            shell(term, todos, term.colors)
+        finally:
+            term.close()
+    else:
+        await piped(todos)

@@ -24,3 +24,5 @@
   Design review 3.1: today `x: int | None` is E459 and `d.get(k)` is E380 when the values are `int`; general unions already box their members, so the optional can use the same path, and `d.get(k)` then works for every value type.
 - Let error subclasses without fields inherit their parent's @init, and give Error an @str
   Design review 3.3: `class MyErr(ValueError): pass` then `raise MyErr("neg")` is E128, so every error class repeats a forwarding `@init` (`std/json.tom` lines 55-64), and `print(e)` is E375. Decide the text of `str(e)` (the message alone, as Python) before 1.0.
+- Fix `list.sort()` leaking on a list held in an object field
+  Debug mode reports "N object(s) were never freed" when `self.names.sort()` sorts a list that is a field of an object, after appends; sorting a local list and assigning it to the field does not leak. Repro: a class with `names: list[str] = []`, append in a loop, then `self.names.sort()`. Worked around in `ReplCompleter.known` (`compiler/src/repledit.tom`); needs a runtime/compiler fix.

@@ -6,7 +6,7 @@ import os
 import terminal
 import lineedit
 from terminal import Key, Style
-from lineedit import Buffer, History, Editor, Result, TermIO, Validator, Highlighter, Run
+from lineedit import Buffer, History, Editor, Result, TermIO, Validator, Highlighter, Completer, Completion, KillRing, Run
 from testing import assert_equal, assert_true, assert_false
 
 # ---- helpers ---------------------------------------------------------------------------------------------------------------
@@ -532,3 +532,296 @@ def session_wide_text():
     result, term = session(Editor(), chars('中文 é') + [named('left'), named('backspace'), enter()])
     assert_equal(result.text, '中文é')
     assert_true(spelled(term.output()).endswith('>>> 中文é\\e[10G\\r\\n\\e[?2004l'), spelled(term.output()))
+
+# ---- the kill ring ---------------------------------------------------------------------------------------------------------
+
+@test
+def kill_ring_keeps_the_newest_and_joins():
+    r = KillRing()
+    r.size = 3
+    r.add('one', False, False)
+    r.add('two', False, False)
+    assert_equal(r.top(), 'two')
+    r.add('three', False, True)                 # joined into the newest cut, after it
+    assert_equal(r.top(), 'twothree')
+    r.add('x ', True, True)                     # a backward cut goes before it
+    assert_equal(r.top(), 'x twothree')
+    r.add('', False, False)                     # nothing cut changes nothing
+    assert_equal(len(r.entries), 2)
+    r.add('four', False, False)
+    r.add('five', False, False)
+    assert_equal(len(r.entries), 3)             # the oldest is gone
+    assert_equal(r.entries[0], 'x twothree')
+    assert_equal(r.rotate(), 'four')
+    assert_equal(r.rotate(), 'x twothree')
+    assert_equal(r.rotate(), 'five')            # round again
+    r.size = 1
+    r.add('six', False, False)
+    assert_equal(len(r.entries), 1)
+    assert_equal(r.top(), 'six')
+
+# ---- completion: the pieces ------------------------------------------------------------------------------------------------
+
+@test
+def common_prefix_of_words():
+    assert_equal(lineedit.common_prefix([]), '')
+    assert_equal(lineedit.common_prefix(['print']), 'print')
+    assert_equal(lineedit.common_prefix(['print', 'printf', 'prompt']), 'pr')
+    assert_equal(lineedit.common_prefix(['abc', 'xyz']), '')
+    assert_equal(lineedit.common_prefix(['ab', 'abc', 'ab']), 'ab')
+    assert_equal(lineedit.common_prefix(['é1', 'é2']), 'é')
+
+@test
+def candidate_rows_in_columns():
+    # down the first column, then the next, as ls does; two spaces between the columns
+    rows = lineedit.candidate_rows(['apple', 'apricot', 'banana', 'cherry'], 30, 8)
+    assert_equal(rows, ['apple    banana', 'apricot  cherry'])
+    assert_equal(lineedit.candidate_rows(['a', 'b'], 80, 8), ['a  b'])
+    # a width that holds one column
+    assert_equal(lineedit.candidate_rows(['alpha', 'beta'], 8, 8), ['alpha', 'beta'])
+    # a row is at most width - 1 cells: a long candidate is cut
+    assert_equal(lineedit.candidate_rows(['abcdefghijkl'], 6, 8), ['abcde'])
+    # wide characters count two cells
+    assert_equal(lineedit.candidate_rows(['中文', 'ab'], 80, 8), ['中文  ab'])
+
+@test
+def candidate_rows_that_do_not_fit_say_how_many_are_left():
+    names: list[str] = []
+    for i in range(10):
+        names.append(f'a{i}')
+    assert_equal(lineedit.candidate_rows(names, 11, 3), ['a0  a2', 'a1  a3', '... 6 more'])
+    assert_equal(lineedit.candidate_rows(names, 11, 1), ['... 10 more'])
+    assert_equal(len(lineedit.candidate_rows(names, 11, 5)), 5)
+
+@test
+def frame_lists_candidates_under_the_text():
+    s = lineedit.Screen()
+    s.menu = ['print', 'printf']
+    f = s.frame(['pri'], [], '>>> ', '... ', 0, 3, False)
+    assert_equal(spelled(f), '\\r\\e[J>>> pri\\r\\nprint   printf\\e[1A\\e[8G')
+    assert_equal(s.cursor_row, 0)
+    # the next frame starts at the top of the text, and clears the list with the rest
+    s.menu = []
+    f = s.frame(['pri'], [], '>>> ', '... ', 0, 3, False)
+    assert_equal(spelled(f), '\\r\\e[J>>> pri\\e[8G')
+    # the last frame (the text submitted) has no list, whatever was left in menu
+    s.menu = ['print', 'printf']
+    f = s.frame(['pri'], [], '>>> ', '... ', 0, 3, True)
+    assert_equal(spelled(f), '\\r\\e[J>>> pri\\e[8G')
+
+@test
+def frame_list_of_candidates_keeps_to_the_window():
+    s = lineedit.Screen()
+    s.height = 4
+    s.menu = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']
+    s.width = 8                                 # two columns: five rows of candidates
+    f = s.frame(['x', 'y'], [], '>>> ', '... ', 1, 1, False)
+    # two rows of text leave two rows of the window for the list: one of candidates and the count of the others
+    assert_equal(spelled(f), '\\r\\e[J>>> x\\r\\n... y\\r\\na  b\\r\\n... 8 more\\e[2A\\e[6G')
+    s.height = 2
+    f = s.frame(['x', 'y'], [], '>>> ', '... ', 1, 1, False)
+    assert_equal(spelled(f), '\\e[1A\\r\\e[J>>> x\\r\\n... y\\e[6G')
+
+# ---- completion: whole sessions --------------------------------------------------------------------------------------------
+
+# completes the word (letters, digits and underscores) before the cursor from a list of words
+class Words implements Completer:
+    words: list[str] = []
+
+    @init
+    def make(self, words: list[str]):
+        self.words = words
+
+    def complete(self, line: str, before: str) -> Completion:
+        start = len(line)
+        while start > 0 and (line[start - 1].isalnum() or line[start - 1] == '_'):
+            start -= 1
+        typed = line[start:]
+        found: list[str] = []
+        for w in self.words:
+            if typed != '' and w.startswith(typed):
+                found.append(w)
+        return Completion(start, found)
+
+# always answers the same
+class Fixed implements Completer:
+    start: int = 0
+    words: list[str] = []
+    after: str = ''
+
+    @init
+    def make(self, start: int, words: list[str], after: str = ''):
+        self.start = start
+        self.words = words
+        self.after = after
+
+    def complete(self, line: str, before: str) -> Completion:
+        return Completion(self.start, self.words, self.after)
+
+def with_completer(c: Completer) -> Editor:
+    ed = Editor()
+    ed.completer = c
+    return ed
+
+def completing(words: list[str]) -> Editor:
+    ed = Editor()
+    ed.completer = Words(words)
+    return ed
+
+@test
+def session_tab_puts_in_the_only_candidate():
+    result, _term = session(completing(['print', 'len', 'range']), chars('x = le') + [named('tab'), chars(')')[0], enter()])
+    assert_equal(result.text, 'x = len)')
+    # the word is replaced from where it starts, with the whole candidate (which need not start like the word)
+    result, _term = session(with_completer(Fixed(4, ['Print'])), chars('1 + pr') + [named('tab'), enter()])
+    assert_equal(result.text, '1 + Print')
+
+@test
+def session_tab_adds_the_text_after_the_only_candidate():
+    result, _term = session(with_completer(Fixed(0, ['add'], ' ')), chars('a') + [named('tab')] + chars('milk') + [enter()])
+    assert_equal(result.text, 'add milk')
+    # only for a single candidate: with several the common start is put in, and nothing after it
+    result, _term = session(with_completer(Fixed(0, ['add', 'adjust'], ' ')), chars('a') + [named('tab'), enter()])
+    assert_equal(result.text, 'ad')
+
+@test
+def session_tab_gives_the_common_start_and_then_the_list():
+    ed = completing(['print', 'printf', 'prompt', 'len'])
+    term = FakeTerminal()
+    term.keys = chars('p') + [named('tab'), named('tab'), ch('i'), named('tab'), named('tab'), enter()]
+    result = ed.read(term)
+    assert_equal(result.text, 'print')
+    frames: list[str] = []
+    for w in term.writes:
+        frames.append(spelled(w))
+    assert_equal(frames[1], '\\r\\e[J>>> \\e[5G')
+    assert_equal(frames[3], '\\r\\e[J>>> pr\\e[7G')                                   # the common start of three
+    assert_equal(frames[4], '\\r\\e[J>>> pr\\r\\nprint   printf  prompt\\e[1A\\e[7G')   # nothing to add: the list
+    assert_equal(frames[5], '\\r\\e[J>>> pri\\e[8G')                             # the next key takes the list away
+    assert_equal(frames[6], '\\r\\e[J>>> print\\e[10G')                          # print and printf: the common start is print
+    assert_equal(frames[7], '\\r\\e[J>>> print\\r\\nprint   printf\\e[1A\\e[10G')
+    assert_equal(frames[8], '\\r\\e[J>>> print\\e[10G')                          # the last frame: no list, the text stays
+
+@test
+def session_the_list_goes_away_with_an_ignored_key_too():
+    term = FakeTerminal()
+    term.keys = chars('p') + [named('tab'), named('tab'), named('f5'), enter()]
+    ed = completing(['pa', 'pb'])
+    result = ed.read(term)
+    assert_equal(result.text, 'p')
+    out = spelled(term.output())
+    assert_true('p\\r\\npa  pb\\e[1A' in out)
+    assert_true(out.endswith('>>> p\\e[6G\\r\\n\\e[?2004l'), out)
+
+@test
+def session_tab_with_no_candidates():
+    # in an indent Tab puts in the tab text, as before; after text it does nothing
+    result, _term = session(completing(['print']), [named('tab')] + chars('zz') + [named('tab'), enter()])
+    assert_equal(result.text, '    zz')
+    result, _term = session(Editor(), chars('ab') + [named('tab'), enter()])
+    assert_equal(result.text, 'ab')
+    # the candidates of an empty line are used before the indent
+    result, _term = session(with_completer(Fixed(0, ['only'])), [named('tab'), enter()])
+    assert_equal(result.text, 'only')
+
+@test
+def session_tab_in_the_middle_of_a_line_and_a_block():
+    ed = completing(['value'])
+    result, _term = session(ed, chars('x = va + 1') + [named('left')] * 4 + [named('tab'), enter()])
+    assert_equal(result.text, 'x = value + 1')
+    # the completer sees the line up to the cursor and all the text before it
+    seen = Spy()
+    ed = Editor()
+    ed.validator = BlockRule()
+    ed.indenter = ColonIndent()
+    ed.completer = seen
+    session(ed, chars('if x:') + [enter()] + chars('  ab') + [named('tab'), enter(), enter()])
+    assert_equal(seen.lines, ['      ab'])
+    assert_equal(seen.befores, ['if x:\n      ab'])
+
+class Spy implements Completer:
+    lines: list[str] = []
+    befores: list[str] = []
+
+    def complete(self, line: str, before: str) -> Completion:
+        self.lines.append(line)
+        self.befores.append(before)
+        return Completion(0, [])
+
+# ---- single-line mode ------------------------------------------------------------------------------------------------------
+
+@test
+def single_line_enter_always_submits():
+    ed = Editor()
+    ed.single_line = True
+    ed.validator = BlockRule()                       # not asked
+    result, _term = session(ed, chars('if x:') + [enter()])
+    assert_equal(result.text, 'if x:')
+    result, _term = session(ed, [enter()])
+    assert_equal(result.text, '')
+
+@test
+def single_line_paste_and_history_stay_on_one_line():
+    ed = Editor()
+    ed.single_line = True
+    ed.history = History(['first', 'for x:\n    y'], 1000)
+    result, _term = session(ed, chars('a') + [Key('paste', 'b\r\nc\nd'), enter()])
+    assert_equal(result.text, 'ab c d')
+    # a recalled entry that has several lines comes back as one
+    result, _term = session(ed, [up(), enter()])
+    assert_equal(result.text, 'for x:     y')
+    result, term = session(ed, [up(), up(), ch('!'), enter()])
+    assert_equal(result.text, 'first!')
+    assert_true('\\r\\n... ' not in spelled(term.output()))
+    result, _term = session(ed, chars('d') + [up(), down(), enter()])
+    assert_equal(result.text, 'd')
+
+@test
+def single_line_tab_does_not_indent():
+    ed = Editor()
+    ed.single_line = True
+    result, _term = session(ed, [named('tab')] + chars('x') + [named('tab'), enter()])
+    assert_equal(result.text, 'x')
+    ed.completer = Words(['value'])
+    result, _term = session(ed, chars('va') + [named('tab'), enter()])
+    assert_equal(result.text, 'value')
+
+# ---- the kill ring ---------------------------------------------------------------------------------------------------------
+
+@test
+def session_kill_ring_of_one_is_the_last_cut():
+    ed = Editor()
+    result, _term = session(ed, chars('one two three') + [ctrl('w'), ctrl('w'), ctrl('y'), enter()])
+    assert_equal(result.text, 'one two ')
+    # Alt-Y does nothing without a ring
+    result, _term = session(ed, chars('a b') + [ctrl('w'), ctrl('w'), ctrl('y'), Key('char', 'y', '', False, True), enter()])
+    assert_equal(result.text, 'a ')
+
+@test
+def session_kill_ring_joins_cuts_in_a_row_and_alt_y_cycles():
+    ed = Editor()
+    ed.kill_ring = 3
+    # two Ctrl-W in a row are one cut (the second goes in front of the first)
+    result, _term = session(ed, chars('one two three') + [ctrl('w'), ctrl('w'), ctrl('y'), enter()])
+    assert_equal(result.text, 'one two three')
+    # a key between them starts a new cut; Ctrl-Y puts back the newest, Alt-Y steps back through the ring
+    ed = Editor()
+    ed.kill_ring = 3
+    alt_y = Key('char', 'y', '', False, True)
+    keys = chars('aa bb cc') + [ctrl('w'), ch('X'), ctrl('w'), ctrl('w'), ctrl('y'), alt_y, enter()]
+    result, _term = session(ed, keys)
+    # the ring is ['cc', 'bb X'] (the cut of 'X' and the one of 'bb ' joined), the line 'aa ': Ctrl-Y puts back 'bb X', Alt-Y swaps in 'cc'
+    assert_equal(result.text, 'aa cc')
+
+@test
+def session_alt_y_needs_a_yank_just_before_and_survives_reads():
+    ed = Editor()
+    ed.kill_ring = 2
+    alt_y = Key('char', 'y', '', False, True)
+    result, _term = session(ed, chars('one') + [ctrl('u')] + chars('two') + [ctrl('u'), alt_y, enter()])
+    assert_equal(result.text, '')                   # Alt-Y without Ctrl-Y first: nothing
+    # the ring belongs to the Editor, so the next read can bring the cuts back: 'two', then 'one', 'two', 'one' round the ring
+    result, _term = session(ed, [ctrl('y'), alt_y, alt_y, alt_y, enter()])
+    assert_equal(result.text, 'one')
+    result, _term = session(ed, [ctrl('y'), alt_y, enter()])
+    assert_equal(result.text, 'two')

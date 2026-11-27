@@ -99,6 +99,10 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
   (dim), built-ins and decorators, and what is wrong underlined; 24-bit, 256, 16 or 8 colors by the terminal; `--color=auto|always|never`,
   `TOMATO_COLOR` and `NO_COLOR` decide, and with no color the repl looks as before. It is built on a tolerant mode of the compiler's own
   lexer (`lex_spans`), which also shares its scanners with `lex`.
+- The repl completes names with Tab (D91a): keywords, built-ins, the names your session uses, standard modules after `import`, and
+  `:commands`; several candidates are listed under the line. (Tab after other text no longer inserts four spaces; it still indents at the start of a line.)
+- `std/lineedit` is finished for other programs (D91a): a single-line mode and `lineedit.read_line`, a `Completer` hook with Tab completion,
+  an optional kill ring (Alt-Y), and a worked example, `examples/todo_shell.tom`.
 - The bootstrap IR is compiled in parallel, so installs and builds are quicker.
 
 ### Performance

@@ -1,8 +1,9 @@
 # The repl line editor, written in Tomato: design
 
-Status: **approved by Davis (all seven recommendations of section 14, 26 November 2026); stages 1, 2 and 3 are built** (D86a,
-`docs/terminal-api.md`, D88a, `docs/lineedit-api.md`, and D90a, the decision entry that says where section 7 became different as built),
-stage 4 is not. The questions are at the end (section 14), each with a
+Status: **approved by Davis (all seven recommendations of section 14, 26 November 2026); stages 1, 2, 3 and 4 are built** (D86a,
+`docs/terminal-api.md`, D88a, `docs/lineedit-api.md`, D90a, the decision entry that says where section 7 became different as built, and
+D91a, which says where section 8's hooks and keys became different with the completion, the single-line mode and the kill ring); stage 5 is
+not planned. The questions are at the end (section 14), each with a
 recommendation and Davis's answer. The marks are the ones of `docs/wave2-api-sheets.md`: **[V]** I read it in this repository, **[M]** I ran it (on
 Linux, or on Davis's MacBook Pro, macOS 27 arm64), **[I]** inferred, not checked.
 
@@ -368,6 +369,13 @@ test it without a terminal, `terminal.Terminal` is an **interface in practice**:
 `write`, `size` and `colors` (`interface TermIO`), and the tests pass a `FakeTerminal` (a list of scripted keys; every write is
 recorded).
 
+*(As built in stage 4, D91a: `Editor` also has `completer: Completer` (a hook like the others, `complete(line, before) -> Completion(start,
+candidates, after)`, with `NoCompletion` as the default), `single_line`, `kill_ring` (how many cuts Ctrl-Y can bring back, 1 by default; more joins cuts in
+a row and gives Alt-Y) and `menu_rows`; `KillRing`, `common_prefix`, `candidate_rows` and `read_line(prompt, history_file)` are exported. Tab asks
+the completer: one candidate is put in, several give their common start, and when that adds nothing they are listed under the text (a menu that
+the next key takes away); with no candidate Tab indents only in an indent. `tomato repl` has a completer for Tomato names (`ReplCompleter`).
+The sheet is `docs/lineedit-api.md`, the worked example `examples/todo_shell.tom`.)*
+
 ### The editing rules (from the brief)
 
 - **Enter**: if the cursor is not on the last line, it splits the line (like Python). On the last line: if the validator says the block
@@ -562,13 +570,13 @@ Each stage is its own task and merge, leaves the repl working, and does not depe
 | 1 | Runtime and `terminal` **(built, D86a)** | the seven C functions + wasm stubs; `std/terminal.tom` (keys, decoder, raw mode, size, colors, widths, styles); `std_modules()` + bootstrap refresh + wasm rebuild; `@test`s and one pty test program; the doc sheet in `docs/` and a decision entry | a usable terminal module; the repl unchanged | M |
 | 2 | Editor library and the repl on it **(built, D88a)** | `std/lineedit.tom` (buffer, history, keymap, layout, frame, hooks); `repledit.tom` with the repl's validator and history; the installer, tarball and pkg steps; the driver change; `tests/repl_history.exp` rewritten; decision entry D-new superseding D59a | the multi-line repl, no colors yet | L |
 | 3 | The tolerant lexer and highlighting **(built, D90a)** | `lex_spans` + shared scanners + the equivalence tests; `hltomato.tom`; palette; `--color` and `NO_COLOR`; bootstrap refresh + wasm rebuild | colors in the repl | M |
-| 4 | Library polish | what other programs need and the repl did not: a single-line mode with completion hook, a `Completer` interface, a kill ring option, docs and a worked example under `examples/` (a small interactive program), site docs copy | the library is documented and exampled | S |
+| 4 | Library polish **(built, D91a)** | what other programs need and the repl did not: a single-line mode with completion hook, a `Completer` interface, a kill ring option, docs and a worked example under `examples/` (a small interactive program), site docs copy | the library is documented and exampled | S |
 | 5 | (not planned) | the driver in Tomato; needs `subprocess` | - | - |
 
 Stages 1, 2 and 3 each touch the compiler's sources (`std_modules()` gains `terminal` in stage 1 and `lineedit` in stage 2; `lexer.tom` gains
 `lex_spans` in stage 3) and stage 1 touches the runtime, so each needs `compiler/bootstrap/refresh.sh` and a `site/wasm/build.sh` run with WASI SDK 24
 (the Mac has it; this Linux box does not **[I]**). To save two wasm rebuilds, stage 1 may add both names to `std_modules()` (with a `lineedit.tom`
-holding only its header comment) at the price of a placeholder module for one release. Stage 4 touches neither. Stages 1 and 2 could also be one
+holding only its header comment) at the price of a placeholder module for one release. Stage 4 touched neither, as planned: no bootstrap refresh and no wasm rebuild (the website's copy of `std/lineedit.tom` is a plain copy). Stages 1 and 2 could also be one
 task, but then the library API gets its first real use only after review, so a stage 1 merged alone may need a small API change later: the
 sheets in sections 6 and 8 are meant to be reviewed before stage 1 starts.
 
