@@ -5,7 +5,7 @@ What changed in each release, for people who use Tomato. The GitHub release page
 (D78a and so on) point into `docs/decisions.md`.
 
 From 1.0.0 on, all releases of one minor version (1.0.0, 1.0.1, ...) are compatible with each other: a program that
-works on one works the same on the others (except the placeholders in `docs/provisional.md`). A new minor version
+works on one works the same on the others (except the 7 features on the unstable list in `docs/provisional.md`). A new minor version
 (1.1.0) may change behaviour, and its section lists each such change under **Breaking changes**; a patch release has
 none. `tomato update` installs patch releases at once and a new minor version only with `tomato update --minor`.
 
@@ -87,6 +87,7 @@ on an older install moves to 1.0.0 as usual.
   others), so they work on lists of angles (D85b).
 - `tuple[A, B]` parses in expression position; mixed tuples, lists and objects inside unions print properly.
 - `set.discard(x)` compiles correctly.
+- **The compatibility promise has a short list of exceptions (D109a).** `docs/provisional.md` was triaged: 58 of its 91 rows are decided, 26 removed and 7 are the *unstable list* that 1.0.x does not promise (error message wording, the edges of the type test, `!name` foreign functions, entry markers other than `@main`, the host input protocol, the text `progress_bar` draws, `random.choice`/`shuffle`/`sample`). Proposed, to be confirmed: an error id never changes its meaning, the class an operation raises does not change within a minor version, and message text may be reworded in a patch release (`docs/releasing.md`). `docs/errors.md` says how two branches that each add an error resolve the id clash.
 
 ### Faster big integers
 

@@ -217,7 +217,22 @@ input is invalid or the machine runs out of memory. These process failures and s
 
 A mistake in a configuration file (`tomato.toml` or `config.toml`, see `tomato config`) stops `tomato run`, `build`, `compile` and `config` with a `ConfigError` id: E539 the file cannot be read, E540 it is not valid TOML, E541 `limits` is not a table, E542 an unknown setting in `[limits]`, E543 a setting is not a whole number in its range. The manifest checks add E555 to E568 (unknown tables and keys, missing or mistyped settings, versions, names, the `tomato` minimum, `[build]`) and the seed commands E569 to E580 (E570 is retired) and E598 to E606 (git, the seed store, the foreign symbols, the edits of `tomato seed add` and `remove`, D101a, and `tomato seed verify`, D103a), with E581 and E607 as compile errors (a module of the project with the name of a module of a seed, D107a), and E590 for a table below `[seeds]` or `[test-seeds]` (D94b); `docs/manifest.md` lists them all. A built program started with a first word that is no entry stops with E591, and an entry input of type `File` that cannot be opened stops it with E592. A definition that takes the name of a built-in type (`def str`, `class list`, `const int`; D107a) is E608, and calling a constant (`const len = 4` then `len(x)`) is E609; any other name of a built-in may be defined and then wins in that module.
 
-To add an error, append a line in the form `Class text` to `std/errors.txt` and keep the existing line numbers. An id that is no longer raised is never deleted or reused: its line becomes `Class (retired: why; the id stays so that later ids do not move)`. Pass that ID when
+To add an error, append a line in the form `Class text` to `std/errors.txt` and keep the existing line numbers (the promise about ids, classes and wording is in `docs/releasing.md`, Compatibility). An id that is no longer raised is never deleted or reused: its line becomes `Class (retired: why; the id stays so that later ids do not move)`. Pass that ID when
 raising an error in the standard library. For a compiler-emitted runtime check, the table text is a prefix of the message.
 For a compile diagnostic, use `CompileError template`, with `{}` for dynamic parts of the first line. The compiler uses the
 most specific matching template and falls back to E368 for unrecognized messages.
+
+## Two branches that each add an error
+
+An id is the line number of its template in `std/errors.txt`, so two branches that each append a line give the same id (say E607) to two different errors, and git sees a conflict at the end of the file. The rule that settles it follows from "an id never changes its meaning" (`docs/releasing.md`, Compatibility):
+
+- **An id is fixed once it is on `main`.** Before that it is only a line number on one branch and belongs to nobody. A released id (any line of `std/errors.txt` in a tagged version) is never moved, whatever else happens.
+- **The branch that merges second renumbers its own lines**, never the other branch's. This holds for every open task: a task started before a merge renumbers when it next merges `main`.
+
+The steps, after `git merge main` reports a conflict in `std/errors.txt` (or, with no textual conflict, when the check below fails):
+
+1. Take `main`'s version of the file: every line in `main`, in `main`'s order. Then append your lines, in your order, after its last line. A line you changed in the middle of the file is a mistake: put it back (a message is never edited in place, a retired error keeps its line: see above).
+2. Your lines now have new numbers: the old id plus the number of lines `main` added. Change each use of every old id to the new one, **highest first** so that a new id never collides with an old one still to be changed: `grep -rn "'E607'" std site/wasm/std runtime tests docs`, then edit the raises in `std/*.tom` (and the copies in `site/wasm/std/`), the ids written in `runtime/tomato_rt.c`, the expected outputs (`tests/errors/*.out`, `tests/expected/*.out`) and any documentation that names the id. A compile error needs no source change: its id is found from its template.
+3. Run the checks that notice a stale id: `tests/run.sh` (`t_error_raises` says which standard-library raise has no id for its class; the template check says which compile error has no line; the expected outputs name every id that moved).
+
+When both branches add the same message (the same template), keep one line and point both uses to it. Do not "make room" by inserting a line in the middle of the file: every id after it would change meaning.
