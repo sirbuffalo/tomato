@@ -1,0 +1,4 @@
+@main
+def main():
+    f = open('/dev/null')
+    print(f.closed)

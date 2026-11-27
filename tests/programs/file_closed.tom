@@ -1,0 +1,183 @@
+# What a File does after close() (D93a, Python's rules; the default was chosen by the implementer): a second close() does nothing,
+# any other operation on a closed file is a ValueError (E547), f.closed() says which, and a File that nothing refers to any
+# more is closed (so its data is written and its descriptor freed). Every text mode, in debug and release, under
+# AddressSanitizer. The work directory comes from tests/run.sh.
+import os
+import ospath
+
+class Log:
+    out: File
+    n: int
+
+    @init
+    def make(self, out: File):
+        self.out = out
+        self.n = 0
+
+    def add(self, line: str):
+        self.out.write(line + '\n')
+        self.n += 1
+
+def open_count() -> int:
+    return len(os.listdir('/dev/fd'))
+
+# the outcome of one operation on f: ok, or the class and id of what it raised
+def attempt(f: File, what: str) -> str:
+    try:
+        if what == 'read':
+            f.read()
+        elif what == 'readline':
+            f.readline()
+        elif what == 'readlines':
+            f.readlines()
+        elif what == 'write':
+            f.write('x')
+        elif what == 'writelines':
+            f.writelines(['x', 'y'])
+        elif what == 'flush':
+            f.flush()
+        elif what == 'iterate':
+            for line in f:
+                pass
+        elif what == 'close':
+            f.close()
+        else:
+            print(f.closed())
+        return 'ok'
+    catch ValueError as e:
+        return 'ValueError ' + e.id + ' ' + e.message
+
+def all_operations(f: File, label: str):
+    for what in ['close', 'read', 'readline', 'readlines', 'write', 'writelines', 'flush', 'iterate', 'close', 'closed']:
+        print(label, what + ':', attempt(f, what))
+
+def write_and_drop(path: str, text: str):
+    f = open(path, 'w')
+    f.write(text)       # never closed: the last reference goes when the function returns
+
+def make(path: str, mode: str) -> File:
+    return open(path, mode)
+
+def keep(files: list[File], path: str):
+    files.append(open(path, 'w'))
+
+@main
+def main(dir: str = '/tmp'):
+    path = dir + '/tomato_file_closed.txt'
+    other = dir + '/tomato_file_closed_other.txt'
+    os.write_text(path, 'one\ntwo\nthree\n')
+    before = open_count()
+
+    # a second close() is a no-op and every other operation raises, in each text mode
+    for mode in ['r', 'w', 'a', 'x', 'r+', 'w+', 'a+', 'x+']:
+        if mode[0] == 'x':
+            if ospath.exists(other):
+                os.remove(other)
+        f = open(other if mode[0] == 'x' else path, mode)
+        print(mode, 'open:', f.closed())
+        f.close()
+        print(mode, 'closed:', f.closed())
+        f.close()
+        print(mode, 'twice:', f.closed())
+        for what in ['read', 'readline', 'readlines', 'write', 'writelines', 'flush', 'iterate']:
+            print(mode, what + ':', attempt(f, what))
+        if mode == 'w' or mode == 'w+':
+            os.write_text(path, 'one\ntwo\nthree\n')
+    print('descriptors after the modes:', open_count() - before)
+
+    # the same list in one place, with a file that was read to its end
+    f = open(path)
+    print(f.read().count('\n'), 'lines read')
+    all_operations(f, 'read file')
+
+    # the error is catchable as ValueError, and says what to do
+    g = open(path)
+    g.close()
+    try:
+        g.readline()
+    catch ValueError as e:
+        print('caught:', e.message, e.id)
+
+    # close inside the loop that reads the file: the next turn raises
+    h = open(path)
+    seen = 0
+    try:
+        for line in h:
+            seen += 1
+            h.close()
+    catch ValueError as e:
+        print('loop stopped after', seen, 'line:', e.message)
+    print('closed after loop:', h.closed())
+
+    # a loop over open(path) closes its file the usual way
+    for line in open(path):
+        last = line
+    print('last line:', last.strip(), open_count() - before)
+
+    # data written and not flushed is there once the file is closed, by close() or by dropping the last reference
+    f = open(other, 'w')
+    f.write('written')
+    f.close()
+    f.close()
+    print('after close:', os.read_text(other))
+    write_and_drop(other, 'dropped')
+    print('after drop:', os.read_text(other), open_count() - before)
+    os.write_text(other, 'old')
+    k = open(other, 'a')
+    k.write(' more')
+    k = open(path)              # the first file loses its only reference here
+    print('after reassign:', os.read_text(other), k.readline().strip(), open_count() - before)
+    k.close()
+
+    # a File is a value like any other: parameters, results, lists, fields
+    a = make(other, 'w')
+    b = a                       # one file, two names
+    b.write('shared')
+    a.close()
+    print('b sees the close:', b.closed(), attempt(b, 'write'))
+    files: list[File] = []
+    keep(files, other)
+    keep(files, path + '.2')
+    files[0].write('listed')
+    files[1].write('second')
+    print('open in a list:', open_count() - before, files[0].closed())
+    files[0].close()
+    files.pop()                 # dropped from the list: closed
+    print('after pop:', open_count() - before, files[0].closed(), os.read_text(path + '.2'))
+    files.pop()
+    log = Log(open(other, 'w'))
+    log.add('first')
+    log.add('second')
+    print('in a field:', log.n, open_count() - before)
+    log.out.close()
+    print('field file:', log.out.closed(), attempt(log.out, 'write'))
+    log = Log(open(path, 'r'))  # the old Log, and its closed File, go
+    print('log replaced:', open_count() - before)
+    print(open(other).read().strip().replace('\n', '|'))
+
+    # an error that unwinds past a File frees it: nothing is left open
+    tmp = open(path)
+    for round in range(200):
+        try:
+            tmp = open(path)
+            tmp.readline()
+            raise ValueError('boom')
+        catch ValueError as e:
+            tmp2 = open(path, 'a')
+            tmp2.close()
+    print('after 200 errors:', open_count() - before)       # the last tmp is still named here
+    tmp.close()
+    print('after closing it:', open_count() - before)
+
+    # the same file opened again after it was closed is a new File: the old one stays closed
+    p = open(path)
+    p.close()
+    q = open(path)
+    print(p.closed(), q.closed(), q.readline().strip())
+    p.close()
+    print('closing the old one again leaves the new one:', q.closed(), q.readline().strip())
+    q.close()
+    log.out.close()
+    print('descriptors at the end:', open_count() - before)
+    os.remove(other)
+    os.remove(path + '.2')

@@ -544,3 +544,5 @@ ConfigError {}: limits.{} must be a whole number from {} to {}, not {}
 ValueError sum() of an empty
 CompileError {}() needs a list of {}{}, but this is {}{}
 CompileError sort() needs a list of numbers or text, or of objects of a class with a method marked @lt, but this is {}
+ValueError I/O operation on a closed file
+CompileError a file has no field '{}'

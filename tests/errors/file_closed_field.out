@@ -1,0 +1,6 @@
+error[E548]: a file has no field 'closed'
+ --> tests/errors/file_closed_field.tom:4:13
+  |
+4 |     print(f.closed)
+  |             ^^^^^^
+  = help: closed is a method: write f.closed()

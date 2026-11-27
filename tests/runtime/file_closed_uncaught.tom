@@ -1,0 +1,7 @@
+# A read after close() is a ValueError that a program does not catch: E547 and the line, in debug and in release.
+@main
+def main():
+    f = open('/dev/null')
+    f.close()
+    f.close()
+    print(f.readline())

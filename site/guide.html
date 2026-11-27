@@ -346,7 +346,7 @@ def main():
         open('no/such/folder/x.txt')
     catch IOError as e:
         print(e.message)                    # could not open 'no/such/folder/x.txt': No such file or directory</code></pre>
-<p><code>open(path)</code> or <code>open(path, mode)</code> gives a <code>File</code> with <code>read()</code>, <code>write(text)</code> and <code>close()</code>; the program closes the file itself. A file that cannot be opened raises <code>IOError</code> naming the path and the reason. <code>toml</code>, <code>json</code> and MessagePack have their own <code>load</code> and <code>dump</code> functions for whole files.</p>
+<p><code>open(path)</code> or <code>open(path, mode)</code> gives a <code>File</code> with <code>read()</code>, <code>write(text)</code> and <code>close()</code>; the program closes the file itself, though a file that nothing refers to any more is closed too. A second <code>close()</code> does nothing, <code>f.closed()</code> says whether the file is closed, and reading or writing a closed file raises <code>ValueError</code>. A file that cannot be opened raises <code>IOError</code> naming the path and the reason. <code>toml</code>, <code>json</code> and MessagePack have their own <code>load</code> and <code>dump</code> functions for whole files.</p>
 <h2>Errors</h2>
 <pre><code>@main
 def main():

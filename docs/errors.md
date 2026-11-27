@@ -159,6 +159,8 @@ written (a full disk, a closed pipe, no permission): `could not write to the fil
 `could not write to the file when closing it: ...` from `close()`. The C library buffers output, so a small write to a full disk
 may fail only at `close()`; call `close()` inside `try` and catch `IOError` to be sure the data arrived.
 
+A closed file is not an `IOError`: `close()` a second time does nothing, and `read()`, `readline()`, `readlines()`, `write()`, `writelines()`, `flush()` or a `for` loop over a file that `close()` was called on raise a `ValueError` (E547), `I/O operation on a closed file` (Python's rule; D93a). `f.closed()` is True after `close()`. A file whose last reference goes away (a variable reassigned, a function that returns, an error that unwinds) is closed too, so it is safe not to call `close()` on a file that was only read, though a file that was written should still be closed inside `try` to see a failed flush. `f.closed` without the parentheses is a compile error, E548 (`a file has no field 'closed'`): `closed` is a method.
+
 `open()` raises the class that matches the reason (`FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError`, else a plain `IOError`) and keeps the id E25; the `os` and `ospath` functions raise the same classes with E505 to E509 (`IOError` E515 for another reason) and the text `could not list the directory 'PATH': REASON`. A mode other than `r`, `w`, `a` or `x` with an optional `+` is a `ValueError` (E510). Reading a file that cannot be read (a file opened for writing) is E381.
 
 The libraries raise subclasses of their own, each also a `RuntimeError`: `JSONDecodeError`, `JSONEncodeError`, `JSONTypeError` and

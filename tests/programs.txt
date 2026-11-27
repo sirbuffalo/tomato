@@ -209,6 +209,7 @@ ospath_text
 file_lines
 file_loop_close
 file_modes
+file_closed
 bytes_files
 string_io
 string_io_bulk

@@ -438,7 +438,7 @@ def strip_optional(t: str) -> str:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t) or is_mtuple(t)
+    return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t) or is_mtuple(t) or t == 'File'
 
 def shown_generic(name: str) -> str:
     # a copy of a generic class, as Box[int]: its type arguments are kept in the internal form inside the name
@@ -493,7 +493,7 @@ def shown(t: str) -> str:
     return t
 
 def llvm_type(t: str) -> str:
-    if is_rc(t) or t == 'File' or is_fn(t):
+    if is_rc(t) or is_fn(t):
         return 'ptr'
     if t == 'f64':
         return 'double'
@@ -1656,8 +1656,8 @@ class Mod:
     def flat_type(self, t: str) -> bool:
         # a value of this static type can never be part of a reference cycle: text, or an object whose class has no
         # reference-counted fields and no subclass (a subclass could add some). Its release skips the cycle-collector test.
-        if t == 'str':
-            return True
+        if t == 'str' or t == 'File':
+            return True              # (a File holds only its stream)
         if not is_class(t):
             return False
         if t in self.flat_cache:
@@ -5725,11 +5725,15 @@ class Gen:
         else:
             obj = self.unwrap(self.expr_b(base, []), n.line)
         name = n.fields[1].text
+        if obj.ty == 'File':
+            if name == 'closed':
+                raise CompileError(f"a file has no field '{name}'\nclosed is a method: write f.closed()", n.line)
+            raise CompileError(f"a file has no field '{name}'\nthe methods it has are: " + ', '.join(file_methods()), n.line)
         if is_class(obj.ty):
             self.check_field_access(obj, name, False, n.line)
         addr = self.field_addr(obj, name, n.line)
         ft = self.field_type(obj, name, n.line)
-        lent = obj.reg.startswith('%bl.') and ((lend and owns_num(ft)) or (as_base and is_rc(ft)))
+        lent =obj.reg.startswith('%bl.') and ((lend and owns_num(ft)) or (as_base and is_rc(ft)))
         v = self.tmp('bl' if lent else 'f')
         if self.bail != '' and ft == 'float' and raw:
             e = self.raw_read(addr)
@@ -8182,6 +8186,40 @@ class Gen:
         raise CompileError(self.no_method(name, 'str'), line)
 
     def file_method(self, f: Ex, name: str, args: list[Node], line: int) -> Ex:
+        # f is held while the arguments are evaluated and the call is made (an error frees it), then released: a File is counted like
+        # any other value, and its stream is closed when the last reference goes away
+        held_before = len(self.held)
+        self.hold(f)
+        r = self.file_op(f, name, args, line)
+        self.drop_held(held_before)
+        self.release(f)
+        return r
+
+    def file_open_check(self, f: Ex):
+        # every operation but close() and closed() on a file that close() has been called on is a ValueError (E547); close() again does nothing
+        closed = self.tmp('closed')
+        self.emit(f'{closed} = call i32 @tomato_file_closed(ptr {f.reg})')
+        bad = self.tmp('isclosed')
+        self.emit(f'{bad} = icmp ne i32 {closed}, 0')
+        stop = self.label('stop')
+        ok = self.label('ok')
+        self.cond_br(bad, stop, ok)
+        self.place(stop)
+        self.raise_here('ValueError', self.mod.intern('I/O operation on a closed file'), False, 'E547')
+        self.place(ok)
+
+    def file_op(self, f: Ex, name: str, args: list[Node], line: int) -> Ex:
+        if name == 'closed' and len(args) == 0:
+            c = self.tmp('closed')
+            self.emit(f'{c} = call i32 @tomato_file_closed(ptr {f.reg})')
+            i1 = self.tmp('flag')
+            self.emit(f'{i1} = icmp ne i32 {c}, 0')
+            return self.bool_of(i1)
+        if name == 'close' and len(args) == 0:
+            self.file_check(f'call i32 @tomato_file_close(ptr {f.reg})', 1, ex('', ''))
+            return ex('', '')
+        if name in ['read', 'readline', 'readlines', 'flush'] and len(args) == 0:
+            self.file_open_check(f)
         if name == 'read' and len(args) == 0:
             r = self.tmp('text')
             self.emit(f'{r} = call ptr @tomato_file_read(ptr {f.reg})')
@@ -8212,18 +8250,23 @@ class Gen:
         if name == 'write' and len(args) == 1:
             v = self.expr(args[0])
             v = self.want(v, 'str', line, 'the argument of write')
+            held_arg = len(self.held)
+            self.hold(v)
+            self.file_open_check(f)
+            self.drop_held(held_arg)
             self.file_check(f'call i32 @tomato_file_write(ptr {f.reg}, ptr {v.reg})', 0, v)
             return ex('', '')
         if name == 'writelines' and len(args) == 1:
             v = self.expr(args[0], 'list[str]')
             v = self.want(v, 'list[str]', line, 'the argument of writelines')
+            held_arg = len(self.held)
+            self.hold(v)
+            self.file_open_check(f)
+            self.drop_held(held_arg)
             self.file_check(f'call i32 @tomato_file_writelines(ptr {f.reg}, ptr {v.reg})', 0, v)
             return ex('', '')
         if name == 'flush' and len(args) == 0:
             self.file_check(f'call i32 @tomato_file_flush(ptr {f.reg})', 0, ex('', ''))
-            return ex('', '')
-        if name == 'close' and len(args) == 0:
-            self.file_check(f'call i32 @tomato_file_close(ptr {f.reg})', 1, ex('', ''))
             return ex('', '')
         raise CompileError(self.no_method(name, 'File'), line)
 
@@ -8284,7 +8327,7 @@ class Gen:
         self.raise_here('ValueError', self.mod.intern('open() text modes only: r, w, a or x, with an optional +; use os.read_bytes/os.write_bytes for bytes'), False, 'E510')
         self.place(go)
         r = self.tmp('file')
-        self.emit(f'{r} = call ptr @tomato_file_open(ptr {path.reg}, ptr {mode.reg})')
+        self.emit(f'{r} = call ptr @tomato_file_open(ptr {path.reg}, ptr {mode.reg}, i64 {self.mod.code_of("File")})')
         bad = self.tmp('nofile')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
         # Caught errors retain the path and reason in both debug and release modes.
@@ -9274,7 +9317,7 @@ class Gen:
         elif is_set(ty) or ty == 'set':
             known = ['add', 'remove', 'discard']
         elif ty == 'File':
-            known = ['read', 'readline', 'readlines', 'write', 'writelines', 'flush', 'close']
+            known = file_methods()
             word = 'a file'
         elif is_list(ty):
             known = ['append', 'pop', 'insert', 'extend', 'sort', 'reverse']
@@ -11196,8 +11239,8 @@ class Gen:
 
     def for_file(self, s: Node, f: Ex):
         # for line in f: the lines of a text file, each with its \n, read one at a time (a large file is never loaded whole); the loop does not close f (a loop over open(...) is rewritten by for_open, which closes it)
-        holder = self.hidden_slot('for.file')
-        self.emit(f'store ptr {f.reg}, ptr {holder}')
+        holder = self.hidden_rc_slot('for.file')
+        self.store_owned(holder, f)
         var = self.slot(s.fields[0].text, 'str', s.line)
         head = self.label('fileline')
         body = self.label('filelinebody')
@@ -11208,6 +11251,7 @@ class Gen:
         self.place(head)
         fp = self.tmp('fp')
         self.emit(f'{fp} = load ptr, ptr {holder}')
+        self.file_open_check(ex(fp, 'File'))      # closing the file inside its loop ends the next turn with a ValueError, as in Python
         line = self.tmp('line')
         self.emit(f'{line} = call ptr @tomato_file_next_line(ptr {fp})')
         go = self.tmp('go')
@@ -11628,6 +11672,10 @@ def async_symbol(mod: Mod, info: FuncInfo) -> str:
 # to text_method)
 def text_helper_methods() -> list[str]:
     return ['splitlines', 'partition', 'rpartition', 'rsplit', 'zfill', 'ljust', 'rjust', 'center', 'isalnum', 'removeprefix', 'removesuffix']
+
+# the methods of a File (file_op)
+def file_methods() -> list[str]:
+    return ['read', 'readline', 'readlines', 'write', 'writelines', 'flush', 'close', 'closed']
 
 def function_symbol(mod: Mod, info: FuncInfo) -> str:
     if info.is_async:
@@ -12197,6 +12245,10 @@ def runtime_tables(mod: Mod) -> str:
                 kinds[slot] = 'i32 8193'
             extra += '@tomato.offs.' + str(slot) + ' = constant [' + str(len(offs)) + ' x i32] [' + ', '.join(offs) + ']\n'
             offsets[slot] = f'ptr @tomato.offs.{slot}'
+        elif code == 'File':
+            kinds[slot] = 'i32 16385'         # bit 14: a File, whose stream the runtime closes when it is freed; it has no fields to walk
+            extra += '@tomato.offs.' + str(slot) + ' = constant [2 x i32] [i32 -1, i32 -1]\n'
+            offsets[slot] = f'ptr @tomato.offs.{slot}'
         elif is_class(code):
             c = mod.find_class(code[1:], 0)
             kinds[slot] = 'i32 1'
@@ -12418,7 +12470,8 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_str_title(ptr)\n'
     d += 'declare ptr @tomato_str_capitalize(ptr)\n'
     d += 'declare ptr @tomato_str_strip(ptr)\n'
-    d += 'declare ptr @tomato_file_open(ptr, ptr)\n'
+    d += 'declare ptr @tomato_file_open(ptr, ptr, i64)\n'
+    d += 'declare i32 @tomato_file_closed(ptr)\n'
     d += 'declare ptr @tomato_open_error(ptr)\n'
     d += 'declare ptr @tomato_file_read(ptr)\n'
     d += 'declare ptr @tomato_file_readline(ptr)\n'

@@ -350,7 +350,13 @@ A `catch` clause names classes, so renaming or re-parenting one after 1.0 is a b
 
 ## 5. Memory and resources
 
-### 5.1 A `File` is a bare C stream: closing it twice reads freed memory (Blocks 1.0)
+### 5.1 A `File` is a bare C stream: closing it twice reads freed memory (Blocks 1.0; default built, see D93a)
+
+> **Status (2026-11-26).** Davis has not decided this one. The implementer built the proposal below as a default (D93a in
+> `docs/decisions.md`, "default chosen by the implementer, easy to change"): `File` is a counted object holding the stream
+> and a closed state, `close()` twice does nothing, any other operation on a closed file raises `ValueError` E547,
+> `f.closed()` says which, and the file is closed when its last reference goes away. `with` is not built. The text below
+> is the original problem statement; the "today" in it is before D93a.
 
 **Problem.** Since D82a, `for line in open(p):` closes its file. Otherwise a `File` is "a bare C stream" (D82a's own
 words), and using or closing it after `close()` is "still undefined". In practice that means memory unsafety reachable
@@ -569,7 +575,7 @@ In the order I would take them, with my recommendation for each. The first eight
 4. **The `@` namespace and the type test (2.1, 2.2).** Entry points other than `main` as `@entry`; type tests as
    `x is T`.
 5. **`bytes` (8.1).** A `bytes` type before 1.0, or at least `list[uint[length=8]]` in every binary std signature.
-6. **`File` safety (5.1).** A closed flag, an idempotent `close()`, close on the last reference; `with` soon after.
+6. **`File` safety (5.1).** A closed flag, an idempotent `close()`, close on the last reference (built as a default, D93a, for Davis to confirm or change); `with` soon after.
 7. **Module names (9.1).** Reserve std's future names, warn when a project file shadows std, add `import ... as`.
 8. **The `!` C interface (1.6).** Allow it only in `std/`, or only behind an opt-in outside the promise.
 9. **The error class tree (4.1).** One `TimeoutError` and `ConnectionError` that module errors subclass; bare `raise`

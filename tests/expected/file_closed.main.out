@@ -1,0 +1,112 @@
+r open: False
+r closed: True
+r twice: True
+r read: ValueError E547 I/O operation on a closed file
+r readline: ValueError E547 I/O operation on a closed file
+r readlines: ValueError E547 I/O operation on a closed file
+r write: ValueError E547 I/O operation on a closed file
+r writelines: ValueError E547 I/O operation on a closed file
+r flush: ValueError E547 I/O operation on a closed file
+r iterate: ValueError E547 I/O operation on a closed file
+w open: False
+w closed: True
+w twice: True
+w read: ValueError E547 I/O operation on a closed file
+w readline: ValueError E547 I/O operation on a closed file
+w readlines: ValueError E547 I/O operation on a closed file
+w write: ValueError E547 I/O operation on a closed file
+w writelines: ValueError E547 I/O operation on a closed file
+w flush: ValueError E547 I/O operation on a closed file
+w iterate: ValueError E547 I/O operation on a closed file
+a open: False
+a closed: True
+a twice: True
+a read: ValueError E547 I/O operation on a closed file
+a readline: ValueError E547 I/O operation on a closed file
+a readlines: ValueError E547 I/O operation on a closed file
+a write: ValueError E547 I/O operation on a closed file
+a writelines: ValueError E547 I/O operation on a closed file
+a flush: ValueError E547 I/O operation on a closed file
+a iterate: ValueError E547 I/O operation on a closed file
+x open: False
+x closed: True
+x twice: True
+x read: ValueError E547 I/O operation on a closed file
+x readline: ValueError E547 I/O operation on a closed file
+x readlines: ValueError E547 I/O operation on a closed file
+x write: ValueError E547 I/O operation on a closed file
+x writelines: ValueError E547 I/O operation on a closed file
+x flush: ValueError E547 I/O operation on a closed file
+x iterate: ValueError E547 I/O operation on a closed file
+r+ open: False
+r+ closed: True
+r+ twice: True
+r+ read: ValueError E547 I/O operation on a closed file
+r+ readline: ValueError E547 I/O operation on a closed file
+r+ readlines: ValueError E547 I/O operation on a closed file
+r+ write: ValueError E547 I/O operation on a closed file
+r+ writelines: ValueError E547 I/O operation on a closed file
+r+ flush: ValueError E547 I/O operation on a closed file
+r+ iterate: ValueError E547 I/O operation on a closed file
+w+ open: False
+w+ closed: True
+w+ twice: True
+w+ read: ValueError E547 I/O operation on a closed file
+w+ readline: ValueError E547 I/O operation on a closed file
+w+ readlines: ValueError E547 I/O operation on a closed file
+w+ write: ValueError E547 I/O operation on a closed file
+w+ writelines: ValueError E547 I/O operation on a closed file
+w+ flush: ValueError E547 I/O operation on a closed file
+w+ iterate: ValueError E547 I/O operation on a closed file
+a+ open: False
+a+ closed: True
+a+ twice: True
+a+ read: ValueError E547 I/O operation on a closed file
+a+ readline: ValueError E547 I/O operation on a closed file
+a+ readlines: ValueError E547 I/O operation on a closed file
+a+ write: ValueError E547 I/O operation on a closed file
+a+ writelines: ValueError E547 I/O operation on a closed file
+a+ flush: ValueError E547 I/O operation on a closed file
+a+ iterate: ValueError E547 I/O operation on a closed file
+x+ open: False
+x+ closed: True
+x+ twice: True
+x+ read: ValueError E547 I/O operation on a closed file
+x+ readline: ValueError E547 I/O operation on a closed file
+x+ readlines: ValueError E547 I/O operation on a closed file
+x+ write: ValueError E547 I/O operation on a closed file
+x+ writelines: ValueError E547 I/O operation on a closed file
+x+ flush: ValueError E547 I/O operation on a closed file
+x+ iterate: ValueError E547 I/O operation on a closed file
+descriptors after the modes: 0
+3 lines read
+read file close: ok
+read file read: ValueError E547 I/O operation on a closed file
+read file readline: ValueError E547 I/O operation on a closed file
+read file readlines: ValueError E547 I/O operation on a closed file
+read file write: ValueError E547 I/O operation on a closed file
+read file writelines: ValueError E547 I/O operation on a closed file
+read file flush: ValueError E547 I/O operation on a closed file
+read file iterate: ValueError E547 I/O operation on a closed file
+read file close: ok
+True
+read file closed: ok
+caught: I/O operation on a closed file E547
+loop stopped after 1 line: I/O operation on a closed file
+closed after loop: True
+last line: three 0
+after close: written
+after drop: dropped 0
+after reassign: old more one 1
+b sees the close: True ValueError E547 I/O operation on a closed file
+open in a list: 2 False
+after pop: 0 True second
+in a field: 2 1
+field file: True ValueError E547 I/O operation on a closed file
+log replaced: 1
+first|second
+after 200 errors: 2
+after closing it: 1
+True False one
+closing the old one again leaves the new one: False two
+descriptors at the end: 0
