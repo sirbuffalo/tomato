@@ -204,6 +204,7 @@ struct_bulk
 struct_extreme
 sys_basics
 sys_args
+sys_run
 os_env
 os_files
 ospath_text

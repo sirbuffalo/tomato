@@ -42,3 +42,7 @@
   Golden files in `tests/cli_contract/` for `tomato help`, `explain`, `config`, the error texts, exit statuses and environment variables, written against main after the project-layout and test-library tasks land. A later rewrite of the `tomato` command in Tomato must pass them unchanged (`docs/shell-to-tomato-plan.md`, sections 6 and 12).
 - Check the shell-to-Tomato plan's open Mac points on a Mac
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
+- Add an async `sys.run` and a `Popen`-style object with pipes
+  On the scheduler's descriptor waits (`docs/next-features.md` item 15): today `run` blocks the whole program, so other tasks do not run while a child does.
+- Close the other open descriptors in the child of `sys.run`
+  Close (or mark close-on-exec) them: the child inherits this program's open files and sockets that are not close-on-exec, which Python avoids with `close_fds`.

@@ -75,6 +75,10 @@ with fixed offsets), `csv`, `textwrap`, `statistics`, `random`, `secrets`, `uuid
 keys and `memoize` handles functions of several arguments. The builtin names moved from `std/builtin.tom` into
 `std/builtin/`.
 
+`sys.run(args, ...)` starts a program (no shell) and returns its exit status and what it wrote to standard output and
+error (D98a). It takes `capture`, `cwd`, `env`, `stdin`, `check` and `timeout`, raises `ProcessError` and
+`ProcessTimeout`, and works natively only (the browser playground raises `RuntimeError`).
+
 `terminal` (D86a, native only): raw keys, window size and resize, colors and styles, and the width of characters, for programs that
 draw on a terminal; the first part of the repl line editor. See `docs/terminal-api.md`.
 

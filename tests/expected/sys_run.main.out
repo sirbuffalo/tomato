@@ -1,0 +1,62 @@
+echo 0 0 hello| 
+words [a b][it's][$HOME][*][][x"y]
+exit 3 3 0 out= err=
+false 1 0 out= err=
+both streams 0 0 out=out|out2| err=err|
+check ok 0 0 out= err=
+check fails ProcessError 4 0 'sh' exited with status 4: oops
+check fails, no stderr ProcessError 5 0 'sh' exited with status 5
+signal 143 15 out= err=
+signal check ProcessError 143 15 'sh' was ended by signal 15
+fields sh 9 0 to-stdout| to-stderr| E588
+bad utf-8 3 65533 ab
+stderr first 300000 300000 xxx yyy
+stdout first 300000 300000
+interleaved 3001 3001 line 2999 of the output of a loop error 2999
+big input 1000000
+echoed big input 1000000 True
+input never read 0
+input line one|line two|
+no input is end of file at once '' 0
+cwd marker.txt| True
+cwd sub inner.txt|
+env [1] [two words]
+inherited [old] []
+replaced [new] [] old None
+PATH /usr/bin:/bin
+PATH lookup could not run 'sh': No such file or directory
+before
+inherited out
+after 0 '' ''
+written without a newline, the child writes this
+inherit status 2
+given to cat
+inherit with input 0
+missing E505 could not run 'no-such-program-xyz': No such file or directory
+missing E505 could not run './no-such-file-xyz': No such file or directory
+missing E505 could not run '/nonexistent-dir-xyz/prog': No such file or directory
+not executable E507
+a directory E507
+cwd E505 could not change to the directory '/nonexistent-dir-xyz' to run 'ls': No such file or directory
+cwd is a file E509
+no program E585 run needs the program to start as the first word of args
+no program E585 run needs the program to start as the first word of args
+NUL E511
+NUL input E511
+env name E512
+env name E512
+env name E511
+env value E511
+empty cwd E586 cwd cannot be empty (leave it out to run in the current directory)
+timeout E587 timeout must be more than 0 seconds
+timeout E587 timeout must be more than 0 seconds
+in time 0 in time|
+timeout 137 9 started| warning| E589
+'sh' did not finish within 3.0 seconds and was killed: warning
+closed streams 137 9 E589
+inherit timeout 137
+input timeout 137
+ProcessTimeout is a ProcessError: yes
+zombies 0
+descriptors kept 0
+zombies after 60 runs 0 descriptors kept 0

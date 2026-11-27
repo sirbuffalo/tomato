@@ -1,5 +1,5 @@
 # sys, os, ospath and File in the browser playground (tests/run.sh runs this through WebAssembly only): the files and
-# directories are the page's own, kept in memory; putenv, unsetenv, chdir and getpid raise RuntimeError there; getcwd is '/'.
+# directories are the page's own, kept in memory; putenv, unsetenv, chdir, getpid and sys.run raise RuntimeError there; getcwd is '/'.
 import os
 import ospath
 import sys
@@ -16,6 +16,8 @@ def blocked(what: str):
             os.unsetenv('A')
         elif what == 'chdir':
             os.chdir('/tmp')
+        elif what == 'run':
+            sys.run(['echo', 'x'])
         else:
             print(os.getpid())
     catch RuntimeError as e:
@@ -25,7 +27,7 @@ def blocked(what: str):
 def main():
     print(sys.platform(), len(sys.argv()), len(sys.version()) > 0)
     print(os.getenv('NO_SUCH_VARIABLE_12345'), os.getenv('NO_SUCH_VARIABLE_12345', 'dflt'), 'NO_SUCH_VARIABLE_12345' in os.environ())
-    for w in ['putenv', 'unsetenv', 'chdir', 'getpid']:
+    for w in ['putenv', 'unsetenv', 'chdir', 'getpid', 'run']:
         blocked(w)
     print(os.getcwd(), ospath.abspath('x'), ospath.relpath('/a/b', '/a'))
     # files and directories (made under /tmp, which exists)

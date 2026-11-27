@@ -94,8 +94,9 @@ Read from the source (nothing here is new behavior):
 - **The `tomato` command is a POSIX shell script** (`native/tomato`) that calls `bin/tomatoc`, then clang. `tomato update`
   already downloads over https only, with a pinned sha256 (`curl_safe`, `native/tomato:52-55`), using `curl`, `tar` and
   `shasum`/`sha256sum`.
-- **The standard library cannot start a process.** `std/os.tom` has files, folders, environment and `stat` (with a
-  `mode`); `std/sys.tom` has argv and exit; there is no `system`, `popen` or `subprocess`. `std/toml.tom` (TOML v1.0.0),
+- **The standard library could not start a process when this was written** (it can now: `sys.run`, D98a, 2026-11-27; no
+  `popen` or async form yet). `std/os.tom` has files, folders, environment and `stat` (with a
+  `mode`); `std/sys.tom` has argv, exit and `run`. `std/toml.tom` (TOML v1.0.0),
   `std/hashlib.tom` (sha256 in Tomato) and `std/requests.tom` (libcurl through `dlopen`, native only) exist.
 - **The browser** (`site/wasm/tomato.js`) has a fixed list of standard modules and no project folder; its `compile`
   takes an optional `extra` map of module files (the command-line repl uses it). Programs on the website cannot import
@@ -954,8 +955,8 @@ needs no `tomato-seed config get`, because the compiler (written in Tomato) alre
 
 ## 14. How `tomato seed` is built
 
-The standard library cannot start a process (`std/os.tom` and `std/sys.tom` have no such function), and a Tomato program
-cannot run `git` or `ssh-keygen`. Adding one to the runtime would be a C change that must also be built for WebAssembly
+When this section was written the standard library could not start a process; `sys.run` (D98a, 2026-11-27) now can, but the
+design below was made without it and is unchanged: a Tomato program could now run `git` or `ssh-keygen`. Adding one to the runtime would be a C change that must also be built for WebAssembly
 (`docs/next-features.md` item 9; the release gate compares `site/wasm/*.wasm` byte for byte). So the work is split:
 
 - **The shell front end** (`native/tomato`, one new `seed)` case in the file that already holds `update` and `test`)
@@ -973,8 +974,10 @@ cannot run `git` or `ssh-keygen`. Adding one to the runtime would be a C change 
 - **Rejected:** all in shell (TOML, semver, hashing and signatures in awk are the kind of code that cannot be tested well);
   a C helper in `runtime/` (a runtime change for tooling, rebuilt for WebAssembly, for no reason); a binary written in another
   language (the project is self-hosted and has no other implementation, `README.md`).
-- **An `os.run` in `std`** (run a program with an argument list and no shell, return its status and output) would let the
-  helper do all of it in Tomato. It is a standard library API and a runtime change, so it is open question 4.
+- **A `run` in `std`** (run a program with an argument list and no shell, return its status and output) would let the
+  helper do all of it in Tomato. It is a standard library API and a runtime change, so it is open question 4. **It now
+  exists as `sys.run` (D98a, 2026-11-27, native only), added so that the `tomato` command's own build steps can be written in
+  Tomato; the split above is unchanged until Davis decides to move `tomato seed` onto it.**
 
 ## 15. Plan
 
@@ -1328,7 +1331,7 @@ has no staff queue to wait on, so the only action it can take automatically is t
    same-named seeds meet.* The alternatives are new syntax (`from acme.example/json5 import parse`, `import ... as j`),
    which decides D24b and D24c, and per-importer module renaming, which allows two majors of a seed in one program.
    Choose them together later, not in this design.
-4. **Does `std` get a way to run a program** (`os.run(args) -> (status, output)`, no shell), or does `tomato seed` stay a
+4. **Does `std` get a way to run a program** (**built as `sys.run`, D98a, 2026-11-27**; the question that is left is whether `tomato seed` moves onto it) (`os.run(args) -> (status, output)`, no shell), or does `tomato seed` stay a
    shell front end plus a Tomato helper? *Recommended: keep the split for the first stages (no runtime or WebAssembly
    change, ships soonest), and decide `os.run` on its own merits; it would make a version of the helper in pure Tomato
    possible later.*

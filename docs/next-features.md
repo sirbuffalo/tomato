@@ -315,6 +315,7 @@ Common to all items: an API decision step with Davis before building; tests in `
 
 - **What**: `run(args, capture_output, input, timeout, check)` returning a result with `returncode`, `stdout`, `stderr`; async `Popen` with pipes; `shlex.split`.
 - **Why**: shell-script replacement is a core "between Python and Go" use `[I]`; also lets tests and release scripts be written in Tomato.
+- **Built so far (D98a, 2026-11-27)**: the blocking `sys.run(args, capture, cwd, env, stdin, check, timeout)` in `std/sys.tom` (fork/exec and `poll` in C, no shell); what is not built is the async form and `Popen` with pipes (they need the scheduler's waiters), `shlex`, and closing inherited descriptors.
 - **Size**: M (fork/exec/pipes in C, scheduler waiters for the pipes and the child).
 - **Dependencies**: #9's descriptor waiter and #2; native only.
 - **Risk**: medium to high (zombies, `SIGCHLD`, escaping, timeouts, cancellation).

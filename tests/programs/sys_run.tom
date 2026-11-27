@@ -1,0 +1,214 @@
+# sys.run (D98a): start a program with a list of words and no shell, wait for it, and get its status and what it wrote. Native only
+# (the browser has no processes: tests/programs/os_browser.tom checks the error there). The first input is a folder for this test's files.
+# Nothing here writes to standard error: the AddressSanitizer tests treat any text there as a report.
+# The programs started are the ones every Unix has (sh, echo, printf, cat, ls, head, tr, wc, sleep, true, false, ps).
+import os
+import ospath
+import sys
+
+def show(text: str) -> str:
+    return text.replace('\n', '|')
+
+def attempt(args: list[str], capture: bool = True, check: bool = False) -> str:
+    try:
+        r = sys.run(args, capture=capture, check=check)
+        return f'{r.status} {r.signal} out={show(r.stdout)} err={show(r.stderr)}'
+    catch sys.ProcessError as e:
+        return f'ProcessError {e.status} {e.signal} {show(e.message)}'
+
+# the zombie children of this process: ps's table of (parent, state) lines
+def zombies() -> int:
+    r = sys.run(['ps', '-A', '-o', 'ppid=,stat='])
+    mine = os.getpid()
+    n = 0
+    for line in r.stdout.split('\n'):
+        text = line.strip()
+        gap = text.find(' ')
+        if gap > 0 and text[:gap] == str(mine) and text[gap:].strip().startswith('Z'):
+            n += 1
+    return n
+
+def open_files() -> int:
+    return len(os.listdir('/dev/fd'))
+
+def sections_basic():
+    r = sys.run(['echo', 'hello'])
+    print('echo', r.status, r.signal, show(r.stdout), show(r.stderr))
+    # every word is one argument as it is: spaces, quotes, $, * and an empty word are not special (there is no shell)
+    r = sys.run(['printf', '[%s]', 'a b', "it's", '$HOME', '*', '', 'x"y'])
+    print('words', r.stdout)
+    print('exit 3', attempt(['sh', '-c', 'exit 3']))
+    print('false', attempt(['false']))
+    print('both streams', attempt(['sh', '-c', 'echo out; echo err >&2; echo out2']))
+    print('check ok', attempt(['true'], check=True))
+    print('check fails', attempt(['sh', '-c', 'echo oops >&2; exit 4'], check=True))
+    print('check fails, no stderr', attempt(['sh', '-c', 'exit 5'], check=True))
+    print('signal', attempt(['sh', '-c', 'kill -TERM $$']))
+    print('signal check', attempt(['sh', '-c', 'kill -TERM $$'], check=True))
+    try:
+        sys.run(['sh', '-c', 'echo to-stdout; echo to-stderr >&2; exit 9'], check=True)
+    catch sys.ProcessError as e:
+        print('fields', e.program, e.status, e.signal, show(e.stdout), show(e.stderr), e.id)
+    # a program that writes bytes that are not text
+    r = sys.run(['printf', '\\377ab'])
+    print('bad utf-8', len(r.stdout), ord(r.stdout[0]), r.stdout[1:])
+
+def sections_big():
+    # more than a pipe holds (64 KiB) on both streams, in both orders: a reader that waits for one stream first would hang
+    r = sys.run(['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" y >&2; head -c 300000 /dev/zero | tr "\\0" x'])
+    print('stderr first', len(r.stdout), len(r.stderr), r.stdout[:3], r.stderr[-3:])
+    r = sys.run(['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" x; head -c 300000 /dev/zero | tr "\\0" y >&2'])
+    print('stdout first', len(r.stdout), len(r.stderr))
+    r = sys.run(['sh', '-c', 'i=0; while [ $i -lt 3000 ]; do echo "line $i of the output of a loop"; echo "error $i" >&2; i=$((i + 1)); done'])
+    print('interleaved', len(r.stdout.split('\n')), len(r.stderr.split('\n')), r.stdout.split('\n')[2999], r.stderr.split('\n')[2999])
+    # a big input that the program reads, and one it never reads (it must not stop this program or kill it with SIGPIPE)
+    big = 'abcdefghi\n' * 100000
+    r = sys.run(['wc', '-c'], stdin=big)
+    print('big input', r.stdout.strip())
+    r = sys.run(['cat'], stdin=big)
+    print('echoed big input', len(r.stdout), r.stdout == big)
+    r = sys.run(['true'], stdin=big)
+    print('input never read', r.status)
+
+def sections_options(work: str):
+    r = sys.run(['cat'], stdin='line one\nline two\n')
+    print('input', show(r.stdout))
+    r = sys.run(['cat'])
+    print('no input is end of file at once', f"'{r.stdout}'", r.status)
+    os.write_text(work + '/marker.txt', 'x')
+    r = sys.run(['ls'], cwd=work)
+    print('cwd', show(r.stdout), os.getcwd() == ospath.abspath('.'))
+    os.mkdir(work + '/sub')
+    os.write_text(work + '/sub/inner.txt', 'y')
+    r = sys.run(['ls', '.'], cwd=work + '/sub')
+    print('cwd sub', show(r.stdout))
+    r = sys.run(['sh', '-c', 'echo "[$TOMATO_RUN_A] [$TOMATO_RUN_B]"'], env={'TOMATO_RUN_A': '1', 'TOMATO_RUN_B': 'two words'})
+    print('env', r.stdout.strip())
+    os.putenv('TOMATO_RUN_A', 'old')
+    r = sys.run(['sh', '-c', 'echo "[$TOMATO_RUN_A] [$TOMATO_RUN_B]"'])
+    print('inherited', r.stdout.strip())
+    r = sys.run(['sh', '-c', 'echo "[$TOMATO_RUN_A] [$TOMATO_RUN_B]"'], env={'TOMATO_RUN_A': 'new', 'TOMATO_RUN_B': ''})
+    print('replaced', r.stdout.strip(), os.getenv('TOMATO_RUN_A'), os.getenv('TOMATO_RUN_B'))
+    os.unsetenv('TOMATO_RUN_A')
+    # PATH is the one of the environment the program gets
+    r = sys.run(['sh', '-c', 'echo $PATH'], env={'PATH': '/usr/bin:/bin'})
+    print('PATH', r.stdout.strip())
+    try:
+        sys.run(['sh', '-c', 'true'], env={'PATH': '/nonexistent-dir-xyz'})
+    catch FileNotFoundError as e:
+        print('PATH lookup', e.message)
+
+def sections_inherit():
+    print('before')
+    r = sys.run(['echo', 'inherited out'], capture=False)
+    print('after', r.status, f"'{r.stdout}' '{r.stderr}'")
+    sys.write_stdout('written without a newline, ')
+    r = sys.run(['sh', '-c', 'echo "the child writes this"; exit 2'], capture=False)
+    print('inherit status', r.status)
+    r = sys.run(['cat'], capture=False, stdin='given to cat\n')
+    print('inherit with input', r.status)
+
+def sections_errors(work: str):
+    for args in [['no-such-program-xyz'], ['./no-such-file-xyz'], ['/nonexistent-dir-xyz/prog']]:
+        try:
+            sys.run(args)
+        catch FileNotFoundError as e:
+            print('missing', e.id, e.message)
+    os.write_text(work + '/plain.txt', 'not a program')
+    try:
+        sys.run([work + '/plain.txt'])
+    catch PermissionError as e:
+        print('not executable', e.id)
+    try:
+        sys.run([work])
+    catch IOError as e:
+        print('a directory', e.id)
+    try:
+        sys.run(['ls'], cwd='/nonexistent-dir-xyz')
+    catch FileNotFoundError as e:
+        print('cwd', e.id, e.message)
+    try:
+        sys.run(['ls'], cwd=work + '/plain.txt')
+    catch NotADirectoryError as e:
+        print('cwd is a file', e.id)
+    nothing: list[str] = []
+    for bad in [nothing, ['']]:
+        try:
+            sys.run(bad)
+        catch ValueError as e:
+            print('no program', e.id, e.message)
+    try:
+        sys.run(['echo', 'a' + chr(0) + 'b'])
+    catch ValueError as e:
+        print('NUL', e.id)
+    try:
+        sys.run(['echo'], stdin='a' + chr(0))
+    catch ValueError as e:
+        print('NUL input', e.id)
+    for name in ['', 'A=B', 'A' + chr(0)]:
+        try:
+            sys.run(['echo'], env={name: 'x'})
+        catch ValueError as e:
+            print('env name', e.id)
+    try:
+        sys.run(['echo'], env={'A': 'x' + chr(0)})
+    catch ValueError as e:
+        print('env value', e.id)
+    try:
+        sys.run(['echo'], cwd='')
+    catch ValueError as e:
+        print('empty cwd', e.id, e.message)
+    for bad_timeout in [0.0, -1.0]:
+        try:
+            sys.run(['echo'], timeout=bad_timeout)
+        catch ValueError as e:
+            print('timeout', e.id, e.message)
+
+def sections_timeout():
+    r = sys.run(['echo', 'in time'], timeout=30.0)
+    print('in time', r.status, show(r.stdout))
+    # a timeout of 3 seconds, because what the program wrote before it is killed is part of the output, and a busy machine starts it late
+    try:
+        sys.run(['sh', '-c', 'echo started; echo warning >&2; exec sleep 30'], timeout=3.0)
+    catch sys.ProcessTimeout as e:
+        print('timeout', e.status, e.signal, show(e.stdout), show(e.stderr), e.id)
+        print(e.message)
+    # a program that closes its streams and goes on: this program waits for it, but not past the timeout
+    try:
+        sys.run(['sh', '-c', 'exec 1>&- 2>&-; exec sleep 30'], timeout=0.3)
+    catch sys.ProcessError as e:
+        print('closed streams', e.status, e.signal, e.id)
+    # without capturing there is nothing to read, and the timeout is still kept
+    try:
+        sys.run(['sleep', '30'], capture=False, timeout=0.3)
+    catch sys.ProcessTimeout as e:
+        print('inherit timeout', e.status)
+    # input that is not read does not hold up the timeout
+    try:
+        sys.run(['sleep', '30'], stdin='x' * 1000000, timeout=0.3)
+    catch sys.ProcessTimeout as e:
+        print('input timeout', e.status)
+    print('ProcessTimeout is a ProcessError:', 'yes')
+
+# (the work is in a function of its own: a release build does not free the text locals of main, and the leak check of the release test would report them)
+def everything(folder: str):
+    # the folder given may hold other files of the test, so the files of this one are in a folder of their own
+    work = folder + '/sys_run_files'
+    os.mkdir(work)
+    ready = open_files()
+    sections_basic()
+    sections_big()
+    sections_options(work)
+    sections_inherit()
+    sections_errors(work)
+    sections_timeout()
+    # nothing is left behind: no child still running as a zombie, and no descriptor kept by the failed and timed-out runs above
+    print('zombies', zombies())
+    print('descriptors kept', open_files() - ready)
+    for i in range(60):
+        sys.run(['true'])
+    print('zombies after 60 runs', zombies(), 'descriptors kept', open_files() - ready)
+
+@main
+def main(folder: str):
+    everything(folder)

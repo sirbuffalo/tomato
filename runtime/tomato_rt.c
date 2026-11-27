@@ -8088,6 +8088,262 @@ int64_t tomato_stat(void *path, int64_t follow, void *out) {
     return 0;
 }
 
+/* ---- starting a process (std/sys.tom run(), D98a). tomato_run starts the program argv[0] with the words argv[1:] directly (no shell), waits
+ * for it, and puts what it wrote to standard output and error (when capture is 1) in out as two texts, bytes that are not valid UTF-8
+ * becoming U+FFFD, and [status, signal, timed_out] in info (status is the exit status, or 128 + the signal when a signal ended the
+ * program; signal is 0 for a program that exited). A program without a slash is looked for in the PATH of the child's environment
+ * (this process's, with the extra "NAME=value" words of extra_env replacing or adding) as execvp does; the child runs in cwd when has_cwd
+ * is 1. Standard input is input when it is not empty; else it is this process's own when capture is 0, and empty (/dev/null) when it is 1.
+ * Both pipes are read with poll() while input is written, so a program that fills both of them (or that never reads its input) cannot make
+ * this process wait for ever. timeout_ms (-1 for none) kills the program with SIGKILL when it has not ended in time (info[2] is 1; the
+ * output so far is kept). The child is always waited for, so none is left as a zombie. Returns 0, or the kind of failure of tomato_os_error
+ * when the program could not be started (the reason is kept; info[0] is 1 when it was the directory that could not be entered, else 0).
+ * Nothing in the browser can start a process: there it is the failure ENOSYS (the library raises its own error first). This blocks the
+ * whole program, as every call of std/os does: other tasks do not run until the program ends. */
+#if defined(TOMATO_WASM) || defined(__wasi__)
+int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void *input, int64_t capture, int64_t timeout_ms, void *out, void *info) {
+    (void)argv; (void)extra_env; (void)cwd; (void)has_cwd; (void)input; (void)capture; (void)timeout_ms; (void)out;
+    push_int(info, 0);
+    return os_fail(ENOSYS);
+}
+#else
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/wait.h>
+typedef struct { char *p; size_t n, cap; } RunBuf;
+static void run_buf_add(RunBuf *b, const char *s, size_t n) {
+    if (b->n + n + 1 > b->cap) {
+        size_t c = b->cap ? b->cap : 4096;
+        while (c < b->n + n + 1) c *= 2;
+        char *q = realloc(b->p, c);
+        if (!q) out_of_memory();
+        b->p = q; b->cap = c;
+    }
+    memcpy(b->p + b->n, s, n);
+    b->n += n;
+}
+/* a pipe whose two descriptors are close-on-exec and above 2, so that making the child's standard streams cannot clobber one */
+static int run_pipe(int fds[2]) {
+    int p[2];
+    if (pipe(p) != 0) return -1;
+    for (int k = 0; k < 2; k++) {
+        int d = fcntl(p[k], F_DUPFD_CLOEXEC, 3);
+        if (d < 0) { int e = errno; close(p[k]); if (k == 0) close(p[1]); else close(fds[0]); errno = e; return -1; }
+        close(p[k]);
+        fds[k] = d;
+    }
+    return 0;
+}
+static void run_close(int *fd) { if (*fd >= 0) { close(*fd); *fd = -1; } }
+static int64_t run_now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000 + (int64_t)(t.tv_nsec / 1000000); }
+/* this process's environment with the "NAME=value" words of extra replacing or adding variables */
+static char **run_env(List *extra) {
+    size_t have = 0;
+    for (char **e = environ; e && *e; e++) have++;
+    char **env = malloc((have + (size_t)extra->len + 1) * sizeof *env);
+    if (!env) out_of_memory();
+    size_t n = 0;
+    for (char **e = environ; e && *e; e++) env[n++] = *e;
+    for (int64_t k = 0; k < extra->len; k++) {
+        char *w = LIST_SLOT(extra, k, Str *)->data;
+        const char *eq = strchr(w, '=');
+        size_t name = eq ? (size_t)(eq - w) : strlen(w);
+        size_t at = 0;
+        while (at < n && !(strncmp(env[at], w, name) == 0 && env[at][name] == '=')) at++;
+        if (at == n) n++;
+        env[at] = w;
+    }
+    env[n] = NULL;
+    return env;
+}
+/* the file to run for the word prog: a word with a slash is used as it is, any other is looked for in the PATH of env (/usr/bin:/bin when it
+ * has none), the way execvp does it. A malloc'ed path, or NULL with errno ENOENT (EACCES when a file was found that cannot be run). */
+static char *run_find(const char *prog, char **env, const char *cwd) {
+    if (strchr(prog, '/')) { char *c = strdup(prog); if (!c) out_of_memory(); return c; }
+    const char *path = "/usr/bin:/bin";
+    for (char **e = env; *e; e++) if (strncmp(*e, "PATH=", 5) == 0) { path = *e + 5; break; }
+    size_t plen = strlen(prog), cwdlen = cwd ? strlen(cwd) : 0;
+    int denied = 0;
+    for (const char *s = path;;) {
+        const char *end = strchr(s, ':');
+        size_t dl = end ? (size_t)(end - s) : strlen(s);
+        char *cand = malloc(cwdlen + dl + plen + 4);
+        if (!cand) out_of_memory();
+        size_t m = 0;
+        if (dl == 0) { cand[m++] = '.'; } else { memcpy(cand, s, dl); m = dl; }
+        cand[m++] = '/';
+        memcpy(cand + m, prog, plen + 1);
+        const char *full = cand;
+        char *rel = NULL;
+        if (cwd && cand[0] != '/') {            /* the child will be in cwd when it runs this */
+            rel = malloc(cwdlen + strlen(cand) + 2);
+            if (!rel) out_of_memory();
+            sprintf(rel, "%s/%s", cwd, cand);
+            full = rel;
+        }
+        struct stat st;
+        int found = stat(full, &st) == 0 && S_ISREG(st.st_mode);
+        int ok = found && access(full, X_OK) == 0;
+        free(rel);
+        if (ok) return cand;
+        if (found) denied = 1;
+        free(cand);
+        if (!end) break;
+        s = end + 1;
+    }
+    errno = denied ? EACCES : ENOENT;
+    return NULL;
+}
+int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void *input, int64_t capture, int64_t timeout_ms, void *out, void *info) {
+    List *words = argv;
+    Str *in = input;
+    const char *dir = has_cwd ? ((Str *)cwd)->data : NULL;
+    char **cargv = malloc(((size_t)words->len + 1) * sizeof *cargv);
+    if (!cargv) out_of_memory();
+    for (int64_t k = 0; k < words->len; k++) cargv[k] = LIST_SLOT(words, k, Str *)->data;
+    cargv[words->len] = NULL;
+    char **env = run_env(extra_env);
+    char *exe = run_find(cargv[0], env, dir);
+    int fail = 0, stage = 0;                    /* fail: the errno that kept the program from running */
+    int ep[2] = { -1, -1 }, in_fd[2] = { -1, -1 }, out_fd[2] = { -1, -1 }, err_fd[2] = { -1, -1 }, devnull = -1;
+    RunBuf ob = { NULL, 0, 0 }, eb = { NULL, 0, 0 };
+    int status = 0, sig = 0, timed_out = 0;
+    pid_t pid = -1;
+    struct sigaction ign, old_pipe;
+    int pipe_saved = 0;
+    int use_in = in->bytes > 0;
+    if (!exe) { fail = errno; goto done; }
+    if (run_pipe(ep) != 0 || (use_in && run_pipe(in_fd) != 0) || (capture && (run_pipe(out_fd) != 0 || run_pipe(err_fd) != 0))) { fail = errno; goto done; }
+    if (capture && !use_in) {
+        int nul = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        if (nul < 0) { fail = errno; goto done; }
+        devnull = fcntl(nul, F_DUPFD_CLOEXEC, 3);      /* above 2, as the pipes are (this process may have closed its own standard input) */
+        if (devnull < 0) { fail = errno; close(nul); goto done; }
+        close(nul);
+    }
+    fflush(NULL);                               /* what this process has printed must come before what the child prints */
+    memset(&ign, 0, sizeof ign);
+    ign.sa_handler = SIG_IGN;
+    sigemptyset(&ign.sa_mask);
+    pipe_saved = sigaction(SIGPIPE, &ign, &old_pipe) == 0;   /* a child that does not read its input must not kill this process */
+    pid = fork();
+    if (pid < 0) { fail = errno; goto done; }
+    if (pid == 0) {
+        struct sigaction dfl;
+        memset(&dfl, 0, sizeof dfl);
+        dfl.sa_handler = SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        sigaction(SIGPIPE, &dfl, NULL);
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        if (use_in) dup2(in_fd[0], 0); else if (devnull >= 0) dup2(devnull, 0);
+        if (capture) { dup2(out_fd[1], 1); dup2(err_fd[1], 2); }
+        int rec[2];
+        if (dir && chdir(dir) != 0) { rec[0] = 1; rec[1] = errno; if (write(ep[1], rec, sizeof rec) < 0) { /* nothing more to do */ } _exit(127); }
+        execve(exe, cargv, env);
+        rec[0] = 0; rec[1] = errno;
+        if (write(ep[1], rec, sizeof rec) < 0) { /* nothing more to do */ }
+        _exit(127);
+    }
+    run_close(&ep[1]); run_close(&in_fd[0]); run_close(&out_fd[1]); run_close(&err_fd[1]); run_close(&devnull);
+    {   /* the child's end of this pipe closes when it runs the program, or says why it could not */
+        int rec[2];
+        ssize_t got;
+        do got = read(ep[0], rec, sizeof rec); while (got < 0 && errno == EINTR);
+        run_close(&ep[0]);
+        if (got > 0) {
+            if (got == (ssize_t)sizeof rec) { stage = rec[0]; fail = rec[1]; } else fail = EIO;
+            int ws;
+            while (waitpid(pid, &ws, 0) < 0 && errno == EINTR) { }
+            pid = -1;
+            goto done;
+        }
+    }
+    {
+        int fds[3] = { in_fd[1], out_fd[0], err_fd[0] };
+        for (int k = 0; k < 3; k++) if (fds[k] >= 0) fcntl(fds[k], F_SETFL, fcntl(fds[k], F_GETFL) | O_NONBLOCK);
+    }
+    {
+        int64_t deadline = timeout_ms >= 0 ? run_now_ms() + timeout_ms : -1;
+        int64_t sent = 0;
+        char chunk[65536];
+        for (;;) {
+            struct pollfd pf[3];
+            int which[3], np = 0;
+            if (in_fd[1] >= 0) { pf[np].fd = in_fd[1]; pf[np].events = POLLOUT; pf[np].revents = 0; which[np++] = 0; }
+            if (out_fd[0] >= 0) { pf[np].fd = out_fd[0]; pf[np].events = POLLIN; pf[np].revents = 0; which[np++] = 1; }
+            if (err_fd[0] >= 0) { pf[np].fd = err_fd[0]; pf[np].events = POLLIN; pf[np].revents = 0; which[np++] = 2; }
+            if (np == 0) break;
+            int wait = -1;
+            if (deadline >= 0) {
+                int64_t left = deadline - run_now_ms();
+                if (left <= 0) { timed_out = 1; break; }
+                wait = left > 1000000000 ? 1000000000 : (int)left;
+            }
+            int r = poll(pf, (nfds_t)np, wait);
+            if (r < 0) { if (errno == EINTR) continue; break; }
+            for (int i = 0; i < np && r > 0; i++) {
+                if (!pf[i].revents) continue;
+                if (which[i] == 0) {
+                    int64_t left = in->bytes - sent;
+                    ssize_t n = write(in_fd[1], in->data + sent, (size_t)(left > (int64_t)sizeof chunk ? (int64_t)sizeof chunk : left));
+                    if (n > 0) sent += n;
+                    if ((n < 0 && errno != EAGAIN && errno != EINTR) || sent >= in->bytes) run_close(&in_fd[1]);   /* all sent, or the child does not read */
+                } else {
+                    int *fd = which[i] == 1 ? &out_fd[0] : &err_fd[0];
+                    ssize_t n = read(*fd, chunk, sizeof chunk);
+                    if (n > 0) run_buf_add(which[i] == 1 ? &ob : &eb, chunk, (size_t)n);
+                    else if (n == 0 || (errno != EAGAIN && errno != EINTR)) run_close(fd);
+                }
+            }
+        }
+        int ws = 0, reaped = 0;
+        if (!timed_out && deadline >= 0) {      /* the pipes are done: wait for the program, but not past the deadline */
+            for (;;) {
+                pid_t w = waitpid(pid, &ws, WNOHANG);
+                if (w == pid) { reaped = 1; break; }
+                if (w < 0 && errno != EINTR) break;
+                if (run_now_ms() >= deadline) { timed_out = 1; break; }
+                struct timespec nap = { 0, 1000000 };
+                nanosleep(&nap, NULL);
+            }
+        }
+        if (timed_out) kill(pid, SIGKILL);
+        if (!reaped) {
+            pid_t w;
+            while ((w = waitpid(pid, &ws, 0)) < 0 && errno == EINTR) { }
+            if (w < 0) { fail = errno; pid = -1; goto done; }
+        }
+        pid = -1;
+        if (WIFSIGNALED(ws)) { sig = WTERMSIG(ws); status = 128 + sig; } else status = WEXITSTATUS(ws);
+        for (int k = 1; k <= 2; k++) {          /* what the program wrote before it ended and was not read yet (not past a grandchild that holds the pipe) */
+            int *fd = k == 1 ? &out_fd[0] : &err_fd[0];
+            ssize_t n;
+            while (*fd >= 0 && (n = read(*fd, chunk, sizeof chunk)) > 0) run_buf_add(k == 1 ? &ob : &eb, chunk, (size_t)n);
+        }
+    }
+done:
+    if (pid > 0) { kill(pid, SIGKILL); while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) { } }
+    run_close(&ep[0]); run_close(&ep[1]); run_close(&in_fd[0]); run_close(&in_fd[1]); run_close(&out_fd[0]); run_close(&out_fd[1]);
+    run_close(&err_fd[0]); run_close(&err_fd[1]); run_close(&devnull);
+    if (pipe_saved) sigaction(SIGPIPE, &old_pipe, NULL);
+    free(cargv); free(env); free(exe);
+    if (fail) {
+        free(ob.p); free(eb.p);
+        push_int(info, stage);
+        return os_fail(fail);
+    }
+    *(void **)tomato_list_push(out, 8) = utf8_lossy((const unsigned char *)(ob.p ? ob.p : ""), (int64_t)ob.n);
+    *(void **)tomato_list_push(out, 8) = utf8_lossy((const unsigned char *)(eb.p ? eb.p : ""), (int64_t)eb.n);
+    free(ob.p); free(eb.p);
+    push_int(info, status);
+    push_int(info, sig);
+    push_int(info, timed_out);
+    return 0;
+}
+#endif
+
 /* ---- the terminal (std/terminal.tom, docs/repl-editor-design.md section 5). Calls return a count or 0, or -errno for a failure;
  * the Tomato code raises the errors. Raw mode is entered with tomato_tty_raw and left with tomato_tty_restore, and is always left at
  * the end of the process: atexit covers exit() (a normal end, sys.exit and an uncaught error), and the handlers of SIGTERM, SIGHUP,

@@ -1,10 +1,13 @@
-# The process: the command-line words, ending the program, the standard streams, the platform and the version. Functions
-# only, no module-level values (D49b). Works natively and in the browser playground (Wave 2, pack A).
+# The process: the command-line words, ending the program, the standard streams, the platform and the version, and starting
+# another program (run). Functions and classes only, no module-level values (D49b). Works natively and in the browser playground
+# (Wave 2, pack A), except run, which needs a process to start and raises RuntimeError there (D98a).
 !tomato_args(out: list[str]) -> int
 !tomato_exit(code: int) -> int
 !tomato_write_fd(fd: int, text: str) -> int
 !tomato_flush_std() -> int
 !tomato_platform() -> str
+!tomato_run(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, text: str, capture: int, timeout_ms: int, out: list[str], info: list[int]) -> int
+!tomato_os_error(what: str) -> str
 
 # All the words of the command line: argv()[0] is the program as it was started, then the inputs. An entry point that takes
 # `*args: tuple[str]` receives the inputs after its fixed ones.
@@ -33,6 +36,141 @@ export def flush():
 # 'linux', 'darwin' or 'wasi' (the browser playground)
 export def platform() -> str:
     return !tomato_platform()
+
+# What run() gives back: how the program ended, and what it wrote. `status` is the exit status of a program that exited, or 128 plus
+# the signal number when a signal ended it (the shell's rule), so `status == 0` means it succeeded; `signal` is that number, or 0 when
+# the program exited by itself. stdout and stderr are the text the program wrote (bytes that are not valid UTF-8 become U+FFFD), and
+# are empty when run() was called with capture=False.
+export class RunResult:
+    status: int = 0
+    signal: int = 0
+    stdout: str = ''
+    stderr: str = ''
+
+    @init
+    def make(self, status: int, signal: int, stdout: str, stderr: str):
+        self.status = status
+        self.signal = signal
+        self.stdout = stdout
+        self.stderr = stderr
+
+# Raised by run(check=True) when the program does not succeed, and by run() itself for a program that was stopped for taking longer
+# than its timeout (ProcessTimeout), so `catch ProcessError` handles every failure of a program that ran. The message says which
+# program and how it ended, and ends with what it wrote to standard error (the last 2000 characters); the fields hold everything:
+# the program (args[0]), the status and signal as in RunResult, and the text it wrote.
+export class ProcessError(RuntimeError):
+    program: str = ''
+    status: int = 0
+    signal: int = 0
+    stdout: str = ''
+    stderr: str = ''
+
+    @init
+    def make_process_error(self, message: str, program: str, status: int, signal: int, stdout: str, stderr: str, id: str = ''):
+        RuntimeError.make(self, message, id)
+        self.program = program
+        self.status = status
+        self.signal = signal
+        self.stdout = stdout
+        self.stderr = stderr
+
+# The program was ended (with SIGKILL) because it had not finished within the timeout; stdout and stderr hold what it had written.
+export class ProcessTimeout(ProcessError):
+    pass
+
+# Raises the error class of a failure kind from the runtime (1 not found, 2 exists, 3 permission, 4 is a directory,
+# 5 not a directory, anything else a plain IOError), the same classes and ids as os.
+def _raise(kind: int, message: str):
+    if kind == 1:
+        raise FileNotFoundError(message, 'E505')
+    if kind == 2:
+        raise FileExistsError(message, 'E506')
+    if kind == 3:
+        raise PermissionError(message, 'E507')
+    if kind == 4:
+        raise IsADirectoryError(message, 'E508')
+    if kind == 5:
+        raise NotADirectoryError(message, 'E509')
+    raise IOError(message, 'E515')
+
+def _no_nul(text: str):
+    if chr(0) in text:
+        raise ValueError('a path or name cannot contain a NUL character', 'E511')
+
+def _how_it_ended(program: str, status: int, signal: int) -> str:
+    if signal != 0:
+        return f"'{program}' was ended by signal {signal}"
+    return f"'{program}' exited with status {status}"
+
+# Runs the program args[0] with the arguments args[1:] and waits for it. There is no shell: every word is passed as it is, so no
+# quoting is needed and nothing in a word is special. A program without a '/' is looked for in the PATH (of the environment the
+# program gets, see env). The result has the exit status and what the program wrote to standard output and error.
+#   capture    True: standard output and error are read into the result (the program's standard input is empty unless stdin is given).
+#              False: the program uses this program's own standard streams (this program's buffered output is written first, so the
+#              order on the screen is the order of the calls), and stdout and stderr in the result are empty.
+#   cwd        the directory the program runs in (this program's directory is not changed)
+#   env        variables added to the environment the program gets, which is this program's environment otherwise (a name that is
+#              already set is replaced)
+#   stdin      the text sent to the program's standard input; when it is not given, standard input is this program's own with
+#              capture=False and empty (end of file at once) with capture=True
+#   check      True: a program that does not succeed (status other than 0) raises ProcessError
+#   timeout    seconds; a program that has not ended by then is killed (SIGKILL) and run() raises ProcessTimeout. The program's own
+#              children are not killed. Without a timeout run() waits as long as it takes.
+# A program that cannot be started raises FileNotFoundError, PermissionError or another IOError, with a message that names the
+# program (or the directory, when cwd cannot be entered). The program is always waited for, so none is left running or as a zombie.
+# run() blocks the whole program, as the functions of os do: other tasks do not run until the program ends. In the browser
+# playground there are no processes: run() raises RuntimeError.
+export def run(args: list[str], capture: bool = True, cwd: str | None = None, env: dict[str, str] | None = None, stdin: str = '', check: bool = False, timeout: float | None = None) -> RunResult:
+    if platform() == 'wasi':
+        raise RuntimeError('run is not available in the browser playground (it cannot start a process)', 'E514')
+    if len(args) == 0 or args[0] == '':
+        raise ValueError('run needs the program to start as the first word of args', 'E585')
+    for word in args:
+        _no_nul(word)
+    _no_nul(stdin)
+    extra: list[str] = []
+    if env is not None:
+        for name, value in env.items():
+            if name == '' or '=' in name:
+                raise ValueError("an environment variable name is empty or contains '='", 'E512')
+            _no_nul(name)
+            _no_nul(value)
+            extra.append(name + '=' + value)
+    where = ''
+    if cwd is not None:
+        _no_nul(cwd)
+        where = cwd
+        if where == '':
+            raise ValueError('cwd cannot be empty (leave it out to run in the current directory)', 'E586')
+    limit = -1
+    if timeout is not None:
+        if timeout <= 0.0:
+            raise ValueError('timeout must be more than 0 seconds', 'E587')
+        limit = int(timeout * 1000.0)
+        if limit < 1:
+            limit = 1
+    out: list[str] = []
+    info: list[int] = []
+    kind = !tomato_run(args, extra, where, 1 if cwd is not None else 0, stdin, 1 if capture else 0, limit, out, info)
+    if kind != 0:
+        if info[0] == 1:
+            _raise(kind, !tomato_os_error(f"change to the directory '{where}' to run '{args[0]}'"))
+        _raise(kind, !tomato_os_error(f"run '{args[0]}'"))
+    result = RunResult(info[0], info[1], out[0], out[1])
+    if info[2] != 0:
+        raise ProcessTimeout(_failure_text(f"'{args[0]}' did not finish within {timeout} seconds and was killed", out[1]), args[0], info[0], info[1], out[0], out[1], 'E589')
+    if check and info[0] != 0:
+        raise ProcessError(_failure_text(_how_it_ended(args[0], info[0], info[1]), out[1]), args[0], info[0], info[1], out[0], out[1], 'E588')
+    return result
+
+# the message of a ProcessError: what happened, then (when the program wrote something to standard error) the end of it
+def _failure_text(what: str, stderr: str) -> str:
+    text = stderr.strip()
+    if text == '':
+        return what
+    if len(text) > 2000:
+        text = '...' + text[-2000:]
+    return what + ': ' + text
 
 # The version of Tomato, the same text as `tomato version`. tests/run.sh (t_sys_version) checks the literal below against the VERSION file,
 # and the release script's bump step writes it (release/release.sh).

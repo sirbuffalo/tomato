@@ -582,3 +582,8 @@ CompileError the module '{}' is in the seed {} and in the standard library, so t
 CompileError cannot read the file {} of the seed {}
 CompileError '{}' and '{}' are both marked @{}
 CompileError the function '{}' is marked @{}, and the entry '{}' runs several functions, so it must take no inputs and cannot be async
+ValueError run needs the program to start as the first word of args
+ValueError cwd cannot be empty (leave it out to run in the current directory)
+ValueError timeout must be more than 0 seconds
+ProcessError the program did not succeed
+ProcessTimeout the program did not finish within its timeout
