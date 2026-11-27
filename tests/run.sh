@@ -1066,7 +1066,7 @@ tomato = \"$(cat VERSION)\"
   check "manifest: the file is checked by every command, config included" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(printf '[x]\n' > "$P/tomato.toml"; noconf $t config "$P/sub/prog.tom" 2>&1)"
   check "manifest: so is compile" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(noconf $t compile "$P/sub/prog.tom" 2>&1)"
   check "explain knows the manifest errors" "error[E555]: ConfigError: {}: unknown {} {} (the tables are {}; every setting is in a table)" "$($t explain E555)"
-  check "tomato help lists the seed commands" "3" "$($t help | grep -c 'tomato seed ')"
+  check "tomato help lists the seed commands" "6" "$($t help | grep -c 'tomato seed ')"
 }
 t_cli_build_tables() { # [build] and [build.ENTRY] (D92c): mode and output, the flags win, a seed's [build] is ignored
   cli_setup
@@ -1299,8 +1299,9 @@ test_only = true' "$(sed -n '/name = "acme.example\/other"/,/^test_only/p' "$W/a
   printf '%s' "$head" > "$W/app/tomato.toml"
   # what install cannot do yet
   badseed() { printf '%s%s\n' "$head" "$2" > "$W/app/tomato.toml"; check "seeds: $1" "$3" "$(cd "$W/app" && noconf $t seed install 2>&1 | sed "s#$here#HERE#g")"; }
-  badseed "a git seed is reported as not supported yet" '"d.example/g" = { git = "https://h/g.git", rev = "abc" }' "error[E570]: HERE/app/tomato.toml: the seed d.example/g comes from git, which this version cannot fetch yet; only { path = \"../folder\" } seeds can be installed (no network, no registry)"
-  badseed "a registry seed is reported as not supported yet" '"d.example/r" = "1.2.0"' "error[E571]: HERE/app/tomato.toml: the seed d.example/r 1.2.0 would come from a registry, and there is none yet; only { path = \"../folder\" } seeds can be installed"
+  badseed "a git seed whose rev is not a full commit id is refused before git is started" '"d.example/g" = { git = "https://h/g.git", rev = "abc" }' "error[E598]: HERE/app/tomato.toml: the rev \"abc\" of the seed d.example/g is not a full commit id (40 lowercase hex digits): a tag or a branch moves, so the manifest names the commit (git rev-parse TAG^{commit} prints it)"
+  badseed "a git seed with a URL of another scheme is refused" '"d.example/g" = { git = "http://h/g.git", rev = "0123456789012345678901234567890123456789" }' "error[E598]: HERE/app/tomato.toml: the git URL of the seed d.example/g cannot be used: the scheme http:// is not used for seeds (the schemes are https, ssh and file)"
+  badseed "a registry seed is reported as not supported yet" '"d.example/r" = "1.2.0"' "error[E571]: HERE/app/tomato.toml: the seed d.example/r 1.2.0 would come from a registry, and there is none yet; only { path = \"../folder\" } and { git = \"URL\", rev = \"COMMIT\" } seeds can be installed"
   badseed "a path that is not a folder" '"d.example/nope" = { path = "../nope" }' "error[E572]: HERE/app/tomato.toml: the seed d.example/nope is at \"../nope\", which is not a folder (a relative path starts at the folder of tomato.toml)"
   mkdir -p "$W/bare"
   badseed "a folder with no tomato.toml" '"d.example/bare" = { path = "../bare" }' "error[E572]: HERE/app/tomato.toml: the seed d.example/bare at \"../bare\" has no tomato.toml: the folder of a seed needs one with a [seed] table"
@@ -1359,7 +1360,286 @@ warning: [build.mian] names no entry: no function in src/ or tests/ is marked @m
   check "seeds: the hash covers nested files, modes, byte order and leaves .git out" "$(indep_hash "$W/h")" "$(noconf $t seed hash "$W/h")"
   case "$(noconf $t seed hash 2>&1)" in "sha256:"*) ok "seeds: hash of no argument is the current folder's";; *) bad "seeds: hash of no argument is the current folder's";; esac
   check "seeds: hash of a missing folder" "error[E572]: $W/nope is not a folder" "$(noconf $t seed hash "$W/nope" 2>&1)"
-  check "seeds: an unknown seed command" "error: unknown seed command 'add' (run 'tomato help'; the commands here are install, check and hash)" "$(noconf $t seed add 2>&1)"
+  check "seeds: an unknown seed command" "error: unknown seed command 'frob' (run 'tomato help'; the commands here are install, add, remove, vendor, check and hash)" "$(noconf $t seed frob 2>&1)"
+}
+t_cli_seed_store() { # tomato seed add/remove/vendor, git seeds and the seed store, the foreign-symbol question (D100a); local bare git repos only, no network
+  cli_setup
+  if ! command -v git >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "seed store: git is required in CI" || echo "skip: git is not installed, so the seed store tests did not run"
+    return
+  fi
+  W="$work/ss"; mkdir -p "$W"; cd "$W" || return 1
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t.t
+  th="$W/home"; mkdir -p "$th"; here="$(pwd -P)"
+  tm() { TOMATO_HOME="$th" "$@"; }
+  sum256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1; else sha256sum | cut -d' ' -f1; fi; }
+  # the seed hash v1 of section 6 with find, sort and the system's sha256 (independent of the Tomato code), as in t_cli_seeds
+  indep_hash() { printf 'sha256:%s' "$(cd "$1" && find . -type f ! -path './.git/*' ! -path './builds/*' | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do m=644; [ -x "$f" ] && m=755; printf '%s  %s  %s\n' "$(sum256 < "$f")" "$m" "$f"; done | sum256)"; }
+  norm() { sed "s#$here#HERE#g"; }
+  commit() { git -C "$1" add -A >/dev/null && git -C "$1" commit -q -m "$2" && git -C "$1" rev-parse HEAD; }   # DIR MESSAGE: prints the commit id
+  bare() { rm -rf "$2"; git clone -q --bare "$1" "$2"; }                                                       # REPO BARE
+  seed_toml() { printf '[seed]\nname = "%s"\nversion = "%s"\ntomato = "0.51"\n' "$1" "$2"; }                  # NAME VERSION
+  # ---- the seeds: a path seed, and a git seed in two commits (the second declares a foreign symbol)
+  mkdir -p "$W/loc/src"
+  seed_toml acme.example/loc 0.3.0 > "$W/loc/tomato.toml"
+  printf 'export def local_name() -> str:\n    return "loc"\n' > "$W/loc/src/loc.tom"
+  git init -q -b main "$W/gs"; mkdir -p "$W/gs/src"
+  seed_toml g.example/gs 1.0.0 > "$W/gs/tomato.toml"
+  printf 'export def hi() -> str:\n    return "hi from git"\n' > "$W/gs/src/gs.tom"
+  printf '#!/bin/sh\necho tool\n' > "$W/gs/tool.sh"; chmod 755 "$W/gs/tool.sh"
+  C1="$(commit "$W/gs" one)"
+  H1="$(indep_hash "$W/gs")"
+  seed_toml g.example/gs 1.1.0 > "$W/gs/tomato.toml"
+  printf '!tomato_json_quote(text: str, ascii: int) -> str\nexport def hi() -> str:\n    return "hi from git 1.1"\n' > "$W/gs/src/gs.tom"
+  C2="$(commit "$W/gs" two)"
+  H2="$(indep_hash "$W/gs")"
+  bare "$W/gs" "$W/gs.git"
+  mkdir -p "$W/app/src"; A="$W/app"
+  head='[project]
+name = "app"
+version = "0.1.0"
+tomato = "0.51"
+'
+  printf 'from loc import local_name\n\n@main\ndef main():\n    print(local_name())\n' > "$A/src/main.tom"
+  printf 'from gs import hi\n\n@main\ndef main():\n    print(hi())\n' > "$A/src/usegs.tom"
+  gsurl="$W/gs.git"
+  # ---- seed add --path: the manifest keeps its comments and order, the new line goes where it belongs
+  printf '# my app\n%s\n# what it uses\n[seeds]\n# the first\n"b.example/b" = "1.0.0"   # kept\n\n[build]\nmode = "release"\n' "$head" > "$A/tomato.toml"
+  cp "$A/tomato.toml" "$W/manifest.before"
+r="$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)"
+  cmp -s "$W/manifest.before" "$A/tomato.toml" && ok "seed add: a failed add leaves tomato.toml exactly as it was" || bad "seed add: a failed add leaves tomato.toml exactly as it was" "$(diff "$W/manifest.before" "$A/tomato.toml")"
+  printf '# my app\n%s\n# what it uses\n[seeds]\n# the first\n"b.example/b" = { path = "../loc" }   # kept\n\n[build]\nmode = "release"\n' "$head" > "$A/tomato.toml"
+  printf '[seed]\nname = "b.example/b"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/loc/tomato.toml"; mkdir -p "$W/b/src"; mv "$W/loc/tomato.toml" "$W/b/tomato.toml"; printf 'export def b() -> int:\n    return 1\n' > "$W/b/src/b.tom"
+  printf '# my app\n%s\n# what it uses\n[seeds]\n# the first\n"b.example/b" = { path = "../b" }   # kept\n\n[build]\nmode = "release"\n' "$head" > "$A/tomato.toml"
+  seed_toml acme.example/loc 0.3.0 > "$W/loc/tomato.toml"
+  cp "$A/tomato.toml" "$W/manifest.before"
+  r="$(cd "$A" && tm $t seed add --path ../loc 2>&1 | norm)"
+  check "seed add: a path seed is listed and locked" "added acme.example/loc 0.3.0 to [seeds] of HERE/app/tomato.toml
+b.example/b 1.0.0  $(indep_hash "$W/b")  (path ../b)
+acme.example/loc 0.3.0  $(indep_hash "$W/loc")  (path ../loc)
+wrote HERE/app/tomato.lock (2 seeds)" "$r"
+  check "seed add: only the new line is added, after the last seed of [seeds], with every comment and blank line where it was" '+"acme.example/loc" = { path = "../loc" }' "$(diff "$W/manifest.before" "$A/tomato.toml" | grep '^[<>]' | sed 's/^> */+/')"
+  check "seed add: the lock holds the seeds, with the content hash of find, sort and sha256" "$(indep_hash "$W/loc")" "$(sed -n '/name = "acme.example\/loc"/,/^seeds/p' "$A/tomato.lock" | sed -n 's/^hash = "\(.*\)"/\1/p')"
+  check "seed add: a program uses the seed" "loc" "$(cd "$A" && tm $t run 2>&1)"
+  cp "$A/tomato.toml" "$W/manifest.once"; cp "$A/tomato.lock" "$W/lock.once"
+  r="$(cd "$A" && tm $t seed add --path "$W/loc" 2>&1 | norm | sed -n 1p)"
+  check "seed add: the same seed again (as an absolute path) replaces its line" 'added acme.example/loc 0.3.0 to [seeds] of HERE/app/tomato.toml' "$r"
+  check "seed add: and keeps the order (one line differs, the path as written)" "+\"acme.example/loc\" = { path = \"$W/loc\" }" "$(diff "$W/manifest.once" "$A/tomato.toml" | grep '^>' | sed 's/^> */+/')"
+  (cd "$A" && tm $t seed add --path ../loc >/dev/null 2>&1)
+  cmp -s "$W/manifest.once" "$A/tomato.toml" && cmp -s "$W/lock.once" "$A/tomato.lock" && ok "seed add: add, add again and add the first form again end where it began" || bad "seed add: add again ends where it began"
+  # --test: [test-seeds], created after [seeds]
+  mkdir -p "$W/tl/src"; seed_toml acme.example/tl 1.0.0 > "$W/tl/tomato.toml"; printf 'export def t() -> int:\n    return 1\n' > "$W/tl/src/tl.tom"
+  (cd "$A" && tm $t seed add --path ../tl --test >/dev/null 2>&1)
+  check "seed add: --test writes [test-seeds], right after [seeds]" '"acme.example/loc" = { path = "../loc" }   # kept
+
+[test-seeds]
+"acme.example/tl" = { path = "../tl" }
+
+[build]' "$(sed -n '/^"acme.example\/loc"/,/^\[build\]/p' "$A/tomato.toml" | sed 's/^"acme.example\/loc" = { path = "..\/loc" }$/&   # kept/' | sed '1s/   # kept   # kept/   # kept/')"
+  check "seed add: the lock marks it test_only" "test_only = true" "$(sed -n '/acme.example\/tl/,$p' "$A/tomato.lock" | grep test_only)"
+  # ---- seed remove
+  r="$(cd "$A" && tm $t seed remove acme.example/tl 2>&1 | norm)"
+  check "seed remove: says what it removed and locked" "removed acme.example/tl from [test-seeds] of HERE/app/tomato.toml
+b.example/b 1.0.0  $(indep_hash "$W/b")  (path ../b)
+acme.example/loc 0.3.0  $(indep_hash "$W/loc")  (path ../loc)
+wrote HERE/app/tomato.lock (2 seeds)" "$r"
+  check "seed remove: only its line goes (the now empty [test-seeds] and the comments stay)" '+[test-seeds]
++' "$(diff "$W/manifest.once" "$A/tomato.toml" | grep '^[<>]' | sed 's/^> */+/')"
+  check "seed remove: the lock no longer has it" "0" "$(grep -c 'acme.example/tl' "$A/tomato.lock")"
+  r="$(cd "$A" && tm $t seed remove acme.example/nothing 2>&1 | norm; echo "rc=$?")"
+  check "seed remove: a seed that is not listed is an error" "error[E604]: HERE/app/tomato.toml: acme.example/nothing is not in [seeds] or [test-seeds] of this tomato.toml
+rc=0" "$r"
+  r="$(cd "$A" && tm $t seed remove acme.example/loc >/dev/null 2>&1; tm $t seed remove b.example/b 2>&1 | norm)"
+  check "seed remove: the last seed leaves a lock with no seeds" "removed b.example/b from [seeds] of HERE/app/tomato.toml
+wrote HERE/app/tomato.lock (0 seeds)" "$r"
+  check "seed remove: a lock with no seeds is only the version" '# tomato.lock: generated by `tomato seed install`, do not edit
+version = 1' "$(cat "$A/tomato.lock")"
+  # ---- forms that are not edited, and what is not a project
+  printf '%s[seeds]\n"acme.example/loc".path = "../loc"\n' "$head" > "$A/tomato.toml"; cp "$A/tomato.toml" "$W/manifest.before"
+  r="$(cd "$A" && tm $t seed remove acme.example/loc 2>&1 | norm | cut -c1-210)"
+  check "seed remove: a dotted key is not edited, the manifest stays" 'error[E603]: HERE/app/tomato.toml: tomato.toml has a form this command does not edit (a dotted key, a multi-line value): nothing was changed. Remove the line of "acme.example/loc" yourself' "$r"
+  r="$(cd "$A" && tm $t seed add --path ../loc 2>&1 | norm)"
+  case "$r" in "error[E603]: HERE/app/tomato.toml: the edit would leave tomato.toml unreadable ("*"); it was put back as it was. Add this line to [seeds] yourself: \"acme.example/loc\" = { path = \"../loc\" }") ok "seed add: a dotted key is not edited either (a second line would be a duplicate): the manifest is put back";; *) bad "seed add: a dotted key is not edited either" "$r";; esac
+  cmp -s "$W/manifest.before" "$A/tomato.toml" && ok "seed add: and it is exactly as it was" || bad "seed add: and it is exactly as it was"
+  r="$(cd "$W/loc" && tm $t seed add --path ../tl 2>&1 | norm)"
+  check "seed add: a seed's manifest is refused (only a project lists seeds that are not registered)" "error[E604]: HERE/loc/tomato.toml: seeds are added to a [project], and this file is a seed (a package can use only registered seeds, and there is no registry yet)" "$r"
+  r="$(cd "$A" && printf '%s' "$head" > tomato.toml && tm $t seed add --path ../nothing 2>&1 | norm)"
+  check "seed add: a folder that does not exist" "error[E572]: HERE/app/tomato.toml: ../nothing is not a folder" "$r"
+  mkdir -p "$W/empty"
+  check "seed add: a folder with no tomato.toml" "error[E572]: HERE/app/tomato.toml: ../empty has no tomato.toml: the folder of a seed needs one with a [seed] table" "$(cd "$A" && tm $t seed add --path ../empty 2>&1 | norm)"
+  # a failed lock puts the manifest back: two seeds with one module
+  mkdir -p "$W/twin/src"; seed_toml twin.example/loc 1.0.0 > "$W/twin/tomato.toml"; printf 'export def x() -> int:\n    return 2\n' > "$W/twin/src/loc.tom"
+  (cd "$A" && printf '%s' "$head" > tomato.toml && tm $t seed add --path ../loc >/dev/null 2>&1); cp "$A/tomato.toml" "$W/manifest.before"; cp "$A/tomato.lock" "$W/lock.before"
+  r="$(cd "$A" && tm $t seed add --path ../twin 2>&1 | norm)"
+  check "seed add: two seeds with one module stop the add" "error[E577]: HERE/app/tomato.toml: the seeds acme.example/loc and twin.example/loc both provide the module 'loc': one program holds one copy of a module" "$r"
+  cmp -s "$W/manifest.before" "$A/tomato.toml" && cmp -s "$W/lock.before" "$A/tomato.lock" && ok "seed add: the manifest and the lock are as they were" || bad "seed add: the manifest and the lock are as they were"
+  # ---- seed add --git: fetched with git into the store, named by the content hash
+  printf '%s' "$head" > "$A/tomato.toml"; rm -f "$A/tomato.lock"
+  r="$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C1" 2>&1 | norm)"
+  check "seed add --git: the seed is fetched, listed and locked" "added g.example/gs 1.0.0 to [seeds] of HERE/app/tomato.toml
+g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
+wrote HERE/app/tomato.lock (1 seed)" "$r"
+  check "seed add --git: the line has the URL and the commit" "\"g.example/gs\" = { git = \"$gsurl\", rev = \"$C1\" }" "$(sed -n '/^\[seeds\]/,$p' "$A/tomato.toml" | sed -n 2p)"
+  check "seed add --git: the lock has source, git, commit and the hash that find, sort and sha256 give for the files at that commit" "source = \"git\"
+git = \"$gsurl\"
+commit = \"$C1\"
+hash = \"$H1\"
+modules = [\"gs\"]" "$(sed -n '/^source/,/^modules/p' "$A/tomato.lock")"
+  hx="${H1#sha256:}"; store="$th/seeds/store/$(echo "$hx" | cut -c1-2)/$hx"
+  [ -f "$store/src/gs.tom" ] && [ -x "$store/tool.sh" ] && [ ! -x "$store/src/gs.tom" ] && ok "seed add --git: the files are in the store under their hash, with the modes git records" || bad "seed add --git: the files are in the store under their hash, with the modes git records" "$(ls -lR "$th/seeds" | head -20)"
+  check "seed add --git: nothing is left in the scratch folder" "" "$(ls "$th/seeds/tmp")"
+  check "seed add --git: the store folder hashes to the lock's hash" "$H1" "$(tm $t seed hash "$store")"
+  check "seed add --git: a program uses the seed from the store" "hi from git" "$(cd "$A" && tm $t run src/usegs.tom 2>&1)"
+  # offline: the repository can go away, the store has it
+  mv "$W/gs.git" "$W/gs.moved"
+  check "seed install --locked --offline: needs neither the repository nor git" "g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
+tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked --offline 2>&1 | norm)"
+  check "seed install: and so does install with the repository gone" "g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
+wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
+  check "a build never fetches: it runs from the store with the repository gone" "hi from git" "$(cd "$A" && tm $t run src/usegs.tom 2>&1)"
+  mv "$store" "$W/store.moved"
+  r="$(cd "$A" && tm $t seed install --offline 2>&1 | norm)"
+  check "seed install --offline: a seed that is not in the store is an error, git is not run" "error[E605]: HERE/app/tomato.toml: the seed g.example/gs is not in the seed store ($(echo "$store" | norm)) or the vendor folder, and --offline does not run git: run \`tomato seed install\` once with the network" "$r"
+  r="$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)"
+  check "a build says to install when the store has lost the seed" "error[E569]: HERE/app/tomato.toml: the seed g.example/gs is not in the seed store ($(echo "$store" | norm))
+  = help: run: tomato seed install" "$r"
+  r="$(cd "$A" && tm $t seed install 2>&1 | norm | cut -c1-60)"
+  r="$(cd "$A" && tm $t seed install 2>&1 | norm | cut -c1-60)"
+  case "$r" in "error[E599]: fetching "*" from HERE/gs.git failed: "*) ok "seed install: git failing (the repository is gone) is an error";; *) bad "seed install: git failing (the repository is gone) is an error" "$r";; esac
+  [ ! -e "$store" ] && ok "seed install: the failed fetch stored nothing" || bad "seed install: the failed fetch stored nothing"
+  check "seed install: and left no scratch folder" "" "$(ls "$th/seeds/tmp")"
+  mv "$W/gs.moved" "$W/gs.git"
+  check "seed install: with the repository back it fetches the missing seed" "g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
+wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
+  check "seed install: and the store has it again, as it was" "$H1" "$(tm $t seed hash "$store")"
+  # a store folder changed after it was stored is caught by a build and by install
+  printf '# changed\n' >> "$store/src/gs.tom"
+  r="$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)"
+  case "$r" in "error[E601]: HERE/app/tomato.toml: the copy of g.example/gs in $(echo "$store" | norm) has the content hash "*"it was changed after it was put there (remove the folder and run \`tomato seed install\` to fetch it again)") ok "seed store: a build checks the stored copy against the lock";; *) bad "seed store: a build checks the stored copy against the lock" "$r";; esac
+  r="$(cd "$A" && tm $t seed install 2>&1 | norm)"
+  case "$r" in "error[E601]: HERE/app/tomato.toml: the copy of g.example/gs in $(echo "$store" | norm) has the content hash "*) ok "seed store: so does install";; *) bad "seed store: so does install" "$r";; esac
+  rm -rf "$store"; (cd "$A" && tm $t seed install >/dev/null 2>&1)
+  # a lock that does not match the repository: the hash decides, nothing is stored
+  cp "$A/tomato.lock" "$W/lock.good"
+  fake="sha256:0000000000000000000000000000000000000000000000000000000000000001"
+  sed "s#^hash = .*#hash = \"$fake\"#" "$W/lock.good" > "$A/tomato.lock"
+  rm -rf "$th/seeds/store"
+  r="$(cd "$A" && tm $t seed install 2>&1 | norm)"
+  check "seed install: a fetched seed that does not hash to the lock's hash is refused" "error[E601]: HERE/app/tomato.toml: the seed g.example/gs fetched from HERE/gs.git at $(echo "$C1" | cut -c1-12) has the content hash $H1, but tomato.lock says $fake: the repository does not hold what was locked (nothing was stored)" "$r"
+  check "seed install: and nothing is in the store, not even a scratch folder" "" "$(find "$th/seeds/store" -type f 2>/dev/null; ls "$th/seeds/tmp")"
+  cp "$W/lock.good" "$A/tomato.lock"
+  # the hash of a git seed is the hash of the same files as a path seed
+  rm -rf "$W/gs_files"; mkdir "$W/gs_files"; git -C "$W/gs" archive "$C1" | tar -x -C "$W/gs_files"
+  check "the same files as a path seed have the same hash" "$H1" "$(tm $t seed hash "$W/gs_files")"
+  # ---- the foreign symbols (D94b item 9)
+  (cd "$A" && tm $t seed install >/dev/null 2>&1)
+  cp "$A/tomato.toml" "$W/manifest.before"; cp "$A/tomato.lock" "$W/lock.before"
+  r="$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C2" 2>&1 < /dev/null | norm)"
+  check "foreign symbols: an update that adds one asks again, and with no terminal refuses" "error[E602]: HERE/app/tomato.toml: the seed g.example/gs 1.1.0 declares foreign symbols, !name(...) declarations that link functions of the runtime or of C into your program, with no check of their types by the compiler:
+  tomato_json_quote  (src/gs.tom:1)
+  = help: this command cannot ask here (standard input is not a terminal): run it at a terminal, or add --yes to accept them; nothing was changed" "$r"
+  cmp -s "$W/manifest.before" "$A/tomato.toml" && cmp -s "$W/lock.before" "$A/tomato.lock" && ok "foreign symbols: the refusal changed neither the manifest nor the lock" || bad "foreign symbols: the refusal changed neither the manifest nor the lock"
+  r="$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C2" --yes 2>&1 | norm)"
+  check "foreign symbols: --yes lists them and goes on" "the seed g.example/gs 1.1.0 declares foreign symbols, !name(...) declarations that link functions of the runtime or of C into your program, with no check of their types by the compiler:
+  tomato_json_quote  (src/gs.tom:1)
+accepted with --yes; they are recorded in tomato.lock
+added g.example/gs 1.1.0 to [seeds] of HERE/app/tomato.toml
+g.example/gs 1.1.0  $H2  (git HERE/gs.git ${C2%????????????????????????????})
+wrote HERE/app/tomato.lock (1 seed)" "$r"
+  check "foreign symbols: the lock records the accepted symbols" 'symbols = ["tomato_json_quote"]' "$(grep '^symbols' "$A/tomato.lock")"
+  check "foreign symbols: the manifest line has the new commit (an update is the same command with another --rev)" "\"g.example/gs\" = { git = \"$gsurl\", rev = \"$C2\" }" "$(sed -n '/^\[seeds\]/,$p' "$A/tomato.toml" | sed -n 2p)"
+  check "foreign symbols: install asks nothing once they are in the lock" "g.example/gs 1.1.0  $H2  (git HERE/gs.git ${C2%????????????????????????????})
+tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked < /dev/null 2>&1 | norm)"
+  check "foreign symbols: and a program that does not touch them still runs" "hi from git 1.1" "$(cd "$A" && tm $t run src/usegs.tom 2>&1)"
+  printf '%s[seeds]\n"g.example/gs" = { git = "%s", rev = "%s" }\n' "$head" "$gsurl" "$C1" > "$A/tomato.toml"
+  r="$(cd "$A" && tm $t seed install < /dev/null 2>&1 | norm | sed -n 1p)"
+  check "foreign symbols: going back to the version without them needs no answer" "g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})" "$r"
+  check "foreign symbols: and the lock no longer lists any" "0" "$(grep -c '^symbols' "$A/tomato.lock")"
+  printf '%s[seeds]\n"g.example/gs" = { git = "%s", rev = "%s" }\n' "$head" "$gsurl" "$C2" > "$A/tomato.toml"
+  r="$(cd "$A" && tm $t seed install < /dev/null 2>&1 | norm | sed -n 1p | cut -c1-60)"
+  check "foreign symbols: going forward by editing the manifest asks again; install refuses with no terminal" "error[E602]: HERE/app/tomato.toml: the seed g.example/gs 1.1" "$r"
+  r="$(cd "$A" && tm $t seed install --locked 2>&1 | norm | tail -n 1)"
+  check "foreign symbols: install --locked says the lock is out of date (it has the old commit)" "error[E578]: HERE/app/tomato.toml: tomato.lock does not match this manifest: run \`tomato seed install\` and commit the new lock" "$r"
+  (cd "$A" && tm $t seed install --yes >/dev/null 2>&1)
+  check "foreign symbols: install --yes accepts them" 'symbols = ["tomato_json_quote"]' "$(grep '^symbols' "$A/tomato.lock")"
+  # a path seed: the same, and the question on a terminal
+  printf '!tomato_json_quote(text: str, ascii: int) -> str\nexport def local_name() -> str:\n    return "loc"\n' > "$W/loc/src/loc.tom"
+  printf '%s' "$head" > "$A/tomato.toml"; rm -f "$A/tomato.lock"
+  if command -v expect >/dev/null 2>&1; then
+    check "foreign symbols: the question on a terminal (n and Enter refuse, y accepts)" "ok" "$(cd "$A" && PATH="$(dirname "$t"):$PATH" TOMATO_HOME="$th" expect "$root/tests/seed_prompt_pty.exp" "$A" "$W/loc" 2>&1 | tail -1)"
+  else
+    [ -n "$CI" ] && bad "seed prompt pty test" "expect is required in CI" || echo "skip: expect is not installed, so the seed prompt pty test did not run"
+    (cd "$A" && tm $t seed add --path ../loc --yes >/dev/null 2>&1)
+  fi
+  # ---- hostile and unusable trees are refused, and nothing is stored
+  mkdir -p "$W/bad"; rm -rf "$th/seeds/store"
+  badrepo() { # NAME: a repository $W/bad/NAME with a valid seed that the caller then spoils; prints nothing
+    git init -q -b main "$W/bad/$1"; mkdir -p "$W/bad/$1/src"; seed_toml bad.example/b 1.0.0 > "$W/bad/$1/tomato.toml"; printf 'export def f() -> int:\n    return 1\n' > "$W/bad/$1/src/b.tom"; }
+  tryrepo() { # NAME [COMMIT]: commit the repository (unless it is committed already) and try to add it; prints the first line of the answer
+    c="${2:-$(commit "$W/bad/$1" x)}"; bare "$W/bad/$1" "$W/bad/$1.git"
+    (cd "$A" && tm $t seed add --git "$W/bad/$1.git" --rev "$c" --yes 2>&1 | norm | sed -n 1p | cut -c1-200); }
+  badrepo link; ln -s /etc/passwd "$W/bad/link/src/l.tom"
+  r="$(tryrepo link)"; case "$r" in "error[E600]: the seed at HERE/bad/link.git ("*"cannot be used: src/l.tom is a symbolic link, which a seed cannot contain (it could point outside the seed)") ok "seed add --git: a symbolic link in the tree is refused";; *) bad "seed add --git: a symbolic link in the tree is refused" "$r";; esac
+  badrepo sub; git -C "$W/bad/sub" add -A >/dev/null; git -C "$W/bad/sub" update-index --add --cacheinfo 160000,1111111111111111111111111111111111111111,vendor/other; git -C "$W/bad/sub" commit -q -m x; csub="$(git -C "$W/bad/sub" rev-parse HEAD)"
+  r="$(tryrepo sub "$csub")"; case "$r" in "error[E600]: the seed at HERE/bad/sub.git ("*"cannot be used: vendor/other is a submodule or another special entry, and a seed holds only plain files") ok "seed add --git: a submodule in the tree is refused";; *) bad "seed add --git: a submodule in the tree is refused" "$r";; esac
+  badrepo case; printf 'export def g() -> int:\n    return 2\n' > "$W/bad/case/src/B.tom"
+  r="$(tryrepo case)"; case "$r" in *"cannot be used: src/b.tom has the same name as another file when upper and lower case are the same"|*"cannot be used: src/B.tom has the same name as another file when upper and lower case are the same") ok "seed add --git: names that differ only in case are refused";; *) bad "seed add --git: names that differ only in case are refused" "$r";; esac
+  badrepo big; head -c 10485761 /dev/zero > "$W/bad/big/data.bin"
+  r="$(tryrepo big)"; case "$r" in *"cannot be used: data.bin is 10485761 bytes, over the limit of 10485760 for one file") ok "seed add --git: a file over the size limit is refused";; *) bad "seed add --git: a file over the size limit is refused" "$r";; esac
+  badrepo noseed; rm "$W/bad/noseed/tomato.toml"
+  r="$(tryrepo noseed)"; case "$r" in "error[E572]: "*"/tomato.toml"*) ok "seed add --git: a tree that has no tomato.toml is not a seed";; *) bad "seed add --git: a tree that has no tomato.toml is not a seed" "$r";; esac
+  badrepo nomod; printf 'def (\n' > "$W/bad/nomod/src/b.tom"
+  r="$(tryrepo nomod)"; case "$r" in "error[E600]: "*"cannot read the module to look for foreign symbols: "*) ok "seed add --git: a module that does not parse is refused (the symbols cannot be found)";; *) bad "seed add --git: a module that does not parse is refused" "$r";; esac
+  check "seed store: nothing from the refused trees reached the store" "" "$(find "$th/seeds/store" -type f 2>/dev/null)"
+  [ -z "$(ls "$th/seeds/tmp")" ] && ok "seed store: and no scratch folder is left" || bad "seed store: and no scratch folder is left" "$(ls "$th/seeds/tmp")"
+  # a top-level builds/ folder in the tree is not part of the seed (D94b): it is not stored and not hashed
+  badrepo builds; mkdir -p "$W/bad/builds/builds"; printf 'junk' > "$W/bad/builds/builds/junk"
+  r="$(tryrepo builds)"; bh="$(indep_hash "$W/bad/builds")"; bd="$th/seeds/store/$(echo "${bh#sha256:}" | cut -c1-2)/${bh#sha256:}"
+  case "$r" in "added bad.example/b 1.0.0 to [seeds]"*) ok "seed add --git: a tree with a top-level builds/ is a seed";; *) bad "seed add --git: a tree with a top-level builds/ is a seed" "$r";; esac
+  [ -f "$bd/src/b.tom" ] && [ ! -e "$bd/builds" ] && ok "seed add --git: its builds/ was not written to the store (the hash is of the other files, as for a path)" || bad "seed add --git: its builds/ was not written to the store" "$(find "$th/seeds/store" | head)"
+  # ---- URLs and revisions that are refused before git is started
+  urlcheck() { # the words after `seed add`: sets r to the first line of the answer
+    r="$(cd "$A" && tm $t seed add "$@" 2>&1 | norm | sed -n 1p | cut -c1-200)"; }
+  urlcheck --git 'ext::sh-c-touch' --rev "$C1"; case "$r" in "error[E598]: HERE/app/tomato.toml: the git URL of the seed at ext::sh-c-touch cannot be used: a URL with :: names a helper program of git, which is refused") ok "seed add --git: a URL for a helper program (ext::) is refused";; *) bad "seed add --git: a URL for a helper program (ext::) is refused" "$r";; esac
+  urlcheck --git '-oProxyCommand=x' --rev "$C1"; case "$r" in *"a URL cannot start with a hyphen"*) ok "seed add --git: a URL that starts with a hyphen is refused";; *) bad "seed add --git: a URL that starts with a hyphen is refused" "$r";; esac
+  urlcheck --git 'http://example.invalid/x.git' --rev "$C1"; case "$r" in *"the scheme http:// is not used for seeds (the schemes are https, ssh and file)"*) ok "seed add --git: http:// is refused";; *) bad "seed add --git: http:// is refused" "$r";; esac
+  urlcheck --git '../gs.git' --rev "$C1"; case "$r" in *"a folder on this machine is written as an absolute path or file:///path"*) ok "seed add --git: a relative folder is refused";; *) bad "seed add --git: a relative folder is refused" "$r";; esac
+  urlcheck --git "$gsurl" --rev v1.0; case "$r" in *"is not a full commit id (40 lowercase hex digits)"*) ok "seed add --git: a tag as the rev is refused (a tag moves)";; *) bad "seed add --git: a tag as the rev is refused" "$r";; esac
+  check "seed add --git: a rev of 40 digits that the repository does not have is a git error, and nothing is stored" "error[E599]:" "$(cd "$A" && tm $t seed add --git "$gsurl" --rev 0123456789012345678901234567890123456789 2>&1 | cut -c1-12)"
+  check "seed add --offline: a git seed that the lock does not know is an error, git is not run" "error[E605]:" "$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C1" --offline 2>&1 | cut -c1-12)"
+  check "seed add: --git needs --rev" "error: a git seed needs --rev COMMIT (the full commit id: a tag or a branch moves)" "$(cd "$A" && tm $t seed add --git "$gsurl" 2>&1)"
+  check "seed add: --path takes no --rev" "error: --rev goes with --git, not with --path" "$(cd "$A" && tm $t seed add --path ../loc --rev "$C1" 2>&1)"
+  check "seed add: it takes --path or --git, not a name (there is no registry)" "error: unknown option 'acme.example/x' for 'tomato seed add' (usage: tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add acme.example/x 2>&1)"
+  check "seed add: with no source" "error: tomato seed add takes --path DIR or --git URL --rev COMMIT, one of them once (a registry name is not supported yet: there is no registry)" "$(cd "$A" && tm $t seed add --test 2>&1)"
+  # ---- seed vendor and [seed-store] vendor
+  (cd "$A" && printf '%s' "$head" > tomato.toml && rm -f tomato.lock && tm $t seed add --path ../loc --yes >/dev/null 2>&1 && tm $t seed add --git "$gsurl" --rev "$C1" >/dev/null 2>&1)
+  r="$(cd "$A" && tm $t seed vendor 2>&1 | norm)"
+  check "seed vendor: copies the locked seeds to vendor/OWNER/NAME" "vendored acme.example/loc 0.3.0 into HERE/app/vendor/acme.example/loc
+vendored g.example/gs 1.0.0 into HERE/app/vendor/g.example/gs
+builds use the vendor folder once tomato.toml says so: add  [seed-store]  vendor = \"vendor\"" "$r"
+  check "seed vendor: the folders hash to the lock's hashes (a copy of a path seed and of a git seed)" "$(indep_hash "$W/loc") $H1" "$(indep_hash "$A/vendor/acme.example/loc") $(indep_hash "$A/vendor/g.example/gs")"
+  [ -x "$A/vendor/g.example/gs/tool.sh" ] && ok "seed vendor: the executable file is still executable" || bad "seed vendor: the executable file is still executable"
+  printf '\n[seed-store]\nvendor = "vendor"\n' >> "$A/tomato.toml"
+  mv "$W/gs.git" "$W/gs.moved"; rm -rf "$th/seeds/store"; mv "$W/loc" "$W/loc.moved"
+  check "[seed-store] vendor: a build uses the vendor folder, with no store, no repository and no path seed folder" "loc
+hi from git" "$(cd "$A" && tm $t run src/main.tom 2>&1; tm $t run src/usegs.tom 2>&1)"
+  mv "$W/loc.moved" "$W/loc"; mv "$W/gs.moved" "$W/gs.git"
+  printf '# edited\n' >> "$A/vendor/g.example/gs/src/gs.tom"
+  r="$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)"
+  case "$r" in "error[E601]: HERE/app/tomato.toml: the copy of g.example/gs in HERE/app/vendor/g.example/gs has the content hash "*) ok "[seed-store] vendor: an edited vendor copy is caught by every build";; *) bad "[seed-store] vendor: an edited vendor copy is caught by every build" "$r";; esac
+  case "$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)" in *"(run \`tomato seed vendor\` to copy it again)") ok "[seed-store] vendor: and says to vendor it again";; *) bad "[seed-store] vendor: and says to vendor it again";; esac
+  (cd "$A" && tm $t seed vendor >/dev/null 2>&1)
+  check "seed vendor: vendoring again replaces the edited copy" "hi from git" "$(cd "$A" && tm $t run src/usegs.tom 2>&1)"
+  rm -rf "$A/vendor"
+  r="$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)"
+  check "[seed-store] vendor: a build says to vendor when the folder is missing" "error[E569]: HERE/app/tomato.toml: the seed acme.example/loc is not in the vendor folder (HERE/app/vendor/acme.example/loc)
+  = help: run: tomato seed vendor" "$r"
+  printf '%s[seeds]\n"acme.example/loc" = { path = "../loc" }\n\n[seed-store]\nvendor = "../outside"\n' "$head" > "$A/tomato.toml"
+  check "seed vendor: a vendor folder that leaves the project is refused" 'error[E604]: HERE/app/tomato.toml: seed-store.vendor is "../outside", but the vendor folder must be a folder below the one with tomato.toml (no leading / and no ..)' "$(cd "$A" && tm $t seed vendor 2>&1 | norm)"
+  printf '%s[seeds]\n"acme.example/loc" = { path = "../loc" }\n' "$head" > "$A/tomato.toml"
+  printf 'x\n' >> "$W/loc/src/loc.tom"
+  case "$(cd "$A" && tm $t seed vendor 2>&1 | norm)" in "error[E578]: HERE/app/tomato.toml: tomato.lock does not match this manifest: run \`tomato seed install\` and commit the new lock") ok "seed vendor: a lock that is out of date is an error (install first)";; *) bad "seed vendor: a lock that is out of date is an error (install first)" "$(cd "$A" && tm $t seed vendor 2>&1 | norm)";; esac
+  cd "$work" || true
 }
 t_cli_project() { # the project layout and the commands that use it (D94b): init, run, build, the built program, raw inputs, File inputs
   cli_setup
@@ -1530,6 +1810,12 @@ quiet" "$(builds/hello greet.loud 2>&1; builds/hello greet 2>&1)"
   mkdir -p src/builds && printf 'y' > src/builds/z.tom; h3="$(noconf $t seed hash .)"
   [ "$h1" != "$h3" ] && ok "seed hash: a builds folder deeper down still counts" || bad "seed hash: a builds folder deeper down still counts"
   cd "$root" || return 1
+}
+t_manedit_logic() { # the text editor of tomato.toml behind `tomato seed add` and `remove` (compiler/src/manedit.tom): what it changes and what it leaves alone
+  cli_setup
+  mkdir -p "$work/me"; cp compiler/src/manedit.tom tests/manedit_logic.tom "$work/me/"
+  r="$(cd "$work/me" && $t run manedit_logic.tom test 2>&1 | tail -n 1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "manedit: the editor's rules: $r";; *) bad "manedit: the editor's rules" "$(cd "$work/me" && $t run manedit_logic.tom test 2>&1 | grep -v '^ok ' | head -12)";; esac
 }
 t_manifest_logic() { # the rules of compiler/src/manifest.tom as @test functions, and its version order against the shell's semver_cmp
   cli_setup
@@ -2348,8 +2634,10 @@ spawn_cli t_cli_config
 spawn_cli t_cli_manifest
 spawn_cli t_cli_build_tables
 spawn_cli t_cli_seeds
+spawn_cli t_cli_seed_store
 spawn_cli t_cli_project
 spawn_cli t_manifest_logic
+spawn_cli t_manedit_logic
 spawn_cli t_cli_repl_1 1
 spawn_cli t_cli_repl_1 2
 spawn_cli t_cli_repl_1 3

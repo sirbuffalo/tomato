@@ -8,7 +8,10 @@
 #   tomato test [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] [FILE]... | FILE ENTRY [INPUTS...]   run each file as a test (no word: every tests/*.tom; FILE ENTRY INPUTS... as in `tomato run`; a bare word before a file is an error); one line per file and a summary; exit 1 if any failed
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
-#   tomato seed install [--locked]                                    lock the seeds of tomato.toml ({ path = "../x" } seeds only) into tomato.lock; --locked checks without writing
+#   tomato seed install [--locked] [--offline] [--yes]                lock the seeds of tomato.toml (path and git seeds) into tomato.lock, fetching a git seed into ~/.tomato/seeds; --locked checks without writing, --offline never runs git
+#   tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline]   list a local or git seed in [seeds] (--test: [test-seeds]) of tomato.toml and lock it; it lists the !name(...) symbols the seed declares and asks to accept them (--yes: do not ask)
+#   tomato seed remove NAME                                           drop a seed from [seeds] and [test-seeds] and lock again
+#   tomato seed vendor [--offline]                                    copy the locked seeds into the vendor folder ([seed-store] vendor, default vendor/)
 #   tomato seed check                                                 check the seed in this folder (its tomato.toml and src/ modules) and print its content hash
 #   tomato seed hash [FOLDER]                                         print the content hash (sha256:...) of a folder
 #   tomato repl [FILE ...]                                            type Tomato one piece at a time
@@ -499,21 +502,64 @@ case "$cmd" in
     out="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
     printf '%s\n' "$out"; exit 0 ;;
   seed)
-    # tomato seed install|check|hash: the compiler does the work (it reads the manifest, hashes the files and writes tomato.lock); this
-    # script finds the manifest and prints what the compiler says. Nothing is fetched: there is no registry or network use here yet.
+    # tomato seed install|add|remove|vendor|check|hash: the compiler does the work (it reads the manifest, hashes the files, runs git for a git
+    # seed and writes tomato.toml and tomato.lock); this script reads the words, finds the manifest and prints what the compiler says. The
+    # commands that may ask (install, add) leave standard output alone, so their question reaches the terminal; the compiler is told with
+    # `tty` that standard input is one.
     sub="${1:-}"; [ -n "$sub" ] || usage
     shift
+    arg=""; rev=""; sflags=""
+    seedopt() { case " $sflags " in *" $1 "*) ;; *) sflags="$sflags $1" ;; esac; }
     case "$sub" in
-      install) [ $# -le 1 ] || usage
-               if [ "${1:-}" = --locked ]; then sub=install-locked; elif [ $# -eq 1 ]; then die "unknown option '$1' for 'tomato seed install' (run 'tomato help')"; fi
-               arg="" ;;
-      check) [ $# -eq 0 ] || usage; arg="" ;;
+      install) while [ $# -gt 0 ]; do
+                 case "$1" in
+                   --locked) seedopt locked ;; --offline) seedopt offline ;; --yes) seedopt yes ;;
+                   *) die "unknown option '$1' for 'tomato seed install' (run 'tomato help')" ;;
+                 esac
+                 shift
+               done ;;
+      add) mode_set=0
+           while [ $# -gt 0 ]; do
+             case "$1" in
+               --path) [ $# -ge 2 ] || die "--path needs a folder (usage: tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline])"; arg="$2"; mode_set=$((mode_set + 1)); shift ;;
+               --git) [ $# -ge 2 ] || die "--git needs a URL (usage: tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline])"; arg="$2"; mode_set=$((mode_set + 10)); shift ;;
+               --rev) [ $# -ge 2 ] || die "--rev needs a commit id"; rev="$2"; shift ;;
+               --test) seedopt test ;; --yes) seedopt yes ;; --offline) seedopt offline ;;
+               *) die "unknown option '$1' for 'tomato seed add' (usage: tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline])" ;;
+             esac
+             shift
+           done
+           case "$mode_set" in
+             1) [ -z "$rev" ] || die "--rev goes with --git, not with --path" ;;
+             10) [ -n "$rev" ] || die "a git seed needs --rev COMMIT (the full commit id: a tag or a branch moves)" ;;
+             *) die "tomato seed add takes --path DIR or --git URL --rev COMMIT, one of them once (a registry name is not supported yet: there is no registry)" ;;
+           esac ;;
+      remove) [ $# -eq 1 ] || usage
+              case "$1" in -*) die "unknown option '$1' for 'tomato seed remove' (usage: tomato seed remove NAME)" ;; esac
+              arg="$1" ;;
+      vendor) while [ $# -gt 0 ]; do
+                case "$1" in
+                  --offline) seedopt offline ;;
+                  *) die "unknown option '$1' for 'tomato seed vendor' (run 'tomato help')" ;;
+                esac
+                shift
+              done ;;
+      check) [ $# -eq 0 ] || usage ;;
       hash) [ $# -le 1 ] || usage; arg="${1:-.}" ;;
-      *) die "unknown seed command '$sub' (run 'tomato help'; the commands here are install, check and hash)" ;;
+      *) die "unknown seed command '$sub' (run 'tomato help'; the commands here are install, add, remove, vendor, check and hash)" ;;
     esac
     find_config .
     if [ "$sub" != hash ] && [ -z "$project_cfg" ]; then die "there is no tomato.toml in this folder or a parent folder"; fi
-    out="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$sub" --seed "$std" "$arg" "$project_cfg" "" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
+    case "$sub" in
+      install|add|remove|vendor)
+        [ -t 0 ] && seedopt tty
+        errf="$(mktemp "${TMPDIR:-/tmp}/tomato-seed.XXXXXX")" || die "cannot make a temporary file"
+        if TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$sub" --seed "$std" "$arg" "$project_cfg" "$rev" "$sflags" 2> "$errf"; then
+          cat "$errf" >&2; rm -f "$errf"; exit 0
+        fi
+        show_error < "$errf"; rm -f "$errf"; exit 1 ;;
+    esac
+    out="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$sub" --seed "$std" "$arg" "$project_cfg" "" "" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
     printf '%s\n' "$out"; exit 0 ;;
   paint) paint; exit 0 ;;      # for the repl: `tomato paint` colors error text read from standard input
   repl|shell) TOMATO_REPL_EDIT="${TOMATO_REPL_EDIT:-$home/bin/tomato-repl-edit}" TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;

@@ -1,0 +1,75 @@
+# The text editor of tomato.toml in compiler/src/manedit.tom (`tomato seed add` and `remove`, D100a), as @test functions: what it changes
+# and, as much, what it leaves alone (comments, blank lines, order, spacing, a comment at the end of a line, CRLF files).
+from manedit import add_entry, remove_entries
+from testing import assert_equal
+
+@test.adds_after_the_last_entry
+def adds_after_the_last_entry():
+    text = '[project]\nname = "a"\n\n[seeds]\n# my seeds\n"x.example/one" = "1.0.0"   # the first\n\n[build]\nmode = "release"\n'
+    got = add_entry(text, 'seeds', 'y.example/two', '{ path = "../two" }')
+    assert_equal(got, '[project]\nname = "a"\n\n[seeds]\n# my seeds\n"x.example/one" = "1.0.0"   # the first\n"y.example/two" = { path = "../two" }\n\n[build]\nmode = "release"\n')
+
+@test.adds_right_after_an_empty_header
+def adds_right_after_an_empty_header():
+    text = '[project]\nname = "a"\n\n[seeds]\n# nothing yet\n\n[build]\n'
+    got = add_entry(text, 'seeds', 'y.example/two', '{ path = "../two" }')
+    assert_equal(got, '[project]\nname = "a"\n\n[seeds]\n"y.example/two" = { path = "../two" }\n# nothing yet\n\n[build]\n')
+
+@test.replaces_a_seed_and_keeps_its_comment
+def replaces_a_seed_and_keeps_its_comment():
+    text = '[seeds]\n"y.example/two"   =   { path = "../old" }   # my fork, see #12\n"z.example/z" = "1.0.0"\n'
+    got = add_entry(text, 'seeds', 'y.example/two', '{ path = "../new" }')
+    assert_equal(got, '[seeds]\n"y.example/two"   =   { path = "../new" }   # my fork, see #12\n"z.example/z" = "1.0.0"\n')
+
+@test.a_hash_inside_a_string_is_not_a_comment
+def a_hash_inside_a_string_is_not_a_comment():
+    text = '[seeds]\n"y.example/two" = { path = "../a#b" }\n'
+    got = add_entry(text, 'seeds', 'y.example/two', '{ path = "../c" }')
+    assert_equal(got, '[seeds]\n"y.example/two" = { path = "../c" }\n')
+
+@test.a_commented_placeholder_becomes_the_table
+def a_commented_placeholder_becomes_the_table():
+    text = '[project]\nname = "a"\n\n# Seeds this project uses:\n# [seeds]\n\n# Seeds only its tests use:\n# [test-seeds]\n'
+    got = add_entry(text, 'seeds', 'y.example/two', '{ path = "../two" }')
+    assert_equal(got, '[project]\nname = "a"\n\n# Seeds this project uses:\n[seeds]\n"y.example/two" = { path = "../two" }\n\n# Seeds only its tests use:\n# [test-seeds]\n')
+    got = add_entry(got, 'test-seeds', 'z.example/z', '"1.0.0"')
+    assert_equal(got, '[project]\nname = "a"\n\n# Seeds this project uses:\n[seeds]\n"y.example/two" = { path = "../two" }\n\n# Seeds only its tests use:\n[test-seeds]\n"z.example/z" = "1.0.0"\n')
+
+@test.a_new_table_goes_before_the_later_tables
+def a_new_table_goes_before_the_later_tables():
+    text = '[project]\nname = "a"\n\n# how to build\n[build]\nmode = "release"\n'
+    got = add_entry(text, 'seeds', 'y.example/two', '{ path = "../two" }')
+    assert_equal(got, '[project]\nname = "a"\n\n[seeds]\n"y.example/two" = { path = "../two" }\n\n# how to build\n[build]\nmode = "release"\n')
+
+@test.a_new_table_at_the_end
+def a_new_table_at_the_end():
+    got = add_entry('[project]\nname = "a"\n', 'seeds', 'y.example/two', '{ path = "../two" }')
+    assert_equal(got, '[project]\nname = "a"\n\n[seeds]\n"y.example/two" = { path = "../two" }\n')
+    got = add_entry('[project]\nname = "a"', 'seeds', 'y.example/two', '"1.0.0"')
+    assert_equal(got, '[project]\nname = "a"\n\n[seeds]\n"y.example/two" = "1.0.0"\n')
+
+@test.test_seeds_go_after_seeds
+def test_seeds_go_after_seeds():
+    text = '[project]\nname = "a"\n\n[seeds]\n"x.example/one" = "1.0.0"\n\n[build]\nmode = "release"\n'
+    got = add_entry(text, 'test-seeds', 'y.example/two', '{ path = "../two" }')
+    assert_equal(got, '[project]\nname = "a"\n\n[seeds]\n"x.example/one" = "1.0.0"\n\n[test-seeds]\n"y.example/two" = { path = "../two" }\n\n[build]\nmode = "release"\n')
+
+@test.crlf_stays_crlf
+def crlf_stays_crlf():
+    text = '[project]\r\nname = "a"\r\n\r\n[seeds]\r\n"x.example/one" = "1.0.0"\r\n'
+    got = add_entry(text, 'seeds', 'y.example/two', '"2.0.0"')
+    assert_equal(got, '[project]\r\nname = "a"\r\n\r\n[seeds]\r\n"x.example/one" = "1.0.0"\r\n"y.example/two" = "2.0.0"\r\n')
+
+@test.removes_the_line_and_nothing_else
+def removes_the_line_and_nothing_else():
+    text = '[seeds]\n# keep me\n"x.example/one" = "1.0.0"\n"y.example/two" = { path = "../two" }   # gone with it\n"z.example/z" = "1.0.0"\n\n[test-seeds]\n"y.example/two" = { path = "../two" }\n[build]\n'
+    got = remove_entries(text, 'y.example/two')
+    assert_equal(got[1], 2)
+    assert_equal(got[0], '[seeds]\n# keep me\n"x.example/one" = "1.0.0"\n"z.example/z" = "1.0.0"\n\n[test-seeds]\n[build]\n')
+    assert_equal(remove_entries(text, 'q.example/none')[1], 0)
+
+@test.single_quoted_keys_are_found
+def single_quoted_keys_are_found():
+    got = remove_entries("[seeds]\n'y.example/two' = { path = '../two' }\n", 'y.example/two')
+    assert_equal(got[0], '[seeds]\n')
+    assert_equal(got[1], 1)

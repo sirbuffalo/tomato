@@ -1,0 +1,221 @@
+# The seed store and the fetch from git (docs/package-registry-design.md section 6, decision D100a): the part of the seed work that
+# starts `git`. A seed from git is fetched into a scratch folder, its files are read from git's objects (never checked out, so no
+# filter, hook or attribute can change them), and the caller hashes the folder (seeds.tom) before it is put in the store:
+#
+#   ${TOMATO_HOME:-$HOME/.tomato}/seeds/store/ab/ab12...64hex/    one folder for each content hash: the seed's files
+#   ${TOMATO_HOME:-$HOME/.tomato}/seeds/tmp/PID-N/                 where a fetch works; removed when it ends, whatever happened
+#
+# Nothing here uses the network except what `git fetch` does. `git` only (no library), with `GIT_ALLOW_PROTOCOL=https:ssh` (and
+# `file` for a URL that names a folder of this machine or file://), no hooks, no submodules, no checkout, no prompts, and git's own
+# object check (fsckObjects) on what arrives. A tree with a symbolic link, a submodule, an unsafe path or a huge file is refused.
+from sys import run, ProcessError
+from os import getenv, getpid, makedirs
+from ospath import isdir, dirname
+from config import ConfigError
+
+const MAX_FILE_BYTES = 10485760        # one file of a seed
+const MAX_TOTAL_BYTES = 67108864       # all the files of a seed
+const MAX_FILES = 5000
+
+def fail(code: int, text: str):
+    raise ConfigError(code, text)
+
+export def tomato_home() -> str:
+    home = getenv('TOMATO_HOME')
+    if home is not None and home != '':
+        return home
+    h = getenv('HOME')
+    if h is None or h == '':
+        fail(599, 'there is no seed store: neither TOMATO_HOME nor HOME is set')
+        return ''
+    return h.rstrip('/') + '/.tomato'
+
+export def store_root() -> str:
+    return tomato_home().rstrip('/') + '/seeds'
+
+# `sha256:` and 64 lowercase hex digits (a lock is a file that anybody may have written: the store path is made from it)
+export def hash_problem(digest: str) -> bool:
+    if len(digest) != 71 or not digest.startswith('sha256:'):
+        return True
+    for c in digest[7:]:
+        if not (('0' <= c and c <= '9') or ('a' <= c and c <= 'f')):
+            return True
+    return False
+
+# the folder of a content hash in the store
+export def store_dir(digest: str) -> str:
+    if hash_problem(digest):
+        fail(578, f'the hash "{digest}" is not sha256: and 64 hexadecimal digits: tomato.lock is damaged, run `tomato seed install`')
+    hex = digest[7:]
+    return store_root() + '/store/' + hex[:2] + '/' + hex
+
+# a new scratch folder under the store; the caller removes it with remove_tree
+export def make_scratch() -> str:
+    base = store_root() + '/tmp'
+    makedirs(base, True)
+    n = 0
+    while True:
+        path = f'{base}/{getpid()}-{n}'
+        if not isdir(path):
+            makedirs(path)
+            return path
+        n += 1
+
+# removes a folder this code made (a scratch folder, an old copy in the vendor folder)
+export def remove_tree(path: str):
+    if path == '' or path == '/':
+        return
+    run(['rm', '-rf', path], check=True)
+
+# the problem with the URL of a git seed, '' when it is fine: only https, ssh (also `user@host:path`), file:// and an absolute folder
+export def git_url_problem(url: str) -> str:
+    if url == '':
+        return 'the URL is empty'
+    if url.startswith('-'):
+        return 'a URL cannot start with a hyphen (it would be read as an option of git)'
+    for c in url:
+        if ord(c) < 33 or ord(c) == 127:
+            return 'a URL has no spaces or control characters'
+    if '::' in url:
+        return 'a URL with :: names a helper program of git, which is refused'
+    at = url.find('://')
+    if at >= 0:
+        scheme = url[:at]
+        if scheme != 'https' and scheme != 'ssh' and scheme != 'file':
+            return f'the scheme {scheme}:// is not used for seeds (the schemes are https, ssh and file)'
+        return ''
+    if url.startswith('/'):
+        return ''
+    colon = url.find(':')
+    slash = url.find('/')
+    if colon > 0 and (slash < 0 or colon < slash):
+        return ''          # host:path, git's way to write ssh
+    return 'a folder on this machine is written as an absolute path or file:///path (a relative path would depend on where the command runs)'
+
+export def is_local_url(url: str) -> bool:
+    return url.startswith('/') or url.startswith('file://')
+
+export def is_commit_id(rev: str) -> bool:
+    if len(rev) != 40:
+        return False
+    for c in rev:
+        if not (('0' <= c and c <= '9') or ('a' <= c and c <= 'f')):
+            return False
+    return True
+
+def last_lines(text: str) -> str:
+    lines: list[str] = []
+    for line in text.strip().split('\n'):
+        if line.strip() != '':
+            lines.append(line.strip())
+    if len(lines) > 4:
+        lines = lines[len(lines) - 4:]
+    return ' / '.join(lines)
+
+def git(scratch: str, url: str, args: list[str], what: str) -> str:
+    cmd = ['git', '-c', 'protocol.ext.allow=never', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'fetch.fsckObjects=true', '-c', 'transfer.fsckObjects=true', '-c', 'init.defaultBranch=main']
+    cmd.extend(args)
+    protocols = 'https:ssh'
+    if is_local_url(url):
+        protocols = 'https:ssh:file'
+    env = {'GIT_DIR': scratch, 'GIT_ALLOW_PROTOCOL': protocols, 'GIT_TERMINAL_PROMPT': '0', 'LC_ALL': 'C'}
+    try:
+        r = run(cmd, env=env)
+        if r.status != 0:
+            fail(599, f'{what} failed: {last_lines(r.stderr + chr(10) + r.stdout)}')
+        return r.stdout
+    catch FileNotFoundError as e:
+        fail(599, 'git is needed to fetch a seed, and the command `git` was not found (install git, or use a seed from a folder with { path = "..." })')
+    return ''
+
+def bad_tree(url: str, rev: str, why: str):
+    fail(600, f'the seed at {url} ({rev[:12]}) cannot be used: {why}')
+
+# a path in a git tree that is safe to write below the seed's folder
+def path_problem(path: str) -> str:
+    if path == '' or path.startswith('/'):
+        return 'an empty or absolute path'
+    if chr(0) in path or '\\' in path:
+        return 'a backslash or NUL in a path'
+    if chr(65533) in path:
+        return 'a file name that is not valid UTF-8'
+    for part in path.split('/'):
+        if part == '' or part == '.' or part == '..':
+            return 'a path with an empty, . or .. part'
+        if part.lower() == '.git':
+            return 'a .git entry'
+    return ''
+
+# fetches commit `rev` of the git repository `url` and writes its files into the folder `dest` (made here) with the modes git
+# records (755 for an executable file, 644 for the others). Returns the commit id. `scratch` is a folder made by make_scratch:
+# the bare repository that git works in goes there. Errors: E595 (a URL or a revision that cannot be used), E596 (git failed),
+# E597 (the tree cannot be a seed).
+export def fetch_tree(url: str, rev: str, dest: str, scratch: str) -> str:
+    problem = git_url_problem(url)
+    if problem != '':
+        fail(598, f'the git URL "{url}" cannot be used: {problem}')
+    if not is_commit_id(rev):
+        fail(598, f'the revision "{rev}" of {url} is not a full commit id (40 lowercase hex digits): a tag or a branch moves, so the manifest names the commit (git rev-parse TAG^{{commit}} prints it)')
+    repo = scratch + '/repo'
+    git(repo, url, ['init', '--bare', '-q'], 'git init')
+    git(repo, url, ['fetch', '--quiet', '--depth', '1', '--no-tags', '--no-recurse-submodules', '--', url, rev], f'fetching {rev[:12]} from {url}')
+    got = git(repo, url, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD^{commit}'], 'git rev-parse').strip()
+    if got != rev:
+        bad_tree(url, rev, f'git sent the commit {got}, not the one asked for')
+    listing = git(repo, url, ['ls-tree', '-r', '-z', '--long', '--full-tree', rev], 'git ls-tree')
+    names: list[str] = []
+    blobs: list[str] = []
+    modes: list[str] = []
+    sizes: list[int] = []
+    seen: dict[str, bool] = {}
+    total = 0
+    for entry in listing.split(chr(0)):
+        if entry == '':
+            continue
+        tab = entry.find('\t')
+        if tab < 0:
+            bad_tree(url, rev, 'git listed its files in a form this version does not understand')
+        meta = [w for w in entry[:tab].split(' ') if w != '']
+        path = entry[tab + 1:]
+        if len(meta) != 4:
+            bad_tree(url, rev, 'git listed its files in a form this version does not understand')
+        if meta[0] == '120000':
+            bad_tree(url, rev, f'{path} is a symbolic link, which a seed cannot contain (it could point outside the seed)')
+        if meta[1] != 'blob' or (meta[0] != '100644' and meta[0] != '100755'):
+            bad_tree(url, rev, f'{path} is a submodule or another special entry, and a seed holds only plain files')
+        why = path_problem(path)
+        if why != '':
+            bad_tree(url, rev, f'{why} ({path})')
+        if path.startswith('builds/'):
+            continue            # a top-level builds/ is never part of a seed (D94b), as in a folder's hash
+        folded = path.lower()
+        if folded in seen:
+            bad_tree(url, rev, f'{path} has the same name as another file when upper and lower case are the same')
+        seen[folded] = True
+        size = int(meta[3])
+        if size > MAX_FILE_BYTES:
+            bad_tree(url, rev, f'{path} is {size} bytes, over the limit of {MAX_FILE_BYTES} for one file')
+        total += size
+        if total > MAX_TOTAL_BYTES or len(names) >= MAX_FILES:
+            bad_tree(url, rev, f'it holds more than {MAX_FILES} files or {MAX_TOTAL_BYTES} bytes')
+        names.append(path)
+        blobs.append(meta[2])
+        modes.append(meta[0])
+        sizes.append(size)
+    if len(names) == 0:
+        bad_tree(url, rev, 'it has no files')
+    makedirs(dest)
+    for i in range(len(names)):
+        out = dest + '/' + names[i]
+        makedirs(dirname(out), True)
+        # the blob's raw bytes go straight from git to the file (sys.run gives text, which would change other bytes)
+        script = 'exec git -c core.hooksPath=/dev/null cat-file blob "$1" > "$2"'
+        try:
+            _r = run(['sh', '-c', script, 'sh', blobs[i], out], env={'GIT_DIR': repo}, check=True)
+        catch ProcessError as e:
+            fail(599, f'git could not read {names[i]}: {e.message}')
+        catch IOError as e:
+            bad_tree(url, rev, f'{names[i]} cannot be written: {e.message}')
+        if modes[i] == '100755':
+            run(['chmod', '755', out], check=True)
+    return got

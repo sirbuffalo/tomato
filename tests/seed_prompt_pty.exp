@@ -1,0 +1,40 @@
+# The question of `tomato seed add` about the foreign symbols a seed declares (D94b item 9, D100a), on a pseudo-terminal: standard input
+# is a terminal, so the command asks "accept these symbols ...? [y/N]". An answer of n (and the Enter key alone) stops the command with the
+# manifest and the lock untouched; y adds the seed. The same command with no terminal is checked by tests/run.sh (it refuses, or --yes).
+# Usage: expect tests/seed_prompt_pty.exp PROJECT_FOLDER SEED_FOLDER   (`tomato` on the PATH, TOMATO_HOME set; prints `ok` or `FAIL: ...`)
+set timeout 120
+log_user 0
+set project [lindex $argv 0]
+set seed [lindex $argv 1]
+proc fail {msg} { puts "FAIL: $msg"; exit 1 }
+proc want {re what} {
+  expect {
+    -re $re {}
+    timeout { fail "timed out waiting for $what" }
+    eof { fail "the session ended while waiting for $what" }
+  }
+}
+set env(NO_COLOR) 1
+spawn sh
+send "cd $project\r"
+send "tomato seed add --path $seed; echo EXIT=\$?\r"
+want {tomato_json_quote} "the symbol that is listed"
+want {accept these symbols and record them in tomato.lock\? \[y/N\] } "the question"
+send "n\r"
+want {were not accepted; nothing was changed} "the refusal"
+want {EXIT=1} "the exit status 1 after n"
+if {[file exists $project/tomato.lock]} { fail "a lock was written after n" }
+if {[string first loc [exec cat $project/tomato.toml]] >= 0} { fail "the manifest changed after n" }
+send "tomato seed add --path $seed; echo EXIT=\$?\r"
+want {accept these symbols and record them in tomato.lock\? \[y/N\] } "the question again"
+send "\r"
+want {EXIT=1} "the exit status 1 after Enter alone"
+send "tomato seed add --path $seed; echo EXIT=\$?\r"
+want {\[y/N\] } "the question a third time"
+send "y\r"
+want {added acme.example/loc 0.3.0 to \[seeds\]} "the seed added"
+want {EXIT=0} "the exit status 0 after y"
+if {[string first {symbols = ["tomato_json_quote"]} [exec cat $project/tomato.lock]] < 0} { fail "the lock does not hold the accepted symbol" }
+send "tomato seed install; echo EXIT=\$?\r"
+want {EXIT=0} "install asks nothing once the symbol is in the lock"
+puts ok

@@ -3,7 +3,7 @@ from compiler import compile_module
 from config import ConfigError, load_limits, describe
 from diag import Diagnostic
 from manifest import read_manifest, check_tomato, build_for, describe_manifest, user_build_mode
-from seeds import module_map, install, check_seed, seed_hash
+from seeds import module_map, install, check_seed, seed_hash, add, remove, vendor, opts_from, AddSpec
 from os import getenv
 from ospath import isdir
 from sys import version
@@ -20,17 +20,33 @@ def compiler_version() -> str:
         return version()
     return got
 
-# `tomato seed install|check|hash` (native/tomato calls the compiler with the entry --seed): the subcommand is the first argument
-# (install, install-locked, check or hash), the folder to hash the mode argument
-def seed_command(command: str, folder: str, project: str) -> list[str]:
+# `tomato seed ...` (native/tomato calls the compiler with the entry --seed): the subcommand is the first argument (install, check, hash,
+# add, remove or vendor), `arg` the word it takes (the folder to hash, a seed's name, the --path folder or the --git URL), `rev` the
+# --rev of add; the flags are words (locked, offline, yes, tty, test)
+def seed_command(command: str, arg: str, project: str, rev: str, words: list[str]) -> list[str]:
     have = compiler_version()
+    opts = opts_from(words)
     if command == 'hash':
-        if not isdir(folder):
-            raise ConfigError(572, f'{folder} is not a folder')
-        return [seed_hash(folder)]
+        if not isdir(arg):
+            raise ConfigError(572, f'{arg} is not a folder')
+        return [seed_hash(arg)]
     if command == 'check':
         return check_seed(project, have)
-    return install(project, have, command == 'install-locked')
+    if command == 'add':
+        spec = AddSpec()
+        if rev == '':
+            spec.kind = 'path'
+            spec.path = arg
+        else:
+            spec.kind = 'git'
+            spec.url = arg
+            spec.rev = rev
+        return add(project, have, spec, opts)
+    if command == 'remove':
+        return remove(project, have, arg, opts)
+    if command == 'vendor':
+        return vendor(project, have, opts)
+    return install(project, have, opts)
 
 @compile
 def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debug', project: str = '', user: str = '', flags: str = ''):
@@ -58,7 +74,7 @@ def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debu
                 print(f'build.mode = {user_build_mode(user)}  ({user}, the default under a project\'s [build] and --mode)')
             return
         if entry == '--seed':
-            for line in seed_command(path, mode, project):
+            for line in seed_command(path, mode, project, user, words):
                 print(line)
             return
         limits = load_limits(project, user)

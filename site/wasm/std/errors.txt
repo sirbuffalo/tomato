@@ -567,7 +567,7 @@ ConfigError {}: {}.target is reserved for a later version and cannot be set yet
 ConfigError {}: [{}] needs a [project] table (a program) or a [seed] table (a package) in the same file
 ConfigError {}: {} must be a version such as "1.2.0", or a table { git = "URL", rev = "COMMIT" } or { path = "../folder" }, not {}
 ConfigError {}: tomato.lock is missing or does not hold what tomato.toml needs (a seed, its source or its version): run tomato seed install
-ConfigError {}: the seed {} comes from git, which this version cannot fetch yet
+ConfigError (retired: git seeds are installed now (D99a), so this is no longer raised; the id stays so that later ids do not move)
 ConfigError {}: the seed {} {} would come from a registry, and there is none yet
 ConfigError {}: the seed folder or manifest is not usable: it is missing, has no tomato.toml, or has no [seed] table
 ConfigError {}: "{}" is listed with the path "{}", but the seed there is called "{}"
@@ -595,3 +595,11 @@ CompileError cannot import 'main': it is the name the program itself has
 ValueError the program's {} was not captured (start it with capture=True)
 ValueError the program's standard input is not open for writing (start it with stdin=True, and write before close_stdin())
 ValueError a signal number is from 1 to 64
+ConfigError {}: the git URL or the rev of a seed cannot be used: the URL is https, ssh, file:// or an absolute folder, and the rev a full 40-digit commit id
+ConfigError {}: git could not fetch the seed, or git is not installed, or there is no folder for the seed store
+ConfigError {}: the files of a seed cannot be used: a symbolic link, a submodule, an unsafe path, a file that is too large, or a module that does not parse
+ConfigError {}: the content hash of the files of a seed is not the one in tomato.lock
+ConfigError {}: the foreign symbols (!name(...) declarations) that a seed declares were not accepted
+ConfigError {}: tomato.toml could not be changed safely by tomato seed add or remove
+ConfigError {}: tomato seed add or remove cannot be used here: the file is not a project, the seed is not listed in it, or the vendor folder is not a folder below the project
+ConfigError {}: --offline: the seed is not in the seed store or the vendor folder, and git is not run

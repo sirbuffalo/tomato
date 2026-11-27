@@ -1,0 +1,229 @@
+# Editing the text of tomato.toml for `tomato seed add` and `tomato seed remove` (docs/manifest.md, D100a). std/toml's `dumps` writes a
+# document from its values and so loses the comments, the blank lines and the order of what the user wrote; these functions change
+# the lines of the file instead and leave every other line as it is. What they know is small: a table header on a line of its own,
+# `key = value` lines (a seed is one line, `"owner/name" = { path = "../x" }`, since an inline table cannot span lines), comments.
+# They do not parse the values: the caller reads the new text again with the manifest reader and refuses a result that is not
+# exactly the intended change (a multi-line string that holds a line like `[seeds]` is the kind of text this cannot see through).
+#
+#   add_entry(text, 'seeds', 'a.example/x', '{ path = "../x" }')    the line goes after the last entry of [seeds]; a seed already
+#       there has only its value replaced (a comment at the end of its line stays); with no [seeds] table a commented `# [seeds]` line
+#       becomes the table, else a new table is written before the first table that is not [project] or [seed] (for [test-seeds],
+#       after [seeds] when there is one), with a blank line on each side
+#   remove_entries(text, 'a.example/x')                             the seed's line is dropped from [seeds] and [test-seeds]
+
+# the table a header line opens ('' when the line is not a header): `[seeds]` gives seeds; `[[x]]` and a quoted name give '?', a table
+# that is not one of ours
+def header_of(line: str) -> str:
+    s = line.strip()
+    if not s.startswith('['):
+        return ''
+    if s.startswith('[['):
+        return '?'
+    end = s.find(']')
+    if end < 0:
+        return ''
+    rest = s[end + 1:].strip()
+    if rest != '' and not rest.startswith('#'):
+        return ''
+    inner = s[1:end].strip()
+    if '"' in inner or "'" in inner:
+        return '?'
+    return inner.replace(' ', '').replace('\t', '')
+
+def is_bare_char(c: str) -> bool:
+    return ('a' <= c and c <= 'z') or ('A' <= c and c <= 'Z') or ('0' <= c and c <= '9') or c == '_' or c == '-'
+
+# the key of a `key = value` line and the index where its value starts; the key is '' for a line that is not an entry (a quoted key
+# followed by a dot, `"a/b".path = ...`, is not one either: this editor does not rewrite dotted keys)
+def entry_key(line: str) -> tuple[str, int]:
+    n = len(line)
+    i = 0
+    while i < n and (line[i] == ' ' or line[i] == '\t'):
+        i += 1
+    if i >= n:
+        return ('', 0)
+    c = line[i]
+    key = ''
+    k = i
+    if c == '"' or c == "'":
+        j = i + 1
+        while j < n and line[j] != c:
+            if c == '"' and line[j] == '\\':
+                j += 1
+            j += 1
+        if j >= n:
+            return ('', 0)
+        key = line[i + 1:j]
+        k = j + 1
+    else:
+        while k < n and (is_bare_char(line[k]) or line[k] == '.'):
+            k += 1
+        key = line[i:k]
+        if key == '':
+            return ('', 0)
+    while k < n and (line[k] == ' ' or line[k] == '\t'):
+        k += 1
+    if k >= n or line[k] != '=':
+        return ('', 0)
+    return (key, k + 1)
+
+# the index of the `#` that starts a comment at the end of a line, from index `start` (strings are skipped), -1 when there is none
+def comment_start(line: str, start: int) -> int:
+    quote = ''
+    i = start
+    while i < len(line):
+        c = line[i]
+        if quote == '"':
+            if c == '\\':
+                i += 1
+            elif c == '"':
+                quote = ''
+        elif quote == "'":
+            if c == "'":
+                quote = ''
+        elif c == '"' or c == "'":
+            quote = c
+        elif c == '#':
+            return i
+        i += 1
+    return -1
+
+# `key = value` with the old line's key text, its spacing and its comment kept
+def replaced(line: str, value_at: int, value: str) -> str:
+    begin = value_at
+    while begin < len(line) and (line[begin] == ' ' or line[begin] == '\t'):
+        begin += 1
+    head = line[:begin]
+    if begin == value_at:
+        head += ' '
+    cs = comment_start(line, begin)
+    if cs < 0:
+        return head + value
+    end = cs
+    while end > begin and (line[end - 1] == ' ' or line[end - 1] == '\t'):
+        end -= 1
+    return head + value + line[end:]
+
+class Span:
+    name: str = ''
+    head: int = 0       # the line of the header
+    last: int = 0       # the last line that holds an entry (the header when there is none)
+    end: int = 0        # the line of the next header, or the number of lines
+
+def scan(lines: list[str]) -> list[Span]:
+    spans: list[Span] = []
+    for i in range(len(lines)):
+        name = header_of(lines[i])
+        if name != '':
+            s = Span()
+            s.name = name
+            s.head = i
+            s.last = i
+            spans.append(s)
+        elif len(spans) > 0:
+            t = lines[i].strip()
+            if t != '' and not t.startswith('#'):
+                spans[len(spans) - 1].last = i
+    for k in range(len(spans)):
+        if k + 1 < len(spans):
+            spans[k].end = spans[k + 1].head
+        else:
+            spans[k].end = len(lines)
+    return spans
+
+class Text:
+    lines: list[str] = []
+    crlf: bool = False
+    final_newline: bool = True
+
+def split_text(text: str) -> Text:
+    t = Text()
+    t.crlf = '\r\n' in text
+    t.final_newline = text == '' or text.endswith('\n')
+    body = text
+    if t.final_newline and body != '':
+        body = body[:len(body) - 1]
+    if body == '' and text == '':
+        return t
+    for raw in body.split('\n'):
+        if t.crlf and raw.endswith('\r'):
+            t.lines.append(raw[:len(raw) - 1])
+        else:
+            t.lines.append(raw)
+    return t
+
+def join_text(t: Text) -> str:
+    sep = '\r\n' if t.crlf else '\n'
+    out = sep.join(t.lines)
+    if len(t.lines) > 0 and t.final_newline:
+        out += sep
+    return out
+
+# where a new table goes: before the first table that is not [project] or [seed] (the lines of comments right above that header go
+# with it), at the end of the file when there is none; [test-seeds] goes after [seeds] when there is one
+def new_table_at(lines: list[str], spans: list[Span], table: str) -> int:
+    if table == 'test-seeds':
+        for s in spans:
+            if s.name == 'seeds':
+                return s.last + 1
+    for s in spans:
+        if s.name != 'project' and s.name != 'seed':
+            at = s.head
+            while at > 0 and lines[at - 1].strip().startswith('#'):
+                at -= 1
+            return at
+    at = len(lines)
+    while at > 0 and lines[at - 1].strip() == '':
+        at -= 1
+    return at
+
+export def add_entry(text: str, table: str, name: str, value: str) -> str:
+    t = split_text(text)
+    spans = scan(t.lines)
+    entry_text = f'"{name}" = {value}'
+    for s in spans:
+        if s.name != table:
+            continue
+        for i in range(s.head + 1, s.end):
+            parts = entry_key(t.lines[i])
+            if parts[0] == name:
+                t.lines[i] = replaced(t.lines[i], parts[1], value)
+                return join_text(t)
+        t.lines.insert(s.last + 1, entry_text)
+        return join_text(t)
+    # no such table: a commented placeholder (what `tomato init` writes) becomes it
+    for i in range(len(t.lines)):
+        if t.lines[i].strip() == f'# [{table}]':
+            indent = t.lines[i][:len(t.lines[i]) - len(t.lines[i].lstrip())]
+            t.lines[i] = indent + f'[{table}]'
+            t.lines.insert(i + 1, entry_text)
+            return join_text(t)
+    at = new_table_at(t.lines, spans, table)
+    block = [f'[{table}]', entry_text]
+    if at > 0 and t.lines[at - 1].strip() != '':
+        block.insert(0, '')
+    if at < len(t.lines) and t.lines[at].strip() != '':
+        block.append('')
+    for k in range(len(block)):
+        t.lines.insert(at + k, block[k])
+    if at + len(block) == len(t.lines):
+        t.final_newline = True      # (a table written at the very end of the file ends the file with a newline)
+    return join_text(t)
+
+# the text without the lines of `name` in [seeds] and [test-seeds], and how many lines that was
+export def remove_entries(text: str, name: str) -> tuple[str, int]:
+    t = split_text(text)
+    spans = scan(t.lines)
+    drop: list[int] = []
+    for s in spans:
+        if s.name != 'seeds' and s.name != 'test-seeds':
+            continue
+        for i in range(s.head + 1, s.end):
+            if entry_key(t.lines[i])[0] == name:
+                drop.append(i)
+    kept: list[str] = []
+    for i in range(len(t.lines)):
+        if i not in drop:
+            kept.append(t.lines[i])
+    t.lines = kept
+    return (join_text(t), len(drop))
