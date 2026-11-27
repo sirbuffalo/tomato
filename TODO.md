@@ -10,16 +10,6 @@
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
 - Run the new `sys_async` test on macOS
   Check the kqueue wait on pipes and the `/dev/fd` listing (`tests/programs/sys_async.tom`, and the open-files check in `tests/programs/sys_run.tom`); everything of D98b was tested on Linux only.
-- Write the init name with `printf`, not `echo`, in `native/tomato`
-  `tomato init 'a\b'` writes `name = "a\b"` (the shell's `echo` turns the escaped `\\` back into `\`, and `\b` is a backspace in TOML), so the project is named "a" plus a backspace and the rest (`tomato config` shows `project: a`). Found by the CLI contract suite, which leaves backslash names untested until this is fixed.
-- Make `tomato config` print only the error when a settings file is wrong
-  With `[build] output = "x"` in `~/.tomato/config.toml`, `tomato config` prints nothing on standard output and the whole report up to the error (project file, user file, limits) on standard error before `error[E558]`, because the script merges the compiler's two streams; `tomato run` prints only the error.
-- Say why `tomato seed install --locked` fails when a path seed's files changed
-  After `seed install`, editing `thing/src/thing.tom`, `--locked` says `tomato.lock does not match this manifest` (E578): the manifest did not change, the seed's content hash did. And `tomato run` still builds with the changed seed and no complaint (a changed path seed is not checked against the lock); confirm that is intended for path seeds and word the E578 text for the hash.
-- Refuse an empty `--mode` in `tomato run`
-  `tomato run hello.tom --mode ""` runs in debug mode with no error (the empty word means "no flag"); `--mode release` and a bad word are checked.
-- Add a bare-clone cache for seed fetches
-  Bare-clone cache `~/.tomato/seeds/git/` (design section 6): `seed update` fetches the tag and then the commit with `--depth 1` each time; a cache would fetch only new objects.
 - Make `@str` dispatch by the object's class whatever the method's name
   `docs/errors.md` says a class may mark any one method `@str`, but a subclass's `@str` under another name is used only when the value's static type is that subclass: `class Own(Error)` with `@str def show(self) -> str: return 'own:' + self.message`, then `try: raise Own('x')` / `catch Error as e: print(e)` prints `x`, not `own:x` (the same for plain classes: `p: P = Q()` prints with `P`'s `@str`). Either dispatch `@str` virtually, or make a second `@str` under a new name in a subclass a compile error that asks for the parent's name and `override` (third audit, S2).
 - Make a failed check in a `tomato test` file point at the test's line

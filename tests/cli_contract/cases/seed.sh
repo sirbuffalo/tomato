@@ -62,6 +62,12 @@ within app try "seed install --locked: checks without writing" 0 "acme.example/t
 tomato.lock is up to date" "" seed install --locked
 within app try "run: the program imports the seed" 0 "hello x" "" run m.tom
 within app/.. try "run from another folder: the manifest is found from the file" 0 "hello x" "" run app/m.tom
+# a path seed that changed after the lock was written: --locked says which seed and why (a build still uses the changed files: a path seed is a working folder)
+printf 'export def greet(n: str) -> str:\n    return "bye " + n\n' > thing/src/thing.tom
+h2="$("$TOMATO" seed hash thing)"
+within app try "seed install --locked: a path seed whose files changed says so, with both hashes" 1 "" "error[E578]: $W/app/tomato.toml: tomato.lock does not match this manifest: the files of the path seed acme.example/thing (../thing) changed since the lock was written (hash $(printf '%s' "$h1" | cut -c1-19)... in tomato.lock, $(printf '%s' "$h2" | cut -c1-19)... now): run \`tomato seed install\` and commit the new lock" seed install --locked
+within app try "run: a path seed that changed still builds" 0 "bye x" "" run m.tom
+printf 'export def greet(n: str) -> str:\n    return "hello " + n\n' > thing/src/thing.tom
 # a manifest that lists no seeds
 mkdir -p noseeds; printf '[project]\nname = "n"\nversion = "0.1.0"\ntomato = "%s"\n' "$minv" > noseeds/tomato.toml
 within noseeds try "seed install with no seeds listed" 0 "the manifest lists no seeds: nothing to lock" "" seed install

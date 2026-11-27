@@ -4,6 +4,8 @@
 #
 #   ${TOMATO_HOME:-$HOME/.tomato}/seeds/store/ab/ab12...64hex/    one folder for each content hash: the seed's files
 #   ${TOMATO_HOME:-$HOME/.tomato}/seeds/tmp/PID-N/                 where a fetch works; removed when it ends, whatever happened
+#   ${TOMATO_HOME:-$HOME/.tomato}/seeds/git/HASH/                  a bare clone kept for each repository URL (a cache, safe to delete): a
+#                                                                  fetch adds only the new objects, and a commit it already holds needs no network
 #
 # Nothing here uses the network except what `git fetch` does. `git` only (no library), with `GIT_ALLOW_PROTOCOL=https:ssh` (and
 # `file` for a URL that names a folder of this machine or file://), no hooks, no submodules, no checkout, no prompts, and git's own
@@ -12,6 +14,8 @@ from sys import run, ProcessError
 from os import getenv, getpid, makedirs
 from ospath import isdir, dirname
 from config import ConfigError
+from hashlib import sha256_hex
+from utf8 import encode
 
 const MAX_FILE_BYTES = 10485760        # one file of a seed
 const MAX_TOTAL_BYTES = 67108864       # all the files of a seed
@@ -113,7 +117,7 @@ def last_lines(text: str) -> str:
     return ' / '.join(lines)
 
 def git(scratch: str, url: str, args: list[str], what: str) -> str:
-    cmd = ['git', '-c', 'protocol.ext.allow=never', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'fetch.fsckObjects=true', '-c', 'transfer.fsckObjects=true', '-c', 'init.defaultBranch=main']
+    cmd = ['git', '-c', 'protocol.ext.allow=never', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'fetch.fsckObjects=true', '-c', 'transfer.fsckObjects=true', '-c', 'init.defaultBranch=main', '-c', 'gc.auto=0']
     cmd.extend(args)
     protocols = 'https:ssh'
     if is_local_url(url):
@@ -127,6 +131,51 @@ def git(scratch: str, url: str, args: list[str], what: str) -> str:
     catch FileNotFoundError as e:
         fail(599, 'git is needed to fetch a seed, and the command `git` was not found (install git, or use a seed from a folder with { path = "..." })')
     return ''
+
+# the bare clone that is kept for the repository `url`: one folder for each URL text, so a second fetch of the same repository adds only
+# the objects that are new, and a commit the clone already holds is read without the network. Everything in it came through git's own
+# object check, and the caller still hashes the files it reads, so a damaged or edited clone can only make a fetch fail or fall back.
+def cache_repo(url: str) -> str:
+    return store_root() + '/git/' + sha256_hex(encode(url))[:40]
+
+# true when the clone `repo` holds the commit `rev` (a missing or unusable clone does not)
+def has_commit(repo: str, url: str, rev: str) -> bool:
+    if not isdir(repo):
+        return False
+    try:
+        got = git(repo, url, ['rev-parse', '--verify', '--quiet', rev + '^{commit}'], 'git rev-parse').strip()
+        return got == rev
+    catch ConfigError as e:
+        return False
+
+# a ref in the clone for a commit that was fetched, so that the commit stays reachable (nothing in the clone is ever pruned: it holds only
+# what seeds were fetched, and a fetch after that finds the commit without the network)
+def keep_commit(repo: str, url: str, commit: str):
+    git(repo, url, ['update-ref', 'refs/tomato/c-' + commit, commit], 'git update-ref')
+
+# fetches `ref` (a tag name, a branch name or a commit) of `url` with the same limits as always, into the kept clone of the repository.
+# When that clone cannot be made or used (a read-only store, a damaged folder) the fetch is done into a new clone in `scratch` instead,
+# and a damaged kept clone is removed so that the next fetch makes it again. Returns the folder of the clone that holds the result.
+def fetch_into(url: str, ref: str, scratch: str, name: str, what: str, into: str = '') -> str:
+    refspec = ref if into == '' else ref + ':' + into
+    args = ['fetch', '--quiet', '--depth', '1', '--no-tags', '--no-recurse-submodules', '--', url, refspec]
+    cache = cache_repo(url)
+    try:
+        makedirs(cache, True)
+        git(cache, url, ['init', '--bare', '-q'], 'git init')
+        git(cache, url, args, what)
+        return cache
+    catch ConfigError as e:
+        pass
+    catch IOError as e:
+        pass
+    repo = scratch + '/' + name
+    git(repo, url, ['init', '--bare', '-q'], 'git init')
+    git(repo, url, args, what)
+    # it worked here and not in the kept clone: that one is damaged (a network error would have failed both)
+    if isdir(cache):
+        remove_tree(cache)
+    return repo
 
 def bad_tree(url: str, rev: str, why: str):
     fail(600, f'the seed at {url} ({rev[:12]}) cannot be used: {why}')
@@ -184,13 +233,15 @@ export def resolve_ref(url: str, tag: str, branch: str, scratch: str) -> str:
     problem = ref_problem(name)
     if problem != '':
         fail(598, f'{what} of {url} cannot be used: {problem}')
-    repo = scratch + '/ref'
-    git(repo, url, ['init', '--bare', '-q'], 'git init')
     ref = 'refs/tags/' + name if tag != '' else 'refs/heads/' + name
-    git(repo, url, ['fetch', '--quiet', '--depth', '1', '--no-tags', '--no-recurse-submodules', '--', url, ref], f'fetching {what} from {url}')
-    got = git(repo, url, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD^{commit}'], 'git rev-parse').strip()
+    # into a ref of its own (named by the scratch folder, which is the process's): two fetches into the kept clone at once do not share FETCH_HEAD
+    mine = 'refs/tomato/' + scratch.split('/')[-1]
+    repo = fetch_into(url, ref, scratch, 'ref', f'fetching {what} from {url}', mine)
+    got = git(repo, url, ['rev-parse', '--verify', '--quiet', mine + '^{commit}'], 'git rev-parse').strip()
     if not is_commit_id(got):
         fail(599, f'git did not give a commit for {what} of {url}')
+    keep_commit(repo, url, got)
+    git(repo, url, ['update-ref', '-d', mine], 'git update-ref')
     return got
 
 # fetches commit `rev` of the git repository `url` and writes its files into the folder `dest` (made here) with the modes git
@@ -207,10 +258,14 @@ export def fetch_tree(url: str, rev: str, dest: str, scratch: str, subdir: str) 
         fail(598, f'the path "{subdir}" of the seed at {url} cannot be used: {problem}')
     if not is_commit_id(rev):
         fail(598, f'the revision "{rev}" of {url} is not a full commit id (40 lowercase hex digits): a tag or a branch moves, so the manifest names the commit (git rev-parse TAG^{{commit}} prints it)')
-    repo = scratch + '/repo'
-    git(repo, url, ['init', '--bare', '-q'], 'git init')
-    git(repo, url, ['fetch', '--quiet', '--depth', '1', '--no-tags', '--no-recurse-submodules', '--', url, rev], f'fetching {rev[:12]} from {url}')
-    got = git(repo, url, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD^{commit}'], 'git rev-parse').strip()
+    repo = cache_repo(url)
+    if has_commit(repo, url, rev):
+        got = rev            # kept from an earlier fetch: no network
+    else:
+        repo = fetch_into(url, rev, scratch, 'repo', f'fetching {rev[:12]} from {url}')
+        got = git(repo, url, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD^{commit}'], 'git rev-parse').strip()
+        if got == rev:
+            keep_commit(repo, url, rev)
     if got != rev:
         bad_tree(url, rev, f'git sent the commit {got}, not the one asked for')
     listing = git(repo, url, ['ls-tree', '-r', '-z', '--long', '--full-tree', rev], 'git ls-tree')

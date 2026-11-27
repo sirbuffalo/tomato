@@ -181,6 +181,11 @@ and eight more comparison languages; Linux x86-64 results are published next to 
 
 ### Fixes
 
+- `tomato init 'a\b'` writes the name as `a\\b` in tomato.toml (the backslash was lost, and `\b` read as a backspace). `tomato config` with a wrong settings
+  file prints only the error. `tomato seed install --locked` says when the files of a path seed changed since the lock (the seed and both hashes).
+  `--mode ""` is an error (E282) in `run`, `build` and `compile`.
+- Fetching a seed from git keeps a bare clone for each repository in `~/.tomato/seeds/git/` (a cache, safe to delete): a second fetch adds only new
+  objects, and a commit already there needs no network (D104a).
 - Converting an `int` to `int[length=64]` used to give a wrong number (`int[length=64](5)` printed `11`, and a value
   beyond the range was not caught); it now checks the range and raises `OverflowError`, and passing an `int` where an
   `int[length=64]` is expected is a compile error, as it already was for the narrower widths. `int[length=64]` mixed

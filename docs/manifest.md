@@ -215,7 +215,9 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   fetched into the store, it must hold the seed's `tomato.toml` and `src/` as a folder of its own would, and the content hash is that of those files alone (the `path` is not part of it: the same files in another repository have the same hash).
   The rest of the repository is not looked at (a link or a submodule outside the folder does not matter; one inside it is E600). The path is a relative folder of plain parts with `/`: no leading or trailing slash, `.` or `..` part, backslash or `.git` (E598); a folder with no files, or a file, is E600. The lock keeps it as `path` (and is version 2, above).
   Two seeds of one repository are two entries of the manifest with the same `git` and `rev` and different paths; one fetch each.
-- **The fetch** (`compiler/src/seedstore.tom`, through `sys.run`, no shell): a scratch bare repository under `~/.tomato/seeds/tmp/`,
+- **The fetch** (`compiler/src/seedstore.tom`, through `sys.run`, no shell): a **bare clone kept for each repository URL** under `~/.tomato/seeds/git/HASH/`
+  (a cache, safe to delete: a second fetch of the same repository adds only the new objects, and a commit the clone already holds is read with no
+  network and no repository; a clone that cannot be used is replaced, and when the store is read-only the fetch works in a scratch folder under `~/.tomato/seeds/tmp/`),
   `git fetch --depth 1 URL COMMIT`, the commit checked to be the one asked for, `git ls-tree -r -z` and `git cat-file blob` of each file: **no
   checkout**, so no filter, hook or attribute can change a byte. `GIT_ALLOW_PROTOCOL` is `https:ssh` (plus `file` for a local URL), no prompts,
   no hooks, git's object check on. A symbolic link or submodule, a path with `..`, an absolute path, a `.git` part or a backslash, two names that
@@ -295,7 +297,7 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E575 | a seed's modules do not fit its name, are missing, or there are none |
 | E576 | a symbolic link or other special file in a seed |
 | E577 | two seeds provide one module |
-| E578 | the lock is damaged, of a version other than 1 or 2, or `--locked` found it out of date |
+| E578 | the lock is damaged, of a version other than 1 or 2, or `--locked` found it out of date (for a path seed whose files changed it names the seed and both hashes) |
 | E579 | a seed module has a standard module's name |
 | E580 | `tomato seed check`: the owner is not one a registry accepts |
 | E581 | (a compile error) a module is in a seed and in the standard library |
@@ -319,6 +321,6 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 
 ## Not built yet
 
-The registry, `index`, signatures, `tomato seed outdated/tree/why/registry`, `seed verify --inputs`, `seed update --accept-owner-change`, the bare-clone cache `~/.tomato/seeds/git/`, seeds that use seeds, MVS over a graph,
+The registry, `index`, signatures, `tomato seed outdated/tree/why/registry`, `seed verify --inputs`, `seed update --accept-owner-change`, seeds that use seeds, MVS over a graph,
 the index listing's record of symbols, visibility of which seed may import which
 (`docs/package-registry-design.md` sections 5 to 8, 12 and 15 stages 4 to 7).

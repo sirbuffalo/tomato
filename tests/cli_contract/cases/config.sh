@@ -62,6 +62,11 @@ within "$P" try "config shows the Tomato a project needs, even a newer one" 0 "~
 within "$P" try "run refuses a project that needs a newer Tomato, and says how to get it" 1 "" "error[E562]: $here/tomato.toml: this needs Tomato 99.0 or newer, and this is Tomato $version
   = help: install a newer release with \`tomato update\`" run sub/p.tom
 
+# a wrong settings file: only the error is printed (standard output is empty, and not the report up to the error)
+printf '[build]\noutput = "x"\n' > "$TOMATO_HOME/config.toml"
+within "$P" try "config: [build] output in the user's file is an error and nothing else" 1 "" "error[E558]: $TOMATO_HOME/config.toml: unknown setting build.output (the user file may set only build.mode: output and [build.ENTRY] belong in a project's tomato.toml)" config
+rm -f "$TOMATO_HOME/config.toml"
+
 # the user's [build] mode is shown, and says it is only a default
 printf '[build]\nmode = "release"\n' > "$TOMATO_HOME/config.toml"
 within "$P" try "config shows the user's [build] mode and where it ranks" 0 @config_user_build.txt "" config

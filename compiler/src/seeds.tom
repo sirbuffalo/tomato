@@ -552,6 +552,10 @@ def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], appro
         if (len(out.seeds) == 0 and not have_lock) or (have_lock and read_text(path) == text):
             out.said.append('tomato.lock is up to date')
             return out
+        for s in out.seeds:
+            e = entry_named(old, s.name)
+            if e is not None and e.hash != s.hash and s.source == 'path':
+                fail(578, m.path, f'tomato.lock does not match this manifest: the files of the path seed {s.name} ({s.path}) changed since the lock was written (hash {short_hash(e.hash)} in tomato.lock, {short_hash(s.hash)} now): run `tomato seed install` and commit the new lock')
         fail(578, m.path, 'tomato.lock does not match this manifest: run `tomato seed install` and commit the new lock')
     if len(out.seeds) == 0 and not have_lock:
         out.said.append('the manifest lists no seeds: nothing to lock')

@@ -16,6 +16,7 @@ try "run: a second file word is refused, naming the first" 1 "" "error: 'other.t
 try "run: a second word with a slash is a file too" 1 "" "error: 'x/y' looks like a file, but the file is already hi.tom: after it comes an entry name such as main (tomato run FILE [ENTRY [INPUTS...]])" run hi.tom x/y
 try "run: -o is a usage error (run writes no program)" 2 "" @help.txt run -o out hi.tom
 try "run: a bad --mode value" 1 "" "error[E282]: the mode must be debug or release, not 'bogus'" run hi.tom --mode bogus
+try "run: an empty --mode is refused, not read as no flag" 1 "" "error[E282]: the mode must be debug or release, not ''" run hi.tom --mode ""
 try "run: the mode normal was renamed" 1 "" "error[E281]: the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" run hi.tom --mode normal
 try "run: a bad --color value" 1 "" "error: --color takes auto, always or never, not 'bogus'" run --color=bogus hi.tom
 try "run: --color with a bad value (two words)" 1 "" "error: --color takes auto, always or never, not 'bogus'" run --color bogus hi.tom
@@ -33,6 +34,7 @@ try "compile: a word that is not a file" 1 "" "error: 'hi' is not a file: a file
 try "compile: an unknown option" 1 "" "error: unknown option '--bogus' for 'tomato compile' (run 'tomato help')" compile --bogus hi.tom
 try "compile: two files are a usage error" 2 "" @help.txt compile hi.tom ent.tom
 try "compile: a file that is not there" 1 "" "error: cannot read nosuch.tom" compile nosuch.tom
+try "compile: an empty mode" 1 "" "error[E282]: the mode must be debug or release, not ''" compile hi.tom --mode ""
 try "compile: a bad mode" 1 "" "error[E282]: the mode must be debug or release, not 'bogus'" compile hi.tom --mode bogus
 try "compile: IR on standard output, nothing on standard error" 0 "~define i32 @main" "" compile hi.tom
 "$TOMATO" compile hi.tom > ir.ll 2> /dev/null
@@ -55,6 +57,7 @@ try "build: a word that is not a file" 1 "" "error: 'hi' is not a file: a file e
 try "build: an unknown option" 1 "" "error: unknown option '--bogus' for 'tomato build' (run 'tomato help')" build --bogus hi.tom
 try "build: -o needs a value" 2 "" @help.txt build hi.tom -o
 try "build: the program would overwrite its own source" 1 "" "error: the program would overwrite its own source hi.tom: name it with -o" build hi.tom -o hi.tom
+try "build: an empty mode" 1 "" "error[E282]: the mode must be debug or release, not ''" build hi.tom --mode ""
 try "build: a bad mode" 1 "" "error[E282]: the mode must be debug or release, not 'bogus'" build hi.tom --mode bogus
 try "build: a file that is not there" 1 "" "error: cannot read nosuch.tom" build nosuch.tom
 try "build: a compile error leaves no program" 1 "" @compile_error.txt build typo.tom -o typo_out

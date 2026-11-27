@@ -29,7 +29,9 @@ within "$W/named" try "init NAME" 0 "~created tomato.toml" "" init demo
 check "init NAME: the name in the manifest" 'name = "demo"' "$(grep '^name' "$W/named/tomato.toml")"
 within "$W/quoted" try "init NAME with a quote" 0 "~created tomato.toml" "" init 'a"b'
 check "init: a quote is escaped in the manifest" 'name = "a\"b"' "$(grep '^name' "$W/quoted/tomato.toml")"
-# (a backslash in a name is not tested: the shell's echo changes it, see TODO.md)
+within "$W/bslash" try "init NAME with a backslash" 0 "~created tomato.toml" "" init 'a\b'
+check "init: a backslash is escaped in the manifest" 'name = "a\\b"' "$(grep '^name' "$W/bslash/tomato.toml")"
+within "$W/bslash" try "config: the project is named as given (a backslash and its letter, no control character)" 0 "~project: a\\b 0.1.0 (needs Tomato $minv or newer)" "" config
 within "$W/slash" try "init NAME with a slash" 0 "~created" "" init a/b
 within "$W/two" try "init with two names" 1 "" "error: tomato init takes one NAME, not 'a' and 'b'" init a b
 check "init with two names writes nothing" "" "$(files_in "$W/two")"

@@ -278,7 +278,7 @@ case "$cmd" in
     if [ "$seed" = 1 ]; then
       {
         echo "[seed]"
-        echo "name = \"$qname\""
+        printf 'name = "%s"\n' "$qname"
         echo 'version = "0.1.0"'
         echo "tomato = \"$minv\""
         echo 'description = "TODO: one line about what this seed is for"'
@@ -291,14 +291,14 @@ case "$cmd" in
         echo "# [test-seeds]"
       } > tomato.toml
       {
-        echo "# The modules of a seed are the .tom files in src/ named $stem.tom or ${stem}_*.tom: users write import $stem."
+        printf '%s\n' "# The modules of a seed are the .tom files in src/ named $stem.tom or ${stem}_*.tom: users write import $stem."
         echo "export def hello(name: str) -> str:"
         echo "    return f'hello, {name}'"
       } > "$mainfile"
       {
         echo "# A test is a file in tests/ that runs without raising an error: tomato test runs each one, and a failed assert raises."
         echo "# The modules of src/ are imported by name."
-        echo "from $stem import hello"
+        printf '%s\n' "from $stem import hello"
         echo
         echo "@main"
         echo "def main():"
@@ -307,7 +307,7 @@ case "$cmd" in
     else
       {
         echo "[project]"
-        echo "name = \"$qname\""
+        printf 'name = "%s"\n' "$qname"
         echo 'version = "0.1.0"'
         echo "tomato = \"$minv\""
         echo
@@ -509,8 +509,12 @@ case "$cmd" in
     [ $# -le 1 ] || usage
     folder=.; [ $# -eq 1 ] && folder="$(dirname "$1")"
     find_config "$folder"
-    out="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
-    printf '%s\n' "$out"; exit 0 ;;
+    # the report is on standard output and an error on standard error: a wrong file prints only the error (the report so far is dropped)
+    errf="$(mktemp "${TMPDIR:-/tmp}/tomato-config.XXXXXX")" || die "cannot make a temporary file"
+    if out="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2> "$errf")"; then
+      rm -f "$errf"; printf '%s\n' "$out"; exit 0
+    fi
+    show_error < "$errf"; rm -f "$errf"; exit 1 ;;
   seed)
     # tomato seed install|add|remove|update|verify|vendor|check|hash: the compiler does the work (it reads the manifest, hashes the files, runs git for a git
     # seed and writes tomato.toml and tomato.lock); this script reads the words, finds the manifest and prints what the compiler says. The
@@ -597,7 +601,7 @@ esac
 set -f      # words are split on newlines below; never expand * or ? in them
 nl="
 "
-file=""; entry=""; out=""; llvm=""; mode=""; testseeds=0     # mode: the flag, else [build].mode of tomato.toml, else debug (decided by the compiler below)
+file=""; entry=""; out=""; llvm=""; mode=""; mode_given=0; testseeds=0     # mode: the flag, else [build].mode of tomato.toml, else debug (decided by the compiler below)
 # A FILE is a word that ends in .tom or has a / in it; any other word where a FILE could be is an ENTRY (D94b). Positional words are kept
 # in "$@" (not a string) so empty and glob-like inputs survive untouched.
 file_word() { case "$1" in *.tom|*/*) return 0 ;; esac; return 1; }
@@ -613,7 +617,7 @@ if [ "$cmd" = run ]; then
         --color) [ $# -ge 2 ] || usage; color="$2"; shift 2; continue ;;
         --no-warnings) warnings=off; shift; continue ;;
         --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; continue ;;
-        --mode) [ $# -ge 2 ] || usage; mode="$2"; shift 2; continue ;;
+        --mode) [ $# -ge 2 ] || usage; mode="$2"; mode_given=1; shift 2; continue ;;
         --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; continue ;;
         --test-seeds) testseeds=1; shift; continue ;;
         -o) usage ;;
@@ -634,7 +638,7 @@ else
         --) dd=1; shift; continue ;;
         -o) [ $# -ge 2 ] || usage; out="$2"; shift 2; continue ;;
         --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; continue ;;
-        --mode) [ $# -ge 2 ] || usage; mode="$2"; shift 2; continue ;;
+        --mode) [ $# -ge 2 ] || usage; mode="$2"; mode_given=1; shift 2; continue ;;
         --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; continue ;;
         --test-seeds) testseeds=1; shift; continue ;;
         -?*) die "unknown option '$1' for 'tomato $cmd' (run 'tomato help')" ;;
@@ -662,7 +666,8 @@ cflags=""
 entry="${entry:-main}"
 
 case "$mode" in
-  ""|debug|release) ;;
+  "") [ "$mode_given" = 0 ] || die_id E282 "the mode must be debug or release, not ''" ;;
+  debug|release) ;;
   normal) die_id E281 "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" ;;
   *) die_id E282 "the mode must be debug or release, not '$mode'" ;;
 esac

@@ -1231,8 +1231,8 @@ MINE TOMATO" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
   printf '\n' >> "$W/thing/src/thing.tom"
   check "seeds: a changed seed still builds (path seeds are for development)" "hello tomato
 HELLO TOMATO" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
-  r="$(cd "$W/app" && noconf $t seed install --locked 2>&1; echo "rc=$?")"
-  check "seeds: install --locked fails when the seed's content changed" "error[E578]: $here/app/tomato.toml: tomato.lock does not match this manifest: run \`tomato seed install\` and commit the new lock
+  r="$(cd "$W/app" && noconf $t seed install --locked 2>&1; echo "rc=$?")"; r="$(printf '%s\n' "$r" | sed -E 's/sha256:[0-9a-f.]+/H/g')"
+  check "seeds: install --locked fails when the seed's content changed, and says so" "error[E578]: $here/app/tomato.toml: tomato.lock does not match this manifest: the files of the path seed acme.example/thing (../thing) changed since the lock was written (hash H in tomato.lock, H now): run \`tomato seed install\` and commit the new lock
 rc=1" "$r"
   (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
   check "seeds: install again records the new hash" "$(indep_hash "$W/thing")" "$(sed -n 's/^hash = "\(.*\)"/\1/p' "$W/app/tomato.lock")"
@@ -1506,11 +1506,12 @@ wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | nor
   r="$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)"
   check "a build says to install when the store has lost the seed" "error[E569]: HERE/app/tomato.toml: the seed g.example/gs is not in the seed store ($(echo "$store" | norm))
   = help: run: tomato seed install" "$r"
-  r="$(cd "$A" && tm $t seed install 2>&1 | norm | cut -c1-60)"
+  mv "$th/seeds/git" "$W/git.moved"          # the kept clones would serve the commit: with them gone, only the repository could
   r="$(cd "$A" && tm $t seed install 2>&1 | norm | cut -c1-60)"
   case "$r" in "error[E599]: fetching "*" from HERE/gs.git failed: "*) ok "seed install: git failing (the repository is gone) is an error";; *) bad "seed install: git failing (the repository is gone) is an error" "$r";; esac
   [ ! -e "$store" ] && ok "seed install: the failed fetch stored nothing" || bad "seed install: the failed fetch stored nothing"
   check "seed install: and left no scratch folder" "" "$(ls "$th/seeds/tmp")"
+  rm -rf "$th/seeds/git"; mv "$W/git.moved" "$th/seeds/git"
   mv "$W/gs.moved" "$W/gs.git"
   check "seed install: with the repository back it fetches the missing seed" "g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
 wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
@@ -1641,7 +1642,7 @@ hi from git" "$(cd "$A" && tm $t run src/main.tom 2>&1; tm $t run src/usegs.tom 
   check "seed vendor: a vendor folder that leaves the project is refused" 'error[E604]: HERE/app/tomato.toml: seed-store.vendor is "../outside", but the vendor folder must be a folder below the one with tomato.toml (no leading / and no ..)' "$(cd "$A" && tm $t seed vendor 2>&1 | norm)"
   printf '%s[seeds]\n"acme.example/loc" = { path = "../loc" }\n' "$head" > "$A/tomato.toml"
   printf 'x\n' >> "$W/loc/src/loc.tom"
-  case "$(cd "$A" && tm $t seed vendor 2>&1 | norm)" in "error[E578]: HERE/app/tomato.toml: tomato.lock does not match this manifest: run \`tomato seed install\` and commit the new lock") ok "seed vendor: a lock that is out of date is an error (install first)";; *) bad "seed vendor: a lock that is out of date is an error (install first)" "$(cd "$A" && tm $t seed vendor 2>&1 | norm)";; esac
+  case "$(cd "$A" && tm $t seed vendor 2>&1 | norm)" in "error[E578]: HERE/app/tomato.toml: tomato.lock does not match this manifest: the files of the path seed acme.example/loc (../loc) changed since the lock was written (hash "*"... in tomato.lock, "*"... now): run \`tomato seed install\` and commit the new lock") ok "seed vendor: a lock that is out of date is an error (install first)";; *) bad "seed vendor: a lock that is out of date is an error (install first)" "$(cd "$A" && tm $t seed vendor 2>&1 | norm)";; esac
   cd "$work" || true
 }
 t_cli_seed_update() { # tomato seed verify, seed update (tag and branch, --dry-run, the question about new symbols) and the git seed's path (a folder of a repository); local bare git repos only, no network
@@ -1904,6 +1905,19 @@ error[E606]: HERE/app/tomato.lock: verify found 2 problems in 2 locked seeds (2 
   TC2="$(commit "$W/two" two)"; git -C "$W/two" tag -f v1 >/dev/null 2>&1; bare "$W/two" "$W/two.git"
   (cd "$W/app2" && tm $t seed update >/dev/null 2>&1)
   check "seed update: a seed in [seeds] and [test-seeds] gets the new rev in both lines" "2 $TC2" "$(grep -c "rev = \"$TC2\", tag = \"v1\"" "$W/app2/tomato.toml") $(sed -n 's/^commit = "\(.*\)"/\1/p' "$W/app2/tomato.lock")"
+  # the bare-clone cache: a repository is kept as a bare clone under seeds/git, a second fetch adds only new objects, and a commit the clone holds needs no repository
+
+  TCDIR="$th/seeds/git/$(printf '%s' "$W/two.git" | sha256 | cut -c1-40)"
+  check "seed fetch: a bare clone is kept for the repository (a folder named by the hash of its URL)" "yes" "$([ -f "$TCDIR/HEAD" ] && echo yes)"
+  check "seed fetch: the kept clone holds the commit that was fetched" "yes" "$(git --git-dir="$TCDIR" cat-file -e "$TC2^{commit}" && echo yes)"
+  rm -rf "$th/seeds/store"; mv "$W/two.git" "$W/two.gone"
+  r="$(cd "$W/app2" && tm $t seed install --locked 2>&1 | norm | tail -n 1)"
+  check "seed fetch: a second fetch of a commit already kept works with the repository gone (no network)" "tomato.lock is up to date" "$r"
+  check "seed fetch: and the seed is back in the store, with the same hash" "yes" "$(test -d "$(store_of "$(sed -n 's/^hash = "\(.*\)"/\1/p' "$W/app2/tomato.lock" | sed -n 1p)")" && echo yes)"
+  mv "$W/two.gone" "$W/two.git"
+  rm -rf "$th/seeds/store"; printf 'garbage\n' > "$TCDIR/HEAD"
+  r="$(cd "$W/app2" && tm $t seed install --locked 2>&1 | norm | tail -n 1)"
+  check "seed fetch: a damaged kept clone is replaced and the fetch still works" "tomato.lock is up to date" "$r"
   cd "$work" || true
 }
 t_cli_project() { # the project layout and the commands that use it (D94b): init, run, build, the built program, raw inputs, File inputs
