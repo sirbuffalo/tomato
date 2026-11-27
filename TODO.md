@@ -20,8 +20,6 @@
   `tests/programs/async_toolkit.tom` (lines 254-274: `wait_for` deadlines of 0.01-0.02 s against 0.01 s sleeps), `async_sync.tom:75` and `time_module.tom:95` race the wall clock like `socket_fair` did before the audit gave its timers one shared deadline. They passed at load 63 but have no margin.
 - Full Unicode case mapping for `upper`, `lower` and `title`
   `'ß'.upper()` is `ß` (Python `SS`) and `'ßa'.title()` `ßa` (Python `Ssa`): the runtime's case tables map one character to one character. Decide whether to follow Python's SpecialCasing or document the difference.
-- Mention `tomato update --minor` and `--pre` on the website's download page once the rebrand task has landed
-  `site/download.html` says `tomato update` "reinstalls when a newer version exists". Since D84a it installs a newer patch release at once, stops before a new minor or major version unless given `--minor`, and moves to a pre-release only with `--pre` or from an installed pre-release (`site/latest-pre.json`). The pre-release audit left the page alone while the rebrand task was editing the site; that task has now landed, so the page can say this (see `docs/releasing.md`, Version numbers).
 - Make `sum()`, `min()`, `max()` and `sorted()` work on a list of angles
   They are compile errors today (the builtins take numbers or text only); make them work on anything with `@lt`/`@add`, or give `Angle` helpers.
 - Give `Angle` a `@hash` so angles can be dict keys and set elements
