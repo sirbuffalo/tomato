@@ -552,3 +552,31 @@ CompileError the @{} method '{}' must return the result of the operation
 CompileError the @{} method '{}' must take nothing besides self and return the result
 CompileError {}() was given a value of type {} first and then one of type {}
 CompileError '{}' cannot be a dict key or set element: its @eq method '{}' compares with {}
+ConfigError {}: unknown {} {} (the tables are {}; every setting is in a table)
+ConfigError {}: the file has both [project] and [seed]: a folder is a project (a program that uses seeds) or a seed (a package), not both
+ConfigError {}: [{}] needs the setting {}
+ConfigError {}: unknown setting {}.{} (the settings of [{}] are {})
+ConfigError {}: {} must be {}, not {}
+ConfigError {}: {} is "{}", which is not a version: {}
+ConfigError {}: "{}" in [{}] is not a seed name: {}
+ConfigError {}: this needs Tomato {} or newer, and this is Tomato {}
+ConfigError {}: {} is a {} seed, and only a project can use those: a seed can use only registered seeds, written as "1.2.0"
+ConfigError {}: the seed {} is written as a {} seed in {} and as a {} seed in {}: it must be one source
+ConfigError {}: {} must be "debug" or "release", not "{}"
+ConfigError {}: {}.target is reserved for a later version and cannot be set yet
+ConfigError {}: [seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file
+ConfigError {}: {} must be a version such as "1.2.0", or a table { git = "URL", rev = "COMMIT" } or { path = "../folder" }, not {}
+ConfigError {}: tomato.lock is missing or does not hold what tomato.toml needs (a seed, its source or its version): run tomato seed install
+ConfigError {}: the seed {} comes from git, which this version cannot fetch yet
+ConfigError {}: the seed {} {} would come from a registry, and there is none yet
+ConfigError {}: the seed folder or manifest is not usable: it is missing, has no tomato.toml, or has no [seed] table
+ConfigError {}: "{}" is listed with the path "{}", but the seed there is called "{}"
+ConfigError {}: the seed {} itself uses the seed {}, and seeds that use seeds cannot be installed yet: there is no registry
+ConfigError {}: the seed's modules do not fit: a module does not match the seed's name, its file or src folder is missing, or there are none
+ConfigError {}: a seed cannot contain a symbolic link or another kind of file
+ConfigError {}: the seeds {} and {} both provide the module '{}': one program holds one copy of a module
+ConfigError {}: tomato.lock is damaged, out of date or not version 1
+ConfigError {}: the module '{}' has the name of a standard module, so imports of it would change meaning
+ConfigError {}: the owner "{}" is not one a registry accepts: it is a domain name with a dot (acme.example) or k- and a key hash
+CompileError the module '{}' is in the seed {} and in the standard library, so the import is ambiguous
+CompileError cannot read the file {} of the seed {}

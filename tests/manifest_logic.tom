@@ -1,0 +1,294 @@
+# The manifest's rules in compiler/src/manifest.tom, as @test functions: versions and their order, seed names, what each table may hold,
+# the errors with their ids, which tables a run of an entry reads, and the [build] settings that apply. manifest.tom imports config.tom
+# from beside it, so tests/run.sh copies the two files with this one into a folder and runs `tomato test` there. The manifests are
+# written to files in the current folder (read_manifest takes a path).
+from os import write_text
+from config import ConfigError
+from manifest import Manifest, read_manifest, compare_versions, version_problem, same_line, name_problem, module_stem, table_applies, build_for, seeds_for, check_tomato, describe_manifest
+from testing import assert_equal, assert_true, assert_false
+
+def load(text: str) -> Manifest:
+    write_text('mf.toml', text)
+    return read_manifest('mf.toml')
+
+# the id and message of the error that reading the text raises, or '' when it reads fine
+def problem(text: str) -> str:
+    try:
+        load(text)
+    catch ConfigError as e:
+        return f'E{e.code} {e.message}'
+    return ''
+
+@test
+def versions_are_checked():
+    assert_equal(version_problem('1.2.0', True), '')
+    assert_equal(version_problem('1.0.0-rc.1', True), '')
+    assert_equal(version_problem('0.51.0', True), '')
+    assert_equal(version_problem('1.0.0-alpha-1.x', True), '')
+    assert_true(version_problem('1.0', True) != '')
+    assert_equal(version_problem('1.0', False), '')
+    assert_equal(version_problem('0.51', False), '')
+    assert_true(version_problem('1', False) != '')
+    assert_true(version_problem('1.2.3.4', False) != '')
+    assert_true(version_problem('01.2.3', True) != '')
+    assert_true(version_problem('1.2.x', True) != '')
+    assert_true(version_problem('1.2.3-', True) != '')
+    assert_true(version_problem('1.2.3-rc..1', True) != '')
+    assert_true(version_problem('1.2.3-rc.01', True) != '')
+    assert_true(version_problem('1.2.3-rc_1', True) != '')
+    assert_true(version_problem('1.2.3+build5', True) != '')
+    assert_true(version_problem('', True) != '')
+    assert_true(version_problem('v1.2.3', True) != '')
+
+@test
+def versions_are_ordered_like_semver():
+    order = ['0.9.0', '0.51', '1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta', '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0-rc.2', '1.0.0-rc.10', '1.0.0', '1.0.1', '1.1.0', '2.0.0', '10.0.0']
+    for i in range(len(order)):
+        for j in range(len(order)):
+            want = 0
+            if i < j:
+                want = -1
+            elif i > j:
+                want = 1
+            assert_equal(compare_versions(order[i], order[j]), want, f'{order[i]} against {order[j]}')
+    assert_equal(compare_versions('0.51', '0.51.0'), 0)
+    assert_equal(compare_versions('1.0', '1.0.0'), 0)
+    assert_equal(compare_versions('1.0.0-rc.1', '1.0'), -1)
+
+@test
+def compatible_lines():
+    assert_true(same_line('1.2.0', '1.9.3'))
+    assert_false(same_line('1.2.0', '2.0.0'))
+    assert_true(same_line('0.4.1', '0.4.9'))
+    assert_false(same_line('0.4.1', '0.5.0'))
+    assert_false(same_line('0.4.1', '1.4.1'))
+
+@test
+def seed_names():
+    assert_equal(name_problem('acme.example/json5'), '')
+    assert_equal(name_problem('local/thing'), '')
+    assert_equal(name_problem('k-abcdefghijklmnopqrstuvwxyz/x_y-z'), '')
+    assert_true(name_problem('json5') != '')
+    assert_true(name_problem('a/b/c') != '')
+    assert_true(name_problem('/x') != '')
+    assert_true(name_problem('Acme/x') != '')
+    assert_true(name_problem('acme./x') != '')
+    assert_true(name_problem('acme/X') != '')
+    assert_true(name_problem('acme/1x') != '')
+    assert_true(name_problem('acme/') != '')
+    assert_true(name_problem('acme/' + 'x' * 65) != '')
+    assert_equal(module_stem('acme.example/json-5'), 'json_5')
+
+@test
+def a_project_reads():
+    m = load('[project]\nname = "todo-app"\nversion = "0.3.0"\ntomato = "1.0"\n')
+    assert_equal(m.kind, 'project')
+    assert_equal(m.name, 'todo-app')
+    assert_equal(m.version, '0.3.0')
+    assert_equal(m.tomato, '1.0')
+    assert_equal(m.dir, '')
+    assert_equal(len(m.reqs), 0)
+
+@test
+def a_seed_reads_with_its_optional_keys():
+    m = load('[seed]\nname = "acme.example/json5"\nversion = "1.2.0"\ntomato = "0.52"\ndescription = "JSON5"\nlicense = "MIT"\nmodules = ["json5", "json5_pretty"]\n\n[seeds]\n"other.example/strutil" = "0.4.1"\n\n[seeds.test]\n"other.example/fixtures" = "1.0.0"\n')
+    assert_equal(m.kind, 'seed')
+    assert_equal(m.description, 'JSON5')
+    assert_equal(m.license, 'MIT')
+    assert_true(m.has_modules)
+    assert_equal(m.modules, ['json5', 'json5_pretty'])
+    assert_equal(len(m.reqs), 2)
+    assert_equal(m.reqs[0].name, 'other.example/strutil')
+    assert_equal(m.reqs[0].table, '')
+    assert_equal(m.reqs[1].table, 'test')
+
+@test
+def a_settings_only_file_reads_as_no_kind():
+    m = load('[limits]\nexp_bits = 4096\n\n[build]\nmode = "release"\n')
+    assert_equal(m.kind, 'none')
+    assert_equal(build_for(m, 'main').mode, 'release')
+
+@test
+def the_seeds_of_every_form():
+    m = load('[project]\nname = "p"\nversion = "0.1.0"\ntomato = "0.51"\n\n[seeds]\n"acme.example/json5" = "1.2.0"\n"dave.example/scratch" = { git = "https://git.example.net/d/s.git", rev = "9f2c" }\n"local/thing" = { path = "../thing" }\n\n[seeds.greet.loud]\n"x.example/colors" = "0.2.0"\n\n[seed-store]\nvendor = "vendor"\n')
+    assert_equal(len(m.reqs), 4)
+    assert_equal(m.reqs[0].kind, 'version')
+    assert_equal(m.reqs[0].version, '1.2.0')
+    assert_equal(m.reqs[1].kind, 'git')
+    assert_equal(m.reqs[1].url, 'https://git.example.net/d/s.git')
+    assert_equal(m.reqs[1].rev, '9f2c')
+    assert_equal(m.reqs[2].kind, 'path')
+    assert_equal(m.reqs[2].path, '../thing')
+    assert_equal(m.reqs[3].table, 'greet.loud')
+    assert_equal(m.vendor, 'vendor')
+
+@test
+def seeds_subtables_are_not_unknown_tables():
+    # the follow-up of D92b: [seeds.ENTRY] is a table the reader must allow
+    assert_equal(problem('[project]\nname = "p"\nversion = "0.1.0"\ntomato = "0.51"\n[seeds.test]\n"a.example/x" = "1.0.0"\n[seeds.test.parse]\n"a.example/y" = "1.0.0"\n'), '')
+
+@test
+def unknown_tables_and_keys_are_errors():
+    assert_equal(problem('[sedes]\n'), "E555 mf.toml: unknown table [sedes] (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)")
+    assert_equal(problem('name = "x"\n'), "E555 mf.toml: unknown key name (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)")
+    assert_equal(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\nlicence = "MIT"\n'), 'E558 mf.toml: unknown setting project.licence (the settings of [project] are name, version, tomato)')
+    assert_true(problem('[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "1.0"\nauthors = []\n').startswith('E558 mf.toml: unknown setting seed.authors'))
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seed-store]\nfolder = "v"\n').startswith('E558 mf.toml: unknown setting seed-store.folder'))
+    assert_true(problem('[limits]\nexp_bits = 4096\n[registry]\ndefault = "x"\n').startswith('E555 mf.toml: unknown table [registry]'))
+
+@test
+def project_and_seed_are_exclusive():
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "1.0"\n').startswith('E556 '))
+
+@test
+def required_settings():
+    assert_equal(problem('[project]\nversion = "1.0.0"\ntomato = "1.0"\n'), 'E557 mf.toml: [project] needs the setting name')
+    assert_equal(problem('[project]\nname = "p"\ntomato = "1.0"\n'), 'E557 mf.toml: [project] needs the setting version')
+    assert_equal(problem('[seed]\nname = "a.example/x"\nversion = "1.0.0"\n'), 'E557 mf.toml: [seed] needs the setting tomato')
+
+@test
+def wrong_types():
+    assert_equal(problem('[project]\nname = 5\nversion = "1.0.0"\ntomato = "1.0"\n'), 'E559 mf.toml: project.name must be a string, not 5')
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"a.example/x" = 5\n').startswith('E568 '))
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\nfoo = "1.0.0"\n').startswith('E559 mf.toml: seeds.foo must be a table of seeds'))
+    assert_true(problem('[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "1.0"\nmodules = "x"\n').startswith('E559 mf.toml: seed.modules must be an array'))
+    assert_true(problem('seeds = 5\n').startswith('E555 ') or problem('seeds = 5\n').startswith('E567 ') or problem('seeds = 5\n').startswith('E559 '))
+
+@test
+def bad_versions_and_names():
+    assert_equal(problem('[project]\nname = "p"\nversion = "1.0"\ntomato = "1.0"\n'), 'E560 mf.toml: project.version is "1.0", which is not a version: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0')
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "latest"\n').startswith('E560 mf.toml: project.tomato is "latest"'))
+    assert_true(problem('[seed]\nname = "json5"\nversion = "1.0.0"\ntomato = "1.0"\n').startswith('E561 mf.toml: seed.name "json5" is not a seed name'))
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"nosuch" = "1.0.0"\n').startswith('E559 mf.toml: seeds.nosuch must be a table of seeds'))
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"Acme/x" = "1.0.0"\n').startswith('E561 mf.toml: "Acme/x" in [seeds] is not a seed name'))
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"a.example/x" = "1.0"\n').startswith('E560 mf.toml: seeds."a.example/x" is "1.0"'))
+
+@test
+def git_and_path_seeds_are_for_projects():
+    seed = '[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n'
+    assert_true(problem(seed + '"b.example/y" = { path = "../y" }\n').startswith('E563 '))
+    assert_true(problem(seed + '"b.example/y" = { git = "u", rev = "r" }\n').startswith('E563 '))
+    assert_true(problem(seed + '[seeds.test]\n"b.example/y" = { path = "../y" }\n').startswith('E563 mf.toml: seeds.test."b.example/y" is a path seed'))
+    assert_equal(problem(seed + '"b.example/y" = "1.0.0"\n'), '')
+
+@test
+def seed_requirement_forms_are_checked():
+    head = '[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n'
+    assert_true(problem(head + '"b.example/y" = { path = "../y", rev = "r" }\n').startswith('E568 '))
+    assert_true(problem(head + '"b.example/y" = { git = "u" }\n').startswith('E557 mf.toml: [seeds."b.example/y"] needs the setting rev'))
+    assert_true(problem(head + '"b.example/y" = { path = "../y", extra = 1 }\n').startswith('E558 mf.toml: unknown setting seeds."b.example/y".extra'))
+    assert_true(problem(head + '"b.example/y" = {}\n').startswith('E568 '))
+    assert_true(problem(head + '"b.example/y" = { path = "" }\n').startswith('E559 '))
+
+@test
+def seeds_need_a_project_or_a_seed():
+    assert_true(problem('[seeds]\n"a.example/x" = "1.0.0"\n').startswith('E567 '))
+
+@test
+def build_tables():
+    m = load('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[build]\nmode = "release"\noutput = "out/app"\n[build.test]\nmode = "debug"\n[build.greet.loud]\noutput = "/abs/loud"\n')
+    assert_equal(build_for(m, 'main').mode, 'release')
+    assert_equal(build_for(m, 'main').output, 'out/app')
+    assert_equal(build_for(m, 'test').mode, 'debug')
+    assert_equal(build_for(m, 'test').output, 'out/app')
+    assert_equal(build_for(m, 'test.parse').mode, 'debug')
+    assert_equal(build_for(m, 'greet.loud').output, '/abs/loud')
+    assert_equal(build_for(m, 'greet.loud').mode, 'release')
+    assert_equal(build_for(m, 'greet').output, 'out/app')
+
+@test
+def the_more_specific_build_table_wins():
+    m = load('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[build.a.b]\nmode = "release"\n[build.a]\nmode = "debug"\n[build]\nmode = "release"\n')
+    assert_equal(build_for(m, 'a.b').mode, 'release')
+    assert_equal(build_for(m, 'a.b.c').mode, 'release')
+    assert_equal(build_for(m, 'a').mode, 'debug')
+    assert_equal(build_for(m, 'x').mode, 'release')
+
+@test
+def a_seeds_build_table_is_read_and_ignored():
+    m = load('[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "1.0"\n[build]\nmode = "release"\n')
+    assert_equal(build_for(m, 'main').mode, '')
+    assert_equal(describe_manifest(m)[1], 'build: ignored, the [build] of a seed is not read')
+
+@test
+def build_settings_are_checked():
+    head = '[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n'
+    assert_equal(problem(head + '[build]\nmode = "fast"\n'), 'E565 mf.toml: build.mode must be "debug" or "release", not "fast"')
+    assert_equal(problem(head + '[build.test]\nmode = 3\n'), 'E559 mf.toml: build.test.mode must be a string, not 3')
+    assert_true(problem(head + '[build]\ntarget = "wasm"\n').startswith('E566 mf.toml: build.target is reserved'))
+    assert_true(problem(head + '[build]\nflags = ["-O3"]\n').startswith('E558 mf.toml: unknown setting build.flags'))
+    assert_true(problem(head + '[build]\noutput = ""\n').startswith('E559 '))
+    assert_true(problem(head + '[build.test]\noptimize = true\n').startswith('E558 mf.toml: unknown setting build.test.optimize'))
+
+@test
+def which_tables_a_run_reads():
+    assert_true(table_applies('', 'main', True))
+    assert_true(table_applies('test', 'test', True))
+    assert_true(table_applies('test', 'test.parse', True))
+    assert_false(table_applies('test.parse', 'test.run', True))
+    assert_true(table_applies('test.parse', 'test', True))
+    assert_false(table_applies('test.parse', 'test', False))
+    assert_false(table_applies('tes', 'test', True))
+    assert_false(table_applies('test', 'tester', True))
+    assert_false(table_applies('greet', 'main', True))
+
+@test
+def seeds_of_a_run_are_merged():
+    m = load('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"a.example/x" = "1.0.0"\n"l/p" = { path = "../p" }\n[seeds.test]\n"a.example/x" = "1.2.0"\n"b.example/y" = "2.0.0"\n[seeds.greet]\n"c.example/z" = "0.1.0"\n')
+    plain = seeds_for(m, 'main', False)
+    assert_equal(len(plain.reqs), 2)
+    assert_equal(plain.reqs[0].version, '1.0.0')
+    run_test = seeds_for(m, 'test', False)
+    assert_equal(len(run_test.reqs), 3)
+    assert_equal(run_test.reqs[0].version, '1.2.0')
+    assert_equal(run_test.tables[0], ['', 'test'])
+    assert_equal(run_test.tables[2], ['test'])
+    everything = seeds_for(m, '', True)
+    assert_equal(len(everything.reqs), 4)
+
+@test
+def one_seed_in_two_tables_must_agree():
+    head = '[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n'
+    differing = load(head + '"a.example/x" = "1.0.0"\n[seeds.test]\n"a.example/x" = { path = "../x" }\n')
+    try:
+        seeds_for(differing, '', True)
+        assert_true(False, 'forms that differ were accepted')
+    catch ConfigError as e:
+        assert_equal(e.code, 564)
+    other_path = load(head + '"l/x" = { path = "../x" }\n[seeds.test]\n"l/x" = { path = "../other" }\n')
+    try:
+        seeds_for(other_path, '', True)
+        assert_true(False, 'two paths were accepted')
+    catch ConfigError as e:
+        assert_equal(e.code, 564)
+    # the same source twice is fine
+    same = load(head + '"l/x" = { path = "../x" }\n[seeds.test]\n"l/x" = { path = "../x" }\n')
+    assert_equal(len(seeds_for(same, '', True).reqs), 1)
+
+@test
+def the_tomato_key_is_a_minimum():
+    m = load('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.2"\n')
+    check_tomato(m, '1.2.0')
+    check_tomato(m, '1.10.3')
+    check_tomato(m, '2.0.0')
+    try:
+        check_tomato(m, '1.1.9')
+        assert_true(False, 'an older compiler was accepted')
+    catch ConfigError as e:
+        assert_equal(e.code, 562)
+        assert_equal(e.message, 'mf.toml: this needs Tomato 1.2 or newer, and this is Tomato 1.1.9\n  = help: install a newer release with `tomato update`')
+    try:
+        check_tomato(m, '1.2.0-rc.1')
+        assert_true(False, 'a pre-release of 1.2.0 was accepted for 1.2')
+    catch ConfigError as e:
+        assert_equal(e.code, 562)
+    old = load('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "0.51"\n')
+    check_tomato(old, '0.51')
+    check_tomato(old, '0.52')
+    check_tomato(old, '1.0.0-rc.1')
+
+@test
+def a_folder_in_the_path_is_kept():
+    write_text('mf.toml', '[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n')
+    assert_equal(read_manifest('./mf.toml').dir, './')
+    assert_equal(read_manifest('./mf.toml').path, './mf.toml')

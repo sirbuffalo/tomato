@@ -111,6 +111,13 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
 - `std/lineedit` is finished for other programs (D91a): a single-line mode and `lineedit.read_line`, a `Completer` hook with Tab completion,
   an optional kill ring (Alt-Y), and a worked example, `examples/todo_shell.tom`.
 - The bootstrap IR is compiled in parallel, so installs and builds are quicker.
+- `tomato.toml` is a manifest (D95a, `docs/manifest.md`): `[project]` or `[seed]` with `name`, `version` and `tomato` (the oldest
+  compiler that builds it, checked against `tomato version`), `[seeds]` and per-entry `[seeds.test]` tables, `[build]` and
+  `[build.ENTRY]` (`mode`, `output`), `[limits]`. Unknown tables and keys are errors, so a typo is caught; a project's
+  `tomato.toml` is now checked by every command. `[build]` gives `--mode` and `-o` their defaults (the flags win).
+- Local seeds: `tomato seed install` locks `{ path = "../folder" }` seeds into `tomato.lock` with a sha256 content hash, and a program
+  can import their modules (found between the program's folder and `std/`); `tomato seed check` and `tomato seed hash` check a seed
+  and print its hash. There is no registry and no network use yet; `git` and version seeds say they are not supported yet.
 
 ### Performance
 

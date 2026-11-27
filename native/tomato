@@ -6,11 +6,15 @@
 #   tomato test FILE... [--filter TEXT] [--mode MODE]                run the functions marked @test in each file (ok/FAIL lines and a summary; exit 1 if any test failed)
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
+#   tomato seed install [--locked]                                    lock the seeds of tomato.toml ({ path = "../x" } seeds only) into tomato.lock; --locked checks without writing
+#   tomato seed check                                                 check the seed in this folder (its tomato.toml and src/ modules) and print its content hash
+#   tomato seed hash [FOLDER]                                         print the content hash (sha256:...) of a folder
 #   tomato repl [FILE ...]                                            type Tomato one piece at a time
 #   tomato update [--minor] [--pre]                                   install the newest release: patch releases (1.0.x) at once; a new
 #                                                                     minor or major version (1.1.0, 2.0.0), which may change behaviour, only
 #                                                                     with --minor; pre-releases (1.1.0-rc.1) only with --pre or when one is installed
 #   tomato version                                                    print the version (also --version)
+# tomato.toml (docs/package-registry-design.md): [build] mode and output (and [build.ENTRY]) are the defaults of --mode and -o; the flags win.
 # Options for every command: --color=auto|always|never (red errors on a terminal; also TOMATO_COLOR, and NO_COLOR turns it off),
 # --no-warnings (hide the warnings the compiler gives about code that runs but looks wrong; also TOMATO_WARNINGS=off).
 # After `--`, no word is read as an option: `tomato run f.tom -- main -o` runs main with the input -o (the first word is still ENTRY).
@@ -78,6 +82,9 @@ semver_cmp() {
     }
     BEGIN { print cmp(a, b) }'
 }
+# The tomato.toml is read by the compiler (compiler/src/manifest.tom), which is told this version for the manifest's `tomato` key
+# (a compiler built from the bootstrap file knows only the version it was built at, not the one of this install).
+tomato_version() { cat "$home/VERSION" 2>/dev/null || echo 0; }
 # The settings (docs/decisions.md D77g): [limits] in a project's tomato.toml (the one in the program's folder or the nearest parent) and in
 # the user's config.toml (${TOMATO_HOME:-$HOME/.tomato}/config.toml). This script only finds the two files; the compiler reads them
 # (compiler/src/config.tom) and writes the settings into the program, so a built program reads no file when it runs.
@@ -249,7 +256,24 @@ case "$cmd" in
     [ $# -le 1 ] || usage
     folder=.; [ $# -eq 1 ] && folder="$(dirname "$1")"
     find_config "$folder"
-    out="$("$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
+    out="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
+    printf '%s\n' "$out"; exit 0 ;;
+  seed)
+    # tomato seed install|check|hash: the compiler does the work (it reads the manifest, hashes the files and writes tomato.lock); this
+    # script finds the manifest and prints what the compiler says. Nothing is fetched: there is no registry or network use here yet.
+    sub="${1:-}"; [ -n "$sub" ] || usage
+    shift
+    case "$sub" in
+      install) [ $# -le 1 ] || usage
+               if [ "${1:-}" = --locked ]; then sub=install-locked; elif [ $# -eq 1 ]; then die "unknown option '$1' for 'tomato seed install' (run 'tomato help')"; fi
+               arg="" ;;
+      check) [ $# -eq 0 ] || usage; arg="" ;;
+      hash) [ $# -le 1 ] || usage; arg="${1:-.}" ;;
+      *) die "unknown seed command '$sub' (run 'tomato help'; the commands here are install, check and hash)" ;;
+    esac
+    find_config .
+    if [ "$sub" != hash ] && [ -z "$project_cfg" ]; then die "there is no tomato.toml in this folder or a parent folder"; fi
+    out="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$sub" --seed "$std" "$arg" "$project_cfg" "" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
     printf '%s\n' "$out"; exit 0 ;;
   paint) paint; exit 0 ;;      # for the repl: `tomato paint` colors error text read from standard input
   repl|shell) TOMATO_REPL_EDIT="${TOMATO_REPL_EDIT:-$home/bin/tomato-repl-edit}" TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;
@@ -260,7 +284,7 @@ esac
 set -f      # words are split on newlines below; never expand * or ? in them
 nl="
 "
-file=""; entry=""; out=""; llvm=""; mode="debug"
+file=""; entry=""; out=""; llvm=""; mode=""     # mode: the flag, else [build].mode of tomato.toml, else debug (decided by the compiler below)
 # the words after FILE: for run, ENTRY then inputs; for build/compile, flags. Positional words are kept in "$@" (not
 # a string) so empty and glob-like inputs survive untouched.
 [ $# -ge 1 ] || usage
@@ -291,18 +315,10 @@ else
 fi
 
 case "$mode" in
-  debug|release) ;;
+  ""|debug|release) ;;
   normal) die_id E281 "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)" ;;
   *) die_id E282 "the mode must be debug or release, not '$mode'" ;;
 esac
-# debug links at -O1 and keeps readable errors and the leak report; release links at -O2 (and prints short error codes, without the
-# leak report). Release links with link-time optimisation, which inlines the runtime's small-number and reference-count fast paths into
-# the program; where the linker cannot do LTO (many Linux systems have a clang without the linker's LLVM plugin), clang itself merges the
-# runtime into the program before optimising it, which inlines the same fast paths, and if that fails too, release falls back to a plain
-# link. Debug mode does not use LTO at all (it costs about a second per build, most of the time of a small program, and with clang 21 on
-# Linux inlined nothing at -O1): runtime/tomato_inline.ll, small inline copies of those fast paths, is put in front of the program IR
-# (inline_merge below), so an ordinary -O1 compile inlines them and the runtime is linked as a plain object.
-opt=-O1; ltoflags="-flto"; nolto=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; nolto="-DTOMATO_RELEASE"; }
 
 # the temporary folder goes on any exit and on Ctrl-C, SIGTERM and hangup (also under dash, where a signal skips an EXIT trap). A
 # cache file half written by an interrupted runtime compile (rtcache_get runs in a subshell, so its name is not known here) stays in
@@ -312,14 +328,30 @@ tmp="$(mktemp -d)" || die "cannot make a temporary folder"
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 find_config "$(dirname "$file")"
-if ! "$tomatoc" "$file" "$entry" "$std" "$mode" "$project_cfg" "$user_cfg" > "$tmp/program.ll" 2> "$tmp/errors"; then
+if ! TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$file" "$entry" "$std" "$mode" "$project_cfg" "$user_cfg" > "$tmp/program.ll" 2> "$tmp/errors"; then
   show_error < "$tmp/errors"        # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
   exit 1
 fi
 [ "$warnings" = off ] || sed -n 's/^;! //p' "$tmp/program.ll" | show_error     # warnings travel as comment lines at the end of the IR
-[ "$cmd" = compile ] && { grep -v '^;! ' "$tmp/program.ll"; exit 0; }
+[ "$cmd" = compile ] && { grep -v -e '^;! ' -e '^;% ' "$tmp/program.ll"; exit 0; }
+# with a tomato.toml the compiler says which mode it settled on ([build].mode when there is no --mode) and where [build].output wants the program
+manifest_mode="$(sed -n 's/^;% mode //p' "$tmp/program.ll" | tail -n 1)"
+manifest_out="$(sed -n 's/^;% output //p' "$tmp/program.ll" | tail -n 1)"
+mode="${manifest_mode:-${mode:-debug}}"
+# debug links at -O1 and keeps readable errors and the leak report; release links at -O2 (and prints short error codes, without the
+# leak report). Release links with link-time optimisation, which inlines the runtime's small-number and reference-count fast paths into
+# the program; where the linker cannot do LTO (many Linux systems have a clang without the linker's LLVM plugin), clang itself merges the
+# runtime into the program before optimising it, which inlines the same fast paths, and if that fails too, release falls back to a plain
+# link. Debug mode does not use LTO at all (it costs about a second per build, most of the time of a small program, and with clang 21 on
+# Linux inlined nothing at -O1): runtime/tomato_inline.ll, small inline copies of those fast paths, is put in front of the program IR
+# (inline_merge below), so an ordinary -O1 compile inlines them and the runtime is linked as a plain object.
+opt=-O1; ltoflags="-flto"; nolto=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; nolto="-DTOMATO_RELEASE"; }
 exe="$tmp/program"
-[ "$cmd" = build ] && exe="${out:-$(basename "${file%.tom}")}"
+if [ "$cmd" = build ]; then
+  exe="$out"
+  if [ -z "$exe" ] && [ -n "$manifest_out" ]; then exe="$manifest_out"; mkdir -p "$(dirname "$exe")" || die "cannot make the folder of the output $exe"; fi
+  [ -n "$exe" ] || exe="$(basename "${file%.tom}")"
+fi
 [ "$cmd" = build ] && [ "$exe" -ef "$file" ] && die "the program would overwrite its own source $file: name it with -o"
 # The runtime is compiled once per mode, clang and runtime source, and kept in the cache folder (native/rtcache.sh); each run then
 # links the stored object (release: bitcode, for link-time optimisation) instead of compiling the 8,000 lines of C again. Without a

@@ -2,28 +2,83 @@
 from compiler import compile_module
 from config import ConfigError, load_limits, describe
 from diag import Diagnostic
+from manifest import read_manifest, check_tomato, build_for, describe_manifest
+from seeds import module_map, install, check_seed, seed_hash
+from os import getenv
+from ospath import isdir
+from sys import version
 
 @main
 def main():
     print('usage: tomato run compiler/src/ctool.tom compile FILE')
 
+# the version the manifest's `tomato` key is checked against: the `tomato` command gives the text of its VERSION file in
+# TOMATO_VERSION (a compiler built from the bootstrap file would otherwise report the version it was built at), else the one in std/sys.tom
+def compiler_version() -> str:
+    got = getenv('TOMATO_VERSION')
+    if got is None or got == '':
+        return version()
+    return got
+
+# `tomato seed install|check|hash` (native/tomato calls the compiler with the entry --seed): the subcommand is the first argument
+# (install, install-locked, check or hash), the folder to hash the mode argument
+def seed_command(command: str, folder: str, project: str) -> list[str]:
+    have = compiler_version()
+    if command == 'hash':
+        if not isdir(folder):
+            raise ConfigError(572, f'{folder} is not a folder')
+        return [seed_hash(folder)]
+    if command == 'check':
+        return check_seed(project, have)
+    return install(project, have, command == 'install-locked')
+
 @compile
 def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debug', project: str = '', user: str = ''):
     # project and user are the paths of the tomato.toml and the config.toml to read ('' for none); the entry --config prints
-    # what they set (`tomato config`) instead of compiling
+    # what they set (`tomato config`) instead of compiling, and --seed runs a `tomato seed` command (see seed_command).
+    # An empty mode means "the mode the manifest's [build] says, else debug". After the IR the compiler writes comment lines for
+    # native/tomato, `;% mode MODE` and, when a [build] table gives one, `;% output PATH`, only when there is a manifest.
     exp_bits = 0
     format_digits = 0
+    seeds: list[str] = []
+    notes: list[str] = []
     try:
         if entry == '--config':
+            extra: list[str] = []
+            if project != '':
+                extra = describe_manifest(read_manifest(project))     # (a mistake in the manifest stops this before anything is printed)
             print(describe(project, user))
+            for line in extra:
+                print(line)
+            return
+        if entry == '--seed':
+            for line in seed_command(path, mode, project):
+                print(line)
             return
         limits = load_limits(project, user)
         exp_bits = limits.exp_bits
         format_digits = limits.format_digits
+        if project != '':
+            m = read_manifest(project)
+            check_tomato(m, compiler_version())
+            seeds = module_map(m, entry)
+            built = build_for(m, entry)
+            if mode == '':
+                mode = built.mode
+            if mode == '':
+                mode = 'debug'
+            notes.append(f';% mode {mode}')
+            if built.output != '':
+                notes.append(f';% output {built.output}')
+        elif mode == '':
+            mode = 'debug'
     catch ConfigError as e:
         raise Diagnostic(f'error[E{e.code}]: {e.message}')
     f = open(path)
     src = f.read()
     f.close()
     name = path.split('/')[-1]          # the program's folder is what comes before its file name
-    print(compile_module(src, path[:len(path) - len(name)], std, entry, mode, path, exp_bits, format_digits))
+    ir = compile_module(src, path[:len(path) - len(name)], std, entry, mode, path, exp_bits, format_digits, seeds)
+    if len(notes) > 0:
+        ir += '\n'.join(notes) + '\n'
+    print(ir)

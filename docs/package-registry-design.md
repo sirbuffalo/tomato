@@ -332,6 +332,9 @@ sets rules for everyone and cannot touch one seed.
 
 ## 2. The manifest: `tomato.toml`
 
+**Built (D95a, 2026-11-26): this section's reader, the `tomato` check, `[build]` and path seeds; see `docs/manifest.md` for what the
+code does today** (the registry, git, the store and everything that needs them are not built).
+
 One file for a seed and for a project (decisions D92a and D92b, 2026-11-26). A folder has **either** `[seed]` (a published
 package) **or** `[project]` (a program that uses seeds), never both. Keys with a `/` are quoted, as TOML requires.
 
@@ -558,7 +561,8 @@ called; `tomato seed check` warns when the local index has such a seed.
 
 ### How the compiler finds them
 
-New lookup order in `read_module`, replacing today's two steps:
+New lookup order in `read_module`, replacing today's two steps (**built, D95a**; the map is passed to `compile_module` as a list of
+`module TAB file TAB label` lines made by `tomatoc` from `tomato.lock`, not as a file; the label, `name version`, names the seed in errors):
 
 1. **The project's own file**: `{dir}{name}.tom`, as now, so a project can still shadow anything (as it can shadow
    `std` today). When a project file shadows a seed module, `tomato seed` prints a warning at install and check time.

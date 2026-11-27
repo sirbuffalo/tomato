@@ -9,8 +9,9 @@
 #   format_digits = 100000   # digits before the point that the f format writes (E529)
 #
 # The user's file is read first and the project's file overrides it, setting by setting. Tables other than [limits] are not
-# looked at (a project's tomato.toml is also a seed manifest, and other settings are read by the code that owns them).
-from toml import loads
+# looked at: a project's tomato.toml is also the manifest (compiler/src/manifest.tom), which checks the other tables, so a typo in
+# a table name is an error there; the user's config.toml is not checked for other tables.
+from toml import loads, Toml
 
 # a problem with a configuration file: code is the id of the error (std/errors.txt, E539 to E543), message its text
 export class ConfigError(Error):
@@ -44,7 +45,7 @@ def lowest(key: str) -> int:
 def highest() -> int:
     return 2147483647
 
-def read_file(path: str) -> str:
+export def read_file(path: str) -> str:
     try:
         f = open(path)
         text = f.read()
@@ -53,12 +54,16 @@ def read_file(path: str) -> str:
     catch RuntimeError as e:
         raise ConfigError(539, f'the configuration file {path} cannot be read: {e.message}')
 
-def apply(out: Limits, path: str):
+# the parsed TOML of a file: E539 when it cannot be read, E540 when it is not TOML
+export def read_toml(path: str) -> Toml:
     text = read_file(path)
     try:
-        doc = loads(text)
+        return loads(text)
     catch RuntimeError as e:
         raise ConfigError(540, f'the configuration file {path} is not valid TOML: {e.message}')
+
+def apply(out: Limits, path: str):
+    doc = read_toml(path)
     if not doc.has('limits'):
         return
     table = doc.lookup('limits')

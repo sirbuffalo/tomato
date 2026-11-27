@@ -1,0 +1,519 @@
+# The manifest, tomato.toml (docs/package-registry-design.md sections 2 and 13; decisions D92a to D92c): the one file that says what a
+# folder is and how it builds. The `tomato` command finds it (native/tomato: the first tomato.toml at or above the program's folder)
+# and gives its path to the compiler, which reads it here with std/toml. Tables:
+#
+#   [project]  name, version, tomato                 a program that uses seeds        (a folder has [project] or [seed], never both)
+#   [seed]     name, version, tomato, and optionally description, license, modules    a package that is published
+#   [seeds]    "owner/name" = "1.2.0"                the seeds every build uses; a minimum version, or in a project
+#                                                    { git = "URL", rev = "COMMIT" } or { path = "../folder" }
+#   [seeds.ENTRY]   the same, used only when running that entry (`[seeds.test]`, `[seeds.greet.loud]`, D92b)
+#   [build]    mode = "debug" | "release", output = "path"; [build.ENTRY] for one entry (D92c); `target` is reserved
+#   [seed-store]    vendor = "folder"                where the project keeps its vendored seeds (read, not used yet)
+#   [limits]   read by config.tom
+#
+# Anything else is an error, a typo in a table or a key included. A file with neither [project] nor [seed] is the settings-only file
+# of D77g ([build], [limits]) and is read as a project's. Seeds are resolved elsewhere (seeds.tom); this file only reads and checks.
+from toml import Toml
+from config import ConfigError, read_toml
+
+# one requirement of one table: the seed's name, the form it was written in, and the table it is in
+export class SeedReq:
+    name: str = ''
+    kind: str = 'version'      # 'version' (a minimum version of a registered seed), 'git' or 'path' (both unregistered, projects only)
+    version: str = ''          # kind 'version': the minimum, MAJOR.MINOR.PATCH
+    url: str = ''              # kind 'git'
+    rev: str = ''
+    path: str = ''             # kind 'path': as written (relative to the manifest's folder)
+    table: str = ''            # '' for [seeds], else the entry's dotted name (`[seeds.test]` is 'test')
+
+# the settings of [build] ('' table) or of one [build.ENTRY]; an unset setting is ''
+export class BuildTable:
+    table: str = ''
+    mode: str = ''
+    output: str = ''
+
+export class Manifest:
+    path: str = ''             # the file
+    dir: str = ''              # its folder with the closing slash ('' for the current folder)
+    kind: str = 'none'         # 'project', 'seed', or 'none' (a settings-only file)
+    name: str = ''
+    version: str = ''
+    tomato: str = ''
+    description: str = ''
+    license: str = ''
+    modules: list[str] = []
+    has_modules: bool = False
+    vendor: str = ''
+    reqs: list[SeedReq] = []
+    builds: list[BuildTable] = []
+
+export class BuildSettings:
+    mode: str = ''             # '' when no table sets it
+    output: str = ''           # the path from the manifest, joined to its folder; '' when no table sets it
+
+def fail(code: int, path: str, text: str):
+    raise ConfigError(code, f'{path}: {text}')
+
+# ---------------------------------------------------------------------------------------------------------------------
+# versions: MAJOR.MINOR.PATCH with an optional -PRERELEASE (docs/decisions.md, the 1.0 numbers); the old 0.NN is 0.NN.0
+
+# ASCII classes (the text methods isdigit and isalpha also accept other scripts)
+def is_digit(c: str) -> bool:
+    return '0' <= c and c <= '9'
+
+def is_lower(c: str) -> bool:
+    return 'a' <= c and c <= 'z'
+
+def is_letter(c: str) -> bool:
+    return is_lower(c) or ('A' <= c and c <= 'Z')
+
+def all_digits(s: str) -> bool:
+    if s == '':
+        return False
+    for c in s:
+        if not is_digit(c):
+            return False
+    return True
+
+def split_version(text: str) -> tuple[str, str]:
+    at = text.find('-')
+    if at < 0:
+        return (text, '')
+    return (text[:at], text[at + 1:])
+
+# why `text` is not a version, '' when it is. full: MAJOR.MINOR.PATCH is required (a seed's version, a minimum); otherwise MAJOR.MINOR
+# is also accepted (the `tomato` key). The pre-release is dot-separated identifiers of letters, digits and hyphens, none empty, a
+# number without a leading zero; there is no +build part (a build must not depend on text that does not count in the order).
+export def version_problem(text: str, full: bool) -> str:
+    if '+' in text:
+        return 'there is no +build part: only the numbers and a -pre-release count'
+    parts = split_version(text)
+    nums = parts[0].split('.')
+    if len(nums) < 2 or len(nums) > 3 or (full and len(nums) != 3):
+        if full:
+            return 'it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0'
+        return 'it needs MAJOR.MINOR or MAJOR.MINOR.PATCH, such as 1.0 or 1.2.0'
+    for n in nums:
+        if not all_digits(n) or (len(n) > 1 and n[0] == '0'):
+            return 'MAJOR, MINOR and PATCH are whole numbers without a leading zero'
+    if '-' in text and parts[1] == '':
+        return 'a pre-release after the hyphen is needed, such as 1.0.0-rc.1'
+    if parts[1] != '':
+        for ident in parts[1].split('.'):
+            if ident == '':
+                return 'a pre-release has no empty part'
+            for c in ident:
+                if not (is_letter(c) or is_digit(c)) and c != '-':
+                    return 'a pre-release has letters, digits, hyphens and dots only'
+            if all_digits(ident) and len(ident) > 1 and ident[0] == '0':
+                return 'a number in a pre-release has no leading zero'
+    return ''
+
+def core_part(nums: list[str], i: int) -> int:
+    if i < len(nums):
+        return int(nums[i])
+    return 0
+
+# SemVer 2.0 precedence, as `semver_cmp` of native/tomato (tests/run.sh checks the two agree): -1, 0 or 1. A missing part is 0, a
+# pre-release is below the release, its identifiers are compared in turn (numbers by value and below words, words in ASCII order,
+# a longer list above its prefix).
+export def compare_versions(a: str, b: str) -> int:
+    pa = split_version(a)
+    pb = split_version(b)
+    na = pa[0].split('.')
+    nb = pb[0].split('.')
+    for i in range(3):
+        x = core_part(na, i)
+        y = core_part(nb, i)
+        if x != y:
+            if x < y:
+                return -1
+            return 1
+    if pa[1] == pb[1]:
+        return 0
+    if pa[1] == '':
+        return 1
+    if pb[1] == '':
+        return -1
+    ia = pa[1].split('.')
+    ib = pb[1].split('.')
+    for i in range(min(len(ia), len(ib))):
+        xs = ia[i]
+        ys = ib[i]
+        if xs == ys:
+            continue
+        xn = all_digits(xs)
+        yn = all_digits(ys)
+        if xn and yn:
+            if int(xs) < int(ys):
+                return -1
+            return 1
+        if xn != yn:
+            if xn:
+                return -1
+            return 1
+        if xs < ys:
+            return -1
+        return 1
+    if len(ia) == len(ib):
+        return 0
+    if len(ia) < len(ib):
+        return -1
+    return 1
+
+# do two versions of a seed lie on the same compatible line (design section 4)? From 1.0.0 the line is the major number, for
+# 0.y.z it is 0.y
+export def same_line(a: str, b: str) -> bool:
+    na = split_version(a)[0].split('.')
+    nb = split_version(b)[0].split('.')
+    if core_part(na, 0) != core_part(nb, 0):
+        return False
+    if core_part(na, 0) == 0:
+        return core_part(na, 1) == core_part(nb, 1)
+    return True
+
+# ---------------------------------------------------------------------------------------------------------------------
+# names
+
+def ident_char(c: str, first: bool) -> bool:
+    if is_letter(c):
+        return True
+    return not first and (is_digit(c) or c == '_')
+
+# the problem with a seed name `owner/name`, '' when it is fine (section 1.2): the owner is lowercase letters, digits, dots and
+# hyphens (a published seed's owner is a domain with a dot, or k- and a key hash: `tomato seed check` asks for that), the name is
+# `[a-z][a-z0-9_-]{0,63}`
+export def name_problem(text: str) -> str:
+    parts = text.split('/')
+    if len(parts) != 2:
+        return 'a seed name is owner/name with exactly one slash'
+    owner = parts[0]
+    name = parts[1]
+    if owner == '':
+        return 'the owner before the slash is empty'
+    for c in owner:
+        if not (is_lower(c) or is_digit(c)) and c != '.' and c != '-':
+            return 'the owner has lowercase letters, digits, dots and hyphens only'
+    if owner[0] == '.' or owner[0] == '-' or owner[len(owner) - 1] == '.' or owner[len(owner) - 1] == '-':
+        return 'the owner does not start or end with a dot or a hyphen'
+    if name == '' or len(name) > 64:
+        return 'the name after the slash is 1 to 64 characters'
+    if not is_lower(name[0]):
+        return 'the name starts with a lowercase letter'
+    for c in name:
+        if not (is_lower(c) or is_digit(c)) and c != '_' and c != '-':
+            return 'the name has lowercase letters, digits, underscores and hyphens only'
+    return ''
+
+# the stem of the module files of a seed: `json-5` is `json_5` (so json_5.tom and json_5_pretty.tom)
+export def module_stem(seed_name: str) -> str:
+    return seed_name.split('/')[1].replace('-', '_')
+
+# an entry name is the dotted name of an @ marker: parts of letters, digits and underscores
+def entry_problem(name: str) -> bool:
+    for part in name.split('.'):
+        if part == '':
+            return True
+        for i in range(len(part)):
+            if not ident_char(part[i], i == 0):
+                return True
+    return False
+
+# ---------------------------------------------------------------------------------------------------------------------
+# reading
+
+def kind_word(v: Toml) -> str:
+    return v.describe()
+
+def need_table(path: str, v: Toml, what: str):
+    if not v.is_table():
+        fail(559, path, f'{what} must be a table, not {kind_word(v)}')
+
+def need_string(path: str, v: Toml, what: str) -> str:
+    if v.kind != 'string':
+        shown = v.show()
+        fail(559, path, f'{what} must be a string, not {shown}')
+    return v.text
+
+def known(path: str, table: Toml, table_name: str, names: list[str]):
+    # every key of the table is one of names
+    for key in table.keys():
+        if key not in names:
+            fail(558, path, f"unknown setting {table_name}.{key} (the settings of [{table_name}] are {', '.join(names)})")
+
+def required(path: str, table: Toml, table_name: str, key: str) -> str:
+    if not table.has(key):
+        fail(557, path, f'[{table_name}] needs the setting {key}')
+    return need_string(path, table.lookup(key), f'{table_name}.{key}')
+
+def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
+    # one requirement: a string (a minimum version) or a table with git and rev, or path
+    where = 'seeds' if table == '' else 'seeds.' + table
+    req = SeedReq()
+    req.name = key
+    req.table = table
+    label = f'{where}."{key}"'
+    if v.kind == 'string':
+        problem = version_problem(v.text, True)
+        if problem != '':
+            fail(560, m.path, f'{label} is "{v.text}", which is not a version: {problem}')
+        req.version = v.text
+    elif v.is_table():
+        has_git = v.has('git') or v.has('rev')
+        if v.has('path'):
+            if has_git:
+                fail(568, m.path, f'{label} has path and also git or rev: it is one or the other')
+            known(m.path, v, label, ['path'])
+            req.kind = 'path'
+            req.path = need_string(m.path, v.lookup('path'), f'{label}.path')
+            if req.path == '':
+                fail(559, m.path, f'{label}.path must not be empty')
+        elif has_git:
+            known(m.path, v, label, ['git', 'rev'])
+            req.kind = 'git'
+            req.url = required(m.path, v, label, 'git')
+            req.rev = required(m.path, v, label, 'rev')
+        else:
+            fail(568, m.path, f'{label} is an empty table: write a version such as "1.2.0", or {{ git = "URL", rev = "COMMIT" }} or {{ path = "../folder" }}')
+    else:
+        fail(568, m.path, f'{label} must be a version such as "1.2.0", or a table {{ git = "URL", rev = "COMMIT" }} or {{ path = "../folder" }}, not {kind_word(v)}')
+    problem = name_problem(key)
+    if problem != '':
+        fail(561, m.path, f'"{key}" in [{where}] is not a seed name: {problem}')
+    if req.kind != 'version' and m.kind == 'seed':
+        fail(563, m.path, f'{label} is a {req.kind} seed, and only a project can use those: a seed can use only registered seeds, written as "1.2.0"')
+    m.reqs.append(req)
+
+def read_seed_table(m: Manifest, t: Toml, table: str):
+    # [seeds] (table '') or [seeds.ENTRY]: the keys with a slash are seeds, the others entry tables below this one
+    where = 'seeds' if table == '' else 'seeds.' + table
+    for key in t.keys():
+        v = t.lookup(key)
+        if '/' in key:
+            read_seed_spec(m, key, v, table)
+        else:
+            sub = key if table == '' else table + '.' + key
+            if entry_problem(sub):
+                fail(555, m.path, f'unknown key "{key}" in [{where}]: a seed is written "owner/name" with a slash, and a table [{where}.NAME] names an entry')
+            if not v.is_table():
+                fail(559, m.path, f'{where}.{key} must be a table of seeds ([{where}.{key}]), not {kind_word(v)}: a seed is written "owner/name" with a slash')
+            read_seed_table(m, v, sub)
+
+def read_mode(m: Manifest, v: Toml, label: str) -> str:
+    text = need_string(m.path, v, label)
+    if text != 'debug' and text != 'release':
+        fail(565, m.path, f'{label} must be "debug" or "release", not "{text}"')
+    return text
+
+def read_build_table(m: Manifest, t: Toml, table: str):
+    where = 'build' if table == '' else 'build.' + table
+    b = BuildTable()
+    b.table = table
+    for key in t.keys():
+        v = t.lookup(key)
+        if key == 'mode':
+            b.mode = read_mode(m, v, f'{where}.mode')
+        elif key == 'output':
+            b.output = need_string(m.path, v, f'{where}.output')
+            if b.output == '':
+                fail(559, m.path, f'{where}.output must not be empty')
+        elif key == 'target':
+            fail(566, m.path, f'{where}.target is reserved for a later version and cannot be set yet')
+        elif v.is_table():
+            sub = key if table == '' else table + '.' + key
+            if entry_problem(sub):
+                fail(558, m.path, f'unknown setting {where}.{key} (the settings of [{where}] are mode and output, and a table [{where}.ENTRY] sets them for one entry)')
+            read_build_table(m, v, sub)
+        else:
+            fail(558, m.path, f'unknown setting {where}.{key} (the settings of [{where}] are mode and output, and a table [{where}.ENTRY] sets them for one entry)')
+    m.builds.append(b)
+
+def read_head(m: Manifest, t: Toml, name: str):
+    # [project] or [seed]
+    need_table(m.path, t, f'[{name}]')
+    if name == 'project':
+        known(m.path, t, name, ['name', 'version', 'tomato'])
+    else:
+        known(m.path, t, name, ['name', 'version', 'tomato', 'description', 'license', 'modules'])
+    m.name = required(m.path, t, name, 'name')
+    m.version = required(m.path, t, name, 'version')
+    m.tomato = required(m.path, t, name, 'tomato')
+    if name == 'project' and m.name == '':
+        fail(559, m.path, 'project.name must not be empty')
+    if name == 'seed':
+        problem = name_problem(m.name)
+        if problem != '':
+            fail(561, m.path, f'seed.name "{m.name}" is not a seed name: {problem}')
+    problem = version_problem(m.version, True)
+    if problem != '':
+        fail(560, m.path, f'{name}.version is "{m.version}", which is not a version: {problem}')
+    problem = version_problem(m.tomato, False)
+    if problem != '':
+        fail(560, m.path, f'{name}.tomato is "{m.tomato}", which is not a version: {problem}')
+    if t.has('description'):
+        m.description = need_string(m.path, t.lookup('description'), 'seed.description')
+    if t.has('license'):
+        m.license = need_string(m.path, t.lookup('license'), 'seed.license')
+    if t.has('modules'):
+        mods = t.lookup('modules')
+        if not mods.is_array():
+            fail(559, m.path, f'seed.modules must be an array of module names, not {kind_word(mods)}')
+        m.has_modules = True
+        for item in mods.items:
+            text = need_string(m.path, item, 'seed.modules (each module name)')
+            if text == '' or entry_problem(text) or '.' in text:
+                fail(559, m.path, f'seed.modules has "{text}", which is not a module name')
+            if text in m.modules:
+                fail(559, m.path, f'seed.modules lists "{text}" twice')
+            m.modules.append(text)
+
+export def top_names() -> list[str]:
+    return ['project', 'seed', 'seeds', 'seed-store', 'build', 'limits']
+
+# The manifest in the file at path, checked: ConfigError E539 to E541 and E555 to E568 say what is wrong, with the file's path
+# first. [limits] is left to config.tom.
+export def read_manifest(path: str) -> Manifest:
+    doc = read_toml(path)
+    m = Manifest()
+    m.path = path
+    at = path.rfind('/')
+    if at >= 0:
+        m.dir = path[:at + 1]
+    for key in doc.keys():
+        if key not in top_names():
+            what = 'table' if doc.lookup(key).is_table() else 'key'
+            shown = f'[{key}]' if what == 'table' else key
+            fail(555, path, f"unknown {what} {shown} (the tables are {', '.join(top_names())}; every setting is in a table)")
+    if doc.has('project') and doc.has('seed'):
+        fail(556, path, 'the file has both [project] and [seed]: a folder is a project (a program that uses seeds) or a seed (a package), not both')
+    if doc.has('project'):
+        m.kind = 'project'
+        read_head(m, doc.lookup('project'), 'project')
+    if doc.has('seed'):
+        m.kind = 'seed'
+        read_head(m, doc.lookup('seed'), 'seed')
+    if doc.has('seeds'):
+        if m.kind == 'none':
+            fail(567, path, '[seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file')
+        need_table(path, doc.lookup('seeds'), '[seeds]')
+        read_seed_table(m, doc.lookup('seeds'), '')
+    if doc.has('seed-store'):
+        store = doc.lookup('seed-store')
+        need_table(path, store, '[seed-store]')
+        known(path, store, 'seed-store', ['vendor'])
+        if store.has('vendor'):
+            m.vendor = need_string(path, store.lookup('vendor'), 'seed-store.vendor')
+    if doc.has('build'):
+        need_table(path, doc.lookup('build'), '[build]')
+        read_build_table(m, doc.lookup('build'), '')
+    return m
+
+# ---------------------------------------------------------------------------------------------------------------------
+# what a run uses
+
+# does the table (the entry name it is for, '' for the top one) apply to a run of `entry`? The top table always does; an entry
+# table applies when it is the entry or a prefix of it (`test` for a run of `test.parse`), and when below_too, also when it is below
+# it (`test.parse` for a run of `test`, which runs the tests of test.parse too)
+export def table_applies(table: str, entry: str, below_too: bool) -> bool:
+    if table == '' or table == entry:
+        return True
+    if entry.startswith(table + '.'):
+        return True
+    return below_too and table.startswith(entry + '.')
+
+def depth(table: str) -> int:
+    if table == '':
+        return 0
+    return len(table.split('.'))
+
+# the settings of [build] and the tables of [build.ENTRY] that apply to a run of `entry`, the more specific one winning (D92c). Only a
+# project's [build] counts: a seed's is read and ignored. `output` is joined to the manifest's folder.
+export def build_for(m: Manifest, entry: str) -> BuildSettings:
+    out = BuildSettings()
+    if m.kind == 'seed':
+        return out
+    deepest = 0
+    for b in m.builds:
+        deepest = max(deepest, depth(b.table))
+    for level in range(deepest + 1):
+        for b in m.builds:
+            if depth(b.table) != level or not table_applies(b.table, entry, False):
+                continue
+            if b.mode != '':
+                out.mode = b.mode
+            if b.output != '':
+                if b.output.startswith('/'):
+                    out.output = b.output
+                else:
+                    out.output = m.dir + b.output
+    return out
+
+# one seed with the requirements of every table it is listed in merged (design section 2): the higher minimum wins; a git or path
+# source must be the same everywhere
+def where_req(r: SeedReq) -> str:
+    return '[seeds]' if r.table == '' else '[seeds.' + r.table + ']'
+
+def merge_req(m: Manifest, old: SeedReq, new: SeedReq) -> SeedReq:
+    if old.kind != new.kind:
+        fail(564, m.path, f'the seed {old.name} is written as a {old.kind} seed in {where_req(old)} and as a {new.kind} seed in {where_req(new)}: it must be one source')
+    if old.kind == 'path' and old.path != new.path:
+        fail(564, m.path, f'the seed {old.name} has the path "{old.path}" in {where_req(old)} and "{new.path}" in {where_req(new)}')
+    if old.kind == 'git' and (old.url != new.url or old.rev != new.rev):
+        fail(564, m.path, f'the seed {old.name} has two different git sources in {where_req(old)} and {where_req(new)}')
+    if old.kind == 'version' and compare_versions(new.version, old.version) > 0:
+        old.version = new.version
+    return old
+
+# the seeds a run of `entry` uses (every_table false), or every seed of every table (the lock holds all of them): one SeedReq per
+# name, in the order first met, with `tables` filled in the second list: for each seed the tables that list it
+export class Wanted:
+    reqs: list[SeedReq] = []
+    tables: list[list[str]] = []
+
+export def seeds_for(m: Manifest, entry: str, every_table: bool) -> Wanted:
+    out = Wanted()
+    for r in m.reqs:
+        if not every_table and not table_applies(r.table, entry, True):
+            continue
+        at = -1
+        for i in range(len(out.reqs)):
+            if out.reqs[i].name == r.name:
+                at = i
+        if at < 0:
+            copy = SeedReq()
+            copy.name = r.name
+            copy.kind = r.kind
+            copy.version = r.version
+            copy.url = r.url
+            copy.rev = r.rev
+            copy.path = r.path
+            copy.table = r.table
+            out.reqs.append(copy)
+            out.tables.append([r.table])
+        else:
+            merge_req(m, out.reqs[at], r)
+            if r.table not in out.tables[at]:
+                out.tables[at].append(r.table)
+    return out
+
+# the compiler's own version against the manifest's `tomato` key: ConfigError E562 when it is older
+export def check_tomato(m: Manifest, have: str):
+    if m.tomato != '' and compare_versions(have, m.tomato) < 0:
+        fail(562, m.path, f'this needs Tomato {m.tomato} or newer, and this is Tomato {have}\n  = help: install a newer release with `tomato update`')
+
+# the lines `tomato config` adds for a manifest: what the folder is, and the top [build] table (the entry tables are not listed)
+export def describe_manifest(m: Manifest) -> list[str]:
+    lines: list[str] = []
+    if m.kind != 'none':
+        lines.append(f'{m.kind}: {m.name} {m.version} (needs Tomato {m.tomato} or newer)')
+    for b in m.builds:
+        if b.table == '':
+            if m.kind == 'seed':
+                if b.mode != '' or b.output != '':
+                    lines.append("build: ignored, the [build] of a seed is not read")
+            else:
+                if b.mode != '':
+                    lines.append(f'build.mode = {b.mode}  ({m.path})')
+                if b.output != '':
+                    lines.append(f'build.output = {b.output}  ({m.path})')
+    return lines

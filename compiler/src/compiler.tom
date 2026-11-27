@@ -1293,6 +1293,9 @@ class Mod:
     main_path: str = ''           # the file name shown for the main program
     exp_bits: int = 65536         # the limits on huge results (D77g): bits of a result's exponent, digits of an f format; the entry point sets them when they are not the defaults
     format_digits: int = 100000
+    seed_files: dict[str, str] = {}    # the module map (design section 5): the file of each module of a seed the run uses, and the seed's label (`name version`)
+    seed_labels: dict[str, str] = {}
+    seed_used: list[str] = []          # the modules that were read from a seed (a file next to the program shadows a seed's module of the same name)
     warnings: list[str] = []      # the finished text of each warning (compiler/src/lint.tom), shown after a program compiles
     tvars: dict[str, str] = {}    # the type parameters in scope and the types they stand for (D60a)
     generics: dict[str, Node] = {}      # the generic classes and functions, by program-wide name
@@ -13275,7 +13278,7 @@ def builtin_modules() -> list[str]:
     return ['bitarray']
 
 # every module in std/ (a test checks this list against the folder), for the help of "cannot find the module"
-def std_modules() -> list[str]:
+export def std_modules() -> list[str]:
     return ['asyncio', 'base64', 'bitarray', 'cache', 'csv', 'datetime', 'hashlib', 'hex', 'hmac', 'html', 'io', 'itertools', 'json', 'lineedit', 'math', 'os', 'ospath', 'random', 'rational', 're', 'requests', 'secrets', 'socket', 'statistics', 'struct', 'sys', 'terminal', 'testing', 'textwrap', 'time', 'toml', 'urlparse', 'utf8', 'uuid', 'zlib']
 
 def std_path(std: str, name: str) -> str:
@@ -13284,14 +13287,25 @@ def std_path(std: str, name: str) -> str:
         return f'{std}builtin/{name}.tom'
     return f'{std}{name}.tom'
 
-def read_module(dir: str, std: str, name: str, line: int) -> str:
-    # a module next to the program, else one from the standard library
+def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
+    # a module next to the program, else one from a seed the run uses (mod.seed_files), else one from the standard library
     text = ''
     try:
         f = open(f'{dir}{name}.tom')
         text = f.read()
         f.close()
     catch IOError:
+        if name in mod.seed_files:
+            if name in std_modules():
+                raise CompileError(f"the module '{name}' is in the seed {mod.seed_labels[name]} and in the standard library, so the import is ambiguous\nthe standard library gained a module of the seed's name: ask the seed's author to rename it, or put your own {name}.tom next to the program", line)
+            try:
+                h = open(mod.seed_files[name])
+                text = h.read()
+                h.close()
+                mod.seed_used.append(name)
+            catch IOError:
+                raise CompileError(f"cannot read the file {mod.seed_files[name]} of the seed {mod.seed_labels[name]}\nrun: tomato seed install, or check the seed's folder", line)
+            return text
         try:
             g = open(std_path(std, name))
             text = g.read()
@@ -13301,6 +13315,9 @@ def read_module(dir: str, std: str, name: str, line: int) -> str:
             near = closest(name, std_modules())
             if near != '':
                 help = f"did you mean '{near}'?\n" + help
+            if len(mod.seed_files) > 0:
+                # the lock, not the seed's folder, says which modules a seed has (a path seed is not re-read by a build)
+                help += '\nif a seed has a new module, run: tomato seed install'
             raise CompileError(f"cannot find the module '{name}'\n{help}\nstandard modules: " + ', '.join(std_modules()), line)
     return text
 
@@ -13316,7 +13333,10 @@ def top_item(node: Node, module: str) -> TopItem:
     return t
 
 def collect_warnings(mod: Mod, own: list[Node], module: str, src: str):
-    # the lint findings of one file as finished warnings, in line order, minus those silenced by an `# allow: KIND` comment on their line
+    # the lint findings of one file as finished warnings, in line order, minus those silenced by an `# allow: KIND` comment on their line.
+    # A seed's code is not the user's to change, so its warnings are not shown.
+    if module in mod.seed_used:
+        return
     lines = src.split('\n')
     for f in sorted(lint_items(own), key=found -> found.line):
         text = ''
@@ -13329,6 +13349,8 @@ def source_path(mod: Mod, module: str) -> str:
     # the file name an error or warning in the module shows
     if module == 'main':
         return mod.main_path
+    if module in mod.seed_used:
+        return f'{mod.seed_labels[module]}: src/{module}.tom'
     return f'{module}.tom'
 
 # does the module declare something called bitarray or frozenbitarray itself? (then the names are its own, not the library's)
@@ -13383,7 +13405,7 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
             if wanted not in loaded:
                 mod.cur = module
                 loaded.append(wanted)
-                load_items(mod, dir, std, read_module(dir, std, wanted, item.line), wanted, items, imports, loaded)
+                load_items(mod, dir, std, read_module(mod, dir, std, wanted, item.line), wanted, items, imports, loaded)
     if module != 'bitarray' and not bits_imported and not declares_bit_name(mine) and mentions_bit_types(mine):
         # bitarray and frozenbitarray need no import: a module that uses either gets `from bitarray import bitarray, frozenbitarray`
         ib = ImportInfo()
@@ -13394,7 +13416,7 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
         if 'bitarray' not in loaded:
             mod.cur = module
             loaded.append('bitarray')
-            load_items(mod, dir, std, read_module(dir, std, 'bitarray', 0), 'bitarray', items, imports, loaded)
+            load_items(mod, dir, std, read_module(mod, dir, std, 'bitarray', 0), 'bitarray', items, imports, loaded)
     own: list[Node] = []
     for item in mine:
         if item.kind != 'Import':
@@ -13650,7 +13672,7 @@ def located(mod: Mod, message: str, line: int, col: int, module: str) -> str:
         return format_error(message, line, col, mod.sources[module], where, error_label(mod, message))
     return format_error(message, 0, 0, '', '', error_label(mod, message))
 
-export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '', exp_bits: int = 65536, format_digits: int = 100000) -> str:
+export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '', exp_bits: int = 65536, format_digits: int = 100000, seeds: list[str] = []) -> str:
     # LLVM IR for the program, or a Diagnostic whose message is the finished error text
     mod = Mod()
     result = ''
@@ -13661,6 +13683,10 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
         mod.main_path = path
         mod.exp_bits = exp_bits
         mod.format_digits = format_digits
+        for seed_line in seeds:
+            seed_parts = seed_line.split('\t')
+            mod.seed_files[seed_parts[0]] = seed_parts[1]
+            mod.seed_labels[seed_parts[0]] = seed_parts[2]
         try:
             result = compile_with(mod, src, dir, std, entry_name, mode)
         catch NeedsEarlyCopy as again:

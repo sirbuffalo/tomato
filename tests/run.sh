@@ -905,11 +905,12 @@ the result is too large to calculate: its exponent would have more than 2048 bit
   noconf $t build "$P/sub/deep/lim.tom" -o "$work/lim_bin" > /dev/null 2>&1; rm "$P/tomato.toml"
   check "config: a built program keeps its limits and reads no file" "$want" "$("$work/lim_bin")"
   printf '[limits]\nexp_bits = 4096\nformat_digits = 7000\n' > "$work/uh/config.toml"
-  printf '# a seed manifest too\n[seed]\nname = "a.example/x"\n\n[limits]\nformat_digits = 9000\n' > "$P/sub/tomato.toml"
+  printf '# a seed manifest too\n[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "0.51"\n\n[limits]\nformat_digits = 9000\n' > "$P/sub/tomato.toml"
   check "config: the project file overrides the user's file, setting by setting; other tables are left alone" "project file: $here/sub/tomato.toml
 user file: $work/uh/config.toml
 limits.exp_bits = 4096  ($work/uh/config.toml)
-limits.format_digits = 9000  ($here/sub/tomato.toml)" "$(TOMATO_HOME="$work/uh" $t config "$P/sub/deep/lim.tom")"
+limits.format_digits = 9000  ($here/sub/tomato.toml)
+seed: a.example/x 1.0.0 (needs Tomato 0.51 or newer)" "$(TOMATO_HOME="$work/uh" $t config "$P/sub/deep/lim.tom")"
   rm "$P/sub/tomato.toml"; printf '[limits]\nformat_digits = 1000\n' > "$work/uh/config.toml"
   check "config: the user's file alone (the other limit stays at its default)" "True
 the number is too large to write with f: it has more than 1000 digits before the point E529
@@ -941,6 +942,349 @@ exp_bit = 5000
   fi
   check "explain knows the configuration errors" "error[E543]: ConfigError: {}: limits.{} must be a whole number from {} to {}, not {}" "$($t explain E543)"
   case "$($t help)" in *"tomato config [FILE]"*) ok "tomato help lists the config command";; *) bad "tomato help lists the config command" "$($t help)";; esac
+}
+t_cli_manifest() { # the strict reader of tomato.toml (D92a, D92b, D95a): tables, keys, errors with ids, the `tomato` minimum, `tomato config`
+  cli_setup
+  P="$work/mproj"; mkdir -p "$P/sub" "$work/uh"
+  printf '@main\ndef main():\n    print(1)\n' > "$P/sub/prog.tom"
+  here="$(cd "$P" && pwd -P)"
+  noconf() { TOMATO_HOME="$work/uh" "$@"; }
+  head='[project]
+name = "demo"
+version = "0.3.0"
+tomato = "0.51"
+'
+  printf '%s' "$head" > "$P/tomato.toml"
+  check "manifest: a project manifest is accepted" "1" "$(noconf $t run "$P/sub/prog.tom" 2>&1)"
+  check "manifest: tomato config names the kind, the name, the version and the compiler it needs" "project file: $here/tomato.toml
+user file: none found
+limits.exp_bits = 65536  (built-in default)
+limits.format_digits = 100000  (built-in default)
+project: demo 0.3.0 (needs Tomato 0.51 or newer)" "$(noconf $t config "$P/sub/prog.tom")"
+  printf '[seed]\nname = "acme.example/demo"\nversion = "1.0.0-rc.1"\ntomato = "0.51.0"\n' > "$P/tomato.toml"
+  check "manifest: a seed manifest is accepted; config shows it" "seed: acme.example/demo 1.0.0-rc.1 (needs Tomato 0.51.0 or newer)" "$(noconf $t config "$P/sub/prog.tom" | tail -n 1)"
+  printf '[limits]\nexp_bits = 4096\n' > "$P/tomato.toml"
+  check "manifest: a settings-only file (D77g) is still accepted" "1" "$(noconf $t run "$P/sub/prog.tom" 2>&1)"
+  badman() { printf '%s' "$2" > "$P/tomato.toml"; r="$(noconf $t run "$P/sub/prog.tom" 2>&1)"; check "manifest: $1" "$3" "$r"; }
+  badman "an unknown table is an error, so a typo is caught" '[sedes]
+' "error[E555]: $here/tomato.toml: unknown table [sedes] (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)"
+  badman "a key outside every table is an error" 'name = "x"
+' "error[E555]: $here/tomato.toml: unknown key name (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)"
+  badman "a project and a seed together" "$head"'[seed]
+name = "a.example/x"
+version = "1.0.0"
+tomato = "0.51"
+' "error[E556]: $here/tomato.toml: the file has both [project] and [seed]: a folder is a project (a program that uses seeds) or a seed (a package), not both"
+  badman "an unknown key in [project]" "$head"'license = "MIT"
+' "error[E558]: $here/tomato.toml: unknown setting project.license (the settings of [project] are name, version, tomato)"
+  badman "a missing setting" '[project]
+name = "demo"
+version = "0.3.0"
+' "error[E557]: $here/tomato.toml: [project] needs the setting tomato"
+  badman "a version needs three numbers" '[project]
+name = "demo"
+version = "0.3"
+tomato = "0.51"
+' "error[E560]: $here/tomato.toml: project.version is \"0.3\", which is not a version: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0"
+  badman "a seed name needs an owner" '[seed]
+name = "json5"
+version = "1.0.0"
+tomato = "0.51"
+' "error[E561]: $here/tomato.toml: seed.name \"json5\" is not a seed name: a seed name is owner/name with exactly one slash"
+  badman "a git seed in a seed is refused" '[seed]
+name = "a.example/x"
+version = "1.0.0"
+tomato = "0.51"
+[seeds]
+"b.example/y" = { git = "https://h/y.git", rev = "abc" }
+' "error[E563]: $here/tomato.toml: seeds.\"b.example/y\" is a git seed, and only a project can use those: a seed can use only registered seeds, written as \"1.2.0\""
+  badman "[seeds] without a project or a seed" '[seeds]
+"b.example/y" = "1.0.0"
+' "error[E567]: $here/tomato.toml: [seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file"
+  badman "the build mode is checked" "$head"'[build.test]
+mode = "fast"
+' "error[E565]: $here/tomato.toml: build.test.mode must be \"debug\" or \"release\", not \"fast\""
+  badman "build.target is reserved" "$head"'[build]
+target = "wasm"
+' "error[E566]: $here/tomato.toml: build.target is reserved for a later version and cannot be set yet"
+  badman "an unknown build setting" "$head"'[build]
+flags = []
+' "error[E558]: $here/tomato.toml: unknown setting build.flags (the settings of [build] are mode and output, and a table [build.ENTRY] sets them for one entry)"
+  badman "a seed's entry tables are tables, not unknown settings (D92b follow-up)" "$head"'[seeds.test]
+"a.example/x" = "1.0.0"
+' "1"
+  rm -f "$P/tomato.toml"
+  badman "a minimum compiler version newer than this one stops the build" '[project]
+name = "demo"
+version = "0.3.0"
+tomato = "9.1"
+' "error[E562]: $here/tomato.toml: this needs Tomato 9.1 or newer, and this is Tomato $(cat VERSION)
+  = help: install a newer release with \`tomato update\`"
+  badman "a minimum equal to this compiler passes" "[project]
+name = \"demo\"
+version = \"0.3.0\"
+tomato = \"$(cat VERSION)\"
+" "1"
+  check "manifest: the file is checked by every command, config included" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)" "$(printf '[x]\n' > "$P/tomato.toml"; noconf $t config "$P/sub/prog.tom" 2>&1)"
+  check "manifest: so is compile" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)" "$(noconf $t compile "$P/sub/prog.tom" 2>&1)"
+  check "explain knows the manifest errors" "error[E555]: ConfigError: {}: unknown {} {} (the tables are {}; every setting is in a table)" "$($t explain E555)"
+  check "tomato help lists the seed commands" "3" "$($t help | grep -c 'tomato seed ')"
+}
+t_cli_build_tables() { # [build] and [build.ENTRY] (D92c): mode and output, the flags win, a seed's [build] is ignored
+  cli_setup
+  P="$work/bproj"; mkdir -p "$P/sub" "$work/uh"
+  here="$(cd "$P" && pwd -P)"
+  noconf() { TOMATO_HOME="$work/uh" "$@"; }
+  # a program that fails: debug mode says what and where, release mode prints a short code
+  printf '@main\ndef main():\n    print(1)\n\n@crash\ndef crash():\n    raise ValueError("boom")\n\n@other\ndef other():\n    raise ValueError("boom")\n\n@test\ndef a_test():\n    assert 1 + 1 == 2\n' > "$P/sub/prog.tom"
+  head='[project]
+name = "demo"
+version = "0.3.0"
+tomato = "0.51"
+'
+  mode_of() { case "$("$@" 2>&1)" in "error E"*) echo release ;; "error: ValueError: boom"*) echo debug ;; *) echo other ;; esac; }
+  printf '%s' "$head" > "$P/tomato.toml"
+  check "build tables: no [build] means debug" "debug" "$(mode_of noconf $t run "$P/sub/prog.tom" crash)"
+  printf '%s[build]\nmode = "release"\n' "$head" > "$P/tomato.toml"
+  check "build tables: [build] mode release applies to run" "release" "$(mode_of noconf $t run "$P/sub/prog.tom" crash)"
+  check "build tables: --mode debug wins over the file" "debug" "$(mode_of noconf $t run "$P/sub/prog.tom" crash --mode debug)"
+  printf '%s[build]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
+  check "build tables: --mode release wins over a debug file" "release" "$(mode_of noconf $t run "$P/sub/prog.tom" crash --mode release)"
+  printf '%s[build]\nmode = "release"\n[build.crash]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
+  check "build tables: [build.ENTRY] overrides [build] for that entry" "debug release" "$(mode_of noconf $t run "$P/sub/prog.tom" crash) $(mode_of noconf $t run "$P/sub/prog.tom" other)"
+  check "build tables: build takes --entry the same way" "wrote e1" "$(cd "$P" && noconf $t build sub/prog.tom --entry crash -o e1 2>&1)"
+  printf '%s[build]\nmode = "release"\n[build.test]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
+  r="$(noconf $t test "$P/sub/prog.tom" 2>&1)"
+  case "$r" in "ok   a_test"*"1 passed, 0 failed, 0 skipped") ok "build tables: tomato test reads [build.test]";; *) bad "build tables: tomato test reads [build.test]" "$r";; esac
+  r="$(noconf $t test "$P/sub/prog.tom" --mode release 2>&1)"
+  case "$r" in *"1 passed, 0 failed, 0 skipped") ok "build tables: tomato test --mode release still runs";; *) bad "build tables: tomato test --mode release still runs" "$r";; esac
+  # output
+  printf '%s[build]\noutput = "out/app"\n[build.crash]\noutput = "/dev/null/never"\n' "$head" > "$P/tomato.toml"
+  r="$(noconf $t build "$P/sub/prog.tom" 2>&1)"
+  check "build tables: [build] output is relative to the manifest's folder and its folder is made" "wrote $here/out/app" "$(echo "$r" | sed "s#$work/bproj#$here#")"
+  check "build tables: the program is there and runs" "1" "$("$P/out/app" 2>&1)"
+  rm -rf "$P/out"
+  r="$(cd "$work" && noconf $t build "$P/sub/prog.tom" -o "$work/other_app" 2>&1)"
+  check "build tables: -o wins over output" "wrote $work/other_app" "$r"
+  [ ! -e "$P/out" ] && ok "build tables: -o leaves the output folder alone" || bad "build tables: -o leaves the output folder alone"
+  r="$(noconf $t run "$P/sub/prog.tom" 2>&1)"
+  check "build tables: run ignores output" "1" "$r"
+  # a seed's [build] is read and ignored; a bad one is still an error
+  printf '[seed]\nname = "acme.example/demo"\nversion = "1.0.0"\ntomato = "0.51"\n[build]\nmode = "release"\n' > "$P/tomato.toml"
+  check "build tables: [build] of a seed is ignored" "debug" "$(mode_of noconf $t run "$P/sub/prog.tom" crash)"
+  check "build tables: tomato config says so" "build: ignored, the [build] of a seed is not read" "$(noconf $t config "$P/sub/prog.tom" | tail -n 1)"
+  printf '[limits]\n[build]\nmode = "release"\n' > "$P/tomato.toml"
+  check "build tables: a settings-only file applies [build]" "release" "$(mode_of noconf $t run "$P/sub/prog.tom" crash)"
+  check "build tables: tomato config shows the top [build] table" "build.mode = release  ($here/tomato.toml)" "$(noconf $t config "$P/sub/prog.tom" | tail -n 1)"
+  check "build tables: tomato compile prints no settings comment" "0" "$(noconf $t compile "$P/sub/prog.tom" | grep -c '^;%')"
+  rm -f "$P/tomato.toml"
+  check "build tables: with no manifest --mode alone decides" "release debug" "$(mode_of noconf $t run "$P/sub/prog.tom" crash --mode release) $(mode_of noconf $t run "$P/sub/prog.tom" crash)"
+  check "build tables: a bad --mode is still refused first" "error[E282]: the mode must be debug or release, not 'fast'" "$(noconf $t run "$P/sub/prog.tom" --mode fast 2>&1)"
+}
+t_cli_seeds() { # local seeds (D95a): tomato seed install/check/hash, tomato.lock, the seed lookup between the program's folder and std/
+  cli_setup
+  W="$work/sd"; mkdir -p "$W/app/sub" "$W/thing/src" "$W/other/src" "$work/uh"
+  noconf() { TOMATO_HOME="$work/uh" "$@"; }
+  sum256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1; else sha256sum | cut -d' ' -f1; fi; }
+  # the seed hash v1 of section 6, computed with find, sort and the system's sha256 (independent of the Tomato code)
+  indep_hash() { printf 'sha256:%s' "$(cd "$1" && find . -type f ! -path './.git/*' | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do m=644; [ -x "$f" ] && m=755; printf '%s  %s  %s\n' "$(sum256 < "$f")" "$m" "$f"; done | sum256)"; }
+  printf '[seed]\nname = "acme.example/thing"\nversion = "0.3.0"\ntomato = "0.51"\ndescription = "a thing"\nlicense = "MIT"\n' > "$W/thing/tomato.toml"
+  printf 'export def greet(n: str) -> str:\n    return "hello " + n\n' > "$W/thing/src/thing.tom"
+  printf 'from thing import greet\n\nexport def shout(n: str) -> str:\n    return greet(n).upper()\n' > "$W/thing/src/thing_extra.tom"
+  printf '[seed]\nname = "acme.example/other"\nversion = "1.4.2"\ntomato = "0.51"\n' > "$W/other/tomato.toml"
+  printf 'export def seven() -> int:\n    return 7\n' > "$W/other/src/other.tom"
+  printf 'from thing import greet\nfrom thing_extra import shout\n\n@main\ndef main():\n    print(greet("tomato"))\n    print(shout("tomato"))\n' > "$W/app/sub/prog.tom"
+  printf 'from other import seven\n\n@main\ndef main():\n    print(seven())\n\n@test\ndef sevens():\n    assert seven() == 7\n' > "$W/app/sub/needs_other.tom"
+  head='[project]
+name = "app"
+version = "0.1.0"
+tomato = "0.51"
+[seeds]
+"acme.example/thing" = { path = "../thing" }
+'
+  printf '%s' "$head" > "$W/app/tomato.toml"
+  here="$(cd "$W" && pwd -P)"
+  r="$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
+  check "seeds: a build with no lock says to run tomato seed install" "error[E569]: $here/app/tomato.toml: this uses the seed acme.example/thing, but there is no tomato.lock beside it
+  = help: run: tomato seed install" "$r"
+  h="$(indep_hash "$W/thing")"
+  r="$(cd "$W/app" && noconf $t seed install 2>&1)"
+  check "seeds: install locks a path seed and says what it wrote" "acme.example/thing 0.3.0  $h  (path ../thing)
+wrote $here/app/tomato.lock (1 seed)" "$r"
+  check "seeds: the lock holds the name, version, source, path, content hash and modules" '# tomato.lock: generated by `tomato seed install`, do not edit
+version = 1
+
+[[seed]]
+name = "acme.example/thing"
+version = "0.3.0"
+source = "path"
+path = "../thing"
+hash = "'"$h"'"
+modules = ["thing", "thing_extra"]
+seeds = []' "$(cat "$W/app/tomato.lock")"
+  check "seeds: the content hash agrees with find, sort and sha256sum" "$h" "$(cd "$W/app" && noconf $t seed hash ../thing)"
+  check "seeds: a program uses the seed's modules" "hello tomato
+HELLO TOMATO" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
+  check "seeds: so does a release build" "hello tomato
+HELLO TOMATO" "$(cd "$W/app" && noconf $t run sub/prog.tom --mode release 2>&1)"
+  case "$(cd "$W/app" && noconf $t compile sub/prog.tom 2>&1)" in *"hello "*) ok "seeds: tomato compile finds them too";; *) bad "seeds: tomato compile finds them too";; esac
+  check "seeds: install --locked passes when the lock is current" "acme.example/thing 0.3.0  $h  (path ../thing)
+tomato.lock is up to date" "$(cd "$W/app" && noconf $t seed install --locked 2>&1)"
+  # the same program compiles to the same IR twice (design section 15, stage 2)
+  (cd "$W/app" && noconf $t compile sub/prog.tom > "$work/ir1.ll" 2>&1; noconf $t compile sub/prog.tom > "$work/ir2.ll" 2>&1)
+  cmp -s "$work/ir1.ll" "$work/ir2.ll" && ok "seeds: a seeded program compiles to the same IR twice" || bad "seeds: a seeded program compiles to the same IR twice"
+  # the project's own file shadows a seed's module (as it shadows std)
+  printf 'export def greet(n: str) -> str:\n    return "mine " + n\n' > "$W/app/sub/thing.tom"
+  check "seeds: a file next to the program shadows the seed's module" "mine tomato
+MINE TOMATO" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
+  printf 'export def greet(n: str) -> str:\n    unused = 1\n    return "mine " + n\n' > "$W/app/sub/thing.tom"
+  case "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)" in *"warning: the variable 'unused'"*" --> thing.tom:2:5"*) ok "seeds: a file that shadows a seed's module is the program's own code (its warnings show, with its own name)";; *) bad "seeds: a file that shadows a seed's module is the program's own code (its warnings show, with its own name)" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)";; esac
+  rm "$W/app/sub/thing.tom"
+  printf 'export def extra() -> int:\n    return 1\n' > "$W/thing/src/thing_util.tom"; printf 'from thing_util import extra\n@main\ndef main():\n    print(extra())\n' > "$W/app/sub/util.tom"
+  case "$(cd "$W/app" && noconf $t run sub/util.tom 2>&1)" in *"cannot find the module 'thing_util'"*"if a seed has a new module, run: tomato seed install"*) ok "seeds: a module added to a seed after the lock says to run install";; *) bad "seeds: a module added to a seed after the lock says to run install" "$(cd "$W/app" && noconf $t run sub/util.tom 2>&1)";; esac
+  rm "$W/thing/src/thing_util.tom"
+  # a path seed is a working folder: a change does not stop a build, but the lock is no longer current
+  printf '\n' >> "$W/thing/src/thing.tom"
+  check "seeds: a changed seed still builds (path seeds are for development)" "hello tomato
+HELLO TOMATO" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
+  r="$(cd "$W/app" && noconf $t seed install --locked 2>&1; echo "rc=$?")"
+  check "seeds: install --locked fails when the seed's content changed" "error[E578]: $here/app/tomato.toml: tomato.lock does not match this manifest: run \`tomato seed install\` and commit the new lock
+rc=1" "$r"
+  (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
+  check "seeds: install again records the new hash" "$(indep_hash "$W/thing")" "$(sed -n 's/^hash = "\(.*\)"/\1/p' "$W/app/tomato.lock")"
+  # entry tables: a seed only a test needs is locked with entries, and compiled only for that entry
+  printf '%s[seeds.test]\n"acme.example/other" = { path = "../other" }\n' "$head" > "$W/app/tomato.toml"
+  (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
+  check "seeds: a seed of [seeds.test] is in the lock with entries" 'name = "acme.example/other"
+version = "1.4.2"
+source = "path"
+path = "../other"
+hash = "'"$(indep_hash "$W/other")"'"
+modules = ["other"]
+seeds = []
+entries = ["test"]' "$(sed -n '/name = "acme.example\/other"/,/^entries/p' "$W/app/tomato.lock")"
+  check "seeds: the seed of [seeds.test] is not in a plain build" "1" "$(cd "$W/app" && noconf $t run sub/needs_other.tom 2>&1 | grep -c "cannot find the module 'other'")"
+  r="$(cd "$W/app" && noconf $t test sub/needs_other.tom 2>&1)"
+  case "$r" in *"ok   sevens"*"1 passed, 0 failed, 0 skipped") ok "seeds: tomato test reads [seeds.test], so its seeds are found";; *) bad "seeds: tomato test reads [seeds.test], so its seeds are found" "$r";; esac
+  printf '%s' "$head" > "$W/app/tomato.toml"
+  # the lock must hold what the run uses
+  r="$(cd "$W/app" && printf '# tomato.lock\nversion = 1\n' > tomato.lock && noconf $t run sub/prog.tom 2>&1)"
+  check "seeds: a seed missing from the lock says to install" "error[E569]: $here/app/tomato.toml: the seed acme.example/thing is in tomato.toml but not in tomato.lock
+  = help: run: tomato seed install" "$r"
+  (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
+  printf 'x = [\n' > "$W/app/tomato.lock"
+  case "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)" in "error[E540]: the configuration file $here/app/tomato.lock is not valid TOML: "*) ok "seeds: a lock that is not TOML is an error naming the file";; *) bad "seeds: a lock that is not TOML is an error naming the file";; esac
+  printf 'version = 2\n' > "$W/app/tomato.lock"
+  check "seeds: a lock of another version is refused" "error[E578]: $here/app/tomato.lock: this lock is not version 1 (a newer Tomato wrote it?): run \`tomato seed install\` to write it again" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
+  (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
+  # errors name the seed, warnings from a seed are not shown
+  printf 'export def bad() -> int:\n    return "x"\n' > "$W/thing/src/thing_bad.tom"
+  printf 'export def w():\n    unused = 1\n    return\n' > "$W/thing/src/thing_warn.tom"
+  (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
+  printf 'from thing_bad import bad\n@main\ndef main():\n    print(bad())\n' > "$W/app/sub/bad.tom"
+  printf 'from thing_warn import w\n@main\ndef main():\n    w()\n    print("done")\n' > "$W/app/sub/warn.tom"
+  check "seeds: an error in a seed names the seed, its version and the file" "error[E324]: the returned value has type str, but int is expected
+ --> acme.example/thing 0.3.0: src/thing_bad.tom:2:5
+  |
+2 |     return \"x\"
+  |     ^^^^^^^^^^" "$(cd "$W/app" && noconf $t run sub/bad.tom 2>&1)"
+  check "seeds: a warning in a seed is not shown" "done" "$(cd "$W/app" && noconf $t run sub/warn.tom 2>&1)"
+  rm "$W/thing/src/thing_bad.tom" "$W/thing/src/thing_warn.tom"
+  (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
+  # a module that is also in std: the compiler says so instead of choosing
+  mkdir -p "$W/mathseed/src"
+  printf '[seed]\nname = "acme.example/math"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/mathseed/tomato.toml"
+  printf 'export def f() -> int:\n    return 1\n' > "$W/mathseed/src/math.tom"
+  printf '[project]\nname = "app"\nversion = "0.1.0"\ntomato = "0.51"\n[seeds]\n"acme.example/math" = { path = "../mathseed" }\n' > "$W/app/tomato.toml"
+  case "$(cd "$W/app" && noconf $t seed install 2>&1)" in "error[E579]: $here/mathseed/tomato.toml: the module 'math' has the name of a standard module, so imports of it would change meaning") ok "seeds: install refuses a module with a standard module's name";; *) bad "seeds: install refuses a module with a standard module's name" "$(cd "$W/app" && noconf $t seed install 2>&1)";; esac
+  printf 'version = 1\n\n[[seed]]\nname = "acme.example/math"\nversion = "1.0.0"\nsource = "path"\npath = "../mathseed"\nhash = "sha256:0"\nmodules = ["math"]\n' > "$W/app/tomato.lock"
+  printf 'import math\n@main\ndef main():\n    print(math.pi)\n' > "$W/app/sub/usemath.tom"
+  check "seeds: a seed module that is also a standard module is an error naming both" "error[E581]: the module 'math' is in the seed acme.example/math 1.0.0 and in the standard library, so the import is ambiguous
+ --> sub/usemath.tom:1:8
+  |
+1 | import math
+  |        ^^^^
+  = help: the standard library gained a module of the seed's name: ask the seed's author to rename it, or put your own math.tom next to the program" "$(cd "$W/app" && noconf $t run sub/usemath.tom 2>&1)" 
+  printf '%s' "$head" > "$W/app/tomato.toml"; rm -f "$W/app/tomato.lock"
+  (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
+  # two seeds with one module
+  mkdir -p "$W/twin/src"
+  printf '[seed]\nname = "twin.example/thing"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/twin/tomato.toml"
+  printf 'export def greet(n: str) -> str:\n    return "twin"\n' > "$W/twin/src/thing.tom"
+  printf '%s"twin.example/thing" = { path = "../twin" }\n' "$head" > "$W/app/tomato.toml"
+  check "seeds: two seeds that provide one module cannot be installed together" "error[E577]: $here/app/tomato.toml: the seeds acme.example/thing and twin.example/thing both provide the module 'thing': one program holds one copy of a module" "$(cd "$W/app" && noconf $t seed install 2>&1)"
+  printf '%s' "$head" > "$W/app/tomato.toml"
+  # what install cannot do yet
+  badseed() { printf '%s%s\n' "$head" "$2" > "$W/app/tomato.toml"; check "seeds: $1" "$3" "$(cd "$W/app" && noconf $t seed install 2>&1 | sed "s#$here#HERE#g")"; }
+  badseed "a git seed is reported as not supported yet" '"d.example/g" = { git = "https://h/g.git", rev = "abc" }' "error[E570]: HERE/app/tomato.toml: the seed d.example/g comes from git, which this version cannot fetch yet; only { path = \"../folder\" } seeds can be installed (no network, no registry)"
+  badseed "a registry seed is reported as not supported yet" '"d.example/r" = "1.2.0"' "error[E571]: HERE/app/tomato.toml: the seed d.example/r 1.2.0 would come from a registry, and there is none yet; only { path = \"../folder\" } seeds can be installed"
+  badseed "a path that is not a folder" '"d.example/nope" = { path = "../nope" }' "error[E572]: HERE/app/tomato.toml: the seed d.example/nope is at \"../nope\", which is not a folder (a relative path starts at the folder of tomato.toml)"
+  mkdir -p "$W/bare"
+  badseed "a folder with no tomato.toml" '"d.example/bare" = { path = "../bare" }' "error[E572]: HERE/app/tomato.toml: the seed d.example/bare at \"../bare\" has no tomato.toml: the folder of a seed needs one with a [seed] table"
+  badseed "a seed listed under another name than its own" '"acme.example/alias" = { path = "../thing" }' "error[E573]: HERE/app/tomato.toml: \"acme.example/alias\" is listed with the path \"../thing\", but the seed there is called \"acme.example/thing\""
+  printf '[project]\nname = "x"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/bare/tomato.toml"
+  badseed "a folder that is a project, not a seed" '"d.example/bare" = { path = "../bare" }' "error[E572]: HERE/bare/tomato.toml: the folder is listed as the seed d.example/bare, but its tomato.toml has no [seed] table"
+  # the seed's own rules
+  mkdir -p "$W/hasdeps/src"
+  printf '[seed]\nname = "d.example/hasdeps"\nversion = "1.0.0"\ntomato = "0.51"\n[seeds]\n"a.example/y" = "1.0.0"\n' > "$W/hasdeps/tomato.toml"
+  printf 'export def f() -> int:\n    return 1\n' > "$W/hasdeps/src/hasdeps.tom"
+  badseed "a seed that uses seeds cannot be installed yet" '"d.example/hasdeps" = { path = "../hasdeps" }' "error[E574]: HERE/app/tomato.toml: the seed d.example/hasdeps itself uses the seed a.example/y, and seeds that use seeds cannot be installed yet: there is no registry"
+  mkdir -p "$W/badname/src"
+  printf '[seed]\nname = "d.example/badname"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/badname/tomato.toml"
+  printf 'export def f() -> int:\n    return 1\n' > "$W/badname/src/helpers.tom"
+  badseed "a module that does not fit the seed's name" '"d.example/badname" = { path = "../badname" }' "error[E575]: HERE/badname/tomato.toml: the module 'helpers' does not fit the seed name d.example/badname: a seed may contain only badname.tom and badname_*.tom"
+  rm "$W/badname/src/helpers.tom"
+  badseed "a seed with no modules" '"d.example/badname" = { path = "../badname" }' "error[E575]: HERE/badname/tomato.toml: the seed has no modules: put badname.tom in HERE/badname/src"
+  printf 'export def f() -> int:\n    return 1\n' > "$W/badname/src/badname.tom"; ln -s src/badname.tom "$W/badname/link.tom"
+  badseed "a symbolic link in a seed" '"d.example/badname" = { path = "../badname" }' "error[E576]: HERE/badname: link.tom is a symbolic link, which a seed cannot contain (it could point outside the seed)"
+  rm "$W/badname/link.tom"
+  printf '[seed]\nname = "d.example/badname"\nversion = "1.0.0"\ntomato = "9.0"\n' > "$W/badname/tomato.toml"
+  badseed "a seed that needs a newer Tomato" '"d.example/badname" = { path = "../badname" }' "error[E562]: HERE/badname/tomato.toml: this needs Tomato 9.0 or newer, and this is Tomato $(cat VERSION)
+  = help: install a newer release with \`tomato update\`"
+  # one seed in two tables
+  printf '%s[seeds.test]\n"acme.example/thing" = { path = "../other" }\n' "$head" > "$W/app/tomato.toml"
+  case "$(cd "$W/app" && noconf $t seed install 2>&1)" in "error[E564]: "*"the seed acme.example/thing has the path \"../thing\" in [seeds] and \"../other\" in [seeds.test]") ok "seeds: one seed with two paths is an error";; *) bad "seeds: one seed with two paths is an error";; esac
+  # no seeds at all
+  printf '[project]\nname = "app"\nversion = "0.1.0"\ntomato = "0.51"\n' > "$W/app/tomato.toml"; rm -f "$W/app/tomato.lock"
+  check "seeds: a manifest with no seeds locks nothing" "the manifest lists no seeds: nothing to lock" "$(cd "$W/app" && noconf $t seed install 2>&1)"
+  [ ! -e "$W/app/tomato.lock" ] && ok "seeds: and writes no lock" || bad "seeds: and writes no lock"
+  rm -f "$W/app/tomato.toml"
+  check "seeds: install needs a tomato.toml" "error: there is no tomato.toml in this folder or a parent folder" "$(cd "$W/app" && noconf $t seed install 2>&1)"
+  # tomato seed check and hash
+  check "seeds: check of a good seed prints its modules and hash" "acme.example/thing 0.3.0: ok
+modules: thing, thing_extra
+$(indep_hash "$W/thing")" "$(cd "$W/thing" && noconf $t seed check 2>&1)"
+  check "seeds: check of a seed without a description or license says so" "acme.example/other 1.4.2: ok
+modules: other
+note: seed.description is not set
+note: seed.license is not set
+$(indep_hash "$W/other")" "$(cd "$W/other" && noconf $t seed check 2>&1)"
+  printf '[seed]\nname = "local/x"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/bare/tomato.toml"; mkdir -p "$W/bare/src"; printf 'export def f() -> int:\n    return 1\n' > "$W/bare/src/x.tom"
+  case "$(cd "$W/bare" && noconf $t seed check 2>&1 | sed "s#$here#HERE#")" in 'error[E580]: HERE/bare/tomato.toml: the owner "local" is not one a registry accepts: '*) ok "seeds: check wants a domain or key owner";; *) bad "seeds: check wants a domain or key owner" "$(cd "$W/bare" && noconf $t seed check 2>&1)";; esac
+  printf '[project]\nname = "x"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/bare/tomato.toml"
+  check "seeds: check of a project is refused" "error[E572]: $here/bare/tomato.toml: this is not a seed: it has no [seed] table (a [project] is a program that uses seeds)" "$(cd "$W/bare" && noconf $t seed check 2>&1)"
+  # hash: modes, nested folders, .git left out, content order
+  mkdir -p "$W/h/a/b" "$W/h/.git"; printf 'one' > "$W/h/z.txt"; printf 'two' > "$W/h/a/b/y"; printf 'x' > "$W/h/.git/config"; printf '#!/bin/sh\n' > "$W/h/run.sh"; chmod 755 "$W/h/run.sh"
+  mkdir -p "$W/h2"; printf 'one' > "$W/h2/z.txt"; chmod 644 "$W/h2/z.txt"
+  check "seeds: a group or other execute bit alone is mode 644, as git records it" "$(cd "$W/h2" && noconf $t seed hash .)" "$(mkdir -p "$W/h3" && printf 'one' > "$W/h3/z.txt" && chmod 654 "$W/h3/z.txt" && cd "$W/h3" && noconf $t seed hash .)"
+  check "seeds: the hash covers nested files, modes, byte order and leaves .git out" "$(indep_hash "$W/h")" "$(noconf $t seed hash "$W/h")"
+  case "$(noconf $t seed hash 2>&1)" in "sha256:"*) ok "seeds: hash of no argument is the current folder's";; *) bad "seeds: hash of no argument is the current folder's";; esac
+  check "seeds: hash of a missing folder" "error[E572]: $W/nope is not a folder" "$(noconf $t seed hash "$W/nope" 2>&1)"
+  check "seeds: an unknown seed command" "error: unknown seed command 'add' (run 'tomato help'; the commands here are install, check and hash)" "$(noconf $t seed add 2>&1)"
+}
+t_manifest_logic() { # the rules of compiler/src/manifest.tom as @test functions, and its version order against the shell's semver_cmp
+  cli_setup
+  mkdir -p "$work/ml"; cp compiler/src/manifest.tom compiler/src/config.tom tests/manifest_logic.tom "$work/ml/"
+  r="$(cd "$work/ml" && $t test manifest_logic.tom 2>&1 | tail -n 1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "manifest: the reader's rules: $r";; *) bad "manifest: the reader's rules" "$(cd "$work/ml" && $t test manifest_logic.tom 2>&1 | grep -v '^ok ' | head -12)";; esac
+  # the order of versions: Tomato's compare_versions and the shell's semver_cmp give the same answer for every pair
+  eval "$(sed -n '/^semver_cmp() {/,/^}/p' native/tomato)"
+  list="0.9 0.51 0.51.0 1.0.0-alpha 1.0.0-alpha.1 1.0.0-alpha.beta 1.0.0-beta 1.0.0-beta.2 1.0.0-beta.11 1.0.0-rc.1 1.0.0-rc.2 1.0.0-rc.10 1.0.0 1.0 1.0.1 1.0.10 1.0.9 1.1.0 2.0.0 10.0.0 1.0.0-0 1.0.0-1 1.0.0-x-y"
+  want=""; pairs=""
+  for a in $list; do for b in $list; do want="$want $(semver_cmp "$a" "$b")"; pairs="$pairs $a:$b"; done; done
+  { printf 'from manifest import compare_versions\n@main\ndef main(*pairs: tuple[str]):\n    out: list[str] = []\n    for p in pairs:\n        w = p.split(":")\n        out.append(str(compare_versions(w[0], w[1])))\n    print(" ".join(out))\n'; } > "$work/ml/order.tom"
+  got="$(cd "$work/ml" && $t run order.tom main $pairs 2>&1)"
+  check "manifest: compare_versions agrees with native/tomato's semver_cmp on every pair" "${want# }" "$got"
 }
 t_cli_repl_1() {
   part="${1:-1}"; cli_setup
@@ -1455,6 +1799,10 @@ spawn_first t_cli_runtime_cache 3
 spawn_first t_cli_runtime_cache 4
 spawn_cli t_cli_explain
 spawn_cli t_cli_config
+spawn_cli t_cli_manifest
+spawn_cli t_cli_build_tables
+spawn_cli t_cli_seeds
+spawn_cli t_manifest_logic
 spawn_cli t_cli_repl_1 1
 spawn_cli t_cli_repl_1 2
 spawn_cli t_cli_repl_1 3
@@ -1769,7 +2117,7 @@ t_builtin_folder() { # every file of std/builtin/ is a part of the built-ins or 
   [ -z "$missing" ] && ok "std/builtin/ matches the compiler's list and the website's" || bad "std/builtin/ matches the compiler's list and the website's" "$missing"
 }
 t_std_modules() { # std_modules() in the compiler (the help of "cannot find the module") lists every module of std/
-  names="$(sed -n '/^def std_modules()/,/return/p' compiler/src/compiler.tom | sed -n 's/^ *return \[//p' | tr -d "]',")"
+  names="$(sed -n '/^\(export \)\{0,1\}def std_modules()/,/return/p' compiler/src/compiler.tom | sed -n 's/^ *return \[//p' | tr -d "]',")"
   have="$(ls std/*.tom std/builtin/bitarray.tom | sed 's#.*/##; s#\.tom$##' | sort | tr '\n' ' ')"
   [ "$(echo $names | tr ' ' '\n' | sort | tr '\n' ' ')" = "$have" ] && ok "std_modules lists the modules of std/" || bad "std_modules lists the modules of std/" "compiler: $names / std: $have"
 }
