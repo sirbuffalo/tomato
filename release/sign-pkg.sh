@@ -22,6 +22,7 @@ profile="${TOMATO_NOTARY_PROFILE:-tomato-notary}"
 appsign="${TOMATO_APP_SIGN:-Developer ID Application: Davis McDowell (39BK8TGQ26)}"
 rm -f "$out"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP      # (dash skips an EXIT trap on a signal; the expanded package is large)
 pkgutil --expand-full "$in" "$work/x"
 find "$work/x" -type f -exec file {} + | grep -v '(for architecture' | sed -n 's/: *Mach-O.*//p' | sort -u > "$work/bins"
 [ -s "$work/bins" ] || { echo "error: no Mach-O binary found in the package to sign" >&2; exit 1; }

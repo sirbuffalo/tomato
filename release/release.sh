@@ -198,15 +198,16 @@ if [ "$on_host" = 0 ]; then
     eval "exec sh \"\$0\" --on-host --invoked \"\$inv\" $orig_args" < /dev/null
   fi
   sshopt="-o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o ConnectTimeout=15"
-  if ! ssh $sshopt -o BatchMode=yes "$host" true < /dev/null 2> "${TMPDIR:-/tmp}/release.err.$$"; then
-    say "error: cannot ssh to $host without a password:"; sed 's/^/  /' "${TMPDIR:-/tmp}/release.err.$$" >&2; rm -f "${TMPDIR:-/tmp}/release.err.$$"
+  errf="${TMPDIR:-/tmp}/release.err.$$"; trap 'rm -f "$errf"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
+  if ! ssh $sshopt -o BatchMode=yes "$host" true < /dev/null 2> "$errf"; then
+    say "error: cannot ssh to $host without a password:"; sed 's/^/  /' "$errf" >&2
     say ""
     say "On that Mac: System Settings > General > Sharing > turn on Remote Login (allow the release user)."
     say "From this machine (once): ssh-copy-id $host   (or append this machine's ~/.ssh/id_ed25519.pub to ~/.ssh/authorized_keys there)."
     say "If the message above is 'Host key verification failed', run 'ssh $host' once by hand and accept the key."
     exit 1
   fi
-  rm -f "${TMPDIR:-/tmp}/release.err.$$"
+  rm -f "$errf"
   if [ "$unlock" = 1 ]; then
     say "== unlocking the login keychain on $host (type that Mac's login password; it is not stored)"
     ssh -t $sshopt "$host" 'security unlock-keychain "$HOME/Library/Keychains/login.keychain-db"' || { say "error: could not unlock the keychain"; exit 1; }
@@ -217,7 +218,22 @@ if [ "$on_host" = 0 ]; then
 fi
 
 # ================================================================ on the signing Mac
-case "$0" in /tmp/tomato-release.*) trap 'rm -f "$0"' EXIT ;; esac
+# One private temp folder for the whole run: every mktemp (and any tool that honours TMPDIR) lands in it, and the EXIT trap removes it, so a
+# `die` or a signal in a step (each runs in a subshell, which a signal kills without any cleanup) leaks nothing. The INT, TERM and HUP traps
+# exit through the EXIT trap (dash skips it on a signal) and leave the state as a failed step, which --resume continues at (the interrupted step
+# is not recorded as done). Ctrl-C and a hangup reach the step too (same process group); a TERM sent to this script alone waits for the step.
+tmpd="$(mktemp -d "${TMPDIR:-/tmp}/tomato-release-tmp.XXXXXX")" || { echo "error: cannot make a temp folder" >&2; exit 1; }
+TMPDIR="$tmpd"; export TMPDIR
+cleanup() { rm -rf "$tmpd"; case "$0" in /tmp/tomato-release.*) rm -f "$0" ;; esac; }
+on_signal() { # NAME STATUS
+  trap '' INT TERM HUP
+  if [ -n "$cur_step" ] && [ -f "$state" ]; then st_set failed_step "$cur_step"; fi
+  printf '\ninterrupted (%s)%s\n' "$1" "${cur_step:+ during step $cur_step; continue with: ${invoked:-release/release.sh} --resume}" >&2
+  exit "$2"
+}
+cur_step=""
+trap cleanup EXIT
+trap 'on_signal INT 130' INT; trap 'on_signal TERM 143' TERM; trap 'on_signal HUP 129' HUP
 exec < /dev/null
 # TOMATO_RELEASE_TEST_BIN (tests/release_resume.sh only): a folder of stand-ins for the Mac, gh and the signing tools, searched first
 PATH="${TOMATO_RELEASE_TEST_BIN:+$TOMATO_RELEASE_TEST_BIN:}/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/go/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"; export PATH
@@ -229,7 +245,7 @@ app_sign="${TOMATO_APP_SIGN:-Developer ID Application: Davis McDowell (39BK8TGQ2
 pkg_sign="${TOMATO_PKG_SIGN:-Developer ID Installer: Davis McDowell (39BK8TGQ26)}"
 profile="${TOMATO_NOTARY_PROFILE:-tomato-notary}"
 slug="$(printf %s "$origin" | sed -n 's#.*github\.com[:/]\([^/]*/[^/]*[^/.]\)\(\.git\)\{0,1\}$#\1#p')"; slug="${slug%.git}"   # the greedy match keeps a trailing .git
-cur_step=""; started="$(date +%s)"
+started="$(date +%s)"
 
 say() { printf '%s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }

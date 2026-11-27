@@ -6,13 +6,15 @@
 # to it, ssh is replaced by a program that fails), the repository holds fake tests/build/sign scripts, and a folder of stand-ins for gh, curl,
 # codesign, pkgutil, xcrun and the other Mac tools comes first on the PATH of the script (TOMATO_RELEASE_TEST_BIN). Failures are injected by
 # creating files in $FAKE/inject (fail-tests, fail-build, fail-sign, fail-dmg, bad-notarization, gh-logged-out, fail-gh-create,
-# fail-gh-create-partial, fail-gh-download, reject-main). No network, no signing, no notarization, nothing published.
+# fail-gh-create-partial, fail-gh-download, reject-main, bad-hardening). A file named `signal` (or `signal-codesign`) holding INT, TERM or HUP makes
+# the gh download (codesign) stand-in send that signal to the release script (to sign-pkg.sh) and its step, like Ctrl-C or a kill: the interrupt tests. No network, no signing, no notarization, nothing published.
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/.." && pwd)"
 W="$1"; [ -n "$W" ] || { echo "usage: $0 WORKDIR" >&2; exit 2; }
 mkdir -p "$W"; W="$(cd "$W" && pwd)"
 real_path="$PATH"
 fails=0
-pass() { echo "ok   $1"; }
+oks=0
+pass() { oks=$((oks + 1)); echo "ok   $1"; }
 fail() { fails=$((fails + 1)); echo "FAIL $1"; [ -n "$2" ] && printf '%s\n' "$2" | sed 's/^/     /'; }
 eq() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1" "expected: $2
 actual:   $3"; fi; }
@@ -41,8 +43,10 @@ echo '  2) BBBB "Developer ID Installer: Davis McDowell (39BK8TGQ26)"'
 EOF
 mkstub codesign <<'EOF'
 #!/bin/sh
+echo "codesign $*" >> "$FAKE/calls.log"
+[ -f "$FAKE/inject/signal-codesign" ] && kill -"$(cat "$FAKE/inject/signal-codesign")" "$PPID"   # (the script that runs us; we exit, so its trap runs then)
 case "$*" in
-  *-dv*) echo "flags=0x10000(runtime)" >&2; echo "Authority=Developer ID Application: Davis McDowell (39BK8TGQ26)" >&2 ;;
+  *-dv*) [ -e "$FAKE/inject/bad-hardening" ] || echo "flags=0x10000(runtime)" >&2; echo "Authority=Developer ID Application: Davis McDowell (39BK8TGQ26)" >&2 ;;
 esac
 exit 0
 EOF
@@ -126,6 +130,9 @@ case "$1 $2" in
     tag="$3"; shift 3; dir=""; pats=""
     while [ $# -gt 0 ]; do case "$1" in --dir) dir="$2"; shift 2 ;; --pattern) pats="$pats $2"; shift 2 ;; *) shift ;; esac; done
     inj fail-gh-download && { echo "network error" >&2; exit 1; }
+    if [ -f "$FAKE/inject/signal" ]; then   # an interrupt: the release script, its step (our parent) and this stand-in all get the signal, as from Ctrl-C
+      step=$PPID; main="$(ps -o ppid= -p "$step" | tr -d ' ')"; kill -"$(cat "$FAKE/inject/signal")" "$main" "$step" $$; sleep 5; exit 1
+    fi
     for p in $pats; do cp "$FAKE/releases/$tag/$p" "$dir/" || exit 1; done ;;
   *) echo "gh stub: unexpected: $*" >&2; exit 99 ;;
 esac
@@ -240,7 +247,8 @@ inject() { : > "$SB/fake/inject/$1"; }
 clear_inject() { rm -f "$SB/fake/inject/$1"; }
 rel() { # ARGS: a run of release.sh in the sandbox; the output is in $SB/out, the status is $rc
   run_n=$((run_n + 1))
-  ( cd "$SB" && env -u TOMATO_RELEASE_HOST -u WASI_SDK TOMATO_RELEASE_TEST_BIN="$bin" TOMATO_TEST_REAL_PATH="$real_path" FAKE="$SB/fake" BARE="$SB/bare.git" \
+  mkdir -p "$SB/tmp"
+  ( cd "$SB" && env -u TOMATO_RELEASE_HOST -u WASI_SDK TMPDIR="$SB/tmp" TOMATO_RELEASE_TEST_BIN="$bin" TOMATO_TEST_REAL_PATH="$real_path" FAKE="$SB/fake" BARE="$SB/bare.git" \
       HOME="$SB" GIT_CONFIG_GLOBAL="$SB/gitconfig" GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false GIT_TERMINAL_PROMPT=0 \
       GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$SB/bare.git.insteadOf" GIT_CONFIG_VALUE_0="git@github.com:sirbuffalo/tomato.git" \
       sh "$W/script/release.sh" --work-dir "$SB/work" --wasi-sdk "$SB/wasi" --no-load-check --skip-bench --no-linux "$@" > "$SB/out.$run_n" 2>&1 < /dev/null )
@@ -253,6 +261,7 @@ cl() { git -C "$SB/work/tomato" "$@"; }
 bare() { git --git-dir="$SB/bare.git" "$@"; }
 calls() { grep -c "$1" "$SB/fake/calls.log"; }
 has() { grep -q "$1" "$SB/out"; }
+nofiles() { ls -A "$1" 2> /dev/null | tr '\n' ' '; }   # what is left in a folder (a run's TMPDIR: it must be empty again)
 base_main="$(git --git-dir="$tmpl/bare.git" rev-parse main)"
 
 # ---------------------------------------------------------------- 1. a dry run publishes and pushes nothing
@@ -277,7 +286,7 @@ eq "real run: VERSION and sys.version say 1.0.1" "1.0.1 1.0.1" "$(bare show main
 # a finished run: --resume refuses; the steps before publish cannot be redone; the later ones are safe to repeat
 rel --resume; ne "finished run: --resume refuses" 0 "$rc"
 rel --from build; ne "after the tag: --from build is refused" 0 "$rc"; has 'tagged and pushed' && pass "after the tag: the message says why" || fail "after the tag: the message says why" "$(cat "$SB/out")"
-rel --from commit; ne "after the tag: --from commit is refused" 0 "$rc"
+rel --from commit; ne "after the tag: --from commit is refused" 0 "$rc"; has 'tagged and pushed' && pass "after the tag: ... for the same reason" || fail "after the tag: ... for the same reason" "$(cat "$SB/out")"
 rel --ignore-linux-failures --from push; eq "after the tag: --from push finds the commit already on main" 0 "$rc"
 has 'already on origin' && pass "after the tag: push says nothing is left to push" || fail "after the tag: push says nothing is left to push" "$(cat "$SB/out")"
 rel --ignore-linux-failures --from publish; eq "after the tag: --from publish repeats safely" 0 "$rc"
@@ -314,7 +323,7 @@ eq "from: the tests ran again, on the start commit and an unbumped tree" "tests 
 eq "from: ... that makes two runs of the tests" 2 "$(calls '^tests')"
 eq "from: still one release commit" 1 "$(cl rev-list --count "$(stget base_sha)..HEAD")"
 rel --dry-run --from nosuchstep; eq "from: an unknown step is refused" 2 "$rc"
-rel --from test; ne "from: a real run cannot resume a dry run" 0 "$rc"
+rel --from test; ne "from: a real run cannot resume a dry run" 0 "$rc"; has 'earlier run was a dry run' && pass "from: ... and the message says it was a dry run" || fail "from: ... and the message says it was a dry run" "$(cat "$SB/out")"
 
 # ---------------------------------------------------------------- 4. push: exactly the recorded commit, from a verified tree
 sandbox push
@@ -332,10 +341,10 @@ inject reject-main
 real; ne "push (dirty): the rejected push stops the run" 0 "$rc"
 clear_inject reject-main
 echo hand-edit >> "$SB/work/tomato/VERSION"
-real --resume; ne "push (dirty): a clone changed after the commit is refused" 0 "$rc"; eq "push (dirty): main is untouched" "$base_main" "$(bare rev-parse main)"
+real --resume; ne "push (dirty): a clone changed after the commit is refused" 0 "$rc"; has 'uncommitted changes' && pass "push (dirty): ... for the uncommitted change" || fail "push (dirty): ... for the uncommitted change" "$(tail -5 "$SB/out")"; eq "push (dirty): main is untouched" "$base_main" "$(bare rev-parse main)"
 cl checkout -q -- VERSION
 cl reset -q --hard "$(stget base_sha)"
-real --resume; ne "push (moved): a clone that no longer has the release commit is refused" 0 "$rc"; eq "push (moved): main is untouched" "$base_main" "$(bare rev-parse main)"
+real --resume; ne "push (moved): a clone that no longer has the release commit is refused" 0 "$rc"; has 'release commit of this run is' && pass "push (moved): ... because the release commit is missing" || fail "push (moved): ... because the release commit is missing" "$(tail -5 "$SB/out")"; eq "push (moved): main is untouched" "$base_main" "$(bare rev-parse main)"
 sandbox pushed
 inject reject-main
 real; ne "push (by hand): the rejected push stops the run" 0 "$rc"
@@ -364,6 +373,7 @@ sandbox pubverify
 inject fail-gh-download
 real; ne "publish: a verification that cannot download stops the run" 0 "$rc"
 eq "publish: ... main is not pushed" "$base_main" "$(bare rev-parse main)"
+eq "publish: ... and the download folder is gone (the run's temp folder is empty)" "" "$(nofiles "$SB/tmp")"
 clear_inject fail-gh-download
 real --resume; eq "publish: the resume verifies again and finishes" 0 "$rc"
 eq "publish: ... without a second release" 1 "$(grep -c '^gh release create' "$SB/fake/calls.log")"
@@ -419,12 +429,47 @@ rel --dry-run --resume; eq "sign: the resume finishes" 0 "$rc"
 eq "sign: ... without signing the package a second time" 1 "$(calls '^sign-pkg')"
 has 'only the disk image is redone' && pass "sign: ... and says so" || fail "sign: ... and says so" "$(tail -8 "$SB/out")"
 
-# ---------------------------------------------------------------- 8. what must never happen in a dry run
+# a package check that fails after it expanded the package leaves no copy of it behind
+sandbox checkleak
+inject bad-hardening
+rel --dry-run; ne "sign: a Mach-O file that is not hardened stops the run" 0 "$rc"; eq "sign: ... at sign" sign "$(stget failed_step)"
+has 'hardened runtime' && pass "sign: ... and the message says so" || fail "sign: ... and the message says so" "$(tail -5 "$SB/out")"
+eq "sign: ... and the expanded package is gone (the run's temp folder is empty)" "" "$(nofiles "$SB/tmp")"
+
+# ---------------------------------------------------------------- 8. an interrupt: temp folders removed, the step is the failed one, --resume continues there
+for sig in TERM HUP; do
+  case $sig in TERM) code=143 ;; HUP) code=129 ;; esac
+  sandbox "int$sig"
+  printf '%s' "$sig" > "$SB/fake/inject/signal"
+  real; eq "interrupt ($sig): the run stops with status $code" "$code" "$rc"
+  has "interrupted ($sig) during step publish" && pass "interrupt ($sig): the message names the step" || fail "interrupt ($sig): the message names the step" "$(tail -5 "$SB/out")"
+  eq "interrupt ($sig): the failed step is publish, the run is still unfinished" "publish running" "$(stget failed_step) $(stget status)"
+  eq "interrupt ($sig): publish is not recorded as done" "preflight version test bump linux bench snapshot build sign commit" "$(done_steps)"
+  eq "interrupt ($sig): no temp folder is left" "" "$(nofiles "$SB/tmp")"
+  rel --resume; ne "interrupt ($sig): without --restart a new run is not started over it" 0 "$rc"
+  real; has 'unfinished' && pass "interrupt ($sig): a fresh run points at --resume" || fail "interrupt ($sig): a fresh run points at --resume" "$(tail -5 "$SB/out")"
+  clear_inject signal
+  real --resume; eq "interrupt ($sig): --resume finishes the release" 0 "$rc"
+  c="$(stget commit_sha)"
+  eq "interrupt ($sig): ... one release, the tag and main on the release commit" "1 $c $c" "$(grep -c '^gh release create' "$SB/fake/calls.log") $(bare rev-parse 'v1.0.1^{commit}') $(bare rev-parse main)"
+  eq "interrupt ($sig): ... and nothing left in the temp folder" "" "$(nofiles "$SB/tmp")"
+done
+# the same in sign-pkg.sh (stand-ins for the Mac tools; the signing tool is stopped by the signal): the expanded package is removed
+sandbox signpkg; mkdir -p "$SB/tmp"
+printf 'version=1.0.1\nunsigned\n' > "$SB/in.pkg"; printf TERM > "$SB/fake/inject/signal-codesign"
+( cd "$SB" && env PATH="$bin:$real_path" TOMATO_TEST_REAL_PATH="$real_path" FAKE="$SB/fake" TMPDIR="$SB/tmp" sh "$root/release/sign-pkg.sh" in.pkg out.pkg > "$SB/out" 2>&1 < /dev/null ); rc=$?
+eq "sign-pkg: a TERM while it signs ends it with status 143" 143 "$rc"
+eq "sign-pkg: it had reached codesign, and made no package" "1 " "$(calls '^codesign --force') $(ls "$SB/out.pkg" 2> /dev/null)"
+eq "sign-pkg: the expanded package is removed" "" "$(nofiles "$SB/tmp")"
+
+# ---------------------------------------------------------------- 9. what must never happen in a dry run
 sandbox drynever
 rel --dry-run --from test 2>/dev/null; ne "dry: --from without an earlier run is refused" 0 "$rc"
 rel --dry-run; eq "dry: finishes" 0 "$rc"
 for s in publish push; do rel --dry-run --from $s; eq "dry: --from $s still publishes and pushes nothing (status)" 0 "$rc"; done
 eq "dry: no new tag, main untouched, no release, ever" "v1.0.0|$base_main|0" "$(bare tag)|$(bare rev-parse main)|$(calls 'gh release \(create\|upload\)')"
 
+# a skipped section would show here: the number of ok lines is fixed (raise it when a check is added)
+[ "$oks" = 141 ] || { echo "FAIL the number of ok lines: expected 141, got $oks"; fails=$((fails + 1)); }
 [ "$fails" = 0 ] || exit 1
 exit 0
