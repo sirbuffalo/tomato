@@ -1,0 +1,6 @@
+def helper():
+    pass
+
+@check
+def check():
+    pass

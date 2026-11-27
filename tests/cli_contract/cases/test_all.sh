@@ -18,4 +18,4 @@ printf '@main\ndef main(n: int):\n    pass\n' > tests/i_needs_input.tom
 try "test: every tests/*.tom, in name order, a helper left out; the status is 1 when any failed" 1 @test_all.txt "" test
 try "test --filter keeps the files whose name contains the text" 0 "ok   tests/a_ok.tom
 tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "" test --filter a_ok
-try "test: a pass prints nothing of the program's output, a failure prints its error text" 1 "~    error[E519]: AssertionError: assertion failed (raised on line 3)" "" test tests/b_bad.tom
+try "test: a pass prints nothing of the program's output, a failure prints its error text" 1 "~    error[E519]: AssertionError: assertion failed (raised at tests/b_bad.tom line 3)" "" test tests/b_bad.tom

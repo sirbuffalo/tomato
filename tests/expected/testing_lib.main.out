@@ -40,14 +40,15 @@ raises parent -> passes
 raises Error -> passes
 raises user class -> passes
 raises user subclass -> passes
-raises wrong class -> expected ValueError, but another error was raised: missing
-raises wrong user class -> expected DeepError, but another error was raised: app broke
+raises wrong class -> expected ValueError, but KeyError was raised: missing
+raises wrong user class -> expected DeepError, but Error was raised: app broke
+  (is 'DeepError' the name of an error class? it is not one of the standard ones; a class of your own is matched by its name)
 raises nothing -> expected ValueError to be raised, but nothing was raised
 raises with ok -> passes
 raises with nothing -> expected ValueError to be raised, but nothing was raised
 raises zero division -> passes
 raises assertion -> passes
-raises assertion is not runtime -> expected RuntimeError, but another error was raised: expected True
+raises assertion is not runtime -> expected RuntimeError, but AssertionError was raised: expected True
 returned: bad value True
 returned with: the text is not a whole number
 negative tolerance: a tolerance must not be negative

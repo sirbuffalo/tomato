@@ -37,7 +37,7 @@ tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "" test tests/fn.to
 try "test: a failure in a file with @test functions lists each test (the function's name) and says how many failed" 1 "FAIL tests/mixed.tom  (1 of 2 tests failed)
     ok   p
     FAIL f
-         assertion failed  (raised on line 6)
+         assertion failed  (raised at tests/mixed.tom:6)
     1 passed, 1 failed, 0 skipped
 tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "" test tests/mixed.tom
 try "test --mode release: the same files, the error text without the line" 1 "FAIL tests/mixed.tom  (1 of 2 tests failed)

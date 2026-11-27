@@ -45,7 +45,7 @@ try "build --entry: one entry" 0 "wrote echo_only" "" build prog.tom --entry ech
 check "build --entry: the program takes the inputs of that entry, with no entry word" "0 3 ('a', 'b', 'c') | " "$(runp ./echo_only a b c)"
 check "build --entry: no input at all is no input" "0 0 () | " "$(runp ./echo_only)"
 try "build: --entry a name that is no entry is E228" 1 "" "error[E228]: no function is marked @nosuch
-  = help: write @nosuch on the line above the function that should start the program" build prog.tom --entry nosuch -o x
+  = help: write @nosuch on the line above the function that should start the program; the entries of this program are: main, echo, greet.loud, greet.quiet, test, greet" build prog.tom --entry nosuch -o x
 # the default place: builds/NAME next to the project, in the current folder when there is no project; NAME is the file's name without .tom
 try "build FILE with no -o and no project: builds/NAME in the current folder, the folder is made" 0 "wrote builds/prog" "" build prog.tom
 [ -x builds/prog ] && ok "build: builds/prog is the program" || bad "build: builds/prog is the program"

@@ -1,0 +1,5 @@
+error[E335]: expected a function after @test.x (write export before the marker: export @test.x), but found the word 'export'
+ --> tests/errors/entry_before_export.tom:2:1
+  |
+2 | export def x():
+  | ^^^^^^

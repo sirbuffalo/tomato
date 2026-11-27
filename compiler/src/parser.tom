@@ -368,6 +368,8 @@ export class Parser:
                 marker = marker + '.' + last.text
             self.expect('NEWLINE')
             if not self.is_def():
+                if self.is_kw('export'):
+                    self.err(f"expected a function after @{marker} (write export before the marker: export @{marker})")
                 self.err(f'expected a function after @{marker}')
             return self.funcdef(False, 'entry:' + marker, False, True)
         if self.is_def():

@@ -12287,6 +12287,37 @@ def trace_name(info: FuncInfo) -> str:
         return info.name
     return info.owner.split('.')[-1] + '.' + info.name
 
+def entries_hint(items: list[Node]) -> str:
+    # "; the entries of this program are: main, test.adds, test" for a message about an entry no function is marked with, or '' when the
+    # program has no entry marker: the markers as written, main first, then the group each dotted marker is part of (@test.adds is part of
+    # the entry `test`), which is an entry too (D96a)
+    markers: list[str] = []
+    for item in items:
+        if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text.startswith('entry:'):
+            markers.append(item.fields[6].text[6:])
+    return entries_hint_of(markers)
+
+def entries_hint_of(markers: list[str]) -> str:
+    names: list[str] = []
+    if 'main' in markers:
+        names.append('main')
+    for m in markers:
+        if m not in names:
+            names.append(m)
+    for m in markers:
+        cut = m.rfind('.')
+        while cut > 0:
+            group = m[0:cut]
+            if group not in names:
+                names.append(group)
+            cut = group.rfind('.')
+    if len(names) == 0:
+        return ''
+    return '; the entries of this program are: ' + ', '.join(names)
+
+def no_entry_error(entry_name: str, hint: str):
+    raise CompileError(f'no function is marked @{entry_name}\nwrite @{entry_name} on the line above the function that should start the program{hint}', 0)
+
 def pure_number(t: str) -> bool:
     return t == 'int' or t == 'float' or t == 'bool' or t == 'U:float;int'
 
@@ -14037,7 +14068,7 @@ def entry_driver(mod: Mod, src: str, entry_name: str) -> str:
     if len(names) == 0:
         if entry_name == 'test':
             raise CompileError('no function is marked @test\nwrite @test.NAME on the line above each function that is a test', 0)
-        raise CompileError(f'no function is marked @{entry_name}\nwrite @{entry_name} on the line above the function that should start the program', 0)
+        no_entry_error(entry_name, entries_hint(top))
     text = src + '\n\n'
     if not imported:
         text += 'import testing\n\n'
@@ -14176,7 +14207,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             if item.fields[2].tag != 'z':
                 raise CompileError('an entry point (a function marked with @main or similar) cannot return a value', item.line)
     if entry == '':
-        raise CompileError(f'no function is marked @{entry_name}\nwrite @{entry_name} on the line above the function that should start the program', 0)
+        no_entry_error(entry_name, entries_hint(user))
     # the output is collected in a list and joined once: appending to one string that grows to megabytes copies it every time
     bodies: list[str] = []
     for k, f in enumerate(funcs):
@@ -14211,7 +14242,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             if pair[0] != entry_name:
                 order.append(pair[0])
         if entry_name not in funcs_of:
-            raise CompileError(f'no function is marked @{entry_name}\nwrite @{entry_name} on the line above the function that should start the program', 0)
+            no_entry_error(entry_name, entries_hint_of(order[1:]))
         wrapper = ''
         for n in order:
             wrapper += entry_wrapper(mod.find(funcs_of[n], 1), mod, 'tomato_entry.' + n)

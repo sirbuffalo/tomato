@@ -1,0 +1,3 @@
+@test.x
+export def x():
+    pass

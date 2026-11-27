@@ -260,7 +260,8 @@ def _unequal(act: str, exp: str) -> str:
     if kind != _top_kind(act):
         kind = 'leaf'
     if kind == 'leaf':
-        if len(ve) <= 12 and len(va) <= 12 and (ve == exp or exp == '') and (va == act or act == ''):
+        # (a text with a space at either end is not shown plain: 'a ' and 'a' would read as the same words)
+        if len(ve) <= 12 and len(va) <= 12 and (ve == exp or exp == '') and (va == act or act == '') and exp == exp.strip() and act == act.strip():
             return plain
         ee = _escaped(exp)
         ea = _escaped(act)
@@ -431,6 +432,32 @@ export def assert_close(actual: float, expected: float, rel_tol: float = 1e-9, a
     if not close:
         _fail(f'expected {str(expected)}, got {str(actual)}', message)
 
+# The names of the error classes the standard library has, the most specific of a family first (a catch is matched by name:
+# tomato_error_is knows names only, not objects of a class).
+def _error_names() -> list[str]:
+    return ['SkipTest', 'AssertionError', 'FileNotFoundError', 'FileExistsError', 'PermissionError', 'IsADirectoryError', 'NotADirectoryError',
+            'ZeroDivisionError', 'OverflowError', 'IndexError', 'KeyError', 'StructError', 'ValueError', 'EOFError', 'CancelledError',
+            'JSONDecodeError', 'JSONEncodeError', 'JSONTypeError', 'MsgpackError', 'TOMLDecodeError', 'ProcessTimeout', 'ProcessError',
+            'TerminalError', 'ConnectionRefusedError', 'ConnectionResetError', 'AddressError', 'SocketError', 'ConnectionError',
+            'InvalidURL', 'TooManyRedirects', 'HTTPError', 'RequestError', 'TimeoutError', 'LockError', 'RegexError', 'CacheMiss',
+            'IOError', 'RuntimeError', 'Error']
+
+# The name of an error's class for a message: the most specific class above that the standard library has (an error class of the
+# program's own shows as its nearest parent in that list, usually 'Error').
+def _class_of(err: Error) -> str:
+    for name in _error_names():
+        if !tomato_error_is(err, name) != 0:
+            return name
+    return 'Error'
+
+# "expected KeyError, but ValueError was raised: bad", with a hint when no class of the standard library has the name asked for (a
+# class of the program's own is found by its name too, so this can be a class that exists; the hint says what was raised).
+def _wrong_error(kind: str, err: Error) -> str:
+    text = f'expected {kind}, but {_class_of(err)} was raised: {err.message}'
+    if kind not in _error_names():
+        text += f"\n  (is '{kind}' the name of an error class? it is not one of the standard ones; a class of your own is matched by its name)"
+    return text
+
 # Calls f and returns the error it raises, which must be of the class called kind (the class name as text, such as 'ValueError')
 # or a subclass of it. It fails the test if f raises nothing or an error of another class. kind 'Error' matches any error.
 export def assert_raises(f: fn(), kind: str = 'Error') -> Error:
@@ -438,7 +465,7 @@ export def assert_raises(f: fn(), kind: str = 'Error') -> Error:
         f()
     catch Error as e:
         if !tomato_error_is(e, kind) == 0:
-            raise AssertionError(f'expected {kind}, but another error was raised: {e.message}', 'E519')
+            raise AssertionError(_wrong_error(kind, e), 'E519')
         return e
     raise AssertionError(f'expected {kind} to be raised, but nothing was raised', 'E519')
 
@@ -448,7 +475,7 @@ export def assert_raises_with[A](f: fn(A), arg: A, kind: str = 'Error') -> Error
         f(arg)
     catch Error as e:
         if !tomato_error_is(e, kind) == 0:
-            raise AssertionError(f'expected {kind}, but another error was raised: {e.message}', 'E519')
+            raise AssertionError(_wrong_error(kind, e), 'E519')
         return e
     raise AssertionError(f'expected {kind} to be raised, but nothing was raised', 'E519')
 
@@ -478,10 +505,13 @@ def _write_progress(path: str, state: str, report: _Report, total: int, index: i
 def _print_failure(name: str, e: Error, line: int):
     print(f'FAIL {name}')
     lines = e.message.split('\n')
+    head = lines[0]
+    if !tomato_error_is(e, 'AssertionError') == 0:
+        head = f'{_class_of(e)}: {head}'      # (a failed check is known by its message; any other error is told by its class)
     if line > 0:
-        print(f'     {lines[0]}  (raised on line {line})')
+        print(f'     {head}  (raised on line {line})')
     else:
-        print(f'     {lines[0]}')
+        print(f'     {head}')
     for i in range(1, len(lines)):
         print(f'     {lines[i]}')
 

@@ -65,7 +65,7 @@ files. The lead checked each report, reproduced what it fixed, fixed the finding
 15. `docs/manifest.md`: E582, E583, E584, E593 and E594 were in no doc; a `float` input cannot have a default; the user config is
     `$TOMATO_HOME/config.toml` when that is set; a module shares what it marks `export` (the examples failed without it).
 16. `docs/testing.md` showed a failure with `(raised on line 5)`; the real output starts in `std/testing.tom` (line 306). The doc now
-    shows the real text and says where the test's own line is; making the output better is a TODO item.
+    shows the real text and says where the test's own line is; the output was made better afterwards (see below).
 17. `progress_bar`'s comment and D105a said plain output starts at 0%; it starts at the first update.
 
 The bootstrap IR (`compiler/bootstrap/refresh.sh`), the wasm files (`site/wasm/build.sh` with WASI SDK 24; only `tomatoc.wasm`
@@ -78,12 +78,6 @@ The rows marked fixed were done afterwards (D107a: the manifest and seed command
 | Id | Kind | What | TODO item |
 | --- | --- | --- | --- |
 | S2 | bug | A subclass's `@str` under another method name is ignored when the static type is the parent (`catch Error as e: print(e)`) | Make `@str` dispatch by the object's class |
-| T4, T7 | rough | A failed check's trace starts in `std/testing.tom` with no file names; release mode prints only `error E519:306` | Make a failed check point at the test's line |
-| T5 | rough | Short text diffs are unquoted: `assert_equal('a ', 'a')` reads `expected a, got a ` | Polish the `tomato test` messages |
-| T6 | rough | An uncaught error in an `@test` function loses its class; `assert_raises` does not name the error it got, or reject `'Bogus'` | same |
-| T8 | rough | A failing test that printed 200,000 lines shows all of them | same |
-| T9 | rough | A file whose tests were all skipped counts as passed | same |
-| T11, T12 | rough | An unknown entry does not list the entries; `@test.x` before `export def` gives a bare "expected a function" | same |
 | M2 | rough (fixed) | Manifest key errors name the file but not the line | fixed (D107a) |
 | M3 | rough (fixed) | A bad user `[build] mode` is reported only when nothing overrides it | fixed (D107a) |
 | M4 | rough (fixed) | An option with no value prints the 26-line help (the CLI contract pins it, so the fix changes golden files) | fixed (D107a) |
@@ -95,6 +89,13 @@ The rows marked fixed were done afterwards (D107a: the manifest and seed command
 | O2 | rough | repl: a redeclaration after an assignment gave a wrong E292. Main's D104a (merged during the audit) removes the error, but the replay now runs the old `x = 3` after the new declaration: `x: int \| None = None`, `x = 3`, `x: int \| None = 7`, `print(x)` prints 3 | not in `TODO.md` (offered as a follow-up, not picked) |
 | O3 to O5, D9 | rough | No hint that fields are not narrowed; `[1, None]` has no hint; E458/E313 point at the `def`; E340 for a function that is not `export`ed | Smooth the optional and union compile errors |
 | S3 to S5 | rough (fixed) | `itertools` accepts negative `r`; `break` out of a terminal `progress_bar` leaves the line open; `progress_bar([])` is E184; a missing `#!` interpreter reads as a missing script | fixed (D107a) |
+
+**Resolved after the audit** (the `tomato test` items, T4 to T9, T11 and T12): a failed check names the file and the line of the test, in
+the first line and in the trace (`at main (tests/a.tom line 6)`, the framework's frames written `testing.NAME`; release mode says that
+it keeps no trace); text with a space at either end is shown in quotes with a caret; an uncaught error in an `@test` function shows its
+class and `assert_raises` names the class it got (and says when the name is no standard class); a long output keeps its first 40 and its
+last 60 lines; a file whose tests were all skipped is skipped; "no function is marked @x" lists the entries of the program; and
+`@test.x` before `export def` says that `export` goes first.
 
 Repros for the table, in brief (the TODO items have the rest):
 

@@ -1,7 +1,7 @@
 ok   tests/a_ok.tom
 FAIL tests/b_bad.tom  (exit status 1)
-    error[E519]: AssertionError: assertion failed (raised on line 3)
-      at main (line 3)
+    error[E519]: AssertionError: assertion failed (raised at tests/b_bad.tom line 3)
+      at main (tests/b_bad.tom line 3)
 ok   tests/c_fn.tom  (2 passed)
 FAIL tests/d_exit3.tom  (exit status 3)
 skip tests/e_skip.tom  (not today)
@@ -15,7 +15,7 @@ ok   tests/g_inp.tom
 FAIL tests/h_mixed.tom  (1 of 2 tests failed)
     ok   p
     FAIL f
-         assertion failed  (raised on line 6)
+         assertion failed  (raised at tests/h_mixed.tom:6)
     1 passed, 1 failed, 0 skipped
 FAIL tests/i_needs_input.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
     error[E352]: the entry point takes 1 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))

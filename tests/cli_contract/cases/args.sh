@@ -22,11 +22,11 @@ try "run: a bad --color value" 1 "" "error: --color takes auto, always or never,
 try "run: --color with a bad value (two words)" 1 "" "error: --color takes auto, always or never, not 'bogus'" run --color bogus hi.tom
 try "run: --color after the file is an option too, before the entry" 1 "" "error: --color takes auto, always or never, not 'bogus'" run hi.tom --color=bogus
 try "run: after -- the next word is still the entry" 1 "" "error[E228]: no function is marked @nosuch
-  = help: write @nosuch on the line above the function that should start the program" run hi.tom -- nosuch
+  = help: write @nosuch on the line above the function that should start the program; the entries of this program are: main" run hi.tom -- nosuch
 try "run: no function is marked with the entry named" 1 "" "error[E228]: no function is marked @nosuch
-  = help: write @nosuch on the line above the function that should start the program" run hi.tom nosuch
+  = help: write @nosuch on the line above the function that should start the program; the entries of this program are: main" run hi.tom nosuch
 try "run: --entry names the entry as well" 1 "" "error[E228]: no function is marked @nosuch
-  = help: write @nosuch on the line above the function that should start the program" run --entry nosuch hi.tom
+  = help: write @nosuch on the line above the function that should start the program; the entries of this program are: main" run --entry nosuch hi.tom
 
 # --- compile: prints the IR, never links
 try "compile: no word and no project" 1 "" "error: there is no tomato.toml in this folder or a parent folder, so there is no project's src/main.tom to compile: name a file (tomato compile FILE.tom), or start a project here with tomato init" compile
@@ -42,7 +42,7 @@ check "compile: the IR has no comment lines the command adds for itself (warning
 "$TOMATO" compile hi.tom --mode release > ir_rel.ll 2> /dev/null
 if ! cmp -s ir.ll ir_rel.ll && grep -q tomato_report_uncaught ir_rel.ll; then ok "compile --mode release is another program (release errors print ids)"; else bad "compile --mode release is another program"; fi
 try "compile --entry: the entry's name is checked" 1 "" "error[E228]: no function is marked @nosuch
-  = help: write @nosuch on the line above the function that should start the program" compile hi.tom --entry nosuch
+  = help: write @nosuch on the line above the function that should start the program; the entries of this program are: main" compile hi.tom --entry nosuch
 "$TOMATO" compile ent.tom --entry greet.loud > ir_entry.ll 2> /dev/null && ok "compile --entry takes a dotted entry" || bad "compile --entry takes a dotted entry"
 try "compile: a file in a folder with a slash needs no .tom" 1 "" "error: cannot read lib/nosuch" compile lib/nosuch
 # the error texts of the compiler: label, id, message, location, source line, caret (the golden file holds the whole text)

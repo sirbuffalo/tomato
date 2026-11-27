@@ -67,16 +67,16 @@ ok   tests/parse_numbers.tom
 FAIL tests/render.tom  (exit status 1)
     error[E519]: AssertionError: lists differ at [1]: expected 3, got 2
       expected: [1, 3]
-      actual:   [1, 2] (raised on line 306)
-      at _fail (line 306)
-      at assert_equal (line 375)
-      at main (line 5)
+      actual:   [1, 2] (raised at tests/render.tom line 5)
+      at testing._fail (line 307)
+      at testing.assert_equal (line 376)
+      at main (tests/render.tom line 5)
 skip tests/network.tom  (no network)
 FAIL tests/slow.tom  (timed out after 10 seconds)
 tomato test: 4 files, 1 passed, 2 failed, 1 skipped: FAILED
 ```
 
-A failed file shows what it printed (its output and its error, with the trace in debug mode) under its line, indented (a check of `testing` raises inside `std/testing.tom`, so the trace starts there, at lines of that file; the test's own line is the last one, `at main (line 5)`); a file that passes shows nothing but its line unless `-v` is given. A file that does not compile shows the compiler's message. The last line ends with `: ok` or `: FAILED`; a CI job is `tomato test`, and nothing else.
+A failed file shows what it printed (its output and its error, with the trace in debug mode) under its line, indented; a file that passes shows nothing but its line unless `-v` is given. A trace line names no file of its own, so `tomato test` marks them: a function of `std/testing.tom` (a check raises inside it) is written `testing.NAME`, and the first function of the test file in the trace is given the file, as in `at main (tests/render.tom line 5)`; the same file and line replace the `(raised on line 306)` of the first line, which is a line of `testing.tom`, so the report starts at the assertion. In `--mode release` there is no trace and the error is only `error E519:307`, so a note says that the number is not the test's line and to run the file in debug mode. A long output is cut: the first 40 lines and the last 60 are shown, with `... N lines left out ...` between them (the end is where the error is). A file that does not compile shows the compiler's message. The last line ends with `: ok` or `: FAILED`; a CI job is `tomato test`, and nothing else.
 
 **Exit status.** 0 when every file passed or was skipped, 1 when any failed or the command line could not be used (an unreadable file, an unknown option, a bare word), 2 for the usage message (an option with no value).
 
@@ -100,7 +100,7 @@ def lookup():
 ok   tests/arith.tom  (1 passed, 1 skipped)
 ```
 
-A function passes when it returns, fails when it raises any `Error`, and is skipped by `skip`. On a failure the file's line is `FAIL tests/arith.tom  (1 of 2 tests failed)` followed by one `ok NAME`, `skip NAME  (reason)` or `FAIL NAME` line for each function, with the message and `(raised on line N)`. The functions share the process: a `sys.exit` inside one ends the file at that function (`the program ended in NAME with status 0`), and the rest are not run. With `tomato test FILE test` the entry is given by hand; `tomato run FILE test` prints the same lines. The file-per-test form above is the main way. To run part of such a file use the entry form (`tomato test FILE test.NAME`); `tomato run FILE test --filter TEXT` filters by function name.
+A file whose functions were all skipped is itself skipped (`skip tests/arith.tom  (all 2 skipped)`), not passed: it tested nothing. A function passes when it returns, fails when it raises any `Error`, and is skipped by `skip`. On a failure the file's line is `FAIL tests/arith.tom  (1 of 2 tests failed)` followed by one `ok NAME`, `skip NAME  (reason)` or `FAIL NAME` line for each function, with the message and `(raised at FILE:N)`, the line of the function that failed (of the call, if a helper raised); an error that is not a failed check shows its class first (`KeyError: k`). The functions share the process: a `sys.exit` inside one ends the file at that function (`the program ended in NAME with status 0`), and the rest are not run. With `tomato test FILE test` the entry is given by hand; `tomato run FILE test` prints the same lines. The file-per-test form above is the main way. To run part of such a file use the entry form (`tomato test FILE test.NAME`); `tomato run FILE test --filter TEXT` filters by function name.
 
 ## Assertions
 
@@ -110,13 +110,13 @@ Each raises `AssertionError` (E519) with the text below; a `message` argument is
 | --- | --- |
 | `fail(message='')` | the message (`test failed`) |
 | `assert_true(v)`, `assert_false(v)` | `expected True` / `expected False` |
-| `assert_equal(actual, expected)` | `expected X, got Y`; for long text, lists and dicts a diff (below) |
+| `assert_equal(actual, expected)` | `expected X, got Y`; for long text, text with a space at either end, lists and dicts a diff (below) |
 | `assert_not_equal(actual, expected)` | `values are equal: X` |
 | `assert_less`, `assert_less_equal`, `assert_greater`, `assert_greater_equal` `(actual, limit)` | `expected 5 to be less than 3`, `... to be at most ...`, `... greater than ...`, `... at least ...` |
 | `assert_in(item, items)`, `assert_not_in` | `'a' is not in ['b', 'c']` / `'a' is in [...]` |
 | `assert_none[T](v)`, `assert_not_none[T](v)` | `expected None, got X` / `expected a value, got None` (write the type: `assert_none[str](name)`) |
 | `assert_close(actual, expected, rel_tol=1e-9, abs_tol=0.0)` | `expected X, got Y` (Python's `math.isclose` rule) |
-| `assert_raises(f, 'ValueError')` | returns the error `f()` raised; fails if nothing was raised or an error of another class was (`'Error'` matches any) |
+| `assert_raises(f, 'ValueError')` | returns the error `f()` raised; fails if nothing was raised or an error of another class was (`'Error'` matches any); the message names the class it got (`expected KeyError, but ValueError was raised: bad`), and says so when the name is not a class of the standard library |
 | `assert_raises_with(f, arg, 'ValueError')` | the same for a function of one argument |
 | `skip(reason)` | ends the test as skipped |
 
