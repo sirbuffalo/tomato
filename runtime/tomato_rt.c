@@ -234,9 +234,19 @@ static void bad_input(int position, const char *what, const char *text) {
 }
 
 void tomato_usage(int expected, int got) {
-    char msg[128];
-    snprintf(msg, sizeof msg, "the entry point takes %d input(s), got %d", expected, got);
+    char msg[256];
+    if (got < expected)
+        snprintf(msg, sizeof msg, "the entry point takes %d input(s), got %d (an input can be left out only if it has a default, as in def main(n: int = 10))", expected, got);
+    else
+        snprintf(msg, sizeof msg, "the entry point takes %d input(s), got %d", expected, got);
     tomato_fail_id(352, msg);
+}
+
+/* a program built with all its entries (D94b) started with a first word that is none of them: the words are ENTRY [INPUTS...] */
+void tomato_no_entry(const char *given, const char *entries) {
+    char msg[1024];
+    snprintf(msg, sizeof msg, "this program has no entry '%s' (its entries are: %s); the first word names the entry and its inputs follow it, as in: main INPUT...", given, entries);
+    tomato_fail_id(591, msg);
 }
 
 int64_t tomato_parse_i64(const char *text, int position) {
@@ -2552,6 +2562,19 @@ static FILE *file_stream(const char *p, const char *m);
 void *tomato_file_open(void *path, void *mode, int64_t code) {
     FILE *f = file_stream(((Str *)path)->data, ((Str *)mode)->data);
     if (!f) return NULL;
+    File *o = tomato_alloc((int64_t)sizeof(File), code);
+    o->f = f;
+    return o;
+}
+/* an entry input of type File (D94b): the file the word names, opened for reading as text before the entry runs (`-` is standard input);
+ * one that cannot be opened stops the program with a message that names the input */
+void *tomato_input_file(const char *word, int32_t position, int64_t code) {
+    FILE *f = file_stream(strcmp(word, "-") == 0 ? "/dev/stdin" : word, "r");
+    if (!f) {
+        char msg[1024];
+        snprintf(msg, sizeof msg, "input %d must be a file that can be read, but '%s' cannot be opened: %s", position, word, strerror(open_errno));
+        tomato_fail_id(592, msg);
+    }
     File *o = tomato_alloc((int64_t)sizeof(File), code);
     o->f = f;
     return o;

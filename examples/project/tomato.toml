@@ -1,0 +1,11 @@
+# A project: the layout `tomato init` makes. tomato.toml at the root, code in src/ (the program is src/main.tom), tests in tests/,
+# and `tomato build` writes into builds/ (see .gitignore).
+#   tomato run                        the usage line (main)
+#   tomato run count words.txt        count the words of a file (an entry that takes a File)
+#   printf 'a b c' | tomato run count -
+#   tomato run tests/test_words.tom        a test: a program that passes when it runs without raising an error
+#   tomato build && builds/wordcount count words.txt
+[project]
+name = "wordcount"
+version = "0.1.0"
+tomato = "0.51"

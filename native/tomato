@@ -1,8 +1,10 @@
 #!/bin/sh
 # The `tomato` command, built on the Tomato compiler written in Tomato (tomatoc). Needs only clang.
-#   tomato run FILE [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]   compile, link and run (MODE: debug or release; debug is the default)
-#   tomato build FILE [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]   write a native program (--mode release for the optimised build)
-#   tomato compile FILE [--entry NAME] [--mode MODE]                  print the LLVM IR
+#   tomato init [NAME] [--seed]                                       start a project in this folder: tomato.toml, src/main.tom, tests/ with an example test, .gitignore (--seed: a seed)
+#   tomato run [FILE] [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]   compile, link and run (no word: the project's src/main.tom; a first word that ends in .tom or has a / is the FILE, any
+#                                                                     other is an ENTRY of it; MODE: debug or release, debug is the default). Everything after the entry is raw input
+#   tomato build [FILE] [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]   write a native program, by default builds/NAME from src/main.tom; it takes [ENTRY [INPUTS...]]
+#   tomato compile [FILE] [--entry NAME] [--mode MODE]                print the LLVM IR
 #   tomato test [FILE]... | FILE ENTRY [INPUTS...] [--filter TEXT] [--timeout SECONDS] [-v]   run each file as a test (no word: every tests/*.tom; FILE ENTRY INPUTS... as in `tomato run`; a bare word before a file is an error); one line per file and a summary; exit 1 if any failed
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
@@ -14,10 +16,12 @@
 #                                                                     minor or major version (1.1.0, 2.0.0), which may change behaviour, only
 #                                                                     with --minor; pre-releases (1.1.0-rc.1) only with --pre or when one is installed
 #   tomato version                                                    print the version (also --version)
-# tomato.toml (docs/package-registry-design.md): [build] mode and output (and [build.ENTRY]) are the defaults of --mode and -o; the flags win.
+# Options of run, build and compile (tomato.toml: docs/manifest.md): --test-seeds also uses the seeds of [test-seeds] (tomato test does); [build] mode and output
+# (and [build.ENTRY]) are the defaults of --mode and -o; the flags win. In `run`, options go before the entry: the words after it are the entry's inputs, read raw.
 # Options for every command: --color=auto|always|never (red errors on a terminal; also TOMATO_COLOR, and NO_COLOR turns it off),
 # --no-warnings (hide the warnings the compiler gives about code that runs but looks wrong; also TOMATO_WARNINGS=off).
 # After `--`, no word is read as an option: `tomato run f.tom -- main -o` runs main with the input -o (the first word is still ENTRY).
+# The layout of a project (docs/manifest.md): tomato.toml at the root, code in src/ (the entry is src/main.tom), tests in tests/, programs built into builds/.
 invoked="$0"
 src="$0"
 while [ -L "$src" ]; do
@@ -109,6 +113,7 @@ cmd="$1"; [ -n "$cmd" ] || usage; shift
 # the options every command takes are read first, from anywhere before a `--`: --color=auto|always|never, --no-warnings
 color=""; warnings="${TOMATO_WARNINGS:-on}"
 n=$#; stop=0
+[ "$cmd" = run ] && n=0      # (run reads its options itself: they stop at the entry, and what follows it is raw input)
 while [ $n -gt 0 ]; do
   n=$((n - 1))
   if [ $stop = 1 ]; then set -- "$@" "$1"; shift; continue; fi
@@ -120,8 +125,11 @@ while [ $n -gt 0 ]; do
     *) set -- "$@" "$1"; shift ;;
   esac
 done
-case "$color" in ""|auto|always|never) ;; *) die "--color takes auto, always or never, not '$color'" ;; esac
-[ -n "$color" ] && export TOMATO_COLOR="$color"   # the program run by `tomato run` (and the repl) follows it too
+check_color() {
+  case "$color" in ""|auto|always|never) ;; *) die "--color takes auto, always or never, not '$color'" ;; esac
+  [ -z "$color" ] || export TOMATO_COLOR="$color"   # the program run by `tomato run` (and the repl) follows it too
+}
+check_color
 case "$cmd" in
   help|--help|-h) sed -n '2p' "$src" | sed 's/^# \{0,1\}//'; commands; exit 0 ;;
   version|--version|-V) echo "Tomato v$(cat "$home/VERSION" 2>/dev/null || echo 0) (compiler written in Tomato)"; exit 0 ;;
@@ -223,6 +231,107 @@ case "$cmd" in
     echo "$pad |"
     echo "$line | $text"
     printf '%s | %*s%s\n' "$pad" "$indent" '' "$(printf '%s' "$trimmed" | sed 's/./^/g')"
+    exit 0 ;;
+  init)
+    # tomato init [NAME] [--seed] (D94b): a project in the current folder. tomato.toml at the root, code in src/ (the program is
+    # src/main.tom), tests in tests/ (each file is one test: a program that passes when it runs without raising an error), what
+    # `tomato build` writes in builds/ (left out of git). Nothing is overwritten: when any file would be, none is written and the
+    # message names them. With --seed the folder is a seed (a package): its name is owner/name and its modules are src/STEM.tom.
+    seed=0; name=""
+    for a in "$@"; do
+      case "$a" in
+        --seed) seed=1 ;;
+        -*) die "unknown option '$a' for 'tomato init' (usage: tomato init [NAME] [--seed])" ;;
+        *) [ -z "$name" ] || die "tomato init takes one NAME, not '$name' and '$a'"; name="$a" ;;
+      esac
+    done
+    folder="$(basename "$(pwd -P)")"
+    if [ "$seed" = 1 ]; then
+      if [ -z "$name" ]; then name="yourdomain.example/$(printf '%s' "$folder" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9_-]/-/g')"; fi
+      printf '%s' "$name" | grep -Eq '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z][a-z0-9_-]{0,63}$' \
+        || die "'$name' is not a seed name: write tomato init --seed owner/name (an owner is lowercase letters, digits, dots and hyphens, a name starts with a letter)"
+      stem="$(printf '%s' "${name#*/}" | tr - _)"
+      mainfile="src/$stem.tom"
+    else
+      [ -n "$name" ] || name="$folder"
+      case "$name" in ""|/) die "give the project a name: tomato init NAME" ;; esac
+      mainfile="src/main.tom"
+    fi
+    case "$name" in *[![:print:]]*) die "the name must be plain printable text" ;; esac
+    existing=""
+    for f in tomato.toml "$mainfile" tests/example.tom .gitignore; do
+      if [ -e "$f" ] || [ -L "$f" ]; then existing="$existing${existing:+, }$f"; fi
+    done
+    [ -z "$existing" ] || die "tomato init will not overwrite: $existing (nothing was written; move them away, or use another folder)$(case "$existing" in *.gitignore*) echo "; an existing .gitignore needs the line builds/ added by hand" ;; esac)"
+    for d in src tests; do
+      if [ -e "$d" ] && [ ! -d "$d" ]; then die "$d exists and is not a folder (nothing was written)"; fi
+    done
+    mkdir -p src tests || die "cannot make the src and tests folders"
+    qname="$(printf '%s' "$name" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    ver="$(tomato_version)"
+    case "$ver" in *-*) minv="$ver" ;; *) minv="$(printf '%s' "$ver" | awk -F. '{ print $1 "." $2 }')" ;; esac    # the oldest compiler that builds it: this one (a pre-release needs its own number, 1.1 is newer than 1.1.0-rc.1)
+    if [ "$seed" = 1 ]; then
+      {
+        echo "[seed]"
+        echo "name = \"$qname\""
+        echo 'version = "0.1.0"'
+        echo "tomato = \"$minv\""
+        echo 'description = "TODO: one line about what this seed is for"'
+        echo 'license = "TODO: a license such as MIT"'
+        echo
+        echo "# Seeds this seed uses, as \"owner/name\" = \"minimum version\":"
+        echo "# [seeds]"
+        echo "#"
+        echo "# Seeds only its tests use (tomato test reads them; whoever uses this seed never does):"
+        echo "# [test-seeds]"
+      } > tomato.toml
+      {
+        echo "# The modules of a seed are the .tom files in src/ named $stem.tom or ${stem}_*.tom: users write import $stem."
+        echo "export def hello(name: str) -> str:"
+        echo "    return f'hello, {name}'"
+      } > "$mainfile"
+      {
+        echo "# A test is a file in tests/ that runs without raising an error: tomato test runs each one, and a failed assert raises."
+        echo "# The modules of src/ are imported by name."
+        echo "from $stem import hello"
+        echo
+        echo "@main"
+        echo "def main():"
+        echo "    assert hello('tomato') == 'hello, tomato'"
+      } > tests/example.tom
+    else
+      {
+        echo "[project]"
+        echo "name = \"$qname\""
+        echo 'version = "0.1.0"'
+        echo "tomato = \"$minv\""
+        echo
+        echo "# Seeds this project uses, as \"owner/name\" = \"minimum version\" (or { path = \"../folder\" }):"
+        echo "# [seeds]"
+        echo "#"
+        echo "# Seeds only its tests use (tomato test reads them; a build does not):"
+        echo "# [test-seeds]"
+      } > tomato.toml
+      {
+        echo "# The program starts at the function marked @main: tomato run runs it, tomato build writes it into builds/."
+        echo "# Other .tom files in src/ are modules: import them by name."
+        echo "@main"
+        echo "def main():"
+        echo "    print('hello, world')"
+      } > "$mainfile"
+      {
+        echo "# A test is a file in tests/ that runs without raising an error: tomato test runs each one, and a failed assert raises."
+        echo "# The modules of src/ (not main.tom) are imported by name, as in: from util import double"
+        echo "@main"
+        echo "def main():"
+        echo "    assert 1 + 1 == 2"
+        echo "    assert 'tomato'.upper() == 'TOMATO'"
+      } > tests/example.tom
+    fi
+    printf 'builds/\n' > .gitignore
+    echo "created tomato.toml, $mainfile, tests/example.tom and .gitignore"
+    if [ "$seed" = 1 ]; then echo "next: edit tomato.toml (the owner, description and license), then tomato seed check"
+    else echo "next: tomato run, tomato build, tomato test"; fi
     exit 0 ;;
   test)
     # tomato test [FILE]... [FILE ENTRY [INPUTS...]] [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] (D81a, D97a). Each file in a tests/ folder is one test: a
@@ -336,7 +445,7 @@ case "$cmd" in
         verdict=FAIL; why="the entry test (the functions marked @test) takes no inputs"
       else
         if [ -n "$tmode" ]; then set -- --mode "$tmode"; else set --; fi
-        if ! TOMATO_WARNINGS="$warnings" "$invoked" build "$f" --entry "$entry" "$@" -o "$prog" 2>> "$out" >/dev/null; then
+        if ! TOMATO_WARNINGS="$warnings" "$invoked" build "$f" --test-seeds --entry "$entry" "$@" -o "$prog" 2>> "$out" >/dev/null; then
           verdict=FAIL; why="did not compile"
         else
           if [ "$kind" = test ]; then
@@ -413,35 +522,69 @@ esac
 set -f      # words are split on newlines below; never expand * or ? in them
 nl="
 "
-file=""; entry=""; out=""; llvm=""; mode=""     # mode: the flag, else [build].mode of tomato.toml, else debug (decided by the compiler below)
-# the words after FILE: for run, ENTRY then inputs; for build/compile, flags. Positional words are kept in "$@" (not
-# a string) so empty and glob-like inputs survive untouched.
-[ $# -ge 1 ] || usage
-file="$1"; shift
-[ -f "$file" ] || die "cannot read $file"
-n=$#
-stop=0     # after `--` every word is a positional input, even one that looks like a flag
-# (the guards test n, the words left after this one: "$@" also holds the words already moved to its end)
-while [ $n -gt 0 ]; do
-  n=$((n - 1))
-  if [ $stop = 1 ]; then set -- "$@" "$1"; shift; continue; fi
-  case "$1" in
-    --) stop=1; shift ;;
-    -o) [ "$cmd" = run ] && usage; [ $n -ge 1 ] || usage; out="$2"; shift 2; n=$((n - 1)) ;;
-    --entry) [ $n -ge 1 ] || usage; entry="$2"; shift 2; n=$((n - 1)) ;;
-    --mode) [ $n -ge 1 ] || usage; mode="$2"; shift 2; n=$((n - 1)) ;;
-    --llvm) [ $n -ge 1 ] || usage; llvm="$llvm$2$nl"; shift 2; n=$((n - 1)) ;;
-    *) set -- "$@" "$1"; shift ;;
-  esac
-done
-# "$@" now holds only the positional words
+file=""; entry=""; out=""; llvm=""; mode=""; testseeds=0     # mode: the flag, else [build].mode of tomato.toml, else debug (decided by the compiler below)
+# A FILE is a word that ends in .tom or has a / in it; any other word where a FILE could be is an ENTRY (D94b). Positional words are kept
+# in "$@" (not a string) so empty and glob-like inputs survive untouched.
+file_word() { case "$1" in *.tom|*/*) return 0 ;; esac; return 1; }
 if [ "$cmd" = run ]; then
-  if [ $# -ge 1 ]; then entry="$1"; shift; fi
-  entry="${entry:-main}"
+  # run [OPTIONS] [FILE] [OPTIONS] [ENTRY [INPUTS...]]: the options are read until the entry, and everything after the entry is raw
+  # input (no flag is read there; `--` ends the options earlier, and the next word is still the FILE or the ENTRY)
+  dd=0; have_file=0
+  while [ $# -gt 0 ]; do
+    if [ $dd = 0 ]; then
+      case "$1" in
+        --) dd=1; shift; continue ;;
+        --color=*) color="${1#--color=}"; shift; continue ;;
+        --color) [ $# -ge 2 ] || usage; color="$2"; shift 2; continue ;;
+        --no-warnings) warnings=off; shift; continue ;;
+        --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; continue ;;
+        --mode) [ $# -ge 2 ] || usage; mode="$2"; shift 2; continue ;;
+        --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; continue ;;
+        --test-seeds) testseeds=1; shift; continue ;;
+        -o) usage ;;
+        -?*) die "unknown option '$1' for 'tomato run' (options go before the entry: the words after it are its inputs, read as they are; after -- no word is an option)" ;;
+      esac
+    fi
+    if [ $have_file = 0 ] && file_word "$1"; then file="$1"; have_file=1; shift; continue; fi
+    if file_word "$1"; then die "'$1' looks like a file, but the file is already $file: after it comes an entry name such as main (tomato run FILE [ENTRY [INPUTS...]])"; fi
+    entry="$1"; shift; break
+  done
+  check_color
+  # "$@" now holds the raw inputs
 else
-  [ $# -eq 0 ] || usage
-  entry="${entry:-main}"
+  dd=0; nfile=0
+  while [ $# -gt 0 ]; do
+    if [ $dd = 0 ]; then
+      case "$1" in
+        --) dd=1; shift; continue ;;
+        -o) [ $# -ge 2 ] || usage; out="$2"; shift 2; continue ;;
+        --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; continue ;;
+        --mode) [ $# -ge 2 ] || usage; mode="$2"; shift 2; continue ;;
+        --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; continue ;;
+        --test-seeds) testseeds=1; shift; continue ;;
+        -?*) die "unknown option '$1' for 'tomato $cmd' (run 'tomato help')" ;;
+      esac
+    fi
+    [ $nfile = 0 ] || usage
+    file_word "$1" || die "'$1' is not a file: a file ends in .tom or has a / in it (tomato $cmd [FILE]; with no FILE it is the project's src/main.tom)"
+    file="$1"; nfile=1; shift
+  done
 fi
+# no FILE: the project's program, src/main.tom of the folder that holds the nearest tomato.toml
+if [ -z "$file" ]; then
+  find_config .
+  [ -n "$project_cfg" ] || die "there is no tomato.toml in this folder or a parent folder, so there is no project's src/main.tom to $cmd: name a file (tomato $cmd FILE.tom), or start a project here with tomato init"
+  root="$(dirname "$project_cfg")"
+  if [ "$root" = "$(pwd -P)" ]; then file="src/main.tom"; else file="$root/src/main.tom"; fi
+  [ -f "$file" ] || die "the project in $root has no src/main.tom (the program of a project is src/main.tom; tomato $cmd FILE.tom runs another file)"
+fi
+[ -f "$file" ] || die "cannot read $file"
+# what the compiler is asked for: the entry (run and compile: the one named, else main); a build with no --entry holds every entry and
+# takes [ENTRY [INPUTS...]] itself (D94b), a build with --entry holds that one and takes its inputs
+cflags=""
+[ "$testseeds" = 0 ] || cflags="tests"
+[ "$cmd" != build ] || [ -n "$entry" ] || cflags="$cflags entries"
+entry="${entry:-main}"
 
 case "$mode" in
   ""|debug|release) ;;
@@ -457,7 +600,7 @@ tmp="$(mktemp -d)" || die "cannot make a temporary folder"
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 find_config "$(dirname "$file")"
-if ! TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$file" "$entry" "$std" "$mode" "$project_cfg" "$user_cfg" > "$tmp/program.ll" 2> "$tmp/errors"; then
+if ! TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$file" "$entry" "$std" "$mode" "$project_cfg" "$user_cfg" "$cflags" > "$tmp/program.ll" 2> "$tmp/errors"; then
   show_error < "$tmp/errors"        # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
   exit 1
 fi
@@ -479,7 +622,18 @@ exe="$tmp/program"
 if [ "$cmd" = build ]; then
   exe="$out"
   if [ -z "$exe" ] && [ -n "$manifest_out" ]; then exe="$manifest_out"; mkdir -p "$(dirname "$exe")" || die "cannot make the folder of the output $exe"; fi
-  [ -n "$exe" ] || exe="$(basename "${file%.tom}")"
+  if [ -z "$exe" ]; then
+    # builds/NAME in the project's folder (the current folder when there is no project): NAME is the project's name for its src/main.tom,
+    # else the file's name without .tom (D94b)
+    base="$(basename "${file%.tom}")"
+    manifest_name="$(sed -n 's/^;% name //p' "$tmp/program.ll" | tail -n 1 | tr -c 'A-Za-z0-9._\n-' '-')"
+    if [ -n "$manifest_name" ] && [ -n "$project_cfg" ] && [ "$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")" = "$(dirname "$project_cfg")/src/main.tom" ]; then
+      base="$manifest_name"; case "$base" in .*|-*) base="p$base" ;; esac
+    fi
+    if [ -n "$project_cfg" ]; then bdir="$(dirname "$project_cfg")"; [ "$bdir" != "$(pwd -P)" ] || bdir="."; else bdir="."; fi
+    [ "$bdir" = . ] && exe="builds/$base" || exe="$bdir/builds/$base"
+    mkdir -p "$(dirname "$exe")" || die "cannot make the folder of the output $exe"
+  fi
 fi
 [ "$cmd" = build ] && [ "$exe" -ef "$file" ] && die "the program would overwrite its own source $file: name it with -o"
 # The runtime is compiled once per mode, clang and runtime source, and kept in the cache folder (native/rtcache.sh); each run then

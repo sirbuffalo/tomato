@@ -221,7 +221,7 @@ without a warning and prints its banner). The website's Run page does not list i
 
 ## The repl on it (`compiler/src/repledit.tom`, `tomato-repl-edit`)
 
-The helper is a Tomato program next to the compiler's lexer, built by `install-native.sh` with the installed `tomato build ... --mode
+The helper is a Tomato program next to the compiler's lexer, built by `install-native.sh` with the installed `tomato build ... --entry main --mode
 release` (optional: a warning when it cannot be built, and the repl uses plain input), shipped in the tarball as source, and in the
 `.pkg` as a universal binary (`release/pkg.sh`, fatal there, checked with `lipo -archs`). `native/tomato-repl` runs it once per prompt
 when standard input is a terminal and `TERM` is not `dumb`:

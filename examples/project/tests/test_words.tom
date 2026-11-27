@@ -1,0 +1,6 @@
+from words import count_words
+
+@main
+def main():
+    assert count_words('') == 0
+    assert count_words('one two  three\nfour') == 4

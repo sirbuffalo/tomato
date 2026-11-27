@@ -51,7 +51,7 @@ benchmarks/run.sh --max-minutes 60 # stop scheduling runs after 60 minutes and s
 It needs `clang` (it builds Tomato from this checkout, using `compiler/bootstrap/tomatoc.ll`, `measure.c`, the timing helper, and
 the C and C++ programs). The other languages are skipped when their tools are missing: `go`, `rustc` (and `cargo`, for
 `bigint`), `javac` and `java`, `dotnet` 10 or newer, `swiftc`, `node` (22.6 or newer for TypeScript), `php` and `python3`.
-Inputs are in `sizes.txt` (columns: smoke input, full input, input for `count.sh`). Tomato is built twice with `tomato build`,
+Inputs are in `sizes.txt` (columns: smoke input, full input, input for `count.sh`). Tomato is built twice with `tomato build --entry main` (a program that takes just main's inputs, as `./fib 30`),
 in release mode (the `tomato` column) and in debug mode (`tomato-debug`); Go with `go build`, Rust with `rustc -O` (`bigint`
 with `cargo build --release`, which fetches the pinned `num-bigint` crate once), C and C++ with `clang -O2`, C# with `dotnet
 build -c Release`, Swift with `swiftc -O`; the rest are run as installed. It works on macOS and Linux.
@@ -65,7 +65,7 @@ When `--max-minutes` expires or the timing loop receives SIGINT or SIGTERM, the 
 
 ## json
 
-`benchmarks/json/jsonbench.tom` (not part of `run.sh`; no other language is compared): `tomato build` it, then
+`benchmarks/json/jsonbench.tom` (not part of `run.sh`; no other language is compared): `tomato build --entry main` it, then
 `jsonbench gen FILE N` writes a document of N records, and `jsonbench loads|dumps|pretty FILE` parses it (and writes it
 back). Results are in docs/performance.md.
 

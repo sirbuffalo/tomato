@@ -1,9 +1,10 @@
-# Local seeds (docs/package-registry-design.md sections 3, 5 and 6; decision D95a): the part of the seed work that needs no registry and
+# Local seeds (docs/package-registry-design.md sections 3, 5 and 6; decisions D95a and D94b): the part of the seed work that needs no registry and
 # no network. A project lists `{ path = "../folder" }` seeds in tomato.toml; `tomato seed install` reads each folder's own manifest,
 # computes its content hash and writes tomato.lock; a build (run, build, compile, test) reads the lock, checks it against the
-# manifest, and gives the compiler the module map: which file holds each module of each seed the run uses. Nothing is fetched, so
+# manifest, and gives the compiler the module map: which file holds each module of each seed the build uses ([seeds], and
+# [test-seeds] too for `tomato test`). Nothing is fetched, so
 # `git` seeds and the registry's seeds (a plain version) are reported as "not yet supported" and nothing is written for them.
-from toml import Toml, table, array, string, integer, dumps
+from toml import Toml, table, array, string, integer, boolean, dumps
 from config import ConfigError, read_toml
 from manifest import Manifest, SeedReq, read_manifest, check_tomato, seeds_for, same_line, compare_versions, module_stem
 from compiler import std_modules
@@ -20,7 +21,7 @@ export class Locked:
     path: str = ''             # source 'path': as written in tomato.toml
     hash: str = ''             # 'sha256:' and the hex of the seed hash v1
     modules: list[str] = []
-    entries: list[str] = []    # the manifest's tables that reach it, only when [seeds] does not (design section 3, D92b)
+    test_only: bool = False    # only [test-seeds] lists it: a plain build does not use it (design section 3, D94b)
 
 def fail(code: int, path: str, text: str):
     raise ConfigError(code, f'{path}: {text}')
@@ -33,12 +34,13 @@ def seed_folder(m: Manifest, path: str) -> str:
 
 # ---------------------------------------------------------------------------------------------------------------------
 # the content hash (section 6, seed hash v1): the files of the folder, sorted by path, one line `sha256  mode  path` for each, the
-# sha256 of the lines together. A folder named .git is not part of a seed. A symlink is refused (a link could point outside).
+# sha256 of the lines together. A folder named .git is not part of a seed, and neither is the builds folder at the top (what
+# `tomato build` writes is never part of a build, D94b). A symlink is refused (a link could point outside).
 
 def collect(folder: str, rel: str, out: list[str]):
     names = listdir(folder if rel == '' else folder + '/' + rel)
     for name in names:
-        if name == '.git':
+        if name == '.git' or (name == 'builds' and rel == ''):
             continue
         here = name if rel == '' else rel + '/' + name
         full = folder + '/' + here
@@ -141,8 +143,8 @@ export def lock_text(seeds: list[Locked]) -> str:
         t.put('hash', string(s.hash))
         t.put('modules', str_array(s.modules))
         t.put('seeds', str_array([]))
-        if len(s.entries) > 0:
-            t.put('entries', str_array(s.entries))
+        if s.test_only:
+            t.put('test_only', boolean(True))
         list_t.append(t)
     if len(seeds) > 0:
         doc.put('seed', list_t)
@@ -186,7 +188,10 @@ export def read_lock(path: str) -> list[Locked]:
                 s.path = must_string(path, t, 'path')
             s.hash = must_string(path, t, 'hash')
             s.modules = string_list(path, t, 'modules')
-            s.entries = string_list(path, t, 'entries')
+            if t.has('test_only'):
+                if t.lookup('test_only').kind != 'boolean':
+                    fail(578, path, 'test_only in a [[seed]] entry must be true or false: the lock is damaged, run `tomato seed install`')
+                s.test_only = t.lookup('test_only').flag
             out.append(s)
     return out
 
@@ -199,7 +204,7 @@ def lock_path(m: Manifest) -> str:
 export def install(manifest_path: str, have: str, only: bool) -> list[str]:
     m = read_manifest(manifest_path)
     check_tomato(m, have)
-    wanted = seeds_for(m, '', True)
+    wanted = seeds_for(m, False, True)
     said: list[str] = []
     seeds: list[Locked] = []
     for i in range(len(wanted.reqs)):
@@ -209,8 +214,7 @@ export def install(manifest_path: str, have: str, only: bool) -> list[str]:
         if r.kind == 'version':
             fail(571, m.path, f'the seed {r.name} {r.version} would come from a registry, and there is none yet; only {{ path = "../folder" }} seeds can be installed')
         s = locked_path_seed(m, r, have)
-        if '' not in wanted.tables[i]:
-            s.entries = sorted(wanted.tables[i])
+        s.test_only = '' not in wanted.tables[i]
         seeds.append(s)
         said.append(f'{s.name} {s.version}  {s.hash}  (path {s.path})')
     # two seeds that both provide a module cannot be in one program (section 5)
@@ -235,11 +239,11 @@ export def install(manifest_path: str, have: str, only: bool) -> list[str]:
     return said
 
 # ---------------------------------------------------------------------------------------------------------------------
-# a build: the lock against the manifest, and the module map of the seeds the run uses. Each line is `module TAB file TAB label`
+# a build: the lock against the manifest, and the module map of the seeds the build uses ([test-seeds] too when `tests`). Each line is `module TAB file TAB label`
 # (the label, `name version`, is what an error in the module names instead of the bare file; design section 5 has the first two).
-export def module_map(m: Manifest, entry: str) -> list[str]:
+export def module_map(m: Manifest, tests: bool) -> list[str]:
     out: list[str] = []
-    wanted = seeds_for(m, entry, False)
+    wanted = seeds_for(m, tests, False)
     if len(wanted.reqs) == 0:
         return out
     help = '\n  = help: run: tomato seed install'

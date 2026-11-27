@@ -1297,6 +1297,10 @@ class Mod:
     seed_files: dict[str, str] = {}    # the module map (design section 5): the file of each module of a seed the run uses, and the seed's label (`name version`)
     seed_labels: dict[str, str] = {}
     seed_used: list[str] = []          # the modules that were read from a seed (a file next to the program shadows a seed's module of the same name)
+    src_dir: str = ''                  # the src/ folder of the project (with its closing slash), searched after the program's own folder (D94b): a test in tests/ imports the modules of src/
+    src_used: list[str] = []           # the modules that were read from src_dir
+    all_entries: bool = False          # a built program (D94b): every entry is in it, and its first command-line word names the one to run
+    entry_map: list[str] = []          # all_entries: for each entry, `NAME TAB FUNCTION`: the function (or the generated driver of a group) that NAME runs
     warnings: list[str] = []      # the finished text of each warning (compiler/src/lint.tom), shown after a program compiles
     tvars: dict[str, str] = {}    # the type parameters in scope and the types they stand for (D60a)
     generics: dict[str, Node] = {}      # the generic classes and functions, by program-wide name
@@ -12634,17 +12638,19 @@ def literal_text(n: Node, ty: str) -> str:
         return '0'
     raise CompileError('an entry point input default must be a plain number, True or False', n.line)
 
-def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
-    # main(): read the command-line inputs, run the entry point, report an error nobody caught (D28a, D22a)
+def entry_wrapper(info: FuncInfo, mod: Mod, symbol: str = '') -> str:
+    # main(): read the command-line inputs, run the entry point, report an error nobody caught (D28a, D22a). With a symbol, the
+    # same code is a function of that name taking the command line as main does (a program with several entries, D94b: the one
+    # `main` picks the entry by its first word and passes the words after it, the program's name first)
     k = len(info.ptypes) - info.stars          # the fixed inputs; a last *args: tuple[str] takes the words beyond them (A-Q3)
     if info.has_kwargs or (info.has_varargs and info.ptypes[k] != 'tuple[str]'):
         raise CompileError('a program input (a parameter of the @main function) must be an int, bool or str', 0)
     low = k - len(info.defaults)
     out = 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
-    out += '  call void @tomato_set_args(i32 %argc, ptr %argv)\n'
-    if mod.exp_bits != default_exp_bits() or mod.format_digits != default_format_digits():
-        mod.declare('declare void @tomato_set_limits(i64, i64)')
-        out += f'  call void @tomato_set_limits(i64 {mod.exp_bits}, i64 {mod.format_digits})\n'
+    if symbol != '':
+        out = f'define i32 @{symbol}(i32 %argc, ptr %argv) {{\nentry:\n  %n = sub i32 %argc, 1\n'
+    else:
+        out += set_limits_text(mod, True)
     if info.has_varargs:
         out += f'  %ok = icmp sge i32 %n, {low}\n'
     else:
@@ -12683,6 +12689,11 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
                 out += f'  %a{si}.v = add i64 %a{si}.w, 0\n'
         elif t == 'float':
             out += f'  %a{si}.v = call i64 @tomato_bf_parse_cstr(ptr %a{si}.s, i32 {str(i + 1)})\n'
+        elif t == 'File':
+            # D94b: the word names a file, opened for reading (text) before the entry runs; `-` is standard input. The entry's
+            # reference is the only one, so the file is closed when it is released after the entry returns.
+            mod.declare('declare ptr @tomato_input_file(ptr, i32, i64)')
+            out += f'  %a{si}.v = call ptr @tomato_input_file(ptr %a{si}.s, i32 {str(i + 1)}, i64 {mod.code_of("File")})\n'
         elif t == 'bool':
             out += f'  %a{si}.w = call i32 @tomato_parse_bool(ptr %a{si}.s, i32 {str(i + 1)})\n'
             out += f'  %a{si}.v = zext i32 %a{si}.w to i64\n'
@@ -12690,6 +12701,8 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
             raise CompileError('a program input (a parameter of the @main function) must be an int, bool or str', 0)
         if optional:
             dflt = info.defaults[i - low]
+            if t == 'File':
+                raise CompileError('a File input cannot have a default: its word is the path of a file to read (or - for standard input), and there is no file to fall back on\nleave the default out, so the input is required', dflt.line)
             out += f'  br label %m{si}\nd{si}:\n  br label %m{si}\nm{si}:\n'
             if t == 'str':
                 if dflt.kind != 'StrLit':
@@ -12701,7 +12714,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
                 out += f'  %a{si} = phi {llvm_type(t)} [ %a{si}.v, %p{si} ], [ {literal_text(dflt, t)}, %d{si} ]\n'
         else:
             reg = f'%a{si}.v'
-        if t == 'str':
+        if t == 'str' or t == 'File':
             args.append(f'ptr {reg}')
             owned.append(reg)
         else:
@@ -12731,6 +12744,45 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     for reg in owned_floats:
         out += f'  call void @tomato_bf_free(i64 {reg})\n'
     out += '  call void @tomato_leak_check()\n  %rc = call i32 @tomato_exit_code()\n  ret i32 %rc\n}\n'
+    return out
+
+def set_limits_text(mod: Mod, with_args: bool) -> str:
+    # the start of main: the command line for sys.argv, and the limits of D77g when they are not the defaults
+    out = ''
+    if with_args:
+        out += '  call void @tomato_set_args(i32 %argc, ptr %argv)\n'
+    if mod.exp_bits != default_exp_bits() or mod.format_digits != default_format_digits():
+        mod.declare('declare void @tomato_set_limits(i64, i64)')
+        out += f'  call void @tomato_set_limits(i64 {mod.exp_bits}, i64 {mod.format_digits})\n'
+    return out
+
+def c_text(text: str) -> str:
+    # an LLVM constant for a text of plain characters (the entry names), with its closing zero
+    return f'private constant [{len(text) + 1} x i8] c"{text}\\00"'
+
+def entries_main(names: list[str], mod: Mod) -> str:
+    # D94b: a program built with every entry in it. Its words are `[ENTRY [INPUTS...]]`: no word runs main with no inputs, a first
+    # word that names an entry runs that entry with the words after it as its inputs, and any other first word is an error that
+    # lists the entries (E591). The entry function gets the words after the entry's name with the program's name put in front of
+    # them (argv[1] is overwritten with argv[0], which is ours to change), so sys.argv and the numbers of the inputs in an error
+    # are those of a program that has the one entry.
+    mod.declare('declare i32 @strcmp(ptr, ptr)')
+    mod.declare('declare void @tomato_no_entry(ptr, ptr)')
+    out = ''
+    for i, name in enumerate(names):
+        out += f'@.entry.{i} = {c_text(name)}\n'
+    out += f'@.entries = {c_text(", ".join(names))}\n'
+    out += 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n'
+    out += set_limits_text(mod, False)
+    out += '  %none = icmp sle i32 %argc, 1\n  br i1 %none, label %runmain, label %pick\nrunmain:\n'
+    out += '  call void @tomato_set_args(i32 %argc, ptr %argv)\n'
+    out += '  %rm = call i32 @tomato_entry.main(i32 %argc, ptr %argv)\n  ret i32 %rm\n'
+    out += 'pick:\n  %p1 = getelementptr ptr, ptr %argv, i64 1\n  %given = load ptr, ptr %p1\n  %p0 = load ptr, ptr %argv\n  store ptr %p0, ptr %p1\n'
+    out += '  %argc1 = sub i32 %argc, 1\n  br label %t0\n'
+    for i, name in enumerate(names):
+        out += f't{i}:\n  %c{i} = call i32 @strcmp(ptr %given, ptr @.entry.{i})\n  %e{i} = icmp eq i32 %c{i}, 0\n  br i1 %e{i}, label %go{i}, label %t{i + 1}\n'
+        out += f'go{i}:\n  call void @tomato_set_args(i32 %argc1, ptr %p1)\n  %r{i} = call i32 @tomato_entry.{name}(i32 %argc1, ptr %p1)\n  ret i32 %r{i}\n'
+    out += f't{len(names)}:\n  call void @tomato_no_entry(ptr %given, ptr @.entries)\n  unreachable\n}}\n'
     return out
 
 def key_of(module: str, name: str) -> str:
@@ -13290,13 +13342,25 @@ def std_path(std: str, name: str) -> str:
     return f'{std}{name}.tom'
 
 def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
-    # a module next to the program, else one from a seed the run uses (mod.seed_files), else one from the standard library
+    # a module next to the program, else one in the project's src/ folder (mod.src_dir, D94b), else one from a seed the run uses
+    # (mod.seed_files), else one from the standard library
     text = ''
     try:
         f = open(f'{dir}{name}.tom')
         text = f.read()
         f.close()
     catch IOError:
+        if mod.src_dir != '':
+            try:
+                h = open(f'{mod.src_dir}{name}.tom')
+                text = h.read()
+                h.close()
+                if name == 'main':
+                    raise CompileError("cannot import 'main': it is the name the program itself has\nput the shared code in a module with another name, such as src/app.tom, and import that", line)
+                mod.src_used.append(name)
+                return text
+            catch IOError:
+                pass
         if name in mod.seed_files:
             if name in std_modules():
                 raise CompileError(f"the module '{name}' is in the seed {mod.seed_labels[name]} and in the standard library, so the import is ambiguous\nthe standard library gained a module of the seed's name: ask the seed's author to rename it, or put your own {name}.tom next to the program", line)
@@ -13314,6 +13378,8 @@ def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
             g.close()
         catch IOError:
             help = f'looked for {name}.tom next to the program and in the standard library'
+            if mod.src_dir != '':
+                help = f'looked for {name}.tom next to the program, in the src folder of the project and in the standard library'
             near = closest(name, std_modules())
             if near != '':
                 help = f"did you mean '{near}'?\n" + help
@@ -13353,6 +13419,8 @@ def source_path(mod: Mod, module: str) -> str:
         return mod.main_path
     if module in mod.seed_used:
         return f'{mod.seed_labels[module]}: src/{module}.tom'
+    if module in mod.src_used:
+        return f'src/{module}.tom'
     return f'{module}.tom'
 
 # does the module declare something called bitarray or frozenbitarray itself? (then the names are its own, not the library's)
@@ -13464,6 +13532,52 @@ def marker_selected(marker: str, entry_name: str) -> bool:
     # @test.a.b; `test.a` selects @test.a and @test.a.b, not @test.ab)
     return marker == entry_name or marker.startswith(entry_name + '.')
 
+def all_entries_driver(mod: Mod, src: str, top: list[Node]) -> str:
+    # D94b: a built program holds every entry. The names it answers to are each marker and each dotted beginning of one (`greet` for
+    # @greet.loud), except the tests (`tomato test` runs those: their driver is made for that entry alone). A name that selects one
+    # function runs it, with its inputs; a name that selects several runs them one after another, as the entry does under
+    # `tomato run` (D96a), through a driver appended as source, but only when none of them takes inputs or is async (otherwise the name is
+    # no entry of the program, and `tomato run FILE NAME` says why). mod.entry_map says which function each name runs.
+    marked: list[Node] = []
+    names: list[str] = []
+    for item in top:
+        if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text.startswith('entry:'):
+            marker = item.fields[6].text[6:]
+            if marker == 'test' or marker.startswith('test.'):
+                continue
+            if item.fields[2].tag != 'z':
+                raise CompileError('an entry point (a function marked with @main or similar) cannot return a value', item.line)
+            marked.append(item)
+            parts = marker.split('.')
+            for i in range(1, len(parts) + 1):
+                prefix = '.'.join(parts[:i])
+                if prefix not in names:
+                    names.append(prefix)
+    mod.entry_map = []
+    text = src
+    groups = 0
+    for name in names:
+        picked: list[Node] = []
+        for item in marked:
+            if marker_selected(item.fields[6].text[6:], name):
+                picked.append(item)
+        if len(picked) == 1:
+            mod.entry_map.append(name + '\t' + picked[0].fields[0].text)
+            continue
+        lines = ''
+        usable = True
+        for item in picked:
+            if (len(item.fields) > 8 and item.fields[8].flag) or len(item.fields[1].items) > 0:
+                usable = False
+            lines += f'    {item.fields[0].text}()\n'
+        if usable:
+            driver = f'_tomato_group_{groups}'
+            groups += 1
+            text += f'\n\ndef {driver}():\n{lines}'
+            mod.entry_map.append(name + '\t' + driver)
+    mod.entry_alias = 'main'
+    return text
+
 def entry_driver(mod: Mod, src: str, entry_name: str) -> str:
     # D96a: every entry marker marks exactly one function (the same full marker on two functions is an error), and a marker may be
     # dotted (@greet.loud). The entry name selects the functions whose marker it is or extends: `greet` runs @greet and every @greet.*,
@@ -13492,6 +13606,8 @@ def entry_driver(mod: Mod, src: str, entry_name: str) -> str:
             seen[marker] = item.fields[0].text
             if marker_selected(marker, entry_name):
                 picked.append(item)
+    if mod.all_entries:
+        return all_entries_driver(mod, src, top)
     is_test = entry_name == 'test' or entry_name.startswith('test.')
     if not is_test:
         mod.entry_alias = entry_name
@@ -13686,8 +13802,25 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     if len(mod.frames) > 0:
         bodies.append(scheduler_ir(mod))
     mod.cur = 'main'
-    wrapper = entry_wrapper(mod.find(entry, 1), mod)
-    bodies.append(finish_bodies(mod, f'@tomato.{mod.find(entry, 1).key}'))
+    if mod.all_entries:
+        # main first (and its own entry function): the names are listed in this order when a word names no entry
+        order = [entry_name]
+        funcs_of: dict[str, str] = {}
+        for line in mod.entry_map:
+            pair = line.split('\t')
+            funcs_of[pair[0]] = pair[1]
+            if pair[0] != entry_name:
+                order.append(pair[0])
+        if entry_name not in funcs_of:
+            raise CompileError(f'no function is marked @{entry_name}\nwrite @{entry_name} on the line above the function that should start the program', 0)
+        wrapper = ''
+        for n in order:
+            wrapper += entry_wrapper(mod.find(funcs_of[n], 1), mod, 'tomato_entry.' + n)
+        wrapper += entries_main(order, mod)
+        bodies.append(finish_bodies(mod, ''))
+    else:
+        wrapper = entry_wrapper(mod.find(entry, 1), mod)
+        bodies.append(finish_bodies(mod, f'@tomato.{mod.find(entry, 1).key}'))
     out: list[str] = ['; written by the Tomato compiler in Tomato (compiler/src/compiler.tom)\n']
     out.append(declarations(mod) + class_types(mod) + runtime_tables(mod) + vtables(mod))
     for j, s in enumerate(mod.strings):
@@ -13714,7 +13847,7 @@ def located(mod: Mod, message: str, line: int, col: int, module: str) -> str:
         return format_error(message, line, col, mod.sources[module], where, error_label(mod, message))
     return format_error(message, 0, 0, '', '', error_label(mod, message))
 
-export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '', exp_bits: int = 65536, format_digits: int = 100000, seeds: list[str] = []) -> str:
+export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '', exp_bits: int = 65536, format_digits: int = 100000, seeds: list[str] = [], src_dir: str = '', all_entries: bool = False) -> str:
     # LLVM IR for the program, or a Diagnostic whose message is the finished error text
     mod = Mod()
     result = ''
@@ -13725,6 +13858,8 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
         mod.main_path = path
         mod.exp_bits = exp_bits
         mod.format_digits = format_digits
+        mod.src_dir = src_dir
+        mod.all_entries = all_entries
         for seed_line in seeds:
             seed_parts = seed_line.split('\t')
             mod.seed_files[seed_parts[0]] = seed_parts[1]

@@ -152,7 +152,7 @@ The whole values are left out when one is more than 60 characters (the lines abo
 
 - **No async tests** (E520 for a function marked `@test`): an `async def` is not a function value (D63a). **No parameterized tests, fixtures or mocks**: a loop inside one test, and helper functions. **No `@setup`/`@teardown`**: set-up and clean-up are code in the file.
 - **No selector option**: one function (or a group) of a file with `@test.NAME` markers is the entry form `tomato test FILE test.NAME`, the same selection as `tomato run FILE test.NAME` (D96a).
-- **A seed's own `tests/`, `src/`, `tomato init` and `[test-seeds]`** are for a later task: `tomato test` reads the current folder's `tests/` only.
+- **The layout, `tomato init` and `[test-seeds]`** are D94b (`docs/manifest.md`): `tomato init` writes `tests/example.tom`, a test in `tests/` imports the modules of `src/` by name, and `tomato test` builds each file with the option `--test-seeds`, so the seeds of `[test-seeds]` (and `[seeds]`) are found; a seed's own `[test-seeds]` is read only by `tomato test` in that seed. `tomato test` still reads the current folder's `tests/` only (not a project folder above it).
 - **No parallel runs and no report formats** (JUnit, TAP). The files' lines and the last line are the interface.
 
 ## The playground

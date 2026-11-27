@@ -64,7 +64,7 @@ if [ -f "$root/site/wasm/SOURCE.sha256" ] && [ "$(cat "$root/compiler/bootstrap/
 build_repl_edit() {
   ed="$stage/.edit"; mkdir -p "$ed" || return 1
   cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$root/compiler/src/hltomato.tom" "$ed/" &&
-    "$stage/bin/tomato" build "$ed/repledit.tom" -o "$stage/bin/tomato-repl-edit" --mode release > "$ed/log" 2>&1
+    "$stage/bin/tomato" build "$ed/repledit.tom" --entry main -o "$stage/bin/tomato-repl-edit" --mode release > "$ed/log" 2>&1
   rc=$?; [ $rc = 0 ] || { tail -5 "$ed/log" >&2; rm -f "$stage/bin/tomato-repl-edit"; }
   rm -rf "$ed"; return $rc
 }

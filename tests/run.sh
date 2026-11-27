@@ -812,10 +812,10 @@ t_cli_runtime_cache() { # the compiled runtime is kept in the cache folder: a hi
   check "runtime cache: a second run is right" "$want" "$(r 2>&1)"
   check "runtime cache: a second run is a hit (no compile, the file is not replaced)" "1 1 $ino" "$(compiles) $(files) $(ls -i "$work/cache"/rt-* | cut -d' ' -f1)"
   $h/bin/tomato build "$work/echo.tom" -o "$work/echo_d" > /dev/null 2>&1; check "runtime cache: build uses the same entry" "1 1" "$(compiles) $(files)"
-  check "runtime cache: a built program runs" "$want" "$("$work/echo_d" a b 2>&1)"
-  check "runtime cache: release is another entry" "$want" "$($h/bin/tomato run "$work/echo.tom" main a b --mode release 2>&1)"
+  check "runtime cache: a built program runs" "$want" "$("$work/echo_d" main a b 2>&1)"
+  check "runtime cache: release is another entry" "$want" "$($h/bin/tomato run --mode release "$work/echo.tom" main a b 2>&1)"
   check "runtime cache: release compiled the runtime once more" "2 2" "$(compiles) $(files)"
-  $h/bin/tomato run "$work/echo.tom" main a b --mode release > /dev/null 2>&1; check "runtime cache: release hits too" "2 2" "$(compiles) $(files)"
+  $h/bin/tomato run --mode release "$work/echo.tom" main a b > /dev/null 2>&1; check "runtime cache: release hits too" "2 2" "$(compiles) $(files)"
   fi; if step 2; then
   r > /dev/null 2>&1; c0="$(compiles)"; f0="$(files)"   # (this part starts from one stored entry)
   printf '\n/* a change to the runtime */\n' >> "$h/runtime/tomato_rt.c"
@@ -837,7 +837,7 @@ t_cli_runtime_cache() { # the compiled runtime is kept in the cache folder: a hi
   rm -rf "$work/cache"; check "runtime cache: TOMATO_CACHE=off still runs" "$want" "$(TOMATO_CACHE=off r 2>&1)"
   check "runtime cache: TOMATO_CACHE=off stores nothing" "0" "$(files)"
   : > "$work/notdir"; check "runtime cache: an unusable cache folder still runs" "$want" "$(TOMATO_CACHE_DIR="$work/notdir/x" r 2>&1)"
-  check "runtime cache: the program is the same with and without the cache" "$(TOMATO_CACHE=off $h/bin/tomato build "$work/echo.tom" -o "$work/e_off" >/dev/null 2>&1; "$work/e_off" a b 2>&1)" "$("$work/echo_d" a b 2>&1)"
+  check "runtime cache: the program is the same with and without the cache" "$(TOMATO_CACHE=off $h/bin/tomato build "$work/echo.tom" -o "$work/e_off" >/dev/null 2>&1; "$work/e_off" main a b 2>&1)" "$("$work/echo_d" main a b 2>&1)"
   fi
 }
 t_cli_build_keeps_source() { # tomato build of a file without .tom (or -o naming the source) must not overwrite the source
@@ -971,9 +971,9 @@ project: demo 0.3.0 (needs Tomato 0.51 or newer)" "$(noconf $t config "$P/sub/pr
   check "manifest: a settings-only file (D77g) is still accepted" "1" "$(noconf $t run "$P/sub/prog.tom" 2>&1)"
   badman() { printf '%s' "$2" > "$P/tomato.toml"; r="$(noconf $t run "$P/sub/prog.tom" 2>&1)"; check "manifest: $1" "$3" "$r"; }
   badman "an unknown table is an error, so a typo is caught" '[sedes]
-' "error[E555]: $here/tomato.toml: unknown table [sedes] (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)"
+' "error[E555]: $here/tomato.toml: unknown table [sedes] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)"
   badman "a key outside every table is an error" 'name = "x"
-' "error[E555]: $here/tomato.toml: unknown key name (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)"
+' "error[E555]: $here/tomato.toml: unknown key name (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)"
   badman "a project and a seed together" "$head"'[seed]
 name = "a.example/x"
 version = "1.0.0"
@@ -1014,9 +1014,20 @@ target = "wasm"
   badman "an unknown build setting" "$head"'[build]
 flags = []
 ' "error[E558]: $here/tomato.toml: unknown setting build.flags (the settings of [build] are mode and output, and a table [build.ENTRY] sets them for one entry)"
-  badman "a seed's entry tables are tables, not unknown settings (D92b follow-up)" "$head"'[seeds.test]
+  badman "a [seeds.ENTRY] table is refused and points at [test-seeds] (D94b)" "$head"'[seeds.test]
 "a.example/x" = "1.0.0"
-' "1"
+' "error[E590]: $here/tomato.toml: [seeds.test] is not allowed: a table in [seeds] names a seed with a slash, \"owner/name\"; seeds used only by tests go in [test-seeds], the one table for them"
+  badman "a [test-seeds] table below it is refused too" "$head"'[test-seeds.x]
+"a.example/x" = "1.0.0"
+' "error[E590]: $here/tomato.toml: [test-seeds.x] is not allowed: a table in [test-seeds] names a seed with a slash, \"owner/name\"; seeds used only by tests go in [test-seeds], the one table for them"
+  badman "[test-seeds] needs a project or a seed" '[test-seeds]
+"a.example/x" = "1.0.0"
+' "error[E567]: $here/tomato.toml: [test-seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file"
+  badman "[test-seeds] takes seeds, not other keys" "$head"'[test-seeds]
+foo = "1.0.0"
+' "error[E555]: $here/tomato.toml: unknown key \"foo\" in [test-seeds]: a seed is written \"owner/name\" with a slash"
+  printf '%s[test-seeds]\n"a.example/x" = "1.0.0"\n' "$head" > "$P/tomato.toml"
+  check "manifest: a manifest with [test-seeds] is accepted" "1" "$(noconf $t run "$P/sub/prog.tom" 2>&1)"
   rm -f "$P/tomato.toml"
   badman "a minimum compiler version newer than this one stops the build" '[project]
 name = "demo"
@@ -1029,8 +1040,8 @@ name = \"demo\"
 version = \"0.3.0\"
 tomato = \"$(cat VERSION)\"
 " "1"
-  check "manifest: the file is checked by every command, config included" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)" "$(printf '[x]\n' > "$P/tomato.toml"; noconf $t config "$P/sub/prog.tom" 2>&1)"
-  check "manifest: so is compile" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)" "$(noconf $t compile "$P/sub/prog.tom" 2>&1)"
+  check "manifest: the file is checked by every command, config included" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(printf '[x]\n' > "$P/tomato.toml"; noconf $t config "$P/sub/prog.tom" 2>&1)"
+  check "manifest: so is compile" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(noconf $t compile "$P/sub/prog.tom" 2>&1)"
   check "explain knows the manifest errors" "error[E555]: ConfigError: {}: unknown {} {} (the tables are {}; every setting is in a table)" "$($t explain E555)"
   check "tomato help lists the seed commands" "3" "$($t help | grep -c 'tomato seed ')"
 }
@@ -1051,9 +1062,9 @@ tomato = "0.51"
   check "build tables: no [build] means debug" "debug" "$(mode_of noconf $t run "$P/sub/prog.tom" crash)"
   printf '%s[build]\nmode = "release"\n' "$head" > "$P/tomato.toml"
   check "build tables: [build] mode release applies to run" "release" "$(mode_of noconf $t run "$P/sub/prog.tom" crash)"
-  check "build tables: --mode debug wins over the file" "debug" "$(mode_of noconf $t run "$P/sub/prog.tom" crash --mode debug)"
+  check "build tables: --mode debug wins over the file" "debug" "$(mode_of noconf $t run --mode debug "$P/sub/prog.tom" crash)"
   printf '%s[build]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
-  check "build tables: --mode release wins over a debug file" "release" "$(mode_of noconf $t run "$P/sub/prog.tom" crash --mode release)"
+  check "build tables: --mode release wins over a debug file" "release" "$(mode_of noconf $t run --mode release "$P/sub/prog.tom" crash)"
   printf '%s[build]\nmode = "release"\n[build.crash]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
   check "build tables: [build.ENTRY] overrides [build] for that entry" "debug release" "$(mode_of noconf $t run "$P/sub/prog.tom" crash) $(mode_of noconf $t run "$P/sub/prog.tom" other)"
   check "build tables: build takes --entry the same way" "wrote e1" "$(cd "$P" && noconf $t build sub/prog.tom --entry crash -o e1 2>&1)"
@@ -1082,7 +1093,7 @@ tomato = "0.51"
   check "build tables: tomato config shows the top [build] table" "build.mode = release  ($here/tomato.toml)" "$(noconf $t config "$P/sub/prog.tom" | tail -n 1)"
   check "build tables: tomato compile prints no settings comment" "0" "$(noconf $t compile "$P/sub/prog.tom" | grep -c '^;%')"
   rm -f "$P/tomato.toml"
-  check "build tables: with no manifest --mode alone decides" "release debug" "$(mode_of noconf $t run "$P/sub/prog.tom" crash --mode release) $(mode_of noconf $t run "$P/sub/prog.tom" crash)"
+  check "build tables: with no manifest --mode alone decides" "release debug" "$(mode_of noconf $t run --mode release "$P/sub/prog.tom" crash) $(mode_of noconf $t run "$P/sub/prog.tom" crash)"
   check "build tables: a bad --mode is still refused first" "error[E282]: the mode must be debug or release, not 'fast'" "$(noconf $t run "$P/sub/prog.tom" --mode fast 2>&1)"
 }
 t_cli_seeds() { # local seeds (D95a): tomato seed install/check/hash, tomato.lock, the seed lookup between the program's folder and std/
@@ -1091,7 +1102,7 @@ t_cli_seeds() { # local seeds (D95a): tomato seed install/check/hash, tomato.loc
   noconf() { TOMATO_HOME="$work/uh" "$@"; }
   sum256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1; else sha256sum | cut -d' ' -f1; fi; }
   # the seed hash v1 of section 6, computed with find, sort and the system's sha256 (independent of the Tomato code)
-  indep_hash() { printf 'sha256:%s' "$(cd "$1" && find . -type f ! -path './.git/*' | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do m=644; [ -x "$f" ] && m=755; printf '%s  %s  %s\n' "$(sum256 < "$f")" "$m" "$f"; done | sum256)"; }
+  indep_hash() { printf 'sha256:%s' "$(cd "$1" && find . -type f ! -path './.git/*' ! -path './builds/*' | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do m=644; [ -x "$f" ] && m=755; printf '%s  %s  %s\n' "$(sum256 < "$f")" "$m" "$f"; done | sum256)"; }
   printf '[seed]\nname = "acme.example/thing"\nversion = "0.3.0"\ntomato = "0.51"\ndescription = "a thing"\nlicense = "MIT"\n' > "$W/thing/tomato.toml"
   printf 'export def greet(n: str) -> str:\n    return "hello " + n\n' > "$W/thing/src/thing.tom"
   printf 'from thing import greet\n\nexport def shout(n: str) -> str:\n    return greet(n).upper()\n' > "$W/thing/src/thing_extra.tom"
@@ -1156,20 +1167,22 @@ HELLO TOMATO" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
 rc=1" "$r"
   (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
   check "seeds: install again records the new hash" "$(indep_hash "$W/thing")" "$(sed -n 's/^hash = "\(.*\)"/\1/p' "$W/app/tomato.lock")"
-  # entry tables: a seed only a test needs is locked with entries, and compiled only for that entry
-  printf '%s[seeds.test]\n"acme.example/other" = { path = "../other" }\n' "$head" > "$W/app/tomato.toml"
+  # [test-seeds] (D94b): a seed only a test needs is locked with test_only, and compiled only for tests
+  printf '%s[test-seeds]\n"acme.example/other" = { path = "../other" }\n' "$head" > "$W/app/tomato.toml"
   (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
-  check "seeds: a seed of [seeds.test] is in the lock with entries" 'name = "acme.example/other"
+  check "seeds: a seed of [test-seeds] is in the lock with test_only" 'name = "acme.example/other"
 version = "1.4.2"
 source = "path"
 path = "../other"
 hash = "'"$(indep_hash "$W/other")"'"
 modules = ["other"]
 seeds = []
-entries = ["test"]' "$(sed -n '/name = "acme.example\/other"/,/^entries/p' "$W/app/tomato.lock")"
-  check "seeds: the seed of [seeds.test] is not in a plain build" "1" "$(cd "$W/app" && noconf $t run sub/needs_other.tom 2>&1 | grep -c "cannot find the module 'other'")"
+test_only = true' "$(sed -n '/name = "acme.example\/other"/,/^test_only/p' "$W/app/tomato.lock")"
+  check "seeds: the seed of [test-seeds] is not in a plain build" "1" "$(cd "$W/app" && noconf $t run sub/needs_other.tom 2>&1 | grep -c "cannot find the module 'other'")"
+  check "seeds: the option --test-seeds finds it" "7" "$(cd "$W/app" && noconf $t run --test-seeds sub/needs_other.tom 2>&1)"
+  check "seeds: so does build --test-seeds" "7" "$(cd "$W/app" && noconf $t build sub/needs_other.tom --test-seeds -o "$work/no_bin" >/dev/null 2>&1 && "$work/no_bin" 2>&1)"
   r="$(cd "$W/app" && noconf $t test sub/needs_other.tom 2>&1)"
-  case "$r" in *"ok   sub/needs_other.tom  (1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "seeds: tomato test reads [seeds.test], so its seeds are found";; *) bad "seeds: tomato test reads [seeds.test], so its seeds are found" "$r";; esac
+  case "$r" in *"ok   sub/needs_other.tom  (1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "seeds: tomato test reads [test-seeds], so its seeds are found";; *) bad "seeds: tomato test reads [test-seeds], so its seeds are found" "$r";; esac
   printf '%s' "$head" > "$W/app/tomato.toml"
   # the lock must hold what the run uses
   r="$(cd "$W/app" && printf '# tomato.lock\nversion = 1\n' > tomato.lock && noconf $t run sub/prog.tom 2>&1)"
@@ -1246,8 +1259,8 @@ entries = ["test"]' "$(sed -n '/name = "acme.example\/other"/,/^entries/p' "$W/a
   badseed "a seed that needs a newer Tomato" '"d.example/badname" = { path = "../badname" }' "error[E562]: HERE/badname/tomato.toml: this needs Tomato 9.0 or newer, and this is Tomato $(cat VERSION)
   = help: install a newer release with \`tomato update\`"
   # one seed in two tables
-  printf '%s[seeds.test]\n"acme.example/thing" = { path = "../other" }\n' "$head" > "$W/app/tomato.toml"
-  case "$(cd "$W/app" && noconf $t seed install 2>&1)" in "error[E564]: "*"the seed acme.example/thing has the path \"../thing\" in [seeds] and \"../other\" in [seeds.test]") ok "seeds: one seed with two paths is an error";; *) bad "seeds: one seed with two paths is an error";; esac
+  printf '%s[test-seeds]\n"acme.example/thing" = { path = "../other" }\n' "$head" > "$W/app/tomato.toml"
+  case "$(cd "$W/app" && noconf $t seed install 2>&1)" in "error[E564]: "*"the seed acme.example/thing has the path \"../thing\" in [seeds] and \"../other\" in [test-seeds]") ok "seeds: one seed with two paths is an error";; *) bad "seeds: one seed with two paths is an error";; esac
   # no seeds at all
   printf '[project]\nname = "app"\nversion = "0.1.0"\ntomato = "0.51"\n' > "$W/app/tomato.toml"; rm -f "$W/app/tomato.lock"
   check "seeds: a manifest with no seeds locks nothing" "the manifest lists no seeds: nothing to lock" "$(cd "$W/app" && noconf $t seed install 2>&1)"
@@ -1276,6 +1289,176 @@ $(indep_hash "$W/other")" "$(cd "$W/other" && noconf $t seed check 2>&1)"
   check "seeds: hash of a missing folder" "error[E572]: $W/nope is not a folder" "$(noconf $t seed hash "$W/nope" 2>&1)"
   check "seeds: an unknown seed command" "error: unknown seed command 'add' (run 'tomato help'; the commands here are install, check and hash)" "$(noconf $t seed add 2>&1)"
 }
+t_cli_project() { # the project layout and the commands that use it (D94b): init, run, build, the built program, raw inputs, File inputs
+  cli_setup
+  noconf() { TOMATO_HOME="$work/uh" "$@"; }
+  mkdir -p "$work/uh"; B="$work/proj"; mkdir -p "$B/hello"; cd "$B/hello" || return 1
+  # ---- tomato init
+  r="$(noconf $t init 2>&1)"
+  check "init: says what it made" "created tomato.toml, src/main.tom, tests/example.tom and .gitignore
+next: tomato run, tomato build, tomato test" "$r"
+  check "init: the project's name is the folder's, the version 0.1.0, tomato the compiler's major and minor" '[project]
+name = "hello"
+version = "0.1.0"
+tomato = "'"$(cat "$root/VERSION" | awk -F. '{ print $1 "." $2 }')"'"' "$(sed -n 1,4p tomato.toml)"
+  check "init: .gitignore leaves builds/ out" "builds/" "$(cat .gitignore)"
+  check "init: the layout" "src/main.tom tests/example.tom" "$(ls src/* tests/* | tr '\n' ' ' | sed 's/ $//')"
+  check "init: the manifest passes tomato config" "project: hello 0.1.0 (needs Tomato $(cat "$root/VERSION" | awk -F. '{ print $1 "." $2 }') or newer)" "$(noconf $t config | tail -n 1)"
+  r="$(noconf $t init 2>&1)"; rc=$?
+  check "init: refuses to overwrite and names the files" "error: tomato init will not overwrite: tomato.toml, src/main.tom, tests/example.tom, .gitignore (nothing was written; move them away, or use another folder); an existing .gitignore needs the line builds/ added by hand
+rc=1" "$r
+rc=$rc"
+  rm -f tests/example.tom
+  check "init: one existing file is named, and the others are not written" "error: tomato init will not overwrite: tomato.toml, src/main.tom, .gitignore (nothing was written; move them away, or use another folder); an existing .gitignore needs the line builds/ added by hand $([ ! -e tests/example.tom ] && echo none-written)" "$(noconf $t init 2>&1 | tr '\n' ' ')$([ ! -e tests/example.tom ] && echo none-written)"
+  mkdir -p "$B/named" && (cd "$B/named" && noconf $t init 'my "app"' >/dev/null 2>&1; check "init: NAME is the project's name, quoted in the file" 'name = "my \"app\""' "$(sed -n 2p tomato.toml)"; check "init: the example test passes" "" "$(noconf $t run tests/example.tom 2>&1)"; check "init: and the hello world runs" "hello, world" "$(noconf $t run 2>&1)")
+  mkdir -p "$B/seedy" && (cd "$B/seedy" && noconf $t init --seed acme.example/thing-x >/dev/null 2>&1
+    check "init --seed: a seed manifest, a module named for the seed, a test that imports it" "[seed] acme.example/thing-x src/thing_x.tom tests/example.tom" "$(sed -n 1p tomato.toml) $(sed -n 2p tomato.toml | sed 's/name = \"\(.*\)\"/\1/') $(ls src/* tests/* | tr '\n' ' ' | sed 's/ $//')"
+    check "init --seed: the placeholders are there, and the seed passes tomato seed check up to the owner" "1" "$(grep -c 'TODO' tomato.toml | sed 's/^2$/1/')"
+    check "init --seed: the example test runs" "" "$(noconf $t run tests/example.tom 2>&1)"
+    check "init --seed: the default owner is a placeholder that seed check accepts as a name" "yourdomain.example/seedy" "$(mkdir -p ../seedy2 && cd ../seedy2 && noconf $t init --seed >/dev/null 2>&1; sed -n 2p tomato.toml | sed 's/name = \"\(.*\)\"/\1/' | sed 's/seedy2/seedy/')")
+  mkdir -p "$B/bad" && (cd "$B/bad"
+    check "init: a bad seed name is refused" "error: 'Bad' is not a seed name: write tomato init --seed owner/name (an owner is lowercase letters, digits, dots and hyphens, a name starts with a letter)" "$(noconf $t init --seed Bad 2>&1)"
+    check "init: an unknown option is refused" "error: unknown option '--lib' for 'tomato init' (usage: tomato init [NAME] [--seed])" "$(noconf $t init --lib 2>&1)"
+    check "init: two names are refused" "error: tomato init takes one NAME, not 'a' and 'b'" "$(noconf $t init a b 2>&1)"
+    [ -z "$(ls -A)" ] && ok "init: a refused init writes nothing" || bad "init: a refused init writes nothing" "$(ls -A)")
+  cd "$B/hello" || return 1
+  # ---- run
+  check "run: no word runs src/main.tom of the project" "hello, world" "$(noconf $t run 2>&1)"
+  check "run: from a folder below the project" "hello, world" "$(cd tests && noconf $t run 2>&1)"
+  cat > src/main.tom <<'EOF'
+from util import twice
+
+@main
+def main(who: str = 'world', times: int = 1):
+    for i in range(times):
+        print('hello,', who)
+
+@prime
+def prime(n: int):
+    print(n, twice(n))
+
+@greet
+def greet():
+    print('group greet')
+
+@greet.loud
+def loud():
+    print('LOUD')
+
+@greet.quiet
+def quiet():
+    print('quiet')
+
+@all
+def all(*args: tuple[str]):
+    print(len(args), args)
+
+@lines
+def lines(data: File):
+    for l in data:
+        print('>', l.strip())
+
+@nums
+def nums(a: int, b: int = 2):
+    print(a + b)
+EOF
+  printf 'export def twice(n: int) -> int:\n    return n * 2\n' > src/util.tom
+  check "run: an entry of src/main.tom and its inputs (a word with no .tom and no / is an entry)" "17 34" "$(noconf $t run prime 17 2>&1)"
+  check "run: main's defaults, and main given its inputs" "hello, world
+hello, bob
+hello, bob" "$(noconf $t run 2>&1; noconf $t run main bob 2 2>&1)"
+  check "run: a dotted entry, and the group of a dotted name" "LOUD
+group greet
+LOUD
+quiet" "$(noconf $t run greet.loud 2>&1; noconf $t run greet 2>&1)"
+  check "run: FILE ENTRY INPUTS is the full form" "17 34" "$(noconf $t run src/main.tom prime 17 2>&1)"
+  check "run: everything after the entry is raw input, options included" "4 ('a', '--mode', 'release', '-o')" "$(noconf $t run all a --mode release -o 2>&1)"
+  check "run: -- ends the options, and the next word is still the entry" "2 ('-x', '--mode')" "$(noconf $t run -- all -x --mode 2>&1)"
+  check "run: an option before the entry is read, and the entry still runs" "17 34" "$(noconf $t run --mode debug prime 17 2>&1)"
+  check "run: an option before the entry is read (--mode release makes the release error text)" "error E01:6" "$(printf '@main\ndef main():\n    half(0)\n\ndef half(n: int):\n    print(5 // n)\n' > src/zero.tom; noconf $t run --mode release src/zero.tom 2>&1)"
+  check "run: an unknown option before the entry is refused" "error: unknown option '-x' for 'tomato run' (options go before the entry: the words after it are its inputs, read as they are; after -- no word is an option)" "$(noconf $t run -x 2>&1)"
+  check "run: a second file word is refused with a hint" "error: 'src/util.tom' looks like a file, but the file is already src/main.tom: after it comes an entry name such as main (tomato run FILE [ENTRY [INPUTS...]])" "$(noconf $t run src/main.tom src/util.tom 2>&1)"
+  r="$(noconf $t run nosuch 2>&1)"; case "$r" in "error[E"*"]: no function is marked @nosuch"*) ok "run: an entry that does not exist is a compile error";; *) bad "run: an entry that does not exist is a compile error" "$r";; esac
+  check "run: an input that is not a number names its position" "1" "$(noconf $t run prime x 2>&1 | grep -c "input 1 must be a whole number, found 'x'")"
+  check "run: too few inputs says that an input needs a default to be left out" "1" "$(noconf $t run nums 2>&1 | grep -c "takes 2 input(s), got 0 (an input can be left out only if it has a default")"
+  # ---- File inputs
+  printf 'one\ntwo\n' > in.txt
+  check "File input: a file is opened for reading and closed after the entry" "> one
+> two" "$(noconf $t run lines in.txt 2>&1)"
+  check "File input: - is standard input" "> x
+> y" "$(printf 'x\ny\n' | noconf $t run lines - 2>&1)"
+  check "File input: a missing file stops with a message naming the input before the entry runs" "error[E592]: input 1 must be a file that can be read, but 'nofile.txt' cannot be opened: No such file or directory" "$(noconf $t run lines nofile.txt 2>&1 | head -n 1)"
+  check "File input: a folder cannot be read either" "1" "$(noconf $t run lines src 2>&1 | grep -c "input 1 must be a file that can be read, but 'src' cannot be opened")"
+  check "File input: no word for it is the usage error" "1" "$(noconf $t run lines 2>&1 | grep -c "takes 1 input(s), got 0")"
+  printf '@main\ndef main(f: File = None):\n    print(1)\n' > src/dflt.tom
+  r="$(noconf $t run src/dflt.tom 2>&1 | head -n 1)"
+  case "$r" in "error[E"*"]: a File input cannot have a default"*|"error[E"*"]: "*) ok "File input: a default is refused at compile time";; *) bad "File input: a default is refused at compile time" "$r";; esac
+  check "File input: and the message says why" "1" "$(noconf $t run src/dflt.tom 2>&1 | grep -c 'a File input cannot have a default')"
+  # ---- build and the built program
+  rm -f src/dflt.tom src/zero.tom
+  check "build: no word builds src/main.tom into builds/NAME (the project's name)" "wrote builds/hello" "$(noconf $t build 2>&1)"
+  check "builds/NAME: no word runs main" "hello, world" "$(builds/hello 2>&1)"
+  check "builds/NAME: main with inputs, named" "hello, bob" "$(builds/hello main bob 2>&1)"
+  check "builds/NAME: an entry and its inputs" "17 34" "$(builds/hello prime 17 2>&1)"
+  check "builds/NAME: a dotted entry and a group" "LOUD
+group greet
+LOUD
+quiet" "$(builds/hello greet.loud 2>&1; builds/hello greet 2>&1)"
+  check "builds/NAME: raw inputs, options included" "3 ('a', '-b', '--mode')" "$(builds/hello all a -b --mode 2>&1)"
+  check "builds/NAME: a File input from a file and from standard input" "> one
+> two
+> x" "$(builds/hello lines in.txt 2>&1; printf 'x\n' | builds/hello lines - 2>&1)"
+  check "builds/NAME: a missing file stops first" "error[E592]: input 1 must be a file that can be read, but 'no.txt' cannot be opened: No such file or directory" "$(builds/hello lines no.txt 2>&1 | head -n 1)"
+  check "builds/NAME: a first word that is no entry is an error that lists the entries" "error[E591]: this program has no entry '5' (its entries are: main, prime, greet, greet.loud, greet.quiet, all, lines, nums); the first word names the entry and its inputs follow it, as in: main INPUT..." "$(builds/hello 5 2>&1 | head -n 1)"
+  check "builds/NAME: tests are not entries" "1" "$(printf '\n@test.x\ndef x():\n    assert True\n' >> src/main.tom; noconf $t build >/dev/null 2>&1; builds/hello test 2>&1 | grep -c "has no entry 'test'")"
+  check "builds/NAME: sys.argv is the program and the inputs" "2 [x]" "$(printf '\nimport sys\n@argv\ndef argv(*a: tuple[str]):\n    print(len(sys.argv()), a)\n' >> src/main.tom; noconf $t build >/dev/null 2>&1; builds/hello argv x 2>&1 | sed 's/\[.*\]/[x]/' | sed 's/^2 .*/2 [x]/')"
+  check "build --entry: a program with the one entry, taking just its inputs" "34" "$(noconf $t build --entry prime -o builds/p1 >/dev/null 2>&1 && builds/p1 17 2>&1 | sed 's/17 //')"
+  check "build -o: wins over builds/NAME" "wrote other/prog" "$(mkdir -p other; noconf $t build -o other/prog 2>&1 | sed 's#^wrote .*other/prog#wrote other/prog#')"
+  check "build FILE: builds/STEM for another file" "wrote builds/util_main" "$(printf '@main\ndef main():\n    print(7)\n' > src/util_main.tom; noconf $t build src/util_main.tom 2>&1)"
+  check "build: ... and it runs" "7" "$(builds/util_main 2>&1)"
+  check "build: a word that is no file is refused" "error: 'prime' is not a file: a file ends in .tom or has a / in it (tomato build [FILE]; with no FILE it is the project's src/main.tom)" "$(noconf $t build prime 2>&1)"
+  check "build: [build] output of the manifest still applies (D92c)" "wrote $B/hello/out/app" "$(printf '[build]\noutput = "out/app"\n' >> tomato.toml; noconf $t build 2>&1)"
+  check "build: ... and builds/ is then left alone" "no" "$(rm -rf builds; noconf $t build >/dev/null 2>&1; [ -e builds ] && echo yes || echo no)"
+  sed -i '/^\[build\]/,$d' tomato.toml
+  check "build: from a folder below the project, builds/ is the project's" "wrote $B/hello/builds/hello" "$(cd tests && noconf $t build 2>&1)"
+  # ---- src/ is found from tests/
+  printf 'from util import twice\n\n@main\ndef main():\n    assert twice(4) == 8\n    print("ok")\n' > tests/uses_src.tom
+  check "src: a test in tests/ imports a module of src/" "ok" "$(noconf $t run tests/uses_src.tom 2>&1)"
+  printf 'from util import twice\n\n@main\ndef main():\n    assert twice(4) == 9\n' > tests/fails.tom
+  r="$(noconf $t run tests/fails.tom 2>&1)"; rc=$?
+  check "src: a failing assert in a test is an error and a status of 1" "1 1" "$(echo "$r" | grep -c 'assert') $rc"
+  printf 'import main\n\n@main\ndef main():\n    print(1)\n' > tests/imports_main.tom
+  check "src: main cannot be imported, and the message says what to do" "1" "$(noconf $t run tests/imports_main.tom 2>&1 | grep -c "cannot import 'main'")"
+  printf 'import nosuch\n\n@main\ndef main():\n    nosuch.f()\n' > tests/importer.tom
+  check "src: the module that is not found lists the src folder among the places" "1" "$(noconf $t run tests/importer.tom 2>&1 | grep -c 'next to the program, in the src folder of the project and in the standard library')"
+  printf 'from util import twice\n\n@main\ndef main():\n    print(twice("x"))\n' > tests/typo.tom
+  check "src: an error in a module of src/ names src/util.tom" "1" "$(noconf $t run tests/typo.tom 2>&1 | grep -c -- '--> src/util.tom\|--> tests/typo.tom')"
+  rm -f tests/fails.tom tests/imports_main.tom tests/importer.tom tests/typo.tom
+  # the example project of the repository
+  cp -R "$root/examples/project" "$work/exproj" && cd "$work/exproj" || return 1
+  check "examples/project: tomato run is the usage line" "usage: tomato run count FILE    (a file, or - for standard input)" "$(noconf $t run 2>&1)"
+  check "examples/project: an entry with a File input" "9" "$(noconf $t run count words.txt 2>&1)"
+  check "examples/project: from standard input" "3" "$(printf 'a b c' | noconf $t run count - 2>&1)"
+  check "examples/project: its test (a module of src/ imported from tests/) passes" "" "$(noconf $t run tests/test_words.tom 2>&1)"
+  check "examples/project: built and run" "9" "$(noconf $t build >/dev/null 2>&1 && builds/wordcount count words.txt 2>&1)"
+  cd "$B/hello" || return 1
+  # ---- outside a project
+  mkdir -p "$B/loose" && cd "$B/loose" || return 1
+  printf '@main\ndef main():\n    print(3)\n' > a.tom
+  check "run: no word and no project is an error that says what to do" "error: there is no tomato.toml in this folder or a parent folder, so there is no project's src/main.tom to run: name a file (tomato run FILE.tom), or start a project here with tomato init" "$(noconf $t run 2>&1)"
+  check "build: no word and no project is the same error" "error: there is no tomato.toml in this folder or a parent folder, so there is no project's src/main.tom to build: name a file (tomato build FILE.tom), or start a project here with tomato init" "$(noconf $t build 2>&1)"
+  check "build: a file outside a project goes to builds/ of the current folder" "wrote builds/a" "$(noconf $t build a.tom 2>&1)"
+  check "build: ... and runs" "3" "$(builds/a)"
+  mkdir -p "$B/empty/src" && cd "$B/empty" && printf '[project]\nname = "e"\nversion = "0.1.0"\ntomato = "0.51"\n' > tomato.toml
+  check "run: a project with no src/main.tom says so" "error: the project in $B/empty has no src/main.tom (the program of a project is src/main.tom; tomato run FILE.tom runs another file)" "$(noconf $t run 2>&1)"
+  # ---- a seed's hash leaves builds/ out
+  mkdir -p "$B/sd/src" && cd "$B/sd" && printf '[seed]\nname = "acme.example/sd"\nversion = "1.0.0"\ntomato = "0.51"\n' > tomato.toml && printf 'export def f() -> int:\n    return 1\n' > src/sd.tom
+  h1="$(noconf $t seed hash .)"; mkdir -p builds && printf 'x' > builds/prog; h2="$(noconf $t seed hash .)"
+  check "seed hash: a top-level builds/ is not part of the seed" "$h1" "$h2"
+  mkdir -p src/builds && printf 'y' > src/builds/z.tom; h3="$(noconf $t seed hash .)"
+  [ "$h1" != "$h3" ] && ok "seed hash: a builds folder deeper down still counts" || bad "seed hash: a builds folder deeper down still counts"
+  cd "$root" || return 1
+}
 t_manifest_logic() { # the rules of compiler/src/manifest.tom as @test functions, and its version order against the shell's semver_cmp
   cli_setup
   mkdir -p "$work/ml"; cp compiler/src/manifest.tom compiler/src/config.tom tests/manifest_logic.tom "$work/ml/"
@@ -1297,7 +1480,7 @@ t_cli_repl_1() {
   check "-- passes flag-like inputs" "[-o][--entry]" "$($t run "$work/echo.tom" -- main -o --entry)"
   r="$(sh native/tomato update 2>&1)"; case "$r" in *"is not one (run ./install-native.sh in a checkout)"*) ok "update refuses to run from a checkout (it would replace its native/ folder)";; *) bad "update refuses to run from a checkout (it would replace its native/ folder)" "$r";; esac
   # an option at the end without its value is a usage error (it once took a word moved to the end as its value: `build f x -o` wrote x)
-  check "an option at the end without its value is a usage error" "2 2 2 none" "$(cd "$work" && { $t run echo.tom main --color > /dev/null 2>&1; a=$?; $t build echo.tom x -o > /dev/null 2>&1; b=$?; $t test echo.tom echo.tom --filter > /dev/null 2>&1; c=$?; [ -e x ] && w=made || w=none; echo "$a $b $c $w"; })"
+  check "an option at the end without its value is a usage error" "2 2 2 none" "$(cd "$work" && { $t run echo.tom --color > /dev/null 2>&1; a=$?; $t build echo.tom -o > /dev/null 2>&1; b=$?; $t test echo.tom echo.tom --filter > /dev/null 2>&1; c=$?; [ -e x ] && w=made || w=none; echo "$a $b $c $w"; })"
   check "repl: variables, functions, new output only" "7
 9
 hi" "$(printf 'x = 3\nx + 4\ndef sq(n: int) -> int:\n    return n * n\n\nsq(x)\nprint("hi")\n:quit\n' | $t repl)"
@@ -1465,16 +1648,16 @@ t_cli_repl_history() {   # the pty session is slow (it compiles after each line)
 t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, layout, frames, whole sessions on a FakeTerminal), debug and release
   cli_setup
   for mode in debug release; do
-    r="$($t run tests/lineedit_logic.tom test --mode $mode 2>&1 | tail -1)"
-    case "$r" in *" passed, 0 failed, 0 skipped") ok "lineedit: the @test functions pass ($mode mode): $r";; *) bad "lineedit: the @test functions pass ($mode mode)" "$($t run tests/lineedit_logic.tom test --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+    r="$($t run --mode $mode tests/lineedit_logic.tom test 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "lineedit: the @test functions pass ($mode mode): $r";; *) bad "lineedit: the @test functions pass ($mode mode)" "$($t run --mode $mode tests/lineedit_logic.tom test 2>&1 | grep -v '^ok ' | head -12)";; esac
   done
 }
 t_todo_shell_logic() { # the worked example examples/todo_shell.tom: its commands, its Completer and whole shell sessions on a FakeTerminal, debug and release (the files are copied together: the test imports the example from beside it)
   cli_setup
   cp examples/todo_shell.tom tests/todo_shell_logic.tom "$work/"
   for mode in debug release; do
-    r="$($t run "$work/todo_shell_logic.tom" test --mode $mode 2>&1 | tail -1)"
-    case "$r" in *" passed, 0 failed, 0 skipped") ok "todo_shell example: the @test functions pass ($mode mode): $r";; *) bad "todo_shell example: the @test functions pass ($mode mode)" "$($t run "$work/todo_shell_logic.tom" test --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+    r="$($t run --mode $mode "$work/todo_shell_logic.tom" test 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "todo_shell example: the @test functions pass ($mode mode): $r";; *) bad "todo_shell example: the @test functions pass ($mode mode)" "$($t run --mode $mode "$work/todo_shell_logic.tom" test 2>&1 | grep -v '^ok ' | head -12)";; esac
   done
   check "todo_shell example: piped input runs the commands" "todo shell: add, done, undo, rm, list, clear, help, quit
 added 1: milk
@@ -1804,7 +1987,7 @@ $rc"
 tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test "$work/tneeds.tom" 2>&1)"; rc=$?
   check "tomato test: a main with an input that has no default fails, says the rule and shows the runtime's message" "FAIL $work/tneeds.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
-    error[E352]: the entry point takes 1 input(s), got 0
+    error[E352]: the entry point takes 1 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))
 tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED
 1" "$r
 $rc"
@@ -1834,7 +2017,7 @@ $rc"
 tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test "$work/tentries.tom" check 2>&1)"
   check "tomato test FILE ENTRY with the inputs missing fails, says the rule and shows the runtime's message" "FAIL $work/tentries.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
-    error[E352]: the entry point takes 2 input(s), got 0
+    error[E352]: the entry point takes 2 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))
 tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
   r="$($t test "$work/tentries.tom" nosuch 2>&1)"
   check "tomato test FILE ENTRY: an entry that is not in the file fails with the compiler's message" "FAIL $work/tentries.tom  (did not compile)
@@ -1915,7 +2098,7 @@ hello..." "$($t run "$work/tg.tom" greet 2>&1)"
   check "the default entry is still @main" "main" "$($t run "$work/tg.tom" 2>&1)"
   check "a group runs in release mode too" "hello
 HELLO
-hello..." "$($t run "$work/tg.tom" greet --mode release 2>&1)"
+hello..." "$($t run --mode release "$work/tg.tom" greet 2>&1)"
   check "tomato build --entry greet.quiet writes a program that runs only that function" "hello..." "$($t build "$work/tg.tom" --entry greet.quiet -o "$work/tg_quiet" >/dev/null 2>&1 && "$work/tg_quiet" 2>&1)"
   cat > "$work/tdot.tom" <<'TD'
 from testing import assert_equal
@@ -1954,7 +2137,7 @@ FAIL fails
 ok   a_y
 2 passed, 0 failed, 0 skipped" "$r"
   check "a selected run that passes exits 0" "0" "$rc"
-  r="$($t run "$work/tdot.tom" test.fails --mode release 2>&1)"; rc=$?
+  r="$($t run --mode release "$work/tdot.tom" test.fails 2>&1)"; rc=$?
   check "the entry test.fails runs that test alone, and exits 1" "FAIL fails
      expected 2, got 1
 0 passed, 1 failed, 0 skipped 1" "$r $rc"
@@ -2015,6 +2198,7 @@ spawn_cli t_cli_config
 spawn_cli t_cli_manifest
 spawn_cli t_cli_build_tables
 spawn_cli t_cli_seeds
+spawn_cli t_cli_project
 spawn_cli t_manifest_logic
 spawn_cli t_cli_repl_1 1
 spawn_cli t_cli_repl_1 2
@@ -2038,8 +2222,8 @@ spawn_cli t_cli_test 5
 t_terminal_logic() { # std/terminal.tom: the pure parts as @test functions (the key decoder at every byte split, widths, SGR lowering, color depth), debug and release
   cli_setup
   for mode in debug release; do
-    r="$($t run tests/terminal_logic.tom test --mode $mode 2>&1 | tail -1)"
-    case "$r" in *" passed, 0 failed, 0 skipped") ok "terminal: the @test functions pass ($mode mode): $r";; *) bad "terminal: the @test functions pass ($mode mode)" "$($t run tests/terminal_logic.tom test --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+    r="$($t run --mode $mode tests/terminal_logic.tom test 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "terminal: the @test functions pass ($mode mode): $r";; *) bad "terminal: the @test functions pass ($mode mode)" "$($t run --mode $mode tests/terminal_logic.tom test 2>&1 | grep -v '^ok ' | head -12)";; esac
   done
 }
 t_terminal_pty() { # std/terminal.tom on a real terminal (a pty), through expect: raw mode, keys, size and resize, and the restore however the program ends
@@ -2048,7 +2232,7 @@ t_terminal_pty() { # std/terminal.tom on a real terminal (a pty), through expect
     [ -n "$CI" ] && bad "terminal pty test" "expect is required in CI" || echo "skip: expect is not installed, so the terminal pty test did not run"
     return
   fi
-  if $t build tests/terminal_pty.tom -o "$work/terminal_pty" > "$work/e" 2>&1; then
+  if $t build tests/terminal_pty.tom --entry main -o "$work/terminal_pty" > "$work/e" 2>&1; then
     check "terminal: raw mode, keys, size, resize and the restore on a pty" "ok" "$(expect tests/terminal_pty.exp "$work/terminal_pty" 2>&1 | tail -1)"
   else bad "terminal pty test: tests/terminal_pty.tom does not build" "$(head -5 "$work/e")"; fi
 }

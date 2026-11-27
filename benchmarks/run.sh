@@ -105,8 +105,8 @@ for b in $benchmarks; do
     src="$here/$b/$b.$(ext "$l")"; bin="$work/$b.$l"
     [ -f "$src" ] || continue         # not every benchmark is written in every language
     case "$l" in
-      tomato) set -- "$home/bin/tomato" build "$src" -o "$bin" --mode "$release_mode" ;;
-      tomato-debug) set -- "$home/bin/tomato" build "$src" -o "$bin" --mode debug ;;
+      tomato) set -- "$home/bin/tomato" build "$src" --entry main -o "$bin" --mode "$release_mode" ;;
+      tomato-debug) set -- "$home/bin/tomato" build "$src" --entry main -o "$bin" --mode debug ;;
       go) set -- "$(command -v go)" build -o "$bin" "$src" ;;
       rust) if [ -f "$here/$b/Cargo.toml" ]; then   # a benchmark that needs a crate (bigint: num-bigint) is a small Cargo project
           set -- /bin/sh -c 'cargo build --release --locked --quiet --manifest-path "$1/Cargo.toml" --target-dir "$2" && cp "$2/release/$3" "$4"' sh "$here/$b" "$work/cargo" "$b" "$bin"

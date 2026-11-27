@@ -564,7 +564,7 @@ ConfigError {}: {} is a {} seed, and only a project can use those: a seed can us
 ConfigError {}: the seed {} is written as a {} seed in {} and as a {} seed in {}: it must be one source
 ConfigError {}: {} must be "debug" or "release", not "{}"
 ConfigError {}: {}.target is reserved for a later version and cannot be set yet
-ConfigError {}: [seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file
+ConfigError {}: [{}] needs a [project] table (a program) or a [seed] table (a package) in the same file
 ConfigError {}: {} must be a version such as "1.2.0", or a table { git = "URL", rev = "COMMIT" } or { path = "../folder" }, not {}
 ConfigError {}: tomato.lock is missing or does not hold what tomato.toml needs (a seed, its source or its version): run tomato seed install
 ConfigError {}: the seed {} comes from git, which this version cannot fetch yet
@@ -587,3 +587,8 @@ ValueError cwd cannot be empty (leave it out to run in the current directory)
 ValueError timeout must be more than 0 seconds
 ProcessError the program did not succeed
 ProcessTimeout the program did not finish within its timeout
+ConfigError {}: [{}.{}] is not allowed: a table in [{}] names a seed with a slash, "owner/name"; seeds used only by tests go in [test-seeds], the one table for them
+ValueError this program has no entry '{}' (its entries are: {}); the first word names the entry and its inputs follow it, as in: main INPUT...
+IOError input {} must be a file that can be read, but '{}' cannot be opened: {}
+CompileError a File input cannot have a default: its word is the path of a file to read (or - for standard input), and there is no file to fall back on
+CompileError cannot import 'main': it is the name the program itself has

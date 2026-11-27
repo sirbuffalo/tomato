@@ -1,8 +1,10 @@
 # Entry points that take inputs: @name marks a function that `tomato run FILE NAME INPUTS...` starts, and each input is
-# converted to its parameter's type (a number, a text, True or False).
+# converted to its parameter's type (a number, a text, True or False). Everything after the entry name is input, as it is typed.
 #   tomato run examples/args.tom                    runs main: no inputs
 #   tomato run examples/args.tom prime 17           prints: 17 True
 #   tomato run examples/args.tom greet bob 2 True   prints BOB twice
+# A program built with `tomato build examples/args.tom -o args` takes the same words: `./args prime 17`, and `./args` for main.
+# (A function that takes `*words: tuple[str]` gets every input as text; a parameter typed File gets a file opened from the input.)
 from math import is_prime
 
 @main

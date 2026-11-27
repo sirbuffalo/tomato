@@ -91,7 +91,7 @@ def a_project_reads():
 
 @test.a_seed_reads_with_its_optional_keys
 def a_seed_reads_with_its_optional_keys():
-    m = load('[seed]\nname = "acme.example/json5"\nversion = "1.2.0"\ntomato = "0.52"\ndescription = "JSON5"\nlicense = "MIT"\nmodules = ["json5", "json5_pretty"]\n\n[seeds]\n"other.example/strutil" = "0.4.1"\n\n[seeds.test]\n"other.example/fixtures" = "1.0.0"\n')
+    m = load('[seed]\nname = "acme.example/json5"\nversion = "1.2.0"\ntomato = "0.52"\ndescription = "JSON5"\nlicense = "MIT"\nmodules = ["json5", "json5_pretty"]\n\n[seeds]\n"other.example/strutil" = "0.4.1"\n\n[test-seeds]\n"other.example/fixtures" = "1.0.0"\n')
     assert_equal(m.kind, 'seed')
     assert_equal(m.description, 'JSON5')
     assert_equal(m.license, 'MIT')
@@ -110,7 +110,7 @@ def a_settings_only_file_reads_as_no_kind():
 
 @test.the_seeds_of_every_form
 def the_seeds_of_every_form():
-    m = load('[project]\nname = "p"\nversion = "0.1.0"\ntomato = "0.51"\n\n[seeds]\n"acme.example/json5" = "1.2.0"\n"dave.example/scratch" = { git = "https://git.example.net/d/s.git", rev = "9f2c" }\n"local/thing" = { path = "../thing" }\n\n[seeds.greet.loud]\n"x.example/colors" = "0.2.0"\n\n[seed-store]\nvendor = "vendor"\n')
+    m = load('[project]\nname = "p"\nversion = "0.1.0"\ntomato = "0.51"\n\n[seeds]\n"acme.example/json5" = "1.2.0"\n"dave.example/scratch" = { git = "https://git.example.net/d/s.git", rev = "9f2c" }\n"local/thing" = { path = "../thing" }\n\n[test-seeds]\n"x.example/colors" = "0.2.0"\n\n[seed-store]\nvendor = "vendor"\n')
     assert_equal(len(m.reqs), 4)
     assert_equal(m.reqs[0].kind, 'version')
     assert_equal(m.reqs[0].version, '1.2.0')
@@ -119,18 +119,13 @@ def the_seeds_of_every_form():
     assert_equal(m.reqs[1].rev, '9f2c')
     assert_equal(m.reqs[2].kind, 'path')
     assert_equal(m.reqs[2].path, '../thing')
-    assert_equal(m.reqs[3].table, 'greet.loud')
+    assert_equal(m.reqs[3].table, 'test')
     assert_equal(m.vendor, 'vendor')
-
-@test.seeds_subtables_are_not_unknown_tables
-def seeds_subtables_are_not_unknown_tables():
-    # the follow-up of D92b: [seeds.ENTRY] is a table the reader must allow
-    assert_equal(problem('[project]\nname = "p"\nversion = "0.1.0"\ntomato = "0.51"\n[seeds.test]\n"a.example/x" = "1.0.0"\n[seeds.test.parse]\n"a.example/y" = "1.0.0"\n'), '')
 
 @test.unknown_tables_and_keys_are_errors
 def unknown_tables_and_keys_are_errors():
-    assert_equal(problem('[sedes]\n'), "E555 mf.toml: unknown table [sedes] (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)")
-    assert_equal(problem('name = "x"\n'), "E555 mf.toml: unknown key name (the tables are project, seed, seeds, seed-store, build, limits; every setting is in a table)")
+    assert_equal(problem('[sedes]\n'), "E555 mf.toml: unknown table [sedes] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)")
+    assert_equal(problem('name = "x"\n'), "E555 mf.toml: unknown key name (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)")
     assert_equal(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\nlicence = "MIT"\n'), 'E558 mf.toml: unknown setting project.licence (the settings of [project] are name, version, tomato)')
     assert_true(problem('[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "1.0"\nauthors = []\n').startswith('E558 mf.toml: unknown setting seed.authors'))
     assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seed-store]\nfolder = "v"\n').startswith('E558 mf.toml: unknown setting seed-store.folder'))
@@ -150,7 +145,7 @@ def required_settings():
 def wrong_types():
     assert_equal(problem('[project]\nname = 5\nversion = "1.0.0"\ntomato = "1.0"\n'), 'E559 mf.toml: project.name must be a string, not 5')
     assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"a.example/x" = 5\n').startswith('E568 '))
-    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\nfoo = "1.0.0"\n').startswith('E559 mf.toml: seeds.foo must be a table of seeds'))
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\nfoo = "1.0.0"\n').startswith('E555 mf.toml: unknown key "foo" in [seeds]'))
     assert_true(problem('[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "1.0"\nmodules = "x"\n').startswith('E559 mf.toml: seed.modules must be an array'))
     assert_true(problem('seeds = 5\n').startswith('E555 ') or problem('seeds = 5\n').startswith('E567 ') or problem('seeds = 5\n').startswith('E559 '))
 
@@ -159,7 +154,7 @@ def bad_versions_and_names():
     assert_equal(problem('[project]\nname = "p"\nversion = "1.0"\ntomato = "1.0"\n'), 'E560 mf.toml: project.version is "1.0", which is not a version: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0')
     assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "latest"\n').startswith('E560 mf.toml: project.tomato is "latest"'))
     assert_true(problem('[seed]\nname = "json5"\nversion = "1.0.0"\ntomato = "1.0"\n').startswith('E561 mf.toml: seed.name "json5" is not a seed name'))
-    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"nosuch" = "1.0.0"\n').startswith('E559 mf.toml: seeds.nosuch must be a table of seeds'))
+    assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"nosuch" = "1.0.0"\n').startswith('E555 mf.toml: unknown key "nosuch" in [seeds]'))
     assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"Acme/x" = "1.0.0"\n').startswith('E561 mf.toml: "Acme/x" in [seeds] is not a seed name'))
     assert_true(problem('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"a.example/x" = "1.0"\n').startswith('E560 mf.toml: seeds."a.example/x" is "1.0"'))
 
@@ -168,7 +163,7 @@ def git_and_path_seeds_are_for_projects():
     seed = '[seed]\nname = "a.example/x"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n'
     assert_true(problem(seed + '"b.example/y" = { path = "../y" }\n').startswith('E563 '))
     assert_true(problem(seed + '"b.example/y" = { git = "u", rev = "r" }\n').startswith('E563 '))
-    assert_true(problem(seed + '[seeds.test]\n"b.example/y" = { path = "../y" }\n').startswith('E563 mf.toml: seeds.test."b.example/y" is a path seed'))
+    assert_true(problem(seed + '[test-seeds]\n"b.example/y" = { path = "../y" }\n').startswith('E563 mf.toml: test-seeds."b.example/y" is a path seed'))
     assert_equal(problem(seed + '"b.example/y" = "1.0.0"\n'), '')
 
 @test.seed_requirement_forms_are_checked
@@ -220,50 +215,63 @@ def build_settings_are_checked():
     assert_true(problem(head + '[build]\noutput = ""\n').startswith('E559 '))
     assert_true(problem(head + '[build.test]\noptimize = true\n').startswith('E558 mf.toml: unknown setting build.test.optimize'))
 
-@test.which_tables_a_run_reads
-def which_tables_a_run_reads():
-    assert_true(table_applies('', 'main', True))
-    assert_true(table_applies('test', 'test', True))
-    assert_true(table_applies('test', 'test.parse', True))
-    assert_false(table_applies('test.parse', 'test.run', True))
-    assert_true(table_applies('test.parse', 'test', True))
-    assert_false(table_applies('test.parse', 'test', False))
-    assert_false(table_applies('tes', 'test', True))
-    assert_false(table_applies('test', 'tester', True))
-    assert_false(table_applies('greet', 'main', True))
+@test.which_build_tables_a_run_reads
+def which_build_tables_a_run_reads():
+    assert_true(table_applies('', 'main'))
+    assert_true(table_applies('test', 'test'))
+    assert_true(table_applies('test', 'test.parse'))
+    assert_false(table_applies('test.parse', 'test.run'))
+    assert_false(table_applies('test.parse', 'test'))
+    assert_false(table_applies('tes', 'test'))
+    assert_false(table_applies('test', 'tester'))
+    assert_false(table_applies('greet', 'main'))
 
-@test.seeds_of_a_run_are_merged
-def seeds_of_a_run_are_merged():
-    m = load('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"a.example/x" = "1.0.0"\n"l/p" = { path = "../p" }\n[seeds.test]\n"a.example/x" = "1.2.0"\n"b.example/y" = "2.0.0"\n[seeds.greet]\n"c.example/z" = "0.1.0"\n')
-    plain = seeds_for(m, 'main', False)
+@test.seeds_of_a_build_are_merged
+def seeds_of_a_build_are_merged():
+    m = load('[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n"a.example/x" = "1.0.0"\n"l/p" = { path = "../p" }\n[test-seeds]\n"a.example/x" = "1.2.0"\n"b.example/y" = "2.0.0"\n')
+    plain = seeds_for(m, False, False)
     assert_equal(len(plain.reqs), 2)
     assert_equal(plain.reqs[0].version, '1.0.0')
-    run_test = seeds_for(m, 'test', False)
-    assert_equal(len(run_test.reqs), 3)
-    assert_equal(run_test.reqs[0].version, '1.2.0')
-    assert_equal(run_test.tables[0], ['', 'test'])
-    assert_equal(run_test.tables[2], ['test'])
-    everything = seeds_for(m, '', True)
-    assert_equal(len(everything.reqs), 4)
+    for_tests = seeds_for(m, True, False)
+    assert_equal(len(for_tests.reqs), 3)
+    assert_equal(for_tests.reqs[0].version, '1.2.0')
+    assert_equal(for_tests.tables[0], ['', 'test'])
+    assert_equal(for_tests.tables[2], ['test'])
+    everything = seeds_for(m, False, True)
+    assert_equal(len(everything.reqs), 3)
 
 @test.one_seed_in_two_tables_must_agree
 def one_seed_in_two_tables_must_agree():
     head = '[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n'
-    differing = load(head + '"a.example/x" = "1.0.0"\n[seeds.test]\n"a.example/x" = { path = "../x" }\n')
+    differing = load(head + '"a.example/x" = "1.0.0"\n[test-seeds]\n"a.example/x" = { path = "../x" }\n')
     try:
-        seeds_for(differing, '', True)
+        seeds_for(differing, False, True)
         assert_true(False, 'forms that differ were accepted')
     catch ConfigError as e:
         assert_equal(e.code, 564)
-    other_path = load(head + '"l/x" = { path = "../x" }\n[seeds.test]\n"l/x" = { path = "../other" }\n')
+    other_path = load(head + '"l/x" = { path = "../x" }\n[test-seeds]\n"l/x" = { path = "../other" }\n')
     try:
-        seeds_for(other_path, '', True)
+        seeds_for(other_path, False, True)
         assert_true(False, 'two paths were accepted')
     catch ConfigError as e:
         assert_equal(e.code, 564)
     # the same source twice is fine
-    same = load(head + '"l/x" = { path = "../x" }\n[seeds.test]\n"l/x" = { path = "../x" }\n')
-    assert_equal(len(seeds_for(same, '', True).reqs), 1)
+    same = load(head + '"l/x" = { path = "../x" }\n[test-seeds]\n"l/x" = { path = "../x" }\n')
+    assert_equal(len(seeds_for(same, False, True).reqs), 1)
+
+@test.the_tables_for_tests_are_one_table
+def the_tables_for_tests_are_one_table():
+    head = '[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n'
+    assert_true(problem(head + '[seeds.test]\n"a.example/x" = "1.0.0"\n').startswith('E590 mf.toml: [seeds.test] is not allowed'))
+    assert_true('[test-seeds]' in problem(head + '[seeds.test]\n"a.example/x" = "1.0.0"\n'))
+    assert_true(problem(head + '[seeds.greet.loud]\n"a.example/x" = "1.0.0"\n').startswith('E590 mf.toml: [seeds.greet] is not allowed'))
+    assert_true(problem(head + '[test-seeds.x]\n"a.example/x" = "1.0.0"\n').startswith('E590 mf.toml: [test-seeds.x] is not allowed'))
+    assert_true(problem(head + '[seeds]\nfoo = "1.0.0"\n').startswith('E555 mf.toml: unknown key "foo" in [seeds]'))
+    assert_true(problem('[test-seeds]\n"a.example/x" = "1.0.0"\n').startswith('E567 mf.toml: [test-seeds] needs a [project]'))
+    assert_true(problem('[seed]\nname = "a.example/s"\nversion = "1.0.0"\ntomato = "1.0"\n[test-seeds]\n"b.example/y" = { path = "../y" }\n').startswith('E563 mf.toml: test-seeds."b.example/y" is a path seed'))
+    m = load(head + '[test-seeds]\n"a.example/x" = "1.0.0"\n')
+    assert_equal(len(m.reqs), 1)
+    assert_equal(m.reqs[0].table, 'test')
 
 @test.the_tomato_key_is_a_minimum
 def the_tomato_key_is_a_minimum():

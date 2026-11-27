@@ -1,0 +1,9 @@
+from words import count_words
+
+@main
+def main():
+    print('usage: tomato run count FILE    (a file, or - for standard input)')
+
+@count
+def count(data: File):
+    print(count_words(data.read()))

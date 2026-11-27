@@ -1,5 +1,5 @@
 # Heap values the compiler allocates and frees by reference counting (D36a).
-# tomato build examples/objects.tom -o objects && ./objects 5
+# tomato build examples/objects.tom -o objects && ./objects main 5
 class Item:
     name: str
     qty: int

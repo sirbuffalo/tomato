@@ -17,6 +17,14 @@ on an older install moves to 1.0.0 as usual.
 
 ### Breaking changes
 
+- A program built by `tomato build` takes `[ENTRY [INPUTS...]]` as its arguments (D94b): no word runs `main`, a first word that names an entry
+  runs that entry with the words after it, and any other first word is an error that lists the entries. What was `./prog 30` for a
+  `main(n: int)` is now `./prog main 30`; `tomato build FILE --entry NAME` still makes a program with that one entry that takes only its inputs.
+- `tomato run X` where X has no `.tom` and no `/` is an entry name, not a file; the options of `tomato run` go before the entry (what
+  follows it is raw input, `tomato run f.tom greet --mode` passes `--mode` to `greet`), and `--` ends the options earlier.
+- `tomato build` with no `-o` writes `builds/NAME` (in the project's folder, or the current folder when there is none), not `./NAME`.
+- `[seeds.ENTRY]` tables of `tomato.toml` are gone (D94b, they were never in a release): `[test-seeds]` lists the seeds only tests use, and
+  `[seeds.test]` is an error that says so. In `tomato.lock` `test_only = true` replaces `entries`.
 - Passing an `int` where an `int[length=64]` is expected is a compile error (convert with `int[length=64](x)`, which
   now checks the range), and `int[length=64]` mixed with `int` is `int` arithmetic.
 - `sin`, `cos` and `tan` of a radian angle give the C library's answer: `sin(rad(pi))` is `1.2246467991473532e-16`
@@ -119,8 +127,14 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
 - `std/lineedit` is finished for other programs (D91a): a single-line mode and `lineedit.read_line`, a `Completer` hook with Tab completion,
   an optional kill ring (Alt-Y), and a worked example, `examples/todo_shell.tom`.
 - The bootstrap IR is compiled in parallel, so installs and builds are quicker.
+- Project layout and `tomato init` (D94b, `docs/manifest.md`): code in `src/` (the program is `src/main.tom`), tests in `tests/`, what a
+  build writes in `builds/` (never part of a build, left out of git by `tomato init`'s `.gitignore`, left out of a seed's hash).
+  `tomato init [NAME] [--seed]` makes it; `tomato run` with no word runs `src/main.tom`; `tomato build` with no word builds it; a test in
+  `tests/` imports the modules of `src/` by name. Entry inputs are raw (`*args: tuple[str]`), and an entry parameter typed `File`
+  is opened for reading from its word (`-` is standard input) before the entry runs, with a message that names the input when it cannot be.
+  A seed's modules may use `!name(...)` foreign declarations (nothing rejects them; `tomato seed add`, not built yet, will list them).
 - `tomato.toml` is a manifest (D95a, `docs/manifest.md`): `[project]` or `[seed]` with `name`, `version` and `tomato` (the oldest
-  compiler that builds it, checked against `tomato version`), `[seeds]` and per-entry `[seeds.test]` tables, `[build]` and
+  compiler that builds it, checked against `tomato version`), `[seeds]` and `[test-seeds]`, `[build]` and
   `[build.ENTRY]` (`mode`, `output`), `[limits]`. Unknown tables and keys are errors, so a typo is caught; a project's
   `tomato.toml` is now checked by every command. `[build]` gives `--mode` and `-o` their defaults (the flags win).
 - Local seeds: `tomato seed install` locks `{ path = "../folder" }` seeds into `tomato.lock` with a sha256 content hash, and a program

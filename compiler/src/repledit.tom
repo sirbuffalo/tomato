@@ -20,7 +20,7 @@
 # --color=always or never decides, else TOMATO_COLOR, NO_COLOR, TERM=dumb and the terminal's own depth (COLORTERM, TERM) do.
 #
 # It sits next to lexer.tom (the compiler's own lexer, which also says whether brackets are still open) and hltomato.tom, and is built
-# by install-native.sh from a copy of the three files (`tomato build repledit.tom --mode release`); it is not part of the compiler.
+# by install-native.sh from a copy of the three files (`tomato build repledit.tom --entry main --mode release`); it is not part of the compiler.
 import os
 import ospath
 import sys

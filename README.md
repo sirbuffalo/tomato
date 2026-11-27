@@ -25,6 +25,16 @@ $ tomato build hello.tom -o hello && ./hello     # a native program
 hello 42
 ```
 
+A project is a folder made by `tomato init`: `tomato.toml`, code in `src/` (the program is `src/main.tom`), tests in `tests/`, and what `tomato build` writes in `builds/`.
+
+```
+$ mkdir hello && cd hello && tomato init
+$ tomato run                  # runs src/main.tom
+$ tomato run greet bob        # an entry of src/main.tom with its inputs (a first word with no .tom and no / is an entry)
+$ tomato build                # writes builds/hello
+$ builds/hello greet bob      # the built program takes [ENTRY [INPUTS...]]
+```
+
 Programs have no top-level code: statements go inside a function, and `@main` marks the one that starts the program. After an install, `~/.tomato/native/examples/` holds the sample programs (`tomato run ~/.tomato/native/examples/compiled.tom main 12`); the guide on the website tours the language.
 
 ## Layout

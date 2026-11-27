@@ -1,4 +1,4 @@
-# The manifest, tomato.toml (docs/package-registry-design.md sections 2 and 13; decisions D92a to D92c): the one file that says what a
+# The manifest, tomato.toml (docs/package-registry-design.md sections 2 and 13; decisions D92a, D92c and D94b): the one file that says what a
 # folder is and how it builds. The `tomato` command finds it (native/tomato: the first tomato.toml at or above the program's folder)
 # and gives its path to the compiler, which reads it here with std/toml. Tables:
 #
@@ -6,7 +6,7 @@
 #   [seed]     name, version, tomato, and optionally description, license, modules    a package that is published
 #   [seeds]    "owner/name" = "1.2.0"                the seeds every build uses; a minimum version, or in a project
 #                                                    { git = "URL", rev = "COMMIT" } or { path = "../folder" }
-#   [seeds.ENTRY]   the same, used only when running that entry (`[seeds.test]`, `[seeds.greet.loud]`, D92b)
+#   [test-seeds]    the same forms, used only by `tomato test` in this folder (D94b); never read by whoever uses a seed
 #   [build]    mode = "debug" | "release", output = "path"; [build.ENTRY] for one entry (D92c); `target` is reserved
 #   [seed-store]    vendor = "folder"                where the project keeps its vendored seeds (read, not used yet)
 #   [limits]   read by config.tom
@@ -24,7 +24,7 @@ export class SeedReq:
     url: str = ''              # kind 'git'
     rev: str = ''
     path: str = ''             # kind 'path': as written (relative to the manifest's folder)
-    table: str = ''            # '' for [seeds], else the entry's dotted name (`[seeds.test]` is 'test')
+    table: str = ''            # '' for [seeds], 'test' for [test-seeds] (D94b)
 
 # the settings of [build] ('' table) or of one [build.ENTRY]; an unset setting is ''
 export class BuildTable:
@@ -248,7 +248,7 @@ def required(path: str, table: Toml, table_name: str, key: str) -> str:
 
 def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
     # one requirement: a string (a minimum version) or a table with git and rev, or path
-    where = 'seeds' if table == '' else 'seeds.' + table
+    where = 'seeds' if table == '' else 'test-seeds'
     req = SeedReq()
     req.name = key
     req.table = table
@@ -285,19 +285,17 @@ def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
     m.reqs.append(req)
 
 def read_seed_table(m: Manifest, t: Toml, table: str):
-    # [seeds] (table '') or [seeds.ENTRY]: the keys with a slash are seeds, the others entry tables below this one
-    where = 'seeds' if table == '' else 'seeds.' + table
+    # [seeds] (table '') or [test-seeds] (table 'test'): every key is a seed, written "owner/name" with a slash. D92b's tables
+    # below them ([seeds.test], [seeds.greet.loud]) are gone (D94b): a table with no slash in its name is refused, with the way out
+    where = 'seeds' if table == '' else 'test-seeds'
     for key in t.keys():
         v = t.lookup(key)
         if '/' in key:
             read_seed_spec(m, key, v, table)
+        elif v.is_table():
+            fail(590, m.path, f'[{where}.{key}] is not allowed: a table in [{where}] names a seed with a slash, "owner/name"; seeds used only by tests go in [test-seeds], the one table for them')
         else:
-            sub = key if table == '' else table + '.' + key
-            if entry_problem(sub):
-                fail(555, m.path, f'unknown key "{key}" in [{where}]: a seed is written "owner/name" with a slash, and a table [{where}.NAME] names an entry')
-            if not v.is_table():
-                fail(559, m.path, f'{where}.{key} must be a table of seeds ([{where}.{key}]), not {kind_word(v)}: a seed is written "owner/name" with a slash')
-            read_seed_table(m, v, sub)
+            fail(555, m.path, f'unknown key "{key}" in [{where}]: a seed is written "owner/name" with a slash')
 
 def read_mode(m: Manifest, v: Toml, label: str) -> str:
     text = need_string(m.path, v, label)
@@ -368,7 +366,7 @@ def read_head(m: Manifest, t: Toml, name: str):
             m.modules.append(text)
 
 export def top_names() -> list[str]:
-    return ['project', 'seed', 'seeds', 'seed-store', 'build', 'limits']
+    return ['project', 'seed', 'seeds', 'test-seeds', 'seed-store', 'build', 'limits']
 
 # The manifest in the file at path, checked: ConfigError E539 to E541 and E555 to E568 say what is wrong, with the file's path
 # first. [limits] is left to config.tom.
@@ -392,11 +390,12 @@ export def read_manifest(path: str) -> Manifest:
     if doc.has('seed'):
         m.kind = 'seed'
         read_head(m, doc.lookup('seed'), 'seed')
-    if doc.has('seeds'):
-        if m.kind == 'none':
-            fail(567, path, '[seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file')
-        need_table(path, doc.lookup('seeds'), '[seeds]')
-        read_seed_table(m, doc.lookup('seeds'), '')
+    for name in ['seeds', 'test-seeds']:
+        if doc.has(name):
+            if m.kind == 'none':
+                fail(567, path, f'[{name}] needs a [project] table (a program) or a [seed] table (a package) in the same file')
+            need_table(path, doc.lookup(name), f'[{name}]')
+            read_seed_table(m, doc.lookup(name), '' if name == 'seeds' else 'test')
     if doc.has('seed-store'):
         store = doc.lookup('seed-store')
         need_table(path, store, '[seed-store]')
@@ -411,15 +410,12 @@ export def read_manifest(path: str) -> Manifest:
 # ---------------------------------------------------------------------------------------------------------------------
 # what a run uses
 
-# does the table (the entry name it is for, '' for the top one) apply to a run of `entry`? The top table always does; an entry
-# table applies when it is the entry or a prefix of it (`test` for a run of `test.parse`), and when below_too, also when it is below
-# it (`test.parse` for a run of `test`, which runs the tests of test.parse too)
-export def table_applies(table: str, entry: str, below_too: bool) -> bool:
+# does the [build.ENTRY] table (the entry name it is for, '' for the top one) apply to a run of `entry`? The top table always does;
+# an entry table applies when it is the entry or a prefix of it (`test` for a run of `test.parse`)
+export def table_applies(table: str, entry: str) -> bool:
     if table == '' or table == entry:
         return True
-    if entry.startswith(table + '.'):
-        return True
-    return below_too and table.startswith(entry + '.')
+    return entry.startswith(table + '.')
 
 def depth(table: str) -> int:
     if table == '':
@@ -437,7 +433,7 @@ export def build_for(m: Manifest, entry: str) -> BuildSettings:
         deepest = max(deepest, depth(b.table))
     for level in range(deepest + 1):
         for b in m.builds:
-            if depth(b.table) != level or not table_applies(b.table, entry, False):
+            if depth(b.table) != level or not table_applies(b.table, entry):
                 continue
             if b.mode != '':
                 out.mode = b.mode
@@ -451,7 +447,7 @@ export def build_for(m: Manifest, entry: str) -> BuildSettings:
 # one seed with the requirements of every table it is listed in merged (design section 2): the higher minimum wins; a git or path
 # source must be the same everywhere
 def where_req(r: SeedReq) -> str:
-    return '[seeds]' if r.table == '' else '[seeds.' + r.table + ']'
+    return '[seeds]' if r.table == '' else '[test-seeds]'
 
 def merge_req(m: Manifest, old: SeedReq, new: SeedReq) -> SeedReq:
     if old.kind != new.kind:
@@ -464,16 +460,17 @@ def merge_req(m: Manifest, old: SeedReq, new: SeedReq) -> SeedReq:
         old.version = new.version
     return old
 
-# the seeds a run of `entry` uses (every_table false), or every seed of every table (the lock holds all of them): one SeedReq per
-# name, in the order first met, with `tables` filled in the second list: for each seed the tables that list it
+# the seeds a build uses: [seeds], and [test-seeds] too when `tests` is true (`tomato test`, D94b); with every_table, every seed of both
+# tables (the lock holds all of them). One SeedReq per name, in the order first met, with `tables` filled in the second list: for
+# each seed the tables that list it ('' for [seeds], 'test' for [test-seeds])
 export class Wanted:
     reqs: list[SeedReq] = []
     tables: list[list[str]] = []
 
-export def seeds_for(m: Manifest, entry: str, every_table: bool) -> Wanted:
+export def seeds_for(m: Manifest, tests: bool, every_table: bool) -> Wanted:
     out = Wanted()
     for r in m.reqs:
-        if not every_table and not table_applies(r.table, entry, True):
+        if not every_table and r.table == 'test' and not tests:
             continue
         at = -1
         for i in range(len(out.reqs)):

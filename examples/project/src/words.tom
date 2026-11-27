@@ -1,0 +1,7 @@
+# A module of the project: src/main.tom and the tests import it as `words`.
+export def count_words(text: str) -> int:
+    count = 0
+    for word in text.replace('\n', ' ').split(' '):
+        if word != '':
+            count += 1
+    return count
