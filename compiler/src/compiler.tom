@@ -7982,6 +7982,7 @@ class Gen:
             kind = '0' if elem == 'int' else ('3' if elem == 'float' else '2')
             r = self.tmp('sorted')
             self.emit(f'{r} = call ptr @tomato_list_sorted(ptr {obj.reg}, i32 {kind})')
+            self.release(obj)       # the runtime only reads its list, so the reference kept above is let go here (a list in a field leaked it)
             copy = ex(r, obj.ty)
         self.emit(f'call void @tomato_list_swap(ptr {obj.reg}, ptr {copy.reg})')
         self.release(copy)

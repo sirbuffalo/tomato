@@ -8,8 +8,6 @@
   Answer the open questions in section 19 of `docs/package-registry-design.md` (1 to 11). The local part is built (D95a, `docs/manifest.md`: the strict manifest reader, `[build]`, path seeds, `tomato.lock`, `tomato seed install/check/hash`, no helper program); what is left is the registry, signatures, the index client and everything under "Not built yet" in the sheet.
 - Settle the compatibility-promise items of docs/language-design-review.md before tagging 1.0.0
   Its ranked list ("Decisions to make, ranked"): triage `docs/provisional.md`, release-mode error messages, builtin shadowing, the `@` namespace and `x is T`, `bytes`, `File` safety, reserved std module names and the `!` interface. Each needs Davis's decision, then a decision entry and the change.
-- Fix `list.sort()` leaking on a list held in an object field
-  Debug mode reports "N object(s) were never freed" when `self.names.sort()` sorts a list that is a field of an object, after appends; sorting a local list and assigning it to the field does not leak. Repro: a class with `names: list[str] = []`, append in a loop, then `self.names.sort()`. Worked around in `ReplCompleter.known` (`compiler/src/repledit.tom`); needs a runtime/compiler fix.
 - Make `tomato seed check` warn about an entry table with no matching entry
   `tomato seed check` should warn when a `[seeds.ENTRY]` names an entry with no matching `@` marker (it would catch a typo such as `[seeds.tset]`, which is otherwise a valid table); see D92b in `docs/decisions.md`.
 - Install seeds from git and keep them in a store

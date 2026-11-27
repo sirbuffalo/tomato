@@ -1,0 +1,68 @@
+# list.sort() on a list held in an object field (or any receiver that owns its reference, not a borrowed local) must not leak a
+# reference: debug mode reports an object that was never freed, and the AddressSanitizer build reports the list
+class Item:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @lt
+    def less(self, other: Item) -> bool:
+        return self.n < other.n
+
+def item_key(it: Item) -> int:
+    return it.n
+
+def by_text(a: str, b: str) -> int:
+    if a < b:
+        return 1
+    if a > b:
+        return -1
+    return 0
+
+class Holder:
+    names: list[str] = []
+    nums: list[int] = []
+    reals: list[float] = []
+    items: list[Item] = []
+
+    def fill(self):
+        for i in range(5):
+            self.names.append('n' + str(5 - i))
+            self.nums.append(5 - i)
+            self.reals.append(5.5 - i)
+            self.items.append(Item(5 - i))
+
+    def plain(self):
+        self.names.sort()
+        self.nums.sort()
+        self.reals.sort()
+        self.items.sort()
+
+    def keyed(self):
+        self.nums.sort(key=x -> -x)
+        self.items.sort(key=item_key)
+
+    def compared(self):
+        self.names.sort(cmp=by_text)
+
+    def show(self):
+        print(self.names, self.nums, self.reals, len(self.items), self.items[0].n, self.items[4].n)
+
+def make() -> Holder:
+    h = Holder()
+    h.fill()
+    return h
+
+@main
+def main():
+    h = make()
+    h.plain()
+    h.show()
+    h.keyed()
+    h.show()
+    h.compared()
+    h.show()
+    make().names.sort()
+    print(len(h.names))
