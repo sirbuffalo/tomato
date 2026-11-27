@@ -1,0 +1,172 @@
+# `t += a` (and every compound assignment, and `t = a + t`) where a is `int | None` and is None, inside a try. The statement hands
+# t's number to the operation, which frees it when it is big; a variable that can stop the program ('None where a value is needed')
+# must not be read after that, or the error path frees the number a second time while t still holds it (a use after free, found by a
+# fuzzer under AddressSanitizer in D102b's tests). t is big here, so the number is a heap object, and after the error it must still be
+# t's own. Every function is run with a value, with None, and with a big value.
+class Box:
+    n: int = 5
+
+def big() -> int:
+    return 4611686018427387904 * 4
+
+def add(a: int | None) -> int:
+    t = big()
+    try:
+        t += a
+    catch RuntimeError:
+        pass
+    return t
+
+def sub(a: int | None) -> int:
+    t = big()
+    try:
+        t -= a
+    catch RuntimeError:
+        pass
+    return t
+
+def mul(a: int | None) -> int:
+    t = big()
+    try:
+        t *= a
+    catch RuntimeError:
+        pass
+    return t
+
+def other_side(a: int | None) -> int:
+    t = big()
+    try:
+        t = a + t
+    catch RuntimeError:
+        pass
+    return t
+
+def other_side_sub(a: int | None) -> int:
+    t = big()
+    try:
+        t = a - t
+    catch RuntimeError:
+        pass
+    return t
+
+def nested_tree(a: int | None) -> int:
+    t = big()
+    try:
+        t = (t + a) * 3
+    catch RuntimeError:
+        pass
+    return t
+
+def deeper(a: int | None) -> int:
+    t = big()
+    try:
+        t = 2 * t + a
+    catch RuntimeError:
+        pass
+    return t
+
+def divided(a: int | None) -> int:
+    t = big()
+    try:
+        t = t // 3 + a
+    catch RuntimeError:
+        pass
+    return t
+
+def twice(a: int | None, b: int | None) -> int:
+    t = big()
+    try:
+        t = t + a + b
+    catch RuntimeError:
+        pass
+    return t
+
+def two_statements(a: int | None) -> int:
+    t = big()
+    u = big() + 1
+    try:
+        t += 1
+        u += a
+        t += a
+    catch RuntimeError:
+        pass
+    return t + u * 2
+
+# in a loop, the number is big at every pass, and the error ends the loop
+def looped(xs: list[int | None]) -> int:
+    t = big()
+    try:
+        for x in xs:
+            t += x
+    catch RuntimeError:
+        pass
+    return t
+
+# not caught here: the caller catches it, and the variable of this function is released by the unwinding exactly once
+def uncaught(a: int | None) -> int:
+    t = big()
+    t += a
+    return t
+
+def caller(a: int | None) -> int:
+    try:
+        return uncaught(a)
+    catch RuntimeError:
+        return -1
+
+# a narrowed optional is a plain int (D102a), and so is a fixed-width one: both keep the fast path and have no error to stop it
+def narrowed(a: int | None) -> int:
+    t = big()
+    if a is None:
+        return t
+    t += a
+    t = a + t
+    return t
+
+def fixed(a: int) -> int:
+    x: int[length=32] = 7
+    t = big()
+    t += x
+    t = a - t + x
+    return t
+
+# the other kinds of operand never had the problem: text, lists and floats are not handed over; they are here to keep it so
+def text(a: str | None) -> str:
+    s = 'abc' * 4
+    try:
+        s += a
+    catch RuntimeError:
+        pass
+    return s
+
+def items(a: list[int] | None) -> list[int]:
+    xs = [1, 2]
+    try:
+        xs += a
+    catch RuntimeError:
+        pass
+    return xs
+
+def floats(a: float | None) -> float:
+    f = 2.0 ** 200
+    try:
+        f += a
+        f *= a
+    catch RuntimeError:
+        pass
+    return f
+
+def show(n: int) -> str:
+    return str(n % 1000000007)
+
+def report():
+    values: list[int | None] = [None, 3, 4611686018427387904 * 8]
+    for a in values:
+        print(show(add(a)), show(sub(a)), show(mul(a)), show(other_side(a)), show(other_side_sub(a)), show(nested_tree(a)), show(deeper(a)), show(divided(a)))
+        print(show(twice(a, 2)), show(twice(2, a)), show(twice(a, None)), show(two_statements(a)), show(caller(a)), show(narrowed(a)))
+    print(show(looped([1, 2, 3])), show(looped([1, None, 3])), show(looped([None])), show(fixed(5)))
+    print(text(None), text('x'), items(None), items([3]), floats(None), floats(2.0) > 1.0)
+
+@main
+def main():
+    report()

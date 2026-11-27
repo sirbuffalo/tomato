@@ -1,0 +1,151 @@
+# D55a (union narrowing by `x in T`) in release-mode loop nests. A narrowed union holds its member in a slot of its own, and the two
+# copies of a loop nest (the fast copy, which has no big-number code, and the general copy) have a slot each. The fast copy goes to the
+# start of the statement in the general copy when a number is big, so the general copy's slot has to be filled again there; it was
+# empty (0, or null) after `if k in str: continue` when the fast copy had made the narrowing, and the nest then used 0 for the
+# member in release mode (debug mode has one copy and was right). Each function is a nest of the shapes that matter, and each
+# is called with small numbers only and with a big one in the table, which leaves the fast copy at a different statement.
+class Tag:
+    n: int = 3
+
+# the example of the bug: the narrowing is made by an `if` that leaves, before the use
+def settled_int(xs: list[int], k: int | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in str:
+                continue
+            t += xs[i] * xs[j] + k
+    return t
+
+# three members: the first test leaves, the second narrows to one
+def settled_three(xs: list[int], k: int | str | float) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in str:
+                continue
+            if k in float:
+                continue
+            t += xs[i] * xs[j] + k
+    return t
+
+# the member is a text: the slot holds a reference, which the general copy takes again
+def settled_text(xs: list[int], k: int | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in int:
+                continue
+            t += xs[i] * xs[j] + len(k)
+    return t
+
+def settled_float(xs: list[int], k: float | str) -> float:
+    t = 0.0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in str:
+                continue
+            t += k * xs[j] + xs[i]
+    return t
+
+def settled_object(xs: list[int], k: Tag | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in str:
+                continue
+            t += xs[i] * xs[j] + k.n
+    return t
+
+# a branch (not an `if` that leaves): the narrowing is for the branch, and the else is the other member
+def branches(xs: list[int], k: int | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in int:
+                t += xs[i] * xs[j] + k
+            else:
+                t += len(k) + xs[i]
+    return t
+
+# the narrowing is made in the outer loop, before the inner one, and used in it (the inner loop's head is where the copies meet)
+def outer_narrow(xs: list[int], k: int | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        if k in str:
+            continue
+        for j in range(len(xs)):
+            t += xs[i] * xs[j] + k
+    return t
+
+# the narrowing is made in the inner loop and used again in a later statement of it
+def used_twice(xs: list[int], k: int | str) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in str:
+                break
+            t += xs[i] * xs[j]
+            t += k * 2
+    return t
+
+# `while` loops
+def while_nest(xs: list[int], k: int | str) -> int:
+    t = 0
+    i = 0
+    while i < len(xs):
+        j = 0
+        while j < len(xs):
+            if k in str:
+                j += 1
+                continue
+            t += xs[i] * xs[j] + k
+            j += 1
+        i += 1
+    return t
+
+# two variables narrowed at once, one of which is an optional (D102a): both slots are filled again
+def with_optional(xs: list[int], k: int | str, c: int | None) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in str:
+                continue
+            if c is None:
+                continue
+            t += xs[i] * xs[j] + k + c
+    return t
+
+# the variable is the smaller union of three members, and then one
+def narrowed_twice(xs: list[int], k: int | str | float) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k in str:
+                continue
+            if k in float:
+                continue
+            t += xs[i] * xs[j] + k
+    return t
+
+def table(big: int) -> list[int]:
+    xs = [1, 2, 3, 4]
+    if big >= 0:
+        xs[big % 4] = 4611686018427387904 * 4 + big * 7
+    return xs
+
+def run(big: int, k: int, text: str) -> str:
+    xs = table(big)
+    a = f'{settled_int(xs, k)} {settled_int(xs, text)} {settled_three(xs, k)} {settled_three(xs, text)} {settled_three(xs, 1.5)}'
+    b = f'{settled_text(xs, text)} {settled_text(xs, k)} {settled_float(xs, 2.5)} {settled_float(xs, text)} {settled_float(xs, 10.0 ** 400)}'
+    c = f'{settled_object(xs, Tag())} {settled_object(xs, text)} {branches(xs, k)} {branches(xs, text)}'
+    d = f'{outer_narrow(xs, k)} {outer_narrow(xs, text)} {used_twice(xs, k)} {used_twice(xs, text)} {while_nest(xs, k)} {while_nest(xs, text)}'
+    e = f'{with_optional(xs, k, 6)} {with_optional(xs, k, None)} {with_optional(xs, text, 6)} {narrowed_twice(xs, k)}'
+    return a + '\n' + b + '\n' + c + '\n' + d + '\n' + e
+
+@main
+def main():
+    for big in range(-1, 4):
+        print(run(big, 5, 'abc'))
+    print(run(2, 2 ** 70 + 9, 'q'))
+    print(run(0, -(2 ** 65), 'wxyz'))

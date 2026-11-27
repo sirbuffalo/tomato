@@ -181,6 +181,13 @@ and eight more comparison languages; Linux x86-64 results are published next to 
 
 ### Fixes
 
+- In release mode, a loop nest that narrowed a union with `x in T` (`if k in str: continue` between the loops, then a use of `k`
+  as an `int`, `float`, text or object) could read an empty slot for the member after the fast copy handed over to the general
+  copy: a 0 for a number, a wrong float, a null text. Debug mode was right. The slot is filled again where the other copy comes
+  in, as it already was for narrowed optionals (D106a).
+- `t += a` (and `-=`, `*=`, and `t = a + t`, `t = 2 * t + a`, ...) with a big `t` and an `a` of type `int | None` that is `None`
+  inside a `try` freed `t`'s number while `t` still held it (a use after free). A statement hands the old number of the variable
+  to the operation only when every other variable it reads is an `int` or a fixed-width integer (D106a).
 - `tomato init 'a\b'` writes the name as `a\\b` in tomato.toml (the backslash was lost, and `\b` read as a backspace). `tomato config` with a wrong settings
   file prints only the error. `tomato seed install --locked` says when the files of a path seed changed since the lock (the seed and both hashes).
   `--mode ""` is an error (E282) in `run`, `build` and `compile`.

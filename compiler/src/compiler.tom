@@ -2340,10 +2340,21 @@ class OptNarrow:
     shadow: str = ''        # an int, float or bool optional: the slot that holds its number while it is narrowed
     nested: bool = False    # made inside a loop nest (see opt_rederive)
 
+class UnionNarrow:
+    # a union local that `x in T` has narrowed to one member T (D55a): its value is a copy taken out of the box into a slot of its
+    # own, which replaces the variable's slot while the narrowing lasts. `box` is the variable's own slot, which keeps holding the box.
+    name: str = ''
+    box: str = ''
+    ty: str = ''            # the type of the box slot
+    member: str = ''
+    shadow: str = ''
+    nested: bool = False    # made inside a loop nest (see opt_rederive)
+
 class GenCtx:
     # one generator being compiled into a for loop: where the loop variable lives, the loop body, and the scope not currently in use
     var: str = ''
     opts: list[OptNarrow] = []
+    unions: list[UnionNarrow] = []
     ty: str = ''
     body: list[Node] = []
     end: str = ''
@@ -2384,6 +2395,7 @@ class Gen:
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
     opts: list[OptNarrow] = []    # the optional locals that are known not to be None where the code being compiled is (D102a), innermost last
+    unions: list[UnionNarrow] = []    # the union locals that are narrowed to one member by a slot of its own, innermost last (see opt_rederive)
     opt_end: list[str] = []       # the optional locals that were known not to be None where the block compiled last ended (see block)
     take_name: str = ''           # `x = x + 1`: the int local whose one read in the right side hands its number over to the operation
     mark_prefix: str = ''        # inside a small-int loop: the prefix of the labels its fast copy jumps back to (see small_loop)
@@ -3664,6 +3676,19 @@ class Gen:
             return False
         leaves: list[Node] = []
         return self.fuse_ops(n, leaves) >= (1 if self.bail != '' else 2)
+
+    def plain_leaves(self, name: str, n: Node) -> bool:
+        # for a self_update of `name`: every other variable the expression reads is a number that is already a value (an int or a
+        # fixed-width int, not an optional, a union or an object). Reading an optional can stop the program ('None where a value
+        # is needed') after the operation has been handed the old number, and the error path would free it while the variable still
+        # holds it (`t += a` with `a: int | None` that is None, inside a try).
+        if n.kind == 'Name':
+            if n.fields[0].text == name:
+                return True
+            return is_numeric(self.peek_type(n))
+        if n.kind == 'BinOp':
+            return self.plain_leaves(name, val_node(n.fields[1])) and self.plain_leaves(name, val_node(n.fields[2]))
+        return True
 
     def fuse_update(self, name: str, n: Node) -> bool:
         # `name = <n>` where n is a fused expression that reads the variable directly exactly once: the operation may take the old
@@ -9860,7 +9885,7 @@ class Gen:
                     after = facts_kill(self.facts, [name])
                 else:
                     after = self.assign_facts(self.facts, name, val_node(s.fields[1]))
-            if opt_at < 0 and self.bail == '' and name in self.slots and self.types[name] == 'int' and (self_update(name, val_node(s.fields[1])) or self.fuse_update(name, val_node(s.fields[1]))):
+            if opt_at < 0 and self.bail == '' and name in self.slots and self.types[name] == 'int' and ((self_update(name, val_node(s.fields[1])) and self.plain_leaves(name, val_node(s.fields[1]))) or self.fuse_update(name, val_node(s.fields[1]))):
                 self.take_name = name
                 self.taken = ex('', '')
             v = self.expr(val_node(s.fields[1]), expected)
@@ -10190,10 +10215,23 @@ class Gen:
         inner = self.unbox_value(ex(holder, saved[1]), member)
         shadow = self.new_slot(name, member)
         self.store_owned(shadow, inner)
+        u = UnionNarrow()
+        u.name = name
+        u.box = saved[0]
+        u.ty = saved[1]
+        u.member = member
+        u.shadow = shadow
+        u.nested = self.nest != '' or self.nest_off
+        self.unions.append(u)
         self.narrowed.append(name)
         return saved
 
     def leave_narrow(self, name: str, saved: list[str]):
+        k = len(self.unions) - 1
+        while k >= 0 and not (self.unions[k].name == name and self.unions[k].box == saved[0]):
+            k -= 1
+        if k >= 0:
+            self.unions.pop(k)
         self.slots[name] = saved[0]
         self.types[name] = saved[1]
         self.narrowed.pop()
@@ -10306,11 +10344,18 @@ class Gen:
 
     def opt_rederive(self):
         # a loop nest has two copies of its code that jump into each other (see nest_loop), and the slot that holds the number of a
-        # narrowed int, float or bool optional is filled by the copy that narrowed it. Where the other copy can come in, the slot is
-        # filled again from the variable, which holds the same value (the narrowing ends at any statement that assigns it).
+        # narrowed int, float or bool optional is filled by the copy that narrowed it (so is the slot of a union that `x in T` has
+        # narrowed to one member: the same loop below, D55a; before D103a that one was left empty). Where the other copy can come in,
+        # the slot is filled again from the variable, which holds the same value (the narrowing ends at any statement that assigns
+        # an optional, and a narrowed union cannot be assigned at all).
         for e in self.opts:
             if e.on and e.nested and e.shadow != '':
                 self.opt_unbox(e)
+        for u in self.unions:                   # (a union narrowed by `x in T` has the same slot: D55a)
+            if u.nested:
+                holder = self.tmp('whole')
+                self.emit(f'{holder} = load ptr, ptr {u.box}')
+                self.store_owned(u.shadow, self.unbox_value(ex(holder, u.ty), u.member))
 
     def opt_on_names(self) -> list[str]:
         # the optional locals that are narrowed now
@@ -11273,6 +11318,7 @@ class Gen:
         self.types, c.types = c.types, self.types
         self.narrowed, c.narrowed = c.narrowed, self.narrowed
         self.opts, c.opts = c.opts, self.opts
+        self.unions, c.unions = c.unions, self.unions
         self.settled, c.settled = c.settled, self.settled
         self.ret, c.ret = c.ret, self.ret
         self.owner, c.owner = c.owner, self.owner
