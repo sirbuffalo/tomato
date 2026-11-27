@@ -50,6 +50,14 @@ on an older install moves to 1.0.0 as usual.
 - **`int | None`, `float | None` and `bool | None`** (D94a) work like `str | None`: declarations, parameters, returns, fields,
   collections, generics, printing, and `d.get(key)` for a dict of any value type (it was a compile error for `int`,
   `float` and `bool` values). A `None` used as a number stops with a catchable "None where a value is needed".
+- **Optionals are narrowed by assignment** (D102b): `if x is None: x = default` leaves `x` a `T` (`str`, `int`, an object ...)
+  for the rest of the block, and so does any plain `x = value` of a value that is not `None`. After an `if` the variable is
+  narrowed when every branch that does not leave has it narrowed (assigned a non-`None` value, or narrowed before and not
+  ended): `if c: s = 'a' else: s = 'b'`, `if s is None: s = ''`, `if c: s = s + '+'` after a test. A branch that assigns `None`
+  or an optional, an `if` without that branch, a loop that assigns the variable and a `try` leave it an optional as before.
+  `x: T | None = value` (a declaration) does not narrow. A copy `y = x` of a narrowed variable is a `T`, so more programs
+  that assign `None` to such a copy fail to compile. Also fixed: in release mode a loop nest that narrowed an `int`, `float`
+  or `bool` optional between its loops could read 0 for its number after leaving the fast copy.
 - **Optionals are narrowed by `is None` and `is not None`** (D102a): a local variable or parameter of type `T | None`
   (text, lists, objects, `int`, `float`, `bool` and the rest) is a `T` where a test shows it is not `None`: in the true
   branch of `x is not None`, in the `else` of `x is None`, in the right side of `and` / `or`, in a conditional

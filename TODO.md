@@ -22,7 +22,9 @@
   After `seed install`, editing `thing/src/thing.tom`, `--locked` says `tomato.lock does not match this manifest` (E578): the manifest did not change, the seed's content hash did. And `tomato run` still builds with the changed seed and no complaint (a changed path seed is not checked against the lock); confirm that is intended for path seeds and word the E578 text for the hash.
 - Refuse an empty `--mode` in `tomato run`
   `tomato run hello.tom --mode ""` runs in debug mode with no error (the empty word means "no flag"); `--mode release` and a bad word are checked.
-- Narrow an optional by assignment of a non-None value
-  `if x is None: x = default` should leave `x` a `T` for the rest of the block, as Python's checkers do. D102a narrows only by tests: an assignment ends the narrowing and the variable is `T | None` again whatever was assigned. Make the end of an `if` know it when its branch assigns a value of type `T`, and extend it to a plain `x = value` of a `T` value, keeping the statement rule of D102a for everything else.
 - Add a bare-clone cache for seed fetches
   Bare-clone cache `~/.tomato/seeds/git/` (design section 6): `seed update` fetches the tag and then the commit with `--depth 1` each time; a cache would fetch only new objects.
+- Fix the empty-slot bug of union narrowing in release-mode loop nests
+  Union narrowing (`x in T`, D55a) has the same empty-slot bug that D102b fixed for optionals: `if k in str: continue` between loops of a nest, then a bail-out, reads 0 for an int member (reproduced with the checked-in compiler: debug gives ...445, release ...440). The same refill fix applies to the union shadow slots (see `opt_rederive` in `compiler/src/compiler.tom`).
+- Fix the use after free of `t += a` when `a: int | None` is None
+  ASan reports heap-use-after-free with the checked-in compiler: `t = <big int>; try: t += a; catch RuntimeError: pass` where `a: int | None` is None. The `t += a` fast path takes `t`'s number before the optional is unwrapped, so the raise leaves `t` freed. Found by the fuzzer, not caused by D102b; the fix is to not take the old number when the other operand can raise.

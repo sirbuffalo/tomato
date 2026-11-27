@@ -1,0 +1,10 @@
+def f(c: bool, s: str | None) -> str:
+    if c:
+        s = 'a'
+    else:
+        s = None
+    return s + '!'
+
+@main
+def main():
+    print(f(True, None))

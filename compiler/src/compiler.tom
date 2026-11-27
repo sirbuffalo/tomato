@@ -2337,6 +2337,8 @@ class OptNarrow:
     slot: str = ''
     ty: str = ''
     on: bool = True
+    shadow: str = ''        # an int, float or bool optional: the slot that holds its number while it is narrowed
+    nested: bool = False    # made inside a loop nest (see opt_rederive)
 
 class GenCtx:
     # one generator being compiled into a for loop: where the loop variable lives, the loop body, and the scope not currently in use
@@ -2382,6 +2384,7 @@ class Gen:
     kw: list[Val] = []            # the keyword arguments of the call being compiled, picked up by call_function
     narrowed: list[str] = []      # variables that are narrowed from a union inside the branch being compiled
     opts: list[OptNarrow] = []    # the optional locals that are known not to be None where the code being compiled is (D102a), innermost last
+    opt_end: list[str] = []       # the optional locals that were known not to be None where the block compiled last ended (see block)
     take_name: str = ''           # `x = x + 1`: the int local whose one read in the right side hands its number over to the operation
     mark_prefix: str = ''        # inside a small-int loop: the prefix of the labels its fast copy jumps back to (see small_loop)
     list_lens: dict[str, str] = {}    # local lists that the loops being compiled cannot change: the register that holds the length
@@ -9386,6 +9389,7 @@ class Gen:
         while k < len(body):
             self.stmt(body[k])
             k += 1
+        self.opt_end = self.opt_on_names()
         self.opt_pop_to(opt_depth)
         self.end_block_narrowing(depth)
 
@@ -9469,10 +9473,12 @@ class Gen:
             spot = f'{self.nest}_{s.spot}'            # the fast copy can come here (and to the end of the statement)
             self.br(spot)
             self.place(spot)
+            self.opt_rederive()
             self.stmt_plain(s)
             if not self.terminated:
                 self.br(f'{spot}e')
                 self.place(f'{spot}e')
+                self.opt_rederive()
             return
         if (s.kind == 'For' or s.kind == 'While') and self.nest_start_ok(s):
             self.nest_loop(s)
@@ -9651,13 +9657,17 @@ class Gen:
 
     def nest_head(self, s: Node):
         # at a loop head of the general copy: the test that enters the fast copy, written by nest_loop when the nest is done
-        if self.nest == '' or self.nest_fast or s.spot == 0:
+        if self.nest == '' or s.spot == 0:
+            return
+        if self.nest_fast:
+            self.opt_rederive()                 # (the general copy can enter here)
             return
         go_on = self.label('nestgo')
         self.nest_heads.append([str(len(self.lines)), go_on, str(s.spot)])
         self.lines.append('  ; nest')
         self.terminated = True
         self.place(go_on)
+        self.opt_rederive()                     # (the fast copy can come here)
 
     def nest_label(self, s: Node, hint: str) -> str:
         if self.nest != '' and self.nest_fast and s.spot > 0:
@@ -9853,6 +9863,7 @@ class Gen:
                 self.taken = ex('', '')
             v = self.expr(val_node(s.fields[1]), expected)
             self.take_name = ''
+            not_none = self.not_none_type(v.ty)      # (an optional that is given such a value is narrowed from here)
             if opt_at >= 0:
                 self.opt_off(self.opts[opt_at])
             if self.taken.reg != '' and not self.taken.fresh and v.ty == 'int' and (v.fresh or v.small):
@@ -9886,6 +9897,8 @@ class Gen:
             self.store_owned(self.slot(name, slot_type, s.line), v, old_small)
             if track:
                 self.facts = after
+            if not_none and is_optional(self.types[name]):
+                self.opt_push(name)
         elif k == 'Multi':
             self.block(val_nodes(s.fields[0]))
         elif k == 'Declare':
@@ -10268,16 +10281,42 @@ class Gen:
         e.name = name
         e.slot = self.slots[name]
         e.ty = t
+        e.nested = self.nest != '' or self.nest_off
         if is_value_optional(t):
-            holder = self.tmp('whole')
-            self.emit(f'{holder} = load ptr, ptr {e.slot}')
-            inner = self.unbox_value(ex(holder, t), base)
-            shadow = self.new_slot(name, base)
-            self.store_owned(shadow, inner)
+            self.opt_unbox(e)
         else:
             self.types[name] = base
         self.narrowed.append(name)
         self.opts.append(e)
+
+    def not_none_type(self, t: str) -> bool:
+        # a value of this type (the type of an expression, before it is made the type of the place it is assigned to) is never None
+        return t != '' and t != 'None' and not is_optional(t) and not is_dyn(t) and not (is_union(t) and 'None' in union_members(t))
+
+    def opt_unbox(self, e: OptNarrow):
+        # an int, float or bool optional that is narrowed: its number is taken out of the box that the variable holds, into a slot of its own
+        holder = self.tmp('whole')
+        self.emit(f'{holder} = load ptr, ptr {e.slot}')
+        inner = self.unbox_value(ex(holder, e.ty), strip_optional(e.ty))
+        if e.shadow == '':
+            e.shadow = self.new_slot(e.name, strip_optional(e.ty))
+        self.store_owned(e.shadow, inner)
+
+    def opt_rederive(self):
+        # a loop nest has two copies of its code that jump into each other (see nest_loop), and the slot that holds the number of a
+        # narrowed int, float or bool optional is filled by the copy that narrowed it. Where the other copy can come in, the slot is
+        # filled again from the variable, which holds the same value (the narrowing ends at any statement that assigns it).
+        for e in self.opts:
+            if e.on and e.nested and e.shadow != '':
+                self.opt_unbox(e)
+
+    def opt_on_names(self) -> list[str]:
+        # the optional locals that are narrowed now
+        out: list[str] = []
+        for e in self.opts:
+            if e.on:
+                out.append(e.name)
+        return out
 
     def opt_push_all(self, names: list[str]):
         for name in names:
@@ -10321,7 +10360,13 @@ class Gen:
         # a statement that can assign a narrowed local ends its narrowing before it. `x = value` keeps it while the value is worked
         # out (`node = node.next`); the assignment ends it.
         names: list[str] = []
-        bound_names(s, names)
+        if s.kind == 'If':
+            # the branches of an if are compiled in turn, each statement of them on its own, and if_stmt joins what they know:
+            # only what its conditions assign (a list comprehension's loop variable) ends a narrowing here
+            for branch in s.fields[0].items:
+                bound_names(val_node(branch.items[0]), names)
+        else:
+            bound_names(s, names)
         k = 0
         while k < len(self.opts):
             e = self.opts[k]
@@ -10330,13 +10375,6 @@ class Gen:
                 if not simple:
                     self.opt_off(e)
             k += 1
-
-    def opt_survivors(self, names: list[str], body: list[Node]) -> list[str]:
-        # the narrowed names that the end of a branch still has: those it does not assign
-        assigned: list[str] = []
-        for st in body:
-            bound_names(st, assigned)
-        return [nm for nm in names if nm not in assigned]
 
     def if_stmt(self, s: Node):
         end = self.label('endif')
@@ -10348,8 +10386,8 @@ class Gen:
         track = self.tracking()
         cur = self.facts              # the facts where the next condition is tested (all the conditions before it were false)
         outs = facts_dead()           # the facts after the if, over the branches that do not leave
-        opt_cum: list[str] = []       # the optionals that are not None where the next condition is tested (D102a)
-        opt_end: list[str] = []       # the optionals that are not None at the end of every branch so far that does not leave
+        opt_cum = self.opt_on_names() # the optionals that are not None where the next condition is tested (D102a): those that were before the if
+        opt_join: list[str] = []      # the optionals that are not None at the end of every branch so far that does not leave
         opt_first = True              # (no such branch yet)
         for k, branch in enumerate(branches):
             opt_base = len(self.opts)
@@ -10385,11 +10423,10 @@ class Gen:
             if rest_known:
                 self.leave_narrow(var, saved_rest)
             if not self.terminated:
-                survivors = self.opt_survivors(opt_now, val_nodes(branch.items[1]))
                 if opt_first:
-                    opt_end = survivors
+                    opt_join = self.opt_end
                 else:
-                    opt_end = [nm for nm in opt_end if nm in survivors]
+                    opt_join = [nm for nm in opt_join if nm in self.opt_end]
                 opt_first = False
             self.opt_pop_to(opt_base)
             opt_cum = self.opt_cond_names(val_node(branch.items[0]), False, opt_cum)
@@ -10418,11 +10455,10 @@ class Gen:
             if narrowed_else:
                 self.leave_narrow(var, saved)
             if not self.terminated:
-                survivors = self.opt_survivors(opt_cum, val_nodes(s.fields[1]))
                 if opt_first:
-                    opt_end = survivors
+                    opt_join = self.opt_end
                 else:
-                    opt_end = [nm for nm in opt_end if nm in survivors]
+                    opt_join = [nm for nm in opt_join if nm in self.opt_end]
                 opt_first = False
             self.opt_pop_to(opt_base)
             if not self.terminated:
@@ -10432,9 +10468,9 @@ class Gen:
         else:
             kept = kept + left
             if opt_first:
-                opt_end = opt_cum
+                opt_join = opt_cum
             else:
-                opt_end = [nm for nm in opt_end if nm in opt_cum]
+                opt_join = [nm for nm in opt_join if nm in opt_cum]
             opt_first = False
             if track:
                 outs = facts_join(outs, cur)
@@ -10444,7 +10480,7 @@ class Gen:
         if track:
             self.facts = self.live_facts(outs)
         if not opt_first:
-            self.opt_push_all(opt_end)          # (to the end of the block, or until a statement assigns one)
+            self.opt_push_all(opt_join)         # (to the end of the block, or until a statement assigns one)
         if var != '' and len(kept) > 0 and self.types[var] == union_type(members):
             keep: list[str] = [m for m in members if m in kept]
             if len(keep) < len(members):

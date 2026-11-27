@@ -1,0 +1,14 @@
+# narrowed before the loop and assigned in it: at the top of the body it is the optional again
+def f(s: str | None) -> str:
+    if s is None:
+        s = 'a'
+    n = 0
+    while n < 3:
+        print(s + '!')
+        s = 'b'
+        n += 1
+    return 'x'
+
+@main
+def main():
+    print(f('a'))

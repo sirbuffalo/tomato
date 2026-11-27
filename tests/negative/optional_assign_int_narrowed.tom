@@ -1,0 +1,8 @@
+# the message says int, not int | None: the variable is an int after the assignment
+def f(x: int | None) -> str:
+    x = 5
+    return x + '!'
+
+@main
+def main():
+    print(f(None))

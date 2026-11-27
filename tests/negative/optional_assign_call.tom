@@ -1,0 +1,11 @@
+def find(c: bool) -> str | None:
+    return 'a' if c else None
+
+def f(c: bool) -> str:
+    s: str | None = None
+    s = find(c)
+    return s + '!'
+
+@main
+def main():
+    print(f(True))

@@ -1,0 +1,8 @@
+def f(c: bool, x: int | None) -> str:
+    if c:
+        x = 5
+    return x + '!'
+
+@main
+def main():
+    print(f(True, None))

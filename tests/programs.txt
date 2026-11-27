@@ -229,5 +229,6 @@ optional_values
 optional_lookups
 optional_narrowing
 optional_narrowing_flow
+optional_narrowing_assign
 optional_error_paths
 error_inherit_init

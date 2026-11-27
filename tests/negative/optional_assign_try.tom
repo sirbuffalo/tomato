@@ -1,0 +1,12 @@
+# a handler can be entered before the assignment
+def f() -> str:
+    s: str | None = None
+    try:
+        s = 'a'
+    catch Error as e:
+        pass
+    return s + '!'
+
+@main
+def main():
+    print(f())

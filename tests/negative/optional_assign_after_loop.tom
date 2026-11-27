@@ -1,0 +1,10 @@
+# a loop may not run, so what it assigns is not known after it
+def f(n: int) -> str:
+    s: str | None = None
+    for i in range(n):
+        s = 'a'
+    return s + '!'
+
+@main
+def main():
+    print(f(2))

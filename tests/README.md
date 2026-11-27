@@ -33,15 +33,15 @@ silent. What it skips:
 
 | Where | Full runs | `--fast` runs | Skipped |
 | --- | --- | --- | --- |
-| memory (AddressSanitizer builds of programs) | 146 | 53 (`fast_asan` in `tests/run.sh`) | 93 |
-| release mode (AddressSanitizer) | 18 programs | 9: `fast_paths`, `loop_nests`, `float_loops`, `float_nests`, `int_ranges`, `containers`, `raise_paths`, `raise_dead`, `file_closed` | 9 |
-| WebAssembly (programs, rejected programs, runtime errors) | 111 | 36 (`fast_wasm`) | 75 |
+| memory (AddressSanitizer builds of programs) | 147 | 53 (`fast_asan` in `tests/run.sh`) | 94 |
+| release mode (AddressSanitizer) | 19 programs | 9: `fast_paths`, `loop_nests`, `float_loops`, `float_nests`, `int_ranges`, `containers`, `raise_paths`, `raise_dead`, `file_closed` | 10 |
+| WebAssembly (programs, rejected programs, runtime errors) | 112 | 36 (`fast_wasm`) | 76 |
 | command line: release mode runs like debug mode | 10 programs | 3: `int_boundary`, `containers`, `cycle` | 7 |
 | benchmarks smoke | 25 benchmarks, each in Tomato and go, rust, python, c, javascript | 6 (`fib sieve strings sort wordcount hof`), each in Tomato and c, python | 19 benchmarks (and, for the six, go, rust, javascript) |
 
 That was 755 checks in the full suite and 654 in the fast tier (101 skipped) before the Wave 2 packs (`re`, hashing and binary, `os`/`sys`, testing), which added about 30 programs, 17 AddressSanitizer builds, a dozen WebAssembly programs and the `tomato test`, exit-status and `sys.version` checks; the ASan rows and the program count above are recounted, the other rows and totals are not; the fast tier takes a little over half the CPU time.
-Everything else runs in both tiers: the compiler and its fixed point, the install, the 14 examples, all 216 programs with expected output,
-the 112 rejected programs and 76 error messages, the 66 runtime errors, the input, error-id, known-gaps, highlighter and release-file checks, and
+Everything else runs in both tiers: the compiler and its fixed point, the install, the 14 examples, all 217 programs with expected output,
+the 126 rejected programs and 76 error messages, the 66 runtime errors, the input, error-id, known-gaps, highlighter and release-file checks, and
 the rest of the command line (the update, the runtime cache, `explain`, the repl, colors, warnings, modes). Which tests were skipped is printed at the
 end of every `--fast` run, as `SECTION: NAME`.
 

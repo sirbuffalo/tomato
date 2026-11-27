@@ -1,0 +1,10 @@
+# a variable made from a narrowed one is a T (D102a, rule 5)
+def f(s: str | None) -> str:
+    s = 'a'
+    t = s
+    t = None
+    return 'x'
+
+@main
+def main():
+    print(f(None))

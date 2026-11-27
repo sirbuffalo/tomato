@@ -1,0 +1,422 @@
+# D102a, extended (2026-11-27): an optional local or parameter that is assigned a value that is certainly not None (a value of type T)
+# is a T from the assignment on; after an `if` it is one when every branch that does not leave has it as one. Programs that compile
+# only if that is right; the rejected cases are in tests/negative/optional_assign_*.tom, and the narrowing that must not happen
+# (a loop that assigns the variable) is run here. In release mode the loop nests at the end hold narrowed int optionals whose
+# numbers sit in slots that the two copies of a nest must both fill.
+class Node:
+    val: int
+    next: Node | None
+
+    @init
+    def make(self, val: int, next: Node | None):
+        self.val = val
+        self.next = next
+
+# the example of the rule: the default
+def dflt_str(s: str | None) -> str:
+    if s is None:
+        s = 'dflt'
+    return s + '!'
+
+def dflt_list(xs: list[int] | None) -> int:
+    if xs is None:
+        xs = []
+    xs.append(1)
+    return len(xs)
+
+def dflt_obj(n: Node | None) -> int:
+    if n is None:
+        n = Node(1, None)
+    return n.val + len(str(n.next is None))
+
+def dflt_int(x: int | None) -> str:
+    if x is None:
+        x = 2 ** 70
+    y = x
+    return f'{y % 1000} {x is None}'
+
+def dflt_float(x: float | None) -> float:
+    if x is None:
+        x = 10.0 ** 400
+    return x / 10.0 ** 399
+
+def dflt_bool(b: bool | None) -> str:
+    if b is None:
+        b = True
+    return 'yes' if b else 'no'
+
+# a plain assignment of a T value narrows from there; assigning None makes it the optional again
+def plain(c: bool) -> str:
+    s: str | None = None
+    s = 'abc'
+    t = s + '!'
+    s = None
+    if s is None:
+        return t
+    return 'no'
+
+def plain_node(n: int) -> int:
+    head: Node | None = None
+    head = Node(n, head)
+    head = Node(head.val + 1, head)
+    return head.val * 10 + (1 if head.next is None else 2)
+
+# the value is worked out with the variable as it was: the optional, or the narrowed one
+def from_optional(a: str | None, b: str | None) -> str:
+    a = b
+    if a is None:
+        return 'none'
+    return a + '?'
+
+def from_narrowed(a: str | None, b: str | None) -> str:
+    if b is None:
+        return 'b'
+    a = b
+    return a + '#'
+
+def chain(a: str | None) -> str:
+    if a is None:
+        a = 'x'
+    a = a + 'y'
+    a = a + 'z'
+    return a
+
+# joins: both branches assign, an elif chain with an else, a branch that leaves
+def both(c: bool, s: str | None) -> str:
+    if c:
+        s = 'yes'
+    else:
+        s = 'no'
+    return s + '.'
+
+def many(c: int, s: str | None) -> str:
+    if c == 0:
+        s = 'zero'
+    elif c == 1:
+        s = 'one'
+    elif c == 2:
+        s = 'two' + str(c)
+    else:
+        s = 'many'
+    return s + '.'
+
+def exits(c: int, s: str | None) -> str:
+    if c == 0:
+        return 'zero'
+    elif c == 1:
+        s = 'one'
+    else:
+        s = 'many'
+    return s + '.'
+
+def one_exits(c: bool, s: str | None) -> str:
+    if c:
+        s = 'a'
+    else:
+        raise Error('no')
+    return s + '.'
+
+# narrowed before the if: a branch that assigns a T keeps it, whichever branch it is
+def keep(s: str | None, c: int) -> str:
+    if s is None:
+        return 'none'
+    if c == 0:
+        s = s + '+'
+    elif c == 1:
+        pass
+    else:
+        s = 'other'
+    return s + '.'
+
+def keep_else(s: str | None, c: bool) -> str:
+    if s is None:
+        return 'none'
+    if c:
+        pass
+    else:
+        s = s + '-'
+    return s + '.'
+
+def keep_after_exit(s: str | None, c: int) -> str:
+    if s is None:
+        return 'none'
+    if c == 0:
+        s = None
+        return 'reset'
+    elif c == 1:
+        s = 'one'
+    return s + '.'
+
+# a branch that assigns None, or an optional, or nothing, leaves the optional (the uses are checked): nothing is narrowed
+def none_branch(c: bool, s: str | None) -> str:
+    if c:
+        s = 'a'
+    else:
+        s = None
+    return 'none' if s is None else 'some'
+
+def nested(c: bool, d: bool, s: str | None) -> str:
+    if c:
+        if d:
+            s = 'cd'
+        else:
+            s = 'c'
+    else:
+        s = 'n'
+    return s + '.'
+
+def nested_leave(c: bool, d: bool, s: str | None) -> str:
+    if c:
+        if d:
+            s = 'cd'
+        else:
+            return 'c'
+    else:
+        s = 'n'
+    return s + '.'
+
+# in a loop body the narrowing starts at the assignment, and it does not leave the body
+def loop_body(items: list[str | None]) -> str:
+    out = ''
+    for it in items:
+        cur = it
+        if cur is None:
+            cur = '?'
+        out += cur + ','
+    return out
+
+def loop_continue(items: list[str | None]) -> str:
+    out = ''
+    for it in items:
+        cur: str | None = it
+        if cur is None:
+            continue
+        out += cur + ';'
+    return out
+
+def while_default(n: int) -> int:
+    x: int | None = None
+    total = 0
+    while n > 0:
+        if x is None:
+            x = n
+        total += x
+        x = x + 1
+        n -= 1
+        if n == 1:
+            x = None
+    return total
+
+# a variable that is narrowed before a loop and assigned in it is the optional in the loop: the checks are made at every use
+def loop_conservative(n: int) -> str:
+    x: int | None = 5
+    x = 5
+    t = 0
+    try:
+        for i in range(n):
+            t += x
+            if i == 1:
+                x = None
+            else:
+                x = 9
+    catch RuntimeError as e:
+        return f'{t} {e.message}'
+    return str(t)
+
+def loop_none_ended(s: str | None) -> str:
+    if s is None:
+        s = ''
+    n = 0
+    while n < 3:
+        if s is None:
+            return 'ended'
+        s = s + 'x'
+        n += 1
+        if n == 2:
+            s = None
+    return 'done'
+
+# after a loop (it may not have run) the variable is not narrowed by what the loop assigned
+def after_loop(n: int) -> str:
+    s: str | None = None
+    for i in range(n):
+        s = 'ran'
+    if s is None:
+        return 'never'
+    return s + '.'
+
+def found(items: list[str], key: str) -> str:
+    hit: str | None = None
+    for it in items:
+        if it == key:
+            hit = it
+            break
+    if hit is None:
+        hit = 'missing'
+    return hit + '!'
+
+# try: what the body assigns is narrowed there, and the handlers see the optional
+def in_try(c: bool) -> str:
+    s: str | None = None
+    try:
+        s = 'a'
+        t = s + 'b'
+        if c:
+            raise Error('x')
+        return t
+    catch Error as e:
+        if s is None:
+            return 'none'
+        return s + '!'
+
+def after_try(c: bool) -> str:
+    s: str | None = None
+    try:
+        if c:
+            raise Error('x')
+        s = 'ok'
+    catch Error as e:
+        s = 'caught'
+    if s is None:
+        return 'none'
+    return s + '.'
+
+# big integers and floats of any size in the box are copied into the slot of the narrowed variable, and freed with it
+def bigs(n: int) -> int:
+    x: int | None = None
+    total = 0
+    for i in range(n):
+        x = 2 ** 70 + i
+        total += x % 1000
+        if x % 2 == 0:
+            x = x + 1
+        total += x % 7
+        x = None
+    return total
+
+def bigs_join(n: int) -> int:
+    total = 0
+    for i in range(n):
+        x: int | None = None
+        if i % 2 == 0:
+            x = 2 ** 80 + i
+        else:
+            x = 3 ** 50 + i
+        total += x % 1000
+    return total
+
+def floats(n: int) -> float:
+    total = 0.0
+    for i in range(n):
+        f: float | None = None
+        if i % 3 == 0:
+            f = 10.0 ** 400
+        else:
+            f = 1.5 * i
+        total += f / 10.0 ** 399
+    return total
+
+def bools(n: int) -> str:
+    out = ''
+    for i in range(n):
+        b: bool | None = None
+        if i % 2 == 0:
+            b = True
+        else:
+            b = False
+        out += 'T' if b else 'F'
+    return out
+
+# a generator and an async function
+def numbers(xs: list[int | None]) -> int:
+    for v in xs:
+        if v is None:
+            v = -1
+        yield v * 10
+
+async def twice(x: int) -> int:
+    return x * 2
+
+async def slow(x: int | None, s: str | None) -> str:
+    if x is None:
+        x = await twice(4)
+    if s is None:
+        s = 'none'
+    t = await twice(x)
+    return s + str(t)
+
+# release mode: loop nests. The number of a narrowed int optional is in a slot that the copy that narrowed it filled; the other copy
+# (entered at a loop head, or when a number is not small) fills it again. A big number in the table leaves the fast copy at once.
+def nest_join(xs: list[int], k: int | None) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            if k is None:
+                continue
+            t += xs[i] * xs[j] + k
+    return t
+
+def nest_assign(xs: list[int], c: int | None) -> int:
+    t = 0
+    for i in range(len(xs)):
+        k = c
+        if k is None:
+            k = 3
+        for j in range(len(xs)):
+            t += xs[i] * xs[j] + k
+    return t
+
+def nest_inner(xs: list[int], c: int | None) -> int:
+    t = 0
+    for i in range(len(xs)):
+        for j in range(len(xs)):
+            k = c
+            if k is None:
+                k = j + 1
+            t += xs[i] * xs[j] + k
+            t += k * 2
+    return t
+
+def nest_float(xs: list[int], c: float | None) -> float:
+    t = 0.0
+    for i in range(len(xs)):
+        f = c
+        if f is None:
+            f = 0.5
+        for j in range(len(xs)):
+            t += f * j + xs[i]
+    return t
+
+def nests(big: int) -> str:
+    xs = [1, 2, 3, 4]
+    if big >= 0:
+        xs[big % 4] = 4611686018427387904 * 4 + big * 7
+    return f'{nest_join(xs, 5)} {nest_join(xs, None)} {nest_assign(xs, 7)} {nest_assign(xs, None)} {nest_inner(xs, 2)} {nest_inner(xs, None)} {nest_float(xs, 1.5)} {nest_float(xs, None)}'
+
+@main
+async def main():
+    print(dflt_str(None), dflt_str('a'), dflt_list(None), dflt_list([5]), dflt_obj(None), dflt_obj(Node(4, None)))
+    print(dflt_int(None), dflt_int(7), dflt_float(None), dflt_float(2.0), dflt_bool(None), dflt_bool(False))
+    print(plain(True), plain_node(5), from_optional('a', None), from_optional(None, 'b'), from_narrowed('a', None), from_narrowed(None, 'b'), chain(None), chain('q'))
+    print(both(True, None), both(False, 'x'), many(0, None), many(1, None), many(2, None), many(3, None))
+    print(exits(0, None), exits(1, None), exits(2, None), one_exits(True, None))
+    try:
+        print(one_exits(False, None))
+    catch Error as e:
+        print('raised', e.message)
+    print(keep(None, 0), keep('a', 0), keep('a', 1), keep('a', 2), keep_else('a', True), keep_else('a', False), keep_after_exit('a', 0), keep_after_exit('a', 1), keep_after_exit('a', 2))
+    print(none_branch(True, None), none_branch(False, 'x'), nested(True, True, None), nested(True, False, None), nested(False, True, None), nested_leave(True, True, None), nested_leave(True, False, None), nested_leave(False, True, None))
+    print(loop_body(['a', None, 'c']), loop_continue(['a', None, 'c']), while_default(4), while_default(1), loop_conservative(2), loop_conservative(3), loop_conservative(0))
+    print(loop_none_ended('a'), loop_none_ended(None), after_loop(0), after_loop(2), found(['a', 'b'], 'b'), found(['a', 'b'], 'z'))
+    print(in_try(False), in_try(True), after_try(False), after_try(True))
+    print(bigs(5), bigs_join(6), floats(7), bools(5))
+    out = ''
+    for v in numbers([1, None, 3]):
+        out += f'{v} '
+    print(out)
+    print(await slow(3, 'ab'), await slow(None, None))
+    print(nests(-1))
+    print(nests(0))
+    print(nests(1))
+    print(nests(2))
+    print(nests(3))

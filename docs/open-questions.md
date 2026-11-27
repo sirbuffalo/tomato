@@ -92,7 +92,7 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 56. ~~Dicts and sets~~ exist (D20b; the dict is called `dict`, D20c) with literals, insertion order and snapshot iteration (P28, P90). Keys of any hashable type were built with D78a. Open: more operations, equality of dicts and sets.
 57. ~~Tuples or multiple return values~~ settled by D39a, D54a and P89 (`tuple[T]`, mixed `tuple[str, int]`, `return a, b`, unpacking). Open: `for`, `in` and slicing on mixed tuples.
 58. ~~Generics~~: classes and functions are built (D60a). Open: generic interfaces, generic methods, bounds, generic functions as values.
-59. ~~Missing values~~: `None` exists (D23a) and an optional is `T | None` (D23b). Open: general unions and operators on optionals; narrowing of an optional by `is None` is D102a (narrowing by assignment is not done).
+59. ~~Missing values~~: `None` exists (D23a) and an optional is `T | None` (D23b). Open: general unions and operators on optionals; narrowing of an optional by `is None` is D102a (narrowing by assignment of a value that is not `None` is D102b).
 60. ~~Errors~~ exist with try/catch/finally/else (D22a); `raise` and the runtime error classes with ids are built (P29, P88). Open: rethrow and the final error class tree.
 61. ~~Modules~~: import and export exist (D24a), `import module` with `module.name` is built (D62a). Open: aliases, re-exports (items 8-9), search paths.
 62. ~~A standard library~~ exists (D24a). Open: its contents, its names, and where `range` lives (D18a).

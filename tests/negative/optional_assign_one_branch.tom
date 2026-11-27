@@ -1,0 +1,9 @@
+# the branch that is not taken leaves the variable as it was
+def f(c: bool, s: str | None) -> str:
+    if c:
+        s = 'a'
+    return s + '!'
+
+@main
+def main():
+    print(f(True, None))

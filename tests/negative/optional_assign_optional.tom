@@ -1,0 +1,9 @@
+# an optional that is given an optional is still one: only a value of type T narrows
+def f(s: str | None, t: str | None) -> str:
+    if s is None:
+        s = t
+    return s + '!'
+
+@main
+def main():
+    print(f(None, 'b'))

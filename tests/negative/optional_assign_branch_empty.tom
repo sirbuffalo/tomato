@@ -1,0 +1,11 @@
+# narrowed before the if, but the branch assigns an optional
+def f(c: bool, s: str | None, t: str | None) -> str:
+    if s is None:
+        return ''
+    if c:
+        s = t
+    return s + '!'
+
+@main
+def main():
+    print(f(True, 'a', None))

@@ -1,0 +1,10 @@
+def f(c: int, s: str | None) -> str:
+    if c == 0:
+        s = 'a'
+    elif c == 1:
+        s = 'b'
+    return s + '!'
+
+@main
+def main():
+    print(f(0, None))
