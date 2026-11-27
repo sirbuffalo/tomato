@@ -83,6 +83,10 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
   arrows move between them, Enter runs a complete piece and continues on an open bracket (`x = (1,`), paste and resize work,
   Ctrl-C cancels the input. The history file keeps its format. The installer builds the editor (`tomato-repl-edit`); without it
   the repl says so and uses plain input.
+- The repl colors the code as you type it and in recalled blocks (D90a): keywords red, texts green (the brand colors), numbers, comments
+  (dim), built-ins and decorators, and what is wrong underlined; 24-bit, 256, 16 or 8 colors by the terminal; `--color=auto|always|never`,
+  `TOMATO_COLOR` and `NO_COLOR` decide, and with no color the repl looks as before. It is built on a tolerant mode of the compiler's own
+  lexer (`lex_spans`), which also shares its scanners with `lex`.
 - The bootstrap IR is compiled in parallel, so installs and builds are quicker.
 
 ### Performance

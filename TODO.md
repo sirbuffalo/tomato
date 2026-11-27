@@ -8,3 +8,5 @@
   Check the editor by hand in iTerm2 and Terminal.app (Option-as-Meta for Alt-B/F, resize re-wrapping) and record which keys each sends (design section 11, item 5 of `docs/repl-editor-design.md`). The pty tests (`tests/repl_history.exp`, `tests/terminal_pty.exp`) pass on macOS 27 arm64 and under Rosetta, but they send xterm sequences themselves; what these two terminals actually send has not been recorded.
 - Answer the seed registry open questions and start stage 1
   Answer the open questions in section 19 of `docs/package-registry-design.md` (1 to 11), then start stage 1 (`tomato-seed` helper skeleton).
+- Let the repl redefine a function or class
+  A second `def f()` in the repl fails with `E120 'f' is defined twice`: the driver's `commit` (`native/tomato-repl`) removes the old declaration only after the piece succeeds, so the new one is compiled on top of the old one. It predates stage 3 and also happens on the piped path; a recalled-and-edited `def` is the natural way to hit it.

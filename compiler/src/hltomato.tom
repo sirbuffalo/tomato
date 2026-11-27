@@ -1,0 +1,145 @@
+# The syntax colors of Tomato code for the repl's line editor (stage 3 of docs/repl-editor-design.md): an implementation of
+# lineedit.Highlighter built on lex_spans, the tolerant mode of the compiler's own lexer (so the colors follow the language's real
+# token rules, and text that is half typed still has colors), and the palette.
+#
+# What is colored: keywords (red, the brand's #EB3C27), texts (green, the brand's #009639), numbers (cyan), comments (dim),
+# True, False and None (magenta), the built-in functions and types (bright blue), the name after def, class and interface and a decorator
+# such as @main (bold), the braces of an f-string field (bold green), and what the lexer refuses, such as a stray character or
+# letters stuck to a number (red, underlined). Names, operators and brackets stay in the terminal's own color. The rest of the colors
+# are the terminal's own 16, so the theme of the terminal (dark or light) decides what they look like; the editor does not try to
+# find out which it is. The palette is one table (Palette): the brand colors are rgb values that terminal.sgr lowers to 256, 16 or 8
+# colors, except that below truecolor the red and the green are the terminal's own, which every theme keeps readable.
+#
+# It sits next to lexer.tom and is built into tomato-repl-edit by install-native.sh (it is not part of the compiler).
+import terminal
+from terminal import Style
+from lineedit import Run, Highlighter
+from lexer import lex_spans, Span
+
+# the built-in functions and the type names (the lists of the website's highlighter, site/site.js: tests/highlighter_lists.sh checks
+# that they are all here, and that the functions in the linter's list of built-in names are)
+const BUILTINS = ' print len str int float rational range open input sleep clock min max sum abs chr ord round divmod any all hash sorted reversed enumerate zip map filter list dict set tuple bool '
+const TYPES = ' uint File Error RuntimeError IOError FileNotFoundError FileExistsError PermissionError IsADirectoryError NotADirectoryError IndexError KeyError ValueError ZeroDivisionError OverflowError EOFError CancelledError Sized bitarray frozenbitarray '
+
+export def is_builtin(name: str) -> bool:
+    key = ' ' + name + ' '
+    return key in BUILTINS or key in TYPES
+
+# What the colors are, for a terminal with `colors` colors (as terminal.Terminal.colors: 8, 16, 256 or 16777216).
+export class Palette:
+    keyword: Style = Style()
+    string: Style = Style()
+    number: Style = Style()
+    constant: Style = Style()         # True, False, None
+    comment: Style = Style()
+    builtin: Style = Style()
+    definition: Style = Style()       # the name after def, class and interface, and a decorator
+    brace: Style = Style()            # the braces of an f-string field
+    error: Style = Style()
+    prompt: Style = Style()           # the editor's prompts
+    continuation: Style = Style()
+
+    @init
+    def make(self, colors: int):
+        red = terminal.ansi(1)
+        green = terminal.ansi(2)
+        if colors >= 16777216:
+            red = terminal.rgb(235, 60, 39)
+            green = terminal.rgb(0, 150, 57)
+        elif colors >= 256:
+            red = 196                                  # the nearest of the 256 to #EB3C27 is an orange (166); 196 is the red
+            green = terminal.rgb(0, 150, 57)           # lowered to 29, the nearest
+        self.keyword = Style(red)
+        self.string = Style(green)
+        self.number = Style(terminal.ansi(6))
+        self.constant = Style(terminal.ansi(5))
+        self.comment = Style(-1, -1, False, True)
+        self.builtin = Style(terminal.ansi(12))
+        self.definition = Style(-1, -1, True)
+        self.brace = Style(green, -1, True)
+        self.error = Style(red, -1, False, False, False, True)
+        self.prompt = Style(green)
+        self.continuation = Style(-1, -1, False, True)
+
+def same_style(a: Style, b: Style) -> bool:
+    return a.fg == b.fg and a.bg == b.bg and a.bold == b.bold and a.dim == b.dim and a.italic == b.italic and a.underline == b.underline and a.reverse == b.reverse
+
+export class TomatoHighlighter implements Highlighter:
+    palette: Palette = Palette(16)
+
+    @init
+    def make(self, colors: int):
+        self.palette = Palette(colors)
+
+    # the style of a span with its text (and the text of the significant span before it), or None for the terminal's own
+    def style_of(self, sp: Span, text: str, before: str) -> Style | None:
+        p = self.palette
+        k = sp.kind
+        if k == 'keyword':
+            if text == 'True' or text == 'False':
+                return p.constant
+            return p.keyword
+        if k == 'name':
+            if before == '.':
+                return None                            # a field or a method: its name is not the built-in's
+            if before == 'def' or before == 'class' or before == 'interface':
+                return p.definition
+            if text == 'None':
+                return p.constant
+            if is_builtin(text):
+                return p.builtin
+            return None
+        if k == 'number':
+            return p.number
+        if k == 'string':
+            return p.string
+        if k == 'fstring-brace':
+            return p.brace
+        if k == 'comment':
+            return p.comment
+        if k == 'error':
+            return p.error
+        return None
+
+    def highlight(self, lines: list[str]) -> list[list[Run]]:
+        spans = lex_spans('\n'.join(lines))[0]
+        out: list[list[Run]] = []
+        for _line in lines:
+            out.append([])
+        depth = 0                 # the brackets open at this span
+        line = 0                  # the line of the span before this one
+        line_first = True         # no span other than spaces and a comment has come yet on this line, and no bracket is open
+        before = ''               # the text of the span before this one that is not a space or a comment
+        decorated = False         # the span is the name of a decorator
+        for index, sp in enumerate(spans):
+            if sp.line != line:
+                line = sp.line
+                line_first = depth == 0
+                before = ''
+            if sp.kind == 'space' or sp.end_col == sp.col:
+                continue
+            text = lines[sp.line - 1][sp.col:sp.end_col]
+            style = self.style_of(sp, text, before)
+            if decorated:
+                style = self.palette.definition
+                decorated = False
+            elif sp.kind == 'op' and text == '@' and line_first and index + 1 < len(spans):
+                nxt = spans[index + 1]
+                if nxt.kind == 'name' and nxt.line == sp.line and nxt.col == sp.end_col:
+                    style = self.palette.definition          # @main: the @ and the name
+                    decorated = True
+            if sp.kind == 'op' and len(text) == 1:
+                if text in '([{':
+                    depth += 1
+                elif text in ')]}' and depth > 0:
+                    depth -= 1
+            if sp.kind != 'comment':
+                line_first = False
+                before = text
+            if style is not None:
+                runs = out[sp.line - 1]
+                if len(runs) > 0 and runs[len(runs) - 1].end == sp.col and same_style(runs[len(runs) - 1].style, style):
+                    runs[len(runs) - 1].end = sp.end_col          # one run for the pieces that touch and look the same
+                else:
+                    runs.append(Run(sp.col, sp.end_col, style))
+        return out

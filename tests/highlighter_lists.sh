@@ -36,6 +36,11 @@ grep -q 'bself' $grammar || missing grammar keyword self
 site_types="$(grep 'var TY' $site | sed 's/.*\^(//; s/)\$.*//' | tr '|' '\n' | sort)"
 gram_types="$(grep '"type":' -A2 $grammar | grep -o 'b(int|[^)]*' | sed 's/^b(//' | tr '|' '\n' | sort)"
 for w in $site_types; do echo "$gram_types" | grep -qx "$w" || missing grammar type "$w"; done
+# the repl's highlighter (compiler/src/hltomato.tom) colors the same built-in functions and types as the website, and the linter's names
+hl="$(grep -E '^const (BUILTINS|TYPES) ' compiler/src/hltomato.tom | sed "s/^[^']*'//; s/'.*//" | tr ' ' '\n' | grep .)"
+site_bi="$(grep 'var BI' $site | sed 's/.*\^(//; s/)\$.*//' | tr '|' '\n')"
+for w in $builtins $site_bi $site_types; do echo "$hl" | grep -qx "$w" || missing hltomato built-in "$w"; done
+for w in $hl; do { echo "$site_bi"; echo "$site_types"; } | grep -qx "$w" || { echo "hltomato.tom knows '$w', which the website does not"; bad=1; }; done
 # the standard library modules (std/NAME.tom) are colored after import/from
 for f in std/*.tom; do
   w="$(basename "$f" .tom)"

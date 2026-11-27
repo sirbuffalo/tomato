@@ -22,13 +22,15 @@ if {[info exists env(TOMATO_REPL_TRANSCRIPT)]} { log_file -a -noappend $env(TOMA
 set env(HOME) $work
 set env(TERM) xterm
 set env(TOMATO_HISTORY) $work/hist
-catch {unset env(NO_COLOR)}
+set env(NO_COLOR) 1          ;# the editor sections below are about the text; the colors have a section of their own at the end
 catch {unset env(TOMATO_COLOR)}
+catch {unset env(COLORTERM)}
 catch {unset env(LINES)}
 catch {unset env(COLUMNS)}
 
 # want REGEXP WHAT: wait for the output to match; fail if it never does
 proc want {re what} {
+  global expect_out
   expect {
     -re $re {}
     timeout { fail "timed out waiting for $what" }
@@ -37,7 +39,8 @@ proc want {re what} {
 }
 set ESC \x1b
 # the editor is reading keys: bracketed paste on, then the first frame (an empty prompt, the cursor after it)
-proc prompt {what} { want {\x1b\[\?2004h\r\x1b\[J>>> \x1b\[5G} "the editor's prompt ($what)" }
+set promptre {>>> \x1b\[5G}
+proc prompt {what} { global promptre; want "\\x1b\\\[\\?2004h\\r\\x1b\\\[J$promptre" "the editor's prompt ($what)" }
 # the piece has been run (its output follows the editor's last write, ESC[?25h: the cursor shown again) and the next prompt is live
 proc ran {re what} { want $re $what; prompt "after $what" }
 proc normal {text} {   # stty -g without macOS's PENDIN bit, which is the kernel's state and not a setting (see tests/terminal_pty.exp)
@@ -48,9 +51,9 @@ proc normal {text} {   # stty -g without macOS's PENDIN bit, which is the kernel
   return $text
 }
 # runs `tomato repl` in the shell with the settings saved before and after (the suffix N names the files)
-proc start_repl {n env_words} {
+proc start_repl {n env_words {flags ""}} {
   global work
-  send "stty -g > $work/before$n; $env_words tomato repl; echo EXIT=\$?; stty -g > $work/after$n\r"
+  send "stty -g > $work/before$n; $env_words tomato repl $flags; echo EXIT=\$?; stty -g > $work/after$n\r"
 }
 proc ended {n what} {
   global work
@@ -144,6 +147,76 @@ if {[string match "*oops*" $hist]} { append bad "the text dropped by Ctrl-C is i
 if {[string match "*Error*" $hist] || [string match "*cannot use*" $hist]} { append bad "error text in the history; " }
 if {[llength [split [string trim $hist] "\n"]] != 9} { append bad "the history does not have 9 entries: $hist; " }
 if {$bad ne ""} { fail $bad }
+
+# ---- the colors ------------------------------------------------------------------------------------------------------------
+# The code is colored as it is typed, lowered to the terminal's colors: 24 bits (COLORTERM), 256 (TERM), 16. --color=always wins over
+# NO_COLOR, --color=never and NO_COLOR (and TOMATO_COLOR=never) leave the text plain, and TOMATO_COLOR=always works like the flag. The
+# brand red (keywords) and green (texts and the prompt), comments dim, numbers cyan, built-ins bright blue, names after def bold.
+set rst {\x1b\[0m}
+# a session that types a line, checks how it is drawn, and leaves: kw and str are the sequences that start a keyword and a text
+proc colored {n env_words flags kw str what} {
+  global rst promptre
+  set promptre ">>> \\x1b\\\[5G"
+  set promptre "$str>>> $rst\\x1b\\\[5G"
+  start_repl $n $env_words $flags
+  prompt "$what"
+  send "for x in 'a':"
+  want "${kw}for${rst} x ${kw}in${rst} ${str}'a'${rst}:" "the colored line ($what)"
+  send "\003"
+  ran {KeyboardInterrupt\r\n} "KeyboardInterrupt ($what)"
+  send "\004"
+  ended $n $what
+  set promptre {>>> \x1b\[5G}
+}
+# a session that types the same line and checks that nothing was colored
+proc plain {n env_words flags what} {
+  global promptre expect_out
+  start_repl $n $env_words $flags
+  prompt "$what"
+  send "for x in 'a':"
+  want {for x in 'a':\x1b\[18G} "the plain line ($what)"
+  if {[regexp {\x1b\[[0-9;]*m} $expect_out(buffer)]} { fail "$what: a color appeared: [string map [list \x1b ESC] $expect_out(buffer)]" }
+  send "\003"
+  ran {KeyboardInterrupt\r\n} "KeyboardInterrupt ($what)"
+  send "\004"
+  ended $n $what
+}
+# 24-bit colors, and a recalled line edited in place: the line comes back colored, the edit changes the colors
+set tkw {\x1b\[38;2;235;60;39m}
+set tstr {\x1b\[38;2;0;150;57m}
+set promptre "$tstr>>> $rst\\x1b\\\[5G"
+start_repl 5 "TOMATO_HISTORY=$work/hist5 TERM=xterm-256color COLORTERM=truecolor NO_COLOR=1" "--color=always"
+prompt "24-bit colors"
+send "print('hi', 3)"
+want "\\x1b\\\[94mprint$rst\\(${tstr}'hi'$rst, \\x1b\\\[36m3$rst\\)" "the typed line in 24-bit colors"
+send "\r"
+ran {\?25hhi 3\r\n} "the colored line runs"
+send "\033\[A"
+want "\\x1b\\\[94mprint$rst\\(${tstr}'hi'$rst, \\x1b\\\[36m3$rst\\)\\x1b\\\[19G" "the recalled line, colored"
+send "\177\17742)"
+want "\\x1b\\\[36m42$rst\\)\\x1b\\\[20G" "the edited recalled line"
+send "\r"
+ran {\?25hhi 42\r\n} "the edited line runs"
+send "x = \$"
+want {x = \x1b\[4;38;2;235;60;39m\$\x1b\[0m\x1b\[10G} "a character that is not Tomato, underlined red"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (24 bits)"
+send "# note"
+want {\x1b\[2m# note\x1b\[0m\x1b\[11G} "a comment, dim"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (comment)"
+send "\004"
+ended 5 "24-bit colors"
+set promptre {>>> \x1b\[5G}
+# 256 colors (the nearest to the brand red is an orange, so the red is 196), always wins over NO_COLOR
+colored 6 "TERM=xterm-256color COLORTERM= NO_COLOR=1" "--color=always" {\x1b\[38;5;196m} {\x1b\[38;5;29m} "256 colors"
+# 16 colors: the terminal's own red and green; the color decided by the environment alone (a terminal, NO_COLOR empty), and by TOMATO_COLOR
+colored 7 "TERM=xterm COLORTERM= NO_COLOR=" "" {\x1b\[31m} {\x1b\[32m} "16 colors, automatic"
+colored 8 "TERM=xterm COLORTERM= NO_COLOR=1 TOMATO_COLOR=always" "" {\x1b\[31m} {\x1b\[32m} "TOMATO_COLOR=always"
+# no colors: NO_COLOR, --color=never, TOMATO_COLOR=never, TERM=dumb has no editor at all
+plain 9 "TERM=xterm-256color NO_COLOR=1" "" "NO_COLOR"
+plain 10 "TERM=xterm-256color NO_COLOR=" "--color=never" "--color=never"
+plain 11 "TERM=xterm-256color NO_COLOR= TOMATO_COLOR=never" "" "TOMATO_COLOR=never"
 
 # ---- the fallbacks ---------------------------------------------------------------------------------------------------------
 # a helper that fails: a one-line note, then plain input (readline) for the rest of the session; only exit 10 leaves

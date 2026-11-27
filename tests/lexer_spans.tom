@@ -1,0 +1,286 @@
+# The tolerant mode of the lexer (lex_spans in compiler/src/lexer.tom), as @test functions: it never raises, its spans cover the text, and it
+# agrees with `lex` (the same errors, the same kinds of tokens in the same order) over every .tom file of the repository and over every
+# prefix of the lines of a few programs. lexer.tom is not a std module, so tests/run.sh copies it beside this file and runs
+# `tomato test` there with the repository as the current folder.
+import os
+import ospath
+from lexer import lex, lex_spans, LexError, Token, Span
+from testing import assert_equal, assert_true, assert_false
+
+# ---- the files -------------------------------------------------------------------------------------------------------------
+
+def collect(folder: str, out: list[str]):
+    names = os.listdir(folder)
+    for name in sorted(names):
+        path = ospath.join(folder, name)
+        if ospath.isdir(path):
+            collect(path, out)
+        elif name.endswith('.tom'):
+            out.append(path)
+
+def repository_files() -> list[str]:
+    out: list[str] = []
+    for folder in ['compiler/src', 'std', 'tests', 'examples', 'benchmarks', 'site', 'docs', 'tools']:
+        if ospath.isdir(folder):
+            collect(folder, out)
+    return out
+
+# ---- what lex says, and what lex_spans says --------------------------------------------------------------------------------
+
+# '' when lex accepts the text, else the message of its error
+def lex_error(src: str) -> str:
+    try:
+        lex(src)
+    catch LexError as e:
+        return e.message
+    return ''
+
+# the spans of the lines, one list per line (from 0)
+def by_line(spans: list[Span], lines: int) -> list[list[Span]]:
+    out: list[list[Span]] = []
+    for _i in range(lines):
+        out.append([])
+    for sp in spans:
+        out[sp.line - 1].append(sp)
+    return out
+
+# '' when the spans cover the text of every line, from its first character to its last one, each span starting where the one before ends
+def coverage_problem(src: str, spans: list[Span]) -> str:
+    lines = src.split('\n')
+    per_line = by_line(spans, len(lines))
+    last_line = 0
+    for sp in spans:
+        if sp.line < last_line:
+            return f'the spans are not in order at line {sp.line}'
+        last_line = sp.line
+    for index, line in enumerate(lines):
+        at = 0
+        for sp in per_line[index]:
+            if sp.col != at:
+                return f'line {index + 1}: a span starts at {sp.col} but the one before ends at {at}: {line}'
+            if sp.end_col < sp.col:
+                return f'line {index + 1}: a span ends before it starts: {line}'
+            at = sp.end_col
+        if at != len(line):
+            return f'line {index + 1}: the spans end at {at}, the line at {len(line)}: {line}'
+    return ''
+
+def token_kind(t: Token) -> str:
+    if t.kind == 'KW':
+        return 'keyword'
+    if t.kind == 'NAME':
+        return 'name'
+    if t.kind == 'INT' or t.kind == 'FLOAT':
+        return 'number'
+    if t.kind == 'STR':
+        return 'string'
+    return 'op'
+
+# the kinds lex gives the tokens of each line, and the kinds of the spans of the line (spaces and comments are not tokens; a closing bracket with
+# nothing open is an error span that lex has as an operator)
+def kind_problem(src: str, toks: list[Token], spans: list[Span]) -> str:
+    lines = src.split('\n')
+    per_line = by_line(spans, len(lines))
+    token_lines: list[list[str]] = []
+    for _i in range(len(lines)):
+        token_lines.append([])
+    for t in toks:
+        if t.kind != 'INDENT' and t.kind != 'DEDENT' and t.kind != 'NEWLINE' and t.kind != 'EOF':
+            token_lines[t.line - 1].append(token_kind(t))
+    for index, line in enumerate(lines):
+        want: list[str] = []
+        fstring = False
+        fields = 0
+        for sp in per_line[index]:
+            text = line[sp.col:sp.end_col]
+            if sp.kind == 'space' or sp.kind == 'comment':
+                continue
+            if sp.kind == 'string' and text.startswith('f'):
+                fstring = True
+            if sp.kind == 'fstring-brace' and text == '{':
+                fields += 1
+            if sp.kind == 'error' and text in [')', ']', '}']:
+                want.append('op')
+            else:
+                want.append(sp.kind)
+        got = token_lines[index]
+        if not fstring:
+            if want != got:
+                return f'line {index + 1}: the tokens are {got} but the spans are {want}: {line}'
+        else:
+            # an f-string is rewritten by lex into tokens of its own ('(' text '+' str '(' expr ')' ... ')'); what has to agree is the code in
+            # the fields: the words and the numbers (lex adds one name, str or _format_spec, for each field)
+            if count(got, 'keyword') != count(want, 'keyword'):
+                return f'line {index + 1}: not the same keywords in an f-string: {line}'
+            if count(got, 'name') != count(want, 'name') + fields:
+                return f'line {index + 1}: not the same names in an f-string: {line}'
+    return ''
+
+def count(items: list[str], what: str) -> int:
+    n = 0
+    for x in items:
+        if x == what:
+            n += 1
+    return n
+
+# everything lex_spans must satisfy for a text: it did not raise (this call is the proof), its spans cover the text, and it says what lex says
+def agree(src: str, label: str):
+    spans, st = lex_spans(src)
+    problem = coverage_problem(src, spans)
+    assert_equal(problem, '', f'{label}: {problem}')
+    err = lex_error(src)
+    assert_equal(st.message, err, f'{label}: lex says <{err}>, lex_spans says <{st.message}>')
+    if err == '':
+        problem = kind_problem(src, lex(src), spans)
+        assert_equal(problem, '', f'{label}: {problem}')
+
+# ---- tests -----------------------------------------------------------------------------------------------------------------
+
+@test
+def every_file_of_the_repository():
+    files = repository_files()
+    assert_true(len(files) > 300, f'the repository files were not found (the test runs in the repository: {len(files)} .tom files)')
+    for path in files:
+        agree(os.read_text(path), path)
+
+# what a text lexes to, as `kind:text` for each span that is not a space
+def shape(src: str) -> str:
+    spans = lex_spans(src)[0]
+    lines = src.split('\n')
+    parts: list[str] = []
+    for sp in spans:
+        if sp.kind != 'space':
+            parts.append(sp.kind + ':' + lines[sp.line - 1][sp.col:sp.end_col])
+    return ' '.join(parts)
+
+@test
+def kinds_of_ordinary_code():
+    assert_equal(shape('x = 1'), 'name:x op:= number:1')
+    assert_equal(shape('def f(a: int) -> str:'), 'keyword:def name:f op:( name:a op:: name:int op:) op:-> name:str op::')
+    assert_equal(shape('if x >= 2.5e3 and not y:  # why'), 'keyword:if name:x op:>= number:2.5e3 keyword:and keyword:not name:y op:: comment:# why')
+    assert_equal(shape('@main'), 'op:@ name:main')
+    assert_equal(shape("print('a#b', \"c\")"), "name:print op:( string:'a#b' op:, string:\"c\" op:)")
+    assert_equal(shape('x //= 3 ** 2'), 'name:x op://= number:3 op:** number:2')
+    assert_equal(shape('True and None'), 'keyword:True keyword:and name:None')
+
+@test
+def f_strings_are_text_with_code_in_the_fields():
+    assert_equal(shape("f'hi'"), "string:f'hi'")
+    assert_equal(shape("f'a{n}b'"), "string:f'a fstring-brace:{ name:n fstring-brace:} string:b'")
+    assert_equal(shape("f'{x:>8.2f}'"), "string:f' fstring-brace:{ name:x op:: number:>8.2f fstring-brace:} string:'")
+    assert_equal(shape("f'{{a}} {b + 1}'"), "string:f'{{a}}  fstring-brace:{ name:b op:+ number:1 fstring-brace:} string:'")
+    assert_equal(shape("f'{d['k']}' + f\"{f'{1}'}\""), "string:f' fstring-brace:{ name:d op:[ string:'k' op:] fstring-brace:} string:' op:+ string:f\" fstring-brace:{ string:f' fstring-brace:{ number:1 fstring-brace:} string:' fstring-brace:} string:\"")
+    assert_equal(shape("f'\\n{a}'"), "string:f'\\n fstring-brace:{ name:a fstring-brace:} string:'")
+
+@test
+def a_text_that_is_not_finished():
+    # the string goes to the end of the line, then an empty error span says where the closing quote was missing
+    assert_equal(shape("print('hel"), "name:print op:( string:'hel error:")
+    assert_equal(shape("print(f'hel{x}"), "name:print op:( string:f'hel fstring-brace:{ name:x fstring-brace:} error:")
+    assert_equal(shape("x = f'{x"), "name:x op:= string:f' error:{ string:x")
+    assert_equal(shape("f'a}b'"), "string:f'a error:} string:b'")
+    assert_equal(shape("f'{}'"), "string:f' error:{} string:'")
+    assert_equal(shape("f'{x:q}' + 1"), "string:f' error:{x:q} string:' op:+ number:1")
+    assert_equal(shape("'a\\qb' + 2"), "string:'a error:\\q string:b' op:+ number:2")
+    st = lex_spans("print('hel")[1]
+    assert_equal(st.message, "this text is missing its closing quote '\nadd ' at the end of the text")
+    assert_equal(st.error_line, 1)
+    assert_equal(st.error_col, 6)
+
+@test
+def what_lex_refuses_is_an_error_span():
+    assert_equal(shape('x = $ + 1'), 'name:x op:= error:$ op:+ number:1')
+    assert_equal(shape('12abc + 1'), 'number:12 error:abc op:+ number:1')
+    assert_equal(shape('1.5x'), 'number:1.5 error:x')
+    assert_equal(shape('3.'), 'number:3 error:.')
+    assert_equal(shape(')'), 'error:)')
+    assert_equal(shape('f(1))'), 'name:f op:( number:1 op:) error:)')
+    assert_equal(shape('\tx = 1'), 'error:\t name:x op:= number:1')
+    assert_equal(shape('x = \t1'), 'name:x op:= error:\t number:1')
+    assert_equal(shape(chr(65279) + 'x'), 'error:' + chr(65279) + ' name:x')
+    assert_equal(shape('if x:\n        a = 1\n    b = 2'), 'keyword:if name:x op:: name:a op:= number:1 error:     name:b op:= number:2')
+
+@test
+def comments_and_spaces_are_kept():
+    assert_equal(shape('# a comment'), 'comment:# a comment')
+    assert_equal(shape('    # indented'), 'comment:# indented')
+    spans = lex_spans('x = 1   # c\n    \n\ny')[0]
+    assert_equal(coverage_problem('x = 1   # c\n    \n\ny', spans), '')
+    assert_equal(len(spans), 9)
+
+@test
+def the_state_says_what_is_open():
+    st = lex_spans('x = 1')[1]
+    assert_equal(st.depth, 0)
+    assert_equal(st.indents, [0])
+    assert_equal(st.message, '')
+    st = lex_spans('if x:\n    for i in r:\n        y = (1,\n  2')[1]
+    assert_equal(st.depth, 1)
+    assert_equal(st.indents, [0, 4, 8])
+    assert_equal(st.open_line, 3)
+    assert_equal(st.open_col, 12)
+    assert_equal(st.message, "a bracket is opened here but never closed\nadd the matching ')', ']' or '}'")
+    assert_equal(st.error_line, 3)
+    assert_equal(st.error_col, 12)
+    assert_false(st.rejected)                         # an open bracket is not a fault of the text, only unfinished
+    assert_true(lex_spans("print('x")[1].rejected)
+    assert_true(lex_spans('a = $')[1].rejected)
+    assert_false(lex_spans(')')[1].rejected)          # lex lets a stray closing bracket through to the parser
+    st = lex_spans('f(a, [b,\n  c], d(')[1]
+    assert_equal(st.depth, 2)
+    assert_equal(st.open_line, 1)
+    assert_equal(st.open_col, 1)
+    st = lex_spans('x = (1)\ny = [2]')[1]
+    assert_equal(st.depth, 0)
+    st = lex_spans('if x:\n    y\n  z')[1]
+    assert_equal(st.indents, [0, 2])                  # the line z is indented differently from its block: the text goes on from it
+    assert_equal(st.error_line, 3)
+    # lines inside brackets have no indentation of their own
+    st = lex_spans('f(\n        1,\n    2,\n)\nz = 3')[1]
+    assert_equal(st.depth, 0)
+    assert_equal(st.indents, [0])
+    assert_equal(st.message, '')
+
+@test
+def the_first_problem_is_the_one_lex_raises():
+    assert_equal(lex_spans('a = $\nb = \'x')[1].message, "unexpected character '$'\nTomato has no such symbol; remove it or put it inside a text")
+    assert_equal(lex_spans('a = (\nb = \'x')[1].message, "this text is missing its closing quote '\nadd ' at the end of the text")
+    assert_equal(lex_spans('a = (')[1].error_line, 1)
+
+# a few programs and some hard lines, cut at every character of every line, and cut at every line and every character of one
+def corpus() -> list[str]:
+    return [
+        "@main\ndef main():\n    x = f'a{1 + 2}b{y:>8.2f}c{{d}}e\\n'\n    s = f\"{a['k']:5} {b(1,[2])} {{}}\"\n    t = 'tab\\there \\q bad'\n",
+        "    u = f'{x'\n    v = f'{}'\n    w = f'a}b'\n    n = 12abc + 1.5e3x + 3. + 1_0\n    z = $ + 'open\n    q = f'open {x\n    p = f'{x:>:}'\n",
+        "    r = f'{x:.}' + f'{x:{y}}'\n    zz = (1,\n      2) ]\nif x:\n\ty = 1\n  z = 2\n        w = (\n    1\n)) ]\n# c\n    \nx = 1 # tail\n",
+        "class A implements B:\n    def f(self, *rest: tuple[int]) -> int | None:\n        return rest[0] if rest else None\n\nasync def g():\n    await h(f'{a!r}')\n",
+    ]
+
+@test
+def every_prefix_of_every_line():
+    for src in corpus():
+        for line in src.split('\n'):
+            for k in range(len(line) + 1):
+                agree(line[:k], f'the line <{line}> cut at {k}')
+
+@test
+def every_prefix_of_a_text():
+    for src in corpus():
+        for k in range(len(src) + 1):
+            agree(src[:k], f'the text cut at {k}')
+
+@test
+def prefixes_of_real_programs():
+    for path in ['compiler/src/repledit.tom', 'std/lineedit.tom', 'tests/programs/angles.tom']:
+        text = os.read_text(path)
+        for line in text.split('\n'):
+            for k in range(len(line) + 1):
+                agree(line[:k], f'{path}: <{line}> cut at {k}')
+
+@test
+def the_scanners_do_not_change_what_lex_makes():
+    toks = lex("x = f'a{b}c' + 1.5e-2")
+    kinds = ' '.join([t.kind for t in toks])
+    assert_equal(kinds, 'NAME OP OP STR OP NAME OP NAME OP OP STR OP OP FLOAT NEWLINE EOF')
+    assert_equal(toks[len(toks) - 3].scale, 3)
+    assert_equal(lex_error("print('a\\qb')"), "this text has an unknown escape '\\q'\nuse one of \\n \\t \\r \\0 \\\\ \\' \\\" (to write a backslash, double it)")

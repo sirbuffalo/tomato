@@ -24,7 +24,7 @@ lipo -create "$work/tomatoc.arm64" "$work/tomatoc.x86_64" -output "$payload/usr/
 # with the runtime, as for tomatoc. Fatal here, unlike in install-native.sh (where it is optional): a package never ships without it, or
 # with it for one architecture only
 lib="$payload/usr/local/lib/tomato/native"
-mkdir -p "$work/repledit"; cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$work/repledit/"
+mkdir -p "$work/repledit"; cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$root/compiler/src/hltomato.tom" "$work/repledit/"
 "$lib/bin/tomatoc" "$work/repledit/repledit.tom" main "$lib/std/" release > "$work/repledit.ll"
 for arch in arm64 x86_64; do
   clang -arch "$arch" -O2 -DTOMATO_RELEASE -Wno-override-module -o "$work/repledit.$arch" "$work/repledit.ll" "$root/runtime/tomato_rt.c" -pthread -lm

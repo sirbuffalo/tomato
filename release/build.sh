@@ -19,7 +19,7 @@ cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/was
 cp "$root/runtime/tomato_rt.c" "$root/runtime/tomato_inline.ll" "$stage/runtime/"
 cp "$root/std/"*.tom "$root/std/errors.txt" "$stage/std/"; cp -R "$root/std/builtin" "$stage/std/"
 cp "$root/compiler/bootstrap/tomatoc.ll" "$root/compiler/bootstrap/split.awk" "$root/compiler/bootstrap/build-object.sh" "$stage/compiler/bootstrap/"
-cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$stage/compiler/src/"   # the repl's line editor, which install-native.sh builds
+cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$root/compiler/src/hltomato.tom" "$stage/compiler/src/"   # the repl's line editor, which install-native.sh builds
 cp -R "$root/examples" "$stage/examples"
 tar -czf "$out/tomato-$version.tar.gz" -C "$out" "tomato-$version"
 rm -rf "$stage"

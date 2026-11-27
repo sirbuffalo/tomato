@@ -94,7 +94,7 @@ The depth: `COLORTERM` `truecolor` or `24bit`, or a `TERM` ending in `-direct`: 
 
 For a background the numbers are 40 and 100 and 48 instead of 30, 90 and 38; a bright background at 8 colors stays plain. The codes come in the order bold, dim, italic, underline, reverse, foreground, background.
 Examples (checked in `tests/terminal_logic.tom`): `rgb(235, 60, 39)` is `38;2;235;60;39`, `38;5;166` (a tie between 215 and 255 in red goes to 215), `91` at 16 colors and `1;31` at 8; `rgb(0, 150, 57)` is `38;5;29`, `32`, `32`.
-Note for the palette of stage 3: the brand red `#EB3C27` lowers to the *bright* red (`91`, 255,0,0 is nearer than 205,0,0), not the plain red `31` that section 7 of the design hopes for; the palette should choose `ansi(1)` itself when `colors` is 16 or less.
+Note for the palette (done in stage 3, D90a): the brand red `#EB3C27` lowers to the *bright* red (`91`, 255,0,0 is nearer than 205,0,0), not the plain red `31` that section 7 of the design hopes for, so the repl's palette (`compiler/src/hltomato.tom`) picks `ansi(1)` and `ansi(2)` itself when `colors` is 16 or less, and `196` for the red at 256.
 
 ## Widths
 

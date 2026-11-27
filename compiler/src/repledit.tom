@@ -12,15 +12,19 @@
 # block joined by ⏎ (U+23CE), the newest 1000 kept; the format of the repl before this editor, so either one reads the other's file.
 # `:commands`, leave(), exit(), quit(), empty pieces and a piece equal to the newest entry are not recorded.
 #
-# It sits next to lexer.tom (the compiler's own lexer, which decides whether brackets are still open) and is built by install-native.sh
-# from a copy of the two files (`tomato build repledit.tom --mode release`); it is not part of the compiler.
+# The text is colored while it is typed (hltomato.tom, on the tolerant mode of the compiler's own lexer) when the terminal has colors:
+# --color=always or never decides, else TOMATO_COLOR, NO_COLOR, TERM=dumb and the terminal's own depth (COLORTERM, TERM) do.
+#
+# It sits next to lexer.tom (the compiler's own lexer, which also says whether brackets are still open) and hltomato.tom, and is built
+# by install-native.sh from a copy of the three files (`tomato build repledit.tom --mode release`); it is not part of the compiler.
 import os
 import ospath
 import sys
 import terminal
 import lineedit
 from lineedit import Editor, Validator, Indenter
-from lexer import lex, LexError, Token
+from lexer import lex_spans, Span
+from hltomato import TomatoHighlighter
 
 const JOINER = '⏎'
 const LIMIT = 1000
@@ -47,45 +51,46 @@ export def code_part(line: str) -> str:
     return line.rstrip(' ')
 
 # whether the text starts a block that ends at an empty line: one of its lines (outside brackets) ends with ':' or starts with '@'
-def opens_block(toks: list[Token]) -> bool:
-    line_start = True
-    prev = ''
-    for t in toks:
-        if t.kind == 'NEWLINE':
-            if prev == ':':
-                return True
-            line_start = True
-            prev = ''
-        elif t.kind == 'INDENT' or t.kind == 'DEDENT' or t.kind == 'EOF':
-            pass
-        else:
-            if line_start and t.kind == 'OP' and t.text == '@':
-                return True
-            line_start = False
-            prev = ''
-            if t.kind == 'OP':
-                prev = t.text
-    return False
-
-# the same question without tokens (when the text does not lex): the first line ends with ':' or starts with '@'
-def opens_block_text(first: str) -> bool:
-    return code_part(first).endswith(':') or first.startswith('@')
+def opens_block(spans: list[Span], lines: list[str]) -> bool:
+    depth = 0
+    current = 0
+    line_start = True       # no token has come yet in this logical line (a line that does not continue the one before it)
+    last = ''               # the last token of the logical line, when it is an operator
+    for sp in spans:
+        if sp.line != current:
+            if current > 0 and depth == 0:
+                if last == ':':
+                    return True
+                line_start = True
+                last = ''
+            current = sp.line
+        if sp.kind == 'space' or sp.kind == 'comment':
+            continue
+        text = lines[sp.line - 1][sp.col:sp.end_col]
+        if line_start and sp.kind == 'op' and text == '@':
+            return True
+        line_start = False
+        last = ''
+        if sp.kind == 'op':
+            last = text
+            if text in '([{':
+                depth += 1
+            elif text in ')]}' and depth > 0:
+                depth -= 1
+    return depth == 0 and last == ':'
 
 # The repl's rule for Enter on the last line. A piece is complete when no bracket is left open and, if it starts a block (a line ends
-# with ':' or starts with '@'), once its last line is empty. So `x = (1,` and `f(` go on to a new line, as in Python; a line the lexer
-# rejects for another reason is complete (the compiler then says what is wrong), unless it is inside a block still being typed.
+# with ':' or starts with '@'), once its last line is empty. So `x = (1,` and `f(` go on to a new line, as in Python; a text with another
+# problem (a text with no closing quote, say) does not wait for brackets: it is complete (the compiler then says what is wrong), unless
+# it is inside a block still being typed.
 export class ReplValidator implements Validator:
     def complete(self, text: str) -> bool:
         lines = text.split('\n')
         ended = len(lines) > 1 and lines[len(lines) - 1].strip() == ''
-        toks: list[Token] = []
-        try:
-            toks = lex(text)
-        catch LexError as e:
-            if e.message.startswith('a bracket is opened here but never closed'):
-                return False
-            return ended or not opens_block_text(lines[0])
-        if not opens_block(toks):
+        spans, state = lex_spans(text)
+        if state.depth > 0 and not state.rejected:
+            return False
+        if not opens_block(spans, lines):
             return True
         return ended
 
@@ -145,7 +150,14 @@ def main(*args: tuple[str]):
     ed.validator = ReplValidator()
     ed.indenter = ReplIndenter()
     term = terminal.open()
-    term.colors = 0                   # colors come with the highlighter (stage 3 of docs/repl-editor-design.md)
+    colors = terminal.color_depth(color, term.fd)
+    term.colors = colors
+    ed.colors = colors
+    if colors > 0:
+        hl = TomatoHighlighter(colors)
+        ed.highlighter = hl
+        ed.prompt_style = hl.palette.prompt
+        ed.continuation_style = hl.palette.continuation
     result = lineedit.Result('eof')
     try:
         result = ed.read(term)

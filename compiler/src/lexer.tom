@@ -1,6 +1,11 @@
 # The Tomato lexer (D38a): turns source text into tokens, with INDENT and DEDENT for the indentation.
 #
 # Used by compiler/src/parser.tom; the command-line tool is compiler/src/lextool.tom.
+#
+# `lex` makes the tokens the parser reads and raises LexError at the first problem. `lex_spans` (D90a) is its tolerant mode for the repl's
+# colors: it never raises and keeps every character, comments and spaces too, in a span. They share the scanners (scan_number,
+# scan_string, scan_fstring, name_end, op_len), so they agree on where a piece of text ends; tests/lexer_spans.tom lexes every file of
+# the repository both ways. The lexer is not a std module: its token set is not a public promise.
 
 export class LexError(Error):
     line: int = 0
@@ -47,6 +52,12 @@ def is_keyword(w: str) -> bool:
              'import', 'from', 'export', 'async', 'await', 'as', 'is', 'and', 'or', 'xor', 'not', 'True', 'False']
     return w in words
 
+def is_escape(e: str) -> bool:
+    return e in 'ntr0\\\'"'
+
+def unknown_escape(e: str) -> str:
+    return "this text has an unknown escape '\\" + e + "'\nuse one of \\n \\t \\r \\0 \\\\ \\' \\\" (to write a backslash, double it)"
+
 def escape_char(e: str, line: int, col: int) -> str:
     if e == 'n':
         return '\n'
@@ -58,55 +69,103 @@ def escape_char(e: str, line: int, col: int) -> str:
         return '\0'
     if e == '\\' or e == "'" or e == '"':
         return e
-    raise LexError("this text has an unknown escape '\\" + e + "'\nuse one of \\n \\t \\r \\0 \\\\ \\' \\\" (to write a backslash, double it)", line, col)
+    raise LexError(unknown_escape(e), line, col)
 
-def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
-    # a whole number or a decimal literal, with an optional exponent (1.5e3, 2E-2); returns the index after it
+# ---- the scanners --------------------------------------------------------------------------------------------------------
+# Each reads one piece of a line and says where it ends and what is wrong with it, without making tokens and without raising. `lex`
+# raises the problem (if any) and makes the tokens; `lex_spans` marks the problem and goes on. Both use the same scanners, so
+# they cannot disagree about where a number, a text or a replacement field ends.
+
+# what a scanner found: where the piece ends, and the first thing wrong with it
+class Scan:
+    end: int = 0            # the index after the piece
+    message: str = ''       # '' when the piece is fine, else what is wrong (the text of the LexError)
+    col: int = 0            # the column (from 1, in the line that was scanned) the LexError reports
+    at: int = 0             # the characters the problem is about: from this index ...
+    stop: int = 0           # ... up to this one (not included); an empty range at the end of the line for a missing quote
+    is_float: bool = False  # a number with a point or an exponent
+
+def fail(s: Scan, message: str, col: int, at: int, stop: int):
+    if s.message == '':
+        s.message = message
+        s.col = col
+        s.at = at
+        s.stop = stop
+
+# the index after the name (letters, digits and underscores) that has its characters from j on
+def name_end(raw: str, j: int) -> int:
+    n = len(raw)
+    while j < n and is_name_char(raw[j]):
+        j += 1
+    return j
+
+# a whole number or a decimal literal, with an optional exponent (1.5e3, 2E-2), at raw[i]; a problem is a name, an underscore or (after a
+# whole number) a dot that follows it directly
+def scan_number(raw: str, i: int) -> Scan:
+    s = Scan()
     n = len(raw)
     j = i
-    value = 0
-    frac = 0
-    exp = 0
-    is_float = False
     while j < n and is_digit(raw[j]):
-        value = value * 10 + digit_value(raw[j])
         j += 1
     if j + 1 < n and raw[j] == '.' and is_digit(raw[j + 1]):
-        is_float = True
+        s.is_float = True
         j += 1
         while j < n and is_digit(raw[j]):
-            value = value * 10 + digit_value(raw[j])
-            frac += 1
             j += 1
     if j < n and (raw[j] == 'e' or raw[j] == 'E'):
         k = j + 1
-        negative = False
         if k < n and (raw[k] == '+' or raw[k] == '-'):
-            negative = raw[k] == '-'
             k += 1
         if k < n and is_digit(raw[k]):
-            is_float = True
+            s.is_float = True
             while k < n and is_digit(raw[k]):
-                exp = exp * 10 + digit_value(raw[k])
                 k += 1
-            if negative:
-                exp = -exp
             j = k
-    if is_float:
+    s.end = j
+    if s.is_float:
         if j < n and (is_alpha(raw[j]) or raw[j] == '_'):
-            word_end = j
-            while word_end < n and is_name_char(raw[word_end]):
-                word_end += 1
-            raise LexError('a number cannot be followed by letters: ' + raw[i:word_end] + '\nput a space or an operator between the number and the name', ln, i + 1)
+            word_end = name_end(raw, j)
+            fail(s, 'a number cannot be followed by letters: ' + raw[i:word_end] + '\nput a space or an operator between the number and the name', i + 1, j, word_end)
+    elif j < n and (is_alpha(raw[j]) or raw[j] in '._'):
+        word_end = name_end(raw, j + 1)
+        fail(s, 'a number cannot be followed by letters, an underscore or a dot: ' + raw[i:word_end] + '\nput a space or an operator between the number and the name', i + 1, j, word_end)
+    return s
+
+def lex_number(raw: str, i: int, ln: int, toks: list[Token]) -> int:
+    # a whole number or a decimal literal, with an optional exponent (1.5e3, 2E-2); returns the index after it
+    s = scan_number(raw, i)
+    if s.message != '':
+        raise LexError(s.message, ln, s.col)
+    j = s.end
+    value = 0
+    frac = 0
+    exp = 0
+    k = i
+    while k < j and is_digit(raw[k]):
+        value = value * 10 + digit_value(raw[k])
+        k += 1
+    if k < j and raw[k] == '.':
+        k += 1
+        while k < j and is_digit(raw[k]):
+            value = value * 10 + digit_value(raw[k])
+            frac += 1
+            k += 1
+    if k < j and (raw[k] == 'e' or raw[k] == 'E'):
+        k += 1
+        negative = False
+        if raw[k] == '+' or raw[k] == '-':
+            negative = raw[k] == '-'
+            k += 1
+        while k < j:
+            exp = exp * 10 + digit_value(raw[k])
+            k += 1
+        if negative:
+            exp = -exp
+    if s.is_float:
         tok = make_token('FLOAT', raw[i:j], value, ln)
         tok.scale = frac - exp
         toks.append(tok)
     else:
-        if j < n and (is_alpha(raw[j]) or raw[j] in '._'):
-            word_end = j + 1
-            while word_end < n and is_name_char(raw[word_end]):
-                word_end += 1
-            raise LexError('a number cannot be followed by letters, an underscore or a dot: ' + raw[i:word_end] + '\nput a space or an operator between the number and the name', ln, i + 1)
         toks.append(make_token('INT', raw[i:j], value, ln))
     return j
 
@@ -116,9 +175,44 @@ def push_op(toks: list[Token], op: str, ln: int, col: int):
 def push_text(toks: list[Token], text: str, ln: int, col: int):
     toks.append(make_token('STR', text, 0, ln, col))
 
-# the index of the '}' that closes the replacement field whose expression starts at `start`, or of the ':' that starts
-# its format spec
-def field_end(raw: str, start: int, ln: int) -> int:
+# the text 'quote ... quote' that starts at raw[i] (the quote): the index after the closing quote, or the end of the line when it is
+# missing. A problem is an escape that is not known, or the missing quote.
+def scan_string(raw: str, i: int) -> Scan:
+    s = Scan()
+    n = len(raw)
+    quote = raw[i]
+    j = i + 1
+    while j < n and raw[j] != quote:
+        if raw[j] == '\\':
+            j += 1
+            if j >= n:
+                break
+            if not is_escape(raw[j]):
+                fail(s, unknown_escape(raw[j]), j, j - 1, j + 1)
+        j += 1
+    if j >= n:
+        fail(s, f'this text is missing its closing quote {quote}\nadd {quote} at the end of the text', i + 1, n, n)
+        s.end = n
+    else:
+        s.end = j + 1
+    return s
+
+# the text of a string between its quotes (raw[a:b]), with its escapes turned into the characters: scan_string has checked them
+def unescape(raw: str, a: int, b: int) -> str:
+    buf = ''
+    j = a
+    while j < b:
+        if raw[j] == '\\':
+            j += 1
+            buf += escape_char(raw[j], 0, 0)
+        else:
+            buf += raw[j]
+        j += 1
+    return buf
+
+# the index of the '}' that closes the replacement field whose expression starts at `start`, or of the ':' that starts its format
+# spec; -1 when the line ends first
+def field_end(raw: str, start: int) -> int:
     n = len(raw)
     j = start
     nesting = 0
@@ -139,7 +233,498 @@ def field_end(raw: str, start: int, ln: int) -> int:
         elif c == ':' and nesting == 0:
             return j
         j += 1
-    raise LexError("this f-string has a '{' that is never closed\nadd '}' after the expression, or write '{{' for a literal brace", ln, start)
+    return -1
+
+# One piece of an f-string: a run of its text (start to end), or a replacement field: its '{' at start, the expression after it up to
+# expr_end (the ':' that starts a format spec, or the '}'), and the '}' at close (so a format spec is raw[expr_end + 1:close]).
+class FPart:
+    kind: str = ''          # 'text' or 'field'
+    start: int = 0
+    end: int = 0
+    expr_end: int = 0
+    close: int = 0
+
+# an f-string f'text {expr:spec} more' at raw[i] (the f): its parts in order up to the first problem, and in scan the index after it.
+# A problem is an escape that is not known, a single '}', a field that is not closed, empty or with a format spec that is wrong, or
+# the missing closing quote. After a problem the rest of the f-string, up to its closing quote, is one more piece of text.
+class FString:
+    parts: list[FPart] = []
+    scan: Scan = Scan()
+
+def text_part(start: int, end: int) -> FPart:
+    p = FPart()
+    p.kind = 'text'
+    p.start = start
+    p.end = end
+    return p
+
+# the index after the closing quote that follows raw[j:] (the end of the line when there is none), the way a text without fields reads
+def after_quote(raw: str, j: int, quote: str) -> int:
+    n = len(raw)
+    while j < n and raw[j] != quote:
+        if raw[j] == '\\':
+            j += 1
+        j += 1
+    if j >= n:
+        return n
+    return j + 1
+
+def scan_fstring(raw: str, i: int) -> FString:
+    out = FString()
+    s = out.scan
+    n = len(raw)
+    quote = raw[i + 1]
+    j = i + 2
+    text_start = j
+    while j < n and raw[j] != quote:
+        c = raw[j]
+        if c == '\\':
+            j += 1
+            if j >= n:
+                break
+            if not is_escape(raw[j]):
+                fail(s, unknown_escape(raw[j]), j, j - 1, j + 1)
+        elif c == '{' and j + 1 < n and raw[j + 1] == '{':
+            j += 1
+        elif c == '}' and j + 1 < n and raw[j + 1] == '}':
+            j += 1
+        elif c == '}':
+            fail(s, "this f-string has a single '}'\nwrite '}}' for a literal brace", j + 1, j, j + 1)
+        elif c == '{':
+            end = field_end(raw, j + 1)
+            if end < 0:
+                fail(s, "this f-string has a '{' that is never closed\nadd '}' after the expression, or write '{{' for a literal brace", j + 1, j, j + 1)
+            else:
+                close = end
+                if raw[end] == ':':
+                    close = raw.find('}', end + 1)
+                    if close < 0:
+                        fail(s, "this f-string has a '{' that is never closed\nadd '}' after the format spec, or write '{{' for a literal brace", j + 1, j, j + 1)
+                    else:
+                        spec = raw[end + 1:close]
+                        if '{' in spec:
+                            fail(s, "a format spec cannot hold another replacement field\nwrite the width or the precision as a number", end + 1, j, close + 1)
+                        else:
+                            try:
+                                parse_format_spec(spec, 0, end + 2)
+                            catch LexError as e:
+                                fail(s, e.message, e.col, j, close + 1)
+                if s.message == '' and raw[j + 1:end].strip() == '':
+                    fail(s, "this f-string has an empty '{}'\nput an expression between the braces, or write '{{}}' for literal braces", j + 1, j, close + 1)
+                if s.message == '':
+                    if text_start < j:
+                        out.parts.append(text_part(text_start, j))
+                    p = FPart()
+                    p.kind = 'field'
+                    p.start = j
+                    p.expr_end = end
+                    p.close = close
+                    out.parts.append(p)
+                    j = close
+                    text_start = close + 1
+        if s.message != '':
+            break
+        j += 1
+    if s.message != '':
+        s.end = after_quote(raw, s.stop, quote)
+    elif j >= n:
+        fail(s, f'this text is missing its closing quote {quote}\nadd {quote} at the end of the text', i + 2, n, n)
+        s.end = n
+    else:
+        if text_start < j:
+            out.parts.append(text_part(text_start, j))
+        s.end = j + 1
+    return out
+
+# the text of an f-string's run of text (raw[a:b]) with its escapes and doubled braces turned into the characters
+def fstring_text(raw: str, a: int, b: int) -> str:
+    buf = ''
+    j = a
+    while j < b:
+        c = raw[j]
+        if c == '\\':
+            j += 1
+            buf += escape_char(raw[j], 0, 0)
+        elif c == '{' or c == '}':
+            buf += c            # the first of a doubled brace: the scanner has seen that it is one
+            j += 1
+        else:
+            buf += c
+        j += 1
+    return buf
+
+# the length of the operator at raw[i]: 3, 2 or 1 characters, or 0 when no operator starts there
+def op_len(raw: str, i: int) -> int:
+    n = len(raw)
+    if i + 2 < n and raw[i:i + 3] in ['//=', '**=', '<<=', '>>=']:
+        return 3
+    if i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<', '>>', '//', '**']:
+        return 2
+    if raw[i] in '+-*/%<>=()[]{}:,.@!|&^~':
+        return 1
+    return 0
+
+def bad_character(c: str) -> str:
+    if ord(c) == 65279:
+        return 'unexpected byte order mark (U+FEFF), an invisible character\nsave the file as UTF-8 without a byte order mark'
+    return f"unexpected character '{c}'\nTomato has no such symbol; remove it or put it inside a text"
+
+const TAB_INDENT = 'a tab cannot be used for indentation\nindent with spaces instead'
+const BAD_DEDENT = 'this line is indented differently from the block it belongs to\nindent it by the same number of spaces as the lines above it, or as an outer line'
+const OPEN_BRACKET = "a bracket is opened here but never closed\nadd the matching ')', ']' or '}'"
+
+# ---- the tokens ----------------------------------------------------------------------------------------------------------------
+
+# An f-string f'text {expr} more' becomes the tokens of ('text ' + str(expr) + ' more'); returns the index after it.
+def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
+    fs = scan_fstring(raw, i)
+    col = i + 1
+    push_op(toks, '(', ln, col)
+    buf = ''
+    first = True
+    for p in fs.parts:
+        if p.kind == 'text':
+            buf += fstring_text(raw, p.start, p.end)
+        else:
+            source = raw[p.start + 1:p.expr_end]
+            spec = ''
+            if p.close != p.expr_end:
+                spec = raw[p.expr_end + 1:p.close]
+            if buf != '' or first:
+                if not first:
+                    push_op(toks, '+', ln, col)
+                push_text(toks, buf, ln, col)
+                buf = ''
+            push_op(toks, '+', ln, col)
+            if spec == '':
+                toks.append(make_token('NAME', 'str', 0, ln, col))
+            else:
+                toks.append(make_token('NAME', '_format_spec', 0, ln, col))
+            push_op(toks, '(', ln, col)
+            inner: list[Token] = []
+            lex_line(source, ln, inner, 0)
+            for t in inner:
+                t.col = p.start + 2
+                toks.append(t)
+            if spec != '':
+                push_op(toks, ',', ln, col)       # f'{x:spec}' is _format_spec(x, 'spec'); the compiler writes the text
+                push_text(toks, spec, ln, col)
+            push_op(toks, ')', ln, col)
+            first = False
+    if fs.scan.message != '':
+        raise LexError(fs.scan.message, ln, fs.scan.col)
+    if buf != '' or first:
+        if not first:
+            push_op(toks, '+', ln, col)
+        push_text(toks, buf, ln, col)
+    push_op(toks, ')', ln, col)
+    return fs.scan.end
+
+def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
+    # Lexes one line's tokens after its indentation; returns the bracket depth at the end of the line.
+    i = 0
+    n = len(raw)
+    while i < n:
+        c = raw[i]
+        start = i
+        made = len(toks)
+        if c == ' ':
+            i += 1
+        elif c == '#':
+            break
+        elif is_digit(c):
+            i = lex_number(raw, i, ln, toks)
+        elif c == 'f' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
+            i = lex_fstring(raw, i, ln, toks)
+        elif is_alpha(c) or c == '_':
+            j = name_end(raw, i)
+            w = raw[i:j]
+            toks.append(make_token('KW' if is_keyword(w) else 'NAME', w, 0, ln))
+            i = j
+        elif c == '"' or c == "'":
+            s = scan_string(raw, i)
+            if s.message != '':
+                raise LexError(s.message, ln, s.col)
+            toks.append(make_token('STR', unescape(raw, i + 1, s.end - 1), 0, ln))
+            i = s.end
+        else:
+            k = op_len(raw, i)
+            if k == 0:
+                raise LexError(bad_character(c), ln, i + 1)
+            if k == 1:
+                if c in '([{':
+                    depth += 1
+                elif c in ')]}' and depth > 0:
+                    depth -= 1              # a closing bracket with nothing open is left for the parser to report
+            toks.append(make_token('OP', raw[i:i + k], 0, ln))
+            i += k
+        if len(toks) > made:
+            toks[made].col = start + 1
+    return depth
+
+# the column of the first bracket opened among toks[first:] and not closed again on the same line
+def open_bracket_col(toks: list[Token], first: int) -> int:
+    col = 0
+    nesting = 0
+    for t in toks[first:]:
+        if t.kind == 'OP' and t.text in ['(', '[', '{']:
+            if nesting == 0:
+                col = t.col
+            nesting += 1
+        elif t.kind == 'OP' and t.text in [')', ']', '}']:
+            nesting -= 1
+    return col
+
+export def lex(src: str) -> list[Token]:
+    toks: list[Token] = []
+    indents = [0]       # the open blocks' indentation widths, innermost last
+    depth = 0           # how many brackets are open; lines inside brackets have no indentation of their own
+    open_line = 1
+    open_col = 0
+    lines = src.split('\n')
+    for index, raw in enumerate(lines):
+        ln = index + 1
+        n = len(raw)
+        if depth == 0:
+            width = n - len(raw.lstrip(' '))
+            if width < n and raw[width] == '\t':
+                raise LexError(TAB_INDENT, ln, width + 1)
+            if width >= n or raw[width] == '#':
+                continue
+            if width > indents[-1]:
+                indents.append(width)
+                toks.append(make_token('INDENT', '', 0, ln, width + 1))
+            while width < indents[-1]:
+                indents.pop()
+                toks.append(make_token('DEDENT', '', 0, ln, width + 1))
+                if width > indents[-1]:
+                    raise LexError(BAD_DEDENT, ln, width + 1)
+        before = depth
+        first_tok = len(toks)
+        depth = lex_line(raw, ln, toks, depth)
+        if before == 0 and depth > 0:
+            open_line = ln
+            open_col = open_bracket_col(toks, first_tok)
+        if depth == 0:
+            toks.append(make_token('NEWLINE', '', 0, ln, n + 1))
+    if depth != 0:
+        raise LexError(OPEN_BRACKET, open_line, open_col)
+    for i in range(len(indents) - 1):
+        toks.append(make_token('DEDENT', '', 0, len(lines)))
+    toks.append(make_token('EOF', '', 0, len(lines)))
+    return toks
+
+# ---- the spans (for colors; the repl's editor and its tests) ----------------------------------------------------------------------
+
+# A piece of a line of source. kind is one of
+#   'keyword' (a word of is_keyword, True and False too), 'name', 'number', 'string' (with its quotes; an f-string's text, up to a
+#   replacement field and after it), 'fstring-brace' (the '{' and the '}' of a replacement field), 'op' (an operator or bracket,
+#   and the ':' of a format spec), 'comment' (from the '#' to the end of the line), 'space', and 'error' (what `lex` refuses: a
+#   character that is not Tomato, a tab in the indentation, an escape that is not known, letters stuck to a number, a '}' or '{'
+#   in an f-string that does not fit, a line indented differently from its block, the end of a text whose quote is missing (an
+#   empty span), and a closing bracket with nothing open, which only the parser refuses).
+# The expression of a replacement field is lexed as code, its format spec is a 'number'. Columns count characters from 0, end_col is
+# after the last character (line[col:end_col] is the text of the span), and the lines count from 1.
+export class Span:
+    kind: str = ''
+    line: int = 0
+    col: int = 0
+    end_col: int = 0
+
+# What is left open after the text: the brackets, the indentation, and the first thing `lex` would raise.
+export class LexState:
+    depth: int = 0              # brackets opened and not closed
+    indents: list[int] = [0]    # the indentation widths of the blocks still open, outermost (0) first
+    open_line: int = 0          # the line (from 1) and column (from 0) of the first bracket that is still open, 0 when none
+    open_col: int = 0
+    rejected: bool = False      # something other than a bracket left open is wrong: `lex` would raise it before it came to the brackets
+    message: str = ''           # what `lex` raises first ('' when it raises nothing); the text of its LexError
+    error_line: int = 0         # where it is: the line (from 1) and column (from 0)
+    error_col: int = 0
+
+# lex_spans keeps its work in one of these
+class SpanLexer:
+    spans: list[Span] = []
+    state: LexState = LexState()
+    open_at: int = 0            # the column of the bracket that the line (lexed last) leaves open, if it does
+
+    def add(self, kind: str, ln: int, col: int, end_col: int):
+        sp = Span()
+        sp.kind = kind
+        sp.line = ln
+        sp.col = col
+        sp.end_col = end_col
+        self.spans.append(sp)
+
+    # the first problem of the text is the one `lex` raises
+    def note(self, message: str, ln: int, col: int):
+        self.state.rejected = True
+        if self.state.message == '':
+            self.state.message = message
+            self.state.error_line = ln
+            self.state.error_col = col
+
+    def string(self, raw: str, i: int, ln: int, at: int, s: Scan):
+        if s.message == '':
+            self.add('string', ln, at + i, at + s.end)
+            return
+        if s.at > i:
+            self.add('string', ln, at + i, at + s.at)
+        self.add('error', ln, at + s.at, at + s.stop)
+        if s.end > s.stop:
+            self.add('string', ln, at + s.stop, at + s.end)
+        self.note(s.message, ln, at + s.col - 1)
+
+    def fstring(self, raw: str, i: int, ln: int, at: int) -> int:
+        fs = scan_fstring(raw, i)
+        pos = i
+        for p in fs.parts:
+            if p.kind == 'field':
+                if p.start > pos:
+                    self.add('string', ln, at + pos, at + p.start)
+                self.add('fstring-brace', ln, at + p.start, at + p.start + 1)
+                self.field(raw[p.start + 1:p.expr_end], ln, at + p.start + 1)
+                if p.close != p.expr_end:
+                    self.add('op', ln, at + p.expr_end, at + p.expr_end + 1)
+                    if p.close > p.expr_end + 1:
+                        self.add('number', ln, at + p.expr_end + 1, at + p.close)
+                self.add('fstring-brace', ln, at + p.close, at + p.close + 1)
+                pos = p.close + 1
+        s = fs.scan
+        if s.message == '':
+            if s.end > pos:
+                self.add('string', ln, at + pos, at + s.end)
+        else:
+            if s.at > pos:
+                self.add('string', ln, at + pos, at + s.at)
+            self.add('error', ln, at + s.at, at + s.stop)
+            if s.end > s.stop:
+                self.add('string', ln, at + s.stop, at + s.end)
+            self.note(s.message, ln, at + s.col - 1)
+        return s.end
+
+    # the expression of a replacement field, which starts at column `at`
+    def field(self, source: str, ln: int, at: int):
+        keep = self.open_at
+        self.line(source, ln, at, 0)
+        self.open_at = keep
+
+    # lexes raw, a line or the rest of one after its indentation (it starts at column `at`); returns the bracket depth at its end
+    def line(self, raw: str, ln: int, at: int, depth: int) -> int:
+        i = 0
+        n = len(raw)
+        nesting = 0
+        while i < n:
+            c = raw[i]
+            if c == ' ':
+                j = i + 1
+                while j < n and raw[j] == ' ':
+                    j += 1
+                self.add('space', ln, at + i, at + j)
+                i = j
+            elif c == '#':
+                self.add('comment', ln, at + i, at + n)
+                i = n
+            elif is_digit(c):
+                s = scan_number(raw, i)
+                self.add('number', ln, at + i, at + s.end)
+                i = s.end
+                if s.message != '':
+                    self.add('error', ln, at + s.at, at + s.stop)
+                    self.note(s.message, ln, at + s.col - 1)
+                    i = s.stop
+            elif c == 'f' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
+                i = self.fstring(raw, i, ln, at)
+            elif is_alpha(c) or c == '_':
+                j = name_end(raw, i)
+                kind = 'name'
+                if is_keyword(raw[i:j]):
+                    kind = 'keyword'
+                self.add(kind, ln, at + i, at + j)
+                i = j
+            elif c == '"' or c == "'":
+                s = scan_string(raw, i)
+                self.string(raw, i, ln, at, s)
+                i = s.end
+            else:
+                k = op_len(raw, i)
+                if k == 0:
+                    self.add('error', ln, at + i, at + i + 1)
+                    self.note(bad_character(c), ln, at + i)
+                    i += 1
+                else:
+                    kind = 'op'
+                    if k == 1:
+                        if c in '([{':
+                            depth += 1
+                            if nesting == 0:
+                                self.open_at = at + i
+                            nesting += 1
+                        elif c in ')]}':
+                            nesting -= 1
+                            if depth > 0:
+                                depth -= 1
+                            else:
+                                kind = 'error'      # a closing bracket with nothing open: `lex` lets it through, the parser refuses it
+                    self.add(kind, ln, at + i, at + i + k)
+                    i += k
+        return depth
+
+# Lexes src the way `lex` does, but never raises, and keeps everything: the spans cover the text (the spans of a line, one after the
+# other, are the whole line; the line breaks are not in a span), comments and spaces included. The same scanners as `lex`, so a
+# number, a text or a replacement field ends at the same place, and the kinds agree (tests/lexer_spans.tom checks it over every file
+# of the repository). Where `lex` would raise there is an 'error' span, and the text goes on: the tolerant mode for text that is being
+# typed. The state says what is open at the end: the brackets, the indentation, and the first problem (the message `lex` raises).
+export def lex_spans(src: str) -> tuple[list[Span], LexState]:
+    lx = SpanLexer()
+    st = lx.state
+    depth = 0
+    lines = src.split('\n')
+    for index, raw in enumerate(lines):
+        ln = index + 1
+        n = len(raw)
+        body = 0                    # where the tokens of the line start (after its indentation)
+        if depth == 0:
+            width = n - len(raw.lstrip(' '))
+            if width < n and raw[width] == '\t':
+                if width > 0:
+                    lx.add('space', ln, 0, width)
+                lx.add('error', ln, width, width + 1)
+                lx.note(TAB_INDENT, ln, width)
+                body = width + 1
+            elif width >= n or raw[width] == '#':
+                if width > 0:
+                    lx.add('space', ln, 0, width)
+                if width < n:
+                    lx.add('comment', ln, width, n)
+                continue
+            else:
+                bad = False
+                if width > st.indents[-1]:
+                    st.indents.append(width)
+                while width < st.indents[-1]:
+                    st.indents.pop()
+                    if width > st.indents[-1]:
+                        bad = True
+                        st.indents.append(width)
+                if width > 0:
+                    if bad:
+                        lx.add('error', ln, 0, width)
+                        lx.note(BAD_DEDENT, ln, width)
+                    else:
+                        lx.add('space', ln, 0, width)
+                body = width
+        before = depth
+        depth = lx.line(raw[body:], ln, body, depth)
+        if before == 0 and depth > 0:
+            st.open_line = ln
+            st.open_col = lx.open_at
+    st.depth = depth
+    if depth != 0 and st.message == '':
+        st.message = OPEN_BRACKET
+        st.error_line = st.open_line
+        st.error_col = st.open_col
+    return lx.spans, st
 
 # The format spec of a replacement field, f'{x:>8.2f}': [[fill]align][sign][0][width][,][.precision][type]
 export class FormatSpec:
@@ -199,191 +784,6 @@ export def parse_format_spec(spec: str, ln: int, col: int) -> FormatSpec:
     if i < n:
         raise LexError(f"'{spec[i:]}' is not a format option that is supported\nthe form is [[fill]align][sign][0][width][,][.precision][type]: the align is < > or ^, the sign + - or a space, and the type s, d, f, e or g", ln, col)
     return f
-
-# An f-string f'text {expr} more' becomes the tokens of ('text ' + str(expr) + ' more'); returns the index after it.
-def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
-    n = len(raw)
-    quote = raw[i + 1]
-    col = i + 1
-    push_op(toks, '(', ln, col)
-    buf = ''
-    first = True
-    j = i + 2
-    while j < n and raw[j] != quote:
-        c = raw[j]
-        if c == '\\':
-            j += 1
-            if j >= n:
-                break
-            buf += escape_char(raw[j], ln, j)
-        elif c == '{' and j + 1 < n and raw[j + 1] == '{':
-            buf += '{'
-            j += 1
-        elif c == '}' and j + 1 < n and raw[j + 1] == '}':
-            buf += '}'
-            j += 1
-        elif c == '}':
-            raise LexError("this f-string has a single '}'\nwrite '}}' for a literal brace", ln, j + 1)
-        elif c == '{':
-            end = field_end(raw, j + 1, ln)
-            source = raw[j + 1:end]
-            spec = ''
-            if raw[end] == ':':
-                close = raw.find('}', end + 1)
-                if close < 0:
-                    raise LexError("this f-string has a '{' that is never closed\nadd '}' after the format spec, or write '{{' for a literal brace", ln, j + 1)
-                spec = raw[end + 1:close]
-                if '{' in spec:
-                    raise LexError("a format spec cannot hold another replacement field\nwrite the width or the precision as a number", ln, end + 1)
-                parse_format_spec(spec, ln, end + 2)
-                end = close
-            if source.strip() == '':
-                raise LexError("this f-string has an empty '{}'\nput an expression between the braces, or write '{{}}' for literal braces", ln, j + 1)
-            if buf != '' or first:
-                if not first:
-                    push_op(toks, '+', ln, col)
-                push_text(toks, buf, ln, col)
-                buf = ''
-            push_op(toks, '+', ln, col)
-            if spec == '':
-                toks.append(make_token('NAME', 'str', 0, ln, col))
-            else:
-                toks.append(make_token('NAME', '_format_spec', 0, ln, col))
-            push_op(toks, '(', ln, col)
-            inner: list[Token] = []
-            lex_line(source, ln, inner, 0)
-            for t in inner:
-                t.col = j + 2
-                toks.append(t)
-            if spec != '':
-                push_op(toks, ',', ln, col)       # f'{x:spec}' is _format_spec(x, 'spec'); the compiler writes the text
-                push_text(toks, spec, ln, col)
-            push_op(toks, ')', ln, col)
-            first = False
-            j = end
-        else:
-            buf += c
-        j += 1
-    if j >= n:
-        raise LexError(f'this text is missing its closing quote {quote}\nadd {quote} at the end of the text', ln, i + 2)
-    if buf != '' or first:
-        if not first:
-            push_op(toks, '+', ln, col)
-        push_text(toks, buf, ln, col)
-    push_op(toks, ')', ln, col)
-    return j + 1
-
-def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
-    # Lexes one line's tokens after its indentation; returns the bracket depth at the end of the line.
-    i = 0
-    n = len(raw)
-    while i < n:
-        c = raw[i]
-        start = i
-        made = len(toks)
-        if c == ' ':
-            i += 1
-        elif c == '#':
-            break
-        elif is_digit(c):
-            i = lex_number(raw, i, ln, toks)
-        elif c == 'f' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
-            i = lex_fstring(raw, i, ln, toks)
-        elif is_alpha(c) or c == '_':
-            j = i
-            while j < n and is_name_char(raw[j]):
-                j += 1
-            w = raw[i:j]
-            toks.append(make_token('KW' if is_keyword(w) else 'NAME', w, 0, ln))
-            i = j
-        elif c == '"' or c == "'":
-            j = i + 1
-            buf = ''
-            while j < n and raw[j] != c:
-                if raw[j] == '\\':
-                    j += 1
-                    if j >= n:
-                        break
-                    buf += escape_char(raw[j], ln, j)
-                else:
-                    buf += raw[j]
-                j += 1
-            if j >= n:
-                raise LexError(f'this text is missing its closing quote {c}\nadd {c} at the end of the text', ln, i + 1)
-            toks.append(make_token('STR', buf, 0, ln))
-            i = j + 1
-        elif i + 2 < n and raw[i:i + 3] in ['//=', '**=', '<<=', '>>=']:
-            toks.append(make_token('OP', raw[i:i + 3], 0, ln))
-            i += 3
-        elif i + 1 < n and raw[i:i + 2] in ['==', '!=', '<=', '>=', '->', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<', '>>', '//', '**']:
-            toks.append(make_token('OP', raw[i:i + 2], 0, ln))
-            i += 2
-        elif c in '+-*/%<>=()[]{}:,.@!|&^~':
-            if c in '([{':
-                depth += 1
-            elif c in ')]}' and depth > 0:
-                depth -= 1              # a closing bracket with nothing open is left for the parser to report
-            toks.append(make_token('OP', c, 0, ln))
-            i += 1
-        elif ord(c) == 65279:
-            raise LexError('unexpected byte order mark (U+FEFF), an invisible character\nsave the file as UTF-8 without a byte order mark', ln, i + 1)
-        else:
-            raise LexError(f"unexpected character '{c}'\nTomato has no such symbol; remove it or put it inside a text", ln, i + 1)
-        if len(toks) > made:
-            toks[made].col = start + 1
-    return depth
-
-# the column of the first bracket opened among toks[first:] and not closed again on the same line
-def open_bracket_col(toks: list[Token], first: int) -> int:
-    col = 0
-    nesting = 0
-    for t in toks[first:]:
-        if t.kind == 'OP' and t.text in ['(', '[', '{']:
-            if nesting == 0:
-                col = t.col
-            nesting += 1
-        elif t.kind == 'OP' and t.text in [')', ']', '}']:
-            nesting -= 1
-    return col
-
-export def lex(src: str) -> list[Token]:
-    toks: list[Token] = []
-    indents = [0]       # the open blocks' indentation widths, innermost last
-    depth = 0           # how many brackets are open; lines inside brackets have no indentation of their own
-    open_line = 1
-    open_col = 0
-    lines = src.split('\n')
-    for index, raw in enumerate(lines):
-        ln = index + 1
-        n = len(raw)
-        if depth == 0:
-            width = n - len(raw.lstrip(' '))
-            if width < n and raw[width] == '\t':
-                raise LexError('a tab cannot be used for indentation\nindent with spaces instead', ln, width + 1)
-            if width >= n or raw[width] == '#':
-                continue
-            if width > indents[-1]:
-                indents.append(width)
-                toks.append(make_token('INDENT', '', 0, ln, width + 1))
-            while width < indents[-1]:
-                indents.pop()
-                toks.append(make_token('DEDENT', '', 0, ln, width + 1))
-                if width > indents[-1]:
-                    raise LexError('this line is indented differently from the block it belongs to\nindent it by the same number of spaces as the lines above it, or as an outer line', ln, width + 1)
-        before = depth
-        first_tok = len(toks)
-        depth = lex_line(raw, ln, toks, depth)
-        if before == 0 and depth > 0:
-            open_line = ln
-            open_col = open_bracket_col(toks, first_tok)
-        if depth == 0:
-            toks.append(make_token('NEWLINE', '', 0, ln, n + 1))
-    if depth != 0:
-        raise LexError("a bracket is opened here but never closed\nadd the matching ')', ']' or '}'", open_line, open_col)
-    for i in range(len(indents) - 1):
-        toks.append(make_token('DEDENT', '', 0, len(lines)))
-    toks.append(make_token('EOF', '', 0, len(lines)))
-    return toks
 
 export def describe(t: Token) -> str:
     if t.kind == 'INT':

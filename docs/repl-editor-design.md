@@ -1,8 +1,8 @@
 # The repl line editor, written in Tomato: design
 
-Status: **approved by Davis (all seven recommendations of section 14, 26 November 2026); stages 1 and 2 are built** (D86a,
-`docs/terminal-api.md`, and D88a, `docs/lineedit-api.md`: the sheets as built, with where they differ from sections 6 and 8), stages 3
-and 4 are not. The questions are at the end (section 14), each with a
+Status: **approved by Davis (all seven recommendations of section 14, 26 November 2026); stages 1, 2 and 3 are built** (D86a,
+`docs/terminal-api.md`, D88a, `docs/lineedit-api.md`, and D90a, the decision entry that says where section 7 became different as built),
+stage 4 is not. The questions are at the end (section 14), each with a
 recommendation and Davis's answer. The marks are the ones of `docs/wave2-api-sheets.md`: **[V]** I read it in this repository, **[M]** I ran it (on
 Linux, or on Davis's MacBook Pro, macOS 27 arm64), **[I]** inferred, not checked.
 
@@ -270,6 +270,12 @@ instead of copying them:
   each time (blocks are a few lines; at 5,000 characters per key the lexer's cost is far below a keystroke). A per-line cache keyed on
   the line text and the bracket depth is the optimization if it is ever needed.
 
+*(As built, D90a: `lex_spans` returns `tuple[list[Span], LexState]`, with `LexState` = `depth`, `indents`, where the first open bracket is,
+`message` (what `lex` raises, with its place) and `rejected`; columns are from 0 and `end_col` is after the last character; an open bracket
+is not marked as an `error` span, since it is the normal state while typing, only `LexState.depth` says so, and a closing bracket with
+nothing open is. The scanners are `scan_number`, `scan_string`, `scan_fstring`, `name_end` and `op_len`. The equivalence test is
+`tests/lexer_spans.tom`. The repl's validator reads the spans and the state instead of the lexer's error message.)*
+
 ### The highlighter
 
 `compiler/src/hltomato.tom` turns spans into styled runs, with the context the lexer does not give: the name after `def`, `class`,
@@ -286,6 +292,10 @@ The editor draws the runs, and wraps and positions the cursor from the plain tex
 means or where the cursor is.
 
 ### Palette
+
+*(As built: the 256-color red is `196` as suggested; the builtins are bright blue (`ansi(12)`), not the plain blue, which is dark on a dark
+background; `True`, `False` and `None` are magenta, the braces of an f-string field bold green; below truecolor the red and green are
+`ansi(1)` and `ansi(2)`. `Palette` in `hltomato.tom` is the table.)*
 
 Colors are a table of `Style`s in `hltomato.tom` with truecolor values and 256/16/8 equivalents; `terminal.sgr` does the lowering,
 so the table is written once. Principles:
@@ -551,7 +561,7 @@ Each stage is its own task and merge, leaves the repl working, and does not depe
 | 0 | Design | this document, Davis's answers | docs | - |
 | 1 | Runtime and `terminal` **(built, D86a)** | the seven C functions + wasm stubs; `std/terminal.tom` (keys, decoder, raw mode, size, colors, widths, styles); `std_modules()` + bootstrap refresh + wasm rebuild; `@test`s and one pty test program; the doc sheet in `docs/` and a decision entry | a usable terminal module; the repl unchanged | M |
 | 2 | Editor library and the repl on it **(built, D88a)** | `std/lineedit.tom` (buffer, history, keymap, layout, frame, hooks); `repledit.tom` with the repl's validator and history; the installer, tarball and pkg steps; the driver change; `tests/repl_history.exp` rewritten; decision entry D-new superseding D59a | the multi-line repl, no colors yet | L |
-| 3 | The tolerant lexer and highlighting | `lex_spans` + shared scanners + the equivalence tests; `hltomato.tom`; palette; `--color` and `NO_COLOR`; bootstrap refresh + wasm rebuild | colors in the repl | M |
+| 3 | The tolerant lexer and highlighting **(built, D90a)** | `lex_spans` + shared scanners + the equivalence tests; `hltomato.tom`; palette; `--color` and `NO_COLOR`; bootstrap refresh + wasm rebuild | colors in the repl | M |
 | 4 | Library polish | what other programs need and the repl did not: a single-line mode with completion hook, a `Completer` interface, a kill ring option, docs and a worked example under `examples/` (a small interactive program), site docs copy | the library is documented and exampled | S |
 | 5 | (not planned) | the driver in Tomato; needs `subprocess` | - | - |
 

@@ -1,0 +1,151 @@
+# The syntax colors of the repl editor (compiler/src/hltomato.tom) as @test functions: the highlighter on a table of lines, the palette and
+# how terminal.sgr lowers it to 256, 16 and 8 colors, and the highlighter used by the editor on a FakeTerminal-less frame. hltomato.tom
+# imports lexer.tom from beside it, so tests/run.sh copies the files together and runs `tomato test` there.
+import terminal
+from terminal import Style
+from hltomato import TomatoHighlighter, Palette, is_builtin
+from testing import assert_equal, assert_true, assert_false
+
+const TRUE_COLOR = 16777216
+
+def esc(text: str) -> str:
+    return chr(27) + text
+
+# the name of a style in the palette (its escape text at 24 bits identifies it)
+def name_of(style: Style, pal: Palette) -> str:
+    got = terminal.sgr(style, TRUE_COLOR)
+    names = ['keyword', 'string', 'number', 'constant', 'comment', 'builtin', 'definition', 'brace', 'error']
+    styles = [pal.keyword, pal.string, pal.number, pal.constant, pal.comment, pal.builtin, pal.definition, pal.brace, pal.error]
+    for i in range(len(names)):
+        if terminal.sgr(styles[i], TRUE_COLOR) == got:
+            return names[i]
+    return 'unknown'
+
+# the lines with every run written as {style|text}
+def marked(lines: list[str]) -> list[str]:
+    hl = TomatoHighlighter(TRUE_COLOR)
+    runs = hl.highlight(lines)
+    assert_equal(len(runs), len(lines))
+    out: list[str] = []
+    for index, line in enumerate(lines):
+        parts: list[str] = []
+        at = 0
+        for r in runs[index]:
+            assert_true(r.start >= at and r.end > r.start and r.end <= len(line), f'runs of {line} out of order or out of the line')
+            parts.append(line[at:r.start])
+            parts.append('{' + name_of(r.style, hl.palette) + '|' + line[r.start:r.end] + '}')
+            at = r.end
+        parts.append(line[at:])
+        out.append(''.join(parts))
+    return out
+
+def one(line: str) -> str:
+    return marked([line])[0]
+
+@test
+def keywords_names_and_numbers():
+    assert_equal(one('def main():'), '{keyword|def} {definition|main}():')
+    assert_equal(one('async def g():'), '{keyword|async} {keyword|def} {definition|g}():')
+    assert_equal(one('class A implements B:'), '{keyword|class} {definition|A} {keyword|implements} B:')
+    assert_equal(one('interface Shape:'), '{keyword|interface} {definition|Shape}:')
+    assert_equal(one('x = 1 + 2.5  # why'), 'x = {number|1} + {number|2.5}  {comment|# why}')
+    assert_equal(one('for i in range(10):'), '{keyword|for} i {keyword|in} {builtin|range}({number|10}):')
+    assert_equal(one('if x is None and y == True:'), '{keyword|if} x {keyword|is} {constant|None} {keyword|and} y == {constant|True}:')
+    assert_equal(one('return not False'), '{keyword|return} {keyword|not} {constant|False}')
+    assert_equal(one('x //= 3 ** 2'), 'x //= {number|3} ** {number|2}')
+
+@test
+def decorators_and_builtins():
+    assert_equal(one('@main'), '{definition|@main}')
+    assert_equal(one('@init'), '{definition|@init}')
+    assert_equal(one('    @test'), '    {definition|@test}')
+    assert_equal(one('print(len(xs), sorted(ys))'), '{builtin|print}({builtin|len}(xs), {builtin|sorted}(ys))')
+    assert_equal(one('x = list[int]()'), 'x = {builtin|list}[{builtin|int}]()')
+    assert_equal(one('raise ValueError("no")'), '{keyword|raise} {builtin|ValueError}({string|"no"})')
+    # a built-in's name after a dot is a field or a method; the @ of an operator is not a decorator
+    assert_equal(one('x.sum(3).len'), 'x.sum({number|3}).len')
+    assert_equal(one('y = a @ b'), 'y = a @ b')
+    assert_equal(marked(['f(', '@x)'])[1], '@x)')
+    assert_equal(marked(['x = (1 +', '@y)'])[1], '@y)')
+
+@test
+def texts_and_f_strings():
+    assert_equal(one("print('a#b', \"c\")"), "{builtin|print}({string|'a#b'}, {string|\"c\"})")
+    assert_equal(one("s = f'a{n:>3}b'"), "s = {string|f'a}{brace|{}n:{number|>3}{brace|}}{string|b'}")
+    assert_equal(one("t = f'{x + 1} and {len(y)}'"), "t = {string|f'}{brace|{}x + {number|1}{brace|}}{string| and }{brace|{}{builtin|len}(y){brace|}}{string|'}")
+    assert_equal(one("u = 'é' + 'ü' + 2"), "u = {string|'é'} + {string|'ü'} + {number|2}")
+
+@test
+def half_typed_text_still_has_colors():
+    assert_equal(one("print('open"), "{builtin|print}({string|'open}")
+    assert_equal(one("x = f'a{b"), "x = {string|f'a}{error|{}{string|b}")
+    assert_equal(one('y = $ + 1'), 'y = {error|$} + {number|1}')
+    assert_equal(one('z = 12abc'), 'z = {number|12}{error|abc}')
+    assert_equal(one('w = (1,'), 'w = ({number|1},')
+    assert_equal(one(')'), '{error|)}')
+    assert_equal(one("print('a\\qb')"), "{builtin|print}({string|'a}{error|\\q}{string|b'})")
+    assert_equal(one(''), '')
+    assert_equal(one('    '), '    ')
+
+@test
+def blocks_are_colored_as_a_whole():
+    got = marked(['for i in range(2):', '    if i:', '        print(i)  # shown', '    else:', '        pass', ''])
+    assert_equal(got[0], '{keyword|for} i {keyword|in} {builtin|range}({number|2}):')
+    assert_equal(got[1], '    {keyword|if} i:')
+    assert_equal(got[2], '        {builtin|print}(i)  {comment|# shown}')
+    assert_equal(got[3], '    {keyword|else}:')
+    assert_equal(got[4], '        {keyword|pass}')
+    assert_equal(got[5], '')
+    # a bracket that goes on to the next line: its inside is colored like any other line, and a name there is a name
+    got = marked(['xs = [1,', '      2, None]', 'y = 3'])
+    assert_equal(got, ['xs = [{number|1},', '      {number|2}, {constant|None}]', 'y = {number|3}'])
+
+@test
+def builtin_names():
+    for w in ['print', 'len', 'str', 'int', 'float', 'range', 'sorted', 'round', 'any', 'ValueError', 'File']:
+        assert_true(is_builtin(w), w)
+    for w in ['prin', 'printx', 'self', 'main', 'Print', '', ' ']:
+        assert_false(is_builtin(w), w)
+
+@test
+def the_palette_at_every_depth():
+    # the brand colors at 24 bits: the red #EB3C27 for keywords, the green #009639 for texts
+    p = Palette(TRUE_COLOR)
+    assert_equal(terminal.sgr(p.keyword, TRUE_COLOR), esc('[38;2;235;60;39m'))
+    assert_equal(terminal.sgr(p.string, TRUE_COLOR), esc('[38;2;0;150;57m'))
+    # 256 colors: the red is 196 (the nearest to #EB3C27, 166, is an orange), the green the nearest, 29
+    p = Palette(256)
+    assert_equal(terminal.sgr(p.keyword, 256), esc('[38;5;196m'))
+    assert_equal(terminal.sgr(p.string, 256), esc('[38;5;29m'))
+    # 16 and 8 colors: the terminal's own red and green
+    for colors in [16, 8]:
+        p = Palette(colors)
+        assert_equal(terminal.sgr(p.keyword, colors), esc('[31m'), f'{colors} colors')
+        assert_equal(terminal.sgr(p.string, colors), esc('[32m'), f'{colors} colors')
+        assert_equal(terminal.sgr(p.error, colors), esc('[4;31m'), f'{colors} colors')
+    # the rest at 24 bits is the same table as at 16: the terminal's own colors, so the theme decides how they look
+    for colors in [TRUE_COLOR, 256, 16]:
+        p = Palette(colors)
+        assert_equal(terminal.sgr(p.number, colors), esc('[36m'), f'{colors} colors')
+        assert_equal(terminal.sgr(p.constant, colors), esc('[35m'), f'{colors} colors')
+        assert_equal(terminal.sgr(p.builtin, colors), esc('[94m'), f'{colors} colors')
+        assert_equal(terminal.sgr(p.comment, colors), esc('[2m'), f'{colors} colors')
+        assert_equal(terminal.sgr(p.definition, colors), esc('[1m'), f'{colors} colors')
+        assert_equal(terminal.sgr(p.prompt, colors), terminal.sgr(Palette(colors).string, colors))
+        assert_equal(terminal.sgr(p.continuation, colors), esc('[2m'), f'{colors} colors')
+    p = Palette(8)
+    assert_equal(terminal.sgr(p.builtin, 8), esc('[1;34m'))             # an 8-color terminal shows the bright blue as bold blue
+    assert_equal(terminal.sgr(p.comment, 8), esc('[2m'))
+    # nothing is drawn with no colors
+    assert_equal(terminal.sgr(Palette(16).keyword, 0), '')
+    assert_equal(terminal.styled('def', Palette(16).keyword, 0), 'def')
+    assert_equal(terminal.styled('def', Palette(16).keyword, 16), esc('[31m') + 'def' + esc('[0m'))
+
+@test
+def no_color_below_what_is_readable_on_both():
+    # the palette has no white, black or grey (they would vanish on one of the two backgrounds) and no background colors
+    for colors in [TRUE_COLOR, 256, 16, 8]:
+        p = Palette(colors)
+        for style in [p.keyword, p.string, p.number, p.constant, p.comment, p.builtin, p.definition, p.brace, p.error, p.prompt, p.continuation]:
+            assert_equal(style.bg, -1)
+            assert_true(style.fg == -1 or (style.fg >= 1 and style.fg != 7 and style.fg != 8 and style.fg != 15), f'{colors} colors: {style.fg}')

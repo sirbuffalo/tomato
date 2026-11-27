@@ -1072,11 +1072,20 @@ t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, lay
     case "$r" in *" passed, 0 failed, 0 skipped") ok "lineedit: the @test functions pass ($mode mode): $r";; *) bad "lineedit: the @test functions pass ($mode mode)" "$($t test tests/lineedit_logic.tom --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
   done
 }
+t_lexer_spans() { # lex_spans in compiler/src/lexer.tom: never raises, covers the text, agrees with lex over every .tom file and every prefix of some lines (the files are copied together, the repository is the current folder)
+  cli_setup
+  cp compiler/src/lexer.tom tests/lexer_spans.tom "$work/"
+  r="$($t test "$work/lexer_spans.tom" 2>&1 | tail -1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "lexer: lex_spans is tolerant and agrees with lex: $r";; *) bad "lexer: lex_spans is tolerant and agrees with lex" "$($t test "$work/lexer_spans.tom" 2>&1 | grep -v '^ok ' | head -12)";; esac
+}
 t_repledit_logic() { # the repl's rules in compiler/src/repledit.tom (it imports the lexer beside it, so the files are copied together, as the installer does)
   cli_setup
-  cp compiler/src/repledit.tom compiler/src/lexer.tom tests/repledit_logic.tom "$work/"
+  cp compiler/src/repledit.tom compiler/src/lexer.tom compiler/src/hltomato.tom tests/repledit_logic.tom "$work/"
   r="$($t test "$work/repledit_logic.tom" 2>&1 | tail -1)"
   case "$r" in *" passed, 0 failed, 0 skipped") ok "repl editor: the validator, the indenter and the history rules: $r";; *) bad "repl editor: the validator, the indenter and the history rules" "$($t test "$work/repledit_logic.tom" 2>&1 | grep -v '^ok ' | head -12)";; esac
+  cp tests/hltomato_logic.tom "$work/"
+  r="$($t test "$work/hltomato_logic.tom" 2>&1 | tail -1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "repl editor: the highlighter and the palette: $r";; *) bad "repl editor: the highlighter and the palette" "$($t test "$work/hltomato_logic.tom" 2>&1 | grep -v '^ok ' | head -12)";; esac
   check "install-native.sh built the repl line editor" "yes" "$([ -x "$home/native/bin/tomato-repl-edit" ] && echo yes || echo no)"
   # standard input that is not a terminal never uses the editor, even when one is named (this one would fail)
   printf '#!/bin/sh\necho used >&2; exit 1\n' > "$work/bad-edit"; chmod +x "$work/bad-edit"
@@ -1404,6 +1413,7 @@ spawn_cli t_terminal_logic
 spawn_cli t_terminal_pty
 spawn_cli t_lineedit_logic
 spawn_cli t_repledit_logic
+spawn_cli t_lexer_spans
 
 # ---- rejected programs --------------------------------------------------------------------------------------------------
 t_neg() { # file, message that the compiler must report, and the entry name (default main; `test` for the @test checks)

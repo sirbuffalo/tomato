@@ -59,11 +59,11 @@ cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/was
 cp "$root/std/"*.tom "$root/std/errors.txt" "$stage/wasm/std/"; cp -R "$root/std/builtin" "$stage/wasm/std/"
 # the website's WebAssembly build is only used by the repl while it matches this compiler (it cannot be rebuilt without the WASI SDK)
 if [ -f "$root/site/wasm/SOURCE.sha256" ] && [ "$(cat "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" | sha256 | cut -d' ' -f1)" = "$(sed -n 1p "$root/site/wasm/SOURCE.sha256")" ]; then touch "$stage/wasm/current"; fi
-# The repl's line editor (compiler/src/repledit.tom, with the lexer beside it), built with the staged tomato. It is optional: when it
+# The repl's line editor (compiler/src/repledit.tom, with the lexer and the highlighter beside it), built with the staged tomato. It is optional: when it
 # cannot be built the install goes on and the repl uses plain input, with a warning here that keeps the reason.
 build_repl_edit() {
   ed="$stage/.edit"; mkdir -p "$ed" || return 1
-  cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$ed/" &&
+  cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$root/compiler/src/hltomato.tom" "$ed/" &&
     "$stage/bin/tomato" build "$ed/repledit.tom" -o "$stage/bin/tomato-repl-edit" --mode release > "$ed/log" 2>&1
   rc=$?; [ $rc = 0 ] || { tail -5 "$ed/log" >&2; rm -f "$stage/bin/tomato-repl-edit"; }
   rm -rf "$ed"; return $rc

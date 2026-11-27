@@ -10,7 +10,9 @@
 # outside the program (writing a file, say) happens again with every later line.
 #
 # Editing: Up and Down recall earlier pieces, a block as a whole; the arrows move within it and between its lines. Enter runs the
-# piece when it is complete (a block ends at an empty line; an open bracket goes on to the next line), Tab indents, Ctrl-C cancels.
+# piece when it is complete (a block ends at an empty line; an open bracket goes on to the next line), Tab indents, Ctrl-C cancels. The
+# code is colored as you type it (keywords red, texts green, ...) on a terminal with colors: --color=always|never, TOMATO_COLOR and
+# NO_COLOR decide, as for the error colors.
 #
 #   :load FILE     add a file's definitions and statements      :program   show the session as one program
 #   :save FILE     write the session program to FILE            :compile   print the session's LLVM IR
@@ -256,7 +258,7 @@ readline() {   # readline PROMPT [INITIAL TEXT] -> sets $REPLY_LINE
 
 while :; do
   if [ $use_edit = 1 ]; then
-    text="$("$edit" --history "$hist" --color="$color_mode")"; rc=$?
+    text="$(TOMATO_COLOR="$color_mode" "$edit" --history "$hist" --color="$color_mode")"; rc=$?
     case $rc in
       0) ;;
       10) break ;;

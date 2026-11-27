@@ -157,11 +157,24 @@ tomato-repl-edit [--history FILE] [--color=auto|always|never]
   any other status: it failed; the repl says "the line editor is not available; using plain input" once and goes on with read -e
 ```
 
-Its rules: **Validator** (`ReplValidator`): a piece is complete when no bracket is left open (the compiler's own `lex` says so) and, if it
-starts a block (a line outside brackets ends with `:`, or a line starts with `@`), once its last line is blank; a piece the lexer rejects
-for another reason is complete unless it is a block still being typed, so the compiler reports the error. **Indenter**: the line's
+Its rules: **Validator** (`ReplValidator`): a piece is complete when no bracket is left open (`LexState.depth` of the compiler's own
+tolerant lexer, `lex_spans`) and, if it starts a block (a line outside brackets ends with `:`, or a line starts with `@`), once its last
+line is blank; a piece with another problem (a text with no closing quote, say) does not wait for brackets and is complete unless it is a
+block still being typed, so the compiler reports the error. **Indenter**: the line's
 indent, four more spaces after a line whose code ends with `:`. **History**: `$TOMATO_HISTORY`, else `~/.tomato/repl_history_v2`, joiner
-`⏎`, 1000 entries; not recorded: empty pieces, `:commands`, `leave()`, `exit()`, `quit()`, and a piece equal to the newest entry (one recalled and run again unchanged). The colors (`--color`) come with stage 3.
+`⏎`, 1000 entries; not recorded: empty pieces, `:commands`, `leave()`, `exit()`, `quit()`, and a piece equal to the newest entry (one recalled and run again unchanged).
+
+**Colors** (stage 3, D90a). When `terminal.color_depth(mode, fd)` says the terminal has colors (`--color=always|never` decide; else
+`TOMATO_COLOR`, a non-empty `NO_COLOR`, `TERM=dumb`, then the depth from `COLORTERM` and `TERM`), the helper sets `Editor.colors`, a
+`TomatoHighlighter` (`compiler/src/hltomato.tom`, an implementation of `Highlighter` over `lex_spans`) and the prompt styles. The
+driver passes its own `--color` mode on (`--color=auto|always|never` or `TOMATO_COLOR`; `NO_COLOR` is read by the helper). The palette:
+keywords red `#EB3C27`, texts green `#009639` (the prompt `>>> ` too), numbers cyan, `True`, `False` and `None` magenta, built-in
+functions and types bright blue, comments dim (`... ` too), the name after `def`, `class` and `interface` and decorators (`@main`)
+bold, the braces of an f-string field bold green, and what the lexer refuses (a character that is not Tomato, letters stuck to a
+number, an unknown escape, a stray closing bracket) underlined red. Names, operators and brackets are the terminal's own color; nothing
+is white, black or grey and nothing has a background, so it reads on a dark and a light terminal (the editor does not ask which). Lowered
+by `terminal.sgr`: 24 bits as written; 256 colors: keyword `196`, text `29`; 16 and 8 colors: the terminal's own red (`31`) and green
+(`32`), cyan, magenta, bright blue (bold blue at 8 colors). With no color the output is byte for byte what it was before stage 3.
 
 ## Tests
 
@@ -171,6 +184,8 @@ indent, four more spaces after a line whose code ends with `:`. **History**: `$T
   where a line wraps) and whole sessions on a `FakeTerminal` (recall a block and edit its middle line, Up through a block into the entry
   before, Down back to the draft, add and delete lines, Enter inside a block, Ctrl-C, Ctrl-D, paste, kills, Tab and Shift-Tab, a resize,
   Ctrl-L, word moves, UTF-8).
-- `tests/repledit_logic.tom`: the repl's validator, indenter and history rules (copied beside `repledit.tom` and `lexer.tom` to run).
+- `tests/repledit_logic.tom`: the repl's validator, indenter and history rules (copied beside `repledit.tom`, `lexer.tom` and `hltomato.tom` to run).
+- `tests/hltomato_logic.tom` (the highlighter on a table of lines, the palette at every depth) and `tests/lexer_spans.tom` (`lex_spans`
+  against `lex` over every file of the repository): D90a.
 - `tests/repl_history.exp`: the real repl with the built helper on a pty (see its header); it fails, never skips, when the helper is
   missing.
