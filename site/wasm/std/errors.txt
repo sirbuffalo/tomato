@@ -533,3 +533,6 @@ TerminalError the terminal cannot be opened or used
 ValueError a color mode is 'auto', 'always' or 'never'
 ValueError a color part must be a whole number from 0 to 255
 ValueError a terminal color must be a whole number from 0 to 15
+CompileError '{}' cannot be a cache key: it has no @str method
+CompileError a union cannot be a type argument written in a call
+CompileError unexpected byte order mark (U+FEFF), an invisible character

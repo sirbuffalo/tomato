@@ -325,6 +325,8 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
                 depth -= 1              # a closing bracket with nothing open is left for the parser to report
             toks.append(make_token('OP', c, 0, ln))
             i += 1
+        elif ord(c) == 65279:
+            raise LexError('unexpected byte order mark (U+FEFF), an invisible character\nsave the file as UTF-8 without a byte order mark', ln, i + 1)
         else:
             raise LexError(f"unexpected character '{c}'\nTomato has no such symbol; remove it or put it inside a text", ln, i + 1)
         if len(toks) > made:

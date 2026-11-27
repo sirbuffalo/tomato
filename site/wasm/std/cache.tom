@@ -23,7 +23,7 @@
 # rejects it), and that text must differ for different values. The keys are stored as one text (dicts have only text keys): every part is written as the length of its
 # `str` text, a colon, and the text, and the parts follow each other: the key `(1, 22, 'a:b')` is `1:12:223:a:b`. A
 # part's length says where it ends, so two different keys never give the same text, and `1` and `'1'` cannot meet because
-# every position has one type. A `float` key is the text of the float: 0.0 and -0.0 are two keys, and nan is one key.
+# every position has one type. A `float` key is the text of the float, with -0.0 written as 0.0 (as in a dict, they are one key); nan is one key.
 #
 # When a cache is full, `set` of a new key drops the entry that was used longest ago. `get`, `c[key]` and `set` count as
 # a use; `contains`, `peek` and `keys` do not. Every operation takes constant time: a dict finds the entry and a doubly
@@ -66,6 +66,9 @@ export class Clock:
 # one key part as text: the length of its `str` text, a colon and the text
 def part[T](x: T) -> str:
     s = str(x)
+    if x in float:
+        if s == '-0.0':
+            s = '0.0'           # a dict treats -0.0 and 0.0 as one key, and so does a cache
     return f'{len(s)}:{s}'
 
 class Entry[K, V]:

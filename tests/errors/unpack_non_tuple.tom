@@ -1,0 +1,5 @@
+@main
+def main():
+    n = 5
+    c, d = n
+    print(c, d)

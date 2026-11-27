@@ -1,0 +1,6 @@
+error[E538]: unexpected byte order mark (U+FEFF), an invisible character
+ --> tests/errors/byte_order_mark.tom:1:1
+  |
+1 | ﻿@main
+  | ^
+  = help: save the file as UTF-8 without a byte order mark

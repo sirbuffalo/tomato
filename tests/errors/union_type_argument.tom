@@ -1,0 +1,11 @@
+class Box[T]:
+    v: T
+
+    @init
+    def make(self, v: T):
+        self.v = v
+
+@main
+def main():
+    b = Box[str | None]("a")
+    print(b.v)

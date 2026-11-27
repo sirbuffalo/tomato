@@ -1959,6 +1959,11 @@ class Mod:
         key = f'{self.base_of(gkey)}[{self.arg_key(args)}]'
         if self.has_class(key):
             return key
+        if self.generic_mods[gkey] == 'cache' and self.cur != 'cache' and len(args) > 1:
+            # a key part is stored as its text: without @str the error would point inside std/cache.tom
+            for a in args[:-1]:
+                if is_class(a) and not self.has_op(a[1:], 'str'):
+                    raise CompileError(f"'{a[1:]}' cannot be a cache key: it has no @str method\nadd a method marked @str that returns text that tells different keys apart, or use a text or an int as the key", line)
         c = ClassInfo()
         c.name = key
         c.display = shown('@' + key)
@@ -6971,6 +6976,8 @@ class Gen:
                         return mk('TypeRef', n.line, [vs(base.fields[0].text), vz(), vnodes(parts), vz()])
                     raise CompileError(f"'{base.fields[0].text}' does not take several types here\nonly tuple[A, B] and dict[K, V] are written with more than one type", n.line)
                 return mk('TypeRef', n.line, [vs(base.fields[0].text), vz(), vn(self.type_node_of(arg)), vz()])
+        if n.kind == 'BinOp' and n.fields[0].text == '|':
+            raise CompileError('a union cannot be a type argument written in a call\na union can only come from a value: leave the brackets out and pass a variable of the union type, as in Box(x) with x: str | None, or wrap the union in a class', n.line)
         raise CompileError('this is not a type\nwrite the type of the items, such as Stack[str]()', n.line)
 
     # Name[Type](args): a generic class or function used with its type argument written out
@@ -8804,6 +8811,17 @@ class Gen:
             v = self.expr_b(args[0], [])
         else:
             v = self.expr(args[0])
+        count = unpack_count(args[0])
+        if count >= 0:
+            # the parser lowers an unpack to a len() check: say what is wrong with the unpack, not with len
+            try:
+                return self.len_value(v, line)
+            catch CompileError as e:
+                what = 'a value of type ' + shown(v.ty)
+                raise CompileError(f'cannot unpack {what} into {plural(count, "variable")}\nthe right side of an unpack must be a tuple, a list or a text', line)
+        return self.len_value(v, line)
+
+    def len_value(self, v: Ex, line: int) -> Ex:
         if is_dyn(v.ty):
             return self.len_dyn(v, line)
         if is_union(v.ty):

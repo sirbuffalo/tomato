@@ -57,7 +57,7 @@ def main():
     f = Cache[bool, float, str, int, str](10)
     f.set(True, 0.5, 'k', 3, 'v1')
     f.set(False, -0.0, 'k', 3, 'v2')
-    f.set(False, 0.0, 'k', 3, 'v3')
+    f.set(False, 0.0, 'k', 3, 'v3')       # -0.0 and 0.0 are one key, as in a dict
     print(f.get(True, 0.5, 'k', 3, '?'), f.get(False, -0.0, 'k', 3, '?'), f.get(False, 0.0, 'k', 3, '?'), len(f))
     print(f.keys())
 

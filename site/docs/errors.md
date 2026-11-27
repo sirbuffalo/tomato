@@ -125,6 +125,13 @@ type that was already written. `tomato explain` shows the id and text of each.
 | `x: int \| None`, `list[float \| None]` | `'int' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None` (E459) | use a default such as `-1`, a flag, or a class |
 | `x: int \| str \| None` | `a union cannot hold None together with two or more other types` (E458) | one type with `None`, or a class holding the choices |
 
+| `Box[str \| None](...)`, `Cache[int \| str, int](...)` | `a union cannot be a type argument written in a call` (E537) | leave the brackets out and pass a variable of the union type (`Box(x)`), or wrap the union in a class |
+| `Cache[Point, int](...)` where `Point` has no `@str` | `'Point' cannot be a cache key: it has no @str method` (E536, at the line that writes the cache) | add an `@str` method, or use a text or an int as the key |
+
+Two more messages name the mistake instead of a symptom: unpacking something that is not a tuple, list or text (`c, d = 5`,
+`for k, v, w in d` over ints) says `cannot unpack a value of type int into 2 variables` (E185), and a UTF-8 byte order mark at the
+start of a file says `unexpected byte order mark (U+FEFF), an invisible character` (E538) and asks for the file to be saved without one.
+
 Only a type the compiler has no reason for at all still gets `this variable cannot be given a type automatically`.
 
 ## Error classes and ids
