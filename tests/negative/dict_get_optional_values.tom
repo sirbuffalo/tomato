@@ -1,0 +1,4 @@
+@main
+def main():
+    d: dict[str, int | None] = {}
+    print(d.get("a"))

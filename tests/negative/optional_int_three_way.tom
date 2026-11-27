@@ -1,0 +1,4 @@
+@main
+def main():
+    x: int | float | None = None
+    print(x)

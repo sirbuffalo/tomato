@@ -1,0 +1,5 @@
+@main
+def main():
+    y: int = 4
+    if y is None:
+        print(1)

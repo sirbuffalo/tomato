@@ -39,6 +39,9 @@ on an older install moves to 1.0.0 as usual.
   digits before the point are an `OverflowError` (E528, E529; D77f); a `[limits]` table in `tomato.toml` or
   `~/.tomato/config.toml` sets both numbers (`exp_bits`, `format_digits`), and `tomato config` shows what is in effect
   (D77g). `float[length=64]` is not a type (D77c).
+- **`int | None`, `float | None` and `bool | None`** (D94a) work like `str | None`: declarations, parameters, returns, fields,
+  collections, generics, printing, and `d.get(key)` for a dict of any value type (it was a compile error for `int`,
+  `float` and `bool` values). A `None` used as a number stops with a catchable "None where a value is needed".
 - **Dict keys and set elements of any hashable type** (D78a): `int`, `bool`, `float`, `str`, tuples of those,
   optionals, unions, and objects of classes with an `@hash` method; the builtin `hash(x)`.
 - **Bitwise `&`, `|`, `^`, `~` on integers of any size** with Python's two's-complement rules; shifts, `2 ** n` and

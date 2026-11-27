@@ -1,0 +1,5 @@
+@main
+def main():
+    x: int | None = 4
+    y = (x + 1) if len("ab") > 1 else None
+    print(y)

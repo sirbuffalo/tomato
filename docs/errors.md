@@ -122,7 +122,7 @@ type that was already written. `tomato explain` shows the id and text of each.
 
 | Written | Message | Instead |
 | --- | --- | --- |
-| `x: int \| None`, `list[float \| None]` | `'int' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None` (E459) | use a default such as `-1`, a flag, or a class |
+| `x: int[length=8] \| None`, `list[uint[length=16] \| None]` | `'int[length=8]' cannot be combined with None, because only int, float, bool, str, lists, dicts, sets, classes and tuples can be None` (E459) | use `int \| None`, which holds every value |
 | `x: int \| str \| None` | `a union cannot hold None together with two or more other types` (E458) | one type with `None`, or a class holding the choices |
 
 | `Box[str \| None](...)`, `Cache[int \| str, int](...)` | `a union cannot be a type argument written in a call` (E537) | leave the brackets out and pass a variable of the union type (`Box(x)`), or wrap the union in a class |

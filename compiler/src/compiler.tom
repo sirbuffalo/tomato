@@ -436,6 +436,11 @@ def strip_optional(t: str) -> str:
         return t[:-1]
     return t
 
+def is_value_optional(t: str) -> bool:
+    # int | None, float | None and bool | None: a pointer to the same heap box a union holds its members in (the value at byte 16),
+    # null for None. The other optionals (text, lists, objects ...) are the pointer to the value itself.
+    return t == 'int?' or t == 'float?' or t == 'bool?'
+
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
     return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t) or is_mtuple(t) or t == 'File'
@@ -1861,7 +1866,10 @@ class Mod:
                     return ''
                 written = other.fields[0].text
                 if self.type_name(vn(other)) != '' and not is_optional(self.type_name(vn(other))):
-                    return f"'{written}' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None\nuse {written} with a flag or a default value, such as -1 or 0, or wrap it in a class"
+                    written = shown(self.type_name(vn(other)))
+                    if is_fixed(self.type_name(vn(other))):
+                        return f"'{written}' cannot be combined with None, because only int, float, bool, str, lists, dicts, sets, classes and tuples can be None\nuse int, which holds every value, with None: int | None"
+                    return f"'{written}' cannot be combined with None, because only int, float, bool, str, lists, dicts, sets, classes and tuples can be None\nuse {written} with a flag or a default value, such as -1 or 0, or wrap it in a class"
                 return self.unsupported_type(vn(other))
             for m in members:
                 found = self.unsupported_type(vn(m))
@@ -2178,7 +2186,7 @@ class Mod:
             elif members[1].fields[0].text != 'None':
                 return ''
             wrapped = self.type_name(vn(other))
-            if not (wrapped == 'str' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped) or is_mtuple(wrapped)):
+            if not (wrapped == 'str' or wrapped == 'int' or wrapped == 'float' or wrapped == 'bool' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped) or is_mtuple(wrapped)):
                 return ''
             return f'{wrapped}?'
         if name == 'task' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
@@ -3182,6 +3190,11 @@ class Gen:
         bad = self.tmp('isnone')
         self.emit(f'{bad} = icmp eq ptr {e.reg}, null')
         self.fail_if(bad, 'None where a value is needed', live)
+        if is_value_optional(e.ty):
+            # the number or bool in the box, as a value of its own; the box is let go
+            inner = self.unbox_value(e, strip_optional(e.ty))
+            self.release(e)
+            return inner
         return ex(e.reg, strip_optional(e.ty))
 
     def resize(self, e: Ex, to: str) -> Ex:
@@ -3210,10 +3223,11 @@ class Gen:
                 raise CompileError(f"the @bitarray method '{conv.name}' must take nothing besides self and return a bitarray", line)
             e = self.marker_call(e, conv, [], line)
         if is_optional(e.ty) and not is_optional(ty) and ty != 'None' and self.mod.assignable(strip_optional(e.ty), ty):
-            self.unwrap(e, line)
-            return ex(e.reg, strip_optional(e.ty))
+            e = self.unwrap(e, line)
         if e.ty == ty:
             return e
+        if is_value_optional(ty) and e.ty == strip_optional(ty):
+            return self.box_as(e, e.ty, ty)
         if is_numeric(e.ty) and is_numeric(ty):
             if not contains(ty, e.ty):
                 raise CompileError(f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected\nconvert it explicitly first', line)
@@ -4749,6 +4763,8 @@ class Gen:
 
     def float_call(self, v: Ex, line: int) -> Ex:
         # float(x): a whole number or a float as a float (any size), or text written as a number
+        if is_value_optional(v.ty):
+            v = self.unwrap(v, line)
         if v.ty == 'str':
             return self.text_to_float(v)
         if v.ty == 'float':
@@ -4898,6 +4914,8 @@ class Gen:
 
     def convert_explicit(self, v: Ex, target: str, line: int) -> Ex:
         # int[length=N](x): the same number in another integer type, or a stop when it does not fit (D05p)
+        if is_value_optional(v.ty):
+            v = self.unwrap(v, line)
         if v.ty == 'str' and target == 'int':
             return self.text_to_int(v)
         if not is_numeric(v.ty):
@@ -5244,6 +5262,8 @@ class Gen:
             if op == '~':
                 return self.invert_op(n)
             v = self.expr(val_node(n.fields[1]), expected)
+            if op == '-' and is_value_optional(v.ty):
+                v = self.unwrap(v, n.line)
             if op == '-' and v.ty == 'float':
                 return self.bf_negate(v)
             if op == '-' and (is_class(v.ty) or (is_optional(v.ty) and is_class(strip_optional(v.ty)))):
@@ -5289,6 +5309,18 @@ class Gen:
         yes = self.label('then')
         no = self.label('else')
         end = self.label('endcond')
+        if not (is_union(expected) or is_optional(expected)):
+            # a number or bool on one side and None on the other: the result is the optional of it (the number goes in a box)
+            yes_node = val_node(n.fields[1])
+            no_node = val_node(n.fields[2])
+            if no_node.kind == 'Name' and no_node.fields[0].text == 'None' and 'None' not in self.slots:
+                other = self.peek_type(yes_node)
+                if other == 'int' or other == 'float' or other == 'bool':
+                    expected = other + '?'
+            elif yes_node.kind == 'Name' and yes_node.fields[0].text == 'None' and 'None' not in self.slots:
+                other = self.peek_type(no_node)
+                if other == 'int' or other == 'float' or other == 'bool':
+                    expected = other + '?'
         self.cond_br(c, yes, no)
         self.place(yes)
         a = self.expr(val_node(n.fields[1]), expected)
@@ -5322,6 +5354,9 @@ class Gen:
             elif is_class(a.ty) and is_class(b.ty) and self.mod.assignable(a.ty, b.ty):
                 ty = b.ty
             else:
+                if (a.ty == 'None' and (b.ty == 'int' or b.ty == 'float' or b.ty == 'bool')) or (b.ty == 'None' and (a.ty == 'int' or a.ty == 'float' or a.ty == 'bool')):
+                    other = a.ty if b.ty == 'None' else b.ty
+                    raise CompileError(f'the two values of this conditional expression have different types: {shown(a.ty)} and {shown(b.ty)}\nwrite the type of the result, such as: y: {other} | None = ... if ... else None', n.line)
                 raise CompileError(f'the two values of this conditional expression have different types: {shown(a.ty)} and {shown(b.ty)}\nconvert one so that both have the same type', n.line)
         self.store_owned(res, b)
         self.br(end)
@@ -5475,6 +5510,8 @@ class Gen:
         if (name == 'min' or name == 'max') and len(args) >= 2:
             held_before = len(self.held)
             first = self.expr(args[0])
+            if is_value_optional(first.ty):
+                first = self.unwrap(first, line)
             items: list[Ex] = [first]
             self.hold(first)                    # the values so far are freed by the error path if a later one raises
             for a in args[1:]:
@@ -7079,6 +7116,8 @@ class Gen:
     def format_call(self, args: list[Node], line: int) -> Ex:
         spec = parse_format_spec(args[1].fields[0].text, line, 0)
         v = self.expr(args[0])
+        if is_value_optional(v.ty):
+            v = self.unwrap(v, line)
         if is_fixed(v.ty):
             v = self.convert_explicit(v, 'int', line)
         if v.ty != 'str' and v.ty != 'int' and not is_float(v.ty):
@@ -7127,6 +7166,8 @@ class Gen:
         if len(nodes) < 1 or len(nodes) > 2:
             raise CompileError('round() takes a number and optionally ndigits: round(x) or round(x, ndigits)', line)
         x = self.expr(nodes[0])
+        if is_value_optional(x.ty):
+            x = self.unwrap(x, line)
         if x.ty != 'int' and not is_float(x.ty):
             raise CompileError(f'round() takes an int or a float, but this is {shown(x.ty)}', line)
         if len(nodes) == 1:
@@ -7205,7 +7246,7 @@ class Gen:
             want = args[1].fields[0].text
             held0 = self.expr(args[0])
             if name == '_cast':
-                if is_union(held0.ty):
+                if is_union(held0.ty) or is_value_optional(held0.ty):
                     member = self.unbox_value(held0, want)
                     self.release(held0)
                     return ret_ex(member.reg, member.ty)
@@ -7276,6 +7317,8 @@ class Gen:
         if len(args) != 1 or len(self.kw) > 0:
             raise CompileError(f"'{name}' takes exactly one argument", line)
         v = self.expr(args[0])
+        if is_value_optional(v.ty):
+            v = self.unwrap(v, line)
         if name == 'abs':
             if v.ty == 'int':
                 return self.builtin_call('_abs_int', [v], line)
@@ -7945,7 +7988,7 @@ class Gen:
         if name == 'get':
             if len(args) != 1 and len(args) != 2:
                 raise CompileError("get() takes a key and optionally a default value: get(key) or get(key, default)", line)
-            if len(args) == 1 and not (vt == 'str' or is_list(vt) or is_dict(vt) or is_set(vt) or is_class(vt) or is_iface(vt)):
+            if len(args) == 1 and not (vt == 'str' or vt == 'int' or vt == 'float' or vt == 'bool' or is_mtuple(vt) or is_list(vt) or is_dict(vt) or is_set(vt) or is_class(vt) or is_iface(vt)):
                 raise CompileError(f"get(key) gives None for a missing key, but a value of type {shown(vt)} cannot be None\nwrite get(key, default), or check 'key in d' first", line)
             held_before = len(self.held)
             self.hold(d)                        # freed by the error path if the key or the default raises
@@ -7965,14 +8008,20 @@ class Gen:
                 self.cond_br(gone, miss1, hit1)
                 self.place(hit1)
                 found1 = self.tmp('val')
-                self.emit(f'{found1} = load ptr, ptr {slot1}')
-                self.retain(ex(found1, vt))
+                self.emit(f'{found1} = load {llvm_type(vt)}, ptr {slot1}')
+                got1 = ex(found1, vt)
+                self.retain(got1)
+                if vt == 'int' or vt == 'float' or vt == 'bool':
+                    got1 = self.box_as(got1, vt, vt + '?')        # a number or bool is handed out in a box of its own (it may be None)
+                hit_end1 = self.label('gotend')       # (retain of a float adds blocks of its own: the phi names the last one)
+                self.br(hit_end1)
+                self.place(hit_end1)
                 self.br(join1)
                 self.place(miss1)
                 self.br(join1)
                 self.place(join1)
                 r1 = self.tmp('got')
-                self.emit(f'{r1} = phi ptr [{found1}, %{hit1}], [null, %{miss1}]')
+                self.emit(f'{r1} = phi ptr [{got1.reg}, %{hit_end1}], [null, %{miss1}]')
                 self.release(k)
                 self.release(d)
                 return ret_ex(r1, vt + '?')
@@ -9152,7 +9201,13 @@ class Gen:
         self.store_owned(res, ex(self.mod.intern('None'), 'str'))
         self.br(end)
         self.place(some)
-        inner = self.text_of(ex(v.reg, strip_optional(v.ty)), line)
+        if is_value_optional(v.ty):
+            boxed = self.tmp('boxtext')
+            self.emit(f'{boxed} = call ptr @tomato_box_str(ptr {v.reg})')
+            self.release(v)
+            inner = ex(boxed, 'str')
+        else:
+            inner = self.text_of(ex(v.reg, strip_optional(v.ty)), line)
         self.store_owned(res, inner)
         self.br(end)
         self.place(end)
@@ -12849,7 +12904,7 @@ def key_problem(mod: Mod, t: str) -> str:
 
 def is_showable(mod: Mod, t: str) -> bool:
     # can a value of this type be shown inside a printed container (what show_item accepts)?
-    if is_numeric(t) or t == 'bool' or is_float(t) or t == 'str' or is_union(t):
+    if is_numeric(t) or t == 'bool' or is_float(t) or t == 'str' or is_union(t) or is_value_optional(t):
         return True
     if is_class(t):
         return mod.has_op(t[1:], 'str')
@@ -12881,7 +12936,7 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
     if is_class(et):
         if not mod.has_op(et[1:], 'str'):
             raise CompileError("'" + et[1:] + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
-    elif not (is_numeric(et) or et == 'bool' or is_float(et) or is_union(et)):
+    elif not (is_numeric(et) or et == 'bool' or is_float(et) or is_union(et) or is_value_optional(et)):
         raise CompileError(f'a list of {shown(et)} cannot be printed\nprint its items one by one instead', line)
     if is_union(et):
         return f'_repr_box({e})'

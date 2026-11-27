@@ -1,0 +1,4 @@
+@main
+def main():
+    xs: list[uint[length=16] | None] = []
+    print(xs)

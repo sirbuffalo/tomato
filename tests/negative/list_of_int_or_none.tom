@@ -1,4 +1,0 @@
-@main
-def main():
-    xs: list[int | None] = []
-    print(xs)

@@ -180,7 +180,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 152. D23d is accepted: the type of None is None; X | None is the union of X's type and None's type. Other unions and None | X remain open.
 153. D23e is accepted (reading to confirm): `x in None` is valid and true when x is None. Other `in` type tests remain open.
 154. D23f is accepted: `x in Type` is the type check (`x in None`, `x in int`, `x in Dog`); subclass, interface, `int` and optional details are logged as P44.
-155. D23g is accepted (reading to confirm): `|` is a general type union (`int | str`, `Dog | Cat | None`); `T | None` is the union with `None`; built for unions of known types (P62, D55a), `T | None` only for heap types; logged as P45.
+155. D23g is accepted (reading to confirm): `|` is a general type union (`int | str`, `Dog | Cat | None`); `T | None` is the union with `None`; built for unions of known types (P62, D55a), `T | None` for every type but fixed-width integers since D94a; logged as P45.
 156. D23h is accepted (reading to confirm): `&` is type intersection and bitwise and, `|` also bitwise or and `^` bitwise xor on whole numbers, and `xor` is the logical word operator; bitwise operators and shifts are built (D67a), `&` between types only as the built-in `Iterable[T] & Sized`; logged as P46.
 157. D38a is accepted (reading to confirm): new code is Tomato and LLVM only; the Python version bootstraps the Tomato compiler and each version compiles the next; first step compiler/src/lexer.tom; commit freely, push when a feature fully works.
 158. D28b is accepted (reading to confirm): an entry parameter typed as a union of int, float, bool and str takes the first member that accepts the input text, in that order.

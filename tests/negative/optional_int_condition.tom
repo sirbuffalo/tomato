@@ -1,0 +1,5 @@
+@main
+def main():
+    x: int | None = 1
+    while x:
+        print(1)

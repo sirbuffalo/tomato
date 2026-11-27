@@ -220,4 +220,7 @@ int_bitwise_runs
 big_bad_text
 int64_convert
 trig_radians
+optional_values
+optional_lookups
+optional_error_paths
 error_inherit_init

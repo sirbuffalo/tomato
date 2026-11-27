@@ -11,8 +11,8 @@
 # The compiler adds a driver that calls _run_all with the names and functions in the order they are written.
 #
 # The generic helpers need the language to accept their operation for the type: assert_equal and assert_not_equal take types with ==
-# (not a class without an @eq method), and assert_none and assert_not_none take types that can be None (text, lists, dicts, sets,
-# classes, tuples; not int or float). Otherwise the compile error points into this file.
+# (not a class without an @eq method), and assert_none and assert_not_none take types that can be None (int, float, bool, text, lists,
+# dicts, sets, classes, tuples; not fixed-width integers). Otherwise the compile error points into this file.
 #
 # The callbacks of assert_raises are named functions (D63a: a function value cannot see the variables around it); to pass
 # a value, use assert_raises_with.

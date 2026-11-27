@@ -1,0 +1,144 @@
+# int | None, float | None and bool | None: the same optionals as str | None, with the number or bool held in a box
+# (the box a union uses). Declaration, assignment, `is None`, parameters, returns, fields, printing, arithmetic and the
+# builtins on the value inside, big numbers, and the stop when a None is used as a value.
+class Person:
+    age: int | None
+    score: float | None
+    active: bool | None
+    @init
+    def make(self, age: int | None):
+        self.age = age
+        self.score = None
+        self.active = None
+
+class Counter:
+    n: int | None = None
+    def bump(self):
+        if self.n is None:
+            self.n = 0
+        self.n = self.n + 1
+
+def plus(x: int | None, d: int) -> int | None:
+    if x is None:
+        return None
+    return x + d
+
+def half(x: float | None) -> float | None:
+    if x is not None:
+        return x / 2.0
+    return None
+
+def flip(b: bool | None) -> bool | None:
+    if b is None:
+        return None
+    return not b
+
+def find(xs: list[int], target: int) -> int | None:
+    for i, v in enumerate(xs):
+        if v == target:
+            return i
+    return None
+
+def describe(x: int | None = None, y: float | None = None, z: bool | None = None) -> str:
+    return f'{x} {y} {z}'
+
+def total(xs: list[int | None]) -> int:
+    s = 0
+    for v in xs:
+        if v is not None:
+            s += v
+    return s
+
+@main
+def main():
+    # declaration, assignment, is None
+    x: int | None = None
+    print(x, x is None, x is not None, x == None)
+    x = 5
+    print(x, x is None, x is not None, x == None)
+    y: int = x
+    print(y, x + 1, 1 + x, x * 2, x - 1, x // 2, x % 3, x ** 2, x << 1, -x)
+    print(x < 7, x >= 5, x == 5, x != 5)
+    x = None
+    x = x if x is not None else 9
+    print(x)
+    f: float | None = 2.5
+    b: bool | None = True
+    print(f, b, f * 2.0, f + 1.0, f < 3.0, -f, not b)
+    print(plus(x, 2), plus(None, 3), half(f), half(None), flip(b), flip(None))
+    print(find([4, 5, 6], 5), find([4, 5, 6], 9))
+    print(describe(), describe(1), describe(1, 2.5, False), describe(z=True))
+    # a conditional expression with None on one side
+    t = 7 if x is not None else None
+    u = None if x is None else 2.5
+    print(t, u)
+    # fields
+    p = Person(30)
+    print(p.age, p.score, p.active)
+    p.age = p.age + 1
+    p.score = 1.5
+    p.active = False
+    print(p.age, p.score, p.active)
+    p.age = None
+    print(p.age)
+    c = Counter()
+    c.bump()
+    c.bump()
+    print(c.n)
+    # printing and text
+    print(f'{x} {f} {b} {x:4}|{f:.2f}|{x:>3}')
+    print(str(x), str(f), str(b))
+    # the builtins use the value inside
+    print(abs(x), min(x, 3), max(x, 20), float(x), round(f), round(f, 1), abs(f), float(f), chr(x + 56))
+    # numbers that do not fit a machine word
+    big: int | None = 10 ** 30
+    print(big, big + 1)
+    bigf: float | None = 10.0 ** 400
+    print(bigf)
+    # lists
+    xs: list[int | None] = []
+    xs.append(3)
+    xs.append(None)
+    xs[1] = 8
+    xs.append(xs[0])
+    print(xs, len(xs), total(xs), total([None, None, 4]))
+    fs: list[float | None] = [1.5, None]
+    bs: list[bool | None] = [True, None, False]
+    print(fs, bs)
+    # loops that reassign
+    n: int | None = None
+    for i in range(3):
+        if n is None:
+            n = 0
+        n = n + i
+        n += 1
+    print(n)
+    w: int | None = None
+    count = 0
+    while w is None:
+        count += 1
+        if count > 2:
+            w = count
+    print(w)
+    # a None used as a value stops the program with a RuntimeError the program can catch
+    r: int | None = None
+    try:
+        print(r + 1)
+    catch RuntimeError as err:
+        print('caught:', err.message)
+    g: float | None = None
+    try:
+        print(g * 2.0)
+    catch RuntimeError as err:
+        print('caught:', err.message)
+    k: bool | None = None
+    try:
+        print(not k)
+    catch RuntimeError as err:
+        print('caught:', err.message)
+    try:
+        z: int = r
+        print(z)
+    catch RuntimeError as err:
+        print('caught:', err.message)
+    print(x in int, r in None, r in int)

@@ -456,7 +456,7 @@ CompileError '{}' takes {} type arguments, but {} given
 CompileError float has no length: there is one float type, with an exponent of any size
 CompileError (retired: float[length=N], a stage 1 type that D77c removed; the id stays so that later ids do not move)
 CompileError a union cannot hold None together with two or more other types
-CompileError '{}' cannot be combined with None, because only str, lists, dicts, sets, classes and tuples can be None
+CompileError '{}' cannot be combined with None, because only int, float, bool, str, lists, dicts, sets, classes and tuples can be None
 CompileError (retired: dict keys other than str; any hashable type is a dict key since D78a; never emitted; the id stays so that later ids do not move)
 CompileError a dict key must be an int, bool, float, text, tuple of those, or an object with a method marked @hash
 CompileError a set element must be an int, bool, float, text, tuple of those, or an object with a method marked @hash

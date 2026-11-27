@@ -1,0 +1,5 @@
+@main
+def main():
+    x: int | None = 5
+    y: str = x
+    print(y)

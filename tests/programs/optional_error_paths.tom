@@ -1,0 +1,38 @@
+# A None used as a number stops with a RuntimeError in the middle of every kind of expression; nothing leaks on the way out
+# (a big integer and a float of any size in the box are owned, so this runs under AddressSanitizer too).
+def need(x: int | None) -> int:
+    return x
+
+@main
+def main():
+    big: int | None = 10 ** 30
+    none: int | None = None
+    bf: float | None = 10.0 ** 400
+    nf: float | None = None
+    for i in range(2):
+        try:
+            print(big + none)
+        catch RuntimeError as e:
+            print('1', e.message)
+        try:
+            print(none + big)
+        catch RuntimeError as e:
+            print('2', e.message)
+        try:
+            print(bf * nf)
+        catch RuntimeError as e:
+            print('3', e.message)
+        try:
+            print(need(none), need(big))
+        catch RuntimeError as e:
+            print('4', e.message)
+        try:
+            xs: list[int] = [big, none]
+            print(xs)
+        catch RuntimeError as e:
+            print('5', e.message)
+        try:
+            print(min(big, none))
+        catch RuntimeError as e:
+            print('6', e.message)
+    print(big, bf)

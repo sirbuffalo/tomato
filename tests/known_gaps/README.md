@@ -16,7 +16,6 @@ Today's programs:
 | `should_reject_dead_rational_zero` | D05ap, D40a | `rational(1, 0)` in a dead branch is accepted |
 | `should_reject_init_unset_field` | D12x | a field `@init` sets on only some paths is accepted |
 | `should_work_union_entry_input` | D28b | E157: entry inputs must be `int`, `bool` or `str` |
-| `should_work_optional_int` | D23g | `int \| None` gives E318 |
 | `should_work_interface_intersection` | D23h | `Named & Sized` as a parameter type gives E313 |
 | `should_work_compact_list_declared` | P86 | `list[int[length=8]]` gives E318 |
 

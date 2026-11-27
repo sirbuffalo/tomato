@@ -1,4 +1,4 @@
 @main
 def main():
-    ages: dict[str, int] = {}
+    ages: dict[str, int | str] = {}
     print(ages.get("ann"))

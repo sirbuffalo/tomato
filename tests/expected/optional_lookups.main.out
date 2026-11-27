@@ -1,0 +1,27 @@
+31 None 0
+False True True False
+41
+no bob
+31 0
+3.14 None 1e+400
+True False None
+off is False, not missing
+1000000000000000000000000000000 None
+x None [1] None (1, 'one') None
+4
+True
+31 None 31
+[31, None, 0]
+{'x': 31, 'y': None}
+False None
+True 4
+None
+1.5 True
+1 1.5 True
+None
+3 True True False
+one none
+None/x 5/y
+8 None
+[31, 0]
+asserted

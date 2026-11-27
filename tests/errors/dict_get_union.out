@@ -1,0 +1,6 @@
+error[E380]: get(key) gives None for a missing key, but a value of type int | str cannot be None
+ --> tests/errors/dict_get_union.tom:4:5
+  |
+4 |     print(ages.get("ann"))
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+  = help: write get(key, default), or check 'key in d' first

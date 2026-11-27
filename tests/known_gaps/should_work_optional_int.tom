@@ -1,6 +1,0 @@
-# D23g: `T | None` is just a union, so `int | None` works. Today it is refused (E318, "write its type").
-@main
-def main():
-    x: int | None = 5
-    y: int | None = None
-    print(x, y)

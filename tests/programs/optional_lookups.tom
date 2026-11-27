@@ -1,0 +1,111 @@
+from testing import assert_none, assert_not_none
+
+# d.get(key) for every value type, and int | None, float | None and bool | None in generics, collections, tuples and async code
+class Slot[T]:
+    value: T | None
+    @init
+    def make(self, value: T | None = None):
+        self.value = value
+    def has(self) -> bool:
+        return self.value is not None
+    def put(self, v: T):
+        self.value = v
+    def clear(self):
+        self.value = None
+
+def first_or_none[T](xs: list[T]) -> T | None:
+    if len(xs) == 0:
+        return None
+    return xs[0]
+
+def show(t: tuple[int | None, str]) -> str:
+    a, b = t
+    return f'{a}/{b}'
+
+async def later(n: int) -> int | None:
+    if n < 0:
+        return None
+    return n * 2
+
+class Point:
+    x: int
+    @init
+    def make(self, x: int):
+        self.x = x
+
+@main
+async def main():
+    # d.get(key) gives None for a missing key, whatever the value type
+    ages: dict[str, int] = {'ann': 31, 'zero': 0}
+    print(ages.get('ann'), ages.get('bob'), ages.get('zero'))
+    a = ages.get('ann')
+    b = ages.get('bob')
+    print(a is None, b is None, a is not None, b is not None)
+    if a is not None:
+        print(a + 10)
+    if b is None:
+        print('no bob')
+    print(ages.get('ann', 0), ages.get('bob', 0))
+    ratios: dict[str, float] = {'pi': 3.14, 'big': 10.0 ** 400}
+    print(ratios.get('pi'), ratios.get('e'), ratios.get('big'))
+    flags: dict[str, bool] = {'on': True, 'off': False}
+    print(flags.get('on'), flags.get('off'), flags.get('maybe'))
+    off = flags.get('off')
+    if off is not None and not off:
+        print('off is False, not missing')
+    bigs: dict[int, int] = {1: 10 ** 30}
+    print(bigs.get(1), bigs.get(2))
+    names: dict[str, str] = {'a': 'x'}
+    lists: dict[str, list[int]] = {'a': [1]}
+    pairs: dict[str, tuple[int, str]] = {'a': (1, 'one')}
+    pts: dict[str, Point] = {'a': Point(4)}
+    print(names.get('a'), names.get('b'), lists.get('a'), lists.get('b'), pairs.get('a'), pairs.get('b'))
+    pt = pts.get('a')
+    if pt is not None:
+        print(pt.x)
+    print(pts.get('b') is None)
+    found: int | None = ages.get('ann')
+    missing: int | None = ages.get('bob')
+    copy: int | None = found
+    print(found, missing, copy)
+    # collected into containers of optionals
+    got: list[int | None] = []
+    for key in ['ann', 'bob', 'zero']:
+        got.append(ages.get(key))
+    print(got)
+    tally: dict[str, int | None] = {}
+    tally['x'] = ages.get('ann')
+    tally['y'] = ages.get('bob')
+    print(tally)
+    # generics
+    s = Slot[int]()
+    print(s.has(), s.value)
+    s.put(4)
+    print(s.has(), s.value)
+    s.clear()
+    print(s.value)
+    s2 = Slot[float](1.5)
+    s3 = Slot[bool](True)
+    print(s2.value, s3.value)
+    print(first_or_none([1, 2]), first_or_none([1.5]), first_or_none([True]))
+    empty: list[int] = []
+    print(first_or_none(empty))
+    # sets, dict keys and tuples
+    st: set[int | None] = {1, None, 2}
+    print(len(st), 1 in st, None in st, 3 in st)
+    k: dict[int | None, str] = {1: 'one', None: 'none'}
+    print(k[1], k[None])
+    t: tuple[int | None, str] = (None, 'x')
+    print(show(t), show((5, 'y')))
+    # async
+    r = await later(4)
+    q = await later(-1)
+    print(r, q)
+    ys = [v for v in got if v is not None]
+    print(ys)
+    # the testing helpers take them too (T is written out, as for any optional)
+    assert_none[int](ages.get('bob'))
+    assert_not_none[int](ages.get('ann'))
+    assert_not_none[bool](flags.get('off'))
+    assert_none[float](ratios.get('e'))
+    print('asserted')

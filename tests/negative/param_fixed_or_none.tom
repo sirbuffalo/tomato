@@ -1,4 +1,4 @@
-def f(x: int | None) -> int:
+def f(x: int[length=32] | None) -> int:
     return 1
 
 @main
