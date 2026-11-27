@@ -212,6 +212,7 @@ file_lines
 file_loop_close
 file_modes
 file_closed
+file_drop_loop
 bytes_files
 string_io
 string_io_bulk

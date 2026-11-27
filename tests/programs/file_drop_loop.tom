@@ -1,0 +1,177 @@
+# Opening a file and dropping it, again and again, in every shape a program has (TODO "9 object(s) were never freed" on open and
+# drop files): the debug-mode run prints "warning: N object(s) were never freed" at exit when a File, a text or a container that
+# held it is not released, and this program's expected output has no such line; the descriptor counts show each dropped File is
+# closed at once, and the AddressSanitizer build reports any leaked memory. The work directory comes from tests/run.sh.
+import os
+
+class Node:
+    f: File
+    other: Node | None
+
+    @init
+    def make(self, f: File):
+        self.f = f
+        self.other = None
+
+class Holder:
+    f: File
+    names: list[str] = []
+
+    @init
+    def make(self, path: str):
+        self.f = open(path, 'a')
+
+def open_count() -> int:
+    return len(os.listdir('/dev/fd'))
+
+# the exact shape of the report: open, write, close, close again, in a loop, with the name dropped at each turn
+def closed_twice(path: str):
+    for i in range(3):
+        f = open(path, 'w')
+        f.write('x')
+        f.close()
+        f.close()
+
+def never_closed(path: str):
+    for i in range(3):
+        f = open(path, 'w')
+        f.write('y')
+
+def reopened(path: str):
+    f = open(path, 'a')
+    for i in range(3):
+        f.write('z')
+        f = open(path, 'a')
+
+def computed_names(dir: str):
+    for i in range(3):
+        f = open(dir + '/drop_' + str(i) + '.txt', 'w')
+        f.write(str(i))
+    for i in range(3):
+        for line in open(dir + '/drop_' + str(i) + '.txt'):
+            print(line)
+        os.remove(dir + '/drop_' + str(i) + '.txt')
+
+def temporaries(path: str):
+    for i in range(3):
+        open(path, 'a')
+        open(path).read()
+        n = len(open(path).readlines())
+        line = open(path).readline()
+        print(n > 0, len(line) > 0)
+
+def cycles(path: str):
+    for i in range(3):
+        a = Node(open(path, 'a'))
+        b = Node(open(path, 'a'))
+        a.other = b
+        b.other = a
+        a.f.write('c')
+        a.f.close()
+        a.f.close()
+        b.f.write('d')
+
+def fields(path: str):
+    for i in range(3):
+        h = Holder(path)
+        h.names.append('n' + str(i))
+        h.names.sort()
+        h.f.write('h')
+        h.f = open(path, 'a')
+
+def leave_early(path: str) -> int:
+    n = 0
+    for i in range(3):
+        for line in open(path):
+            n += 1
+            if n % 2 == 0:
+                break
+            if n > 100:
+                return n
+    return n
+
+def raise_in_loop(path: str):
+    for line in open(path):
+        raise ValueError('stop')
+
+def errors(path: str):
+    for i in range(3):
+        try:
+            raise_in_loop(path)
+        catch ValueError as e:
+            print(e.message)
+        try:
+            g = open(path, 'x')
+            g.close()
+        catch IOError as e:
+            print('exists')
+        try:
+            open(path + '/no/such/dir', 'w')
+        catch IOError as e:
+            print('missing')
+        f = open(path, 'a')
+        try:
+            f.write('e')
+        finally:
+            f.close()
+
+def into_containers(path: str):
+    for i in range(3):
+        fs = [open(path, 'a'), open(path, 'a')]
+        d = {'a': open(path, 'a')}
+        t = (open(path, 'a'), i)
+        fs[0].write('l')
+        d['a'].write('d')
+        t[0].write('t')
+        fs.pop()
+        d['a'] = open(path, 'a')
+
+async def appender(path: str, n: int) -> int:
+    f = open(path, 'a')
+    f.write('a')
+    await sleep(0)
+    f.write('b')
+    return n
+
+async def endless(path: str):
+    f = open(path, 'a')
+    while True:
+        f.write('z')
+        await sleep(0.001)
+
+@main
+async def main(dir: str = '/tmp'):
+    path = dir + '/tomato_file_drop_loop.txt'
+    os.write_text(path, 'one\ntwo\nthree\n')
+    before = open_count()
+    closed_twice(path)
+    print('closed twice:', os.read_text(path), open_count() - before)
+    never_closed(path)
+    print('never closed:', os.read_text(path), open_count() - before)
+    reopened(path)
+    print('reopened:', os.read_text(path), open_count() - before)
+    computed_names(dir)
+    print('computed names:', open_count() - before)
+    os.write_text(path, 'one\ntwo\nthree\n')
+    temporaries(path)
+    print('temporaries:', open_count() - before)
+    fields(path)
+    print('fields:', open_count() - before)
+    os.write_text(path, 'one\ntwo\nthree\n')
+    print('leave early:', leave_early(path), open_count() - before)
+    errors(path)
+    print('errors:', open_count() - before)
+    into_containers(path)
+    print('containers:', open_count() - before)
+    os.write_text(path, '')
+    for i in range(3):
+        await appender(path, i)
+    task = start endless(path)
+    await sleep(0.01)
+    task.cancel()
+    await sleep(0.01)
+    print('tasks:', open_count() - before)
+    os.remove(path)
+    print('descriptors at the end:', open_count() - before)
+    cycles(dir + '/tomato_file_drop_loop_cycles.txt')    # the files of a cycle are closed when the cycle is collected, at the latest at exit
+    os.remove(dir + '/tomato_file_drop_loop_cycles.txt')

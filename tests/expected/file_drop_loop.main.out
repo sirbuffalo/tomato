@@ -1,0 +1,25 @@
+closed twice: x 0
+never closed: y 0
+reopened: yzzz 0
+0
+1
+computed names: 0
+True True
+True True
+True True
+temporaries: 0
+fields: 0
+leave early: 6 0
+stop
+exists
+missing
+stop
+exists
+missing
+stop
+exists
+missing
+errors: 0
+containers: 0
+tasks: 0
+descriptors at the end: 0
