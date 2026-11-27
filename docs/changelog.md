@@ -26,6 +26,8 @@ on an older install moves to 1.0.0 as usual.
 - `upper()`, `lower()`, `title()` and `capitalize()` use Python's full Unicode case mapping instead of the one-letter
   one: `'ß'.upper()` is `'SS'`, `'ßa'.title()` is `'Ssa'`, `'ΌΣΟΣ'.lower()` ends in the final sigma `'ς'`, `'ǆ'.title()`
   is `'ǅ'`, so the length of the result can differ from the text's (D17d).
+- Float `//` and `%` are Python's (D87a): `3.7 // 1e-5` is `369999.0` (it was `370000.0`), and a zero remainder takes
+  the divisor's sign (`6.0 % -2.0` and `2.0 ** 64 % -1.0` are `-0.0`).
 
 ### Language
 
@@ -42,6 +44,10 @@ on an older install moves to 1.0.0 as usual.
   single-limb division of big integers are now linear time.
 - **A `File` opened in a `for` loop header is closed when the loop is left** (D82a).
 - **`assert` and `@test`** with `tomato test` (D81a).
+- **`@neg` and `@rmul`** (D85a): `-x` and `number * x` on objects of any class. `math.Angle` uses them (`-deg(30)` is
+  `-30 deg`, `3 * deg(30)` is `90 deg`) and has an `@hash`, so angles are dict keys and set elements.
+- `sum`, `min`, `max`, `sorted` and `list.sort()` take a list of objects whose class has `@add` (`sum`) or `@lt` (the
+  others), so they work on lists of angles (D85b).
 - `tuple[A, B]` parses in expression position; mixed tuples, lists and objects inside unions print properly.
 - `set.discard(x)` compiles correctly.
 
@@ -78,6 +84,12 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
 
 - `tomato build` and `tomato run` have a fast non-LTO debug build path, and the compiled C runtime is cached
   (`~/.cache/tomato`, `TOMATO_CACHE_DIR`, `TOMATO_CACHE=off`).
+- `tomato update` (and `install-native.sh`) builds the new install beside the old one and swaps it in with one rename:
+  a failure or Ctrl-C part way leaves the old install as it was, and a `tomato run` at that moment sees one whole
+  install. Ctrl-C no longer leaves temporary folders behind.
+- `tomato config` shows the settings in effect and the files they come from.
+- Clearer compile errors for unpacking a value that is not a tuple, a `Cache` key class without `@str`, a union as a
+  type argument, and a byte order mark at the start of a file.
 - The repl reports precise import errors; the site editor, repl and VS Code auto-indent after a colon line.
 - The repl edits whole blocks (D88a, replacing D59a's `[Enter] run  [e] edit`): Up and Down recall a block as its real lines, the
   arrows move between them, Enter runs a complete piece and continues on an open bracket (`x = (1,`), paste and resize work,
@@ -108,9 +120,17 @@ and eight more comparison languages; Linux x86-64 results are published next to 
 - The repl links its pieces with `-pthread` (and `-ldl` on Linux) like `tomato run`, so it works with older glibc.
 - `sin`, `cos` and `tan` of a radian angle lost digits: `sin(rad(10.0))` was 14 units in the last place off and
   `sin(rad(1e10))` right to only 6 digits; they are now the C library's answer (D83a).
+- `sin`, `cos` and `tan` of a large angle in degrees, turns or gradians lost digits (`sin(deg(1e22))` was `0.0`, it is now
+  `sin(deg(280))`; next to a quarter turn `cos(deg(89.99999999999999))` was 30% off), and of a radian angle beyond a double's range gave a made-up `0.0`; that is now an `OverflowError`.
+- Unpacking a dict or a set (`a, b = d`) compiled and read `d[0]` and `d[1]`; it is a compile error now. A class with two
+  methods marked with the same operator marker (two `@add`) is a compile error (the second was silently ignored).
+- A program that leaves a terminal in raw mode and then fails prints its error after the terminal is restored; two
+  `Terminal`s on one device no longer leave it raw, whichever is left first.
+- `tomato build a.tom x -o` (an option with its value missing at the end) took an earlier word as the value and wrote `x`;
+  it is a usage error. `tomato update` refuses to run from a source checkout.
 - `set.discard(x)` compiled wrongly; async exceptions and scheduling had several bugs; `wasi.js` `path_rename`
   lost file times under renamed folders; regex `{m,n}` repeats around empty-matching groups now match Python.
 
 ### Known issues
 
-See `TODO.md`: float `//` and `%` differ from Python in rare cases; a few compile errors point at the wrong place.
+See `TODO.md`, and `docs/language-design-review.md` for the language questions still open before 1.0.

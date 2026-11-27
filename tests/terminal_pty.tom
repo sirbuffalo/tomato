@@ -6,6 +6,8 @@
 #   error    raw mode, then an uncaught error (nothing leaves the mode: the runtime must)
 #   exit     raw mode, then sys.exit(3)
 #   noleave  raw mode, then the program ends normally
+#   shared   raw mode on two Terminals of the same device (the second saves settings that are raw already), then a normal end
+#   sharedin, sharedout   the same, then leave() on both: the newer first (in), or the older first (out)
 #   fault    raw mode, then a stack overflow
 #   wait     raw mode, then waits for a key for ever (the test kills it with a signal)
 #   twice    enter_raw, leave and close called twice each
@@ -16,7 +18,7 @@
 import os
 import sys
 import terminal
-from terminal import Key, Style
+from terminal import Style
 
 def say(term: terminal.Terminal, text: str):
     term.write(text + '\r\n')
@@ -104,6 +106,20 @@ def main(mode: str):
         sys.exit(3)
     elif mode == 'noleave':
         say(term, 'READY ' + str(os.getpid()))
+    elif mode == 'shared':
+        other = terminal.Terminal(0)
+        other.enter_raw()
+        say(term, 'READY ' + str(os.getpid()))
+    elif mode == 'sharedin' or mode == 'sharedout':
+        other = terminal.Terminal(0)
+        other.enter_raw()
+        say(term, 'READY ' + str(os.getpid()))
+        if mode == 'sharedin':
+            other.leave()
+            term.leave()
+        else:
+            term.leave()
+            other.leave()
     elif mode == 'fault':
         say(term, 'READY ' + str(os.getpid()))
         print(deep(0))

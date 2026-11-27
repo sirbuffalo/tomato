@@ -127,8 +127,10 @@ NOINLINE static void possible_root(Hdr *h);
 NOINLINE static void destroy_object(Hdr *h);
 
 /* These IDs are line numbers in std/errors.txt. Line zero means there is no available source location. */
+static void tty_restore_all(void);   /* the terminal block, below: raw mode is left before an error is printed, so it is not a staircase */
 _Noreturn void tomato_fail_id(int kind, const char *message) {
     fflush(stdout);
+    tty_restore_all();
 #ifdef TOMATO_RELEASE
     (void)message;
     fprintf(stderr, "error E%02d:0\n", kind);
@@ -147,7 +149,6 @@ static _Noreturn void out_of_memory(void) { tomato_fail_id(349, "out of memory")
 /* A function that calls itself without end used to die with a bare segmentation fault. A fault just below the stack
  * (the guard page) is reported as an ordinary error instead; any other fault keeps its default behavior. */
 static char *stack_top, *stack_low;
-static void tty_restore_all(void);   /* the terminal's raw mode is left on a fault too (the terminal block, below) */
 static void on_fault(int sig, siginfo_t *info, void *ctx) {
     (void)ctx;
     char *at = (char *)info->si_addr;
@@ -160,8 +161,8 @@ static void on_fault(int sig, siginfo_t *info, void *ctx) {
         static const char colored[] = "\033[1;31merror[E350]:\033[0m \033[1mstack overflow: a function calls itself too deeply\033[0m\n";
 #endif
         fflush(stdout);
-        if (use_color() ? write(2, colored, sizeof colored - 1) < 0 : write(2, msg, sizeof msg - 1) < 0) { /* nothing more to do */ }
         tty_restore_all();
+        if (use_color() ? write(2, colored, sizeof colored - 1) < 0 : write(2, msg, sizeof msg - 1) < 0) { /* nothing more to do */ }
         _exit(1);
     }
     tty_restore_all();
@@ -4584,6 +4585,7 @@ int tomato_str_contains(void *hay, void *needle) { return find_bytes(hay, needle
  * compiler. Mode is 1 debug, 2 release (D34b). */
 static void print_uncaught(void *obj, int line, int runtime, int mode, const char *where) {
     fflush(stdout);
+    tty_restore_all();
     /* The prefix of Error and its subclasses in std/builtin/errors.tom. Pointers are 32-bit on wasm. */
     typedef struct { Hdr header; Str *message; Str *id; } ErrorFields;
     ErrorFields *error = obj;
@@ -8072,24 +8074,39 @@ int64_t tomato_tty_restore(int64_t fd) { (void)fd; return 0; }
 int64_t tomato_tty_size(int64_t fd, void *out) { (void)fd; push_int(out, 24); push_int(out, 80); return 1; }
 int64_t tomato_tty_read(int64_t fd, void *out, int64_t max, int64_t ms) { (void)fd; (void)out; (void)max; (void)ms; return -ENOSYS - 1000; }
 int64_t tomato_tty_write(int64_t fd, void *text) { (void)fd; (void)text; return -ENOSYS; }
+static void tty_restore_all(void) {}
 #else
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
 #define TTY_SLOTS 4
-static struct { int fd; int active; struct termios saved; } tty_slot[TTY_SLOTS];
+static struct { int fd; int active; unsigned seq; int over; struct termios saved, raw; } tty_slot[TTY_SLOTS];
+/* Two Terminals can be made raw on one device (Terminal(0) and open() of /dev/tty): the second saves settings that are raw already.
+ * The device cannot be told from the descriptor (an fstat of /dev/tty names /dev/tty, not the terminal behind it), so a slot whose
+ * settings were found to be exactly the raw mode another active slot set is taken to be on top of it (over, -1 for none). seq is the
+ * order raw mode was entered in: at the end the slots are put back newest first, and a slot left by itself hands its saved settings
+ * to the slots over it, so the terminal ends as it was in any order of leave(). */
+static unsigned tty_seq = 0;
+static int tty_same_mode(const struct termios *a, const struct termios *b) {
+    return a->c_iflag == b->c_iflag && a->c_oflag == b->c_oflag && a->c_cflag == b->c_cflag && a->c_lflag == b->c_lflag
+        && a->c_cc[VMIN] == b->c_cc[VMIN] && a->c_cc[VTIME] == b->c_cc[VTIME];
+}
 /* a failure: the reason is kept for tomato_os_error (as in the os calls) and -errno comes back; a read says -1000 - errno, since 0, -1 and -2 are answers */
 static int64_t tty_fail(int e) { open_errno = e ? e : EIO; return -(int64_t)open_errno; }
 static int64_t tty_fail_read(int e) { open_errno = e ? e : EIO; return -1000 - (int64_t)open_errno; }
 static int tty_hooks = 0, tty_pipe[2] = { -1, -1 };
 static volatile sig_atomic_t tty_resized = 0;
-/* puts every terminal that is in raw mode back as it was; safe to call from a signal handler */
+/* puts every terminal that is in raw mode back as it was, the one made raw last first (a second Terminal on the same device saved
+ * settings that were raw already, so the first one's must be applied last); safe to call from a signal handler */
 static void tty_restore_all(void) {
-    for (int i = 0; i < TTY_SLOTS; i++) {
-        if (!tty_slot[i].active) continue;
-        tty_slot[i].active = 0;
-        tcsetattr(tty_slot[i].fd, TCSADRAIN, &tty_slot[i].saved);
+    for (;;) {
+        int last = -1;
+        for (int i = 0; i < TTY_SLOTS; i++)
+            if (tty_slot[i].active && (last < 0 || tty_slot[i].seq > tty_slot[last].seq)) last = i;
+        if (last < 0) return;
+        tty_slot[last].active = 0;
+        tcsetattr(tty_slot[last].fd, TCSADRAIN, &tty_slot[last].saved);
     }
 }
 static void tty_die(int sig) { tty_restore_all(); signal(sig, SIG_DFL); raise(sig); }
@@ -8134,12 +8151,16 @@ int64_t tomato_tty_raw(int64_t fd) {
     struct termios t;
     if (tcgetattr((int)fd, &t) != 0) return tty_fail(errno);
     tty_install();
-    tty_slot[slot].fd = (int)fd; tty_slot[slot].saved = t; tty_slot[slot].active = 1;
+    tty_slot[slot].over = -1;
+    for (int j = 0; j < TTY_SLOTS; j++)     /* the newest raw slot whose mode this is */
+        if (tty_slot[j].active && tty_same_mode(&t, &tty_slot[j].raw) && (tty_slot[slot].over < 0 || tty_slot[j].seq > tty_slot[tty_slot[slot].over].seq)) tty_slot[slot].over = j;
+    tty_slot[slot].fd = (int)fd; tty_slot[slot].saved = t; tty_slot[slot].seq = ++tty_seq; tty_slot[slot].active = 1;
     t.c_iflag &= ~(tcflag_t)(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     t.c_oflag &= ~(tcflag_t)OPOST;
     t.c_lflag &= ~(tcflag_t)(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
     t.c_cflag &= ~(tcflag_t)(CSIZE | PARENB); t.c_cflag |= CS8;
     t.c_cc[VMIN] = 1; t.c_cc[VTIME] = 0;
+    tty_slot[slot].raw = t;
     if (tcsetattr((int)fd, TCSADRAIN, &t) != 0) { int e = errno; tty_slot[slot].active = 0; return tty_fail(e); }
     return 0;
 }
@@ -8148,6 +8169,8 @@ int64_t tomato_tty_restore(int64_t fd) {
     for (int i = 0; i < TTY_SLOTS; i++) {
         if (tty_slot[i].active && tty_slot[i].fd == fd) {
             tty_slot[i].active = 0;
+            for (int j = 0; j < TTY_SLOTS; j++)
+                if (tty_slot[j].active && tty_slot[j].over == i) { tty_slot[j].saved = tty_slot[i].saved; tty_slot[j].over = tty_slot[i].over; }
             return tcsetattr((int)fd, TCSADRAIN, &tty_slot[i].saved) == 0 ? 0 : tty_fail(errno);
         }
     }
@@ -9033,8 +9056,6 @@ int64_t tomato_bf_parse_cstr(const char *text, int position) {
 #define BF_MAX_FORMAT_DIGITS 100000
 static int64_t bf_max_exp_bits = BF_MAX_EXP_BITS, bf_max_format_digits = BF_MAX_FORMAT_DIGITS;
 void tomato_set_limits(int64_t exp_bits, int64_t format_digits) { bf_max_exp_bits = exp_bits; bf_max_format_digits = format_digits; }
-/* a limit: 0 the bits of a result's exponent, 1 the digits before the point of an f format */
-int64_t tomato_bf_limit(int64_t which) { return which == 0 ? bf_max_exp_bits : bf_max_format_digits; }
 /* the message of E528 (kind 528) or E529 (529) with the limit in it, for the compiled code that raises it */
 void *tomato_limit_message(int32_t kind) {
     char text[160];

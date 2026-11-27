@@ -1,7 +1,8 @@
 # Drives tests/terminal_pty.tom (built as PROGRAM) on a pseudo-terminal, through a shell, to check std/terminal.tom as it works on this
 # system: raw mode, reading keys (escape sequences, a lone Escape, a bracketed paste, the timeout), the size and its resize, the color
 # depth, and above all that the terminal's settings (`stty -g`) are the same after the program as before it, however it ends: normally,
-# with leave() in a finally, with no leave() at all, with an uncaught error, sys.exit, a stack overflow and SIGTERM and SIGHUP.
+# with leave() in a finally, with no leave() at all (one Terminal or two on the same device), with an uncaught error, sys.exit, a stack
+# overflow and SIGTERM and SIGHUP.
 # Usage: expect tests/terminal_pty.exp PROGRAM        (the last line printed is `ok`, or `FAIL: ...` and the status is 1)
 # No fixed sleeps: every key is sent after the line it follows has been seen.
 set timeout 30
@@ -132,9 +133,15 @@ set pid [start finally ""]
 want {EXIT=1\r\n} "the exit of finally"
 run "echo DO\"\"NE"; want {DONE\r\n} "the shell after finally"
 same_settings finally
-ending error 1
+# the error is written after raw mode is left, so each of its lines starts at the left (no staircase of bare newlines)
+set pid [start error ""]
+want {boom[^\r\n]*\r\n} "the error message of error, written with the terminal's settings back"
+finished error 1
 ending exit 3
 ending noleave 0
+ending shared 0
+ending sharedin 0
+ending sharedout 0
 ending fault 1
 
 # --- the signals that end a program: restored, then the default action ---

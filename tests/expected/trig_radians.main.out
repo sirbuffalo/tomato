@@ -1,3 +1,9 @@
 397 angles, 0 off by more than one unit in the last place
 True True True 0.0 1.0
 -1e-20 1e-20 -0.0 0.0 0.0 0.0
+-0.984807753012 -0.978147600734 0.207911690818 0.984807753012 -0.587785252292 0.207911690818 -0.809016994375
+-0.0 -1.7453292519943296e-22 0.0 1.0 -6.283185307179586e-20
+104 angles in other units, 0 off by more than two units in the last place
+E347 the number is too big here: sin, cos and tan take a radian angle within a double's range (up to about 1.8e308), not 1e+400
+E347 the number is too big here: sin, cos and tan take a radian angle within a double's range (up to about 1.8e308), not -1e+400
+E347 the number is too big here: sin, cos and tan take a radian angle within a double's range (up to about 1.8e308), not 1.4203213919920185e+310

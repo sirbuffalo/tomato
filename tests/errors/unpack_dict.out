@@ -1,0 +1,6 @@
+error[E185]: cannot unpack a value of type dict[int, int] into 2 variables
+ --> tests/errors/unpack_dict.tom:4:5
+  |
+4 |     a, b = d
+  |     ^^^^^^^^
+  = help: the right side of an unpack must be a tuple, a list or a text

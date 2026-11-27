@@ -8845,12 +8845,15 @@ class Gen:
             v = self.expr(args[0])
         count = unpack_count(args[0])
         if count >= 0:
-            # the parser lowers an unpack to a len() check: say what is wrong with the unpack, not with len
+            # the parser lowers an unpack to a len() check: say what is wrong with the unpack, not with len. A dict or a set has a
+            # len() but no positions (the items would be read as d[0], d[1]), so it is refused here too.
+            unpack_error = f'cannot unpack a value of type {shown(v.ty)} into {plural(count, "variable")}\nthe right side of an unpack must be a tuple, a list or a text'
+            if is_dict(v.ty) or is_set(v.ty):
+                raise CompileError(unpack_error, line)
             try:
                 return self.len_value(v, line)
             catch CompileError as e:
-                what = 'a value of type ' + shown(v.ty)
-                raise CompileError(f'cannot unpack {what} into {plural(count, "variable")}\nthe right side of an unpack must be a tuple, a list or a text', line)
+                raise CompileError(unpack_error, line)
         return self.len_value(v, line)
 
     def len_value(self, v: Ex, line: int) -> Ex:
@@ -12686,17 +12689,24 @@ def check_classes(mod: Mod):
 
 def check_class_shapes(mod: Mod):
     # one @init per class (D12aj); a class with no @init anywhere needs every field to have a value (D12af);
-    # a method name is declared once; no class inherits from itself
+    # a method name and an operator marker are declared once; no class inherits from itself
     for c in mod.classes:
         if not c.populated:
             continue
         inits = 0
         names: list[str] = []
+        markers: list[str] = []
         for f in mod.infos:
             if f.owner == c.name:
                 if f.name in names or field_position(c, f.name) >= 0:
                     raise CompileError(f"'{f.name}' is defined twice in class '{c.display}'\nrename one of them", f.line)
                 names.append(f.name)
+                # an operator or protocol marker names one method of a class (a second @add would never run); @static marks any number
+                if f.op != '' and f.op != 'static':
+                    if f.op in markers:
+                        marker = '@' + f.op
+                        raise CompileError(f"'{marker}' is defined twice in class '{c.display}'\nkeep the marker on one method", f.line)
+                    markers.append(f.op)
                 if f.is_init:
                     inits += 1
         if inits > 1:

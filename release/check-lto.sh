@@ -4,6 +4,7 @@
 set -eu
 command -v nm >/dev/null || { echo 'error: nm is required to verify LTO' >&2; exit 1; }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP      # (dash skips an EXIT trap on a signal)
 printf 'int value(void) { return 42; }\n' > "$work/a.c"
 printf 'int value(void); int main(void) { return value() != 42; }\n' > "$work/b.c"
 clang -O2 -flto "$work/a.c" "$work/b.c" -o "$work/test"

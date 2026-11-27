@@ -14,6 +14,7 @@ res="$root/benchmarks/results"; lin="$res/linux-x86_64"
 [ -f "$res/results.md" ] && [ -f "$res/results.json" ] || { echo "error: no benchmark results in $res" >&2; exit 1; }
 [ -f "$doc" ] || { echo "error: $doc not found" >&2; exit 1; }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP      # (dash skips an EXIT trap on a signal)
 jget() { sed -n "s/.*\"$2\": *\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" "$1" | head -1; }   # FILE KEY
 [ "$(jget "$res/results.json" tomato)" = "$version" ] || { echo "error: benchmarks/results is for Tomato v$(jget "$res/results.json" tomato), not v$version" >&2; exit 1; }
 have_linux=0

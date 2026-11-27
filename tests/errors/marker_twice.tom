@@ -1,0 +1,15 @@
+class V:
+    x: int = 0
+
+    @neg
+    def a(self) -> V:
+        return V()
+
+    @neg
+    def b(self) -> V:
+        return self
+
+@main
+def main():
+    v = -V()
+    print(v.x)

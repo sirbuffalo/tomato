@@ -942,6 +942,9 @@ t_cli_repl_1() {
   if step 1; then
   check "glob and empty inputs survive" "[*][]" "$(cd "$work" && $t run echo.tom main '*' '')"
   check "-- passes flag-like inputs" "[-o][--entry]" "$($t run "$work/echo.tom" -- main -o --entry)"
+  r="$(sh native/tomato update 2>&1)"; case "$r" in *"is not one (run ./install-native.sh in a checkout)"*) ok "update refuses to run from a checkout (it would replace its native/ folder)";; *) bad "update refuses to run from a checkout (it would replace its native/ folder)" "$r";; esac
+  # an option at the end without its value is a usage error (it once took a word moved to the end as its value: `build f x -o` wrote x)
+  check "an option at the end without its value is a usage error" "2 2 2 none" "$(cd "$work" && { $t run echo.tom main --color > /dev/null 2>&1; a=$?; $t build echo.tom x -o > /dev/null 2>&1; b=$?; $t test echo.tom echo.tom --filter > /dev/null 2>&1; c=$?; [ -e x ] && w=made || w=none; echo "$a $b $c $w"; })"
   check "repl: variables, functions, new output only" "7
 9
 hi" "$(printf 'x = 3\nx + 4\ndef sq(n: int) -> int:\n    return n * n\n\nsq(x)\nprint("hi")\n:quit\n' | $t repl)"

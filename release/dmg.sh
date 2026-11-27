@@ -26,6 +26,7 @@ rm -f "$out"
 work="$(mktemp -d)"; mnt=""
 cleanup() { [ -z "$mnt" ] || hdiutil detach -quiet "$mnt" 2>/dev/null || hdiutil detach -force -quiet "$mnt" 2>/dev/null || true; rm -rf "$work"; }
 trap cleanup EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP      # (dash skips an EXIT trap on a signal)
 # hdiutil sometimes fails with "Resource busy" or a timeout (often on a busy CI runner) and works a moment later
 retry() { try=1; until "$@"; do [ "$try" -ge 3 ] && return 1; try=$((try + 1)); sleep 3; done; }
 mkdir "$work/stage"; cp "$pkg" "$work/stage/$name"

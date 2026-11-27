@@ -446,17 +446,35 @@ export def turns(x: int | float) -> Angle:
 export def gradians(x: int | float) -> Angle:
     return grad(x)
 
-# Trigonometry reduces the angle to a quarter turn first (in turns, which are exact for degrees and gradians), so the
+# Trigonometry reduces the angle to a quarter turn first (exactly, for degrees, gradians and turns), so the
 # multiples of a quarter turn come out exactly: sin(deg(180)) is 0.0, cos(deg(90)) is 0.0 and sin(deg(90)) is 1.0.
 # k is which quarter turn the angle is nearest (0 to 3); x is the small remainder in radians, -pi/4 up to pi/4.
-# The turns are reduced to the nearest whole turn (-0.5 up to 0.5), not to 0 up to 1, so that a tiny negative angle keeps its
-# digits: t - floor(t) would round -1e-20 + 1 to 1.0 and lose them all. Subtracting a whole number is exact here.
+# The angle is reduced in its own unit, exactly: first to within half a turn of zero (% of floats is exact, it is fmod's remainder,
+# and so is the step into -half up to half a turn, since both numbers are then within a factor of two of each other), then to
+# within an eighth of a turn of the nearest quarter turn k (k times a quarter is a whole number of degrees or gradians, or a
+# quarter of a turn, and the subtraction is exact for the same reason). Only that small remainder is turned into radians, with
+# one rounded constant and one multiplication, so the answer is within about two units in the last place of the exact one at any
+# size (sin(deg(1e22)) is sin(deg(280)); dividing by a full turn first gave 0.0, and near a quarter turn cos(deg(89.99999999999999))
+# was 30% off). The remainder is taken of the magnitude, so a negative one is not moved to the divisor's sign, which would round
+# -1e-20 + 360 to 360 and lose its digits. A radian angle reaches this only beyond a double's range (see _c_rad), where 2 pi as a double is too
+# coarse to reduce it: that is an error, as it is in Python, whose floats cannot hold such an angle.
 def _quarter(a: Angle) -> list[float]:
-    t = a.turn()
-    t = t - ((t + 0.5) // 1.0)
-    q = t * 4.0
-    k = (q + 0.5) // 1.0
-    x = (q - k) * (3.141592653589793 / 2.0)
+    if a.unit() == 'rad':
+        raise OverflowError(f"the number is too big here: sin, cos and tan take a radian angle within a double's range (up to about 1.8e308), not {a.value}", 'E347')
+    full = a.per_turn()
+    r = a.value
+    if r < 0.0:
+        r = 0.0 - ((0.0 - r) % full)
+    elif r > 0.0:
+        r = r % full
+    if r > full / 2.0:
+        r = r - full
+    elif r < 0.0 - full / 2.0:
+        r = r + full
+    quarter = full / 4.0
+    k = (r / quarter + 0.5) // 1.0
+    rem = r - k * quarter
+    x = rem * (3.141592653589793 / (2.0 * quarter))
     if k < 0.0:
         k = k + 4.0
     return [k, x]
@@ -464,7 +482,7 @@ def _quarter(a: Angle) -> list[float]:
 # A radian angle of double size goes straight to the C library (D77d: a double gets the C library's answer), whose
 # argument reduction is exact over the whole double range. The quarter-turn reduction above divides by 2 pi first, which
 # rounds: sin(rad(10.0)) came out 14 units in the last place off and sin(rad(1e10)) right to only 6 digits. The other
-# units keep it, so their multiples of a quarter turn stay exact; a radian angle beyond a double's range keeps it too.
+# units keep it, so their multiples of a quarter turn stay exact; a radian angle beyond a double's range is an error there.
 def _c_rad(a: Angle) -> bool:
     return a.unit() == 'rad' and a.value <= 1.7976931348623157e308 and a.value >= -1.7976931348623157e308
 

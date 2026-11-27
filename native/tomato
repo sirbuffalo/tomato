@@ -13,7 +13,7 @@
 #   tomato version                                                    print the version (also --version)
 # Options for every command: --color=auto|always|never (red errors on a terminal; also TOMATO_COLOR, and NO_COLOR turns it off),
 # --no-warnings (hide the warnings the compiler gives about code that runs but looks wrong; also TOMATO_WARNINGS=off).
-# After `--`, every word is an input to the program, even one that looks like a flag.
+# After `--`, no word is read as an option: `tomato run f.tom -- main -o` runs main with the input -o (the first word is still ENTRY).
 invoked="$0"
 src="$0"
 while [ -L "$src" ]; do
@@ -108,7 +108,7 @@ while [ $n -gt 0 ]; do
   case "$1" in
     --) stop=1; set -- "$@" "$1"; shift ;;
     --color=*) color="${1#--color=}"; shift ;;
-    --color) [ $# -ge 2 ] || usage; color="$2"; shift 2; n=$((n - 1)) ;;
+    --color) [ $n -ge 1 ] || usage; color="$2"; shift 2; n=$((n - 1)) ;;
     --no-warnings) warnings=off; shift ;;
     *) set -- "$@" "$1"; shift ;;
   esac
@@ -124,6 +124,9 @@ case "$cmd" in
     # installed version is itself a pre-release, so a stable install is never moved to an rc unasked, while an rc install moves to
     # a later rc or to the release. Patch releases keep programs working (docs/releasing.md, Version numbers), so they install at
     # once; a newer MAJOR.MINOR from 1.0 on needs --minor, because a minor version may change behaviour.
+    # only an install made by install-native.sh (or the .pkg) is replaced: run from a checkout, $home is the repository (it has
+    # install-native.sh and compiler/), and the installer would swap its native/ folder for an install
+    if [ -f "$home/install-native.sh" ] && [ -d "$home/compiler" ]; then die "tomato update replaces an install, and $home is not one (run ./install-native.sh in a checkout)"; fi
     minor=0; pre=0
     for a in "$@"; do case "$a" in --minor) minor=1 ;; --pre) pre=1 ;; *) die "tomato update takes --minor and --pre, not $a" ;; esac; done
     url="${TOMATO_UPDATE_URL:-https://tomato.davismcd.com/latest.json}"
@@ -223,8 +226,8 @@ case "$cmd" in
     while [ $n -gt 0 ]; do
       n=$((n - 1))
       case "$1" in
-        --filter) [ $# -ge 2 ] || usage; tfilter="$2"; shift 2; n=$((n - 1)) ;;
-        --mode) [ $# -ge 2 ] || usage; tmode="$2"; shift 2; n=$((n - 1)) ;;
+        --filter) [ $n -ge 1 ] || usage; tfilter="$2"; shift 2; n=$((n - 1)) ;;
+        --mode) [ $n -ge 1 ] || usage; tmode="$2"; shift 2; n=$((n - 1)) ;;
         -*) die "unknown option '$1' for 'tomato test' (run 'tomato help')" ;;
         *) set -- "$@" "$1"; shift ;;
       esac
@@ -265,15 +268,16 @@ file="$1"; shift
 [ -f "$file" ] || die "cannot read $file"
 n=$#
 stop=0     # after `--` every word is a positional input, even one that looks like a flag
+# (the guards test n, the words left after this one: "$@" also holds the words already moved to its end)
 while [ $n -gt 0 ]; do
   n=$((n - 1))
   if [ $stop = 1 ]; then set -- "$@" "$1"; shift; continue; fi
   case "$1" in
     --) stop=1; shift ;;
-    -o) [ "$cmd" = run ] && usage; [ $# -ge 2 ] || usage; out="$2"; shift 2; n=$((n - 1)) ;;
-    --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; n=$((n - 1)) ;;
-    --mode) [ $# -ge 2 ] || usage; mode="$2"; shift 2; n=$((n - 1)) ;;
-    --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; n=$((n - 1)) ;;
+    -o) [ "$cmd" = run ] && usage; [ $n -ge 1 ] || usage; out="$2"; shift 2; n=$((n - 1)) ;;
+    --entry) [ $n -ge 1 ] || usage; entry="$2"; shift 2; n=$((n - 1)) ;;
+    --mode) [ $n -ge 1 ] || usage; mode="$2"; shift 2; n=$((n - 1)) ;;
+    --llvm) [ $n -ge 1 ] || usage; llvm="$llvm$2$nl"; shift 2; n=$((n - 1)) ;;
     *) set -- "$@" "$1"; shift ;;
   esac
 done
@@ -300,11 +304,12 @@ esac
 # (inline_merge below), so an ordinary -O1 compile inlines them and the runtime is linked as a plain object.
 opt=-O1; ltoflags="-flto"; nolto=""; [ "$mode" = release ] && { opt=-O2; ltoflags="-flto -DTOMATO_RELEASE"; nolto="-DTOMATO_RELEASE"; }
 
-# the temporary folder goes on any exit and on Ctrl-C, SIGTERM and hangup (also under dash, where a signal skips an EXIT trap); a
-# cache file half written by the runtime compile goes with it. A signal that comes while a compile or link runs is taken once that
-# command ends (the terminal's ^C ends it at once, as it reaches the whole foreground group).
+# the temporary folder goes on any exit and on Ctrl-C, SIGTERM and hangup (also under dash, where a signal skips an EXIT trap). A
+# cache file half written by an interrupted runtime compile (rtcache_get runs in a subshell, so its name is not known here) stays in
+# the cache folder as .tmp.XXXXXX until the next store's sweep removes it a day later. A signal that comes while a compile or link
+# runs is taken once that command ends (the terminal's ^C ends it at once, as it reaches the whole foreground group).
 tmp="$(mktemp -d)" || die "cannot make a temporary folder"
-trap 'rm -rf "$tmp" "${rtc_tmp:-}"' EXIT
+trap 'rm -rf "$tmp"' EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 find_config "$(dirname "$file")"
 if ! "$tomatoc" "$file" "$entry" "$std" "$mode" "$project_cfg" "$user_cfg" > "$tmp/program.ll" 2> "$tmp/errors"; then

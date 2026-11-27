@@ -1,0 +1,6 @@
+error[E119]: '@neg' is defined twice in class 'V'
+ --> tests/errors/marker_twice.tom:9:5
+  |
+9 |     def b(self) -> V:
+  |     ^^^^^^^^^^^^^^^^^
+  = help: keep the marker on one method
