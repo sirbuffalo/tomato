@@ -240,7 +240,7 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
 
 ### Foreign symbols (D101a, D94b item 9)
 
-A seed's modules may declare foreign functions, top-level `!name(...) -> T` lines (nothing rejects them). `add` and `install` find them by parsing
+A seed's modules may declare foreign functions, top-level `!name(...) -> T` lines, for any symbol except the runtime's `tomato_*` functions, which only `std/` may use (D112a: such a seed is refused, E612, naming the module, line and symbol, and is not listed for consent; the compiler refuses the same declaration with E611). `add` and `install` find them by parsing
 every module of the seed (`LlvmDecl` nodes), and when the seed declares a name that the lock's `symbols` for that seed do not hold, they list the
 names with the module and line and ask once: `accept these symbols and record them in tomato.lock? [y/N]` (standard input is read, an
 empty answer or `n` is no). `--yes` accepts without asking. With no terminal and no `--yes` the command refuses (E602) and changes nothing; so does
@@ -321,6 +321,8 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E605 | `--offline`: the seed is in neither the store nor the vendor folder (or `update --offline` of a seed that follows a tag or branch) |
 | E606 | `tomato seed verify` found a missing copy or one that does not match tomato.lock (D103a) |
 | E607 | (a compile error) a module next to the program or in `src/` has the name of a module of a seed the run uses |
+| E611 | (a compile error) a `!tomato_*` declaration or call in a module that is not part of `std/` (D112a) |
+| E612 | a seed declares a `!tomato_*` function (D112a); `seed add` and `install` refuse it |
 
 ## Not built yet
 

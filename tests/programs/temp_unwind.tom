@@ -3,7 +3,7 @@
 # a literal before a failing item, a fresh base before a failing index, a fresh object and the bounds before a failing bound
 # of `obj[a:b]`, a big range bound before a later bound that fails. The big-number leak check is strict here (it reports at
 # exit), and the same file runs under AddressSanitizer (whose leak check also sees objects on Linux).
-!tomato_json_quote(text: str, ascii: int) -> str
+!fmax(a: float, b: float) -> float
 
 def huge(n: int) -> int:
     r = 1
@@ -224,7 +224,7 @@ def main():
         count += 1
         print(e.message)
     try:
-        print(huge(21), !tomato_json_quote('dynamic' + str(count), 1 // zero()))
+        print(huge(21), !fmax(float(len('dynamic' + str(count))), float(1 // zero())))
     catch RuntimeError as e:
         count += 1
         print(e.message)

@@ -11,6 +11,7 @@ from lexer import LexError, parse_format_spec
 from diag import Diagnostic, format_error, closest
 from lint import lint_items, falls_through
 from config import default_exp_bits, default_format_digits
+from utf8 import encode
 
 class NeedsEarlyCopy(Error):
     # a copy of a generic class is first made after code that loops over every class that fits an Iterable or Sized type was
@@ -1302,6 +1303,7 @@ class Mod:
     format_digits: int = 100000
     seed_files: dict[str, str] = {}    # the module map (design section 5): the file of each module of a seed the run uses, and the seed's label (`name version`)
     seed_labels: dict[str, str] = {}
+    std_used: list[str] = []           # the modules that were read from the standard library (the only ones that may use the runtime's tomato_* functions with !)
     seed_used: list[str] = []          # the modules that were read from a seed (a file next to the program shadows a seed's module of the same name)
     src_dir: str = ''                  # the src/ folder of the project (with its closing slash), searched after the program's own folder (D94b): a test in tests/ imports the modules of src/
     src_used: list[str] = []           # the modules that were read from src_dir
@@ -2357,9 +2359,6 @@ class Mod:
             return f'%{key}'
         return ''
 
-!tomato_str_nbytes(s: str) -> int
-!tomato_str_byte(s: str, i: int) -> int
-
 def escape_byte(b: int) -> str:
     # one byte of a text constant as LLVM writes it: printable ASCII as itself, anything else as \XX (D17a-b: text is UTF-8)
     ascii = ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
@@ -2370,18 +2369,19 @@ def escape_byte(b: int) -> str:
 
 def escape_text(s: str) -> str:
     body = ''
-    for i in range(!tomato_str_nbytes(s)):
-        body += escape_byte(!tomato_str_byte(s, i))
+    for b in encode(s):
+        body += escape_byte(b)
     return body
 
 def string_global(index: int, s: str) -> str:
-    size = str(!tomato_str_nbytes(s) + 1)
+    nbytes = len(encode(s))
+    size = str(nbytes + 1)
     body = escape_text(s)
-    return '@.str.' + str(index) + ' = private constant { i64, i64, i64, i64, [' + size + ' x i8] } { i64 -1, i64 1, i64 ' + str(!tomato_str_nbytes(s)) + ', i64 ' + str(len(s)) + ', [' + size + ' x i8] c"' + body + '\\00" }'
+    return '@.str.' + str(index) + ' = private constant { i64, i64, i64, i64, [' + size + ' x i8] } { i64 -1, i64 1, i64 ' + str(nbytes) + ', i64 ' + str(len(s)) + ', [' + size + ' x i8] c"' + body + '\\00" }'
 
 def string_c(index: int, s: str) -> str:
     # a plain C copy, which is what tomato_fail prints
-    return '@.str.' + str(index) + '.c = private constant [' + str(!tomato_str_nbytes(s) + 1) + ' x i8] c"' + escape_text(s) + '\\00"'
+    return '@.str.' + str(index) + '.c = private constant [' + str(len(encode(s)) + 1) + ' x i8] c"' + escape_text(s) + '\\00"'
 
 class TryInfo:
     # a try statement being compiled (D22a)
@@ -7705,6 +7705,7 @@ class Gen:
 
     def llvm_call(self, n: Node, name: str) -> Ex:
         # a call to a declared LLVM function (D27b): the declaration gives the types, the linker the body
+        check_reserved_llvm(self.mod, self.mod.cur, name, n.line)
         found: list[FuncInfo] = [d for d in self.mod.llvm_decls if d.name == name]
         if len(found) == 0:
             raise CompileError(f"the LLVM function '!{name}' is not declared\nadd a line like '!{name}(a: int) -> int' at the top level of the file", n.line)
@@ -14097,6 +14098,7 @@ def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
             g = open(std_path(std, name))
             text = g.read()
             g.close()
+            mod.std_used.append(name)
         catch IOError:
             help = f'looked for {name}.tom next to the program and in the standard library'
             if mod.src_dir != '':
@@ -14109,6 +14111,16 @@ def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
                 help += '\nif a seed has a new module, run: tomato seed install'
             raise CompileError(f"cannot find the module '{name}'\n{help}\nstandard modules: " + ', '.join(std_modules()), line)
     return text
+
+# D27c: the runtime's own functions, all named tomato_*, are not part of the language, so a module of the standard library (which ships
+# with the toolchain, and wraps them) may declare and call them with `!`, and no other module may. A project's or a seed's module with the
+# name of a standard module is not one. Any other symbol (libc, the program's C, an LLVM function) is open to everyone.
+def check_reserved_llvm(mod: Mod, module: str, name: str, line: int):
+    if not name.startswith('tomato_'):
+        return
+    if module == 'builtin' or module in mod.std_used:
+        return
+    raise CompileError(f"the function '!{name}' belongs to the runtime and cannot be used here\ntomato_* functions belong to the runtime and are not part of the language; use the std module that wraps it", line)
 
 class TopItem:
     # a top-level declaration and the module that wrote it
@@ -14481,6 +14493,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
                 raise CompileError(f"the constant '{item.fields[0].text}' must be a number, text or True or False written out\na constant is not code: write its value as a literal, such as 3.14", item.line)
             mod.consts[mod.key_for(top.module, item.fields[0].text)] = val_node(item.fields[1])
         elif item.kind == 'LlvmDecl':
+            check_reserved_llvm(mod, top.module, item.fields[0].text, item.line)
             decl = function_info(item, mod, '')
             for pt in decl.ptypes:
                 if pt == 'File' or (is_rc(pt) and pt != 'str' and pt != '@Error' and not pt.startswith('list[')):      # (an Error object only for testing's tomato_error_is)

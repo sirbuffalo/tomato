@@ -1,6 +1,6 @@
 # When an error is raised partway through an expression or statement, the values it already made are freed: every case
 # here raises after making some text, catches the error, and goes on (tests/run.sh runs it under AddressSanitizer too)
-!tomato_json_quote(text: str, ascii: int) -> str
+!fmax(a: float, b: float) -> float
 
 class Shelf:
     items: list[str] = ['x']
@@ -32,7 +32,7 @@ def leave_print(s: str):
     print(s[0:2], g())
 
 async def quoted(method: str) -> int:
-    n = len(!tomato_json_quote(method.upper(), g()))
+    n = int(!fmax(float(len(method.upper())), float(g())))
     await sleep(0)
     return n
 
@@ -78,7 +78,7 @@ def caught(what: str, xs: list[int]):
         elif what == 'get':
             print(shelf.table.get(name(1), name(xs[9])))
         elif what == 'extern':
-            print(!tomato_json_quote(what.upper(), g()))
+            print(!fmax(float(len(what.upper())), float(g())))
     catch RuntimeError as e:
         print(f'{what}: {e.message}')
 

@@ -123,7 +123,7 @@ export def seed_modules(sm: Manifest, folder: str) -> list[str]:
         fail(575, sm.path, f'the seed has no modules: put {stem}.tom in {folder}/src')
     return mods
 
-# the foreign symbols the modules of a seed declare (D94b item 9): the `!name(...)` lines, found by parsing each module as the seed checks of
+# the foreign symbols the modules of a seed declare (D94b item 9; a `!tomato_*` declaration is refused, D27c): the `!name(...)` lines, found by parsing each module as the seed checks of
 # design section 11 do. Sets seed.symbols (the names, sorted, once each) and seed.sites (`name TAB src/module.tom:line`)
 def find_symbols(seed: Locked, folder: str):
     names: list[str] = []
@@ -139,6 +139,9 @@ def find_symbols(seed: Locked, folder: str):
             node = item.node
             if node is not None and node.kind == 'LlvmDecl':
                 name = node.fields[0].text
+                if name.startswith('tomato_'):
+                    # D27c: the runtime's functions are reserved, so they are not offered for consent: the seed is refused
+                    fail(612, f'{file}:{node.line}', f'the seed declares !{name}: tomato_* functions belong to the runtime and are not part of the language, so only the standard library may use them\n  = help: use the std module that wraps it, or ask the seed author to')
                 if name not in names:
                     names.append(name)
                 sites.append(f'{name}\tsrc/{mod}.tom:{node.line}')

@@ -69,7 +69,7 @@ within app try "seed install --locked: a path seed whose files changed says so, 
 within app try "run: a path seed that changed still builds" 0 "bye x" "" run m.tom
 printf 'export def greet(n: str) -> str:\n    return "hello " + n\n' > thing/src/thing.tom
 # a `!name(...)` symbol added to a path seed after it was locked is asked about by a build, as `seed install` asks (not linked silently)
-printf '!tomato_getpid() -> int\n' >> thing/src/thing.tom
+printf '!getpid() -> int\n' >> thing/src/thing.tom
 within app try "run: a foreign symbol added to a locked path seed is refused until it is accepted" 1 "" "~  = help: tomato.lock does not hold these symbols: run \`tomato seed install\` and answer, or add --yes" run m.tom
 within app try "seed install --yes accepts it, and the build runs again" 0 "~wrote $W/app/tomato.lock (1 seed)" "" seed install --yes
 within app try "run: with the symbol in the lock the build goes on" 0 "hello x" "" run m.tom

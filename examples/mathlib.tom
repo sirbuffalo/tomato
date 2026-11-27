@@ -1,5 +1,5 @@
 # LLVM functions are declared with their Tomato types, then called with !name (D27b).
-# Run with: tomato run examples/mathlib.tom main --llvm examples/mathlib.ll
+# Run with: tomato run --llvm examples/mathlib.ll examples/mathlib.tom main
 !sqrt(x: float) -> float
 !add(a: int, b: int) -> int
 !is_even(n: int[length=32]) -> bool

@@ -662,6 +662,7 @@ if [ -n "$have_js" ]; then
   done
   spawn_free t_wasm_browser
   spawn_free t_wasm_sockets
+  wasm_neg foreign_runtime_decl "belongs to the runtime and cannot be used here"
   wasm_neg type_mismatch "cannot use '+' with int and str"
   wasm_neg shadow_type_function "'str' is the name of a built-in type, so it cannot be defined here"
   wasm_neg shadow_len_own_signature "argument 1 of 'len' (the parameter 'x') has type str, but int is expected"
@@ -1425,7 +1426,7 @@ t_cli_seed_store() { # tomato seed add/remove/vendor, git seeds and the seed sto
   C1="$(commit "$W/gs" one)"
   H1="$(indep_hash "$W/gs")"
   seed_toml g.example/gs 1.1.0 > "$W/gs/tomato.toml"
-  printf '!tomato_json_quote(text: str, ascii: int) -> str\nexport def hi() -> str:\n    return "hi from git 1.1"\n' > "$W/gs/src/gs.tom"
+  printf '!getpid() -> int\nexport def hi() -> str:\n    return "hi from git 1.1"\n' > "$W/gs/src/gs.tom"
   C2="$(commit "$W/gs" two)"
   H2="$(indep_hash "$W/gs")"
   bare "$W/gs" "$W/gs.git"
@@ -1576,17 +1577,17 @@ wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | nor
   cp "$A/tomato.toml" "$W/manifest.before"; cp "$A/tomato.lock" "$W/lock.before"
   r="$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C2" 2>&1 < /dev/null | norm)"
   check "foreign symbols: an update that adds one asks again, and with no terminal refuses" "error[E602]: HERE/app/tomato.toml: the seed g.example/gs 1.1.0 declares foreign symbols, !name(...) declarations that link functions of the runtime or of C into your program, with no check of their types by the compiler:
-  tomato_json_quote  (src/gs.tom:1)
+  getpid  (src/gs.tom:1)
   = help: this command cannot ask here (standard input is not a terminal): run it at a terminal, or add --yes to accept them; nothing was changed" "$r"
   cmp -s "$W/manifest.before" "$A/tomato.toml" && cmp -s "$W/lock.before" "$A/tomato.lock" && ok "foreign symbols: the refusal changed neither the manifest nor the lock" || bad "foreign symbols: the refusal changed neither the manifest nor the lock"
   r="$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C2" --yes 2>&1 | norm)"
   check "foreign symbols: --yes lists them and goes on" "the seed g.example/gs 1.1.0 declares foreign symbols, !name(...) declarations that link functions of the runtime or of C into your program, with no check of their types by the compiler:
-  tomato_json_quote  (src/gs.tom:1)
+  getpid  (src/gs.tom:1)
 accepted with --yes; they are recorded in tomato.lock
 added g.example/gs 1.1.0 to [seeds] of HERE/app/tomato.toml
 g.example/gs 1.1.0  $H2  (git HERE/gs.git ${C2%????????????????????????????})
 wrote HERE/app/tomato.lock (1 seed)" "$r"
-  check "foreign symbols: the lock records the accepted symbols" 'symbols = ["tomato_json_quote"]' "$(grep '^symbols' "$A/tomato.lock")"
+  check "foreign symbols: the lock records the accepted symbols" 'symbols = ["getpid"]' "$(grep '^symbols' "$A/tomato.lock")"
   check "foreign symbols: the manifest line has the new commit (an update is the same command with another --rev)" "\"g.example/gs\" = { git = \"$gsurl\", rev = \"$C2\" }" "$(sed -n '/^\[seeds\]/,$p' "$A/tomato.toml" | sed -n 2p)"
   check "foreign symbols: install asks nothing once they are in the lock" "g.example/gs 1.1.0  $H2  (git HERE/gs.git ${C2%????????????????????????????})
 tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked < /dev/null 2>&1 | norm)"
@@ -1601,9 +1602,9 @@ tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked < /dev/null
   r="$(cd "$A" && tm $t seed install --locked 2>&1 | norm | tail -n 1)"
   check "foreign symbols: install --locked says the lock is out of date (it has the old commit)" "error[E578]: HERE/app/tomato.toml: tomato.lock does not match this manifest: run \`tomato seed install\` and commit the new lock" "$r"
   (cd "$A" && tm $t seed install --yes >/dev/null 2>&1)
-  check "foreign symbols: install --yes accepts them" 'symbols = ["tomato_json_quote"]' "$(grep '^symbols' "$A/tomato.lock")"
+  check "foreign symbols: install --yes accepts them" 'symbols = ["getpid"]' "$(grep '^symbols' "$A/tomato.lock")"
   # a path seed: the same, and the question on a terminal
-  printf '!tomato_json_quote(text: str, ascii: int) -> str\nexport def local_name() -> str:\n    return "loc"\n' > "$W/loc/src/loc.tom"
+  printf '!getpid() -> int\nexport def local_name() -> str:\n    return "loc"\n' > "$W/loc/src/loc.tom"
   printf '%s' "$head" > "$A/tomato.toml"; rm -f "$A/tomato.lock"
   if command -v expect >/dev/null 2>&1; then
     check "foreign symbols: the question on a terminal (n and Enter refuse, y accepts)" "ok" "$(cd "$A" && PATH="$(dirname "$t"):$PATH" TOMATO_HOME="$th" expect "$root/tests/seed_prompt_pty.exp" "$A" "$W/loc" 2>&1 | tail -1)"
@@ -1768,20 +1769,20 @@ wrote HERE/app/tomato.lock (1 seed)" "$r"
   checkn "seed update: install --locked agrees with the new manifest and lock" "tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked 2>&1 | tail -n 1)"
   checkn "seed update: a second update has nothing to do" "tomato.lock is already up to date" "$(cd "$A" && tm $t seed update 2>&1 | tail -n 1)"
   # ---- a new foreign symbol asks again: with no terminal and no --yes the update changes nothing, and --yes accepts
-  printf '!tomato_json_quote(text: str, ascii: int) -> str\nexport def hi() -> str:\n    return "hi 1.2"\n' > "$W/gs/src/gs.tom"
+  printf '!getpid() -> int\nexport def hi() -> str:\n    return "hi 1.2"\n' > "$W/gs/src/gs.tom"
   seed_toml g.example/gs 1.2.0 > "$W/gs/tomato.toml"
   GC3="$(commit "$W/gs" three)"; git -C "$W/gs" tag -f v1 >/dev/null 2>&1; bare "$W/gs" "$W/gs.git"
   cp "$A/tomato.toml" "$W/manifest.before"; cp "$A/tomato.lock" "$W/lock.before"
   r="$(cd "$A" && tm $t seed update --dry-run 2>&1 | norm | sed -n '4,5p')"
   checkn "seed update --dry-run: says that it would ask about the new symbol" "  hash    $(c19 "$GH2")... -> $(indep_hash "$W/gs" | cut -c1-19)...
-  new foreign symbols: tomato_json_quote (the update would ask you to accept them)" "$r"
+  new foreign symbols: getpid (the update would ask you to accept them)" "$r"
   r="$(cd "$A" && tm $t seed update 2>&1 | norm | cut -c1-200)"
   case "$r" in *"error[E602]: HERE/app/tomato.toml: the seed g.example/gs 1.2.0 declares foreign symbols"*"this command cannot ask here"*"nothing was changed") ok "seed update: a new foreign symbol is asked about again (no terminal, no --yes: refused)";; *) bad "seed update: a new foreign symbol is asked about again" "$r";; esac
   cmp -s "$W/manifest.before" "$A/tomato.toml" && cmp -s "$W/lock.before" "$A/tomato.lock" && ok "seed update: a refused question leaves tomato.toml and tomato.lock exactly as they were" || bad "seed update: a refused question leaves tomato.toml and tomato.lock exactly as they were" "$(diff "$W/manifest.before" "$A/tomato.toml")"
   r="$(cd "$A" && tm $t seed update --yes 2>&1 | norm | tail -n 3)"
   checkn "seed update --yes: accepts and records them" "accepted with --yes; they are recorded in tomato.lock
 wrote HERE/app/tomato.lock (1 seed)" "$(printf '%s\n' "$r" | tail -n 2)"
-  checkn "seed update --yes: the lock has the symbol and the new commit" "tomato_json_quote $GC3" "$(sed -n 's/^symbols = \["\(.*\)"\]/\1/p' "$A/tomato.lock") $(lockfield g.example/gs commit)"
+  checkn "seed update --yes: the lock has the symbol and the new commit" "getpid $GC3" "$(sed -n 's/^symbols = \["\(.*\)"\]/\1/p' "$A/tomato.lock") $(lockfield g.example/gs commit)"
   # ---- only the named seeds move; one that is pinned is said to be; a branch is followed
   r="$(cd "$A" && tm $t seed add --git "$W/br.git" --branch main 2>&1 | norm | sed -n 1p)"
   checkn "seed add --branch: the branch is looked up and its commit written" "added b.example/br 0.1.0 to [seeds] of HERE/app/tomato.toml (branch main is at $(c12 "$BC1"))" "$r"
@@ -2197,6 +2198,35 @@ error[E190]: cannot use '+' with int and str
 range(1, 100, 1)
 range(0, 5, 1)" "$(printf 'print(range(100))\nx = range(1, 100)\nx\nrange(5)\n:quit\n' | $t repl 2>&1)"
   fi
+}
+# D27c: `!tomato_*` (the runtime's private functions) is for std/ only; every other symbol is open
+t_foreign_reserved() {
+  cli_setup
+  mkdir -p "$work/fr/seed/src" "$work/fr/app"
+  cd "$work/fr" || return
+  printf '!tomato_env_has(name: str) -> int\n\n@main\ndef main():\n    print(!tomato_env_has("HOME"))\n' > decl.tom
+  check "foreign: a !tomato_ declaration in the program is rejected" "error[E611]: the function '!tomato_env_has' belongs to the runtime and cannot be used here
+  = help: tomato_* functions belong to the runtime and are not part of the language; use the std module that wraps it" "$($t run decl.tom 2>&1 | grep -E 'error|help')"
+  printf '@main\ndef main():\n    print(!tomato_getpid())\n' > call.tom
+  check "foreign: a !tomato_ call without a declaration is rejected too" "error[E611]: the function '!tomato_getpid' belongs to the runtime and cannot be used here" "$($t run call.tom 2>&1 | head -1)"
+  printf '!tomato_str_nbytes(s: str) -> int\nexport def n(s: str) -> int:\n    return !tomato_str_nbytes(s)\n' > utf8.tom
+  printf 'import utf8\n\n@main\ndef main():\n    print(utf8.n("a"))\n' > shadow.tom
+  check "foreign: a project module named like a std module does not count as std" "error[E611]: the function '!tomato_str_nbytes' belongs to the runtime and cannot be used here" "$($t run shadow.tom 2>&1 | head -1)"
+  rm -f utf8.tom
+  printf 'import utf8\nimport json\n\n@main\ndef main():\n    print(len(utf8.encode("hé")), json.dumps(json.loads("[1, 2]")))\n' > stdok.tom
+  check "foreign: std modules still use !tomato_ (debug)" '3 [1,2]' "$($t run stdok.tom 2>&1)"
+  check "foreign: std modules still use !tomato_ (release)" '3 [1,2]' "$($t run --mode release stdok.tom 2>&1)"
+  printf '!abs(x: int[length=32]) -> int[length=32]\n!strlen(s: str) -> int\n\n@main\ndef main():\n    print(!abs(-5))\n' > libc.tom
+  check "foreign: a libc function is open to programs" "5" "$($t run libc.tom 2>&1)"
+  check "foreign: examples/mathlib with its .ll still works" "1.4142135623730951
+42
+True False
+1000000000" "$(cd "$root" && $t run --llvm examples/mathlib.ll examples/mathlib.tom main 2>&1)"
+  printf '[seed]\nname = "acme.example/res"\nversion = "0.1.0"\ntomato = "%s"\ndescription = "x"\nlicense = "MIT"\n' "$(cat "$root/VERSION")" > seed/tomato.toml
+  printf '!tomato_getpid() -> int\nexport def p() -> int:\n    return 1\n' > seed/src/res.tom
+  printf '[project]\nname = "app"\nversion = "0.1.0"\ntomato = "%s"\n\n[seeds]\n"acme.example/res" = { path = "../seed" }\n' "$(cat "$root/VERSION")" > app/tomato.toml
+  r="$(cd app && $t seed install --yes 2>&1)"
+  case "$r" in *"error[E612]"*"the seed declares !tomato_getpid: tomato_* functions belong to the runtime"*) ok "foreign: a seed declaring !tomato_ is rejected, not offered for consent";; *) bad "foreign: a seed declaring !tomato_ is rejected, not offered for consent" "$r";; esac
 }
 t_cli_color() {
   part="${1:-1}"; cli_setup
@@ -3019,6 +3049,7 @@ spawn_cli t_manedit_logic
 spawn_cli t_cli_repl_1 1
 spawn_cli t_cli_repl_1 2
 spawn_cli t_cli_repl_1 3
+spawn_cli t_foreign_reserved
 spawn_cli t_cli_color 1
 spawn_cli t_cli_color 2
 spawn_cli t_cli_color 3
@@ -3146,6 +3177,7 @@ neg optional_assign_int_branch "cannot use '+' with int | None and str"
 neg optional_assign_int_narrowed "cannot use '+' with int and str"
 neg optional_assign_derived "the assigned value has type None, but str is expected"
 neg union_with_none "a union cannot hold None together with two or more other types"
+neg foreign_runtime_decl "tomato_* functions belong to the runtime and are not part of the language; use the std module that wraps it"
 neg type_mismatch "cannot use '+' with int and str"
 neg dict_key_no_hash "'Point' has no method marked @hash, so it cannot be a dict key or set element"
 neg dict_key_eq_only "'Point' has a method marked @eq but none marked @hash"

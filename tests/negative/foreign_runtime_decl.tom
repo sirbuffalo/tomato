@@ -1,0 +1,5 @@
+!tomato_env_has(name: str) -> int
+
+@main
+def main():
+    print(!tomato_env_has("HOME"))

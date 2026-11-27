@@ -103,7 +103,7 @@ Source: `python3 -I -c 'import sys; print(sorted(sys.stdlib_module_names))'` on 
 | `shlex` | later | small, with subprocess |
 | `curses`, `readline`, `rlcompleter`, `cmd`, `code`, `codeop` | skip | |
 | `threading`, `multiprocessing`, `concurrent`, `queue`, `sched`, `contextvars` | skip (`queue` as an async `Queue` is in #8) | the concurrency model is cooperative tasks (D13/D51); threads are a language decision, not a library one |
-| `ctypes`, `mmap`, `faulthandler`, `gc` | skip | FFI exists as `!name(...)` declarations in std modules only (D27b) |
+| `ctypes`, `mmap`, `faulthandler`, `gc` | skip | FFI exists as `!name(...)` declarations (D27b, open for any symbol except the runtime's `tomato_*`, D112a) |
 
 ### 4.3 Text and data formats
 

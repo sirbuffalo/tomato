@@ -106,7 +106,7 @@ Read from the source (nothing here is new behavior):
   line 12805), shown as the file name `{module}.tom` (`source_path`, line 12815).
 - **`!name(...)` foreign declarations exist only in std modules** by convention (D27b; `docs/next-features.md` says "FFI
   exists as `!name(...)` declarations in std modules only"). There is no compiler check that forbids them in a user module, and
-  none is wanted: Davis's decision (D94b, a default he leaned to, "like in Python you can have C") is that a seed **may** use
+  none is wanted (except for the runtime's `tomato_*` functions, D112a: E611 outside `std/`, E612 for a seed): Davis's decision (D94b, a default he leaned to, "like in Python you can have C") is that a seed **may** use
   them. Sections 8 and 11 say how that is made visible instead.
 - **The `tomato` command is a POSIX shell script** (`native/tomato`) that calls `bin/tomatoc`, then clang. `tomato update`
   already downloads over https only, with a pinned sha256 (`curl_safe`, `native/tomato:52-55`), using `curl`, `tar` and

@@ -139,7 +139,14 @@ version changes results: U+2630-2637 and U+4DC0-4DFF are wide in 16 and were nar
 
 **Cost.** One sentence, and a rule for whoever regenerates `tools/gen_case_table.py`'s or `tools/gen_width_table.py`'s output (both need Python 3.14, and the suite's "generated tables" check runs them with `--check`, and `tools/check_ctype_table.py` checks the isalpha/isdigit tables against Python).
 
-### 1.6 Calling C from any program (`!name`) makes the runtime's internals public (Blocks 1.0)
+### 1.6 Calling C from any program (`!name`) makes the runtime's internals public (Blocks 1.0; decided and built, D112a)
+
+> **Status (2026-11-27).** Davis decided: `!name(...)` stays open for any symbol (libc, the program's own compiled C, any LLVM
+> function the program links, in seeds too), except the runtime's private `tomato_*` functions. Declaring or calling one with
+> `!` from outside `std/` is a compile error (E611) with the hint "tomato_* functions belong to the runtime and are not part of the
+> language; use the std module that wraps it"; a seed that declares one is refused (E612), not offered for consent. The standard
+> library, which ships with the toolchain, keeps using them. It is built as D112a in `docs/decisions.md`. The text below is the
+> problem as it was written; no opt-in flag (`--allow-llvm`) is needed.
 
 **Problem.** Any program can declare and call any C symbol, including the runtime's private functions:
 
@@ -210,7 +217,7 @@ builtins can then accept angles without special cases.
 
 ### 2.2 `x in Type` for type tests (Blocks 1.0) — decided and built (D23i, 2026-11-27)
 
-**Decided.** Davis chose the proposal below on 2026-11-27: the type test is `x is T` (and `x is not T`), replacing `x in T`. He added the meaning: `is` checks equivalence at the pointer (identity) level and also checks whether something is a type, so `a is b` on two reference values is identity, `x is T` with a type name is the type test, and `x is None` is the type test for `None`. Built as D23i: identity works on objects, interface values, lists, dicts, sets and their optionals (numbers, text and tuples are a compile error that points at `==`); the narrowing of D55a, D102a and D102b is the same for `is`, with `is not T` added for unions; `x in T` still works in 1.0.x with a warning (`# allow: type-test`; the transition is a default, not yet decided by Davis). A class or interface value is tested by the object's own class (D110a, decided by Davis the same day: `x is Animal` is true for a subclass instance, as `isinstance`), and `x is Dog` narrows a base-typed variable to a `Dog`. The text below is the audit's original problem and proposal.
+**Decided.** Davis chose the proposal below on 2026-11-27: the type test is `x is T` (and `x is not T`), replacing `x in T`. He added the meaning: `is` checks equivalence at the pointer (identity) level and also checks whether something is a type, so `a is b` on two reference values is identity, `x is T` with a type name is the type test, and `x is None` is the type test for `None`. Built as D23i: identity works on objects, interface values, lists, dicts, sets and their optionals (numbers, text and tuples are a compile error that points at `==`); the narrowing of D55a, D102a and D102b is the same for `is`, with `is not T` added for unions; `x in T` still works in 1.0.x with a warning (`# allow: type-test`; the transition is a default, not yet decided by Davis). A class or interface value is tested by the object's own class (D112a, decided by Davis the same day: `x is Animal` is true for a subclass instance, as `isinstance`), and `x is Dog` narrows a base-typed variable to a `Dog`. The text below is the audit's original problem and proposal.
 
 **Problem.** `if x in int:`, `if shape in Circle:` (D23f) use the same word as membership (`if a in angles:`), and the
 two read alike. For example `if v in Angle:` is a type test, while `if v in angles:` searches a list. A type name that
@@ -591,7 +598,7 @@ In the order I would take them, with my recommendation for each. The first eight
 5. **`bytes` (8.1).** A `bytes` type before 1.0, or at least `list[uint[length=8]]` in every binary std signature.
 6. **`File` safety (5.1).** A closed flag, an idempotent `close()`, close on the last reference (built as a default, D93a, for Davis to confirm or change); `with` soon after.
 7. **Module names (9.1).** Reserve std's future names, warn when a project file shadows std, add `import ... as`.
-8. **The `!` C interface (1.6).** Allow it only in `std/`, or only behind an opt-in outside the promise.
+8. **The `!` C interface (1.6).** Decided and built (D112a): open for any symbol except `tomato_*`, which only `std/` may use.
 9. **The error class tree (4.1).** One `TimeoutError` and `ConnectionError` that module errors subclass; bare `raise`
    rethrows.
 10. **The sleep clock (6.1).** Real time natively, with the logical clock as the test and browser mode.
