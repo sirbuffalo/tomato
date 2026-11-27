@@ -1,59 +1,181 @@
-# Drives `tomato repl` in a pty (no Python): a multi-line block must come back from the up arrow as one entry that runs
-# whole, and the history file must hold only typed input. Usage: expect tests/repl_history.exp   (needs `tomato` on PATH)
-# No fixed sleeps: every key is sent only after the prompt it answers has been drawn (readline prints ESC[?2004h, bracketed
-# paste on, right before it starts reading), so a loaded machine only makes the session slower, not different.
-set timeout 120
-match_max 100000
-set home [exec mktemp -d]
-set env(HOME) $home
+# Drives the real `tomato repl` with its line editor (tomato-repl-edit, TOMATO_REPL_EDIT) on a pseudo-terminal, through a shell (no Python):
+# a block typed with auto-indent, recalled whole by the up arrow and edited in place (a middle line changed, a line added, a line
+# deleted), Ctrl-C, a bracketed paste, a UTF-8 line, a resize, Ctrl-D; the history file in its plain ⏎ format holding only what was
+# typed; the terminal's settings (`stty -g`) the same after the session as before; and the fallbacks: a helper that fails (exit 1) or
+# is killed (SIGTERM) gives a one-line note and plain input, and TERM=dumb gives plain input with no note.
+# Usage: TOMATO_REPL_EDIT=HELPER expect tests/repl_history.exp   (needs `tomato` on PATH; the last line printed is `ok` or `FAIL: ...`)
+# It fails, never skips, when the helper is missing. TOMATO_REPL_TRANSCRIPT=FILE also writes the session, as the terminal got it, to FILE.
+# No fixed sleeps: every key is sent only after the editor has drawn the prompt it answers (the editor turns bracketed paste on,
+# ESC[?2004h, once its terminal is raw, and then draws the first frame), so a loaded machine only makes the session slower.
+set timeout 180
+encoding system utf-8
+match_max 200000
+log_user 0
+proc fail {msg} { global work; puts "FAIL: $msg"; catch {exec rm -rf $work}; exit 1 }
+if {![info exists env(TOMATO_REPL_EDIT)] || ![file executable $env(TOMATO_REPL_EDIT)]} {
+  puts "FAIL: the line editor (TOMATO_REPL_EDIT) is missing: [expr {[info exists env(TOMATO_REPL_EDIT)] ? $env(TOMATO_REPL_EDIT) : {not set}}]"
+  exit 1
+}
+set edit $env(TOMATO_REPL_EDIT)
+set work [exec mktemp -d]
+if {[info exists env(TOMATO_REPL_TRANSCRIPT)]} { log_file -a -noappend $env(TOMATO_REPL_TRANSCRIPT) }
+set env(HOME) $work
 set env(TERM) xterm
-set env(TOMATO_HISTORY) $home/hist
-log_user 0   ;# the session is not echoed: the last line printed is the verdict
-spawn bash [file dirname [info script]]/../native/tomato-repl
-set bv [exec bash -c {echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}}]
-set old_bash [expr {[lindex $bv 0] < 4}]
-# readline 8.1 (bash 5.1) and later prints ESC[?2004h (bracketed paste on) right before it starts reading: the surest sign that
-# the prompt is live, not merely echoed. Older readlines (macOS bash 3.2) print nothing, so there the prompt text alone is matched.
-if {[lindex $bv 0] > 5 || ([lindex $bv 0] == 5 && [lindex $bv 1] >= 1)} { set P "\033\\\[\\?2004h" } else { set P "" }
-# await_prompt REGEXP: wait for readline to show a prompt matching it (REGEXP follows the marker); fail if it never does
-set all ""
-proc await_prompt {re} {
-  global P all
+set env(TOMATO_HISTORY) $work/hist
+catch {unset env(NO_COLOR)}
+catch {unset env(TOMATO_COLOR)}
+catch {unset env(LINES)}
+catch {unset env(COLUMNS)}
+
+# want REGEXP WHAT: wait for the output to match; fail if it never does
+proc want {re what} {
   expect {
-    -re "$P$re" { append all $expect_out(buffer) }
-    timeout { puts "FAIL: timed out waiting for prompt: $re"; exit 1 }
-    eof { puts "FAIL: repl exited while waiting for prompt: $re"; exit 1 }
+    -re $re {}
+    timeout { fail "timed out waiting for $what" }
+    eof { fail "the session ended while waiting for $what" }
   }
 }
-proc line {s next} { send "$s\r"; await_prompt $next }
-await_prompt {>>> }
-line "for i in range(2):" {\.\.\. +}
-line "\tprint(i)" {\.\.\. +}
-line "" {>>> }
-line "x = 5" {>>> }
-line "print(1 + \"a\")" {>>> }
-send "\033\[A\033\[A\033\[A"   ;# print(1+"a"), x = 5, then the block
-send "\r"; await_prompt {\[Enter\] run  \[e\] edit: }   ;# the block is shown as real lines with the run/edit prompt
-send "\r"; await_prompt {>>> }                          ;# Enter runs it whole
-send "\033\[A\033\[A\033\[A\r"; await_prompt {\[Enter\] run  \[e\] edit: }   ;# the block again
-# bash 4+ shows each line prefilled in the editor; bash 3.2 shows an empty prompt (Enter keeps the line, Up recalls it)
-if {$old_bash} { set p1 {>>> }; set p2 {\.\.\. } } else { set p1 {>>> for i in range\(2\):}; set p2 {\.\.\. +print\(i\)} }
-send "e\r"; await_prompt $p1       ;# edit: line 1
-send "\r"; await_prompt $p2        ;# keep line 1; line 2 comes next
-# line 2: bash 3.2 (macOS) cannot prefill the editor, so the up arrow recalls the line; from bash 4 on it is already there (and
-# the up arrow would go on to older history). Either way, change it.
-if {$old_bash} { send "\033\[A" }
-send "\b * 10)\r"; await_prompt {\.\.\. }
-send "\r"; await_prompt {>>> }                          ;# no more lines: run
-send ":quit\r"
-expect eof
-append all $expect_out(buffer)
-set hist [exec cat $home/hist]
+set ESC \x1b
+# the editor is reading keys: bracketed paste on, then the first frame (an empty prompt, the cursor after it)
+proc prompt {what} { want {\x1b\[\?2004h\r\x1b\[J>>> \x1b\[5G} "the editor's prompt ($what)" }
+# the piece has been run (its output follows the editor's last write, ESC[?25h: the cursor shown again) and the next prompt is live
+proc ran {re what} { want $re $what; prompt "after $what" }
+proc normal {text} {   # stty -g without macOS's PENDIN bit, which is the kernel's state and not a setting (see tests/terminal_pty.exp)
+  if {[regexp {^(.*lflag=)([0-9a-f]+)(.*)$} $text -> head flags tail]} {
+    scan $flags %x bits
+    set text "$head[format %x [expr {$bits & ~0x20000000}]]$tail"
+  }
+  return $text
+}
+# runs `tomato repl` in the shell with the settings saved before and after (the suffix N names the files)
+proc start_repl {n env_words} {
+  global work
+  send "stty -g > $work/before$n; $env_words tomato repl; echo EXIT=\$?; stty -g > $work/after$n\r"
+}
+proc ended {n what} {
+  global work
+  want {EXIT=0\r\n} "the repl to leave ($what)"
+  send "echo DO\"\"NE\r"
+  want {DONE\r\n} "the shell after $what"
+  set a [normal [exec cat $work/before$n]]
+  set b [normal [exec cat $work/after$n]]
+  if {$a ne $b} { fail "$what: the terminal settings changed: before '$a', after '$b'" }
+}
+
+spawn sh
+set slave $spawn_out(slave,name)
+exec stty rows 30 cols 100 < $slave
+
+# ---- the editor ------------------------------------------------------------------------------------------------------------
+start_repl 1 ""
+prompt "start"
+# a block: Enter after a line ending in ':' indents the next line; an empty last line runs it
+send "for i in range(2):\r"
+want {>>> for i in range\(2\):\r\n\.\.\.     \x1b\[9G} "the auto-indented second line"
+send "y = i\r"
+want {\.\.\.     y = i\r\n\.\.\.     \x1b\[9G} "the third line"
+send "print(y)\r"
+want {\.\.\.     print\(y\)\r\n\.\.\.     \x1b\[9G} "the fourth line"
+send "\r"
+ran {\?25h0\r\n1\r\n} "the block runs"
+send "x = 5\r"
+prompt "x = 5"
+send "print(1 + \"a\")\r"
+ran {cannot use '\+' with int and str} "the error"
+send ":help\r"
+ran {:reset} ":help"
+# Up three times: the block comes back as its real lines, the cursor at its end; Up again goes to its middle line
+send "\033\[A\033\[A\033\[A"
+want {>>> for i in range\(2\):\r\n\.\.\.     y = i\r\n\.\.\.     print\(y\)\x1b\[17G} "the recalled block"
+send "\033\[A * 10"
+want {\.\.\.     y = i \* 10\r\n\.\.\.     print\(y\)\x1b\[1A\x1b\[19G} "the edited middle line"
+# Down to the last line, Enter adds a line (the block is still open), and Enter on that empty line runs it
+send "\033\[B\r"
+want {print\(y\)\r\n\.\.\.     \x1b\[9G} "the new last line"
+send "\r"
+ran {\?25h0\r\n10\r\n} "the edited block runs"
+# add a line to the recalled block
+send "\033\[A"
+want {y = i \* 10\r\n\.\.\.     print\(y\)\x1b\[17G} "the edited block recalled"
+send "\rprint(-y)\r"
+want {print\(-y\)\r\n\.\.\.     \x1b\[9G} "the added line"
+send "\r"
+ran {\?25h0\r\n0\r\n10\r\n-10\r\n} "the block with the added line"
+# delete that line again: Ctrl-U empties it, Backspace joins it to the line above
+send "\033\[A"
+want {print\(-y\)\x1b\[18G} "the four-line block recalled"
+send "\025\177"
+want {\.\.\.     print\(y\)\x1b\[17G} "the deleted line"
+send "\r\r"
+ran {\?25h0\r\n10\r\n} "the block without the line"
+# Ctrl-C drops what was typed and gives a new prompt
+send "oops"
+want {>>> oops\x1b\[9G} "the typed text"
+send "\003"
+ran {>>> oops\x1b\[9G\r\nKeyboardInterrupt\r\n} "KeyboardInterrupt"
+# a bracketed paste of two lines is inserted as it is, and Enter runs it
+send "\033\[200~print(7)\rprint(8)\033\[201~"
+want {>>> print\(7\)\r\n\.\.\. print\(8\)\x1b\[13G} "the pasted lines"
+send "\r"
+ran {\?25h7\r\n8\r\n} "the pasted lines run"
+# UTF-8: wide characters, the cursor placed by cells
+send "print('héllo 中')"
+want "print\\('héllo 中'\\)\x1b\\\[22G" "the UTF-8 line"
+send "\r"
+ran "\\?25hhéllo 中\r\n" "the UTF-8 line runs"
+# a resize: the editor redraws at the new width, and a long line wraps there
+exec stty cols 30 < $slave
+send "print('abcdefghijklmnopqrstuvwxyz')"
+want {>>> print\('abcdefghijklmnopqrs\r\ntuvwxyz'\)\x1b\[10G} "the line wrapped at the new width"
+send "\r"
+ran {\?25habcdefghijklmnopqrstuvwxyz\r\n} "the wrapped line runs"
+exec stty cols 100 < $slave
+# Ctrl-D on an empty prompt leaves
+send "\004"
+ended 1 "Ctrl-D"
+set hist [exec cat $work/hist]
 set bad ""
-if {[regexp -all {0\r\n1\r\n} $all] < 2} { append bad "recalled block did not run whole; " }
-if {![regexp {0\r\n10\r\n} $all]} { append bad "edited block did not run; " }
-if {![string match "*for i in range(2):⏎*print(i)*" $hist]} { append bad "block not stored as one entry: $hist; " }
-if {[regexp {\nprint\(i\)} $hist]} { append bad "body stored as its own entry; " }
-if {[string match "*Error*" $hist]} { append bad "error text in history; " }
-if {$bad ne ""} { puts "FAIL: $bad"; exit 1 }
+if {![string match "for i in range(2):⏎    y = i⏎    print(y)\n*" $hist]} { append bad "the block is not one entry in the ⏎ format: $hist; " }
+if {![string match "*\nfor i in range(2):⏎    y = i \\* 10⏎    print(y)⏎    print(-y)\n*" $hist]} { append bad "the block with the added line is not in the history; " }
+if {![string match "*\nprint(7)⏎print(8)\n*" $hist]} { append bad "the paste is not one entry; " }
+if {![string match "*\nprint('héllo 中')\n*" $hist]} { append bad "the UTF-8 line is not in the history; " }
+if {[string match "*:help*" $hist]} { append bad "a :command is in the history; " }
+if {[string match "*oops*" $hist]} { append bad "the text dropped by Ctrl-C is in the history; " }
+if {[string match "*Error*" $hist] || [string match "*cannot use*" $hist]} { append bad "error text in the history; " }
+if {[llength [split [string trim $hist] "\n"]] != 9} { append bad "the history does not have 9 entries: $hist; " }
+if {$bad ne ""} { fail $bad }
+
+# ---- the fallbacks ---------------------------------------------------------------------------------------------------------
+# a helper that fails: a one-line note, then plain input (readline) for the rest of the session; only exit 10 leaves
+set fake $work/failing-editor
+exec sh -c "printf '#!/bin/sh\\nexit 1\\n' > $fake; chmod +x $fake"
+start_repl 2 "TOMATO_REPL_EDIT=$fake"
+want {the line editor is not available; using plain input\r\n} "the note for a failing editor"
+want {>>> } "the plain prompt"
+send "print(5)\r"
+want {[\r\n]5\r\n} "plain input runs"
+want {>>> } "the plain prompt again"
+send ":quit\r"
+ended 2 "a failing editor"
+# the editor killed by SIGTERM while it reads: the same note, and the terminal given back
+start_repl 3 "TOMATO_HISTORY=$work/hist3"
+prompt "before the kill"
+set pid [exec pgrep -f -- "--history $work/hist3"]
+exec kill -TERM $pid
+want {the line editor is not available; using plain input\r\n} "the note for a killed editor"
+want {>>> } "the plain prompt after the kill"
+send ":quit\r"
+ended 3 "a killed editor"
+# TERM=dumb: plain input, and no note
+start_repl 4 "TERM=dumb"
+expect {
+  -re {line editor} { fail "TERM=dumb printed the note" }
+  -re {>>> } {}
+  timeout { fail "timed out waiting for the plain prompt with TERM=dumb" }
+}
+send "print(6)\r"
+want {[\r\n]6\r\n} "TERM=dumb runs"
+send ":quit\r"
+ended 4 "TERM=dumb"
+catch {exec rm -rf $work}
 puts ok

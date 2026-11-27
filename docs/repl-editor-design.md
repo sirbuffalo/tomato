@@ -1,7 +1,8 @@
 # The repl line editor, written in Tomato: design
 
-Status: **approved by Davis (all seven recommendations of section 14, 26 November 2026); stage 1 is built** (D86a, `docs/terminal-api.md`:
-the sheet as built, with where it differs from section 6), stages 2 to 4 are not. The questions are at the end (section 14), each with a
+Status: **approved by Davis (all seven recommendations of section 14, 26 November 2026); stages 1 and 2 are built** (D86a,
+`docs/terminal-api.md`, and D88a, `docs/lineedit-api.md`: the sheets as built, with where they differ from sections 6 and 8), stages 3
+and 4 are not. The questions are at the end (section 14), each with a
 recommendation and Davis's answer. The marks are the ones of `docs/wave2-api-sheets.md`: **[V]** I read it in this repository, **[M]** I ran it (on
 Linux, or on Davis's MacBook Pro, macOS 27 arm64), **[I]** inferred, not checked.
 
@@ -549,7 +550,7 @@ Each stage is its own task and merge, leaves the repl working, and does not depe
 | --- | --- | --- | --- | --- |
 | 0 | Design | this document, Davis's answers | docs | - |
 | 1 | Runtime and `terminal` **(built, D86a)** | the seven C functions + wasm stubs; `std/terminal.tom` (keys, decoder, raw mode, size, colors, widths, styles); `std_modules()` + bootstrap refresh + wasm rebuild; `@test`s and one pty test program; the doc sheet in `docs/` and a decision entry | a usable terminal module; the repl unchanged | M |
-| 2 | Editor library and the repl on it | `std/lineedit.tom` (buffer, history, keymap, layout, frame, hooks); `repledit.tom` with the repl's validator and history; the installer, tarball and pkg steps; the driver change; `tests/repl_history.exp` rewritten; decision entry D-new superseding D59a | the multi-line repl, no colors yet | L |
+| 2 | Editor library and the repl on it **(built, D88a)** | `std/lineedit.tom` (buffer, history, keymap, layout, frame, hooks); `repledit.tom` with the repl's validator and history; the installer, tarball and pkg steps; the driver change; `tests/repl_history.exp` rewritten; decision entry D-new superseding D59a | the multi-line repl, no colors yet | L |
 | 3 | The tolerant lexer and highlighting | `lex_spans` + shared scanners + the equivalence tests; `hltomato.tom`; palette; `--color` and `NO_COLOR`; bootstrap refresh + wasm rebuild | colors in the repl | M |
 | 4 | Library polish | what other programs need and the repl did not: a single-line mode with completion hook, a `Completer` interface, a kill ring option, docs and a worked example under `examples/` (a small interactive program), site docs copy | the library is documented and exampled | S |
 | 5 | (not planned) | the driver in Tomato; needs `subprocess` | - | - |

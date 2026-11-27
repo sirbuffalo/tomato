@@ -1,8 +1,8 @@
 # `terminal`: the API sheet as built (stage 1 of the repl editor)
 
 `import terminal` (`std/terminal.tom`, D86a). Raw keys, the size of the window, colors and styles, and the width of characters, for any
-program that wants to draw on a terminal. The editor library `lineedit` (stage 2 of `docs/repl-editor-design.md`) is built on it; today
-`std/lineedit.tom` is only a header comment, listed so that adding it does not need another compiler change. The design, the reasons and
+program that wants to draw on a terminal. The editor library `lineedit` (stage 2 of `docs/repl-editor-design.md`, D88a, its sheet
+`docs/lineedit-api.md`) is built on it, and `terminal.Terminal` implements its `TermIO` interface. The design, the reasons and
 the open stages are in `docs/repl-editor-design.md`; this sheet says what was built, including where the design's sheet (section 6) was
 made precise.
 

@@ -1,4 +1,800 @@
-# The line editor library (stage 2 of docs/repl-editor-design.md): an editor for one line or a block of lines, built on `terminal`, with
-# a text buffer, history, key bindings, drawing, and hooks for highlighting, completeness and indentation. This module is a placeholder
-# for now: it is listed here so that adding the editor later does not need another compiler change (and another rebuild of the
-# browser files). It has no content yet; `import lineedit` works and gives nothing.
+# The line editor: `import lineedit`. An editor for one line or a block of lines on a terminal, with history, the usual keys, a
+# screen region that is redrawn after every key, and hooks that a program fills in: whether Enter submits (Validator), the indent of a
+# new line (Indenter) and the colors of the text (Highlighter).
+#
+#     import terminal
+#     import lineedit
+#
+#     ed = lineedit.Editor()
+#     ed.prompt = '> '
+#     ed.history = lineedit.load_history('/tmp/my_history', '')       # one entry per line
+#     term = terminal.open()
+#     result = ed.read(term)                                           # draws, reads keys, gives the terminal back as it was
+#     term.close()
+#     if result.status == 'text':
+#         lineedit.append_history('/tmp/my_history', result.text, '')
+#
+# Editor.read takes any TermIO (terminal.Terminal is one); a test passes a FakeTerminal of its own, with scripted keys, and looks at
+# what was written. The parts are classes of their own and need no terminal: Buffer (the text and the cursor, and the editing
+# operations), History (the entries, Up and Down, the draft), layout() (where every character and the cursor go on the screen, in
+# cells) and Screen (the text that redraws the region).
+#
+# Keys (as in Python 3.13's repl and readline): characters insert; Left, Right, Home, End, Up, Down, Ctrl-B, Ctrl-F, Ctrl-A, Ctrl-E,
+# Ctrl-P, Ctrl-N move (Left and Right cross line ends; Up on the first line and Down on the last go through the history); Ctrl-Left,
+# Ctrl-Right, Alt-B and Alt-F move by word; Backspace and Delete (Ctrl-D on text that is not empty) delete, and join lines at a line's
+# start or end; Backspace in an indent goes back to the previous tab stop; Ctrl-K, Ctrl-U and Ctrl-W cut to the end of the line, to its
+# start and the word before the cursor, Ctrl-Y puts the last cut back; Tab inserts `tab`, Shift-Tab removes one indent; Enter adds a
+# line inside the text, and on the last line submits when the Validator says the text is complete (else adds a line, with the Indenter's
+# indent); Ctrl-L clears the screen; Ctrl-C gives 'interrupt', Ctrl-D on empty text 'eof'. A paste is inserted as it is (no indent added,
+# no submit). Other keys are ignored.
+#
+# Limits: one terminal region, redrawn whole after each key (a block is small); a block taller than the window shows the rows around the
+# cursor while editing; the width of a character is the terminal module's (a flag or a family emoji can be a cell off); after a resize
+# the editor assumes the terminal re-wrapped the old text (most do; Ctrl-L cleans up after one that does not).
+import os
+import ospath
+import terminal
+from terminal import Key, Style, Terminal
+
+# ---- hooks -----------------------------------------------------------------------------------------------------------------
+
+# A styled piece of a line: characters start to end (end not included) in style. A Highlighter gives runs per line.
+export class Run:
+    start: int = 0
+    end: int = 0
+    style: Style = Style()
+
+    @init
+    def make(self, start: int, end: int, style: Style):
+        self.start = start
+        self.end = end
+        self.style = style
+
+# What the editor reads keys from and draws on. terminal.Terminal is one; a test can make its own.
+export interface TermIO:
+    def read_key(self, timeout: float = -1.0) -> Key
+    def write(self, text: str)
+    def size(self) -> tuple[int, int]
+    def enter_raw(self)
+    def leave(self)
+
+Terminal implements TermIO
+
+# The colors of the text: per line, the styled runs (sorted, not overlapping; what no run covers is drawn plain). The editor wraps the
+# lines and places the cursor from the plain text, so a highlighter cannot change what the text is or where the cursor goes.
+export interface Highlighter:
+    def highlight(self, lines: list[str]) -> list[list[Run]]
+
+# Whether Enter on the last line submits the text (True) or adds a line (False).
+export interface Validator:
+    def complete(self, text: str) -> bool
+
+# The indent a new line gets: `line` is the current line up to the cursor, `before` all of the text up to the cursor.
+export interface Indenter:
+    def indent_after(self, line: str, before: str) -> str
+
+# The default hooks: no colors; Enter always submits (an editor of one line, unless a paste brings more); a new line keeps the indent.
+export class Plain implements Highlighter:
+    def highlight(self, lines: list[str]) -> list[list[Run]]:
+        out: list[list[Run]] = []
+        for _line in lines:
+            out.append([])
+        return out
+
+export class AlwaysComplete implements Validator:
+    def complete(self, text: str) -> bool:
+        return True
+
+export class KeepIndent implements Indenter:
+    def indent_after(self, line: str, before: str) -> str:
+        return leading_spaces(line)
+
+# the spaces at the start of a line
+export def leading_spaces(line: str) -> str:
+    return line[:len(line) - len(line.lstrip(' '))]
+
+# ---- the text --------------------------------------------------------------------------------------------------------------
+
+def _is_space(c: str) -> bool:
+    return c == ' ' or c == '\t'
+
+# The text being edited: its lines and the cursor (row is the line, col the character in it, from 0). Pure: no terminal.
+export class Buffer:
+    lines: list[str] = ['']
+    row: int = 0
+    col: int = 0
+
+    # the whole text, the lines joined with '\n'
+    def text(self) -> str:
+        return '\n'.join(self.lines)
+
+    # replaces the text; the cursor goes to its end
+    def set_text(self, text: str):
+        self.lines = text.split('\n')
+        self.row = len(self.lines) - 1
+        self.col = len(self.lines[self.row])
+
+    # True when there is no text at all
+    def is_empty(self) -> bool:
+        return len(self.lines) == 1 and self.lines[0] == ''
+
+    def line(self) -> str:
+        return self.lines[self.row]
+
+    def on_last_line(self) -> bool:
+        return self.row == len(self.lines) - 1
+
+    # inserts text at the cursor; a '\n' in it splits the line
+    def insert(self, text: str):
+        parts = text.split('\n')
+        cur = self.lines[self.row]
+        head = cur[:self.col]
+        tail = cur[self.col:]
+        if len(parts) == 1:
+            self.lines[self.row] = head + text + tail
+            self.col += len(text)
+            return
+        new_lines: list[str] = [head + parts[0]]
+        for p in parts[1:len(parts) - 1]:
+            new_lines.append(p)
+        last = parts[len(parts) - 1]
+        new_lines.append(last + tail)
+        self.lines = self.lines[:self.row] + new_lines + self.lines[self.row + 1:]
+        self.row += len(parts) - 1
+        self.col = len(last)
+
+    # splits the line at the cursor; the new line below starts with indent, and the cursor goes after it
+    def newline(self, indent: str):
+        cur = self.lines[self.row]
+        head = cur[:self.col]
+        tail = cur[self.col:]
+        if indent != '':
+            tail = tail.lstrip(' ')
+        self.lines = self.lines[:self.row] + [head, indent + tail] + self.lines[self.row + 1:]
+        self.row += 1
+        self.col = len(indent)
+
+    # deletes the character before the cursor; at the start of a line, joins it to the line above. False when there was nothing
+    def backspace(self) -> bool:
+        if self.col > 0:
+            cur = self.lines[self.row]
+            self.lines[self.row] = cur[:self.col - 1] + cur[self.col:]
+            self.col -= 1
+            return True
+        if self.row == 0:
+            return False
+        above = self.lines[self.row - 1]
+        self.lines = self.lines[:self.row - 1] + [above + self.lines[self.row]] + self.lines[self.row + 1:]
+        self.row -= 1
+        self.col = len(above)
+        return True
+
+    # deletes the character at the cursor; at the end of a line, joins the next line to it. False when there was nothing
+    def delete(self) -> bool:
+        cur = self.lines[self.row]
+        if self.col < len(cur):
+            self.lines[self.row] = cur[:self.col] + cur[self.col + 1:]
+            return True
+        if self.row == len(self.lines) - 1:
+            return False
+        self.lines = self.lines[:self.row] + [cur + self.lines[self.row + 1]] + self.lines[self.row + 2:]
+        return True
+
+    # removes up to n spaces before the cursor (they must all be spaces up to the start of the line): Backspace in an indent
+    def dedent_back(self, n: int) -> bool:
+        cur = self.lines[self.row]
+        head = cur[:self.col]
+        if self.col == 0 or head.strip(' ') != '':
+            return False
+        k = self.col % n
+        if k == 0:
+            k = n
+        self.lines[self.row] = cur[:self.col - k] + cur[self.col:]
+        self.col -= k
+        return True
+
+    # removes up to n spaces from the start of the line (Shift-Tab); the cursor keeps its place in the text
+    def dedent(self, n: int):
+        cur = self.lines[self.row]
+        k = 0
+        while k < n and k < len(cur) and cur[k] == ' ':
+            k += 1
+        self.lines[self.row] = cur[k:]
+        self.col = self.col - k
+        if self.col < 0:
+            self.col = 0
+
+    # one character left; from the start of a line to the end of the one above
+    def left(self) -> bool:
+        if self.col > 0:
+            self.col -= 1
+            return True
+        if self.row > 0:
+            self.row -= 1
+            self.col = len(self.lines[self.row])
+            return True
+        return False
+
+    # one character right; from the end of a line to the start of the next
+    def right(self) -> bool:
+        if self.col < len(self.lines[self.row]):
+            self.col += 1
+            return True
+        if self.row < len(self.lines) - 1:
+            self.row += 1
+            self.col = 0
+            return True
+        return False
+
+    # the line above, at the same column or the end of that line; False on the first line
+    def up(self) -> bool:
+        if self.row == 0:
+            return False
+        self.row -= 1
+        if self.col > len(self.lines[self.row]):
+            self.col = len(self.lines[self.row])
+        return True
+
+    # the line below; False on the last line
+    def down(self) -> bool:
+        if self.row >= len(self.lines) - 1:
+            return False
+        self.row += 1
+        if self.col > len(self.lines[self.row]):
+            self.col = len(self.lines[self.row])
+        return True
+
+    def home(self):
+        self.col = 0
+
+    def end(self):
+        self.col = len(self.lines[self.row])
+
+    # to the start of the word before the cursor (words are split by spaces), crossing to the line above at a line's start
+    def word_left(self):
+        if self.col == 0:
+            self.left()
+            return
+        cur = self.lines[self.row]
+        i = self.col
+        while i > 0 and _is_space(cur[i - 1]):
+            i -= 1
+        while i > 0 and not _is_space(cur[i - 1]):
+            i -= 1
+        self.col = i
+
+    # to the end of the word after the cursor, crossing to the next line at a line's end
+    def word_right(self):
+        cur = self.lines[self.row]
+        if self.col >= len(cur):
+            self.right()
+            return
+        i = self.col
+        while i < len(cur) and _is_space(cur[i]):
+            i += 1
+        while i < len(cur) and not _is_space(cur[i]):
+            i += 1
+        self.col = i
+
+    # cuts from the cursor to the end of the line and gives what it cut
+    def kill_to_end(self) -> str:
+        cur = self.lines[self.row]
+        cut = cur[self.col:]
+        self.lines[self.row] = cur[:self.col]
+        return cut
+
+    # cuts from the start of the line to the cursor
+    def kill_to_start(self) -> str:
+        cur = self.lines[self.row]
+        cut = cur[:self.col]
+        self.lines[self.row] = cur[self.col:]
+        self.col = 0
+        return cut
+
+    # cuts the word before the cursor and the spaces after it (words are split by spaces), within the line
+    def kill_word_back(self) -> str:
+        cur = self.lines[self.row]
+        i = self.col
+        while i > 0 and _is_space(cur[i - 1]):
+            i -= 1
+        while i > 0 and not _is_space(cur[i - 1]):
+            i -= 1
+        cut = cur[i:self.col]
+        self.lines[self.row] = cur[:i] + cur[self.col:]
+        self.col = i
+        return cut
+
+# ---- history ---------------------------------------------------------------------------------------------------------------
+
+# The entries (oldest first) and where Up and Down are in them. Up from the text being typed (the draft) remembers it, Down past the
+# newest entry gives it back; changes made to a recalled entry are dropped when Up or Down leaves it (as in Python's repl).
+export class History:
+    entries: list[str] = []
+    limit: int = 1000
+    private pos: int = 0
+    private draft: str = ''
+
+    @init
+    def make(self, entries: list[str], limit: int = 1000):
+        self.limit = limit
+        self.entries = entries
+        if limit >= 0 and len(entries) > limit:
+            self.entries = entries[len(entries) - limit:]
+        self.pos = len(self.entries)
+        self.draft = ''
+
+    # the entry before the one shown, or None at the oldest; `current` is the text shown now, kept as the draft when leaving it
+    def previous(self, current: str) -> str | None:
+        if self.pos == 0:
+            return None
+        if self.pos == len(self.entries):
+            self.draft = current
+        self.pos -= 1
+        return self.entries[self.pos]
+
+    # the entry after the one shown, the draft after the newest, or None when the draft is already shown
+    def next(self) -> str | None:
+        if self.pos >= len(self.entries):
+            return None
+        self.pos += 1
+        if self.pos == len(self.entries):
+            return self.draft
+        return self.entries[self.pos]
+
+    # True while an entry (not the draft) is shown
+    def recalled(self) -> bool:
+        return self.pos < len(self.entries)
+
+    # adds an entry at the end (the caller decides whether it is worth keeping), keeps the newest `limit`, and goes back to the draft
+    def add(self, text: str):
+        self.entries.append(text)
+        if self.limit >= 0 and len(self.entries) > self.limit:
+            self.entries = self.entries[len(self.entries) - self.limit:]
+        self.reset()
+
+    # back to an empty draft, after the newest entry
+    def reset(self):
+        self.pos = len(self.entries)
+        self.draft = ''
+
+# Text that is safe to put in the editor: tabs become `tab`, other control characters (and DEL) are dropped; '\n' is kept when keep_lines.
+export def clean_text(text: str, tab: str = '    ', keep_lines: bool = True) -> str:
+    parts: list[str] = []
+    for c in text:
+        o = ord(c)
+        if c == '\t':
+            parts.append(tab)
+        elif c == '\n' and keep_lines:
+            parts.append(c)
+        elif o >= 32 and o != 127 and not (o >= 128 and o < 160):
+            parts.append(c)
+    return ''.join(parts)
+
+# One history entry as a line of the file: its line breaks written as `joiner` (with joiner '' they become spaces).
+export def history_line(entry: str, joiner: str) -> str:
+    if joiner == '':
+        return entry.replace('\n', ' ')
+    return entry.replace('\n', joiner)
+
+# The entries of a history file: one per line, oldest first, UTF-8, with `joiner` inside a line standing for a line break of the entry
+# (pass '' when entries are single lines). Empty lines are skipped; tabs become four spaces and other control characters are dropped.
+# A file that does not exist gives an empty history; one that cannot be read raises the os module's error.
+export def read_history(path: str, joiner: str) -> list[str]:
+    if not ospath.exists(path):
+        return []
+    entries: list[str] = []
+    for raw in os.read_text(path).split('\n'):
+        line = clean_text(raw, '    ', False)
+        if joiner != '':
+            line = line.replace(joiner, '\n')
+        if line.strip() != '':
+            entries.append(line)
+    return entries
+
+# A History of the newest `limit` entries of a file (read_history)
+export def load_history(path: str, joiner: str, limit: int = 1000) -> History:
+    return History(read_history(path, joiner), limit)
+
+# Adds one entry at the end of a history file (made with its folder when missing). When the file then holds more than `limit` entries,
+# it is rewritten with the newest `limit` (to a temporary name, then renamed over it, so a reader never sees half a file).
+export def append_history(path: str, entry: str, joiner: str, limit: int = 1000):
+    folder = ospath.dirname(path)
+    if folder != '' and not ospath.exists(folder):
+        os.makedirs(folder, True)
+    os.write_text(path, history_line(entry, joiner) + '\n', True)
+    if limit < 0:
+        return
+    entries = read_history(path, joiner)
+    if len(entries) <= limit:
+        return
+    kept: list[str] = []
+    for e in entries[len(entries) - limit:]:
+        kept.append(history_line(e, joiner) + '\n')
+    tmp = path + f'.{os.getpid()}.tmp'
+    os.write_text(tmp, ''.join(kept))
+    os.rename(tmp, path)
+
+# ---- layout ----------------------------------------------------------------------------------------------------------------
+
+# One row of the screen: characters start to end of line `line`, after `prefix` (the prompt, on a line's first row; '' on the rows a
+# long line wraps onto).
+export class Row:
+    line: int = 0
+    start: int = 0
+    end: int = 0
+    prefix: str = ''
+
+    @init
+    def make(self, line: int, start: int, end: int, prefix: str):
+        self.line = line
+        self.start = start
+        self.end = end
+        self.prefix = prefix
+
+    @str
+    def show(self) -> str:
+        return f'{self.line}:{self.start}-{self.end}'
+
+# Where the text goes on the screen: the rows, and the cursor's row and column (in cells; column 0 is the left edge).
+export class Layout:
+    rows: list[Row] = []
+    cursor_row: int = 0
+    cursor_col: int = 0
+
+# The rows of lines at `width` cells (prompt before the first line, continuation before the others), and where the cursor (line row,
+# character col) is. A line wraps at the width, a wide character is never split across the edge, and a cursor after a line that fills
+# its last row exactly is on a row of its own below (the editor never leaves the terminal at the edge, waiting to wrap).
+export def layout(lines: list[str], prompt: str, continuation: str, width: int, row: int, col: int) -> Layout:
+    out = Layout()
+    w = width
+    if w < 2:
+        w = 2
+    for i, text in enumerate(lines):
+        prefix = continuation
+        if i == 0:
+            prefix = prompt
+        cells = terminal.text_width(prefix)
+        while cells >= w:
+            cells -= w
+        start = 0
+        for j, c in enumerate(text):
+            cw = terminal.char_width(ord(c))
+            if cells + cw > w and cells > 0:
+                out.rows.append(Row(i, start, j, prefix))
+                prefix = ''
+                start = j
+                cells = 0
+            if i == row and j == col:
+                out.cursor_row = len(out.rows)
+                out.cursor_col = cells
+            cells += cw
+        if i == row and col >= len(text):
+            if cells >= w:
+                out.rows.append(Row(i, start, len(text), prefix))
+                prefix = ''
+                start = len(text)
+                cells = 0
+            out.cursor_row = len(out.rows)
+            out.cursor_col = cells
+        out.rows.append(Row(i, start, len(text), prefix))
+    return out
+
+# ---- drawing ---------------------------------------------------------------------------------------------------------------
+
+# a piece of a line, styled by the runs that cover it (what they leave out is plain)
+def _styled_piece(text: str, start: int, end: int, runs: list[Run], colors: int) -> str:
+    if colors <= 0 or len(runs) == 0:
+        return text[start:end]
+    parts: list[str] = []
+    at = start
+    for r in runs:
+        a = r.start
+        b = r.end
+        if b <= at or a >= end:
+            continue
+        if a < at:
+            a = at
+        if b > end:
+            b = end
+        if a > at:
+            parts.append(text[at:a])
+        parts.append(terminal.styled(text[a:b], r.style, colors))
+        at = b
+    if at < end:
+        parts.append(text[at:end])
+    return ''.join(parts)
+
+# The editor's region of the screen: from the row where the prompt starts down. It remembers where it left the cursor, so the next
+# frame can go back to the region's top. A frame is one piece of text, written with one write.
+export class Screen:
+    cursor_row: int = 0       # the row of the cursor in the region after the last frame (0 is the region's top)
+    height: int = 24
+    width: int = 80
+    prompt_style: Style = Style()
+    continuation_style: Style = Style()
+    colors: int = 0
+
+    # the text that redraws the region with lines (and their runs), the cursor at (row, col); with all_rows False a layout taller than the
+    # window shows only the rows around the cursor
+    def frame(self, lines: list[str], runs: list[list[Run]], prompt: str, continuation: str, row: int, col: int, all_rows: bool) -> str:
+        lay = layout(lines, prompt, continuation, self.width, row, col)
+        first = 0
+        last = len(lay.rows)
+        if not all_rows and len(lay.rows) > self.height and self.height >= 1:
+            first = lay.cursor_row - (self.height - 1)
+            if first < 0:
+                first = 0
+            last = first + self.height
+        parts: list[str] = [terminal.cursor_up(self.cursor_row), '\r', terminal.clear_to_end()]
+        for k in range(first, last):
+            r = lay.rows[k]
+            if k > first:
+                parts.append('\r\n')
+            if r.prefix != '':
+                st = self.continuation_style
+                if r.line == 0:
+                    st = self.prompt_style
+                parts.append(terminal.styled(r.prefix, st, self.colors))
+            line_runs: list[Run] = []
+            if r.line < len(runs):
+                line_runs = runs[r.line]
+            parts.append(_styled_piece(lines[r.line], r.start, r.end, line_runs, self.colors))
+        cur = lay.cursor_row - first
+        if cur < 0:
+            cur = 0
+        parts.append(terminal.cursor_up(last - 1 - first - cur))
+        parts.append(terminal.cursor_column(lay.cursor_col))
+        self.cursor_row = cur
+        return ''.join(parts)
+
+    # the window changed to rows x cols: the text drawn last (lines, cursor) is assumed re-wrapped by the terminal at the new width, so
+    # the cursor's row in the region is found again from it
+    def resized(self, rows: int, cols: int, lines: list[str], prompt: str, continuation: str, row: int, col: int):
+        self.height = rows
+        self.width = cols
+        lay = layout(lines, prompt, continuation, cols, row, col)
+        self.cursor_row = lay.cursor_row
+        if self.cursor_row > rows - 1:
+            self.cursor_row = rows - 1
+
+# ---- the editor ------------------------------------------------------------------------------------------------------------
+
+# What Editor.read gives: status 'text' (text is the submitted text, without trailing empty lines), 'eof' (Ctrl-D on empty text, or the
+# input ended) or 'interrupt' (Ctrl-C).
+export class Result:
+    status: str = ''
+    text: str = ''
+
+    @init
+    def make(self, status: str, text: str = ''):
+        self.status = status
+        self.text = text
+
+# the text without its trailing lines that hold only spaces
+export def strip_trailing_lines(text: str) -> str:
+    lines = text.split('\n')
+    while len(lines) > 1 and lines[len(lines) - 1].strip() == '':
+        lines = lines[:len(lines) - 1]
+    if len(lines) == 1 and lines[0].strip() == '':
+        return ''
+    return '\n'.join(lines)
+
+export class Editor:
+    prompt: str = '>>> '
+    continuation: str = '... '
+    history: History = History([], 1000)
+    highlighter: Highlighter = Plain()
+    validator: Validator = AlwaysComplete()
+    indenter: Indenter = KeepIndent()
+    tab: str = '    '                      # what Tab inserts (and how much Shift-Tab and Backspace in an indent take away)
+    colors: int = 0                        # 0: no colors; else as terminal.Terminal.colors (the highlighter's runs and the prompt styles)
+    prompt_style: Style = Style()
+    continuation_style: Style = Style()
+    interrupt_text: str = 'KeyboardInterrupt'    # written on its own line after Ctrl-C ('' for nothing)
+    private buf: Buffer = Buffer()
+    private screen: Screen = Screen()
+    private kill: str = ''
+
+    # Reads one text: draws the prompt, edits until Enter submits (or Ctrl-C, Ctrl-D), and gives the terminal back as it found it. The
+    # text stays on the screen as it was typed, and the cursor ends at the start of the next line.
+    def read(self, term: TermIO) -> Result:
+        term.enter_raw()
+        try:
+            term.write(terminal.bracketed_paste(True))
+            return self._edit(term)
+        finally:
+            try:
+                term.write(terminal.bracketed_paste(False))
+            catch Error as _e:
+                pass
+            term.leave()
+
+    def _edit(self, term: TermIO) -> Result:
+        self.buf = Buffer()
+        self.screen = Screen()
+        self.screen.colors = self.colors
+        self.screen.prompt_style = self.prompt_style
+        self.screen.continuation_style = self.continuation_style
+        rows, cols = term.size()
+        self.screen.height = rows
+        self.screen.width = cols
+        self.history.reset()
+        self._draw(term, False)
+        while True:
+            key = term.read_key()
+            status = self._key(term, key)
+            if status == 'submit':
+                text = strip_trailing_lines(self.buf.text())
+                self._finish(term, '')
+                return Result('text', text)
+            if status == 'interrupt':
+                self._finish(term, self.interrupt_text)
+                return Result('interrupt')
+            if status == 'eof':
+                self._finish(term, '')
+                return Result('eof')
+            if status == 'clear':
+                self.screen.cursor_row = 0
+                term.write(terminal.clear_screen())
+            if status != 'same':
+                self._draw(term, False)
+
+    # the last frame: the whole text, the cursor at its end, then the next line (and a note such as KeyboardInterrupt)
+    def _finish(self, term: TermIO, note: str):
+        self.buf.row = len(self.buf.lines) - 1
+        self.buf.col = len(self.buf.lines[self.buf.row])
+        self._draw(term, True)
+        end = '\r\n'
+        if note != '':
+            end += note + '\r\n'
+        term.write(end)
+
+    def _draw(self, term: TermIO, all_rows: bool):
+        runs: list[list[Run]] = []
+        if self.colors > 0:
+            runs = self.highlighter.highlight(self.buf.lines)
+        term.write(self.screen.frame(self.buf.lines, runs, self.prompt, self.continuation, self.buf.row, self.buf.col, all_rows))
+
+    def _recall(self, text: str, at_end: bool):
+        self.buf.set_text(text)
+        if not at_end:
+            self.buf.row = 0
+            self.buf.col = len(self.buf.lines[0])
+
+    def _tab_width(self) -> int:
+        if len(self.tab) > 0 and self.tab.strip(' ') == '':
+            return len(self.tab)
+        return 4
+
+    # does what a key says; gives 'submit', 'interrupt', 'eof', 'clear', 'same' (nothing to redraw) or 'draw'
+    def _key(self, term: TermIO, key: Key) -> str:
+        b = self.buf
+        if key.kind == 'char':
+            if key.ctrl:
+                return self._ctrl(key.text)
+            if key.alt:
+                if key.text == 'b':
+                    b.word_left()
+                    return 'draw'
+                if key.text == 'f':
+                    b.word_right()
+                    return 'draw'
+                return 'same'
+            b.insert(clean_text(key.text, self.tab, False))
+            return 'draw'
+        if key.kind == 'paste':
+            b.insert(clean_text(key.text, self.tab, True))
+            return 'draw'
+        if key.kind == 'resize':
+            rows, cols = term.size()
+            self.screen.resized(rows, cols, b.lines, self.prompt, self.continuation, b.row, b.col)
+            return 'draw'
+        if key.kind == 'eof':
+            return 'eof'
+        if key.kind != 'key':
+            return 'same'
+        name = key.name
+        if name == 'enter':
+            if key.alt or key.ctrl:
+                return 'same'
+            return self._enter()
+        if name == 'tab':
+            b.insert(self.tab)
+            return 'draw'
+        if name == 'backtab':
+            b.dedent(self._tab_width())
+            return 'draw'
+        if name == 'backspace':
+            if not b.dedent_back(self._tab_width()):
+                b.backspace()
+            return 'draw'
+        if name == 'delete':
+            b.delete()
+            return 'draw'
+        if name == 'left':
+            if key.ctrl or key.alt:
+                b.word_left()
+            else:
+                b.left()
+            return 'draw'
+        if name == 'right':
+            if key.ctrl or key.alt:
+                b.word_right()
+            else:
+                b.right()
+            return 'draw'
+        if name == 'home':
+            b.home()
+            return 'draw'
+        if name == 'end':
+            b.end()
+            return 'draw'
+        if name == 'up':
+            return self._up()
+        if name == 'down':
+            return self._down()
+        return 'same'
+
+    def _ctrl(self, c: str) -> str:
+        b = self.buf
+        if c == 'c':
+            return 'interrupt'
+        if c == 'd':
+            if b.is_empty():
+                return 'eof'
+            b.delete()
+            return 'draw'
+        if c == 'a':
+            b.home()
+        elif c == 'e':
+            b.end()
+        elif c == 'b':
+            b.left()
+        elif c == 'f':
+            b.right()
+        elif c == 'p':
+            return self._up()
+        elif c == 'n':
+            return self._down()
+        elif c == 'k':
+            self.kill = b.kill_to_end()
+        elif c == 'u':
+            self.kill = b.kill_to_start()
+        elif c == 'w':
+            self.kill = b.kill_word_back()
+        elif c == 'y':
+            b.insert(self.kill)
+        elif c == 'l':
+            return 'clear'
+        elif c == 'j' or c == 'm':
+            return self._enter()
+        else:
+            return 'same'
+        return 'draw'
+
+    def _enter(self) -> str:
+        b = self.buf
+        if b.on_last_line() and self.validator.complete(b.text()):
+            return 'submit'
+        line = b.line()[:b.col]
+        before = '\n'.join(b.lines[:b.row] + [line])
+        b.newline(self.indenter.indent_after(line, before))
+        return 'draw'
+
+    def _up(self) -> str:
+        if self.buf.up():
+            return 'draw'
+        entry = self.history.previous(self.buf.text())
+        if entry is None:
+            return 'same'
+        self._recall(entry, True)
+        return 'draw'
+
+    def _down(self) -> str:
+        if self.buf.down():
+            return 'draw'
+        entry = self.history.next()
+        if entry is None:
+            return 'same'
+        self._recall(entry, not self.history.recalled())
+        return 'draw'

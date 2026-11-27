@@ -11,7 +11,7 @@ url="${1:-https://github.com/$repo/releases/download/v$version/tomato-$version.t
 out="${TOMATO_RELEASE_OUT:-$root/release/out}"; stage="$out/tomato-$version"
 # refuse to wipe a folder that is not (or does not look like) release output
 if [ -e "$out" ] && [ -n "$(ls -A "$out" 2>/dev/null)" ] && [ ! -f "$out/latest.json" ]; then echo "error: $out is not empty and not release output; refusing to delete it" >&2; exit 1; fi
-rm -rf "$out"; mkdir -p "$stage/native" "$stage/runtime" "$stage/std" "$stage/compiler/bootstrap"
+rm -rf "$out"; mkdir -p "$stage/native" "$stage/runtime" "$stage/std" "$stage/compiler/bootstrap" "$stage/compiler/src"
 cp "$root/VERSION" "$root/install-native.sh" "$stage/"
 cp "$root/native/tomato" "$root/native/tomato-repl" "$root/native/rtcache.sh" "$root/native/tomato-jsc.js" "$stage/native/"
 mkdir -p "$stage/site/wasm"
@@ -19,6 +19,7 @@ cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/was
 cp "$root/runtime/tomato_rt.c" "$root/runtime/tomato_inline.ll" "$stage/runtime/"
 cp "$root/std/"*.tom "$root/std/errors.txt" "$stage/std/"; cp -R "$root/std/builtin" "$stage/std/"
 cp "$root/compiler/bootstrap/tomatoc.ll" "$root/compiler/bootstrap/split.awk" "$root/compiler/bootstrap/build-object.sh" "$stage/compiler/bootstrap/"
+cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$stage/compiler/src/"   # the repl's line editor, which install-native.sh builds
 cp -R "$root/examples" "$stage/examples"
 tar -czf "$out/tomato-$version.tar.gz" -C "$out" "tomato-$version"
 rm -rf "$stage"

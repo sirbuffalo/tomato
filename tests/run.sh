@@ -1056,7 +1056,31 @@ hi Ann" "$(printf "name = await input('Name? ')\nAnn\nprint('hi', name)\n:quit\n
 }
 t_cli_repl_history() {   # the pty session is slow (it compiles after each line): it is its own job, so it does not hold up the others
   cli_setup
-  if command -v expect >/dev/null 2>&1; then check "repl: up-arrow recalls a multi-line block as one history entry" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/repl_history.exp 2>&1 | tail -1)"; fi
+  # the line editor install-native.sh built: the pty test fails (it never skips) when it is missing, so a helper that stops building is seen
+  edit="$home/native/bin/tomato-repl-edit"
+  if ! command -v expect >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "repl pty test" "expect is required in CI" || echo "skip: expect is not installed, so the repl pty test did not run"
+    return
+  fi
+  check "repl: the line editor on a pty (recall and edit a block, Ctrl-C, paste, UTF-8, resize, the history file, the fallbacks)" "ok" \
+    "$(PATH="$(dirname "$t"):$PATH" TOMATO_REPL_EDIT="$edit" expect tests/repl_history.exp 2>&1 | tail -1)"
+}
+t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, layout, frames, whole sessions on a FakeTerminal), debug and release
+  cli_setup
+  for mode in debug release; do
+    r="$($t test tests/lineedit_logic.tom --mode $mode 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "lineedit: the @test functions pass ($mode mode): $r";; *) bad "lineedit: the @test functions pass ($mode mode)" "$($t test tests/lineedit_logic.tom --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+  done
+}
+t_repledit_logic() { # the repl's rules in compiler/src/repledit.tom (it imports the lexer beside it, so the files are copied together, as the installer does)
+  cli_setup
+  cp compiler/src/repledit.tom compiler/src/lexer.tom tests/repledit_logic.tom "$work/"
+  r="$($t test "$work/repledit_logic.tom" 2>&1 | tail -1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "repl editor: the validator, the indenter and the history rules: $r";; *) bad "repl editor: the validator, the indenter and the history rules" "$($t test "$work/repledit_logic.tom" 2>&1 | grep -v '^ok ' | head -12)";; esac
+  check "install-native.sh built the repl line editor" "yes" "$([ -x "$home/native/bin/tomato-repl-edit" ] && echo yes || echo no)"
+  # standard input that is not a terminal never uses the editor, even when one is named (this one would fail)
+  printf '#!/bin/sh\necho used >&2; exit 1\n' > "$work/bad-edit"; chmod +x "$work/bad-edit"
+  check "repl: piped input does not use the line editor" "3" "$(printf 'print(3)\n:quit\n' | TOMATO_REPL_EDIT="$work/bad-edit" $t repl 2>&1)"
 }
 # tomato update: a fake release, checksum failures and non-official URLs. It changes the installed command, so it has one of its own.
 t_cli_update() {
@@ -1378,6 +1402,8 @@ t_terminal_pty() { # std/terminal.tom on a real terminal (a pty), through expect
 }
 spawn_cli t_terminal_logic
 spawn_cli t_terminal_pty
+spawn_cli t_lineedit_logic
+spawn_cli t_repledit_logic
 
 # ---- rejected programs --------------------------------------------------------------------------------------------------
 t_neg() { # file, message that the compiler must report, and the entry name (default main; `test` for the @test checks)
@@ -1776,6 +1802,7 @@ t_release_pkg() { # macOS only, and serial (last): it builds the installer packa
   if [ -n "$pkg" ] && pkgutil --expand-full "$pkg" "$work/pkgx" 2>/dev/null; then
     pp="$work/pkgx/component.pkg/Payload"
     check "pkg: the compiler is universal" "arm64 x86_64" "$(lipo -archs "$pp/usr/local/lib/tomato/native/bin/tomatoc" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+    check "pkg: the repl line editor is universal" "arm64 x86_64" "$(lipo -archs "$pp/usr/local/lib/tomato/native/bin/tomato-repl-edit" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
     check "pkg: /usr/local/bin/tomato is a relative link into the install" "../lib/tomato/native/bin/tomato" "$(readlink "$pp/usr/local/bin/tomato")"
     check "pkg: the installed command runs" "Tomato v$(cat VERSION) (compiler written in Tomato)" "$("$pp/usr/local/bin/tomato" version)"
     check "pkg: the installed command compiles and runs a program" "fib 12 = 144" "$("$pp/usr/local/bin/tomato" run examples/compiled.tom main 12 2>&1 | head -1)"

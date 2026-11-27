@@ -9,6 +9,9 @@
 # not print twice. A bare expression shows its value. Because the whole session re-runs, a line with a side effect
 # outside the program (writing a file, say) happens again with every later line.
 #
+# Editing: Up and Down recall earlier pieces, a block as a whole; the arrows move within it and between its lines. Enter runs the
+# piece when it is complete (a block ends at an empty line; an open bracket goes on to the next line), Tab indents, Ctrl-C cancels.
+#
 #   :load FILE     add a file's definitions and statements      :program   show the session as one program
 #   :save FILE     write the session program to FILE            :compile   print the session's LLVM IR
 #   :reset         forget everything                            :help      this text
@@ -37,6 +40,7 @@ case "${TOMATO_COLOR:-auto}" in
   never) ;;
   *) [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ] && [ -t 2 ] && repl_color=1 ;;
 esac
+color_mode="${TOMATO_COLOR:-auto}"; case "$color_mode" in always|never) ;; *) color_mode=auto ;; esac   # for the line editor
 export TOMATO_COLOR=never
 err() { if [ $repl_color = 1 ]; then printf '%s\n' "$*" | "$tomato" paint >&2; else printf '%s\n' "$*" >&2; fi; }
 
@@ -167,8 +171,11 @@ friendly_plain() {   # reads $S/err, prints the message on stderr; writes "in-de
 new_output() {  # print the part of $S/out that is not in the previous output ($1, default $S/shown)
   prev_out="${1:-$S/shown}"
   have=$(wc -c < "$prev_out" | tr -d ' ')
-  if [ "$have" -gt 0 ] && head -c "$have" "$S/out" | cmp -s - "$prev_out"; then tail -c +$((have + 1)) "$S/out"; else cat "$S/out"; fi
+  if [ "$have" -gt 0 ] && head -c "$have" "$S/out" | cmp -s - "$prev_out"; then tail -c +$((have + 1)) "$S/out" > "$S/new"; else cat "$S/out" > "$S/new"; fi
+  cat "$S/new"
 }
+# the line editor draws its prompt from the start of the line: end a last line the program left open (print(x, end=''))
+end_open_line() { [ "${use_edit:-0}" = 1 ] && [ -s "$S/new" ] && [ -n "$(tail -c 1 "$S/new" | tr -d '\n')" ] && echo; return 0; }
 
 commit() {   # the candidate worked: keep it
   cat "$S/stmts.try" > "$S/stmts"
@@ -197,11 +204,11 @@ submit() {   # one piece of source text in $1
        && ! printf '%s' "$first" | grep -qE '^[A-Za-z_][A-Za-z_0-9]*( *:[^=]+)? *([-+*/%&|^]|//|\*\*)?= *[^=]' \
        && [ "$(wc -l < "$S/cb" | tr -d ' ')" = 1 ] && ! printf '%s' "$first" | grep -q ':$'; then
       printf 'print(%s)\n' "$first" > "$S/ce"
-      if try_run "$S/cd" "$S/ce"; then new_output; commit "$S/cd"; return; fi
+      if try_run "$S/cd" "$S/ce"; then new_output; end_open_line; commit "$S/cd"; return; fi
     fi
   fi
-  if try_run "$S/cd" "$S/cb"; then new_output; commit "$S/cd"; else
-    new_output          # what the line printed before it failed
+  if try_run "$S/cd" "$S/cb"; then new_output; end_open_line; commit "$S/cd"; else
+    new_output; end_open_line          # what the line printed before it failed
     friendly
     grep -q "^in-definition" "$S/where" 2>/dev/null && grep -q "is not defined" "$S/err" 2>/dev/null && err "hint: a function or class defined here cannot read repl variables; pass them as arguments"
   fi
@@ -223,90 +230,60 @@ load_file() {
 
 help() { awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; }   # the comment block at the top of this file
 
-for f in "$@"; do load_file "$f"; done
 interactive=0; [ -t 0 ] && interactive=1
-# line editing: read -e gives the arrow keys, and the history (up and down) is kept between sessions
-HISTFILE="${TOMATO_HISTORY:-$HOME/.tomato/repl_history_v2}"; HISTSIZE=1000; HISTFILESIZE=1000
-# Tab inserts an indent: readline's own file-completion would list the directory. bind in a script is not enough (bash 3.2
-# ignores it), so readline gets a private inputrc. History holds only what the user types (see readline below).
-if [ $interactive = 1 ]; then { printf '%s\n' '$include /etc/inputrc'; user="${INPUTRC:-$HOME/.inputrc}"; [ -f "$user" ] && printf '%s\n' "\$include $user"; printf '%s\n' '"\t": "    "' 'set bell-style none'; } > "$S/inputrc"; export INPUTRC="$S/inputrc"; mkdir -p "$(dirname "$HISTFILE")" 2>/dev/null; history -r "$HISTFILE" 2>/dev/null; fi
-# A block is one history entry, its lines joined by BLK (readline cannot hand back a multi-line entry: bash returns only its
-# first line). Up-arrow recalls the whole block on one editable line; entering it splits it back into lines.
-BLK='⏎'
-remember() { [ $interactive = 1 ] && [ -n "$(printf '%s' "$1" | tr -d ' ')" ] && { history -s -- "$1"; history -a "$HISTFILE" 2>/dev/null; }; }
+# The line editor (tomato-repl-edit, built from compiler/src/repledit.tom by install-native.sh; native/tomato sets TOMATO_REPL_EDIT): it
+# reads a whole piece on the terminal (Up and Down recall whole blocks from the history file, the arrows move between lines, Enter runs
+# the piece when it is complete) and prints it. It is used when standard input is a terminal and TERM is not dumb. Its exit status:
+# 0 the piece is on its standard output, 10 Ctrl-D (leave), 11 Ctrl-C (a new prompt); anything else means it failed, and the repl goes
+# on with plain input (read -e: no history, a block typed line by line) for the rest of the session, after saying so once.
+edit="${TOMATO_REPL_EDIT:-}"; hist="${TOMATO_HISTORY:-$HOME/.tomato/repl_history_v2}"; use_edit=0
+plain_note() { printf '%s\n' "the line editor is not available; using plain input" >&2; }
+if [ $interactive = 1 ] && [ "${TERM:-}" != dumb ]; then
+  if [ -n "$edit" ] && [ -x "$edit" ]; then use_edit=1; else plain_note; fi
+fi
+for f in "$@"; do load_file "$f"; done
+# plain input (no editor, and the answers to input()): read -e gives the arrow keys within a line. Tab inserts an indent: readline's own file-completion would list
+# the directory, and bind in a script is not enough (bash 3.2 ignores it), so readline gets a private inputrc.
+if [ $interactive = 1 ]; then { printf '%s\n' '$include /etc/inputrc'; user="${INPUTRC:-$HOME/.inputrc}"; [ -f "$user" ] && printf '%s\n' "\$include $user"; printf '%s\n' '"\t": "    "' 'set bell-style none'; } > "$S/inputrc"; export INPUTRC="$S/inputrc"; fi
 readline() {   # readline PROMPT [INITIAL TEXT] -> sets $REPLY_LINE
   if [ $interactive = 1 ]; then
     if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then IFS= read -r -e -p "$1" -i "$2" REPLY_LINE || return 1   # macOS ships bash 3.2, which has no -i: there Tab inserts the indent
     else IFS= read -r -e -p "$1" REPLY_LINE || return 1; fi
   else IFS= read -r REPLY_LINE || return 1; fi
 }
-# A block recalled from history arrives as one line (lines joined by BLK). Show it as the real multi-line block, then let
-# the user run it (Enter) or edit it line by line (e): for each line, Enter keeps it, Up recalls it into the editor
-# (bash 3.2 cannot prefill the editor, so the line is put at the top of the history) and - deletes it; after the last line
-# more lines can be added, and an empty line finishes, as when typing a block. An edited block is remembered as a new entry.
-recall_block() {
-  local n l r p old new prev indent
-  [ $interactive = 1 ] || return
-  show_block
-  readline "[Enter] run  [e] edit: " || return
-  [ "$REPLY_LINE" = e ] || return
-  old="$text"; new=""; n=0;
-  while IFS= read -r -u 3 l; do
-    n=$((n + 1)); [ $n = 1 ] && p='>>> ' || p='... '
-    if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then readline "$p" "$l" || break; r="$REPLY_LINE"
-    else
-      history -s -- "$l"
-      readline "$p" || { history -d "$HISTCMD" 2>/dev/null; break; }
-      history -d $(history 1 | awk '{print $1}') 2>/dev/null
-      r="$REPLY_LINE"; [ -z "$r" ] && r="$l"
-    fi
-    [ "$r" = - ] && continue
-    new="${new:+$new
-}$r"
-  done 3<<EOF
-$old
-EOF
-  prev="$(printf '%s\n' "$new" | tail -1)"
-  while :; do
-    indent="$(printf '%s' "$prev" | sed 's/^\([ ]*\).*/\1/')"; case "$prev" in *:) indent="$indent    " ;; esac
-    readline '... ' "$indent" || break
-    [ -z "$(printf '%s' "$REPLY_LINE" | tr -d ' ')" ] && break
-    prev="$REPLY_LINE"; new="$new
-$prev"
-  done
-  text="$new"
-  [ "$new" != "$old" ] && remember "${new//
-/$BLK}"
-}
-show_block() { local n l; n=0; while IFS= read -r l; do n=$((n + 1)); if [ $n = 1 ]; then printf '>>> %s\n' "$l"; else printf '... %s\n' "$l"; fi; done <<EOF
-$text
-EOF
-}
 
 [ $interactive = 1 ] && say "Tomato repl (each line re-runs the whole session, so file writes repeat). :help for commands, :quit or Ctrl-D to leave."
 
 while :; do
-  readline '>>> ' || { [ $interactive = 1 ] && echo; break; }
-  line="$REPLY_LINE"
-  case "$line" in
+  if [ $use_edit = 1 ]; then
+    text="$("$edit" --history "$hist" --color="$color_mode")"; rc=$?
+    case $rc in
+      0) ;;
+      10) break ;;
+      11) continue ;;
+      *) use_edit=0; [ $rc -ge 128 ] && echo; plain_note; continue ;;   # (killed by a signal: it may have left its prompt on the line)
+    esac
+  else
+    readline '>>> ' || { [ $interactive = 1 ] && echo; break; }
+    text="$REPLY_LINE"
+  fi
+  case "$text" in
+    *"
+"*) ;;   # a block from the editor (a command is one line)
     "") continue ;;
     :quit|:q|:exit|"leave()"|"exit()"|"quit()") break ;;
     :help) help; continue ;;
     :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; say "session cleared"; continue ;;
     :program) program; continue ;;
     :compile) program > "$S/p.tom"; "$tomato" compile "$S/p.tom"; continue ;;
-    :save\ *) program > "${line#:save }" && say "wrote ${line#:save }"; continue ;;
-    :load\ *) load_file "${line#:load }"; continue ;;
-    :*) err "error: unknown command ${line%% *} (try :help)"; continue ;;
+    :save\ *) program > "${text#:save }" && say "wrote ${text#:save }"; continue ;;
+    :load\ *) load_file "${text#:load }"; continue ;;
+    :*) err "error: unknown command ${text%% *} (try :help)"; continue ;;
   esac
-  text="$line"
-  case "$line" in *:|@*|*"$BLK"*) ;; *) remember "$line" ;; esac   # a block is remembered whole, once its body is read
-  case "$line" in
-    *"$BLK"*) text="${line//$BLK/
-}"; recall_block ;;   # a recalled block: show it as real lines, offer to edit
-    *:|@*)
+  if [ $use_edit = 0 ]; then
+    case "$text" in *:|@*)
       # a block: read lines until an empty one; each line starts with the previous line's indent (four more after a colon)
-      prev="$line"
+      prev="$text"
       while :; do
         indent="$(printf '%s' "$prev" | sed 's/^\([ ]*\).*/\1/')"
         case "$prev" in *:) indent="$indent    " ;; esac
@@ -316,13 +293,10 @@ while :; do
         prev="$more"
         text="$text
 $more"
-      done
-      case "$text" in *"
-"*) remember "${text//
-/$BLK}" ;; *) remember "$text" ;; esac ;;
-  esac
+      done ;;
+    esac
+  fi
   submit "$text"
 done
 
-[ $interactive = 1 ] && history -w "$HISTFILE" 2>/dev/null
 exit 0

@@ -249,7 +249,7 @@ case "$cmd" in
     out="$("$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
     printf '%s\n' "$out"; exit 0 ;;
   paint) paint; exit 0 ;;      # for the repl: `tomato paint` colors error text read from standard input
-  repl|shell) TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;
+  repl|shell) TOMATO_REPL_EDIT="${TOMATO_REPL_EDIT:-$home/bin/tomato-repl-edit}" TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;
   run|build|compile) ;;
   *) echo "error: unknown command '$cmd'" >&2; echo "run 'tomato help' for the commands" >&2; exit 2 ;;
 esac

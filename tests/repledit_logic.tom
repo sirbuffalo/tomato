@@ -1,0 +1,105 @@
+# The repl's own rules in compiler/src/repledit.tom, as @test functions: when Enter runs a piece (the validator, with the lexer's bracket
+# depth), the indent of a new line, what goes into the history, and the history file's place. repledit.tom imports lexer.tom from beside
+# it, so tests/run.sh copies the three files into one folder and runs `tomato test` there (as install-native.sh builds the editor).
+import os
+from repledit import ReplValidator, ReplIndenter, worth_recording, code_part, history_path
+from testing import assert_equal, assert_true, assert_false
+
+def complete(text: str) -> bool:
+    return ReplValidator().complete(text)
+
+@test
+def single_lines_run_at_once():
+    assert_true(complete(''))
+    assert_true(complete('x = 5'))
+    assert_true(complete('print(1 + "a")'))
+    assert_true(complete('x = (1, 2)'))
+    assert_true(complete('d = {1: 2}'))
+    assert_true(complete("s = 'a:'"))
+    assert_true(complete('x = 1  # a comment that ends with a colon:'))
+    # a line the lexer rejects for another reason runs (the compiler says what is wrong)
+    assert_true(complete("print('no end"))
+    assert_true(complete('x = $'))
+    assert_true(complete(')'))
+
+@test
+def blocks_end_at_an_empty_line():
+    # today's rule: a first line ending with ':' or starting with '@' opens a block, and an empty (or blank) last line ends it
+    assert_false(complete('for i in range(2):'))
+    assert_false(complete('for i in range(2):\n    print(i)'))
+    assert_true(complete('for i in range(2):\n    print(i)\n'))
+    assert_true(complete('for i in range(2):\n    print(i)\n    '))
+    assert_false(complete('@main'))
+    assert_false(complete('@main\ndef f():\n    pass'))
+    assert_true(complete('@main\ndef f():\n    pass\n'))
+    assert_false(complete('def f():  # a comment'))
+    assert_false(complete('if x:\n    y = 1\nelse:\n    y = 2'))
+    # inside a block that is still being typed, a line the lexer rejects does not run the block early
+    assert_false(complete("for i in r:\n    print('oops"))
+    assert_true(complete("for i in r:\n    print('oops\n"))
+
+@test
+def open_brackets_go_on():
+    # an open bracket goes on to the next line, as in Python (Davis's answer to question 5 of docs/repl-editor-design.md)
+    assert_false(complete('x = (1,'))
+    assert_false(complete('f('))
+    assert_false(complete('xs = [\n    1,\n    2,'))
+    assert_true(complete('xs = [\n    1,\n    2,\n]'))
+    assert_false(complete('d = {'))
+    assert_false(complete('x = (1,\n'))                     # an empty line inside brackets does not end them
+    assert_false(complete("print(f'{x}'"))
+    # a block whose header spans lines
+    assert_false(complete('if (a and\n        b):'))
+    assert_false(complete('if (a and\n        b):\n    pass'))
+    assert_true(complete('if (a and\n        b):\n    pass\n'))
+    # a ':' inside brackets does not open a block
+    assert_true(complete('d = {1:\n    2}'))
+
+@test
+def pasted_statements():
+    assert_true(complete('print(7)\nprint(8)'))
+    assert_false(complete('x = 1\nfor i in r:\n    print(i)'))
+    assert_true(complete('x = 1\nfor i in r:\n    print(i)\n'))
+
+@test
+def indent_of_a_new_line():
+    ind = ReplIndenter()
+    assert_equal(ind.indent_after('for i in r:', ''), '    ')
+    assert_equal(ind.indent_after('    if x:', ''), '        ')
+    assert_equal(ind.indent_after('    print(i)', ''), '    ')
+    assert_equal(ind.indent_after('def f():  # here', ''), '    ')
+    assert_equal(ind.indent_after("s = '#:'", ''), '')
+    assert_equal(ind.indent_after('x = 1', ''), '')
+    assert_equal(code_part("a = 'x # y'  # c"), "a = 'x # y'")
+    assert_equal(code_part('b = "q\\"#" # c'), 'b = "q\\"#"')
+
+@test
+def what_the_history_records():
+    assert_true(worth_recording('x = 5', ''))
+    assert_true(worth_recording('for i in r:\n    print(i)', 'x = 5'))
+    assert_false(worth_recording('', ''))
+    assert_false(worth_recording('   ', ''))
+    assert_false(worth_recording(':help', ''))
+    assert_false(worth_recording(':load f.tom', ''))
+    assert_false(worth_recording('quit()', ''))
+    assert_false(worth_recording('exit()', ''))
+    assert_false(worth_recording('leave()', ''))
+    assert_true(worth_recording('leave_now()', ''))
+    # the newest entry run again unchanged is not recorded twice; an older one is (it becomes the newest)
+    assert_false(worth_recording('for i in r:\n    print(i)', 'for i in r:\n    print(i)'))
+    assert_true(worth_recording('x = 5', 'y = 1'))
+
+@test
+def where_the_history_file_is():
+    assert_equal(history_path('/tmp/given'), '/tmp/given')
+    old = os.getenv('TOMATO_HISTORY')
+    os.putenv('TOMATO_HISTORY', '/tmp/from_env')
+    assert_equal(history_path(''), '/tmp/from_env')
+    os.putenv('TOMATO_HISTORY', '')
+    home = os.getenv('HOME', '')
+    if home != '':
+        assert_equal(history_path(''), f'{home}/.tomato/repl_history_v2')
+    if old is not None:
+        os.putenv('TOMATO_HISTORY', old)
+    else:
+        os.unsetenv('TOMATO_HISTORY')

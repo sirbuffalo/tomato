@@ -62,7 +62,10 @@ keys and `memoize` handles functions of several arguments. The builtin names mov
 `std/builtin/`.
 
 `terminal` (D86a, native only): raw keys, window size and resize, colors and styles, and the width of characters, for programs that
-draw on a terminal; the first part of the repl line editor (`lineedit` is reserved for the next part). See `docs/terminal-api.md`.
+draw on a terminal; the first part of the repl line editor. See `docs/terminal-api.md`.
+
+`lineedit` (D88a): a line and block editor for terminal programs, with history, the keys of Python's repl and readline, and hooks
+for when Enter submits, the indent of a new line and colors (`Validator`, `Indenter`, `Highlighter`). See `docs/lineedit-api.md`.
 
 ### Runtime and async
 
@@ -76,6 +79,10 @@ draw on a terminal; the first part of the repl line editor (`lineedit` is reserv
 - `tomato build` and `tomato run` have a fast non-LTO debug build path, and the compiled C runtime is cached
   (`~/.cache/tomato`, `TOMATO_CACHE_DIR`, `TOMATO_CACHE=off`).
 - The repl reports precise import errors; the site editor, repl and VS Code auto-indent after a colon line.
+- The repl edits whole blocks (D88a, replacing D59a's `[Enter] run  [e] edit`): Up and Down recall a block as its real lines, the
+  arrows move between them, Enter runs a complete piece and continues on an open bracket (`x = (1,`), paste and resize work,
+  Ctrl-C cancels the input. The history file keeps its format. The installer builds the editor (`tomato-repl-edit`); without it
+  the repl says so and uses plain input.
 - The bootstrap IR is compiled in parallel, so installs and builds are quicker.
 
 ### Performance

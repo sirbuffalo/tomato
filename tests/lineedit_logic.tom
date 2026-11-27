@@ -1,0 +1,534 @@
+# The line editor library std/lineedit.tom without a terminal, as @test functions (`tomato test tests/lineedit_logic.tom`, which
+# tests/run.sh runs in debug and release mode): Buffer, History (with the history file and the old ⏎ format), the layout of lines on the
+# screen, the frames, and whole editing sessions on a FakeTerminal with scripted keys. The repl's own rules (when Enter runs a piece, the
+# indent) are tested in tests/repledit_logic.tom; the real terminal in tests/repl_history.exp.
+import os
+import terminal
+import lineedit
+from terminal import Key, Style
+from lineedit import Buffer, History, Editor, Result, TermIO, Validator, Highlighter, Run
+from testing import assert_equal, assert_true, assert_false
+
+# ---- helpers ---------------------------------------------------------------------------------------------------------------
+
+# escape codes spelled out: ESC is shown as \e, CR as \r, LF as \n
+def spelled(text: str) -> str:
+    return text.replace(chr(27), '\\e').replace('\r', '\\r').replace('\n', '\\n')
+
+# A terminal with scripted keys that records every write. A 'resize' key changes the size to the next of `sizes` first.
+class FakeTerminal implements TermIO:
+    keys: list[Key] = []
+    writes: list[str] = []
+    rows: int = 24
+    cols: int = 80
+    sizes: list[tuple[int, int]] = []
+    raw: bool = False
+    raw_calls: int = 0
+    leave_calls: int = 0
+
+    def read_key(self, timeout: float = -1.0) -> Key:
+        if len(self.keys) == 0:
+            return Key('eof')
+        k = self.keys[0]
+        self.keys = self.keys[1:]
+        if k.kind == 'resize' and len(self.sizes) > 0:
+            self.rows, self.cols = self.sizes[0]
+            self.sizes = self.sizes[1:]
+        return k
+
+    def write(self, text: str):
+        self.writes.append(text)
+
+    def size(self) -> tuple[int, int]:
+        return self.rows, self.cols
+
+    def enter_raw(self):
+        self.raw = True
+        self.raw_calls += 1
+
+    def leave(self):
+        self.raw = False
+        self.leave_calls += 1
+
+    # every write as one text
+    def output(self) -> str:
+        return ''.join(self.writes)
+
+def ch(text: str) -> Key:
+    return Key('char', text)
+
+def ctrl(c: str) -> Key:
+    return Key('char', c, '', True)
+
+def named(name: str) -> Key:
+    return Key('key', '', name)
+
+def chars(text: str) -> list[Key]:
+    out: list[Key] = []
+    for c in text:
+        out.append(ch(c))
+    return out
+
+def up() -> Key:
+    return named('up')
+
+def down() -> Key:
+    return named('down')
+
+def enter() -> Key:
+    return named('enter')
+
+# a validator like the repl's, without the lexer: a text whose first line ends with ':' is complete once its last line is empty
+class BlockRule implements Validator:
+    def complete(self, text: str) -> bool:
+        lines = text.split('\n')
+        if not lines[0].endswith(':'):
+            return True
+        return len(lines) > 1 and lines[len(lines) - 1].strip() == ''
+
+class ColonIndent implements lineedit.Indenter:
+    def indent_after(self, line: str, before: str) -> str:
+        ind = lineedit.leading_spaces(line)
+        if line.rstrip(' ').endswith(':'):
+            ind += '    '
+        return ind
+
+def block_editor(entries: list[str]) -> Editor:
+    ed = Editor()
+    ed.history = History(entries, 1000)
+    ed.validator = BlockRule()
+    ed.indenter = ColonIndent()
+    return ed
+
+# runs an editor over the keys; the result and the fake terminal
+def session(ed: Editor, keys: list[Key]) -> tuple[Result, FakeTerminal]:
+    term = FakeTerminal()
+    term.keys = keys
+    result = ed.read(term)
+    return result, term
+
+def buf(text: str, row: int, col: int) -> Buffer:
+    b = Buffer()
+    b.set_text(text)
+    b.row = row
+    b.col = col
+    return b
+
+def where(b: Buffer) -> str:
+    return f'{b.row}:{b.col} ' + b.text().replace('\n', '|')
+
+def temp_path(name: str) -> str:
+    folder = os.getenv('TMPDIR')
+    if folder is None or folder == '':
+        folder = '/tmp'
+    return f'{folder}/lineedit_test_{os.getpid()}_{name}'
+
+# ---- Buffer ----------------------------------------------------------------------------------------------------------------
+
+@test
+def buffer_insert_and_split():
+    b = Buffer()
+    assert_true(b.is_empty())
+    b.insert('ab')
+    assert_equal(where(b), '0:2 ab')
+    b.left()
+    b.insert('X\nY')
+    assert_equal(where(b), '1:1 aX|Yb')
+    b.insert('\n\n')
+    assert_equal(where(b), '3:0 aX|Y||b')
+    b.newline('    ')
+    assert_equal(where(b), '4:4 aX|Y|||    b')
+    b2 = buf('if x:  y', 0, 5)
+    b2.newline('    ')                       # the spaces after the cursor give way to the indent
+    assert_equal(where(b2), '1:4 if x:|    y')
+
+@test
+def buffer_backspace_and_delete_join_lines():
+    b = buf('ab\ncd', 1, 0)
+    assert_true(b.backspace())
+    assert_equal(where(b), '0:2 abcd')
+    b.col = 0
+    assert_false(b.backspace())
+    b = buf('ab\ncd', 0, 2)
+    assert_true(b.delete())
+    assert_equal(where(b), '0:2 abcd')
+    b.end()
+    assert_false(b.delete())
+    b = buf('héllo', 0, 2)
+    b.backspace()
+    assert_equal(where(b), '0:1 hllo')
+
+@test
+def buffer_moves_cross_line_ends():
+    b = buf('ab\ncd', 1, 0)
+    assert_true(b.left())
+    assert_equal(where(b), '0:2 ab|cd')
+    assert_true(b.right())
+    assert_equal(where(b), '1:0 ab|cd')
+    b.end()
+    assert_false(b.right())
+    b.row = 0
+    b.col = 0
+    assert_false(b.left())
+
+@test
+def buffer_up_down_keep_the_column():
+    b = buf('long line\nab\nanother', 0, 7)
+    assert_true(b.down())
+    assert_equal(where(b), '1:2 long line|ab|another')
+    assert_true(b.down())
+    assert_equal(b.col, 2)
+    assert_false(b.down())
+    assert_true(b.up())
+    assert_true(b.up())
+    assert_false(b.up())
+    assert_equal(b.row, 0)
+
+@test
+def buffer_words_and_kills():
+    b = buf('print(x)  + total', 0, 17)
+    b.word_left()
+    assert_equal(b.col, 12)
+    b.word_left()
+    assert_equal(b.col, 10)
+    b.word_left()
+    assert_equal(b.col, 0)
+    b.word_right()
+    assert_equal(b.col, 8)
+    b = buf('ab\ncd', 1, 0)
+    b.word_left()
+    assert_equal(where(b), '0:2 ab|cd')
+    b.word_right()
+    assert_equal(where(b), '1:0 ab|cd')
+    b = buf('one two  three', 0, 9)
+    assert_equal(b.kill_word_back(), 'two  ')
+    assert_equal(where(b), '0:4 one three')
+    assert_equal(b.kill_to_end(), 'three')
+    assert_equal(where(b), '0:4 one ')
+    b.col = 2
+    assert_equal(b.kill_to_start(), 'on')
+    assert_equal(where(b), '0:0 e ')
+    b = buf('ab\ncd', 0, 2)
+    assert_equal(b.kill_to_end(), '')         # within the line: it never joins lines
+    assert_equal(b.text(), 'ab\ncd')
+
+@test
+def buffer_indents():
+    b = buf('        x', 0, 8)
+    assert_true(b.dedent_back(4))
+    assert_equal(where(b), '0:4     x')
+    b.col = 3
+    assert_true(b.dedent_back(4))             # to the previous tab stop
+    assert_equal(where(b), '0:0  x')
+    b = buf('  ab', 0, 3)
+    assert_false(b.dedent_back(4))            # not in the indent: a plain backspace
+    b = buf('      x', 0, 7)
+    b.dedent(4)
+    assert_equal(where(b), '0:3   x')
+    b.dedent(4)
+    b.dedent(4)
+    assert_equal(where(b), '0:1 x')
+    assert_equal(lineedit.leading_spaces('   a  '), '   ')
+
+@test
+def buffer_set_text_puts_the_cursor_at_the_end():
+    b = Buffer()
+    b.set_text('for i in r:\n    print(i)')
+    assert_equal(where(b), '1:12 for i in r:|    print(i)')
+    assert_equal(lineedit.strip_trailing_lines('a\n  b\n    \n'), 'a\n  b')
+    assert_equal(lineedit.strip_trailing_lines('   '), '')
+    assert_equal(lineedit.strip_trailing_lines('x'), 'x')
+
+# ---- History ---------------------------------------------------------------------------------------------------------------
+
+@test
+def history_up_down_and_the_draft():
+    h = History(['one', 'two', 'three'], 1000)
+    assert_false(h.recalled())
+    assert_equal(h.previous('typing'), 'three')
+    assert_true(h.recalled())
+    assert_equal(h.previous('three edited'), 'two')   # edits to a recalled entry are dropped
+    assert_equal(h.previous('two'), 'one')
+    assert_true(h.previous('one') is None)
+    assert_equal(h.next(), 'two')
+    assert_equal(h.next(), 'three')
+    assert_equal(h.next(), 'typing')                   # past the newest: the draft
+    assert_false(h.recalled())
+    assert_true(h.next() is None)
+    h.add('four')
+    assert_equal(h.previous(''), 'four')
+    h.reset()
+    assert_equal(h.previous('new draft'), 'four')
+    assert_equal(h.next(), 'new draft')
+
+@test
+def history_limit():
+    h = History(['a', 'b', 'c', 'd'], 3)
+    assert_equal(', '.join(h.entries), 'b, c, d')
+    h.add('e')
+    assert_equal(', '.join(h.entries), 'c, d, e')
+    e = History([], 1000)
+    assert_true(e.previous('x') is None)
+    assert_true(e.next() is None)
+
+@test
+def history_file_old_format():
+    path = temp_path('old')
+    # the file the bash repl wrote: ⏎ inside an entry, a trailing blank line, a tab, a CR and a control character
+    os.write_text(path, 'x = 5\nfor i in range(2):⏎    print(i)\n\n\tprint(2)\r\nbad' + chr(7) + 'char\n\n')
+    entries = lineedit.read_history(path, '⏎')
+    assert_equal(len(entries), 4)
+    assert_equal(entries[0], 'x = 5')
+    assert_equal(entries[1], 'for i in range(2):\n    print(i)')
+    assert_equal(entries[2], '    print(2)')
+    assert_equal(entries[3], 'badchar')
+    h = lineedit.load_history(path, '⏎', 2)
+    assert_equal(len(h.entries), 2)
+    os.remove(path)
+    assert_equal(len(lineedit.read_history(path, '⏎')), 0)    # no file: no history
+
+@test
+def history_file_append_and_trim():
+    path = temp_path('dir') + '/sub/hist'
+    lineedit.append_history(path, 'a = 1', '⏎', 3)              # the folders are made
+    lineedit.append_history(path, 'if a:\n    print(a)', '⏎', 3)
+    assert_equal(os.read_text(path), 'a = 1\nif a:⏎    print(a)\n')
+    lineedit.append_history(path, 'b', '⏎', 3)
+    lineedit.append_history(path, 'c', '⏎', 3)
+    assert_equal(os.read_text(path), 'if a:⏎    print(a)\nb\nc\n')    # past the limit: only the newest 3
+    lineedit.append_history(path, 'two\nlines', '', 0)
+    assert_equal(os.read_text(path), '')
+    lineedit.append_history(path, 'two\nlines', '', -1)        # joiner '': one line, limit -1: no trimming
+    assert_equal(os.read_text(path), 'two lines\n')
+    os.remove(path)
+    assert_equal(lineedit.clean_text('a\tb\nc' + chr(27) + chr(127) + chr(155) + 'é', '  ', True), 'a  b\ncé')
+    assert_equal(lineedit.clean_text('a\nb', '  ', False), 'ab')
+
+# ---- layout ----------------------------------------------------------------------------------------------------------------
+
+def rows_of(lay: lineedit.Layout) -> str:
+    parts: list[str] = []
+    for r in lay.rows:
+        parts.append(str(r))
+    return ' '.join(parts) + f' @{lay.cursor_row},{lay.cursor_col}'
+
+@test
+def layout_rows_and_cursor():
+    assert_equal(rows_of(lineedit.layout([''], '>>> ', '... ', 80, 0, 0)), '0:0-0 @0,4')
+    assert_equal(rows_of(lineedit.layout(['for x:', '    y'], '>>> ', '... ', 80, 1, 2)), '0:0-6 1:0-5 @1,6')
+    # 4 + 12 cells at width 10: the line wraps after 6 characters, and the row after it starts at column 0
+    assert_equal(rows_of(lineedit.layout(['abcdefghijkl'], '>>> ', '... ', 10, 0, 8)), '0:0-6 0:6-12 @1,2')
+    assert_equal(rows_of(lineedit.layout(['abcdefghijkl'], '>>> ', '... ', 10, 0, 6)), '0:0-6 0:6-12 @1,0')
+
+@test
+def layout_exactly_full_rows():
+    # '>>> ' + 6 characters fill a 10-cell row: with the cursor at the end, it goes to a row of its own
+    assert_equal(rows_of(lineedit.layout(['abcdef'], '>>> ', '... ', 10, 0, 6)), '0:0-6 0:6-6 @1,0')
+    # the cursor elsewhere: no extra row
+    assert_equal(rows_of(lineedit.layout(['abcdef'], '>>> ', '... ', 10, 0, 2)), '0:0-6 @0,6')
+    assert_equal(rows_of(lineedit.layout(['abcdef', 'x'], '>>> ', '... ', 10, 1, 1)), '0:0-6 1:0-1 @1,5')
+    # two full rows
+    assert_equal(rows_of(lineedit.layout(['abcdefghijklmnop'], '>>> ', '... ', 10, 0, 16)), '0:0-6 0:6-16 0:16-16 @2,0')
+
+@test
+def layout_wide_and_combining_characters():
+    # 中 takes 2 cells: at column 9 of a 10-cell row it does not fit, so it starts the next row
+    assert_equal(rows_of(lineedit.layout(['abcde中'], '>>> ', '... ', 10, 0, 6)), '0:0-5 0:5-6 @1,2')
+    assert_equal(rows_of(lineedit.layout(['中中中'], '>>> ', '... ', 10, 0, 3)), '0:0-3 @0,10'.replace('@0,10', '0:3-3 @1,0'))
+    # a combining accent takes no cell
+    assert_equal(rows_of(lineedit.layout(['e' + chr(769) + 'x'], '>>> ', '... ', 80, 0, 3)), '0:0-3 @0,6')
+    assert_equal(rows_of(lineedit.layout(['😀a'], '', '', 80, 0, 1)), '0:0-2 @0,2')
+
+@test
+def frame_text():
+    s = lineedit.Screen()
+    f = s.frame(['for i in r:', '    print(i)'], [], '>>> ', '... ', 0, 3, False)
+    assert_equal(spelled(f), '\\r\\e[J>>> for i in r:\\r\\n...     print(i)\\e[1A\\e[8G')
+    assert_equal(s.cursor_row, 0)
+    f = s.frame(['for i in r:', '    print(i)', ''], [], '>>> ', '... ', 2, 0, False)
+    assert_equal(spelled(f), '\\r\\e[J>>> for i in r:\\r\\n...     print(i)\\r\\n... \\e[5G')
+    assert_equal(s.cursor_row, 2)
+    f = s.frame(['x'], [], '>>> ', '... ', 0, 1, False)
+    assert_equal(spelled(f), '\\e[2A\\r\\e[J>>> x\\e[6G')
+
+@test
+def frame_tall_block_shows_a_window():
+    s = lineedit.Screen()
+    s.height = 3
+    lines = ['a', 'b', 'c', 'd', 'e']
+    f = s.frame(lines, [], '>>> ', '... ', 4, 1, False)
+    assert_equal(spelled(f), '\\r\\e[J... c\\r\\n... d\\r\\n... e\\e[6G')
+    assert_equal(s.cursor_row, 2)
+    f = s.frame(lines, [], '>>> ', '... ', 0, 0, False)
+    assert_equal(spelled(f), '\\e[2A\\r\\e[J>>> a\\r\\n... b\\r\\n... c\\e[2A\\e[5G')
+    f = s.frame(lines, [], '>>> ', '... ', 4, 1, True)        # the last frame: every row
+    assert_equal(spelled(f), '\\r\\e[J>>> a\\r\\n... b\\r\\n... c\\r\\n... d\\r\\n... e\\e[6G')
+
+class Shout implements Highlighter:
+    def highlight(self, lines: list[str]) -> list[list[Run]]:
+        out: list[list[Run]] = []
+        for line in lines:
+            runs: list[Run] = []
+            k = line.find('if')
+            if k >= 0:
+                runs.append(Run(k, k + 2, Style(terminal.ansi(1))))
+            out.append(runs)
+        return out
+
+@test
+def frame_with_runs_and_colors():
+    s = lineedit.Screen()
+    s.colors = 16
+    s.prompt_style = Style(terminal.ansi(2))
+    s.width = 7
+    lines = ['x if y']
+    runs = Shout().highlight(lines)
+    f = s.frame(lines, runs, '>>> ', '... ', 0, 0, False)
+    # the run is split where the line wraps
+    assert_equal(spelled(f), '\\r\\e[J\\e[32m>>> \\e[0mx \\e[31mi\\e[0m\\r\\n\\e[31mf\\e[0m y\\e[1A\\e[5G')
+
+# ---- whole sessions on a FakeTerminal --------------------------------------------------------------------------------------
+
+@test
+def session_type_and_submit():
+    result, term = session(Editor(), chars('1 + 2') + [enter()])
+    assert_equal(result.status, 'text')
+    assert_equal(result.text, '1 + 2')
+    assert_false(term.raw)
+    assert_equal(term.raw_calls, 1)
+    assert_equal(term.leave_calls, 1)
+    out = spelled(term.output())
+    assert_true(out.startswith('\\e[?2004h\\r\\e[J>>> \\e[5G'), out)
+    assert_true(out.endswith('\\r\\e[J>>> 1 + 2\\e[10G\\r\\n\\e[?2004l'), out)
+
+@test
+def session_block_with_auto_indent():
+    keys = chars('for i in range(3):') + [enter()] + chars('print(i)') + [enter(), enter()]
+    result, term = session(block_editor([]), keys)
+    assert_equal(result.status, 'text')
+    assert_equal(result.text, 'for i in range(3):\n    print(i)')      # the empty indented last line is not part of it
+    out = spelled(term.output())
+    assert_true('>>> for i in range(3):\\r\\n...     print(i)\\r\\n...     \\e[9G\\r\\n' in out, out)
+
+@test
+def session_recall_and_edit_the_middle_line():
+    block = 'for i in range(2):\n    x = i\n    print(x)'
+    # Up recalls the block with the cursor at its end; Up again goes to its middle line; End, then change it
+    keys = [up(), up(), named('end'), named('backspace')] + chars('i * 10') + [down(), named('end'), enter(), enter()]
+    result, _term = session(block_editor(['older', block]), keys)
+    assert_equal(result.status, 'text')
+    assert_equal(result.text, 'for i in range(2):\n    x = i * 10\n    print(x)')
+
+@test
+def session_up_through_a_block_into_the_entry_before():
+    block = 'if a:\n    b'
+    keys = [up(), up(), up()] + [enter()]
+    result, _term = session(block_editor(['first = 1', block]), keys)
+    assert_equal(result.text, 'first = 1')
+    # Down from the first line of an older entry walks into the newer one; past the newest, the draft comes back
+    keys2 = chars('draft') + [up(), up(), up(), down(), down(), down(), enter()]
+    result2, _t2 = session(block_editor(['first = 1', block]), keys2)
+    assert_equal(result2.text, 'draft')
+
+@test
+def session_edits_to_a_recalled_entry_are_dropped():
+    keys = [up()] + chars(' changed') + [up(), down(), enter()]
+    result, _term = session(Editor(), keys)
+    assert_equal(result.text, ' changed')                       # no history: Up does nothing
+    ed = Editor()
+    ed.history = History(['one', 'two'], 1000)
+    result, _term = session(ed, [up()] + chars('!') + [up(), down(), enter()])
+    assert_equal(result.text, 'two')
+
+@test
+def session_add_and_delete_lines():
+    keys = [up()] + [enter()]          # Enter on the last line of an open block: a new line with its indent
+    keys = keys + chars('y = 2') + [named('home'), named('backspace')]
+    keys = keys + [ctrl('e'), enter(), enter()]
+    result, _term = session(block_editor(['if a:\n    x = 1']), keys)
+    # Home goes to column 0 of '    y = 2', Backspace joins it to the line above (no indent there to go back over)
+    assert_equal(result.text, 'if a:\n    x = 1    y = 2')
+    # Delete at a line's end joins the next line to it
+    keys = [up(), up(), up(), ctrl('e'), named('delete'), ctrl('n'), ctrl('e'), enter(), enter()]
+    result, _term = session(block_editor(['if a:\n    x = 1\n    y = 2']), keys)
+    assert_equal(result.text, 'if a:    x = 1\n    y = 2')
+
+@test
+def session_enter_inside_a_block_splits_the_line():
+    keys = [up(), up(), ctrl('e'), enter()] + chars('z = 0') + [ctrl('n'), ctrl('e'), enter(), enter()]
+    result, _term = session(block_editor(['if a:\n    x = 1']), keys)
+    assert_equal(result.text, 'if a:\n    z = 0\n    x = 1')
+
+@test
+def session_ctrl_c_and_ctrl_d():
+    result, term = session(Editor(), chars('half') + [ctrl('c')])
+    assert_equal(result.status, 'interrupt')
+    assert_true(spelled(term.output()).endswith('>>> half\\e[9G\\r\\nKeyboardInterrupt\\r\\n\\e[?2004l'), spelled(term.output()))
+    result, term = session(Editor(), [ctrl('d')])
+    assert_equal(result.status, 'eof')
+    assert_false(term.raw)
+    # Ctrl-D on text deletes the character at the cursor
+    result, term = session(Editor(), chars('abc') + [ctrl('a'), ctrl('d'), enter()])
+    assert_equal(result.text, 'bc')
+    # the input ending (the terminal went away) is 'eof' too
+    result, term = session(Editor(), chars('abc'))
+    assert_equal(result.status, 'eof')
+
+@test
+def session_paste():
+    paste = Key('paste', 'def f():\n\treturn 1\n' + chr(7))
+    result, _term = session(block_editor([]), [paste, enter()])
+    # inserted as it is (a tab becomes four spaces, control characters go), not submitted and not indented by the paste itself
+    assert_equal(result.text, 'def f():\n    return 1')
+    result, _term = session(Editor(), [Key('paste', 'a\nb'), enter()])
+    assert_equal(result.text, 'a\nb')
+
+@test
+def session_kills_and_yank():
+    keys = chars('one two') + [ctrl('w'), ctrl('a')] + [ctrl('y')] + [ctrl('k'), ctrl('y'), ctrl('y'), enter()]
+    result, _term = session(Editor(), keys)
+    # Ctrl-W cuts 'two', Ctrl-Y at the start puts it back; Ctrl-K then cuts 'one ', and two Ctrl-Y put it back twice
+    assert_equal(result.text, 'twoone one ')
+
+@test
+def session_tabs_and_shift_tab():
+    keys = [named('tab'), named('tab')] + chars('x') + [Key('key', '', 'backtab', False, False, True), enter()]
+    result, _term = session(Editor(), keys)
+    assert_equal(result.text, '    x')
+    keys = [named('tab'), named('tab'), named('backspace')] + chars('y') + [enter()]
+    result, _term = session(Editor(), keys)
+    assert_equal(result.text, '    y')
+
+@test
+def session_resize_redraws_at_the_new_width():
+    ed = Editor()
+    term = FakeTerminal()
+    term.keys = chars('abcdefghij') + [Key('resize'), ch('k'), enter()]
+    term.sizes = [(24, 10)]
+    result = ed.read(term)
+    assert_equal(result.text, 'abcdefghijk')
+    # after the resize, the cursor (after 'j', at cell 14) is on the second row of a 10-cell terminal: the frame goes up one row first
+    frames: list[str] = []
+    for w in term.writes:
+        frames.append(spelled(w))
+    assert_equal(frames[len(frames) - 5], '\\e[1A\\r\\e[J>>> abcdef\\r\\nghij\\e[5G')
+    assert_equal(frames[len(frames) - 4], '\\e[1A\\r\\e[J>>> abcdef\\r\\nghijk\\e[6G')
+
+@test
+def session_ctrl_l_and_ignored_keys():
+    keys = chars('a') + [ctrl('l'), ctrl('z'), named('f5'), named('escape'), Key('timeout'), Key('char', 'x', '', False, True), ch('b'), enter()]
+    result, term = session(Editor(), keys)
+    assert_equal(result.text, 'ab')
+    assert_true('\\e[2J\\e[H\\r\\e[J>>> a\\e[6G' in spelled(term.output()))
+
+@test
+def session_alt_and_ctrl_word_moves():
+    keys = chars('one two') + [Key('char', 'b', '', False, True), ch('X'), Key('key', '', 'right', True), ch('Y'), Key('key', '', 'left', True), Key('char', 'f', '', False, True), ch('Z'), enter()]
+    result, _term = session(Editor(), keys)
+    assert_equal(result.text, 'one XtwoYZ')
+
+@test
+def session_wide_text():
+    result, term = session(Editor(), chars('中文 é') + [named('left'), named('backspace'), enter()])
+    assert_equal(result.text, '中文é')
+    assert_true(spelled(term.output()).endswith('>>> 中文é\\e[10G\\r\\n\\e[?2004l'), spelled(term.output()))

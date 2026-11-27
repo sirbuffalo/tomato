@@ -1,0 +1,166 @@
+# tomato-repl-edit: the line editor of `tomato repl` (native/tomato-repl runs it once per prompt). It reads one piece of Tomato from the
+# terminal with the std library `lineedit`, with the repl's rules for when Enter runs the piece and how a new line is indented, and its
+# history file, and prints the piece on standard output.
+#
+#   tomato-repl-edit [--history FILE] [--color=auto|always|never]
+#     exit 0:  the piece is on standard output (empty when Enter was pressed on an empty prompt)
+#     exit 10: end of input (Ctrl-D on an empty prompt)
+#     exit 11: Ctrl-C (the driver shows a new prompt)
+#     any other status: the editor failed (no terminal, a crash); the driver falls back to plain input
+#
+# The history file is $TOMATO_HISTORY, else ~/.tomato/repl_history_v2 (or --history): plain text, one entry per line, the lines of a
+# block joined by ⏎ (U+23CE), the newest 1000 kept; the format of the repl before this editor, so either one reads the other's file.
+# `:commands`, leave(), exit(), quit(), empty pieces and a piece equal to the newest entry are not recorded.
+#
+# It sits next to lexer.tom (the compiler's own lexer, which decides whether brackets are still open) and is built by install-native.sh
+# from a copy of the two files (`tomato build repledit.tom --mode release`); it is not part of the compiler.
+import os
+import ospath
+import sys
+import terminal
+import lineedit
+from lineedit import Editor, Validator, Indenter
+from lexer import lex, LexError, Token
+
+const JOINER = '⏎'
+const LIMIT = 1000
+const EXIT_EOF = 10
+const EXIT_INTERRUPT = 11
+
+# the text of a line without a comment at its end, and without trailing spaces (a '#' inside quotes is not a comment)
+export def code_part(line: str) -> str:
+    quote = ''
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if quote != '':
+            if c == '\\':
+                i += 1
+            elif c == quote:
+                quote = ''
+        elif c == '"' or c == "'":
+            quote = c
+        elif c == '#':
+            return line[:i].rstrip(' ')
+        i += 1
+    return line.rstrip(' ')
+
+# whether the text starts a block that ends at an empty line: one of its lines (outside brackets) ends with ':' or starts with '@'
+def opens_block(toks: list[Token]) -> bool:
+    line_start = True
+    prev = ''
+    for t in toks:
+        if t.kind == 'NEWLINE':
+            if prev == ':':
+                return True
+            line_start = True
+            prev = ''
+        elif t.kind == 'INDENT' or t.kind == 'DEDENT' or t.kind == 'EOF':
+            pass
+        else:
+            if line_start and t.kind == 'OP' and t.text == '@':
+                return True
+            line_start = False
+            prev = ''
+            if t.kind == 'OP':
+                prev = t.text
+    return False
+
+# the same question without tokens (when the text does not lex): the first line ends with ':' or starts with '@'
+def opens_block_text(first: str) -> bool:
+    return code_part(first).endswith(':') or first.startswith('@')
+
+# The repl's rule for Enter on the last line. A piece is complete when no bracket is left open and, if it starts a block (a line ends
+# with ':' or starts with '@'), once its last line is empty. So `x = (1,` and `f(` go on to a new line, as in Python; a line the lexer
+# rejects for another reason is complete (the compiler then says what is wrong), unless it is inside a block still being typed.
+export class ReplValidator implements Validator:
+    def complete(self, text: str) -> bool:
+        lines = text.split('\n')
+        ended = len(lines) > 1 and lines[len(lines) - 1].strip() == ''
+        toks: list[Token] = []
+        try:
+            toks = lex(text)
+        catch LexError as e:
+            if e.message.startswith('a bracket is opened here but never closed'):
+                return False
+            return ended or not opens_block_text(lines[0])
+        if not opens_block(toks):
+            return True
+        return ended
+
+# A new line gets the indent of the line before it, four more spaces after a line that ends with ':'.
+export class ReplIndenter implements Indenter:
+    def indent_after(self, line: str, before: str) -> str:
+        indent = lineedit.leading_spaces(line)
+        if code_part(line).endswith(':'):
+            indent += '    '
+        return indent
+
+# whether a submitted piece goes into the history: not empty, not a `:command`, not one of the words that leave, and not the same as the
+# newest entry (a recalled piece run again unchanged; the repl before this editor did not record an unchanged recalled block either)
+export def worth_recording(text: str, newest: str) -> bool:
+    t = text.strip()
+    if t == '' or t.startswith(':') or text == newest:
+        return False
+    return t != 'leave()' and t != 'exit()' and t != 'quit()'
+
+export def history_path(given: str) -> str:
+    if given != '':
+        return given
+    env = os.getenv('TOMATO_HISTORY')
+    if env is not None and env != '':
+        return env
+    return ospath.expanduser('~/.tomato/repl_history_v2')
+
+def usage():
+    sys.write_stderr('usage: tomato-repl-edit [--history FILE] [--color=auto|always|never]\n')
+    sys.exit(2)
+
+@main
+def main(*args: tuple[str]):
+    path = ''
+    color = 'auto'
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--history' and i + 1 < len(args):
+            path = args[i + 1]
+            i += 1
+        elif a.startswith('--color='):
+            color = a[8:]
+            if color != 'auto' and color != 'always' and color != 'never':
+                usage()
+        else:
+            usage()
+        i += 1
+    path = history_path(path)
+    entries: list[str] = []
+    try:
+        entries = lineedit.read_history(path, JOINER)
+    catch IOError as _e:
+        pass                          # an unreadable history is an empty one; the repl still works
+    ed = Editor()
+    ed.history = lineedit.History(entries, LIMIT)
+    ed.validator = ReplValidator()
+    ed.indenter = ReplIndenter()
+    term = terminal.open()
+    term.colors = 0                   # colors come with the highlighter (stage 3 of docs/repl-editor-design.md)
+    result = lineedit.Result('eof')
+    try:
+        result = ed.read(term)
+    finally:
+        term.close()
+    if result.status == 'eof':
+        sys.exit(EXIT_EOF)
+    if result.status == 'interrupt':
+        sys.exit(EXIT_INTERRUPT)
+    newest = ''
+    if len(entries) > 0:
+        newest = entries[len(entries) - 1]
+    if worth_recording(result.text, newest):
+        try:
+            lineedit.append_history(path, result.text, JOINER, LIMIT)
+        catch IOError as _e:
+            pass
+    sys.write_stdout(result.text + '\n')

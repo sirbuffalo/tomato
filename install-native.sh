@@ -59,7 +59,17 @@ cp "$root/site/wasm/tomatoc.wasm" "$root/site/wasm/runtime.wasm" "$root/site/was
 cp "$root/std/"*.tom "$root/std/errors.txt" "$stage/wasm/std/"; cp -R "$root/std/builtin" "$stage/wasm/std/"
 # the website's WebAssembly build is only used by the repl while it matches this compiler (it cannot be rebuilt without the WASI SDK)
 if [ -f "$root/site/wasm/SOURCE.sha256" ] && [ "$(cat "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" | sha256 | cut -d' ' -f1)" = "$(sed -n 1p "$root/site/wasm/SOURCE.sha256")" ]; then touch "$stage/wasm/current"; fi
-# (optional steps that need the staged install, such as building the repl's line editor with "$stage/bin/tomato" build, go here, through `run`)
+# The repl's line editor (compiler/src/repledit.tom, with the lexer beside it), built with the staged tomato. It is optional: when it
+# cannot be built the install goes on and the repl uses plain input, with a warning here that keeps the reason.
+build_repl_edit() {
+  ed="$stage/.edit"; mkdir -p "$ed" || return 1
+  cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$ed/" &&
+    "$stage/bin/tomato" build "$ed/repledit.tom" -o "$stage/bin/tomato-repl-edit" --mode release > "$ed/log" 2>&1
+  rc=$?; [ $rc = 0 ] || { tail -5 "$ed/log" >&2; rm -f "$stage/bin/tomato-repl-edit"; }
+  rm -rf "$ed"; return $rc
+}
+echo "building the repl line editor ..."
+run build_repl_edit || echo "warning: the repl line editor could not be built (the reason is above); the repl will use plain input" >&2
 # the staged install must be whole and run before it replaces anything
 [ -x "$stage/bin/tomatoc" ] && [ -x "$stage/bin/tomato" ] && "$stage/bin/tomato" version >/dev/null 2>&1 || { echo "error: the new install is incomplete: leaving the old one alone" >&2; exit 1; }
 # The swap. With `mv --exchange` (GNU mv on Linux, renameat2) the two folders trade names in one step, so there is no moment without

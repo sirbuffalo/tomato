@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds release/out/tomato-VERSION.pkg: a macOS installer that needs no build step at install time. It ships a universal
-# (arm64 + x86_64) tomatoc, installs into /usr/local/lib/tomato/native (the same layout install-native.sh makes, so
-# `tomato update` keeps working) and links /usr/local/bin/tomato. Programs still need clang to compile (Xcode command line tools).
+# (arm64 + x86_64) tomatoc and repl line editor (tomato-repl-edit), installs into /usr/local/lib/tomato/native (the same layout
+# install-native.sh makes, so `tomato update` keeps working) and links /usr/local/bin/tomato. Programs still need clang to compile (Xcode command line tools).
 # The package is always unsigned here; release/sign-pkg.sh signs and notarizes it (see docs/releasing.md).
 # Usage: release/pkg.sh   (macOS only; needs clang, lipo, pkgbuild, productbuild; run release/build.sh first so latest.json lists the package)
 set -e
@@ -20,6 +20,20 @@ for arch in arm64 x86_64; do
   clang -arch "$arch" -O1 -Wno-override-module -o "$work/tomatoc.$arch" "$root/compiler/bootstrap/tomatoc.ll" "$root/runtime/tomato_rt.c" -pthread -lm
 done
 lipo -create "$work/tomatoc.arm64" "$work/tomatoc.x86_64" -output "$payload/usr/local/lib/tomato/native/bin/tomatoc"
+# the repl's line editor, universal too: its IR once (the IR names no target), with the universal tomatoc just made, then per architecture
+# with the runtime, as for tomatoc. Fatal here, unlike in install-native.sh (where it is optional): a package never ships without it, or
+# with it for one architecture only
+lib="$payload/usr/local/lib/tomato/native"
+mkdir -p "$work/repledit"; cp "$root/compiler/src/repledit.tom" "$root/compiler/src/lexer.tom" "$work/repledit/"
+"$lib/bin/tomatoc" "$work/repledit/repledit.tom" main "$lib/std/" release > "$work/repledit.ll"
+for arch in arm64 x86_64; do
+  clang -arch "$arch" -O2 -DTOMATO_RELEASE -Wno-override-module -o "$work/repledit.$arch" "$work/repledit.ll" "$root/runtime/tomato_rt.c" -pthread -lm
+done
+lipo -create "$work/repledit.arm64" "$work/repledit.x86_64" -output "$lib/bin/tomato-repl-edit"
+case "$(lipo -archs "$lib/bin/tomato-repl-edit")" in
+  "x86_64 arm64"|"arm64 x86_64") ;;
+  *) echo "error: the repl line editor in the package is not universal: $(lipo -archs "$lib/bin/tomato-repl-edit")" >&2; exit 1 ;;
+esac
 ln -s ../lib/tomato/native/bin/tomato "$payload/usr/local/bin/tomato"
 # scripts: keep a foreign `tomato`, and hand the folder to the person installing so `tomato update` needs no sudo
 mkdir -p "$work/scripts"
