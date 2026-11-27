@@ -247,6 +247,30 @@ ran {\?25h8\r\n} "the old variable is still there"
 send "\004"
 ended 14 "variable redeclaration"
 
+# a variable declared again takes the place of the old one: an earlier line that used it runs with the new one, the old value is dropped,
+# a redeclaration with a type an earlier line does not fit is refused with a hint (the old variable stays), and the history keeps every entry
+start_repl 15 "TOMATO_HISTORY=$work/hist15"
+prompt "variable replaced in place"
+send "rv: int = 1\r"
+prompt "the variable"
+send "print(rv)\r"
+ran {\?25h1\r\n} "the value"
+send "rv: int = 5\r"
+ran {\?25h} "the redeclaration runs (no error, no output)"
+send "print(rv + 1)\r"
+ran {\?25h6\r\n} "the old value is gone"
+send "rv: str = \"a\"\r"
+want {cannot use '\+' with} "the redeclaration an earlier line does not fit is refused"
+want {the earlier declaration is kept} "the hint"
+prompt "after the refusal"
+send "rv * 2\r"
+ran {\?25h10\r\n} "the old variable is still there"
+send "\004"
+ended 15 "variable replaced in place"
+set hist [exec cat $work/hist15]
+if {[llength [split [string trim $hist] "\n"]] != 6} { fail "variable replaced in place: the history does not have 6 entries: $hist" }
+if {![string match "rv: int = 1\n*rv: int = 5\n*rv: str = \"a\"\n*" $hist]} { fail "variable replaced in place: the history holds every entry: $hist" }
+
 # ---- the colors ------------------------------------------------------------------------------------------------------------
 # The code is colored as it is typed, lowered to the terminal's colors: 24 bits (COLORTERM), 256 (TERM), 16. --color=always wins over
 # NO_COLOR, --color=never and NO_COLOR (and TOMATO_COLOR=never) leave the text plain, and TOMATO_COLOR=always works like the flag. The

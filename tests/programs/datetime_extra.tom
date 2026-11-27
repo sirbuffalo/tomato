@@ -87,6 +87,8 @@ def main():
     a = datetime(2024, 3, 9, 16, 30, 15, 250000)
     print(a.replace())
     print(a.replace(year=2000))
+    print(a.replace(year=None, hour=None))
+    print(a.replace(year=2001, month=None, day=None, hour=None, minute=None, second=None, microsecond=None))
     print(a.replace(month=12, day=31))
     print(a.replace(hour=0, minute=0, second=0, microsecond=0))
     print(a.replace(microsecond=7))

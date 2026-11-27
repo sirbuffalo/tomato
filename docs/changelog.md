@@ -134,6 +134,11 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
 - The repl accepts a function, class or interface that is defined again (it was E120 "defined twice"): the new one replaces the old
   everywhere in the session, so earlier lines and the objects they made use it; it is refused, and the old one kept, when an earlier
   line no longer works with it. A recalled and edited `def`, or `:load` of a changed file, now just works.
+- A variable declared again in the repl (`x: int = 2`) replaces the earlier declaration where it stood, as a redefined function does, so
+  an earlier line that used it (`print(x)`) uses the new one (it was moved to the end, and that line failed). It may have another type;
+  it is refused, and the old variable kept, when an earlier line no longer works with it (D104a).
+- The parts of `datetime.replace` (`year` ... `microsecond`) are `int | None = None` (they were `int | bool = False`); leave a part
+  out or pass `None` to keep it. `False` is a compile error now (D104a).
 - The repl reports precise import errors; the site editor, repl and VS Code auto-indent after a colon line.
 - The repl edits whole blocks (D88a, replacing D59a's `[Enter] run  [e] edit`): Up and Down recall a block as its real lines, the
   arrows move between them, Enter runs a complete piece and continues on an open bracket (`x = (1,`), paste and resize work,

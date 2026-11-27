@@ -2242,6 +2242,31 @@ hint: the earlier lines of the session run again with the new P, and one of them
 def tomato_repl_main():
     x: int = 1
     print(x + 1)" "$(printf 'x: int = 1\nx: int = "a"\nx + 1\n:program\n:quit\n' | $t repl 2>&1)"
+  check "repl: a redeclared variable takes the place of the old one, so an earlier line that used it runs with the new value" "1
+2
+@main
+def tomato_repl_main():
+    x: int = 2
+    print(x)
+    print(x)" "$(printf 'x: int = 1\nprint(x)\nx: int = 2\nprint(x)\n:program\n:quit\n' | $t repl 2>&1)"
+  check "repl: a variable redeclared with another type, with every earlier line fitting it" "1
+2.5
+@main
+def tomato_repl_main():
+    x: float = 2.5
+    print(x)
+    print(x)" "$(printf 'x: int = 1\nprint(x)\nx: float = 2.5\nx\n:program\n:quit\n' | $t repl 2>&1)"
+  check "repl: a redeclaration an earlier line does not fit is refused at that line, with a hint, and the old variable and its value stay" "error[E190]: cannot use '+' with str and int
+ --> session:2:7
+  |
+2 | y = x + 1
+  |       ^
+hint: the earlier lines of the session run again with the new declaration of x, and one of them does not work with it; the earlier declaration is kept
+2" "$(printf 'x: int = 1\ny = x + 1\nx: str = "a"\ny\n:quit\n' | $t repl 2>&1)"
+  printf 'x: int = 3\nprint(x + 1)\n' > "$work/v2.tom"
+  check "repl: a variable redeclared from one declared after it is put at the end of the session instead" "20" "$(printf 'x: int = 1\ny: int = 2\nx: int = y * 10\nx\n:quit\n' | $t repl 2>&1)"
+  check "repl: a piece that redeclares a variable and has statements shows only the output of the statements after it" "1
+4" "$(printf 'x: int = 1\nprint(x)\n:load %s\n:quit\n' "$work/v2.tom" | $t repl 2>&1)"
   check "repl: after a refused redefinition :program still has the old definition" "1
 def f(n: int) -> int:
     return n

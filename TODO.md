@@ -8,10 +8,6 @@
   Its ranked list ("Decisions to make, ranked"): triage `docs/provisional.md`, release-mode error messages, builtin shadowing, the `@` namespace and `x is T`, `bytes`, `File` safety, reserved std module names and the `!` interface. Each needs Davis's decision, then a decision entry and the change.
 - Check the shell-to-Tomato plan's open Mac points on a Mac
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
-- Change `datetime.replace` part parameters from `int | bool = False` to `int | None = None`
-  `datetime.replace` still takes year, month, day, hour, minute, second and microsecond as `int | bool = False`; convert them to `int | None = None` like `offset_minutes` (D94a), and update the callers, docs and tests.
-- Replace a redeclared repl variable in place
-  A redeclared variable moves to the end of the session's statements, so an earlier line that used it (`print(x)` between `x: int = 1` and `x: int = 2`) fails with 'name x is not defined'. Pre-existing; replace the declaration in place instead.
 - Run the new `sys_async` test on macOS
   Check the kqueue wait on pipes and the `/dev/fd` listing (`tests/programs/sys_async.tom`, and the open-files check in `tests/programs/sys_run.tom`); everything of D98b was tested on Linux only.
 - Write the init name with `printf`, not `echo`, in `native/tomato`
