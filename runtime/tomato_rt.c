@@ -9084,11 +9084,14 @@ int64_t tomato_bf_parse_cstr(const char *text, int position) {
 #define BF_MAX_EXP_BITS 65536
 #define BF_MAX_FORMAT_DIGITS 100000
 static int64_t bf_max_exp_bits = BF_MAX_EXP_BITS, bf_max_format_digits = BF_MAX_FORMAT_DIGITS;
+/* the exponent size that stopped the last ** (tomato_bf_pow_check answering 3): bf_max_exp_bits, or 2^31 for a power of two, whose result is
+ * exact and quick up to the size the runtime can build; the message of E528 names it */
+static _Thread_local int64_t bf_pow_limit_bits = 0;
 void tomato_set_limits(int64_t exp_bits, int64_t format_digits) { bf_max_exp_bits = exp_bits; bf_max_format_digits = format_digits; }
 /* the message of E528 (kind 528) or E529 (529) with the limit in it, for the compiled code that raises it */
 void *tomato_limit_message(int32_t kind) {
     char text[160];
-    if (kind == 528) snprintf(text, sizeof text, "the result is too large to calculate: its exponent would have more than %lld bits", (long long)bf_max_exp_bits);
+    if (kind == 528) { snprintf(text, sizeof text, "the result is too large to calculate: its exponent would have more than %lld bits", (long long)(bf_pow_limit_bits ? bf_pow_limit_bits : bf_max_exp_bits)); bf_pow_limit_bits = 0; }
     else snprintf(text, sizeof text, "the number is too large to write with f: it has more than %lld digits before the point", (long long)bf_max_format_digits);
     return tomato_str_from_cstr(text);
 }
@@ -9182,7 +9185,12 @@ int32_t tomato_bf_pow_check(int64_t x, int64_t y) {
     int odd;
     if (a.m == 0) return b.m < 0;
     if (a.m < 0 && !bf_whole(b, &odd)) return 2;
-    return b.m != 0 && (bf_boxed(x) || bf_boxed(y)) && fabs(a.m) != 1 && bf_exp_too_big(&a, b) ? 3 : 0;   /* (a power of two is exact and quick, as 1 is) */
+    if (b.m == 0 || !(bf_boxed(x) || bf_boxed(y))) return 0;
+    bf_pow_limit_bits = 0;
+    if (fabs(a.m) != 1) return bf_exp_too_big(&a, b) ? 3 : 0;
+    /* a power of two is exact and quick, as 1 is, up to the 2^31 bits of exponent that bf_pow can build (the exponent is a.e y) */
+    if (!bi_zero(a.e) && bf_whole(b, &odd) && (!int_is_small(b.e) || int_small_val(b.e) > INT_MAX_SHIFT || int_small_val(b.e) - 52 + bi_bits(a.e) > INT_MAX_SHIFT)) { bf_pow_limit_bits = INT_MAX_SHIFT; return 3; }
+    return 0;
 }
 
 static int64_t bf_pow(int64_t x, int64_t y) {
@@ -9198,7 +9206,7 @@ static int64_t bf_pow(int64_t x, int64_t y) {
     if (one && bi_zero(a.e)) return bf_bits(neg ? -1.0 : 1.0);
     if (one && whole) {                                              /* 2^(e y), exactly, in case y is huge */
         int64_t k = bf_count(b.e) - 52;
-        if (k + bi_bits(a.e) > INT_MAX_SHIFT) out_of_memory();      /* the result's exponent would have more than 2^31 bits */
+        if (k + bi_bits(a.e) > INT_MAX_SHIFT) out_of_memory();      /* (tomato_bf_pow_check stops this first) */
         int64_t e = bi_mul(bi((int64_t)ldexp(b.m, 52)), tomato_int_dup(a.e));
         return bf_make(neg ? -1.0 : 1.0, bi_shift(e, k));            /* (no bits are lost: y is whole) */
     }

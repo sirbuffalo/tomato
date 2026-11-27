@@ -20,6 +20,14 @@ def attempt(name: str, x: float) -> str:
             return f'pow {size(10.0 ** x)}'
         if name == 'pow2':
             return f'pow2 {size(2.0 ** x)}'
+        if name == 'pow2big':
+            return f'pow2big {size(2.0 ** x)}'
+        if name == 'pow2neg':
+            return f'pow2neg {size(0.5 ** x)}'
+        if name == 'pow2sq':
+            return f'pow2sq {size(x ** x)}'
+        if name == 'pow2mod':
+            return f'pow2mod {size((-2.0) ** x)}'
         if name == 'pow1':
             return f'pow1 {1.0 ** x}'
         return f'f {len(f"{x:.2f}")}'
@@ -40,6 +48,15 @@ def main():
     print(attempt('expm1', big))
     print(attempt('pow2', huge))            # a power of two is exact and quick
     print(attempt('pow1', huge))
+    # a power of two whose result's exponent would need more than 2^31 bits: an OverflowError that names 2^31, not E349 (the
+    # configured exp_bits does not apply to a power of two, which is exact and quick below that size)
+    h = 2.0 ** 1e300
+    print(attempt('pow2big', h))
+    print(attempt('pow2neg', h))
+    print(attempt('pow2sq', h))
+    print(attempt('pow2mod', h))
+    print(attempt('pow2big', -h))
+    print(attempt('pow', h))                # not a power of two: the exp_bits limit
     print(attempt('exp', 1e300))            # a double: far below the limit
     print(attempt('f', float('1e99999')))   # 100,000 digits
     print(attempt('f', float('1e100000')))  # 100,001

@@ -56,7 +56,7 @@ Results are the exact value rounded once, to nearest, ties to even (D05ae), exce
 | `i64 tomato_bf_add / _sub / _mul / _div(i64 x, i64 y, i32 m)` | `/`: `y` is not zero (the compiler tests it, as today) |
 | `i64 tomato_bf_floordiv(i64 x, i64 y, i32 m)` | `x // y` as Python gives it: two doubles use Python's `float_divmod` (`fmod`, then `(x - r) / y`, corrected: D87a); a box, or a quotient beyond a double, gets the floor of the exact quotient (its magnitude's ceiling when negative) rounded once. `y` is not zero |
 | `i64 tomato_bf_mod(i64 x, i64 y, i32 m)` | the exact remainder with the sign of `y` (a zero too: `-6.0 % 2.0` is `0.0`, `6.0 % -2.0` is `-0.0`), as Python gives it |
-| `i32 tomato_bf_pow_check(i64 x, i64 y)` | 0 when `x ** y` has a value, 1 for zero to a negative power (ZeroDivisionError), 2 for a negative number to a power that is not whole (ValueError) |
+| `i32 tomato_bf_pow_check(i64 x, i64 y)` | 0 when `x ** y` has a value, 1 for zero to a negative power (ZeroDivisionError), 2 for a negative number to a power that is not whole (ValueError), 3 for a result whose exponent would have more than `exp_bits` bits, or, for a power of two, more than 2^31 bits (OverflowError, E528) |
 | `i64 tomato_bf_pow(i64 x, i64 y, i32 m)` | call the check first |
 | `i64 tomato_bf_neg / _abs(i64 x, i32 m)` | use these, not `fneg`, which would break a box |
 | **text** | |
@@ -104,7 +104,7 @@ the C library's, on scaled operands. `sin`, `cos` and `tan` of a box above `2^10
 ## Limits
 
 - `exp` and `**` need as many bits of log 2 as the result's exponent has, in quadratic time: an exponent of 100,000 bits takes about a second. A
-  result whose exponent would need more than 2^31 bits (or a whole part, a digit string or a power of ten of more than 2^31 bits) is "out of memory". Powers of two to a whole power (`2.0 ** y`) are exact and quick.
+  result whose exponent would need more than 2^31 bits (or a whole part, a digit string or a power of ten of more than 2^31 bits) is "out of memory", except for `**`, which checks first (below). Powers of two to a whole power (`2.0 ** y`) are exact and quick, so `exp_bits` does not apply to them; only a result whose exponent would need more than 2^31 bits (`2.0 ** (2.0 ** 1e300)`, `0.5 ** h`, `h ** h`) is an `OverflowError` (E528, with 2^31 = 2147483648 in the message in place of `exp_bits`: `tomato_bf_pow_check` leaves the bound in a thread-local that `tomato_limit_message(528)` reads and clears).
 - **Refused beyond a size (D77f).** The time of `exp`, `expm1`, `sinh`, `cosh` and `**` grows with the square of the number of bits of the result's exponent
   (`exp(1e100000)`, 332,000 bits: 7.7 s on a loaded machine), so a result whose exponent needs more than `bf_max_exp_bits` (65,536 unless configured) bits is an `OverflowError`
   (E528) before any work: `tomato_bf_exp_check` for the four functions (called by `std/math.tom` when the argument is above 1e300 in size) and the code 3 of

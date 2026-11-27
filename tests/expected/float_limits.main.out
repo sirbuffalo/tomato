@@ -15,6 +15,12 @@ expm1 True
 expm1 the result is too large to calculate: its exponent would have more than 65536 bits
 pow2 30006
 pow1 1.0
+pow2big the result is too large to calculate: its exponent would have more than 2147483648 bits
+pow2neg the result is too large to calculate: its exponent would have more than 2147483648 bits
+pow2sq the result is too large to calculate: its exponent would have more than 2147483648 bits
+pow2mod the result is too large to calculate: its exponent would have more than 2147483648 bits
+pow2big the result is too large to calculate: its exponent would have more than 2147483648 bits
+pow the result is too large to calculate: its exponent would have more than 65536 bits
 exp 320
 f 100003
 f the number is too large to write with f: it has more than 100000 digits before the point
