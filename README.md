@@ -1,4 +1,4 @@
-<h1 align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="site/assets/tomato-logo-full-dark.svg"><img src="site/assets/tomato-logo-full.svg" alt="Tomato" height="96"></picture></h1>
+<h1 align="center"><img src="site/assets/tomato-logo-full.svg#gh-light-mode-only" alt="Tomato" height="96"><img src="site/assets/tomato-logo-full-dark.svg#gh-dark-mode-only" alt="Tomato" height="96"></h1>
 
 Tomato is a statically typed, reference-counted language with indentation syntax, compiled through LLVM, designed by Davis McDowell. Its compiler is written in Tomato and compiles itself; there is no other implementation.
 
