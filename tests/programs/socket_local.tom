@@ -31,9 +31,10 @@ async def sink(server: socket.Server) -> int:
     c = await server.accept()
     return await drain(c)
 
-async def silent(server: socket.Server):
+# says nothing until it is told to hang up: the read that times out must not race a timer of this task
+async def silent(server: socket.Server, told: asyncio.Event):
     c = await server.accept()
-    await sleep(0.2)
+    await told.wait()
     c.close()
 
 async def reader(c: socket.Socket):
@@ -100,12 +101,14 @@ async def main():
     c.close()
     print('received', await t, 'bytes')
     # a timeout on a read: the read is cancelled cleanly and the connection still works
-    q = start silent(server)
+    bye = asyncio.Event()
+    q = start silent(server, bye)
     d = await socket.connect('127.0.0.1', server.port)
     try:
         await asyncio.wait_for(start d.recv(10), 0.05)
     catch asyncio.TimeoutError:
         print('read timed out')
+    bye.set()
     print('then:', await d.recv(10))
     try:
         await d.send([1, 256])

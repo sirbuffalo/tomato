@@ -92,5 +92,9 @@ def main():
     print(m2 >= m, monotonic_ns() >= n, float(n) / 1.0e9 >= m - 1.0 and float(n) / 1.0e9 <= m2 + 1.0)
     w = Stopwatch()
     x = monotonic()
-    print(x >= m, w.elapsed() >= 0.0, w.restart() >= 0.0, w.elapsed() < 5.0)
+    rs = w.restart()
+    el = w.elapsed()
+    y = monotonic()
+    # no fixed limit that a loaded machine could pass: the restart came after x and the elapsed time was read before y
+    print(x >= m, rs >= 0.0, el >= 0.0, el <= y - x)
     print(clock() >= m)

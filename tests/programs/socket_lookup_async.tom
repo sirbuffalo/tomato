@@ -13,4 +13,4 @@ async def main():
         print('lookup cancelled')
     a = await socket.getaddrinfo('127.0.0.1', 1)
     print('next lookup:', a[0].host)
-    await sleep(0.4)
+    await sleep(1.2)

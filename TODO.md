@@ -4,8 +4,6 @@
   Use `--dry-run --version 1.0.0` (or `--from linux`) so ssh, copy-back, the publish gate and the snapshot are exercised end to end, with `--linux-host` reachable from the Mac. The Linux step's remote script alone ran fine on biggie: the full tier passed 842 tests with `TOMATO_TEST_REQUIRE_LTO=1` at load about 62 (not quiet).
 - Decide the seed registry design and record it (stage 0 of docs/package-registry-design.md)
   Answer the five open questions at the end of `docs/package-registry-design.md` (human power over the registry, key-only owners, how `.tom` files name a seed, an `os.run` in `std`, whether `tomato run` may fetch), then record a decision entry (D-number) for seeds in `docs/decisions.md` and a short section in `docs/specification.md`.
-- Make the short async deadlines in tests robust under load
-  `tests/programs/async_toolkit.tom` (lines 254-274: `wait_for` deadlines of 0.01-0.02 s against 0.01 s sleeps), `async_sync.tom:75` and `time_module.tom:95` race the wall clock like `socket_fair` did before the audit gave its timers one shared deadline. They passed at load 63 but have no margin.
 - Make `sum()`, `min()`, `max()` and `sorted()` work on a list of angles
   They are compile errors today (the builtins take numbers or text only); make them work on anything with `@lt`/`@add`, or give `Angle` helpers.
 - Give `Angle` a `@hash` so angles can be dict keys and set elements
