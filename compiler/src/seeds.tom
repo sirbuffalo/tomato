@@ -11,7 +11,7 @@ from manifest import Manifest, SeedReq, entry_markers_of, read_manifest, check_t
 from compiler import std_modules
 from parser import parse
 from manedit import add_entry, remove_entries
-from seedstore import store_dir, make_scratch, remove_tree, fetch_tree, git_url_problem, is_commit_id
+from seedstore import store_dir, make_scratch, remove_tree, fetch_tree, resolve_ref, git_url_problem, is_commit_id, ref_problem, subdir_problem
 from hashlib import sha256_hex
 from utf8 import encode
 from os import listdir, stat, read_bytes, write_bytes, read_text, write_text, getcwd, makedirs, rename
@@ -23,7 +23,7 @@ export class Locked:
     name: str = ''
     version: str = ''
     source: str = ''           # 'path' or 'git' (what this version can install); the design's 'registry' is read, not built
-    path: str = ''             # source 'path': as written in tomato.toml
+    path: str = ''             # source 'path': as written in tomato.toml; source 'git': the folder of the repository that holds the seed ('' for the root)
     git: str = ''              # source 'git': the URL as written in tomato.toml
     commit: str = ''           # source 'git': the commit, 40 hex digits (the manifest's rev)
     hash: str = ''             # 'sha256:' and the hex of the seed hash v1
@@ -39,6 +39,7 @@ export class Opts:
     yes: bool = False          # accept the foreign symbols without asking
     tty: bool = False          # standard input is a terminal, so there may be a question
     test: bool = False         # add: into [test-seeds]
+    dry_run: bool = False      # update: show what would change, write nothing
 
 export def opts_from(words: list[str]) -> Opts:
     o = Opts()
@@ -47,6 +48,7 @@ export def opts_from(words: list[str]) -> Opts:
     o.yes = 'yes' in words
     o.tty = 'tty' in words
     o.test = 'test' in words
+    o.dry_run = 'dry-run' in words
     return o
 
 def fail(code: int, path: str, text: str):
@@ -201,13 +203,24 @@ def vendor_folder(m: Manifest, name: str) -> str:
         return ''
     return root + '/' + name
 
-def git_source_problem(m: Manifest, name: str, url: str, rev: str):
-    label = f'the seed {name}' if name != '' else f'the seed at {url}'
-    why = git_url_problem(url)
+def git_source_problem(m: Manifest, r: SeedReq):
+    label = f'the seed {r.name}' if r.name != '' else f'the seed at {r.url}'
+    why = git_url_problem(r.url)
     if why != '':
         fail(598, m.path, f'the git URL of {label} cannot be used: {why}')
-    if not is_commit_id(rev):
-        fail(598, m.path, f'the rev "{rev}" of {label} is not a full commit id (40 lowercase hex digits): a tag or a branch moves, so the manifest names the commit (git rev-parse TAG^{{commit}} prints it)')
+    if not is_commit_id(r.rev):
+        fail(598, m.path, f'the rev "{r.rev}" of {label} is not a full commit id (40 lowercase hex digits): a tag or a branch moves, so the manifest names the commit (git rev-parse TAG^{{commit}} prints it)')
+    if r.tag != '':
+        why = ref_problem(r.tag)
+        if why != '':
+            fail(598, m.path, f'the tag "{r.tag}" of {label} cannot be used: {why}')
+    if r.branch != '':
+        why = ref_problem(r.branch)
+        if why != '':
+            fail(598, m.path, f'the branch "{r.branch}" of {label} cannot be used: {why}')
+    why = subdir_problem(r.subdir)
+    if why != '':
+        fail(598, m.path, f'the path "{r.subdir}" of {label} cannot be used: {why} (it is a folder of the repository, written with / and no leading or trailing slash)')
 
 def changed_copy(m: Manifest, s: Locked, folder: str, actual: str):
     fix = 'run `tomato seed vendor` to copy it again' if folder == vendor_folder(m, s.name) else 'remove the folder and run `tomato seed install` to fetch it again'
@@ -218,7 +231,7 @@ def fetch_git_seed(m: Manifest, r: SeedReq, have: str, expect: str) -> Locked:
     s = Locked()
     try:
         tree = scratch + '/tree'
-        commit = fetch_tree(r.url, r.rev, tree, scratch)
+        commit = fetch_tree(r.url, r.rev, tree, scratch, r.subdir)
         s = describe_folder(m, r.name, tree, have)
         if expect != '' and s.hash != expect:
             fail(601, m.path, f'the seed {s.name} fetched from {r.url} at {r.rev[:12]} has the content hash {s.hash}, but tomato.lock says {expect}: the repository does not hold what was locked (nothing was stored)')
@@ -233,6 +246,7 @@ def fetch_git_seed(m: Manifest, r: SeedReq, have: str, expect: str) -> Locked:
         s.source = 'git'
         s.git = r.url
         s.commit = commit
+        s.path = r.subdir
     finally:
         remove_tree(scratch)
     return s
@@ -241,12 +255,23 @@ def fetch_git_seed(m: Manifest, r: SeedReq, have: str, expect: str) -> Locked:
 def find_git_entry(lists: list[list[Locked]], r: SeedReq) -> Locked | None:
     for entries in lists:
         for e in entries:
-            if e.source == 'git' and e.git == r.url and e.commit == r.rev and (r.name == '' or e.name == r.name):
+            if e.source == 'git' and e.git == r.url and e.commit == r.rev and e.path == r.subdir and (r.name == '' or e.name == r.name):
                 return e
     return None
 
+# the checks of git_source_problem for a requirement with no rev yet (--tag and --branch of `seed add`): the URL, the names and the path
+def git_source_problem_ref(m: Manifest, r: SeedReq):
+    probe = SeedReq()
+    probe.name = r.name
+    probe.url = r.url
+    probe.rev = '0' * 40
+    probe.tag = r.tag
+    probe.branch = r.branch
+    probe.subdir = r.subdir
+    git_source_problem(m, probe)
+
 def locked_git_seed(m: Manifest, r: SeedReq, have: str, lists: list[list[Locked]], opts: Opts) -> Locked:
-    git_source_problem(m, r.name, r.url, r.rev)
+    git_source_problem(m, r)
     found = find_git_entry(lists, r)
     if found is not None:
         # the lock knows the content hash: a copy in the store (or the vendor folder) is checked against it, and only a missing one is fetched
@@ -260,6 +285,7 @@ def locked_git_seed(m: Manifest, r: SeedReq, have: str, lists: list[list[Locked]
                 s.source = 'git'
                 s.git = r.url
                 s.commit = r.rev
+                s.path = r.subdir
                 return s
         if opts.offline:
             fail(605, m.path, f'the seed {found.name} is not in the seed store ({store_dir(found.hash)}) or the vendor folder, and --offline does not run git: run `tomato seed install` once with the network')
@@ -279,9 +305,17 @@ def str_array(items: list[str]) -> Toml:
         a.append(string(s))
     return a
 
+# the format version a lock is written with: 1, the first, and 2 only when an entry uses what version 1 cannot say, a git seed's `path`. An
+# older Tomato reads version 1 only and stops on a 2 with "not version 1" instead of building another tree from the same URL and commit
+export def lock_version(seeds: list[Locked]) -> int:
+    for s in seeds:
+        if s.source == 'git' and s.path != '':
+            return 2
+    return 1
+
 export def lock_text(seeds: list[Locked]) -> str:
     doc = table()
-    doc.put('version', integer(1))
+    doc.put('version', integer(lock_version(seeds)))
     list_t = array()
     for s in sorted(seeds, key=x -> x.name):
         t = table()
@@ -293,6 +327,8 @@ export def lock_text(seeds: list[Locked]) -> str:
         if s.source == 'git':
             t.put('git', string(s.git))
             t.put('commit', string(s.commit))
+            if s.path != '':
+                t.put('path', string(s.path))
         t.put('hash', string(s.hash))
         t.put('modules', str_array(s.modules))
         if len(s.symbols) > 0:
@@ -325,8 +361,11 @@ def string_list(path: str, t: Toml, key: str) -> list[str]:
 
 export def read_lock(path: str) -> list[Locked]:
     doc = read_toml(path)
-    if not doc.has('version') or doc.lookup('version').kind != 'integer' or doc.lookup('version').num != 1:
-        fail(578, path, 'this lock is not version 1 (a newer Tomato wrote it?): run `tomato seed install` to write it again')
+    version = 0
+    if doc.has('version') and doc.lookup('version').kind == 'integer':
+        version = doc.lookup('version').num
+    if version != 1 and version != 2:
+        fail(578, path, 'this lock is not version 1 or 2 (a newer Tomato wrote it?): run `tomato seed install` to write it again')
     out: list[Locked] = []
     if doc.has('seed'):
         a = doc.lookup('seed')
@@ -344,6 +383,10 @@ export def read_lock(path: str) -> list[Locked]:
             if s.source == 'git':
                 s.git = must_string(path, t, 'git')
                 s.commit = must_string(path, t, 'commit')
+                if t.has('path'):
+                    if version < 2:
+                        fail(578, path, 'a git [[seed]] entry has a path, which only a lock of version 2 has: the lock is damaged, run `tomato seed install`')
+                    s.path = must_string(path, t, 'path')
             s.hash = must_string(path, t, 'hash')
             s.modules = string_list(path, t, 'modules')
             s.symbols = string_list(path, t, 'symbols')
@@ -375,6 +418,51 @@ def old_lock(m: Manifest) -> list[Locked]:
             out = read_lock(path)
         catch ConfigError as e:
             out = []
+    return out
+
+# the lock's entry for a seed, or None
+def entry_named(entries: list[Locked], name: str) -> Locked | None:
+    for e in entries:
+        if e.name == name:
+            return e
+    return None
+
+def short_hash(h: str) -> str:
+    return h[:19] + '...' if len(h) > 19 else h
+
+# what changes in one seed when the lock is written again (`tomato seed update`): the version, the commit and the content hash, and the
+# foreign symbols the lock does not hold yet (those make the command ask, or with --dry-run say it would)
+def change_lines(before: list[Locked], s: Locked, fresh: list[str], opts: Opts) -> list[str]:
+    out: list[str] = []
+    old = entry_named(before, s.name)
+    if old is None:
+        out.append(f'{s.name}: {s.version} is new in tomato.lock')
+    else:
+        was = old
+        same = was.version == s.version and was.hash == s.hash and was.commit == s.commit and was.git == s.git and was.path == s.path and was.source == s.source
+        if same:
+            out.append(f'{s.name} {s.version}: unchanged')
+        else:
+            if was.version != s.version:
+                out.append(f'{s.name}: {was.version} -> {s.version}')
+            else:
+                out.append(f'{s.name} {s.version}: changed')
+            if s.source == 'git' and was.commit != s.commit:
+                out.append(f'  commit  {was.commit[:12]} -> {s.commit[:12]}')
+            if was.hash != s.hash:
+                out.append(f'  hash    {short_hash(was.hash)} -> {short_hash(s.hash)}')
+            if was.version != s.version:
+                c = compare_versions(s.version, was.version)
+                if c < 0:
+                    out.append(f'  warning: the version went down, from {was.version} to {s.version}')
+                elif not same_line(s.version, was.version):
+                    out.append(f'  note: {s.version} is not on the compatible line of {was.version} (a new major version, or a new minor one below 1.0)')
+    if len(fresh) > 0:
+        names = ', '.join(fresh)
+        if opts.dry_run:
+            out.append(f'  new foreign symbols: {names} (the update would ask you to accept them)')
+        else:
+            out.append(f'  new foreign symbols: {names} (you are asked below)')
     return out
 
 def site_lines(s: Locked, fresh: list[str]) -> list[str]:
@@ -416,7 +504,7 @@ def consent(m: Manifest, s: Locked, fresh: list[str], opts: Opts):
     if not ask_yes():
         fail(602, m.path, f'the foreign symbols of {s.name} were not accepted; nothing was changed')
 
-def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], approved: dict[str, list[str]]) -> Relocked:
+def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], approved: dict[str, list[str]], report: list[str]) -> Relocked:
     m = read_manifest(manifest_path)
     check_tomato(m, have)
     wanted = seeds_for(m, False, True)
@@ -439,11 +527,16 @@ def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], appro
             if e.name == s.name:
                 accepted = accepted + e.symbols
         fresh = [x for x in s.symbols if x not in accepted]
-        if len(fresh) > 0:
+        if s.name in report:
+            # what `seed update` changes in this seed, shown before the question about its new symbols
+            for line in change_lines(old, s, fresh, opts):
+                print(line)
+        if len(fresh) > 0 and not opts.dry_run:
             consent(m, s, fresh, opts)
         out.seeds.append(s)
         if s.source == 'git':
-            out.said.append(f'{s.name} {s.version}  {s.hash}  (git {s.git} {s.commit[:12]})')
+            where = f'git {s.git} {s.commit[:12]}' + (f' path {s.path}' if s.path != '' else '')
+            out.said.append(f'{s.name} {s.version}  {s.hash}  ({where})')
         else:
             out.said.append(f'{s.name} {s.version}  {s.hash}  (path {s.path})')
     # two seeds that both provide a module cannot be in one program (section 5)
@@ -463,12 +556,15 @@ def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], appro
     if len(out.seeds) == 0 and not have_lock:
         out.said.append('the manifest lists no seeds: nothing to lock')
         return out
+    if opts.dry_run:
+        out.said.append('dry run: tomato.toml and tomato.lock are as they were')
+        return out
     write_text(path, text)
     out.said.append(f'wrote {path} ({len(out.seeds)} seed' + ('' if len(out.seeds) == 1 else 's') + ')')
     return out
 
 export def install(manifest_path: str, have: str, opts: Opts) -> list[str]:
-    return relock(manifest_path, have, opts, [], {}).said
+    return relock(manifest_path, have, opts, [], {}, []).said
 
 # ---------------------------------------------------------------------------------------------------------------------
 # a build: the lock against the manifest, and the module map of the seeds the build uses ([test-seeds] too when `tests`). Each line is `module TAB file TAB label`
@@ -508,7 +604,7 @@ export def module_map(m: Manifest, tests: bool) -> list[str]:
             if found.source != 'path' or found.path != r.path:
                 fail(569, m.path, f'tomato.lock has the seed {r.name} from another source than the path "{r.path}" in tomato.toml{help}')
         elif r.kind == 'git':
-            if found.source != 'git' or found.git != r.url or found.commit != r.rev:
+            if found.source != 'git' or found.git != r.url or found.commit != r.rev or found.path != r.subdir:
                 fail(569, m.path, f'tomato.lock has the seed {r.name} from another source than the git URL and rev in tomato.toml{help}')
         elif r.kind == 'version':
             if found.source == 'path' or found.source == 'git' or compare_versions(found.version, r.version) < 0 or not same_line(found.version, r.version):
@@ -538,16 +634,40 @@ export def module_map(m: Manifest, tests: bool) -> list[str]:
 # manifest is put back as it was
 
 export class AddSpec:
-    kind: str = 'path'         # 'path' (--path DIR) or 'git' (--git URL --rev COMMIT)
+    kind: str = 'path'         # 'path' (--path DIR) or 'git' (--git URL with --rev COMMIT, --tag TAG or --branch BRANCH)
     path: str = ''             # the folder as the user wrote it, relative to the current folder
     url: str = ''
     rev: str = ''
+    tag: str = ''              # git: a tag, resolved to its commit now; `seed update` follows it
+    branch: str = ''           # git: a branch, the same
+    subdir: str = ''           # git: the folder of the repository that holds the seed (--subdir)
+
+# the manifest's value of a git seed: { git = "URL", rev = "COMMIT" } and, when set, tag or branch, and path
+def git_value(r: SeedReq) -> str:
+    v = '{ git = ' + dumps_value(string(r.url)) + ', rev = ' + dumps_value(string(r.rev))
+    if r.tag != '':
+        v += ', tag = ' + dumps_value(string(r.tag))
+    if r.branch != '':
+        v += ', branch = ' + dumps_value(string(r.branch))
+    if r.subdir != '':
+        v += ', path = ' + dumps_value(string(r.subdir))
+    return v + ' }'
+
+# the commit that the tag or branch of a git seed points at now (git runs; nothing else is touched)
+def resolve_follow(m: Manifest, r: SeedReq) -> str:
+    scratch = make_scratch()
+    commit = ''
+    try:
+        commit = resolve_ref(r.url, r.tag, r.branch, scratch)
+    finally:
+        remove_tree(scratch)
+    return commit
 
 # one line for each requirement of every table, sorted: what an edit may change and nothing else
 def req_keys(m: Manifest) -> list[str]:
     out: list[str] = []
     for r in m.reqs:
-        out.append(f'{r.table}|{r.name}|{r.kind}|{r.version}|{r.url}|{r.rev}|{r.path}')
+        out.append(req_key(r))
     return sorted(out)
 
 # the manifest at path, read again after an edit: it must be the old requirements without those of `name` (in `table` only, when it is
@@ -557,7 +677,7 @@ def check_edit(path: str, before: Manifest, name: str, table: str, added: str, b
     for r in before.reqs:
         if r.name == name and (table == '*' or r.table == table):
             continue
-        expected.append(f'{r.table}|{r.name}|{r.kind}|{r.version}|{r.url}|{r.rev}|{r.path}')
+        expected.append(req_key(r))
     if added != '':
         expected.append(added)
     after = Manifest()
@@ -570,7 +690,7 @@ def check_edit(path: str, before: Manifest, name: str, table: str, added: str, b
         fail(603, path, f'tomato.toml has a form this command does not edit (a dotted key, a multi-line value, a table written another way): it was put back as it was. {by_hand}')
 
 def req_key(r: SeedReq) -> str:
-    return f'{r.table}|{r.name}|{r.kind}|{r.version}|{r.url}|{r.rev}|{r.path}'
+    return f'{r.table}|{r.name}|{r.kind}|{r.version}|{r.url}|{r.rev}|{r.path}|{r.tag}|{r.branch}|{r.subdir}'
 
 export def add(manifest_path: str, have: str, spec: AddSpec, opts: Opts) -> list[str]:
     m = read_manifest(manifest_path)
@@ -602,9 +722,18 @@ export def add(manifest_path: str, have: str, spec: AddSpec, opts: Opts) -> list
         req.kind = 'git'
         req.url = spec.url
         req.rev = spec.rev
+        req.tag = spec.tag
+        req.branch = spec.branch
+        req.subdir = spec.subdir
+        if spec.tag != '' or spec.branch != '':
+            # a tag or a branch names the commit the manifest holds (a build never follows it): git is asked once, here
+            if opts.offline:
+                fail(605, m.path, f'--offline does not run git, and {spec.tag if spec.tag != "" else spec.branch} has to be looked up in {spec.url}: use --rev COMMIT, or run it with the network')
+            git_source_problem_ref(m, req)
+            req.rev = resolve_follow(m, req)
         s = locked_git_seed(m, req, have, [old], opts)
         req.name = s.name
-        value = '{ git = ' + dumps_value(string(req.url)) + ', rev = ' + dumps_value(string(req.rev)) + ' }'
+        value = git_value(req)
     # the question comes before anything is written
     accepted: list[str] = []
     for e in old:
@@ -620,12 +749,12 @@ export def add(manifest_path: str, have: str, spec: AddSpec, opts: Opts) -> list
     done = False
     try:
         check_edit(manifest_path, m, s.name, req.table, req_key(req), f'Add this line to [{where}] yourself: "{s.name}" = {value}')
-        said = relock(manifest_path, have, opts, [s], {s.name: s.symbols}).said
+        said = relock(manifest_path, have, opts, [s], {s.name: s.symbols}, []).said
         done = True
     finally:
         if not done:
             write_text(manifest_path, original)
-    said.insert(0, f'added {s.name} {s.version} to [{where}] of {manifest_path}')
+    said.insert(0, f'added {s.name} {s.version} to [{where}] of {manifest_path}' + (f' (tag {req.tag} is at {req.rev[:12]})' if req.tag != '' else '') + (f' (branch {req.branch} is at {req.rev[:12]})' if req.branch != '' else ''))
     return said
 
 export def remove(manifest_path: str, have: str, name: str, opts: Opts) -> list[str]:
@@ -648,13 +777,123 @@ export def remove(manifest_path: str, have: str, name: str, opts: Opts) -> list[
     done = False
     try:
         check_edit(manifest_path, m, name, '*', '', f'Remove the line of "{name}" yourself')
-        said = relock(manifest_path, have, opts, [], {}).said
+        said = relock(manifest_path, have, opts, [], {}, []).said
         done = True
     finally:
         if not done:
             write_text(manifest_path, original)
     where = ' and '.join(tables)
     said.insert(0, f'removed {name} from {where} of {manifest_path}')
+    return said
+
+# ---------------------------------------------------------------------------------------------------------------------
+# tomato seed update [NAME...] [--dry-run] (design sections 4 and 12): lock the named seeds (all, with no name) again from where they come
+# from. There is no registry, so there are no newer versions to look up; what moves is the commit of a git seed that follows a tag or a branch
+# (`tag = "v1"` or `branch = "main"` beside its rev in tomato.toml): git is asked where the tag or branch is now, and when that is another commit
+# the rev in tomato.toml is changed to it (the same text edit as `add`) and the seed is fetched, hashed and locked: the new version, commit and
+# content hash go into tomato.lock and the lines say what changed. A version bump asks nothing; a foreign symbol the lock does not hold asks
+# again, as `add` does (the consent rule, D101a), and one refusal changes nothing. A git seed with no tag or branch is pinned to its commit
+# and is left as it is (say so); a path seed is read again, as `install` does. --dry-run does all of it but the writes: tomato.toml and
+# tomato.lock stay as they are (a seed that had to be fetched is kept in the store, which is only a cache named by hash).
+
+# the manifest's requirements with the named seeds' revs replaced: what an edit of `update` may leave behind
+def moved_keys(m: Manifest, moved: dict[str, str]) -> list[str]:
+    out: list[str] = []
+    for r in m.reqs:
+        if r.name in moved:
+            copy = SeedReq()
+            copy.table = r.table
+            copy.name = r.name
+            copy.kind = r.kind
+            copy.url = r.url
+            copy.rev = moved[r.name]
+            copy.tag = r.tag
+            copy.branch = r.branch
+            copy.subdir = r.subdir
+            out.append(req_key(copy))
+        else:
+            out.append(req_key(r))
+    return out
+
+def check_moved(path: str, expected: list[str], by_hand: str):
+    after = Manifest()
+    try:
+        after = read_manifest(path)
+    catch ConfigError as e:
+        fail(603, path, f'the edit would leave tomato.toml unreadable ({e.message}); it was put back as it was. {by_hand}')
+    seeds_for(after, False, True)
+    if req_keys(after) != sorted(expected):
+        fail(603, path, f'tomato.toml has a form this command does not edit (a dotted key, a multi-line value, a table written another way): it was put back as it was. {by_hand}')
+
+export def update(manifest_path: str, have: str, names: list[str], opts: Opts) -> list[str]:
+    m = read_manifest(manifest_path)
+    check_tomato(m, have)
+    if m.kind != 'project':
+        what = 'a seed (a package can use only registered seeds, and there is no registry yet)' if m.kind == 'seed' else 'neither a project nor a seed'
+        fail(604, m.path, f'seeds are updated in a [project], and this file is {what}')
+    wanted = seeds_for(m, False, True)
+    for n in names:
+        known = False
+        for r in wanted.reqs:
+            if r.name == n:
+                known = True
+        if not known:
+            fail(604, m.path, f'{n} is not in [seeds] or [test-seeds] of this tomato.toml (the seeds here: {", ".join([r.name for r in wanted.reqs])})')
+    if len(wanted.reqs) == 0:
+        return ['the manifest lists no seeds: nothing to update']
+    selected: list[str] = []
+    moved: dict[str, str] = {}
+    for r in wanted.reqs:
+        if len(names) > 0 and r.name not in names:
+            continue
+        selected.append(r.name)
+        if r.kind == 'version':
+            fail(571, m.path, f'the seed {r.name} {r.version} would come from a registry, and there is none yet; only {{ path = "../folder" }} and {{ git = "URL", rev = "COMMIT" }} seeds can be updated')
+        if r.kind != 'git':
+            continue
+        if r.tag == '' and r.branch == '':
+            print(f'{r.name}: pinned to the commit {r.rev[:12]}, with no tag or branch to follow (add tag = "..." or branch = "..." to its line in tomato.toml, or: tomato seed add --git {r.url} --rev NEWCOMMIT)')
+            continue
+        if opts.offline:
+            fail(605, m.path, f'--offline does not run git, and the tag or branch of {r.name} has to be looked up in {r.url}')
+        git_source_problem(m, r)
+        commit = resolve_follow(m, r)
+        follows = f'tag {r.tag}' if r.tag != '' else f'branch {r.branch}'
+        if commit == r.rev:
+            print(f'{r.name}: {follows} is still at {r.rev[:12]}')
+        else:
+            print(f'{r.name}: {follows} is now at {commit[:12]} (was {r.rev[:12]})')
+            moved[r.name] = commit
+    original = read_text(manifest_path)
+    lock_before = ''
+    if isfile(lock_path(m)):
+        lock_before = read_text(lock_path(m))
+    said: list[str] = []
+    done = False
+    try:
+        if len(moved) > 0:
+            text = original
+            for r in m.reqs:
+                if r.name in moved:
+                    copy = SeedReq()
+                    copy.url = r.url
+                    copy.rev = moved[r.name]
+                    copy.tag = r.tag
+                    copy.branch = r.branch
+                    copy.subdir = r.subdir
+                    text = add_entry(text, 'test-seeds' if r.table == 'test' else 'seeds', r.name, git_value(copy))
+            write_text(manifest_path, text)
+            check_moved(manifest_path, moved_keys(m, moved), 'Change the rev of ' + ', '.join(sorted(moved.keys())) + ' yourself')
+        got = relock(manifest_path, have, opts, [], {}, selected)
+        said = [got.said[len(got.said) - 1]]
+        if not opts.dry_run and isfile(lock_path(m)) and read_text(lock_path(m)) == lock_before:
+            said = ['tomato.lock is already up to date']
+        done = True
+    finally:
+        if (opts.dry_run or not done) and len(moved) > 0:
+            write_text(manifest_path, original)
+    if opts.dry_run and len(moved) > 0:
+        said.append('the seeds above would move; run without --dry-run to do it')
     return said
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -680,7 +919,7 @@ export def vendor(manifest_path: str, have: str, opts: Opts) -> list[str]:
     if root == '':
         root = m.dir + 'vendor'
     opts.locked = True
-    got = relock(manifest_path, have, opts, [], {})
+    got = relock(manifest_path, have, opts, [], {}, [])
     said: list[str] = []
     for s in got.seeds:
         source = store_dir(s.hash) if s.source == 'git' else seed_folder(m, s.path)
@@ -700,6 +939,92 @@ export def vendor(manifest_path: str, have: str, opts: Opts) -> list[str]:
     elif m.vendor == '':
         said.append('builds use the vendor folder once tomato.toml says so: add  [seed-store]  vendor = "vendor"')
     return said
+
+# ---------------------------------------------------------------------------------------------------------------------
+# tomato seed verify (design sections 6 and 12): every copy of every locked seed is hashed again (seed hash v1) and compared with
+# tomato.lock: a git seed's folder in the store, the vendor folder's copy when [seed-store] vendor is set, and the folder of a path seed
+# (a working folder that a build does not check; here it is, so a lock that went out of date after an edit shows). One line for each copy;
+# a missing copy, a content hash that is not the lock's, or a module the lock lists that the copy lacks, is a problem, and any problem ends
+# the command with an error (exit status 1) after all the lines. Nothing is fetched and nothing is written.
+
+# '' when the folder is a copy of the seed as the lock holds it, else what is wrong with it
+def copy_problem(s: Locked, folder: str) -> str:
+    actual = ''
+    try:
+        actual = seed_hash(folder)
+    catch ConfigError as e:
+        return e.message
+    if actual != s.hash:
+        return f'has the content hash {actual}, but tomato.lock says {s.hash}'
+    for mod in s.modules:
+        if not isfile(f'{folder}/src/{mod}.tom'):
+            return f'has no src/{mod}.tom, which tomato.lock lists as a module of the seed'
+    return ''
+
+export def verify(manifest_path: str, have: str) -> list[str]:
+    m = read_manifest(manifest_path)
+    check_tomato(m, have)
+    path = lock_path(m)
+    if not isfile(path):
+        wanted = seeds_for(m, False, True)
+        if len(wanted.reqs) == 0:
+            return ['there is no tomato.lock and the manifest lists no seeds: nothing to verify']
+        fail(569, m.path, f'the manifest lists seeds, but there is no tomato.lock beside it\n  = help: run: tomato seed install')
+    lock = read_lock(path)
+    if len(lock) == 0:
+        return ['tomato.lock holds no seeds: nothing to verify']
+    problems = 0
+    copies = 0
+    for s in lock:
+        label = f'{s.name} {s.version}'
+        if s.source != 'git' and s.source != 'path':
+            print(f'PROBLEM  {label}: it comes from a {s.source}, which this version cannot check (there is no registry)')
+            problems += 1
+            continue
+        vfolder = vendor_folder(m, s.name)
+        places: list[str] = []         # `kind TAB folder`
+        if s.source == 'git':
+            try:
+                places.append('store\t' + store_dir(s.hash))
+            catch ConfigError as e:
+                print(f'PROBLEM  {label}: {e.message}')
+                problems += 1
+        else:
+            places.append('path\t' + seed_folder(m, s.path))
+        if vfolder != '':
+            places.append('vendor\t' + vfolder)
+        for place in places:
+            parts = place.split('\t')
+            kind = parts[0]
+            folder = parts[1]
+            if not isdir(folder):
+                if kind == 'path' and vfolder != '':
+                    print(f'skipped  {label}: the folder {folder} is not here, and the build uses the vendor copy')
+                    continue
+                fix = 'tomato seed vendor' if kind == 'vendor' else 'tomato seed install'
+                if kind == 'path':
+                    print(f'MISSING  {label}: the {kind} folder {folder} is not there')
+                else:
+                    print(f'MISSING  {label}: the {kind} copy {folder} is not there (run: {fix})')
+                problems += 1
+                continue
+            copies += 1
+            why = copy_problem(s, folder)
+            if why == '':
+                print(f'ok       {label}  {kind}: {folder}')
+            else:
+                fix = ''
+                if kind == 'vendor':
+                    fix = '; run: tomato seed vendor'
+                elif kind == 'store':
+                    fix = '; remove the folder and run: tomato seed install'
+                else:
+                    fix = '; the folder was edited after it was locked: run: tomato seed install'
+                print(f'CHANGED  {label}: the {kind} copy {folder} {why}{fix}')
+                problems += 1
+    if problems > 0:
+        raise ConfigError(606, f'{path}: verify found {problems} problem' + ('' if problems == 1 else 's') + f' in {len(lock)} locked seeds ({copies} copies checked)')
+    return [f'verified {copies} cop' + ('y' if copies == 1 else 'ies') + f' of {len(lock)} locked seed' + ('' if len(lock) == 1 else 's') + ': all match tomato.lock']
 
 # ---------------------------------------------------------------------------------------------------------------------
 # tomato seed check and tomato seed hash

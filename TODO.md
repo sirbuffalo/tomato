@@ -24,5 +24,5 @@
   `tomato run hello.tom --mode ""` runs in debug mode with no error (the empty word means "no flag"); `--mode release` and a bad word are checked.
 - Narrow an optional by assignment of a non-None value
   `if x is None: x = default` should leave `x` a `T` for the rest of the block, as Python's checkers do. D102a narrows only by tests: an assignment ends the narrowing and the variable is `T | None` again whatever was assigned. Make the end of an `if` know it when its branch assigns a value of type `T`, and extend it to a plain `x = value` of a `T` value, keeping the statement rule of D102a for everything else.
-- Add `tomato seed verify` and `tomato seed update`, and the `[[source]]` `path`
-  Add `tomato seed verify` and `tomato seed update` (re-hash the store and vendor folders against the lock; raise a git seed's rev), and the `[[source]]` `path` for a repository that holds several seeds. Today an update of a git seed is `tomato seed add --git URL --rev NEWCOMMIT` (D101a).
+- Add a bare-clone cache for seed fetches
+  Bare-clone cache `~/.tomato/seeds/git/` (design section 6): `seed update` fetches the tag and then the commit with `--depth 1` each time; a cache would fetch only new objects.

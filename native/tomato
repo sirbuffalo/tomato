@@ -9,7 +9,9 @@
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
 #   tomato seed install [--locked] [--offline] [--yes]                lock the seeds of tomato.toml (path and git seeds) into tomato.lock, fetching a git seed into ~/.tomato/seeds; --locked checks without writing, --offline never runs git
-#   tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline]   list a local or git seed in [seeds] (--test: [test-seeds]) of tomato.toml and lock it; it lists the !name(...) symbols the seed declares and asks to accept them (--yes: do not ask)
+#   tomato seed add --path DIR | --git URL (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]   list a local or git seed in [seeds] (--test: [test-seeds]) of tomato.toml and lock it; a tag or branch is looked up once and its commit written as the rev (update follows it), --subdir is the folder of the repository that holds the seed; it lists the !name(...) symbols the seed declares and asks to accept them (--yes: do not ask)
+#   tomato seed update [NAME...] [--dry-run] [--yes]                  lock the named seeds (all with no name) again: a git seed that follows a tag or branch gets the commit it points at now (new rev in tomato.toml, new hash in tomato.lock); asks only about new !name(...) symbols; --dry-run writes nothing
+#   tomato seed verify                                                hash every locked seed in the store, the vendor folder and the path folders again and compare with tomato.lock: exit 1 on a missing or changed copy
 #   tomato seed remove NAME                                           drop a seed from [seeds] and [test-seeds] and lock again
 #   tomato seed vendor [--offline]                                    copy the locked seeds into the vendor folder ([seed-store] vendor, default vendor/)
 #   tomato seed check                                                 check the seed in this folder (its tomato.toml and src/ modules) and print its content hash
@@ -502,9 +504,9 @@ case "$cmd" in
     out="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
     printf '%s\n' "$out"; exit 0 ;;
   seed)
-    # tomato seed install|add|remove|vendor|check|hash: the compiler does the work (it reads the manifest, hashes the files, runs git for a git
+    # tomato seed install|add|remove|update|verify|vendor|check|hash: the compiler does the work (it reads the manifest, hashes the files, runs git for a git
     # seed and writes tomato.toml and tomato.lock); this script reads the words, finds the manifest and prints what the compiler says. The
-    # commands that may ask (install, add) leave standard output alone, so their question reaches the terminal; the compiler is told with
+    # commands that may ask (install, add, update) leave standard output alone, so their question reaches the terminal; the compiler is told with
     # `tty` that standard input is one.
     sub="${1:-}"; [ -n "$sub" ] || usage
     shift
@@ -518,22 +520,38 @@ case "$cmd" in
                  esac
                  shift
                done ;;
-      add) mode_set=0
+      add) mode_set=0; arev=""; atag=""; abranch=""; asub=""
+           addusage="usage: tomato seed add --path DIR | --git URL (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]"
            while [ $# -gt 0 ]; do
              case "$1" in
-               --path) [ $# -ge 2 ] || die "--path needs a folder (usage: tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline])"; arg="$2"; mode_set=$((mode_set + 1)); shift ;;
-               --git) [ $# -ge 2 ] || die "--git needs a URL (usage: tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline])"; arg="$2"; mode_set=$((mode_set + 10)); shift ;;
-               --rev) [ $# -ge 2 ] || die "--rev needs a commit id"; rev="$2"; shift ;;
+               --path) [ $# -ge 2 ] || die "--path needs a folder ($addusage)"; arg="$2"; mode_set=$((mode_set + 1)); shift ;;
+               --git) [ $# -ge 2 ] || die "--git needs a URL ($addusage)"; arg="$2"; mode_set=$((mode_set + 10)); shift ;;
+               --rev) [ $# -ge 2 ] || die "--rev needs a commit id"; arev="$2"; shift ;;
+               --tag) [ $# -ge 2 ] || die "--tag needs a tag name"; atag="$2"; shift ;;
+               --branch) [ $# -ge 2 ] || die "--branch needs a branch name"; abranch="$2"; shift ;;
+               --subdir) [ $# -ge 2 ] || die "--subdir needs a folder of the repository"; asub="$2"; shift ;;
                --test) seedopt test ;; --yes) seedopt yes ;; --offline) seedopt offline ;;
-               *) die "unknown option '$1' for 'tomato seed add' (usage: tomato seed add --path DIR | --git URL --rev COMMIT [--test] [--yes] [--offline])" ;;
+               *) die "unknown option '$1' for 'tomato seed add' ($addusage)" ;;
              esac
              shift
            done
            case "$mode_set" in
-             1) [ -z "$rev" ] || die "--rev goes with --git, not with --path" ;;
-             10) [ -n "$rev" ] || die "a git seed needs --rev COMMIT (the full commit id: a tag or a branch moves)" ;;
+             1) [ -z "$arev$atag$abranch$asub" ] || die "--rev, --tag, --branch and --subdir go with --git, not with --path" ;;
+             10) n=0; [ -z "$arev" ] || n=$((n + 1)); [ -z "$atag" ] || n=$((n + 1)); [ -z "$abranch" ] || n=$((n + 1))
+                 [ "$n" = 1 ] || die "a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH ($addusage)"
+                 seedopt git
+                 rev="$(printf '%s\t%s\t%s\t%s' "$arev" "$atag" "$abranch" "$asub")" ;;
              *) die "tomato seed add takes --path DIR or --git URL --rev COMMIT, one of them once (a registry name is not supported yet: there is no registry)" ;;
            esac ;;
+      update) while [ $# -gt 0 ]; do
+                case "$1" in
+                  --dry-run) seedopt dry-run ;; --yes) seedopt yes ;;
+                  -*) die "unknown option '$1' for 'tomato seed update' (usage: tomato seed update [NAME...] [--dry-run] [--yes])" ;;
+                  *) arg="${arg:+$arg }$1" ;;
+                esac
+                shift
+              done ;;
+      verify) [ $# -eq 0 ] || die "tomato seed verify takes no words (usage: tomato seed verify)" ;;
       remove) [ $# -eq 1 ] || usage
               case "$1" in -*) die "unknown option '$1' for 'tomato seed remove' (usage: tomato seed remove NAME)" ;; esac
               arg="$1" ;;
@@ -546,12 +564,12 @@ case "$cmd" in
               done ;;
       check) [ $# -eq 0 ] || usage ;;
       hash) [ $# -le 1 ] || usage; arg="${1:-.}" ;;
-      *) die "unknown seed command '$sub' (run 'tomato help'; the commands here are install, add, remove, vendor, check and hash)" ;;
+      *) die "unknown seed command '$sub' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check and hash)" ;;
     esac
     find_config .
     if [ "$sub" != hash ] && [ -z "$project_cfg" ]; then die "there is no tomato.toml in this folder or a parent folder"; fi
     case "$sub" in
-      install|add|remove|vendor)
+      install|add|remove|vendor|update|verify)
         [ -t 0 ] && seedopt tty
         errf="$(mktemp "${TMPDIR:-/tmp}/tomato-seed.XXXXXX")" || die "cannot make a temporary file"
         if TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$sub" --seed "$std" "$arg" "$project_cfg" "$rev" "$sflags" 2> "$errf"; then

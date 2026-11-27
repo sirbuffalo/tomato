@@ -24,6 +24,9 @@ export class SeedReq:
     url: str = ''              # kind 'git'
     rev: str = ''
     path: str = ''             # kind 'path': as written (relative to the manifest's folder)
+    tag: str = ''              # kind 'git': the tag `tomato seed update` follows ('' for none; the rev is the commit it named when it was added or updated)
+    branch: str = ''           # kind 'git': the branch `update` follows (a seed has a tag or a branch, not both)
+    subdir: str = ''           # kind 'git': the folder of the repository that holds the seed (`path` in the manifest, design section 6), '' for the root
     table: str = ''            # '' for [seeds], 'test' for [test-seeds] (D94b)
 
 # the settings of [build] ('' table) or of one [build.ENTRY]; an unset setting is ''
@@ -259,20 +262,30 @@ def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
             fail(560, m.path, f'{label} is "{v.text}", which is not a version: {problem}')
         req.version = v.text
     elif v.is_table():
-        has_git = v.has('git') or v.has('rev')
-        if v.has('path'):
-            if has_git:
-                fail(568, m.path, f'{label} has path and also git or rev: it is one or the other')
+        has_git = v.has('git') or v.has('rev') or v.has('tag') or v.has('branch')
+        if has_git and not v.has('git') and v.has('path'):
+            fail(568, m.path, f'{label} has path and also rev, tag or branch but no git: a path seed is only {{ path = "../folder" }}, and a git seed needs git (its path is the folder of the repository)')
+        if has_git:
+            # a git seed: git and rev (the commit that is built), optionally tag or branch (what `tomato seed update` follows) and path (the
+            # folder of the repository that holds the seed)
+            known(m.path, v, label, ['git', 'rev', 'tag', 'branch', 'path'])
+            req.kind = 'git'
+            req.url = required(m.path, v, label, 'git')
+            req.rev = required(m.path, v, label, 'rev')
+            if v.has('tag') and v.has('branch'):
+                fail(568, m.path, f'{label} has tag and also branch: a seed follows one or the other')
+            if v.has('tag'):
+                req.tag = need_string(m.path, v.lookup('tag'), f'{label}.tag')
+            if v.has('branch'):
+                req.branch = need_string(m.path, v.lookup('branch'), f'{label}.branch')
+            if v.has('path'):
+                req.subdir = need_string(m.path, v.lookup('path'), f'{label}.path')
+        elif v.has('path'):
             known(m.path, v, label, ['path'])
             req.kind = 'path'
             req.path = need_string(m.path, v.lookup('path'), f'{label}.path')
             if req.path == '':
                 fail(559, m.path, f'{label}.path must not be empty')
-        elif has_git:
-            known(m.path, v, label, ['git', 'rev'])
-            req.kind = 'git'
-            req.url = required(m.path, v, label, 'git')
-            req.rev = required(m.path, v, label, 'rev')
         else:
             fail(568, m.path, f'{label} is an empty table: write a version such as "1.2.0", or {{ git = "URL", rev = "COMMIT" }} or {{ path = "../folder" }}')
     else:
@@ -488,7 +501,7 @@ def merge_req(m: Manifest, old: SeedReq, new: SeedReq) -> SeedReq:
         fail(564, m.path, f'the seed {old.name} is written as a {old.kind} seed in {where_req(old)} and as a {new.kind} seed in {where_req(new)}: it must be one source')
     if old.kind == 'path' and old.path != new.path:
         fail(564, m.path, f'the seed {old.name} has the path "{old.path}" in {where_req(old)} and "{new.path}" in {where_req(new)}')
-    if old.kind == 'git' and (old.url != new.url or old.rev != new.rev):
+    if old.kind == 'git' and (old.url != new.url or old.rev != new.rev or old.tag != new.tag or old.branch != new.branch or old.subdir != new.subdir):
         fail(564, m.path, f'the seed {old.name} has two different git sources in {where_req(old)} and {where_req(new)}')
     if old.kind == 'version' and compare_versions(new.version, old.version) > 0:
         old.version = new.version
@@ -518,6 +531,9 @@ export def seeds_for(m: Manifest, tests: bool, every_table: bool) -> Wanted:
             copy.url = r.url
             copy.rev = r.rev
             copy.path = r.path
+            copy.tag = r.tag
+            copy.branch = r.branch
+            copy.subdir = r.subdir
             copy.table = r.table
             out.reqs.append(copy)
             out.tables.append([r.table])

@@ -70,7 +70,7 @@ checks it the same way; it has no folders, so no seeds.
 | --- | --- |
 | `[project]` | a program that uses seeds: `name`, `version`, `tomato` (all three required) |
 | `[seed]` | a package: `name` (`owner/name`), `version`, `tomato` (required), `description`, `license`, `modules` (optional) |
-| `[seeds]` | the seeds every build uses, each `"owner/name" = "1.2.0"` (a minimum version) or, in a project only, `{ path = "../folder" }` or `{ git = "URL", rev = "COMMIT" }` |
+| `[seeds]` | the seeds every build uses, each `"owner/name" = "1.2.0"` (a minimum version) or, in a project only, `{ path = "../folder" }` or `{ git = "URL", rev = "COMMIT" }` (git also takes `tag` or `branch`, which `tomato seed update` follows, and `path`, the folder of the repository that holds the seed) |
 | `[test-seeds]` | the same forms, used only by `tomato test` (and the option `--test-seeds`); a seed's own `[test-seeds]` is read only by `tomato test` in that seed, never by its users |
 | `[build]`, `[build.ENTRY]` | `mode` (`"debug"` or `"release"`) and `output` (a path); `target` is reserved |
 | `[seed-store]` | `vendor = "folder"`: where `tomato seed vendor` copies the locked seeds, and where a build then takes them from (a folder below the project's) |
@@ -154,7 +154,11 @@ tomato seed install [--locked] [--offline] [--yes]   lock every seed of both tab
                                  (--locked: check it, write nothing; --offline: never run git; --yes: accept foreign symbols)
 tomato seed add --path DIR       list a local seed in [seeds] of tomato.toml and lock it (--test: in [test-seeds])
 tomato seed add --git URL --rev COMMIT   the same for a seed from git (the rev is a full 40-digit commit id)
+tomato seed add --git URL --tag TAG | --branch BRANCH   the same, looking the tag or branch up once; its commit is the rev and `update` follows it
+tomato seed add --git URL --rev COMMIT --subdir DIR   the seed is the folder DIR of the repository (several seeds in one repository)
 tomato seed remove NAME          drop the seed from [seeds] and [test-seeds], lock again
+tomato seed update [NAME...] [--dry-run] [--yes]   lock the named seeds (all with no name) again; a git seed that follows a tag or branch moves to its commit now
+tomato seed verify               hash every locked seed again (store, vendor folder, path folders) against tomato.lock; exit 1 on a problem
 tomato seed vendor               copy the locked seeds into the vendor folder ([seed-store] vendor, default vendor/)
 tomato seed check                check the seed of this folder (its manifest, its src/ modules, the owner) and print its hash
 tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
@@ -171,8 +175,10 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   (mode `755` when the owner's execute bit is set, else `644`, as git records it; paths sorted bytewise) of every file under the folder except a `.git` folder and a top-level `builds/` folder (D94b); a symbolic link is
   refused (E576). `tests/run.sh` computes the same with `find`, `sort` and `sha256sum`.
 - **`tomato.lock`** (next to the manifest, committed) holds `version = 1` and a `[[seed]]` for every seed of both tables, sorted by
-  name: `name`, `version` (the seed's own), `source = "path"` with `path` (as written) or `"git"` with `git` and `commit`, `hash`, `modules`, `symbols` (only when the seed declares foreign symbols), `seeds = []`, and `test_only = true`
-  only for a seed `[seeds]` does not list (design section 3; it replaced `entries`, D94b). There is no `index` field yet.
+  name: `name`, `version` (the seed's own), `source = "path"` with `path` (as written) or `"git"` with `git`, `commit` and, for a seed in a folder of its repository, `path`, `hash`, `modules`, `symbols` (only when the seed declares foreign symbols), `seeds = []`, and `test_only = true`
+  only for a seed `[seeds]` does not list (design section 3; it replaced `entries`, D94b). There is no `index` field yet. **The format version** is `version = 1`, and `version = 2` only when an entry has a git `path`
+  (what version 1 cannot say; an older Tomato reads 1 only, and stops at a 2 with "not version 1 or 2 ... a newer Tomato wrote it" instead of hashing another tree of the same URL and commit): a lock with no such entry is written as 1, byte for
+  byte as before, and a version 1 lock that has a git `path` is a damaged lock (E578). Any other version is E578.
 - **A build never resolves.** `run`, `build`, `compile` and `test` read the lock and check that each seed the build uses is in it,
   from the same path, and meets the minimum; if not they stop with `run: tomato seed install` (E569). A path seed is a working
   folder, so a build does **not** re-hash it (edit it freely): `tomato seed install --locked` is the check that the lock matches
@@ -201,7 +207,14 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
 ### Git seeds and the store (D101a)
 
 - `{ git = "URL", rev = "COMMIT" }`: the URL is `https://`, `ssh://`, `file://`, `host:path` or an absolute folder (`ext::`, `-...`, other schemes
-  and relative folders are refused, E598); the rev must be a full commit id (a tag moves, so `git rev-parse TAG^{commit}` is typed once).
+  and relative folders are refused, E598); the rev must be a full commit id (a tag moves, so a build never follows one: `git rev-parse TAG^{commit}` is typed once, or `seed add --tag` does it).
+- **`tag` and `branch` (D103a).** `{ git = "URL", rev = "COMMIT", tag = "v1.2" }` (or `branch = "main"`, not both) says what `tomato seed update` follows; the `rev` stays the commit that
+  is built, so the manifest and a build are as exact as before. `seed add --git URL --tag v1.2` (or `--branch main`) asks git where it is (`refs/tags/v1.2` or `refs/heads/main`, an annotated tag followed to its
+  commit), writes that commit as `rev` and keeps the name. A name is plain: no leading hyphen, no space or control character, none of `~ ^ : ? * [ \`, no `..`, `//` or `@{` (E598).
+- **`path` (D103a, design sections 3 and 6): a repository that holds several seeds.** `{ git = "URL", rev = "COMMIT", path = "seeds/json5" }` (`seed add --subdir seeds/json5`) makes the folder `seeds/json5` of the commit the seed: only the files below it are
+  fetched into the store, it must hold the seed's `tomato.toml` and `src/` as a folder of its own would, and the content hash is that of those files alone (the `path` is not part of it: the same files in another repository have the same hash).
+  The rest of the repository is not looked at (a link or a submodule outside the folder does not matter; one inside it is E600). The path is a relative folder of plain parts with `/`: no leading or trailing slash, `.` or `..` part, backslash or `.git` (E598); a folder with no files, or a file, is E600. The lock keeps it as `path` (and is version 2, above).
+  Two seeds of one repository are two entries of the manifest with the same `git` and `rev` and different paths; one fetch each.
 - **The fetch** (`compiler/src/seedstore.tom`, through `sys.run`, no shell): a scratch bare repository under `~/.tomato/seeds/tmp/`,
   `git fetch --depth 1 URL COMMIT`, the commit checked to be the one asked for, `git ls-tree -r -z` and `git cat-file blob` of each file: **no
   checkout**, so no filter, hook or attribute can change a byte. `GIT_ALLOW_PROTOCOL` is `https:ssh` (plus `file` for a local URL), no prompts,
@@ -231,6 +244,25 @@ empty answer or `n` is no). `--yes` accepts without asking. With no terminal and
 lock entry; the entry has none when the seed declares none. A version that adds a name asks again; one that only drops names needs no answer. Moving the manifest back to an
 older commit records the older list. **A symbol's meaning is not checked**: it links a function of the runtime or of C into the program
 (a seed still cannot ship C or run build scripts); the question is the only gate.
+
+### `seed update` (D103a)
+
+`tomato seed update [NAME...] [--dry-run] [--yes]` locks the named seeds again (every seed with no name; a name that is not in the manifest is E604; a registry seed is E571). There is no registry, so nothing is "newest in its line": what moves is a git seed's commit.
+
+- **A git seed with `tag` or `branch`**: git is asked where the tag or branch is now (one `git fetch --depth 1`). If it is the commit of the manifest nothing happens (`tag v1 is still at ...`). If not, the `rev` of its line (in both
+  tables when it is in both) is replaced by the new commit with the same text edit as `add` (the comments, the order and the other keys stay), the seed is fetched, hashed and checked like any other, and **the new commit and the new content hash are always written into tomato.lock**.
+  The lines say what changed: `name: 1.0.0 -> 1.1.0`, the old and new commit, the old and new hash (shortened), and a `warning:` when the version went down or a `note:` when the new version is not on the compatible line of the old one (a major bump, or a new `0.y`); both are only said, nothing is refused.
+- **A version bump asks nothing.** The question about foreign symbols is the one of `add` (D101a): a `!name(...)` the lock does not hold for that seed lists the names with their module and line and asks `[y/N]` (`--yes` accepts; no terminal and no `--yes` is E602 and **nothing is changed in any seed**; an update that only drops names asks nothing).
+- **A git seed with no tag or branch** is pinned to its commit: the line says so and how to move it (`tomato seed add --git URL --rev NEWCOMMIT`, or add a `tag` or `branch` to its line). A **path seed** is read again, as `install` does, and the lines say if its version or hash changed.
+- **`--dry-run`** does all of it except the writes: tomato.toml and tomato.lock stay exactly as they were (a seed that had to be fetched stays in the store, which is a cache named by hash and not used by any lock that does not name it), the lines show the plan, and a new foreign symbol is reported as "the update would ask you to accept them". `--offline` is an error for a seed that follows a tag or branch (git has to be asked).
+- If anything fails (git, a hash, a refused question, two seeds that now provide one module) tomato.toml is put back as it was and tomato.lock is not written, as for `add`.
+
+### `seed verify` (D103a)
+
+`tomato seed verify` hashes every copy of every locked seed again (seed hash v1) and compares it with `hash` in tomato.lock, writing one line for each: `ok`, `CHANGED` (another content hash, a file the lock's `modules` lists that is not there, or a link in the copy),
+`MISSING` (the copy is not there) or `skipped`. The copies are the **store folder** of a git seed, the **vendor folder** of every seed when `[seed-store] vendor` is set, and the **folder of a path seed** (a working folder that a build does not check; a lock that went out of date after an edit shows here, and `install` writes it again). A path seed's folder that is gone while a vendor copy serves the build is `skipped`, not a problem.
+Any `CHANGED`, `MISSING` or seed from a registry (which this version cannot check) makes the command end with E606 and exit status 1, after all the lines; with none it prints `verified N copies of M locked seeds: all match tomato.lock` and exits 0. It never fetches and never writes. With no lock and no seeds in the manifest there is nothing to verify (exit 0); seeds without a lock is E569.
+`--inputs` and the list of revoked keys of design section 12 are not built (there are no signatures yet).
 
 ## Errors
 
@@ -263,25 +295,25 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E575 | a seed's modules do not fit its name, are missing, or there are none |
 | E576 | a symbolic link or other special file in a seed |
 | E577 | two seeds provide one module |
-| E578 | the lock is damaged, of another version, or `--locked` found it out of date |
+| E578 | the lock is damaged, of a version other than 1 or 2, or `--locked` found it out of date |
 | E579 | a seed module has a standard module's name |
 | E580 | `tomato seed check`: the owner is not one a registry accepts |
 | E581 | (a compile error) a module is in a seed and in the standard library |
 | E590 | a table below `[seeds]` or `[test-seeds]` (`[seeds.test]`): use `[test-seeds]` |
 | E591 | (a runtime error of a built program) its first word is no entry |
 | E592 | (a runtime error) a `File` input cannot be opened |
-| E598 | a git URL or rev that cannot be used (a scheme, `ext::`, a leading hyphen, a rev that is not a full commit id) |
+| E598 | a git URL, rev, tag, branch or path that cannot be used (a scheme, `ext::`, a leading hyphen, a rev that is not a full commit id, a `..` in a path) |
 | E599 | `git` failed (or is not installed), or the store folder cannot be made |
 | E600 | a git tree that cannot be a seed (a link, a submodule, an unsafe path, a file too large, a module that does not parse) |
 | E601 | the content hash of a fetched seed, a stored copy or a vendored copy is not the one in tomato.lock |
 | E602 | foreign symbols not accepted (no `--yes`, no terminal, `install --locked`, or the answer was no) |
 | E603 | `seed add` or `remove` cannot edit this tomato.toml safely (it was put back as it was) |
 | E604 | `seed add` or `remove` used on a file that is not a project, a seed that is not listed, or a vendor folder outside the project |
-| E605 | `--offline`: the seed is in neither the store nor the vendor folder |
+| E605 | `--offline`: the seed is in neither the store nor the vendor folder (or `update --offline` of a seed that follows a tag or branch) |
+| E606 | `tomato seed verify` found a missing copy or one that does not match tomato.lock (D103a) |
 
 ## Not built yet
 
-The registry, `index`, signatures, `tomato seed update/outdated/tree/verify/registry` (an update of a git seed is `seed add` with the new `--rev`), the seed's
-`path =` within a repository that holds several seeds, the bare-clone cache `~/.tomato/seeds/git/`, seeds that use seeds, MVS over a graph,
+The registry, `index`, signatures, `tomato seed outdated/tree/why/registry`, `seed verify --inputs`, `seed update --accept-owner-change`, the bare-clone cache `~/.tomato/seeds/git/`, seeds that use seeds, MVS over a graph,
 the index listing's record of symbols, visibility of which seed may import which
 (`docs/package-registry-design.md` sections 5 to 8, 12 and 15 stages 4 to 7).

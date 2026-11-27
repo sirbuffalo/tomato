@@ -21,7 +21,7 @@ check "seed hash: changed back, the same hash" "$h1" "$("$TOMATO" seed hash thin
 try "seed hash of a folder that is not there" 1 "" "error[E572]: nosuch is not a folder" seed hash nosuch
 try "seed hash of two folders" 2 "" @help.txt seed hash a b
 try "seed with no subcommand" 2 "" @help.txt seed
-try "seed with an unknown subcommand" 1 "" "error: unknown seed command 'bogus' (run 'tomato help'; the commands here are install, add, remove, vendor, check and hash)" seed bogus
+try "seed with an unknown subcommand" 1 "" "error: unknown seed command 'bogus' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check and hash)" seed bogus
 try "seed install with an unknown option" 1 "" "error: unknown option '--bogus' for 'tomato seed install' (run 'tomato help')" seed install --bogus
 try "seed install with a word that is no option" 1 "" "error: unknown option 'now' for 'tomato seed install' (run 'tomato help')" seed install --locked now
 try "seed check with a word" 2 "" @help.txt seed check now

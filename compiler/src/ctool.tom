@@ -3,7 +3,7 @@ from compiler import compile_module
 from config import ConfigError, load_limits, describe
 from diag import Diagnostic
 from manifest import read_manifest, check_tomato, build_for, describe_manifest, user_build_mode
-from seeds import module_map, install, check_seed, seed_hash, add, remove, vendor, opts_from, AddSpec
+from seeds import module_map, install, check_seed, seed_hash, add, remove, vendor, update, verify, opts_from, AddSpec
 from os import getenv
 from ospath import isdir
 from sys import version
@@ -21,8 +21,9 @@ def compiler_version() -> str:
     return got
 
 # `tomato seed ...` (native/tomato calls the compiler with the entry --seed): the subcommand is the first argument (install, check, hash,
-# add, remove or vendor), `arg` the word it takes (the folder to hash, a seed's name, the --path folder or the --git URL), `rev` the
-# --rev of add; the flags are words (locked, offline, yes, tty, test)
+# add, remove, vendor, update or verify), `arg` the word it takes (the folder to hash, a seed's name, the --path folder or the --git URL, or the
+# names of `update`, separated by spaces), `rev` what `add --git` takes besides the URL, four texts joined by tabs: the --rev (a commit id), --tag
+# and --branch (a name each, one of the three) and --subdir; the flags are words (locked, offline, yes, tty, test, git, dry-run)
 def seed_command(command: str, arg: str, project: str, rev: str, words: list[str]) -> list[str]:
     have = compiler_version()
     opts = opts_from(words)
@@ -34,18 +35,26 @@ def seed_command(command: str, arg: str, project: str, rev: str, words: list[str
         return check_seed(project, have)
     if command == 'add':
         spec = AddSpec()
-        if rev == '':
+        if 'git' not in words:
             spec.kind = 'path'
             spec.path = arg
         else:
+            parts = (rev + '\t\t\t').split('\t')
             spec.kind = 'git'
             spec.url = arg
-            spec.rev = rev
+            spec.rev = parts[0]
+            spec.tag = parts[1]
+            spec.branch = parts[2]
+            spec.subdir = parts[3]
         return add(project, have, spec, opts)
     if command == 'remove':
         return remove(project, have, arg, opts)
     if command == 'vendor':
         return vendor(project, have, opts)
+    if command == 'update':
+        return update(project, have, [n for n in arg.split(' ') if n != ''], opts)
+    if command == 'verify':
+        return verify(project, have)
     return install(project, have, opts)
 
 @compile

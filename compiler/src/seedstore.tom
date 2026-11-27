@@ -146,14 +146,65 @@ def path_problem(path: str) -> str:
             return 'a .git entry'
     return ''
 
-# fetches commit `rev` of the git repository `url` and writes its files into the folder `dest` (made here) with the modes git
-# records (755 for an executable file, 644 for the others). Returns the commit id. `scratch` is a folder made by make_scratch:
-# the bare repository that git works in goes there. Errors: E595 (a URL or a revision that cannot be used), E596 (git failed),
-# E597 (the tree cannot be a seed).
-export def fetch_tree(url: str, rev: str, dest: str, scratch: str) -> str:
+# the problem with a tag or branch name that `tomato seed update` follows ('' when it is fine): git's own rules for a ref name, a little
+# stricter, and never a leading hyphen (it would be read as an option of git)
+export def ref_problem(name: str) -> str:
+    if name == '':
+        return 'the name is empty'
+    if name.startswith('-'):
+        return 'a name cannot start with a hyphen (it would be read as an option of git)'
+    if name.startswith('/') or name.endswith('/') or name.endswith('.') or name.endswith('.lock'):
+        return 'a name does not start or end with a slash, and does not end with a dot or .lock'
+    if '..' in name or '//' in name or '@{' in name or name == '@':
+        return 'a name has no .., // or @{'
+    for c in name:
+        if ord(c) < 33 or ord(c) == 127 or c in '~^:?*[\\':
+            return 'a name has no spaces, control characters or any of ~ ^ : ? * [ and a backslash'
+    return ''
+
+# the problem with the folder of a repository that holds a seed ('' when it is fine; '' itself, the root, is fine): a relative path of
+# plain parts, no trailing slash, nothing git or the file system would read another way
+export def subdir_problem(path: str) -> str:
+    if path == '':
+        return ''
+    why = path_problem(path)
+    if why != '':
+        return why
+    return ''
+
+# the commit that the tag (or, with tag '', the branch) of the git repository `url` points at, fetched with the same limits as a seed's files
+# (`scratch` as for fetch_tree). An annotated tag is followed to its commit. Errors: E598 (a URL or a name that cannot be used), E599 (git failed:
+# the usual cause is a tag or branch that the repository does not have).
+export def resolve_ref(url: str, tag: str, branch: str, scratch: str) -> str:
     problem = git_url_problem(url)
     if problem != '':
         fail(598, f'the git URL "{url}" cannot be used: {problem}')
+    name = tag if tag != '' else branch
+    what = f'the tag {name}' if tag != '' else f'the branch {name}'
+    problem = ref_problem(name)
+    if problem != '':
+        fail(598, f'{what} of {url} cannot be used: {problem}')
+    repo = scratch + '/ref'
+    git(repo, url, ['init', '--bare', '-q'], 'git init')
+    ref = 'refs/tags/' + name if tag != '' else 'refs/heads/' + name
+    git(repo, url, ['fetch', '--quiet', '--depth', '1', '--no-tags', '--no-recurse-submodules', '--', url, ref], f'fetching {what} from {url}')
+    got = git(repo, url, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD^{commit}'], 'git rev-parse').strip()
+    if not is_commit_id(got):
+        fail(599, f'git did not give a commit for {what} of {url}')
+    return got
+
+# fetches commit `rev` of the git repository `url` and writes its files into the folder `dest` (made here) with the modes git
+# records (755 for an executable file, 644 for the others). With `subdir` (not '') the seed is that folder of the repository: only the
+# files below it are taken, and the folder is the seed's root (the rest of the repository is not looked at). Returns the commit id. `scratch` is a folder made by make_scratch:
+# the bare repository that git works in goes there. Errors: E595 (a URL or a revision that cannot be used), E596 (git failed),
+# E597 (the tree cannot be a seed).
+export def fetch_tree(url: str, rev: str, dest: str, scratch: str, subdir: str) -> str:
+    problem = git_url_problem(url)
+    if problem != '':
+        fail(598, f'the git URL "{url}" cannot be used: {problem}')
+    problem = subdir_problem(subdir)
+    if problem != '':
+        fail(598, f'the path "{subdir}" of the seed at {url} cannot be used: {problem}')
     if not is_commit_id(rev):
         fail(598, f'the revision "{rev}" of {url} is not a full commit id (40 lowercase hex digits): a tag or a branch moves, so the manifest names the commit (git rev-parse TAG^{{commit}} prints it)')
     repo = scratch + '/repo'
@@ -179,6 +230,13 @@ export def fetch_tree(url: str, rev: str, dest: str, scratch: str) -> str:
         path = entry[tab + 1:]
         if len(meta) != 4:
             bad_tree(url, rev, 'git listed its files in a form this version does not understand')
+        if subdir != '':
+            # a seed in a folder of the repository: what is outside it is not part of the seed and is not checked
+            if path == subdir:
+                bad_tree(url, rev, f'{path} is a file (or a link or a submodule), not a folder')
+            if not path.startswith(subdir + '/'):
+                continue
+            path = path[len(subdir) + 1:]
         if meta[0] == '120000':
             bad_tree(url, rev, f'{path} is a symbolic link, which a seed cannot contain (it could point outside the seed)')
         if meta[1] != 'blob' or (meta[0] != '100644' and meta[0] != '100755'):
@@ -203,6 +261,8 @@ export def fetch_tree(url: str, rev: str, dest: str, scratch: str) -> str:
         modes.append(meta[0])
         sizes.append(size)
     if len(names) == 0:
+        if subdir != '':
+            bad_tree(url, rev, f'it has no files in the folder {subdir} (is that path right?)')
         bad_tree(url, rev, 'it has no files')
     makedirs(dest)
     for i in range(len(names)):

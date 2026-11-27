@@ -19,6 +19,14 @@ def problem(text: str) -> str:
         return f'E{e.code} {e.message}'
     return ''
 
+# the same for the merge of the two tables (seeds_for), which is where one seed in both with two sources is found
+def merge_problem(text: str) -> str:
+    try:
+        seeds_for(load(text), False, True)
+    catch ConfigError as e:
+        return f'E{e.code} {e.message}'
+    return ''
+
 @test.versions_are_checked
 def versions_are_checked():
     assert_equal(version_problem('1.2.0', True), '')
@@ -174,6 +182,25 @@ def seed_requirement_forms_are_checked():
     assert_true(problem(head + '"b.example/y" = { path = "../y", extra = 1 }\n').startswith('E558 mf.toml: unknown setting seeds."b.example/y".extra'))
     assert_true(problem(head + '"b.example/y" = {}\n').startswith('E568 '))
     assert_true(problem(head + '"b.example/y" = { path = "" }\n').startswith('E559 '))
+
+@test.git_seed_tag_branch_and_path
+def git_seed_tag_branch_and_path():
+    head = '[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n[seeds]\n'
+    m = load(head + '"b.example/y" = { git = "u", rev = "r", tag = "v1", path = "seeds/y" }\n"b.example/z" = { git = "u", rev = "r", branch = "main" }\n"b.example/w" = { git = "u", rev = "r" }\n')
+    assert_equal(m.reqs[0].kind, 'git')
+    assert_equal(m.reqs[0].tag + '|' + m.reqs[0].branch + '|' + m.reqs[0].subdir, 'v1||seeds/y')
+    assert_equal(m.reqs[1].tag + '|' + m.reqs[1].branch + '|' + m.reqs[1].subdir, '|main|')
+    assert_equal(m.reqs[2].tag + m.reqs[2].branch + m.reqs[2].subdir, '')
+    wanted = seeds_for(m, False, True)
+    assert_equal(wanted.reqs[0].tag + '|' + wanted.reqs[0].subdir, 'v1|seeds/y')
+    assert_true(problem(head + '"b.example/y" = { git = "u", rev = "r", tag = "v1", branch = "main" }\n').startswith('E568 mf.toml: seeds."b.example/y" has tag and also branch'))
+    assert_true(problem(head + '"b.example/y" = { git = "u", rev = "r", tag = 1 }\n').startswith('E559 '))
+    assert_true(problem(head + '"b.example/y" = { git = "u", rev = "r", mode = "x" }\n').startswith('E558 mf.toml: unknown setting seeds."b.example/y".mode'))
+    assert_true(problem(head + '"b.example/y" = { path = "../y", tag = "v1" }\n').startswith('E568 '))
+    # the same seed in two tables must name the same tag, branch and path
+    assert_true(merge_problem(head + '"b.example/y" = { git = "u", rev = "r", tag = "v1" }\n[test-seeds]\n"b.example/y" = { git = "u", rev = "r", tag = "v2" }\n').startswith('E564 '))
+    assert_true(merge_problem(head + '"b.example/y" = { git = "u", rev = "r", path = "a" }\n[test-seeds]\n"b.example/y" = { git = "u", rev = "r" }\n').startswith('E564 '))
+    assert_equal(merge_problem(head + '"b.example/y" = { git = "u", rev = "r", tag = "v1" }\n[test-seeds]\n"b.example/y" = { git = "u", rev = "r", tag = "v1" }\n'), '')
 
 @test.seeds_need_a_project_or_a_seed
 def seeds_need_a_project_or_a_seed():

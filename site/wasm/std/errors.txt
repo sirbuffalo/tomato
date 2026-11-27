@@ -595,7 +595,7 @@ CompileError cannot import 'main': it is the name the program itself has
 ValueError the program's {} was not captured (start it with capture=True)
 ValueError the program's standard input is not open for writing (start it with stdin=True, and write before close_stdin())
 ValueError a signal number is from 1 to 64
-ConfigError {}: the git URL or the rev of a seed cannot be used: the URL is https, ssh, file:// or an absolute folder, and the rev a full 40-digit commit id
+ConfigError {}: the git URL, the rev, the tag, the branch or the path of a seed cannot be used: the URL is https, ssh, file:// or an absolute folder, the rev a full 40-digit commit id, a tag or branch a plain name, and the path a folder of the repository
 ConfigError {}: git could not fetch the seed, or git is not installed, or there is no folder for the seed store
 ConfigError {}: the files of a seed cannot be used: a symbolic link, a submodule, an unsafe path, a file that is too large, or a module that does not parse
 ConfigError {}: the content hash of the files of a seed is not the one in tomato.lock
@@ -603,3 +603,4 @@ ConfigError {}: the foreign symbols (!name(...) declarations) that a seed declar
 ConfigError {}: tomato.toml could not be changed safely by tomato seed add or remove
 ConfigError {}: tomato seed add or remove cannot be used here: the file is not a project, the seed is not listed in it, or the vendor folder is not a folder below the project
 ConfigError {}: --offline: the seed is not in the seed store or the vendor folder, and git is not run
+ConfigError {}: tomato seed verify found a seed that is missing or whose files do not match tomato.lock

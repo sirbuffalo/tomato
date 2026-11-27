@@ -450,7 +450,7 @@ tomato = "1.0"                         # the oldest compiler that builds it
 
 [seeds]                                # packages and their minimum versions
 "acme.example/json5" = "1.2.0"
-"dave.example/scratch" = { git = "https://git.example.net/dave/scratch.git", rev = "9f2c...40hex" }   # unregistered
+"dave.example/scratch" = { git = "https://git.example.net/dave/scratch.git", rev = "9f2c...40hex" }   # unregistered; also tag = "v1" or branch = "main" (what `seed update` follows) and path = "seeds/scratch" (D103a)
 "local/thing" = { path = "../thing" }                                                                  # unregistered
 
 [test-seeds]                           # only `tomato test` reads it (D94b)
@@ -565,6 +565,9 @@ modules = ["scratch"]
 
 - **The hash is the content hash of section 6**, not the commit's hash. A git commit id is sha1 and is no defence
   against a collision or a rewritten history; the content hash is sha256 over the files.
+- **`path` (built, D103a)** is the folder of the repository that holds the seed, for a git source whose repository holds several seeds (section 6): the lock keeps it beside `git` and `commit`, the hash covers the files below it only, and the
+  manifest's `{ git, rev, path }` says it. It is the `path` of the `[[source]]` statement of the index (section 9) for a registered seed, and the one thing here that changes what a `git` and `commit` mean, so **the lock's format
+  version is 2 when (and only when) an entry has it**: a Tomato that reads version 1 only stops with "not version 1 or 2" instead of hashing the whole repository, and every lock that needs no path stays version 1 and byte for byte as before.
 - `commit` and `git` are *where it came from*, kept so the source can be fetched again; the build trusts `hash`.
   If a host lost the repository, any copy that produces the same hash is the same seed.
 - **`test_only = true`** (D94b, which replaced D92b's `entries`) appears only on a seed that only `[test-seeds]` lists. A seed that
@@ -617,7 +620,8 @@ also the only one of the two whose solver is small enough to write, test and tru
   resolve); until nothing changes. Two requirements on different lines of one seed are an error that names the
   chain of requirers on each side. Nothing is downgraded and nothing is searched.
 - **`add`** picks the newest non-yanked version of the seed in the index and writes it as the minimum. **`update`**
-  raises the minimum of the seeds named (or all) to the newest in their line and re-locks. **`install`** never changes
+  raises the minimum of the seeds named (or all) to the newest in their line and re-locks.
+  (**Built without the index, D103a:** `update` of a git seed that follows a `tag` or `branch` moves the commit to where it points now and always writes the new content hash into the lock; there are no versions to compare, so a new version is shown, never refused.) **`install`** never changes
   versions.
 - **Yanked versions** (section 17) are skipped by `add` and `update`. A requirement that names a yanked version still
   resolves to it, with a warning, so existing locks keep building; a yank of kind `malware` is an error unless
@@ -714,7 +718,7 @@ empty). No map means today's behavior exactly, so every existing program and tes
 
 The hash must not depend on git's object format, on archive formats, or on line-ending and `.gitattributes` filters.
 Definition (**seed hash v1**): take the files of the seed's tree at the commit, under `path` if the source names one
-(for a repository that holds several seeds); the tree must contain only regular files and directories (no symlink,
+(for a repository that holds several seeds; **built for git seeds, D103a**: the path is not part of the hash, so the same files in a folder or at a root hash the same); the tree must contain only regular files and directories (no symlink,
 no submodule); sort the file paths bytewise (`/` as separator, no leading `./`); for each file make the line
 
 ```
@@ -972,7 +976,8 @@ accepted wherever a name is added.
 ```
 tomato seed init [OWNER/NAME]               start a seed (`[seed]`, src/), or with no name a project (`[project]`)
 tomato seed add NAME[@VERSION]              add (or raise) a requirement, update tomato.toml and tomato.lock, fetch into the store
-tomato seed add --git URL [--rev R|--tag T] [--name N]    unregistered source, by git URL (a project only)
+tomato seed add --git URL [--rev R|--tag T|--branch B] [--subdir DIR] [--name N]    unregistered source, by git URL (a project only). Built (D103a) except --name:
+                                            --tag and --branch look the ref up once and write its commit as the rev (the name is kept for `update`); --subdir is `path`
 tomato seed add gh:USER/REPO | gitlab:USER/REPO | codeberg:USER/REPO | srht:~USER/REPO  [--rev R|--tag T] [--name N]
                                             host shortcuts (proposed): expanded to the full https URL at once, then as --git;
                                             the lock stores the URL and the hash, never the shortcut (section 6, "Any git host")
@@ -980,10 +985,12 @@ tomato seed add --path DIR                  unregistered source, a local folder 
 tomato seed add NAME --from-owner | --index-only    use only the owner's server (domain owners), or never fall back to it (section 18.2)
 tomato seed remove NAME                     drop a requirement and re-lock
 tomato seed install [--locked] [--offline]  fetch every seed in the lock into the store and check each hash
-tomato seed update [NAME...] [--accept-owner-change OWNER]   raise minimums to the newest in their line, re-lock
+tomato seed update [NAME...] [--accept-owner-change OWNER]   raise minimums to the newest in their line, re-lock. Built for git and path seeds (D103a), with --dry-run
+                                            and --yes: a git seed that follows a tag or branch moves its rev (docs/manifest.md); no registry, so no versions to raise
 tomato seed outdated                        newer versions, yanks, last publish date
 tomato seed tree                            the resolved graph;  tomato seed why NAME   who requires it
-tomato seed verify [--inputs]               re-hash the store or vendor folder against the lock; list revoked keys; print build inputs
+tomato seed verify [--inputs]               re-hash the store or vendor folder against the lock; list revoked keys; print build inputs.
+                                            Built without --inputs and the keys (D103a): store, vendor and path folders, exit 1 on a problem
 tomato seed vendor                          copy the locked seeds to ./vendor/
 tomato seed search TEXT                     scan the index;  tomato seed info NAME   owner, signer, versions, first seen
 tomato seed alias [NAME OWNER/NAME]         set an alias (no arguments lists them);  tomato seed unalias NAME
@@ -1124,7 +1131,7 @@ already give a useful local package workflow. Sizes are rough guesses of hand-wr
 | 0 | Davis's direction recorded (**done: D89a and D100a**, sections 1.10 and 18); he still answers open questions 1 to 11; a short section in `docs/specification.md` when the first stage is built; reserve the `tomato seed` word | 0 | none |
 | 1 | `tomato-seed` helper skeleton and `seed check` and `seed hash`: read and validate `tomato.toml`, the naming rule, the seed hash v1 with test vectors cross-checked in shell; no network, no compiler change; measure the helper's first-use compile time | 700 | low |
 | 2 | **Compiler**: module map argument, the lookup order, seed names in errors, hidden warnings from seeds, the `src/` lookup; `tomato run` finds `tomato.toml`; works with `path` dependencies by hand-written lock; a test that compiles a seeded program twice and compares the IR | 350 + 300 test | medium: `tomatoc` is regenerated into `compiler/bootstrap/tomatoc.ll` and the wasm files |
-| 3 | `tomato.lock`, the store, **`add --git`, `add --path`, `install`, `verify`, `vendor`, `--offline`/`--locked`**, the hardened fetch; no registry yet. **Built (D101a, 27 Nov 2026) except `verify`, `[[source]] path` and the bare-clone cache; the fetch is in Tomato (`compiler/src/seedstore.tom`) through `sys.run`, not in the shell** | 900 + 400 test | medium: git handling and hostile trees |
+| 3 | `tomato.lock`, the store, **`add --git`, `add --path`, `install`, `verify`, `vendor`, `--offline`/`--locked`**, the hardened fetch; no registry yet. **Built (D101a, 27 Nov 2026) except the bare-clone cache; `verify`, `update` and the `[[source]]` `path` followed (D103a); the fetch is in Tomato (`compiler/src/seedstore.tom`) through `sys.run`, not in the shell** | 900 + 400 test | medium: git handling and hostile trees |
 | 4 | **Index client**: `config.toml`, `policy.toml`, `owners/`, `seeds/`, `requests/` and `names.toml` formats, parsing, signature verification through `ssh-keygen -Y`, MVS, `add NAME` (an alias, a short name or a full name, section 1.7), host shortcuts, **`add` from the owner's own server (automatic fallback when the index has no entry or is unreachable, and the `--from-owner` and `--index-only` flags; moved up from stage 6: the tap-like path with no registry, section 18.2)**, `registry add`, `update`, `outdated`, `tree`, `why`, `search`, `info`, aliases; tested against a fixture index checked into `tests/` | 1,300 + 600 test | medium |
 | 5 | **The registry and its checker, launched at policy level 0**: `index-check` with the rules (proof, signatures, append only, source check, names and skeleton, rate limits, the `policy.toml` notice rule, a request's owner signature and a maintainer's signature on `names.toml`), `claim`, `publish`, `yank`, `endorse`, `request-name`, `maintain`, the policy text as `POLICY.md` (with the short-name review guidance) and `SECURITY.md` in the index, a `policy.toml` with every requirement off, the maintainer keys in `config.toml` (Davis first), the first index repository and its acceptor. Endorsements and the acceptor's age stamps are collected from the first day. Short names and, if accepted, handles are statements of this stage | 1,400 + 700 test | **high**: this is the security-critical program and runs on untrusted input from strangers |
 | 5b | **Signals and the ramp machinery (section 18.3 to 18.6)**: the sandboxed runner and its signed `[[result]]` statements, the pure score function with test vectors, the star counts of the host (`[[host]]`), the generated `listing.toml` with the shadow score ("would pass level N"), `score`, `admit-check`, `listing-verify`, `only_listed`. **Still gates nothing**: every threshold stays at 0 until Davis raises one (open question 10) | 1,000 + 600 test | **high** for the runner (it runs strangers' code; the sandbox is the work), medium for the rest |
