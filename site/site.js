@@ -2,7 +2,7 @@
 (function () {
   var pages = [["index.html", "Home"], ["guide.html", "Guide"], ["docs.html", "Reference"], ["play.html", "Run & Repl"], ["benchmarks.html", "Benchmarks"], ["download.html", "Download"]];
   var here = location.pathname.split("/").pop() || "index.html";
-  var h = '<a class="skip" href="#main">Skip to content</a><nav aria-label="Site"><a class="brand" href="index.html"><img src="assets/tomato-logo-full.svg" alt="Tomato" width="138" height="40"></a><div class="links">';
+  var h = '<a class="skip" href="#main">Skip to content</a><nav aria-label="Site"><a class="brand" href="index.html"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tomato-logo-full-dark.svg"><img src="assets/tomato-logo-full.svg" alt="Tomato" width="138" height="40"></picture></a><div class="links">';
   pages.forEach(function (p) { h += '<a href="' + p[0] + '"' + (p[0] === here ? ' aria-current="page"' : "") + ">" + p[1] + "</a>"; });
   var main = document.querySelector("main"); if (main && !main.id) main.id = "main";
   var el = document.getElementById("site-header");

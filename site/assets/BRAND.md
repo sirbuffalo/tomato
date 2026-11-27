@@ -4,18 +4,19 @@ Logo and colors are by Davis; the artwork is fixed (never retyped or restyled). 
 
 | file | use |
 |---|---|
-| `tomato-logo-full.svg` (+ `-2400.png`, `-800.png`) | mark + wordmark, transparent: site header, README |
+| `tomato-logo-full.svg` (+ `-2400.png`, `-800.png`) | mark + black wordmark (`#111111`), transparent: for light backgrounds (site header, README) |
+| `tomato-logo-full-dark.svg` (+ `-2400.png`, `-800.png`) | the same logo with a light wordmark (`#F6ECE8`, the dark theme's `--text`), transparent: for dark backgrounds; the site header and README swap to it with `prefers-color-scheme: dark` |
 | `tomato-icon-square.svg` (+ `-1024.png`, `-256.png`, `-64.png`) | the mark alone: page titles (`h1 .mark`) |
 | `../favicon.svg`, `../icon.svg` | copies of `tomato-icon-square.svg` |
 | `../favicon.ico` (16/32/48), `../icon-192.png`, `../icon-512.png`, `../apple-touch-icon.png` (180, white background) | rendered from the square SVG with cairosvg |
 
-Brand colors (screen source of truth; Pantone matches are approximate): red `#EB3C27` (Pantone 179 C), green `#009639` (Pantone 355 C). The two hexes are never changed, only paired with tints where the raw color is too light for text.
+Brand colors (screen source of truth; Pantone matches are approximate): red `#EB3C27` (Pantone 179 C), green `#009639` (Pantone 355 C), wordmark black `#111111` (`#F6ECE8` in the dark variant). The two hexes are never changed, only paired with tints where the raw color is too light for text.
 
 ## Decisions
 
 - Raw red on white is 4.03:1 and raw green on white is 3.87:1, so they fail AA (4.5) for small text. Text and links use a darker red tint `--accent` (`#C62E1A` light, `#FF6A52` dark) and a darker green tint `--accent-green` (`#00762E` light, `#5FD48A` dark); the raw hexes (`--red`, `--green`) are used for fills, the logo, the focus ring and the selected-tab underline (all need only 3:1).
 - The primary button is brand red with near-black text (`--on-red` `#1A0805`, 4.82:1); white on `#EB3C27` is only 4.03:1.
-- The red wordmark on the dark page background (`#1A1210`) is 4.58:1 (3:1 is the bar for a logo), and the green leaf is 4.76:1, so no light-on-dark variant of the full logo was made.
+- The wordmark is black (`#111111`), which is unreadable on the dark page background (`#1A1210`), so the full logo has a light-on-dark variant with the wordmark in `#F6ECE8` (15.9:1 on `#1A1210`). The mark is unchanged in both: the red is 4.58:1 and the green leaf 4.76:1 on `#1A1210` (3:1 is the bar for a logo). Use the black logo on light backgrounds and the dark one on dark backgrounds; on a photo or unknown background pick whichever has more contrast.
 - Control borders (buttons, inputs, language pills) use `--ctl`, at least 3:1 on every surface; `--line` stays for dividers and card edges.
 - Page titles and section headings (`h1`, `h2`) use Quicksand Bold (`fonts/quicksand-bold.woff2`, a Latin subset, SIL OFL), the wordmark's typeface.
 - Benchmark chart: the Tomato bar is the brand red in both themes; "Tomato (debug)" is a dark maroon on light and a light pink on dark (the old light tint on white was under 3:1); every bar is at least 3:1 against the page.
