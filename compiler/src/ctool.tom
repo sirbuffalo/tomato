@@ -1,14 +1,29 @@
 # The Tomato compiler (slice) as a command: tomato run compiler/src/ctool.tom compile FILE   (prints LLVM IR)
 from compiler import compile_module
+from config import ConfigError, load_limits, describe
+from diag import Diagnostic
 
 @main
 def main():
     print('usage: tomato run compiler/src/ctool.tom compile FILE')
 
 @compile
-def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debug'):
+def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debug', project: str = '', user: str = ''):
+    # project and user are the paths of the tomato.toml and the config.toml to read ('' for none); the entry --config prints
+    # what they set (`tomato config`) instead of compiling
+    exp_bits = 0
+    format_digits = 0
+    try:
+        if entry == '--config':
+            print(describe(project, user))
+            return
+        limits = load_limits(project, user)
+        exp_bits = limits.exp_bits
+        format_digits = limits.format_digits
+    catch ConfigError as e:
+        raise Diagnostic(f'error[E{e.code}]: {e.message}')
     f = open(path)
     src = f.read()
     f.close()
     name = path.split('/')[-1]          # the program's folder is what comes before its file name
-    print(compile_module(src, path[:len(path) - len(name)], std, entry, mode, path))
+    print(compile_module(src, path[:len(path) - len(name)], std, entry, mode, path, exp_bits, format_digits))

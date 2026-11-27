@@ -197,6 +197,7 @@ export def lcm(a: int, b: int) -> int:
 # and in the browser.
 !tomato_bf_math1(op: int, x: float, m: int[length=32]) -> float
 !tomato_bf_exp_check(op: int, x: float) -> int
+!tomato_limit_message(kind: int[length=32]) -> str
 !tomato_bf_math2(op: int, x: float, y: float, m: int[length=32]) -> float
 
 def _f(x: int | float) -> float:
@@ -545,12 +546,13 @@ export def hypot(x: int | float, y: int | float) -> float:
     return !tomato_bf_math2(1, _f(x), _f(y), 0)
 
 # exp, expm1, sinh and cosh of a large number are floats of any size: exp(1000) is 1.970071114017047e+434. The time they take grows
-# with the square of the number of bits of the result's exponent, so one with more than 65536 bits (an argument of more than about
-# 20,000 digits: exp(1e100000) takes 8 s) is an OverflowError (D77f).
+# with the square of the number of bits of the result's exponent, so one with more bits than the limit (65536 unless the program was
+# built with another limits.exp_bits in tomato.toml; an argument of more than about 20,000 digits: exp(1e100000) takes 8 s) is an
+# OverflowError (D77f, D77g).
 def _exp_arg(op: int, x: int | float) -> float:
     v = _f(x)
     if (v > 1e300 or v < -1e300) and !tomato_bf_exp_check(op, v) != 0:
-        raise OverflowError('the result is too large to calculate: its exponent would have more than 65536 bits', 'E528')
+        raise OverflowError(!tomato_limit_message(528), 'E528')
     return v
 
 export def exp(x: int | float) -> float:

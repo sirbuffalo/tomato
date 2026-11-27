@@ -591,6 +591,33 @@ skip lookup  (no network)
   m="$(tjsc site/wasm run "$work/wt.tom" 2>&1)"
   case "$m" in *"no function is marked @main"*"~rc 1") ok "wasm: a test file without @main is not a program";; *) bad "wasm: a test file without @main is not a program" "$m";; esac
 }
+t_wasm_config() { # the browser path takes the limits from a tomato.toml given to the compiler (D77g); without one the defaults apply
+  cat > "$work/wl.tom" <<'EOF2'
+from math import exp
+@main
+def main():
+    try:
+        print(len(str(exp(float('1e5000')))) > 0)
+    catch OverflowError as e:
+        print(e.message, e.id)
+    try:
+        print(len(f"{float('1e1500'):.1f}"))
+    catch OverflowError as e:
+        print(e.message, e.id)
+EOF2
+  printf '[limits]\nexp_bits = 2048\nformat_digits = 1000\n' > "$work/wl.toml"
+  m="$(tjsc site/wasm run "$work/wl.tom" 2>&1 | grep -v '^Could not open file: ')"
+  case "$m" in "True
+1503
+~rc 0") ok "wasm: no tomato.toml means the default limits";; *) bad "wasm: no tomato.toml means the default limits" "$m";; esac
+  m="$(tjsc site/wasm run "$work/wl.tom" "--config=$work/wl.toml" 2>&1 | grep -v '^Could not open file: ')"
+  case "$m" in "the result is too large to calculate: its exponent would have more than 2048 bits E528
+the number is too large to write with f: it has more than 1000 digits before the point E529
+~rc 0") ok "wasm: the limits come from a tomato.toml given to the compiler";; *) bad "wasm: the limits come from a tomato.toml given to the compiler" "$m";; esac
+  printf '[limits]\nexp_bits = 5\n' > "$work/wl.toml"
+  m="$(tjsc site/wasm compile "$work/wl.tom" "--config=$work/wl.toml" 2>&1)"
+  case "$m" in *"error[E543]: /tomato.toml: limits.exp_bits must be a whole number from 2048 to 2147483647, not 5"*"~rc 1") ok "wasm: a bad tomato.toml is an error";; *) bad "wasm: a bad tomato.toml is an error" "$m";; esac
+}
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
 t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ] && ok "highlighters know every lexer keyword and built-in" || bad "highlighters" "$r"; }
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
@@ -644,6 +671,7 @@ if [ -n "$have_js" ]; then
   wasm_neg assert_not_bool "a condition has type int, but bool is expected"
   wasm_rt assert_failed "error[E519]: AssertionError: x should be 4, but is 3 (raised on line 3)" 1
   spawn_free t_wasm_test_entry
+  spawn_free t_wasm_config
   spawn_free t_wasm_site_errors
   spawn_free t_wasm_repl_import
   spawn_free t_wasm_site_editor
@@ -828,6 +856,86 @@ t_cli_explain() {
   check "explain says when the line is not in the file" "error[E01]: ZeroDivisionError: division by zero
   (line 999 is past the end of $work/dz.tom: is this the file the program was built from?)" "$($t explain E01:999 "$work/dz.tom")"
   check "unknown command exits 2" "2" "$($t wghwrltghs >/dev/null 2>&1; echo $?)"
+}
+t_cli_config() { # [limits] in tomato.toml and the user's config.toml (D77g): found by tomato, read by the compiler, written into the program
+  cli_setup
+  P="$work/proj"; mkdir -p "$P/sub/deep" "$work/uh"
+  cat > "$P/sub/deep/lim.tom" <<'EOF2'
+from math import exp
+@main
+def main():
+    try:
+        print(len(str(exp(float('1e5000')))) > 0)
+    catch OverflowError as e:
+        print(e.message, e.id)
+    try:
+        print(len(f"{float('1e1500'):.1f}"))
+    catch OverflowError as e:
+        print(e.message, e.id)
+    try:
+        print(len(str(float('1e5000') ** float('1e5000'))) > 0)
+    catch OverflowError as e:
+        print(e.message, e.id)
+EOF2
+  here="$(cd "$P" && pwd -P)"
+  noconf() { TOMATO_HOME="$work/uh" "$@"; }
+  check "config: no files, the built-in defaults" "project file: none found
+user file: none found
+limits.exp_bits = 65536  (built-in default)
+limits.format_digits = 100000  (built-in default)" "$(cd "$P" && noconf $t config)"
+  check "config: with no limits set the program prints as before" "True
+1503
+True" "$(noconf $t run "$P/sub/deep/lim.tom")"
+  noconf $t compile "$P/sub/deep/lim.tom" 2>&1 | grep -q tomato_set_limits && bad "config: default limits add nothing to the IR" || ok "config: default limits add nothing to the IR"
+  printf '[limits]\nexp_bits = 2048\nformat_digits = 1_000\n' > "$P/tomato.toml"
+  check "config: the nearest tomato.toml is found from a parent folder" "project file: $here/tomato.toml
+user file: none found
+limits.exp_bits = 2048  ($here/tomato.toml)
+limits.format_digits = 1000  ($here/tomato.toml)" "$(noconf $t config "$P/sub/deep/lim.tom")"
+  want="the result is too large to calculate: its exponent would have more than 2048 bits E528
+the number is too large to write with f: it has more than 1000 digits before the point E529
+the result is too large to calculate: its exponent would have more than 2048 bits E528"
+  check "config: run uses the project limits (E528 and E529 say the number)" "$want" "$(noconf $t run "$P/sub/deep/lim.tom")"
+  check "config: release mode uses them too" "$want" "$(noconf $t run "$P/sub/deep/lim.tom" --mode release)"
+  noconf $t build "$P/sub/deep/lim.tom" -o "$work/lim_bin" > /dev/null 2>&1; rm "$P/tomato.toml"
+  check "config: a built program keeps its limits and reads no file" "$want" "$("$work/lim_bin")"
+  printf '[limits]\nexp_bits = 4096\nformat_digits = 7000\n' > "$work/uh/config.toml"
+  printf '# a seed manifest too\n[seed]\nname = "a.example/x"\n\n[limits]\nformat_digits = 9000\n' > "$P/sub/tomato.toml"
+  check "config: the project file overrides the user's file, setting by setting; other tables are left alone" "project file: $here/sub/tomato.toml
+user file: $work/uh/config.toml
+limits.exp_bits = 4096  ($work/uh/config.toml)
+limits.format_digits = 9000  ($here/sub/tomato.toml)" "$(TOMATO_HOME="$work/uh" $t config "$P/sub/deep/lim.tom")"
+  rm "$P/sub/tomato.toml"; printf '[limits]\nformat_digits = 1000\n' > "$work/uh/config.toml"
+  check "config: the user's file alone (the other limit stays at its default)" "True
+the number is too large to write with f: it has more than 1000 digits before the point E529
+True" "$(TOMATO_HOME="$work/uh" $t run "$P/sub/deep/lim.tom")"
+  rm -f "$work/uh/config.toml"
+  badcfg() { printf '%s' "$2" > "$P/tomato.toml"; r="$(noconf $t run "$P/sub/deep/lim.tom" 2>&1)"; rc=$?; check "config: $1" "$3
+1" "$r
+$rc"; }
+  badcfg "a limit below what a double reaches is refused" '[limits]
+exp_bits = 100
+' "error[E543]: $here/tomato.toml: limits.exp_bits must be a whole number from 2048 to 2147483647, not 100"
+  badcfg "a limit above what the runtime can build is refused" '[limits]
+format_digits = 2147483648
+' "error[E543]: $here/tomato.toml: limits.format_digits must be a whole number from 1000 to 2147483647, not 2147483648"
+  badcfg "a limit that is not an integer is refused" '[limits]
+format_digits = "many"
+' "error[E543]: $here/tomato.toml: limits.format_digits must be a whole number from 1000 to 2147483647, not \"many\""
+  badcfg "an unknown setting is an error" '[limits]
+exp_bit = 5000
+' "error[E542]: $here/tomato.toml: unknown setting limits.exp_bit (the settings are exp_bits and format_digits)"
+  badcfg "limits must be a table" 'limits = 5
+' "error[E541]: $here/tomato.toml: limits must be a table ([limits]), not an integer"
+  r="$(printf '[limits\n' > "$P/tomato.toml"; noconf $t config "$P/sub/deep/lim.tom" 2>&1)"
+  case "$r" in "error[E540]: the configuration file $here/tomato.toml is not valid TOML: "*) ok "config: text that is not TOML is an error naming the file";; *) bad "config: text that is not TOML is an error naming the file" "$r";; esac
+  rm -f "$P/tomato.toml"; printf '[limits]\n' > "$work/uh/config.toml"; chmod 000 "$work/uh/config.toml"
+  if [ ! -r "$work/uh/config.toml" ]; then   # (not when the tests run as root, which reads anything)
+    r="$(noconf $t config "$P/sub/deep/lim.tom" 2>&1)"
+    case "$r" in "error[E539]: the configuration file $work/uh/config.toml cannot be read: "*) ok "config: a file that cannot be read is an error naming the file";; *) bad "config: a file that cannot be read is an error naming the file" "$r";; esac
+  fi
+  check "explain knows the configuration errors" "error[E543]: ConfigError: {}: limits.{} must be a whole number from {} to {}, not {}" "$($t explain E543)"
+  case "$($t help)" in *"tomato config [FILE]"*) ok "tomato help lists the config command";; *) bad "tomato help lists the config command" "$($t help)";; esac
 }
 t_cli_repl_1() {
   part="${1:-1}"; cli_setup
@@ -1234,6 +1342,7 @@ spawn_first t_cli_runtime_cache 2
 spawn_first t_cli_runtime_cache 3
 spawn_first t_cli_runtime_cache 4
 spawn_cli t_cli_explain
+spawn_cli t_cli_config
 spawn_cli t_cli_repl_1 1
 spawn_cli t_cli_repl_1 2
 spawn_cli t_cli_repl_1 3

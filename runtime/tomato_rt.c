@@ -9025,15 +9025,29 @@ int64_t tomato_bf_parse_cstr(const char *text, int position) {
 
 /* Limits on how large a result may be (D77f). exp, expm1, sinh, cosh and ** take time in the square of the number of bits of the result's
  * exponent (100,000 digits in the argument: 8 s); the f format writes every digit of the whole part, in time in the square of their
- * number. A result beyond these is an OverflowError (E528, E529), raised by the caller. */
+ * number. A result beyond these is an OverflowError (E528, E529), raised by the caller. The limits are the defaults below unless the
+ * program sets them at its start (tomato_set_limits: the compiler writes the call when a tomato.toml or config.toml names other
+ * values, docs/decisions.md D77g). The compiler checks the values (compiler/src/config.tom): they are above what a double can reach,
+ * since a float that is a double is never checked. */
 #define BF_MAX_EXP_BITS 65536
 #define BF_MAX_FORMAT_DIGITS 100000
+static int64_t bf_max_exp_bits = BF_MAX_EXP_BITS, bf_max_format_digits = BF_MAX_FORMAT_DIGITS;
+void tomato_set_limits(int64_t exp_bits, int64_t format_digits) { bf_max_exp_bits = exp_bits; bf_max_format_digits = format_digits; }
+/* a limit: 0 the bits of a result's exponent, 1 the digits before the point of an f format */
+int64_t tomato_bf_limit(int64_t which) { return which == 0 ? bf_max_exp_bits : bf_max_format_digits; }
+/* the message of E528 (kind 528) or E529 (529) with the limit in it, for the compiled code that raises it */
+void *tomato_limit_message(int32_t kind) {
+    char text[160];
+    if (kind == 528) snprintf(text, sizeof text, "the result is too large to calculate: its exponent would have more than %lld bits", (long long)bf_max_exp_bits);
+    else snprintf(text, sizeof text, "the number is too large to write with f: it has more than %lld digits before the point", (long long)bf_max_format_digits);
+    return tomato_str_from_cstr(text);
+}
 
-/* whether 2^(y L), or x^y when x is given, has an exponent of more than BF_MAX_EXP_BITS bits (y is not zero) */
+/* whether 2^(y L), or x^y when x is given, has an exponent of more than bf_max_exp_bits bits (y is not zero) */
 static int bf_exp_too_big(const BigFloat *x, BigFloat y) {
     if (y.m == 0) return 0;
     int64_t top = bi_add(tomato_int_add(y.e, bi(2)), bi(x ? bi_bits(x->e) + 1 : 1));   /* as in bf_exp2: |y L| < 2^top */
-    int big = !int_is_small(top) || int_small_val(top) > BF_MAX_EXP_BITS;
+    int big = !int_is_small(top) || int_small_val(top) > bf_max_exp_bits;
     tomato_int_free(top);
     return big;
 }
@@ -9046,12 +9060,12 @@ int64_t tomato_bf_exp_check(int64_t op, int64_t x) {
     return bf_exp_too_big(NULL, a);
 }
 
-/* whether the f format of x would write more than BF_MAX_FORMAT_DIGITS digits before the point (std/builtin/format.tom raises the error) */
+/* whether the f format of x would write more than bf_max_format_digits digits before the point (std/builtin/format.tom raises the error) */
 int64_t tomato_bf_digits_check(int64_t x) {
     if (!bf_boxed(x)) return 0;                                      /* a double: at most 309 digits */
     BigFloat a = bf_open(x);
     if (tomato_int_sign(a.e) <= 0) return 0;
-    return !int_is_small(a.e) || (double)int_small_val(a.e) * 0.30103 + 1 > BF_MAX_FORMAT_DIGITS;
+    return !int_is_small(a.e) || (double)int_small_val(a.e) * 0.30103 + 1 > bf_max_format_digits;
 }
 
 /* 2^(y L), where L is 1 / log 2 (exp) or log2 |x| (a power; x is given), y is not zero and the exact value is neither a float
@@ -9111,7 +9125,7 @@ static int bf_whole(BigFloat y, int *odd) {
 }
 
 /* whether x ** y has a value: 0 yes, 1 no because it is zero to a negative power, 2 no because it is a negative number to a
- * power that is not whole, 3 no because the result's exponent would have more than BF_MAX_EXP_BITS bits */
+ * power that is not whole, 3 no because the result's exponent would have more than bf_max_exp_bits bits */
 int32_t tomato_bf_pow_check(int64_t x, int64_t y) {
     BF_NEED_FINITE(x, y);
     BigFloat a = bf_open(x), b = bf_open(y);

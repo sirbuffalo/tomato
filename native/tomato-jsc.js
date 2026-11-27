@@ -1,7 +1,7 @@
 // Runs the Tomato toolchain in JavaScriptCore (the jsc shell that ships with macOS), so the repl never has to start a
 // new native program: macOS checks each freshly built executable the first time it runs (0.7 s or more), and the same
 // compiler and runtime that run on the website (WebAssembly) do not need that check.
-//   jsc tomato-jsc.js -- WASMDIR compile|run FILE [--entry=NAME] [--timeout-ms=N]
+//   jsc tomato-jsc.js -- WASMDIR compile|run FILE [--entry=NAME] [--timeout-ms=N] [--config=TOMATO.TOML]
 // jsc cannot set an exit status, so the last line on standard error is "~rc N" (0 for success).
 var self = globalThis;
 (function polyfills() {
@@ -42,6 +42,9 @@ args = args.filter(function (a) { var m = /^--timeout-ms=([0-9]+)$/.exec(a); if 
 // --entry=NAME anywhere in the arguments picks the entry point to compile (default main; `test` runs the functions marked @test)
 var entryName = "main";
 args = args.filter(function (a) { var m = /^--entry=([A-Za-z_][A-Za-z0-9_]*)$/.exec(a); if (m) entryName = m[1]; return !m; });
+// --config=FILE gives the compiler a tomato.toml (its [limits] table, as tomato.js's compile takes it)
+var configFile = "";
+args = args.filter(function (a) { var m = /^--config=(.+)$/.exec(a); if (m) configFile = m[1]; return !m; });
 var dir = args[0], mode = args[1], file = args[2];
 var stdinFile = args[3] || "", ask = args[4] === "ask";   // the answers so far, one per line; ask: exit code 75 when the program wants another (the line printed last then ends with a newline jsc added)
 ["wasi.js", "llvm.js", "tomato.js"].forEach(function (f) { load(dir + "/" + f); });
@@ -76,7 +79,7 @@ function emit(text, stream) {   // jsc's print adds a newline, so one trailing n
 // real jsc has no environment, so tests/run.sh passes the flag). Hosted CI runners are much slower than a Mac, hence the option.
 var limitMs = argLimitMs || (typeof process !== "undefined" && process.env && Number(process.env.TOMATO_WASM_TIMEOUT_MS)) || 5000;
 function finish(code) { printErr("~rc " + code); }
-(mode === "run-ir" ? Promise.resolve({ ok: true, ir: source }) : tw.compile(source, entryName, extra)).then(function (c) {
+(mode === "run-ir" ? Promise.resolve({ ok: true, ir: source }) : tw.compile(source, entryName, extra, configFile ? new TextDecoder().decode(bin(configFile)) : undefined)).then(function (c) {
   if (mode === "compile") { emit(c.ok ? c.ir : c.error, c.ok ? "out" : "err"); finish(c.ok ? 0 : 1); return; }
   if (!c.ok) { emit(c.error, "err"); finish(1); return; }
   return tw.run(c.ir, { inputs: [], stdin: stdinFile ? new TextDecoder().decode(bin(stdinFile)) : "", ask: ask, timeoutMs: limitMs }).then(function (r) {

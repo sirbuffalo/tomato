@@ -33,7 +33,9 @@ on an older install moves to 1.0.0 as usual.
   overflows or underflows (`1e300 * 1e300` is `1.0000000000000001e+600`, `float(10 ** 400)` is `1e+400`). `int` and
   `float` compare exactly. `std/math`, `round`, f-strings and the `f`/`e`/`g` formats take them. Results whose
   exponent needs more than 2^16 bits (`exp`, `expm1`, `sinh`, `cosh`, `**`) and `f` formats with more than 100,000
-  digits before the point are an `OverflowError` (E528, E529; D77f). `float[length=64]` is not a type (D77c).
+  digits before the point are an `OverflowError` (E528, E529; D77f); a `[limits]` table in `tomato.toml` or
+  `~/.tomato/config.toml` sets both numbers (`exp_bits`, `format_digits`), and `tomato config` shows what is in effect
+  (D77g). `float[length=64]` is not a type (D77c).
 - **Dict keys and set elements of any hashable type** (D78a): `int`, `bool`, `float`, `str`, tuples of those,
   optionals, unions, and objects of classes with an `@hash` method; the builtin `hash(x)`.
 - **Bitwise `&`, `|`, `^`, `~` on integers of any size** with Python's two's-complement rules; shifts, `2 ** n` and

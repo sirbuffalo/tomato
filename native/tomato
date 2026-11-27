@@ -5,6 +5,7 @@
 #   tomato compile FILE [--entry NAME] [--mode MODE]                  print the LLVM IR
 #   tomato test FILE... [--filter TEXT] [--mode MODE]                run the functions marked @test in each file (ok/FAIL lines and a summary; exit 1 if any test failed)
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
+#   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
 #   tomato repl [FILE ...]                                            type Tomato one piece at a time
 #   tomato update [--minor] [--pre]                                   install the newest release: patch releases (1.0.x) at once; a new
 #                                                                     minor or major version (1.1.0, 2.0.0), which may change behaviour, only
@@ -76,6 +77,20 @@ semver_cmp() {
       return n == m ? 0 : n < m ? -1 : 1
     }
     BEGIN { print cmp(a, b) }'
+}
+# The settings (docs/decisions.md D77g): [limits] in a project's tomato.toml (the one in the program's folder or the nearest parent) and in
+# the user's config.toml (${TOMATO_HOME:-$HOME/.tomato}/config.toml). This script only finds the two files; the compiler reads them
+# (compiler/src/config.tom) and writes the settings into the program, so a built program reads no file when it runs.
+# find_config FOLDER sets project_cfg and user_cfg to the paths of the files that exist, else to empty text.
+find_config() {
+  project_cfg=""; user_cfg="${TOMATO_HOME:-${HOME:-}/.tomato}/config.toml"
+  [ -f "$user_cfg" ] || user_cfg=""
+  d="$(cd "$1" 2>/dev/null && pwd -P)" || return 0
+  while :; do
+    if [ -f "$d/tomato.toml" ]; then project_cfg="$d/tomato.toml"; return 0; fi
+    [ "$d" = / ] && return 0
+    d="$(dirname "$d")"
+  done
 }
 # update downloads use https only, including after redirects (file:// only for tests, with the override)
 # (only called in a subshell, a $(...) or a background job, where `exec` makes the subshell curl itself: a signal sent to the job stops curl)
@@ -225,6 +240,14 @@ case "$cmd" in
       else TOMATO_WARNINGS="$warnings" "$invoked" run "$f" test || status=1; fi
     done
     exit $status ;;
+  config)
+    # tomato config [FILE]: the settings in effect for FILE (without one, for the current folder) and where each came from; the
+    # compiler reads the files, so a mistake in one is reported here as it is by run and build
+    [ $# -le 1 ] || usage
+    folder=.; [ $# -eq 1 ] && folder="$(dirname "$1")"
+    find_config "$folder"
+    out="$("$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>&1)" || { printf '%s\n' "$out" | show_error; exit 1; }
+    printf '%s\n' "$out"; exit 0 ;;
   paint) paint; exit 0 ;;      # for the repl: `tomato paint` colors error text read from standard input
   repl|shell) TOMATO_CMD="$home/bin/tomato" TOMATO_TOMATOC="$tomatoc" TOMATO_RUNTIME="$runtime" TOMATO_STD="$std" TOMATO_WASM="$home/wasm" TOMATO_JSC_JS="$home/wasm/tomato-jsc.js" exec bash "$home/bin/tomato-repl" "$@" ;;
   run|build|compile) ;;
@@ -283,7 +306,8 @@ opt=-O1; ltoflags="-flto"; nolto=""; [ "$mode" = release ] && { opt=-O2; ltoflag
 tmp="$(mktemp -d)" || die "cannot make a temporary folder"
 trap 'rm -rf "$tmp" "${rtc_tmp:-}"' EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
-if ! "$tomatoc" "$file" "$entry" "$std" "$mode" > "$tmp/program.ll" 2> "$tmp/errors"; then
+find_config "$(dirname "$file")"
+if ! "$tomatoc" "$file" "$entry" "$std" "$mode" "$project_cfg" "$user_cfg" > "$tmp/program.ll" 2> "$tmp/errors"; then
   show_error < "$tmp/errors"        # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
   exit 1
 fi

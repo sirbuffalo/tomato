@@ -10,6 +10,7 @@ from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, v
 from lexer import LexError, parse_format_spec
 from diag import Diagnostic, format_error, closest
 from lint import lint_items, falls_through
+from config import default_exp_bits, default_format_digits
 
 class NeedsEarlyCopy(Error):
     # a copy of a generic class is first made after code that loops over every class that fits an Iterable or Sized type was
@@ -1283,6 +1284,8 @@ class Mod:
     sources: dict[str, str] = {}  # the source text of each module loaded (for showing an error's line)
     helper_count: int = 0
     main_path: str = ''           # the file name shown for the main program
+    exp_bits: int = 65536         # the limits on huge results (D77g): bits of a result's exponent, digits of an f format; the entry point sets them when they are not the defaults
+    format_digits: int = 100000
     warnings: list[str] = []      # the finished text of each warning (compiler/src/lint.tom), shown after a program compiles
     tvars: dict[str, str] = {}    # the type parameters in scope and the types they stand for (D60a)
     generics: dict[str, Node] = {}      # the generic classes and functions, by program-wide name
@@ -4572,7 +4575,7 @@ class Gen:
             self.fail_if(nowhole, 'a negative number cannot be raised to a power that is not a whole number', [x, y])
             toobig = self.tmp('powbig')
             self.emit(f'{toobig} = icmp eq i32 {code}, 3')
-            self.fail_if(toobig, 'the result is too large to calculate: its exponent would have more than 65536 bits', [x, y])
+            self.fail_with(toobig, 'OverflowError', 'the result is too large to calculate', [x, y], 528)   # (the text has the configured limit in it)
             return self.bf_call2('pow', x, y)
         if is_compare:
             return self.bf_compare(op, x, y)
@@ -4964,7 +4967,9 @@ class Gen:
         # failing operation itself, which the error path frees together with the temporaries held by the enclosing expressions.
         self.fail_with(bad, self.mod.error_class(self.mod.error_kind(message)), message, live)
 
-    def fail_with(self, bad: str, cls: str, message: str, live: list[Ex] = []):
+    def fail_with(self, bad: str, cls: str, message: str, live: list[Ex] = [], limit: int = 0):
+        # limit: the id (528 or 529) of an error whose message has a configured limit in it (D77g): the runtime makes the text
+        # (tomato_limit_message) and message is not used
         if self.bail != '':
             self.bail_if(bad, live)           # the general copy raises the error
             return
@@ -4973,14 +4978,25 @@ class Gen:
         self.cold_br(bad, stop, ok, True)
         self.place(stop)
         if self.mod.mode == 2:
-            self.fail_call(cls, message, live)
+            self.fail_call(cls, message, live, limit)
         else:
             for v in live:
                 self.release(v)
-            self.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)))
+            if limit > 0:
+                text = self.limit_text(limit)
+                self.raise_here(cls, text, True, self.mod.error_id(limit))
+            else:
+                self.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)))
         self.place(ok)
 
-    def fail_call(self, cls: str, message: str, live: list[Ex]):
+    def limit_text(self, limit: int) -> str:
+        # the message of the error with this id, with the configured limit in it, as a new text
+        self.mod.declare('declare ptr @tomato_limit_message(i32)')
+        text = self.tmp('limtext')
+        self.emit(f'{text} = call ptr @tomato_limit_message(i32 {limit})')
+        return text
+
+    def fail_call(self, cls: str, message: str, live: list[Ex], limit: int = 0):
         # release mode: the error of fail_with is raised by a function of its own, @tomato.fail.N, one for each error and each
         # list of types of the values to free (live, then the held temporaries), which it frees first. It is marked cold and is
         # never inlined, so a check costs a function only a branch and a call when clang decides whether to inline it.
@@ -4992,6 +5008,8 @@ class Gen:
             if self.owns_some(e):
                 values.append(e)
         key = cls + ' ' + message
+        if limit > 0:
+            key += f' limit {limit}'
         for v in values:
             key += ' ' + v.ty
         if key not in self.mod.fails:
@@ -5007,7 +5025,10 @@ class Gen:
                 given.fresh = True
                 h.release(given)
             sig.append('i32 %line')
-            h.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)), '%line')
+            if limit > 0:
+                h.raise_here(cls, h.limit_text(limit), True, self.mod.error_id(limit), '%line')
+            else:
+                h.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)), '%line')
             h.attrs = 'cold noinline'
             finish_function(h, symbol, sig, '')
         args: list[str] = []
@@ -12459,6 +12480,9 @@ def entry_wrapper(info: FuncInfo, mod: Mod) -> str:
     low = k - len(info.defaults)
     out = 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
     out += '  call void @tomato_set_args(i32 %argc, ptr %argv)\n'
+    if mod.exp_bits != default_exp_bits() or mod.format_digits != default_format_digits():
+        mod.declare('declare void @tomato_set_limits(i64, i64)')
+        out += f'  call void @tomato_set_limits(i64 {mod.exp_bits}, i64 {mod.format_digits})\n'
     if info.has_varargs:
         out += f'  %ok = icmp sge i32 %n, {low}\n'
     else:
@@ -13391,7 +13415,7 @@ def located(mod: Mod, message: str, line: int, col: int, module: str) -> str:
         return format_error(message, line, col, mod.sources[module], where, error_label(mod, message))
     return format_error(message, 0, 0, '', '', error_label(mod, message))
 
-export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '') -> str:
+export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '', exp_bits: int = 65536, format_digits: int = 100000) -> str:
     # LLVM IR for the program, or a Diagnostic whose message is the finished error text
     mod = Mod()
     result = ''
@@ -13400,6 +13424,8 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
         mod = Mod()
         mod.preload = early
         mod.main_path = path
+        mod.exp_bits = exp_bits
+        mod.format_digits = format_digits
         try:
             result = compile_with(mod, src, dir, std, entry_name, mode)
         catch NeedsEarlyCopy as again:

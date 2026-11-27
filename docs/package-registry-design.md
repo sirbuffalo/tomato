@@ -19,7 +19,7 @@ Davis wants to share Tomato code the way other languages share packages, with th
 - Users do not type long names every day: short names come from a local alias layer, and `tomato.lock` pins what was
   chosen. A direct git URL stays available as an escape hatch for an unregistered seed.
 - The manifest is `tomato.toml` and the lockfile `tomato.lock`, with content hashes. Configuration in general is TOML
-  (the TODO "Make the huge-float limits configurable from a TOML file" is one user of it; section 13 aligns with it).
+  (the huge-float limits, D77g, are its first user: `[limits]` in `tomato.toml` and `config.toml`; section 13).
 - Written policies: no squatting, a way to reclaim abandoned work, yank instead of delete.
 - The registry index is designed so a hosted service can replace the git repository later without changing any seed.
 
@@ -790,9 +790,15 @@ behaves exactly as today.
 
 ## 13. Configuration in TOML
 
-Davis wants configuration to be TOML throughout, and a separate TODO makes the huge-float limits configurable from a
-TOML file. This design fixes the *shape* so those do not collide, and leaves the limits' own choices (where a native
-program reads them, whether 0 means no limit, the minimum above a double's 1,026 bits) to that task.
+Davis wants configuration to be TOML throughout. The huge-float limits were the first user and are **built** (D77g in
+`docs/decisions.md`): the compiler reads `[limits]` (`exp_bits`, `format_digits`) from the two files below and writes the
+values into the program (so a native program reads no file when it runs; the browser has no files and uses the defaults),
+and `tomato config` shows what is in effect. The files are found by `native/tomato` (a walk up from the program's folder,
+then `${TOMATO_HOME:-$HOME/.tomato}/config.toml`), which only passes their paths on, as this section says. What D77g does
+not do, so that the seed work decides it: it reads only `[limits]` and leaves every other table alone (it neither checks
+nor rejects them, so `[seed]` and the rest are free for the manifest); there is no command-line override yet; and it
+needs no `tomato-seed config get`, because the compiler (written in Tomato) already has `std/toml`. This design fixes the
+*shape* so that later settings do not collide.
 
 - **Two files, one format.** `tomato.toml` in a project folder (project settings and the manifest) and
   `~/.tomato/config.toml` (`${TOMATO_HOME:-$HOME/.tomato}/config.toml`, the user's). Both TOML 1.0, read by the same code.

@@ -9,9 +9,11 @@
 # a double the exponent has as many digits as it needs (1.000e+400), and f writes every digit of the whole part (D77d)
 !tomato_bf_format(x: float, precision: int, kind: int) -> str
 
-# whether f would write more than 100,000 digits before the point (1 yes). That many take a second or more to build (the time grows with
-# the square of their number), so f stops with an OverflowError first (D77f). e and g write few digits and are not limited.
+# whether f would write more digits before the point than the limit (1 yes; 100,000 unless the program was built with another
+# limits.format_digits in tomato.toml). That many take a second or more to build (the time grows with the square of their number), so f
+# stops with an OverflowError first (D77f, D77g). e and g write few digits and are not limited.
 !tomato_bf_digits_check(x: float) -> int
+!tomato_limit_message(kind: int[length=32]) -> str
 
 # the digits of a whole number with a comma before each group of three from the right
 def _group3(digits: str) -> str:
@@ -128,7 +130,7 @@ def _fmt_float(x: float, fill: str, align: str, sign: str, zero: bool, width: in
         if p < 0:
             p = 6
         if kind == 'f' and !tomato_bf_digits_check(x) != 0:
-            raise OverflowError('the number is too large to write with f: it has more than 100000 digits before the point', 'E529')
+            raise OverflowError(!tomato_limit_message(529), 'E529')
         text = !tomato_bf_format(x, p, ord(kind))
     negative = text.startswith('-')
     if negative:

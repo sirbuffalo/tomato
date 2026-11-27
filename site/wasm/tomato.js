@@ -19,13 +19,16 @@
   var enc = function (s) { return new TextEncoder().encode(s); };
 
   // extra: optional { "/name.tom": Uint8Array } for the modules the program imports (the command-line repl supplies them;
-  // the website has only the program and the standard library)
-  TomatoWasm.prototype.compile = function (source, entry, extra) {
+  // the website has only the program and the standard library). config: optional text of a tomato.toml, whose [limits] table sets the
+  // limits on huge floats for the program (docs/decisions.md D77g); without it the built-in limits apply, since a browser has no files
+  TomatoWasm.prototype.compile = function (source, entry, extra, config) {
     var self = this;
     return this.load().then(function () {
       var files = Object.assign({}, extra || {}, { "/program.tom": enc(source) });
       TomatoWasm.STD.forEach(function (n, i) { files["/std/" + TomatoWasm.file(n)] = new Uint8Array(self.std[i]); });
-      var host = new WasiHost({ args: ["tomatoc", "/program.tom", entry || "main", "/std/"], files: files });
+      var args = ["tomatoc", "/program.tom", entry || "main", "/std/"];
+      if (typeof config === "string") { files["/tomato.toml"] = enc(config); args.push("debug", "/tomato.toml", ""); }   // (the compiler's arguments: mode, project file, user file)
+      var host = new WasiHost({ args: args, files: files });
       return host.run(self.compiler).then(function (r) {
         var err = r.stderr.trim();
         if (!self.local && r.code !== 0 && /could not be opened/.test(err) && /^\s*(from|import)\s/m.test(source))

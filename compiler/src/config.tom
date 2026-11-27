@@ -1,0 +1,106 @@
+# The configuration the compiler reads when it builds a program (D77g): the [limits] table of a project's tomato.toml and of the
+# user's config.toml, both TOML (std/toml.tom). The `tomato` command finds the two files (native/tomato) and gives their paths to
+# the compiler; nothing here looks for a file itself, so the compiler's own build and the website (which has no files) see only
+# the built-in defaults. The limits are written into the program (compiler.tom, entry_wrapper), so a built program reads no
+# configuration file when it runs.
+#
+#   [limits]
+#   exp_bits = 65536         # bits in the exponent of a result of exp, expm1, sinh, cosh and ** (E528)
+#   format_digits = 100000   # digits before the point that the f format writes (E529)
+#
+# The user's file is read first and the project's file overrides it, setting by setting. Tables other than [limits] are not
+# looked at (a project's tomato.toml is also a seed manifest, and other settings are read by the code that owns them).
+from toml import loads
+
+# a problem with a configuration file: code is the id of the error (std/errors.txt, E539 to E543), message its text
+export class ConfigError(Error):
+    code: int = 0
+
+    @init
+    def make_config(self, code: int, message: str):
+        Error.start(self, message)
+        self.code = code
+
+export class Limits:
+    exp_bits: int = 65536
+    format_digits: int = 100000
+    exp_from: str = ''           # the file a value came from, '' for the built-in default
+    digits_from: str = ''
+
+# The values must be above what a double can reach, because the runtime checks only floats that are not doubles (a double's
+# exponent has at most 1,026 bits and its whole part 309 digits), and no larger than the runtime can build anyway (a result of
+# more than 2^31 bits is "out of memory"). To remove a limit, write the largest value.
+export def default_exp_bits() -> int:
+    return 65536
+
+export def default_format_digits() -> int:
+    return 100000
+
+def lowest(key: str) -> int:
+    if key == 'exp_bits':
+        return 2048
+    return 1000
+
+def highest() -> int:
+    return 2147483647
+
+def read_file(path: str) -> str:
+    try:
+        f = open(path)
+        text = f.read()
+        f.close()
+        return text
+    catch RuntimeError as e:
+        raise ConfigError(539, f'the configuration file {path} cannot be read: {e.message}')
+
+def apply(out: Limits, path: str):
+    text = read_file(path)
+    try:
+        doc = loads(text)
+    catch RuntimeError as e:
+        raise ConfigError(540, f'the configuration file {path} is not valid TOML: {e.message}')
+    if not doc.has('limits'):
+        return
+    table = doc.lookup('limits')
+    if not table.is_table():
+        raise ConfigError(541, f'{path}: limits must be a table ([limits]), not {table.describe()}')
+    for key in table.keys():
+        if key != 'exp_bits' and key != 'format_digits':
+            raise ConfigError(542, f'{path}: unknown setting limits.{key} (the settings are exp_bits and format_digits)')
+        v = table.lookup(key)
+        low = lowest(key)
+        if v.kind != 'integer' or v.num < low or v.num > highest():
+            shown = v.show()
+            if v.kind == 'integer':
+                shown = str(v.num)
+            raise ConfigError(543, f'{path}: limits.{key} must be a whole number from {low} to {highest()}, not {shown}')
+        if key == 'exp_bits':
+            out.exp_bits = v.num
+            out.exp_from = path
+        else:
+            out.format_digits = v.num
+            out.digits_from = path
+
+# The limits for a build: the built-in defaults, then the user's file, then the project's ('' for a file there is none of)
+export def load_limits(project: str, user: str) -> Limits:
+    out = Limits()
+    if user != '':
+        apply(out, user)
+    if project != '':
+        apply(out, project)
+    return out
+
+def where(path: str) -> str:
+    if path == '':
+        return 'built-in default'
+    return path
+
+# the text of `tomato config`: the files in use and the effective value of each setting with where it came from
+export def describe(project: str, user: str) -> str:
+    limits = load_limits(project, user)
+    lines: list[str] = []
+    lines.append('project file: ' + (project if project != '' else 'none found'))
+    lines.append('user file: ' + (user if user != '' else 'none found'))
+    lines.append(f'limits.exp_bits = {limits.exp_bits}  ({where(limits.exp_from)})')
+    lines.append(f'limits.format_digits = {limits.format_digits}  ({where(limits.digits_from)})')
+    return '\n'.join(lines)
