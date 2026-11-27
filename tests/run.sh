@@ -300,11 +300,11 @@ while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done
 
 # ---- programs -----------------------------------------------------------------------------------------------------------
 # the fast tier builds only these with AddressSanitizer (one or two programs of each kind of thing the suite looks at)
-fast_asan=" at_neg_rmul float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module re_api re_limits sys_args os_files file_lines file_loop_close file_closed string_io assert_ok testing_lib "
+fast_asan=" at_neg_rmul float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module re_api re_limits sys_args os_files file_lines file_loop_close file_closed string_io assert_ok testing_lib testing_diff "
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
 asan_specs1="tests/programs/at_neg_rmul: tests/programs/angle_lists: tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/sort_field: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/big_shift: tests/programs/int_bitwise_big: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/big_decimal: tests/programs/big_karatsuba: tests/programs/big_ntt: tests/programs/big_division: tests/programs/int_bitwise_runs: tests/programs/big_bad_text: tests/programs/int64_convert: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_case_full: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/optional_values: tests/programs/optional_lookups: tests/programs/optional_error_paths: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_floor_mod: tests/programs/float_ownership: tests/programs/float_loops: tests/programs/float_keys: tests/programs/float_nests: tests/programs/float_library: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
-asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_loop_close:WORK tests/programs/file_modes:WORK tests/programs/file_closed:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib:"
+asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_loop_close:WORK tests/programs/file_modes:WORK tests/programs/file_closed:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib: tests/programs/testing_diff:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
   want="$(sed -n '1s/^# borrowed loops: //p' "tests/programs/$2.tom")"
@@ -628,7 +628,7 @@ t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_error_paths time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits; do
+  for name in trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_error_paths time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -1059,9 +1059,9 @@ tomato = "0.51"
   check "build tables: build takes --entry the same way" "wrote e1" "$(cd "$P" && noconf $t build sub/prog.tom --entry crash -o e1 2>&1)"
   printf '%s[build]\nmode = "release"\n[build.test]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
   r="$(noconf $t test "$P/sub/prog.tom" 2>&1)"
-  case "$r" in "ok   a_test"*"1 passed, 0 failed, 0 skipped") ok "build tables: tomato test reads [build.test]";; *) bad "build tables: tomato test reads [build.test]" "$r";; esac
+  case "$r" in "ok   $P/sub/prog.tom  (1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "build tables: tomato test reads [build.test]";; *) bad "build tables: tomato test reads [build.test]" "$r";; esac
   r="$(noconf $t test "$P/sub/prog.tom" --mode release 2>&1)"
-  case "$r" in *"1 passed, 0 failed, 0 skipped") ok "build tables: tomato test --mode release still runs";; *) bad "build tables: tomato test --mode release still runs" "$r";; esac
+  case "$r" in *"(1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "build tables: tomato test --mode release still runs";; *) bad "build tables: tomato test --mode release still runs" "$r";; esac
   # output
   printf '%s[build]\noutput = "out/app"\n[build.crash]\noutput = "/dev/null/never"\n' "$head" > "$P/tomato.toml"
   r="$(noconf $t build "$P/sub/prog.tom" 2>&1)"
@@ -1169,7 +1169,7 @@ seeds = []
 entries = ["test"]' "$(sed -n '/name = "acme.example\/other"/,/^entries/p' "$W/app/tomato.lock")"
   check "seeds: the seed of [seeds.test] is not in a plain build" "1" "$(cd "$W/app" && noconf $t run sub/needs_other.tom 2>&1 | grep -c "cannot find the module 'other'")"
   r="$(cd "$W/app" && noconf $t test sub/needs_other.tom 2>&1)"
-  case "$r" in *"ok   sevens"*"1 passed, 0 failed, 0 skipped") ok "seeds: tomato test reads [seeds.test], so its seeds are found";; *) bad "seeds: tomato test reads [seeds.test], so its seeds are found" "$r";; esac
+  case "$r" in *"ok   sub/needs_other.tom  (1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "seeds: tomato test reads [seeds.test], so its seeds are found";; *) bad "seeds: tomato test reads [seeds.test], so its seeds are found" "$r";; esac
   printf '%s' "$head" > "$W/app/tomato.toml"
   # the lock must hold what the run uses
   r="$(cd "$W/app" && printf '# tomato.lock\nversion = 1\n' > tomato.lock && noconf $t run sub/prog.tom 2>&1)"
@@ -1279,8 +1279,8 @@ $(indep_hash "$W/other")" "$(cd "$W/other" && noconf $t seed check 2>&1)"
 t_manifest_logic() { # the rules of compiler/src/manifest.tom as @test functions, and its version order against the shell's semver_cmp
   cli_setup
   mkdir -p "$work/ml"; cp compiler/src/manifest.tom compiler/src/config.tom tests/manifest_logic.tom "$work/ml/"
-  r="$(cd "$work/ml" && $t test manifest_logic.tom 2>&1 | tail -n 1)"
-  case "$r" in *" passed, 0 failed, 0 skipped") ok "manifest: the reader's rules: $r";; *) bad "manifest: the reader's rules" "$(cd "$work/ml" && $t test manifest_logic.tom 2>&1 | grep -v '^ok ' | head -12)";; esac
+  r="$(cd "$work/ml" && $t run manifest_logic.tom test 2>&1 | tail -n 1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "manifest: the reader's rules: $r";; *) bad "manifest: the reader's rules" "$(cd "$work/ml" && $t run manifest_logic.tom test 2>&1 | grep -v '^ok ' | head -12)";; esac
   # the order of versions: Tomato's compare_versions and the shell's semver_cmp give the same answer for every pair
   eval "$(sed -n '/^semver_cmp() {/,/^}/p' native/tomato)"
   list="0.9 0.51 0.51.0 1.0.0-alpha 1.0.0-alpha.1 1.0.0-alpha.beta 1.0.0-beta 1.0.0-beta.2 1.0.0-beta.11 1.0.0-rc.1 1.0.0-rc.2 1.0.0-rc.10 1.0.0 1.0 1.0.1 1.0.10 1.0.9 1.1.0 2.0.0 10.0.0 1.0.0-0 1.0.0-1 1.0.0-x-y"
@@ -1465,16 +1465,16 @@ t_cli_repl_history() {   # the pty session is slow (it compiles after each line)
 t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, layout, frames, whole sessions on a FakeTerminal), debug and release
   cli_setup
   for mode in debug release; do
-    r="$($t test tests/lineedit_logic.tom --mode $mode 2>&1 | tail -1)"
-    case "$r" in *" passed, 0 failed, 0 skipped") ok "lineedit: the @test functions pass ($mode mode): $r";; *) bad "lineedit: the @test functions pass ($mode mode)" "$($t test tests/lineedit_logic.tom --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+    r="$($t run tests/lineedit_logic.tom test --mode $mode 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "lineedit: the @test functions pass ($mode mode): $r";; *) bad "lineedit: the @test functions pass ($mode mode)" "$($t run tests/lineedit_logic.tom test --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
   done
 }
 t_todo_shell_logic() { # the worked example examples/todo_shell.tom: its commands, its Completer and whole shell sessions on a FakeTerminal, debug and release (the files are copied together: the test imports the example from beside it)
   cli_setup
   cp examples/todo_shell.tom tests/todo_shell_logic.tom "$work/"
   for mode in debug release; do
-    r="$($t test "$work/todo_shell_logic.tom" --mode $mode 2>&1 | tail -1)"
-    case "$r" in *" passed, 0 failed, 0 skipped") ok "todo_shell example: the @test functions pass ($mode mode): $r";; *) bad "todo_shell example: the @test functions pass ($mode mode)" "$($t test "$work/todo_shell_logic.tom" --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+    r="$($t run "$work/todo_shell_logic.tom" test --mode $mode 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "todo_shell example: the @test functions pass ($mode mode): $r";; *) bad "todo_shell example: the @test functions pass ($mode mode)" "$($t run "$work/todo_shell_logic.tom" test --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
   done
   check "todo_shell example: piped input runs the commands" "todo shell: add, done, undo, rm, list, clear, help, quit
 added 1: milk
@@ -1502,17 +1502,17 @@ t_std_sheets() { # every name that std/terminal.tom and std/lineedit.tom export 
 t_lexer_spans() { # lex_spans in compiler/src/lexer.tom: never raises, covers the text, agrees with lex over every .tom file and every prefix of some lines (the files are copied together, the repository is the current folder)
   cli_setup
   cp compiler/src/lexer.tom tests/lexer_spans.tom "$work/"
-  r="$($t test "$work/lexer_spans.tom" 2>&1 | tail -1)"
-  case "$r" in *" passed, 0 failed, 0 skipped") ok "lexer: lex_spans is tolerant and agrees with lex: $r";; *) bad "lexer: lex_spans is tolerant and agrees with lex" "$($t test "$work/lexer_spans.tom" 2>&1 | grep -v '^ok ' | head -12)";; esac
+  r="$($t run "$work/lexer_spans.tom" test 2>&1 | tail -1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "lexer: lex_spans is tolerant and agrees with lex: $r";; *) bad "lexer: lex_spans is tolerant and agrees with lex" "$($t run "$work/lexer_spans.tom" test 2>&1 | grep -v '^ok ' | head -12)";; esac
 }
 t_repledit_logic() { # the repl's rules in compiler/src/repledit.tom (it imports the lexer beside it, so the files are copied together, as the installer does)
   cli_setup
   cp compiler/src/repledit.tom compiler/src/lexer.tom compiler/src/hltomato.tom tests/repledit_logic.tom "$work/"
-  r="$($t test "$work/repledit_logic.tom" 2>&1 | tail -1)"
-  case "$r" in *" passed, 0 failed, 0 skipped") ok "repl editor: the validator, the indenter and the history rules: $r";; *) bad "repl editor: the validator, the indenter and the history rules" "$($t test "$work/repledit_logic.tom" 2>&1 | grep -v '^ok ' | head -12)";; esac
+  r="$($t run "$work/repledit_logic.tom" test 2>&1 | tail -1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "repl editor: the validator, the indenter and the history rules: $r";; *) bad "repl editor: the validator, the indenter and the history rules" "$($t run "$work/repledit_logic.tom" test 2>&1 | grep -v '^ok ' | head -12)";; esac
   cp tests/hltomato_logic.tom "$work/"
-  r="$($t test "$work/hltomato_logic.tom" 2>&1 | tail -1)"
-  case "$r" in *" passed, 0 failed, 0 skipped") ok "repl editor: the highlighter and the palette: $r";; *) bad "repl editor: the highlighter and the palette" "$($t test "$work/hltomato_logic.tom" 2>&1 | grep -v '^ok ' | head -12)";; esac
+  r="$($t run "$work/hltomato_logic.tom" test 2>&1 | tail -1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "repl editor: the highlighter and the palette: $r";; *) bad "repl editor: the highlighter and the palette" "$($t run "$work/hltomato_logic.tom" test 2>&1 | grep -v '^ok ' | head -12)";; esac
   check "install-native.sh built the repl line editor" "yes" "$([ -x "$home/native/bin/tomato-repl-edit" ] && echo yes || echo no)"
   # standard input that is not a terminal never uses the editor, even when one is named (this one would fail)
   printf '#!/bin/sh\necho used >&2; exit 1\n' > "$work/bad-edit"; chmod +x "$work/bad-edit"
@@ -1693,82 +1693,192 @@ t_release_resume() { # release/release.sh after a failure (--resume, --from, --r
   cat "$work/rr.out"
   [ "$rc" = 0 ] || [ -n "$(grep '^FAIL' "$work/rr.out")" ] || bad "release resume sandbox tests ran (status $rc)"
 }
-t_cli_test() { # tomato test: the ok/FAIL lines and summary on standard output, the status, --filter, --mode, several files, errors (pack B)
+t_cli_test() { # tomato test (D81a, D97a): each file in tests/ is one test, in a process of its own; the forms FILE and FILE ENTRY INPUTS..., the summary line, the status, --filter, --timeout, -v
   part="${1:-1}"; cli_setup
-  printf 'from testing import assert_equal, skip\n\n@test.adds\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test.fails\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test.lookup\ndef lookup():\n    skip("no network")\n' > "$work/t3.tom"
-  printf 'from testing import assert_equal\n\n@test.one\ndef one():\n    assert_equal(1, 1)\n\n@test.two\ndef two():\n    assert 2 > 1\n\n@test.three\ndef three():\n    assert_equal("a" + "b", "ab")\n' > "$work/tpass.tom"
-  printf 'from testing import assert_equal\n\n@test.broken\ndef broken():\n    assert_equal(undefined_name, 1)\n' > "$work/tbad.tom"
-  printf '@test.plain\ndef plain():\n    x = 2\n    assert x == 3, "x is not three"\n\n@test.later\ndef later():\n    print("later ran")\n' > "$work/tplain.tom"
-  printf 'import testing\n\n@test.q\ndef q():\n    testing.assert_equal(1, 1)\n    testing.assert_raises(boom, "ValueError")\n\ndef boom():\n    raise ValueError("x")\n' > "$work/timport.tom"
+  # the lines of the report that do not depend on the traces in the output of a failed file: one line for each file and the summary
+  lines() { grep -E '^(ok|FAIL|skip) |^tomato test: |^warning|^error'; }
+  mkdir -p "$work/proj/tests"; cd "$work/proj"
+  printf 'from testing import assert_equal\n\n@main\ndef main():\n    assert_equal(1 + 1, 2)\n    print("a ran")\n' > tests/a_pass.tom
+  printf 'from testing import assert_equal\n\n@main\ndef main():\n    print("before")\n    assert_equal([1, 2], [1, 3])\n' > tests/b_fail.tom
+  printf 'from testing import skip\n\n@main\ndef main():\n    skip("no network")\n' > tests/c_skip.tom
+  printf 'import sys\n\n@main\ndef main():\n    sys.exit(3)\n' > tests/d_exit.tom
+  printf 'from testing import assert_equal, skip\n\n@test.adds\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test.lookup\ndef lookup():\n    skip("later")\n\n@test.subs\ndef subs():\n    assert_equal(3 - 1, 2)\n' > tests/e_group.tom
+  printf 'def helper() -> int:\n    return 1\n' > tests/_helper.tom
   if step 1; then
-  r="$($t test "$work/t3.tom" 2>/dev/null)"; rc=$?
-  check "tomato test: the lines and the summary are on standard output" "ok   adds
-FAIL fails
-     expected 3, got 2  (raised on line 9)
-skip lookup  (no network)
-1 passed, 1 failed, 1 skipped" "$r"
-  check "tomato test: a failing test makes the status 1" "1" "$rc"
-  r="$($t test "$work/tpass.tom" 2>&1)"; rc=$?
-  check "tomato test: an all-pass file" "ok   one
-ok   two
-ok   three
-3 passed, 0 failed, 0 skipped" "$r"
-  check "tomato test: an all-pass file exits 0" "0" "$rc"
-  r="$($t test "$work/t3.tom" --filter adds 2>&1)"; rc=$?
-  check "tomato test: --filter runs the tests whose name contains the text" "ok   adds
-1 passed, 0 failed, 0 skipped" "$r"
-  check "tomato test: a filtered run that passes exits 0" "0" "$rc"
-  r="$($t test "$work/t3.tom" --filter nomatch 2>&1)"; rc=$?
-  check "tomato test: a filter that matches no test says so, and the status stays 0" "warning: no test name contains 'nomatch'
-0 passed, 0 failed, 0 skipped 0" "$r $rc"
-  r="$($t test --filter ail "$work/t3.tom" 2>&1)"; rc=$?
-  case "$r" in "FAIL fails"*"0 passed, 1 failed, 0 skipped") ok "tomato test: --filter before the file";; *) bad "tomato test: --filter before the file" "$r";; esac
-  r="$($t test "$work/timport.tom" 2>&1)"; rc=$?
-  check "tomato test: a file that imports testing itself (import testing) runs" "ok   q
-1 passed, 0 failed, 0 skipped" "$r"
-  fi; if step 2; then
-  r="$($t test "$work/tbad.tom" 2>&1)"; rc=$?
-  case "$r" in *"error[E227]: name 'undefined_name' is not defined"*) [ "$rc" = 1 ] && ok "tomato test: a compile error is reported and exits 1" || bad "tomato test: a compile error exits 1" "status $rc";; *) bad "tomato test: a compile error is reported" "$r";; esac
-  r="$($t test "$work/tpass.tom" "$work/t3.tom" "$work/tbad.tom" 2>/dev/null)"; rc=$?
-  check "tomato test: several files run one after another, each under its name" "==> $work/tpass.tom <==
-ok   one
-ok   two
-ok   three
-3 passed, 0 failed, 0 skipped
-==> $work/t3.tom <==
-ok   adds
-FAIL fails
-     expected 3, got 2  (raised on line 9)
-skip lookup  (no network)
-1 passed, 1 failed, 1 skipped
-==> $work/tbad.tom <==" "$r"
-  check "tomato test: any failing file makes the status 1" "1" "$rc"
   r="$($t test 2>&1)"; rc=$?
-  case "$r" in *"tomato test FILE..."*) [ "$rc" = 2 ] && ok "tomato test: no file is a usage error" || bad "tomato test: no file is a usage error" "status $rc";; *) bad "tomato test: no file is a usage error" "$r";; esac
+  check "tomato test: every tests/*.tom, one line each (a helper module that starts with _ is left out), then the summary" "ok   tests/a_pass.tom
+FAIL tests/b_fail.tom  (exit status 1)
+skip tests/c_skip.tom  (no network)
+FAIL tests/d_exit.tom  (exit status 3)
+ok   tests/e_group.tom  (2 passed, 1 skipped)
+tomato test: 5 files, 2 passed, 2 failed, 1 skipped: FAILED" "$(printf '%s\n' "$r" | lines)"
+  check "tomato test: the status is 1 when a file failed" "1" "$rc"
+  case "$r" in *"    before
+    error"*"AssertionError: lists differ at [1]: expected 3, got 2"*"      expected: [1, 3]
+      actual:   [1, 2]"*) ok "tomato test: a failed file shows its output under its line, with the diff";; *) bad "tomato test: a failed file shows its output under its line, with the diff" "$r";; esac
+  case "$r" in *"a ran"*) bad "tomato test: a passing file's output is not shown" "$r";; *) ok "tomato test: a passing file's output is not shown";; esac
+  r="$($t test -v tests/a_pass.tom tests/e_group.tom 2>&1)"; rc=$?
+  check "tomato test -v shows the output of the files that pass, a file with @test functions shows its functions" "ok   tests/a_pass.tom
+    a ran
+ok   tests/e_group.tom  (2 passed, 1 skipped)
+    ok   adds
+    skip lookup  (later)
+    ok   subs
+    2 passed, 0 failed, 1 skipped
+tomato test: 2 files, 2 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  r="$($t test tests/a_pass.tom --mode release 2>&1)"; rc=$?
+  check "tomato test --mode release runs the file in release mode" "ok   tests/a_pass.tom
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  r="$($t test tests --filter pass 2>&1)"; rc=$?
+  check "tomato test --filter keeps the files whose name contains the text; a folder stands for its test files" "ok   tests/a_pass.tom
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  r="$($t test tests/a_pass.tom --filter zzz 2>&1)"; rc=$?
+  check "tomato test --filter that keeps no file says so and the status stays 0" "warning: no file name contains 'zzz'
+tomato test: 0 files, 0 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  r="$($t test tests/a_pass.tom tests/c_skip.tom 2>&1)"; rc=$?
+  check "tomato test FILE FILE: the files in the order given, a skipped file does not fail the run" "ok   tests/a_pass.tom
+skip tests/c_skip.tom  (no network)
+tomato test: 2 files, 1 passed, 0 failed, 1 skipped: ok
+0" "$(printf '%s\n' "$r" | lines)
+$rc"
+  r="$($t test tests/c_skip.tom --mode release 2>&1)"
+  check "tomato test: a skipped file in release mode" "skip tests/c_skip.tom
+tomato test: 1 files, 0 passed, 0 failed, 1 skipped: ok" "$(printf '%s\n' "$r" | lines)"
+  fi; if step 2; then
+  # errors in the command line, a file that does not compile or has nothing to run
+  printf 'from testing import assert_equal\n\n@main\ndef main():\n    assert_equal(undefined_name, 1)\n' > "$work/tbad.tom"
+  printf 'def nothing() -> int:\n    return 1\n' > "$work/tnone.tom"
+  r="$($t test "$work/tbad.tom" "$work/tnone.tom" tests/a_pass.tom 2>&1)"; rc=$?
+  check "tomato test: a file that does not compile or has no @main fails, with the compiler's message, and the next file still runs" "FAIL $work/tbad.tom  (did not compile)
+    error[E227]: name 'undefined_name' is not defined
+FAIL $work/tnone.tom  (did not compile)
+    error[E228]: no function is marked @main
+ok   tests/a_pass.tom
+tomato test: 3 files, 1 passed, 2 failed, 0 skipped: FAILED
+1" "$(printf '%s\n' "$r" | grep -E '^(ok|FAIL|skip) |^tomato test: |^    error\[')
+$rc"
+  r="$($t test x 2>&1)"; rc=$?
+  check "tomato test x (a bare word) is an error that suggests x.tom" "error: 'x' is not a file: write tomato test x.tom (or tests/x.tom); a word that is not a file is only accepted right after a file, as the entry to run in it (tomato test x.tom x)
+1" "$r
+$rc"
+  r="$($t test tests/a_pass.tom x tests/b_fail.tom 2>&1 | head -3)"
+  case "$r" in *"error[E352]"*|*"FAIL tests/a_pass.tom"*) ok "tomato test FILE x: the word after a file is its entry";; *) bad "tomato test FILE x: the word after a file is its entry" "$r";; esac
   r="$($t test "$work/nothing.tom" 2>&1)"; rc=$?
-  check "tomato test: a missing file" "error: cannot read $work/nothing.tom" "$r"
-  r="$($t test "$work/dz.tom" 2>&1)"; rc=$?
-  case "$r" in *"error[E522]: no function is marked @test"*) [ "$rc" = 1 ] && ok "tomato test: a file with no @test function" || bad "tomato test: a file with no @test function" "status $rc";; *) bad "tomato test: a file with no @test function" "$r";; esac
+  check "tomato test: a file that does not exist" "error: cannot read $work/nothing.tom
+1" "$r
+$rc"
+  mkdir -p "$work/none"; cd "$work/none"
+  r="$($t test 2>&1)"; rc=$?
+  check "tomato test with no file and no tests folder says what to do" "error: no tests folder here: run tomato test FILE..., or put test files in tests/ (each tests/NAME.tom is one test)
+1" "$r
+$rc"
+  mkdir -p "$work/none/tests"; printf 'def helper() -> int:\n    return 1\n' > "$work/none/tests/_h.tom"
+  r="$($t test 2>&1)"; rc=$?
+  check "tomato test: a tests folder with only helper modules has no test" "error: no test file in tests (each tests/NAME.tom is one test; a name that starts with _ is a helper module, not a test)
+1" "$r
+$rc"
+  cd "$work/proj"
+  r="$($t test --bogus 2>&1)"; rc=$?
+  check "tomato test: an unknown option is an error" "error: unknown option '--bogus' for 'tomato test' (run 'tomato help')
+1" "$r
+$rc"
+  r="$($t test tests/a_pass.tom --timeout x 2>&1)"; rc=$?
+  check "tomato test: --timeout takes whole seconds" "error: --timeout takes a whole number of seconds above 0, not 'x'
+1" "$r
+$rc"
+  case "$($t help)" in *"tomato test [FILE]... | FILE ENTRY [INPUTS...] [--filter TEXT] [--timeout SECONDS] [-v]"*) ok "tomato help lists the test command";; *) bad "tomato help lists the test command" "$($t help | grep 'tomato test')";; esac
+  # the inputs of main have defaults: a bare tomato test can always run it
+  printf 'from testing import assert_equal\n\n@main\ndef main(n: int = 3, word: str = "w"):\n    print("n =", n, "word =", word)\n    assert_equal(n, 3)\n' > tests/f_defaults.tom
+  printf '@main\ndef main(n: int):\n    print(n)\n' > "$work/tneeds.tom"
+  r="$($t test -v tests/f_defaults.tom 2>&1)"
+  check "tomato test: a main whose inputs have defaults runs with none" "ok   tests/f_defaults.tom
+    n = 3 word = w
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+  r="$($t test "$work/tneeds.tom" 2>&1)"; rc=$?
+  check "tomato test: a main with an input that has no default fails, says the rule and shows the runtime's message" "FAIL $work/tneeds.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
+    error[E352]: the entry point takes 1 input(s), got 0
+tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED
+1" "$r
+$rc"
   fi; if step 3; then
-  r="$($t test "$work/tplain.tom" 2>&1)"; rc=$?
-  check "tomato test: a plain assert fails the test with its message and line; the next test still runs" "FAIL plain
-     x is not three  (raised on line 4)
-later ran
-ok   later
-1 passed, 1 failed, 0 skipped" "$r"
-  r="$($t test "$work/tplain.tom" --mode release 2>&1)"; rc=$?
-  check "tomato test --mode release: the same, without the line (release mode keeps no call trace)" "FAIL plain
-     x is not three
-later ran
-ok   later
-1 passed, 1 failed, 0 skipped" "$r"
-  check "tomato test --mode release exits 1 on a failure" "1" "$rc"
-  check "release mode runs testing_lib (assert_raises by class name) like debug" "$(cat tests/expected/testing_lib.main.out)" "$($t run tests/programs/testing_lib.tom --mode release 2>&1)"
-  check "an uncaught failed assert has its release ID and line" "error E519:3" "$($t run tests/runtime/assert_failed.tom --mode release 2>&1)"
-  r="$($t run "$work/t3.tom" 2>&1)"; rc=$?
-  case "$r" in *"no function is marked @main"*) ok "tomato run on a test file without @main asks for @main";; *) bad "tomato run on a test file without @main" "$r";; esac
-  case "$($t help)" in *"tomato test FILE... [--entry test.NAME] [--filter TEXT] [--mode MODE]"*) ok "tomato help lists the test command";; *) bad "tomato help lists the test command";; esac
+  # FILE ENTRY INPUTS...: as tomato run FILE ENTRY INPUTS...
+  printf 'from testing import assert_equal\n\n@main\ndef main():\n    print("main ran")\n\n@check\ndef check(n: int, word: str = "w"):\n    print("check", n, word)\n    assert_equal(n, 4)\n' > "$work/tentries.tom"
+  r="$($t test -v "$work/tentries.tom" check 4 hi 2>&1)"; rc=$?
+  check "tomato test FILE ENTRY INPUTS: the entry runs with the inputs" "ok   $work/tentries.tom
+    check 4 hi
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  printf '@main\ndef main(n: int = 3):\n    assert n < 0\n' > "$work/tneg.tom"
+  r="$($t test "$work/tneg.tom" main -5 2>&1)"; rc=$?
+  check "tomato test FILE ENTRY -5: a word that starts with - after a file is an input, as for tomato run" "ok   $work/tneg.tom
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  r="$($t test "$work/tentries.tom" check 5 2>&1)"; rc=$?
+  check "tomato test FILE ENTRY INPUTS: an assertion in the entry fails the file" "FAIL $work/tentries.tom  (exit status 1)
+tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED
+1" "$(printf '%s\n' "$r" | grep -E '^(ok|FAIL|skip) |^tomato test: ')
+$rc"
+  r="$($t test -v "$work/tentries.tom" main 2>&1)"
+  check "tomato test FILE ENTRY: the entry main" "ok   $work/tentries.tom
+    main ran
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+  r="$($t test "$work/tentries.tom" check 2>&1)"
+  check "tomato test FILE ENTRY with the inputs missing fails, says the rule and shows the runtime's message" "FAIL $work/tentries.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
+    error[E352]: the entry point takes 2 input(s), got 0
+tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
+  r="$($t test "$work/tentries.tom" nosuch 2>&1)"
+  check "tomato test FILE ENTRY: an entry that is not in the file fails with the compiler's message" "FAIL $work/tentries.tom  (did not compile)
+    error[E228]: no function is marked @nosuch" "$(printf '%s\n' "$r" | sed -n 1,2p)"
+  r="$($t test tests/e_group.tom test 2>&1)"
+  check "tomato test FILE test: the entry test runs the file's @test functions, as when there is no @main" "ok   tests/e_group.tom  (2 passed, 1 skipped)
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+  r="$($t test tests/e_group.tom test 1 2>&1)"
+  check "tomato test FILE test INPUTS: the entry test takes no inputs" "FAIL tests/e_group.tom  (the entry test (the functions marked @test) takes no inputs)
+tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
+  r="$($t test tests/a_pass.tom tests/e_group.tom 2>&1 | lines)"
+  check "tomato test FILE FILE: a second file is a file, not an entry" "ok   tests/a_pass.tom
+ok   tests/e_group.tom  (2 passed, 1 skipped)
+tomato test: 2 files, 2 passed, 0 failed, 0 skipped: ok" "$r"
   fi; if step 4; then
+  # one process for each file: a file that ends the program, overflows the stack or hangs fails alone, and the next file still runs
+  printf 'import sys\n\n@test.first\ndef first():\n    assert 1 == 1\n\n@test.quits\ndef quits():\n    sys.exit(0)\n\n@test.never\ndef never():\n    assert 1 == 1\n' > "$work/exits.tom"
+  printf 'def down(n: int) -> int:\n    return down(n + 1) + 1\n\n@main\ndef main():\n    print(down(0))\n' > "$work/deep.tom"
+  printf '@main\ndef main():\n    x = 0\n    while True:\n        x += 1\n' > "$work/hang.tom"
+  printf 'import sys\n\n@main\ndef main():\n    sys.exit(0)\n' > "$work/ends.tom"
+  r="$($t test "$work/exits.tom" "$work/deep.tom" "$work/ends.tom" tests/a_pass.tom 2>/dev/null)"; rc=$?
+  check "tomato test: sys.exit(0) in a test function, a stack overflow, sys.exit(0) in a main: each file alone; the later files still run" "FAIL $work/exits.tom  (the program ended in quits with status 0 (a test must not call sys.exit))
+ok   $work/ends.tom
+ok   tests/a_pass.tom
+tomato test: 4 files, 2 passed, 2 failed, 0 skipped: FAILED
+1" "$(printf '%s\n' "$r" | grep -E '^(ok|FAIL|skip) |^tomato test: ' | grep -v "deep.tom")
+$rc"
+  case "$r" in *"FAIL $work/deep.tom  (exit status 1)"*"stack overflow"*) ok "tomato test: a stack overflow fails its file with the runtime's message";; *) bad "tomato test: a stack overflow fails its file with the runtime's message" "$r";; esac
+  printf 'import sys\n\n@main\ndef main():\n    sys.exit(130)\n' > "$work/e130.tom"
+  r="$($t test "$work/e130.tom" 2>&1)"
+  check "tomato test: an exit status above 128 is not called a signal for sure" "FAIL $work/e130.tom  (exit status 130 (killed by signal 2, or sys.exit(130)))
+tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
+  r="$($t test "$work/hang.tom" tests/a_pass.tom --timeout 2 2>&1)"; rc=$?
+  check "tomato test --timeout: a file that runs too long is stopped and named, the next file runs" "FAIL $work/hang.tom  (timed out after 2 seconds)
+ok   tests/a_pass.tom
+tomato test: 2 files, 1 passed, 1 failed, 0 skipped: FAILED
+1" "$r
+$rc"
+  r="$($t test tests/a_pass.tom --timeout 30 2>&1)"; rc=$?
+  check "tomato test --timeout: a file that finishes in time is unaffected" "ok   tests/a_pass.tom
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  fi; if step 5; then
   # dotted entry markers (D96a): every marker marks one function; the entry `x` runs @x and every @x.*, `x.y` runs that one
   cat > "$work/tg.tom" <<'TG'
 @greet
@@ -1830,8 +1940,8 @@ def ab():
 def fails():
     assert_equal(1, 2)
 TD
-  r="$($t test "$work/tdot.tom" 2>&1)"; rc=$?
-  check "tomato test runs @test and every @test.*, in the order written" "ok   bare
+  r="$($t run "$work/tdot.tom" test 2>&1)"; rc=$?
+  check "the entry test runs @test and every @test.*, in the order written" "ok   bare
 ok   a_x
 ok   a_y
 ok   ab
@@ -1839,26 +1949,34 @@ FAIL fails
      expected 2, got 1  (raised on line 21)
 4 passed, 1 failed, 0 skipped" "$r"
   check "that failing run exits 1" "1" "$rc"
-  r="$($t test "$work/tdot.tom" --entry test.a 2>&1)"; rc=$?
-  check "tomato test --entry test.a runs @test.a.x and @test.a.y, not @test.ab" "ok   a_x
+  r="$($t run "$work/tdot.tom" test.a 2>&1)"; rc=$?
+  check "the entry test.a runs @test.a.x and @test.a.y, not @test.ab" "ok   a_x
 ok   a_y
 2 passed, 0 failed, 0 skipped" "$r"
   check "a selected run that passes exits 0" "0" "$rc"
-  r="$($t test "$work/tdot.tom" --entry test.fails --mode release 2>&1)"; rc=$?
-  check "tomato test --entry test.fails runs that test alone, and exits 1" "FAIL fails
+  r="$($t run "$work/tdot.tom" test.fails --mode release 2>&1)"; rc=$?
+  check "the entry test.fails runs that test alone, and exits 1" "FAIL fails
      expected 2, got 1
 0 passed, 1 failed, 0 skipped 1" "$r $rc"
-  check "tomato test --entry test runs the same as no --entry" "$($t test "$work/tdot.tom" 2>&1)" "$($t test "$work/tdot.tom" --entry test 2>&1)"
-  r="$($t test "$work/tdot.tom" --entry test.a --filter y 2>&1)"
+  r="$($t run "$work/tdot.tom" test.a --filter y 2>&1)"
   check "--filter works inside a selected entry" "ok   a_y
 1 passed, 0 failed, 0 skipped" "$r"
   r="$($t run "$work/tdot.tom" test.ab 2>&1)"
   check "tomato run FILE test.ab is the same selection" "ok   ab
 1 passed, 0 failed, 0 skipped" "$r"
-  r="$($t test "$work/tdot.tom" --entry test.zzz 2>&1)"; rc=$?
-  case "$r" in *"error[E228]: no function is marked @test.zzz"*) [ "$rc" = 1 ] && ok "tomato test --entry for a marker nothing has" || bad "tomato test --entry for a marker nothing has" "status $rc";; *) bad "tomato test --entry for a marker nothing has" "$r";; esac
-  r="$($t test "$work/tdot.tom" --entry main 2>&1)"; rc=$?
-  case "$r" in *"the entry of 'tomato test' must be test or test.NAME"*) [ "$rc" = 1 ] && ok "tomato test --entry main is refused" || bad "tomato test --entry main is refused" "status $rc";; *) bad "tomato test --entry main is refused" "$r";; esac
+  # tomato test FILE ENTRY with a dotted entry: one function (or a group) of a file, as a test
+  r="$($t test "$work/tdot.tom" test.a 2>&1)"; rc=$?
+  check "tomato test FILE test.a: the entry is a group of the file's @test functions" "ok   $work/tdot.tom  (2 passed)
+tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+0" "$r
+$rc"
+  r="$($t test "$work/tdot.tom" test.fails 2>&1)"; rc=$?
+  check "tomato test FILE test.fails: a failing function fails the file" "FAIL $work/tdot.tom  (1 of 1 tests failed)
+tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED
+1" "$(printf '%s\n' "$r" | grep -E '^(ok|FAIL|skip) |^tomato test: ')
+$rc"
+  r="$($t test "$work/tdot.tom" test.zzz 2>&1)"; rc=$?
+  case "$r" in *"error[E228]: no function is marked @test.zzz"*) [ "$rc" = 1 ] && ok "tomato test FILE test.zzz: a marker nothing has" || bad "tomato test FILE test.zzz: a marker nothing has" "status $rc";; *) bad "tomato test FILE test.zzz: a marker nothing has" "$r";; esac
   fi
 }
 t_cli_compile() { cli_setup; check "compile writes IR" "yes" "$($t compile examples/shapes.tom | grep -q 'define i32 @main' && echo yes)"; }
@@ -1916,11 +2034,12 @@ spawn_cli t_cli_test 1
 spawn_cli t_cli_test 2
 spawn_cli t_cli_test 3
 spawn_cli t_cli_test 4
+spawn_cli t_cli_test 5
 t_terminal_logic() { # std/terminal.tom: the pure parts as @test functions (the key decoder at every byte split, widths, SGR lowering, color depth), debug and release
   cli_setup
   for mode in debug release; do
-    r="$($t test tests/terminal_logic.tom --mode $mode 2>&1 | tail -1)"
-    case "$r" in *" passed, 0 failed, 0 skipped") ok "terminal: the @test functions pass ($mode mode): $r";; *) bad "terminal: the @test functions pass ($mode mode)" "$($t test tests/terminal_logic.tom --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+    r="$($t run tests/terminal_logic.tom test --mode $mode 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "terminal: the @test functions pass ($mode mode): $r";; *) bad "terminal: the @test functions pass ($mode mode)" "$($t run tests/terminal_logic.tom test --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
   done
 }
 t_terminal_pty() { # std/terminal.tom on a real terminal (a pty), through expect: raw mode, keys, size and resize, and the restore however the program ends

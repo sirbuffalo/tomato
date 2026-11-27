@@ -1,0 +1,83 @@
+int -> expected 3, got 2: sum
+empty -> expected x, got ''
+prefix -> expected abc, got abcd
+long -> values differ at character 41
+  expected: '...jumps over the lazy cat and keeps running far away from home'
+  actual:   '...jumps over the lazy dog and keeps running far away from home'
+                                    ^
+nl -> values differ at character 17
+  expected: 'line one\nline too'
+  actual:   'line one\nline two'
+                             ^
+list -> lists differ at [2]: expected 4, got 3
+  expected: [1, 2, 4]
+  actual:   [1, 2, 3]
+listlen -> lists differ: expected 3 items, got 4 (the first extra item is [3]: 4)
+  expected: [1, 2, 3]
+  actual:   [1, 2, 3, 4]
+listshort -> lists differ: expected 2 items, got 1 (the first missing item is [1]: 2)
+  expected: [1, 2]
+  actual:   [1]
+nested -> lists differ at [1][1]: expected 5, got 4
+  expected: [[1, 2], [3, 5]]
+  actual:   [[1, 2], [3, 4]]
+liststr -> lists differ at [1]: expected 'c', got 'b'
+  expected: ['a', 'c']
+  actual:   ['a', 'b']
+dict -> dicts differ: key 'c' is missing (expected 3)
+  expected: {'a': 1, 'c': 3}
+  actual:   {'a': 1, 'b': 2}
+  and key 'b' is unexpected (got 2)
+dictval -> dicts differ at ['a'][1]: expected 3, got 2: msg here
+  expected: {'a': [1, 3], 'b': [2]}
+  actual:   {'a': [1, 2], 'b': [2]}
+obj -> expected Pt(2), got Pt(1)
+float -> expected 0.25, got 0.5
+biglist -> lists differ at [77]: expected -1, got 77
+notequal -> values are equal: a
+in -> 'a' is not in ['b', 'c']
+none -> expected None, got tom
+less -> expected 5 to be less than 3
+ge -> expected 'a' to be at least 'b'
+emptydict -> dicts differ: key 'a' is missing (expected 1)
+  expected: {'a': 1}
+  actual:   {}
+emptylist -> lists differ: expected 1 item, got 0 (the first missing item is [0]: 1)
+  expected: [1]
+  actual:   []
+strlist -> lists differ at [1]: expected 'x;y', got 'x,y'
+  expected: ["it's", 'x;y']
+  actual:   ["it's", 'x,y']
+dict_same -> passes
+dict_not_equal_bad -> values are equal: {'a': 1}
+dict_not_equal_ok -> passes
+nested_dict -> dicts differ at ['m'][0]: expected 4, got 3
+  expected: {'k': [1, 2], 'm': [4]}
+  actual:   {'k': [1, 2], 'm': [3]}
+many_keys -> dicts differ: key 'z1' is missing (expected 1)
+  and key 'z2' is missing (expected 2)
+  and key 'z3' is missing (expected 3)
+  and key 'z4' is missing (expected 4)
+  and key 'z5' is missing (expected 5)
+  and key 'z6' is missing (expected 6)
+  and more differences
+text_in_list_long -> lists differ at [0]: strings differ at character 42
+  expected: '...aaaaaaaaaaaaaaaaaaaab'
+  actual:   '...aaaaaaaaaaaaaaaaaaaaa'
+                                    ^
+order_ok -> passes
+le_bad -> expected 3 to be at most 2: too big
+gt_bad -> expected 1.5 to be greater than 1.5
+unicode -> values differ at character 8
+  expected: 'héllo world, how are you'
+  actual:   'héllo wörld, how are you'
+                    ^
+optional_bad -> expected tom, got None
+optional_ok -> passes
+none_string -> expected None, got None
+empty_expected -> values differ at character 1 (expected 0 characters, got 19)
+  expected: ''
+  actual:   'this is a long text'
+             ^
+both_none -> passes
+text_vs_none -> expected None, got x

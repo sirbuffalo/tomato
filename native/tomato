@@ -3,7 +3,7 @@
 #   tomato run FILE [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]   compile, link and run (MODE: debug or release; debug is the default)
 #   tomato build FILE [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]   write a native program (--mode release for the optimised build)
 #   tomato compile FILE [--entry NAME] [--mode MODE]                  print the LLVM IR
-#   tomato test FILE... [--entry test.NAME] [--filter TEXT] [--mode MODE]   run the functions marked @test.* in each file (ok/FAIL lines and a summary; exit 1 if any test failed)
+#   tomato test [FILE]... | FILE ENTRY [INPUTS...] [--filter TEXT] [--timeout SECONDS] [-v]   run each file as a test (no word: every tests/*.tom; FILE ENTRY INPUTS... as in `tomato run`; a bare word before a file is an error); one line per file and a summary; exit 1 if any failed
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
 #   tomato seed install [--locked]                                    lock the seeds of tomato.toml ({ path = "../x" } seeds only) into tomato.lock; --locked checks without writing
@@ -225,33 +225,159 @@ case "$cmd" in
     printf '%s | %*s%s\n' "$pad" "$indent" '' "$(printf '%s' "$trimmed" | sed 's/./^/g')"
     exit 0 ;;
   test)
-    # tomato test FILE... [--entry test.NAME] [--filter TEXT] [--mode MODE]: compiles each file with the entry `test` (the compiler adds a
-    # driver that runs every function marked @test or @test.NAME, in the order written: std/testing.tom) and runs it. --entry test.NAME
-    # runs only the functions marked @test.NAME (and @test.NAME.*); --filter TEXT runs the tests whose name contains TEXT. The status is
-    # 1 when a file does not compile or any test failed, else 0. There is no discovery of files (B-Q2).
-    tfilter=""; tmode=""; tentry="test"
+    # tomato test [FILE]... [FILE ENTRY [INPUTS...]] [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] (D81a, D97a). Each file in a tests/ folder is one test: a
+    # program that passes when it ends with status 0 (nothing was raised) and fails otherwise; a file with functions marked
+    # @test.NAME is run through the driver of the entry `test` (even if it has a @main), and passes when all of them do. Every file is built once and run as a
+    # process of its own, so a sys.exit, a crash or a hang ends only that file. The words: one that ends in .tom or has a / is a file (a
+    # folder stands for its *.tom files, except those whose name starts with _); a bare word before any file is an error (write x.tom).
+    # After a file, a word that is not a file is the ENTRY to run in it, as `tomato run FILE ENTRY INPUTS...` (the entry may be a
+    # dotted @test.NAME), and the words after it are the inputs of that entry's function; with no ENTRY the file runs as a whole
+    # and takes no inputs.
+    # With no word, every tests/*.tom. --filter TEXT keeps the files whose name contains TEXT; --timeout N stops a file that runs for
+    # more than N seconds; -v also shows the output of the files that pass. One line for each file, then one line for CI; the status is
+    # 1 when any file failed (did not compile, raised, ended with another status, timed out), else 0.
+    tfilter=""; tmode=""; ttimeout=""; tverbose=0
     n=$#
+    seen_file=0     # a file has been read: an unknown word that starts with - (-5) is then an input of its entry, as for `tomato run`
+    stop=0          # after `--` every word is a word of the command, not an option
     while [ $n -gt 0 ]; do
       n=$((n - 1))
+      if [ $stop = 1 ]; then set -- "$@" "$1"; shift; continue; fi
       case "$1" in
+        --) stop=1; shift ;;
         --filter) [ $n -ge 1 ] || usage; tfilter="$2"; shift 2; n=$((n - 1)) ;;
         --mode) [ $n -ge 1 ] || usage; tmode="$2"; shift 2; n=$((n - 1)) ;;
-        --entry) [ $n -ge 1 ] || usage; tentry="$2"; shift 2; n=$((n - 1)) ;;
-        -*) die "unknown option '$1' for 'tomato test' (run 'tomato help')" ;;
+        --timeout) [ $n -ge 1 ] || usage; ttimeout="$2"; shift 2; n=$((n - 1)) ;;
+        -v|--verbose) tverbose=1; shift ;;
+        -*) if [ "$seen_file" = 1 ]; then set -- "$@" "$1"; shift; else die "unknown option '$1' for 'tomato test' (run 'tomato help')"; fi ;;
+        *.tom|*/*) seen_file=1; set -- "$@" "$1"; shift ;;
         *) set -- "$@" "$1"; shift ;;
       esac
     done
-    case "$tentry" in test|test.?*) ;; *) die "the entry of 'tomato test' must be test or test.NAME (the name of a test marker), not '$tentry'" ;; esac
-    [ $# -ge 1 ] || usage
-    for f in "$@"; do [ -f "$f" ] || die "cannot read $f"; done
-    nfiles=$#; status=0
-    for f in "$@"; do
-      [ "$nfiles" -gt 1 ] && printf '==> %s <==\n' "$f"
-      if [ -n "$tmode" ] && [ -n "$tfilter" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" "$tentry" --mode "$tmode" --filter "$tfilter" || status=1
-      elif [ -n "$tmode" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" "$tentry" --mode "$tmode" || status=1
-      elif [ -n "$tfilter" ]; then TOMATO_WARNINGS="$warnings" "$invoked" run "$f" "$tentry" --filter "$tfilter" || status=1
-      else TOMATO_WARNINGS="$warnings" "$invoked" run "$f" "$tentry" || status=1; fi
+    case "$ttimeout" in
+      "") ;;
+      *[!0-9]*|0|00*) die "--timeout takes a whole number of seconds above 0, not '$ttimeout'" ;;
+    esac
+    tmpd="$(mktemp -d)" || die "cannot make a temporary folder"
+    job=""; watcher=""
+    cleanup() { [ -z "$job" ] || kill "$job" 2>/dev/null; [ -z "$watcher" ] || kill "$watcher" 2>/dev/null; rm -rf "$tmpd"; }
+    trap cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
+    nl="
+"
+    file_word() { case "$1" in *.tom|*/*) return 0 ;; esac; return 1; }
+    # the list of tests, one line each: K|FILE; the entry named after a file (if any) is in $tmpd/entry.K and the words after the entry, the
+    # inputs of its function, one to a line in $tmpd/args.K
+    : > "$tmpd/list"
+    k=0
+    add_file() { k=$((k + 1)); printf '%s|%s\n' "$k" "$1" >> "$tmpd/list"; : > "$tmpd/args.$k"; : > "$tmpd/entry.$k"; }
+    if [ $# -eq 0 ]; then
+      [ -d tests ] || die "no tests folder here: run tomato test FILE..., or put test files in tests/ (each tests/NAME.tom is one test)"
+      set -- tests
+    fi
+    while [ $# -gt 0 ]; do
+      a="$1"; shift
+      if [ -d "$a" ]; then
+        any=0
+        for f in "${a%/}"/*.tom; do
+          [ -f "$f" ] || continue
+          case "$(basename "$f")" in _*) continue ;; esac
+          add_file "$f"; any=1
+        done
+        [ "$any" = 1 ] || die "no test file in $a (each $a/NAME.tom is one test; a name that starts with _ is a helper module, not a test)"
+      elif file_word "$a"; then
+        add_file "$a"
+        # FILE [ENTRY [INPUTS...]]: a word that is not a file is the entry to run, and every word after it an input of that entry's function
+        if [ $# -gt 0 ] && ! file_word "$1" && [ ! -d "$1" ]; then
+          printf '%s\n' "$1" > "$tmpd/entry.$k"; shift
+          while [ $# -gt 0 ]; do printf '%s\n' "$1" >> "$tmpd/args.$k"; shift; done
+        fi
+      else
+        die "'$a' is not a file: write tomato test $a.tom (or tests/$a.tom); a word that is not a file is only accepted right after a file, as the entry to run in it (tomato test x.tom $a)"
+      fi
     done
+    while IFS= read -r line; do
+      f="${line#*|}"; [ -f "$f" ] || die "cannot read $f"
+    done < "$tmpd/list"
+    prog="$tmpd/prog"; progress="$tmpd/progress"; out="$tmpd/out"
+    nfiles=0; npassed=0; nfailed=0; nskipped=0; status=0
+    # run_prog: the program and its words, the output in $out, with the time limit when there is one; sets prc (its status) and timed_out
+    run_prog() {
+      timed_out=0
+      if [ -z "$ttimeout" ]; then "$@" >> "$out" 2>&1; prc=$?; return 0; fi
+      "$@" >> "$out" 2>&1 </dev/stdin &
+      job=$!
+      # (the watcher's own sleep is stopped with it: a TERM to the subshell would leave the sleep running until its time is up)
+      ( sleep "$ttimeout" & nap=$!; trap 'kill "$nap" 2>/dev/null; exit 0' TERM; wait "$nap"
+        : > "$tmpd/timeout"; kill -TERM "$job" 2>/dev/null; sleep 1; kill -KILL "$job" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+      watcher=$!
+      { wait "$job"; } 2>/dev/null; prc=$?
+      kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+      job=""; watcher=""
+      [ ! -f "$tmpd/timeout" ] || timed_out=1
+      return 0
+    }
+    while IFS= read -r line <&3; do
+      k="${line%%|*}"; f="${line#*|}"
+      if [ -n "$tfilter" ]; then case "$f" in *"$tfilter"*) ;; *) continue ;; esac; fi
+      nfiles=$((nfiles + 1))
+      rm -f "$prog" "$progress" "$tmpd/timeout"; : > "$out"
+      # what runs: the entry named after the file, else the file as a whole: the functions marked @test (the entry test, through the
+      # driver, whatever else the file has: its [build.test] and [seeds.test] apply), or, with none, the program (@main; a file
+      # with neither says what is missing)
+      entry="$(cat "$tmpd/entry.$k")"
+      if [ -n "$entry" ]; then
+        case "$entry" in test|test.*) kind=test ;; *) kind=main ;; esac
+      else
+        entry=main; kind=main
+        if grep -Eq '^@test([.][A-Za-z_]|[[:space:]]*(#.*)?$)' "$f" 2>/dev/null; then entry=test; kind=test; fi
+      fi
+      verdict=ok; why=""
+      if [ "$kind" = test ] && [ -s "$tmpd/args.$k" ]; then
+        verdict=FAIL; why="the entry test (the functions marked @test) takes no inputs"
+      else
+        if [ -n "$tmode" ]; then set -- --mode "$tmode"; else set --; fi
+        if ! TOMATO_WARNINGS="$warnings" "$invoked" build "$f" --entry "$entry" "$@" -o "$prog" 2>> "$out" >/dev/null; then
+          verdict=FAIL; why="did not compile"
+        else
+          if [ "$kind" = test ]; then
+            set -- "$prog" --progress "$progress"
+          else
+            set -- "$prog"
+            while IFS= read -r w; do set -- "$@" "$w"; done < "$tmpd/args.$k"
+          fi
+          run_prog "$@"
+          state=""; passed=0; failed=0; skipped=0; total=0; index=0; name=""
+          [ ! -f "$progress" ] || read -r state passed failed skipped total index name < "$progress"
+          if [ "$timed_out" = 1 ]; then verdict=FAIL; why="timed out after $ttimeout seconds"; [ -z "$name" ] || [ "$name" = "-" ] || why="$why, in $name"
+          elif [ "$kind" = test ] && [ "$state" != done ] && [ "$prc" -ne 2 ]; then
+            verdict=FAIL
+            if [ -z "$state" ]; then why="the program ended before it ran a test (status $prc)"
+            elif [ "$prc" -gt 128 ]; then why="the program ended in $name with status $prc (killed by signal $((prc - 128)), or sys.exit($prc))"
+            else why="the program ended in $name with status $prc (a test must not call sys.exit)"; fi
+          elif [ "$prc" -gt 128 ]; then verdict=FAIL; why="exit status $prc (killed by signal $((prc - 128)), or sys.exit($prc))"
+          elif [ "$prc" -ne 0 ]; then
+            # an uncaught skip() ends a file with this error id (E523, SkipTest): the file is skipped, not failed
+            reason="$(sed -n 's/^error\[E523\]: SkipTest: //p' "$out" | head -1 | sed 's/ (raised on line [0-9]*)$//')"
+            if [ "$kind" = main ] && grep -Eq '^error(\[| )E523' "$out"; then verdict=skip; why="$reason"
+            else verdict=FAIL; why="exit status $prc"; [ "$kind" != test ] || [ "$failed" -eq 0 ] || why="$failed of $total tests failed"
+              # an entry (main, by default) with an input that has no default cannot run with none: say the rule (the runtime's own line follows)
+              if [ "$kind" = main ] && [ ! -s "$tmpd/args.$k" ] && grep -q 'error.E352' "$out"; then why="exit status $prc: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...)"; fi
+            fi
+          elif [ "$kind" = test ]; then why="$passed passed"; [ "$skipped" -eq 0 ] || why="$why, $skipped skipped"
+          fi
+        fi
+      fi
+      case "$verdict" in
+        ok) npassed=$((npassed + 1)); if [ -n "$why" ]; then printf 'ok   %s  (%s)\n' "$f" "$why"; else printf 'ok   %s\n' "$f"; fi
+            [ "$tverbose" = 0 ] || sed 's/^/    /' "$out" ;;
+        skip) nskipped=$((nskipped + 1)); if [ -n "$why" ]; then printf 'skip %s  (%s)\n' "$f" "$why"; else printf 'skip %s\n' "$f"; fi
+            [ "$tverbose" = 0 ] || sed 's/^/    /' "$out" ;;
+        *) nfailed=$((nfailed + 1)); status=1; printf 'FAIL %s  (%s)\n' "$f" "$why"; sed 's/^/    /' "$out" ;;
+      esac
+    done 3< "$tmpd/list"
+    [ -z "$tfilter" ] || [ "$nfiles" -gt 0 ] || echo "warning: no file name contains '$tfilter'"
+    if [ "$status" -eq 0 ]; then verdict=ok; else verdict=FAILED; fi
+    printf 'tomato test: %d files, %d passed, %d failed, %d skipped: %s\n' "$nfiles" "$npassed" "$nfailed" "$nskipped" "$verdict"
     exit $status ;;
   config)
     # tomato config [FILE]: the settings in effect for FILE (without one, for the current folder) and where each came from; the

@@ -216,6 +216,7 @@ string_io
 string_io_bulk
 assert_ok
 testing_lib
+testing_diff
 big_huge
 int_bitwise_runs
 big_bad_text

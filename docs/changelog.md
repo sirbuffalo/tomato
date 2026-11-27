@@ -47,10 +47,11 @@ on an older install moves to 1.0.0 as usual.
 - **Bitwise `&`, `|`, `^`, `~` on integers of any size** with Python's two's-complement rules; shifts, `2 ** n` and
   single-limb division of big integers are now linear time.
 - **A `File` opened in a `for` loop header is closed when the loop is left** (D82a).
-- **`assert` and `@test`** with `tomato test` (D81a). Every `@` entry marker marks exactly one function and may be
-  dotted (D96a): `@test.parse_empty` marks one test, `tomato test FILE` runs every `@test.*`, and `tomato test FILE
-  --entry test.parse_empty` (or `tomato run FILE test.parse_empty`) runs one; `tomato run FILE greet` runs every
+- **Dotted entry markers** (D96a): every `@` entry marker marks exactly one function and may be
+  dotted: `@test.parse_empty` marks one test, `tomato test FILE` runs every `@test.*`, and `tomato test FILE
+  test.parse_empty` (or `tomato run FILE test.parse_empty`) runs one; `tomato run FILE greet` runs every
   `@greet.*` and `greet.loud` runs one. The same marker on two functions is an error (E587).
+- **`assert`, `tomato test` and `testing`** (D81a, D97a): a file in `tests/` is one test (a program that passes when it ends with status 0); `tomato test` runs every `tests/*.tom`, each file as a process of its own, so a `sys.exit`, crash or hang ends only that file; one line for each file and a summary line for CI; `tomato test FILE ENTRY INPUTS...`, `--filter`, `--timeout`, `-v`; `assert_equal` shows where the first difference is in long text, lists and dicts; `assert_less` and friends; `@test` functions in one file still work. See `docs/testing.md`.
 - **`@neg` and `@rmul`** (D85a): `-x` and `number * x` on objects of any class. `math.Angle` uses them (`-deg(30)` is
   `-30 deg`, `3 * deg(30)` is `90 deg`) and has an `@hash`, so angles are dict keys and set elements.
 - `sum`, `min`, `max`, `sorted` and `list.sort()` take a list of objects whose class has `@add` (`sum`) or `@lt` (the

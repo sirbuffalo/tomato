@@ -1,20 +1,23 @@
-# Testing (Wave 2, pack B): assertions for tests, and the runner behind `tomato test`. Every assertion raises AssertionError
-# (a direct subclass of Error, like the `assert` statement) with the text shown below; a `message` is added after it, as
-# "text: message". Pure Tomato, so it works natively and in the playground. No module-level values (D49b): the runner counts in a
-# small _Report object it passes around.
+# Testing (Wave 2, pack B; the file-per-test form and the rest for 1.0 by D97a): assertions for tests, and the runner behind `tomato test`. Every assertion raises
+# AssertionError (a direct subclass of Error, like the `assert` statement) with the text shown below; a `message` is added to the
+# first line, as "text: message". Pure Tomato, so it works natively and in the playground. No module-level values (D49b): the
+# runner counts in a small _Report object it passes around. docs/testing.md is the guide.
 #
-# A test file marks plain functions with no parameters and no result with @test.NAME (every entry marker marks exactly one
-# function, so each test has a marker of its own: D96a) and runs with `tomato test FILE`:
+# The main way to test: a file in a tests/ folder is one test. It is an ordinary program (a function marked @main) that uses `assert`
+# and the checks below, and `tomato test` runs every tests/*.tom as a process of its own: it passes when it ends with status 0 (nothing
+# was raised), fails otherwise, and is skipped when it ends by calling skip(). A file may also hold several tests, plain functions
+# with no parameters and no result marked @test.NAME (every entry marker marks exactly one function, D96a): the entry `test` runs every @test and @test.* function, and the file passes when
+# every one does (even if the file also has a @main, which stays for `tomato run`):
 #     from testing import assert_equal
 #     @test.adds
 #     def adds():
 #         assert_equal(1 + 1, 2)
-# The entry `test` runs every @test and @test.* function; `tomato test FILE --entry test.adds` (or `tomato run FILE test.adds`)
-# runs one. The compiler adds a driver that calls _run_all with the names and functions in the order they are written.
+# The compiler adds a driver that calls _run_all with the names and functions in the order they are written. `tomato run FILE test.adds` runs one of them. docs/testing.md.
 #
 # The generic helpers need the language to accept their operation for the type: assert_equal and assert_not_equal take types with ==
-# (not a class without an @eq method), and assert_none and assert_not_none take types that can be None (int, float, bool, text, lists,
-# dicts, sets, classes, tuples; not fixed-width integers). Otherwise the compile error points into this file.
+# (not a class without an @eq method), assert_less and the other order checks take types with < and > (numbers and text, or a
+# class with @lt and @gt), and assert_none and assert_not_none take types that can be None (int, float, bool, text, lists, dicts,
+# sets, classes, tuples; not fixed-width integers). Otherwise the compile error points into this file.
 #
 # The callbacks of assert_raises are named functions (D63a: a function value cannot see the variables around it); to pass
 # a value, use assert_raises_with.
@@ -29,9 +32,279 @@ export class SkipTest(Error):
     def make_skip(self, message: str, id: str = ""):
         Error.start(self, message, id)
 
+
+# ---- showing values and finding the first difference ----------------------------------------------------------------------------
+
+# How a list shows the value: 'abc' (quoted, escapes written) for a str, the same as str() for everything else. Failure texts use it
+# so that an empty string or a number written as text is not mistaken for something else.
+def _show[T](x: T) -> str:
+    text = str([x])
+    return text[1:len(text) - 1]
+
+# A shown value cut to 60 characters for a one-line message.
+def _clip(text: str) -> str:
+    if len(text) > 60:
+        return text[0:57] + '...'
+    return text
+
+class _Items:
+    ok: bool = True
+    items: list[str] = []
+
+# Splits text at each `sep` that is outside quotes and brackets. ok is False when the quotes or brackets do not balance (a class
+# whose @str writes brackets of its own, say); the caller then shows the two values whole.
+def _scan(text: str, sep: str) -> _Items:
+    result = _Items()
+    n = len(text)
+    if n > 200000:
+        result.ok = False
+        return result
+    quote = ''
+    depth = 0
+    start = 0
+    i = 0
+    while i < n:
+        c = text[i:i + 1]
+        if quote != '':
+            if c == '\\':
+                i += 1
+            elif c == quote:
+                quote = ''
+        elif c == "'" or c == '"':
+            quote = c
+        elif c == '[' or c == '{' or c == '(':
+            depth += 1
+        elif c == ']' or c == '}' or c == ')':
+            depth -= 1
+            if depth < 0:
+                result.ok = False
+                return result
+        elif c == sep and depth == 0:
+            result.items.append(text[start:i].strip())
+            start = i + 1
+        i += 1
+    if quote != '' or depth != 0:
+        result.ok = False
+        return result
+    result.items.append(text[start:n].strip())
+    return result
+
+# The items of a shown list or dict: [a, b], {k: v}
+def _split_items(text: str) -> _Items:
+    result = _scan(text[1:len(text) - 1], ',')
+    if result.ok and len(result.items) > 0 and result.items[len(result.items) - 1] == '':
+        result.items.pop()     # the empty text has no items
+    return result
+
+# 'text', [list], {dict}, or leaf (a number, a class, anything else). Tuples and sets have no == (so cannot be the T of assert_equal);
+# a text that looks like one is a leaf.
+def _kind(text: str) -> str:
+    n = len(text)
+    if n >= 2:
+        first = text[0:1]
+        last = text[n - 1:n]
+        if (first == "'" or first == '"') and last == first:
+            return 'text'
+        if first == '[' and last == ']':
+            return 'list'
+        if first == '{' and last == '}':
+            return 'dict'
+    return 'leaf'
+
+# The kind of a whole value as str() writes it: a text that looks quoted is a leaf, because a str is not quoted at the top.
+def _top_kind(text: str) -> str:
+    kind = _kind(text)
+    if kind == 'text':
+        return 'leaf'
+    return kind
+
+# Index of the first character where a and b differ (the length of the shorter one when one is a prefix of the other).
+def _first_difference(a: str, b: str) -> int:
+    n = min(len(a), len(b))
+    i = 0
+    while i < n and a[i:i + 1] == b[i:i + 1]:
+        i += 1
+    return i
+
+# The lines that show two texts one under the other with a caret under the first difference. e and a are shown texts with their
+# quotes; a long text is cut to a window of 60 characters around the difference, with ... where it was cut.
+def _text_lines(e: str, a: str) -> list[str]:
+    ei = e[1:len(e) - 1]
+    ai = a[1:len(a) - 1]
+    at = _first_difference(ei, ai)
+    start = 0
+    if at > 20:
+        start = at - 20
+    lead = ''
+    if start > 0:
+        lead = '...'
+    etail = ''
+    if start + 60 < len(ei):
+        etail = '...'
+    atail = ''
+    if start + 60 < len(ai):
+        atail = '...'
+    lines: list[str] = []
+    lines.append("  expected: '" + lead + ei[start:start + 60] + etail + "'")
+    lines.append("  actual:   '" + lead + ai[start:start + 60] + atail + "'")
+    lines.append(' ' * (13 + len(lead) + at - start) + '^')
+    return lines
+
+class _Found:
+    lines: list[str] = []      # one phrase for each difference found, the first the most important
+    detail: list[str] = []     # extra lines under the first: the two texts with a caret
+    more: bool = False         # there were more than 6 differences: the rest is not listed
+
+def _at(path: str) -> str:
+    if path == '':
+        return ''
+    return f'at {path}: '
+
+def _items_word(n: int) -> str:
+    if n == 1:
+        return '1 item'
+    return f'{n} items'
+
+def _chars_word(n: int) -> str:
+    if n == 1:
+        return '1 character'
+    return f'{n} characters'
+
+def _leaf(path: str, exp: str, act: str, found: _Found):
+    if _kind(exp) == 'text' and _kind(act) == 'text' and (len(exp) > 30 or len(act) > 30):
+        at = _first_difference(exp[1:len(exp) - 1], act[1:len(act) - 1])
+        found.lines.append(f'{_at(path)}strings differ at character {at + 1}')
+        if len(found.detail) == 0:
+            found.detail = _text_lines(exp, act)
+        return
+    found.lines.append(f'{_at(path)}expected {_clip(exp)}, got {_clip(act)}')
+
+# Adds the differences between two shown values to found, going down into lists and dicts: a list reports its first differing
+# item, a dict every key that is missing, unexpected or has another value (up to 6 differences in all).
+def _find(path: str, exp: str, act: str, found: _Found):
+    if exp == act or len(found.lines) >= 6:
+        return
+    kind = _kind(exp)
+    if kind != _kind(act) or kind == 'leaf' or kind == 'text':
+        _leaf(path, exp, act, found)
+        return
+    e = _split_items(exp)
+    a = _split_items(act)
+    if not e.ok or not a.ok:
+        _leaf(path, exp, act, found)
+        return
+    if kind == 'list':
+        n = min(len(e.items), len(a.items))
+        for i in range(n):
+            if e.items[i] != a.items[i]:
+                _find(path + f'[{i}]', e.items[i], a.items[i], found)
+                return
+        if len(a.items) > n:
+            found.lines.append(f'{_at(path)}expected {_items_word(n)}, got {len(a.items)} (the first extra item is [{n}]: {_clip(a.items[n])})')
+        elif len(e.items) > n:
+            found.lines.append(f'{_at(path)}expected {_items_word(len(e.items))}, got {n} (the first missing item is [{n}]: {_clip(e.items[n])})')
+        return
+    # a dict: {k: v, ...}; the keys are compared as shown, in the order of the expected dict
+    emap: dict[str, str] = {}
+    amap: dict[str, str] = {}
+    ekeys: list[str] = []
+    akeys: list[str] = []
+    for item in e.items:
+        pair = _scan(item, ':')
+        if not pair.ok or len(pair.items) != 2:
+            _leaf(path, exp, act, found)
+            return
+        emap[pair.items[0]] = pair.items[1]
+        ekeys.append(pair.items[0])
+    for item in a.items:
+        pair = _scan(item, ':')
+        if not pair.ok or len(pair.items) != 2:
+            _leaf(path, exp, act, found)
+            return
+        amap[pair.items[0]] = pair.items[1]
+        akeys.append(pair.items[0])
+    for k in ekeys:
+        if len(found.lines) >= 6:
+            found.more = True
+            break
+        if k not in amap:
+            found.lines.append(f'{_at(path)}key {_clip(k)} is missing (expected {_clip(emap[k])})')
+        elif emap[k] != amap[k]:
+            _find(path + f'[{k}]', emap[k], amap[k], found)
+    for k in akeys:
+        if len(found.lines) >= 6:
+            found.more = True
+            break
+        if k not in emap:
+            found.lines.append(f'{_at(path)}key {_clip(k)} is unexpected (got {_clip(amap[k])})')
+
+# A value's text for a one-line message: '' for the empty text, and a newline or tab written out.
+def _visible(text: str) -> str:
+    if text == '':
+        return "''"
+    return _escaped(text)
+
+# A text with a newline, tab or carriage return written out.
+def _escaped(text: str) -> str:
+    if text.find('\n') >= 0 or text.find('\t') >= 0 or text.find('\r') >= 0:
+        return text.replace('\\', '\\\\').replace('\n', '\\n').replace('\t', '\\t').replace('\r', '\\r')
+    return text
+
+# The failure text of assert_equal for the two values as str() writes them (the type is not known here: text is not quoted, and the
+# text of a list or dict is told by its brackets): "expected X, got Y" for a short text or a number or a class; for a longer text
+# (more than 12 characters, or one with a newline) the two texts one under the other with a caret under the first difference; for a list or a dict where the
+# first difference is, from the second line on.
+def _unequal(act: str, exp: str) -> str:
+    ve = _visible(exp)
+    va = _visible(act)
+    plain = f'expected {_clip(ve)}, got {_clip(va)}'
+    kind = _top_kind(exp)
+    if kind != _top_kind(act):
+        kind = 'leaf'
+    if kind == 'leaf':
+        if len(ve) <= 12 and len(va) <= 12 and (ve == exp or exp == '') and (va == act or act == ''):
+            return plain
+        ee = _escaped(exp)
+        ea = _escaped(act)
+        head = f'values differ at character {_first_difference(ee, ea) + 1}'
+        if len(ee) != len(ea):
+            head += f' (expected {_chars_word(len(ee))}, got {len(ea)})'
+        return head + '\n' + '\n'.join(_text_lines("'" + ee + "'", "'" + ea + "'"))
+    found = _Found()
+    _find('', exp, act, found)
+    if len(found.lines) == 0:
+        return plain
+    first = found.lines[0]
+    noun = 'lists'
+    if kind == 'dict':
+        noun = 'dicts'
+    if first.startswith('at '):
+        head = f'{noun} differ {first}'
+    else:
+        head = f'{noun} differ: {first}'
+    lines: list[str] = [head]
+    if len(found.detail) > 0:
+        for d in found.detail:
+            lines.append(d)
+    elif len(exp) <= 60 and len(act) <= 60:
+        lines.append('  expected: ' + exp)
+        lines.append('  actual:   ' + act)
+    for i in range(1, len(found.lines)):
+        lines.append('  and ' + found.lines[i])
+    if found.more:
+        lines.append('  and more differences')
+    return '\n'.join(lines)
+
+# ---- assertions -----------------------------------------------------------------------------------------------------------------
+
+# Raises with text; a message goes after the first line of it.
 def _fail(text: str, message: str):
     if message != '':
-        text = text + ': ' + message
+        cut = text.find('\n')
+        if cut < 0:
+            text = text + ': ' + message
+        else:
+            text = text[0:cut] + ': ' + message + text[cut:len(text)]
     raise AssertionError(text, 'E519')
 
 # fails the test with message
@@ -49,30 +322,96 @@ export def assert_false(value: bool, message: str = ''):
     if value:
         _fail('expected False', message)
 
-# "expected X, got Y" (the values as str() shows them)
+# == for assert_equal and assert_not_equal. A value that may be None (T is `str | None`, a list or a class) raises "None where a
+# value is needed" when it is compared and is None; here that is a value that is not equal, unless both are None.
+def _is_none[T](a: T) -> bool:
+    try:
+        if a == a:
+            return False
+    catch RuntimeError as e:
+        return e.id == 'E10'
+    return False
+
+def _equal[T](a: T, b: T) -> bool:
+    try:
+        return a == b
+    catch RuntimeError as e:
+        if e.id != 'E10':
+            raise e
+        return _is_none(a) and _is_none(b)
+
+# The same for two dicts, whose == the language does not have (two dicts are equal when they have the same keys and equal values; the
+# order of the keys does not matter). This overload comes first so that a call with a dict finds it; the values need ==.
+def _same_dict[K, V](a: dict[K, V], b: dict[K, V]) -> bool:
+    if len(a) != len(b):
+        return False
+    for k, v in a.items():
+        if k not in b:
+            return False
+        if b[k] != v:
+            return False
+    return True
+
+export def assert_equal[K, V](actual: dict[K, V], expected: dict[K, V], message: str = ''):
+    if not _same_dict(actual, expected):
+        _fail(_unequal(str(actual), str(expected)), message)
+
+export def assert_not_equal[K, V](actual: dict[K, V], expected: dict[K, V], message: str = ''):
+    if _same_dict(actual, expected):
+        _fail(f'values are equal: {_clip(_visible(str(actual)))}', message)
+
+# "expected X, got Y" (the values as a list shows them: 'abc' for text). For text, a list or a dict the text goes on to say where
+# the first difference is:
+#     strings differ at character 3 (expected 3 characters, got 4)
+#       expected: 'abd'
+#       actual:   'abcd'
+#                   ^
+#     lists differ at [2]: expected 4, got 3
+#       expected: [1, 2, 4]
+#       actual:   [1, 2, 3]
+#     dicts differ: key 'b' is missing (expected 2)
+# A list reports its first differing item (and goes down into nested lists and dicts: `at [1]['k'][0]`); a dict says every key that is
+# missing, unexpected or has another value (up to 6).
 export def assert_equal[T](actual: T, expected: T, message: str = ''):
-    if not (actual == expected):
-        _fail(f'expected {str(expected)}, got {str(actual)}', message)
+    if not _equal(actual, expected):
+        _fail(_unequal(str(actual), str(expected)), message)
 
 # "values are equal: X"
 export def assert_not_equal[T](actual: T, expected: T, message: str = ''):
-    if actual == expected:
-        _fail(f'values are equal: {str(actual)}', message)
+    if _equal(actual, expected):
+        _fail(f'values are equal: {_clip(_visible(str(actual)))}', message)
+
+# "expected X to be less than Y" and so on. Numbers and text compare as usual; a class needs @lt and @gt.
+export def assert_less[T](actual: T, limit: T, message: str = ''):
+    if not (actual < limit):
+        _fail(f'expected {_show(actual)} to be less than {_show(limit)}', message)
+
+export def assert_less_equal[T](actual: T, limit: T, message: str = ''):
+    if actual > limit:
+        _fail(f'expected {_show(actual)} to be at most {_show(limit)}', message)
+
+export def assert_greater[T](actual: T, limit: T, message: str = ''):
+    if not (actual > limit):
+        _fail(f'expected {_show(actual)} to be greater than {_show(limit)}', message)
+
+export def assert_greater_equal[T](actual: T, limit: T, message: str = ''):
+    if actual < limit:
+        _fail(f'expected {_show(actual)} to be at least {_show(limit)}', message)
 
 # "X is not in [...]" / "X is in [...]"
 export def assert_in[T](item: T, items: list[T], message: str = ''):
     if item not in items:
-        _fail(f'{str(item)} is not in {str(items)}', message)
+        _fail(f'{_show(item)} is not in {_clip(str(items))}', message)
 
 export def assert_not_in[T](item: T, items: list[T], message: str = ''):
     if item in items:
-        _fail(f'{str(item)} is in {str(items)}', message)
+        _fail(f'{_show(item)} is in {_clip(str(items))}', message)
 
 # "expected None, got X" / "expected a value, got None". T is not found from a value that may be None: write the type,
 # as in assert_none[str](name).
 export def assert_none[T](value: T | None, message: str = ''):
     if value is not None:
-        _fail(f'expected None, got {str(value)}', message)
+        _fail(f'expected None, got {_clip(str(value))}', message)
 
 export def assert_not_none[T](value: T | None, message: str = ''):
     if value is None:
@@ -115,50 +454,91 @@ export def assert_raises_with[A](f: fn(A), arg: A, kind: str = 'Error') -> Error
         return e
     raise AssertionError(f'expected {kind} to be raised, but nothing was raised', 'E519')
 
-# Ends the test as skipped (the runner counts it apart from the failures).
+# Ends the test as skipped: in a @test function the runner counts it apart from the failures, and a file that ends this way (nothing
+# catches it) is a skipped test for `tomato test`.
 export def skip(reason: str):
     raise SkipTest(reason, 'E523')
+
+# ---- the runner -----------------------------------------------------------------------------------------------------------------
 
 class _Report:
     passed: int = 0
     failed: int = 0
     skipped: int = 0
 
+# With `--progress FILE` the runner rewrites FILE before each test and at the end, so that `tomato test`, which runs this program as
+# a process of its own, can say which test was running when the program ended (a crash, sys.exit, a timeout) and how the run stood:
+#     STATE PASSED FAILED SKIPPED TOTAL INDEX NAME        STATE is run or done; INDEX counts from 1, 0 before the first test
+def _write_progress(path: str, state: str, report: _Report, total: int, index: int, name: str):
+    if path == '':
+        return
+    f = open(path, 'w')
+    f.write(f'{state} {report.passed} {report.failed} {report.skipped} {total} {index} {name}\n')
+    f.close()
+
+# FAIL NAME, then the message: its first line with where it was raised, the others (a diff) under it
+def _print_failure(name: str, e: Error, line: int):
+    print(f'FAIL {name}')
+    lines = e.message.split('\n')
+    if line > 0:
+        print(f'     {lines[0]}  (raised on line {line})')
+    else:
+        print(f'     {lines[0]}')
+    for i in range(1, len(lines)):
+        print(f'     {lines[i]}')
+
+def _bad_argument(text: str):
+    print(f'error: {text}')
+    print('usage: PROGRAM [--filter TEXT] [--progress FILE]')
+    sys.exit(2)
+
 # Runs the tests in the order given, one after another in this process, and prints one line each (ok, FAIL with the message and
-# the line, or skip), then the counts. args holds the words after the file name; `--filter TEXT` runs only the tests whose name
-# contains TEXT. The program ends with status 1 when any test failed. Called by the driver the compiler writes for `tomato test`.
+# the line, or skip), then the counts. args holds the words after the file name: `--filter TEXT` runs only the tests whose name
+# contains TEXT, `--progress FILE` is described above. The
+# program ends with status 1 when any test failed. Called by the driver the compiler writes for the entry `test`.
 export def _run_all(names: list[str], tests: list[fn()], args: tuple[str]):
     pattern = ''
-    wants = False
+    progress = ''
+    wants = ''
     for w in args:
-        if wants:
+        if wants == '--filter':
             pattern = w
-            wants = False
-        elif w == '--filter':
-            wants = True
-    report = _Report()
+            wants = ''
+        elif wants == '--progress':
+            progress = w
+            wants = ''
+        elif w == '--filter' or w == '--progress':
+            wants = w
+        else:
+            _bad_argument(f"unknown argument '{w}'")
+    if wants != '':
+        _bad_argument(f'{wants} needs a value')
+    selected: list[int] = []
     for i in range(len(names)):
-        if pattern != '' and pattern not in names[i]:
-            continue
-        test = tests[i]
+        if pattern == '' or pattern in names[i]:
+            selected.append(i)
+    total = len(selected)
+    report = _Report()
+    for k in range(total):
+        name = names[selected[k]]
+        _write_progress(progress, 'run', report, total, k + 1, name)
         try:
-            test()
+            tests[selected[k]]()
             report.passed += 1
-            print(f'ok   {names[i]}')
+            print(f'ok   {name}')
         catch SkipTest as s:
             report.skipped += 1
-            print(f'skip {names[i]}  ({s.message})')
+            print(f'skip {name}  ({s.message})')
         catch Error as e:
             line = !tomato_caught_line()
             report.failed += 1
-            print(f'FAIL {names[i]}')
-            if line > 0:
-                print(f'     {e.message}  (raised on line {line})')
-            else:
-                print(f'     {e.message}')
-    if pattern != '' and report.passed + report.failed + report.skipped == 0:
+            _print_failure(name, e, line)
+        sys.flush()
+    if pattern != '' and total == 0:
         # a typo in the filter would otherwise pass silently; the status stays 0 (whether it should be 1 is Davis's choice)
         print(f"warning: no test name contains '{pattern}'")
+    _write_progress(progress, 'done', report, total, total, '-')
     print(f'{report.passed} passed, {report.failed} failed, {report.skipped} skipped')
+    sys.flush()
     if report.failed > 0:
         sys.exit(1)

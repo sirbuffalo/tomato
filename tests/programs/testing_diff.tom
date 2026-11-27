@@ -1,0 +1,168 @@
+# The failure texts of assert_equal and the other checks of the testing module for text, lists and dicts (D97a): where the first
+# difference is, in nested lists and dicts, with a message, with a long text cut to a window, and the quoted values in the
+# other checks. Each check is caught here and its text printed (the runner's own output is in the tomato test checks of tests/run.sh).
+from testing import assert_equal, assert_not_equal, assert_in, assert_none, assert_less, assert_greater_equal, assert_less_equal, assert_greater
+
+# runs f and prints what it raised (or that it did not)
+def show(label: str, f: fn()):
+    try:
+        f()
+        print(label, '-> passes')
+    catch AssertionError as e:
+        print(label, '->', e.message)
+
+class Pt:
+    x: int = 0
+    @init
+    def make(self, x: int):
+        self.x = x
+    @eq
+    def same(self, other: Pt) -> bool:
+        return self.x == other.x
+    @str
+    def show(self) -> str:
+        return f'Pt({self.x})'
+
+def t_int():
+    assert_equal(1 + 1, 3, 'sum')
+def t_empty():
+    assert_equal('', 'x')
+def t_prefix():
+    assert_equal('abcd', 'abc')
+def t_long():
+    assert_equal('the quick brown fox jumps over the lazy dog and keeps running far away from home', 'the quick brown fox jumps over the lazy cat and keeps running far away from home')
+def t_nl():
+    assert_equal('line one\nline two', 'line one\nline too')
+def t_list():
+    assert_equal([1, 2, 3], [1, 2, 4])
+def t_listlen():
+    assert_equal([1, 2, 3, 4], [1, 2, 3])
+def t_listshort():
+    assert_equal([1], [1, 2])
+def t_nested():
+    assert_equal([[1, 2], [3, 4]], [[1, 2], [3, 5]])
+def t_liststr():
+    assert_equal(['a', 'b'], ['a', 'c'])
+def t_dict():
+    assert_equal({'a': 1, 'b': 2}, {'a': 1, 'c': 3})
+def t_dictval():
+    assert_equal({'a': [1, 2], 'b': [2]}, {'a': [1, 3], 'b': [2]}, 'msg here')
+def t_obj():
+    assert_equal(Pt(1), Pt(2))
+def t_float():
+    assert_equal(0.5, 0.25)
+def t_biglist():
+    a: list[int] = []
+    b: list[int] = []
+    for i in range(100):
+        a.append(i)
+        b.append(i)
+    b[77] = -1
+    assert_equal(a, b)
+def t_notequal():
+    assert_not_equal('a', 'a')
+def t_in():
+    assert_in('a', ['b', 'c'])
+def t_none():
+    name: str | None = 'tom'
+    assert_none[str](name)
+def t_less():
+    assert_less(5, 3)
+def t_ge():
+    assert_greater_equal('a', 'b')
+def t_emptydict():
+    d: dict[str, int] = {}
+    assert_equal(d, {'a': 1})
+def t_emptylist():
+    d: list[int] = []
+    assert_equal(d, [1])
+def t_strlist():
+    assert_equal(['it\'s', 'x,y'], ['it\'s', 'x;y'])
+
+def f_dict_same():
+    assert_equal({'a': 1, 'b': 2}, {'b': 2, 'a': 1})
+def f_dict_not_equal_bad():
+    assert_not_equal({'a': 1}, {'a': 1})
+def f_dict_not_equal_ok():
+    assert_not_equal({'a': 1}, {'a': 2})
+def f_nested_dict():
+    assert_equal({'k': [1, 2], 'm': [3]}, {'k': [1, 2], 'm': [4]})
+def f_many_keys():
+    assert_equal({'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8}, {'z1': 1, 'z2': 2, 'z3': 3, 'z4': 4, 'z5': 5, 'z6': 6, 'z7': 7, 'z8': 8})
+def f_text_in_list_long():
+    assert_equal(['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'], ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab'])
+def f_order_ok():
+    assert_less(1, 2)
+    assert_less_equal(2, 2)
+    assert_greater(3, 2)
+    assert_greater_equal(2.5, 2.5)
+    assert_less('a', 'b')
+def f_le_bad():
+    assert_less_equal(3, 2, 'too big')
+def f_gt_bad():
+    assert_greater(1.5, 1.5)
+def f_unicode():
+    assert_equal('héllo wörld, how are you', 'héllo world, how are you')
+def f_optional_bad():
+    name: str | None = None
+    assert_equal(name, 'tom')
+def f_both_none():
+    a: str | None = None
+    b: str | None = None
+    assert_equal(a, b)
+    assert_not_equal(a, 'x')
+def f_text_vs_none():
+    a: str | None = 'x'
+    b: str | None = None
+    assert_equal(a, b)
+def f_none_string():
+    a: str | None = 'None'
+    b: str | None = None
+    assert_equal(a, b)
+def f_empty_expected():
+    assert_equal('this is a long text', '')
+def f_optional_ok():
+    name: str | None = 'tom'
+    assert_equal(name, 'tom')
+
+@main
+def main():
+    show('int', t_int)
+    show('empty', t_empty)
+    show('prefix', t_prefix)
+    show('long', t_long)
+    show('nl', t_nl)
+    show('list', t_list)
+    show('listlen', t_listlen)
+    show('listshort', t_listshort)
+    show('nested', t_nested)
+    show('liststr', t_liststr)
+    show('dict', t_dict)
+    show('dictval', t_dictval)
+    show('obj', t_obj)
+    show('float', t_float)
+    show('biglist', t_biglist)
+    show('notequal', t_notequal)
+    show('in', t_in)
+    show('none', t_none)
+    show('less', t_less)
+    show('ge', t_ge)
+    show('emptydict', t_emptydict)
+    show('emptylist', t_emptylist)
+    show('strlist', t_strlist)
+    show('dict_same', f_dict_same)
+    show('dict_not_equal_bad', f_dict_not_equal_bad)
+    show('dict_not_equal_ok', f_dict_not_equal_ok)
+    show('nested_dict', f_nested_dict)
+    show('many_keys', f_many_keys)
+    show('text_in_list_long', f_text_in_list_long)
+    show('order_ok', f_order_ok)
+    show('le_bad', f_le_bad)
+    show('gt_bad', f_gt_bad)
+    show('unicode', f_unicode)
+    show('optional_bad', f_optional_bad)
+    show('optional_ok', f_optional_ok)
+    show('none_string', f_none_string)
+    show('empty_expected', f_empty_expected)
+    show('both_none', f_both_none)
+    show('text_vs_none', f_text_vs_none)

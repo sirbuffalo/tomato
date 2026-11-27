@@ -39,7 +39,7 @@ Programs have no top-level code: statements go inside a function, and `@main` ma
 | `site/` | the website for tomato.davismcd.com; `site/wasm/` is the compiler, runtime and IR interpreter that run in the browser |
 | `editors/` | the VS Code extension: TextMate grammar, snippets, language configuration |
 | `release/` | `release.sh` makes a whole release (see `docs/releasing.md`); `build.sh` builds the archive and the `latest.json` that `tomato update` reads, `pkg.sh`, `sign-pkg.sh` and `dmg.sh` the macOS installer, `linux-setup.sh` the Linux toolchains |
-| `docs/` | the specification, decision log, decision inventory, open questions, placeholders (`provisional.md`) and the error-message guide (`errors.md`), which the website's Reference shows; also the style guide (`style.md`), `performance.md`, `releasing.md`, `next-features.md` (a ranked roadmap), `language-design-review.md` (what to decide before 1.0 fixes compatibility) and `handoff.md` |
+| `docs/` | the specification, decision log, decision inventory, open questions, placeholders (`provisional.md`) and the error-message guide (`errors.md`), which the website's Reference shows; also the style guide (`style.md`), `performance.md`, `releasing.md`, `next-features.md` (a ranked roadmap), `language-design-review.md` (what to decide before 1.0 fixes compatibility), `testing.md` (the guide to `tomato test` and the `testing` module) and `handoff.md` |
 | `examples/` | sample programs (the website's example menu is generated from them by `site/examples.sh`) |
 | `benchmarks/` | the cross-language benchmark suite (see `benchmarks/README.md`) and its results |
 | `tools/` | C programs that generate the Unicode case and character-class tables in the runtime |
