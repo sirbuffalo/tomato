@@ -1,0 +1,11 @@
+class Note:
+    text: str | None = None
+
+    def shout(self) -> str:
+        if self.text is not None:
+            return self.text + '!'
+        return ''
+
+@main
+def main():
+    print(Note().shout())

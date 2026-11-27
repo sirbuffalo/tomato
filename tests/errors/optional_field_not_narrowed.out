@@ -1,0 +1,7 @@
+error[E190]: cannot use '+' with str | None and str
+ --> tests/errors/optional_field_not_narrowed.tom:6:30
+  |
+6 |             return self.text + '!'
+  |                              ^
+  = help: 'self.text' is a field that can be None, and a field is not narrowed by an 'is not None' test
+  = help: copy it to a variable, test that, and use the variable: text = self.text

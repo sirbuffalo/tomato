@@ -244,3 +244,5 @@ shadow_print
 shadow_library
 shadow_classes
 shadow_std
+str_dispatch
+optional_field_fused

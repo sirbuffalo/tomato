@@ -1,0 +1,6 @@
+error[E458]: a union cannot hold None together with two or more other types
+ --> tests/errors/field_type_union_none.tom:2:11
+  |
+2 |     item: int | str | None = None
+  |           ^^^
+  = help: use one type with None, such as: x: str | None, or a class that holds the choices

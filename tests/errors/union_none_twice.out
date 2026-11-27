@@ -1,0 +1,6 @@
+error[E610]: None is written more than once in this union
+ --> tests/errors/union_none_twice.tom:1:10
+  |
+1 | def f(x: int | None | None) -> int:
+  |          ^^^
+  = help: write None once, such as: x: int | None

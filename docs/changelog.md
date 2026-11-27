@@ -190,6 +190,14 @@ and eight more comparison languages; Linux x86-64 results are published next to 
 
 ### Fixes
 
+- `@str` is found through the object's own class: a subclass's `@str` under another name is used when the value is typed as the
+  parent (`class Own(Error)` with `@str def show`, then `catch Error as e: print(e)` printed the message alone, not `own:x`), as
+  `print`, `str()`, f-strings and printed lists all do now (D111a).
+- `(t * 2) + o.n * 3` with `o: Box | None` was the error "the class 'Box?' does not exist"; it compiles, and a `None` stops the
+  program with "None where a value is needed", as `t + o.n` does (D111a).
+- Clearer errors for optionals and unions: a field that can be None in `+` says fields are not narrowed and to copy it to a variable;
+  `[1, None]` says how to write `list[int | None]`; the errors for `int | str | None`, `int | None | None` (new E610) and `x: None` point at
+  the type; `module.f()` for a function that is not `export`ed says so (E225) instead of "not defined" (D111a).
 - In release mode, a loop nest that narrowed a union with `x in T` (`if k in str: continue` between the loops, then a use of `k`
   as an `int`, `float`, text or object) could read an empty slot for the member after the fast copy handed over to the general
   copy: a 0 for a number, a wrong float, a null text. Debug mode was right. The slot is filled again where the other copy comes

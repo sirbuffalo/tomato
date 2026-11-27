@@ -1,0 +1,6 @@
+class Pair:
+    item: int | str | None = None
+
+@main
+def main():
+    print(Pair().item)

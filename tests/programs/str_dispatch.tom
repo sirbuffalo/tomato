@@ -1,0 +1,60 @@
+# @str is found through the object's own class, whatever the method is called (the static type may be a parent)
+class P:
+    @str
+    def show(self) -> str:
+        return 'P'
+
+class Q(P):
+    @str
+    def other(self) -> str:
+        return 'Q'
+
+class R(Q):
+    pass
+
+class S(P):
+    pass
+
+class Own(Error):
+    @str
+    def show(self) -> str:
+        return 'own:' + self.message
+
+class Plain(Error):
+    pass
+
+class G[T](P):
+    item: T
+    @init
+    def start(self, item: T):
+        self.item = item
+    @str
+    def text(self) -> str:
+        return 'G:' + str(self.item)
+
+@main
+def main():
+    p: P = Q()
+    print(p)
+    print(str(p))
+    print(f'{p}')
+    r: P = R()
+    print(r)
+    s: P = S()
+    print(s)
+    items: list[P] = [P(), Q(), R(), S()]
+    print(items)
+    for x in items:
+        print(x)
+    try:
+        raise Own('x')
+    catch Error as e:
+        print(e)
+    try:
+        raise Plain('y')
+    catch Error as e:
+        print(e)
+    maybe: P | None = Q()
+    print(maybe)
+    g: P = G[int](5)
+    print(g)

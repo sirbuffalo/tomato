@@ -1,0 +1,5 @@
+import cache
+
+@main
+def main():
+    print(cache.part(3))

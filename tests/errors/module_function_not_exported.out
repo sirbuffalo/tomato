@@ -1,0 +1,6 @@
+error[E225]: module 'cache' does not export 'part'
+ --> tests/errors/module_function_not_exported.tom:5:11
+  |
+5 |     print(cache.part(3))
+  |           ^^^^^
+  = help: put 'export' before its definition in cache.tom

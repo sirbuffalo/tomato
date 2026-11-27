@@ -6,7 +6,7 @@
 # Types are written as short texts: int, str, list[int], @Class, %Interface, U:a;b for a union, str? for str | None, and
 # iN / uN for fixed-width integers. Heap values are reference counted: whoever an expression's value is handed to owns it.
 # A problem with the program is raised as a CompileError and reported by diag.tom.
-from parser import Node, Val, parse, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
+from parser import Node, Val, parse, path_text, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
 from lexer import LexError, parse_format_spec
 from diag import Diagnostic, format_error, closest
 from lint import lint_items, falls_through
@@ -1326,6 +1326,8 @@ class Mod:
     float_cache: dict[str, str] = {}       # the copies made by float_copy
     small_cache: dict[str, bool] = {}      # has_small answers, by function symbol
     override_cache: dict[str, bool] = {}   # overridden answers, by class and method name
+    type_col: int = 0                      # the column of the type that unsupported_type found fault with (0: not known)
+    str_vary_cache: dict[str, bool] = {}   # str_varies answers, by class
     iface_tests: list[str] = []            # the interfaces that `x is Interface` tests an object for at run time (D109a), by key: iface_tests() writes one function each
 
     def code_of(self, t: str) -> int:
@@ -1727,6 +1729,32 @@ class Mod:
         self.flat_cache[t] = ans
         return ans
 
+    def str_varies(self, cls: str) -> bool:
+        # can an object of a class below cls have a method marked @str of its own (whatever its name), so that printing a cls value
+        # must look the method up in the object's class? Generic classes below cls count as in overridden.
+        if cls in self.str_vary_cache:
+            return self.str_vary_cache[cls]
+        found = False
+        for f in self.infos:
+            if f.op == 'str' and f.owner != '' and f.owner != cls and self.subclass(f'@{f.owner}', f'@{cls}'):
+                found = True
+                break
+        if not found:
+            for gk, node in self.generics.items():
+                if node.kind != 'ClassDef' or node.fields[1].tag != 's':
+                    continue
+                saved = self.cur
+                self.cur = self.generic_mods[gk]
+                parent = self.class_key(node.fields[1].text, node.line)
+                self.cur = saved
+                if not self.subclass(f'@{parent}', f'@{cls}'):
+                    continue
+                for m in val_nodes(node.fields[4]):
+                    if m.fields[6].tag == 's' and m.fields[6].text == 'str':
+                        found = True
+        self.str_vary_cache[cls] = found
+        return found
+
     def overridden(self, cls: str, name: str) -> bool:
         # can an object of class cls, or of a class below it, have another method of this name than the one cls itself uses?
         # Copies of generic classes are made while bodies are compiled, so the generic classes below cls count as if they existed.
@@ -1900,13 +1928,21 @@ class Mod:
         if name == 'union':
             members = val_nodes(t.fields[2])
             if self.has_none_member(members):
+                nones = 0
+                for m in members:
+                    if m.fields[0].text == 'None':
+                        nones += 1
+                if len(t.fields) > 4:
+                    self.type_col = t.fields[4].num
+                if nones > 1:
+                    if nones == len(members):
+                        return "None is written more than once in this union\nNone | None is just None; write the type that can be None, such as: x: int | None"
+                    return "None is written more than once in this union\nwrite None once, such as: x: int | None"
                 if len(members) > 2:
                     return "a union cannot hold None together with two or more other types\nuse one type with None, such as: x: str | None, or a class that holds the choices"
                 other = members[0]
                 if other.fields[0].text == 'None':
                     other = members[1]
-                if other.fields[0].text == 'None':
-                    return ''
                 written = other.fields[0].text
                 if self.type_name(vn(other)) != '' and not is_optional(self.type_name(vn(other))):
                     written = shown(self.type_name(vn(other)))
@@ -5986,6 +6022,10 @@ class Gen:
                 v = first
             else:
                 v = self.expr(item, elem_of(t))
+            if v.ty == 'None' and first.ty != '' and k > 0 and not is_optional(elem_of(t)) and (basic_type(elem_of(t)) or is_rc(elem_of(t))) and not is_union(elem_of(t)):
+                # [1, None]: the type came from the first item, so say how to write a list that holds None
+                wrote = f"a list item has type None, but {shown(elem_of(t))} is expected"   # (E324's text, with a help line)
+                raise CompileError(wrote + f"\nto hold None, write the type of the list: xs: {kind}[{shown(elem_of(t))} | None] = ...", n.line)
             v = self.want(v, elem_of(t), n.line, 'a list item')
             v = self.owned(v)
             self.push_item(lst, t, v)     # the list takes the reference
@@ -6310,8 +6350,8 @@ class Gen:
             return is_float(t) or t == 'bool' or is_numeric(t)
         if k == 'Attr':
             b = val_node(n.fields[0])
-            if b.kind != 'Name' or b.fields[0].text not in self.slots or not is_class(self.types[b.fields[0].text]):
-                return False
+            if b.kind != 'Name' or b.fields[0].text not in self.slots or not is_class(self.types[b.fields[0].text]) or is_optional(self.types[b.fields[0].text]):
+                return False       # (an optional object may be None: the field read stops the program, which is not 'no user code runs')
             c = self.mod.find_class(self.types[b.fields[0].text][1:], n.line)
             at = field_position(c, n.fields[1].text)
             if at < 0:
@@ -6813,6 +6853,20 @@ class Gen:
             acc = flipped
         return self.bool_of(acc)
 
+    def cannot_use(self, op: str, a: Ex, b: Ex, help: str, line: int) -> CompileError:
+        # E190, with the help lines of field_not_narrowed when there are any
+        said = f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}"
+        return CompileError(said + help, line)
+
+    def field_not_narrowed(self, left: Node, a: Ex, right: Node, b: Ex) -> str:
+        # the help line for an operator that was given a field that can be None: a field is never narrowed by an `is not None` test
+        for side in [(left, a), (right, b)]:
+            node = side[0]
+            if node.kind == 'Attr' and is_optional(side[1].ty) and path_text(node) != '':
+                name = node.fields[1].text
+                return f"\n'{path_text(node)}' is a field that can be None, and a field is not narrowed by an 'is not None' test\ncopy it to a variable, test that, and use the variable: {name} = {path_text(node)}"
+        return ''
+
     def binop(self, n: Node, expected: str) -> Ex:
         op = n.fields[0].text
         if op == 'and' or op == 'or':
@@ -6931,7 +6985,7 @@ class Gen:
                 return joined
         if a.ty == 'str' or b.ty == 'str':
             if a.ty != b.ty:
-                raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", n.line)
+                raise self.cannot_use(op, a, b, self.field_not_narrowed(left, a, right, b), n.line)
             if op == '+':
                 r = self.tmp('cat')
                 self.emit(f'{r} = call ptr @tomato_str_concat(ptr {a.reg}, ptr {b.reg})')
@@ -6951,7 +7005,7 @@ class Gen:
             if op != '==' and op != '!=':
                 raise CompileError('bool values cannot be ordered with < or >\nuse == or != to compare them', n.line)
         elif not (is_numeric(a.ty) and is_numeric(b.ty)):
-            raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", n.line)
+            raise self.cannot_use(op, a, b, self.field_not_narrowed(left, a, right, b), n.line)
         if is_numeric(a.ty):
             known: Rng | None = None
             if (op == '+' or op == '-' or op == '*') and self.tracking():
@@ -9305,7 +9359,13 @@ class Gen:
         if len(info.ptypes) != 0 or info.ret != 'str':
             raise CompileError(f"the @str method '{info.name}' must take no argument besides self and return str", line)
         r = self.tmp('shown')
-        symbol = self.method_symbol(v, info)
+        if self.mod.str_varies(v.ty[1:]):
+            # a class below this one has a method marked @str, under whatever name: the object's own class picks it (the '@str' slot)
+            if '@str' not in self.mod.slots:
+                self.mod.slots.append('@str')
+            symbol = self.dispatch(v, '@str')
+        else:
+            symbol = self.method_symbol(v, info)
         self.emit(f'{r} = call ptr {symbol}(ptr {v.reg})')
         self.check_error([v], symbol)
         return ex(r, 'str')
@@ -9416,9 +9476,9 @@ class Gen:
                 if kinds[0] == '0':
                     left = values[0].ty
                 if left != seen:
-                    raise CompileError(f"cannot use '+' with {shown(left)} and {shown(seen)}", line)
+                    raise self.cannot_use('+', ex('', left), ex('', seen), self.field_not_narrowed(parts[0], values[0], p, v), line)
             if len(values) >= 2 and seen != 'str':
-                raise CompileError(f"cannot use '+' with {shown('str')} and {shown(seen)}", line)
+                raise self.cannot_use('+', ex('', 'str'), ex('', seen), self.field_not_narrowed(p, v, p, v), line)
             values.append(v)
             kinds.append(kind)
             self.hold(v)                        # freed by the error path if a later part raises
@@ -9626,6 +9686,12 @@ class Gen:
             return f"'{name}' is not available\nuse a for loop instead"
         if name in ['pow', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'format']:
             return f"'{name}' is not built in"
+        dot = name.rfind('.')
+        if dot > 0:
+            # module.name where the module has the name but does not export it
+            found = self.mod.binding(name[:dot], name[dot + 1:])
+            if found is not None and not found.exported:
+                return f"module '{name[:dot]}' does not export '{name[dot + 1:]}'\nput 'export' before its definition in {name[:dot]}.tom"
         near = closest(name, self.visible_names())
         if near != '':
             return f"the function '{name}' is not defined\ndid you mean '{near}'?"
@@ -10106,9 +10172,10 @@ class Gen:
         elif k == 'Declare':
             ty = self.mod.type_name(s.fields[1])
             if ty == '':
+                self.mod.type_col = 0
                 why = self.mod.unsupported_type(s.fields[1])
                 if why != '':
-                    raise CompileError(why, s.line)
+                    raise CompileError(why, s.line, self.mod.type_col)
                 raise CompileError('this variable cannot be given a type automatically\nwrite its type, such as: name: Type = value', s.line)
             after = self.facts
             if self.tracking():
@@ -12904,6 +12971,12 @@ def vtables(mod: Mod) -> str:
             entries: list[str] = []
             for name in mod.slots:
                 found = mod.lookup_method(code[1:], name)
+                if name == '@str':
+                    # the slot of the method marked @str, whatever it is called: the class's own, or the nearest parent's (as overridden)
+                    found = None
+                    marked = mod.find_op(code[1:], 'str')
+                    if marked is not None:
+                        found = mod.lookup_method(code[1:], marked.name)
                 if found is not None and not found.is_gen:
                     entries.append(f'ptr {function_symbol(mod, found)}')
                 else:
@@ -13437,10 +13510,11 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
     if item.fields[2].tag != 'z':
         info.ret = mod.type_name(item.fields[2])
         if info.ret == '':
+            mod.type_col = 0
             why = mod.unsupported_type(item.fields[2])
             if why != '':
-                raise CompileError(why, item.line)
-            raise CompileError('this return type is not supported\na function can return int, bool, str, float, a list, a set, a dict or a class', item.line)
+                raise CompileError(why, item.line, mod.type_col)
+            raise CompileError('this return type is not supported\n' + unsupported_help(item.fields[2], 'a function can return int, bool, str, float, a list, a set, a dict or a class'), item.line, written_col(item.fields[2]))
     seen: list[str] = []
     for p in val_nodes(item.fields[1]):
         if p.fields[0].text in seen:
@@ -13452,10 +13526,11 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
             info.defaults.append(val_node(p.fields[2]))
         pt = mod.type_name(p.fields[1])
         if pt == '':
+            mod.type_col = 0
             why = mod.unsupported_type(p.fields[1])
             if why != '':
-                raise CompileError(why, p.line)
-            raise CompileError('this parameter type is not supported\na function can take int, bool, str, float, a list, a set, a dict or a class', p.line)
+                raise CompileError(why, p.line, mod.type_col)
+            raise CompileError('this parameter type is not supported\n' + unsupported_help(p.fields[1], 'a function can take int, bool, str, float, a list, a set, a dict or a class'), p.line, written_col(p.fields[1]))
         if p.fields[3].tag == 's':
             if p.fields[3].text == '*' and not pt.startswith('tuple['):
                 raise CompileError(f"'*{p.fields[0].text}' needs a tuple type, such as tuple[int]", p.line)
@@ -13469,6 +13544,22 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
         info.pnames.append(p.fields[0].text)
         info.ptypes.append(pt)
     return info
+
+# the column where a written type starts, when the parser noted it (a union, or None); 0 when it did not
+def written_col(v: Val) -> int:
+    if v.tag == 'n':
+        n = val_node(v)
+        if n.kind == 'TypeRef' and len(n.fields) > 4:
+            return n.fields[4].num
+    return 0
+
+# what to write instead of a type that is not supported: None alone is not a type, and says what to write instead
+def unsupported_help(v: Val, general: str) -> str:
+    if v.tag == 'n':
+        n = val_node(v)
+        if n.kind == 'TypeRef' and n.fields[0].text == 'None':
+            return "None alone is not a type; write the type that can be None, such as int | None"
+    return general
 
 def same_signature(a: FuncInfo, b: FuncInfo) -> bool:
     if a.is_async != b.is_async or a.yields != b.yields:
@@ -13921,10 +14012,11 @@ def resolve_class(mod: Mod, c: ClassInfo):
     for fd in val_nodes(node.fields[3]):
         ft = mod.type_name(fd.fields[1])
         if ft == '':
+            mod.type_col = 0
             why = mod.unsupported_type(fd.fields[1])
             if why != '':
-                raise CompileError(why, fd.line)
-            raise CompileError('this field type is not supported\na field can hold int, bool, str, float, a list, a set, a dict or a class', fd.line)
+                raise CompileError(why, fd.line, mod.type_col)
+            raise CompileError('this field type is not supported\n' + unsupported_help(fd.fields[1], 'a field can hold int, bool, str, float, a list, a set, a dict or a class'), fd.line, written_col(fd.fields[1]))
         before = field_position(c, fd.fields[0].text)
         if before >= 0:
             if c.fields[before].owner == c.name:

@@ -1,0 +1,38 @@
+# a field of an optional object inside a longer arithmetic expression: the number is read when the object is there, and a missing
+# object stops the program with 'None where a value is needed', as it does in `t + o.n`
+class Box:
+    n: int = 0
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+def plain(o: Box | None, t: int) -> int:
+    return t + o.n
+
+def fused(o: Box | None, t: int) -> int:
+    return (t * 2) + o.n * 3
+
+def mixed(o: Box | None, t: int) -> int:
+    x: int = t - o.n * 2 + 5 * o.n
+    return x
+
+@main
+def main():
+    box: Box | None = Box(4)
+    print(plain(box, 10))
+    print(fused(box, 10))
+    print(mixed(box, 10))
+    nothing: Box | None = None
+    try:
+        print(plain(nothing, 1))
+    catch RuntimeError as e:
+        print('plain:', e)
+    try:
+        print(fused(nothing, 1))
+    catch RuntimeError as e:
+        print('fused:', e)
+    try:
+        print(mixed(nothing, 1))
+    catch RuntimeError as e:
+        print('mixed:', e)

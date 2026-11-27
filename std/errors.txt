@@ -607,3 +607,4 @@ ConfigError {}: tomato seed verify found a seed that is missing or whose files d
 CompileError the module '{}' is in {} and in the seed {}, so the import is ambiguous
 CompileError '{}' is the name of a built-in type, so it cannot be defined here
 CompileError '{}' is a constant, not a function, so it cannot be called
+CompileError None is written more than once in this union

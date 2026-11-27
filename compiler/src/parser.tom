@@ -71,7 +71,7 @@ def mark_core(v: Val):
         for item in v.items:
             mark_core(item)
 
-def path_text(n: Node) -> str:
+export def path_text(n: Node) -> str:
     # a variable or a chain of fields written as text, or '' for any other expression
     if n.kind == 'Name':
         return n.fields[0].text
@@ -437,6 +437,7 @@ export class Parser:
 
     # types
     def type(self) -> Node:
+        start = self.cur().col
         base = self.inter_type()
         if self.is_op('|'):
             members: list[Node] = [base]
@@ -444,7 +445,7 @@ export class Parser:
             while self.is_op('|'):
                 self.adv()
                 members.append(self.inter_type())
-            return mk('TypeRef', line, [vs('union'), vz(), vnodes(members), vz()])
+            return mk('TypeRef', line, [vs('union'), vz(), vnodes(members), vz(), vi(start)])   # (the column the type starts at, for an error about it)
         return base
 
     def inter_type(self) -> Node:
@@ -529,6 +530,8 @@ export class Parser:
                 return mk('TypeRef', t.line, [vs(t.text), vz(), vnodes(parts), vz()])
             self.expect_op(']')
             return mk('TypeRef', t.line, [vs(t.text), vz(), vn(first), second])
+        if t.text == 'None':
+            return mk('TypeRef', t.line, [vs(t.text), length, vz(), vz(), vi(t.col)])
         return mk('TypeRef', t.line, [vs(t.text), length, vz(), vz()])
 
     # declarations

@@ -130,6 +130,14 @@ type that was already written. `tomato explain` shows the id and text of each.
 | --- | --- | --- |
 | `x: int[length=8] \| None`, `list[uint[length=16] \| None]` | `'int[length=8]' cannot be combined with None, because only int, float, bool, str, lists, dicts, sets, classes and tuples can be None` (E459) | use `int \| None`, which holds every value |
 | `x: int \| str \| None` | `a union cannot hold None together with two or more other types` (E458) | one type with `None`, or a class holding the choices |
+| `x: int \| None \| None`, `-> None \| None` | `None is written more than once in this union` (E610) | write `None` once |
+| `x: None` | `this parameter type is not supported` (E313; a return type and a field say "return type" and "field type", with ids of their own) with the help `None alone is not a type` | write the type that can be None, such as `int \| None` |
+
+These point at the type that is wrong (the caret is under the start of the union, or under `None`), not at the whole `def`.
+Other smoothed messages: `self.s + 'x'` where `s` is a field of type `str | None` (E190) adds that a field is not narrowed by
+`is not None`, so to copy it to a variable first; `xs = [1, None]` (E324) says to write the type of the list, `xs: list[int | None] = ...`;
+`helper.f()` where `helper.tom` has `f` but not `export def f` is E225 ("module 'helper' does not export 'f'", with the help to put
+`export` before its definition), as `from helper import f` already said.
 
 | `Box[str \| None](...)`, `Cache[int \| str, int](...)` | `a union cannot be a type argument written in a call` (E537) | leave the brackets out and pass a variable of the union type (`Box(x)`), or wrap the union in a class |
 | `Cache[Point, int](...)` where `Point` has no `@str` | `'Point' cannot be a cache key: it has no @str method` (E536, at the line that writes the cache) | add an `@str` method, or use a text or an int as the key |
@@ -207,7 +215,8 @@ fields default to `""`.
 **Printing an error.** `Error` has an `@str` that gives the message alone, as Python's `str(e)` does: `print(e)`, `str(e)` and
 `f'{e}'` are `e.message`, with no class name and no id. An error nobody catches prints more, `error: ClassName: message (raised on
 line N)` (above), because there the class name is the only clue to what went wrong. Every error class inherits the `@str`; a
-class can give its own (one method marked `@str`, any name) and `print` then uses that, but the uncaught-error report does not: it
+class can give its own (one method marked `@str`, any name) and `print` then uses that, found through the object's own class, so a
+value typed `Error` that holds an `Own` shows `Own`'s text (D111a), but the uncaught-error report does not: it
 always prints the class name and the `message` field. Release builds print the same on one line, with the line and no trace:
 `error[E11]: ClassName: message (line 12)`, or `error[E04]: index out of range (line 12)` for a runtime failure.
 `tomato explain E04:12 prog.tom` shows the diagnostic and line from the supplied file. `tomato explain E04`

@@ -10,12 +10,6 @@
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
 - Run the new `sys_async` test on macOS
   Check the kqueue wait on pipes and the `/dev/fd` listing (`tests/programs/sys_async.tom`, and the open-files check in `tests/programs/sys_run.tom`); everything of D98b was tested on Linux only.
-- Make `@str` dispatch by the object's class whatever the method's name
-  `docs/errors.md` says a class may mark any one method `@str`, but a subclass's `@str` under another name is used only when the value's static type is that subclass: `class Own(Error)` with `@str def show(self) -> str: return 'own:' + self.message`, then `try: raise Own('x')` / `catch Error as e: print(e)` prints `x`, not `own:x` (the same for plain classes: `p: P = Q()` prints with `P`'s `@str`). Either dispatch `@str` virtually, or make a second `@str` under a new name in a subclass a compile error that asks for the parent's name and `override` (third audit, S2).
-- Smooth the optional and union compile errors found by the third audit
-  `self.s + 'x'` on a field `s: str | None` inside `if self.s is not None:` is E190 with no hint that fields are not narrowed (copy it to a local); `xs = [1, None]` is E324 with no hint to declare `list[int | None]`; E458 (`int | str | None`, `int | None | None`) and E313 (`x: None`) point at the start of the `def`, not at the type, and `None | None` gets the "two or more other types" wording; E340 for a module function that exists but is not `export`ed says it is not defined (third audit, O3 to O5, D9).
-- Fix the error for a field of an optional object inside a fused arithmetic expression
-  `def b(o: Box | None, t: int) -> int: return (t * 2) + o.n * 3` gives E339 "the class 'Box?' does not exist", while `return t + o.n` compiles and raises None at run time. The message is wrong in either direction (a clear 'None where a value is needed' at run time, or a proper type error).
 - Decide whether local variables and parameters shadow builtins in calls
   Ask Davis whether local variables and parameters should shadow builtins in calls too (Python's rule). Today the `shadow` warning says a local 'hides' the name, but a call `len(x)` still reaches the builtin. Changing it could break programs that have a local `len` and call `len(x)`.
 - Warn when a program uses one of the unstable features of `docs/provisional.md`

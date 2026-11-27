@@ -1,0 +1,6 @@
+error[E313]: this parameter type is not supported
+ --> tests/errors/param_type_none.tom:1:10
+  |
+1 | def f(x: None) -> int:
+  |          ^^^^
+  = help: None alone is not a type; write the type that can be None, such as int | None

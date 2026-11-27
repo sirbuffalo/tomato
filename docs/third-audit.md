@@ -77,7 +77,7 @@ The rows marked fixed were done afterwards (D107a: the manifest and seed command
 
 | Id | Kind | What | TODO item |
 | --- | --- | --- | --- |
-| S2 | bug | A subclass's `@str` under another method name is ignored when the static type is the parent (`catch Error as e: print(e)`) | Make `@str` dispatch by the object's class |
+| S2 | bug (fixed) | A subclass's `@str` under another method name is ignored when the static type is the parent (`catch Error as e: print(e)`) | Make `@str` dispatch by the object's class |
 | M2 | rough (fixed) | Manifest key errors name the file but not the line | fixed (D107a) |
 | M3 | rough (fixed) | A bad user `[build] mode` is reported only when nothing overrides it | fixed (D107a) |
 | M4 | rough (fixed) | An option with no value prints the 26-line help (the CLI contract pins it, so the fix changes golden files) | fixed (D107a) |
@@ -87,7 +87,7 @@ The rows marked fixed were done afterwards (D107a: the manifest and seed command
 | M9 | rough | `--locked` on a changed path seed says the manifest does not match | (already in `TODO.md` from the CLI contract task) |
 | M10, M13, M14 | rough (fixed) | `tomato init '../x'` accepted; `seed check` passes `TODO:` placeholders; a damaged store copy is not refetched | fixed (D107a) |
 | O2 | rough | repl: a redeclaration after an assignment gave a wrong E292. Main's D104a (merged during the audit) removes the error, but the replay now runs the old `x = 3` after the new declaration: `x: int \| None = None`, `x = 3`, `x: int \| None = 7`, `print(x)` prints 3 | not in `TODO.md` (offered as a follow-up, not picked) |
-| O3 to O5, D9 | rough | No hint that fields are not narrowed; `[1, None]` has no hint; E458/E313 point at the `def`; E340 for a function that is not `export`ed | Smooth the optional and union compile errors |
+| O3 to O5, D9 | rough (fixed) | No hint that fields are not narrowed; `[1, None]` has no hint; E458/E313 point at the `def`; E340 for a function that is not `export`ed | Smooth the optional and union compile errors |
 | S3 to S5 | rough (fixed) | `itertools` accepts negative `r`; `break` out of a terminal `progress_bar` leaves the line open; `progress_bar([])` is E184; a missing `#!` interpreter reads as a missing script | fixed (D107a) |
 
 **Resolved after the audit** (the `tomato test` items, T4 to T9, T11 and T12): a failed check names the file and the line of the test, in

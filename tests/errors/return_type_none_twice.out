@@ -1,0 +1,6 @@
+error[E610]: None is written more than once in this union
+ --> tests/errors/return_type_none_twice.tom:1:12
+  |
+1 | def f() -> None | None:
+  |            ^^^^
+  = help: None | None is just None; write the type that can be None, such as: x: int | None

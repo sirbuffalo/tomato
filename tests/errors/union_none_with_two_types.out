@@ -1,0 +1,6 @@
+error[E458]: a union cannot hold None together with two or more other types
+ --> tests/errors/union_none_with_two_types.tom:1:10
+  |
+1 | def f(x: int | str | None) -> int:
+  |          ^^^
+  = help: use one type with None, such as: x: str | None, or a class that holds the choices
