@@ -4,6 +4,12 @@ Status: **proposal for Davis to review. Nothing is built, and no language rule c
 at the end.** It records the decisions Davis has already made (the first section), settles what can be settled, and lists the
 few real forks. The source facts about the compiler were read on `main` at `a58ae90b` (v0.51).
 
+**Update, 2026-11-26 (stage 0, D89a in `docs/decisions.md`):** Davis gave his direction on the model: Homebrew-like (anyone
+uses `owner/name` at once, no approval), a default index that **starts with no requirements beyond structural validity** and
+whose requirements (passing tests, community recommendations, a score) are **raised over time** by a versioned policy file.
+Section 18 records it and the ramp; sections 1.5, 1.7, 9, 11, 12, 13, 15 and 17 carry the small changes it needs. The five
+older open questions stay open; questions 6 to 11 are new (section 19).
+
 ## The requirement
 
 Davis wants to share Tomato code the way other languages share packages, with these decisions already taken:
@@ -22,6 +28,9 @@ Davis wants to share Tomato code the way other languages share packages, with th
   (the huge-float limits, D77g, are its first user: `[limits]` in `tomato.toml` and `config.toml`; section 13).
 - Written policies: no squatting, a way to reclaim abandoned work, yank instead of delete.
 - The registry index is designed so a hosted service can replace the git repository later without changing any seed.
+- **Homebrew-like use (added 2026-11-26):** any seed is usable as `owner/name` at once, with no approval and no registry
+  needed; the default index's listing starts with **no requirements** beyond structural validity, and requirements are
+  raised over time by a versioned policy file, never in a way that breaks a lock (section 18).
 
 Candidate domains, **unregistered and unconfirmed when checked, and not contacted**: `tomatoseeds.dev` for the registry
 and `tomatolang.dev` for the project. This document needs neither: the index location is a setting (section 13), so the
@@ -54,6 +63,9 @@ names below are only examples.
 8. **`tomato seed` is a shell front end plus a small helper program written in Tomato** (section 14), because the
    standard library cannot start a process today.
 9. **Seven small stages**, each shippable alone; the first three need no registry at all (section 15).
+10. **Use is open, listing is a ratchet.** `owner/name` always works. The default index's listing starts with structural
+    checks only; tests, endorsements and a score are collected from the first day, and `policy.toml` raises the bar for **new**
+    listings with a notice period, grandfathering what is already listed (section 18).
 
 ## What exists today
 
@@ -263,7 +275,8 @@ json5 = "acme.example/json5"
 - `tomato seed add json5` expands an alias, then proceeds as `add acme.example/json5`. The manifest records the **full
   name**, so a project means the same thing on every machine; aliases are not read from a project's `tomato.toml` and
   a project cannot give a user an alias.
-- **A bare name that is not an alias is never resolved by the registry.** `tomato seed add json5` with no alias searches
+- **A bare name that is not an alias is never resolved by the registry** (and a listing, section 18, does not change that;
+  open question 7 asks whether it should). `tomato seed add json5` with no alias searches
   the index for seeds called `json5`, prints the candidates (owner, first-seen date, number of versions, signing
   domain or "unverified: no domain") and stops with exit status 2; the user picks one with the full name or sets an
   alias. There is no popularity ranking and no "default" owner for a name, because that would be a curator again.
@@ -312,7 +325,9 @@ four.
 | Cost to run | people's time, forever | a small program and a git host |
 
 Davis chose automatic; this document designs that and says what it costs. The one real fork left is whether the
-registry keeps a narrow, **yank-only** emergency power for named security keys (open question 1).
+registry keeps a narrow, **yank-only** emergency power for named security keys (open question 1). Davis's later direction
+(section 18) adds a second, deliberately weaker lever, a versioned `policy.toml` that raises the bar for **listing** over time; it
+sets rules for everyone and cannot touch one seed.
 
 ## 2. The manifest: `tomato.toml`
 
@@ -669,6 +684,10 @@ config.toml                     index format version, the rule numbers (rate lim
                                 the reserved names (every std module, `std_*`, `builtin*`), the index's own name
 owners/<owner>.toml             [owner]  and  [[key]] statements (section 1.4)
 seeds/<owner>/<name>.toml       [[source]], [[version]], [[yank]] and [moved] statements, in the order they were accepted
+policy.toml                     what listing requires, versioned, every requirement off at launch (section 18.3)
+endorsements/<owner>.toml       [[endorse]] and [[unendorse]] statements by that owner (section 18.6)
+results/<owner>/<name>.toml     [[result]] statements signed by a runner key (section 18.4)
+listing.toml                    GENERATED: status, score, level and notices of each seed; verifiable, never hand-edited
 ```
 
 ```toml
@@ -709,8 +728,8 @@ signature = "..."
   service, or mirroring it, is a change to one setting (`[registries.NAME] index`, where a `https://` URL means the
   hosted form and anything else is a git URL).
 - **The same statement files can be served by the owner** at `https://DOMAIN/.well-known/tomato-seeds/NAME.toml`. A
-  client can use them when the registry is unreachable or absent (`tomato seed add --from-owner acme.example/json5`),
-  with exactly the same checks. This is the "decentralized" mode, costing no extra format.
+  client uses them automatically when the registry has no entry for the seed or cannot be reached, and on request with
+  `tomato seed add --from-owner acme.example/json5` (section 18.2), with exactly the same checks. This is the "decentralized" mode, costing no extra format.
 - **Several registries** (a company's own, a mirror) are `[registries.NAME]` entries; a project's lock names which one
   each seed came from. Resolution never mixes registries behind the user's back.
 - The checker, `tomato seed index-check BASE HEAD`, is part of the `tomato` distribution so that **anyone can run the
@@ -743,7 +762,9 @@ signature = "..."
 - it compiles: `tomato compile` of a one-line program per module (this type-checks without running anything).
 
 The index's checker **never runs a seed's tests or code**. Running arbitrary code from a publisher inside the acceptor
-would turn the registry into a remote execution service. `tomato test` is for the owner, on their machine.
+would turn the registry into a remote execution service. `tomato test` is for the owner, on their machine. The later
+listing levels (section 18) do need test results; they come from a separate **sandboxed runner** that appends signed results
+and gates nothing at launch (section 18.4), so this rule about the acceptor stays true.
 
 ## 12. The `tomato seed` commands
 
@@ -755,6 +776,7 @@ tomato seed init [OWNER/NAME]               start a seed (tomato.toml, src/), or
 tomato seed add NAME[@VERSION]              add (or raise) a requirement, update tomato.toml and tomato.lock, fetch into the store
 tomato seed add --git URL [--rev R|--tag T] [--name N]    unregistered source, by git URL (a project only)
 tomato seed add --path DIR                  unregistered source, a local folder (a project only; for development)
+tomato seed add NAME --from-owner | --index-only    use only the owner's server (domain owners), or never fall back to it (section 18.2)
 tomato seed remove NAME                     drop a requirement and re-lock
 tomato seed install [--locked] [--offline]  fetch every seed in the lock into the store and check each hash
 tomato seed update [NAME...] [--accept-owner-change OWNER]   raise minimums to the newest in their line, re-lock
@@ -765,6 +787,9 @@ tomato seed vendor                          copy the locked seeds to ./vendor/
 tomato seed search TEXT                     scan the index;  tomato seed info NAME   owner, signer, versions, first seen
 tomato seed alias [NAME OWNER/NAME]         set an alias (no arguments lists them);  tomato seed unalias NAME
 tomato seed registry update                 refresh the local clone of the index
+tomato seed registry add NAME URL           add another index (the analogue of a Homebrew tap); `add --registry NAME` uses it
+tomato seed endorse NAME | unendorse NAME   sign a recommendation ("star") of a seed (section 18.6)
+tomato seed score NAME                      the listing status, policy level and the breakdown of the score (section 18.5)
 
 # for a seed's author:
 tomato seed check                           the seed checks (section 11);  tomato seed hash    print the content hash
@@ -772,6 +797,8 @@ tomato seed claim DOMAIN | --key            write the owner statement and the we
 tomato seed publish [--rev REV]             write the signed [[source]] and [[version]] statements into an index clone
 tomato seed yank NAME VERSION --kind K --reason TEXT      write a signed [[yank]]
 tomato seed index-check BASE HEAD           the registry's rules, for the acceptor and for anyone
+tomato seed admit-check NAME [VERSION]      reproduce a test result locally (runs the seed's tests: use a sandbox)
+tomato seed listing-verify                  recompute listing.toml from the index files; runs nothing
 ```
 
 `add` prints one summary line before it changes anything and **never prompts** (so scripts behave like terminals):
@@ -804,7 +831,8 @@ needs no `tomato-seed config get`, because the compiler (written in Tomato) alre
   `~/.tomato/config.toml` (`${TOMATO_HOME:-$HOME/.tomato}/config.toml`, the user's). Both TOML 1.0, read by the same code.
 - **Precedence**, highest first: the command line, the project's `tomato.toml`, the user's `config.toml`, the built-in
   default. A dependency's `tomato.toml` is **never** consulted for settings (section 2).
-- **Tables** reserved now: `[registry]`/`[registries.NAME]` (default registry and index URLs), `[aliases]` (user file
+- **Tables** reserved now: `[registry]`/`[registries.NAME]` (default registry and index URLs; `only_listed`, user file only,
+  section 18), `[aliases]` (user file
   only), `[seeds]` (vendor folder, offline), `[limits]` (the float limits and the like) and `[build]` (mode and flags).
   Unknown tables and keys are errors, so a typo is not silently a default.
 - **Who reads TOML.** The `tomato` front end is a shell script and must not parse TOML in shell. The helper program of
@@ -856,14 +884,18 @@ already give a useful local package workflow. Sizes are rough guesses of hand-wr
 
 | stage | content | size (lines) | risk |
 | --- | --- | ---: | --- |
-| 0 | Davis answers the questions; a decision entry (D-number) for seeds in `docs/decisions.md`, a short section in `docs/specification.md`; reserve the `tomato seed` word | 0 | none |
+| 0 | Davis's direction recorded (**done: D89a** and section 18); he still answers open questions 1 to 11; a short section in `docs/specification.md` when the first stage is built; reserve the `tomato seed` word | 0 | none |
 | 1 | `tomato-seed` helper skeleton and `seed check` and `seed hash`: read and validate `tomato.toml`, the naming rule, the seed hash v1 with test vectors cross-checked in shell; no network, no compiler change; measure the helper's first-use compile time | 700 | low |
 | 2 | **Compiler**: module map argument, the lookup order, seed names in errors, hidden warnings from seeds, the check against foreign declarations outside `std`; `tomato run` finds `tomato.toml`; works with `path` dependencies by hand-written lock; a test that compiles a seeded program twice and compares the IR | 350 + 300 test | medium: `tomatoc` is regenerated into `compiler/bootstrap/tomatoc.ll` and the wasm files |
 | 3 | `tomato.lock`, the store, **`add --git`, `add --path`, `install`, `verify`, `vendor`, `--offline`/`--locked`**, the hardened fetch; no registry yet | 900 + 400 test | medium: git handling and hostile trees |
-| 4 | **Index client**: `config.toml`, `owners/`, `seeds/` formats, parsing, signature verification through `ssh-keygen -Y`, MVS, `add NAME`, `update`, `outdated`, `tree`, `why`, `search`, `info`, aliases; tested against a fixture index checked into `tests/` | 1,100 + 500 test | medium |
-| 5 | **The registry and its checker**: `index-check` with the rules (proof, signatures, append only, source check, names and skeleton, rate limits), `claim`, `publish`, `yank`, the policy text as `POLICY.md` in the index, the first index repository and its acceptor | 1,200 + 600 test | **high**: this is the security-critical program and runs on untrusted input from strangers |
-| 6 | Re-root with delay and veto, owner-direct statements (`--from-owner`), mirrors, DNS TXT proof; a hosted service that serves the same files, accepts the same signed statements and keeps archives by hash | separate design | medium |
+| 4 | **Index client**: `config.toml`, `policy.toml`, `owners/`, `seeds/` formats, parsing, signature verification through `ssh-keygen -Y`, MVS, `add NAME`, **`add` from the owner's own server (automatic fallback when the index has no entry or is unreachable, and the `--from-owner` and `--index-only` flags; moved up from stage 6: the tap-like path with no registry, section 18.2)**, `registry add`, `update`, `outdated`, `tree`, `why`, `search`, `info`, aliases; tested against a fixture index checked into `tests/` | 1,300 + 600 test | medium |
+| 5 | **The registry and its checker, launched at policy level 0**: `index-check` with the rules (proof, signatures, append only, source check, names and skeleton, rate limits, the `policy.toml` notice rule), `claim`, `publish`, `yank`, `endorse`, the policy text as `POLICY.md` and `SECURITY.md` in the index, a `policy.toml` with every requirement off, the first index repository and its acceptor. Endorsements and the acceptor's age stamps are collected from the first day | 1,400 + 700 test | **high**: this is the security-critical program and runs on untrusted input from strangers |
+| 5b | **Signals and the ramp machinery (section 18.3 to 18.6)**: the sandboxed runner and its signed `[[result]]` statements, the pure score function with test vectors, the generated `listing.toml` with the shadow score ("would pass level N"), `score`, `admit-check`, `listing-verify`, `only_listed`. **Still gates nothing**: every threshold stays at 0 until Davis raises one (open question 10) | 1,000 + 600 test | **high** for the runner (it runs strangers' code; the sandbox is the work), medium for the rest |
+| 6 | Re-root with delay and veto, mirrors, DNS TXT proof; a hosted service that serves the same files, accepts the same signed statements and keeps archives by hash | separate design | medium |
 | 7 | The compiler enforces which seeds a module may import; seeds in the playground and the repl through `extra`; in-Tomato ed25519 verification | separate design | medium |
+
+Raising the listing bar (section 18.3) is not a stage: it is a commit to `policy.toml`, made when the signals say so, with its
+notice period. Stage 5 ships with the launch policy and 5b makes the data for the first change.
 
 The settings work (section 13) is independent of these stages and can start as soon as stage 1 exists; the float-limits
 task is its first user.
@@ -913,10 +945,274 @@ These are the written rules. Most are enforced by the checker, so they do not de
 6. **No secrets, no binaries.** A tree with a file that looks like a private key, or a file that is not text up to the size
    cap, is rejected (the exact rule is stage 5's).
 7. **Naming.** Owners and names follow section 1.2: ASCII only, no std names, no confusable collisions.
-8. **Changes of rules** are changes to `config.toml` and `POLICY.md` in the index, announced there and effective for later
-   statements only, never retroactively.
+8. **Changes of rules** are changes to `config.toml`, `policy.toml` and `POLICY.md` in the index, announced there and effective
+   for later statements only, never retroactively; a tightening of what listing needs takes effect after a notice period
+   and grandfathers what is already listed (section 18.3).
+9. **No approval, ever.** No person decides whether a seed is accepted, usable, listed or delisted. A listing requirement is a
+   written rule that a program applies to everyone, starts at "structurally valid" (level 0), and is raised only by a public
+   `policy.toml` change with notice. Delisting never deletes a seed, never affects a lock, and never stops `owner/name` from
+   being used.
+10. **Security reports.** The index has a `SECURITY.md` and shows an owner's optional `security` contact; the registry's only
+    automatic reaction to a report is the owner's own yank (and the named security keys', if open question 1 is answered that way).
 
-## 18. Open questions for Davis
+## 18. Open use and the default index: launch open, tighten over time (Davis's direction of 2026-11-26, D89a)
+
+### 18.1 What Davis said, and how it is read
+
+His words, verbatim and typo included:
+
+> I think we will do something like homebrew for seeds like a you can it username/whatever easy not paproval to get a
+> full thing with just test you need star recommendations not relay reuirements becouse like fi you adj and your @74 you
+> will probaly get acepted
+
+Then, in a clarification: **there are no requirements for the default index to start with (no test requirement, no score
+threshold, no star requirement), and requirements are increased over time.**
+
+| Davis's words | Read as | Confidence |
+| --- | --- | --- |
+| "something like homebrew ... you can it username/whatever easy" | Anyone can use a seed as `owner/name`, at once, from their own git repository on any host, like a Homebrew tap (`brew install user/tap/formula`). | high |
+| "not paproval" | **No approval step**, at launch or ever: nobody decides whether a seed may be used or listed. | high |
+| "username" | The `owner` part. Owners are a domain or a key (section 1), not a free-text username, because a username table needs an authority; the alias layer (section 1.7) gives the short spelling. | medium: open question 8 |
+| "to get a full thing with just test you need star recommendations" | A **later** level of the default index asks for passing tests and for recommendations ("stars") from other people. | high |
+| "not relay reuirements" | Those signals are **soft**: they are not hard conditions on their own, and they are switched on later. At launch there is none. | high |
+| "fi you adj and your @74 you will probaly get acepted" | I read it as an example: a project with roughly that many stars, or that score, would "probably" be accepted, which is why they are not hard requirements. **Unclear, and not needed now**: every number is a setting in a policy file (below), so none is decided here. It matters only when the first non-zero threshold is chosen (open question 10). | low |
+
+So there are **two things**, and the design keeps them apart:
+
+| | **Usable** (open) | **Listed** (the default index's listing) |
+| --- | --- | --- |
+| What it is | `tomato seed add owner/name` works | the seed appears in the default index's listing (search, `outdated` notes, the optional `only_listed` filter) |
+| Approval | none, ever | none, ever: an automatic rule only |
+| Condition at launch | the structural checks of section 1.5 (valid manifest, resolvable source, owner proof, name rules, no collisions, rate limits) | the same: **nothing more** |
+| Condition later | unchanged | raised step by step by a policy file (section 18.3) |
+| Who can use it | everyone, with no registry at all if the owner serves the statements (section 18.2) | everyone |
+
+The line that matters for Davis's model: **raising the bar for listing never stops anyone from using `owner/name`.** A seed
+that is not (or is no longer) listed is still usable, locks that contain it still build, and only discovery changes.
+
+### 18.2 Using a seed with no approval (the tap-like path)
+
+There is **no `tomato seed tap` command**: a tap exists in Homebrew because formulae live in separate repositories; a
+seed's statements already name its own repository and are verified by the owner's key, so adding a source is not a
+separate act. `tomato seed add owner/name` resolves in this order and says which one answered:
+
+1. **The default index** (the user's `[registry] default`): the seed's file under `seeds/owner/`. This is "usable" by the
+   structural rule of section 1.5, accepted within seconds of the owner sending the change, with no review.
+2. **The owner's own server**, for a **domain** owner, **automatically only when** the default index has no entry for that
+   exact `owner/name` or cannot be reached (an index that has the entry always wins, so the index's order and revocations
+   are used when it has them). It is the same seed identity checked by the same owner key, not another registry, so it
+   does not break "never mixes registries"; the summary line says it answered, and `--index-only` turns the fallback off.
+   `--from-owner` (section 12) **forces** this path even when the index has an entry, for someone who does not want to use
+   the index at all. The address:
+   `https://DOMAIN/.well-known/tomato-seeds/NAME.toml` (section 9), with the same signature checks. This needs **no registry
+   at all** and no submission step: put the signed file on your own website and `tomato seed add your.example/thing` works
+   for everyone. It is verified for signatures but not for history (section 1.5, "Which time counts"), and the summary line
+   says "from the owner directly, not in the index". It is moved up from stage 6 to stage 4 for this reason.
+3. **Another index**, which is the real analogue of adding a tap: `tomato seed registry add NAME URL` puts a
+   `[registries.NAME]` entry in the user's configuration (a company's index, a friend's, a mirror), and a seed is added
+   from it with `--registry NAME`. Resolution never mixes registries behind the user's back (section 9).
+4. **A git URL**, `--git`: the unregistered escape hatch (section 12), unchanged.
+
+The summary line of `add` gains the status and the policy level:
+
+```
+acme.example/json5 1.2.0  signed by acme.example (key SHA256:Qn3...), first seen 2026-12-01, 4 versions, similar to: none
+status: listed (policy level 0: structural checks only), 2 endorsements, no test result yet
+```
+
+### 18.3 The ramp: a versioned policy file, tightened over time
+
+The index holds **`policy.toml`**, the one file that says what listing requires. It is data, not code, so raising the bar
+is a change to numbers in a file, with no change to the checker or to any seed. At launch it is level 0:
+
+```toml
+# policy.toml (version 1: the launch policy, nothing required)
+version = 1
+notice_days = 60              # a tightening takes effect this long after it is committed (enforced by index-check)
+
+[listing]                     # what a seed needs to be listed; every value here is "off"
+require_tests_pass = false    # the newest stable version's tests pass in the sandbox runner (section 18.4)
+min_tests_per_module = 0
+min_age_days = 0              # days since the seed's first accepted version
+min_score = 0                 # 0..100, section 18.5
+require_license = false
+
+[demotion]                    # re-checking seeds that are already listed
+enabled = false
+grace_days = 90
+
+# A scheduled change is announced in the file before it applies:
+# [[change]]
+# effective = 2027-06-01
+# set = { "listing.require_tests_pass" = true }
+```
+
+**Rules for changing it** (all checked by `index-check`, so nobody has to be trusted to remember them):
+
+- A change that **tightens** anything (turns a requirement on, raises a number, enables demotion) must be committed at
+  least `notice_days` before its `effective` date. A change that **loosens** takes effect at once.
+- A tightening applies to **new listings** from the effective date. A seed already listed is **grandfathered** at the
+  policy version it was listed under (`listed_under = N` in the generated listing) and is not re-examined.
+- **Re-examining listed seeds is a separate switch** (`[demotion] enabled`), announced with its own notice and used last. When
+  it is on, a seed below the current bar gets a visible **notice** (`below policy since DATE, delisted on DATE + grace_days
+  unless it passes`), the owner can fix it in the meantime, and at the end it is **delisted**: flagged in the listing,
+  never deleted. A seed that later meets the bar is listed again with no one's decision.
+- **Nothing here touches a lock.** `tomato.lock` does not record the status (section 3), `install --locked` and
+  `verify` do not look at it, and an `owner/name` requirement still resolves to every non-deleted version entry. The only
+  people affected by a delisting are those who set `[registry] only_listed = true` (section 13), and `outdated` tells
+  them.
+- **Who may edit `policy.toml`** is open question 9. The honest statement: it is the one lever a person holds. It can change
+  the rules **for everyone** and cannot approve, refuse, list or delist one named seed, and every change is a public commit
+  with a notice period.
+
+**The ramp** (a proposal; the numbers and the order are Davis's, open question 10). Each step is a new `policy.toml` version,
+made only when the signals of section 18.4 say that the existing seeds would mostly pass it:
+
+| Level | Listing asks for | Soft or hard | Raise it when |
+| ---: | --- | --- | --- |
+| 0 (launch) | the structural checks only | hard (they are the rules of section 1.5) | |
+| 1 | a license, and the newest stable version's tests pass (at least one `@test` per module) | hard, for new listings | at least 80% of listed seeds already would pass |
+| 2 | level 1 **and** a score of at least 40 (section 18.5): documentation, age, metadata and endorsements add to the tests, and no single part is required (a seed with no endorsement can reach 70) | hard conjunction of level 1 and a soft score; each level only adds conditions | the score distribution has been public for 60 days |
+| 3 | level 1 **and** a score of at least 60; demotion enabled | soft for new, with notice for old | last, after a full cycle of notices |
+
+Whether 74 is a score, a number of stars, or an example matters only at the step where a first non-zero threshold is
+picked; until then every value is 0 or off.
+
+### 18.4 Signals collected from day one
+
+So that the later requirements are set from data and not guessed, these are recorded from the first release of the registry
+(or, for tests, from stage 5b), **and none of them gates anything at level 0**:
+
+| Signal | How it is collected | Available from |
+| --- | --- | --- |
+| **Age and history** | the acceptor's `accepted` stamp on each statement (section 1.5); number of versions; time between versions | stage 5 |
+| **Endorsements ("stars")** | signed `[[endorse]]` statements (section 18.6), accepted and stored from the start | stage 5 |
+| **Test results** | the **runner** (below) runs `tomato test` for the newest version of each seed and appends a signed `[[result]]` (status, number of tests, compiler version, platform, time taken); three runs, all must pass | stage 5b |
+| **Shadow score** | the pure scoring function of section 18.5 is run over every seed and its value and "would pass level N" are written into the generated `listing.toml`, so the effect of a threshold is visible **before** it is set | stage 5b |
+| **Yanks and reports** | the `[[yank]]` statements already in the index, by kind | stage 5 |
+| **Not collected** | downloads, installs, who uses which seed, any telemetry: there is no central service to hold it, and the design should not grow one for this | |
+
+**The runner** is a separate program run by anyone with the index clone and a sandbox, not part of the acceptor: it reads
+the index, fetches each seed **by content hash** outside the sandbox, runs its tests **inside** one, and pushes `[[result]]`
+statements signed by a runner key listed in `config.toml` (a key that can only append under `results/`). It may run in a
+CI job on any git host, a cron job on any machine, or several of them. The sandbox is an operating-system one (a
+container, `bwrap`, a throwaway virtual machine), because the language has none: no network, a read-only file system
+except a temporary folder, no credentials in the environment, an unprivileged user, a time limit (five minutes), a memory
+limit and a process limit. Tests that need the network fail, and the policy says tests must be hermetic. **The acceptor of
+section 1.5 still never runs a seed's code** (section 11); the runner is the only place where stranger-written code runs,
+and only for the signals above. Anyone can reproduce a result with `tomato seed admit-check owner/name VERSION` on their
+own machine (it runs the seed's tests, which is code from the seed: use a sandbox), and `tomato seed listing-verify`
+recomputes `listing.toml` from the index files without running anything.
+
+### 18.5 The score (the later, soft tier)
+
+A transparent score from 0 to 100, computed by a pure function over the index files (so it is reproducible and has test
+vectors), shown by `tomato seed score owner/name` with every line of the breakdown. A proposal, to be tuned with the
+signals of section 18.4:
+
+| Part | Points | Measured by |
+| --- | ---: | --- |
+| Tests | 20 | a passing result; more points for more `@test` functions per module, up to 3 per module |
+| Documentation | 20 | a `README.md` (10) whose fenced `tomato` examples compile (10, compiled, never run) |
+| Age and stability | 20 | first version at least 30 days old (10), a version at 1.0.0 or later (5), at least 3 versions (5) |
+| Endorsements | 30 | section 18.6; the points cannot pass the structural rules or the tests on their own |
+| Metadata | 10 | license present, description present, `requires_tomato` matching what the tests ran on |
+
+Without a single endorsement the most a seed can reach is 70, so a threshold at or below 70 never *requires* a star; that is
+"soft". Endorsements move a seed with weaker documentation or less age over the line (the tests stay a separate condition from level 1 on). A threshold above 70 (for example, if 74
+meant a score) would make at least one endorsement necessary, which is a different, harder rule and should be chosen
+knowingly.
+
+### 18.6 Endorsements ("stars") without an account system
+
+There is no account to star from. An endorsement is a **signed statement by an owner's key**, like everything else:
+
+```toml
+# endorsements/dave.example.toml  (the endorser's file; append only, like all index files)
+[[endorse]]
+seed = "acme.example/json5"
+signed_by = "SHA256:..."
+signature = "..."
+
+[[unendorse]]          # a withdrawal is a new statement, never an edit
+seed = "acme.example/json5"
+signed_by = "SHA256:..."
+signature = "..."
+```
+
+`tomato seed endorse owner/name` and `unendorse` write them; any key owner or domain owner can send one, so a person who
+only wants to recommend a seed makes a key (`tomato seed claim --key`, a few seconds of proof of work) and does that.
+The weight of an endorser is computed from the index files, never stated by anyone:
+
+- Counted once per endorser per seed, only while it is not withdrawn, and only while the endorser's key is valid (a
+  revoked key's earlier endorsements keep counting if they precede the revocation, as in section 1.6).
+- **Eligible endorser:** at least 30 days old (by the acceptor's stamp); not the seed's own owner and not an owner whose
+  domain is a subdomain of it or the other way round; not holding more than 25 active endorsements (so a farm of keys cannot
+  endorse everything cheaply).
+- **Weight:** a domain owner counts 1, a key owner 0.25 (keys are free, domains cost money). Two owners who endorse each other
+  count half each. An owner with a `malware` yank against it counts zero.
+- **Points:** `min(30, round(10 * log2(1 + total weight)))`: a total weight of 7 saturates, so the first few matter and the
+  hundredth does not.
+
+Abuse and Sybil resistance, honestly:
+
+| Attack | Cost to the attacker | What it gains | Left over |
+| --- | --- | --- | --- |
+| Many keys endorse one seed | PoW per key, the daily cap on new key owners, a 30-day wait, weight 0.25 each | a few points | needs about 28 keys for a full 30 points |
+| Many domains endorse one seed | about 7 real domains and a month | the full 30 points | a few tens of dollars a year: **this is the real hole** |
+| A ring of mutual endorsements | the same | half weight | still possible, only less |
+| Endorsement of a good seed by a bad actor | none | nothing: it is a vote for a seed | |
+| Endorsements as a way to bury a seed | none: there is no negative vote | | |
+
+The result: **endorsements are cheap to fake by someone who spends a little money, and the design assumes that.** They are
+capped at 30 points, they can never replace the structural checks (or, once required, the tests), and the listing never
+says a seed is safe, only "listed at level N, with this score and these signals". There is no way to make stars
+trustworthy without an account system or a person; the cap is what bounds the harm.
+
+### 18.7 What launching with no requirements costs
+
+| Risk | At level 0 | What stays from day one | What is left |
+| --- | --- | --- | --- |
+| **Malware** | anyone can list a seed that does harm; "listed" means "structurally valid" and nothing more | no code runs at fetch or install (section 8); **hash pins**, so a bad version cannot replace a good one; signatures; **yank by the owner's key** (kind `malware` stops builds, section 4); immutable versions; a **security contact** (below); the language-level rule that a seed has no `!` functions (section 5) | a malicious owner who does not yank their own seed. **Without a human power (open question 1) the registry cannot remove one; only the owner can.** Say this to users |
+| **Squatting and typosquatting** | no name can be squatted inside an owner; lookalike *owners* are allowed | the warn-only skeleton rule, first-seen date and age shown at `add`, the full name stored once (section 1.8); the daily caps and PoW for key owners | a user who types a lookalike owner and does not read the line. Unchanged from section 1.8, and a listing at level 0 gives no extra signal |
+| **Abandoned and junk seeds** | nothing is removed or flagged; search fills with unmaintained work | rate limits and per-owner caps; `outdated` shows the last-publish date; the signals of section 18.4, so a later level can sort and filter on facts | search is poor at first. Mitigation without ranking power: default sort by endorsement weight, then by number of versions, shown with the numbers; `only_listed` becomes useful only at level 1 |
+| **Flooding** | a script can fill the index with valid seeds | per-owner and per-day caps; key owners are limited separately; every statement is a small text file | an attacker who buys domains pays for it |
+| **A weak "default" meaning** | users may take "listed" for "trusted" | the summary line says `policy level 0: structural checks only` | |
+
+**Minimal safeguards that never wait for a later level:** hash pinning and the lock; signatures and the owner proof; no
+code at install; the structural checks of section 11; yank by the owner's key (and, if Davis agrees, by named security keys,
+open question 1); and a **security contact**: `SECURITY.md` in the index, plus an optional `security = "..."` (an email or
+a URL) that an owner may put in `[seed]`, shown by `tomato seed info`. A report goes to that contact; the registry itself
+has no staff queue to wait on, so the only action it can take automatically is the yank rule above.
+
+### 18.8 Names under zero approval
+
+- **Owner scoped names do not need it** (section 1): `acme.example/json5` is only ever claimable by the owner.
+- **At level 0 nothing new:** listing is the same set as usable seeds, so no listing rule can refuse or reorder a name.
+- **When listing has requirements (levels 1 and up), a contested name** needs one deterministic rule: two seeds with the same
+  name under lookalike owners (equal skeleton or edit distance 1, section 1.8) and both eligible: the one with at least 10
+  more points of endorsement is listed and the other stays usable but unlisted; with a smaller difference **neither**
+  is listed. The rule can be griefed (register a lookalike and leave both unlisted) for the price of a domain, and
+  that is accepted because the damaged party remains usable and the owner can win the contest with real endorsements.
+  An owner can never be *blocked from use*, which is the property of section 1.8 that has to be kept.
+- **No bare names.** A listing, like the index, never resolves a bare name (section 1.7). Whether it should (like
+  homebrew-core's `brew install wget`) is open question 7.
+
+### 18.9 What changes in the other sections
+
+- Section 1.5's acceptor is exactly the level-0 admission; nothing in it is removed. Section 11's last paragraph is
+  kept: the acceptor never runs seed code, and the runner of 18.4 is the only thing that does.
+- `index-check` additionally checks `policy.toml` changes (the notice rule) and accepts `[[endorse]]`, `[[unendorse]]` and the
+  runner's `[[result]]` statements under the same signed, append-only rules.
+- New files in the index: `policy.toml`, `endorsements/<owner>.toml`, `results/<owner>/<name>.toml`, and the **generated**
+  `listing.toml` (status, score, `listed_under`, notices; rebuilt by the program, never edited by hand, and verifiable with
+  `tomato seed listing-verify`).
+- New commands: `tomato seed endorse|unendorse`, `score`, `admit-check`, `listing-verify`, `registry add`; `add` shows the
+  status line; `search` shows the listing and the numbers behind it (`--all` includes unlisted seeds).
+- New setting in the user's configuration: `[registry] only_listed = false`. It is a user preference only: a project's
+  `tomato.toml` cannot set it, so a seed cannot make a user's tool stricter or looser.
+
+## 19. Open questions for Davis
 
 1. **Does the registry keep any human power at all, even yank-only?** Everything routine is automatic, but nobody
    could remove a seed that is malware, illegal or leaking secrets from a registry I host, except by the owner's own
@@ -940,3 +1236,24 @@ These are the written rules. Most are enforced by the checker, so they do not de
 5. **May `tomato run` ever fetch?** This design says no: `run` and `build` use only the lock and the store, and say
    `tomato seed install` when something is missing. *Recommended: keep it, because it keeps "download" and "run code" as
    two decisions; a `[seeds] auto_install = true` setting can be added for people who want the other way.*
+6. **Is the split "usable (`owner/name`, always, no approval) versus listed (the default index's listing, with a bar that
+   rises over time)" what you meant?** It is how this document reconciles "easy, no approval" with "requirements increased over
+   time". *Recommended: yes. Raising the bar then only ever changes discovery, never whether a seed can be used or a lock
+   builds (section 18.1).*
+7. **Should a listed seed get a bare name** (`tomato seed add json5`, like `brew install wget`)? It would make listing a
+   first-come namespace again, the thing owner-scoped names avoid (section 1.7). *Recommended: no, not in this design. Keep
+   `owner/name` plus aliases; if you want bare names later, give a bare name to the listed seed with the highest score, never
+   by first come, and decide it with the squatting analysis in front of you.*
+8. **Is "username" a domain or key owner, or do you want short handles** (`dave/thing`)? A handle table needs someone to hand
+   them out (section 1.1). *Recommended: keep domain and key owners and the alias layer; short handles can be added later as
+   an alias layer the index publishes, not as identity.*
+9. **Who may edit `policy.toml`?** It sets the rules for everyone and can never touch one named seed (section 18.3).
+   *Recommended: a small set of named policy keys in `config.toml` (yours first), a public commit for every change, and the
+   checker's notice rule (60 days to tighten, none to loosen), so even those keys cannot surprise anyone.*
+10. **The ramp: what is level 1, and when is it raised?** And does "@74" still matter, as a score or a count of stars?
+    *Recommended: level 0 until the signals of section 18.4 have been collected for about six months and at least 80% of
+    listed seeds would pass level 1; level 1 is "a license and passing tests"; stars enter as points at level 2, never as a
+    condition; demotion last. Pick the first non-zero number only when the shadow score shows what it would do.*
+11. **Do key owners' endorsements count** (weight 0.25 in section 18.6), or only domain owners'? Keys are free and
+    make Sybil attacks cheaper; domains exclude ordinary users from recommending. *Recommended: count keys at 0.25 with
+    the 25-endorsement cap, and revisit when the data shows abuse.*
