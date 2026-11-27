@@ -1,0 +1,5 @@
+[1;31merror[E227]:[0m [1mname 'tets' is not defined[0m
+ [1;34m-->[0m [36mtypo.tom:3:11[0m
+[1;34m  |[0m
+[1;34m3 |[0m     print(tets)
+[1;34m  |[0m           [1;31m^^^^[0m

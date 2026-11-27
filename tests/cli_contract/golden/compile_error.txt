@@ -1,0 +1,5 @@
+error[E227]: name 'tets' is not defined
+ --> typo.tom:3:11
+  |
+3 |     print(tets)
+  |           ^^^^

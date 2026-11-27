@@ -1,0 +1,12 @@
+[seed]
+name = "acme.example/@NAME@"
+version = "0.1.0"
+tomato = "@MINV@"
+description = "TODO: one line about what this seed is for"
+license = "TODO: a license such as MIT"
+
+# Seeds this seed uses, as "owner/name" = "minimum version":
+# [seeds]
+#
+# Seeds only its tests use (tomato test reads them; whoever uses this seed never does):
+# [test-seeds]

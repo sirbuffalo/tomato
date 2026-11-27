@@ -1,0 +1,7 @@
+project file: @W/proj/tomato.toml
+user file: none found
+limits.exp_bits = 65536  (built-in default)
+limits.format_digits = 100000  (built-in default)
+project: demo 0.3.0 (needs Tomato 0.51 or newer)
+build.mode = release  (@W/proj/tomato.toml)
+build.output = out/app  (@W/proj/tomato.toml)

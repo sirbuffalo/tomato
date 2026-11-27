@@ -1,0 +1,7 @@
+# A test is a file in tests/ that runs without raising an error: tomato test runs each one, and a failed assert raises.
+# The modules of src/ are imported by name.
+from @STEM@ import hello
+
+@main
+def main():
+    assert hello('tomato') == 'hello, tomato'

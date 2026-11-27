@@ -1,0 +1,10 @@
+[project]
+name = "app"
+version = "0.1.0"
+tomato = "@MINV@"
+
+# Seeds this project uses, as "owner/name" = "minimum version" (or { path = "../folder" }):
+# [seeds]
+#
+# Seeds only its tests use (tomato test reads them; a build does not):
+# [test-seeds]

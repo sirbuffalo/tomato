@@ -1,0 +1,3 @@
+error[E01]: division by zero
+  at half (line 6)
+  at main (line 3)

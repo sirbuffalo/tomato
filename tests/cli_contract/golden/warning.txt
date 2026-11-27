@@ -1,0 +1,6 @@
+warning: the variable 'unused' is given a value that is never used
+ --> warn.tom:3:5
+  |
+3 |     unused = 1
+  |     ^^^^^^
+  = help: remove it, or rename it '_unused' to show that this is intended

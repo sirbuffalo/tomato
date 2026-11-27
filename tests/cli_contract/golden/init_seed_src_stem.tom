@@ -1,0 +1,3 @@
+# The modules of a seed are the .tom files in src/ named @STEM@.tom or @STEM@_*.tom: users write import @STEM@.
+export def hello(name: str) -> str:
+    return f'hello, {name}'

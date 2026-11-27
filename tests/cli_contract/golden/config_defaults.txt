@@ -1,0 +1,4 @@
+project file: none found
+user file: none found
+limits.exp_bits = 65536  (built-in default)
+limits.format_digits = 100000  (built-in default)

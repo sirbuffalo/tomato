@@ -1,0 +1,2 @@
+error[E04]: IndexError: index out of range
+  (line 99 is past the end of src.tom: is this the file the program was built from?)

@@ -3,7 +3,8 @@
 #   1. builds the compiler from compiler/bootstrap/tomatoc.ll and checks that it reproduces itself and that the
 #      checked-in IR is current (the fixed point)
 #   2. compiles and runs every example with the expected output in tests/expected
-#   3. checks the command line (tomato run/build/compile/repl/update/version/help)
+#   3. checks the command line (tomato run/build/compile/repl/update/version/help), and the CLI contract (tests/cli_contract: a black-box
+#      suite of the command, written to pass any `tomato`, the script today and a Tomato program later)
 #
 # Tiers: with no flag the whole suite runs (what CI and a release use). --fast (or TOMATO_TEST_FAST=1) runs a representative
 # subset for a developer's edit-and-test loop and for an agent's check before a merge: the same checks on every kind of program,
@@ -2682,6 +2683,35 @@ spawn_cli t_lexer_spans
 spawn_cli t_todo_shell_logic
 spawn_cli t_todo_shell_pty
 spawn t_std_sheets
+
+# ---- the CLI contract ---------------------------------------------------------------------------------------------------
+# tests/cli_contract: a black-box suite of the `tomato` command (docs/shell-to-tomato-plan.md, sections 6 and 12), written to pass any
+# `tomato` (today the script, later the compiled Tomato program that replaces it) and to know nothing of how it is made. Here it runs against
+# the installed command ($t). One test per case file (tests/cli_contract/cases/NAME.sh); the fast tier skips the cases that link many
+# programs (the ones that say `# tier: full` on their second line) and runs the others. `sh tests/cli_contract/run.sh --help` runs it alone.
+t_cli_contract() { # NAME: the lines of the case become the suite's ok and FAIL lines
+  cli_setup
+  TOMATO="$t" CONTRACT_FAST="$fast" CONTRACT_JOBS=1 sh tests/cli_contract/run.sh "$1" > "$work/contract.out" 2>&1 < /dev/null; contract_rc=$?
+  detail=""; failing=""
+  while IFS= read -r line; do
+    case "$line" in
+      "ok   "*) [ -z "$failing" ] || { bad "$failing" "$detail"; failing=""; detail=""; }; ok "${line#ok   }" ;;
+      "FAIL "*) [ -z "$failing" ] || bad "$failing" "$detail"; failing="${line#FAIL }"; detail="" ;;
+      "     "*) [ -z "$failing" ] || detail="$detail${detail:+
+}${line#     }" ;;
+      "skip "*) [ -z "$failing" ] || { bad "$failing" "$detail"; failing=""; detail=""; }; echo "$line" ;;
+      "tomato under test:"*|"cli contract: "*|"") ;;
+      *) [ -z "$failing" ] || { bad "$failing" "$detail"; failing=""; detail=""; }; echo "$line" ;;
+    esac
+  done < "$work/contract.out"
+  [ -z "$failing" ] || bad "$failing" "$detail"
+  [ "$contract_rc" -le 1 ] || bad "cli contract $1: the runner failed (status $contract_rc)" "$(cat "$work/contract.out")"
+}
+section "== CLI contract (tests/cli_contract: what a user sees of the tomato command, whatever it is made of) =="
+for cf in tests/cli_contract/cases/*.sh; do
+  cn="$(basename "$cf" .sh)"
+  if [ -n "$fast" ] && sed -n '2p' "$cf" | grep -q '^# tier: full'; then skip "cli contract $cn"; else spawn_cli t_cli_contract "$cn"; fi
+done
 
 # ---- rejected programs --------------------------------------------------------------------------------------------------
 t_neg() { # file, message that the compiler must report, and the entry name (default main; `test` for the @test checks)

@@ -77,6 +77,38 @@ Tomato v0.51, on macOS 27.0.1, Apple M3 Pro (12 cores), 36 GB RAM, a laptop on b
 
 Full measurements: `benchmarks/results/linux-x86_64/results.md`, `results.json`, `raw.tsv`. The previous run (the pre-bigfloat tree `c1fae360`) is kept as `results-c1fae360.*` and `raw-c1fae360.tsv`.
 
+## The `tomato` command's startup, shell script (2026-11-27, loaded host)
+
+The stage 0 numbers of `docs/shell-to-tomato-plan.md` (section 2, "What the numbers say"): what the shell-script `tomato` costs today, so
+that the compiled Tomato `tomato` that replaces it is held to them (the plan's budgets: `version`, `help`, `config`, `explain` and
+`seed hash` at most the figure of the first rows; `run`, `build` and `compile` within 5% of the debug `run`; check it with the same script).
+**Loaded host, not a quiet machine**: biggie (Linux x86-64, 128 logical CPUs, clang 21.1.8), load average 69.5, 85.0 and 94.5 (1, 5, 15 minutes)
+at the start and 67.6, 80.5 and 92.0 at the end, another user's jobs (left alone; the run was not delayed and not pinned). Tree: main at `5513952f`
+(v0.51, with the project layout, `run`, `build`, `test` and `[test-seeds]`), a fresh install from `install-native.sh` in a scratch folder, an
+empty hello-world `@main` program. Median of 20 runs (min / max in brackets; the rows that compile and link, 10 runs), measured with
+`TOMATO=... sh tests/cli_contract/startup_times.sh 20`, which uses the command line only, so it measures any `tomato`:
+
+| What | Time |
+| --- | --- |
+| `sh -c true` (the floor for any script) | 10 ms (7 / 16) |
+| `tomato version` | 49 ms (43 / 76) |
+| `tomato help` | 55 ms (44 / 69) |
+| `tomato explain E01` | 47 ms (42 / 65) |
+| `tomato config` (runs the compiler to read the settings) | 75 ms (70 / 97) |
+| a built hello-world program, run | 10 ms (8 / 16) |
+| `tomato compile hello.tom` (the compiler alone, IR out) | 168 ms (152 / 224) |
+| `tomato build hello.tom` debug, runtime cached | 1029 ms (911 / 1882) |
+| `tomato run hello.tom` debug, runtime cached | 1240 ms (995 / 1391) |
+| `tomato run hello.tom --mode release`, runtime cached | 3594 ms (3297 / 4216) |
+| first `tomato run`, runtime cache empty (debug / release; one run each) | 6777 ms / 7596 ms |
+| `clang --version` | 80 ms (68 / 94) |
+
+These are higher than the figures the plan quoted from the earlier tree (`version` 33 ms, debug `run` 645 ms, release `run` 2006 ms, built
+program 15 ms): the load was not the same (the plan's own run was at 67 to 96; a first attempt for this table, taken while the contract suite's
+own runs were going on the same host, read the debug `run` at 4.7 s and `version` at 227 ms and was thrown away), and perhaps the script itself, which has grown since (the project-layout and `test` code is parsed on every start; not isolated here), so read the two as the same order and compare ratios, not seconds.
+The plan's own numbers (`version` 33 ms, 645 ms for `run`) stay its budget until a quiet-host run replaces them. The compile-and-link rows
+move with the load more than the others (a `clang` run is most of them).
+
 ## Linux x86-64 snapshot, pre-bigfloat tree (2026-11-25)
 
 Tomato v0.51 plus later work (`c1fae360`, the commit before floats of any size; first published as `f533dbd0`, see the note above), built with link-time optimisation (`release/check-lto.sh` passed before the run), on Ubuntu 26.04.1 LTS, AMD Ryzen Threadripper 3990X (64 physical cores, 128 logical CPUs), 247 GB RAM. Each program ran ten times in one shuffled order (seed 1); values are median wall-clock seconds. This is not a quiet-machine run: biggie's one-, five-, and fifteen-minute load averages were 66.44, 71.05, 72.33 before and 60.91, 61.63, 63.40 after (mostly another user's long-running jobs, which were left alone), so the run was pinned to 6 otherwise idle CPUs. Its spread is still large: the median of (max - min) / median over the 325 program-language pairs is 54%, and 284 of them are above 20%. Read differences below about 20% as noise. Full measurements are in `benchmarks/results/linux-x86_64/results.md` and `raw.tsv`; earlier website numbers were measured on an Apple M1 Mac and are not directly comparable.

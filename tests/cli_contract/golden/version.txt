@@ -1,0 +1,1 @@
+Tomato v@VERSION@ (compiler written in Tomato)

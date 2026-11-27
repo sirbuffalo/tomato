@@ -1,0 +1,2 @@
+error: unknown command 'frobnicate'
+run 'tomato help' for the commands

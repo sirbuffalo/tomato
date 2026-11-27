@@ -1,0 +1,6 @@
+project file: @W/proj/tomato.toml
+user file: @W/.tomato-home/config.toml
+limits.exp_bits = 65536  (built-in default)
+limits.format_digits = 100000  (built-in default)
+project: x 0.1.0 (needs Tomato 99.0 or newer)
+build.mode = release  (@W/.tomato-home/config.toml, the default under a project's [build] and --mode)

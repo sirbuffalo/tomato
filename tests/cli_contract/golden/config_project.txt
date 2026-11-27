@@ -1,0 +1,5 @@
+project file: @W/proj/tomato.toml
+user file: none found
+limits.exp_bits = 2048  (@W/proj/tomato.toml)
+limits.format_digits = 1000  (@W/proj/tomato.toml)
+project: demo 0.3.0 (needs Tomato 0.51 or newer)

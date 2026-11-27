@@ -1,0 +1,5 @@
+error[E04]: IndexError: index out of range
+ --> src.tom:2
+  |
+2 |     x = 1 // 0
+  |     ^^^^^^^^^^

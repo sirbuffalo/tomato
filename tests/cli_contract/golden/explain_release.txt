@@ -1,0 +1,5 @@
+error[E01]: ZeroDivisionError: division by zero
+ --> dz.tom:4
+  |
+4 |     print(5 // x)
+  |     ^^^^^^^^^^^^^

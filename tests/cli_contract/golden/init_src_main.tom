@@ -1,0 +1,5 @@
+# The program starts at the function marked @main: tomato run runs it, tomato build writes it into builds/.
+# Other .tom files in src/ are modules: import them by name.
+@main
+def main():
+    print('hello, world')

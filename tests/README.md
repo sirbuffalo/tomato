@@ -10,6 +10,14 @@ tests/run.sh -j N            N tests at a time (TOMATO_TEST_JOBS=N)
 tests/run.sh --times         after the summary: the 20 slowest tests and the time per section
 ```
 
+## CLI contract
+
+`tests/cli_contract/` is a black-box suite of the `tomato` command (help, errors, exit statuses, `init`'s files, build tables, `config`,
+`explain`, `update` paths that need no network, `run`/`build`/`test` argument rules). It runs against any `tomato` (`$TOMATO` or the one on
+`PATH`), so the compiled Tomato `tomato` that replaces the shell script must pass it unchanged (`docs/shell-to-tomato-plan.md`, stage 0).
+`tests/run.sh` has it as its own section, one job per case; `--fast` skips the cases that link many programs. Run it alone with
+`sh tests/cli_contract/run.sh` (see `tests/cli_contract/README.md`).
+
 ## Browser entropy check
 
 Serve the repository over HTTP on localhost (a secure context for Web Crypto) and open

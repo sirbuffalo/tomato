@@ -1,0 +1,3 @@
+[1;31merror[E01]:[0m [1mdivision by zero[0m
+[2m  at half (line 6)[0m
+[2m  at main (line 3)[0m

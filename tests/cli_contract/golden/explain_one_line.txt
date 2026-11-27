@@ -1,0 +1,5 @@
+error[E01]: ZeroDivisionError: division by zero
+ --> two_digit_line.tom:1
+  |
+1 | print(1)
+  | ^^^^^^^^

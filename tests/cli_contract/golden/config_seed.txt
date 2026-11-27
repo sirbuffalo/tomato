@@ -1,0 +1,6 @@
+project file: @W/proj/sub/tomato.toml
+user file: @W/.tomato-home/config.toml
+limits.exp_bits = 4096  (@W/.tomato-home/config.toml)
+limits.format_digits = 9000  (@W/proj/sub/tomato.toml)
+seed: a.example/x 1.0.0 (needs Tomato 0.51 or newer)
+build: ignored, the [build] of a seed is not read
