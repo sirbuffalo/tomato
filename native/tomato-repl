@@ -9,6 +9,12 @@
 # not print twice. A bare expression shows its value. Because the whole session re-runs, a line with a side effect
 # outside the program (writing a file, say) happens again with every later line.
 #
+# Defining a function, class or interface again replaces the earlier one (a recalled def, edited, or :load of a file you changed). The
+# session runs again from the top, so everything that used the old definition uses the new one, including the values that earlier lines
+# made (an object of an old class is built again by the new class). If an earlier line or definition does not work with the new one (a
+# parameter or a field that is gone, say), the new definition is refused with that error and the old one stays. A redefinition shows
+# no output of its own: what the earlier lines printed was shown when they ran.
+#
 # Editing: Up and Down recall earlier pieces, a block as a whole; the arrows move within it and between its lines. Enter runs the
 # piece when it is complete (a block ends at an empty line; an open bracket goes on to the next line), Tab completes a name (keywords,
 # built-ins, what the session uses, standard modules after import, :commands) or indents, Ctrl-C cancels. The
@@ -61,8 +67,30 @@ split() {
   '
 }
 
+# A declaration is kept in a file of its own, d/NNNN_NAME (NAME: the function, class or interface it defines, or -N for the others,
+# such as an import). A piece that defines a name again replaces the earlier declaration of it: REDEF holds those names (one per line)
+# while the piece is tried and committed, and redefined says whether a declaration file is one of them.
+REDEF=""
+declname() { b="${1##*/}"; printf '%s\n' "${b#*_}"; }
+redefined() { case "
+$REDEF" in *"
+$(declname "$1")
+"*) return 0 ;; esac; return 1; }
+# The declarations in file $1, one file each in $S/ch (1, 2, ...) and, in $S/ch/keys, the name each one defines ("-": none).
+decl_chunks() {
+  rm -rf "$S/ch"; mkdir "$S/ch"
+  awk -v DIR="$S/ch" '
+    function key(l,   m) { sub(/^export +/, "", l); if (!match(l, /^(async +)?(def|class|interface) +[A-Za-z_0-9]+/)) return "-"; m = substr(l, RSTART, RLENGTH); sub(/^(async +)?(def|class|interface) +/, "", m); return m }
+    { top = ($0 !~ /^[ \t]/ && $0 !~ /^[ \t]*$/ && $0 !~ /^#/); at = (substr($0, 1, 1) == "@")
+      if (top && !afterat) { if (n > 0) close(f); n++; f = DIR "/" n; k[n] = at ? "-" : key($0); afterat = at }
+      else if (top) { k[n] = key($0); afterat = 0 }
+      if (n > 0) print $0 >> f }
+    END { for (i = 1; i <= n; i++) print k[i] > (DIR "/keys") }
+  ' "$1"
+}
+
 program() {   # the session as one program on stdout
-  for f in "$S"/d/*; do [ -f "$f" ] && { cat "$f"; echo; }; done
+  for f in "$S"/d/*; do [ -f "$f" ] && ! redefined "$f" && { cat "$f"; echo; }; done
   echo "@main"; echo "$(main_kw "$S/stmts") tomato_repl_main():"
   if [ -s "$S/stmts" ]; then sed 's/^/    /' "$S/stmts"; else echo "    pass"; fi
 }
@@ -75,11 +103,11 @@ main_kw() { if grep -Eq '(^|[^A-Za-z0-9_])(await|async|start) ' "$1"; then echo 
 try_once() {
   cp "$S/stmts" "$S/stmts.try"; cat "$2" >> "$S/stmts.try"
   # where the new piece sits in the generated program, so an error can be shown against what the user typed (see friendly)
-  prev=0; for f in "$S"/d/*; do [ -f "$f" ] && prev=$((prev + $(wc -l < "$f") + 1)); done
+  prev=0; for f in "$S"/d/*; do [ -f "$f" ] && ! redefined "$f" && prev=$((prev + $(wc -l < "$f") + 1)); done
   DECL_FILE="$1"; STMT_FILE="$2"; DECL_BASE=$((prev + 1)); DECL_N=0; total=$prev
   if [ -s "$1" ]; then DECL_N=$(wc -l < "$1"); total=$((prev + DECL_N + 1)); fi
-  STMT_BASE=$((total + 3 + $(wc -l < "$S/stmts"))); STMT_N=$(wc -l < "$2")
-  { for f in "$S"/d/*; do [ -f "$f" ] && { cat "$f"; echo; }; done
+  PREV_N=$(wc -l < "$S/stmts"); PREV_BASE=$((total + 3)); STMT_BASE=$((PREV_BASE + PREV_N)); STMT_N=$(wc -l < "$2")
+  { for f in "$S"/d/*; do [ -f "$f" ] && ! redefined "$f" && { cat "$f"; echo; }; done
     [ -s "$1" ] && { cat "$1"; echo; }
     echo "@main"; echo "$(main_kw "$S/stmts.try") tomato_repl_main():"
     if [ -s "$S/stmts.try" ]; then sed 's/^/    /' "$S/stmts.try"; else echo "    pass"; fi
@@ -134,7 +162,7 @@ try_run() {
 friendly() { if [ $repl_color = 1 ]; then friendly_plain | "$tomato" paint >&2; else friendly_plain >&2; fi; }
 friendly_plain() {   # reads $S/err, prints the message on stderr; writes "in-definition" to $S/where when the error is in a definition
   : > "$S/where"
-  sed -e "s#$S/[^ :]*/*##g" "$S/err" | awk -v D0="$DECL_BASE" -v DN="$DECL_N" -v S0="$STMT_BASE" -v SN="$STMT_N" -v DF="$DECL_FILE" -v SF="$STMT_FILE" -v W="$S/where" '
+  sed -e "s#$S/[^ :]*/*##g" "$S/err" | awk -v D0="$DECL_BASE" -v DN="$DECL_N" -v S0="$STMT_BASE" -v SN="$STMT_N" -v DF="$DECL_FILE" -v SF="$STMT_FILE" -v W="$S/where" -v P0="$PREV_BASE" -v PN="$PREV_N" -v PF="$S/stmts" '
     function digits(n) { return length(n ""); }
     function sp(n,   s) { s = ""; while (n-- > 0) s = s " "; return s; }
     { l[NR] = $0 }
@@ -146,6 +174,7 @@ friendly_plain() {   # reads $S/err, prints the message on stderr; writes "in-de
         loc = l[h]; sub(/^ *--> /, "", loc); n = split(loc, p, ":"); L = p[n-1] + 0; C = p[n] + 0
         if (DN > 0 && L >= D0 && L < D0 + DN) { file = DF; ul = L - D0 + 1; uc = C; mapped = 1; print "in-definition" > W }
         else if (L >= S0 && L < S0 + SN) { file = SF; ul = L - S0 + 1; uc = C - 4; mapped = 1 }
+        else if (L >= P0 && L < P0 + PN) { file = PF; ul = L - P0 + 1; uc = C - 4; mapped = 1; name = "session" }   # an earlier line of the session, which a redefinition broke
         if (mapped) {
           k = 0; while ((getline t < file) > 0) { k++; if (k == ul) { src = t; break } } close(file)
           if (uc < 1) uc = 1
@@ -156,7 +185,7 @@ friendly_plain() {   # reads $S/err, prints the message on stderr; writes "in-de
       for (i = 1; i <= NR; i++) {
         if (h > 0 && i >= h && i <= h + 3) {
           if (!mapped) continue
-          if (i == h) print pad "--> repl:" ul ":" uc
+          if (i == h) print pad "--> " (name == "" ? "repl" : name) ":" ul ":" uc
           else if (i == h + 1) print pad " |"
           else if (i == h + 2) print ul " | " src
           else print pad " | " sp(uc - 1) carets
@@ -180,16 +209,32 @@ new_output() {  # print the part of $S/out that is not in the previous output ($
 # the line editor draws its prompt from the start of the line: end a last line the program left open (print(x, end=''))
 end_open_line() { [ "${use_edit:-0}" = 1 ] && [ -s "$S/new" ] && [ -n "$(tail -c 1 "$S/new" | tr -d '\n')" ] && echo; return 0; }
 
-commit() {   # the candidate worked: keep it
+commit() {   # the candidate worked: keep it ($S/ch holds its declarations, one file each; see decl_chunks)
   cat "$S/stmts.try" > "$S/stmts"
   if [ -s "$1" ]; then
-    key=$(head -1 "$1" | sed -E 's/^(async )?(def|class|interface)[ ]+([A-Za-z_0-9]+).*/\3/')
-    case "$(head -1 "$1")" in async\ def\ *|def\ *|class\ *|interface\ *)
-      rm -f "$S"/d/*_"$key" 2>/dev/null ;; *) key="x$seq" ;;
-    esac
-    seq=$((seq + 1)); cp "$1" "$S/d/$(printf '%04d' $seq)_$key"
+    for f in "$S"/d/*; do [ -f "$f" ] && redefined "$f" && rm -f "$f"; done   # a name defined again replaces the earlier declaration
+    i=0
+    while IFS= read -r key; do
+      i=$((i + 1)); seq=$((seq + 1))
+      [ "$key" = - ] && key="-$seq"
+      cp "$S/ch/$i" "$S/d/$(printf '%04d' $seq)_$key"
+    done < "$S/ch/keys"
   fi
   cp "$S/out" "$S/shown"; cp "$S/inputs.try" "$S/inputs"
+}
+
+# the output of a candidate that is kept or refused. A redefinition runs the earlier lines again with the new definition, so the part
+# of the output that is "new" cannot be told from them: it shows nothing (what the earlier lines printed was shown when they ran).
+show_new() { [ -n "$REDEF" ] || { new_output; end_open_line; }; }
+# a refused candidate: the compiler's error against what was typed; for a redefinition, also why the old definition is still there
+refused() {
+  show_new
+  friendly
+  grep -q "^in-definition" "$S/where" 2>/dev/null && grep -q "is not defined" "$S/err" 2>/dev/null && err "hint: a function or class defined here cannot read repl variables; pass them as arguments"
+  if [ -n "$REDEF" ] && ! grep -q "^in-definition" "$S/where" 2>/dev/null; then
+    err "hint: the earlier lines of the session run again with the new $(printf '%s' "$REDEF" | paste -sd, - | sed 's/,/, /g'), and one of them does not work with it; the earlier definition is kept"
+  fi
+  REDEF=""      # the session is as it was: program and the completer see the earlier definition again
 }
 
 submit() {   # one piece of source text in $1
@@ -199,6 +244,21 @@ submit() {   # one piece of source text in $1
   if [ -s "$S/cb" ]; then
     name=$(head -1 "$S/cb" | sed -nE 's/^([A-Za-z_][A-Za-z_0-9]*) *:[^=]*=.*/\1/p')
     if [ -n "$name" ]; then grep -vE "^$name *:" "$S/stmts" > "$S/stmts.n"; cp "$S/stmts.n" "$S/stmts"; fi
+  fi
+  # a name that is defined again replaces its earlier definition (see REDEF); the new definition goes first, alone, so a mixed piece's
+  # output is only its own statements
+  REDEF=""
+  if [ -s "$S/cd" ]; then
+    decl_chunks "$S/cd"
+    while IFS= read -r key; do
+      [ "$key" = - ] && continue
+      for f in "$S"/d/*; do [ -f "$f" ] && [ "$(declname "$f")" = "$key" ] && { REDEF="$REDEF$key
+"; break; }; done
+    done < "$S/ch/keys"
+  fi
+  if [ -n "$REDEF" ] && [ -s "$S/cb" ]; then
+    : > "$S/empty"
+    if try_run "$S/cd" "$S/empty"; then commit "$S/cd"; REDEF=""; : > "$S/cd"; else refused; return; fi
   fi
   if [ ! -s "$S/cd" ] && [ -s "$S/cb" ]; then
     first=$(head -1 "$S/cb")
@@ -210,11 +270,7 @@ submit() {   # one piece of source text in $1
       if try_run "$S/cd" "$S/ce"; then new_output; end_open_line; commit "$S/cd"; return; fi
     fi
   fi
-  if try_run "$S/cd" "$S/cb"; then new_output; end_open_line; commit "$S/cd"; else
-    new_output; end_open_line          # what the line printed before it failed
-    friendly
-    grep -q "^in-definition" "$S/where" 2>/dev/null && grep -q "is not defined" "$S/err" 2>/dev/null && err "hint: a function or class defined here cannot read repl variables; pass them as arguments"
-  fi
+  if try_run "$S/cd" "$S/cb"; then show_new; commit "$S/cd"; REDEF=""; else refused; fi
 }
 
 load_file() {

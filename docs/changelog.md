@@ -94,6 +94,9 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
 - `tomato config` shows the settings in effect and the files they come from.
 - Clearer compile errors for unpacking a value that is not a tuple, a `Cache` key class without `@str`, a union as a
   type argument, and a byte order mark at the start of a file.
+- The repl accepts a function, class or interface that is defined again (it was E120 "defined twice"): the new one replaces the old
+  everywhere in the session, so earlier lines and the objects they made use it; it is refused, and the old one kept, when an earlier
+  line no longer works with it. A recalled and edited `def`, or `:load` of a changed file, now just works.
 - The repl reports precise import errors; the site editor, repl and VS Code auto-indent after a colon line.
 - The repl edits whole blocks (D88a, replacing D59a's `[Enter] run  [e] edit`): Up and Down recall a block as its real lines, the
   arrows move between them, Enter runs a complete piece and continues on an open bracket (`x = (1,`), paste and resize work,

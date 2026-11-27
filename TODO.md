@@ -14,8 +14,6 @@
   Check the editor by hand in iTerm2 and Terminal.app (Option-as-Meta for Alt-B/F, resize re-wrapping) and record which keys each sends (design section 11, item 5 of `docs/repl-editor-design.md`). The pty tests (`tests/repl_history.exp`, `tests/terminal_pty.exp`) pass on macOS 27 arm64 and under Rosetta, but they send xterm sequences themselves; what these two terminals actually send has not been recorded.
 - Answer the seed registry open questions and start stage 1
   Answer the open questions in section 19 of `docs/package-registry-design.md` (1 to 11), then start stage 1 (`tomato-seed` helper skeleton).
-- Let the repl redefine a function or class
-  A second `def f()` in the repl fails with `E120 'f' is defined twice`: the driver's `commit` (`native/tomato-repl`) removes the old declaration only after the piece succeeds, so the new one is compiled on top of the old one. It predates stage 3 and also happens on the piped path; a recalled-and-edited `def` is the natural way to hit it.
 - Settle the compatibility-promise items of docs/language-design-review.md before tagging 1.0.0
   Its ranked list ("Decisions to make, ranked"): triage `docs/provisional.md`, release-mode error messages, builtin shadowing, the `@` namespace and `x is T`, `bytes`, `File` safety, reserved std module names and the `!` interface. Each needs Davis's decision, then a decision entry and the change.
 - Fix `list.sort()` leaking on a list held in an object field
@@ -32,3 +30,5 @@
   `int | None` is possible now (D94a); the comment in `std/datetime.tom` says why the parameter is `int | bool`. It is an API change, so it needs Davis's call.
 - Flow narrowing of optionals by `is None` / `is not None`
   Applies to all optionals, not just `int | None`, `float | None` and `bool | None`: `s + "!"` and `abs(x)` after a check should need no runtime unwrap. Today `s + "literal"` on a `str | None` is also E190 (an existing quirk).
+- Keep the old repl variable when its redeclaration is refused
+  Redeclared repl variable (`x: int = 1` then `x: int = "a"` failing) drops the old `x` from the session even though the new line was refused: `submit` removes the old declaration from the statements before trying the piece (pre-existing, `native/tomato-repl`). Restore it when the piece fails.

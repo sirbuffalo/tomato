@@ -1062,6 +1062,47 @@ hi Ann" "$(printf "name = await input('Name? ')\nAnn\nprint('hi', name)\n:quit\n
   check "repl: leave() leaves" "a" "$(printf "print('a')\nleave()\nprint('b')\n" | $t repl)"
   fi
 }
+t_cli_repl_redef() {   # a function, class or interface defined again replaces the earlier one (it was E120 "defined twice")
+  cli_setup
+  P1='class P:\n    x: int\n    @init\n    def make(self, x: int):\n        self.x = x\n\n'
+  P2='class P:\n    x: int\n    y: int\n    @init\n    def make(self, x: int, y: int):\n        self.x = x\n        self.y = y\n\n'
+  P3='class P:\n    x: int\n    @init\n    def make(self, x: int):\n        self.x = x * 2\n    def get(self) -> int:\n        return self.x\n\n'
+  check "repl: a function defined again replaces the earlier one, and shows no output of its own" "1
+2
+3" "$(printf 'def f() -> int:\n    return 1\n\nprint(f())\ndef f() -> int:\n    return 2\n\nprint(f())\nf() + 1\n:quit\n' | $t repl 2>&1)"
+  check "repl: a class defined again: the object an earlier line made is built by the new class, and the old output is not shown again" "5
+10" "$(printf "${P1}p = P(5)\nprint(p.x)\n${P3}p.get()\n:quit\n" | $t repl 2>&1)"
+  check "repl: a definition that calls a redefined function uses the new one" "4" "$(printf 'def one() -> int:\n    return 1\n\ndef two() -> int:\n    return one()\n\ndef one() -> int:\n    return 4\n\ntwo()\n:quit\n' | $t repl 2>&1)"
+  check "repl: a redefinition an earlier line does not fit is refused at that line, with a hint, and the old one stays" "error[E128]: 'P' takes 2 arguments, but 1 given
+ --> session:1:5
+  |
+1 | p = P(5)
+  |     ^
+hint: the earlier lines of the session run again with the new P, and one of them does not work with it; the earlier definition is kept
+5" "$(printf "${P1}p = P(5)\n${P2}p.x\n:quit\n" | $t repl 2>&1)"
+  check "repl: after a refused redefinition :program still has the old definition" "1
+def f(n: int) -> int:
+    return n
+@main
+def tomato_repl_main():
+    print(f(1))" "$(printf 'def f(n: int) -> int:\n    return n\n\nprint(f(1))\ndef f(n: int, m: int) -> int:\n    return n\n\n:program\n:quit\n' | $t repl 2>/dev/null | sed '/^$/d')"
+  check "repl: a function that now fails at run time is refused too" "2
+error[E01]: division by zero
+hint: the earlier lines of the session run again with the new f, and one of them does not work with it; the earlier definition is kept" "$(printf 'def f(n: int) -> int:\n    return 10 // n\n\nprint(f(5))\ndef f(n: int) -> int:\n    return 10 // (n - 5)\n\n:quit\n' | $t repl 2>&1)"
+  printf 'def f() -> int:\n    return 1\n\ndef f() -> int:\n    return 2\n' > "$work/twice.tom"
+  check "repl: a name defined twice in one piece is still an error" "error[E120]: 'f' is defined twice in module 'main'" "$(printf ':load %s\n:quit\n' "$work/twice.tom" | $t repl 2>&1 | head -1)"
+  printf 'def f() -> int:\n    return 2\n\nprint(f())\n' > "$work/mixed.tom"
+  check "repl: a piece with a redefinition and statements shows only its statements" "1
+2" "$(printf 'def f() -> int:\n    return 1\n\nprint(f())\n:load %s\n:quit\n' "$work/mixed.tom" | $t repl 2>&1)"
+  check "repl: :program holds one definition of a redefined name, and my_f is not f" "def my_f() -> int:
+    return 5
+
+def f() -> int:
+    return 2" "$(printf 'def my_f() -> int:\n    return 5\n\ndef f() -> int:\n    return 1\n\ndef f() -> int:\n    return 2\n\n:program\n:quit\n' | $t repl 2>&1 | sed -n '1,5p')"
+  printf 'def g() -> int:\n    return 1\n' > "$work/g1.tom"; printf 'def g() -> int:\n    return 9\n' > "$work/g2.tom"
+  check "repl: :load of a changed file replaces its definitions" "1
+9" "$(printf ':load %s\nprint(g())\n:load %s\nprint(g())\n:quit\n' "$work/g1.tom" "$work/g2.tom" | $t repl 2>&1)"
+}
 t_cli_repl_history() {   # the pty session is slow (it compiles after each line): it is its own job, so it does not hold up the others
   cli_setup
   # the line editor install-native.sh built: the pty test fails (it never skips) when it is missing, so a helper that stops building is seen
@@ -1425,6 +1466,7 @@ spawn_cli t_cli_warnings 2
 spawn_cli t_cli_repl_2 1
 spawn_cli t_cli_repl_2 2
 spawn_cli t_cli_repl_2 3
+spawn_cli t_cli_repl_redef
 spawn_cli t_cli_repl_history
 spawn_cli t_cli_compile
 spawn_cli t_cli_test 1

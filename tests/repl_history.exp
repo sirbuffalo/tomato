@@ -187,6 +187,53 @@ ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (indent)"
 send "\004"
 ended 12 "completion"
 
+# ---- redefinition ----------------------------------------------------------------------------------------------------------
+# A def recalled with Up, edited and run again replaces the earlier one (it was E120 "defined twice"): the next call uses it, the session
+# shows no output of its own for the redefinition, and the history holds both blocks. A class redefined so that an earlier line no longer
+# works is refused with that error and a hint, the old class stays and the session goes on; the completer offers the names as before.
+start_repl 13 "TOMATO_HISTORY=$work/hist13"
+prompt "redefinition"
+send "def fval() -> int:\r"
+want {>>> def fval\(\) -> int:\r\n\.\.\.     \x1b\[9G} "the def's second line"
+send "return 1\r\r"
+ran {\?25h} "the def"
+send "fval()\r"
+ran {\?25h1\r\n} "the first definition's value"
+# Up twice: the call, then the def block, the cursor at its last line; replace the 1 by 2 and run it
+send "\033\[A\033\[A"
+want {>>> def fval\(\) -> int:\r\n\.\.\.     return 1\x1b\[17G} "the def recalled"
+send "\177"
+send "2"
+want {return 2\x1b\[17G} "the edited def"
+send "\r\r"
+ran {\?25h} "the redefinition runs (no error, no output)"
+send "fval()\r"
+ran {\?25h2\r\n} "the new definition's value"
+# a name that the completer knows because of the redefinition
+send "fva\t"
+want {>>> fval\x1b\[9G} "the redefined name completed"
+send "\003"
+ran {KeyboardInterrupt\r\n} "KeyboardInterrupt (redefined name)"
+# a class, an object of it, then a class that an earlier line no longer fits (its field is gone): refused, the old class stays
+send "class Pt:\r"
+send "x: int = 3\r\r"
+ran {\?25h} "the class"
+send "p = Pt()\r"
+prompt "the object"
+send "print(p.x)\r"
+ran {\?25h3\r\n} "the field"
+send "class Pt:\r"
+send "z: int = 1\r\r"
+want {hint: the earlier lines of the session run again with the new Pt} "the hint"
+prompt "after the refusal"
+send "p.x\r"
+ran {\?25h3\r\n} "the old class is still there"
+send "\004"
+ended 13 "redefinition"
+set hist [exec cat $work/hist13]
+if {[llength [split [string trim $hist] "\n"]] != 9} { fail "redefinition: the history does not have 9 entries: $hist" }
+if {![string match "def fval() -> int:⏎    return 1\n*def fval() -> int:⏎    return 2\n*" $hist]} { fail "redefinition: both definitions are in the history: $hist" }
+
 # ---- the colors ------------------------------------------------------------------------------------------------------------
 # The code is colored as it is typed, lowered to the terminal's colors: 24 bits (COLORTERM), 256 (TERM), 16. --color=always wins over
 # NO_COLOR, --color=never and NO_COLOR (and TOMATO_COLOR=never) leave the text plain, and TOMATO_COLOR=always works like the flag. The
