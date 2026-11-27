@@ -24,9 +24,7 @@ class Error:
 # A failed `assert` statement or testing assertion (Wave 2, pack B). A direct subclass of Error, so `catch RuntimeError` does not
 # catch it: a failed check is a mistake in the program or its tests, not a failure of an operation.
 class AssertionError(Error):
-    @init
-    def make_assertion(self, message: str = "", id: str = ""):
-        Error.start(self, message, id)
+    pass
 
 # Failures the language itself raises: division by zero, an index out of range, a missing key, bad text for int().
 class RuntimeError(Error):
@@ -36,15 +34,11 @@ class RuntimeError(Error):
 
 # A list, text or range index (or a slice) that is out of range, and pop() from an empty list.
 class IndexError(RuntimeError):
-    @init
-    def make_index(self, message: str = "", id: str = ""):
-        RuntimeError.make(self, message, id)
+    pass
 
 # A key that a dict, set or table does not hold.
 class KeyError(RuntimeError):
-    @init
-    def make_key(self, message: str = "", id: str = ""):
-        RuntimeError.make(self, message, id)
+    pass
 
 # A value of the right type that the operation cannot use: int("abc"), chr(-1), a step of 0, sqrt(-1).
 class ValueError(RuntimeError):
@@ -54,15 +48,11 @@ class ValueError(RuntimeError):
 
 # /, // or % by zero.
 class ZeroDivisionError(RuntimeError):
-    @init
-    def make_zero(self, message: str = "", id: str = ""):
-        RuntimeError.make(self, message, id)
+    pass
 
 # A number too big for its type, or a float result that is infinite.
 class OverflowError(RuntimeError):
-    @init
-    def make_overflow(self, message: str = "", id: str = ""):
-        RuntimeError.make(self, message, id)
+    pass
 
 class IOError(RuntimeError):
     @init
@@ -72,38 +62,24 @@ class IOError(RuntimeError):
 # The file and directory failures that say why (os, ospath and open() raise them; each is an IOError, so catch IOError still
 # catches them): the path is not there, is already there, may not be used, is a directory, or goes through something that is not one.
 class FileNotFoundError(IOError):
-    @init
-    def make_not_found(self, message: str = "", id: str = ""):
-        IOError.make_io(self, message, id)
+    pass
 
 class FileExistsError(IOError):
-    @init
-    def make_exists(self, message: str = "", id: str = ""):
-        IOError.make_io(self, message, id)
+    pass
 
 class PermissionError(IOError):
-    @init
-    def make_permission(self, message: str = "", id: str = ""):
-        IOError.make_io(self, message, id)
+    pass
 
 class IsADirectoryError(IOError):
-    @init
-    def make_is_dir(self, message: str = "", id: str = ""):
-        IOError.make_io(self, message, id)
+    pass
 
 class NotADirectoryError(IOError):
-    @init
-    def make_not_dir(self, message: str = "", id: str = ""):
-        IOError.make_io(self, message, id)
+    pass
 
 # Raised by input() when there is no more input to read.
 class EOFError(RuntimeError):
-    @init
-    def make_eof(self, message: str = "", id: str = ""):
-        RuntimeError.make(self, message, id)
+    pass
 
 # Raised inside a task that was cancelled with t.cancel() (at its next wait), and by await on that task.
 class CancelledError(RuntimeError):
-    @init
-    def make_cancelled(self, message: str = "", id: str = ""):
-        RuntimeError.make(self, message, id)
+    pass

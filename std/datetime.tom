@@ -313,8 +313,8 @@ def _clock_text(hour: int, minute: int, second: int, microsecond: int) -> str:
     return out
 
 # A date and time of day, naive (no offset: the default) or aware (a fixed offset from UTC in minutes, such as 330 for
-# +05:30; 0 is UTC). `offset_minutes` is read as an int, with 0 when naive: `is_aware` tells which. The language cannot
-# take `int | None` for a parameter, so the parameter is `int | bool`: leave it out (or give False) for naive.
+# +05:30; 0 is UTC). `offset_minutes` is read as an int, with 0 when naive: `is_aware` tells which. The parameter is
+# `int | None`: leave it out (or give None) for naive.
 export class datetime:
     const year: int = 1
     const month: int = 1
@@ -327,16 +327,13 @@ export class datetime:
     const is_aware: bool = False
 
     @init
-    def make(self, year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0, microsecond: int = 0, offset_minutes: int | bool = False):
+    def make(self, year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0, microsecond: int = 0, offset_minutes: int | None = None):
         _check_date(year, month, day)
         _check_time(hour, minute, second, microsecond)
-        if offset_minutes in int:
+        if offset_minutes is not None:
             _check_offset(offset_minutes)
             self.offset_minutes = offset_minutes
             self.is_aware = True
-        else:
-            if offset_minutes:
-                raise ValueError('offset_minutes must be a whole number of minutes, or left out for a naive datetime', 'E406')
         self.year = year
         self.month = month
         self.day = day
@@ -368,7 +365,7 @@ export class datetime:
     # a copy with the parts you give (by name, such as dt.replace(hour=0)) changed and the rest kept; the result is checked
     # like a new datetime. offset_minutes makes a naive value aware (or moves the offset of an aware one without changing
     # its clock), as replace(tzinfo=...) does in Python; there is no way to make an aware value naive again
-    def replace(self, year: int | bool = False, month: int | bool = False, day: int | bool = False, hour: int | bool = False, minute: int | bool = False, second: int | bool = False, microsecond: int | bool = False, offset_minutes: int | bool = False) -> datetime:
+    def replace(self, year: int | bool = False, month: int | bool = False, day: int | bool = False, hour: int | bool = False, minute: int | bool = False, second: int | bool = False, microsecond: int | bool = False, offset_minutes: int | None = None) -> datetime:
         y = self.year
         mo = self.month
         d = self.day
@@ -390,7 +387,7 @@ export class datetime:
             s = second
         if microsecond in int:
             us = microsecond
-        if offset_minutes in int:
+        if offset_minutes is not None:
             return datetime(y, mo, d, h, mi, s, us, offset_minutes)
         if self.is_aware:
             return datetime(y, mo, d, h, mi, s, us, self.offset_minutes)
@@ -886,8 +883,8 @@ export def date_today() -> date:
     return date(parts.year, parts.month, parts.day)
 
 # the date and the time of day as one datetime (Python's datetime.combine); the result is naive unless offset_minutes is given
-export def datetime_combine(d: date, t: time, offset_minutes: int | bool = False) -> datetime:
-    if offset_minutes in int:
+export def datetime_combine(d: date, t: time, offset_minutes: int | None = None) -> datetime:
+    if offset_minutes is not None:
         return datetime(d.year, d.month, d.day, t.hour, t.minute, t.second, t.microsecond, offset_minutes)
     return datetime(d.year, d.month, d.day, t.hour, t.minute, t.second, t.microsecond)
 

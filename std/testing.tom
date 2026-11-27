@@ -28,9 +28,7 @@ import sys
 
 # Raised by skip(): the runner counts the test as skipped, not failed.
 export class SkipTest(Error):
-    @init
-    def make_skip(self, message: str, id: str = ""):
-        Error.start(self, message, id)
+    pass
 
 
 # ---- showing values and finding the first difference ----------------------------------------------------------------------------

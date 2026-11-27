@@ -72,27 +72,19 @@
 
 # Everything this library raises is a SocketError, so `catch SocketError` handles any failure of a socket.
 export class SocketError(IOError):
-    @init
-    def make_socket_error(self, message: str, id: str = ''):
-        IOError.make_io(self, message, id)
+    pass
 
 # Nothing listens at that address and port.
 export class ConnectionRefusedError(SocketError):
-    @init
-    def make_refused(self, message: str, id: str = ''):
-        SocketError.make_socket_error(self, message, id)
+    pass
 
 # The other side dropped the connection (or it was closed while this side was still writing).
 export class ConnectionResetError(SocketError):
-    @init
-    def make_reset(self, message: str, id: str = ''):
-        SocketError.make_socket_error(self, message, id)
+    pass
 
 # The host name cannot be found, or the address or port is not usable.
 export class AddressError(SocketError):
-    @init
-    def make_address(self, message: str, id: str = ''):
-        SocketError.make_socket_error(self, message, id)
+    pass
 
 # raise the error of the runtime call that just failed, with what was being done in front of it
 def _fail(doing: str):

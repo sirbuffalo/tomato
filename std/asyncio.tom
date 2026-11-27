@@ -36,9 +36,7 @@
 
 # A wait_for ran out of time.
 export class TimeoutError(RuntimeError):
-    @init
-    def make_timeout_error(self, message: str, id: str = ''):
-        RuntimeError.make(self, message, id)
+    pass
 
 export async def gather[T](given: list[task[T]]) -> list[T]:
     tasks = given[:]                     # its own list: the caller may change the one it gave
@@ -204,9 +202,7 @@ export class Queue[T]:
 
 # A release has no owner: any task may give up a held lock or semaphore permit.
 export class LockError(RuntimeError):
-    @init
-    def make_lock_error(self, message: str, id: str = ''):
-        RuntimeError.make(self, message, id)
+    pass
 
 export class Lock:
     private held: bool = False

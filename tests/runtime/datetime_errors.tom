@@ -30,10 +30,6 @@ def main():
     catch ValueError as e:
         print('ValueError:', e.message, e.id)
     try:
-        print(datetime(2024, 1, 1, 0, 0, 0, 0, True))
-    catch ValueError as e:
-        print('ValueError:', e.message, e.id)
-    try:
         print(date(9999, 12, 31) + timedelta(1))
     catch OverflowError as e:
         print('OverflowError:', e.message, e.id)

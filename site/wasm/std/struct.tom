@@ -3,9 +3,7 @@ import utf8
 import math
 
 export class StructError(ValueError):
-    @init
-    def make(self, message: str, id: str = ""):
-        ValueError.make_value(self, message, id)
+    pass
 def _order(byteorder: str) -> bool:
     if byteorder == 'big' or byteorder == '>' or byteorder == '!':
         return True

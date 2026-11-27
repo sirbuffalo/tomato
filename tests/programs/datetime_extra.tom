@@ -98,6 +98,9 @@ def main():
     print(b.replace(offset_minutes=120).isoformat())
     print(a.replace(offset_minutes=0).isoformat())
     print(a.replace(offset_minutes=0).is_aware)
+    print(datetime(2024, 1, 2, 3, 4, 5, 6, None).is_aware)
+    print(datetime_combine(date(2024, 1, 2), time(3), None).is_aware)
+    print(b.replace(offset_minutes=None).offset_minutes)
     print(a.replace(year=1, month=1, day=1).isoformat())
     print(datetime(2024, 1, 31).replace(month=2, day=29))
     for bad in [[2023, 2, 29], [2024, 13, 1], [0, 1, 1], [10000, 1, 1], [2024, 4, 31]]:

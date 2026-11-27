@@ -193,7 +193,7 @@ The libraries raise subclasses of their own, each also a `RuntimeError`: `JSONDe
 Write your own with `class MyError(RuntimeError)`. A class that declares no fields of its own inherits its parent's `@init`
 (D93b), so `class NotFound(Error): pass` is made with `NotFound('no such user')` or `NotFound('no such user', 'E7')` (message,
 then an optional id; both may be left out, and the message is then `""`), and so is `class Missing(NotFound): pass`. The class can give its own `@init` to take other arguments,
-which calls the parent's with `Error.start(self, message, id)` (or `RuntimeError.make(self, message, id)` for a `RuntimeError`). A
+which calls the parent's with `Error.start(self, message, id)` (or `RuntimeError.make(self, message, id)` for a `RuntimeError`, `IOError.make_io` for an `IOError`). A
 class that declares fields (`code: int = 404`) does not inherit `@init`, because the parent's would leave those fields unset;
 it needs an `@init` of its own, and `MyError('x')` without one is E128 with a help line saying so. The `message` and `id`
 fields default to `""`.

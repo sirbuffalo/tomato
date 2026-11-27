@@ -3,7 +3,6 @@ ValueError: day 29 is out of range for month 2 of year 2023 E406
 ValueError: year must be in 1..9999, but got 10000 E406
 ValueError: hour must be in 0..23, but got 24 E406
 ValueError: offset_minutes must be strictly between -1440 and 1440, but got 1440 E406
-ValueError: offset_minutes must be a whole number of minutes, or left out for a naive datetime E406
 OverflowError: date value out of range E407
 OverflowError: timedelta days must have a magnitude of at most 999999999, but got 1000000000 E407
 OverflowError: date value out of range E407

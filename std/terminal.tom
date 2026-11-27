@@ -39,9 +39,7 @@ from time import monotonic
 
 # The terminal cannot be opened or used (there is none, it went away, a write failed).
 export class TerminalError(IOError):
-    @init
-    def make_terminal_error(self, message: str, id: str = ''):
-        IOError.make_io(self, message, id)
+    pass
 
 def _fail(doing: str):
     raise TerminalError(!tomato_os_error(doing), 'E532')

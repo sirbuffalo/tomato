@@ -18,10 +18,6 @@
   Building the compiler itself in debug mode (`tomato build ctool.tom --entry compile`) prints `constant expression type mismatch` from clang for `@.str.N = private constant ... c"call void @tomato_inl_retain(ptr \00"` and falls back to the link without the inline fast paths (the program is correct, only slower): the `awk` rewrite of `@tomato_X(` also changes the text of a string constant (a line starting with `@.str`). Skip constant lines, with a test that compiles a program holding such a string.
 - Find why the compiler reports "9 object(s) were never freed" on some programs that open and drop files
   Compiling a program with a function that opens a file and drops it inside a `for i in range(3)` loop (a small test of `open`, `write`, `close` and a second `close`) makes the compiler print `warning: 9 object(s) were never freed (a reference cycle or a missing release)` at exit. The compiler before the `File` change (D93a) does it too, so that change did not cause it: it looks like a leak in the compiler itself. Bisect the program (smaller variants did not show it) and fix the missing release.
-- Remove the remaining forwarding-only error `@init` methods in `std/`
-  Socket, requests, cache, asyncio and the built-in errors still repeat an `@init` that only forwards its arguments; a class that declares no fields now inherits its parent's `@init` (D93b), so those can go. Keep the `make_*` names that other code calls explicitly (`IOError.make_io(self, ...)`, `RuntimeError.make(self, ...)`), or change those callers too.
-- Change `datetime(..., offset_minutes: int | bool)` to `offset_minutes: int | None = None` in `std/datetime.tom`
-  `int | None` is possible now (D94a); the comment in `std/datetime.tom` says why the parameter is `int | bool`. It is an API change, so it needs Davis's call.
 - Flow narrowing of optionals by `is None` / `is not None`
   Applies to all optionals, not just `int | None`, `float | None` and `bool | None`: `s + "!"` and `abs(x)` after a check should need no runtime unwrap. Today `s + "literal"` on a `str | None` is also E190 (an existing quirk).
 - Keep the old repl variable when its redeclaration is refused
@@ -46,3 +42,5 @@
   Close (or mark close-on-exec) them: the child inherits this program's open files and sockets that are not close-on-exec, which Python avoids with `close_fds`.
 - Make `tomato test` read its options only before the entry
   So that inputs such as `-v` or `--filter` can be passed through `tomato test FILE ENTRY INPUTS` (the raw-input rule of D94b item 6: everything after the entry is input; `tomato run` and a built program already do this, but `tomato test` reads `--filter`, `--mode`, `--timeout` and `-v` anywhere on its line). `tomato run FILE ENTRY -- INPUTS` does it today.
+- Change `datetime.replace` part parameters from `int | bool = False` to `int | None = None`
+  `datetime.replace` still takes year, month, day, hour, minute, second and microsecond as `int | bool = False`; convert them to `int | None = None` like `offset_minutes` (D94a), and update the callers, docs and tests.

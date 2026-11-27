@@ -55,9 +55,7 @@
 # the one that has as many type arguments as the use writes.
 
 export class CacheMiss(RuntimeError):
-    @init
-    def make_miss(self, message: str, id: str = ''):
-        RuntimeError.make(self, message, id)
+    pass
 
 export class Clock:
     def now(self) -> float:
