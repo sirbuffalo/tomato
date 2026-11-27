@@ -469,6 +469,12 @@ t_fd_wait() {
 }
 section "== descriptor wait lifecycle =="
 spawn t_fd_wait
+t_tty_slots() {   # the raw-mode slots of the terminal block: a descriptor closed by other means and then reused (on pseudo-terminals)
+  clang -O1 -w -ffunction-sections -fdata-sections tests/tty_slots.c -Wl,-dead_strip -lm -o "$work/tty_slots" 2>/dev/null ||
+    clang -O1 -w -ffunction-sections -fdata-sections tests/tty_slots.c -Wl,--gc-sections -lm -o "$work/tty_slots" || { bad "terminal raw slots build" "compile failed"; return; }
+  "$work/tty_slots" >/dev/null && ok "terminal raw slots: a reused descriptor number is not taken for the raw terminal it was" || bad "terminal raw slots" "test failed"
+}
+spawn t_tty_slots
 
 section "== sockets: more waiting tasks than descriptors the process may open =="
 spawn t_socket_many
@@ -1611,6 +1617,16 @@ t_cli_repl_redef() {   # a function, class or interface defined again replaces t
   |     ^
 hint: the earlier lines of the session run again with the new P, and one of them does not work with it; the earlier definition is kept
 5" "$(printf "${P1}p = P(5)\n${P2}p.x\n:quit\n" | $t repl 2>&1)"
+  check "repl: a refused redeclaration of a variable keeps the old variable and its value" "error[E324]: the value has type str, but int is expected
+ --> repl:1:1
+  |
+1 | x: int = \"a\"
+  | ^^^^^^^^^^^^
+2
+@main
+def tomato_repl_main():
+    x: int = 1
+    print(x + 1)" "$(printf 'x: int = 1\nx: int = "a"\nx + 1\n:program\n:quit\n' | $t repl 2>&1)"
   check "repl: after a refused redefinition :program still has the old definition" "1
 def f(n: int) -> int:
     return n
@@ -2465,7 +2481,7 @@ ready? rc=75" "$out"
 spawn t_input_ask
 
 # ---- error ids ----------------------------------------------------------------------------------------------------------
-# The case tables and the width tables in runtime/tomato_rt.c are written by tools/gen_case_table.py and tools/gen_width_table.py
+# The case tables and the width tables (and, against Python itself, the isalpha/isdigit tables) in runtime/tomato_rt.c are written by tools/gen_case_table.py and tools/gen_width_table.py
 # from Python's unicodedata (Unicode 16.0.0 = Python 3.14): each generator is run in --check mode and must find the file current.
 # A Python with another Unicode version cannot say (the generators exit 2 and name the version they need): that is a skip locally
 # and a failure in CI, as for jsc.
@@ -2482,6 +2498,9 @@ t_generated_tables() {
     if r="$("$py" -I "tools/gen_${g}_table.py" --check runtime/tomato_rt.c 2>&1)"; then ok "generated $g tables in runtime/tomato_rt.c are what tools/gen_${g}_table.py makes"
     else bad "generated $g tables" "$r (rewrite with: python3.14 -I tools/gen_${g}_table.py runtime/tomato_rt.c)"; fi
   done
+  # the letter and digit tables come from tools/gen_ctype_table.c (UnicodeData.txt); here they are checked against Python's own str.isalpha/isdigit
+  if r="$("$py" -I tools/check_ctype_table.py runtime/tomato_rt.c 2>&1)"; then ok "isalpha/isdigit tables in runtime/tomato_rt.c agree with Python 3.14 (tools/check_ctype_table.py)"
+  else bad "isalpha/isdigit tables" "$r (regenerate with tools/gen_ctype_table.c, see its header)"; fi
 }
 t_error_templates() {
   tests/error_templates.sh | awk '{ l=$0; gsub(/\{\}/,"",l); if (length(l) >= 12) print }' > "$work/templates"

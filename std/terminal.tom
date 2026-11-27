@@ -213,6 +213,22 @@ export class KeyDecoder:
     def pending(self) -> bool:
         return len(self.buf) > 0 and not self.pasting
 
+    # True inside a bracketed paste that has not ended. The Terminal gives up on one that stays open with no bytes for 2 seconds (the
+    # terminal that sent the start never sent the end), and on the end of input, with abort_paste.
+    def in_paste(self) -> bool:
+        return self.pasting
+
+    # Ends an open paste where it is: the text so far is the 'paste' key (nothing when there is no open paste), and later bytes are keys again.
+    def abort_paste(self) -> list[Key]:
+        if not self.pasting:
+            return []
+        self._add('paste', _paste_text(self.paste), '', False, False, False)
+        self.paste = []
+        self.pasting = False
+        keys = self.out
+        self.out = []
+        return keys
+
     # The wait is over: a lone ESC is the Escape key, `ESC x` is Alt-x, other unfinished sequences are dropped.
     def flush(self) -> list[Key]:
         return self._drain(True)
@@ -380,6 +396,8 @@ export class KeyDecoder:
             self._codepoint(first, ctrl, meta, shift)
             return used
         name = _letter_name(last)
+        if last == 82 and first > 1:
+            name = ''    # `ESC [ 24 ; 80 R` is a cursor report (row; column), not F3: F3 has 1 (or nothing) before its modifier
         if name != '':
             self._add('key', '', name, ctrl, meta, shift)
         return used
@@ -753,6 +771,7 @@ export class Terminal:
     colors: int = 0         # how many colors it shows, from color_depth(); a program can set another value (0 for none)
     private raw: bool = False
     private owned: bool = False          # the descriptor was opened by open(), so close() closes it
+    private paste_since: float = -1.0    # when an open bracketed paste last got bytes (monotonic seconds), or -1.0
     private since: float = -1.0          # when the bytes of an unfinished sequence were first seen (monotonic seconds), or -1.0
     private decoder: KeyDecoder = KeyDecoder()
     private queue: list[Key] = []
@@ -834,19 +853,40 @@ export class Terminal:
                 if wait < 0 or wait > rest:
                     wait = rest
                     due = True
+            # a bracketed paste that never ends must not swallow every later key: 2 seconds without a byte close it
+            paste_due = False
+            if not self.decoder.in_paste():
+                self.paste_since = -1.0
+            else:
+                if self.paste_since < 0.0:
+                    self.paste_since = monotonic()
+                paste_rest = 2000 - int((monotonic() - self.paste_since) * 1000.0)
+                if paste_rest <= 0:
+                    self.queue.extend(self.decoder.abort_paste())
+                    self.paste_since = -1.0
+                    continue
+                if wait < 0 or wait > paste_rest:
+                    wait = paste_rest
+                    paste_due = True
+                    due = False
             data: list[int] = []
             got = !tomato_tty_read(self.fd, data, 4096, wait)
             if got > 0:
                 self.queue.extend(self.decoder.feed(data))
                 self.since = -1.0
+                self.paste_since = -1.0
             elif got == 0:
-                if due:
+                if paste_due:
+                    self.queue.extend(self.decoder.abort_paste())
+                    self.paste_since = -1.0
+                elif due:
                     self.queue.extend(self.decoder.flush())
                     self.since = -1.0
                 elif len(self.queue) == 0:
                     return Key('timeout')
             elif got == -1:
                 self.queue.extend(self.decoder.flush())
+                self.queue.extend(self.decoder.abort_paste())
                 self.queue.append(Key('eof'))
             elif got == -2:
                 self.queue.append(Key('resize'))

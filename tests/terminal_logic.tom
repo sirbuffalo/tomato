@@ -233,8 +233,25 @@ def bracketed_paste():
     assert_equal(shown(e.feed([27, 91, 50, 48, 49])), '')
     assert_false(e.pending())
     assert_equal(shown(e.feed([126])), "paste 'a'")
+    # a paste that never ends: abort_paste gives the text so far, and later bytes are keys again
+    f = KeyDecoder()
+    assert_false(f.in_paste())
+    assert_equal(shown(f.abort_paste()), '')
+    assert_equal(shown(f.feed(start + [97, 13, 98])), '')
+    assert_true(f.in_paste())
+    assert_equal(shown(f.abort_paste()), "paste 'a\\nb'")
+    assert_false(f.in_paste())
+    assert_equal(shown(f.feed([120])), "char 'x'")
     # an end marker outside a paste is nothing
     keys_are(end + [97], "char 'a'")
+
+@test.a_cursor_report_is_not_a_key
+def a_cursor_report_is_not_a_key():
+    # ESC [ row ; column R is the answer to a cursor position query; F3 is ESC [ R or ESC [ 1 ; modifier R
+    keys_are([27, 91, 50, 52, 59, 56, 48, 82], '')
+    keys_are([27, 91, 50, 59, 51, 82, 97], "char 'a'")
+    keys_are([27, 91, 82], 'key f3')
+    keys_are([27, 91, 49, 59, 53, 82], 'key f3 ctrl')
 
 @test.a_long_paste_in_small_pieces
 def a_long_paste_in_small_pieces():

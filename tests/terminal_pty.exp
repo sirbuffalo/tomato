@@ -93,6 +93,14 @@ send "\033";               want {KEY key escape\r\n} "a lone Escape"
 # bracketed paste: one key with the text and the line breaks as \n
 send "\033\[200~a\rb\r\nc\033\[201~"
 want {KEY paste 'a\\nb\\nc'\r\n} "a paste"
+# a paste that never ends is closed after 2 seconds without bytes, and the keys after it are keys again
+send "\033\[200~lost"
+want {KEY paste 'lost'\r\n} "an unterminated paste closed by the timeout"
+send "k"
+want {KEY char 'k'\r\n} "a key after the unterminated paste"
+# a cursor position report is not F3
+send "\033\[24;80Ry"
+want {KEY char 'y'\r\n} "a cursor report dropped"
 # UTF-8: the bytes of an e with an acute accent, and of a Chinese character
 send -- "é";          want "KEY char 'é'\r\n" "a UTF-8 character"
 send -- "中";          want "KEY char '中'\r\n" "a wide UTF-8 character"

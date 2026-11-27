@@ -13,7 +13,8 @@
 # session runs again from the top, so everything that used the old definition uses the new one, including the values that earlier lines
 # made (an object of an old class is built again by the new class). If an earlier line or definition does not work with the new one (a
 # parameter or a field that is gone, say), the new definition is refused with that error and the old one stays. A redefinition shows
-# no output of its own: what the earlier lines printed was shown when they ran.
+# no output of its own: what the earlier lines printed was shown when they ran. A variable declared again (`x: int = 2`) replaces
+# its earlier declaration; if the new line is refused, the old variable and its value are still there.
 #
 # Editing: Up and Down recall earlier pieces, a block as a whole; the arrows move within it and between its lines. Enter runs the
 # piece when it is complete (a block ends at an empty line; an open bracket goes on to the next line), Tab completes a name (keywords,
@@ -234,16 +235,17 @@ refused() {
   if [ -n "$REDEF" ] && ! grep -q "^in-definition" "$S/where" 2>/dev/null; then
     err "hint: the earlier lines of the session run again with the new $(printf '%s' "$REDEF" | paste -sd, - | sed 's/,/, /g'), and one of them does not work with it; the earlier definition is kept"
   fi
+  [ -f "$S/stmts.keep" ] && cp "$S/stmts.keep" "$S/stmts"   # a redeclared variable that is refused: the old declaration stays, with its value
   REDEF=""      # the session is as it was: program and the completer see the earlier definition again
 }
 
 submit() {   # one piece of source text in $1
-  : > "$S/cd"; : > "$S/cb"
+  : > "$S/cd"; : > "$S/cb"; rm -f "$S/stmts.keep"
   printf '%s\n' "$1" | split "$S/cd" "$S/cb"
   # a redeclared variable replaces its earlier declaration
   if [ -s "$S/cb" ]; then
     name=$(head -1 "$S/cb" | sed -nE 's/^([A-Za-z_][A-Za-z_0-9]*) *:[^=]*=.*/\1/p')
-    if [ -n "$name" ]; then grep -vE "^$name *:" "$S/stmts" > "$S/stmts.n"; cp "$S/stmts.n" "$S/stmts"; fi
+    if [ -n "$name" ]; then cp "$S/stmts" "$S/stmts.keep"; grep -vE "^$name *:" "$S/stmts" > "$S/stmts.n"; cp "$S/stmts.n" "$S/stmts"; fi
   fi
   # a name that is defined again replaces its earlier definition (see REDEF); the new definition goes first, alone, so a mixed piece's
   # output is only its own statements

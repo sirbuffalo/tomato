@@ -130,6 +130,7 @@ static void file_dropped(Hdr *h);   /* a File object whose last reference went a
 
 /* These IDs are line numbers in std/errors.txt. Line zero means there is no available source location. */
 static void tty_restore_all(void);   /* the terminal block, below: raw mode is left before an error is printed, so it is not a staircase */
+static void tty_restore_signal(void);   /* the same for a signal handler: it must not wait for output (TCSANOW, not TCSADRAIN) */
 _Noreturn void tomato_fail_id(int kind, const char *message) {
     fflush(stdout);
     tty_restore_all();
@@ -163,11 +164,11 @@ static void on_fault(int sig, siginfo_t *info, void *ctx) {
         static const char colored[] = "\033[1;31merror[E350]:\033[0m \033[1mstack overflow: a function calls itself too deeply\033[0m\n";
 #endif
         fflush(stdout);
-        tty_restore_all();
+        tty_restore_signal();
         if (use_color() ? write(2, colored, sizeof colored - 1) < 0 : write(2, msg, sizeof msg - 1) < 0) { /* nothing more to do */ }
         _exit(1);
     }
-    tty_restore_all();
+    tty_restore_signal();
     signal(sig, SIG_DFL);   /* not a stack overflow: return, and the fault happens again with the default action */
 }
 __attribute__((constructor)) static void install_stack_guard(void) {
@@ -8383,13 +8384,15 @@ int64_t tomato_tty_size(int64_t fd, void *out) { (void)fd; push_int(out, 24); pu
 int64_t tomato_tty_read(int64_t fd, void *out, int64_t max, int64_t ms) { (void)fd; (void)out; (void)max; (void)ms; return -ENOSYS - 1000; }
 int64_t tomato_tty_write(int64_t fd, void *text) { (void)fd; (void)text; return -ENOSYS; }
 static void tty_restore_all(void) {}
+static void tty_restore_signal(void) {}
 #else
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <termios.h>
 #define TTY_SLOTS 4
-static struct { int fd; int active; unsigned seq; int over; struct termios saved, raw; } tty_slot[TTY_SLOTS];
+static struct { int fd; int active; unsigned seq; int over; dev_t dev; ino_t ino; dev_t rdev; struct termios saved, raw; } tty_slot[TTY_SLOTS];
 /* Two Terminals can be made raw on one device (Terminal(0) and open() of /dev/tty): the second saves settings that are raw already.
  * The device cannot be told from the descriptor (an fstat of /dev/tty names /dev/tty, not the terminal behind it), so a slot whose
  * settings were found to be exactly the raw mode another active slot set is taken to be on top of it (over, -1 for none). seq is the
@@ -8405,19 +8408,34 @@ static int64_t tty_fail(int e) { open_errno = e ? e : EIO; return -(int64_t)open
 static int64_t tty_fail_read(int e) { open_errno = e ? e : EIO; return -1000 - (int64_t)open_errno; }
 static int tty_hooks = 0, tty_pipe[2] = { -1, -1 };
 static volatile sig_atomic_t tty_resized = 0;
+/* A slot is live while its descriptor still is the file it was made raw on. A program that closes the descriptor by other means (close(2)
+ * through another library, not tomato_tty_close) leaves the slot active, and a later open can reuse the number: the slot is then dropped,
+ * and neither a new raw mode nor a restore touches the other file. (fstat is safe in a signal handler.) */
+static int tty_slot_live(int i) {
+    struct stat st;
+    if (!tty_slot[i].active) return 0;
+    if (fstat(tty_slot[i].fd, &st) != 0 || st.st_dev != tty_slot[i].dev || st.st_ino != tty_slot[i].ino || st.st_rdev != tty_slot[i].rdev) {
+        tty_slot[i].active = 0;
+        return 0;
+    }
+    return 1;
+}
 /* puts every terminal that is in raw mode back as it was, the one made raw last first (a second Terminal on the same device saved
- * settings that were raw already, so the first one's must be applied last); safe to call from a signal handler */
-static void tty_restore_all(void) {
+ * settings that were raw already, so the first one's must be applied last); how is TCSADRAIN (waits for the output to be written, so a
+ * style reset is not cut short) or TCSANOW; safe to call from a signal handler with TCSANOW: a stuck output cannot hold it up */
+static void tty_restore_how(int how) {
     for (;;) {
         int last = -1;
         for (int i = 0; i < TTY_SLOTS; i++)
-            if (tty_slot[i].active && (last < 0 || tty_slot[i].seq > tty_slot[last].seq)) last = i;
+            if (tty_slot_live(i) && (last < 0 || tty_slot[i].seq > tty_slot[last].seq)) last = i;
         if (last < 0) return;
         tty_slot[last].active = 0;
-        tcsetattr(tty_slot[last].fd, TCSADRAIN, &tty_slot[last].saved);
+        tcsetattr(tty_slot[last].fd, how, &tty_slot[last].saved);
     }
 }
-static void tty_die(int sig) { tty_restore_all(); signal(sig, SIG_DFL); raise(sig); }
+static void tty_restore_all(void) { tty_restore_how(TCSADRAIN); }
+static void tty_restore_signal(void) { tty_restore_how(TCSANOW); }
+static void tty_die(int sig) { tty_restore_signal(); signal(sig, SIG_DFL); raise(sig); }
 static void tty_winch(int sig) {
     (void)sig;
     int keep = errno;
@@ -8452,7 +8470,7 @@ int64_t tomato_tty_is(int64_t fd) { return fd >= 0 && fd < 1 << 30 && isatty((in
 int64_t tomato_tty_raw(int64_t fd) {
     int slot = -1;
     for (int i = 0; i < TTY_SLOTS; i++) {
-        if (tty_slot[i].active && tty_slot[i].fd == fd) return 0;
+        if (tty_slot_live(i) && tty_slot[i].fd == fd) return 0;
         if (slot < 0 && !tty_slot[i].active) slot = i;
     }
     if (slot < 0) return tty_fail(EMFILE);
@@ -8462,6 +8480,9 @@ int64_t tomato_tty_raw(int64_t fd) {
     tty_slot[slot].over = -1;
     for (int j = 0; j < TTY_SLOTS; j++)     /* the newest raw slot whose mode this is */
         if (tty_slot[j].active && tty_same_mode(&t, &tty_slot[j].raw) && (tty_slot[slot].over < 0 || tty_slot[j].seq > tty_slot[tty_slot[slot].over].seq)) tty_slot[slot].over = j;
+    struct stat st;
+    if (fstat((int)fd, &st) != 0) return tty_fail(errno);
+    tty_slot[slot].dev = st.st_dev; tty_slot[slot].ino = st.st_ino; tty_slot[slot].rdev = st.st_rdev;
     tty_slot[slot].fd = (int)fd; tty_slot[slot].saved = t; tty_slot[slot].seq = ++tty_seq; tty_slot[slot].active = 1;
     t.c_iflag &= ~(tcflag_t)(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     t.c_oflag &= ~(tcflag_t)OPOST;
@@ -8475,7 +8496,7 @@ int64_t tomato_tty_raw(int64_t fd) {
 /* the settings saved by tomato_tty_raw; a terminal that is not raw is left alone */
 int64_t tomato_tty_restore(int64_t fd) {
     for (int i = 0; i < TTY_SLOTS; i++) {
-        if (tty_slot[i].active && tty_slot[i].fd == fd) {
+        if (tty_slot_live(i) && tty_slot[i].fd == fd) {
             tty_slot[i].active = 0;
             for (int j = 0; j < TTY_SLOTS; j++)
                 if (tty_slot[j].active && tty_slot[j].over == i) { tty_slot[j].saved = tty_slot[i].saved; tty_slot[j].over = tty_slot[i].over; }

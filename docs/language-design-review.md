@@ -129,7 +129,7 @@ version changes results: U+2630-2637 and U+4DC0-4DFF are wide in 16 and were nar
 **Proposal.** Say in the promise that the Unicode version changes only in minor releases and is named in the changelog
 (Python changes it in minor releases too *(general knowledge)*). Keep all tables on one version.
 
-**Cost.** One sentence, and a rule for whoever regenerates `tools/gen_case_table.py`'s or `tools/gen_width_table.py`'s output (both need Python 3.14, and the suite's "generated tables" check runs them with `--check`).
+**Cost.** One sentence, and a rule for whoever regenerates `tools/gen_case_table.py`'s or `tools/gen_width_table.py`'s output (both need Python 3.14, and the suite's "generated tables" check runs them with `--check`, and `tools/check_ctype_table.py` checks the isalpha/isdigit tables against Python).
 
 ### 1.6 Calling C from any program (`!name`) makes the runtime's internals public (Blocks 1.0)
 

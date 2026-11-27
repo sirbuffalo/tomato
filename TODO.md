@@ -18,12 +18,6 @@
   Compiling a program with a function that opens a file and drops it inside a `for i in range(3)` loop (a small test of `open`, `write`, `close` and a second `close`) makes the compiler print `warning: 9 object(s) were never freed (a reference cycle or a missing release)` at exit. The compiler before the `File` change (D93a) does it too, so that change did not cause it: it looks like a leak in the compiler itself. Bisect the program (smaller variants did not show it) and fix the missing release.
 - Flow narrowing of optionals by `is None` / `is not None`
   Applies to all optionals, not just `int | None`, `float | None` and `bool | None`: `s + "!"` and `abs(x)` after a check should need no runtime unwrap. Today `s + "literal"` on a `str | None` is also E190 (an existing quirk).
-- Keep the old repl variable when its redeclaration is refused
-  Redeclared repl variable (`x: int = 1` then `x: int = "a"` failing) drops the old `x` from the session even though the new line was refused: `submit` removes the old declaration from the statements before trying the piece (pre-existing, `native/tomato-repl`). Restore it when the piece fails.
-- Fix the smaller terminal points left from the Unicode 16 width task
-  Restore uses `TCSADRAIN` inside signal handlers (`TCSANOW` cannot block on a stuck output). A raw slot stays active if the descriptor is closed by other means, so a reused descriptor number is not made raw. An unterminated bracketed paste swallows every later key. `ESC[24;80R` (a cursor report) decodes as F3.
-- Check the isalpha/isdigit tables in the suite
-  Check the tables from `tools/gen_ctype_table.c` against Python 3.14's `str.isalpha` and `str.isdigit`.
 - Confirm whether the user's `config.toml` may hold `[build]` defaults
   D92c reads `[build]` only in a project's `tomato.toml` (the agent's reading of "only in a project", unconfirmed); section 13 of `docs/package-registry-design.md` says so.
 - Make `tomato seed check` warn about a `[build.ENTRY]` that names no entry
@@ -42,3 +36,5 @@
   So that inputs such as `-v` or `--filter` can be passed through `tomato test FILE ENTRY INPUTS` (the raw-input rule of D94b item 6: everything after the entry is input; `tomato run` and a built program already do this, but `tomato test` reads `--filter`, `--mode`, `--timeout` and `-v` anywhere on its line). `tomato run FILE ENTRY -- INPUTS` does it today.
 - Change `datetime.replace` part parameters from `int | bool = False` to `int | None = None`
   `datetime.replace` still takes year, month, day, hour, minute, second and microsecond as `int | bool = False`; convert them to `int | None = None` like `offset_minutes` (D94a), and update the callers, docs and tests.
+- Replace a redeclared repl variable in place
+  A redeclared variable moves to the end of the session's statements, so an earlier line that used it (`print(x)` between `x: int = 1` and `x: int = 2`) fails with 'name x is not defined'. Pre-existing; replace the declaration in place instead.

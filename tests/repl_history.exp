@@ -234,6 +234,19 @@ set hist [exec cat $work/hist13]
 if {[llength [split [string trim $hist] "\n"]] != 9} { fail "redefinition: the history does not have 9 entries: $hist" }
 if {![string match "def fval() -> int:⏎    return 1\n*def fval() -> int:⏎    return 2\n*" $hist]} { fail "redefinition: both definitions are in the history: $hist" }
 
+# a variable declared again with a type that does not fit: refused, and the old variable and its value stay usable
+start_repl 14 "TOMATO_HISTORY=$work/hist14"
+prompt "variable redeclaration"
+send "vv: int = 7\r"
+prompt "the variable"
+send "vv: int = \"a\"\r"
+want {the value has type str, but int is expected} "the refused redeclaration"
+prompt "after the refused redeclaration"
+send "vv + 1\r"
+ran {\?25h8\r\n} "the old variable is still there"
+send "\004"
+ended 14 "variable redeclaration"
+
 # ---- the colors ------------------------------------------------------------------------------------------------------------
 # The code is colored as it is typed, lowered to the terminal's colors: 24 bits (COLORTERM), 256 (TERM), 16. --color=always wins over
 # NO_COLOR, --color=never and NO_COLOR (and TOMATO_COLOR=never) leave the text plain, and TOMATO_COLOR=always works like the flag. The
