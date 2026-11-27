@@ -9,6 +9,7 @@
 !tomato_platform() -> str
 !tomato_run(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, text: str, capture: int, timeout_ms: int, out: list[str], info: list[int]) -> int
 !tomato_os_error(what: str) -> str
+!tomato_file_read_bytes(path: str, out: list[int]) -> int
 !tomato_proc_spawn(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, flags: int, info: list[int]) -> int
 !tomato_proc_text_size(text: str) -> int
 !tomato_proc_write(fd: int, text: str, off: int) -> int
@@ -106,6 +107,25 @@ def _raise(kind: int, message: str):
         raise NotADirectoryError(message, 'E509')
     raise IOError(message, 'E515')
 
+# A program that cannot be started. When it is a script whose `#!` interpreter is missing, the system says only "No such file or
+# directory", which reads as if the script were missing: say which interpreter it is.
+def _raise_start(kind: int, program: str, where: str, has_cwd: bool, message: str):
+    if kind == 1 and '/' in program:
+        path = program
+        if has_cwd and not program.startswith('/'):
+            path = where + '/' + program
+        head: list[int] = []
+        if !tomato_file_read_bytes(path, head) == 0 and len(head) > 2 and head[0] == 35 and head[1] == 33:
+            line = ''
+            i = 2
+            while i < len(head) and head[i] != 10 and i < 300:
+                line += chr(head[i])
+                i += 1
+            words = line.strip().split(' ')
+            if words[0] != '':
+                raise FileNotFoundError(f"could not run '{program}': its interpreter '{words[0]}' was not found", 'E505')
+    _raise(kind, message)
+
 def _no_nul(text: str):
     if chr(0) in text:
         raise ValueError('a path or name cannot contain a NUL character', 'E511')
@@ -178,7 +198,7 @@ export def run(args: list[str], capture: bool = True, cwd: str | None = None, en
     if kind != 0:
         if info[0] == 1:
             _raise(kind, !tomato_os_error(f"change to the directory '{where}' to run '{args[0]}'"))
-        _raise(kind, !tomato_os_error(f"run '{args[0]}'"))
+        _raise_start(kind, args[0], where, cwd is not None, !tomato_os_error(f"run '{args[0]}'"))
     result = RunResult(info[0], info[1], out[0], out[1])
     if info[2] != 0:
         raise ProcessTimeout(_failure_text(f"'{args[0]}' did not finish within {timeout} seconds and was killed", out[1]), args[0], info[0], info[1], out[0], out[1], 'E589')
@@ -433,7 +453,7 @@ export def spawn(args: list[str], capture: bool = True, cwd: str | None = None, 
     if kind != 0:
         if info[0] == 1:
             _raise(kind, !tomato_os_error(f"change to the directory '{where}' to run '{args[0]}'"))
-        _raise(kind, !tomato_os_error(f"run '{args[0]}'"))
+        _raise_start(kind, args[0], where, cwd is not None, !tomato_os_error(f"run '{args[0]}'"))
     return Process(info[0], info[1], info[2], info[3])
 
 # collects what a stream writes, for run_async
@@ -489,7 +509,7 @@ export async def run_async(args: list[str], capture: bool = True, cwd: str | Non
     if kind != 0:
         if info[0] == 1:
             _raise(kind, !tomato_os_error(f"change to the directory '{where}' to run '{args[0]}'"))
-        _raise(kind, !tomato_os_error(f"run '{args[0]}'"))
+        _raise_start(kind, args[0], where, cwd is not None, !tomato_os_error(f"run '{args[0]}'"))
     p = Process(info[0], info[1], info[2], info[3])
     readers: list[task[str]] = []
     feeders: list[task[str]] = []

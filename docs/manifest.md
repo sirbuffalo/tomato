@@ -25,7 +25,7 @@ Writes, in the current folder: `tomato.toml` (`[project]` with `name` (NAME, els
 than it), `src/main.tom` (hello world with `@main`), `tests/example.tom` and `.gitignore` (`builds/`). With `--seed` the manifest is
 `[seed]` (NAME is `owner/name`, default `yourdomain.example/FOLDER`, with placeholder description and license), the module is
 `src/STEM.tom` (a seed has no `main`; `main.tom` would break the module rule of design section 5) and the test imports it.
-It writes nothing and names the files when `tomato.toml`, the program, the example test or `.gitignore` exists.
+It writes nothing and names the files when `tomato.toml`, the program, the example test or `.gitignore` exists. A project NAME with a `.` or `..` part (`../x`) is refused; after `--` a word is a NAME even if it starts with `-`.
 
 ### `run`, `build` and the built program
 
@@ -60,7 +60,7 @@ builds/NAME [ENTRY [INPUTS...]]      the program: no word runs main; an entry na
 `tomato.toml` is one file for a project, a seed and the build settings. The compiler reads it (`compiler/src/manifest.tom`,
 on `std/toml`); `tomato` only finds it: the first `tomato.toml` in the program's folder or the nearest parent folder (`tomato
 config [FILE]` shows which). A mistake in it stops `tomato run`, `build`, `compile`, `test`, `config` and `seed` with an
-error that names the file, so a typo in a table or a key is never silently ignored. The browser takes the text of a
+error that names the file (and the line of the key, as in `tomato.toml:6:`; it is found from the text, so a key inside a multi-line value has the file only), so a typo in a table or a key is never silently ignored. The browser takes the text of a
 `tomato.toml` through `TomatoWasm.compile(source, entry, extra, config)` (and `--config=FILE` of `native/tomato-jsc.js`) and
 checks it the same way; it has no folders, so no seeds.
 
@@ -166,7 +166,8 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
 
 - `tomato seed check` also prints a `warning:` line for each `[build.ENTRY]` table that names no entry: no function in the seed's `src/`
   or `tests/` is marked `@ENTRY` or `@ENTRY.something` (a typo such as `[build.mian]` is a valid table, D92c). It is a warning, not an
-  error, and the table is ignored anyway (a seed's `[build]` is never used).
+  error, and the table is ignored anyway (a seed's `[build]` is never used). A `description` or `license` that still starts with `TODO:` and the
+  owner `yourdomain.example` (the placeholders `tomato init --seed` writes) are warnings too.
 - A seed's folder holds `tomato.toml` with `[seed]` and its modules as `.tom` files directly in `src/`: all of them, or the
   ones listed in `seed.modules`. Each module is `stem.tom` or `stem_*.tom` where the stem is the seed's name with `-` as `_`
   (`acme.example/json5` provides `json5` and `json5_pretty`), and no module has the name of a standard module (E575, E579).
@@ -229,7 +230,8 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   `--offline` is an error only for a seed that is in neither the store nor the vendor folder (E605).
 - **The lock** has `source = "git"`, `git` (the URL), `commit`, `hash`, `modules`. **A build re-hashes** a git seed's store folder, and a vendored copy, against the
   lock every time (a path seed is a working folder and is not, D95a choice c): a changed copy is E601; a store folder that has gone says
-  `run: tomato seed install` (E569). A build never fetches. `install --locked` also checks that the lock matches the manifest.
+  `run: tomato seed install` (E569). A build never fetches; `install` does, and it also fetches a seed again when its store copy was damaged, replacing the copy
+  (`install --offline` cannot, and says E601). `install --locked` also checks that the lock matches the manifest.
 - **`seed vendor`** requires a current lock (the check of `install --locked`), copies each seed's files (what the hash covers, modes kept) to
   `VENDOR/owner/name` (written beside it first, then renamed, and hashed again before it replaces the old copy). With `[seed-store] vendor` set a
   build takes **every** seed (path seeds too) from there, re-hashed, so a project builds with no network, no git, no store and no sibling folders; without it
@@ -242,7 +244,7 @@ A seed's modules may declare foreign functions, top-level `!name(...) -> T` line
 every module of the seed (`LlvmDecl` nodes), and when the seed declares a name that the lock's `symbols` for that seed do not hold, they list the
 names with the module and line and ask once: `accept these symbols and record them in tomato.lock? [y/N]` (standard input is read, an
 empty answer or `n` is no). `--yes` accepts without asking. With no terminal and no `--yes` the command refuses (E602) and changes nothing; so does
-`install --locked` (a lock that lacks a declared symbol is out of date). The accepted names are written as `symbols = [...]` (sorted) in the seed's
+`install --locked` (a lock that lacks a declared symbol is out of date). A build of a **path** seed, which is a working folder, checks the same (E602 with the help to run `install`), so a symbol added after the lock is never linked unasked. The accepted names are written as `symbols = [...]` (sorted) in the seed's
 lock entry; the entry has none when the seed declares none. A version that adds a name asks again; one that only drops names needs no answer. Moving the manifest back to an
 older commit records the older list. **A symbol's meaning is not checked**: it links a function of the runtime or of C into the program
 (a seed still cannot ship C or run build scripts); the question is the only gate.
@@ -315,9 +317,10 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E601 | the content hash of a fetched seed, a stored copy or a vendored copy is not the one in tomato.lock |
 | E602 | foreign symbols not accepted (no `--yes`, no terminal, `install --locked`, or the answer was no) |
 | E603 | `seed add` or `remove` cannot edit this tomato.toml safely (it was put back as it was) |
-| E604 | `seed add` or `remove` used on a file that is not a project, a seed that is not listed, or a vendor folder outside the project |
+| E604 | `seed add` or `remove` used on a file that is not a project, a seed that is not listed, or a vendor folder that is outside the project, is the project's own folder (`.`, `""`), starts with `src`, `tests`, `builds` or `.git`, or is a file |
 | E605 | `--offline`: the seed is in neither the store nor the vendor folder (or `update --offline` of a seed that follows a tag or branch) |
 | E606 | `tomato seed verify` found a missing copy or one that does not match tomato.lock (D103a) |
+| E607 | (a compile error) a module next to the program or in `src/` has the name of a module of a seed the run uses |
 
 ## Not built yet
 

@@ -55,7 +55,7 @@ try "compile error: a type mismatch" 1 "" "~error[E190]: cannot use '+' with str
 try "build: no word and no project" 1 "" "error: there is no tomato.toml in this folder or a parent folder, so there is no project's src/main.tom to build: name a file (tomato build FILE.tom), or start a project here with tomato init" build
 try "build: a word that is not a file" 1 "" "error: 'hi' is not a file: a file ends in .tom or has a / in it (tomato build [FILE]; with no FILE it is the project's src/main.tom)" build hi
 try "build: an unknown option" 1 "" "error: unknown option '--bogus' for 'tomato build' (run 'tomato help')" build --bogus hi.tom
-try "build: -o needs a value" 2 "" @help.txt build hi.tom -o
+try "build: -o needs a value" 2 "" "error: -o needs a value" build hi.tom -o
 try "build: the program would overwrite its own source" 1 "" "error: the program would overwrite its own source hi.tom: name it with -o" build hi.tom -o hi.tom
 try "build: an empty mode" 1 "" "error[E282]: the mode must be debug or release, not ''" build hi.tom --mode ""
 try "build: a bad mode" 1 "" "error[E282]: the mode must be debug or release, not 'bogus'" build hi.tom --mode bogus

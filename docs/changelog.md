@@ -216,6 +216,18 @@ and eight more comparison languages; Linux x86-64 results are published next to 
   lost file times under renamed folders; regex `{m,n}` repeats around empty-matching groups now match Python.
 - `progress_bar` opened `/dev/stderr` for each redraw and ended the program with `could not open '/dev/stderr'` where that path
   is not there (in the repl on macOS, with standard error closed); it writes through the standard error stream now (D105a).
+- `tomato.toml` and `config.toml` mistakes (E555 to E560, E565, E568, E590, E562) name the line of the key (`tomato.toml:6: build.mode must be ...`); a bad
+  `[build] mode` in your own `config.toml` is reported even when `--mode` or the project's `[build]` decides the mode. An option with its value missing
+  at the end (`tomato build -o`, `tomato test --filter`, `tomato seed remove`) is a one-line usage error (status 2), not the whole help.
+  `tomato test` with no word finds the project's `tests/` from a folder below it, as `run` and `build` find `src/main.tom`. `tomato init ../x` is
+  refused and `tomato init -- -x` makes a project named `-x`. `[seed-store] vendor` of `.`, `src`, `tests`, `builds` or `""` is refused (E604), and a file
+  there is an error that says so. A `!name(...)` symbol added to a locked path seed is asked about by the next build (E602, accepted by `tomato seed
+  install`); a module `src/X.tom` (or next to the program) with the name of a seed's module is a compile error (E607), as a clash with `std/` is (E581).
+  `tomato seed check` warns about the `TODO:` placeholders and the `yourdomain.example` owner of `tomato init --seed`, and `tomato seed install` fetches a
+  seed again when its store copy was damaged (a build still says E601, and the message now says to run `install`) (D107a).
+- `itertools`: `combinations`, `combinations_with_replacement`, `product_repeat` and `repeat` with a negative count, and `permutations` with an `r`
+  below -1 (-1 still means all), raise `ValueError` (E39), as `batched` does; a `break` or `return` out of `for x in progress_bar(...)` ends the bar's line
+  on a terminal; `sys.run` of a script whose `#!` interpreter is missing says `its interpreter '/x/y' was not found` (D107a).
 - A big number as an `int | None` or `float | None` dict key, set element or `hash()` argument (`d[10 ** 40] = 1` on a
   `dict[int | None, int]`) was freed twice and crashed the program; it works now.
 - `await p.wait()` on a `sys.spawn` program that wrote more than a pipe holds (about 64 KB) before anything read it waited

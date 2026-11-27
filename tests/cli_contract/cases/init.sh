@@ -38,6 +38,11 @@ check "init with two names writes nothing" "" "$(files_in "$W/two")"
 within "$W/opt" try "init with an unknown option" 1 "" "error: unknown option '--frob' for 'tomato init' (usage: tomato init [NAME] [--seed])" init --frob
 check "init with an unknown option writes nothing" "" "$(files_in "$W/opt")"
 within "$W/dash" try "init -x is an unknown option, not a name" 1 "" "error: unknown option '-x' for 'tomato init' (usage: tomato init [NAME] [--seed])" init -x
+within "$W/updir" try "init ../x is not a name (it would be a path)" 1 "" "error: '../x' is not a project name: it has a . or .. part, as a path does (tomato init NAME starts the project in this folder; to start it in another folder, go there first)" init ../x
+check "init ../x writes nothing" "" "$(files_in "$W/updir")"
+within "$W/dd" try "init -- -x: after -- a word is a name, not an option" 0 "~created tomato.toml" "" init -- -x
+check "init -- -x names the project -x" 'name = "-x"' "$(grep '^name' "$W/dd/tomato.toml")"
+within "$W/dd2" try "init -- a b: still one name" 1 "" "error: tomato init takes one NAME, not 'a' and 'b'" init -- a b
 within "$W/tab" try "init NAME must be plain printable text" 1 "" "error: the name must be plain printable text" init "$(printf 'a\tb')"
 within "$W/slashname" try "init / is no name" 1 "" "error: give the project a name: tomato init NAME" init /
 

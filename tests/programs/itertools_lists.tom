@@ -28,3 +28,25 @@ def main():
     show(pairwise([1, 2, 3, 4]))
     show(batched([1, 2, 3, 4, 5], 2))
     flat(repeat(7, 3))
+    # a negative count is an error, as in batched (permutations takes -1 for "all")
+    try:
+        permutations(xs, -2)
+    catch ValueError as e:
+        print(e.id, e.message)
+    try:
+        combinations(xs, -1)
+    catch ValueError as e:
+        print(e.id, e.message)
+    try:
+        combinations_with_replacement(xs, -1)
+    catch ValueError as e:
+        print(e.id, e.message)
+    try:
+        product_repeat(xs, -1)
+    catch ValueError as e:
+        print(e.id, e.message)
+    try:
+        repeat(1, -1)
+    catch ValueError as e:
+        print(e.id, e.message)
+    flat(repeat(1, 0))

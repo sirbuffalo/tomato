@@ -11706,6 +11706,18 @@ class Gen:
         guarded = mk('Try', line, [vnodes([loop]), vlist([]), vz(), vnodes([close])])
         self.block([mk('Assign', line, [vn(mk('Name', line, [vs(name)])), vn(it)]), guarded])
 
+    # for x in progress_bar(...): the loop owns the bar it made and closes it however it is left (break, return or an error), so a
+    # break out of a bar drawn on a terminal does not leave its line open. Written as for_open does: the bar in a variable no program
+    # can name, a try with a finally around the loop. close() does nothing the second time, so the normal end does not draw twice.
+    def for_bar(self, s: Node, it: Node):
+        name = '.barfor' + str(self.tmp('f')[1:])
+        line = s.line
+        held = mk('Name', line, [vs(name)])
+        close = mk('ExprStmt', line, [vn(mk('Call', line, [vn(mk('Attr', line, [vn(held), vs('close')])), vnodes([]), vlist([])]))])
+        loop = mk('For', line, [s.fields[0], vn(held), s.fields[2]])
+        guarded = mk('Try', line, [vnodes([loop]), vlist([]), vz(), vnodes([close])])
+        self.block([mk('Assign', line, [vn(mk('Name', line, [vs(name)])), vn(it)]), guarded])
+
     def for_file(self, s: Node, f: Ex):
         # for line in f: the lines of a text file, each with its \n, read one at a time (a large file is never loaded whole); the loop does not close f (a loop over open(...) is rewritten by for_open, which closes it)
         holder = self.hidden_rc_slot('for.file')
@@ -11963,6 +11975,9 @@ class Gen:
         it = val_node(s.fields[1])
         if len(s.fields) == 3 and it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text == 'open' and 'open' not in self.slots and len(it.fields[2].items) == 0:
             self.for_open(s, it)
+            return
+        if len(s.fields) == 3 and it.kind == 'Call' and val_node(it.fields[0]).kind == 'Name' and val_node(it.fields[0]).fields[0].text not in self.slots and self.mod.resolve(val_node(it.fields[0]).fields[0].text) == 'itertools.progress_bar':
+            self.for_bar(s, it)
             return
         if len(s.fields) > 3:
             self.for_items(s, it)
@@ -13716,6 +13731,12 @@ def std_path(std: str, name: str) -> str:
         return f'{std}builtin/{name}.tom'
     return f'{std}{name}.tom'
 
+# a module of the project (next to the program or in src/) with the name of a module of a seed the run uses: which one an import means
+# would depend on where it is looked for first, so it is an error naming both (the same as a seed's module with a standard module's name)
+def shadows_seed(mod: Mod, name: str, where: str, line: int):
+    if name in mod.seed_files:
+        raise CompileError(f"the module '{name}' is in {where} and in the seed {mod.seed_labels[name]}, so the import is ambiguous\nrename the project's module, or leave the seed out", line)
+
 def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
     # a module next to the program, else one in the project's src/ folder (mod.src_dir, D94b), else one from a seed the run uses
     # (mod.seed_files), else one from the standard library
@@ -13724,6 +13745,8 @@ def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
         f = open(f'{dir}{name}.tom')
         text = f.read()
         f.close()
+        if dir == mod.src_dir:                  # (a file next to a program elsewhere shadows a seed's module on purpose; one in src/ is ambiguous)
+            shadows_seed(mod, name, f'{dir}{name}.tom', line)
     catch IOError:
         if mod.src_dir != '':
             try:
@@ -13732,6 +13755,7 @@ def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
                 h.close()
                 if name == 'main':
                     raise CompileError("cannot import 'main': it is the name the program itself has\nput the shared code in a module with another name, such as src/app.tom, and import that", line)
+                shadows_seed(mod, name, f'{mod.src_dir}{name}.tom', line)
                 mod.src_used.append(name)
                 return text
             catch IOError:

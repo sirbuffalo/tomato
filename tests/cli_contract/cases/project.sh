@@ -21,7 +21,9 @@ try "build FILE.tom, another file of the project: its own name in builds/" 0 "wr
 try "test: no word runs every file of tests/, one line each, then the summary" 0 "ok   tests/example.tom
 ok   tests/uses_util.tom
 tomato test: 2 files, 2 passed, 0 failed, 0 skipped: ok" "" test
-within src try "test: only looks for tests/ in the current folder" 1 "" "error: no tests folder here: run tomato test FILE..., or put test files in tests/ (each tests/NAME.tom is one test)" test
+within src try "test: from a folder below the project, the tests/ of the project are run (as run and build find it)" 0 "ok   $W/app/tests/example.tom
+ok   $W/app/tests/uses_util.tom
+tomato test: 2 files, 2 passed, 0 failed, 0 skipped: ok" "" test
 # the name of the program is the manifest's name made into a file name: anything but letters, digits, . _ - becomes -, and a leading . or - gets a p
 mkdir -p names; cd names || exit 1
 named() { # NAME EXPECTED-FILE

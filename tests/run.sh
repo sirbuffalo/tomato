@@ -1000,61 +1000,61 @@ project: demo 0.3.0 (needs Tomato 0.51 or newer)" "$(noconf $t config "$P/sub/pr
   check "manifest: a settings-only file (D77g) is still accepted" "1" "$(noconf $t run "$P/sub/prog.tom" 2>&1)"
   badman() { printf '%s' "$2" > "$P/tomato.toml"; r="$(noconf $t run "$P/sub/prog.tom" 2>&1)"; check "manifest: $1" "$3" "$r"; }
   badman "an unknown table is an error, so a typo is caught" '[sedes]
-' "error[E555]: $here/tomato.toml: unknown table [sedes] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)"
+' "error[E555]: $here/tomato.toml:1: unknown table [sedes] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)"
   badman "a key outside every table is an error" 'name = "x"
-' "error[E555]: $here/tomato.toml: unknown key name (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)"
+' "error[E555]: $here/tomato.toml:1: unknown key name (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)"
   badman "a project and a seed together" "$head"'[seed]
 name = "a.example/x"
 version = "1.0.0"
 tomato = "0.51"
-' "error[E556]: $here/tomato.toml: the file has both [project] and [seed]: a folder is a project (a program that uses seeds) or a seed (a package), not both"
+' "error[E556]: $here/tomato.toml:5: the file has both [project] and [seed]: a folder is a project (a program that uses seeds) or a seed (a package), not both"
   badman "an unknown key in [project]" "$head"'license = "MIT"
-' "error[E558]: $here/tomato.toml: unknown setting project.license (the settings of [project] are name, version, tomato)"
+' "error[E558]: $here/tomato.toml:5: unknown setting project.license (the settings of [project] are name, version, tomato)"
   badman "a missing setting" '[project]
 name = "demo"
 version = "0.3.0"
-' "error[E557]: $here/tomato.toml: [project] needs the setting tomato"
+' "error[E557]: $here/tomato.toml:1: [project] needs the setting tomato"
   badman "a version needs three numbers" '[project]
 name = "demo"
 version = "0.3"
 tomato = "0.51"
-' "error[E560]: $here/tomato.toml: project.version is \"0.3\", which is not a version: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0"
+' "error[E560]: $here/tomato.toml:3: project.version is \"0.3\", which is not a version: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0"
   badman "a seed name needs an owner" '[seed]
 name = "json5"
 version = "1.0.0"
 tomato = "0.51"
-' "error[E561]: $here/tomato.toml: seed.name \"json5\" is not a seed name: a seed name is owner/name with exactly one slash"
+' "error[E561]: $here/tomato.toml:2: seed.name \"json5\" is not a seed name: a seed name is owner/name with exactly one slash"
   badman "a git seed in a seed is refused" '[seed]
 name = "a.example/x"
 version = "1.0.0"
 tomato = "0.51"
 [seeds]
 "b.example/y" = { git = "https://h/y.git", rev = "abc" }
-' "error[E563]: $here/tomato.toml: seeds.\"b.example/y\" is a git seed, and only a project can use those: a seed can use only registered seeds, written as \"1.2.0\""
+' "error[E563]: $here/tomato.toml:6: seeds.\"b.example/y\" is a git seed, and only a project can use those: a seed can use only registered seeds, written as \"1.2.0\""
   badman "[seeds] without a project or a seed" '[seeds]
 "b.example/y" = "1.0.0"
-' "error[E567]: $here/tomato.toml: [seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file"
+' "error[E567]: $here/tomato.toml:1: [seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file"
   badman "the build mode is checked" "$head"'[build.test]
 mode = "fast"
-' "error[E565]: $here/tomato.toml: build.test.mode must be \"debug\" or \"release\", not \"fast\""
+' "error[E565]: $here/tomato.toml:6: build.test.mode must be \"debug\" or \"release\", not \"fast\""
   badman "build.target is reserved" "$head"'[build]
 target = "wasm"
-' "error[E566]: $here/tomato.toml: build.target is reserved for a later version and cannot be set yet"
+' "error[E566]: $here/tomato.toml:6: build.target is reserved for a later version and cannot be set yet"
   badman "an unknown build setting" "$head"'[build]
 flags = []
-' "error[E558]: $here/tomato.toml: unknown setting build.flags (the settings of [build] are mode and output, and a table [build.ENTRY] sets them for one entry)"
+' "error[E558]: $here/tomato.toml:6: unknown setting build.flags (the settings of [build] are mode and output, and a table [build.ENTRY] sets them for one entry)"
   badman "a [seeds.ENTRY] table is refused and points at [test-seeds] (D94b)" "$head"'[seeds.test]
 "a.example/x" = "1.0.0"
-' "error[E590]: $here/tomato.toml: [seeds.test] is not allowed: a table in [seeds] names a seed with a slash, \"owner/name\"; seeds used only by tests go in [test-seeds], the one table for them"
+' "error[E590]: $here/tomato.toml:5: [seeds.test] is not allowed: a table in [seeds] names a seed with a slash, \"owner/name\"; seeds used only by tests go in [test-seeds], the one table for them"
   badman "a [test-seeds] table below it is refused too" "$head"'[test-seeds.x]
 "a.example/x" = "1.0.0"
-' "error[E590]: $here/tomato.toml: [test-seeds.x] is not allowed: a table in [test-seeds] names a seed with a slash, \"owner/name\"; seeds used only by tests go in [test-seeds], the one table for them"
+' "error[E590]: $here/tomato.toml:5: [test-seeds.x] is not allowed: a table in [test-seeds] names a seed with a slash, \"owner/name\"; seeds used only by tests go in [test-seeds], the one table for them"
   badman "[test-seeds] needs a project or a seed" '[test-seeds]
 "a.example/x" = "1.0.0"
-' "error[E567]: $here/tomato.toml: [test-seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file"
+' "error[E567]: $here/tomato.toml:1: [test-seeds] needs a [project] table (a program) or a [seed] table (a package) in the same file"
   badman "[test-seeds] takes seeds, not other keys" "$head"'[test-seeds]
 foo = "1.0.0"
-' "error[E555]: $here/tomato.toml: unknown key \"foo\" in [test-seeds]: a seed is written \"owner/name\" with a slash"
+' "error[E555]: $here/tomato.toml:6: unknown key \"foo\" in [test-seeds]: a seed is written \"owner/name\" with a slash"
   printf '%s[test-seeds]\n"a.example/x" = "1.0.0"\n' "$head" > "$P/tomato.toml"
   check "manifest: a manifest with [test-seeds] is accepted" "1" "$(noconf $t run "$P/sub/prog.tom" 2>&1)"
   rm -f "$P/tomato.toml"
@@ -1062,15 +1062,15 @@ foo = "1.0.0"
 name = "demo"
 version = "0.3.0"
 tomato = "9.1"
-' "error[E562]: $here/tomato.toml: this needs Tomato 9.1 or newer, and this is Tomato $(cat VERSION)
+' "error[E562]: $here/tomato.toml:4: this needs Tomato 9.1 or newer, and this is Tomato $(cat VERSION)
   = help: install a newer release with \`tomato update\`"
   badman "a minimum equal to this compiler passes" "[project]
 name = \"demo\"
 version = \"0.3.0\"
 tomato = \"$(cat VERSION)\"
 " "1"
-  check "manifest: the file is checked by every command, config included" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(printf '[x]\n' > "$P/tomato.toml"; noconf $t config "$P/sub/prog.tom" 2>&1)"
-  check "manifest: so is compile" "error[E555]: $here/tomato.toml: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(noconf $t compile "$P/sub/prog.tom" 2>&1)"
+  check "manifest: the file is checked by every command, config included" "error[E555]: $here/tomato.toml:1: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(printf '[x]\n' > "$P/tomato.toml"; noconf $t config "$P/sub/prog.tom" 2>&1)"
+  check "manifest: so is compile" "error[E555]: $here/tomato.toml:1: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(noconf $t compile "$P/sub/prog.tom" 2>&1)"
   check "explain knows the manifest errors" "error[E555]: ConfigError: {}: unknown {} {} (the tables are {}; every setting is in a table)" "$($t explain E555)"
   check "tomato help lists the seed commands" "8" "$($t help | grep -c 'tomato seed ')"
 }
@@ -1160,9 +1160,9 @@ tomato = "0.51"
   noconf $t build "$P/sub/dot.tom" -o "$work/b_user" > /dev/null 2>&1
   check "build tables: build uses the user's mode too" "release" "$(mode_of "$work/b_user" grp.one)"
   printf '[build]\noutput = "x"\n' > "$work/uh/config.toml"
-  case "$(noconf $t run "$P/sub/dot.tom" 2>&1)" in "error[E558]: $work/uh/config.toml: unknown setting build.output"*) ok "build tables: output is refused in the user's file";; *) bad "build tables: output is refused in the user's file" "$(noconf $t run "$P/sub/dot.tom" 2>&1)";; esac
+  case "$(noconf $t run "$P/sub/dot.tom" 2>&1)" in "error[E558]: $work/uh/config.toml:2: unknown setting build.output"*) ok "build tables: output is refused in the user's file";; *) bad "build tables: output is refused in the user's file" "$(noconf $t run "$P/sub/dot.tom" 2>&1)";; esac
   printf '[build]\nmode = "fast"\n' > "$work/uh/config.toml"
-  check "build tables: a bad mode in the user's file is E565" "error[E565]: $work/uh/config.toml: build.mode must be \"debug\" or \"release\", not \"fast\"" "$(noconf $t run "$P/sub/dot.tom" 2>&1)"
+  check "build tables: a bad mode in the user's file is E565" "error[E565]: $work/uh/config.toml:2: build.mode must be \"debug\" or \"release\", not \"fast\"" "$(noconf $t run "$P/sub/dot.tom" 2>&1)"
   rm -f "$work/uh/config.toml"
   rm -f "$P/tomato.toml"
   check "build tables: with no manifest --mode alone decides" "release debug" "$(mode_of noconf $t run --mode release "$P/sub/prog.tom" crash) $(mode_of noconf $t run "$P/sub/prog.tom" crash)"
@@ -1329,7 +1329,7 @@ test_only = true' "$(sed -n '/name = "acme.example\/other"/,/^test_only/p' "$W/a
   badseed "a symbolic link in a seed" '"d.example/badname" = { path = "../badname" }' "error[E576]: HERE/badname: link.tom is a symbolic link, which a seed cannot contain (it could point outside the seed)"
   rm "$W/badname/link.tom"
   printf '[seed]\nname = "d.example/badname"\nversion = "1.0.0"\ntomato = "9.0"\n' > "$W/badname/tomato.toml"
-  badseed "a seed that needs a newer Tomato" '"d.example/badname" = { path = "../badname" }' "error[E562]: HERE/badname/tomato.toml: this needs Tomato 9.0 or newer, and this is Tomato $(cat VERSION)
+  badseed "a seed that needs a newer Tomato" '"d.example/badname" = { path = "../badname" }' "error[E562]: HERE/badname/tomato.toml:4: this needs Tomato 9.0 or newer, and this is Tomato $(cat VERSION)
   = help: install a newer release with \`tomato update\`"
   # one seed in two tables
   printf '%s[test-seeds]\n"acme.example/thing" = { path = "../other" }\n' "$head" > "$W/app/tomato.toml"
@@ -1364,7 +1364,7 @@ warning: [build.mian] names no entry: no function in src/ or tests/ is marked @m
   mkdir -p "$W/h2"; printf 'one' > "$W/h2/z.txt"; chmod 644 "$W/h2/z.txt"
   check "seeds: a group or other execute bit alone is mode 644, as git records it" "$(cd "$W/h2" && noconf $t seed hash .)" "$(mkdir -p "$W/h3" && printf 'one' > "$W/h3/z.txt" && chmod 654 "$W/h3/z.txt" && cd "$W/h3" && noconf $t seed hash .)"
   check "seeds: the hash covers nested files, modes, byte order and leaves .git out" "$(indep_hash "$W/h")" "$(noconf $t seed hash "$W/h")"
-  case "$(noconf $t seed hash 2>&1)" in "sha256:"*) ok "seeds: hash of no argument is the current folder's";; *) bad "seeds: hash of no argument is the current folder's";; esac
+  r="$(noconf $t seed hash 2>&1)"; case "$r" in "sha256:"*) ok "seeds: hash of no argument is the current folder's";; *) bad "seeds: hash of no argument is the current folder's" "$r";; esac
   check "seeds: hash of a missing folder" "error[E572]: $W/nope is not a folder" "$(noconf $t seed hash "$W/nope" 2>&1)"
   check "seeds: an unknown seed command" "error: unknown seed command 'frob' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check and hash)" "$(noconf $t seed frob 2>&1)"
 }
@@ -1522,9 +1522,13 @@ wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | nor
   # a store folder changed after it was stored is caught by a build and by install
   printf '# changed\n' >> "$store/src/gs.tom"
   r="$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)"
-  case "$r" in "error[E601]: HERE/app/tomato.toml: the copy of g.example/gs in $(echo "$store" | norm) has the content hash "*"it was changed after it was put there (remove the folder and run \`tomato seed install\` to fetch it again)") ok "seed store: a build checks the stored copy against the lock";; *) bad "seed store: a build checks the stored copy against the lock" "$r";; esac
+  case "$r" in "error[E601]: HERE/app/tomato.toml: the copy of g.example/gs in $(echo "$store" | norm) has the content hash "*"it was changed after it was put there (run \`tomato seed install\` to fetch it again, which replaces the damaged copy)") ok "seed store: a build checks the stored copy against the lock";; *) bad "seed store: a build checks the stored copy against the lock" "$r";; esac
   r="$(cd "$A" && tm $t seed install 2>&1 | norm)"
-  case "$r" in "error[E601]: HERE/app/tomato.toml: the copy of g.example/gs in $(echo "$store" | norm) has the content hash "*) ok "seed store: so does install";; *) bad "seed store: so does install" "$r";; esac
+  case "$r" in "g.example/gs 1.0.0  $H1  (git HERE/gs.git "*) ok "seed store: install fetches a damaged copy again";; *) bad "seed store: install fetches a damaged copy again" "$r";; esac
+  check "seed store: and the store copy is as it was" "$H1" "$(tm $t seed hash "$store")"
+  printf '# changed\n' >> "$store/src/gs.tom"
+  r="$(cd "$A" && tm $t seed install --offline 2>&1 | norm)"
+  case "$r" in "error[E601]: "*"it was changed after it was put there"*) ok "seed store: install --offline cannot fetch a damaged copy again";; *) bad "seed store: install --offline cannot fetch a damaged copy again" "$r";; esac
   rm -rf "$store"; (cd "$A" && tm $t seed install >/dev/null 2>&1)
   # a lock that does not match the repository: the hash decides, nothing is stored
   cp "$A/tomato.lock" "$W/lock.good"
@@ -1829,9 +1833,9 @@ b from mono" "$(cd "$A" && tm $t run 2>&1)"
   # a path in tomato.toml that is not a git seed's: path with a rev but no git is a missing setting; tag and branch together are refused
   printf '%s[seeds]\n"m.example/a" = { rev = "%s", path = "seeds/a" }\n' "$head" "$MC1" > "$A/tomato.toml.x"
   r="$(cd "$A" && cp tomato.toml tomato.toml.keep && cp tomato.toml.x tomato.toml && tm $t seed install 2>&1 | norm; cp tomato.toml.keep tomato.toml)"
-  checkn "tomato.toml: a rev and a path with no git is refused (a mix of the two forms)" "error[E568]: HERE/app/tomato.toml: seeds.\"m.example/a\" has path and also rev, tag or branch but no git: a path seed is only { path = \"../folder\" }, and a git seed needs git (its path is the folder of the repository)" "$r"
+  checkn "tomato.toml: a rev and a path with no git is refused (a mix of the two forms)" "error[E568]: HERE/app/tomato.toml:6: seeds.\"m.example/a\" has path and also rev, tag or branch but no git: a path seed is only { path = \"../folder\" }, and a git seed needs git (its path is the folder of the repository)" "$r"
   printf '%s[seeds]\n"m.example/a" = { git = "%s/mono.git", rev = "%s", tag = "v1", branch = "main" }\n' "$head" "$W" "$MC1" > "$A/tomato.toml"
-  checkn "tomato.toml: a tag and a branch together are refused" "error[E568]: HERE/app/tomato.toml: seeds.\"m.example/a\" has tag and also branch: a seed follows one or the other" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
+  checkn "tomato.toml: a tag and a branch together are refused" "error[E568]: HERE/app/tomato.toml:6: seeds.\"m.example/a\" has tag and also branch: a seed follows one or the other" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
   printf '%s[seeds]\n"m.example/a" = { git = "%s/mono.git", rev = "%s", path = "seeds/a" }\n"m.example/b" = { git = "%s/mono.git", rev = "%s", path = "seeds/b", tag = "-x" }\n' "$head" "$W" "$MC1" "$W" "$MC1" > "$A/tomato.toml"
   r="$(cd "$A" && tm $t seed install 2>&1 | norm)"
   checkn "tomato.toml: a tag that git would read as an option is refused" "error[E598]: HERE/app/tomato.toml: the tag \"-x\" of the seed m.example/b cannot be used: a name cannot start with a hyphen (it would be read as an option of git)" "$r"
@@ -1865,7 +1869,7 @@ rc=0" "$r"
   r="$(cd "$A" && tm $t seed verify > "$W/v.out" 2> "$W/v.err"; echo "rc=$?"; norm < "$W/v.out"; norm < "$W/v.err")"
   checkn "seed verify: a changed store copy and an edited path folder are problems, every copy is listed, exit status 1" "rc=1
 CHANGED  acme.example/loc 0.3.0: the path copy $W/loc has the content hash $(indep_hash "$W/loc"), but tomato.lock says $LH; the folder was edited after it was locked: run: tomato seed install
-CHANGED  m.example/a 1.0.0: the store copy $(store_of "$MAH") has the content hash $(indep_hash "$(store_of "$MAH")"), but tomato.lock says $MAH; remove the folder and run: tomato seed install
+CHANGED  m.example/a 1.0.0: the store copy $(store_of "$MAH") has the content hash $(indep_hash "$(store_of "$MAH")"), but tomato.lock says $MAH; run: tomato seed install (it fetches the seed again and replaces the damaged copy)
 error[E606]: HERE/app/tomato.lock: verify found 2 problems in 2 locked seeds (2 copies checked)" "$(printf '%s' "$r" | sed "s#$W#HERE/su#g")"
   rm -rf "$(store_of "$MAH")"
   r="$(cd "$A" && tm $t seed verify 2>/dev/null | grep MISSING | norm)"
@@ -2343,6 +2347,30 @@ p:  20%|#| 4/20" "$("$work/pb" 2>&1 > /dev/null | head -3 | sed 's/|[#-]*|/|#|/'
   "$work/pb" 2>/dev/full > "$work/o"; rc=$?
   check "progress_bar: stderr that cannot be written does not fail the program" "0" "$rc"
 }
+t_progress_break() { # a break (or return) out of `for x in progress_bar(...)` on a terminal ends the bar's line: the next print is on a line of its own
+  cli_setup
+  if ! command -v expect >/dev/null 2>&1; then ok "progress_bar break on a terminal (skipped: no expect)"; return; fi
+  cat > "$work/pbb.tom" <<'EOT'
+from itertools import progress_bar
+def first_big(xs: list[int]) -> int:
+    for x in progress_bar(xs, 'r', 10):
+        if x > 1:
+            return x
+    return 0
+@main
+def main():
+    for x in progress_bar([1, 2, 3], 'b', 10):
+        if x == 2:
+            break
+    print('after break')
+    print(first_big([1, 2, 3]))
+    print('after return')
+EOT
+  $t build "$work/pbb.tom" -o "$work/pbb" > "$work/e" 2>&1 || { bad "progress_bar break: build" "$(head -5 "$work/e")"; return; }
+  lines="$(expect -c 'log_user 0; spawn '"$work/pbb"'; expect eof; puts -nonewline $expect_out(buffer)' 2>&1 | tr -d '\r')"
+  check "progress_bar: a break out of the bar ends its line" "after break" "$(printf '%s\n' "$lines" | grep -x 'after break')"
+  check "progress_bar: a return out of the bar ends its line" "after return" "$(printf '%s\n' "$lines" | grep -x 'after return')"
+}
 t_repl_progress() { # tomato repl on a pseudo-terminal shows the bar on the terminal
   cli_setup
   if ! command -v expect >/dev/null 2>&1; then
@@ -2352,6 +2380,7 @@ t_repl_progress() { # tomato repl on a pseudo-terminal shows the bar on the term
   check "repl: a progress bar draws on the terminal and the loop output follows" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/repl_progress.exp 2>&1 | tail -1)"
 }
 spawn_cli t_progress_streams
+spawn_cli t_progress_break
 spawn_cli t_repl_progress
 t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, layout, frames, whole sessions on a FakeTerminal), debug and release
   cli_setup

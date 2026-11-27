@@ -68,6 +68,30 @@ h2="$("$TOMATO" seed hash thing)"
 within app try "seed install --locked: a path seed whose files changed says so, with both hashes" 1 "" "error[E578]: $W/app/tomato.toml: tomato.lock does not match this manifest: the files of the path seed acme.example/thing (../thing) changed since the lock was written (hash $(printf '%s' "$h1" | cut -c1-19)... in tomato.lock, $(printf '%s' "$h2" | cut -c1-19)... now): run \`tomato seed install\` and commit the new lock" seed install --locked
 within app try "run: a path seed that changed still builds" 0 "bye x" "" run m.tom
 printf 'export def greet(n: str) -> str:\n    return "hello " + n\n' > thing/src/thing.tom
+# a `!name(...)` symbol added to a path seed after it was locked is asked about by a build, as `seed install` asks (not linked silently)
+printf '!tomato_getpid() -> int\n' >> thing/src/thing.tom
+within app try "run: a foreign symbol added to a locked path seed is refused until it is accepted" 1 "" "~  = help: tomato.lock does not hold these symbols: run \`tomato seed install\` and answer, or add --yes" run m.tom
+within app try "seed install --yes accepts it, and the build runs again" 0 "~wrote $W/app/tomato.lock (1 seed)" "" seed install --yes
+within app try "run: with the symbol in the lock the build goes on" 0 "hello x" "" run m.tom
+printf 'export def greet(n: str) -> str:\n    return "hello " + n\n' > thing/src/thing.tom
+within app try "seed install --yes: the lock without the symbol again" 0 "~wrote $W/app/tomato.lock (1 seed)" "" seed install --yes
+# a module of the project with the name of a module of a seed is ambiguous (as a seed module with a standard module's name is, E581)
+cp thing/src/thing.tom app/thing.tom
+within app try "run: a module next to the program with the name of a seed's module is an error naming both" 1 "" "~the module 'thing' is in thing.tom and in the seed acme.example/thing 0.3.0, so the import is ambiguous" run m.tom
+rm app/thing.tom
+# seed check: the placeholders of `tomato init --seed`, and seed remove with no name
+mkdir -p ph; within ph "$TOMATO" init --seed acme.example/ph > /dev/null
+within ph try "seed check: the TODO placeholders of init --seed are warnings" 0 "~warning: seed.description is still the placeholder \`tomato init --seed\` wrote: say what the seed is for" "" seed check
+within ph try "seed check: and the license one too" 0 "~warning: seed.license is still the placeholder \`tomato init --seed\` wrote: name a license such as MIT" "" seed check
+within app try "seed remove with no name is one line, status 2" 2 "" "error: tomato seed remove needs the name of a seed (usage: tomato seed remove NAME)" seed remove
+# [seed-store] vendor: a folder of its own below the project's
+for v in '.' 'src' '' './tests'; do
+  printf '[project]\nname = "app"\nversion = "0.1.0"\ntomato = "%s"\n\n[seeds]\n"acme.example/thing" = { path = "../thing" }\n\n[seed-store]\nvendor = "%s"\n' "$minv" "$v" > app/tomato.toml
+  within app try "vendor = \"$v\" is refused, naming the line" 1 "" "~error[E604]: $W/app/tomato.toml:10: seed-store.vendor is \"$v\", which cannot be the vendor folder: " seed vendor
+done
+printf '[project]\nname = "app"\nversion = "0.1.0"\ntomato = "%s"\n\n[seeds]\n"acme.example/thing" = { path = "../thing" }\n\n[seed-store]\nvendor = "m.tom"\n' "$minv" > app/tomato.toml
+within app try "vendor naming a file is refused with a message, not a trace" 1 "" "~error[E604]: $W/app/tomato.toml: the vendor folder $W/app/m.tom is a file, not a folder" seed vendor
+printf '[project]\nname = "app"\nversion = "0.1.0"\ntomato = "%s"\n\n[seeds]\n"acme.example/thing" = { path = "../thing" }\n' "$minv" > app/tomato.toml
 # a manifest that lists no seeds
 mkdir -p noseeds; printf '[project]\nname = "n"\nversion = "0.1.0"\ntomato = "%s"\n' "$minv" > noseeds/tomato.toml
 within noseeds try "seed install with no seeds listed" 0 "the manifest lists no seeds: nothing to lock" "" seed install

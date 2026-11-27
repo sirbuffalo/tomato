@@ -14,7 +14,7 @@
 # Anything else is an error, a typo in a table or a key included. A file with neither [project] nor [seed] is the settings-only file
 # of D77g ([build], [limits]) and is read as a project's. Seeds are resolved elsewhere (seeds.tom); this file only reads and checks.
 from toml import Toml
-from config import ConfigError, read_toml
+from config import ConfigError, read_toml, read_file
 
 # one requirement of one table: the seed's name, the form it was written in, and the table it is in
 export class SeedReq:
@@ -56,6 +56,95 @@ export class BuildSettings:
 
 def fail(code: int, path: str, text: str):
     raise ConfigError(code, f'{path}: {text}')
+
+# the parts of a dotted key as written in a TOML file or in a message here: `seeds."a/b".path` is [seeds, a/b, path]
+def key_parts(text: str) -> list[str]:
+    parts: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        while i < n and text[i] == ' ':
+            i += 1
+        if i < n and text[i] == '"':
+            j = text.find('"', i + 1)
+            if j < 0:
+                j = n
+            parts.append(text[i + 1:j])
+            i = j + 1
+        else:
+            j = i
+            while j < n and text[j] != '.':
+                j += 1
+            parts.append(text[i:j].strip())
+            i = j
+        while i < n and text[i] == ' ':
+            i += 1
+        if i < n and text[i] == '.':
+            i += 1
+    return parts
+
+# the key written before the = of a `key = value` line ('' for a line that is not one)
+def key_before_equals(line: str) -> str:
+    quoted = False
+    for i in range(len(line)):
+        c = line[i]
+        if c == '"':
+            quoted = not quoted
+        elif c == '=' and not quoted:
+            return line[:i]
+        elif c == '#' and not quoted:
+            return ''
+    return ''
+
+# the line (from 1) of the key `at` in the file's text, 0 when it cannot be found: the line of the key itself, of the header of the
+# table `at` names, or (for a key inside an inline table, `"a/b" = { path = "" }`) of the key that holds it. A guess from the text: a
+# value in several lines or an array of tables is not looked into.
+def line_of(text: str, at: str) -> int:
+    want = key_parts(at)
+    cur: list[str] = []
+    near = 0
+    lines = text.split('\n')
+    for k in range(len(lines)):
+        s = lines[k].strip()
+        if s.startswith('[['):
+            cur = ['[[']
+            continue
+        if s.startswith('['):
+            end = s.find(']')
+            cur = key_parts(s[1:end]) if end > 0 else ['[']
+            if cur == want:
+                return k + 1
+            continue
+        key = key_before_equals(s)
+        if key == '' or s == '':
+            continue
+        full = cur + key_parts(key.strip())
+        if full == want:
+            return k + 1
+        if near == 0 and len(full) < len(want) and want[:len(full)] == full:
+            near = k + 1
+    return near
+
+# like fail, with the line of the key `at` after the path (a guess from the file's text, left out when it cannot be found)
+def fail_at(code: int, path: str, at: str, text: str):
+    where = path
+    try:
+        n = line_of(read_file(path), at)
+        if n > 0:
+            where = f'{path}:{n}'
+    catch ConfigError as e:
+        where = path
+    raise ConfigError(code, f'{where}: {text}')
+
+# the key a message label names: `[seeds]` is seeds, `seed.modules (each module name)` is seed.modules
+def label_key(what: str) -> str:
+    key = what
+    cut = key.find(' (')
+    if cut >= 0:
+        key = key[:cut]
+    if key.startswith('[') and key.endswith(']'):
+        key = key[1:len(key) - 1]
+    return key
 
 # ---------------------------------------------------------------------------------------------------------------------
 # versions: MAJOR.MINOR.PATCH with an optional -PRERELEASE (docs/decisions.md, the 1.0 numbers); the old 0.NN is 0.NN.0
@@ -230,23 +319,23 @@ def kind_word(v: Toml) -> str:
 
 def need_table(path: str, v: Toml, what: str):
     if not v.is_table():
-        fail(559, path, f'{what} must be a table, not {kind_word(v)}')
+        fail_at(559, path, label_key(what), f'{what} must be a table, not {kind_word(v)}')
 
 def need_string(path: str, v: Toml, what: str) -> str:
     if v.kind != 'string':
         shown = v.show()
-        fail(559, path, f'{what} must be a string, not {shown}')
+        fail_at(559, path, label_key(what), f'{what} must be a string, not {shown}')
     return v.text
 
 def known(path: str, table: Toml, table_name: str, names: list[str]):
     # every key of the table is one of names
     for key in table.keys():
         if key not in names:
-            fail(558, path, f"unknown setting {table_name}.{key} (the settings of [{table_name}] are {', '.join(names)})")
+            fail_at(558, path, f'{table_name}.{key}', f"unknown setting {table_name}.{key} (the settings of [{table_name}] are {', '.join(names)})")
 
 def required(path: str, table: Toml, table_name: str, key: str) -> str:
     if not table.has(key):
-        fail(557, path, f'[{table_name}] needs the setting {key}')
+        fail_at(557, path, table_name, f'[{table_name}] needs the setting {key}')
     return need_string(path, table.lookup(key), f'{table_name}.{key}')
 
 def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
@@ -259,12 +348,12 @@ def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
     if v.kind == 'string':
         problem = version_problem(v.text, True)
         if problem != '':
-            fail(560, m.path, f'{label} is "{v.text}", which is not a version: {problem}')
+            fail_at(560, m.path, label, f'{label} is "{v.text}", which is not a version: {problem}')
         req.version = v.text
     elif v.is_table():
         has_git = v.has('git') or v.has('rev') or v.has('tag') or v.has('branch')
         if has_git and not v.has('git') and v.has('path'):
-            fail(568, m.path, f'{label} has path and also rev, tag or branch but no git: a path seed is only {{ path = "../folder" }}, and a git seed needs git (its path is the folder of the repository)')
+            fail_at(568, m.path, label, f'{label} has path and also rev, tag or branch but no git: a path seed is only {{ path = "../folder" }}, and a git seed needs git (its path is the folder of the repository)')
         if has_git:
             # a git seed: git and rev (the commit that is built), optionally tag or branch (what `tomato seed update` follows) and path (the
             # folder of the repository that holds the seed)
@@ -273,7 +362,7 @@ def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
             req.url = required(m.path, v, label, 'git')
             req.rev = required(m.path, v, label, 'rev')
             if v.has('tag') and v.has('branch'):
-                fail(568, m.path, f'{label} has tag and also branch: a seed follows one or the other')
+                fail_at(568, m.path, label, f'{label} has tag and also branch: a seed follows one or the other')
             if v.has('tag'):
                 req.tag = need_string(m.path, v.lookup('tag'), f'{label}.tag')
             if v.has('branch'):
@@ -285,16 +374,16 @@ def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
             req.kind = 'path'
             req.path = need_string(m.path, v.lookup('path'), f'{label}.path')
             if req.path == '':
-                fail(559, m.path, f'{label}.path must not be empty')
+                fail_at(559, m.path, f'{label}.path', f'{label}.path must not be empty')
         else:
-            fail(568, m.path, f'{label} is an empty table: write a version such as "1.2.0", or {{ git = "URL", rev = "COMMIT" }} or {{ path = "../folder" }}')
+            fail_at(568, m.path, label, f'{label} is an empty table: write a version such as "1.2.0", or {{ git = "URL", rev = "COMMIT" }} or {{ path = "../folder" }}')
     else:
-        fail(568, m.path, f'{label} must be a version such as "1.2.0", or a table {{ git = "URL", rev = "COMMIT" }} or {{ path = "../folder" }}, not {kind_word(v)}')
+        fail_at(568, m.path, label, f'{label} must be a version such as "1.2.0", or a table {{ git = "URL", rev = "COMMIT" }} or {{ path = "../folder" }}, not {kind_word(v)}')
     problem = name_problem(key)
     if problem != '':
-        fail(561, m.path, f'"{key}" in [{where}] is not a seed name: {problem}')
+        fail_at(561, m.path, f'{where}."{key}"', f'"{key}" in [{where}] is not a seed name: {problem}')
     if req.kind != 'version' and m.kind == 'seed':
-        fail(563, m.path, f'{label} is a {req.kind} seed, and only a project can use those: a seed can use only registered seeds, written as "1.2.0"')
+        fail_at(563, m.path, label, f'{label} is a {req.kind} seed, and only a project can use those: a seed can use only registered seeds, written as "1.2.0"')
     m.reqs.append(req)
 
 def read_seed_table(m: Manifest, t: Toml, table: str):
@@ -306,14 +395,14 @@ def read_seed_table(m: Manifest, t: Toml, table: str):
         if '/' in key:
             read_seed_spec(m, key, v, table)
         elif v.is_table():
-            fail(590, m.path, f'[{where}.{key}] is not allowed: a table in [{where}] names a seed with a slash, "owner/name"; seeds used only by tests go in [test-seeds], the one table for them')
+            fail_at(590, m.path, f'{where}.{key}', f'[{where}.{key}] is not allowed: a table in [{where}] names a seed with a slash, "owner/name"; seeds used only by tests go in [test-seeds], the one table for them')
         else:
-            fail(555, m.path, f'unknown key "{key}" in [{where}]: a seed is written "owner/name" with a slash')
+            fail_at(555, m.path, f'{where}."{key}"', f'unknown key "{key}" in [{where}]: a seed is written "owner/name" with a slash')
 
 def read_mode(m: Manifest, v: Toml, label: str) -> str:
     text = need_string(m.path, v, label)
     if text != 'debug' and text != 'release':
-        fail(565, m.path, f'{label} must be "debug" or "release", not "{text}"')
+        fail_at(565, m.path, label_key(label), f'{label} must be "debug" or "release", not "{text}"')
     return text
 
 def read_build_table(m: Manifest, t: Toml, table: str):
@@ -327,16 +416,16 @@ def read_build_table(m: Manifest, t: Toml, table: str):
         elif key == 'output':
             b.output = need_string(m.path, v, f'{where}.output')
             if b.output == '':
-                fail(559, m.path, f'{where}.output must not be empty')
+                fail_at(559, m.path, f'{where}.output', f'{where}.output must not be empty')
         elif key == 'target':
-            fail(566, m.path, f'{where}.target is reserved for a later version and cannot be set yet')
+            fail_at(566, m.path, f'{where}.target', f'{where}.target is reserved for a later version and cannot be set yet')
         elif v.is_table():
             sub = key if table == '' else table + '.' + key
             if entry_problem(sub):
-                fail(558, m.path, f'unknown setting {where}.{key} (the settings of [{where}] are mode and output, and a table [{where}.ENTRY] sets them for one entry)')
+                fail_at(558, m.path, f'{where}.{key}', f'unknown setting {where}.{key} (the settings of [{where}] are mode and output, and a table [{where}.ENTRY] sets them for one entry)')
             read_build_table(m, v, sub)
         else:
-            fail(558, m.path, f'unknown setting {where}.{key} (the settings of [{where}] are mode and output, and a table [{where}.ENTRY] sets them for one entry)')
+            fail_at(558, m.path, f'{where}.{key}', f'unknown setting {where}.{key} (the settings of [{where}] are mode and output, and a table [{where}.ENTRY] sets them for one entry)')
     m.builds.append(b)
 
 def read_head(m: Manifest, t: Toml, name: str):
@@ -350,17 +439,17 @@ def read_head(m: Manifest, t: Toml, name: str):
     m.version = required(m.path, t, name, 'version')
     m.tomato = required(m.path, t, name, 'tomato')
     if name == 'project' and m.name == '':
-        fail(559, m.path, 'project.name must not be empty')
+        fail_at(559, m.path, 'project.name', 'project.name must not be empty')
     if name == 'seed':
         problem = name_problem(m.name)
         if problem != '':
-            fail(561, m.path, f'seed.name "{m.name}" is not a seed name: {problem}')
+            fail_at(561, m.path, 'seed.name', f'seed.name "{m.name}" is not a seed name: {problem}')
     problem = version_problem(m.version, True)
     if problem != '':
-        fail(560, m.path, f'{name}.version is "{m.version}", which is not a version: {problem}')
+        fail_at(560, m.path, f'{name}.version', f'{name}.version is "{m.version}", which is not a version: {problem}')
     problem = version_problem(m.tomato, False)
     if problem != '':
-        fail(560, m.path, f'{name}.tomato is "{m.tomato}", which is not a version: {problem}')
+        fail_at(560, m.path, f'{name}.tomato', f'{name}.tomato is "{m.tomato}", which is not a version: {problem}')
     if t.has('description'):
         m.description = need_string(m.path, t.lookup('description'), 'seed.description')
     if t.has('license'):
@@ -368,15 +457,25 @@ def read_head(m: Manifest, t: Toml, name: str):
     if t.has('modules'):
         mods = t.lookup('modules')
         if not mods.is_array():
-            fail(559, m.path, f'seed.modules must be an array of module names, not {kind_word(mods)}')
+            fail_at(559, m.path, 'seed.modules', f'seed.modules must be an array of module names, not {kind_word(mods)}')
         m.has_modules = True
         for item in mods.items:
             text = need_string(m.path, item, 'seed.modules (each module name)')
             if text == '' or entry_problem(text) or '.' in text:
-                fail(559, m.path, f'seed.modules has "{text}", which is not a module name')
+                fail_at(559, m.path, 'seed.modules', f'seed.modules has "{text}", which is not a module name')
             if text in m.modules:
-                fail(559, m.path, f'seed.modules lists "{text}" twice')
+                fail_at(559, m.path, 'seed.modules', f'seed.modules lists "{text}" twice')
             m.modules.append(text)
+
+# why a [seed-store] vendor value cannot be the vendor folder ('' when it can): it must be a folder of its own, not the project's own
+# folder or one a build or a test uses for something else (the seeds are copied into it, and a copy there is replaced)
+def vendor_problem(v: str) -> str:
+    parts = [p for p in v.split('/') if p != '' and p != '.']
+    if len(parts) == 0:
+        return 'write a folder of its own, such as "vendor" (an empty name or . would be the project\'s own folder)'
+    if parts[0] in ['src', 'tests', 'builds', '.git']:
+        return f'{parts[0]}/ holds the project\'s own files: use a folder of its own, such as "vendor"'
+    return ''
 
 export def top_names() -> list[str]:
     return ['project', 'seed', 'seeds', 'test-seeds', 'seed-store', 'build', 'limits']
@@ -394,9 +493,9 @@ export def read_manifest(path: str) -> Manifest:
         if key not in top_names():
             what = 'table' if doc.lookup(key).is_table() else 'key'
             shown = f'[{key}]' if what == 'table' else key
-            fail(555, path, f"unknown {what} {shown} (the tables are {', '.join(top_names())}; every setting is in a table)")
+            fail_at(555, path, f'"{key}"', f"unknown {what} {shown} (the tables are {', '.join(top_names())}; every setting is in a table)")
     if doc.has('project') and doc.has('seed'):
-        fail(556, path, 'the file has both [project] and [seed]: a folder is a project (a program that uses seeds) or a seed (a package), not both')
+        fail_at(556, path, 'seed', 'the file has both [project] and [seed]: a folder is a project (a program that uses seeds) or a seed (a package), not both')
     if doc.has('project'):
         m.kind = 'project'
         read_head(m, doc.lookup('project'), 'project')
@@ -406,7 +505,7 @@ export def read_manifest(path: str) -> Manifest:
     for name in ['seeds', 'test-seeds']:
         if doc.has(name):
             if m.kind == 'none':
-                fail(567, path, f'[{name}] needs a [project] table (a program) or a [seed] table (a package) in the same file')
+                fail_at(567, path, name, f'[{name}] needs a [project] table (a program) or a [seed] table (a package) in the same file')
             need_table(path, doc.lookup(name), f'[{name}]')
             read_seed_table(m, doc.lookup(name), '' if name == 'seeds' else 'test')
     if doc.has('seed-store'):
@@ -415,6 +514,9 @@ export def read_manifest(path: str) -> Manifest:
         known(path, store, 'seed-store', ['vendor'])
         if store.has('vendor'):
             m.vendor = need_string(path, store.lookup('vendor'), 'seed-store.vendor')
+            problem = vendor_problem(m.vendor)
+            if problem != '':
+                fail_at(604, path, 'seed-store.vendor', f'seed-store.vendor is "{m.vendor}", which cannot be the vendor folder: {problem}')
     if doc.has('build'):
         need_table(path, doc.lookup('build'), '[build]')
         read_build_table(m, doc.lookup('build'), '')
@@ -450,9 +552,9 @@ export def user_build_mode(path: str) -> str:
         if key == 'mode':
             mode = need_string(path, t.lookup('mode'), 'build.mode')
             if mode != 'debug' and mode != 'release':
-                fail(565, path, f'build.mode must be "debug" or "release", not "{mode}"')
+                fail_at(565, path, 'build.mode', f'build.mode must be "debug" or "release", not "{mode}"')
         else:
-            fail(558, path, f'unknown setting build.{key} (the user file may set only build.mode: output and [build.ENTRY] belong in a project\'s tomato.toml)')
+            fail_at(558, path, f'build.{key}', f'unknown setting build.{key} (the user file may set only build.mode: output and [build.ENTRY] belong in a project\'s tomato.toml)')
     return mode
 
 # the entry markers (`x.y` for `@x.y`) that start a line of a source text, in order
@@ -546,7 +648,7 @@ export def seeds_for(m: Manifest, tests: bool, every_table: bool) -> Wanted:
 # the compiler's own version against the manifest's `tomato` key: ConfigError E562 when it is older
 export def check_tomato(m: Manifest, have: str):
     if m.tomato != '' and compare_versions(have, m.tomato) < 0:
-        fail(562, m.path, f'this needs Tomato {m.tomato} or newer, and this is Tomato {have}\n  = help: install a newer release with `tomato update`')
+        fail_at(562, m.path, f'{m.kind}.tomato', f'this needs Tomato {m.tomato} or newer, and this is Tomato {have}\n  = help: install a newer release with `tomato update`')
 
 # the lines `tomato config` adds for a manifest: what the folder is, and the top [build] table (the entry tables are not listed)
 export def describe_manifest(m: Manifest) -> list[str]:

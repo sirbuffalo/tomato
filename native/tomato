@@ -64,6 +64,8 @@ paint() {
 # shows text on standard error, painted when the color is on
 show_error() { if want_color; then paint >&2; else cat >&2; fi; }
 die() { printf 'error: %s\n' "$*" | show_error; exit 1; }
+# a usage error that one line explains (a missing value, a missing name): status 2 as `usage` gives, but without the whole help
+die_usage() { printf 'error: %s\n' "$*" | show_error; exit 2; }
 die_id() { id="$1"; shift; printf 'error[%s]: %s\n' "$id" "$*" | show_error; exit 1; }
 # SemVer 2.0 precedence of two version texts: prints -1, 0 or 1 (the first below, equal to or above the second). MAJOR.MINOR.PATCH
 # by number, a missing part counting as 0 (the old 0.NN numbers are 0.NN.0); then a -PRERELEASE is below the release itself,
@@ -125,7 +127,7 @@ while [ $n -gt 0 ]; do
   case "$1" in
     --) stop=1; set -- "$@" "$1"; shift ;;
     --color=*) color="${1#--color=}"; shift ;;
-    --color) [ $n -ge 1 ] || usage; color="$2"; shift 2; n=$((n - 1)) ;;
+    --color) [ $n -ge 1 ] || die_usage "--color needs a value (auto, always or never)"; color="$2"; shift 2; n=$((n - 1)) ;;
     --no-warnings) warnings=off; shift ;;
     *) set -- "$@" "$1"; shift ;;
   esac
@@ -242,13 +244,17 @@ case "$cmd" in
     # src/main.tom), tests in tests/ (each file is one test: a program that passes when it runs without raising an error), what
     # `tomato build` writes in builds/ (left out of git). Nothing is overwritten: when any file would be, none is written and the
     # message names them. With --seed the folder is a seed (a package): its name is owner/name and its modules are src/STEM.tom.
-    seed=0; name=""
+    seed=0; name=""; dd=0
     for a in "$@"; do
-      case "$a" in
-        --seed) seed=1 ;;
-        -*) die "unknown option '$a' for 'tomato init' (usage: tomato init [NAME] [--seed])" ;;
-        *) [ -z "$name" ] || die "tomato init takes one NAME, not '$name' and '$a'"; name="$a" ;;
-      esac
+      if [ $dd = 0 ]; then
+        case "$a" in
+          --) dd=1; continue ;;
+          --seed) seed=1; continue ;;
+          -*) die "unknown option '$a' for 'tomato init' (usage: tomato init [NAME] [--seed])" ;;
+        esac
+      fi
+      [ -z "$name" ] || die "tomato init takes one NAME, not '$name' and '$a'"
+      name="$a"
     done
     folder="$(basename "$(pwd -P)")"
     if [ "$seed" = 1 ]; then
@@ -263,6 +269,12 @@ case "$cmd" in
       mainfile="src/main.tom"
     fi
     case "$name" in *[![:print:]]*) die "the name must be plain printable text" ;; esac
+    # a project's name becomes the file name of its program (builds/NAME), where a / turns into a -: a name that goes up or stays (../x, ./x, a/../b) is not a name
+    if [ "$seed" = 0 ]; then
+      case "/$name/" in
+        */../*|*/./*) die "'$name' is not a project name: it has a . or .. part, as a path does (tomato init NAME starts the project in this folder; to start it in another folder, go there first)" ;;
+      esac
+    fi
     existing=""
     for f in tomato.toml "$mainfile" tests/example.tom .gitignore; do
       if [ -e "$f" ] || [ -L "$f" ]; then existing="$existing${existing:+, }$f"; fi
@@ -357,11 +369,11 @@ case "$cmd" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --) shift; break ;;
-        --filter) [ $# -ge 2 ] || usage; tfilter="$2"; shift 2 ;;
-        --mode) [ $# -ge 2 ] || usage; tmode="$2"; shift 2 ;;
-        --timeout) [ $# -ge 2 ] || usage; ttimeout="$2"; shift 2 ;;
+        --filter) [ $# -ge 2 ] || die_usage "$1 needs a value"; tfilter="$2"; shift 2 ;;
+        --mode) [ $# -ge 2 ] || die_usage "$1 needs a value"; tmode="$2"; shift 2 ;;
+        --timeout) [ $# -ge 2 ] || die_usage "$1 needs a value"; ttimeout="$2"; shift 2 ;;
         --color=*) color="${1#--color=}"; shift ;;
-        --color) [ $# -ge 2 ] || usage; color="$2"; shift 2 ;;
+        --color) [ $# -ge 2 ] || die_usage "--color needs a value (auto, always or never)"; color="$2"; shift 2 ;;
         --no-warnings) warnings=off; shift ;;
         -v|--verbose) tverbose=1; shift ;;
         -?*) die "unknown option '$1' for 'tomato test' (options go before the files: the words after a file or its entry are not options; run 'tomato help')" ;;
@@ -386,8 +398,16 @@ case "$cmd" in
     k=0
     add_file() { k=$((k + 1)); printf '%s|%s\n' "$k" "$1" >> "$tmpd/list"; : > "$tmpd/args.$k"; : > "$tmpd/entry.$k"; }
     if [ $# -eq 0 ]; then
-      [ -d tests ] || die "no tests folder here: run tomato test FILE..., or put test files in tests/ (each tests/NAME.tom is one test)"
-      set -- tests
+      if [ -d tests ]; then
+        set -- tests
+      else
+        # from a folder below the project's (src/, say), as run and build do: the tests/ of the folder that holds the nearest tomato.toml
+        find_config .
+        troot=""; [ -z "$project_cfg" ] || troot="$(dirname "$project_cfg")"
+        [ -z "$troot" ] || [ -d "$troot/tests" ] || die "the project in $troot has no tests folder: run tomato test FILE..., or put test files in $troot/tests/ (each tests/NAME.tom is one test)"
+        [ -n "$troot" ] || die "no tests folder here: run tomato test FILE..., or put test files in tests/ (each tests/NAME.tom is one test)"
+        set -- "$troot/tests"
+      fi
     fi
     while [ $# -gt 0 ]; do
       a="$1"; shift
@@ -564,7 +584,8 @@ case "$cmd" in
                 shift
               done ;;
       verify) [ $# -eq 0 ] || die "tomato seed verify takes no words (usage: tomato seed verify)" ;;
-      remove) [ $# -eq 1 ] || usage
+      remove) [ $# -ge 1 ] || die_usage "tomato seed remove needs the name of a seed (usage: tomato seed remove NAME)"
+              [ $# -eq 1 ] || usage
               case "$1" in -*) die "unknown option '$1' for 'tomato seed remove' (usage: tomato seed remove NAME)" ;; esac
               arg="$1" ;;
       vendor) while [ $# -gt 0 ]; do
@@ -614,11 +635,11 @@ if [ "$cmd" = run ]; then
       case "$1" in
         --) dd=1; shift; continue ;;
         --color=*) color="${1#--color=}"; shift; continue ;;
-        --color) [ $# -ge 2 ] || usage; color="$2"; shift 2; continue ;;
+        --color) [ $# -ge 2 ] || die_usage "--color needs a value (auto, always or never)"; color="$2"; shift 2; continue ;;
         --no-warnings) warnings=off; shift; continue ;;
-        --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; continue ;;
-        --mode) [ $# -ge 2 ] || usage; mode="$2"; mode_given=1; shift 2; continue ;;
-        --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; continue ;;
+        --entry) [ $# -ge 2 ] || die_usage "$1 needs a value"; entry="$2"; shift 2; continue ;;
+        --mode) [ $# -ge 2 ] || die_usage "$1 needs a value"; mode="$2"; mode_given=1; shift 2; continue ;;
+        --llvm) [ $# -ge 2 ] || die_usage "$1 needs a value"; llvm="$llvm$2$nl"; shift 2; continue ;;
         --test-seeds) testseeds=1; shift; continue ;;
         -o) usage ;;
         -?*) die "unknown option '$1' for 'tomato run' (options go before the entry: the words after it are its inputs, read as they are; after -- no word is an option)" ;;
@@ -636,10 +657,10 @@ else
     if [ $dd = 0 ]; then
       case "$1" in
         --) dd=1; shift; continue ;;
-        -o) [ $# -ge 2 ] || usage; out="$2"; shift 2; continue ;;
-        --entry) [ $# -ge 2 ] || usage; entry="$2"; shift 2; continue ;;
-        --mode) [ $# -ge 2 ] || usage; mode="$2"; mode_given=1; shift 2; continue ;;
-        --llvm) [ $# -ge 2 ] || usage; llvm="$llvm$2$nl"; shift 2; continue ;;
+        -o) [ $# -ge 2 ] || die_usage "$1 needs a value"; out="$2"; shift 2; continue ;;
+        --entry) [ $# -ge 2 ] || die_usage "$1 needs a value"; entry="$2"; shift 2; continue ;;
+        --mode) [ $# -ge 2 ] || die_usage "$1 needs a value"; mode="$2"; mode_given=1; shift 2; continue ;;
+        --llvm) [ $# -ge 2 ] || die_usage "$1 needs a value"; llvm="$llvm$2$nl"; shift 2; continue ;;
         --test-seeds) testseeds=1; shift; continue ;;
         -?*) die "unknown option '$1' for 'tomato $cmd' (run 'tomato help')" ;;
       esac

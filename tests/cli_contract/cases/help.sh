@@ -15,22 +15,22 @@ run 'tomato help' for the commands" --frobnicate
 try "explain with no code" 2 "" @help.txt explain
 try "explain with three words" 2 "" @help.txt explain E01 a.tom b.tom
 try "config with two files" 2 "" @help.txt config a.tom b.tom
-try "run: --mode needs a value" 2 "" @help.txt run --mode
-try "run: --entry needs a value" 2 "" @help.txt run --entry
-try "run: --llvm needs a value" 2 "" @help.txt run --llvm
+try "run: --mode needs a value" 2 "" "error: --mode needs a value" run --mode
+try "run: --entry needs a value" 2 "" "error: --entry needs a value" run --entry
+try "run: --llvm needs a value" 2 "" "error: --llvm needs a value" run --llvm
 try "run: -o is not an option of run" 2 "" @help.txt run -o out hello.tom
-try "build: -o needs a value" 2 "" @help.txt build -o
-try "build: --entry needs a value" 2 "" @help.txt build --entry
-try "build: --mode needs a value" 2 "" @help.txt build --mode
+try "build: -o needs a value" 2 "" "error: -o needs a value" build -o
+try "build: --entry needs a value" 2 "" "error: --entry needs a value" build --entry
+try "build: --mode needs a value" 2 "" "error: --mode needs a value" build --mode
 try "compile: two files" 2 "" @help.txt compile a.tom b.tom
-try "test: --filter needs a value" 2 "" @help.txt test --filter
-try "test: --timeout needs a value" 2 "" @help.txt test --timeout
-try "test: --mode needs a value" 2 "" @help.txt test --mode
+try "test: --filter needs a value" 2 "" "error: --filter needs a value" test --filter
+try "test: --timeout needs a value" 2 "" "error: --timeout needs a value" test --timeout
+try "test: --mode needs a value" 2 "" "error: --mode needs a value" test --mode
 try "seed with no subcommand" 2 "" @help.txt seed
 try "seed install with a word that is no option" 1 "" "error: unknown option 'more' for 'tomato seed install' (run 'tomato help')" seed install --locked more
 try "seed check takes no word" 2 "" @help.txt seed check now
 try "seed hash takes one folder" 2 "" @help.txt seed hash a b
-try "--color needs a value (the option every command takes)" 2 "" @help.txt help --color
+try "--color needs a value (the option every command takes)" 2 "" "error: --color needs a value (auto, always or never)" help --color
 # structure: the text names every command and every option the plan lists (so a rewrite cannot drop one unnoticed)
 help="$("$TOMATO" help)"
 for w in "tomato init" "tomato run" "tomato build" "tomato compile" "tomato test" "tomato explain" "tomato config" "tomato seed install" "tomato seed check" "tomato seed hash" "tomato repl" "tomato update" "tomato version" "--test-seeds" "--llvm" "--entry" "--mode" "--filter" "--timeout" "--color=auto|always|never" "--no-warnings" "TOMATO_COLOR" "NO_COLOR" "TOMATO_WARNINGS" "--minor" "--pre"; do

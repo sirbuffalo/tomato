@@ -13,12 +13,15 @@
 #     bar.close()
 #
 # update() draws the bar on standard error (so it does not mix with what the program prints); render() returns the
-# same line as text, which is what the tests check. An empty list gives a total of 0, which shows only the count.
+# same line as text, which is what the tests check. An empty list (a variable with a type) gives a total of 0, which shows only the count.
 # When standard error is a terminal the bar is one line that is redrawn in place ('\r'). When it is not (a pipe, a file, closed),
 # a plain line is written at the first update and then at each new tenth of the percentage (10%, 20%, ...) and once at the end, and nothing fails if the stream is closed.
 # The repl runs your code with standard error captured, so it sets TOMATO_PROGRESS_TTY=1 and the bar then draws on the
 # controlling terminal (/dev/tty) when there is one.
-# Looping over the bar itself (its @iter method) draws as it goes and ends the line when the loop is done.
+# Looping over the bar itself (its @iter method) draws as it goes and ends the line when the loop is done. `for x in progress_bar(...):`
+# written like that closes the bar however the loop is left (break, return or an error), so the line is never left open; a bar kept
+# in a variable and looped over is closed by the loop only when it ends, so call bar.close() after a break.
+# An empty list literal has no type to take T from: `xs: list[int] = []` first, then progress_bar(xs, 'label').
 
 !tomato_tty_open(path: str) -> int
 !tomato_tty_close(fd: int) -> int
@@ -38,6 +41,7 @@ export class progress_bar[T]:
     private live: bool = False     # one redrawn line (standard error, or the terminal) instead of plain lines
     private last_line: str = ''    # the last plain line written
     private last_pct: int = -1
+    private ended: bool = False    # close() has run (and nothing was drawn since): a second close() does nothing
 
     @init
     def make(self, items: Iterable[T] & Sized, label: str = '', width: int = 30):
@@ -95,9 +99,13 @@ export class progress_bar[T]:
 
     def update(self, n: int = 1):
         self.count += n
+        self.ended = False
         self.show('')
 
     def close(self):
+        if self.ended:
+            return
+        self.ended = True
         self.show('\n')
         if self.tty >= 0:
             _r = !tomato_tty_close(self.tty)
@@ -113,8 +121,10 @@ export class progress_bar[T]:
 # The helpers below take lists of any item type T and return whole lists (the type is worked out from the arguments).
 # Results come in the same order as Python's itertools.
 
-# Every ordering of r items from `items` (all of them when r is -1), by position, so repeated values repeat.
+# Every ordering of r items from `items` (all of them when r is -1; any other negative r is a ValueError, as in the other functions), by position, so repeated values repeat.
 export def permutations[T](items: list[T], r: int = -1) -> list[list[T]]:
+    if r < -1:
+        raise ValueError('permutations needs r of at least 0 (or -1 for all the items)', 'E39')
     size = len(items) if r < 0 else r
     result: list[list[T]] = []
     if size > len(items):
@@ -134,17 +144,19 @@ def _permute_into[T](items: list[T], size: int, prefix: list[T], used: list[bool
 
 # Every r-item selection in input order, with no repeats of a position.
 export def combinations[T](items: list[T], r: int) -> list[list[T]]:
+    if r < 0:
+        raise ValueError('combinations needs r of at least 0', 'E39')
     result: list[list[T]] = []
-    if r < 0 or r > len(items):
+    if r > len(items):
         return result
     _combine_into(items, r, 0, [], False, result)
     return result
 
 # Like combinations, but an item may be picked again.
 export def combinations_with_replacement[T](items: list[T], r: int) -> list[list[T]]:
-    result: list[list[T]] = []
     if r < 0:
-        return result
+        raise ValueError('combinations_with_replacement needs r of at least 0', 'E39')
+    result: list[list[T]] = []
     _combine_into(items, r, 0, [], True, result)
     return result
 
@@ -166,9 +178,9 @@ export def product[T](a: list[T], b: list[T]) -> list[list[T]]:
 
 # Every list of `repeat` items from `items` (the product of items with itself repeat times).
 export def product_repeat[T](items: list[T], repeat: int) -> list[list[T]]:  # allow: shadow
-    result: list[list[T]] = []
     if repeat < 0:
-        return result
+        raise ValueError('product_repeat needs a repeat of at least 0', 'E39')
+    result: list[list[T]] = []
     result.append([])
     for step in range(repeat):
         grown: list[list[T]] = []
@@ -201,4 +213,6 @@ export def batched[T](items: list[T], n: int) -> list[list[T]]:
     return [items[i:i + n] for i in range(0, len(items), n)]
 
 export def repeat[T](item: T, times: int) -> list[T]:
+    if times < 0:
+        raise ValueError('repeat needs a count of at least 0', 'E39')
     return [item] * times

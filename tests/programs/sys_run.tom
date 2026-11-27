@@ -141,6 +141,12 @@ def sections_errors(work: str):
             sys.run(args)
         catch FileNotFoundError as e:
             print('missing', e.id, e.message)
+    os.write_text(work + '/script.sh', '#!/nonexistent-dir-xyz/interp -x\necho hi\n')
+    sys.run(['chmod', '+x', work + '/script.sh'])
+    try:
+        sys.run(['./script.sh'], cwd=work)
+    catch FileNotFoundError as e:
+        print('missing interpreter', e.id, e.message)
     os.write_text(work + '/plain.txt', 'not a program')
     try:
         sys.run([work + '/plain.txt'])

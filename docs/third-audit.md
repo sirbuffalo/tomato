@@ -73,6 +73,8 @@ changed) and the `site/docs` copies were regenerated, not edited.
 
 ## Open (recorded in `TODO.md`)
 
+The rows marked fixed were done afterwards (D107a: the manifest and seed commands, `itertools`, `progress_bar` and `sys.run`; `progress_bar([])` stays E184 for the literal `[]`, whose type nothing gives, and the comment now says so).
+
 | Id | Kind | What | TODO item |
 | --- | --- | --- | --- |
 | S2 | bug | A subclass's `@str` under another method name is ignored when the static type is the parent (`catch Error as e: print(e)`) | Make `@str` dispatch by the object's class |
@@ -82,17 +84,17 @@ changed) and the `site/docs` copies were regenerated, not edited.
 | T8 | rough | A failing test that printed 200,000 lines shows all of them | same |
 | T9 | rough | A file whose tests were all skipped counts as passed | same |
 | T11, T12 | rough | An unknown entry does not list the entries; `@test.x` before `export def` gives a bare "expected a function" | same |
-| M2 | rough | Manifest key errors name the file but not the line | Polish the manifest and seed commands |
-| M3 | rough | A bad user `[build] mode` is reported only when nothing overrides it | same |
-| M4 | rough | An option with no value prints the 26-line help (the CLI contract pins it, so the fix changes golden files) | same |
-| M5 | rough | `tomato test` in `src/` does not find the project's `tests/` | same |
-| M6 | rough | `[seed-store] vendor = "."`, `"src"` or `""` accepted; a file gives a raw E509 trace | same |
-| M7, M8 | rough | A symbol added to a locked path seed is not asked about by a build; `src/X.tom` shadows a seed's `X` silently | same |
+| M2 | rough (fixed) | Manifest key errors name the file but not the line | fixed (D107a) |
+| M3 | rough (fixed) | A bad user `[build] mode` is reported only when nothing overrides it | fixed (D107a) |
+| M4 | rough (fixed) | An option with no value prints the 26-line help (the CLI contract pins it, so the fix changes golden files) | fixed (D107a) |
+| M5 | rough (fixed) | `tomato test` in `src/` does not find the project's `tests/` | fixed (D107a) |
+| M6 | rough (fixed) | `[seed-store] vendor = "."`, `"src"` or `""` accepted; a file gives a raw E509 trace | fixed (D107a) |
+| M7, M8 | rough (fixed) | A symbol added to a locked path seed is not asked about by a build; `src/X.tom` shadows a seed's `X` silently | fixed (D107a) |
 | M9 | rough | `--locked` on a changed path seed says the manifest does not match | (already in `TODO.md` from the CLI contract task) |
-| M10, M13, M14 | rough | `tomato init '../x'` accepted; `seed check` passes `TODO:` placeholders; a damaged store copy is not refetched | Polish the manifest and seed commands |
+| M10, M13, M14 | rough (fixed) | `tomato init '../x'` accepted; `seed check` passes `TODO:` placeholders; a damaged store copy is not refetched | fixed (D107a) |
 | O2 | rough | repl: a redeclaration after an assignment gave a wrong E292. Main's D104a (merged during the audit) removes the error, but the replay now runs the old `x = 3` after the new declaration: `x: int \| None = None`, `x = 3`, `x: int \| None = 7`, `print(x)` prints 3 | not in `TODO.md` (offered as a follow-up, not picked) |
 | O3 to O5, D9 | rough | No hint that fields are not narrowed; `[1, None]` has no hint; E458/E313 point at the `def`; E340 for a function that is not `export`ed | Smooth the optional and union compile errors |
-| S3 to S5 | rough | `itertools` accepts negative `r`; `break` out of a terminal `progress_bar` leaves the line open; `progress_bar([])` is E184; a missing `#!` interpreter reads as a missing script | Tidy `itertools` and `progress_bar` edges |
+| S3 to S5 | rough (fixed) | `itertools` accepts negative `r`; `break` out of a terminal `progress_bar` leaves the line open; `progress_bar([])` is E184; a missing `#!` interpreter reads as a missing script | fixed (D107a) |
 
 Repros for the table, in brief (the TODO items have the rest):
 

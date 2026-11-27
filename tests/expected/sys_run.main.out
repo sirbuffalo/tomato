@@ -39,6 +39,7 @@ cwd given
 missing E505 could not run 'no-such-program-xyz': No such file or directory
 missing E505 could not run './no-such-file-xyz': No such file or directory
 missing E505 could not run '/nonexistent-dir-xyz/prog': No such file or directory
+missing interpreter E505 could not run './script.sh': its interpreter '/nonexistent-dir-xyz/interp' was not found
 not executable E507
 a directory E507
 cwd E505 could not change to the directory '/nonexistent-dir-xyz' to run 'ls': No such file or directory

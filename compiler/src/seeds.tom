@@ -15,7 +15,7 @@ from seedstore import store_dir, make_scratch, remove_tree, fetch_tree, resolve_
 from hashlib import sha256_hex
 from utf8 import encode
 from os import listdir, stat, read_bytes, write_bytes, read_text, write_text, getcwd, makedirs, rename
-from ospath import isfile, isdir, normpath, relpath, dirname
+from ospath import exists, isfile, isdir, normpath, relpath, dirname
 from sys import run, flush, write_stdout
 
 # a seed as the lock holds it
@@ -223,7 +223,7 @@ def git_source_problem(m: Manifest, r: SeedReq):
         fail(598, m.path, f'the path "{r.subdir}" of {label} cannot be used: {why} (it is a folder of the repository, written with / and no leading or trailing slash)')
 
 def changed_copy(m: Manifest, s: Locked, folder: str, actual: str):
-    fix = 'run `tomato seed vendor` to copy it again' if folder == vendor_folder(m, s.name) else 'remove the folder and run `tomato seed install` to fetch it again'
+    fix = 'run `tomato seed vendor` to copy it again' if folder == vendor_folder(m, s.name) else 'run `tomato seed install` to fetch it again, which replaces the damaged copy'
     fail(601, m.path, f'the copy of {s.name} in {folder} has the content hash {actual}, but tomato.lock says {s.hash}: it was changed after it was put there ({fix})')
 
 def fetch_git_seed(m: Manifest, r: SeedReq, have: str, expect: str) -> Locked:
@@ -236,6 +236,8 @@ def fetch_git_seed(m: Manifest, r: SeedReq, have: str, expect: str) -> Locked:
         if expect != '' and s.hash != expect:
             fail(601, m.path, f'the seed {s.name} fetched from {r.url} at {r.rev[:12]} has the content hash {s.hash}, but tomato.lock says {expect}: the repository does not hold what was locked (nothing was stored)')
         place = store_dir(s.hash)
+        if isdir(place) and seed_hash(place) != s.hash:
+            remove_tree(place)                  # a damaged copy (changed after it was stored) is replaced by the one just fetched
         if not isdir(place):
             makedirs(dirname(place), True)
             try:
@@ -281,7 +283,9 @@ def locked_git_seed(m: Manifest, r: SeedReq, have: str, lists: list[list[Locked]
                 if s.hash != found.hash:
                     if folder == vendor_folder(m, found.name):
                         continue            # a vendor copy that was edited is not used (the store, or git, has the seed): `seed vendor` writes it again
-                    changed_copy(m, found, folder, s.hash)
+                    if opts.offline:
+                        changed_copy(m, found, folder, s.hash)
+                    continue                # a damaged copy in the store is fetched again (and replaced) below, as a missing one is
                 s.source = 'git'
                 s.git = r.url
                 s.commit = r.rev
@@ -625,6 +629,23 @@ export def module_map(m: Manifest, tests: bool) -> list[str]:
             actual = seed_hash(folder)
             if actual != found.hash:
                 changed_copy(m, found, folder, actual)
+        if found.source == 'path' and vendor_folder(m, found.name) == '':
+            # a path seed is a working folder: a `!name(...)` symbol added after it was locked is asked about here, as `seed install` asks
+            # (a module that cannot be read is left to the compile, which says what is wrong with it)
+            now = Locked()
+            now.name = found.name
+            now.version = found.version
+            now.modules = found.modules
+            readable = True
+            try:
+                find_symbols(now, folder)
+            catch ConfigError as e:
+                readable = False
+            fresh = [x for x in now.symbols if x not in found.symbols]
+            if readable and len(fresh) > 0:
+                check = Opts()
+                check.locked = True
+                consent(m, now, fresh, check)
         for mod in found.modules:
             if mod in owner:
                 fail(577, m.path, f"the seeds {owner[mod]} and {found.name} both provide the module '{mod}': one program holds one copy of a module")
@@ -922,6 +943,8 @@ export def vendor(manifest_path: str, have: str, opts: Opts) -> list[str]:
     root = vendor_root(m)
     if root == '':
         root = m.dir + 'vendor'
+    if exists(root) and not isdir(root):
+        fail(604, m.path, f'the vendor folder {root} is a file, not a folder: move it away or set [seed-store] vendor to another folder')
     opts.locked = True
     got = relock(manifest_path, have, opts, [], {}, [])
     said: list[str] = []
@@ -1021,7 +1044,7 @@ export def verify(manifest_path: str, have: str) -> list[str]:
                 if kind == 'vendor':
                     fix = '; run: tomato seed vendor'
                 elif kind == 'store':
-                    fix = '; remove the folder and run: tomato seed install'
+                    fix = '; run: tomato seed install (it fetches the seed again and replaces the damaged copy)'
                 else:
                     fix = '; the folder was edited after it was locked: run: tomato seed install'
                 print(f'CHANGED  {label}: the {kind} copy {folder} {why}{fix}')
@@ -1074,6 +1097,12 @@ export def check_seed(manifest_path: str, have: str) -> list[str]:
         said.append('note: seed.description is not set')
     if m.license == '':
         said.append('note: seed.license is not set')
+    if m.description.startswith('TODO:'):
+        said.append('warning: seed.description is still the placeholder `tomato init --seed` wrote: say what the seed is for')
+    if m.license.startswith('TODO:'):
+        said.append('warning: seed.license is still the placeholder `tomato init --seed` wrote: name a license such as MIT')
+    if m.name.split('/')[0] == 'yourdomain.example':
+        said.append('warning: the owner yourdomain.example is the placeholder `tomato init --seed` wrote: use a domain you own')
     markers = folder_markers(folder)
     for b in m.builds:
         if b.table != '' and not names_an_entry(b.table, markers):

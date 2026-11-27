@@ -22,7 +22,7 @@ try "run: a program killed by SIGTERM gives 143 (what a shell says about the dea
 printf '@main\ndef main():\n    raise ValueError("x")\n' > raises.tom
 try "run: an uncaught error gives 1" 1 "" "~error: ValueError: x" run raises.tom
 try "run: an error of tomato itself (no such file) gives 1" 1 "" "error: cannot read none.tom" run none.tom
-try "run: a usage error gives 2" 2 "" @help.txt run --mode
+try "run: a usage error gives 2" 2 "" "error: --mode needs a value" run --mode
 # a built program has the same statuses
 "$TOMATO" build exit7.tom -o exit7_bin > /dev/null 2>&1
 "$TOMATO" build term.tom -o term_bin > /dev/null 2>&1

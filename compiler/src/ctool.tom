@@ -89,6 +89,7 @@ def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debu
         limits = load_limits(project, user)
         exp_bits = limits.exp_bits
         format_digits = limits.format_digits
+        user_mode = user_build_mode(user)          # (read even when --mode or the project's [build] decides: a mistake in the file is reported either way)
         if project != '':
             m = read_manifest(project)
             check_tomato(m, compiler_version())
@@ -99,7 +100,7 @@ def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debu
             if mode == '':
                 mode = built.mode
             if mode == '':
-                mode = user_build_mode(user)
+                mode = user_mode
             if mode == '':
                 mode = 'debug'
             notes.append(f';% mode {mode}')
@@ -108,7 +109,7 @@ def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debu
             if built.output != '':
                 notes.append(f';% output {built.output}')
         elif mode == '':
-            mode = user_build_mode(user)
+            mode = user_mode
             if mode == '':
                 mode = 'debug'
             else:

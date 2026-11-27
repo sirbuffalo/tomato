@@ -49,9 +49,9 @@ check "[build] of a seed is ignored by run" "debug" "$(mode_of "$TOMATO" run sub
 check "[build] of a seed is ignored by build (the default place is builds/NAME)" "wrote builds/prog" "$(cd "$W/p" && "$TOMATO" build sub/prog.tom 2>&1)"
 check "config says the [build] of a seed is not read" "build: ignored, the [build] of a seed is not read" "$("$TOMATO" config sub/prog.tom | tail -n 1)"
 printf '%s[build]\nmode = "fast"\n' "$head" > tomato.toml
-try "a bad [build] mode is an error with an id, naming the file" 1 "" "error[E565]: $W/p/tomato.toml: build.mode must be \"debug\" or \"release\", not \"fast\"" run sub/prog.tom
+try "a bad [build] mode is an error with an id, naming the file" 1 "" "error[E565]: $W/p/tomato.toml:6: build.mode must be \"debug\" or \"release\", not \"fast\"" run sub/prog.tom
 printf '%s[build]\ntarget = "x"\n' "$head" > tomato.toml
-try "[build] target is reserved" 1 "" "~error[E566]: $W/p/tomato.toml: build.target is reserved" run sub/prog.tom
+try "[build] target is reserved" 1 "" "~error[E566]: $W/p/tomato.toml:6: build.target is reserved" run sub/prog.tom
 
 # the user's ~/.tomato/config.toml ($TOMATO_HOME/config.toml) may hold [build] mode: the default of every build on the machine, under the
 # project's [build] and [build.ENTRY] and the flags (D99a); it may hold nothing else of [build]
@@ -67,7 +67,14 @@ printf '%s' "$head" > tomato.toml
 printf '[build]\nmode = "debug"\n' > "$TOMATO_HOME/config.toml"
 check "--mode release wins over the user's debug" "release" "$(mode_of "$TOMATO" run --mode release sub/prog.tom crash)"
 printf '[build]\noutput = "x"\n' > "$TOMATO_HOME/config.toml"
-try "the user's file may not set [build] output (it belongs to a project)" 1 "" "~error[E558]: $TOMATO_HOME/config.toml: unknown setting build.output (the user file may set only build.mode: output and [build.ENTRY] belong in a project's tomato.toml)" run sub/prog.tom
+try "the user's file may not set [build] output (it belongs to a project)" 1 "" "~error[E558]: $TOMATO_HOME/config.toml:2: unknown setting build.output (the user file may set only build.mode: output and [build.ENTRY] belong in a project's tomato.toml)" run sub/prog.tom
 printf '[build]\nmode = "fast"\n' > "$TOMATO_HOME/config.toml"
-try "a bad mode in the user's file is E565" 1 "" "~error[E565]: $TOMATO_HOME/config.toml: build.mode must be \"debug\" or \"release\", not \"fast\"" run sub/prog.tom
+try "a bad mode in the user's file is E565" 1 "" "~error[E565]: $TOMATO_HOME/config.toml:2: build.mode must be \"debug\" or \"release\", not \"fast\"" run sub/prog.tom
+rm -f "$TOMATO_HOME/config.toml"
+
+# a mistake in the user's file is reported even when --mode or the project's [build] decides the mode (not only when nothing overrides it)
+printf '[build]\nmode = "fast"\n' > "$TOMATO_HOME/config.toml"
+try "a bad mode in the user's file is E565 even with --mode" 1 "" "~error[E565]: $TOMATO_HOME/config.toml:2: build.mode must be \"debug\" or \"release\", not \"fast\"" run --mode release sub/prog.tom
+printf '%s[build]\nmode = "release"\n' "$head" > tomato.toml
+try "a bad mode in the user's file is E565 even when the project's [build] sets one" 1 "" "~error[E565]: $TOMATO_HOME/config.toml:2: build.mode must be \"debug\" or \"release\", not \"fast\"" run sub/prog.tom
 rm -f "$TOMATO_HOME/config.toml"

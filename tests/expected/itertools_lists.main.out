@@ -14,3 +14,9 @@
 3 12 23 34 
 3 12 34 5 
 7,7,7,
+E39 permutations needs r of at least 0 (or -1 for all the items)
+E39 combinations needs r of at least 0
+E39 combinations_with_replacement needs r of at least 0
+E39 product_repeat needs a repeat of at least 0
+E39 repeat needs a count of at least 0
+
