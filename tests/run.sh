@@ -1098,6 +1098,49 @@ tomato = "0.51"
   check "build tables: a settings-only file applies [build]" "release" "$(mode_of noconf $t run "$P/sub/prog.tom" crash)"
   check "build tables: tomato config shows the top [build] table" "build.mode = release  ($here/tomato.toml)" "$(noconf $t config "$P/sub/prog.tom" | tail -n 1)"
   check "build tables: tomato compile prints no settings comment" "0" "$(noconf $t compile "$P/sub/prog.tom" | grep -c '^;%')"
+  # build and test honor the mode (D92c item 3), the flags win, the dotted-prefix rule holds, a seed's folder ignores [build]
+  printf '@main\ndef main():\n    print(1)\n\n@oth.x\ndef x():\n    raise ValueError("boom")\n\n@grp.one\ndef one():\n    raise ValueError("boom")\n\n@grp.two\ndef two():\n    raise ValueError("boom")\n\n@test.t\ndef t():\n    assert 1 + 1 == 2\n' > "$P/sub/dot.tom"
+  printf '%s[build]\nmode = "release"\n' "$head" > "$P/tomato.toml"
+  noconf $t build "$P/sub/dot.tom" -o "$work/b_rel" > /dev/null 2>&1
+  check "build tables: build uses [build] mode (the built program prints a short code)" "release" "$(mode_of "$work/b_rel" grp.one)"
+  noconf $t build "$P/sub/dot.tom" -o "$work/b_dbg" --mode debug > /dev/null 2>&1
+  check "build tables: build --mode debug wins over [build] mode release" "debug" "$(mode_of "$work/b_dbg" grp.one)"
+  printf '%s[build]\nmode = "release"\n[build.grp]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
+  check "build tables: [build.grp] applies to grp.one (the dotted-prefix rule)" "debug" "$(mode_of noconf $t run "$P/sub/dot.tom" grp.one)"
+  printf '%s[build]\nmode = "debug"\n[build.grp.one]\nmode = "release"\n' "$head" > "$P/tomato.toml"
+  check "build tables: [build.grp.one] applies to grp.one and not to grp (a table below the entry is not used)" "release debug" "$(mode_of noconf $t run "$P/sub/dot.tom" grp.one) $(mode_of noconf $t run "$P/sub/dot.tom" grp)"
+  check "build tables: a table for the prefix text (grp.o) does not apply" "debug" "$(printf '%s[build]\nmode = "debug"\n[build.grp.o]\nmode = "release"\n' "$head" > "$P/tomato.toml"; mode_of noconf $t run "$P/sub/dot.tom" grp.one)"
+  printf '%s[build]\nmode = "debug"\n[build.grp.one]\nmode = "release"\n' "$head" > "$P/tomato.toml"
+  noconf $t build "$P/sub/dot.tom" --entry grp.one -o "$work/b_ent" > /dev/null 2>&1
+  check "build tables: build --entry reads [build.ENTRY]" "release" "$(mode_of "$work/b_ent")"
+  printf '%s[build]\nmode = "release"\n[build.test]\nmode = "debug"\n[build.test.t]\noutput = "should/not/matter"\n' "$head" > "$P/tomato.toml"
+  r="$(noconf $t test "$P/sub/dot.tom" 2>&1)"; case "$r" in *"(1 passed)"*": ok") ok "build tables: tomato test runs with [build.test] and ignores output";; *) bad "build tables: tomato test runs with [build.test] and ignores output" "$r";; esac
+  [ ! -e "$P/should" ] && ok "build tables: tomato test makes no output folder" || bad "build tables: tomato test makes no output folder"
+  # a seed's own folder: its [build] mode and output are ignored by run, build and test
+  printf '[seed]\nname = "acme.example/demo"\nversion = "1.0.0"\ntomato = "0.51"\n[build]\nmode = "release"\noutput = "seedout/app"\n[build.test]\nmode = "release"\n' > "$P/tomato.toml"
+  r="$(cd "$P" && noconf $t build sub/dot.tom -o sb 2>&1)"; check "build tables: build in a seed's folder ignores its [build] output" "wrote sb" "$r"
+  check "build tables: ... and its mode" "debug" "$(mode_of "$P/sb" grp.one)"
+  [ ! -e "$P/seedout" ] && ok "build tables: no seed output folder" || bad "build tables: no seed output folder"
+  check "build tables: tomato test in a seed's folder ignores [build.test]" "debug" "$(noconf $t test "$P/sub/dot.tom" >/dev/null 2>&1; mode_of noconf $t run "$P/sub/dot.tom" grp.one)"
+  # the user's config.toml: [build] mode is the default under the project's [build] and the flags; nothing else of [build] is allowed there
+  printf '[build]\nmode = "release"\n' > "$work/uh/config.toml"
+  rm -f "$P/tomato.toml"
+  check "build tables: the user's [build] mode applies with no project file" "release" "$(mode_of noconf $t run "$P/sub/dot.tom" grp.one)"
+  check "build tables: --mode wins over the user's [build] mode" "debug" "$(mode_of noconf $t run --mode debug "$P/sub/dot.tom" grp.one)"
+  printf '%s' "$head" > "$P/tomato.toml"
+  check "build tables: a project without [build] still gets the user's mode" "release" "$(mode_of noconf $t run "$P/sub/dot.tom" grp.one)"
+  printf '%s[build]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
+  check "build tables: the project's [build] mode wins over the user's" "debug" "$(mode_of noconf $t run "$P/sub/dot.tom" grp.one)"
+  printf '%s[build.grp]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
+  check "build tables: the user's mode is the base of the project's entry tables" "debug release" "$(mode_of noconf $t run "$P/sub/dot.tom" grp.one) $(mode_of noconf $t run "$P/sub/dot.tom" oth.x)"
+  check "build tables: tomato config shows the user's mode" "1" "$(noconf $t config "$P/sub/dot.tom" | grep -c "^build.mode = release  ($work/uh/config.toml")"
+  noconf $t build "$P/sub/dot.tom" -o "$work/b_user" > /dev/null 2>&1
+  check "build tables: build uses the user's mode too" "release" "$(mode_of "$work/b_user" grp.one)"
+  printf '[build]\noutput = "x"\n' > "$work/uh/config.toml"
+  case "$(noconf $t run "$P/sub/dot.tom" 2>&1)" in "error[E558]: $work/uh/config.toml: unknown setting build.output"*) ok "build tables: output is refused in the user's file";; *) bad "build tables: output is refused in the user's file" "$(noconf $t run "$P/sub/dot.tom" 2>&1)";; esac
+  printf '[build]\nmode = "fast"\n' > "$work/uh/config.toml"
+  check "build tables: a bad mode in the user's file is E565" "error[E565]: $work/uh/config.toml: build.mode must be \"debug\" or \"release\", not \"fast\"" "$(noconf $t run "$P/sub/dot.tom" 2>&1)"
+  rm -f "$work/uh/config.toml"
   rm -f "$P/tomato.toml"
   check "build tables: with no manifest --mode alone decides" "release debug" "$(mode_of noconf $t run --mode release "$P/sub/prog.tom" crash) $(mode_of noconf $t run "$P/sub/prog.tom" crash)"
   check "build tables: a bad --mode is still refused first" "error[E282]: the mode must be debug or release, not 'fast'" "$(noconf $t run "$P/sub/prog.tom" --mode fast 2>&1)"
@@ -1282,6 +1325,12 @@ modules: other
 note: seed.description is not set
 note: seed.license is not set
 $(indep_hash "$W/other")" "$(cd "$W/other" && noconf $t seed check 2>&1)"
+  # a [build.ENTRY] that names no entry is a warning (D92c): a marker in src/ or tests/ equal to it or below it counts
+  cp -r "$W/other" "$W/warn"; mkdir -p "$W/warn/tests"
+  printf '\n@greet.loud\ndef loud():\n    pass\n' >> "$W/warn/src/other.tom"; printf '@test.a\ndef a():\n    pass\n' > "$W/warn/tests/t.tom"
+  printf '[seed]\nname = "acme.example/other"\nversion = "1.4.2"\ntomato = "0.51"\n[build.greet]\nmode = "debug"\n[build.test.a]\nmode = "debug"\n[build.mian]\nmode = "debug"\n[build.greet.quiet]\nmode = "debug"\n' > "$W/warn/tomato.toml"
+  check "seeds: check warns about a [build.ENTRY] that names no entry" "warning: [build.greet.quiet] names no entry: no function in src/ or tests/ is marked @greet.quiet (or @greet.quiet.something), so the table is never used (a typo?)
+warning: [build.mian] names no entry: no function in src/ or tests/ is marked @mian (or @mian.something), so the table is never used (a typo?)" "$(cd "$W/warn" && noconf $t seed check 2>&1 | grep '^warning:')"
   printf '[seed]\nname = "local/x"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/bare/tomato.toml"; mkdir -p "$W/bare/src"; printf 'export def f() -> int:\n    return 1\n' > "$W/bare/src/x.tom"
   case "$(cd "$W/bare" && noconf $t seed check 2>&1 | sed "s#$here#HERE#")" in 'error[E580]: HERE/bare/tomato.toml: the owner "local" is not one a registry accepts: '*) ok "seeds: check wants a domain or key owner";; *) bad "seeds: check wants a domain or key owner" "$(cd "$W/bare" && noconf $t seed check 2>&1)";; esac
   printf '[project]\nname = "x"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/bare/tomato.toml"

@@ -79,7 +79,7 @@ checks it the same way; it has no folders, so no seeds.
 A folder has `[project]` **or** `[seed]`, never both (E556). A file with neither (the settings-only file of D77g: `[limits]`,
 `[build]`) is allowed and read as a project's; `[seeds]` needs one of the two (E567). Any other table or key outside a table is
 E555; any other key inside one is E558. `~/.tomato/config.toml` is **not** checked for other tables (its tables are not all
-defined yet): only the project's file is strict.
+defined yet): only the project's file is strict, except that a `[build]` table in the user's file is checked (see `[build]` below).
 
 ```toml
 [project]
@@ -128,6 +128,16 @@ paths) is E564. As for `[seeds]`, a `[seed]` manifest cannot use `git` or `path`
 
 - `mode` is the default of `--mode`; `output` is the default of `tomato build -o`, a path relative to the manifest's folder
   (its folder is made when missing). A flag on the command line always wins. `run`, `test` and `compile` ignore `output`.
+- **How the commands use it (D92c, checked by the suite).** `tomato run`, `tomato build`, `tomato compile` and `tomato test` all read the
+  tables for the entry they compile (a plain `run` or `build` is `main`, `build --entry X` is `X`, `tomato test` builds each file with
+  `--entry test` or the entry it was given). `mode` is used by all four; `output` only by `build` and only without `-o` (`run`, `test`
+  and `compile` ignore it). The order of the settings is the flag (`--mode`, `-o`), then the most specific `[build.ENTRY]` that is the
+  entry or a prefix of it, then `[build]`, then the user's `[build] mode` (below), then `debug`. A `tomato build` that holds every
+  entry settles its mode and output as for `main`.
+- **The user's `~/.tomato/config.toml`** may hold `[build] mode = "debug" | "release"`, the default of every build on the machine,
+  under the project's `[build]` and `[build.ENTRY]` and the flags (D99a). It may hold nothing else of `[build]`: `output` and
+  `[build.ENTRY]` belong to a project (the path would have no folder to be relative to), and any other key is E558, a bad mode E565.
+  It applies with no project and with a seed's folder (a seed's own `[build]` is ignored, not the user's default). `tomato config` shows it.
 - `[build]` is read only in a project (and in a settings-only file). The `[build]` of a `[seed]` is checked and **ignored**
   (`tomato config` says so), and the `[build]` of a seed that a project uses is never read at all: a library cannot change how
   the program that uses it is built.
@@ -145,6 +155,9 @@ tomato seed check                check the seed of this folder (its manifest, it
 tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
 ```
 
+- `tomato seed check` also prints a `warning:` line for each `[build.ENTRY]` table that names no entry: no function in the seed's `src/`
+  or `tests/` is marked `@ENTRY` or `@ENTRY.something` (a typo such as `[build.mian]` is a valid table, D92c). It is a warning, not an
+  error, and the table is ignored anyway (a seed's `[build]` is never used).
 - A seed's folder holds `tomato.toml` with `[seed]` and its modules as `.tom` files directly in `src/`: all of them, or the
   ones listed in `seed.modules`. Each module is `stem.tom` or `stem_*.tom` where the stem is the seed's name with `-` as `_`
   (`acme.example/json5` provides `json5` and `json5_pretty`), and no module has the name of a standard module (E575, E579).
@@ -207,6 +220,5 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 ## Not built yet
 
 The registry, `index`, signatures, `tomato seed add/remove/update/outdated/tree/vendor/verify/registry`, git and the seed store
-(`~/.tomato/seeds`), seeds that use seeds, MVS over a graph, `--offline`, a warning for a `[build.ENTRY]`
-that matches no entry, the list of the `!name(...)` foreign symbols a seed declares that `tomato seed add` will show and the lock will record (D94b: such declarations are allowed, nothing rejects them), visibility of which seed may import which
+(`~/.tomato/seeds`), seeds that use seeds, MVS over a graph, `--offline`, the list of the `!name(...)` foreign symbols a seed declares that `tomato seed add` will show and the lock will record (D94b: such declarations are allowed, nothing rejects them), visibility of which seed may import which
 (`docs/package-registry-design.md` sections 5 to 8, 12 and 15 stages 3 to 7).

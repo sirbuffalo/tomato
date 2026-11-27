@@ -6,7 +6,7 @@
 # `git` seeds and the registry's seeds (a plain version) are reported as "not yet supported" and nothing is written for them.
 from toml import Toml, table, array, string, integer, boolean, dumps
 from config import ConfigError, read_toml
-from manifest import Manifest, SeedReq, read_manifest, check_tomato, seeds_for, same_line, compare_versions, module_stem
+from manifest import Manifest, SeedReq, entry_markers_of, read_manifest, check_tomato, seeds_for, same_line, compare_versions, module_stem
 from compiler import std_modules
 from hashlib import sha256_hex
 from utf8 import encode
@@ -287,6 +287,24 @@ def publishable_owner(name: str) -> bool:
         return True
     return owner.startswith('k-') and len(owner) == 28
 
+# the entry markers (`x.y` of `@x.y`) written in the .tom files of a seed's src/ and tests/ folders
+def folder_markers(folder: str) -> list[str]:
+    out: list[str] = []
+    for sub in ['src', 'tests']:
+        if not isdir(folder + '/' + sub):
+            continue
+        for f in sorted(listdir(folder + '/' + sub)):
+            if f.endswith('.tom') and isfile(f'{folder}/{sub}/{f}'):
+                out += entry_markers_of(read_text(f'{folder}/{sub}/{f}'))
+    return out
+
+# does a [build.TABLE] name an entry: a marker equal to it, or below it (the table applies to `x` when it is `x` or a prefix of it)
+def names_an_entry(table: str, markers: list[str]) -> bool:
+    for mk in markers:
+        if mk == table or mk.startswith(table + '.'):
+            return True
+    return False
+
 export def check_seed(manifest_path: str, have: str) -> list[str]:
     m = read_manifest(manifest_path)
     if m.kind != 'seed':
@@ -303,5 +321,9 @@ export def check_seed(manifest_path: str, have: str) -> list[str]:
         said.append('note: seed.description is not set')
     if m.license == '':
         said.append('note: seed.license is not set')
+    markers = folder_markers(folder)
+    for b in m.builds:
+        if b.table != '' and not names_an_entry(b.table, markers):
+            said.append(f'warning: [build.{b.table}] names no entry: no function in src/ or tests/ is marked @{b.table} (or @{b.table}.something), so the table is never used (a typo?)')
     said.append(seed_hash(folder))
     return said

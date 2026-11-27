@@ -4,7 +4,7 @@
 # written to files in the current folder (read_manifest takes a path).
 from os import write_text
 from config import ConfigError
-from manifest import Manifest, read_manifest, compare_versions, version_problem, same_line, name_problem, module_stem, table_applies, build_for, seeds_for, check_tomato, describe_manifest
+from manifest import Manifest, read_manifest, compare_versions, version_problem, same_line, name_problem, module_stem, table_applies, build_for, seeds_for, check_tomato, describe_manifest, user_build_mode, entry_markers_of
 from testing import assert_equal, assert_true, assert_false
 
 def load(text: str) -> Manifest:
@@ -300,3 +300,25 @@ def a_folder_in_the_path_is_kept():
     write_text('mf.toml', '[project]\nname = "p"\nversion = "1.0.0"\ntomato = "1.0"\n')
     assert_equal(read_manifest('./mf.toml').dir, './')
     assert_equal(read_manifest('./mf.toml').path, './mf.toml')
+
+def user_problem(text: str) -> str:
+    write_text('uc.toml', text)
+    try:
+        return 'ok ' + user_build_mode('uc.toml')
+    catch ConfigError as e:
+        return f'E{e.code} {e.message}'
+
+@test.the_user_file_may_hold_a_default_build_mode
+def the_user_file_may_hold_a_default_build_mode():
+    assert_equal(user_build_mode(''), '')
+    assert_equal(user_problem('[limits]\nexp_bits = 4096\n'), 'ok ')
+    assert_equal(user_problem('[build]\nmode = "release"\n'), 'ok release')
+    assert_equal(user_problem('[build]\nmode = "fast"\n'), 'E565 uc.toml: build.mode must be "debug" or "release", not "fast"')
+    assert_true(user_problem('[build]\noutput = "x"\n').startswith('E558 uc.toml: unknown setting build.output'))
+    assert_true(user_problem('[build.test]\nmode = "debug"\n').startswith('E558 uc.toml: unknown setting build.test'))
+    assert_true(user_problem('[build]\ntarget = "wasm"\n').startswith('E558 '))
+
+@test.entry_markers_are_read_from_source
+def entry_markers_are_read_from_source():
+    got = entry_markers_of('@main\ndef main():\n    pass\n@test.a_b\n  @x\n@greet.loud(1)\n@bad.\n@\n')
+    assert_equal(','.join(got), 'main,test.a_b,greet.loud')

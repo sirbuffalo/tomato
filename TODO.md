@@ -16,12 +16,6 @@
   Building the compiler itself in debug mode (`tomato build ctool.tom --entry compile`) prints `constant expression type mismatch` from clang for `@.str.N = private constant ... c"call void @tomato_inl_retain(ptr \00"` and falls back to the link without the inline fast paths (the program is correct, only slower): the `awk` rewrite of `@tomato_X(` also changes the text of a string constant (a line starting with `@.str`). Skip constant lines, with a test that compiles a program holding such a string.
 - Flow narrowing of optionals by `is None` / `is not None`
   Applies to all optionals, not just `int | None`, `float | None` and `bool | None`: `s + "!"` and `abs(x)` after a check should need no runtime unwrap. Today `s + "literal"` on a `str | None` is also E190 (an existing quirk).
-- Confirm whether the user's `config.toml` may hold `[build]` defaults
-  D92c reads `[build]` only in a project's `tomato.toml` (the agent's reading of "only in a project", unconfirmed); section 13 of `docs/package-registry-design.md` says so.
-- Make `tomato seed check` warn about a `[build.ENTRY]` that names no entry
-  Beside the existing item for `[seeds.ENTRY]`: a typo such as `[build.mian]` is a valid table, so `tomato seed check` should warn when no `@mian` marker exists (D92c).
-- Confirm how `tomato run`, `tomato test` and `tomato build` use the build tables
-  D92c (unconfirmed): `run` and `test` read `mode` from `[build.ENTRY]` (the example's `[build.test]` depends on it; D95a does so, `output` only for `build`), the base of `output` (the manifest's folder in the file, where the command runs for a flag), and what `tomato build` does in a seed's folder (D95a: its `[build]` is ignored).
 - Write CLI contract tests for the shell-to-Tomato plan (stage 0)
   Golden files in `tests/cli_contract/` for `tomato help`, `explain`, `config`, the error texts, exit statuses and environment variables, written against main after the project-layout and test-library tasks land. A later rewrite of the `tomato` command in Tomato must pass them unchanged (`docs/shell-to-tomato-plan.md`, sections 6 and 12).
 - Check the shell-to-Tomato plan's open Mac points on a Mac

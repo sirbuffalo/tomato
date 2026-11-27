@@ -108,6 +108,8 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
   a failure or Ctrl-C part way leaves the old install as it was, and a `tomato run` at that moment sees one whole
   install. Ctrl-C no longer leaves temporary folders behind.
 - `tomato config` shows the settings in effect and the files they come from.
+- `~/.tomato/config.toml` may hold `[build] mode = "release"` (or `"debug"`), the default of every build on the machine; a project's
+  `[build]` and the `--mode` flag win (D99a). `tomato seed check` warns about a `[build.ENTRY]` that names no entry (`[build.mian]`).
 - Clearer compile errors for unpacking a value that is not a tuple, a `Cache` key class without `@str`, a union as a
   type argument, and a byte order mark at the start of a file.
 - The repl accepts a function, class or interface that is defined again (it was E120 "defined twice"): the new one replaces the old

@@ -422,6 +422,40 @@ def depth(table: str) -> int:
         return 0
     return len(table.split('.'))
 
+# the user's `config.toml` may hold `[build] mode` (the default of every build, under the project's tomato.toml and the flags); '' when it
+# does not. `output` and `[build.ENTRY]` belong to a project and are E558 there.
+export def user_build_mode(path: str) -> str:
+    if path == '':
+        return ''
+    doc = read_toml(path)
+    if not doc.has('build'):
+        return ''
+    t = doc.lookup('build')
+    need_table(path, t, '[build]')
+    mode = ''
+    for key in t.keys():
+        if key == 'mode':
+            mode = need_string(path, t.lookup('mode'), 'build.mode')
+            if mode != 'debug' and mode != 'release':
+                fail(565, path, f'build.mode must be "debug" or "release", not "{mode}"')
+        else:
+            fail(558, path, f'unknown setting build.{key} (the user file may set only build.mode: output and [build.ENTRY] belong in a project\'s tomato.toml)')
+    return mode
+
+# the entry markers (`x.y` for `@x.y`) that start a line of a source text, in order
+export def entry_markers_of(src: str) -> list[str]:
+    out: list[str] = []
+    for line in src.split('\n'):
+        if not line.startswith('@'):
+            continue
+        j = 1
+        while j < len(line) and (ident_char(line[j], False) or line[j] == '.'):
+            j += 1
+        name = line[1:j]
+        if name != '' and not name.endswith('.'):
+            out.append(name)
+    return out
+
 # the settings of [build] and the tables of [build.ENTRY] that apply to a run of `entry`, the more specific one winning (D92c). Only a
 # project's [build] counts: a seed's is read and ignored. `output` is joined to the manifest's folder.
 export def build_for(m: Manifest, entry: str) -> BuildSettings:

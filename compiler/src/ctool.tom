@@ -2,7 +2,7 @@
 from compiler import compile_module
 from config import ConfigError, load_limits, describe
 from diag import Diagnostic
-from manifest import read_manifest, check_tomato, build_for, describe_manifest
+from manifest import read_manifest, check_tomato, build_for, describe_manifest, user_build_mode
 from seeds import module_map, install, check_seed, seed_hash
 from os import getenv
 from ospath import isdir
@@ -54,6 +54,8 @@ def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debu
             print(describe(project, user))
             for line in extra:
                 print(line)
+            if user_build_mode(user) != '':
+                print(f'build.mode = {user_build_mode(user)}  ({user}, the default under a project\'s [build] and --mode)')
             return
         if entry == '--seed':
             for line in seed_command(path, mode, project):
@@ -72,6 +74,8 @@ def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debu
             if mode == '':
                 mode = built.mode
             if mode == '':
+                mode = user_build_mode(user)
+            if mode == '':
                 mode = 'debug'
             notes.append(f';% mode {mode}')
             if m.kind == 'project':
@@ -79,7 +83,11 @@ def compile(path: str, entry: str = 'main', std: str = 'std/', mode: str = 'debu
             if built.output != '':
                 notes.append(f';% output {built.output}')
         elif mode == '':
-            mode = 'debug'
+            mode = user_build_mode(user)
+            if mode == '':
+                mode = 'debug'
+            else:
+                notes.append(f';% mode {mode}')
     catch ConfigError as e:
         raise Diagnostic(f'error[E{e.code}]: {e.message}')
     f = open(path)

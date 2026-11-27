@@ -421,7 +421,7 @@ Rules:
   most specific table wins, key by key. The tables **below** `x` are not used: `mode` and `output` hold one value per build.
   (So put `output` in the exact entry's table; one in a prefix table gives every entry below it the same path.) `[build]` is read
   only in a project's `tomato.toml`, **never in a seed** (neither a seed that a project uses nor a seed's own manifest;
-  a seed's `[build]` is ignored, so `tomato build` in a published seed's folder uses the flags and the built-in defaults; unconfirmed), the same rule as `[limits]` (D92a item 6). Whether the user's `config.toml` may also hold `[build]` defaults is unconfirmed (D92c item 5).
+  a seed's `[build]` is ignored, so `tomato build` in a published seed's folder uses the flags and the built-in defaults; unconfirmed), the same rule as `[limits]` (D92a item 6). The user's `config.toml` may hold `[build] mode` as the lowest default (D99a, 2026-11-27; easy to change); `output` and `[build.ENTRY]` only in a project.
 - Unknown top-level tables are an error, not ignored, so a typo in `[sedes]` is caught (a typo in a `[build.ENTRY]` name is a valid table). `[limits]` is
   **reserved** for the configuration work (section 13), `[build]` is defined above, and `[seed-store]` holds the project's
   vendor folder (the former `[seeds] vendor`; `[seeds]` is now only the list of seeds).
