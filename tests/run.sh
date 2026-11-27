@@ -596,7 +596,7 @@ t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser string_io assert_ok testing_lib float_any_size float_ownership float_loops float_keys float_nests float_library float_limits; do
+  for name in trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib float_any_size float_ownership float_loops float_keys float_nests float_library float_limits; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -1133,6 +1133,25 @@ spawn_cli t_cli_compile
 spawn_cli t_cli_test 1
 spawn_cli t_cli_test 2
 spawn_cli t_cli_test 3
+t_terminal_logic() { # std/terminal.tom: the pure parts as @test functions (the key decoder at every byte split, widths, SGR lowering, color depth), debug and release
+  cli_setup
+  for mode in debug release; do
+    r="$($t test tests/terminal_logic.tom --mode $mode 2>&1 | tail -1)"
+    case "$r" in *" passed, 0 failed, 0 skipped") ok "terminal: the @test functions pass ($mode mode): $r";; *) bad "terminal: the @test functions pass ($mode mode)" "$($t test tests/terminal_logic.tom --mode $mode 2>&1 | grep -v '^ok ' | head -12)";; esac
+  done
+}
+t_terminal_pty() { # std/terminal.tom on a real terminal (a pty), through expect: raw mode, keys, size and resize, and the restore however the program ends
+  cli_setup
+  if ! command -v expect >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "terminal pty test" "expect is required in CI" || echo "skip: expect is not installed, so the terminal pty test did not run"
+    return
+  fi
+  if $t build tests/terminal_pty.tom -o "$work/terminal_pty" > "$work/e" 2>&1; then
+    check "terminal: raw mode, keys, size, resize and the restore on a pty" "ok" "$(expect tests/terminal_pty.exp "$work/terminal_pty" 2>&1 | tail -1)"
+  else bad "terminal pty test: tests/terminal_pty.tom does not build" "$(head -5 "$work/e")"; fi
+}
+spawn_cli t_terminal_logic
+spawn_cli t_terminal_pty
 
 # ---- rejected programs --------------------------------------------------------------------------------------------------
 t_neg() { # file, message that the compiler must report, and the entry name (default main; `test` for the @test checks)

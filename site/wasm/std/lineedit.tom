@@ -1,0 +1,4 @@
+# The line editor library (stage 2 of docs/repl-editor-design.md): an editor for one line or a block of lines, built on `terminal`, with
+# a text buffer, history, key bindings, drawing, and hooks for highlighting, completeness and indentation. This module is a placeholder
+# for now: it is listed here so that adding the editor later does not need another compiler change (and another rebuild of the
+# browser files). It has no content yet; `import lineedit` works and gives nothing.

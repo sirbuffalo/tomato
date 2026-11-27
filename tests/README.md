@@ -1,7 +1,7 @@
 # The test suite
 
 `tests/run.sh` is the whole suite, in shell; it needs only clang (node or macOS's jsc for the WebAssembly checks, `expect` for the
-repl history check). `tests/run.sh --help` prints the usage.
+repl history and terminal checks, and `perl` for one of the latter). `tests/run.sh --help` prints the usage.
 
 ```
 tests/run.sh                 the full suite: what CI and a release run

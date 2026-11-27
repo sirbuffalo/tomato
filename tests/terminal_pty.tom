@@ -1,0 +1,124 @@
+# The program that tests/terminal_pty.exp drives on a pseudo-terminal: it uses std/terminal.tom on the real /dev/tty, so raw mode,
+# the size, the resize, the read with a timeout and the restore are checked as they work on this system (Linux and macOS differ).
+# The mode (the one input) says what it does:
+#   keys     reads keys and tells each one; some keys ask for more (see the cases); q ends
+#   finally  raw mode, then an error raised inside try/finally with leave()
+#   error    raw mode, then an uncaught error (nothing leaves the mode: the runtime must)
+#   exit     raw mode, then sys.exit(3)
+#   noleave  raw mode, then the program ends normally
+#   fault    raw mode, then a stack overflow
+#   wait     raw mode, then waits for a key for ever (the test kills it with a signal)
+#   twice    enter_raw, leave and close called twice each
+#   poll     raw mode, then polls read_key(0.05) until a key comes (a lone Escape must come out as the Escape key)
+#   borrow   a Terminal made from descriptor 0 does not close it
+#   depth    prints color_depth in the three modes (no raw mode)
+#   notty    open() must fail with TerminalError (run without a controlling terminal)
+import os
+import sys
+import terminal
+from terminal import Key, Style
+
+def say(term: terminal.Terminal, text: str):
+    term.write(text + '\r\n')
+
+def deep(n: int) -> int:
+    return deep(n + 1) + 1
+
+def keys(term: terminal.Terminal):
+    say(term, f'READY {os.getpid()}')
+    say(term, f'TTY {terminal.is_tty(0)} {terminal.is_tty(1)} {terminal.is_tty(2)} {terminal.is_tty(term.fd)} {terminal.is_tty(99)}')
+    while True:
+        k = term.read_key()
+        say(term, f'KEY {k}')
+        if k.kind == 'eof':
+            break
+        if k.kind != 'char' or k.ctrl or k.alt:
+            continue
+        if k.text == 'q':
+            break
+        if k.text == 's':
+            rows, cols = term.size()
+            say(term, f'SIZE {rows} {cols}')
+        if k.text == 'd':
+            say(term, f'DEPTH {terminal.color_depth("auto", term.fd)} {term.colors}')
+        if k.text == 'w':
+            say(term, 'STYLED ' + terminal.styled('red', Style(terminal.rgb(235, 60, 39), -1, True), term.colors) + ' END')
+        if k.text == 't':
+            later = term.read_key(0.3)
+            say(term, f'T {later}')
+        if k.text == 'z':
+            later = term.read_key(0.0)
+            say(term, f'Z {later}')
+        if k.text == 'x':
+            say(term, f'WIDTH {terminal.text_width("a" + chr(20013) + chr(769))}')
+
+@main
+def main(mode: str):
+    if mode == 'depth':
+        print(f'DEPTH auto={terminal.color_depth("auto")} always={terminal.color_depth("always")} never={terminal.color_depth("never")}')
+        return
+    if mode == 'notty':
+        print(f'IS {terminal.is_tty(0)}')
+        try:
+            t = terminal.open()
+            print('OPENED')
+            t.close()
+        catch terminal.TerminalError as e:
+            print('NOTTY', e.id, e.message)
+        return
+    if mode == 'borrow':
+        t = terminal.Terminal(0)
+        t.close()
+        t.close()
+        print('BORROW', terminal.is_tty(0))
+        return
+    term = terminal.open()
+    if mode == 'twice':
+        term.enter_raw()
+        term.enter_raw()
+        term.leave()
+        term.leave()
+        term.close()
+        term.close()
+        print('TWICE ok')
+        return
+    term.enter_raw()
+    if mode == 'keys':
+        try:
+            keys(term)
+        finally:
+            term.leave()
+            term.close()
+        print('BYE')
+    elif mode == 'finally':
+        try:
+            say(term, 'READY ' + str(os.getpid()))
+            raise ValueError('boom')
+        finally:
+            term.leave()
+    elif mode == 'error':
+        say(term, 'READY ' + str(os.getpid()))
+        raise ValueError('boom')
+    elif mode == 'exit':
+        say(term, 'READY ' + str(os.getpid()))
+        sys.exit(3)
+    elif mode == 'noleave':
+        say(term, 'READY ' + str(os.getpid()))
+    elif mode == 'fault':
+        say(term, 'READY ' + str(os.getpid()))
+        print(deep(0))
+    elif mode == 'wait':
+        say(term, 'READY ' + str(os.getpid()))
+        k = term.read_key()
+        say(term, f'KEY {k}')
+    elif mode == 'poll':
+        say(term, 'READY ' + str(os.getpid()))
+        got = False
+        for i in range(200):
+            k = term.read_key(0.05)
+            if k.kind != 'timeout':
+                say(term, f'POLL {k}')
+                got = True
+                break
+        if not got:
+            say(term, 'POLL none')

@@ -56,6 +56,9 @@ with fixed offsets), `csv`, `textwrap`, `statistics`, `random`, `secrets`, `uuid
 keys and `memoize` handles functions of several arguments. The builtin names moved from `std/builtin.tom` into
 `std/builtin/`.
 
+`terminal` (D86a, native only): raw keys, window size and resize, colors and styles, and the width of characters, for programs that
+draw on a terminal; the first part of the repl line editor (`lineedit` is reserved for the next part). See `docs/terminal-api.md`.
+
 ### Runtime and async
 
 - The scheduler waits on descriptors with epoll (Linux) or kqueue (macOS), with `poll` as a fallback.

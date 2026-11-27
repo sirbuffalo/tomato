@@ -234,6 +234,7 @@ Every area below still contains **open** decisions. D01, D02, D04, D05, D12, and
 206. D83a is accepted: `sin`, `cos` and `tan` of a radian angle of double size give the C library's answer (`sin(rad(pi))` is `1.2246467991473532e-16`); degrees, turns and gradians keep the exact quarter-turn reduction.
 207. D84a is accepted: versions are MAJOR.MINOR.PATCH from 1.0.0 with SemVer pre-releases; all 1.0.x releases are compatible, a minor release may change behaviour (listed under Breaking changes); `tomato update` takes patches at once, a new minor with `--minor`, pre-releases with `--pre`.
 208. Detailed inference, remaining class/interface details (including how D12b’s inherited fields interact with D12u–v and D12r), web-app integration, and remaining priorities are queued for relevant discussions.
+210. D86a is accepted: the repl line editor is written in Tomato as the std modules `terminal` and `lineedit` (hooks as interfaces, the lexer stays non-public, the `⏎` history format kept, blocking `read_key`, Enter continues on an open bracket, edits to a recalled entry dropped, keywords red and strings green); stage 1 (the runtime terminal functions and `terminal`, with an empty `lineedit` placeholder) is built.
 
 203. D76d is accepted: UDP datagram sockets and public asynchronous `getaddrinfo` return numeric address records; name resolution lets other tasks run.
 204. D76e is accepted: `asyncio.Lock`, bounded `Semaphore` and `Event` with FIFO hand-off, `LockError`, `wait_for` timeouts, and a deadlock report that names each task waiting in `Lock.acquire`.

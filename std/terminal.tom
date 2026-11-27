@@ -1,0 +1,864 @@
+# The terminal: raw keys, size, colors and styles, widths of characters: `import terminal`.
+#
+#     term = terminal.open()                       # /dev/tty: the keyboard and the screen, even when the standard streams are redirected
+#     term.enter_raw()
+#     try:
+#         term.write('press a key' + terminal.cursor_column(0))
+#         key = term.read_key()                    # blocks; Key.kind is 'char', 'key', 'paste', 'resize', 'timeout' or 'eof'
+#         if key.kind == 'char' and key.ctrl and key.text == 'c':
+#             term.write('^C')
+#     finally:
+#         term.leave()                             # always: the terminal must not stay raw
+#     style = terminal.Style(terminal.rgb(235, 60, 39), -1, True)    # red, default background, bold
+#     print(terminal.styled('error', style, terminal.color_depth()))
+#
+# A KeyDecoder turns bytes into keys and needs no terminal (it is what the tests use). Everything that makes text for the screen
+# (styled, cursor_up, ...) returns a string and writes nothing: the caller decides when. Raw mode turns off the terminal's own
+# output translation too, so a new line is written as '\r\n'. Escape characters are built with chr(27), which these functions do.
+# Errors are TerminalError (an IOError) when the terminal cannot be opened or used. Native only: in the browser playground open()
+# raises RuntimeError, while is_tty (False), color_depth, char_width, text_width, KeyDecoder and the styles work.
+# Limits: read_key blocks (there is no async version); the width of a character is the sum over code points, so a flag, a family
+# emoji or a letter with a variation selector can be one or two cells off; the keys sent by a terminal that is not xterm-like
+# (a few old ones) may be unknown and are then dropped.
+import os
+import sys
+from time import monotonic
+
+# the runtime's terminal functions (runtime/tomato_rt.c): each gives a count or 0, or -errno; tomato_tty_read gives -1 at the end,
+# -2 for a resize and -1000 - errno for a failure
+!tomato_tty_open(path: str) -> int
+!tomato_tty_close(fd: int) -> int
+!tomato_tty_is(fd: int) -> int
+!tomato_tty_raw(fd: int) -> int
+!tomato_tty_restore(fd: int) -> int
+!tomato_tty_size(fd: int, out: list[int]) -> int
+!tomato_tty_read(fd: int, out: list[int], max: int, ms: int) -> int
+!tomato_tty_write(fd: int, text: str) -> int
+!tomato_char_width(cp: int) -> int
+!tomato_os_error(what: str) -> str
+
+# The terminal cannot be opened or used (there is none, it went away, a write failed).
+export class TerminalError(IOError):
+    @init
+    def make_terminal_error(self, message: str, id: str = ''):
+        IOError.make_io(self, message, id)
+
+def _fail(doing: str):
+    raise TerminalError(!tomato_os_error(doing), 'E532')
+
+def _not_in_browser(what: str):
+    if sys.platform() == 'wasi':
+        raise RuntimeError(what + ' is not available in the browser playground', 'E514')
+
+# ---- keys ------------------------------------------------------------------------------------------------------------------
+
+# One key press, a paste, or an event of the terminal.
+#   kind 'char': a character: text is it ('a', 'é', ' '); a control key is the letter with ctrl True (Ctrl-A: text 'a', ctrl True;
+#                Ctrl-Space: text ' '; Ctrl-\ ] ^ _ : those characters). Tab, Enter and Backspace are never 'char'.
+#   kind 'key':  a named key, in name: 'enter' 'tab' 'backtab' (Shift-Tab, shift True) 'backspace' 'delete' 'escape' 'up' 'down'
+#                'left' 'right' 'home' 'end' 'pageup' 'pagedown' 'insert' 'f1' to 'f12'. Ctrl-Left is name 'left', ctrl True.
+#   kind 'paste': text is the pasted text with every line break turned into '\n' (needs bracketed_paste(True) first)
+#   kind 'resize': the window changed size; 'timeout': read_key's time ran out; 'eof': the input ended or the terminal went away
+export class Key:
+    kind: str = ''
+    text: str = ''
+    name: str = ''
+    ctrl: bool = False
+    alt: bool = False
+    shift: bool = False
+
+    @init
+    def make(self, kind: str, text: str = '', name: str = '', ctrl: bool = False, alt: bool = False, shift: bool = False):
+        self.kind = kind
+        self.text = text
+        self.name = name
+        self.ctrl = ctrl
+        self.alt = alt
+        self.shift = shift
+
+    @eq
+    def same(self, other: Key) -> bool:
+        return self.kind == other.kind and self.text == other.text and self.name == other.name and self.ctrl == other.ctrl and self.alt == other.alt and self.shift == other.shift
+
+    # for example `char 'a' ctrl`, `key up shift`, `paste 'one\ntwo'`
+    @str
+    def show(self) -> str:
+        what = self.kind
+        if self.kind == 'char' or self.kind == 'paste':
+            what = f"{self.kind} '{self.text}'".replace('\n', '\\n')
+        elif self.kind == 'key':
+            what = f'key {self.name}'
+        if self.ctrl:
+            what += ' ctrl'
+        if self.alt:
+            what += ' alt'
+        if self.shift:
+            what += ' shift'
+        return what
+
+def _paste_end() -> list[int]:
+    return [27, 91, 50, 48, 49, 126]
+
+# The code point at data[pos] and the bytes it takes, as (used, cp): used 0 means the character is not complete yet (more bytes may
+# come); with final True it is dropped instead. An invalid byte is dropped with cp -1, and the bytes after it are looked at again.
+def _utf8_step(data: list[int], pos: int, final: bool) -> tuple[int, int]:
+    b = data[pos]
+    need = 0
+    cp = 0
+    if b >= 194 and b <= 223:
+        need = 2
+        cp = b & 31
+    elif b >= 224 and b <= 239:
+        need = 3
+        cp = b & 15
+    elif b >= 240 and b <= 244:
+        need = 4
+        cp = b & 7
+    else:
+        return 1, -1
+    k = 1
+    while k < need:
+        if pos + k >= len(data):
+            if final:
+                return k, -1
+            return 0, -1
+        c = data[pos + k]
+        if c < 128 or c > 191:
+            return k, -1
+        if k == 1 and ((b == 224 and c < 160) or (b == 237 and c > 159) or (b == 240 and c < 144) or (b == 244 and c > 143)):
+            return k, -1
+        cp = (cp << 6) | (c & 63)
+        k += 1
+    return need, cp
+
+# text from the bytes of a paste: invalid bytes dropped, CRLF and CR turned into '\n'
+def _paste_text(data: list[int]) -> str:
+    parts: list[str] = []
+    i = 0
+    while i < len(data):
+        b = data[i]
+        if b < 128:
+            parts.append(chr(b))
+            i += 1
+        else:
+            used, cp = _utf8_step(data, i, True)
+            if cp >= 0:
+                parts.append(chr(cp))
+            i += used
+    return ''.join(parts).replace('\r\n', '\n').replace('\r', '\n')
+
+# the key of a `ESC [ n ~` sequence
+def _tilde_name(n: int) -> str:
+    if n == 1 or n == 7:
+        return 'home'
+    if n == 2:
+        return 'insert'
+    if n == 3:
+        return 'delete'
+    if n == 4 or n == 8:
+        return 'end'
+    if n == 5:
+        return 'pageup'
+    if n == 6:
+        return 'pagedown'
+    if n >= 11 and n <= 15:
+        return f'f{n - 10}'
+    if n >= 17 and n <= 21:
+        return f'f{n - 11}'
+    if n == 23 or n == 24:
+        return f'f{n - 12}'
+    return ''
+
+# the key of the last byte of `ESC [ ... x` or `ESC O x` (the same letters in both), or ''
+def _letter_name(c: int) -> str:
+    if c == 65:
+        return 'up'
+    if c == 66:
+        return 'down'
+    if c == 67:
+        return 'right'
+    if c == 68:
+        return 'left'
+    if c == 72:
+        return 'home'
+    if c == 70:
+        return 'end'
+    if c == 80:
+        return 'f1'
+    if c == 81:
+        return 'f2'
+    if c == 82:
+        return 'f3'
+    if c == 83:
+        return 'f4'
+    return ''
+
+# Bytes in, keys out; keeps what is unfinished (half of an escape sequence or of a UTF-8 character) until more bytes arrive.
+# It understands the sequences of xterm, VT100, the Linux console, macOS Terminal, iTerm2, GNOME Terminal and tmux: CSI and SS3 arrows,
+# Home and End in all their spellings, Insert, Delete, Page keys, F1 to F12, the modifier parameter (`1;5C` is Ctrl-Right), `ESC x` as
+# Alt-x, the `u` form of codepoint keys, and bracketed paste (`ESC [ 200 ~` text `ESC [ 201 ~` becomes one 'paste' key). 0x7f and
+# 0x08 are Backspace; CR and LF are Enter (CR LF in one piece is one Enter). Sequences it does not know are dropped.
+export class KeyDecoder:
+    private buf: list[int] = []
+    private out: list[Key] = []
+    private pasting: bool = False
+    private paste: list[int] = []
+
+    # the keys that the bytes complete (the bytes of the rest stay inside)
+    def feed(self, data: list[int]) -> list[Key]:
+        for b in data:
+            self.buf.append(b & 255)
+        return self._drain(False)
+
+    # True when bytes of an unfinished sequence are waiting: the caller waits a moment (about 100 ms) for the rest, then calls flush.
+    # Inside a bracketed paste there is no such wait: the rest of the paste comes when it comes.
+    def pending(self) -> bool:
+        return len(self.buf) > 0 and not self.pasting
+
+    # The wait is over: a lone ESC is the Escape key, `ESC x` is Alt-x, other unfinished sequences are dropped.
+    def flush(self) -> list[Key]:
+        return self._drain(True)
+
+    def _add(self, kind: str, text: str, name: str, ctrl: bool, alt: bool, shift: bool):
+        self.out.append(Key(kind, text, name, ctrl, alt, shift))
+
+    def _drain(self, final: bool) -> list[Key]:
+        pos = 0
+        while pos < len(self.buf):
+            used = 0
+            if self.pasting:
+                used = self._paste_step(pos)
+            else:
+                used = self._one(pos, final, False)
+            if used == 0:
+                break
+            pos += used
+        self.buf = self.buf[pos:]
+        keys = self.out
+        self.out = []
+        return keys
+
+    # inside a paste: collects bytes up to the end marker (or up to what may be the start of it); the bytes it took
+    def _paste_step(self, pos: int) -> int:
+        mark = _paste_end()
+        n = len(self.buf)
+        j = pos
+        while j < n:
+            if self.buf[j] == 27:
+                k = 0
+                while k < 6 and j + k < n and self.buf[j + k] == mark[k]:
+                    k += 1
+                if k == 6:
+                    self.paste.extend(self.buf[pos:j])
+                    self._add('paste', _paste_text(self.paste), '', False, False, False)
+                    self.paste = []
+                    self.pasting = False
+                    return j + 6 - pos
+                if j + k == n:
+                    self.paste.extend(self.buf[pos:j])
+                    return j - pos
+            j += 1
+        self.paste.extend(self.buf[pos:n])
+        return n - pos
+
+    # one key at pos; the bytes it took, 0 when more are needed (with final True nothing is waited for)
+    def _one(self, pos: int, final: bool, alt: bool) -> int:
+        n = len(self.buf)
+        b = self.buf[pos]
+        if b == 27:
+            if pos + 1 >= n:
+                if final:
+                    self._add('key', '', 'escape', False, alt, False)
+                    return 1
+                return 0
+            c = self.buf[pos + 1]
+            if c == 91:
+                return self._csi(pos, final, alt)
+            if c == 79:
+                return self._ss3(pos, final, alt)
+            inner = self._one(pos + 1, final, True)
+            if inner == 0:
+                return 0
+            return 1 + inner
+        if b == 13:
+            self._add('key', '', 'enter', False, alt, False)
+            if pos + 1 < n and self.buf[pos + 1] == 10:
+                return 2
+            return 1
+        if b == 10:
+            self._add('key', '', 'enter', False, alt, False)
+            return 1
+        if b == 9:
+            self._add('key', '', 'tab', False, alt, False)
+            return 1
+        if b == 127 or b == 8:
+            self._add('key', '', 'backspace', False, alt, False)
+            return 1
+        if b == 0:
+            self._add('char', ' ', '', True, alt, False)
+            return 1
+        if b < 32:
+            if b <= 26:
+                self._add('char', chr(b + 96), '', True, alt, False)
+            else:
+                self._add('char', chr(b + 64), '', True, alt, False)
+            return 1
+        if b < 127:
+            self._add('char', chr(b), '', False, alt, False)
+            return 1
+        used, cp = _utf8_step(self.buf, pos, final)
+        if used > 0 and cp >= 0:
+            self._add('char', chr(cp), '', False, alt, False)
+        return used
+
+    # `ESC [ params final` at pos
+    def _csi(self, pos: int, final: bool, alt: bool) -> int:
+        n = len(self.buf)
+        i = pos + 2
+        params: list[int] = []
+        cur = -1
+        marked = False
+        if i < n and self.buf[i] >= 60 and self.buf[i] <= 63:
+            marked = True
+            i += 1
+        if i < n and self.buf[i] == 91 and not marked:    # the Linux console's `ESC [ [ A` for F1 to F5
+            if i + 1 >= n:
+                if final:
+                    return n - pos
+                return 0
+            c = self.buf[i + 1]
+            if c >= 65 and c <= 69:
+                self._add('key', '', f'f{c - 64}', False, alt, False)
+            return i + 2 - pos
+        while True:
+            if i >= n:
+                if final:
+                    if n - pos == 2:
+                        self._add('char', '[', '', False, True, False)
+                    return n - pos
+                return 0
+            c = self.buf[i]
+            if c >= 48 and c <= 57:
+                if cur < 0:
+                    cur = 0
+                if cur < 100000:
+                    cur = cur * 10 + (c - 48)
+                i += 1
+            elif c == 59 or c == 58:
+                params.append(cur)
+                cur = -1
+                i += 1
+            elif c >= 32 and c <= 47:
+                i += 1
+            elif c >= 64 and c <= 126:
+                break
+            else:
+                return i - pos
+        params.append(cur)
+        used = i + 1 - pos
+        if marked:
+            return used
+        last = self.buf[i]
+        mod = 0
+        if len(params) > 1 and params[1] > 1:
+            mod = params[1] - 1
+        shift = (mod & 1) != 0
+        meta = alt or (mod & 10) != 0
+        ctrl = (mod & 4) != 0
+        first = params[0]
+        if last == 126:
+            if first == 200:
+                self.pasting = True
+                self.paste = []
+                return used
+            name = _tilde_name(first)
+            if name != '':
+                self._add('key', '', name, ctrl, meta, shift)
+            return used
+        if last == 90:
+            self._add('key', '', 'backtab', ctrl, meta, True)
+            return used
+        if last == 117:
+            self._codepoint(first, ctrl, meta, shift)
+            return used
+        name = _letter_name(last)
+        if name != '':
+            self._add('key', '', name, ctrl, meta, shift)
+        return used
+
+    # a key given as `ESC [ code ; modifiers u`
+    def _codepoint(self, cp: int, ctrl: bool, alt: bool, shift: bool):
+        if cp == 13:
+            self._add('key', '', 'enter', ctrl, alt, shift)
+        elif cp == 9:
+            self._add('key', '', 'tab', ctrl, alt, shift)
+        elif cp == 127 or cp == 8:
+            self._add('key', '', 'backspace', ctrl, alt, shift)
+        elif cp == 27:
+            self._add('key', '', 'escape', ctrl, alt, shift)
+        elif cp >= 32 and cp <= 1114111 and not (cp >= 55296 and cp <= 57343):
+            self._add('char', chr(cp), '', ctrl, alt, shift)
+
+    # `ESC O [modifier] x` at pos
+    def _ss3(self, pos: int, final: bool, alt: bool) -> int:
+        n = len(self.buf)
+        i = pos + 2
+        mod = 0
+        while i < n and self.buf[i] >= 48 and self.buf[i] <= 57:
+            mod = mod * 10 + (self.buf[i] - 48)
+            if mod > 100000:
+                mod = 100000
+            i += 1
+        if i >= n:
+            if final:
+                if n - pos == 2:
+                    self._add('char', 'O', '', False, True, False)
+                return n - pos
+            return 0
+        c = self.buf[i]
+        used = i + 1 - pos
+        bits = 0
+        if mod > 1:
+            bits = mod - 1
+        if c == 77:
+            self._add('key', '', 'enter', (bits & 4) != 0, alt or (bits & 10) != 0, (bits & 1) != 0)
+            return used
+        name = _letter_name(c)
+        if name != '':
+            self._add('key', '', name, (bits & 4) != 0, alt or (bits & 10) != 0, (bits & 1) != 0)
+        return used
+
+# ---- widths ----------------------------------------------------------------------------------------------------------------
+
+# How many cells of the terminal a character takes: 0 (combining marks, zero-width and format characters, control characters),
+# 2 (East Asian wide and full-width characters, emoji with emoji presentation) or 1. The runtime's own tables give the same answer
+# on every system and in the browser.
+export def char_width(cp: int) -> int:
+    return !tomato_char_width(cp)
+
+# The cells of a text: the sum over its characters (not over grapheme clusters).
+export def text_width(text: str) -> int:
+    total = 0
+    for c in text:
+        total += !tomato_char_width(ord(c))
+    return total
+
+# ---- colors and styles -----------------------------------------------------------------------------------------------------
+
+# marks a 24-bit color in a color value, so that it cannot be taken for one of the 256 of the palette
+const _RGB = 16777216
+
+# A color value: rgb(r, g, b) with each part from 0 to 255 (red 235, 60, 39 is `rgb(235, 60, 39)`)
+export def rgb(r: int, g: int, b: int) -> int:
+    if r < 0 or r > 255 or g < 0 or g > 255 or b < 0 or b > 255:
+        raise ValueError('a color part must be a whole number from 0 to 255', 'E534')
+    return _RGB + (r << 16) + (g << 8) + b
+
+# One of the terminal's 16 own colors, 0 to 15 (0 to 7: black, red, green, yellow, blue, magenta, cyan, white; 8 to 15 the bright
+# ones). The theme of the terminal chooses what they look like, so they stay readable on a light and on a dark background.
+export def ansi(n: int) -> int:
+    if n < 0 or n > 15:
+        raise ValueError('a terminal color must be a whole number from 0 to 15', 'E535')
+    return n
+
+# What a piece of text looks like. fg and bg are color values: -1 is the terminal's own (the default), 0 to 15 are ansi(n), 16 to 255 are
+# the fixed palette of 256 colors, and rgb(...) values are 24-bit. Any other value (256 up to 16777215) has no color: sgr ignores it. The
+# fields can be changed after the Style is made.
+export class Style:
+    fg: int = -1
+    bg: int = -1
+    bold: bool = False
+    dim: bool = False
+    italic: bool = False
+    underline: bool = False
+    reverse: bool = False
+
+    @init
+    def make(self, fg: int = -1, bg: int = -1, bold: bool = False, dim: bool = False, italic: bool = False, underline: bool = False, reverse: bool = False):
+        self.fg = fg
+        self.bg = bg
+        self.bold = bold
+        self.dim = dim
+        self.italic = italic
+        self.underline = underline
+        self.reverse = reverse
+
+# the 16 terminal colors as red, green, blue (xterm's own values): used to find the nearest one
+def _ansi_rgb(n: int) -> tuple[int, int, int]:
+    if n == 0:
+        return 0, 0, 0
+    if n == 1:
+        return 205, 0, 0
+    if n == 2:
+        return 0, 205, 0
+    if n == 3:
+        return 205, 205, 0
+    if n == 4:
+        return 0, 0, 238
+    if n == 5:
+        return 205, 0, 205
+    if n == 6:
+        return 0, 205, 205
+    if n == 7:
+        return 229, 229, 229
+    if n == 8:
+        return 127, 127, 127
+    if n == 9:
+        return 255, 0, 0
+    if n == 10:
+        return 0, 255, 0
+    if n == 11:
+        return 255, 255, 0
+    if n == 12:
+        return 92, 92, 255
+    if n == 13:
+        return 255, 0, 255
+    if n == 14:
+        return 0, 255, 255
+    return 255, 255, 255
+
+# the level (0, 95, 135, 175, 215 or 255) of the 6x6x6 cube that is nearest to v, as its index 0 to 5 (a tie goes to the lower)
+def _cube_index(v: int) -> int:
+    if v < 48:
+        return 0
+    if v < 116:
+        return 1
+    if v < 156:
+        return 2
+    if v < 196:
+        return 3
+    if v < 236:
+        return 4
+    return 5
+
+def _cube_level(i: int) -> int:
+    if i == 0:
+        return 0
+    return 55 + 40 * i
+
+# the red, green and blue of a color of the 256 palette
+def _palette_rgb(n: int) -> tuple[int, int, int]:
+    if n < 16:
+        return _ansi_rgb(n)
+    if n < 232:
+        m = n - 16
+        return _cube_level(m // 36), _cube_level((m // 6) % 6), _cube_level(m % 6)
+    g = 8 + 10 * (n - 232)
+    return g, g, g
+
+def _dist(r1: int, g1: int, b1: int, r2: int, g2: int, b2: int) -> int:
+    return (r1 - r2) * (r1 - r2) + (g1 - g2) * (g1 - g2) + (b1 - b2) * (b1 - b2)
+
+# the nearest of the 256 palette colors (the cube and the 24 greys) to a 24-bit color; the cube wins a tie
+def _nearest_256(r: int, g: int, b: int) -> int:
+    ri = _cube_index(r)
+    gi = _cube_index(g)
+    bi = _cube_index(b)
+    cube = 16 + 36 * ri + 6 * gi + bi
+    best = _dist(r, g, b, _cube_level(ri), _cube_level(gi), _cube_level(bi))
+    avg = (r + g + b) // 3
+    gi2 = (avg - 3) // 10
+    if gi2 < 0:
+        gi2 = 0
+    if gi2 > 23:
+        gi2 = 23
+    grey = 8 + 10 * gi2
+    if _dist(r, g, b, grey, grey, grey) < best:
+        return 232 + gi2
+    return cube
+
+# the nearest of the 16 terminal colors to a 24-bit color (by the distance in RGB; the lower number wins a tie)
+def _nearest_16(r: int, g: int, b: int) -> int:
+    best = -1
+    best_d = 0
+    for n in range(16):
+        r2, g2, b2 = _ansi_rgb(n)
+        d = _dist(r, g, b, r2, g2, b2)
+        if best < 0 or d < best_d:
+            best = n
+            best_d = d
+    return best
+
+# The SGR parameters of one color for `colors` (8, 16, 256 or 16777216) as text, such as '31', '38;5;166' or '38;2;235;60;39';
+# base is 30 for a foreground and 40 for a background. At 8 colors a bright one is the plain one (the caller adds bold for a foreground).
+def _color_code(c: int, colors: int, base: int) -> str:
+    if c < 0 or (c >= 256 and c < _RGB):
+        return ''
+    n = -1
+    r = 0
+    g = 0
+    b = 0
+    if c >= _RGB:
+        r = (c >> 16) & 255
+        g = (c >> 8) & 255
+        b = c & 255
+        if colors >= _RGB:
+            return f'{base + 8};2;{r};{g};{b}'
+        if colors >= 256:
+            return f'{base + 8};5;{_nearest_256(r, g, b)}'
+        n = _nearest_16(r, g, b)
+    elif c >= 16:
+        if colors >= 256:
+            return f'{base + 8};5;{c}'
+        r, g, b = _palette_rgb(c)
+        n = _nearest_16(r, g, b)
+    else:
+        n = c
+    if colors < 16:
+        return str(base + n % 8)
+    if n < 8:
+        return str(base + n)
+    return str(base + 60 + n - 8)
+
+# whether a color is one of the bright 8 to 15 after being lowered to the 16 colors
+def _bright(c: int) -> bool:
+    if c < 0 or (c >= 256 and c < _RGB):
+        return False
+    if c >= _RGB:
+        return _nearest_16((c >> 16) & 255, (c >> 8) & 255, c & 255) >= 8
+    if c >= 16:
+        r, g, b = _palette_rgb(c)
+        return _nearest_16(r, g, b) >= 8
+    return c >= 8
+
+# The escape text that starts a style, with its colors lowered to what the terminal has (`colors` as in Terminal.colors: 0, 8, 16, 256
+# or 16777216): truecolor to the nearest of the 256 (the 6x6x6 cube and the 24 greys), to the nearest of the 16, or to the 8 (the
+# 16 without the bright ones, and an 8-color terminal shows bold for a bright foreground). '' when colors is 0 or the style is plain.
+export def sgr(style: Style, colors: int) -> str:
+    if colors < 8:
+        return ''
+    parts: list[str] = []
+    bold = style.bold
+    if colors < 16 and _bright(style.fg):
+        bold = True
+    if bold:
+        parts.append('1')
+    if style.dim:
+        parts.append('2')
+    if style.italic:
+        parts.append('3')
+    if style.underline:
+        parts.append('4')
+    if style.reverse:
+        parts.append('7')
+    fg = _color_code(style.fg, colors, 30)
+    if fg != '':
+        parts.append(fg)
+    bg = _color_code(style.bg, colors, 40)
+    if bg != '':
+        parts.append(bg)
+    if len(parts) == 0:
+        return ''
+    return chr(27) + '[' + ';'.join(parts) + 'm'
+
+# the escape text that ends every style
+export def reset() -> str:
+    return chr(27) + '[0m'
+
+# text in a style, and the reset after it; the text alone when colors is 0 or the style is plain
+export def styled(text: str, style: Style, colors: int) -> str:
+    start = sgr(style, colors)
+    if start == '':
+        return text
+    return start + text + reset()
+
+# How many colors the terminal on descriptor fd (2 is standard error) shows: 0 for none, else 8, 16, 256 or 16777216. mode is 'auto',
+# 'always' or 'never' (anything else is a ValueError), as the `--color` option of the tomato command: 'never' is 0 and 'always'
+# is the depth the environment says, whatever fd is. 'auto' reads TOMATO_COLOR (always or never) first, then is 0 when NO_COLOR is not
+# empty, when TERM is dumb, or when fd is not a terminal. The depth: COLORTERM truecolor or 24bit, or a TERM ending in -direct: 16777216;
+# TERM_PROGRAM Apple_Terminal (no truecolor): 256; a TERM with 256color: 256; TERM linux: 8; any other: 16.
+export def color_depth(mode: str = 'auto', fd: int = 2) -> int:
+    if mode != 'auto' and mode != 'always' and mode != 'never':
+        raise ValueError("a color mode is 'auto', 'always' or 'never'", 'E533')
+    how = mode
+    if how == 'auto':
+        env = _env('TOMATO_COLOR')
+        if env == 'always' or env == 'never':
+            how = env
+    if how == 'never':
+        return 0
+    term = _env('TERM')
+    if how == 'auto':
+        if _env('NO_COLOR') != '' or term == 'dumb' or not is_tty(fd):
+            return 0
+    colorterm = _env('COLORTERM')
+    if colorterm == 'truecolor' or colorterm == '24bit' or term.endswith('-direct'):
+        return 16777216
+    if _env('TERM_PROGRAM') == 'Apple_Terminal' or '256color' in term:
+        return 256
+    if term == 'linux':
+        return 8
+    return 16
+
+def _env(name: str) -> str:
+    v = os.getenv(name)
+    if v is None:
+        return ''
+    return v
+
+# ---- escape text -----------------------------------------------------------------------------------------------------------
+
+# the text that moves the cursor up n lines (nothing when n is 0 or less), down, or to a column (0 is the left edge)
+export def cursor_up(n: int) -> str:
+    if n <= 0:
+        return ''
+    return chr(27) + f'[{n}A'
+
+export def cursor_down(n: int) -> str:
+    if n <= 0:
+        return ''
+    return chr(27) + f'[{n}B'
+
+export def cursor_column(c: int) -> str:
+    return chr(27) + f'[{c + 1}G'
+
+# clears from the cursor to the end of the screen, the whole line the cursor is on (the cursor stays), or the screen (the cursor goes to
+# the top left)
+export def clear_to_end() -> str:
+    return chr(27) + '[J'
+
+export def clear_line() -> str:
+    return chr(27) + '[2K'
+
+export def clear_screen() -> str:
+    return chr(27) + '[2J' + chr(27) + '[H'
+
+export def hide_cursor() -> str:
+    return chr(27) + '[?25l'
+
+export def show_cursor() -> str:
+    return chr(27) + '[?25h'
+
+# turns bracketed paste on or off: a pasted text then arrives as one 'paste' key
+export def bracketed_paste(on: bool) -> str:
+    if on:
+        return chr(27) + '[?2004h'
+    return chr(27) + '[?2004l'
+
+# ---- the terminal ----------------------------------------------------------------------------------------------------------
+
+# Whether descriptor fd (0, 1 and 2 are the standard streams) is a terminal.
+export def is_tty(fd: int) -> bool:
+    return !tomato_tty_is(fd) == 1
+
+# The terminal of this process (/dev/tty), whatever the standard streams are connected to. TerminalError when there is none.
+# Close it when done; call enter_raw() and leave() (in a finally) to read single keys.
+export def open() -> Terminal:
+    _not_in_browser('the terminal')
+    fd = !tomato_tty_open('/dev/tty')
+    if fd < 0:
+        _fail('open the terminal')
+    return Terminal(fd, True)
+
+export class Terminal:
+    fd: int = -1
+    colors: int = 0         # how many colors it shows, from color_depth(); a program can set another value (0 for none)
+    private raw: bool = False
+    private owned: bool = False          # the descriptor was opened by open(), so close() closes it
+    private since: float = -1.0          # when the bytes of an unfinished sequence were first seen (monotonic seconds), or -1.0
+    private decoder: KeyDecoder = KeyDecoder()
+    private queue: list[Key] = []
+
+    @init
+    def make(self, fd: int, owned: bool = False):
+        self.fd = fd
+        self.owned = owned
+        self.colors = color_depth('auto', fd)
+        self.decoder = KeyDecoder()
+
+    # Raw mode: keys arrive one by one, with no echo, no line editing and no signals from the keyboard (Ctrl-C and Ctrl-Z are keys), and
+    # no translation of the output (write '\r\n' for a new line). Idempotent. The settings are restored by leave(), and also at the end of
+    # the process, whatever the way it ends, except for a kill that cannot be caught.
+    def enter_raw(self):
+        if self.raw:
+            return
+        code = !tomato_tty_raw(self.fd)
+        if code < 0:
+            _fail('put the terminal in raw mode')
+        self.raw = True
+
+    # Restores the settings that enter_raw changed, and the cursor and the style (idempotent, and it never raises: it belongs in a finally).
+    def leave(self):
+        if not self.raw:
+            return
+        self.raw = False
+        text = reset() + show_cursor()
+        _code = !tomato_tty_write(self.fd, text)
+        _back = !tomato_tty_restore(self.fd)
+
+    # leaves raw mode and closes the descriptor when open() made it (a Terminal(fd) made by a program leaves its descriptor to the program,
+    # so Terminal(0).close() does not close standard input); the Terminal cannot be used afterwards. Closing twice is fine.
+    def close(self):
+        if self.fd >= 0:
+            self.leave()
+            if self.owned:
+                _code = !tomato_tty_close(self.fd)
+            self.fd = -1
+
+    # (rows, columns) of the window; from LINES and COLUMNS when the terminal does not say, else (24, 80)
+    def size(self) -> tuple[int, int]:
+        out: list[int] = []
+        _how = !tomato_tty_size(self.fd, out)
+        return out[0], out[1]
+
+    # The next key. It waits for one when timeout is negative (the default), at most that many seconds otherwise (0 only looks): kind 'timeout'
+    # when the time ran out. A lone Escape is told from the start of a sequence by waiting about 100 ms for more bytes. 'resize' says the window
+    # changed, 'eof' that the input ended (or the terminal went away; it keeps saying so).
+    def read_key(self, timeout: float = -1.0) -> Key:
+        if self.fd < 0:
+            raise TerminalError('the terminal is closed', 'E532')
+        start = monotonic()
+        while True:
+            if len(self.queue) > 0:
+                key = self.queue[0]
+                self.queue = self.queue[1:]
+                return key
+            wait = -1
+            if timeout >= 0.0:
+                left = timeout - (monotonic() - start)
+                wait = 0
+                if left > 0.0:
+                    wait = int(left * 1000.0) + 1
+            # an unfinished sequence (a lone ESC may be the start of one) is given 100 ms from when it was first seen, whatever timeout the
+            # caller has: a loop that polls with read_key(0.05) must still get the Escape key
+            waiting = self.decoder.pending()
+            due = False
+            if not waiting:
+                self.since = -1.0
+            else:
+                if self.since < 0.0:
+                    self.since = monotonic()
+                rest = 100 - int((monotonic() - self.since) * 1000.0)
+                if rest <= 0:
+                    self.queue.extend(self.decoder.flush())
+                    self.since = -1.0
+                    continue
+                if wait < 0 or wait > rest:
+                    wait = rest
+                    due = True
+            data: list[int] = []
+            got = !tomato_tty_read(self.fd, data, 4096, wait)
+            if got > 0:
+                self.queue.extend(self.decoder.feed(data))
+                self.since = -1.0
+            elif got == 0:
+                if due:
+                    self.queue.extend(self.decoder.flush())
+                    self.since = -1.0
+                elif len(self.queue) == 0:
+                    return Key('timeout')
+            elif got == -1:
+                self.queue.extend(self.decoder.flush())
+                self.queue.append(Key('eof'))
+            elif got == -2:
+                self.queue.append(Key('resize'))
+            else:
+                _fail('read from the terminal')
+
+    # writes all of the text at once, with no buffering
+    def write(self, text: str):
+        if self.fd < 0:
+            raise TerminalError('the terminal is closed', 'E532')
+        code = !tomato_tty_write(self.fd, text)
+        if code < 0:
+            _fail('write to the terminal')

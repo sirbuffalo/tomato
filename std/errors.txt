@@ -529,3 +529,7 @@ OverflowError the result is too large to calculate: its exponent would have more
 OverflowError the number is too large to write with f: it has more than 100000 digits before the point
 CompileError cannot use '-' on '{}
 CompileError the @neg method '{}' must take nothing besides self and return the result
+TerminalError the terminal cannot be opened or used
+ValueError a color mode is 'auto', 'always' or 'never'
+ValueError a color part must be a whole number from 0 to 255
+ValueError a terminal color must be a whole number from 0 to 15

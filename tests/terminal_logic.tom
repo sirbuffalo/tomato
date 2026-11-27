@@ -1,0 +1,502 @@
+# The pure logic of std/terminal.tom, as @test functions (run by `tomato test tests/terminal_logic.tom`, which tests/run.sh does on every
+# machine, with and without a terminal): the key decoder at every byte boundary, character widths, SGR lowering of colors from true
+# color to 256, 16 and 8, the color depth from the environment, and the escape helpers. The parts that need a terminal (raw mode,
+# size, reading keys, the restore) are in tests/terminal_pty.exp and tests/terminal_pty.tom.
+import os
+import terminal
+from terminal import Key, KeyDecoder, Style
+from testing import assert_equal, assert_true, assert_false, assert_raises_with
+
+def esc(text: str) -> str:
+    return chr(27) + text
+
+# the keys as text, one after the other, split by ' | '
+def shown(keys: list[Key]) -> str:
+    parts: list[str] = []
+    for k in keys:
+        parts.append(str(k))
+    return ' | '.join(parts)
+
+# all the bytes at once, then the wait is over (flush)
+def whole(data: list[int]) -> str:
+    d = KeyDecoder()
+    keys = d.feed(data)
+    keys.extend(d.flush())
+    return shown(keys)
+
+# the bytes in two pieces, split at `at`
+def two(data: list[int], at: int) -> str:
+    d = KeyDecoder()
+    keys = d.feed(data[:at])
+    keys.extend(d.feed(data[at:]))
+    keys.extend(d.flush())
+    return shown(keys)
+
+# the bytes one at a time
+def single(data: list[int]) -> str:
+    d = KeyDecoder()
+    keys: list[Key] = []
+    for b in data:
+        keys.extend(d.feed([b]))
+    keys.extend(d.flush())
+    return shown(keys)
+
+# the keys for data, the same however the bytes arrive (split at every place, and one by one)
+def keys_are(data: list[int], want: str):
+    assert_equal(whole(data), want, f'all at once: {data}')
+    for at in range(len(data) + 1):
+        assert_equal(two(data, at), want, f'{data} split at {at}')
+    assert_equal(single(data), want, f'{data} one at a time')
+
+@test
+def plain_characters():
+    keys_are([97], "char 'a'")
+    keys_are([97, 98, 32, 126], "char 'a' | char 'b' | char ' ' | char '~'")
+    keys_are([195, 169], "char 'é'")
+    keys_are([226, 130, 172], "char '€'")
+    keys_are([240, 159, 152, 128], "char '😀'")
+    keys_are([228, 184, 173, 97], "char '中' | char 'a'")
+
+@test
+def control_keys():
+    keys_are([1], "char 'a' ctrl")
+    keys_are([26], "char 'z' ctrl")
+    keys_are([3], "char 'c' ctrl")
+    keys_are([4], "char 'd' ctrl")
+    keys_are([0], "char ' ' ctrl")
+    keys_are([28], "char '\\' ctrl")
+    keys_are([29], "char ']' ctrl")
+    keys_are([31], "char '_' ctrl")
+    keys_are([9], 'key tab')
+    keys_are([13], 'key enter')
+    keys_are([10], 'key enter')
+    keys_are([13, 13], 'key enter | key enter')
+    keys_are([127], 'key backspace')
+    keys_are([8], 'key backspace')
+
+@test
+def crlf_is_one_enter():
+    # in one piece; split between the CR and the LF it cannot be told from an Enter followed by Ctrl-J
+    assert_equal(whole([13, 10]), 'key enter')
+    assert_equal(whole([13, 10, 97]), "key enter | char 'a'")
+    assert_equal(single([13, 10]), 'key enter | key enter')
+
+@test
+def arrows_and_the_navigation_keys():
+    keys_are([27, 91, 65], 'key up')
+    keys_are([27, 91, 66], 'key down')
+    keys_are([27, 91, 67], 'key right')
+    keys_are([27, 91, 68], 'key left')
+    keys_are([27, 79, 65], 'key up')
+    keys_are([27, 79, 66], 'key down')
+    keys_are([27, 79, 67], 'key right')
+    keys_are([27, 79, 68], 'key left')
+    # the spellings of Home and End: xterm, VT100, the Linux console, SS3
+    keys_are([27, 91, 72], 'key home')
+    keys_are([27, 91, 70], 'key end')
+    keys_are([27, 79, 72], 'key home')
+    keys_are([27, 79, 70], 'key end')
+    keys_are([27, 91, 49, 126], 'key home')
+    keys_are([27, 91, 52, 126], 'key end')
+    keys_are([27, 91, 55, 126], 'key home')
+    keys_are([27, 91, 56, 126], 'key end')
+    keys_are([27, 91, 50, 126], 'key insert')
+    keys_are([27, 91, 51, 126], 'key delete')
+    keys_are([27, 91, 53, 126], 'key pageup')
+    keys_are([27, 91, 54, 126], 'key pagedown')
+    keys_are([27, 91, 90], 'key backtab shift')
+
+@test
+def function_keys():
+    keys_are([27, 79, 80], 'key f1')
+    keys_are([27, 79, 81], 'key f2')
+    keys_are([27, 79, 82], 'key f3')
+    keys_are([27, 79, 83], 'key f4')
+    keys_are([27, 91, 91, 65], 'key f1')
+    keys_are([27, 91, 91, 69], 'key f5')
+    keys_are([27, 91, 49, 49, 126], 'key f1')
+    keys_are([27, 91, 49, 53, 126], 'key f5')
+    keys_are([27, 91, 49, 55, 126], 'key f6')
+    keys_are([27, 91, 49, 56, 126], 'key f7')
+    keys_are([27, 91, 49, 57, 126], 'key f8')
+    keys_are([27, 91, 50, 48, 126], 'key f9')
+    keys_are([27, 91, 50, 49, 126], 'key f10')
+    keys_are([27, 91, 50, 51, 126], 'key f11')
+    keys_are([27, 91, 50, 52, 126], 'key f12')
+
+@test
+def modifiers():
+    # the xterm parameter: 1 + shift + 2 alt + 4 ctrl + 8 meta
+    keys_are([27, 91, 49, 59, 53, 67], 'key right ctrl')
+    keys_are([27, 91, 49, 59, 50, 65], 'key up shift')
+    keys_are([27, 91, 49, 59, 51, 68], 'key left alt')
+    keys_are([27, 91, 49, 59, 54, 67], 'key right ctrl shift')
+    keys_are([27, 91, 49, 59, 55, 68], 'key left ctrl alt')
+    keys_are([27, 91, 49, 59, 56, 66], 'key down ctrl alt shift')
+    keys_are([27, 91, 49, 59, 57, 66], 'key down alt')
+    keys_are([27, 91, 51, 59, 53, 126], 'key delete ctrl')
+    keys_are([27, 91, 49, 59, 53, 72], 'key home ctrl')
+    keys_are([27, 91, 49, 59, 50, 80], 'key f1 shift')
+    keys_are([27, 79, 53, 67], 'key right ctrl')
+    keys_are([27, 79, 50, 80], 'key f1 shift')
+    # the `u` form: a code point and the modifiers
+    keys_are([27, 91, 57, 55, 59, 53, 117], "char 'a' ctrl")
+    keys_are([27, 91, 49, 51, 117], 'key enter')
+    keys_are([27, 91, 49, 51, 59, 50, 117], 'key enter shift')
+    keys_are([27, 91, 50, 55, 117], 'key escape')
+
+@test
+def alt_and_the_lone_escape():
+    keys_are([27, 120], "char 'x' alt")
+    keys_are([27, 195, 169], "char 'é' alt")
+    keys_are([27, 127], 'key backspace alt')
+    keys_are([27, 13], 'key enter alt')
+    keys_are([27, 27, 91, 65], 'key up alt')
+    keys_are([27, 120, 121], "char 'x' alt | char 'y'")
+    # waiting is over (flush): a lone ESC is the Escape key
+    keys_are([27], 'key escape')
+    keys_are([97, 27], "char 'a' | key escape")
+    keys_are([27, 27], 'key escape alt')
+    keys_are([27, 91], "char '[' alt")
+    keys_are([27, 79], "char 'O' alt")
+    keys_are([27, 91, 49], '')
+    keys_are([27, 91, 49, 59], '')
+
+@test
+def what_waits_for_more():
+    d = KeyDecoder()
+    assert_false(d.pending())
+    assert_equal(shown(d.feed([27])), '')
+    assert_true(d.pending())
+    assert_equal(shown(d.feed([91])), '')
+    assert_true(d.pending())
+    assert_equal(shown(d.feed([49, 59])), '')
+    assert_true(d.pending())
+    assert_equal(shown(d.feed([53, 67])), 'key right ctrl')
+    assert_false(d.pending())
+    assert_equal(shown(d.feed([226, 130])), '')
+    assert_true(d.pending())
+    assert_equal(shown(d.feed([172])), "char '€'")
+    assert_false(d.pending())
+    assert_equal(shown(d.feed([27])), '')
+    assert_true(d.pending())
+    assert_equal(shown(d.flush()), 'key escape')
+    assert_false(d.pending())
+    assert_equal(shown(d.flush()), '')
+    # a half character that never completes is dropped by flush
+    assert_equal(shown(d.feed([226, 130])), '')
+    assert_equal(shown(d.flush()), '')
+    assert_false(d.pending())
+
+@test
+def bad_and_unknown_bytes_are_dropped():
+    keys_are([255, 97], "char 'a'")
+    keys_are([254], '')
+    keys_are([195, 97], "char 'a'")
+    keys_are([192, 128], '')
+    keys_are([237, 160, 128], '')
+    keys_are([244, 144, 128, 128], '')
+    keys_are([226, 130, 97], "char 'a'")
+    keys_are([128, 97], "char 'a'")
+    keys_are([226, 130], '')
+    # unknown final bytes, private-marker sequences (answers to queries), focus events
+    keys_are([27, 91, 50, 48, 59, 50, 120, 97], "char 'a'")
+    keys_are([27, 91, 63, 49, 59, 50, 99, 97], "char 'a'")
+    keys_are([27, 91, 73, 27, 91, 79, 97], "char 'a'")
+    keys_are([27, 91, 60, 48, 59, 49, 59, 49, 77, 97], "char 'a'")
+    keys_are([27, 91, 57, 57, 126, 97], "char 'a'")
+    keys_are([27, 79, 122, 97], "char 'a'")
+    # a control character inside a sequence ends it
+    keys_are([27, 91, 49, 1, 97], "char 'a' ctrl | char 'a'")
+
+@test
+def bracketed_paste():
+    start = [27, 91, 50, 48, 48, 126]
+    end = [27, 91, 50, 48, 49, 126]
+    text = [97, 13, 10, 98, 13, 99, 10, 100]      # a CR LF, a CR and a LF
+    keys_are(start + text + end, "paste 'a\\nb\\nc\\nd'")
+    keys_are(start + text + end + [120], "paste 'a\\nb\\nc\\nd' | char 'x'")
+    keys_are([121] + start + end, "char 'y' | paste ''")
+    keys_are(start + [226, 130, 172, 255, 97] + end, "paste '€a'")
+    # the text is kept as it is, escape sequences inside it included, and the keys after it are keys again
+    d = KeyDecoder()
+    keys = d.feed(start + [27, 91, 65, 27, 91, 50, 48, 48, 126] + end + [27, 91, 65])
+    assert_equal(len(keys), 2)
+    assert_equal(keys[0].kind, 'paste')
+    assert_equal(keys[0].text, esc('[A') + esc('[200~'))
+    assert_equal(str(keys[1]), 'key up')
+    # while a paste is open there is nothing to wait for, and flush does not end it
+    e = KeyDecoder()
+    assert_equal(shown(e.feed(start + [97])), '')
+    assert_false(e.pending())
+    assert_equal(shown(e.flush()), '')
+    assert_equal(shown(e.feed([27, 91, 50, 48, 49])), '')
+    assert_false(e.pending())
+    assert_equal(shown(e.feed([126])), "paste 'a'")
+    # an end marker outside a paste is nothing
+    keys_are(end + [97], "char 'a'")
+
+@test
+def a_long_paste_in_small_pieces():
+    d = KeyDecoder()
+    data: list[int] = [27, 91, 50, 48, 48, 126]
+    for i in range(300):
+        data.append(97 + i % 26)
+        if i % 40 == 39:
+            data.append(13)
+    data.extend([27, 91, 50, 48, 49, 126])
+    keys: list[Key] = []
+    at = 0
+    while at < len(data):
+        keys.extend(d.feed(data[at:at + 7]))
+        at += 7
+    assert_equal(len(keys), 1)
+    assert_equal(keys[0].kind, 'paste')
+    assert_equal(len(keys[0].text), 300 + 7)
+    assert_equal(keys[0].text.count('\n'), 7)
+
+@test
+def key_fields_and_text():
+    d = KeyDecoder()
+    keys = d.feed([27, 91, 49, 59, 53, 67, 1, 97])
+    assert_equal(keys[0].kind, 'key')
+    assert_equal(keys[0].name, 'right')
+    assert_true(keys[0].ctrl)
+    assert_false(keys[0].alt)
+    assert_false(keys[0].shift)
+    assert_equal(keys[1].kind, 'char')
+    assert_equal(keys[1].text, 'a')
+    assert_true(keys[1].ctrl)
+    assert_equal(keys[2].text, 'a')
+    assert_false(keys[2].ctrl)
+    assert_true(Key('char', 'a') == keys[2])
+    assert_false(Key('char', 'b') == keys[2])
+    assert_equal(str(Key('timeout')), 'timeout')
+    assert_equal(str(Key('resize')), 'resize')
+    assert_equal(str(Key('eof')), 'eof')
+
+@test
+def character_widths():
+    assert_equal(terminal.char_width(97), 1)
+    assert_equal(terminal.char_width(32), 1)
+    assert_equal(terminal.char_width(233), 1)          # é
+    assert_equal(terminal.char_width(8364), 1)         # €
+    assert_equal(terminal.char_width(10084), 1)        # a heart with text presentation
+    assert_equal(terminal.char_width(1488), 1)         # a Hebrew letter
+    assert_equal(terminal.char_width(3585), 1)         # a Thai letter
+    assert_equal(terminal.char_width(65377), 1)        # a half-width ideographic full stop
+    assert_equal(terminal.char_width(127462), 1)       # a regional indicator letter
+    assert_equal(terminal.char_width(0), 0)
+    assert_equal(terminal.char_width(7), 0)
+    assert_equal(terminal.char_width(27), 0)
+    assert_equal(terminal.char_width(127), 0)
+    assert_equal(terminal.char_width(159), 0)
+    assert_equal(terminal.char_width(768), 0)          # a combining acute accent
+    assert_equal(terminal.char_width(879), 0)
+    assert_equal(terminal.char_width(1425), 0)         # a Hebrew point
+    assert_equal(terminal.char_width(3633), 0)         # a Thai vowel mark
+    assert_equal(terminal.char_width(8203), 0)         # a zero width space
+    assert_equal(terminal.char_width(8205), 0)         # a zero width joiner
+    assert_equal(terminal.char_width(65039), 0)        # a variation selector
+    assert_equal(terminal.char_width(65279), 0)        # a byte order mark
+    assert_equal(terminal.char_width(4448), 0)         # a Hangul medial jamo
+    assert_equal(terminal.char_width(917760), 0)       # a variation selector supplement
+    assert_equal(terminal.char_width(20013), 2)        # 中
+    assert_equal(terminal.char_width(12354), 2)        # あ
+    assert_equal(terminal.char_width(44032), 2)        # a Hangul syllable
+    assert_equal(terminal.char_width(4352), 2)         # a Hangul initial jamo
+    assert_equal(terminal.char_width(12288), 2)        # an ideographic space
+    assert_equal(terminal.char_width(65313), 2)        # a full-width A
+    assert_equal(terminal.char_width(9989), 2)         # a check mark button emoji
+    assert_equal(terminal.char_width(128512), 2)       # a grinning face
+    assert_equal(terminal.char_width(127995), 2)       # an emoji skin tone
+    assert_equal(terminal.char_width(131072), 2)       # a CJK extension B ideograph
+    assert_equal(terminal.char_width(1114112), 1)      # beyond Unicode
+
+@test
+def text_widths():
+    assert_equal(terminal.text_width(''), 0)
+    assert_equal(terminal.text_width('hello'), 5)
+    assert_equal(terminal.text_width('ab' + chr(20013) + chr(233)), 5)
+    assert_equal(terminal.text_width('e' + chr(769)), 1)
+    assert_equal(terminal.text_width(chr(128512) + chr(128512)), 4)
+    assert_equal(terminal.text_width(chr(65039)), 0)
+
+@test
+def color_values():
+    assert_equal(terminal.rgb(0, 0, 0), 16777216)
+    assert_equal(terminal.rgb(1, 2, 3), 16777216 + 66051)
+    assert_equal(terminal.rgb(255, 255, 255), 33554431)
+    assert_equal(terminal.ansi(0), 0)
+    assert_equal(terminal.ansi(15), 15)
+    assert_raises_with(bad_rgb, 256, 'ValueError')
+    assert_raises_with(bad_rgb, -1, 'ValueError')
+    assert_raises_with(bad_ansi, 16, 'ValueError')
+    assert_raises_with(bad_ansi, -1, 'ValueError')
+
+def bad_rgb(n: int):
+    _c = terminal.rgb(0, n, 0)
+
+def bad_ansi(n: int):
+    _c = terminal.ansi(n)
+
+@test
+def sgr_lowering_of_true_color():
+    red = Style(terminal.rgb(235, 60, 39))
+    green = Style(terminal.rgb(0, 150, 57))
+    grey = Style(terminal.rgb(128, 128, 128))
+    white = Style(terminal.rgb(255, 255, 255))
+    assert_equal(terminal.sgr(red, 16777216), esc('[38;2;235;60;39m'))
+    assert_equal(terminal.sgr(green, 16777216), esc('[38;2;0;150;57m'))
+    # the 256 colors: the nearest of the 6x6x6 cube (levels 0 95 135 175 215 255, a tie goes to the lower) and the 24 greys (8 + 10 i)
+    assert_equal(terminal.sgr(red, 256), esc('[38;5;166m'))        # 215 95 0
+    assert_equal(terminal.sgr(green, 256), esc('[38;5;29m'))       # 0 135 95
+    assert_equal(terminal.sgr(grey, 256), esc('[38;5;244m'))       # the grey 128
+    assert_equal(terminal.sgr(white, 256), esc('[38;5;231m'))      # the cube's white, not the greys' 238
+    # the 16: the nearest by the distance in RGB, over xterm's values of the colors
+    assert_equal(terminal.sgr(red, 16), esc('[91m'))               # bright red 255 0 0
+    assert_equal(terminal.sgr(green, 16), esc('[32m'))             # green 0 205 0
+    assert_equal(terminal.sgr(grey, 16), esc('[90m'))              # bright black 127 127 127
+    assert_equal(terminal.sgr(white, 16), esc('[97m'))
+    # the 8: the same without the bright ones, which are bold for a foreground
+    assert_equal(terminal.sgr(red, 8), esc('[1;31m'))
+    assert_equal(terminal.sgr(green, 8), esc('[32m'))
+    assert_equal(terminal.sgr(grey, 8), esc('[1;30m'))
+    assert_equal(terminal.sgr(white, 8), esc('[1;37m'))
+
+@test
+def sgr_of_terminal_colors_and_the_palette():
+    for colors in [8, 16, 256, 16777216]:
+        assert_equal(terminal.sgr(Style(terminal.ansi(1)), colors), esc('[31m'), f'{colors} colors')
+        assert_equal(terminal.sgr(Style(terminal.ansi(7)), colors), esc('[37m'), f'{colors} colors')
+    for colors in [16, 256, 16777216]:
+        assert_equal(terminal.sgr(Style(terminal.ansi(9)), colors), esc('[91m'), f'{colors} colors')
+        assert_equal(terminal.sgr(Style(terminal.ansi(15)), colors), esc('[97m'), f'{colors} colors')
+        assert_equal(terminal.sgr(Style(-1, terminal.ansi(9)), colors), esc('[101m'), f'{colors} colors')
+        assert_equal(terminal.sgr(Style(-1, terminal.ansi(2)), colors), esc('[42m'), f'{colors} colors')
+    assert_equal(terminal.sgr(Style(terminal.ansi(9)), 8), esc('[1;31m'))
+    assert_equal(terminal.sgr(Style(-1, terminal.ansi(9)), 8), esc('[41m'))      # a bright background stays plain
+    # a color of the fixed palette: as it is at 256 and above, the nearest of the 16 below
+    assert_equal(terminal.sgr(Style(196), 256), esc('[38;5;196m'))
+    assert_equal(terminal.sgr(Style(196), 16777216), esc('[38;5;196m'))
+    assert_equal(terminal.sgr(Style(196), 16), esc('[91m'))                  # 255 0 0
+    assert_equal(terminal.sgr(Style(232), 256), esc('[38;5;232m'))
+    assert_equal(terminal.sgr(Style(-1, 196), 256), esc('[48;5;196m'))
+    # a value between the palette and the 24-bit colors is no color
+    assert_equal(terminal.sgr(Style(300), 256), '')
+    assert_equal(terminal.sgr(Style(300, 16777215, True), 16), esc('[1m'))
+    assert_equal(terminal.sgr(Style(300), 8), '')
+
+@test
+def sgr_attributes_and_the_rest():
+    assert_equal(terminal.sgr(Style(), 256), '')
+    assert_equal(terminal.sgr(Style(terminal.ansi(1), -1, True), 0), '')
+    assert_equal(terminal.sgr(Style(terminal.ansi(1), -1, True), 4), '')
+    assert_equal(terminal.sgr(Style(-1, -1, True), 16), esc('[1m'))
+    assert_equal(terminal.sgr(Style(-1, -1, True, True, True, True, True), 16), esc('[1;2;3;4;7m'))
+    assert_equal(terminal.sgr(Style(terminal.ansi(2), terminal.ansi(4), True), 16), esc('[1;32;44m'))
+    assert_equal(terminal.sgr(Style(terminal.rgb(0, 150, 57), terminal.rgb(235, 60, 39)), 16777216), esc('[38;2;0;150;57;48;2;235;60;39m'))
+    assert_equal(terminal.sgr(Style(terminal.rgb(0, 150, 57), terminal.rgb(235, 60, 39)), 256), esc('[38;5;29;48;5;166m'))
+    assert_equal(terminal.sgr(Style(-1, terminal.rgb(0, 150, 57)), 8), esc('[42m'))
+    assert_equal(terminal.reset(), esc('[0m'))
+    red = Style(terminal.ansi(1), -1, True)
+    assert_equal(terminal.styled('x', red, 16), esc('[1;31m') + 'x' + esc('[0m'))
+    assert_equal(terminal.styled('x', red, 0), 'x')
+    assert_equal(terminal.styled('x', Style(), 256), 'x')
+    assert_equal(terminal.styled('', red, 16), esc('[1;31m') + esc('[0m'))
+
+@test
+def escape_helpers():
+    assert_equal(terminal.cursor_up(3), esc('[3A'))
+    assert_equal(terminal.cursor_up(0), '')
+    assert_equal(terminal.cursor_up(-2), '')
+    assert_equal(terminal.cursor_down(2), esc('[2B'))
+    assert_equal(terminal.cursor_down(0), '')
+    assert_equal(terminal.cursor_column(0), esc('[1G'))
+    assert_equal(terminal.cursor_column(9), esc('[10G'))
+    assert_equal(terminal.clear_to_end(), esc('[J'))
+    assert_equal(terminal.clear_line(), esc('[2K'))
+    assert_equal(terminal.clear_screen(), esc('[2J') + esc('[H'))
+    assert_equal(terminal.hide_cursor(), esc('[?25l'))
+    assert_equal(terminal.show_cursor(), esc('[?25h'))
+    assert_equal(terminal.bracketed_paste(True), esc('[?2004h'))
+    assert_equal(terminal.bracketed_paste(False), esc('[?2004l'))
+
+@test
+def descriptors_that_are_not_terminals():
+    assert_false(terminal.is_tty(99))
+    assert_false(terminal.is_tty(-1))
+
+# --- color_depth: the environment decides; the variables are set for each case and put back at the end ---
+
+def set_env(term: str, colorterm: str, program: str, no_color: str, tomato_color: str):
+    for pair in [['TERM', term], ['COLORTERM', colorterm], ['TERM_PROGRAM', program], ['NO_COLOR', no_color], ['TOMATO_COLOR', tomato_color]]:
+        if pair[1] == '-':
+            os.unsetenv(pair[0])
+        else:
+            os.putenv(pair[0], pair[1])
+
+def depth(term: str, colorterm: str, program: str) -> int:
+    set_env(term, colorterm, program, '-', '-')
+    return terminal.color_depth('always', 2)
+
+@test
+def color_depth_from_the_environment():
+    keep = [os.getenv('TERM'), os.getenv('COLORTERM'), os.getenv('TERM_PROGRAM'), os.getenv('NO_COLOR'), os.getenv('TOMATO_COLOR')]
+    names = ['TERM', 'COLORTERM', 'TERM_PROGRAM', 'NO_COLOR', 'TOMATO_COLOR']
+    try:
+        assert_equal(depth('xterm-256color', '-', '-'), 256)
+        assert_equal(depth('xterm', '-', '-'), 16)
+        assert_equal(depth('screen', '-', '-'), 16)
+        assert_equal(depth('tmux-256color', '-', '-'), 256)
+        assert_equal(depth('vt100', '-', '-'), 16)
+        assert_equal(depth('linux', '-', '-'), 8)
+        assert_equal(depth('-', '-', '-'), 16)
+        assert_equal(depth('xterm', 'truecolor', '-'), 16777216)
+        assert_equal(depth('xterm', '24bit', '-'), 16777216)
+        assert_equal(depth('xterm-256color', 'truecolor', '-'), 16777216)
+        assert_equal(depth('xterm', 'yes', '-'), 16)
+        assert_equal(depth('xterm-direct', '-', '-'), 16777216)
+        assert_equal(depth('xterm-256color', '-', 'Apple_Terminal'), 256)
+        assert_equal(depth('xterm', '-', 'Apple_Terminal'), 256)
+        assert_equal(depth('xterm-256color', '-', 'iTerm.app'), 256)
+        assert_equal(depth('xterm-256color', 'truecolor', 'Apple_Terminal'), 16777216)
+        # 'never' is 0 whatever the environment says; 'always' wins over NO_COLOR, TERM=dumb and a descriptor that is no terminal
+        set_env('xterm-256color', 'truecolor', '-', '-', '-')
+        assert_equal(terminal.color_depth('never', 2), 0)
+        set_env('xterm-256color', '-', '-', '1', '-')
+        assert_equal(terminal.color_depth('always', 99), 256)
+        set_env('dumb', '-', '-', '-', '-')
+        assert_equal(terminal.color_depth('always', 99), 16)
+        # 'auto': not a terminal is 0 (the cases with a terminal are in tests/terminal_pty.exp)
+        set_env('xterm-256color', 'truecolor', '-', '-', '-')
+        assert_equal(terminal.color_depth('auto', 99), 0)
+        assert_equal(terminal.color_depth('auto', -1), 0)
+        # TOMATO_COLOR is what 'auto' reads: always and never decide, another value changes nothing
+        set_env('xterm-256color', '-', '-', '-', 'always')
+        assert_equal(terminal.color_depth('auto', 99), 256)
+        assert_equal(terminal.color_depth('never', 99), 0)
+        set_env('xterm-256color', '-', '-', '1', 'always')
+        assert_equal(terminal.color_depth('auto', 99), 256)
+        set_env('xterm-256color', '-', '-', '-', 'never')
+        assert_equal(terminal.color_depth('auto', 99), 0)
+        assert_equal(terminal.color_depth('always', 99), 256)
+        set_env('xterm-256color', '-', '-', '-', 'sometimes')
+        assert_equal(terminal.color_depth('auto', 99), 0)
+        assert_equal(terminal.color_depth('always', 99), 256)
+    finally:
+        for i in range(5):
+            v = keep[i]
+            if v is None:
+                os.unsetenv(names[i])
+            else:
+                os.putenv(names[i], v)
+
+def bad_mode(mode: str):
+    _d = terminal.color_depth(mode, 2)
+
+@test
+def color_depth_checks_the_mode():
+    assert_raises_with(bad_mode, 'sometimes', 'ValueError')
+    assert_raises_with(bad_mode, '', 'ValueError')
+    assert_raises_with(bad_mode, 'ALWAYS', 'ValueError')

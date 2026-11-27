@@ -1,0 +1,190 @@
+# Drives tests/terminal_pty.tom (built as PROGRAM) on a pseudo-terminal, through a shell, to check std/terminal.tom as it works on this
+# system: raw mode, reading keys (escape sequences, a lone Escape, a bracketed paste, the timeout), the size and its resize, the color
+# depth, and above all that the terminal's settings (`stty -g`) are the same after the program as before it, however it ends: normally,
+# with leave() in a finally, with no leave() at all, with an uncaught error, sys.exit, a stack overflow and SIGTERM and SIGHUP.
+# Usage: expect tests/terminal_pty.exp PROGRAM        (the last line printed is `ok`, or `FAIL: ...` and the status is 1)
+# No fixed sleeps: every key is sent after the line it follows has been seen.
+set timeout 30
+encoding system utf-8
+match_max 100000
+log_user 0
+set prog [lindex $argv 0]
+set work [exec mktemp -d]
+proc cleanup {} { global work; catch {exec rm -rf $work} }
+proc fail {msg} { puts "FAIL: $msg"; cleanup; exit 1 }
+# what to wait for: a regular expression, with a name for the message
+proc want {re what} {
+  global expect_out last_group
+  expect {
+    -re $re { catch {set last_group $expect_out(1,string)} }
+    timeout { fail "timed out waiting for $what" }
+    eof { fail "the session ended while waiting for $what" }
+  }
+}
+catch {unset env(COLORTERM)}
+catch {unset env(NO_COLOR)}
+catch {unset env(TOMATO_COLOR)}
+catch {unset env(TERM_PROGRAM)}
+catch {unset env(LINES)}
+catch {unset env(COLUMNS)}
+set env(TERM) xterm-256color
+set env(LC_ALL) C
+spawn sh
+set slave $spawn_out(slave,name)
+exec stty rows 30 cols 100 < $slave
+# a command: a marker that cannot be in the echo of the command itself
+proc run {cmd} { send "$cmd\r" }
+proc settings {} { global slave; return [exec stty -g < $slave] }
+# runs `PROGRAM MODE` with the settings saved before and after; returns after READY and its process id
+proc start {mode extra} {
+  global prog work
+  run "stty -g > $work/before; $extra $prog $mode; echo EXIT=\$?; stty -g > $work/after"
+  want {READY ([0-9]+)\r\n} "READY of $mode"
+  global last_group
+  return $last_group
+}
+proc finished {mode status} {
+  global work
+  want "EXIT=$status\r\n" "the exit status $status of $mode"
+  # the echo of `stty -g > after` comes before the file exists: wait for the shell to be done with it
+  run "echo DO\"\"NE"
+  want {DONE\r\n} "the shell after $mode"
+  same_settings $mode
+}
+# `stty -g` as text, without the one bit that is the kernel's state and not a setting: macOS sets PENDIN (0x20000000 in lflag) whenever
+# ICANON changes and clears it when the pending input has been retyped, so it differs between two reads of unchanged settings
+proc normal {text} {
+  if {[regexp {^(.*lflag=)([0-9a-f]+)(.*)$} $text -> head flags tail]} {
+    scan $flags %x bits
+    set text "$head[format %x [expr {$bits & ~0x20000000}]]$tail"
+  }
+  return $text
+}
+proc same_settings {mode} {
+  global work
+  set a [normal [exec cat $work/before]]
+  set b [normal [exec cat $work/after]]
+  if {$a ne $b} { fail "$mode: the terminal settings changed: before '$a', after '$b'" }
+}
+
+# --- keys ---
+set pid [start keys ""]
+if {[normal [settings]] eq [normal [exec cat $work/before]]} { fail "keys: raw mode did not change the settings (the checks below would prove nothing)" }
+want {TTY True True True True False\r\n} "is_tty"
+send "a";                  want {KEY char 'a'\r\n} "a"
+send "\001";               want {KEY char 'a' ctrl\r\n} "Ctrl-A"
+send "\003";               want {KEY char 'c' ctrl\r\n} "Ctrl-C (no signal: ISIG is off)"
+send "\032";               want {KEY char 'z' ctrl\r\n} "Ctrl-Z (no stop: ISIG is off)"
+send "\r";                 want {KEY key enter\r\n} "Enter (CR is not turned into NL)"
+send "\177";               want {KEY key backspace\r\n} "Backspace"
+send "\t";                 want {KEY key tab\r\n} "Tab"
+send "\033\[A";            want {KEY key up\r\n} "Up"
+send "\033OH";             want {KEY key home\r\n} "Home (SS3)"
+send "\033\[3~";           want {KEY key delete\r\n} "Delete"
+send "\033\[1;5C";         want {KEY key right ctrl\r\n} "Ctrl-Right"
+send "\033x";              want {KEY char 'x' alt\r\n} "Alt-x"
+send "\033\[Z";            want {KEY key backtab shift\r\n} "Shift-Tab"
+# the escape sequence in two pieces, as a slow link would send it
+send "\033\["
+send "B";                  want {KEY key down\r\n} "Down in two pieces"
+# a lone Escape is a key once the wait for the rest of a sequence is over
+send "\033";               want {KEY key escape\r\n} "a lone Escape"
+# bracketed paste: one key with the text and the line breaks as \n
+send "\033\[200~a\rb\r\nc\033\[201~"
+want {KEY paste 'a\\nb\\nc'\r\n} "a paste"
+# UTF-8: the bytes of an e with an acute accent, and of a Chinese character
+send -- "é";          want "KEY char 'é'\r\n" "a UTF-8 character"
+send -- "中";          want "KEY char '中'\r\n" "a wide UTF-8 character"
+send "x";                  want {KEY char 'x'\r\n} "x"
+want {WIDTH 3\r\n} "the width of a, a wide character and a combining mark"
+# read_key with a timeout: nothing comes (a 0.3 s wait), or the next key is already there
+send "t";                  want {KEY char 't'\r\n} "t"
+want {T timeout\r\n} "the timeout"
+send "t";                  want {KEY char 't'\r\n} "t again"
+send "k";                  want {T char 'k'\r\n} "a key within the timeout"
+send "z";                  want {KEY char 'z'\r\n} "z"
+want {Z timeout\r\n} "a look with timeout 0"
+# the size, and a resize while read_key is waiting
+send "s";                  want {SIZE 30 100\r\n} "the size"
+exec stty cols 90 < $slave
+want {KEY resize\r\n} "the resize"
+send "s";                  want {SIZE 30 90\r\n} "the size after the resize"
+exec stty rows 40 < $slave
+want {KEY resize\r\n} "the second resize"
+send "s";                  want {SIZE 40 90\r\n} "the size after the second resize"
+# colors: TERM is xterm-256color and a terminal is attached
+send "d";                  want {DEPTH 256 256\r\n} "the color depth"
+send "w";                  want "STYLED \033\\\[1;38;5;166mred\033\\\[0m END\r\n" "a styled text"
+send "q";                  want {KEY char 'q'\r\n} "q"
+want {BYE\r\n} "the end of keys"
+finished keys 0
+
+# --- end of input: the terminal goes away from under the program ---
+# (a pty cannot say end of file; Ctrl-D is a key in raw mode, so this is checked by the other modes below)
+
+# --- every way the program can end must give the terminal back ---
+proc ending {mode status} {
+  # (these end at once, so there is no time to look at the settings while raw: keys and wait did that)
+  set pid [start $mode ""]
+  finished $mode $status
+}
+set pid [start finally ""]
+want {EXIT=1\r\n} "the exit of finally"
+run "echo DO\"\"NE"; want {DONE\r\n} "the shell after finally"
+same_settings finally
+ending error 1
+ending exit 3
+ending noleave 0
+ending fault 1
+
+# --- the signals that end a program: restored, then the default action ---
+proc killed {sig status} {
+  set pid [start wait ""]
+  if {[normal [settings]] eq [normal [exec cat $::work/before]]} { fail "wait: the program was not in raw mode" }
+  exec kill -$sig $pid
+  finished "wait with $sig" $status
+}
+killed TERM 143
+killed HUP 129
+
+# --- a lone Escape is a key even when the program polls with a timeout shorter than the 100 ms wait ---
+start poll ""
+send "\033"
+want {POLL key escape\r\n} "the Escape key from a polling loop"
+finished poll 0
+
+# --- a Terminal made from descriptor 0 leaves it open ---
+run "$prog borrow"
+want {BORROW True\r\n} "close() of a Terminal(0) keeps standard input"
+
+# --- called twice ---
+run "$prog twice"
+want {TWICE ok\r\n} "enter_raw, leave and close twice"
+
+# --- the color depth is decided by the environment on a terminal ---
+proc depth {extra want_text} {
+  global prog
+  run "$extra $prog depth"
+  want "DEPTH auto=$want_text\\r\\n" "the color depth with '$extra': $want_text"
+}
+depth "" "256 always=256 never=0"
+depth "COLORTERM=truecolor" "16777216 always=16777216 never=0"
+depth "NO_COLOR=1" "0 always=256 never=0"
+depth "TERM=dumb" "0 always=16 never=0"
+depth "TOMATO_COLOR=never" "0 always=256 never=0"
+depth "TOMATO_COLOR=always" "256 always=256 never=0"
+depth "TERM=linux" "8 always=8 never=0"
+depth "TERM=xterm" "16 always=16 never=0"
+run "$prog depth 2>/dev/null"
+want {DEPTH auto=0 always=256 never=0\r\n} "a standard error that is not a terminal"
+
+# --- no controlling terminal: open() raises TerminalError (a new session has none; needs perl) ---
+if {[catch {exec perl -e 1}] == 0} {
+  # (the child of perl makes the session: a process that leads its group, as perl may be, cannot)
+  run "perl -MPOSIX -e 'if (my \$p = fork) { waitpid(\$p, 0); exit(\$? >> 8) } POSIX::setsid(); exec @ARGV' $prog notty < /dev/null"
+  want {IS False\r\nNOTTY E532 could not open the terminal: [^\r]*\r\n} "TerminalError without a terminal"
+}
+send "exit\r"
+expect eof
+cleanup
+puts ok

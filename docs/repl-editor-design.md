@@ -1,7 +1,8 @@
 # The repl line editor, written in Tomato: design
 
-Status: **proposal, waiting for Davis.** Nothing in this document is built. The questions are at the end (section 14), each with a
-recommendation. The marks are the ones of `docs/wave2-api-sheets.md`: **[V]** I read it in this repository, **[M]** I ran it (on
+Status: **approved by Davis (all seven recommendations of section 14, 26 November 2026); stage 1 is built** (D86a, `docs/terminal-api.md`:
+the sheet as built, with where it differs from section 6), stages 2 to 4 are not. The questions are at the end (section 14), each with a
+recommendation and Davis's answer. The marks are the ones of `docs/wave2-api-sheets.md`: **[V]** I read it in this repository, **[M]** I ran it (on
 Linux, or on Davis's MacBook Pro, macOS 27 arm64), **[I]** inferred, not checked.
 
 ## 1. The requirement
@@ -128,6 +129,9 @@ and nobody needs one without the others, and each extra module is a name in `std
 
 ## 5. The runtime layer (C)
 
+*(As built: eight `tomato_tty_*` functions, since `Terminal.close` needs a `tomato_tty_close`, and no `tomato_tty_resized`: `tomato_tty_read` clears the
+resize flag itself. The exact contracts are in `docs/terminal-api.md`.)*
+
 Seven functions in a new block of `tomato_rt.c`, all `#if`ed out under WebAssembly, where stubs say "no terminal". They return `int`
 codes and fill `list[int]` outputs, like `os` and `socket`; `terminal.tom` raises the Tomato errors.
 
@@ -156,7 +160,10 @@ which thread gets the signal (the runtime has helper threads for name lookups **
 
 ## 6. `std/terminal.tom`: the terminal
 
-The API sheet. Conventions as in Wave 1 and 2: explicit objects, no module state, errors are classes of `IOError`, native only (in the
+The API sheet. *(As built, with the points where the code made it precise: `docs/terminal-api.md`: `Style` takes its fields positionally because a class
+cannot take keyword arguments; `cursor_column` counts from 0; `char_width` is 0 for control characters; Ctrl-Space is `char ' '` with `ctrl`; `backtab`
+has `shift` True; `leave()` also writes the reset and `show_cursor`; `Terminal` is a class and the `TermIO` interface comes with `lineedit` in stage 2;
+`color_depth` reads `TOMATO_COLOR` when `mode` is `'auto'`.)* Conventions as in Wave 1 and 2: explicit objects, no module state, errors are classes of `IOError`, native only (in the
 browser `open()` raises `RuntimeError` like `os.putenv`), and names match Python's where Python has the thing (`shutil.get_terminal_size`,
 `termios`, `curses`) and are otherwise plain words.
 
@@ -286,7 +293,8 @@ so the table is written once. Principles:
   parses first; the same two as `tomato paint` already uses for errors (red) and `help:` (green), so the repl looks like the rest of
   the tool. At 256 colors the nearest entries are `166` (`#d75f00`) and `29` (`#00875f`); the red looks orange there, so the 256 table may use `196` (`#ff0000`)
   instead, a choice for the palette review in stage 3. At 16 and 8 colors they become the terminal's own red (`31`) and
-  green (`32`), which every theme keeps readable.
+  green (`32`), which every theme keeps readable. *(Stage 1 note: `terminal.sgr` lowers `#EB3C27` to the nearest of the 16, which is the bright red `91`, not `31`; the green does become `32`. The palette in
+  stage 3 should therefore pick `ansi(1)` itself when `colors` is 16 or less.)*
 - **Readable on both** light and dark: no white, black or bright-black text. Mid-tone accents (by the usual relative-luminance formula, the red `#EB3C27` has contrast 4.0:1 on white and 5.2:1 on
   black, the green `#009639` 3.9:1 on white and 5.4:1 on black: both above 3:1, the usual floor for large or bold text) and the terminal's own 16 colors for the rest, because those are chosen by the
   theme. Comments use *dim* (`SGR 2`) rather than a grey, which follows the foreground on any theme. No background colors in the
@@ -534,7 +542,7 @@ Each stage is its own task and merge, leaves the repl working, and does not depe
 | # | Stage | Contents | Ships | Size |
 | --- | --- | --- | --- | --- |
 | 0 | Design | this document, Davis's answers | docs | - |
-| 1 | Runtime and `terminal` | the seven C functions + wasm stubs; `std/terminal.tom` (keys, decoder, raw mode, size, colors, widths, styles); `std_modules()` + bootstrap refresh + wasm rebuild; `@test`s and one pty test program; the doc sheet in `docs/` and a decision entry | a usable terminal module; the repl unchanged | M |
+| 1 | Runtime and `terminal` **(built, D86a)** | the seven C functions + wasm stubs; `std/terminal.tom` (keys, decoder, raw mode, size, colors, widths, styles); `std_modules()` + bootstrap refresh + wasm rebuild; `@test`s and one pty test program; the doc sheet in `docs/` and a decision entry | a usable terminal module; the repl unchanged | M |
 | 2 | Editor library and the repl on it | `std/lineedit.tom` (buffer, history, keymap, layout, frame, hooks); `repledit.tom` with the repl's validator and history; the installer, tarball and pkg steps; the driver change; `tests/repl_history.exp` rewritten; decision entry D-new superseding D59a | the multi-line repl, no colors yet | L |
 | 3 | The tolerant lexer and highlighting | `lex_spans` + shared scanners + the equivalence tests; `hltomato.tom`; palette; `--color` and `NO_COLOR`; bootstrap refresh + wasm rebuild | colors in the repl | M |
 | 4 | Library polish | what other programs need and the repl did not: a single-line mode with completion hook, a `Completer` interface, a kill ring option, docs and a worked example under `examples/` (a small interactive program), site docs copy | the library is documented and exampled | S |
@@ -567,6 +575,8 @@ sheets in sections 6 and 8 are meant to be reviewed before stage 1 starts.
 ## 14. Questions for Davis
 
 Each has a recommendation; the first four are the ones that change the shape of the work.
+
+**Davis approved all seven recommendations (26 November 2026).**
 
 1. **Where does the editor library live, and how generic is its API?** *Recommend: two std modules, `terminal` and `lineedit`, with
    hooks as `interface`s (`Highlighter`, `Validator`, `Indenter`) rather than function values.* Interfaces carry state (a theme, the
