@@ -1,0 +1,126 @@
+# SemVer 2.0 precedence and the release version rules of dev/release.tom (the port of semver_cmp, version_ok and pick_version of
+# release/release.sh). The same comparison is in compiler/src/cli_term.tom (`tomato update`); tests/run.sh checks that the two agree
+# on a table of pairs. MAJOR.MINOR.PATCH by number, a missing part counting as 0 (the old 0.NN numbers are 0.NN.0); then a -PRERELEASE
+# is below the release itself, its dot-separated identifiers compared in turn (numbers by value and below words, words in ASCII order, a
+# longer list above its prefix: 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-beta < 1.0.0-rc.2 < 1.0.0-rc.10 < 1.0.0); +BUILD is ignored.
+import re
+
+def _all_digits(s: str) -> bool:
+    if s == '':
+        return False
+    for c in s:
+        if not c.isdigit():
+            return False
+    return True
+
+# the core of a version (MAJOR.MINOR.PATCH, without -PRE or +BUILD) as the numbers awk's `split(c, w, ".")` and `w[i] + 0` made
+def _part(v: str, i: int) -> int:
+    core = v
+    for mark in ['-', '+']:
+        k = core.find(mark)
+        if k >= 0:
+            core = core[:k]
+    words = core.split('.')
+    if i >= len(words):
+        return 0
+    w = words[i]
+    n = 0
+    for c in w:
+        if not c.isdigit():
+            break
+        n = n * 10 + int(c)
+    return n
+
+def _pre(v: str) -> str:
+    t = v
+    k = t.find('+')
+    if k >= 0:
+        t = t[:k]
+    d = t.find('-')
+    if d < 0:
+        return ''
+    return t[d + 1:]
+
+# -1, 0 or 1: the first below, equal to or above the second
+export def semver_cmp(a: str, b: str) -> int:
+    for i in range(3):
+        x = _part(a, i)
+        y = _part(b, i)
+        if x != y:
+            return -1 if x < y else 1
+    xp = _pre(a)
+    yp = _pre(b)
+    if xp == yp:
+        return 0
+    if xp == '':
+        return 1
+    if yp == '':
+        return -1
+    u = xp.split('.')
+    t = yp.split('.')
+    i = 0
+    while i < len(u) and i < len(t):
+        xn = _all_digits(u[i])
+        yn = _all_digits(t[i])
+        if xn and yn:
+            if int(u[i]) != int(t[i]):
+                return -1 if int(u[i]) < int(t[i]) else 1
+        elif xn != yn:
+            return -1 if xn else 1
+        elif u[i] != t[i]:
+            return -1 if u[i] < t[i] else 1
+        i += 1
+    if len(u) == len(t):
+        return 0
+    return -1 if len(u) < len(t) else 1
+
+# MAJOR.MINOR.PATCH with an optional SemVer pre-release (no +build part, numbers without leading zeros)
+export def version_ok(v: str) -> bool:
+    ident = '(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+    pattern = '(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-' + ident + '(\\.' + ident + ')*)?'
+    return re.fullmatch(pattern, v) is not None
+
+export def is_pre(v: str) -> bool:
+    return '-' in v
+
+def _starts_three_parts(cur: str) -> bool:
+    return re.match('[0-9]+\\.[0-9]+\\.[0-9]+', cur) is not None
+
+# The version a run releases from a VERSION of `cur`, from --version or --bump; `ahead` is True when VERSION is not released yet (no tag, no
+# GitHub release), so it is used as it is. Gives the version, or a text that starts with "error:".
+export def pick_version(cur: str, ahead: bool, version: str, bump: str) -> str:
+    if version == '' and bump == '' and not _starts_three_parts(cur):
+        return f'error: VERSION is {cur}, an old 0.NN number: name the first three-part version, e.g. --version 1.0.0 (or --bump major|minor|patch)'
+    new = ''
+    if version != '':
+        new = version
+    elif bump == '' and ahead:
+        new = cur                      # VERSION was bumped ahead of its release
+    elif is_pre(cur):
+        core = cur.partition('-')[0]
+        return f'error: VERSION is the pre-release {cur}: name the next version with --version (the release {core} or the next pre-release)'
+    else:
+        part = bump
+        if part == '':
+            part = 'patch'
+        w = cur.split('.')
+        major = _part(cur, 0)
+        minor = _part(cur, 1)
+        patch = 0
+        if len(w) > 2:
+            patch = _part(cur, 2)
+        if part == 'major':
+            major += 1
+            minor = 0
+            patch = 0
+        elif part == 'minor':
+            minor += 1
+            patch = 0
+        else:
+            patch += 1
+        new = f'{major}.{minor}.{patch}'
+    if not version_ok(new):
+        return f"error: '{new}' is not a version number like 1.0.0 or 1.0.0-rc.1 (MAJOR.MINOR.PATCH, three whole numbers, then an optional -pre-release)"
+    if new != cur and semver_cmp(new, cur) != 1:
+        return f'error: {new} is not newer than the current {cur}'
+    return new

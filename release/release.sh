@@ -425,7 +425,7 @@ step_bump() {
   # the website names the latest stable release, so a pre-release leaves site/config.js alone
   is_pre "$v" || { sed "s/window.TOMATO_VERSION = \".*\"/window.TOMATO_VERSION = \"$v\"/" site/config.js > site/config.js.new && mv site/config.js.new site/config.js; }
   for f in std/sys.tom site/wasm/std/sys.tom; do   # sys.version() returns the version as text (tests/run.sh t_sys_version checks it against VERSION)
-    sed "s/^    return '[0-9A-Za-z.-]*'\$/    return '$v'/" "$f" > "$f.new" && mv "$f.new" "$f"
+    sed "s/^    return '[0-9A-Za-z.-][0-9A-Za-z.-]*'\$/    return '$v'/" "$f" > "$f.new" && mv "$f.new" "$f"
   done
   # a sed that matched nothing would leave an old number in a file that the tests (which ran before) never see again
   [ "$(cat VERSION)" = "$v" ] && grep -qF "    return '$v'" std/sys.tom && grep -qF "    return '$v'" site/wasm/std/sys.tom || die "the bump did not take: VERSION, std/sys.tom and site/wasm/std/sys.tom must all say $v"

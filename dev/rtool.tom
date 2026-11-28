@@ -1,0 +1,418 @@
+# What the release tools of dev/ share (docs/shell-to-tomato-plan.md, stage 5): running a program and getting its text, a log that is
+# shown and kept at once, key=value state files, a private temporary folder, the file hash. Every call that std of stage 1 will answer
+# (os.mkdtemp, os.rmtree, os.copy, os.chmod, os.symlink, hashlib.sha256_file, signal.send) is here once and only here, built on std as
+# it is on main today (sys.run, os, ospath) and the system's own programs (never a shell script of this repository), so when stage 1
+# is on main only this file changes. Stage 1 is on main: the calls below are std's (marked `allow: unstable`, the std functions are new).
+import sys
+import os
+import ospath
+import re
+import time
+import hashlib
+import signal
+
+# A failure the tool reports and stops on: `error: MESSAGE` on standard error, status 1 (the shell's `die`). It is an error, not an
+# exit, so `finally` blocks (temporary folders) run first.
+export class Fatal(Error):
+    pass
+
+export def die(message: str):
+    raise Fatal(message)
+
+# ---- text out ------------------------------------------------------------------------------------------------------------------
+
+export def say(text: str):
+    sys.write_stdout(text + '\n')
+
+export def note(text: str):
+    sys.write_stdout('   ' + text + '\n')
+
+export def eprint(text: str):
+    sys.write_stderr(text + '\n')
+
+export def banner(name: str, what: str):
+    sys.write_stdout(f'\n== {name}: {what}\n')
+
+# ---- running programs ----------------------------------------------------------------------------------------------------------
+
+# Runs a program with its output captured, never raising for a status other than 0; a program that cannot be started gives status 127
+# and its error text, as a shell would.
+export def run(args: list[str], cwd: str | None = None, env: dict[str, str] | None = None, stdin: str = '') -> sys.RunResult:
+    try:
+        return sys.run(args, True, cwd, env, stdin)
+    catch IOError as e:
+        return sys.RunResult(127, 0, '', e.message)
+
+# Does the program succeed (status 0)? Its output is dropped.
+export def ok(args: list[str], cwd: str | None = None, env: dict[str, str] | None = None) -> bool:
+    return run(args, cwd, env).status == 0
+
+# The standard output of a program without its trailing newlines, '' when it fails or cannot be started: `$(prog args 2>/dev/null)`.
+export def out(args: list[str], cwd: str | None = None, env: dict[str, str] | None = None) -> str:
+    r = run(args, cwd, env)
+    if r.status != 0:
+        return ''
+    return r.stdout.rstrip('\n')
+
+# The same, but whatever the status was (the shell's `$(...)` without a check): `$(prog args 2>&1)` is out_all.
+export def out_any(args: list[str], cwd: str | None = None, env: dict[str, str] | None = None) -> str:
+    return run(args, cwd, env).stdout.rstrip('\n')
+
+# Both streams of a program in one text, standard output first (the shell's `2>&1` would interleave them as they came).
+export def out_all(args: list[str], cwd: str | None = None, env: dict[str, str] | None = None) -> str:
+    r = run(args, cwd, env)
+    return (r.stdout + r.stderr).rstrip('\n')
+
+# A program that is started with this program's own streams (output shown as it comes), with its status.
+export def run_shown(args: list[str], cwd: str | None = None, env: dict[str, str] | None = None) -> int:
+    try:
+        return sys.run(args, False, cwd, env).status
+    catch IOError:
+        return 127
+
+export def have(name: str) -> bool:
+    return which(name) is not None
+
+export def which(name: str) -> str | None:
+    if '/' in name:
+        if ospath.isfile(name):
+            return name
+        return None
+    path = os.getenv('PATH')
+    if path is None:
+        return None
+    for d in path.split(':'):
+        folder = d
+        if folder == '':
+            folder = '.'
+        p = folder + '/' + name
+        if ospath.isfile(p):
+            try:
+                if os.stat(p).mode & 73 != 0:
+                    return p
+            catch IOError:
+                pass
+    return None
+
+# Runs a program, showing its output as it comes (both streams, in the order they arrive, on standard output) and keeping it in a log
+# file as well, and gives its status: the shell's `{ cmd 2>&1; echo $? > rc; } | tee LOG`. The status is 128 plus the signal when a
+# signal ended it.
+export async def tee_run(log: str, args: list[str], cwd: str | None = None, env: dict[str, str] | None = None) -> int:
+    kept: list[str] = []
+    p: sys.Process | None = None
+    try:
+        p = sys.spawn(args, True, cwd, env)
+    catch IOError as e:
+        text = e.message + '\n'
+        sys.write_stdout(text)
+        os.write_text(log, text)
+        return 127
+    proc = p
+    if proc is None:
+        return 127
+    try:
+        a = start _pump(proc.stdout, kept)   # allow: unstable
+        b = start _pump(proc.stderr, kept)   # allow: unstable
+        await a
+        await b
+        status = await proc.wait()
+    finally:
+        proc.stop()
+    os.write_text(log, ''.join(kept))
+    return status
+
+async def _pump(r: sys.PipeReader, kept: list[str]) -> int:
+    while True:
+        line = await r.read_line()
+        if line == '':
+            break
+        sys.write_stdout(line)
+        kept.append(line)
+    return 0
+
+# ---- files ---------------------------------------------------------------------------------------------------------------------
+
+export def read_or(path: str, default: str = '') -> str:
+    if not ospath.isfile(path):
+        return default
+    try:
+        return os.read_text(path)
+    catch IOError:
+        return default
+
+export def write(path: str, text: str):
+    os.write_text(path, text)
+
+export def append(path: str, text: str):
+    os.write_text(path, text, True)
+
+# `a/b/c` made as a whole path
+export def mkdirs(path: str):
+    os.makedirs(path, True)
+
+# Removes a folder and everything in it (os.rmtree), or a file or a link; nothing when it is not there.
+export def rmtree(path: str):
+    if path == '' or path == '/':
+        raise ValueError('rmtree: refusing to remove ' + path)
+    if ospath.islink(path) or ospath.isfile(path):
+        try:
+            os.remove(path)
+        catch IOError:
+            pass
+        return
+    if not ospath.isdir(path):
+        return
+    os.rmtree(path, True)   # allow: unstable
+
+export def rm(path: str):
+    if ospath.islink(path) or ospath.isfile(path):
+        try:
+            os.remove(path)
+        catch IOError:
+            pass
+
+# The folder src and all it holds copied to dst, which must not exist (os.copytree: modes and links kept)
+export def copy_tree(src: str, dst: str):
+    os.copytree(src, dst)   # allow: unstable
+
+# A file copied with its mode (os.copy); dst may be a folder (`cp -p SRC DIR/`: the name of src is kept)
+export def copy(src: str, dst: str):
+    target = dst
+    if dst.endswith('/') or ospath.isdir(dst):
+        target = dst.rstrip('/') + '/' + ospath.basename(src)
+    os.copy(src, target)   # allow: unstable
+
+export def chmod_x(paths: list[str]):
+    _r = run(['chmod', '+x'] + paths)
+
+export def symlink(target: str, path: str):
+    os.symlink(target, path)   # allow: unstable
+
+export def readlink(path: str) -> str:
+    try:
+        return os.readlink(path)   # allow: unstable
+    catch IOError:
+        return ''
+
+# The files and folders of a folder, '' for one that is not there (`ls -A`)
+export def names(path: str) -> list[str]:
+    if not ospath.isdir(path):
+        return []
+    r: list[str] = os.listdir(path)
+    return sorted(r)
+
+# Replaces a file the way `> f.new; mv f.new f` does
+export def replace_file(path: str, text: str):
+    tmp = path + '.new'
+    os.write_text(tmp, text)
+    os.rename(tmp, path)
+
+# A new private folder in TMPDIR (or /tmp) named prefix and random letters (os.mkdtemp).
+export def mkdtemp(prefix: str) -> str:
+    return os.mkdtemp(prefix)   # allow: unstable
+
+# The sha256 of a file as 64 hex digits (hashlib.sha256_file: the file is never held in memory); '' when it cannot be read.
+export def sha256_file(path: str) -> str:
+    try:
+        return hashlib.sha256_file(path)   # allow: unstable
+    catch IOError:
+        return ''
+
+# ---- state files: key=value lines ----------------------------------------------------------------------------------------------
+
+# The value of the last line `KEY=...`, '' when there is none (`sed -n "s/^KEY=//p" FILE | tail -1`).
+export def kv_get(path: str, key: str) -> str:
+    if not ospath.isfile(path):
+        return ''
+    found = ''
+    prefix = key + '='
+    for line in os.read_text(path).split('\n'):
+        if line.startswith(prefix):
+            found = line[len(prefix):]
+    return found
+
+# Sets KEY: the other lines stay, the new one comes last; written to FILE.new and renamed.
+export def kv_set(path: str, key: str, value: str):
+    keep = ''
+    if ospath.isfile(path):
+        prefix = key + '='
+        for line in os.read_text(path).split('\n'):
+            if line == '' or line.startswith(prefix):
+                continue
+            keep += line + '\n'
+    replace_file(path, keep + f'{key}={value}\n')
+
+# ---- the machine ---------------------------------------------------------------------------------------------------------------
+
+# The load average (1, 5 and 15 minutes) as the system prints them, three words; [] when it cannot be read: /proc on Linux, sysctl on
+# macOS (os.loadavg, stage 1).
+export def loadavg() -> list[str]:
+    if ospath.exists('/proc/loadavg'):
+        first = read_or('/proc/loadavg').split(' ')
+        if len(first) >= 3:
+            return [first[0], first[1], first[2]]
+    text = out(['sysctl', '-n', 'vm.loadavg']).replace('{', ' ').replace('}', ' ')
+    found: list[str] = []
+    for w in text.split(' '):
+        if w != '':
+            found.append(w)
+    if len(found) >= 3:
+        return [found[0], found[1], found[2]]
+    return []
+
+export def now() -> int:
+    return int(time.time())
+
+# ---- signals -------------------------------------------------------------------------------------------------------------------
+
+# The process id of this process's parent (os.getppid)
+export def parent_pid(pid: int) -> int:
+    t = out(['ps', '-o', 'ppid=', '-p', str(pid)]).strip()
+    if t.isdigit():
+        return int(t)
+    return 0
+
+# Sends the signal (a name such as TERM) to processes (signal.send)
+export def kill(sig: str, pids: list[int]):
+    for p in pids:
+        try:
+            signal.send(p, sig)   # allow: unstable
+        catch IOError:
+            pass
+
+# From now on INT, TERM and HUP do not end the program at once: the next wait for a program raises sys.Interrupted, the `finally` blocks
+# run, and the program ends with 128 plus the signal (signal.watch)
+export def watch_signals():
+    signal.watch()   # allow: unstable
+
+# The signal number when e is the error raised for a watched signal (sys.Interrupted), else 0
+export def interrupted_by(e: Error) -> int:
+    if e is sys.Interrupted:   # allow: unstable
+        return e.number
+    return 0
+
+export def signal_name(n: int) -> str:
+    if n == 1:
+        return 'HUP'
+    if n == 2:
+        return 'INT'
+    if n == 15:
+        return 'TERM'
+    return f'SIG{n}'
+
+# ---- Mach-O files ----------------------------------------------------------------------------------------------------------------
+
+export def is_exec(p: str) -> bool:
+    if not ospath.isfile(p):
+        return False
+    try:
+        return os.stat(p).mode & 73 != 0
+    catch IOError:
+        return False
+
+export def has_line(text: str, pat: str) -> bool:
+    for line in text.split('\n'):
+        if re.search(pat, line) is not None:
+            return True
+    return False
+
+# the Mach-O files of a folder, as `find -type f -exec file {} +` names them (not the per-architecture lines)
+export def macho_files(folder: str) -> list[str]:
+    found: list[str] = []
+    for f in walk_files(folder):
+        r = run(['file', f])
+        for line in r.stdout.split('\n'):
+            if '(for architecture' in line:
+                continue
+            k = line.find(': ')
+            if k >= 0 and 'Mach-O' in line[k:]:
+                name = line[:k].rstrip(' ')
+                if name not in found:
+                    found.append(name)
+    return sorted(found)
+
+export def walk_files(folder: str) -> list[str]:
+    found: list[str] = []
+    for n in sorted(os.listdir(folder)):
+        p = folder + '/' + n
+        if ospath.islink(p):
+            continue
+        if ospath.isdir(p):
+            found += walk_files(p)
+        elif ospath.isfile(p):
+            found.append(p)
+    return found
+
+
+# the lines of a text that are not empty
+export def lines_of(text: str) -> list[str]:
+    found: list[str] = []
+    for line in text.split('\n'):
+        if line != '':
+            found.append(line)
+    return found
+
+# this program's standard error and output: a program that is stopped between them keeps the order
+export def eout(text: str):
+    sys.write_stderr(text)
+
+# ---- notarization -----------------------------------------------------------------------------------------------------------------
+
+# Submits a file to the notary service and waits; gives "Accepted" results as the submission id, dies with Apple's log otherwise.
+# Used by dev/sign.tom and dev/dmg.tom.
+export def notarize(path: str, profile: str, work: str) -> str:
+    log = work + '/notary.plist'
+    r = run(['xcrun', 'notarytool', 'submit', path, '--keychain-profile', profile, '--wait', '--output-format', 'plist'])
+    write(log, r.stdout + r.stderr)
+    if r.status != 0:
+        sys.write_stderr(r.stdout + r.stderr)
+        die('notarytool submit failed')
+    status = out(['/usr/libexec/PlistBuddy', '-c', 'Print :status', log])
+    sid = out(['/usr/libexec/PlistBuddy', '-c', 'Print :id', log])
+    if status != 'Accepted':
+        shown = status
+        if shown == '':
+            shown = 'failed'
+        sys.write_stderr(f'error: notarization {shown} (submission {sid})\n')
+        if sid != '':
+            lg = run(['xcrun', 'notarytool', 'log', sid, '--keychain-profile', profile])
+            sys.write_stderr(lg.stdout + lg.stderr)
+        else:
+            sys.write_stderr(read_or(log))
+        raise Fatal('notarization failed')
+    return sid
+
+
+# ---- latest.json -------------------------------------------------------------------------------------------------------------------
+
+# The tarball's url in latest.json without its `.tar.gz` (the pkg_url and dmg_url are that plus .pkg and .dmg), or ''
+export def url_stem(path: str) -> str:
+    for line in read_or(path).split('\n'):
+        m = re.search('"url" *: *"([^"]*)\\.tar\\.gz"', line)
+        if m is not None:
+            return m.group(1)
+    return ''
+
+# The lines of latest.json without the lines of a key prefix (`"pkg_`), without the closing brace line, and the last of them ending in one
+# comma: what the shell's `grep -v '"pkg_' f | sed '$d' | sed '$s/,*$/,/'` kept
+export def json_keep(path: str, key_prefix: str) -> list[str]:
+    lines: list[str] = []
+    for line in read_or(path).split('\n'):
+        if line == '':
+            continue
+        if key_prefix in line:
+            continue
+        lines.append(line)
+    if len(lines) > 0:
+        lines.pop()
+    if len(lines) > 0:
+        lines[len(lines) - 1] = lines[len(lines) - 1].rstrip(',') + ','
+    return lines
+
+# latest.json with two keys added at its end: `"KEY_url": URL, "KEY_sha256": SUM` (KEY is pkg or dmg)
+export def json_with_asset(path: str, key: str, url: str, total: str) -> str:
+    lines = json_keep(path, '"' + key + '_')
+    lines.append('  "' + key + '_url": "' + url + '",')
+    lines.append('  "' + key + '_sha256": "' + total + '"')
+    lines.append('}')
+    return '\n'.join(lines) + '\n'

@@ -1,0 +1,1445 @@
+# The benchmark tools, in Tomato (docs/shell-to-tomato-plan.md, stage 5): benchmarks/run.sh and benchmarks/count.sh over again.
+#
+#     tomato run dev/bench.tom main [--runs N] [--python-runs N] [--seed N] [--smoke] [--only a,b] [--langs a,b] [--out DIR]
+#                                   [--max-minutes N] [--site] [--tomatoc FILE]
+#     tomato run dev/bench.tom main count [--setup] [--runs N] [--only a,b] [--smoke] [--vm NAME] [--out FILE]
+#     tomato run dev/bench.tom count [...]        (the same as `main count`)
+#
+# Run it from the root of the repository. `main` with an option (or nothing) as its first word is run.sh: it builds every benchmark
+# in Tomato and in the other languages whose tools are installed (Go, Rust, C, C++, Java, C#, Swift, JavaScript, TypeScript, PHP and
+# Python), runs each several times, and writes the median and fastest time, peak memory, build time and binary size as JSON and a
+# Markdown table. `count` is count.sh: deterministic instruction counts under Valgrind in a Lima VM (--setup creates it). The options,
+# the environment, the output text and the files (benchmarks/results/results.json, results.md, raw.tsv, instructions.md) are those of
+# the two shell scripts; read their header comments (still in benchmarks/) for what each option does.
+#
+#   --runs N       runs per program (default 10; the median is reported); Python and PHP run --python-runs times (default 10)
+#   --seed N       the seed of the random order of the runs (default 1): every (benchmark, language, run) job is shuffled and run in
+#                  that order, so throttling and background load fall evenly on every row; the seed is recorded
+#   --smoke        the tiny inputs of sizes.txt, and only a check that all versions print the same thing
+#   --max-minutes  stop timing after N minutes; the runs that finished are kept ("partial": true)
+#   --site         also copy results.json to site/benchmarks.json
+#   --tomatoc F    use this compiler binary (built from compiler/bootstrap/tomatoc.ll) instead of building one
+#
+# The timing helper is benchmarks/measure.c, built with clang as run.sh built it. The shuffle is run.sh's: awk's srand(seed) and rand()
+# of the BSD awk of macOS (which the release is made on) are random() of the BSD C library, a 31-word additive feedback generator seeded
+# by a linear congruential one; it is written out below (class Random), so that the same seed gives the same order as `sh
+# benchmarks/run.sh` gave on the Mac, and on any machine. (gawk and mawk, which Linux has, draw other numbers for the same seed.)
+import sys
+import os
+import ospath
+import re
+import time
+import base64
+import rtool as rt
+
+const RUN_USAGE = 'usage: tomato run dev/bench.tom main [--runs N] [--python-runs N] [--seed N] [--smoke] [--only a,b] [--langs a,b] [--out DIR] [--max-minutes N] [--site] [--tomatoc FILE]'
+const COUNT_USAGE = 'usage: tomato run dev/bench.tom main count [--setup] [--runs N] [--only a,b] [--smoke] [--vm NAME] [--out FILE]'
+const ALL_LANGS = 'go rust python c cpp java csharp swift javascript typescript php'
+const RELEASE_MODE = 'release'
+
+# ---- the seeded shuffle ----------------------------------------------------------------------------------------------------------
+
+# Written out where the C library of BSD and macOS has it: random() of libc, TYPE_3 (31 words, separation 3). The first word is the
+# seed, each next one is 16807 * the one before mod 2^31-1 (a seed of 0 becomes 123459876), then 310 numbers are drawn and thrown away.
+class Random:
+    words: list[int] = []
+    front: int = 3
+    rear: int = 0
+
+    @init
+    def make(self, seed: int):
+        self.words = []
+        x = seed & 4294967295
+        self.words.append(x)
+        for i in range(1, 31):
+            self.words.append(good_rand(self.words[i - 1]))
+        self.front = 3
+        self.rear = 0
+        for _ in range(310):
+            _n = self.next()
+
+    # the next number, from 0 to 2147483647
+    def next(self) -> int:
+        w = (self.words[self.front] + self.words[self.rear]) & 4294967295
+        self.words[self.front] = w
+        result = w >> 1
+        self.front += 1
+        if self.front >= 31:
+            self.front = 0
+            self.rear += 1
+        else:
+            self.rear += 1
+            if self.rear >= 31:
+                self.rear = 0
+        return result
+
+# 16807 * x mod 2147483647 by Schrage's method, in C's int32 arithmetic (division truncates toward zero)
+def good_rand(word: int) -> int:
+    x = word
+    if x >= 2147483648:
+        x -= 4294967296
+    if x == 0:
+        x = 123459876
+    hi = 0
+    lo = 0
+    if x < 0:
+        hi = -((-x) // 127773)
+        lo = -((-x) % 127773)
+    else:
+        hi = x // 127773
+        lo = x % 127773
+    x = 16807 * lo - 2836 * hi
+    if x < 0:
+        x += 2147483647
+    return x
+
+# awk's `printf "%.12f", rand()` as a whole number of 10^-12: rand() is random() / 2^31, and the digits are those of that exact
+# fraction, rounded to 12 places with ties to even, as printf does.
+def key12(r: int) -> int:
+    rem = r
+    value = 0
+    for _ in range(12):
+        rem *= 10
+        value = value * 10 + (rem >> 31)
+        rem = rem & 2147483647
+    if rem > 1073741824 or (rem == 1073741824 and value % 2 == 1):
+        value += 1
+    return value
+
+class Keyed:
+    key: int = 0
+    line: str = ''
+
+    @init
+    def make(self, key: int, line: str):
+        self.key = key
+        self.line = line
+
+    @lt   # allow: unstable
+    def less(self, other: Keyed) -> bool:
+        if self.key != other.key:
+            return self.key < other.key
+        return self.line < other.line
+
+# Every line gets rand() in file order, then `sort -n` on the printed number (ties by the whole line, as sort does)
+export def shuffle_lines(lines: list[str], seed: int) -> list[str]:
+    rng = Random(seed)
+    keyed: list[Keyed] = []
+    for line in lines:
+        keyed.append(Keyed(key12(rng.next()), line))
+    ordered = sorted(keyed)
+    found: list[str] = []
+    for k in ordered:
+        found.append(k.line)
+    return found
+
+# ---- small helpers -----------------------------------------------------------------------------------------------------------------
+
+def words(text: str) -> list[str]:
+    found: list[str] = []
+    for w in text.replace('\t', ' ').split(' '):
+        if w != '':
+            found.append(w)
+    return found
+
+def say(text: str):
+    sys.write_stderr(text + '\n')
+
+def to_num(text: str) -> float:
+    try:
+        return float(text)
+    catch ValueError:
+        return 0.0
+
+def is_int(text: str) -> bool:
+    t = text
+    if t.startswith('-'):
+        t = t[1:]
+    return t.isdigit()
+
+# a word of an awk script that is not a number counts as 0 (and so does an empty one)
+def int_of(text: str) -> int:
+    if is_int(text):
+        return int(text)
+    return 0
+
+def first_line(text: str) -> str:
+    k = text.find('\n')
+    if k < 0:
+        return text
+    return text[:k]
+
+def last_line(text: str) -> str:
+    t = text.rstrip('\n')
+    k = t.rfind('\n')
+    if k < 0:
+        return t
+    return t[k + 1:]
+
+def comma_list(text: str) -> list[str]:
+    return words(text.replace(',', ' '))
+
+# a number as the shell script's awk printed it
+def f6(x: float) -> str:
+    return f'{x:.6f}'
+
+def f3(text: str) -> str:
+    return f'{to_num(text):.3f}'
+
+# t / x as `awk '{ printf "%.2f", t / $1 }'`
+def ratio2(t: str, x: str) -> str:
+    d = to_num(x)
+    if d == 0.0:
+        sys.write_stderr('awk: division by zero\n')
+        return 'inf'
+    return f'{to_num(t) / d:.2f}'
+
+# a number that sort -n sorts: the text is kept (the shell script printed it as it was), the value orders
+class Num:
+    v: float = 0.0
+    s: str = ''
+
+    @init
+    def make(self, s: str):
+        self.s = s
+        self.v = to_num(s)
+
+    @lt   # allow: unstable
+    def less(self, other: Num) -> bool:
+        if self.v != other.v:
+            return self.v < other.v
+        return self.s < other.s
+
+def sort_nums(texts: list[str]) -> list[Num]:
+    items: list[Num] = []
+    for t in texts:
+        items.append(Num(t))
+    return sorted(items)
+
+# the median of sorted numbers as run.sh's awk printed it: a middle one as it is, the mean of two with six places, 0.000000 for none
+def median_of(items: list[Num]) -> str:
+    n = len(items)
+    if n == 0:
+        return '0.000000'
+    if n % 2 == 1:
+        return items[(n - 1) // 2].s
+    return f6((items[n // 2 - 1].v + items[n // 2].v) / 2.0)
+
+def head_of(items: list[Num]) -> str:
+    if len(items) == 0:
+        return ''
+    return items[0].s
+
+def tail_of(items: list[Num]) -> str:
+    if len(items) == 0:
+        return ''
+    return items[len(items) - 1].s
+
+# the first line of what a program says about its version (both streams, as `2>&1 | head -1` showed them)
+def ver(argv: list[str]) -> str:
+    r = rt.run(argv)
+    return first_line(r.stdout + r.stderr)
+
+def have(name: str) -> bool:
+    return rt.which(name) is not None
+
+# `command -v name`
+def where(name: str) -> str:
+    p = rt.which(name)
+    if p is None:
+        return name
+    return p
+
+def child_env(extra_path: str) -> dict[str, str]:
+    path = ''
+    p = os.getenv('PATH')
+    if p is not None:
+        path = p
+    return {'PATH': extra_path + ':' + path}
+
+class Meas:
+    wall: str = ''
+    user: str = ''
+    systime: str = ''
+    rss: str = ''
+    code: str = ''
+    stderr: str = ''
+
+# `measure OUTFILE PROGRAM ARGS...`: the program's standard output goes to OUTFILE, the numbers are the last line of standard error
+def measure(helper: str, outfile: str, argv: list[str], env: dict[str, str] | None = None) -> Meas:
+    r = rt.run([helper, outfile] + argv, None, env)
+    m = Meas()
+    m.stderr = r.stderr
+    w = words(last_line(r.stderr))
+    while len(w) < 5:
+        w.append('')
+    m.wall = w[0]
+    m.user = w[1]
+    m.systime = w[2]
+    m.rss = w[3]
+    m.code = w[4]
+    return m
+
+class Row:
+    b: str = ''
+    l: str = ''
+    wall: str = ''
+    user: str = ''
+    systime: str = ''
+    rss: str = ''
+    code: str = ''
+
+    @init
+    def make(self, b: str, l: str, m: Meas):
+        self.b = b
+        self.l = l
+        self.wall = m.wall
+        self.user = m.user
+        self.systime = m.systime
+        self.rss = m.rss
+        self.code = m.code
+
+class Built:
+    b: str = ''
+    l: str = ''
+    wall: str = ''
+    size: str = ''
+
+    @init
+    def make(self, b: str, l: str, wall: str, size: str):
+        self.b = b
+        self.l = l
+        self.wall = wall
+        self.size = size
+
+class Agree:
+    b: str = ''
+    l: str = ''
+    ok: bool = False
+
+    @init
+    def make(self, b: str, l: str, ok: bool):
+        self.b = b
+        self.l = l
+        self.ok = ok
+
+# sizes.txt: benchmark, smoke input, full input, counting input
+class Sizes:
+    names: list[str] = []
+    rows: dict[str, list[str]] = {}
+
+    @init
+    def make(self, path: str):
+        self.names = []
+        self.rows = {}
+        for line in rt.read_or(path).split('\n'):
+            if line.startswith('#'):
+                continue
+            w = words(line)
+            if len(w) == 0:
+                continue
+            self.names.append(w[0])
+            if w[0] not in self.rows:
+                self.rows[w[0]] = w
+
+    # column 2 (smoke), 3 (full) or 4 (counting) of the benchmark, '' when it has none
+    def input_for(self, name: str, column: int) -> str:
+        if name not in self.rows:
+            return ''
+        w = self.rows[name]
+        if column > len(w):
+            return ''
+        return w[column - 1]
+
+# the repository root: this program is run from it (benchmarks/sizes.txt is there)
+def repo_root() -> str:
+    root = os.getcwd()
+    if not ospath.isfile(root + '/benchmarks/sizes.txt'):
+        return ''
+    return root
+
+# the Tomato compiler of this checkout in a folder of its own: run.sh and count.sh built it from compiler/bootstrap/tomatoc.ll
+def make_home(root: str, work: str, tomatoc: str) -> str:
+    home = work + '/tomato'
+    rt.mkdirs(home + '/bin')
+    if tomatoc != '':
+        try:
+            rt.copy(tomatoc, home + '/bin/tomatoc')
+        catch IOError as e:
+            sys.write_stderr(e.message + '\n')
+            return ''
+    else:
+        status = rt.run_shown(['clang', '-O1', '-w', '-o', home + '/bin/tomatoc', root + '/compiler/bootstrap/tomatoc.ll', root + '/runtime/tomato_rt.c', '-pthread', '-lm'])
+        if status != 0:
+            return ''
+    try:
+        rt.copy(root + '/native/tomato', home + '/bin/tomato')
+        rt.copy(root + '/native/rtcache.sh', home + '/bin/rtcache.sh')
+        rt.copy_tree(root + '/runtime', home + '/runtime')
+        rt.copy_tree(root + '/std', home + '/std')
+        rt.copy(root + '/VERSION', home + '/VERSION')
+    catch IOError as e:
+        sys.write_stderr(e.message + '\n')
+        return ''
+    return home
+
+def file_text(path: str) -> str:
+    return rt.read_or(path).rstrip('\n')
+
+# ---- run ------------------------------------------------------------------------------------------------------------------------------
+
+class Bench:
+    root: str = ''
+    here: str = ''
+    work: str = ''
+    out: str = ''
+    runs: int = 10
+    python_runs: int = 10
+    seed_text: str = '1'
+    smoke: bool = False
+    only: str = ''
+    wanted: str = ''
+    site: bool = False
+    max_minutes: int = 0
+    tomatoc: str = ''
+    langs: list[str] = []
+    benchmarks: list[str] = []
+    sizes: Sizes = Sizes('')
+    extras: list[str] = []
+    raw: list[Row] = []
+    built: list[Built] = []
+    agree: list[Agree] = []
+    jobs: list[str] = []
+    machine_line: str = ''
+
+    @init
+    def make(self):
+        self.langs = []
+        self.benchmarks = []
+        self.extras = []
+        self.raw = []
+        self.built = []
+        self.agree = []
+        self.jobs = []
+
+    def input_for(self, name: str) -> str:
+        if self.smoke:
+            return self.sizes.input_for(name, 2)
+        return self.sizes.input_for(name, 3)
+
+    def ran(self, b: str, l: str) -> bool:
+        for r in self.raw:
+            if r.b == b and r.l == l:
+                return True
+        return False
+
+    # the walls (or peak memories) of every run of a program, sorted
+    def stat_of(self, b: str, l: str, memory: bool) -> list[Num]:
+        found: list[str] = []
+        for r in self.raw:
+            if r.b == b and r.l == l:
+                if memory:
+                    found.append(r.rss)
+                else:
+                    found.append(r.wall)
+        return sort_nums(found)
+
+    def used(self, l: str) -> bool:
+        return l in self.langs
+
+    def installed(self, l: str) -> bool:
+        if l == 'go':
+            return have('go')
+        if l == 'rust':
+            return have('rustc') and have('cargo')
+        if l == 'c':
+            return have('clang')
+        if l == 'cpp':
+            if not have('clang++'):
+                return False
+            return rt.run(['clang++', '-std=c++17', '-x', 'c++', '-fsyntax-only', '-'], None, None, '#include <vector>\n').status == 0
+        if l == 'java':
+            return have('javac') and have('java')
+        if l == 'csharp':
+            if not have('dotnet'):
+                return False
+            r = rt.run(['dotnet', '--version'])
+            if r.status != 0:
+                return False
+            major = r.stdout.strip().partition('.')[0]
+            return is_int(major) and int(major) >= 10
+        if l == 'swift':
+            return have('swiftc') and rt.run(['swiftc', '--version']).status == 0
+        if l == 'javascript':
+            return have('node')
+        if l == 'typescript':
+            if not have('node'):
+                return False
+            probe = self.work + '/probe.ts'
+            rt.write(probe, 'const x: number = 0;\n')
+            return rt.run(['node', '--experimental-strip-types', '--no-warnings', probe]).status == 0
+        if l == 'php':
+            return have('php')
+        if l == 'python':
+            return have('python3')
+        return False
+
+    def ext(self, l: str) -> str:
+        if l == 'tomato' or l == 'tomato-debug':
+            return 'tom'
+        if l == 'rust':
+            return 'rs'
+        if l == 'csharp':
+            return 'cs'
+        if l == 'javascript':
+            return 'js'
+        if l == 'typescript':
+            return 'ts'
+        if l == 'python':
+            return 'py'
+        return l
+
+    # language, the path it was built to, benchmark -> the bytes of what the build made
+    def size_of(self, l: str, binary: str, b: str) -> int:
+        if l == 'java':
+            total = 0
+            folder = binary + '.classes'
+            for n in rt.names(folder):
+                if n.endswith('.class'):
+                    total += ospath.getsize(folder + '/' + n)
+            return total
+        if l == 'csharp':
+            return ospath.getsize(binary + '.dir/' + b + '.dll')
+        return ospath.getsize(binary)
+
+    # the build command of a language, [] for the ones that are not built
+    def build_cmd(self, l: str, b: str, src: str, binary: str, home: str) -> list[str]:
+        if l == 'tomato':
+            return [home + '/bin/tomato', 'build', src, '--entry', 'main', '-o', binary, '--mode', RELEASE_MODE]
+        if l == 'tomato-debug':
+            return [home + '/bin/tomato', 'build', src, '--entry', 'main', '-o', binary, '--mode', 'debug']
+        if l == 'go':
+            return [where('go'), 'build', '-o', binary, src]
+        if l == 'rust':
+            if ospath.isfile(self.here + '/' + b + '/Cargo.toml'):   # a benchmark that needs a crate (bigint: num-bigint) is a small Cargo project
+                return [where('cargo'), 'build', '--release', '--locked', '--quiet', '--manifest-path', self.here + '/' + b + '/Cargo.toml', '--target-dir', self.work + '/cargo']
+            return [where('rustc'), '-O', '-o', binary, src]
+        if l == 'c':
+            return [where('clang'), '-O2', '-o', binary, src, '-lm']
+        if l == 'cpp':
+            return [where('clang++'), '-std=c++17', '-O2', '-o', binary, src]
+        if l == 'java':
+            return [where('javac'), '-d', binary + '.classes', src]
+        if l == 'csharp':
+            rt.mkdirs(self.work + '/cs/' + b)
+            rt.copy(src, self.work + '/cs/' + b + '/')
+            return [where('dotnet'), 'build', self.work + '/cs/' + b + '/' + b + '.cs', '-c', 'Release', '-o', binary + '.dir']
+        if l == 'swift':
+            return [where('swiftc'), '-O', '-o', binary, src]
+        return []
+
+    def run_cmd(self, l: str, b: str, src: str, inp: str) -> list[str]:
+        w = self.work
+        if l == 'java':
+            return [where('java'), '-cp', w + '/' + b + '.' + l + '.classes', b, inp]
+        if l == 'csharp':
+            return [where('dotnet'), w + '/' + b + '.' + l + '.dir/' + b + '.dll', inp]
+        if l == 'javascript':
+            return [where('node'), src, inp]
+        if l == 'typescript':
+            return [where('node'), '--experimental-strip-types', '--no-warnings', src, inp]
+        if l == 'php':
+            return [where('php'), src, inp]
+        if l == 'python':
+            return [where('python3'), src, inp]
+        return [w + '/' + b + '.' + l, inp]
+
+    # the -O level (and -flto, when used) clang really got for the Tomato builds of a language, read from the wrapper's log
+    def olevel(self, l: str) -> str:
+        matching = False
+        for line in rt.read_or(self.work + '/clang.log').split('\n'):
+            w = words(line)
+            if len(w) == 0:
+                continue
+            if w[0] == 'BUILD':
+                matching = len(w) > 2 and w[2] == l
+                continue
+            if matching:
+                s = ''
+                for tok in w:
+                    if re.fullmatch('-O[0-9sz]', tok) is not None or tok == '-flto':
+                        if s != '':
+                            s += ' '
+                        s += tok
+                if s != '':
+                    return s
+        return ''
+
+    def one_result(self, b: str, l: str, sep: str) -> str:
+        walls = self.stat_of(b, l, False)
+        med = median_of(walls)
+        mn = head_of(walls)
+        mx = tail_of(walls)
+        rss = median_of(self.stat_of(b, l, True))
+        bt = ''
+        bs = ''
+        for x in self.built:
+            if x.b == b and x.l == l:
+                bt = x.wall
+                bs = x.size
+        if bt == '':
+            bt = 'null'
+        if bs == '':
+            bs = 'null'
+        ok = 'false'
+        for a in self.agree:
+            if a.b == b and a.l == l and a.ok:
+                ok = 'true'
+        return f'{sep}"{l}": {{"median": {med}, "min": {mn}, "max": {mx}, "peak_memory_bytes": {rss}, "build_seconds": {bt}, "binary_bytes": {bs}, "agrees": {ok}, "runs": {len(walls)}}}'
+
+    def extras_of(self, b: str) -> list[str]:
+        found: list[str] = []
+        for e in self.extras:
+            if e == b:
+                found.append('rust-radix')
+        return found
+
+    def agree_bad(self) -> list[str]:
+        found: list[str] = []
+        for a in self.agree:
+            if not a.ok:
+                found.append(a.b + ' ' + a.l)
+        return found
+
+    def go(self, args: list[str]) -> int:
+        self.seed_text = '1'
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == '--smoke':
+                self.smoke = True
+                i += 1
+                continue
+            if a == '--site':
+                self.site = True
+                i += 1
+                continue
+            known = a == '--runs' or a == '--python-runs' or a == '--seed' or a == '--only' or a == '--langs' or a == '--out' or a == '--max-minutes' or a == '--tomatoc'
+            if not known or i + 1 >= len(args):
+                sys.write_stderr(RUN_USAGE + '\n')
+                return 2
+            v = args[i + 1]
+            i += 2
+            if a == '--runs' or a == '--python-runs' or a == '--max-minutes':
+                if not is_int(v):
+                    sys.write_stderr(RUN_USAGE + '\n')
+                    return 2
+                if a == '--runs':
+                    self.runs = int(v)
+                elif a == '--python-runs':
+                    self.python_runs = int(v)
+                else:
+                    self.max_minutes = int(v)
+            elif a == '--seed':
+                self.seed_text = v
+            elif a == '--only':
+                self.only = v
+            elif a == '--langs':
+                self.wanted = v
+            elif a == '--out':
+                self.out = v
+            else:
+                self.tomatoc = v
+        self.root = repo_root()
+        if self.root == '':
+            sys.write_stderr('error: run this from the root of the repository (benchmarks/sizes.txt is not here)\n')
+            return 1
+        self.here = self.root + '/benchmarks'
+        if self.out == '':
+            self.out = self.here + '/results'
+        rt.mkdirs(self.out)
+        self.work = rt.mkdtemp('tmp.')
+        status = 1
+        try:
+            status = self.body()
+        finally:
+            rt.rmtree(self.work)
+        return status
+
+    def body(self) -> int:
+        work = self.work
+        here = self.here
+        root = self.root
+        # --- the Tomato compiler from this checkout, and the timing helper
+        home = make_home(root, work, self.tomatoc)
+        if home == '':
+            return 1
+        helper = work + '/measure'
+        if rt.run_shown(['clang', '-O2', '-o', helper, here + '/measure.c']) != 0:
+            return 1
+        # a clang wrapper that records which optimization level each Tomato build really used
+        rt.mkdirs(work + '/shim')
+        rt.write(work + '/clang.log', '')
+        rt.write(work + '/shim/clang', '#!/bin/sh\necho "$*" >> "' + work + '/clang.log"\nexec "' + where('clang') + '" "$@"\n')
+        rt.chmod_x([work + '/shim/clang'])
+        shim_env = child_env(work + '/shim')
+
+        self.langs = ['tomato', 'tomato-debug']
+        os.putenv('DOTNET_CLI_TELEMETRY_OPTOUT', '1')
+        os.putenv('DOTNET_NOLOGO', '1')
+        all_langs = ALL_LANGS.split(' ')
+        tries: list[str] = []
+        if self.wanted != '':
+            tries = comma_list(self.wanted)
+        elif self.smoke:
+            for t in all_langs:
+                if t != 'csharp' and t != 'swift':
+                    tries.append(t)
+        else:
+            tries = all_langs
+        for t in tries:
+            if t not in all_langs:
+                sys.write_stderr(f"unknown language '{t}' (known: {ALL_LANGS})\n")
+                return 2
+            if self.installed(t):
+                self.langs.append(t)
+            else:
+                say(f'skipping {t}: its tools are not installed')
+
+        self.sizes = Sizes(here + '/sizes.txt')
+        self.benchmarks = self.sizes.names
+        if self.only != '':
+            self.benchmarks = comma_list(self.only)
+
+        load_before = self.load_text()
+        for b in self.benchmarks:
+            inp = self.input_for(b)
+            if inp == '':
+                say(f'no input for {b} in sizes.txt')
+                return 1
+            for l in self.langs:
+                src = here + '/' + b + '/' + b + '.' + self.ext(l)
+                binary = work + '/' + b + '.' + l
+                if not ospath.isfile(src):      # not every benchmark is written in every language
+                    continue
+                argv: list[str] = []
+                try:
+                    argv = self.build_cmd(l, b, src, binary, home)
+                catch IOError as e:
+                    say(e.message)
+                    return 1
+                if len(argv) > 0:
+                    rt.append(work + '/clang.log', f'BUILD {b} {l}\n')
+                    m = measure(helper, work + '/build.log', argv, shim_env)
+                    # measure prints its numbers as the last line of stderr; the build's own stderr (a warning, say) comes before it
+                    if m.code != '0':
+                        say(f'build failed: {b} {l}')
+                        sys.write_stderr(rt.read_or(work + '/build.log') + m.stderr)
+                        return 1
+                    if l == 'rust' and ospath.isfile(here + '/' + b + '/Cargo.toml'):
+                        try:
+                            rt.copy(work + '/cargo/release/' + b, binary)
+                        catch IOError:
+                            say(f'build failed: {b} {l}')
+                            return 1
+                    # numbers from a Tomato whose link-time optimisation was lost would be wrong ones (v0.51's Linux column was): refuse, except in a smoke run (a check of the harness)
+                    if (l == 'tomato' or l == 'tomato-debug') and not self.smoke and 'warning: LTO link failed' in m.stderr:
+                        say(f'the Tomato build lost link-time optimisation ({b} {l}): fix the toolchain (tomato run dev/linux_setup.tom check_lto, dev/linux_setup.tom)')
+                        sys.write_stderr(m.stderr)
+                        return 1
+                    self.built.append(Built(b, l, m.wall, str(self.size_of(l, binary, b))))
+                limit = self.runs
+                if l == 'python' or l == 'php':
+                    limit = self.python_runs
+                if self.smoke:
+                    limit = 1
+                n = 1
+                while n <= limit:
+                    self.jobs.append(f'{b} {l} {n}')
+                    n += 1
+                say(f'{b} {l} built')
+            if have('rustc') and ospath.isfile(here + '/' + b + '/' + b + '_radix.rs'):   # an extra Rust version with another algorithm, reported beside the table
+                self.extras.append(b)
+                m = measure(helper, work + '/build.log', [where('rustc'), '-O', '-o', work + '/' + b + '.rust-radix', here + '/' + b + '/' + b + '_radix.rs'])
+                if m.code != '0':
+                    say(f'build failed: {b} rust-radix')
+                    sys.write_stderr(rt.read_or(work + '/build.log'))
+                    return 1
+                self.built.append(Built(b, 'rust-radix', m.wall, str(ospath.getsize(work + '/' + b + '.rust-radix'))))
+                limit = self.runs
+                if self.smoke:
+                    limit = 1
+                n = 1
+                while n <= limit:
+                    self.jobs.append(f'{b} rust-radix {n}')
+                    n += 1
+        # every (benchmark, language, run) job, shuffled with a fixed seed, instead of all runs of one program back to back
+        order = shuffle_lines(self.jobs, int_of(self.seed_text))
+        total = len(order)
+        done_n = 0
+        stop = False
+        rt.watch_signals()      # a stop signal ends the timing loop; what has run so far is still summarized below
+        start_time = rt.now()
+        for job in order:
+            if stop:
+                break
+            if self.max_minutes > 0 and rt.now() - start_time >= self.max_minutes * 60:
+                stop = True
+                say(f'time limit reached after {done_n} of {total} runs')
+                break
+            w = words(job)
+            b = w[0]
+            l = w[1]
+            inp = self.input_for(b)
+            src = here + '/' + b + '/' + b + '.' + self.ext(l)
+            m = Meas()
+            try:
+                m = measure(helper, work + '/' + b + '.' + l + '.out', self.run_cmd(l, b, src, inp))
+            catch Error as e:
+                if rt.interrupted_by(e) == 0:
+                    raise e
+                stop = True
+                break
+            if stop and m.code != '0':      # the signal killed this run halfway: do not count it
+                break
+            self.raw.append(Row(b, l, m))
+            done_n += 1
+            if done_n % 50 == 0:
+                say(f'{done_n} of {total} runs')
+        partial = stop
+        rawtext = ''
+        for r in self.raw:     # every run: benchmark language wall user sys peak-memory-bytes exit-code
+            rawtext += f'{r.b} {r.l} {r.wall} {r.user} {r.systime} {r.rss} {r.code}\n'
+        rt.write(self.out + '/raw.tsv', rawtext)
+        if partial:      # a benchmark Tomato never ran has nothing to compare with, so it is left out
+            keep: list[str] = []
+            for b in self.benchmarks:
+                if self.ran(b, 'tomato'):
+                    keep.append(b)
+                else:
+                    say(f'no Tomato run of {b}: left out')
+            self.benchmarks = keep
+        for b in self.benchmarks:
+            # every language must print what Tomato prints
+            for l in self.langs + self.extras_of(b):
+                if not self.ran(b, l):
+                    continue
+                same = False
+                try:
+                    same = os.read_bytes(work + '/' + b + '.tomato.out') == os.read_bytes(work + '/' + b + '.' + l + '.out')
+                catch IOError:
+                    same = False
+                self.agree.append(Agree(b, l, same))
+        load_after = self.load_text()
+
+        if self.smoke:
+            bad = self.agree_bad()
+            if len(bad) > 0:
+                print("outputs differ from Tomato's for:")
+                print('\n'.join(bad))
+                return 1
+            print(f"ok: every benchmark prints the same in {','.join(self.langs)}")
+            return 0
+
+        self.write_json(load_before, load_after, partial)
+        self.write_markdown(load_before, load_after)
+        if self.site:
+            try:
+                rt.copy(self.out + '/results.json', root + '/site/benchmarks.json')
+            catch IOError as e:
+                sys.write_stderr(e.message + '\n')
+        bad = self.agree_bad()
+        if len(bad) > 0:
+            print("WARNING: outputs differ from Tomato's for: " + '\n'.join(bad))
+        print(f'wrote {self.out}/results.json and {self.out}/results.md')
+        return 0
+
+    def load_text(self) -> str:
+        text = rt.out(['uptime'])
+        m = re.search('.*load averages*: ', text)
+        if m is None:
+            return text
+        return text[m.end():]
+
+    def write_json(self, load_before: str, load_after: str, partial: bool):
+        root = self.root
+        machine = rt.out(['sysctl', '-n', 'machdep.cpu.brand_string'])
+        if machine == '':
+            for line in rt.read_or('/proc/cpuinfo').split('\n'):
+                if 'model name' in line:
+                    k = line.rfind(': ')
+                    if k >= 0:
+                        machine = line[k + 2:]
+                    break
+        cores = rt.out(['sysctl', '-n', 'hw.ncpu'])
+        if cores == '':
+            cores = rt.out(['nproc'])
+        memory = ''
+        mem = rt.out(['sysctl', '-n', 'hw.memsize'])
+        if mem != '':
+            memory = f'{int(to_num(mem) / 1073741824.0)} GB'
+        if memory == '':
+            for line in rt.read_or('/proc/meminfo').split('\n'):
+                if line.startswith('MemTotal:'):
+                    w = words(line)
+                    if len(w) > 1:
+                        memory = f'{int(to_num(w[1]) / 1048576.0 + 0.5)} GB'
+                    break
+        osname = ''
+        uname = rt.out(['uname', '-sr'])
+        if have('sw_vers'):
+            osname = rt.out(['sw_vers', '-productName']) + ' ' + rt.out(['sw_vers', '-productVersion']) + ' (' + uname + ')'
+        else:
+            pretty = 'Linux'
+            for line in rt.read_or('/etc/os-release').split('\n'):
+                if line.startswith('PRETTY_NAME='):
+                    v = line[len('PRETTY_NAME='):]
+                    if len(v) >= 2 and ((v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'"))):
+                        v = v[1:len(v) - 1]
+                    if v != '':
+                        pretty = v
+            osname = pretty + ' on ' + rt.out(['uname', '-m']) + ' (' + uname + ')'
+        self.machine_line = f'{machine}, {cores} cores, {memory}, {osname}'
+        version = file_text(root + '/VERSION')
+        v_go = ''
+        if have('go'):
+            v_go = self.quote(ver(['go', 'version']))
+        v_rust = ''
+        if have('rustc'):
+            v_rust = self.quote(ver(['rustc', '--version']))
+        v_python = ''
+        if have('python3'):
+            v_python = self.quote(ver(['python3', '--version']))
+        v_java = ''
+        if self.used('java'):
+            v_java = self.quote(ver(['javac', '-version']))
+        v_csharp = ''
+        if self.used('csharp'):
+            v_csharp = self.quote(ver(['dotnet', '--version']))
+        v_swift = ''
+        if self.used('swift'):
+            v_swift = self.quote(ver(['swiftc', '--version']))
+        v_node = ''
+        if have('node'):
+            v_node = self.quote(ver(['node', '--version']))
+        v_php = ''
+        if self.used('php'):
+            v_php = self.quote(ver(['php', '--version']))
+        j = '{\n'
+        j += f'  "date": "{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(rt.now()))}",\n'
+        j += f'  "machine": {{"cpu": "{machine}", "cores": {cores}, "memory": "{memory}", "os": "{osname}"}},\n'
+        j += f'  "versions": {{"tomato": "{version}", "clang": "{self.quote(ver(["clang", "--version"]))}", "go": "{v_go}", "rust": "{v_rust}", "python": "{v_python}", "java": "{v_java}", "csharp": "{v_csharp}", "swift": "{v_swift}", "node": "{v_node}", "php": "{v_php}"}},\n'
+        j += f'  "runs": {self.runs},\n  "python_runs": {self.python_runs},\n  "order": "shuffled",\n  "seed": {self.seed_text},\n  "load_before": "{load_before}",\n  "load_after": "{load_after}",\n  "partial": {"true" if partial else "false"},\n'
+        j += f'  "commands": {{"tomato": "tomato build --mode {RELEASE_MODE} (clang {first_line(self.olevel("tomato"))} on the LLVM IR)", "tomato-debug": "tomato build --mode debug (clang {first_line(self.olevel("tomato-debug"))} on the LLVM IR)", "go": "go build", "rust": "rustc -O (bigint: cargo build --release with the num-bigint crate)", "rust-radix": "rustc -O (sort_radix.rs: a radix sort instead of the standard sort)", "c": "clang -O2", "cpp": "clang++ -std=c++17 -O2", "java": "javac, then java", "csharp": "dotnet build -c Release, then dotnet FILE.dll", "swift": "swiftc -O", "javascript": "node FILE", "typescript": "node --experimental-strip-types FILE", "php": "php FILE", "python": "python3 FILE"}},\n'
+        j += '  "benchmarks": [\n'
+        first = True
+        for b in self.benchmarks:
+            if not first:
+                j += ',\n'
+            first = False
+            j += f'    {{"name": "{b}", "input": {self.input_for(b)}, "results": {{'
+            sep = ''
+            for l in self.langs:
+                if not self.ran(b, l):
+                    continue
+                j += self.one_result(b, l, sep)
+                sep = ', '
+            j += '}'
+            extra = self.extras_of(b)
+            if len(extra) > 0:
+                j += ', "extra": {'
+                sep = ''
+                for l in extra:
+                    j += self.one_result(b, l, sep)
+                    sep = ', '
+                j += '}'
+            j += '}'
+        j += '\n  ]\n}\n'
+        rt.write(self.out + '/results.json', j)
+
+    def quote(self, text: str) -> str:
+        return text.replace('"', '\\"')
+
+    # the Markdown table: median seconds, and the ratio to Rust (or to the fastest program when Rust is missing)
+    def write_markdown(self, load_before: str, load_after: str):
+        version = file_text(self.root + '/VERSION')
+        t = '# Benchmark results\n\n'
+        t += f'Machine: {self.machine_line}. Tomato v{version}. Median of {self.runs} runs ({self.python_runs} for Python and PHP), all runs in one shuffled order (seed {self.seed_text}); load average before {load_before}, after {load_after}.\n\n'
+        t += '| benchmark | input |'
+        for l in self.langs:
+            t += f' {l} (s) |'
+        t += '\n| --- | --- |'
+        for l in self.langs:
+            t += ' ---: |'
+        t += '\n'
+        for b in self.benchmarks:
+            t += f'| {b} | {self.input_for(b)} |'
+            for l in self.langs:
+                if not self.ran(b, l):
+                    t += ' n/a |'
+                    continue
+                t += ' ' + f3(median_of(self.stat_of(b, l, False))) + ' |'
+            t += '\n'
+        t += '\nFastest run and spread ((slowest - fastest) / median), per program:\n\n'
+        t += '| benchmark |'
+        for l in self.langs:
+            t += f' {l} min (s) | spread |'
+        t += '\n| --- |'
+        for l in self.langs:
+            t += ' ---: | ---: |'
+        t += '\n'
+        for b in self.benchmarks:
+            t += f'| {b} |'
+            for l in self.langs:
+                if not self.ran(b, l):
+                    t += ' n/a | n/a |'
+                    continue
+                walls = self.stat_of(b, l, False)
+                med = median_of(walls)
+                mn = head_of(walls)
+                mx = tail_of(walls)
+                spread = ''
+                if to_num(med) == 0.0:
+                    sys.write_stderr('awk: division by zero\n')
+                    spread = 'inf'
+                else:
+                    spread = f'{(to_num(mx) - to_num(mn)) / to_num(med) * 100.0:.0f}%'
+                t += f' {f3(mn)} | {spread} |'
+            t += '\n'
+        t += '\n'
+        for b in self.extras:
+            l = 'rust-radix'
+            walls = self.stat_of(b, l, False)
+            med = median_of(walls)
+            tm = median_of(self.stat_of(b, 'tomato', False))
+            t += f'{b}, {l}: median {f3(med)} s, fastest {f3(head_of(walls))} s, tomato ÷ {l} {ratio2(tm, med)} (benchmarks/{b}/{b}_radix.rs; not in the tables above).\n\n'
+        t += "Tomato's time divided by each other language's time (below 1.0 Tomato is faster, above 1.0 it is slower):\n\n"
+        cmp_langs: list[str] = []
+        for l in self.langs:
+            if l != 'tomato' and l != 'tomato-debug':
+                cmp_langs.append(l)
+        t += '| benchmark |'
+        for x in ['tomato', 'tomato-debug']:
+            for l in cmp_langs:
+                t += f' {x} ÷ {l} |'
+        t += '\n| --- |'
+        for x in ['tomato', 'tomato-debug']:
+            for l in cmp_langs:
+                t += ' ---: |'
+        t += '\n'
+        for b in self.benchmarks:
+            t += f'| {b} |'
+            for x in ['tomato', 'tomato-debug']:
+                tm = median_of(self.stat_of(b, x, False))
+                for l in cmp_langs:
+                    if not self.ran(b, l):
+                        t += ' n/a |'
+                        continue
+                    t += ' ' + ratio2(tm, median_of(self.stat_of(b, l, False))) + ' |'
+            t += '\n'
+        rt.write(self.out + '/results.md', t)
+
+# ---- count ----------------------------------------------------------------------------------------------------------------------------
+
+# what the VM needs once (run inside it by `limactl shell`, as count.sh did): Go and the newest stable Rust, the versions the Mac has,
+# so the comparison is like for like; Ubuntu's own are too old
+const VM_SETUP = '\n      set -e\n      sudo apt-get update -qq\n      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq valgrind clang gcc python3 curl\n      [ -x "$HOME/.cargo/bin/rustc" ] || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal\n      /usr/local/go/bin/go version 2>/dev/null | grep -q go1.27.4 || {\n        curl -fsSL -o /tmp/go.tgz https://go.dev/dl/go1.27.4.linux-arm64.tar.gz\n        sudo rm -rf /usr/local/go; sudo tar -C /usr/local -xzf /tmp/go.tgz; }'
+
+# the copy of this checkout in the VM: the files arrive as base64 text on standard input (a tar of the checkout, gzipped), because
+# sys.run sends text only
+const VM_UNPACK = 'rm -rf "$HOME/tomato-count" && mkdir "$HOME/tomato-count" && base64 -d | tar --warning=no-unknown-keyword -xzf - -C "$HOME/tomato-count"'
+
+# The VM has no `tomato`, only clang: build the compiler of the checkout (as the guest half does again for its own use) and run the
+# guest half of this program with it. "$@" are the options of the guest half.
+const VM_BOOT = 'set -e; cd "$HOME/tomato-count"; h="$HOME/tomato-count/.boot"; rm -rf "$h"; mkdir -p "$h/bin"; clang -O1 -w -o "$h/bin/tomatoc" compiler/bootstrap/tomatoc.ll runtime/tomato_rt.c -pthread -lm; cp native/tomato native/rtcache.sh "$h/bin/"; cp -R runtime std VERSION "$h/"; exec "$h/bin/tomato" run dev/bench.tom main count "$@"'
+
+class Counted:
+    b: str = ''
+    l: str = ''
+    n: int = 0
+    count: str = ''
+
+    @init
+    def make(self, b: str, l: str, n: int, count: str):
+        self.b = b
+        self.l = l
+        self.n = n
+        self.count = count
+
+# a program's output and standard error, shown as it comes (error) or collected (output)
+async def pump_lines(r: sys.PipeReader, kept: list[str], show: bool) -> int:
+    while True:
+        line = await r.read_line()
+        if line == '':
+            break
+        if show:
+            sys.write_stderr(line)
+        else:
+            kept.append(line)
+    return 0
+
+# a program with its standard output kept and its standard error shown at once: `prog > FILE`
+async def run_keep_stdout(argv: list[str], cwd: str | None = None) -> tuple[int, str]:
+    kept: list[str] = []
+    p: sys.Process | None = None
+    try:
+        p = sys.spawn(argv, True, cwd, None)
+    catch IOError as e:
+        sys.write_stderr(e.message + '\n')
+        return (127, '')
+    proc = p
+    if proc is None:
+        return (127, '')
+    status = 127
+    try:
+        a = start pump_lines(proc.stdout, kept, False)   # allow: unstable
+        b = start pump_lines(proc.stderr, kept, True)   # allow: unstable
+        await a
+        await b
+        status = await proc.wait()
+    finally:
+        proc.stop()
+    return (status, ''.join(kept))
+
+class Count:
+    vm: str = 'tomato-count'
+    runs: int = 2
+    only: str = ''
+    smoke: bool = False
+    out: str = ''
+    guest: bool = False
+    setup: bool = False
+    benchmarks: list[str] = []
+    sizes: Sizes = Sizes('')
+    counts: list[Counted] = []
+
+    def input_for(self, name: str) -> str:
+        if self.smoke:
+            return self.sizes.input_for(name, 2)
+        return self.sizes.input_for(name, 4)
+
+    def vm_exists(self) -> bool:
+        for line in rt.out_any(['limactl', 'list', '-q']).split('\n'):
+            if line == self.vm:
+                return True
+        return False
+
+    async def go(self, args: list[str]) -> int:
+        argc = len(args)
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == '--setup':
+                self.setup = True
+                i += 1
+                continue
+            if a == '--guest':
+                self.guest = True
+                i += 1
+                continue
+            if a == '--smoke':
+                self.smoke = True
+                i += 1
+                continue
+            known = a == '--vm' or a == '--runs' or a == '--only' or a == '--out'
+            if not known or i + 1 >= len(args):
+                sys.write_stderr(COUNT_USAGE + '\n')
+                return 2
+            v = args[i + 1]
+            i += 2
+            if a == '--vm':
+                self.vm = v
+            elif a == '--runs':
+                if not is_int(v):
+                    sys.write_stderr(COUNT_USAGE + '\n')
+                    return 2
+                self.runs = int(v)
+            elif a == '--only':
+                self.only = v
+            else:
+                self.out = v
+        root = repo_root()
+        if root == '':
+            sys.write_stderr('error: run this from the root of the repository (benchmarks/sizes.txt is not here)\n')
+            return 1
+        if self.out == '':
+            self.out = root + '/benchmarks/results/instructions.md'
+        if not self.guest:
+            return await self.on_the_mac(root, argc)
+        work = rt.mkdtemp('tmp.')
+        status = 1
+        try:
+            status = self.in_the_vm(root, work)
+        finally:
+            rt.rmtree(work)
+        return status
+
+    # ---- on the Mac: set up the VM if asked, copy this checkout into it, run the guest half, keep the report
+    async def on_the_mac(self, root: str, argc: int) -> int:
+        vm = self.vm
+        if self.setup:
+            if not have('limactl'):
+                if rt.run_shown(['brew', 'install', 'lima']) != 0:
+                    return 1
+            if not self.vm_exists():
+                if rt.run_shown(['limactl', 'start', '--name=' + vm, '--vm-type=vz', '--cpus=4', '--memory=6', '--disk=30', '--mount-none', '--tty=false', 'template:ubuntu-24.04']) != 0:
+                    return 1
+            _r = rt.run(['limactl', 'start', vm])
+            if rt.run_shown(['limactl', 'shell', vm, '--', 'sh', '-c', VM_SETUP]) != 0:
+                return 1
+            print(f'VM {vm} is ready')
+            if argc == 1:      # --setup alone just sets up
+                return 0
+        if not have('limactl'):
+            sys.write_stderr('limactl not found: run tomato run dev/bench.tom main count --setup (see docs/performance.md)\n')
+            return 1
+        if not self.vm_exists():
+            sys.write_stderr(f'no VM named {vm}: run tomato run dev/bench.tom main count --setup\n')
+            return 1
+        _r = rt.run(['limactl', 'start', vm])
+        rt.mkdirs(ospath.dirname(self.out))
+        work = rt.mkdtemp('tmp.')
+        status = 1
+        try:
+            status = await self.ship(root, work)
+        finally:
+            rt.rmtree(work)
+        return status
+
+    async def ship(self, root: str, work: str) -> int:
+        vm = self.vm
+        packed = work + '/checkout.tgz'
+        made = rt.run(['tar', '-czf', packed, '-C', root, 'benchmarks', 'compiler/bootstrap', 'runtime', 'std', 'native', 'VERSION', 'dev'], None, {'COPYFILE_DISABLE': '1'})
+        if made.status != 0:
+            sys.write_stderr(made.stderr)
+            return 1
+        sent = rt.run(['limactl', 'shell', vm, '--', 'sh', '-c', VM_UNPACK], None, None, base64.b64encode(os.read_bytes(packed)))
+        if sent.status != 0:
+            sys.write_stderr(sent.stderr)
+            return 1
+        guest_args = ['--guest', '--runs', str(self.runs)]
+        if self.only != '':
+            guest_args += ['--only', self.only]
+        if self.smoke:
+            guest_args += ['--smoke']
+        res = await run_keep_stdout(['limactl', 'shell', vm, '--', 'sh', '-c', VM_BOOT, 'sh'] + guest_args)
+        if res[0] != 0:
+            return 1
+        tmp = self.out + '.tmp'
+        rt.write(tmp, res[1])
+        os.rename(tmp, self.out)
+        sys.write_stdout(res[1])
+        print('')
+        print(f'wrote {self.out}')
+        return 0
+
+    # ---- inside the VM
+    def in_the_vm(self, root: str, work: str) -> int:
+        home_dir = ''
+        hd = os.getenv('HOME')
+        if hd is not None:
+            home_dir = hd
+        path = '/usr/local/go/bin:' + home_dir + '/.cargo/bin:'
+        base = os.getenv('PATH')
+        if base is not None:
+            path += base
+        os.putenv('PATH', path)
+        os.putenv('GOMAXPROCS', '1')
+        os.putenv('PYTHONHASHSEED', '0')
+        os.putenv('CGO_ENABLED', '1')
+        if rt.out(['uname', '-s']) == 'Linux' and rt.out(['uname', '-m']) == 'x86_64':
+            os.putenv('GODEBUG', 'asyncpreemptoff=1')      # x86-64 Linux only: callgrind crashes on the Go wordcount binary with async preemption signals; the arm64 VM counts stay as they were
+        home = make_home(root, work, '')
+        if home == '':
+            return 1
+        here = root + '/benchmarks'
+        langs = ['tomato', 'go', 'rust', 'python']
+        self.sizes = Sizes(here + '/sizes.txt')
+        self.benchmarks = self.sizes.names
+        if self.only != '':
+            self.benchmarks = comma_list(self.only)
+        outputs: dict[str, str] = {}
+        bad: list[str] = []
+        last = ''
+        for b in self.benchmarks:
+            inp = self.input_for(b)
+            if inp == '':
+                say(f'no input for {b} in sizes.txt')
+                return 1
+            for l in langs:
+                ext = 'tom'
+                if l == 'go':
+                    ext = 'go'
+                elif l == 'rust':
+                    ext = 'rs'
+                elif l == 'python':
+                    ext = 'py'
+                src = here + '/' + b + '/' + b + '.' + ext
+                binary = work + '/' + b + '.' + l
+                built = False
+                if l == 'tomato':
+                    r = rt.run([home + '/bin/tomato', 'build', src, '--entry', 'main', '-o', binary, '--mode', RELEASE_MODE])
+                    sys.write_stderr(r.stdout + r.stderr)
+                    # a Tomato that lost link-time optimisation would give wrong counts (v0.51's Linux column did): refuse, except in a smoke run
+                    if not self.smoke and 'warning: LTO link failed' in r.stdout + r.stderr:
+                        say(f'the Tomato build lost link-time optimisation ({b}): fix the toolchain (tomato run dev/linux_setup.tom check_lto, dev/linux_setup.tom)')
+                        return 1
+                    built = r.status == 0
+                elif l == 'go':
+                    built = rt.run_shown(['go', 'build', '-ldflags=-linkmode=external', '-o', binary, src]) == 0
+                elif l == 'rust':
+                    if ospath.isfile(here + '/' + b + '/Cargo.toml'):
+                        built = rt.run_shown(['cargo', 'build', '--release', '--locked', '--quiet', '--manifest-path', here + '/' + b + '/Cargo.toml', '--target-dir', work + '/cargo']) == 0
+                        if built:
+                            try:
+                                rt.copy(work + '/cargo/release/' + b, binary)
+                            catch IOError:
+                                built = False
+                    else:
+                        built = rt.run_shown(['rustc', '-O', '-o', binary, src]) == 0
+                else:
+                    built = True
+                if not built:
+                    say(f'build failed: {b} {l}')
+                    return 1
+                n = 1
+                while n <= self.runs:
+                    argv = [binary, inp]
+                    if l == 'python':
+                        argv = ['python3', src, inp]
+                    r = rt.run(['valgrind', '--tool=callgrind', '--callgrind-out-file=/dev/null'] + argv)
+                    outputs[b + ' ' + l] = r.stdout
+                    got = ''
+                    for line in r.stderr.split('\n'):
+                        m = re.match('==[0-9]*== Collected : (.*)', line)
+                        if m is not None:
+                            got += m.group(1) + '\n'
+                    got = got.rstrip('\n')
+                    if got == '':
+                        say(f'no count for {b} {l}:')
+                        sys.write_stderr(r.stderr)
+                        return 1
+                    self.counts.append(Counted(b, l, n, got))
+                    last = got
+                    n += 1
+                say(f'{b} {l} {last}')
+            for l in ['go', 'rust', 'python']:
+                if (b + ' tomato') not in outputs or (b + ' ' + l) not in outputs or outputs[b + ' tomato'] != outputs[b + ' ' + l]:
+                    bad.append(b + ' ' + l)
+        sys.write_stdout(self.report(root, langs, bad))
+        return 0
+
+    # the instruction count of the first run (what the table shows), '' when there is none
+    def count_of(self, b: str, l: str) -> str:
+        for c in self.counts:
+            if c.b == b and c.l == l and c.n == 1:
+                return c.count
+        return ''
+
+    def spread_of(self, b: str, l: str) -> str:
+        lo = 0.0
+        hi = 0.0
+        seen = 0
+        for c in self.counts:
+            if c.b == b and c.l == l:
+                w = words(c.count)
+                v = 0.0
+                if len(w) > 0:
+                    v = to_num(w[0])
+                if seen == 0 or v < lo:
+                    lo = v
+                if v > hi:
+                    hi = v
+                seen += 1
+        if lo == 0.0:
+            sys.write_stderr('awk: division by zero\n')
+            return 'inf'
+        return f'{(hi - lo) / lo * 100.0:.4f}'
+
+    def millions(self, text: str) -> str:
+        w = words(text)
+        if len(w) == 0:
+            return ''
+        return f'{to_num(w[0]) / 1000000.0:.2f} M'
+
+    def ratio(self, t: str, text: str) -> str:
+        w = words(text)
+        tw = words(t)
+        if len(w) == 0:
+            return ''
+        if len(tw) == 0:
+            return ratio2('0', w[0])
+        return ratio2(tw[0], w[0])
+
+    def report(self, root: str, langs: list[str], bad: list[str]) -> str:
+        version = file_text(root + '/VERSION')
+        clang = ver(['clang', '--version'])
+        k = clang.find(' (')
+        if k >= 0:
+            clang = clang[:k]
+        gov = ''
+        gw = ver(['go', 'version']).split(' ')
+        if len(gw) > 2:
+            gov = gw[2]
+        rw = ver(['rustc', '--version']).split(' ')
+        rustv = ' '.join(rw[:2])
+        what = 'the counting inputs'
+        if self.smoke:
+            what = 'the smoke inputs'
+        t = '# Instructions executed (deterministic, under Valgrind in a Linux arm64 VM)\n\n'
+        t += f'Tomato v{version} (release mode). {ver(["valgrind", "--version"])} callgrind, {rt.out(["uname", "-srm"])}, {rt.out(["nproc"])} cores. {clang}, {gov}, {rustv}, {ver(["python3", "--version"])}. Every program ran {self.runs} times; inputs are {what} from sizes.txt.\n\n'
+        t += 'These are INSTRUCTIONS EXECUTED by the whole process (startup included), not cycles. Valgrind has no pipeline model, so this says nothing about M1 cycles; it is the same on a busy machine and on an idle one.\n\n'
+        t += '| benchmark | input | tomato | go | rust | python |\n| --- | --- | ---: | ---: | ---: | ---: |\n'
+        for b in self.benchmarks:
+            t += f'| {b} | {self.input_for(b)} |'
+            for l in langs:
+                t += f' {self.millions(self.count_of(b, l))} |'
+            t += '\n'
+        t += "\nTomato's instructions divided by each other language's (below 1.0 Tomato executes fewer instructions, above 1.0 more):\n\n"
+        t += '| benchmark | tomato ÷ go | tomato ÷ rust | tomato ÷ python |\n| --- | ---: | ---: | ---: |\n'
+        for b in self.benchmarks:
+            tc = self.count_of(b, 'tomato')
+            t += f'| {b} |'
+            for l in ['go', 'rust', 'python']:
+                t += f' {self.ratio(tc, self.count_of(b, l))} |'
+            t += '\n'
+        t += f'\nRun-to-run difference, (largest - smallest) / smallest over {self.runs} runs, in percent:\n\n'
+        t += '| benchmark | tomato | go | rust | python |\n| --- | ---: | ---: | ---: | ---: |\n'
+        for b in self.benchmarks:
+            t += f'| {b} |'
+            for l in langs:
+                t += f' {self.spread_of(b, l)} |'
+            t += '\n'
+        if len(bad) > 0:
+            t += '\nWARNING: output differs from Tomato\'s for: ' + ','.join(bad) + ',\n'
+        return t
+
+# ---- the entry points ---------------------------------------------------------------------------------------------------------------
+
+def exit_with(code: int):
+    if code != 0:
+        sys.exit(code)
+
+def rest_of(args: tuple[str], skip: int) -> list[str]:
+    found: list[str] = []
+    n = 0
+    for a in args:
+        if n >= skip:
+            found.append(a)
+        n += 1
+    return found
+
+@main
+async def main(*args: tuple[str]):
+    first = ''
+    for a in args:
+        first = a
+        break
+    if first == 'count':
+        exit_with(await Count().go(rest_of(args, 1)))
+        return
+    exit_with(Bench().go(rest_of(args, 0)))
+
+@count
+async def entry_count(*args: tuple[str]):
+    exit_with(await Count().go(rest_of(args, 0)))

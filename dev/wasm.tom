@@ -1,0 +1,515 @@
+# The WebAssembly files of the website (the port of site/wasm/build.sh and site/wasm/sections.sh). Run from the root of the repository:
+#
+#     WASI_SDK=~/wasi-sdk-24.0-arm64-macos tomato run dev/wasm.tom main build
+#     tomato run dev/wasm.tom main sections FILE.wasm            one line per section: offset, size, cksum, name
+#     tomato run dev/wasm.tom main sections OLD.wasm NEW.wasm    exit 0 if the files are byte-identical, else the sections that differ, exit 1
+#
+# `build` builds the files the website runs in the browser (committed, so Pages needs no toolchain):
+#   tomatoc.wasm  the compiler written in Tomato (compiler/bootstrap/tomatoc.ll) plus the C runtime
+#   runtime.wasm  the C runtime alone, exporting the tomato_* functions the IR interpreter (llvm.js) calls
+# It needs WASI SDK 24 (https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-24) for any host, and its output is byte-identical
+# on every host (macOS arm64 and Linux x86-64 are checked), so wasm built on Linux passes the Mac release check "wasm files rebuild
+# identically". What makes that hold (docs/releasing.md, "The wasm files"):
+#   - the SDK is pinned: exactly the clang of WASI SDK 24 and its wasi-libc (libc.a is the same file in every host's SDK)
+#   - -Wl,--strip-debug: each host's SDK builds its own compiler-rt, and its debug info names that host's build folder
+#     (/Users/runner/work/... on macOS, /src/src/... on Linux); without debug sections the linked bytes are the same
+#   - no -g and no __FILE__ in our sources, so the repository's folder and the temporary folder never reach the output
+#   - the compiler-rt functions whose code or data differ between hosts (trapping arithmetic that embeds __FILE__, __clear_cache,
+#     __multc3) must not be linked in; the build stops if one is
+# `sections` says which sections differ when two builds do not match; it needs no SDK.
+import sys
+import os
+import ospath
+import rtool as rt
+
+# The names the messages of the old scripts used for these two tools (kept so that the text is the same).
+const BUILD_NAME = 'site/wasm/build.sh'
+const SECTIONS_NAME = 'tomato run dev/wasm.tom main sections'
+
+const WANT_CLANG = 'clang version 18.1.2-wasi-sdk (https://github.com/llvm/llvm-project 26a1d6601d727a96f4301d0d8647b5a42760ae0c)'
+const WANT_LIBC = '566b9d6322cb3f339963cb1e6719b0bb0c932724fafa3418cf6aebe763dc2036'
+
+const USAGE = 'usage: tomato run dev/wasm.tom main build | sections FILE.wasm [OTHER.wasm]'
+
+# ---- the host-dependent compiler-rt code: grep -a -o -E '__(abs|add|sub|mul|neg)v[sdt]i[23]|__clear_cache|__multc3|llvm-project/[[:alnum:]_./-]*'
+
+def is_path_byte(c: int) -> bool:
+    if c >= 48 and c <= 57:
+        return True
+    if c >= 65 and c <= 90:
+        return True
+    if c >= 97 and c <= 122:
+        return True
+    return c == 95 or c == 46 or c == 47 or c == 45
+
+def at(data: bytes, i: int, pat: bytes) -> bool:
+    return data[i:i + len(pat)] == pat
+
+# The length of the match at position i of the data (0 for none): the same alternatives as the regular expression, none of which can
+# start where another does.
+def match_at(data: bytes, i: int) -> int:
+    n = len(data)
+    if data[i] == 108:                            # llvm-project/ and the path characters after it
+        if not at(data, i, b'llvm-project/'):
+            return 0
+        j = i + 13
+        while j < n and is_path_byte(data[j]):
+            j += 1
+        return j - i
+    if at(data, i, b'__clear_cache'):
+        return 13
+    if at(data, i, b'__multc3'):
+        return 8
+    # __ + abs|add|sub|mul|neg + v + s|d|t + i + 2|3
+    if i + 10 > n:
+        return 0
+    if data[i + 2] == 97:
+        if not (at(data, i + 2, b'abs') or at(data, i + 2, b'add')):
+            return 0
+    elif data[i + 2] == 115:
+        if not at(data, i + 2, b'sub'):
+            return 0
+    elif data[i + 2] == 109:
+        if not at(data, i + 2, b'mul'):
+            return 0
+    elif data[i + 2] == 110:
+        if not at(data, i + 2, b'neg'):
+            return 0
+    else:
+        return 0
+    if data[i + 5] != 118:
+        return 0
+    c = data[i + 6]
+    if c != 115 and c != 100 and c != 116:
+        return 0
+    if data[i + 7] != 105:
+        return 0
+    if data[i + 8] != 50 and data[i + 8] != 51:
+        return 0
+    return 9
+
+# The matches, sorted and without repeats (grep -o ... | sort -u)
+def bad_symbols(data: bytes) -> list[str]:
+    found: list[str] = []
+    n = len(data)
+    i = 0
+    while i < n:
+        a = data.find(b'__', i)
+        b = data.find(b'llvm-project/', i)
+        if a < 0 and b < 0:
+            break
+        p = a
+        if a < 0 or (b >= 0 and b < a):
+            p = b
+        k = match_at(data, p)
+        if k > 0:
+            text = data[p:p + k].decode('utf-8', errors='replace')
+            if text not in found:
+                found.append(text)
+            i = p + k
+        else:
+            i = p + 1
+    return sorted(found)
+
+# ---- build ---------------------------------------------------------------------------------------------------------------------
+
+# The first line of what the SDK's clang says of itself ('' when it cannot be run)
+def clang_version(sdk: str) -> str:
+    r = rt.run([sdk + '/bin/clang', '--version'])
+    if r.status != 0:
+        return ''
+    k = r.stdout.find('\n')
+    if k < 0:
+        return r.stdout
+    return r.stdout[:k]
+
+# sed 's/^define i32 @main(i32/define i32 @__main_argc_argv(i32/' (the WASI C library starts programs at __main_argc_argv, so the
+# compiler's own main is renamed for this build only)
+def rename_main(data: bytes) -> bytes:
+    old = b'define i32 @main(i32'
+    new = b'define i32 @__main_argc_argv(i32'
+    out = data.replace(b'\n' + old, b'\n' + new)
+    if out.startswith(old):
+        out = new + out[len(old):]
+    return out
+
+def build(root: str) -> int:
+    sdk = ''
+    got = os.getenv('WASI_SDK')
+    if got is not None:
+        sdk = got
+    if sdk == '':
+        sys.write_stderr('WASI_SDK: set WASI_SDK to the folder of an unpacked WASI SDK 24\n')
+        return 2
+    out = root + '/site/wasm'
+    sysroot = sdk + '/share/wasi-sysroot'
+    have_clang = clang_version(sdk)
+    have_libc = rt.sha256_file(sysroot + '/lib/wasm32-wasi/libc.a')
+    if have_clang != WANT_CLANG or have_libc != WANT_LIBC:
+        shown_clang = have_clang
+        if shown_clang == '':
+            shown_clang = 'missing'
+        shown_libc = have_libc
+        if shown_libc == '':
+            shown_libc = 'missing'
+        sys.write_stderr(f'{BUILD_NAME} needs WASI SDK 24 (the committed wasm files are built with it, and another version gives other bytes)\n')
+        sys.write_stderr(f'  {sdk}/bin/clang: {shown_clang}  (want: {WANT_CLANG})\n')
+        sys.write_stderr(f'  {sysroot}/lib/wasm32-wasi/libc.a sha256: {shown_libc}  (want: {WANT_LIBC})\n')
+        sys.write_stderr('  get it from https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-24\n')
+        return 1
+    tmp = rt.mkdtemp('tmp.')
+    try:
+        return build_in(root, out, sdk, sysroot, tmp)
+    finally:
+        rt.rmtree(tmp)
+
+def build_in(root: str, out: str, sdk: str, sysroot: str, tmp: str) -> int:
+    cc = [sdk + '/bin/clang', '--target=wasm32-wasi', '--sysroot=' + sysroot]
+    rtc = root + '/runtime/tomato_rt.c'
+    ll = root + '/compiler/bootstrap/tomatoc.ll'
+    ll_bytes = os.read_bytes(ll)
+    os.write_bytes(tmp + '/tomatoc.ll', rename_main(ll_bytes))
+    st = rt.run_shown(cc + ['-O1', '-Wno-override-module', '-x', 'ir', tmp + '/tomatoc.ll', '-x', 'c', rtc, '-lm', '-Wl,--strip-debug',
+        '-Wl,--stack-first', '-Wl,-z,stack-size=8388608', '-Wl,--initial-memory=67108864', '-Wl,--max-memory=1073741824',
+        '-o', tmp + '/tomatoc.wasm'])
+    if st != 0:
+        return st
+    st = rt.run_shown(cc + ['-O1', '-DTOMATO_WASM', '-mexec-model=reactor', rtc, '-lm', '-Wl,--strip-debug',
+        '-Wl,--export-all', '-Wl,--no-entry', '-Wl,--initial-memory=33554432', '-Wl,--max-memory=1073741824',
+        '-o', tmp + '/runtime.wasm'])
+    if st != 0:
+        return st
+    for f in ['tomatoc', 'runtime']:
+        # host-dependent compiler-rt functions (by name, from the name section) and any build folder of the SDK's own sources
+        bad = bad_symbols(os.read_bytes(tmp + '/' + f + '.wasm'))
+        if len(bad) > 0:
+            shown = ''
+            for s in bad:
+                shown += s + ' '
+            sys.write_stderr(f'{BUILD_NAME}: {f}.wasm links code whose bytes differ between the macOS and Linux WASI SDKs: {shown}\n')
+            sys.write_stderr('  so the build would not be the same on every host; avoid what pulls it in (see the comment at the top of this script)\n')
+            return 1
+        os.rename(tmp + '/' + f + '.wasm', out + '/' + f + '.wasm')
+    rt.rmtree(out + '/std')
+    rt.mkdirs(out + '/std')
+    sources: list[str] = []
+    for n in sorted(os.listdir(root + '/std')):
+        if n.endswith('.tom') and ospath.isfile(root + '/std/' + n):
+            sources.append(root + '/std/' + n)
+    sources.append(root + '/std/errors.txt')
+    r = rt.run(['cp'] + sources + [out + '/std/'])
+    if r.status != 0:
+        sys.write_stderr(r.stderr)
+        return r.status
+    r = rt.run(['cp', '-R', root + '/std/builtin', out + '/std/'])
+    if r.status != 0:
+        sys.write_stderr(r.stderr)
+        return r.status
+    # the source hash (the IR and the C runtime one after the other), then the two wasm files; tests/run.sh checks they are not stale
+    os.write_bytes(tmp + '/source', ll_bytes + os.read_bytes(rtc))
+    text = rt.sha256_file(tmp + '/source') + '\n'
+    text += rt.sha256_file(out + '/tomatoc.wasm') + '\n'
+    text += rt.sha256_file(out + '/runtime.wasm') + '\n'
+    os.write_text(out + '/SOURCE.sha256', text)
+    rt.say(f'built {out}/tomatoc.wasm and {out}/runtime.wasm')
+    return 0
+
+# ---- sections ------------------------------------------------------------------------------------------------------------------
+
+class Sec:
+    off: int = 0
+    size: int = 0
+    name: str = ''
+
+    @init
+    def make(self, off: int, size: int, name: str):
+        self.off = off
+        self.size = size
+        self.name = name
+
+class Parsed:
+    secs: list[Sec] = []
+    state: int = 0
+
+def section_name(id: int) -> str:
+    if id == 1:
+        return 'type'
+    if id == 2:
+        return 'import'
+    if id == 3:
+        return 'function'
+    if id == 4:
+        return 'table'
+    if id == 5:
+        return 'memory'
+    if id == 6:
+        return 'global'
+    if id == 7:
+        return 'export'
+    if id == 8:
+        return 'start'
+    if id == 9:
+        return 'element'
+    if id == 10:
+        return 'code'
+    if id == 11:
+        return 'data'
+    if id == 12:
+        return 'datacount'
+    if id == 13:
+        return 'tag'
+    return f'unknown-{id}'
+
+# Offset, size and name of each section (the offset of the section's id byte; the size includes the id and length bytes). The states:
+# 0 header, 1 section id, 2 section size, 3 custom name length, 4 custom name, 5 skipping the payload; the file must end in state 1.
+# This is the shell script's awk state machine byte for byte, quirks included (the header is not checked, a name that runs past the
+# section's end is still read).
+def parse_sections(data: bytes) -> Parsed:
+    p = Parsed()
+    found: list[Sec] = []
+    st = 0
+    start = 0
+    sid = 0
+    size = 0
+    mul = 1
+    end = 0
+    nlen = 0
+    nmul = 1
+    nm: list[int] = []
+    pos = 0
+    for c in data:
+        if st == 0:
+            if pos == 7:
+                st = 1
+        elif st == 1:
+            start = pos
+            sid = c
+            size = 0
+            mul = 1
+            st = 2
+        elif st == 2:
+            size += (c % 128) * mul
+            mul *= 128
+            if c < 128:
+                end = pos + 1 + size
+                if sid == 0:
+                    nlen = 0
+                    nmul = 1
+                    nm = []
+                    st = 3
+                else:
+                    found.append(Sec(start, end - start, section_name(sid)))
+                    if size > 0:
+                        st = 5
+                    else:
+                        st = 1
+        elif st == 3:
+            nlen += (c % 128) * nmul
+            nmul *= 128
+            if c < 128:
+                if nlen > 0:
+                    st = 4
+                else:
+                    found.append(Sec(start, end - start, 'custom:'))
+                    if pos + 1 < end:
+                        st = 5
+                    else:
+                        st = 1
+        elif st == 4:
+            nm.append(c)
+            nlen -= 1
+            if nlen == 0:
+                found.append(Sec(start, end - start, 'custom:' + bytes(nm).decode('utf-8', errors='replace')))
+                if pos + 1 < end:
+                    st = 5
+                else:
+                    st = 1
+        elif st == 5:
+            if pos + 1 == end:
+                st = 1
+        pos += 1
+    p.secs = found
+    p.state = st
+    return p
+
+# The POSIX cksum of the bytes: CRC with the polynomial 0x04C11DB7, most significant bit first, over the bytes and then the length
+# (least significant byte first, as many bytes as it needs), complemented. zlib.crc32 is another CRC (reflected, other start and end).
+def cksum_table() -> list[int]:
+    t: list[int] = []
+    for i in range(256):
+        c = i << 24
+        for _ in range(8):
+            if c & 2147483648 != 0:
+                c = ((c << 1) ^ 79764919) & 4294967295
+            else:
+                c = (c << 1) & 4294967295
+        t.append(c)
+    return t
+
+def cksum(table: list[int], data: bytes) -> int:
+    crc = 0
+    for b in data:
+        crc = ((crc << 8) & 4294967295) ^ table[((crc >> 24) ^ b) & 255]
+    n = len(data)
+    while n != 0:
+        crc = ((crc << 8) & 4294967295) ^ table[((crc >> 24) ^ (n & 255)) & 255]
+        n = n >> 8
+    return (~crc) & 4294967295
+
+class Row:
+    off: int = 0
+    size: int = 0
+    crc: int = 0
+    name: str = ''
+
+    @init
+    def make(self, off: int, size: int, crc: int, name: str):
+        self.off = off
+        self.size = size
+        self.crc = crc
+        self.name = name
+
+def line_of(r: Row) -> str:
+    return f'{r.off} {r.size} {r.crc} {r.name}'
+
+# `list FILE | while read ... tail | head | cksum`: the rows of a file; None after the message when the file ends inside a section (the
+# script then stops with status 2)
+def sums(path: str, table: list[int]) -> list[Row] | None:
+    data = b''
+    if not ospath.exists(path):
+        sys.write_stderr(f'od: {path}: No such file or directory\n')
+    else:
+        try:
+            data = os.read_bytes(path)
+        catch IOError as e:
+            sys.write_stderr(f'od: {path}: {e.message}\n')
+    parsed = parse_sections(data)
+    if parsed.state != 1:
+        sys.write_stderr(f'error: - ends inside a section (state {parsed.state})\n')    # awk's FILENAME for its standard input
+        return None
+    rows: list[Row] = []
+    for s in parsed.secs:
+        rows.append(Row(s.off, s.size, cksum(table, data[s.off:s.off + s.size]), s.name))
+    return rows
+
+# the first blank-separated word of a text (awk's field splitting)
+def first_word(s: str) -> str:
+    i = 0
+    while i < len(s) and (s[i] == ' ' or s[i] == '\t'):
+        i += 1
+    j = i
+    while j < len(s) and s[j] != ' ' and s[j] != '\t':
+        j += 1
+    return s[i:j]
+
+# the key of a row: its name and which of that name it is (the nth section called X), ignoring offsets, which move when an earlier
+# section changes size
+def keyed(rows: list[Row]) -> dict[str, str]:
+    found: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    for r in rows:
+        w = first_word(r.name)
+        n = 1
+        if w in counts:
+            n = counts[w] + 1
+        counts[w] = n
+        found[f'{w}#{n}'] = f'{r.size} {r.crc}'
+    return found
+
+def keys_in_order(rows: list[Row], order: list[str], seen: dict[str, int]):
+    counts: dict[str, int] = {}
+    for r in rows:
+        w = first_word(r.name)
+        n = 1
+        if w in counts:
+            n = counts[w] + 1
+        counts[w] = n
+        k = f'{w}#{n}'
+        if k not in seen:
+            seen[k] = 1
+            order.append(k)
+
+def sections(words: list[str]) -> int:
+    table = cksum_table()
+    if len(words) == 1:
+        rows = sums(words[0], table)
+        if rows is None:
+            return 2
+        for r in rows:
+            rt.say(line_of(r))
+        return 0
+    if len(words) != 2:
+        sys.write_stderr(f'usage: {SECTIONS_NAME} FILE.wasm [OTHER.wasm]\n')
+        return 2
+    first = words[0]
+    second = words[1]
+    if ospath.isfile(first) and ospath.isfile(second):
+        if os.read_bytes(first) == os.read_bytes(second):
+            return 0
+    for f in words:
+        magic = b''
+        if not ospath.exists(f):
+            sys.write_stderr(f"head: cannot open '{f}' for reading: No such file or directory\n")
+        else:
+            magic = os.read_bytes(f)[:4]
+        if magic != b'\x00asm':
+            rt.say(f'{f} is not a WebAssembly file')
+            return 1
+    ra = sums(first, table)
+    if ra is None:
+        return 2
+    rb = sums(second, table)
+    if rb is None:
+        return 2
+    rt.say(f'{first} ({ospath.getsize(first)} bytes) and {second} ({ospath.getsize(second)} bytes) differ in:')
+    a = keyed(ra)
+    b = keyed(rb)
+    order: list[str] = []
+    seen: dict[str, int] = {}
+    keys_in_order(ra, order, seen)
+    keys_in_order(rb, order, seen)
+    for k in order:
+        s = k
+        if s.endswith('#1'):
+            s = s[:len(s) - 2]
+        if k not in a:
+            rt.say(f'  {s}: only in {second}')
+        elif k not in b:
+            rt.say(f'  {s}: only in {first}')
+        elif a[k] != b[k]:
+            x = a[k].split(' ')
+            y = b[k].split(' ')
+            if x[0] == y[0]:
+                rt.say(f'  {s}: same size ({x[0]} bytes), different bytes')
+            else:
+                rt.say(f'  {s}: {x[0]} bytes vs {y[0]} bytes')
+    return 1
+
+# ---- the entry -----------------------------------------------------------------------------------------------------------------
+
+@main
+def main(*args: tuple[str]):
+    words: list[str] = []
+    for a in args:
+        words.append(a)
+    if len(words) < 1:
+        sys.write_stderr(USAGE + '\n')
+        sys.exit(2)
+    status = 0
+    cmd = words[0]
+    rest = words[1:]
+    if cmd == 'build':
+        if len(rest) != 0:
+            sys.write_stderr(USAGE + '\n')
+            sys.exit(2)
+        root = ospath.abspath(os.getcwd())
+        if not ospath.isdir(root + '/site/wasm') or not ospath.isfile(root + '/runtime/tomato_rt.c'):
+            sys.write_stderr('error: run it from the root of the repository: tomato run dev/wasm.tom main build\n')
+            sys.exit(1)
+        status = build(root)
+    elif cmd == 'sections':
+        status = sections(rest)
+    else:
+        sys.write_stderr(USAGE + '\n')
+        status = 2
+    sys.exit(status)

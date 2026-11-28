@@ -1,0 +1,88 @@
+# Builds the release files in release/out/: tomato-VERSION.tar.gz (everything `install-native.sh` needs, with no Python) and latest.json
+# (what `tomato update` reads). The port of release/build.sh (docs/shell-to-tomato-plan.md, stage 5). Upload the archive to a GitHub release
+# tagged vVERSION and attach latest.json to the release too (tomato update falls back to it); `dev/site.tom build` copies it into site/.
+#
+#     tomato run dev/build.tom main [ARCHIVE_URL]      (from the root of the repository)
+#
+#   TOMATO_REPO          GitHub owner/name for the default URL (default sirbuffalo/tomato)
+#   TOMATO_RELEASE_OUT   where the files go (default release/out)
+import sys
+import os
+import ospath
+import rtool as rt
+
+def say(text: str):
+    sys.write_stdout(text + '\n')
+
+# one file of the tree into a folder of the stage, its mode kept
+def put(root: str, stage: str, files: list[str], folder: str):
+    for f in files:
+        r = rt.run(['cp', root + '/' + f, stage + '/' + folder + '/'])
+        if r.status != 0:
+            raise rt.Fatal(f'cannot copy {f}: {r.stderr.strip()}')
+
+def entries_with(folder: str, ext: str) -> list[str]:
+    found: list[str] = []
+    for n in sorted(os.listdir(folder)):
+        if n.endswith(ext) and ospath.isfile(folder + '/' + n):
+            found.append(n)
+    return found
+
+@main
+def main(*args: tuple[str]):
+    root = os.getcwd()
+    if not ospath.isfile(root + '/VERSION') or not ospath.isfile(root + '/install-native.sh'):
+        sys.write_stderr('error: run it from the root of the repository: tomato run dev/build.tom main\n')
+        sys.exit(1)
+    url_arg = ''
+    for a in args:
+        if url_arg == '':
+            url_arg = a
+    status = 0
+    try:
+        build(root, url_arg)
+    catch rt.Fatal as e:
+        sys.write_stderr('error: ' + e.message + '\n')
+        status = 1
+    if status != 0:
+        sys.exit(status)
+
+def build(root: str, url_arg: str):
+    version = rt.read_or(root + '/VERSION').rstrip('\n')
+    repo = os.getenv('TOMATO_REPO')
+    if repo is None or repo == '':
+        repo = 'sirbuffalo/tomato'
+    url = url_arg
+    if url == '':
+        url = f'https://github.com/{repo}/releases/download/v{version}/tomato-{version}.tar.gz'
+    outd = os.getenv('TOMATO_RELEASE_OUT')
+    if outd is None or outd == '':
+        outd = root + '/release/out'
+    stage = f'{outd}/tomato-{version}'
+    # refuse to wipe a folder that is not (or does not look like) release output
+    if ospath.exists(outd) and len(rt.names(outd)) > 0 and not ospath.isfile(outd + '/latest.json'):
+        raise rt.Fatal(f'{outd} is not empty and not release output; refusing to delete it')
+    rt.rmtree(outd)
+    for d in ['native', 'runtime', 'std', 'compiler/bootstrap', 'compiler/src', 'site/wasm']:
+        rt.mkdirs(f'{stage}/{d}')
+    put(root, stage, ['VERSION', 'install-native.sh'], '')
+    put(root, stage, ['native/tomato', 'native/tomato-repl', 'native/rtcache.sh', 'native/tomato-jsc.js'], 'native')
+    put(root, stage, ['site/wasm/tomatoc.wasm', 'site/wasm/runtime.wasm', 'site/wasm/wasi.js', 'site/wasm/llvm.js', 'site/wasm/tomato.js', 'site/wasm/SOURCE.sha256'], 'site/wasm')
+    put(root, stage, ['runtime/tomato_rt.c', 'runtime/tomato_inline.ll'], 'runtime')
+    std_files: list[str] = []
+    for n in entries_with(root + '/std', '.tom'):
+        std_files.append('std/' + n)
+    std_files.append('std/errors.txt')
+    put(root, stage, std_files, 'std')
+    rt.copy_tree(root + '/std/builtin', stage + '/std/builtin')
+    put(root, stage, ['compiler/bootstrap/tomatoc.ll', 'compiler/bootstrap/split.awk', 'compiler/bootstrap/build-object.sh'], 'compiler/bootstrap')
+    put(root, stage, ['compiler/src/repledit.tom', 'compiler/src/lexer.tom', 'compiler/src/hltomato.tom'], 'compiler/src')   # the repl's line editor, which install-native.sh builds
+    rt.copy_tree(root + '/examples', stage + '/examples')
+    tarball = f'{outd}/tomato-{version}.tar.gz'
+    t = rt.run(['tar', '-czf', tarball, '-C', outd, f'tomato-{version}'])
+    if t.status != 0:
+        raise rt.Fatal('tar failed: ' + t.stderr.strip())
+    rt.rmtree(stage)
+    total = rt.sha256_file(tarball)
+    rt.write(outd + '/latest.json', '{\n  "version": "' + version + '",\n  "url": "' + url + '",\n  "sha256": "' + total + '"\n}\n')
+    say(f'built {tarball} and {outd}/latest.json')

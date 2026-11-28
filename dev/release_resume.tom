@@ -1,0 +1,639 @@
+# Sandbox tests of the release program: what happens when a run fails and is resumed (--resume, --from, --restart). The port of
+# tests/release_resume.sh (docs/shell-to-tomato-plan.md, section 10.2): the same 141 checks under the same names.
+#
+#     tomato run dev/release_resume.tom main WORKDIR [--old]
+#
+# It prints "ok   NAME" or "FAIL NAME" (and the reason under it), one per line, and exits 1 if any failed. `tomato` must be on PATH (it
+# builds dev/fakebin.tom, dev/release.tom and dev/sign.tom into WORKDIR). --old runs the checks on release/release.sh instead of
+# dev/release.tom (the two must report the same names: that was the acceptance of the move; release.sh goes with the last slice).
+#
+# Nothing real is touched. The "GitHub" origin is a bare repository in WORKDIR (git's url.insteadOf maps git@github.com:sirbuffalo/tomato.git
+# to it, ssh is replaced by a program that fails), the repository holds no tools of its own (a fake `tomato`, dev/fakebin.tom, answers
+# `tomato run dev/test.tom main` and the others), and a folder of stand-ins for gh, curl, codesign, pkgutil, xcrun and the other Mac
+# tools comes first on the PATH of the program (TOMATO_RELEASE_TEST_BIN). Failures are injected by creating files in $FAKE/inject
+# (fail-tests, fail-build, fail-sign, fail-dmg, bad-notarization, gh-logged-out, fail-gh-create, fail-gh-create-partial,
+# fail-gh-download, reject-main, bad-hardening). A file named `signal` (or `signal-codesign`) holding INT, TERM or HUP makes the gh
+# download (codesign) stand-in send that signal to the release program (to the sign tool) and itself, like Ctrl-C or a kill: the
+# interrupt tests. No network, no signing, no notarization, nothing published.
+import sys
+import os
+import ospath
+import re
+import rtool as rt
+
+const EXPECTED = 141
+
+class Rig:
+    root: str = ''
+    w: str = ''                 # the work folder
+    old: bool = False
+    tomato: str = 'tomato'
+    real_path: str = ''
+    bin: str = ''
+    tmpl: str = ''
+    script: str = ''            # the program that is tested: release (built) or `sh release.sh`
+    sign_tool: list[str] = []
+    fakebin: str = ''
+    sb: str = ''                # the sandbox of the scenario
+    run_n: int = 0
+    rc: int = 0
+    oks: int = 0
+    fails: int = 0
+    base_main: str = ''
+    output: str = ''            # the output of the last run
+
+    @init
+    def make(self, root: str, w: str, old: bool):
+        self.root = root
+        self.w = w
+        self.old = old
+        self.sign_tool = []
+
+    def pass_(self, name: str):
+        self.oks += 1
+        print('ok   ' + name)
+
+    def fail(self, name: str, detail: str = ''):
+        self.fails += 1
+        print('FAIL ' + name)
+        if detail != '':
+            for line in detail.split('\n'):
+                print('     ' + line)
+
+    def eq(self, name: str, want: str, got: str):
+        if want == got:
+            self.pass_(name)
+        else:
+            self.fail(name, f'expected: {want}\nactual:   {got}')
+
+    def ne(self, name: str, a: str, b: str):
+        if a != b:
+            self.pass_(name)
+        else:
+            self.fail(name, 'both were: ' + a)
+
+    def eqi(self, name: str, want: int, got: int):
+        self.eq(name, str(want), str(got))
+
+    def nei(self, name: str, a: int, b: int):
+        self.ne(name, str(a), str(b))
+
+    # grep -q PATTERN in the last output (a regular expression)
+    def has(self, pat: str) -> bool:
+        for line in self.output.split('\n'):
+            if re.search(pat, line) is not None:
+                return True
+        return False
+
+    # `has PAT && pass NAME || fail NAME DETAIL`
+    def has_check(self, pat: str, name: str, detail: str):
+        if self.has(pat):
+            self.pass_(name)
+        else:
+            self.fail(name, detail)
+
+    def tail(self, n: int) -> str:
+        lines = self.output.rstrip('\n').split('\n')
+        start = len(lines) - n
+        if start < 0:
+            start = 0
+        return '\n'.join(lines[start:])
+
+    # ---- the sandbox ---------------------------------------------------------------------------------------------------------
+
+    def env_for_git(self, home: str, cfg: str) -> dict[str, str]:
+        env: dict[str, str] = {}
+        env['HOME'] = home
+        env['GIT_CONFIG_GLOBAL'] = cfg
+        env['GIT_CONFIG_NOSYSTEM'] = '1'
+        return env
+
+    # NAME: a fresh bare "GitHub", fake folder and signing-Mac work dir; selects it for rel
+    def sandbox(self, name: str):
+        self.sb = f'{self.w}/s.{name}'
+        rt.rmtree(self.sb)
+        rt.mkdirs(self.sb + '/fake/inject')
+        rt.mkdirs(self.sb + '/fake/releases/v1.0.0')
+        rt.copy_tree(self.tmpl + '/bare.git', self.sb + '/bare.git')
+        rt.copy_tree(self.tmpl + '/wasi', self.sb + '/wasi')
+        rt.write(self.sb + '/fake/calls.log', '')
+        rt.write(self.sb + '/gitconfig', '[user]\n\tname = Test\n\temail = test@example.com\n')
+        self.run_n = 0
+
+    def inject(self, name: str):
+        rt.write(f'{self.sb}/fake/inject/{name}', '')
+
+    def clear_inject(self, name: str):
+        rt.rm(f'{self.sb}/fake/inject/{name}')
+
+    # a run of the release program in the sandbox; the output is in self.output and in SB/out, the status is self.rc
+    def rel(self, args: list[str]):
+        self.run_n += 1
+        rt.mkdirs(self.sb + '/tmp')
+        sb = self.sb
+        env: dict[str, str] = {}
+        env['TOMATO_RELEASE_HOST'] = ''
+        env['WASI_SDK'] = ''
+        env['TMPDIR'] = sb + '/tmp'
+        env['TOMATO_RELEASE_TEST_BIN'] = self.bin
+        env['TOMATO_TEST_REAL_PATH'] = self.real_path
+        env['FAKE'] = sb + '/fake'
+        env['BARE'] = sb + '/bare.git'
+        env['HOME'] = sb
+        env['GIT_CONFIG_GLOBAL'] = sb + '/gitconfig'
+        env['GIT_CONFIG_NOSYSTEM'] = '1'
+        env['GIT_SSH_COMMAND'] = 'false'
+        env['GIT_TERMINAL_PROMPT'] = '0'
+        env['GIT_CONFIG_COUNT'] = '1'
+        env['GIT_CONFIG_KEY_0'] = f'url.{sb}/bare.git.insteadOf'
+        env['GIT_CONFIG_VALUE_0'] = 'git@github.com:sirbuffalo/tomato.git'
+        if self.old:
+            env['FAKE_PARENT_LEVELS'] = '2'
+        argv = self.script_argv() + ['--work-dir', sb + '/work', '--wasi-sdk', sb + '/wasi', '--no-load-check', '--skip-bench', '--no-linux'] + args
+        r = rt.run(argv, sb, env)
+        self.output = r.stdout + r.stderr
+        os.write_text(f'{sb}/out.{self.run_n}', self.output)
+        os.write_text(sb + '/out', self.output)
+        self.rc = r.status
+
+    def script_argv(self) -> list[str]:
+        if self.old:
+            return ['sh', self.w + '/script/release.sh']
+        return [self.w + '/script/release']
+
+    # a real run (it can only reach the sandbox's bare repository and gh stand-in)
+    def real(self, args: list[str]):
+        self.rel(['--ignore-linux-failures'] + args)
+
+    def stget(self, key: str) -> str:
+        return rt.kv_get(self.sb + '/work/state', key)
+
+    def done_steps(self) -> str:
+        return self.stget('done').lstrip(' ')
+
+    def cl(self, args: list[str]) -> str:
+        return rt.out_any(['git', '-C', self.sb + '/work/tomato'] + args)
+
+    def bare(self, args: list[str]) -> str:
+        return rt.out_any(['git', '--git-dir=' + self.sb + '/bare.git'] + args)
+
+    # grep -c PATTERN calls.log
+    def calls(self, pat: str) -> int:
+        n = 0
+        for line in rt.read_or(self.sb + '/fake/calls.log').split('\n'):
+            if line != '' and re.search(pat, line) is not None:
+                n += 1
+        return n
+
+    def last_test_line(self) -> str:
+        found = ''
+        for line in rt.read_or(self.sb + '/fake/calls.log').split('\n'):
+            if line.startswith('tests'):
+                found = line
+        return found
+
+    def test_lines(self) -> str:
+        found = ''
+        for line in rt.read_or(self.sb + '/fake/calls.log').split('\n'):
+            if line.startswith('tests'):
+                found += line + '\n'
+        return found.rstrip('\n')
+
+    # what is left in a folder (a run's TMPDIR: it must be empty again), as `ls -A | tr '\n' ' '` shows it
+    def nofiles(self, path: str) -> str:
+        text = ''
+        for n in rt.names(path):
+            text += n + ' '
+        return text
+
+    def n_commits(self) -> str:
+        return self.cl(['rev-list', '--count', self.stget('base_sha') + '..HEAD'])
+
+    # ---- building the pieces ---------------------------------------------------------------------------------------------------
+
+    def link(self, name: str):
+        rt.symlink(self.fakebin, self.bin + '/' + name)
+
+    def build_pieces(self) -> bool:
+        w = self.w
+        rt.mkdirs(w + '/script')
+        rt.mkdirs(w + '/tools')
+        self.fakebin = w + '/tools/fakebin'
+        ok_all = True
+        for pair in [['dev/fakebin.tom', self.fakebin], ['dev/release.tom', w + '/script/release'], ['dev/sign.tom', w + '/tools/sign']]:
+            if self.old and pair[0] != 'dev/fakebin.tom':
+                continue
+            if not ospath.isfile(self.root + '/' + pair[0]):
+                continue
+            r = rt.run([self.tomato, 'build', self.root + '/' + pair[0], '-o', pair[1], '--entry', 'main'])
+            if r.status != 0:
+                print('FAIL release sandbox: cannot build ' + pair[0])
+                for line in (r.stdout + r.stderr).split('\n')[:20]:
+                    print('     ' + line)
+                ok_all = False
+        if self.old:
+            rt.copy(self.root + '/release/release.sh', w + '/script/release.sh')   # no release.conf next to this copy
+        return ok_all
+
+    def make_bin(self):
+        rt.rmtree(self.bin)
+        rt.mkdirs(self.bin)
+        for n in ['uname', 'sw_vers', 'clang', 'lipo', 'productbuild', 'hdiutil', 'codesign-unused', 'security', 'codesign', 'productsign', 'pkgbuild',
+                  'xcrun', 'spctl', 'ssh', 'pkgutil', 'file', 'curl', 'gh', 'tomato']:
+            self.link(n)
+
+    # the repository that is "released": a template, copied to each sandbox
+    def make_template(self) -> bool:
+        tmpl = self.tmpl
+        rt.rmtree(tmpl)
+        seed = tmpl + '/seed'
+        rt.mkdirs(seed)
+        cfg = tmpl + '/gitconfig'
+        rt.write(cfg, '[user]\n\tname = Test\n\temail = test@example.com\n')
+        env = self.env_for_git(tmpl, cfg)
+        for d in ['std', 'site/wasm/std', 'release', 'tests', 'benchmarks/results', 'docs']:
+            rt.mkdirs(seed + '/' + d)
+        rt.write(seed + '/VERSION', '1.0.0\n')
+        # (the real std/sys.tom has "    return '0.51'" with four spaces; the program's edit and its check both want that shape)
+        # (std/sys.tom has other functions that return text, some an empty one: the bump must change only the version's line)
+        sysver = "def platform():\n    return ''\n\ndef version():\n    return '1.0.0'\n\ndef other():\n    return 'x86_64'\n"
+        rt.write(seed + '/std/sys.tom', sysver)
+        rt.write(seed + '/site/wasm/std/sys.tom', sysver)
+        rt.write(seed + '/site/config.js', 'window.TOMATO_VERSION = "1.0.0";\n')
+        rt.write(seed + '/site/latest.json', '{\n  "version": "1.0.0"\n}\n')
+        rt.write(seed + '/docs/performance.md', '# performance\n')
+        rt.write(seed + '/benchmarks/results/results.md', 'x\n')
+        rt.write(seed + '/.gitignore', 'release/out/\n')
+        if self.old:   # release.sh runs the tools of the repository as scripts: each hands over to the fake `tomato`
+            for pair in [['tests/run.sh', 'test'], ['release/build.sh', 'build'], ['release/pkg.sh', 'pkg'], ['release/sign-pkg.sh', 'sign'], ['release/dmg.sh', 'dmg'], ['site/build.sh', 'site']]:
+                rt.write(seed + '/' + pair[0], '#!/bin/sh\nexec tomato run dev/' + pair[1] + '.tom main "$@"\n')
+        else:
+            rt.rmtree(seed + '/release')
+            rt.rmtree(seed + '/tests')
+        steps: list[list[str]] = [
+            ['git', 'init', '-q', '.'],
+            ['git', 'symbolic-ref', 'HEAD', 'refs/heads/main'],
+            ['git', 'add', '-A'],
+            ['git', 'commit', '-q', '-m', 'fake tomato 1.0.0'],
+        ]
+        for s in steps:
+            if rt.run(s, seed, env).status != 0:
+                return False
+        bare = tmpl + '/bare.git'
+        for s in [['git', 'init', '-q', '--bare', bare], ['git', '--git-dir=' + bare, 'symbolic-ref', 'HEAD', 'refs/heads/main'],
+                  ['git', 'push', '-q', bare, 'main'], ['git', '--git-dir=' + bare, 'tag', 'v1.0.0', 'main']]:   # 1.0.0 is released: the next version is 1.0.1
+            if rt.run(s, seed, env).status != 0:
+                return False
+        rt.symlink(self.fakebin, bare + '/hooks/pre-receive')
+        rt.mkdirs(tmpl + '/wasi/bin')
+        rt.mkdirs(tmpl + '/wasi/share/wasi-sysroot')
+        rt.symlink(self.fakebin, tmpl + '/wasi/bin/clang')
+        return True
+    # ---- the checks ----------------------------------------------------------------------------------------------------------------
+
+def check_all(r: Rig):
+    # ---------------------------------------------------------------- 1. a dry run publishes and pushes nothing
+    r.sandbox('dry')
+    r.rel(['--dry-run'])
+    r.eqi('dry run: finishes', 0, r.rc)
+    r.eq('dry run: every step is recorded as done', 'preflight version test bump linux bench snapshot build sign commit publish push summary', r.done_steps())
+    r.eq('dry run: origin has no new tag', 'v1.0.0', r.bare(['tag']))
+    r.eq("dry run: origin's main is untouched", r.base_main, r.bare(['rev-parse', 'main']))
+    r.eqi('dry run: gh made no release and uploaded nothing', 0, r.calls('gh release (create|upload)'))
+    r.ne('dry run: the release commit exists in the clone', r.base_main, r.cl(['rev-parse', 'HEAD']))
+    r.eq('dry run: the commit is the one recorded', r.stget('commit_sha'), r.cl(['rev-parse', 'HEAD']))
+
+    # ---------------------------------------------------------------- 2. a real run: the tested commit is the tagged commit's parent
+    r.sandbox('real')
+    r.real([])
+    r.eqi('real run: finishes', 0, r.rc)
+    c = r.stget('commit_sha')
+    r.eq('real run: the tag is the release commit', c, r.bare(['rev-parse', 'v1.0.1^{commit}']))
+    r.eq('real run: main is the release commit', c, r.bare(['rev-parse', 'main']))
+    r.eq('real run: the tests ran on the commit the release commit is built on, before the bump', 'tests HEAD=' + r.bare(['rev-parse', c + '^']) + ' VERSION=1.0.0', r.test_lines())
+    r.eq('real run: one GitHub release with the four assets', 'latest.json tomato-1.0.1.dmg tomato-1.0.1.pkg tomato-1.0.1.tar.gz', ' '.join(rt.names(r.sb + '/fake/releases/v1.0.1')))
+    r.eq('real run: VERSION and sys.version say 1.0.1', '1.0.1 1.0.1', r.bare(['show', 'main:VERSION']) + ' ' + _sysver(r.bare(['show', 'main:std/sys.tom'])))
+    # a finished run: --resume refuses; the steps before publish cannot be redone; the later ones are safe to repeat
+    r.rel(['--resume'])
+    r.nei('finished run: --resume refuses', 0, r.rc)
+    r.rel(['--from', 'build'])
+    r.nei('after the tag: --from build is refused', 0, r.rc)
+    r.has_check('tagged and pushed', 'after the tag: the message says why', r.output)
+    r.rel(['--from', 'commit'])
+    r.nei('after the tag: --from commit is refused', 0, r.rc)
+    r.has_check('tagged and pushed', 'after the tag: ... for the same reason', r.output)
+    r.rel(['--ignore-linux-failures', '--from', 'push'])
+    r.eqi('after the tag: --from push finds the commit already on main', 0, r.rc)
+    r.has_check('already on origin', 'after the tag: push says nothing is left to push', r.output)
+    r.rel(['--ignore-linux-failures', '--from', 'publish'])
+    r.eqi('after the tag: --from publish repeats safely', 0, r.rc)
+    r.eqi('after the tag: still one release created', 1, r.calls('gh release create'))
+    r.eq('after the tag: the tag did not move', c, r.bare(['rev-parse', 'v1.0.1^{commit}']))
+
+    # ---------------------------------------------------------------- 3. --from never skips, and goes back properly
+    r.sandbox('from')
+    r.inject('fail-build')
+    r.rel(['--dry-run'])
+    r.nei('from: a build failure stops the run', 0, r.rc)
+    r.eq('from: it failed at build', 'build', r.stget('failed_step'))
+    r.rel(['--dry-run', '--from', 'sign'])
+    r.nei('from: --from sign is refused while build and linux... are not done', 0, r.rc)
+    r.has_check('did not finish', 'from: the refusal names the unfinished steps', r.output)
+    r.eq('from: the refusal changed nothing', 'preflight version test bump linux bench snapshot', r.done_steps())
+    r.clear_inject('fail-build')
+    r.rel(['--dry-run', '--resume'])
+    r.eqi('from: --resume carries on at build', 0, r.rc)
+    r.eqi('from: the tests were not run again', 1, r.calls('^tests'))
+    r.eq('from: one release commit', '1', r.n_commits())
+    # going back: the release commit is taken off, the later steps count as not done, a failure there resumes there
+    r.inject('fail-dmg')
+    r.rel(['--dry-run', '--from', 'sign'])
+    r.nei('from: going back to sign (the disk image fails)', 0, r.rc)
+    r.eq('from: the steps from sign on are not done', 'preflight version test bump linux bench snapshot build', r.done_steps())
+    r.eq('from: the release commit was taken off', '', r.stget('commit_sha'))
+    r.eq('from: HEAD is back on the start commit', r.stget('base_sha'), r.cl(['rev-parse', 'HEAD']))
+    r.clear_inject('fail-dmg')
+    n = r.calls('^build')
+    r.rel(['--dry-run', '--resume'])
+    r.eqi('from: --resume goes on at sign', 0, r.rc)
+    r.eqi('from: ... without building again', n, r.calls('^build'))
+    r.eqi('from: ... and without signing the signed package a second time', 1, r.calls('^sign-pkg'))
+    r.eq('from: ... and ends with one release commit', '1', r.n_commits())
+    r.eq('from: ... that is the recorded one', r.stget('commit_sha'), r.cl(['rev-parse', 'HEAD']))
+    # back to the start of the tests: the clone is reset to the start commit (the bump is undone), and everything runs again
+    r.rel(['--dry-run', '--from', 'test'])
+    r.eqi('from: --from test runs on', 0, r.rc)
+    r.eq('from: the tests ran again, on the start commit and an unbumped tree', 'tests HEAD=' + r.stget('base_sha') + ' VERSION=1.0.0', r.last_test_line())
+    r.eqi('from: ... that makes two runs of the tests', 2, r.calls('^tests'))
+    r.eq('from: still one release commit', '1', r.n_commits())
+    r.rel(['--dry-run', '--from', 'nosuchstep'])
+    r.eqi('from: an unknown step is refused', 2, r.rc)
+    r.rel(['--from', 'test'])
+    r.nei('from: a real run cannot resume a dry run', 0, r.rc)
+    r.has_check('earlier run was a dry run', 'from: ... and the message says it was a dry run', r.output)
+
+    # ---------------------------------------------------------------- 4. push: exactly the recorded commit, from a verified tree
+    r.sandbox('push')
+    r.inject('reject-main')
+    r.real([])
+    r.nei('push: a rejected push of main stops the run', 0, r.rc)
+    r.eq('push: it failed at push', 'push', r.stget('failed_step'))
+    c = r.stget('commit_sha')
+    r.eq('push: the tag and the release exist; main does not have the commit yet', c + ' / ' + r.base_main, r.bare(['rev-parse', 'v1.0.1^{commit}']) + ' / ' + r.bare(['rev-parse', 'main']))
+    r.clear_inject('reject-main')
+    _g = r.cl(['commit', '-q', '--allow-empty', '-m', 'something else, made by hand'])
+    r.real(['--resume'])
+    r.eqi('push: a resume pushes the recorded release commit, not HEAD', 0, r.rc)
+    r.eq('push: main is the release commit', c, r.bare(['rev-parse', 'main']))
+    r.ne('push: ... and HEAD is something else', c, r.cl(['rev-parse', 'HEAD']))
+    r.sandbox('pushdirty')
+    r.inject('reject-main')
+    r.real([])
+    r.nei('push (dirty): the rejected push stops the run', 0, r.rc)
+    r.clear_inject('reject-main')
+    rt.append(r.sb + '/work/tomato/VERSION', 'hand-edit\n')
+    r.real(['--resume'])
+    r.nei('push (dirty): a clone changed after the commit is refused', 0, r.rc)
+    r.has_check('uncommitted changes', 'push (dirty): ... for the uncommitted change', r.tail(5))
+    r.eq('push (dirty): main is untouched', r.base_main, r.bare(['rev-parse', 'main']))
+    _g = r.cl(['checkout', '-q', '--', 'VERSION'])
+    _g = r.cl(['reset', '-q', '--hard', r.stget('base_sha')])
+    r.real(['--resume'])
+    r.nei('push (moved): a clone that no longer has the release commit is refused', 0, r.rc)
+    r.has_check('release commit of this run is', 'push (moved): ... because the release commit is missing', r.tail(5))
+    r.eq('push (moved): main is untouched', r.base_main, r.bare(['rev-parse', 'main']))
+    r.sandbox('pushed')
+    r.inject('reject-main')
+    r.real([])
+    r.nei('push (by hand): the rejected push stops the run', 0, r.rc)
+    c = r.stget('commit_sha')
+    r.clear_inject('reject-main')
+    _g = r.bare(['update-ref', 'refs/heads/main', c])   # somebody pushed it for us
+    r.real(['--resume'])
+    r.eqi('push (by hand): a resume finds the commit on main and finishes', 0, r.rc)
+    r.eq('push (by hand): recorded as pushed', 'yes', r.stget('pushed'))
+
+    # ---------------------------------------------------------------- 5. publish: nothing twice, nothing different
+    r.sandbox('pubfail')
+    r.inject('fail-gh-create')
+    r.real([])
+    r.nei('publish: a failed gh release create stops the run', 0, r.rc)
+    r.eq('publish: ... at publish', 'publish', r.stget('failed_step'))
+    c = r.stget('commit_sha')
+    r.eq('publish: the tag is on origin (the release needs it)', c, r.bare(['rev-parse', 'v1.0.1^{commit}']))
+    r.eq('publish: main is not pushed', r.base_main, r.bare(['rev-parse', 'main']))
+    r.clear_inject('fail-gh-create')
+    r.real(['--resume'])
+    r.eqi('publish: the resume creates the release and finishes', 0, r.rc)
+    r.eqi('publish: ... two create calls, the failed one and the one that worked', 2, r.calls('^gh release create'))
+    r.sandbox('pubpartial')
+    r.inject('fail-gh-create-partial')
+    r.real([])
+    r.nei('publish: a release created with one asset stops the run', 0, r.rc)
+    r.clear_inject('fail-gh-create-partial')
+    r.real(['--resume'])
+    r.eqi('publish: the resume uploads the rest into that release', 0, r.rc)
+    r.eqi('publish: ... all four assets are there', 4, len(rt.names(r.sb + '/fake/releases/v1.0.1')))
+    r.eqi('publish: ... no second release was created', 1, r.calls('^gh release create'))
+    r.sandbox('pubverify')
+    r.inject('fail-gh-download')
+    r.real([])
+    r.nei('publish: a verification that cannot download stops the run', 0, r.rc)
+    r.eq('publish: ... main is not pushed', r.base_main, r.bare(['rev-parse', 'main']))
+    r.eq('publish: ... and the download folder is gone (the run\'s temp folder is empty)', '', r.nofiles(r.sb + '/tmp'))
+    r.clear_inject('fail-gh-download')
+    r.real(['--resume'])
+    r.eqi('publish: the resume verifies again and finishes', 0, r.rc)
+    r.eqi('publish: ... without a second release', 1, r.calls('^gh release create'))
+    # the Linux gate stops a real run after the commit, before anything is tagged; what is then resumed must be what was signed
+    r.sandbox('gate')
+    r.rel([])
+    r.nei('gate: a real run without a passing Linux run stops at publish', 0, r.rc)
+    r.eq('gate: ... at publish', 'publish', r.stget('failed_step'))
+    r.eq('gate: no new tag', 'v1.0.0', r.bare(['tag']))
+    rt.append(r.sb + '/work/tomato/release/out/tomato-1.0.1.pkg', 'tampered\n')
+    r.rel(['--ignore-linux-failures', '--resume'])
+    r.nei('gate: a changed package is not published', 0, r.rc)
+    r.has_check('not the package that was signed', 'gate: the message says why', r.output)
+    r.eqi('gate: still no tag, no release', 0, r.calls('gh release create'))
+    r.sandbox('tagelsewhere')
+    r.rel([])
+    r.nei('tag: gate stop', 0, r.rc)
+    _g = r.bare(['tag', 'v1.0.1', r.base_main])   # the tag appeared on origin on another commit meanwhile
+    r.rel(['--ignore-linux-failures', '--resume'])
+    r.nei('tag: a tag on origin that is not the release commit stops the publish', 0, r.rc)
+    r.eqi('tag: no release was created', 0, r.calls('gh release create'))
+    r.eq("tag: origin's tag stayed", r.base_main, r.bare(['rev-parse', 'v1.0.1^{commit}']))
+    r.sandbox('taglocal')
+    r.rel([])
+    r.nei('tag (local): gate stop', 0, r.rc)
+    _g = r.cl(['tag', 'v1.0.1', r.stget('base_sha')])
+    r.rel(['--ignore-linux-failures', '--resume'])
+    r.nei('tag (local): a local tag on another commit stops the publish', 0, r.rc)
+    r.eq('tag (local): origin has no new tag', 'v1.0.0', r.bare(['tag']))
+
+    # ---------------------------------------------------------------- 6. a dirty clone after a failed preflight
+    r.sandbox('dirty')
+    r.rel(['--dry-run'])
+    r.eqi('dirty: a dry run leaves the clone with a release commit', 0, r.rc)
+    r.inject('gh-logged-out')
+    r.rel(['--dry-run'])
+    r.nei("dirty: the next run's preflight fails (gh logged out)", 0, r.rc)
+    r.eq('dirty: ... before the clone was synced', '', r.stget('base_sha'))
+    r.clear_inject('gh-logged-out')
+    r.rel(['--dry-run', '--resume'])
+    r.eqi('dirty: --resume resets the clone and goes on', 0, r.rc)
+    r.eq('dirty: ... ending with one release commit on a clean tree', '1 ', r.n_commits() + ' ' + r.cl(['status', '--porcelain']))
+    r.sandbox('dirtyreal')
+    r.real(['--no-push'])
+    r.eqi('dirty (unpushed): a real run with --no-push leaves its commit in the clone', 0, r.rc)
+    c = r.stget('commit_sha')
+    r.inject('gh-logged-out')
+    r.real(['--no-push'])
+    r.nei('dirty (unpushed): the next preflight fails', 0, r.rc)
+    r.clear_inject('gh-logged-out')
+    r.real(['--no-push', '--resume'])
+    r.nei('dirty (unpushed): --resume does not throw the unpushed release commit away', 0, r.rc)
+    r.eq('dirty (unpushed): ... the commit is still there', c, r.cl(['rev-parse', c + '^{commit}']))
+    r.real(['--no-push', '--restart'])
+    r.nei('dirty (unpushed): --restart does reset, then the tag exists and the run stops', 0, r.rc)
+    r.has_check('tag v1.0.1 already exists|already has a release', 'dirty (unpushed): ... a published version cannot be released again', r.tail(5))
+
+    # ---------------------------------------------------------------- 7. signing: a failed check never leaves a signed package to be signed again
+    r.sandbox('sign')
+    r.inject('bad-notarization')
+    r.rel(['--dry-run'])
+    r.nei('sign: a package that does not check out stops the run', 0, r.rc)
+    r.eq('sign: ... at sign', 'sign', r.stget('failed_step'))
+    r.clear_inject('bad-notarization')
+    r.rel(['--dry-run', '--resume'])
+    r.eqi('sign: the resume signs the built package again (never a signed one)', 0, r.rc)
+    r.sandbox('dmg')
+    r.inject('fail-dmg')
+    r.rel(['--dry-run'])
+    r.nei('sign: a failing disk image stops the run', 0, r.rc)
+    r.clear_inject('fail-dmg')
+    r.rel(['--dry-run', '--resume'])
+    r.eqi('sign: the resume finishes', 0, r.rc)
+    r.eqi('sign: ... without signing the package a second time', 1, r.calls('^sign-pkg'))
+    r.has_check('only the disk image is redone', 'sign: ... and says so', r.tail(8))
+
+    # a package check that fails after it expanded the package leaves no copy of it behind
+    r.sandbox('checkleak')
+    r.inject('bad-hardening')
+    r.rel(['--dry-run'])
+    r.nei('sign: a Mach-O file that is not hardened stops the run', 0, r.rc)
+    r.eq('sign: ... at sign', 'sign', r.stget('failed_step'))
+    r.has_check('hardened runtime', 'sign: ... and the message says so', r.tail(5))
+    r.eq("sign: ... and the expanded package is gone (the run's temp folder is empty)", '', r.nofiles(r.sb + '/tmp'))
+
+    # ---------------------------------------------------------------- 8. an interrupt: temp folders removed, the step is the failed one, --resume continues there
+    for sig in ['TERM', 'HUP']:
+        code = 143
+        if sig == 'HUP':
+            code = 129
+        r.sandbox('int' + sig)
+        rt.write(r.sb + '/fake/inject/signal', sig)
+        r.real([])
+        r.eqi(f'interrupt ({sig}): the run stops with status {code}', code, r.rc)
+        r.has_check(f'interrupted \\({sig}\\) during step publish', f'interrupt ({sig}): the message names the step', r.tail(5))
+        r.eq(f'interrupt ({sig}): the failed step is publish, the run is still unfinished', 'publish running', r.stget('failed_step') + ' ' + r.stget('status'))
+        r.eq(f'interrupt ({sig}): publish is not recorded as done', 'preflight version test bump linux bench snapshot build sign commit', r.done_steps())
+        r.eq(f'interrupt ({sig}): no temp folder is left', '', r.nofiles(r.sb + '/tmp'))
+        r.rel(['--resume'])
+        r.nei(f'interrupt ({sig}): without --restart a new run is not started over it', 0, r.rc)
+        r.real([])
+        r.has_check('unfinished', f'interrupt ({sig}): a fresh run points at --resume', r.tail(5))
+        r.clear_inject('signal')
+        r.real(['--resume'])
+        r.eqi(f'interrupt ({sig}): --resume finishes the release', 0, r.rc)
+        c = r.stget('commit_sha')
+        r.eq(f'interrupt ({sig}): ... one release, the tag and main on the release commit', f'1 {c} {c}', str(r.calls('^gh release create')) + ' ' + r.bare(['rev-parse', 'v1.0.1^{commit}']) + ' ' + r.bare(['rev-parse', 'main']))
+        r.eq(f'interrupt ({sig}): ... and nothing left in the temp folder', '', r.nofiles(r.sb + '/tmp'))
+    # the same in the sign tool (stand-ins for the Mac tools; the signing tool is stopped by the signal): the expanded package is removed
+    r.sandbox('signpkg')
+    rt.mkdirs(r.sb + '/tmp')
+    rt.write(r.sb + '/in.pkg', 'version=1.0.1\nunsigned\n')
+    rt.write(r.sb + '/fake/inject/signal-codesign', 'TERM')
+    env: dict[str, str] = {}
+    env['PATH'] = r.bin + ':' + r.real_path
+    env['TOMATO_TEST_REAL_PATH'] = r.real_path
+    env['FAKE'] = r.sb + '/fake'
+    env['TMPDIR'] = r.sb + '/tmp'
+    argv = r.sign_tool + ['in.pkg', 'out.pkg']
+    res = rt.run(argv, r.sb, env)
+    r.output = res.stdout + res.stderr
+    os.write_text(r.sb + '/out', r.output)
+    r.rc = res.status
+    r.eqi('sign-pkg: a TERM while it signs ends it with status 143', 143, r.rc)
+    outpkg = ''
+    if ospath.exists(r.sb + '/out.pkg'):
+        outpkg = 'out.pkg'
+    r.eq('sign-pkg: it had reached codesign, and made no package', '1 ', str(r.calls('^codesign --force')) + ' ' + outpkg)
+    r.eq('sign-pkg: the expanded package is removed', '', r.nofiles(r.sb + '/tmp'))
+
+    # ---------------------------------------------------------------- 9. what must never happen in a dry run
+    r.sandbox('drynever')
+    r.rel(['--dry-run', '--from', 'test'])
+    r.nei('dry: --from without an earlier run is refused', 0, r.rc)
+    r.rel(['--dry-run'])
+    r.eqi('dry: finishes', 0, r.rc)
+    for s in ['publish', 'push']:
+        r.rel(['--dry-run', '--from', s])
+        r.eqi(f'dry: --from {s} still publishes and pushes nothing (status)', 0, r.rc)
+    r.eq('dry: no new tag, main untouched, no release, ever', f'v1.0.0|{r.base_main}|0', r.bare(['tag']) + '|' + r.bare(['rev-parse', 'main']) + '|' + str(r.calls('gh release (create|upload)')))
+
+# the version the `return 'X'` line of `def version(` names
+def _sysver(text: str) -> str:
+    inside = False
+    for line in text.split('\n'):
+        if line.startswith('def version('):
+            inside = True
+        elif inside and line.startswith("    return '") and line.endswith("'"):
+            return line[len("    return '"):len(line) - 1]
+    return ''
+
+@main
+def main(*args: tuple[str]):
+    old = False
+    w = ''
+    for a in args:
+        if a == '--old':
+            old = True
+        elif w == '':
+            w = a
+    if w == '':
+        sys.write_stderr('usage: tomato run dev/release_resume.tom main WORKDIR [--old]\n')
+        sys.exit(2)
+    rt.mkdirs(w)
+    w = ospath.abspath(w)
+    root = ospath.abspath(os.getcwd())
+    if not ospath.isfile(root + '/dev/release_resume.tom'):
+        sys.write_stderr('dev/release_resume.tom: run it from the root of the repository: tomato run dev/release_resume.tom main WORKDIR\n')
+        sys.exit(2)
+    r = Rig(root, w, old)
+    tomato = os.getenv('TOMATO')
+    if tomato is not None and tomato != '':
+        r.tomato = tomato
+    path = os.getenv('PATH')
+    r.real_path = '' if path is None else path
+    r.bin = w + '/bin'
+    r.tmpl = w + '/template'
+    if not r.build_pieces():
+        sys.exit(1)
+    if old:
+        r.sign_tool = ['sh', root + '/release/sign-pkg.sh']
+    else:
+        r.sign_tool = [w + '/tools/sign']
+    r.make_bin()
+    if not r.make_template():
+        print('FAIL release sandbox: cannot build the fake repository')
+        sys.exit(1)
+    r.base_main = rt.out_any(['git', '--git-dir=' + r.tmpl + '/bare.git', 'rev-parse', 'main'])
+    check_all(r)
+    # a skipped section would show here: the number of ok lines is fixed (raise it when a check is added)
+    if r.oks != EXPECTED:
+        print(f'FAIL the number of ok lines: expected {EXPECTED}, got {r.oks}')
+        r.fails += 1
+    if r.fails != 0:
+        sys.exit(1)

@@ -1,0 +1,160 @@
+# Wraps the final (signed, notarized, stapled) installer package in a disk image, then signs, notarizes and staples the image
+# itself. The port of release/dmg.sh (docs/shell-to-tomato-plan.md, stage 5). Run it ON a Mac that holds the Developer ID
+# Application identity and the stored notarytool login, after dev/sign.tom. The image holds exactly one file, tomato-VERSION.pkg,
+# byte-identical to PKG.
+#
+#     tomato run dev/dmg.tom main PKG OUT.dmg
+#
+#   TOMATO_APP_SIGN        identity that signs the image (default: Developer ID Application: Davis McDowell (39BK8TGQ26));
+#                          a disk image is signed with codesign and the Application certificate, not the Installer one
+#   TOMATO_NOTARY_PROFILE  notarytool keychain profile (default: tomato-notary)
+#   TOMATO_SKIP_NOTARIZE   testing only: sign but do not notarize or staple (release.tom allows it only with --dry-run)
+#   TOMATO_NO_SIGN         testing only: neither sign nor notarize (dev/release.tom --dry-run --no-sign)
+#   TOMATO_LATEST_JSON     optional: a latest.json that gets dmg_url and dmg_sha256 for the finished image
+# Checks the result: hdiutil verify, codesign --verify --strict, stapler validate, spctl (open, primary signature), and
+# mounts it read-only to compare the package inside with PKG and check that package's signature. Prints the SHA-256.
+import sys
+import os
+import ospath
+import re
+import rtool as rt
+
+def env_or(name: str, default: str) -> str:
+    v = os.getenv(name)
+    if v is None or v == '':
+        return default
+    return v
+
+def say(text: str):
+    sys.write_stdout(text + '\n')
+
+# hdiutil sometimes fails with "Resource busy" or a timeout (often on a busy CI runner) and works a moment later
+async def retry(argv: list[str]) -> bool:
+    tries = 1
+    while True:
+        if rt.run_shown(argv) == 0:
+            return True
+        if tries >= 3:
+            return False
+        tries += 1
+        await sleep(3.0)
+
+# the names `ls` shows in a folder (not the dot entries: the file system's own)
+def visible(folder: str) -> list[str]:
+    found: list[str] = []
+    for n in sorted(os.listdir(folder)):
+        if not n.startswith('.'):
+            found.append(n)
+    return found
+
+@main
+async def main(*args: tuple[str]):
+    words: list[str] = []
+    for a in args:
+        words.append(a)
+    if rt.out(['uname']) != 'Darwin':
+        sys.write_stderr('error: the disk image is built on a Mac\n')
+        sys.exit(1)
+    if len(words) != 2:
+        sys.write_stderr('usage: tomato run dev/dmg.tom main PKG OUT.dmg\n')
+        sys.exit(2)
+    pkg = words[0]
+    outp = words[1]
+    if not ospath.isfile(pkg):
+        sys.write_stderr(f'error: no package at {pkg}\n')
+        sys.exit(1)
+    if not outp.endswith('.dmg'):
+        sys.write_stderr('error: OUT must end in .dmg\n')
+        sys.exit(2)
+    ver = ospath.basename(pkg)
+    if ver.endswith('.pkg'):
+        ver = ver[:len(ver) - 4]
+    if ver.startswith('tomato-'):
+        ver = ver[len('tomato-'):]
+    if ver.endswith('.signed'):
+        ver = ver[:len(ver) - 7]
+    if re.fullmatch('[0-9]+(\\.[0-9]+)+(-[0-9A-Za-z.-]+)?', ver) is None:
+        sys.write_stderr(f'error: cannot read the version from the package name {pkg} (want tomato-VERSION.pkg)\n')
+        sys.exit(1)
+    rt.rm(outp)
+    work = rt.mkdtemp('dmg.')
+    rt.watch_signals()
+    mnt: list[str] = []
+    status = 0
+    try:
+        await build(pkg, outp, ver, work, mnt)
+    catch rt.Fatal as e:
+        if e.message != 'notarization failed':
+            sys.write_stderr('error: ' + e.message + '\n')
+        status = 1
+    catch Error as e:
+        n = rt.interrupted_by(e)
+        if n == 0:
+            raise e
+        status = 128 + n
+    finally:
+        if len(mnt) > 0:
+            if rt.run(['hdiutil', 'detach', '-quiet', mnt[0]]).status != 0:
+                _f = rt.run(['hdiutil', 'detach', '-force', '-quiet', mnt[0]])
+        rt.rmtree(work)
+    if status != 0:
+        sys.exit(status)
+
+async def build(pkg: str, outp: str, ver: str, work: str, mnt: list[str]):
+    appsign = env_or('TOMATO_APP_SIGN', 'Developer ID Application: Davis McDowell (39BK8TGQ26)')
+    profile = env_or('TOMATO_NOTARY_PROFILE', 'tomato-notary')
+    no_sign = env_or('TOMATO_NO_SIGN', '') != ''
+    skip = env_or('TOMATO_SKIP_NOTARIZE', '') != ''
+    name = f'tomato-{ver}.pkg'
+    rt.mkdirs(work + '/stage')
+    rt.copy(pkg, work + '/stage/' + name)
+    tmp = f'{work}/tomato-{ver}.dmg'   # OUT appears only once signed, notarized, stapled and checked
+    if not await retry(['hdiutil', 'create', '-quiet', '-volname', f'Tomato {ver}', '-srcfolder', work + '/stage', '-fs', 'HFS+', '-format', 'UDZO', '-imagekey', 'zlib-level=9', '-ov', tmp]):
+        raise rt.Fatal('hdiutil create failed')
+    if not await retry(['hdiutil', 'verify', '-quiet', tmp]):
+        raise rt.Fatal('hdiutil verify failed')
+    if not no_sign:
+        if rt.run_shown(['codesign', '--force', '--timestamp', '--sign', appsign, tmp]) != 0:
+            raise rt.Fatal('codesign failed on the image')
+        if rt.run_shown(['codesign', '--verify', '--strict', '-vv', tmp]) != 0:
+            raise rt.Fatal('codesign --verify failed on the image')
+        dv = rt.run(['codesign', '-dv', '--verbose=4', tmp])
+        if ('Authority=' + appsign) not in dv.stdout + dv.stderr:
+            raise rt.Fatal(f'the image is not signed by {appsign}')
+    if not no_sign and not skip:
+        sid = rt.notarize(tmp, profile, work)
+        say(f'notarized dmg (submission {sid})')
+        for argv in [['xcrun', 'stapler', 'staple', tmp], ['xcrun', 'stapler', 'validate', tmp], ['codesign', '--verify', '--strict', tmp],
+                     ['spctl', '--assess', '--type', 'open', '--context', 'context:primary-signature', '-vv', tmp]]:
+            if rt.run_shown(argv) != 0:
+                raise rt.Fatal(' '.join(argv) + ' failed')
+    # the contents: exactly the package we were given, still signed (and, when notarized, still stapled)
+    rt.mkdirs(work + '/mnt')
+    if not await retry(['hdiutil', 'attach', '-quiet', '-readonly', '-nobrowse', '-noautoopen', '-mountpoint', work + '/mnt', tmp]):
+        raise rt.Fatal('hdiutil attach failed')
+    mnt.append(work + '/mnt')
+    listing = visible(work + '/mnt')
+    if listing != [name]:
+        raise rt.Fatal(f"the image should hold only {name}, it holds: " + ' '.join(listing) + ' ')
+    if os.read_bytes(f'{work}/mnt/{name}') != os.read_bytes(pkg):
+        raise rt.Fatal(f'the package in the image differs from {pkg}')
+    if not no_sign:
+        sg = rt.run(['pkgutil', '--check-signature', f'{work}/mnt/{name}'])
+        if sg.status != 0:
+            sys.write_stderr(sg.stdout + sg.stderr)
+            raise rt.Fatal('the package in the image is not validly signed')
+        if not skip:
+            if not rt.ok(['xcrun', 'stapler', 'validate', f'{work}/mnt/{name}']):
+                raise rt.Fatal('the package in the image is not stapled')
+    if rt.run_shown(['hdiutil', 'detach', '-quiet', work + '/mnt']) != 0:
+        raise rt.Fatal('hdiutil detach failed')
+    mnt.pop()
+    os.rename(tmp, outp)
+    total = rt.sha256_file(outp)
+    lj = os.getenv('TOMATO_LATEST_JSON')
+    if lj is not None and lj != '' and ospath.isfile(lj):   # dmg_url sits next to url (the tarball), dmg_sha256 is this image's hash
+        rt.replace_file(lj, rt.json_with_asset(lj, 'dmg', rt.url_stem(lj) + '.dmg', total))
+    if no_sign or skip:
+        say(f'built {outp}, NOT notarized ({total})')
+    else:
+        say(f'signed, notarized and stapled {outp} ({total})')

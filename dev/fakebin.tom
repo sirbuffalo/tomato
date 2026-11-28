@@ -1,0 +1,402 @@
+# One program that stands in for the Mac's tools, GitHub's `gh`, `curl`, `ssh`, and the release tools of the repository, in the sandbox
+# of dev/release_resume.tom (docs/shell-to-tomato-plan.md, section 10.2; the old tests/release_resume.sh wrote each as a shell script).
+# It is built once and linked under each name (like busybox): what it is depends on the name it was started under, argv[0]:
+#
+#   uname sw_vers clang lipo productbuild hdiutil codesign security productsign pkgbuild xcrun spctl ssh pkgutil file curl gh
+#   pre-receive      the hook of the sandbox's bare repository
+#   tomato           `tomato run dev/NAME.tom main ARGS` for the tools of a release (test build pkg sign dmg site), as the fake
+#                    repository's own scripts were: they log to $FAKE/calls.log and are failed by files in $FAKE/inject
+#
+# Failures are injected by creating files in $FAKE/inject (fail-tests, fail-build, fail-sign, fail-dmg, bad-notarization,
+# gh-logged-out, fail-gh-create, fail-gh-create-partial, fail-gh-download, reject-main, bad-hardening); a file `signal` (or
+# `signal-codesign`) holding INT, TERM or HUP makes the gh download (codesign) stand-in send that signal to the program that started
+# it (and the stand-in itself), like Ctrl-C or a kill. Environment: FAKE (the fake folder), BARE (the bare repository),
+# TOMATO_TEST_REAL_PATH (the PATH of the real tools).
+import sys
+import os
+import ospath
+import re
+import rtool as rt
+
+def fake_dir() -> str:
+    d = os.getenv('FAKE')
+    if d is None or d == '':
+        sys.write_stderr('fakebin: FAKE is not set\n')
+        sys.exit(2)
+    return d
+
+def inj(name: str) -> bool:
+    return ospath.exists(fake_dir() + '/inject/' + name)
+
+def calls_log(line: str):
+    rt.append(fake_dir() + '/calls.log', line + '\n')
+
+def words(items: list[str]) -> str:
+    return ' '.join(items)
+
+def err(text: str):
+    sys.write_stderr(text + '\n')
+
+def echo(text: str):
+    sys.write_stdout(text + '\n')
+
+# The real tool of this name (the one that is on the real PATH), run with the arguments; its output and status are ours
+def real_tool(name: str, args: list[str]):
+    path = os.getenv('TOMATO_TEST_REAL_PATH')
+    if path is None:
+        path = os.getenv('PATH')
+    found = ''
+    if path is not None:
+        for d in path.split(':'):
+            p = d + '/' + name
+            if ospath.isfile(p):
+                found = p
+                break
+    if found == '':
+        sys.exit(127)
+    r = rt.run([found] + args)
+    sys.write_stdout(r.stdout)
+    sys.write_stderr(r.stderr)
+    sys.exit(r.status)
+
+def last_of(args: list[str]) -> str:
+    if len(args) == 0:
+        return ''
+    return args[len(args) - 1]
+
+# ---- the Mac's tools --------------------------------------------------------------------------------------------------------------
+
+def f_uname(args: list[str]):
+    if len(args) == 0:
+        echo('Darwin')
+        return
+    real_tool('uname', args)
+
+def f_sw_vers(args: list[str]):
+    if len(args) > 0 and args[0] == '-productName':
+        echo('macOS')
+    else:
+        echo('14.0')
+
+def f_security(args: list[str]):
+    echo('  1) AAAA "Developer ID Application: Davis McDowell (39BK8TGQ26)"')
+    echo('  2) BBBB "Developer ID Installer: Davis McDowell (39BK8TGQ26)"')
+
+def f_codesign(args: list[str]):
+    calls_log('codesign ' + words(args))
+    if inj('signal-codesign'):                # the program that runs us (we exit, so its handler runs then)
+        rt.kill(rt.read_or(fake_dir() + '/inject/signal-codesign').strip(), [rt.parent_pid(os.getpid())])
+    if '-dv' in words(args):
+        if not inj('bad-hardening'):
+            err('flags=0x10000(runtime)')
+        err('Authority=Developer ID Application: Davis McDowell (39BK8TGQ26)')
+
+# an empty file at the last argument (productsign, pkgbuild)
+def f_touch_last(args: list[str]):
+    rt.write(last_of(args), '')
+
+def f_pkgutil(args: list[str]):
+    if len(args) == 0:
+        return
+    if args[0] == '--check-signature':
+        echo('   Status: signed by a developer certificate issued by Apple for distribution')
+        if not inj('bad-notarization'):
+            echo('   Notarization: trusted by the Apple notary service')
+        echo('   Certificate Chain:')
+        echo('    1. Developer ID Installer: Davis McDowell (39BK8TGQ26)')
+    elif args[0] == '--expand-full':
+        v = ''
+        for line in rt.read_or(args[1]).split('\n'):
+            if line.startswith('version='):
+                v = line[len('version='):]
+                break
+        x = args[2]
+        comp = x + '/component.pkg'
+        rt.mkdirs(comp + '/Scripts')
+        rt.mkdirs(comp + '/Payload/usr/local/bin')
+        rt.mkdirs(comp + '/Payload/usr/local/lib/tomato/native/bin')
+        rt.write(comp + '/Scripts/preinstall', '#!/bin/sh\n')
+        rt.write(comp + '/Scripts/postinstall', '#!/bin/sh\n')
+        rt.chmod_x([comp + '/Scripts/preinstall', comp + '/Scripts/postinstall'])
+        rt.symlink('../lib/tomato/native/bin/tomato', comp + '/Payload/usr/local/bin/tomato')
+        tomato = comp + '/Payload/usr/local/lib/tomato/native/bin/tomato'
+        rt.write(tomato, f'#!/bin/sh\necho "Tomato v{v} (compiler written in Tomato)"\n')
+        rt.chmod_x([tomato])
+        rt.write(x + '/Distribution', f'<pkg-ref id="com.davismcd.tomato" version="{v}">component.pkg</pkg-ref>\n')
+
+def f_file(args: list[str]):
+    for f in args:
+        if f.endswith('/bin/tomato'):
+            echo(f + ': Mach-O 64-bit executable arm64')
+        else:
+            echo(f + ': data')
+
+# `curl -fsSL -o OUT URL`: the file of that name in the fake release of the tag in the URL
+def f_curl(args: list[str]):
+    outp = ''
+    url = ''
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '-o':
+            outp = args[i + 1]
+            i += 2
+        elif a.startswith('-'):
+            i += 1
+        else:
+            url = a
+            i += 1
+    calls_log('curl ' + url)
+    tag = ''
+    at = url.find('/download/')
+    if at >= 0:
+        tag = url[at + len('/download/'):].partition('/')[0]
+    src = fake_dir() + '/releases/' + tag + '/' + ospath.basename(url)
+    if not ospath.isfile(src):
+        err('curl: (22) not found: ' + url)
+        sys.exit(22)
+    rt.copy(src, outp)
+
+def f_gh(args: list[str]):
+    calls_log('gh ' + words(args))
+    fake = fake_dir()
+    key = ''
+    if len(args) >= 2:
+        key = args[0] + ' ' + args[1]
+    if key == 'auth status':
+        if inj('gh-logged-out'):
+            err('You are not logged into any GitHub hosts')
+            sys.exit(1)
+    elif key == 'repo view':
+        echo('ADMIN')
+    elif key == 'api user':
+        echo('testuser')
+    elif key == 'release view':
+        if ospath.isdir(fake + '/releases/' + args[2]):
+            return
+        err('release not found')
+        sys.exit(1)
+    elif key == 'release create' or key == 'release upload':
+        verb = args[1]
+        tag = args[2]
+        files: list[str] = []
+        for a in args[3:]:
+            if ospath.isfile(a):
+                files.append(a)
+        d = fake + '/releases/' + tag
+        if verb == 'create':
+            if inj('fail-gh-create'):
+                err('HTTP 502 from GitHub')
+                sys.exit(1)
+            bare = os.getenv('BARE')
+            if bare is None or not rt.ok(['git', '--git-dir=' + bare, 'rev-parse', '-q', '--verify', 'refs/tags/' + tag]):
+                err(f'tag {tag} is not on the remote (--verify-tag)')
+                sys.exit(1)
+            rt.mkdirs(d)
+            if inj('fail-gh-create-partial'):
+                if len(files) > 0:
+                    rt.copy(files[0], d + '/')
+                err('HTTP 502 from GitHub after the first asset')
+                sys.exit(1)
+        elif not ospath.isdir(d):
+            err('release not found')
+            sys.exit(1)
+        for f in files:
+            rt.copy(f, d + '/')
+    elif key == 'release download':
+        tag = args[2]
+        dirp = ''
+        pats: list[str] = []
+        i = 3
+        while i < len(args):
+            if args[i] == '--dir':
+                dirp = args[i + 1]
+                i += 2
+            elif args[i] == '--pattern':
+                pats.append(args[i + 1])
+                i += 2
+            else:
+                i += 1
+        if inj('fail-gh-download'):
+            err('network error')
+            sys.exit(1)
+        if ospath.isfile(fake + '/inject/signal'):   # an interrupt: our parent and this stand-in both get the signal, as from Ctrl-C
+            targets = [rt.parent_pid(os.getpid()), os.getpid()]
+            levels = os.getenv('FAKE_PARENT_LEVELS')
+            if levels is not None and levels == '2':   # the old release.sh runs each step in a subshell: that and the script above it
+                targets = [rt.parent_pid(targets[0]), targets[0], os.getpid()]
+            rt.kill(rt.read_or(fake + '/inject/signal').strip(), targets)
+            _s = rt.run(['sleep', '5'])
+            sys.exit(1)
+        for p in pats:
+            r = rt.run(['cp', fake + '/releases/' + tag + '/' + p, dirp + '/'])
+            if r.status != 0:
+                sys.exit(1)
+    else:
+        err('gh stub: unexpected: ' + words(args))
+        sys.exit(99)
+
+# ---- the tools of the repository being released ---------------------------------------------------------------------------------------
+
+def sum_of(path: str) -> str:
+    return rt.sha256_file(path)
+
+def t_test(args: list[str]):
+    head = rt.out(['git', 'rev-parse', 'HEAD'])
+    version = rt.read_or('VERSION').strip()
+    calls_log(f'tests HEAD={head} VERSION={version}')
+    if inj('fail-tests'):
+        echo('FAIL fake test')
+        echo('1 passed, 1 failed')
+        sys.exit(1)
+    echo('ok   fake test')
+    echo('10 passed, 0 failed')
+
+def t_build(args: list[str]):
+    calls_log('build')
+    if inj('fail-build'):
+        err('build failed')
+        sys.exit(1)
+    v = rt.read_or('VERSION').strip()
+    counter = fake_dir() + '/counter'
+    n = 1
+    c = rt.read_or(counter).strip()
+    if c.isdigit():
+        n = int(c) + 1
+    rt.write(counter, f'{n}\n')
+    outd = 'release/out'
+    rt.rmtree(outd)
+    rt.mkdirs(outd)
+    tar = f'{outd}/tomato-{v}.tar.gz'
+    rt.write(tar, f'tarball {v} build {n}\n')
+    sha = sum_of(tar)
+    rt.write(outd + '/latest.json', '{\n  "version": "' + v + '",\n  "url": "https://github.com/sirbuffalo/tomato/releases/download/v' + v + '/tomato-' + v + '.tar.gz",\n  "sha256": "' + sha + '"\n}\n')
+
+def t_pkg(args: list[str]):
+    v = rt.read_or('VERSION').strip()
+    outd = 'release/out'
+    n = rt.read_or(fake_dir() + '/counter').strip()
+    pkg = f'{outd}/tomato-{v}.pkg'
+    rt.write(pkg, f'version={v}\nunsigned build {n}\n')
+    psum = sum_of(pkg)
+    rt.replace_file(outd + '/latest.json', rt.json_with_asset(outd + '/latest.json', 'pkg', rt.url_stem(outd + '/latest.json') + '.pkg', psum))
+
+def t_sign(args: list[str]):
+    calls_log('sign-pkg ' + args[0])
+    if inj('fail-sign'):
+        err('notarization rejected')
+        sys.exit(1)
+    inp = rt.read_or(args[0])
+    for line in inp.split('\n'):
+        if line == 'signed':
+            err(f'error: {args[0]} is signed already')
+            sys.exit(1)
+    rt.write(args[1], inp + 'signed\n')
+    echo('notarized (submission fake-1)')
+    sha = sum_of(args[1])
+    lj = os.getenv('TOMATO_LATEST_JSON')
+    if lj is not None and lj != '':
+        rt.replace_file(lj, re.sub('"pkg_sha256": *"[0-9a-f]*"', '"pkg_sha256": "' + sha + '"', rt.read_or(lj)))
+
+def t_dmg(args: list[str]):
+    calls_log('dmg ' + args[0])
+    if inj('fail-dmg'):
+        err('dmg failed')
+        sys.exit(1)
+    rt.write(args[1], 'dmg of ' + sum_of(args[0]) + '\n')
+    sha = sum_of(args[1])
+    lj = os.getenv('TOMATO_LATEST_JSON')
+    if lj is not None and lj != '':
+        rt.replace_file(lj, rt.json_with_asset(lj, 'dmg', rt.url_stem(lj) + '.dmg', sha))
+    echo('notarized dmg (submission fake-2)')
+
+def t_site(args: list[str]):
+    v = rt.read_or('VERSION').strip()
+    if '-' in v:
+        rt.copy('release/out/latest.json', 'site/latest-pre.json')
+    else:
+        rt.copy('release/out/latest.json', 'site/latest.json')
+        cfg = rt.read_or('site/config.js')
+        out = ''
+        for line in cfg.split('\n'):
+            if line.startswith('window.TOMATO_VERSION = "'):
+                line = 'window.TOMATO_VERSION = "' + v + '";'
+            out += line + '\n'
+        rt.replace_file('site/config.js', out[:len(out) - 1])
+
+def f_tomato(args: list[str]):
+    if len(args) >= 3 and args[0] == 'run' and args[1].endswith('.tom'):
+        tool = ospath.basename(args[1])
+        tool = tool[:len(tool) - 4]
+        rest = args[3:]
+        if tool == 'test':
+            t_test(rest)
+        elif tool == 'build':
+            t_build(rest)
+        elif tool == 'pkg':
+            t_pkg(rest)
+        elif tool == 'sign':
+            t_sign(rest)
+        elif tool == 'dmg':
+            t_dmg(rest)
+        elif tool == 'site':
+            t_site(rest)
+        else:
+            err('fakebin tomato: no such tool: ' + args[1])
+            sys.exit(2)
+        return
+    err('fakebin tomato: unexpected: ' + words(args))
+    sys.exit(2)
+
+# the hook of the sandbox's bare repository: standard input is "OLD NEW REF" lines
+async def f_pre_receive():
+    while True:
+        line = ''
+        try:
+            line = await input('')
+        catch EOFError:
+            break
+        w = line.split(' ')
+        if len(w) >= 3 and w[2] == 'refs/heads/main' and inj('reject-main'):
+            err('main is protected (test)')
+            sys.exit(1)
+
+@main
+async def main(*args: tuple[str]):
+    argv = sys.argv()
+    name = ospath.basename(argv[0])
+    rest: list[str] = []
+    for a in args:
+        rest.append(a)
+    if name == 'uname':
+        f_uname(rest)
+    elif name == 'sw_vers':
+        f_sw_vers(rest)
+    elif name == 'clang' or name == 'lipo' or name == 'productbuild' or name == 'hdiutil' or name == 'codesign-unused':
+        echo('fake ' + name)
+    elif name == 'security':
+        f_security(rest)
+    elif name == 'codesign':
+        f_codesign(rest)
+    elif name == 'productsign' or name == 'pkgbuild':
+        f_touch_last(rest)
+    elif name == 'xcrun' or name == 'spctl':
+        pass
+    elif name == 'ssh':
+        err('ssh is not allowed in the release sandbox: ' + words(rest))
+        sys.exit(255)
+    elif name == 'pkgutil':
+        f_pkgutil(rest)
+    elif name == 'file':
+        f_file(rest)
+    elif name == 'curl':
+        f_curl(rest)
+    elif name == 'gh':
+        f_gh(rest)
+    elif name == 'tomato':
+        f_tomato(rest)
+    elif name == 'pre-receive':
+        await f_pre_receive()
+    else:
+        err('fakebin: no stand-in is called ' + name)
+        sys.exit(2)

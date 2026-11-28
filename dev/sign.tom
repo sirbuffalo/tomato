@@ -1,0 +1,139 @@
+# Signs, notarizes and staples a tomato installer package. The port of release/sign-pkg.sh (docs/shell-to-tomato-plan.md, stage 5). Run
+# it ON a Mac that holds the Developer ID Installer identity and a stored notarytool login (the build Mac has neither; see
+# docs/releasing.md for the copy-to-a-signing-Mac procedure).
+#
+#     tomato run dev/sign.tom main IN.pkg OUT.pkg
+#
+#   TOMATO_PKG_SIGN        installer identity   (default: Developer ID Installer: Davis McDowell (39BK8TGQ26))
+#   TOMATO_NOTARY_PROFILE  notarytool keychain profile (default: tomato-notary; created once with
+#                          `xcrun notarytool store-credentials tomato-notary`, so no password is ever written down)
+#   TOMATO_APP_SIGN        code-signing identity for the binaries inside the package (default: Developer ID Application: Davis McDowell (39BK8TGQ26)).
+#                          Apple notarization rejects unsigned Mach-O files, so every one in the payload (tomatoc) is re-signed with the
+#                          hardened runtime and a secure timestamp before the package itself is signed. This needs a Developer ID *Application*
+#                          certificate, a different certificate from the Installer one.
+#   TOMATO_SKIP_NOTARIZE   testing only: sign but do not notarize or staple (the result is not distributable; release.tom allows it only with --dry-run)
+#   TOMATO_LATEST_JSON     optional: a latest.json whose pkg_sha256 is rewritten to the signed package's hash
+# Prints the SHA-256 of OUT.pkg. On a notarization rejection it prints Apple's log and exits non-zero.
+import sys
+import os
+import ospath
+import re
+import rtool as rt
+
+def env_or(name: str, default: str) -> str:
+    v = os.getenv(name)
+    if v is None or v == '':
+        return default
+    return v
+
+def fail(text: str):
+    rt.die(text)
+
+@main
+def main(*args: tuple[str]):
+    words: list[str] = []
+    for a in args:
+        words.append(a)
+    if rt.out(['uname']) != 'Darwin':
+        sys.write_stderr('error: signing needs a Mac\n')
+        sys.exit(1)
+    if len(words) != 2:
+        sys.write_stderr('usage: tomato run dev/sign.tom main IN.pkg OUT.pkg\n')
+        sys.exit(2)
+    inp = words[0]
+    outp = words[1]
+    if inp == outp:
+        sys.write_stderr('error: IN and OUT must differ\n')
+        sys.exit(2)
+    rt.rm(outp)
+    work = rt.mkdtemp('sign.')
+    rt.watch_signals()
+    status = 0
+    try:
+        status = sign(inp, outp, work)
+    catch rt.Fatal as e:
+        if e.message != 'notarization failed':
+            sys.write_stderr('error: ' + e.message + '\n')
+        status = 1
+    catch Error as e:
+        n = rt.interrupted_by(e)
+        if n == 0:
+            raise e
+        status = 128 + n
+    finally:
+        rt.rmtree(work)
+    if status != 0:
+        sys.exit(status)
+
+def sign(inp: str, outp: str, work: str) -> int:
+    sign_id = env_or('TOMATO_PKG_SIGN', 'Developer ID Installer: Davis McDowell (39BK8TGQ26)')
+    profile = env_or('TOMATO_NOTARY_PROFILE', 'tomato-notary')
+    appsign = env_or('TOMATO_APP_SIGN', 'Developer ID Application: Davis McDowell (39BK8TGQ26)')
+    skip = env_or('TOMATO_SKIP_NOTARIZE', '') != ''
+    if rt.run_shown(['pkgutil', '--expand-full', inp, work + '/x']) != 0:
+        raise rt.Fatal('pkgutil --expand-full failed')
+    bins = rt.macho_files(work + '/x')
+    if len(bins) == 0:
+        raise rt.Fatal('no Mach-O binary found in the package to sign')
+    for b in bins:
+        if rt.run_shown(['codesign', '--force', '--options', 'runtime', '--timestamp', '--sign', appsign, b]) != 0:
+            raise rt.Fatal(f'codesign failed on {b}')
+        if rt.run_shown(['codesign', '--verify', '--strict', b]) != 0:
+            raise rt.Fatal(f'codesign --verify failed on {b}')
+    # Rebuild with pkgbuild, not --flatten-full: flatten-full records the signer's own owner (davis:staff), pkgbuild forces root:wheel.
+    ver = ''
+    m = re.search('<pkg-ref id="com.davismcd.tomato" version="([^"]*)"', rt.read_or(work + '/x/Distribution'))
+    if m is not None:
+        ver = m.group(1)
+    if ver == '':
+        raise rt.Fatal('cannot read the package version from Distribution')
+    rt.mkdirs(work + '/parts')
+    if not rt.ok(['pkgbuild', '--root', work + '/x/component.pkg/Payload', '--scripts', work + '/x/component.pkg/Scripts', '--identifier', 'com.davismcd.tomato', '--version', ver, '--install-location', '/', '--ownership', 'recommended', work + '/parts/component.pkg']):
+        raise rt.Fatal('pkgbuild failed')
+    if not rt.ok(['productbuild', '--distribution', work + '/x/Distribution', '--package-path', work + '/parts', work + '/app-signed.pkg']):
+        raise rt.Fatal('productbuild failed')
+    # the result installs with these owners; they must be root:wheel
+    if rt.run_shown(['pkgutil', '--expand', work + '/app-signed.pkg', work + '/chk']) != 0:
+        raise rt.Fatal('pkgutil --expand failed')
+    boms: list[str] = []
+    if ospath.isdir(work + '/chk'):
+        for n in sorted(os.listdir(work + '/chk')):
+            if n.endswith('.pkg'):
+                boms.append(work + '/chk/' + n + '/Bom')
+    listing = ''
+    for b in boms:
+        listing += rt.out_any(['lsbom', '-p', 'MUGsf', b]) + '\n'
+    listing = listing.strip('\n')
+    if listing == '':
+        raise rt.Fatal('cannot list the repacked payload')
+    bad: list[str] = []
+    for line in listing.split('\n'):
+        f = line.split('\t')
+        if len(f) >= 3 and (f[1] != 'root' or f[2] != 'wheel'):
+            bad.append(f[len(f) - 1])
+    if len(bad) > 0:
+        raise rt.Fatal('repacked payload is not owned by root:wheel, e.g. ' + ' '.join(bad[:3]))
+    tmp = work + '/final.pkg'   # OUT appears only once notarized, stapled and validated
+    if rt.run_shown(['productsign', '--sign', sign_id, work + '/app-signed.pkg', tmp]) != 0:
+        raise rt.Fatal('productsign failed')
+    if rt.run_shown(['pkgutil', '--check-signature', tmp]) != 0:
+        raise rt.Fatal('pkgutil --check-signature failed')
+    if skip:   # testing only (dev/release.tom --dry-run --skip-notarize): signed but NOT notarized, so not distributable
+        os.rename(tmp, outp)
+        say(f'signed {outp}, NOT notarized ({rt.sha256_file(outp)})')
+        return 0
+    sid = rt.notarize(tmp, profile, work)
+    say(f'notarized (submission {sid})')
+    for argv in [['xcrun', 'stapler', 'staple', tmp], ['xcrun', 'stapler', 'validate', tmp], ['spctl', '--assess', '--type', 'install', '-vv', tmp]]:
+        if rt.run_shown(argv) != 0:
+            raise rt.Fatal(' '.join(argv) + ' failed')
+    os.rename(tmp, outp)
+    total = rt.sha256_file(outp)
+    lj = os.getenv('TOMATO_LATEST_JSON')
+    if lj is not None and lj != '' and ospath.isfile(lj):
+        rt.replace_file(lj, re.sub('"pkg_sha256": *"[0-9a-f]*"', '"pkg_sha256": "' + total + '"', rt.read_or(lj)))
+    say(f'signed {outp} ({total})')
+    return 0
+
+def say(text: str):
+    sys.write_stdout(text + '\n')

@@ -1,0 +1,235 @@
+# The website's three small tools (the port of site/build.sh, site/check.sh and site/examples.sh). Run them from the root of the repository:
+#
+#     tomato run dev/site.tom main build      assembles the files GitHub Pages serves into site/ (docs copied in, examples.json written,
+#                                             latest.json or latest-pre.json copied from release/out/, config.js given the version)
+#     tomato run dev/site.tom main check      quick checks that the website is consistent and publishable; needs no compiler, and the
+#                                             Pages deploy and the test workflow depend on it: `ok   ...` / `FAIL ...` lines, status 1
+#                                             when one failed
+#     tomato run dev/site.tom main examples   writes site/examples.json (name -> source) from examples/*.tom, for the Run page's menu
+#
+# The text rules of the shell and sed lines are written out in the functions that carry them.
+import sys
+import os
+import ospath
+import re
+import rtool as rt
+
+const USAGE = 'usage: tomato run dev/site.tom main build|check|examples'
+
+# Examples the Run page does not offer: mathlib needs an LLVM file the page does not offer, http_get needs a network, todo_shell needs
+# a terminal.
+def skipped(name: str) -> bool:
+    return name == 'mathlib' or name == 'http_get' or name == 'todo_shell'
+
+# `$(cat FILE)` (the text without its trailing newlines); '' for a file that is not there, after cat's own message
+def cat_value(path: str) -> str:
+    if not ospath.isfile(path):
+        sys.write_stderr(f'cat: {path}: No such file or directory\n')
+        return ''
+    return os.read_text(path).rstrip('\n')
+
+# `cp SRC DST` with cp's own message and status
+def cp(src: str, dst: str) -> int:
+    r = rt.run(['cp', src, dst])
+    if r.status != 0:
+        sys.write_stderr(r.stderr)
+    return r.status
+
+# ---- examples ------------------------------------------------------------------------------------------------------------------
+
+# One source as the awk program wrote it: every backslash, double quote, tab and carriage return escaped, and each line (a last one
+# without its newline too) ended by \n written out; the whole text is bytes, so nothing about a file's encoding can change it.
+def json_text(data: bytes) -> bytes:
+    esc = data.replace(b'\\', b'\\\\').replace(b'"', b'\\"').replace(b'\t', b'\\t').replace(b'\r', b'\\r').replace(b'\n', b'\\n')
+    if len(data) > 0 and data[len(data) - 1] != 10:
+        esc += b'\\n'
+    return esc
+
+def examples(root: str) -> int:
+    folder = root + '/examples'
+    names: list[str] = []
+    for f in sorted(os.listdir(folder)):
+        if f.endswith('.tom') and ospath.isfile(folder + '/' + f):
+            names.append(f[:len(f) - 4])
+    parts: list[bytes] = [b'{']
+    first = True
+    for name in names:
+        if skipped(name):
+            continue
+        if not first:
+            parts.append(b',')
+        first = False
+        parts.append(('\n  "' + name + '": "').encode())
+        parts.append(json_text(os.read_bytes(folder + '/' + name + '.tom')))
+        parts.append(b'"')
+    parts.append(b'\n}\n')
+    os.write_bytes(root + '/site/examples.json', b''.join(parts))
+    return 0
+
+# ---- build ---------------------------------------------------------------------------------------------------------------------
+
+# sed -i.bak "s/window.TOMATO_VERSION = \".*\"/window.TOMATO_VERSION = \"VERSION\"/" FILE: on each line the first match, from the
+# text up to the last double quote of the line, becomes the new text
+def set_config_version(path: str, version: str) -> int:
+    if not ospath.isfile(path):
+        sys.write_stderr(f"sed: can't read {path}: No such file or directory\n")
+        return 2
+    lines = os.read_text(path).split('\n')
+    changed: list[str] = []
+    for line in lines:
+        m = re.search('window.TOMATO_VERSION = ".*"', line)
+        if m is not None:
+            changed.append(line[:m.start()] + 'window.TOMATO_VERSION = "' + version + '"' + line[m.end():])
+        else:
+            changed.append(line)
+    os.write_text(path, '\n'.join(changed))
+    return 0
+
+def build(root: str) -> int:
+    rt.mkdirs(root + '/site/docs')
+    for f in ['specification', 'decisions', 'decision-inventory', 'open-questions', 'errors']:
+        st = cp(root + '/docs/' + f + '.md', root + '/site/docs/' + f + '.md')
+        if st != 0:
+            return st
+    st = examples(root)
+    st = cp(root + '/docs/provisional.md', root + '/site/docs/PROVISIONAL.md')
+    if st != 0:
+        return st
+    # A pre-release (VERSION such as 1.1.0-rc.1) goes to latest-pre.json, which only `tomato update --pre` and installed pre-releases
+    # read; latest.json and the version the pages show (config.js) stay at the latest stable release.
+    version = cat_value(root + '/VERSION')
+    latest = root + '/release/out/latest.json'
+    if '-' in version:
+        if ospath.isfile(latest):
+            st = cp(latest, root + '/site/latest-pre.json')
+            if st != 0:
+                return st
+    else:
+        if ospath.isfile(latest):
+            st = cp(latest, root + '/site/latest.json')
+            if st != 0:
+                return st
+        st = set_config_version(root + '/site/config.js', version)
+    rt.say('site/ is ready to publish')
+    return 0
+
+# ---- check ---------------------------------------------------------------------------------------------------------------------
+
+class Checks:
+    fails: int = 0
+
+    def bad(self, text: str):
+        rt.say('FAIL ' + text)
+        self.fails += 1
+
+    def ok(self, text: str):
+        rt.say('ok   ' + text)
+
+    # `cond && ok "A" || bad "B"`
+    def verdict(self, cond: bool, good: str, evil: str):
+        if cond:
+            self.ok(good)
+        else:
+            self.bad(evil)
+
+# `sed -n 's/PATTERN/\1/p' FILE`: for every line the pattern matches (its text up to the last place the whole of it can match), the
+# first group; the lines come one per line
+def sed_group(path: str, pattern: str) -> str:
+    if not ospath.isfile(path):
+        sys.write_stderr(f"sed: can't read {path}: No such file or directory\n")
+        return ''
+    found: list[str] = []
+    for line in os.read_text(path).split('\n'):
+        m = re.search('.*' + pattern, line)
+        if m is not None:
+            found.append(m.group(1))
+    # the text of a file whose last line has no newline is split the same way; the empty piece after a final newline never matches
+    return '\n'.join(found)
+
+# the "version" of a latest.json
+def mv_(path: str) -> str:
+    return sed_group(path, '"version" *: *"([^"]*)"')
+
+# A basic regular expression's text for a version: every character is itself except the dot, which stands for any character, as it did in
+# the script's grep pattern
+def bre_version(v: str) -> str:
+    text = ''
+    for c in v:
+        if c == '.':
+            text += '.'
+        else:
+            text += re.escape(c)
+    return text
+
+# FILE VERSION: the three download URLs name that version's release
+def urls(c: Checks, path: str, version: str):
+    for k in ['url', 'pkg_url', 'dmg_url']:
+        found = False
+        if not ospath.isfile(path):
+            sys.write_stderr(f'grep: {path}: No such file or directory\n')
+        else:
+            v = bre_version(version)
+            pat = '"' + k + '": *"https://github.com/sirbuffalo/tomato/releases/download/v' + v + '/tomato-' + v + '\\.[a-z.]*"'
+            for line in os.read_text(path).split('\n'):
+                if re.search(pat, line) is not None:
+                    found = True
+                    break
+        c.verdict(found, f'{path} {k} names v{version}', f'{path} {k} does not name v{version}')
+
+def nonempty(path: str) -> bool:
+    return ospath.exists(path) and ospath.getsize(path) > 0
+
+def check() -> int:
+    c = Checks()
+    v = cat_value('VERSION')
+    # site/latest.json and site/config.js name the latest stable release; a pre-release (VERSION like 1.1.0-rc.1) is in
+    # site/latest-pre.json instead (docs/releasing.md, Version numbers)
+    stable = mv_('site/latest.json')
+    if stable == '' or '-' in stable:
+        c.bad(f"site/latest.json must name a stable release, not '{stable}'")
+    if '-' in v:
+        good = ospath.isfile('site/latest-pre.json') and mv_('site/latest-pre.json') == v
+        c.verdict(good, f'site/latest-pre.json is v{v}', f'site/latest-pre.json must name the pre-release v{v}')
+        urls(c, 'site/latest-pre.json', v)
+    else:
+        c.verdict(stable == v, f'site/latest.json is v{v}', 'site/latest.json version differs from VERSION')
+        if ospath.isfile('site/latest-pre.json'):
+            c.verdict('-' in mv_('site/latest-pre.json'), 'site/latest-pre.json names a pre-release', 'site/latest-pre.json does not name a pre-release')
+    shown = sed_group('site/config.js', 'TOMATO_VERSION = "([^"]*)"')
+    c.verdict(shown == stable, f'site/config.js is v{stable}', 'site/config.js version differs from site/latest.json')
+    urls(c, 'site/latest.json', stable)
+    for f in ['index', 'download', 'guide', 'play', 'docs', 'benchmarks']:
+        c.verdict(nonempty(f'site/{f}.html'), f'site/{f}.html exists', f'site/{f}.html missing')
+    for f in ['tomatoc.wasm', 'runtime.wasm']:
+        c.verdict(nonempty(f'site/wasm/{f}'), f'site/wasm/{f} exists', f'site/wasm/{f} missing')
+    if c.fails != 0:
+        rt.say(f'{c.fails} site check(s) failed')
+        return 1
+    rt.say('site checks passed')
+    return 0
+
+# ---- the entry -----------------------------------------------------------------------------------------------------------------
+
+@main
+def main(*args: tuple[str]):
+    words: list[str] = []
+    for a in args:
+        words.append(a)
+    if len(words) != 1:
+        sys.write_stderr(USAGE + '\n')
+        sys.exit(2)
+    root = ospath.abspath(os.getcwd())
+    if not ospath.isdir(root + '/site') or not ospath.isfile(root + '/VERSION'):
+        sys.write_stderr('error: run it from the root of the repository: tomato run dev/site.tom main ' + words[0] + '\n')
+        sys.exit(1)
+    status = 0
+    if words[0] == 'build':
+        status = build(root)
+    elif words[0] == 'check':
+        status = check()
+    elif words[0] == 'examples':
+        status = examples(root)
+    else:
+        sys.write_stderr(USAGE + '\n')
+        status = 2
+    sys.exit(status)

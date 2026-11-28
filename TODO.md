@@ -20,6 +20,8 @@
   Plan section 10.1 and 12. Needs stage 1. Gate on 1.0.0.
 - Shell-to-Tomato stage 5: the release tools in Tomato (`dev/release.tom`, pkg, sign, dmg, site, bench, `fakebin.tom`), keeping the 141 `release_resume` checks
   Plan section 10.2 and 12. Precondition: the real dry run above. The Python table generators (decision 8) are recommended here and still open. Needs stage 1 and the contract tests. Gate on 1.0.0.
+- Run `tomato run dev/tables.tom main check-all --ucd DIR` against the real Unicode 16.0.0 files (`download` fetches them)
+  `dev/tables.tom` replaces `tools/gen_case_table.py`, `gen_width_table.py` and `check_ctype_table.py` (decision 8, recommended in the plan) and reads the Unicode 16.0.0 files from `--ucd DIR` or `TOMATO_UCD_DIR`. It was checked only against fixture files made from Python 3.14's own Unicode data (its output is byte-identical to the Python generators' there), so one run on the real files from unicode.org, on a machine with network access, still has to show that the layouts it assumes (SpecialCasing, DerivedCoreProperties, EastAsianWidth `@missing` lines) are right; a mismatch would most likely be in the width or title tables.
 - Shell-to-Tomato stage 6: the bootstrap (`tomato.ll`, one clang command, no `.sh` file left in the repository)
   Plan section 7 and 12. Last stage; its acceptance gates the 1.0.0 tag (`docs/releasing.md`). The split build (decision 9) is recommended as `tomato build --jobs` and still open.
 - Add a Windows-not-1.0 line and the one-command build to the download page when stage 6 lands

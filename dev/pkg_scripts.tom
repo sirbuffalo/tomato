@@ -1,0 +1,40 @@
+# The two scripts the macOS package runs before and after it copies its files (docs/shell-to-tomato-plan.md, stage 5: the shell snippets of
+# release/pkg.sh as a small Tomato program). One universal program, installed twice, as `preinstall` and as `postinstall`: it does what
+# its own name says. The installer runs them as `NAME PACKAGE INSTALL_LOCATION TARGET_VOLUME ROOT`, as root; whatever happens they end with
+# status 0, so an install never fails on them (as the shell scripts' `exit 0`).
+#
+#   preinstall   keep a foreign `tomato` (a file that is not a link: not ours) as `tomato.old`
+#   postinstall  hand /usr/local/lib/tomato to the person at the console, so `tomato update` needs no sudo
+#
+# It uses std only (no module of dev/): it is compiled by the package build with the compiler it ships.
+import sys
+import os
+import ospath
+
+def pre(target: str):
+    t = target + '/usr/local/bin/tomato'
+    if (ospath.isfile(t) or ospath.isdir(t)) and not ospath.islink(t):
+        os.rename(t, t + '.old')
+
+def post(target: str):
+    r = sys.run(['stat', '-f', '%Su', '/dev/console'])
+    user = r.stdout.strip()
+    if r.status != 0 or user == '' or user == 'root':
+        return
+    _c = sys.run(['chown', '-R', user, target + '/usr/local/lib/tomato'])
+
+@main
+def main(*args: tuple[str]):
+    words: list[str] = []
+    for a in args:
+        words.append(a)
+    name = ospath.basename(sys.argv()[0])
+    if len(words) < 3:
+        return
+    try:
+        if name == 'preinstall':
+            pre(words[2])
+        elif name == 'postinstall':
+            post(words[2])
+    catch Error:
+        pass

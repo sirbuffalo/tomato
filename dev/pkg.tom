@@ -1,0 +1,118 @@
+# Builds release/out/tomato-VERSION.pkg: a macOS installer that needs no build step at install time. The port of release/pkg.sh
+# (docs/shell-to-tomato-plan.md, stage 5). It ships a universal (arm64 + x86_64) tomatoc and repl line editor (tomato-repl-edit), installs
+# into /usr/local/lib/tomato/native (the same layout install-native.sh makes, so `tomato update` keeps working) and links
+# /usr/local/bin/tomato. Programs still need clang to compile (Xcode command line tools). The package's own installer steps
+# (keep a foreign `tomato`, hand the folder to the console user) are the universal program dev/pkg_scripts.tom, built here and installed
+# as `preinstall` and `postinstall`.
+# The package is always unsigned here; dev/sign.tom signs and notarizes it (see docs/releasing.md).
+#
+#     tomato run dev/pkg.tom main      (macOS only; needs clang, lipo, pkgbuild, productbuild; run dev/build.tom first so latest.json lists the package)
+#
+#   TOMATO_RELEASE_OUT   where the files go (default release/out)
+import sys
+import os
+import ospath
+import rtool as rt
+
+def say(text: str):
+    sys.write_stdout(text + '\n')
+
+def must(argv: list[str], what: str):
+    r = rt.run(argv)
+    if r.status != 0:
+        raise rt.Fatal(what + ' failed: ' + (r.stderr + r.stdout).strip())
+
+@main
+def main(*args: tuple[str]):
+    root = os.getcwd()
+    if not ospath.isfile(root + '/VERSION') or not ospath.isfile(root + '/install-native.sh'):
+        sys.write_stderr('error: run it from the root of the repository: tomato run dev/pkg.tom main\n')
+        sys.exit(1)
+    if rt.out(['uname']) != 'Darwin':
+        sys.write_stderr('error: the .pkg is built on a Mac\n')
+        sys.exit(1)
+    work = rt.mkdtemp('pkg.')
+    rt.watch_signals()
+    status = 0
+    try:
+        build(root, work)
+    catch rt.Fatal as e:
+        sys.write_stderr('error: ' + e.message + '\n')
+        status = 1
+    catch Error as e:
+        n = rt.interrupted_by(e)
+        if n == 0:
+            raise e
+        status = 128 + n
+    finally:
+        rt.rmtree(work)
+    if status != 0:
+        sys.exit(status)
+
+def universal(root: str, work: str, name: str, source: str, flags: list[str], output: str):
+    for arch in ['arm64', 'x86_64']:
+        must(['clang', '-arch', arch] + flags + ['-Wno-override-module', '-o', f'{work}/{name}.{arch}', source, root + '/runtime/tomato_rt.c', '-pthread', '-lm'], f'clang -arch {arch} {name}')
+    must(['lipo', '-create', f'{work}/{name}.arm64', f'{work}/{name}.x86_64', '-output', output], 'lipo ' + name)
+
+def build(root: str, work: str):
+    version = rt.read_or(root + '/VERSION').rstrip('\n')
+    outd = os.getenv('TOMATO_RELEASE_OUT')
+    if outd is None or outd == '':
+        outd = root + '/release/out'
+    payload = work + '/payload'
+    rt.mkdirs(payload + '/usr/local/bin')
+    rt.mkdirs(outd)
+    # the usual install layout, into the payload
+    lib = payload + '/usr/local/lib/tomato/native'
+    env: dict[str, str] = {}
+    env['TOMATO_HOME'] = payload + '/usr/local/lib/tomato'
+    env['TOMATO_BIN'] = work + '/unused'
+    must_env(['sh', root + '/install-native.sh'], env, 'install-native.sh')
+    rt.rmtree(work + '/unused')
+    rt.rm(lib + '/bin/tomatoc')
+    # universal compiler, built from the checked-in IR
+    universal(root, work, 'tomatoc', root + '/compiler/bootstrap/tomatoc.ll', ['-O1'], lib + '/bin/tomatoc')
+    # the repl's line editor, universal too: its IR once (the IR names no target), with the universal tomatoc just made, then per architecture
+    # with the runtime, as for tomatoc. Fatal here, unlike in install-native.sh (where it is optional): a package never ships without it, or
+    # with it for one architecture only
+    rt.mkdirs(work + '/repledit')
+    for f in ['repledit.tom', 'lexer.tom', 'hltomato.tom']:
+        rt.copy(root + '/compiler/src/' + f, work + '/repledit/')
+    ir = rt.run([lib + '/bin/tomatoc', work + '/repledit/repledit.tom', 'main', lib + '/std/', 'release'])
+    if ir.status != 0:
+        raise rt.Fatal('compiling the repl line editor failed: ' + ir.stderr.strip())
+    rt.write(work + '/repledit.ll', ir.stdout)
+    universal(root, work, 'repledit', work + '/repledit.ll', ['-O2', '-DTOMATO_RELEASE'], lib + '/bin/tomato-repl-edit')
+    archs = rt.out_all(['lipo', '-archs', lib + '/bin/tomato-repl-edit'])
+    if archs != 'x86_64 arm64' and archs != 'arm64 x86_64':
+        raise rt.Fatal('the repl line editor in the package is not universal: ' + archs)
+    rt.symlink('../lib/tomato/native/bin/tomato', payload + '/usr/local/bin/tomato')
+    # installer steps: keep a foreign `tomato`, and hand the folder to the person installing so `tomato update` needs no sudo (a universal
+    # program, installed under both names)
+    rt.mkdirs(work + '/scripts')
+    ir2 = rt.run([lib + '/bin/tomatoc', root + '/dev/pkg_scripts.tom', 'main', lib + '/std/', 'release'])
+    if ir2.status != 0:
+        raise rt.Fatal('compiling the installer steps failed: ' + ir2.stderr.strip())
+    rt.write(work + '/pkg_scripts.ll', ir2.stdout)
+    universal(root, work, 'pkg_scripts', work + '/pkg_scripts.ll', ['-O2', '-DTOMATO_RELEASE'], work + '/scripts/preinstall')
+    rt.copy(work + '/scripts/preinstall', work + '/scripts/postinstall')
+    rt.chmod_x([work + '/scripts/preinstall', work + '/scripts/postinstall'])
+    must(['pkgbuild', '--root', payload, '--identifier', 'com.davismcd.tomato', '--version', version, '--install-location', '/', '--scripts', work + '/scripts', work + '/component.pkg'], 'pkgbuild')
+    dist = ('<?xml version="1.0" encoding="utf-8"?>\n<installer-gui-script minSpecVersion="1">\n  <title>Tomato ' + version + '</title>\n'
+            + '  <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>\n'
+            + '  <domains enable_anywhere="false" enable_localSystem="true"/>\n  <choices-outline><line choice="default"/></choices-outline>\n'
+            + '  <choice id="default" title="Tomato"><pkg-ref id="com.davismcd.tomato"/></choice>\n'
+            + '  <pkg-ref id="com.davismcd.tomato" version="' + version + '">component.pkg</pkg-ref>\n</installer-gui-script>\n')
+    rt.write(work + '/dist.xml', dist)
+    pkg = f'{outd}/tomato-{version}.pkg'
+    must(['productbuild', '--distribution', work + '/dist.xml', '--package-path', work, pkg], 'productbuild')
+    say(f'built {pkg} ({rt.sha256_file(pkg)})')
+    # record the package in latest.json (run dev/build.tom first): the download page reads pkg_url and pkg_sha256
+    lj = outd + '/latest.json'
+    if ospath.isfile(lj):
+        rt.replace_file(lj, rt.json_with_asset(lj, 'pkg', rt.url_stem(lj) + '.pkg', rt.sha256_file(pkg)))
+
+def must_env(argv: list[str], env: dict[str, str], what: str):
+    r = rt.run(argv, None, env)
+    if r.status != 0:
+        raise rt.Fatal(what + ' failed: ' + (r.stderr + r.stdout).strip())

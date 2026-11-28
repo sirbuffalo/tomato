@@ -1,0 +1,182 @@
+# The program that runs ON the Linux machine during a release (dev/release.tom, step "linux"; it was the script embedded in
+# release/release.sh, linux_remote_script): the tests, the benchmarks and the instruction counts of the commit in
+# ~/.tomato-release/linux/src, written to ~/.tomato-release/linux/out. It prints @@KEY=value lines for the release to read:
+# @@TOOLS_MISSING=, @@MACHINE=, @@LOAD_WARN=, @@TESTS_RC=, @@TESTS_SUMMARY=, @@BENCH=, @@COUNT=, @@DONE=1.
+#
+#     cd ~/.tomato-release/linux/src && tomato run dev/linux_run.tom main TOOLS RUNS SEED SKIP_BENCH MAX_LOAD WAIT_SEC NEWVERSION
+#
+#   TOOLS        the folder of dev/linux_setup.tom (a leading ~/ is this user's home)
+#   RUNS, SEED   the options --runs and --seed of the benchmarks
+#   SKIP_BENCH   1: tests only
+#   MAX_LOAD     start only when the 1-minute load average is at most this; WAIT_SEC seconds at most are waited (then @@LOAD_WARN=)
+#   NEWVERSION   the version of the release: the tests run on the commit before the bump, the benchmarks on VERSION = NEWVERSION
+import sys
+import os
+import ospath
+import time
+import rtool as rt
+
+# `tail -1`: the last line of a file's text
+def tail1(text: str) -> str:
+    if text == '':
+        return ''
+    t = text
+    if t.endswith('\n'):
+        t = t[:len(t) - 1]
+    k = t.rfind('\n')
+    if k < 0:
+        return t
+    return t[k + 1:]
+
+# a line for the release to read, at once (the release follows this program's output while the tests and benchmarks run)
+def emit(text: str):
+    sys.write_stdout(text + '\n')
+    sys.flush()
+
+def to_num(text: str) -> float:
+    try:
+        return float(text)
+    catch ValueError:
+        return 0.0
+
+# `grep -m1 'model name' /proc/cpuinfo | sed 's/.*: //'`
+def cpu_model() -> str:
+    for line in rt.read_or('/proc/cpuinfo').split('\n'):
+        if 'model name' in line:
+            k = line.rfind(': ')
+            if k >= 0:
+                return line[k + 2:]
+            return line
+    return ''
+
+async def pump(r: sys.PipeReader, kept: list[str]) -> int:
+    while True:
+        line = await r.read_line()
+        if line == '':
+            break
+        kept.append(line)
+    return 0
+
+# a program run in the checkout with both streams in a file, in the order the lines came (`> FILE 2>&1`, or appended): its status
+async def logged(log: str, argv: list[str], env: dict[str, str] | None, append: bool) -> int:
+    kept: list[str] = []
+    p: sys.Process | None = None
+    try:
+        p = sys.spawn(argv, True, None, env)
+    catch IOError as e:
+        kept.append(e.message + '\n')
+    status = 127
+    proc = p
+    if proc is not None:
+        try:
+            a = start pump(proc.stdout, kept)   # allow: unstable
+            b = start pump(proc.stderr, kept)   # allow: unstable
+            await a
+            await b
+            status = await proc.wait()
+        finally:
+            proc.stop()
+    if append:
+        rt.append(log, ''.join(kept))
+    else:
+        rt.write(log, ''.join(kept))
+    return status
+
+async def run_all(args: list[str]) -> int:
+    given = args
+    while len(given) < 7:
+        given.append('')
+    tools = given[0]
+    runs = given[1]
+    seed = given[2]
+    skip_bench = given[3]
+    max_load = given[4]
+    wait_sec = given[5]
+    newver = given[6]
+    home = ''
+    h = os.getenv('HOME')
+    if h is not None:
+        home = h
+    w = home + '/.tomato-release/linux'
+    src = w + '/src'
+    out = w + '/out'
+    if tools.startswith('~/'):
+        tools = home + '/' + tools[2:]
+    path = tools + '/bin:' + tools + '/llvm/bin:' + tools + '/go/bin'
+    old = os.getenv('PATH')
+    if old is not None:
+        path += ':' + old
+    os.putenv('PATH', path)
+    missing = ''
+    for t in ['clang', 'go', 'rustc', 'cargo', 'python3', 'gcc', 'make', 'valgrind']:
+        if not rt.have(t):
+            missing += ' ' + t
+    if missing != '':
+        emit('@@TOOLS_MISSING=' + missing)
+        return 0
+    rt.rmtree(out)
+    rt.mkdirs(out)
+    if not ospath.isdir(src):
+        sys.write_stderr(f"cd: can't cd to {src}\n")
+        return 1
+    os.chdir(src)
+    emit(f"@@MACHINE={cpu_model()}, {rt.out(['nproc'])} threads, {rt.out(['uname', '-sr'])}")
+    deadline = rt.now() + int(to_num(wait_sec))
+    while True:
+        l1 = ''
+        parts = rt.read_or('/proc/loadavg').split(' ')
+        if len(parts) > 0:
+            l1 = parts[0]
+        if to_num(l1) <= to_num(max_load):
+            break
+        if rt.now() >= deadline:
+            emit(f'@@LOAD_WARN=load average {l1} is above {max_load} after waiting {wait_sec}s; benchmarking anyway')
+            break
+        await sleep(20.0)
+    # Without working LTO the benchmark numbers would be the wrong ones, so then (and only then) they are skipped; failing tests still get
+    # benchmarks, as before (--ignore-linux-failures goes on with fresh Linux numbers). A toolchain without LTO still gets its tests (which
+    # then do not require LTO) and is reported as a failure on the last line of tests.log.
+    tests_log = out + '/tests.log'
+    lto_ok = 1
+    if await logged(tests_log, ['tomato', 'run', 'dev/linux_setup.tom', 'check_lto'], None, False) != 0:
+        lto_ok = 0
+    rc = await logged(tests_log, ['tomato', 'run', 'dev/test.tom', 'main'], {'TOMATO_TEST_REQUIRE_LTO': str(lto_ok)}, True)
+    if lto_ok != 1:
+        rt.append(tests_log, 'FAIL Linux release toolchain does no link-time optimisation (tomato run dev/linux_setup.tom check_lto): 1 failed in addition to the tests above\n')
+        rc = 1
+    emit(f'@@TESTS_RC={rc}')
+    emit('@@TESTS_SUMMARY=' + tail1(rt.read_or(tests_log)))
+    if skip_bench == '0' and lto_ok == 0:
+        emit('@@BENCH=skipped')
+        emit('@@COUNT=skipped')
+    elif skip_bench == '0':
+        rt.write(src + '/VERSION', newver + '\n')    # the tests ran on the commit before the bump (they compare VERSION with site/latest.json); the results are for the new version
+        bench_log = out + '/bench.log'
+        status = await logged(bench_log, ['tomato', 'run', 'dev/bench.tom', 'main', '--runs', runs, '--seed', seed, '--out', out], None, False)
+        if status == 0 and 'outputs differ' not in rt.read_or(bench_log):
+            emit('@@BENCH=ok')
+        else:
+            emit('@@BENCH=failed')
+        r = rt.run(['tomato', 'run', 'dev/bench.tom', 'main', 'count', '--guest', '--runs', '2'])
+        rt.write(out + '/instructions.md', r.stdout)
+        rt.write(out + '/count.log', r.stderr)
+        if r.status == 0:
+            emit('@@COUNT=ok')
+        else:
+            emit('@@COUNT=failed')
+    emit('@@DONE=1')
+    return 0
+
+@main
+async def main(*args: tuple[str]):
+    given: list[str] = []
+    for a in args:
+        given.append(a)
+    status = 1
+    try:
+        status = await run_all(given)
+    catch IOError as e:
+        sys.write_stderr(e.message + '\n')
+        status = 1
+    if status != 0:
+        sys.exit(status)

@@ -1,0 +1,1764 @@
+# Cuts a complete Tomato release, on the Mac that holds the signing identities (Davis's iMac; see docs/releasing.md). The port of
+# release/release.sh (docs/shell-to-tomato-plan.md, stage 5): the same 13 steps, state file, --resume/--from/--restart rules, messages
+# and exit statuses; tests/release_resume.sh's 141 checks (dev/release_resume.tom) are its acceptance. Run it ON that Mac (a terminal
+# there, or byre's bash tool with that client), from any checkout of this repository, with a `tomato` on PATH:
+#
+#   tomato run dev/release.tom main [options]
+#
+# No ssh is needed. Optionally, `--host USER@HOST` sends the release program's source to another Mac over ssh and runs it there instead.
+# It works in a private clone of the repository (never your own checkout) and runs these steps in order, stopping at the first failure:
+def usage() -> str:
+    lines = [
+        'Cuts a complete Tomato release, on the Mac that holds the signing identities (see docs/releasing.md):',
+        '',
+        '  tomato run dev/release.tom main [options]',
+        '',
+        'Steps (in order, stopping at the first failure):',
+        '  preflight  a private clone of the repository (clean, on main, equal to origin), signing identities and a test signature,',
+        '             the notary profile, WASI SDK and toolchains, GitHub CLI login and push rights, a quiet machine',
+        '  version    the next version number, MAJOR.MINOR.PATCH or a SemVer pre-release such as 1.1.0-rc.1 (--version X, or --bump',
+        '             major|minor|patch from VERSION; patch by default); refuses a version that already has a tag or a GitHub release, or',
+        '             is not newer than VERSION by SemVer precedence. A pre-release is published as a GitHub pre-release and in',
+        '             site/latest-pre.json; site/latest.json and site/config.js keep naming the latest stable release',
+        '  test       dev/test.tom (tomato run dev/test.tom main) with the WASI SDK (so the wasm files are rebuilt and compared too)',
+        '  bump       VERSION, site/config.js and std/sys.tom (sys.version)',
+        '  linux      the same tests and benchmarks (plus callgrind instruction counts) on a Linux x86-64 machine over ssh, from the',
+        '             commit being released (before the bump); results go to benchmarks/results/linux-x86_64/. A test FAILURE there stops the',
+        '             release; an unreachable host, missing tools or failed Linux benchmarks only warn',
+        '  bench      dev/bench.tom (10 runs per program, seeded shuffled order, Tomato/Go/Rust/Python), instruction counts when the Lima VM',
+        '             exists, then the docs/performance.md snapshot',
+        '  snapshot   dev/perf_snapshot.tom: the docs/performance.md section (Mac and Linux columns)',
+        '  build      dev/build.tom and dev/pkg.tom',
+        '  sign       dev/sign.tom: sign every Mach-O (Application identity), sign the package (Installer identity), notarize,',
+        '             staple; then stapler validate, spctl, pkgutil, codesign and install-layout checks of the result. Then dev/dmg.tom:',
+        '             the signed package in a disk image, itself signed (Application identity), notarized, stapled and checked mounted',
+        '  commit     dev/site.tom build (site/latest.json with the new version, pkg_sha256 and dmg_sha256) and ONE local commit of the release files',
+        '  publish    push the tag, create the GitHub release, upload the package, disk image, tarball and latest.json, download them again and',
+        '             compare sha256 (the public URL too)',
+        '  push       push the release commit to main (the site only changes now, after the assets are live)',
+        '  summary    version, benchmark ratios, notarization result, sha256, release URL',
+        '',
+        'Options:',
+        '  --host USER@HOST     run on another Mac over ssh (needs Remote Login there, a key and `tomato`; default: this machine, no ssh;',
+        '                       also $TOMATO_RELEASE_HOST or host= in dev/release.conf)',
+        '  --dry-run            everything except publishing: no tag, no GitHub release, no push. The release commit is made in the',
+        '                       private clone only. Notarization still happens (it is the real test).',
+        '  --skip-bench         no benchmarks (and no performance snapshot); needs no Go, Rust or Python',
+        '  --no-push            publish, but leave the release commit unpushed in the clone and say so',
+        '  --version X          release X instead of the next version: X.Y.Z (three whole numbers; 1.0.0 after the old 0.NN numbers) or a',
+        '                       pre-release X.Y.Z-ID[.ID...] (1.0.0-rc.1, 1.1.0-beta.2: letters, digits and hyphens, numbers without leading zeros)',
+        '  --bump PART          the next version from VERSION: major (1.4.2 -> 2.0.0), minor (1.4.2 -> 1.5.0) or patch (1.4.2 -> 1.4.3, the',
+        '                       default); an old two-part VERSION such as 0.51 counts as 0.51.0, so --bump major gives 1.0.0. After a',
+        '                       pre-release VERSION, name the next version with --version (the release itself or the next pre-release)',
+        '  --next-version CUR   print the version a run would choose from a VERSION of CUR with the other flags, and stop (no clone, no checks',
+        '                       of tags or GitHub; for tests)',
+        '  --resume             continue after a failure, at the first step not finished (a clone left dirty by a failed preflight is reset)',
+        '  --from STEP          go back to STEP and continue there: every step before it must be finished (nothing is skipped); STEP and',
+        '                       the later steps count as not done again and what they changed is undone (the clone returns to the commit the',
+        '                       run started from for a step up to bump, the release commit is taken off for a later one up to commit).',
+        '                       Not once the tag is pushed: then only publish, push and summary can be run again',
+        '  --restart            throw away an unfinished run (and the clone\'s local changes) and begin again',
+        '  --seed N, --runs N   benchmark shuffle seed (default 1) and runs per program (default 10)',
+        '  --max-load N         refuse to start (and to benchmark) while the 1- or 5-minute load average is above N (default 2.0);',
+        '  --wait-quiet SEC     wait up to SEC seconds (default 900) for the load to drop first; --no-load-check turns it off',
+        '  --branch NAME        the branch to release from (default main)',
+        '  --origin URL         the repository to clone (default git@github.com:sirbuffalo/tomato.git)',
+        '  --work-dir DIR       on the signing Mac: clone, state and logs (default ~/.tomato-release)',
+        '  --wasi-sdk DIR       the WASI SDK folder (default: $WASI_SDK, then the usual places)',
+        '  --skip-notarize      with --dry-run only: sign but do not notarize (for a Mac that has no notary profile)',
+        '  --no-linux           skip the Linux step; --linux-host H (default biggie.davismcd.com), --linux-tools DIR (installed by dev/linux_setup.tom),',
+        '                       --linux-max-load N (default 32) and --linux-wait SEC (300): wait for biggie\'s load, then go on with a warning',
+        '  --ignore-linux-failures   release even though the Linux tests failed or did not run (publish otherwise requires a recorded passing',
+        '                       Linux run; needs explicit approval; the summary says so loudly)',
+        '  --no-sign            with --dry-run only: neither sign nor notarize (for a Mac whose keychain cannot sign yet); tests everything else',
+        '  --unlock-keychain    first run `security unlock-keychain` on the signing Mac, asking for its login password on your terminal',
+        '                       (codesign over ssh needs the login keychain unlocked; the password is never stored or passed on)',
+        '  --list-steps, --help',
+        '',
+        'dev/release.conf (not committed; see dev/release.conf.example) can set host, branch, origin, work_dir, wasi_sdk,',
+        'max_load and wait_quiet. Nothing secret goes in it: the Apple ID and app-specific password stay in the keychain profile',
+        '`tomato-notary` (xcrun notarytool store-credentials tomato-notary), the GitHub token in gh\'s own login.',
+        'No Python is used here (the benchmark comparisons run Python programs, nothing else does).',
+        '',
+    ]
+    return '\n'.join(lines)
+import sys
+import os
+import ospath
+import re
+import rtool as rt
+import semver as sv
+
+def steps() -> list[str]:
+    return ['preflight', 'version', 'test', 'bump', 'linux', 'bench', 'snapshot', 'build', 'sign', 'commit', 'publish', 'push', 'summary']
+
+def step_known(s: str) -> bool:
+    return s in steps()
+
+def step_pos(s: str) -> int:
+    n = 0
+    for x in steps():
+        n += 1
+        if x == s:
+            return n
+    return 0
+
+def is_pre(v: str) -> bool:
+    return '-' in v
+
+# The first match of "KEY": "value" in a small JSON text (sed -n 's/.*"KEY" *: *"\([^"]*\)".*/\1/p'), or ''
+def json_str(path: str, key: str) -> str:
+    for line in rt.read_or(path).split('\n'):
+        m = re.search('"' + key + '" *: *"([^"]*)"', line)
+        if m is not None:
+            return m.group(1)
+    return ''
+
+# does the (small) JSON file hold KEY with exactly this value (grep -q "\"KEY\": \"VALUE\"")
+def json_has(path: str, key: str, value: str) -> bool:
+    return ('"' + key + '": "' + value + '"') in rt.read_or(path)
+
+# one argument, quoted for a shell on the other side
+def q(s: str) -> str:
+    return "'" + s.replace("'", "'\\''") + "'"
+
+def lines_of(text: str) -> list[str]:
+    out: list[str] = []
+    for line in text.split('\n'):
+        if line != '':
+            out.append(line)
+    return out
+
+def count_lines(text: str) -> int:
+    return len(lines_of(text))
+
+def first_lines(text: str, n: int) -> str:
+    out = lines_of(text)
+    return '\n'.join(out[:n])
+
+# The last line of a file the way `tail -1` shows it
+def last_line(path: str) -> str:
+    text = rt.read_or(path)
+    if text.endswith('\n'):
+        text = text[:len(text) - 1]
+    k = text.rfind('\n')
+    if k >= 0:
+        return text[k + 1:]
+    return text
+
+def file_has_line_matching(path: str, pat: str) -> bool:
+    for line in rt.read_or(path).split('\n'):
+        if re.search(pat, line) is not None:
+            return True
+    return False
+
+# the lines of the benchmark ratio table of a results.md as `|a|b|c|d|` rows, each with the prefix
+def ratio_rows(path: str, prefix: str) -> list[str]:
+    rows: list[str] = []
+    started = False
+    for line in rt.read_or(path).split('\n'):
+        if re.match("Tomato.s time divided by", line) is not None:
+            started = True
+            continue
+        if started and line.startswith('| '):
+            f = line.split('|')
+            if len(f) >= 5:
+                rows.append(prefix + '|' + f[1] + '|' + f[2] + '|' + f[3] + '|' + f[4] + '|')
+            continue
+        if started and len(rows) > 0:
+            break
+    return rows
+
+# Does a program of this name exist on PATH (command -v)
+def have(name: str) -> bool:
+    return rt.have(name)
+
+# ---- the options ----------------------------------------------------------------------------------------------------------------
+
+class Rel:
+    host: str = ''
+    on_host: bool = False
+    dry: bool = False
+    skip_bench: bool = False
+    no_push: bool = False
+    version: str = ''
+    bump: str = ''
+    next_from: str = ''
+    resume: bool = False
+    from_step: str = ''
+    restart: bool = False
+    seed: str = '1'
+    runs: str = '10'
+    max_load: str = '2.0'
+    wait_quiet: int = 900
+    load_check: bool = True
+    branch: str = ''
+    origin: str = ''
+    work_dir: str = ''
+    wasi: str = ''
+    skip_notarize: bool = False
+    no_sign: bool = False
+    unlock: bool = False
+    no_linux: bool = False
+    ignore_linux: bool = False
+    linux_host: str = 'biggie.davismcd.com'
+    linux_tools: str = '~/.tomato-release/linux-tools'
+    linux_max_load: str = '32'
+    linux_wait: str = '300'
+    invoked: str = ''
+    hint_args: list[str] = []
+    orig_args: list[str] = []
+    # on the signing Mac
+    tmpd: str = ''
+    clone: str = ''
+    state: str = ''
+    logs: str = ''
+    app_sign: str = ''
+    pkg_sign: str = ''
+    profile: str = ''
+    slug: str = ''
+    started: int = 0
+    cur_step: str = ''
+    keychain_hint: bool = False
+
+    @init
+    def make(self):
+        self.hint_args = []
+        self.orig_args = []
+
+    # ---- state -------------------------------------------------------------------------------------------------------------------
+
+    def st_get(self, key: str) -> str:
+        return rt.kv_get(self.state, key)
+
+    def st_set(self, key: str, value: str):
+        rt.kv_set(self.state, key, value)
+
+    def in_clone(self):
+        try:
+            os.chdir(self.clone)
+        catch IOError:
+            rt.die(f'no clone at {self.clone}')
+
+    # git in the current folder; its output without the trailing newline, '' on failure
+    def git(self, args: list[str]) -> str:
+        return rt.out(['git'] + args)
+
+    def git_ok(self, args: list[str]) -> bool:
+        return rt.ok(['git'] + args)
+
+    def head(self) -> str:
+        return self.git(['rev-parse', 'HEAD'])
+
+    def short(self, rev: str = 'HEAD') -> str:
+        return self.git(['rev-parse', '--short', rev])
+
+    def porcelain(self) -> str:
+        return self.git(['status', '--porcelain'])
+
+    def status_short_lines(self) -> int:
+        return count_lines(self.git(['status', '--short']))
+
+    # a resumed run must still be on the commit it started from (or its own release commit), with only release files changed
+    def verify_state_tree(self):
+        self.in_clone()
+        vb = self.st_get('base_sha')
+        if vb == '':
+            return
+        vc = self.st_get('commit_sha')
+        vh = self.head()
+        if vc != '':   # the release commit was made: HEAD is it (or a merge made on top of it by hand), and nothing is left uncommitted
+            if not self.git_ok(['merge-base', '--is-ancestor', vc, 'HEAD']):
+                rt.die(f'the clone is at {vh}, but the release commit of this run is {vc} (state says so). Use --restart.')
+            if self.porcelain() != '':
+                short = ' '.join(lines_of(self.git(['status', '--short']))[:5]) + ' '
+                rt.die(f'uncommitted changes in {self.clone} after the release commit: {short}')
+        elif vh != vb:
+            rt.die(f'the clone is at {vh}, not at {vb} where this run started (state says so). Use --restart.')
+        bad = self.unexpected_changes()
+        if len(bad) > 0:
+            rt.die(f'unexpected changes in {self.clone}: ' + ' '.join(bad[:5]) + ' ')
+
+    # the changed files that are not release files
+    def unexpected_changes(self) -> list[str]:
+        bad: list[str] = []
+        for line in self.porcelain().split('\n'):
+            if line == '':
+                continue
+            f = line[3:]
+            if f == 'VERSION' or f == 'std/sys.tom' or f.startswith('site/') or f.startswith('benchmarks/results/') or f == 'docs/performance.md':
+                continue
+            bad.append(f)
+        return bad
+
+    # ---- output ------------------------------------------------------------------------------------------------------------------
+
+    def say(self, text: str):
+        rt.say(text)
+
+    def note(self, text: str):
+        rt.note(text)
+
+    # the load average gate before a timing-sensitive step
+    async def wait_quiet_machine(self, what: str):
+        if not self.load_check:
+            return
+        deadline = rt.now() + self.wait_quiet
+        limit = float(self.max_load)
+        while True:
+            la = rt.loadavg()
+            l1 = '0'
+            l5 = '0'
+            if len(la) >= 2:
+                l1 = la[0]
+                l5 = la[1]
+            busy = float(l1) > limit or float(l5) > limit
+            if not busy:
+                self.note(f'machine is quiet enough for {what}: load average {l1} (1 min), {l5} (5 min), limit {self.max_load}')
+                return
+            if rt.now() >= deadline:
+                rt.die(f'the machine is busy (load average {l1} / {l5}, limit {self.max_load}, waited {self.wait_quiet}s). Quit what is running, or raise --max-load, or use --no-load-check. Timings taken now would not be comparable.')
+            self.note(f'busy: load average {l1} (1 min), {l5} (5 min) is above {self.max_load}; checking again in 30 s')
+            await sleep(30.0)
+
+    def find_wasi(self) -> str | None:
+        home = os.getenv('HOME')
+        if home is None:
+            home = ''
+        wasi_env = os.getenv('WASI_SDK')
+        if wasi_env is None:
+            wasi_env = ''
+        cands: list[str] = [self.wasi, wasi_env]
+        cands += globs(home, 'wasi-sdk') + globs(self.work_dir, 'wasi-sdk') + globs('/opt', 'wasi-sdk') + globs('/usr/local', 'wasi-sdk')
+        cands += globs('/private/tmp/wasisdk', 'wasi-sdk')
+        cands.append('/opt/homebrew/opt/wasi-sdk')
+        for d in cands:
+            if d != '' and rt.which(d + '/bin/clang') is not None and ospath.isdir(d + '/share/wasi-sysroot'):
+                return d
+        return None
+
+    # ---- the steps ---------------------------------------------------------------------------------------------------------------
+
+    async def step_preflight(self):
+        rt.banner('preflight', 'this Mac, tools, keys, clone')
+        if rt.out(['uname']) != 'Darwin':
+            rt.die('the signing machine must be a Mac')
+        self.note(f"host {rt.out(['hostname'])}, {rt.out(['sw_vers', '-productName'])} {rt.out(['sw_vers', '-productVersion'])}, user {rt.out(['whoami'])}")
+        # every problem is collected and listed together, so one run says everything that is missing
+        problems: list[str] = []
+        for t in ['git', 'clang', 'tomato', 'codesign', 'productsign', 'pkgutil', 'pkgbuild', 'productbuild', 'lipo', 'spctl', 'hdiutil', 'xcrun', 'curl']:
+            if not have(t):
+                problems.append(f'{t} not found: install the Xcode command line tools (xcode-select --install)')
+        if have('xcrun'):
+            if not rt.ok(['xcrun', '--find', 'notarytool']):
+                problems.append('xcrun notarytool is missing: install Xcode 13+ or the current command line tools')
+            if not rt.ok(['xcrun', '--find', 'stapler']):
+                problems.append('xcrun stapler is missing: install the Xcode command line tools')
+        if not have('gh'):
+            problems.append('gh (GitHub CLI) not found: brew install gh, then gh auth login')
+        if not self.skip_bench:
+            if not have('go'):
+                problems.append('go not found: brew install go (the benchmarks compare against it), or use --skip-bench')
+            if not (have('rustc') and have('cargo')):
+                problems.append('rustc/cargo not found: install Rust (rustup, or brew install rust), or use --skip-bench')
+            if not (have('python3') and rt.ok(['python3', '--version'])):
+                problems.append('python3 does not run (xcode-select --install): only the benchmark comparison programs use it; or use --skip-bench')
+        # signing identities, and a real test signature: the login keychain must be unlocked and its keys usable without a dialog
+        if self.no_sign:
+            self.note('signing not checked (--no-sign, dry run): the package will NOT be signed')
+        else:
+            ids = rt.out_any(['security', 'find-identity', '-v'])
+            ids_ok = True
+            if ('"' + self.app_sign + '"') not in ids:
+                ids_ok = False
+                problems.append(f'signing identity not in the keychain: {self.app_sign} (import the Developer ID Application certificate with its private key)')
+            if ('"' + self.pkg_sign + '"') not in ids:
+                ids_ok = False
+                problems.append(f'signing identity not in the keychain: {self.pkg_sign} (import the Developer ID Installer certificate with its private key)')
+            if ids_ok and have('codesign') and have('productsign') and have('pkgbuild'):
+                t = rt.mkdtemp('probe.')
+                try:
+                    rt.copy('/usr/bin/true', t + '/probe')
+                    cs = rt.run(['codesign', '--force', '--sign', self.app_sign, t + '/probe'])
+                    if cs.status == 0:
+                        rt.run(['pkgbuild', '--nopayload', '--identifier', 'com.davismcd.tomato.probe', '--version', '1', t + '/p.pkg'])
+                        ps = rt.run(['productsign', '--sign', self.pkg_sign, t + '/p.pkg', t + '/ps.pkg'])
+                        if ps.status == 0:
+                            self.note('test signatures with both identities worked')
+                        else:
+                            problems.append(f"cannot sign a package with '{self.pkg_sign}': {last_of(ps.stdout + ps.stderr)}. See the keychain fix below.")
+                            self.keychain_hint = True
+                    else:
+                        problems.append(f"cannot sign code with '{self.app_sign}': {last_of(cs.stdout + cs.stderr)}. See the keychain fix below.")
+                        self.keychain_hint = True
+                finally:
+                    rt.rmtree(t)
+            if self.skip_notarize:
+                self.note('notary profile not checked (--skip-notarize, dry run)')
+            elif have('xcrun'):
+                nc = rt.run(['xcrun', 'notarytool', 'history', '--keychain-profile', self.profile])
+                rt.write(self.logs + '/notary-check.txt', nc.stdout + nc.stderr)
+                if nc.status == 0:
+                    self.note(f'notary profile {self.profile} works')
+                else:
+                    first = first_lines(nc.stdout + nc.stderr, 1)
+                    problems.append(f"notarytool keychain profile '{self.profile}' is missing or rejected ({first}). Create it once, in Terminal on this Mac (only the Apple ID owner can; the app-specific password is typed there and stays in the keychain): xcrun notarytool store-credentials {self.profile} --apple-id APPLE_ID --team-id 39BK8TGQ26")
+        # WASI SDK
+        w = self.find_wasi()
+        if w is not None and rt.ok([w + '/bin/clang', '--version']):
+            self.st_set('wasi', w)
+            self.note(f'WASI SDK {w}')
+        else:
+            problems.append('no WASI SDK found (the tests rebuild the wasm files with it). Unpack one from https://github.com/WebAssembly/wasi-sdk/releases (wasi-sdk-24.0-arm64-macos.tar.gz) into your home folder and pass --wasi-sdk DIR, or set WASI_SDK, or leave it at ~/wasi-sdk-* or /opt/wasi-sdk-*')
+        # GitHub (only a real release needs GitHub; a dry run from another origin does not)
+        if self.slug != '' and have('gh'):
+            ga = rt.run(['gh', 'auth', 'status'])
+            rt.write(self.logs + '/gh-check.txt', ga.stdout + ga.stderr)
+            if ga.status == 0:
+                perm = rt.out(['gh', 'repo', 'view', self.slug, '--json', 'viewerPermission', '-q', '.viewerPermission'])
+                if perm == 'ADMIN' or perm == 'MAINTAIN' or perm == 'WRITE':
+                    self.note(f'gh: logged in, {perm} on {self.slug}')
+                else:
+                    shown = perm
+                    if shown == '':
+                        shown = 'unknown'
+                    problems.append(f'gh cannot write to {self.slug} (permission: {shown})')
+            else:
+                problems.append('gh is not logged in on this Mac: run gh auth login')
+        elif self.slug == '':
+            if self.dry:
+                self.note('origin is not on GitHub: GitHub checks skipped (dry run)')
+            else:
+                problems.append(f'origin {self.origin} is not a GitHub repository, so a real release cannot be published (use --dry-run)')
+        if rt.out(['git', 'config', '--global', 'user.email']) == '':   # no identity configured: the release commit uses the GitHub login's (see step_commit)
+            if not (have('gh') and rt.out(['gh', 'api', 'user', '-q', '.login']) != ''):
+                problems.append('git has no user.email and gh cannot tell who you are: git config --global user.name ...; git config --global user.email ...')
+        if len(problems) > 0:
+            if self.keychain_hint:
+                problems.append('keychain fix, once, in Terminal on this Mac (it asks for the login password): security unlock-keychain ~/Library/Keychains/login.keychain-db && security set-key-partition-list -S apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db   (errSecInternalComponent means the keychain is locked or its key refuses non-interactive use; over ssh add --unlock-keychain)')
+                problems.append('if signing works right after a login but fails later: the keychain locks itself on a timeout or on sleep. Turn that off once: security set-keychain-settings ~/Library/Keychains/login.keychain-db   (no -t, no -l; security show-keychain-info must then say no-timeout without lock-on-sleep)')
+                problems.append('if this Mac was restarted: log in at it once (at the Mac or through Screen Sharing). macOS unlocks the login keychain at login; if signing still fails after that, redo the keychain fix above')
+            text = ''
+            for p in problems:
+                text += '\n  - ' + p
+            rt.die('preflight found problems:' + text)
+        # the private clone
+        if self.st_get('base_sha') == '':   # the clone has not been synced yet (a first run, or one that failed in preflight): do the full path
+            if not ospath.isdir(self.clone + '/.git'):
+                rt.rmtree(self.clone)
+                self.say(f'cloning {self.origin} into {self.clone}')
+                if not rt.ok(['git', 'clone', '--quiet', '--no-local', self.origin, self.clone]):
+                    rt.die(f'git clone {self.origin} failed (does this Mac have access to GitHub over ssh?)')
+            self.in_clone()
+            rt.run(['git', 'remote', 'set-url', 'origin', self.origin])
+            if not self.git_ok(['fetch', '--quiet', '--tags', '--prune', 'origin']):
+                rt.die('git fetch origin failed')
+            if not self.git_ok(['rev-parse', '--verify', '--quiet', f'origin/{self.branch}']):
+                rt.die(f'origin has no branch {self.branch}')
+            dirty = self.porcelain()
+            ahead = self.git(['rev-list', '--count', f'origin/{self.branch}..HEAD'])
+            if ahead == '':
+                ahead = '0'
+            if dirty != '' or ahead != '0' or self.git(['rev-parse', '--abbrev-ref', 'HEAD']) != self.branch:
+                if self.st_get('reset_clone') == 'yes':   # allowed when the run began (--restart, or after a finished dry run); kept in the state so a --resume after a failed preflight may reset too
+                    self.note(f'resetting the clone to origin/{self.branch} (discarding: {self.status_short_lines()} changed files, {ahead} unpushed commits from the last unfinished or dry run)')
+                    if not (self.git_ok(['checkout', '-q', '-f', '-B', self.branch, f'origin/{self.branch}']) and self.git_ok(['clean', '-fdxq'])):
+                        rt.die('could not reset the clone')
+                else:
+                    rt.die(f'the clone {self.clone} is not clean and on {self.branch}, equal to origin ({self.status_short_lines()} changes, {ahead} unpushed commits). It is private to this script; inspect it, or use --restart to discard everything in it.')
+            if not self.git_ok(['merge', '--ff-only', '-q', f'origin/{self.branch}']):
+                rt.die(f'cannot fast-forward the clone to origin/{self.branch}')
+            if self.head() != self.git(['rev-parse', f'origin/{self.branch}']):
+                rt.die(f'the clone is not equal to origin/{self.branch}')
+            self.git(['clean', '-fdxq'])   # untracked and ignored leftovers (release/out) never leak into a release
+            self.note(f'clone: {self.branch} at {self.short()}, equal to origin')
+            if self.slug != '':
+                pc = rt.run(['git', 'push', '--dry-run', '-q', 'origin', f'HEAD:refs/heads/{self.branch}'])
+                rt.write(self.logs + '/push-check.txt', pc.stdout + pc.stderr)
+                if pc.status != 0:
+                    sys.write_stderr(pc.stdout + pc.stderr)
+                    rt.die('git push to origin would fail (ssh key for GitHub on this Mac?)')
+                self.note('git push access to origin works')
+            self.st_set('base_sha', self.head())   # last: a preflight that failed before this point is redone in full by --resume
+            self.st_set('reset_clone', '')
+        else:
+            self.verify_state_tree()
+            self.note(f'resuming in {self.clone} at {self.short()}')
+        await self.wait_quiet_machine('preflight')
+
+    # 0: yes, no: False; stops on any other gh failure (network, auth) instead of reading it as "no"
+    def release_exists(self, tag: str) -> bool:
+        r = rt.run(['gh', 'release', 'view', tag, '--repo', self.slug])
+        if r.status == 0:
+            return True
+        text = r.stdout + r.stderr
+        if 'not found' in text or 'Not Found' in text:
+            return False
+        rt.die(f'cannot ask GitHub about release {tag}: {text.rstrip()}')
+        return False
+
+    def tag_exists_locally(self, tag: str) -> bool:
+        return self.git_ok(['rev-parse', '-q', '--verify', f'refs/tags/{tag}'])
+
+    async def step_version(self):
+        rt.banner('version', 'choose the number')
+        self.in_clone()
+        cur = rt.read_or('VERSION').rstrip('\n')
+        # Versions are MAJOR.MINOR.PATCH (with an optional SemVer pre-release) since 1.0.0; the releases before it were 0.NN (0.NN.0 here).
+        ahead = False
+        if self.slug != '' and not self.release_exists('v' + cur) and not self.tag_exists_locally('v' + cur):
+            ahead = True
+        new = sv.pick_version(cur, ahead, self.version, self.bump)
+        if new.startswith('error:'):
+            rt.die(new[len('error: '):])
+        if self.slug != '' and self.st_get('published') == '':
+            if self.release_exists('v' + new):
+                rt.die(f'GitHub already has a release v{new}')
+        if self.tag_exists_locally('v' + new) and self.st_get('published') == '':
+            rt.die(f'tag v{new} already exists')
+        self.st_set('version', new)
+        extra = ''
+        if is_pre(new):
+            extra = ', a pre-release'
+        self.say(f'releasing Tomato {new}{extra} (current VERSION is {cur})')
+
+    async def step_test(self):
+        rt.banner('test', 'dev/test.tom with the WASI SDK')
+        self.in_clone()
+        self.verify_state_tree()
+        cur = rt.read_or('VERSION').rstrip('\n')
+        if cur == self.st_get('version') and cur != self.git(['show', 'HEAD:VERSION']):
+            rt.die('VERSION is already bumped; tests must run on the unbumped tree (use --from test, which resets the clone to the start of this run, or --restart)')
+        env: dict[str, str] = {}
+        env['WASI_SDK'] = self.st_get('wasi')
+        log = self.logs + '/test.log'
+        rc = await rt.tee_run(log, ['tomato', 'run', 'dev/test.tom', 'main'], None, env)
+        if rc != 0:
+            sys.write_stderr(first_lines('\n'.join(starting(rt.read_or(log), 'FAIL')), 10) + '\n')
+            rt.die(f'tests failed (full output: {log} on the signing Mac)')
+        if ' 0 failed' not in last_line(log):
+            rt.die('unexpected test summary: ' + last_line(log))
+        if self.porcelain() != '':
+            rt.die('the tests changed tracked files (the wasm rebuild is not identical?): ' + ' '.join(lines_of(self.git(['status', '--short']))[:5]) + ' ')
+        self.st_set('tests', last_line(log))
+
+    async def step_bump(self):
+        rt.banner('bump', 'VERSION, site/config.js and std/sys.tom')
+        self.in_clone()
+        v = self.st_get('version')
+        rt.write('VERSION', v + '\n')
+        # the website names the latest stable release, so a pre-release leaves site/config.js alone
+        if not is_pre(v):
+            replace_lines('site/config.js', 'window.TOMATO_VERSION = ".*"', 'window.TOMATO_VERSION = "' + v + '"')
+        for f in ['std/sys.tom', 'site/wasm/std/sys.tom']:   # sys.version() returns the version as text (tests/run.sh t_sys_version checks it against VERSION)
+            bump_sys_version(f, v)
+        # a replacement that matched nothing would leave an old number in a file that the tests (which ran before) never see again
+        ret = "    return '" + v + "'"
+        if not (rt.read_or('VERSION').rstrip('\n') == v and ret in rt.read_or('std/sys.tom') and ret in rt.read_or('site/wasm/std/sys.tom')):
+            rt.die(f'the bump did not take: VERSION, std/sys.tom and site/wasm/std/sys.tom must all say {v}')
+        if not is_pre(v) and ('window.TOMATO_VERSION = "' + v + '"') not in rt.read_or('site/config.js'):
+            rt.die(f'the bump did not take: site/config.js does not say {v}')
+        what = ''
+        if not is_pre(v):
+            what = ', site/config.js'
+        self.note(f'VERSION{what} and std/sys.tom now say {v}')
+
+    async def step_bench(self):
+        rt.banner('bench', 'benchmarks')
+        self.in_clone()
+        self.verify_state_tree()
+        v = self.st_get('version')
+        if self.skip_bench:
+            self.note('skipped (--skip-bench): benchmarks/results and docs/performance.md are unchanged')
+            self.st_set('bench', 'skipped')
+            return
+        await self.wait_quiet_machine('the benchmarks')
+        log = self.logs + '/bench.log'
+        rc = await rt.tee_run(log, ['tomato', 'run', 'dev/bench.tom', 'main', '--runs', self.runs, '--seed', self.seed, '--site'])
+        if rc != 0:
+            rt.die(f'dev/bench.tom failed (see {log})')
+        if ('"tomato": "' + v + '"') not in rt.read_or('benchmarks/results/results.json'):
+            rt.die(f'benchmarks/results/results.json is not for v{v}')
+        if 'outputs differ' in rt.read_or(log):
+            rt.die(f"a benchmark's output differed between languages (see {log})")
+        load_after = ' '.join(rt.loadavg())
+        have_vm = False
+        if have('limactl'):
+            for line in rt.out_any(['limactl', 'list', '-q']).split('\n'):
+                if line == 'tomato-count':
+                    have_vm = True
+        if have_vm:
+            clog = self.logs + '/count.log'
+            rc2 = await rt.tee_run(clog, ['tomato', 'run', 'dev/bench.tom', 'count'])
+            if rc2 != 0:
+                rt.die(f'dev/bench.tom count failed (see {clog})')
+            self.st_set('counts', 'yes')
+        else:
+            self.note("instruction counts skipped: no Lima VM 'tomato-count' here (tomato run dev/bench.tom count --setup creates it)")
+            self.st_set('counts', 'skipped (no VM)')
+        self.st_set('bench', f'done (load after: {load_after})')
+
+    # the options of the remote program (dev/linux_run.tom) in one text
+    def ssh_opts(self) -> list[str]:
+        return ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=10']
+
+    def mk(self, key: str) -> str:
+        found = ''
+        for line in rt.read_or(self.logs + '/linux.log').split('\n'):
+            if line.startswith('@@' + key + '='):
+                found = line[len('@@' + key + '='):]
+        return found
+
+    def warn(self, text: str):
+        sys.write_stderr('WARNING: ' + text + '\n')
+        self.st_set('linux', 'NOT RUN: ' + text)
+        self.st_set('linux_tests', 'not run')
+
+    async def step_linux(self):
+        rt.banner('linux', f'tests and benchmarks on {self.linux_host} (Linux x86-64)')
+        self.in_clone()
+        self.verify_state_tree()
+        v = self.st_get('version')
+        lo = 'benchmarks/results/linux-x86_64'
+        # the override is part of the run: a --resume without the flag must not stop at the same failure again
+        if self.ignore_linux:
+            self.st_set('ignore_linux', '1')
+        elif self.st_get('ignore_linux') == '1':
+            self.ignore_linux = True
+        # Why the benchmarks run on a slightly different tree than the tests: the tests need VERSION to equal site/latest.json (the commit before
+        # the bump); the benchmarks must record the new version, and VERSION is the only bumped file they read (site/config.js is website-only).
+        # results.json is checked below to name that version, so the committed Linux numbers cannot belong to another release.
+        # back to what is committed: a skipped or failed step keeps the previous release's Linux results, and a resume drops this run's earlier ones
+        if self.git(['ls-tree', 'HEAD', '--', lo]) != '':   # nothing committed yet (the first release): nothing to restore
+            self.git(['checkout', '-q', 'HEAD', '--', lo])
+        self.git(['clean', '-fdq', '--', lo])
+        self.st_set('linux_passed', '')   # set again below only by a run whose tests exited 0 with a " 0 failed" summary; publish requires it
+        if self.no_linux:
+            self.note('skipped (--no-linux)')
+            self.st_set('linux', 'skipped (--no-linux)')
+            self.st_set('linux_tests', 'skipped (--no-linux)')
+            return
+        sshopt = self.ssh_opts()
+        host = self.linux_host
+        fo = self.logs + '/linux-out'
+        # a resume after the gate stopped the run reuses the finished remote run (tests, benchmarks and counts take long) and only re-applies the gate
+        if self.st_get('linux_fetched') == v and ospath.isfile(fo + '/tests.log'):
+            self.note('reusing the finished Linux run from this release run')
+        else:
+            ssh_check = rt.run(['ssh'] + sshopt + [host, 'true'])
+            rt.write(self.logs + '/linux-ssh.txt', ssh_check.stdout + ssh_check.stderr)
+            if ssh_check.status != 0:
+                self.warn(f"cannot ssh to {host} ({last_of(ssh_check.stdout + ssh_check.stderr)}). Authorize this Mac's key there (ssh-copy-id {host}, or append ~/.ssh/id_ed25519.pub to ~/.ssh/authorized_keys) and run 'ssh {host}' once by hand to accept the host key. The macOS release goes on.")
+                return
+            # the commit the run started from (the Mac tests ran on it too); the new VERSION is written before the benchmarks
+            src = self.logs + '/linux-src.tar'
+            if not rt.ok(['git', 'archive', '-o', src, 'HEAD']):
+                rt.die('git archive failed')
+            sc = rt.run(['scp', '-q'] + sshopt + [src, f'{host}:.tomato-release-src.tar'])
+            if sc.status != 0:
+                rt.die(f'copying the source to {host} failed')
+            ex = rt.run(['ssh'] + sshopt + [host, 'rm -rf ~/.tomato-release/linux && mkdir -p ~/.tomato-release/linux/src && tar -xf ~/.tomato-release-src.tar -C ~/.tomato-release/linux/src && rm -f ~/.tomato-release-src.tar'])
+            if ex.status != 0:
+                rt.die(f'copying the source to {host} failed')
+            tools = self.linux_tools
+            remote = f'export PATH=$HOME/.local/bin:$PATH; cd ~/.tomato-release/linux/src && tomato run dev/linux_run.tom main {q(tools)} {self.runs} {self.seed} {1 if self.skip_bench else 0} {self.linux_max_load} {self.linux_wait} {v}'
+            rc = await rt.tee_run(self.logs + '/linux.log', ['ssh'] + sshopt + [host, remote])
+            if rc != 0:
+                self.warn(f'the run on {host} was cut off (see {self.logs}/linux.log)')
+                return
+            tm = self.mk('TOOLS_MISSING')
+            if tm != '':
+                self.warn(f"Linux tools missing on {host}:{tm}. Install them once: tomato run dev/linux_setup.tom main on {host} (or --linux-tools DIR)")
+                return
+            if self.mk('DONE') == '':
+                self.warn(f'the Linux run did not finish (see {self.logs}/linux.log)')
+                return
+            rt.rmtree(fo)
+            rt.mkdirs(fo)
+            # to a file first: a cut-off stream could look complete
+            pk = rt.run(['ssh'] + sshopt + [host, 'tar -cf ~/.tomato-release/linux/out.tar -C ~/.tomato-release/linux/out .'])
+            if pk.status != 0:
+                rt.die(f'copying the Linux results back failed')
+            cp = rt.run(['scp', '-q'] + sshopt + [f'{host}:.tomato-release/linux/out.tar', fo + '.tar'])
+            if cp.status != 0:
+                rt.die('copying the Linux results back failed')
+            if not rt.ok(['tar', '-xf', fo + '.tar', '-C', fo]):
+                rt.die('the Linux results archive is damaged')
+            rt.rm(fo + '.tar')
+            if not ospath.isfile(fo + '/tests.log'):
+                rt.die('the Linux results lack tests.log')
+            rt.copy(fo + '/tests.log', self.logs + '/linux-tests.log')
+            self.st_set('linux_fetched', v)
+        rt.copy(fo + '/tests.log', self.logs + '/linux-tests.log')
+        if self.mk('LOAD_WARN') != '':
+            sys.write_stderr('WARNING: ' + self.mk('LOAD_WARN') + '\n')
+        self.st_set('linux_machine', self.mk('MACHINE'))
+        self.st_set('linux_load_warn', self.mk('LOAD_WARN'))
+        self.st_set('linux_tests', self.mk('TESTS_SUMMARY'))
+        b = self.mk('BENCH')
+        c = self.mk('COUNT')
+        if self.skip_bench:
+            self.st_set('linux', 'tests only (--skip-bench)')
+        else:
+            if b == 'ok' and ('"tomato": "' + v + '"') not in rt.read_or(fo + '/results.json'):
+                b = 'failed'   # (a skipped run stays skipped)
+            if b == 'ok':   # fresh numbers replace the committed ones, all of them
+                rt.rmtree(lo)
+                rt.mkdirs(lo)
+                rt.copy(fo + '/results.json', lo + '/')
+                rt.copy(fo + '/results.md', lo + '/')
+                if c == 'ok':
+                    rt.copy(fo + '/instructions.md', lo + '/')
+            tr = self.mk('TESTS_RC')
+            word = tr
+            if tr == '0':
+                word = 'passed'
+            elif tr != '' and tr[0] != '0' and tr[0].isdigit():
+                word = 'FAILED'
+            bshow = b
+            if bshow == '':
+                bshow = 'n/a'
+            cshow = c
+            if cshow == '':
+                cshow = 'n/a'
+            self.st_set('linux', f'tests {word}; benchmarks {bshow}; instruction counts {cshow}')
+            if b == 'skipped':
+                sys.write_stderr(f'WARNING: the Linux benchmarks were skipped on {host}: its toolchain does no link-time optimisation (dev/linux_setup.tom check_lto; see {self.logs}/linux-tests.log)\n')
+            if b != 'ok' and b != 'skipped':
+                sys.write_stderr(f'WARNING: the Linux benchmarks failed on {host} (see {self.logs}/linux.log); the release goes on without fresh Linux numbers.\n')
+        if self.mk('TESTS_RC') != '0':
+            self.st_set('linux_tests', 'FAILED: ' + self.mk('TESTS_SUMMARY'))
+            sys.write_stderr(first_lines('\n'.join(starting(rt.read_or(self.logs + '/linux-tests.log'), 'FAIL')), 15) + '\n')
+            if self.ignore_linux:
+                sys.write_stderr(f'WARNING: the Linux tests FAILED, continuing because of --ignore-linux-failures (log: {self.logs}/linux-tests.log)\n')
+            else:
+                rt.die(f'the Linux x86-64 tests FAILED on {host} (log: {self.logs}/linux-tests.log). Fix them, or release anyway with --resume --ignore-linux-failures')
+        if self.mk('TESTS_RC') == '0' and self.mk('TESTS_SUMMARY').endswith(' passed, 0 failed'):
+            self.st_set('linux_passed', v)
+
+    async def step_snapshot(self):
+        rt.banner('snapshot', 'docs/performance.md')
+        self.in_clone()
+        v = self.st_get('version')
+        if self.skip_bench:
+            self.note('skipped (--skip-bench)')
+            return
+        r = rt.run(['tomato', 'run', 'dev/perf_snapshot.tom', 'main', v], None, None)
+        sys.write_stdout(r.stdout)
+        sys.write_stderr(r.stderr)
+        if r.status != 0:
+            rt.die('dev/perf_snapshot.tom failed')
+
+    async def step_build(self):
+        rt.banner('build', 'dev/build.tom and dev/pkg.tom')
+        self.in_clone()
+        self.verify_state_tree()
+        log = self.logs + '/build.log'
+        rc = await rt.tee_run(log, ['tomato', 'run', 'dev/build.tom', 'main'])
+        if rc == 0:
+            rc2 = await rt.tee_run(self.logs + '/build2.log', ['tomato', 'run', 'dev/pkg.tom', 'main'])
+            rt.append(log, rt.read_or(self.logs + '/build2.log'))
+            rc = rc2
+        if rc != 0:
+            rt.die(f'building the release files failed (see {log})')
+        v = self.st_get('version')
+        if not (ospath.isfile(f'release/out/tomato-{v}.pkg') and ospath.isfile(f'release/out/tomato-{v}.tar.gz') and ospath.isfile('release/out/latest.json')):
+            rt.die('release/out lacks the expected files')
+        self.st_set('pkg_built_sha256', rt.sha256_file(f'release/out/tomato-{v}.pkg'))   # the unsigned package: the only one the sign step may sign
+
+    # the signed package: signature, staple, Gatekeeper, binaries, install layout
+    def check_pkg(self, p: str, v: str):
+        sig = rt.run(['pkgutil', '--check-signature', p])
+        rt.write(self.logs + '/check-signature.txt', sig.stdout)
+        for line in sig.stdout.rstrip('\n').split('\n'):
+            sys.write_stdout('   ' + line + '\n')
+        if sig.status != 0:
+            rt.die('pkgutil --check-signature failed')
+        if self.pkg_sign not in sig.stdout:
+            rt.die(f"the package is not signed by '{self.pkg_sign}'")
+        if not self.skip_notarize:
+            if 'Notarization: trusted by the Apple notary service' not in sig.stdout:
+                rt.die('pkgutil does not report the package as notarized')
+            if not rt.ok(['xcrun', 'stapler', 'validate', p]):
+                rt.die('stapler validate failed')
+            sp = rt.run(['spctl', '--assess', '--type', 'install', '-vv', p])
+            for line in lines_of(sp.stdout + sp.stderr):
+                sys.write_stdout('   ' + line + '\n')
+            if not rt.ok(['spctl', '--assess', '--type', 'install', p]):
+                rt.die('spctl rejects the package')
+        x = rt.mkdtemp('pkgcheck.')
+        try:
+            if not rt.ok(['pkgutil', '--expand-full', p, x + '/x']):
+                rt.die('cannot expand the package')
+            comp = x + '/x/component.pkg'
+            for s in ['preinstall', 'postinstall']:
+                if not rt.is_exec(comp + '/Scripts/' + s):
+                    rt.die(f'{s} is not executable in the package')
+            if rt.readlink(comp + '/Payload/usr/local/bin/tomato') != '../lib/tomato/native/bin/tomato':
+                rt.die('usr/local/bin/tomato is not the expected symlink')
+            if ('<pkg-ref id="com.davismcd.tomato" version="' + v + '"') not in rt.read_or(x + '/x/Distribution'):
+                rt.die(f'Distribution does not list component.pkg at version {v}')
+            bins = rt.macho_files(x + '/x')
+            if len(bins) == 0:
+                rt.die('no Mach-O binary found in the package')
+            bad = ''
+            for b in bins:
+                if not rt.ok(['codesign', '--verify', '--strict', b]):
+                    bad = 'a Mach-O file in the package is not signed with the hardened runtime by the Application identity'
+                    break
+                dv = rt.run(['codesign', '-dv', '--verbose=4', b])
+                dvt = dv.stdout + dv.stderr
+                if not rt.has_line(dvt, 'flags=.*runtime'):
+                    sys.write_stderr('not hardened: ' + b + '\n')
+                    bad = 'a Mach-O file in the package is not signed with the hardened runtime by the Application identity'
+                    break
+                if ('Authority=' + self.app_sign) not in dvt:
+                    sys.write_stderr(f'not signed by {self.app_sign}: {b}\n')
+                    bad = 'a Mach-O file in the package is not signed with the hardened runtime by the Application identity'
+                    break
+            if bad != '':
+                rt.die(bad)
+            names: list[str] = []
+            for b in bins:
+                n = ospath.basename(b)
+                if n not in names:
+                    names.append(n)
+            self.note(f"every Mach-O is signed by '{self.app_sign}' with the hardened runtime: " + ' '.join(sorted(names)) + ' ')
+            tv = rt.out_all([comp + '/Payload/usr/local/lib/tomato/native/bin/tomato', 'version'])
+            if tv != f'Tomato v{v} (compiler written in Tomato)':
+                rt.die(f'the packaged tomato does not report v{v}')
+        finally:
+            rt.rmtree(x)
+        self.note("install layout and the packaged 'tomato version' check out")
+
+    async def step_sign(self):
+        rt.banner('sign', 'sign, notarize, staple, verify')
+        self.in_clone()
+        self.verify_state_tree()
+        v = self.st_get('version')
+        o = 'release/out'
+        pkg = f'{o}/tomato-{v}.pkg'
+        if not ospath.isfile(pkg):
+            rt.die(f'{pkg} is missing; run the build step')
+        if self.no_sign:   # dry run on a Mac that cannot sign yet: everything after this still gets exercised
+            self.note('--no-sign: the package stays UNSIGNED')
+            total = rt.sha256_file(pkg)
+            env: dict[str, str] = {}
+            env['TOMATO_NO_SIGN'] = '1'
+            env['TOMATO_LATEST_JSON'] = o + '/latest.json'
+            rc = await rt.tee_run(self.logs + '/dmg.log', ['tomato', 'run', 'dev/dmg.tom', 'main', pkg, f'{o}/tomato-{v}.dmg'], None, env)
+            if rc != 0:
+                rt.die(f'building the disk image failed (see {self.logs}/dmg.log)')
+            self.st_set('pkg_sha256', total)
+            self.st_set('dmg_sha256', rt.sha256_file(f'{o}/tomato-{v}.dmg'))
+            self.st_set('tar_sha256', rt.sha256_file(f'{o}/tomato-{v}.tar.gz'))
+            self.st_set('notarization', 'NOT signed or notarized (dry run with --no-sign)')
+            return
+        senv: dict[str, str] = {}
+        if self.skip_notarize:
+            senv['TOMATO_SKIP_NOTARIZE'] = '1'
+        # a resume after a disk-image failure keeps the package signed and checked by this run: re-signing would repack it (a new
+        # hash) and cost another notarization; a rebuilt (unsigned) package has another hash, so it is signed again
+        psig = self.st_get('pkg_signed_sha256')
+        pcur = rt.sha256_file(pkg)
+        if psig != '' and pcur == psig:
+            self.note(f'the package was already signed, notarized and checked in this release run (sha256 {psig}): only the disk image is redone')
+        else:
+            if pcur != self.st_get('pkg_built_sha256'):
+                rt.die(f'{pkg} is neither the package this run built nor the one it signed (sha256 {pcur}); signing is only done on a package this run built: use --from build')
+            rt.rm(f'{o}/tomato-{v}.signed.pkg')
+            e2: dict[str, str] = {}
+            e2['TOMATO_APP_SIGN'] = self.app_sign
+            e2['TOMATO_PKG_SIGN'] = self.pkg_sign
+            e2['TOMATO_NOTARY_PROFILE'] = self.profile
+            e2['TOMATO_LATEST_JSON'] = o + '/latest.json'
+            if self.skip_notarize:
+                e2['TOMATO_SKIP_NOTARIZE'] = '1'
+            rc = await rt.tee_run(self.logs + '/sign.log', ['tomato', 'run', 'dev/sign.tom', 'main', pkg, f'{o}/tomato-{v}.signed.pkg'], None, e2)
+            if rc != 0:
+                rt.die(f"signing or notarizing failed (see {self.logs}/sign.log; Apple's log is printed above on a rejection)")
+            # checked before it replaces the built package: a failed check then leaves the unsigned package in place, which a resume signs again
+            # (a signed package must never be fed to the sign tool a second time)
+            self.check_pkg(f'{o}/tomato-{v}.signed.pkg', v)
+            signed_sum = rt.sha256_file(f'{o}/tomato-{v}.signed.pkg')
+            os.rename(f'{o}/tomato-{v}.signed.pkg', pkg)
+            self.st_set('pkg_signed_sha256', signed_sum)
+        total = rt.sha256_file(pkg)
+        lj = o + '/latest.json'
+        if not json_has(lj, 'pkg_sha256', total):
+            rt.die(f"latest.json's pkg_sha256 is not the signed package's hash {total}")
+        tsum = rt.sha256_file(f'{o}/tomato-{v}.tar.gz')
+        if not json_has(lj, 'sha256', tsum):
+            rt.die("latest.json's sha256 is not the tarball's hash")
+        # the disk image: the finished package inside, the image itself signed, notarized and stapled; the dmg tool checks it mounted
+        rt.rm(f'{o}/tomato-{v}.dmg')
+        e3: dict[str, str] = {}
+        e3['TOMATO_APP_SIGN'] = self.app_sign
+        e3['TOMATO_NOTARY_PROFILE'] = self.profile
+        e3['TOMATO_LATEST_JSON'] = lj
+        if self.skip_notarize:
+            e3['TOMATO_SKIP_NOTARIZE'] = '1'
+        rc3 = await rt.tee_run(self.logs + '/dmg.log', ['tomato', 'run', 'dev/dmg.tom', 'main', pkg, f'{o}/tomato-{v}.dmg'], None, e3)
+        if rc3 != 0:
+            rt.die(f'building, signing or notarizing the disk image failed (see {self.logs}/dmg.log)')
+        dsum = rt.sha256_file(f'{o}/tomato-{v}.dmg')
+        if not json_has(lj, 'dmg_sha256', dsum):
+            rt.die(f"latest.json's dmg_sha256 is not the disk image's hash {dsum}")
+        if not json_has(lj, 'pkg_sha256', total):
+            rt.die("latest.json lost the package's hash while adding the disk image")
+        dv = rt.run(['codesign', '-dv', '--verbose=4', f'{o}/tomato-{v}.dmg'])
+        if ('Authority=' + self.app_sign) not in dv.stdout + dv.stderr:
+            rt.die(f"the disk image is not signed by '{self.app_sign}'")
+        if not self.skip_notarize:
+            if not rt.ok(['xcrun', 'stapler', 'validate', f'{o}/tomato-{v}.dmg']):
+                rt.die('stapler validate failed on the disk image')
+            if not rt.ok(['spctl', '--assess', '--type', 'open', '--context', 'context:primary-signature', f'{o}/tomato-{v}.dmg']):
+                rt.die('spctl rejects the disk image')
+        self.st_set('pkg_sha256', total)
+        self.st_set('dmg_sha256', dsum)
+        self.st_set('tar_sha256', tsum)
+        if self.skip_notarize:
+            self.st_set('notarization', 'NOT notarized (dry run with --skip-notarize)')
+        else:
+            self.st_set('notarization', 'package: ' + accepted(rt.read_or(self.logs + '/sign.log'), 'notarized') + '; disk image: ' + accepted(rt.read_or(self.logs + '/dmg.log'), 'notarized dmg'))
+        self.note(f'signed package sha256 {total}')
+        self.note(f'signed disk image sha256 {dsum}')
+
+    async def step_commit(self):
+        rt.banner('commit', 'site files and one local release commit')
+        self.in_clone()
+        self.verify_state_tree()
+        v = self.st_get('version')
+        total = self.st_get('pkg_sha256')
+        if self.st_get('commit_sha') != '':
+            rt.die(f"the release commit {self.st_get('commit_sha')} exists already; to make it again use --from commit (it undoes the commit first)")
+        if total == '':
+            rt.die('no signed package yet (the sign step has not finished)')
+        if rt.sha256_file(f'release/out/tomato-{v}.pkg') != total:
+            rt.die(f'release/out/tomato-{v}.pkg is not the package that was signed')
+        r = rt.run(['tomato', 'run', 'dev/site.tom', 'main', 'build'])
+        rt.write(self.logs + '/site-build.log', r.stdout + r.stderr)
+        if r.status != 0:
+            sys.write_stderr(r.stdout + r.stderr)
+            rt.die('dev/site.tom build failed')
+        if rt.read_or('VERSION').rstrip('\n') != v:
+            rt.die(f'VERSION is not {v}')
+        man = 'site/latest.json'
+        if is_pre(v):
+            man = 'site/latest-pre.json'   # the site tool writes a pre-release's manifest to latest-pre.json
+        if json_str(man, 'version') != v:
+            rt.die(f'{man} is not version {v}')
+        if json_str(man, 'pkg_sha256') != total:
+            rt.die(f'{man} pkg_sha256 is not {total}')
+        dsum = self.st_get('dmg_sha256')
+        if dsum == '':
+            rt.die('no disk image yet (the sign step has not finished)')
+        if rt.sha256_file(f'release/out/tomato-{v}.dmg') != dsum:
+            rt.die(f'release/out/tomato-{v}.dmg is not the disk image that was signed')
+        if json_str(man, 'dmg_sha256') != dsum:
+            rt.die(f'{man} dmg_sha256 is not {dsum}')
+        if is_pre(v):
+            if self.git(['status', '--porcelain', '--', 'site/latest.json', 'site/config.js']) != '':
+                rt.die('a pre-release must not change site/latest.json or site/config.js')
+        else:
+            m = re.search('TOMATO_VERSION = "([^"]*)"', rt.read_or('site/config.js'))
+            got = ''
+            if m is not None:
+                got = m.group(1)
+            if got != v:
+                rt.die(f'site/config.js is not {v}')
+        bad = self.unexpected_changes()
+        if len(bad) > 0:
+            rt.die('unexpected changed files, not committing: ' + ' '.join(bad[:5]) + ' ')
+        cenv: dict[str, str] = {}
+        if rt.out(['git', 'config', 'user.email']) == '':   # the author is the logged-in GitHub account (its noreply address), so nothing personal is configured here
+            login = rt.out(['gh', 'api', 'user', '-q', '.login'])
+            gid = rt.out(['gh', 'api', 'user', '-q', '.id'])
+            gname = rt.out(['gh', 'api', 'user', '-q', '.name'])
+            who = gname
+            if who == '':
+                who = login
+            email = f'{gid}+{login}@users.noreply.github.com'
+            cenv['GIT_AUTHOR_NAME'] = who
+            cenv['GIT_COMMITTER_NAME'] = who
+            cenv['GIT_AUTHOR_EMAIL'] = email
+            cenv['GIT_COMMITTER_EMAIL'] = email
+        if self.porcelain() != '':
+            if not rt.ok(['git', 'add', '-A', 'VERSION', 'std/sys.tom', 'site', 'benchmarks/results', 'docs/performance.md'], None, cenv):
+                rt.die('git add failed')
+            c = rt.run(['git', 'commit', '-q', '-m', f'Release Tomato {v}', '-m', f'Signed and notarized package sha256 {total}, disk image sha256 {dsum}.'], None, cenv)
+            if c.status != 0:
+                rt.die('git commit failed')
+        if self.head() == self.st_get('base_sha'):
+            rt.die('nothing was committed')
+        if self.git(['rev-parse', 'HEAD^']) != self.st_get('base_sha'):
+            rt.die(f"the release commit is not directly on {self.st_get('base_sha')}, the commit the tests ran on")
+        self.st_set('commit_sha', self.head())
+        self.note(f'committed {self.short()} "Release Tomato {v}" in {self.clone} (not pushed)')
+
+    async def step_publish(self):
+        rt.banner('publish', 'tag, GitHub release, assets, verification')
+        self.in_clone()
+        self.verify_state_tree()
+        v = self.st_get('version')
+        total = self.st_get('pkg_sha256')
+        tsum = self.st_get('tar_sha256')
+        dsum = self.st_get('dmg_sha256')
+        o = 'release/out'
+        tag = 'v' + v
+        c = self.st_get('commit_sha')
+        man = 'site/latest.json'
+        prerel: list[str] = []
+        if is_pre(v):
+            man = 'site/latest-pre.json'
+            prerel = ['--prerelease']   # a pre-release is never GitHub's "latest"
+        if c == '' or self.head() != c:
+            rt.die('HEAD is not the release commit; run the commit step')
+        # the Linux gate: a real release needs a recorded passing Linux run; a skipped, unreachable or failed one needs the explicit
+        # override. It is checked before the dry-run exit too, so a dry run shows what a real one would do.
+        lt = self.st_get('linux_tests')
+        if self.st_get('linux_passed') != v and not self.ignore_linux and self.st_get('ignore_linux') != '1':
+            shown = lt
+            if shown == '':
+                shown = 'none'
+            gate = f'no passing Linux x86-64 test run is recorded (linux tests: {shown}). Run the linux step (--from linux), or publish anyway only with explicit approval: --resume --ignore-linux-failures'
+            if self.dry:
+                self.say('DRY RUN: a real release would STOP here: ' + gate)
+            else:
+                rt.die(gate)
+        elif self.st_get('linux_passed') == v:
+            self.note(f'Linux gate: passed ({lt})')
+        else:
+            shown2 = lt
+            if shown2 == '':
+                shown2 = 'none'
+            self.note(f'Linux gate: OVERRIDDEN by --ignore-linux-failures (linux tests: {shown2})')
+        if self.dry:
+            pre = ''
+            if len(prerel) > 0:
+                pre = 'pre-'
+            self.say(f'DRY RUN: would push tag {tag} ({self.short()}), create the GitHub {pre}release {tag} on {self.slug} with')
+            for f in [f'{o}/tomato-{v}.pkg', f'{o}/tomato-{v}.dmg', f'{o}/tomato-{v}.tar.gz', f'{o}/latest.json']:
+                self.say(f'   {f} ({ospath.getsize(f)} bytes)')
+            self.say(f'and then download them and compare sha256 {total} (package), {dsum} (disk image).')
+            return
+        if self.slug == '':
+            rt.die('origin is not a GitHub repository')
+        # every file that goes out is the one that was signed, checked and committed (a resume must not upload a rebuilt or changed file)
+        if total == '' or tsum == '' or dsum == '':
+            rt.die('the sign step has not recorded the sha256 of every asset; nothing is published without them')
+        if rt.sha256_file(f'{o}/tomato-{v}.pkg') != total:
+            rt.die(f'{o}/tomato-{v}.pkg is missing or is not the package that was signed; nothing is published')
+        if rt.sha256_file(f'{o}/tomato-{v}.tar.gz') != tsum:
+            rt.die(f'{o}/tomato-{v}.tar.gz is missing or changed; nothing is published')
+        if rt.sha256_file(f'{o}/tomato-{v}.dmg') != dsum:
+            rt.die(f'the signed disk image {o}/tomato-{v}.dmg is missing or changed; nothing is published without it')
+        if not ospath.isfile(o + '/latest.json') or not ospath.isfile(man) or os.read_bytes(o + '/latest.json') != os.read_bytes(man):
+            rt.die(f'{o}/latest.json is not {man} in the release commit; nothing is published')
+        if self.tag_exists_locally(tag):
+            if self.git(['rev-parse', tag + '^{commit}']) != c:
+                rt.die(f'tag {tag} exists locally on another commit')
+        else:
+            self.git(['tag', tag, c])
+        self.st_set('tagging', tag)   # from here on the commit is (or may be) public: no step up to commit can be redone (see rewind)
+        if not self.git_ok(['push', '-q', 'origin', 'refs/tags/' + tag]):
+            rt.die('pushing the tag failed')
+        rtag = ''
+        remote_lines = lines_of(self.git(['ls-remote', 'origin', f'refs/tags/{tag}^{{}}', f'refs/tags/{tag}']))
+        if len(remote_lines) > 0:
+            rtag = remote_lines[len(remote_lines) - 1].split('\t')[0].split(' ')[0]   # the peeled line comes last for an annotated tag
+        if rtag != c:
+            shown3 = rtag
+            if shown3 == '':
+                shown3 = 'missing'
+            rt.die(f"origin's tag {tag} is {shown3}, not the release commit {c}; nothing is uploaded")
+        assets = [f'{o}/tomato-{v}.tar.gz', f'{o}/tomato-{v}.pkg', f'{o}/tomato-{v}.dmg', f'{o}/latest.json']
+        if self.release_exists(tag):
+            self.note(f'release {tag} exists (resuming): uploading the assets again')
+            if not rt.ok(['gh', 'release', 'upload', tag] + assets + ['--clobber', '--repo', self.slug]):
+                rt.die('gh release upload failed')
+        else:
+            if not rt.ok(['gh', 'release', 'create', tag] + assets + ['--verify-tag', '--title', f'Tomato {v}', '--generate-notes'] + prerel + ['--repo', self.slug]):
+                rt.die(f'gh release create failed. Nothing is on the site yet; to undo a half-made release: gh release delete {tag} --cleanup-tag -y --repo {self.slug}')
+        self.st_set('published', 'yes')
+        d = rt.mkdtemp('publish.')
+        dl = rt.run(['gh', 'release', 'download', tag, '--repo', self.slug, '--dir', d, '--pattern', f'tomato-{v}.pkg', '--pattern', f'tomato-{v}.dmg', '--pattern', f'tomato-{v}.tar.gz', '--pattern', 'latest.json'])
+        if dl.status != 0:
+            rt.die('cannot download the published assets')
+        if rt.sha256_file(f'{d}/tomato-{v}.pkg') != total:
+            rt.die(f"the PUBLISHED package's sha256 differs from {total}. The site is not updated (main is not pushed). Delete the release: gh release delete {tag} --cleanup-tag -y --repo {self.slug}")
+        if rt.sha256_file(f'{d}/tomato-{v}.tar.gz') != tsum:
+            rt.die(f"the PUBLISHED tarball's sha256 differs from {tsum} (main is not pushed)")
+        if rt.sha256_file(f'{d}/tomato-{v}.dmg') != dsum:
+            rt.die(f"the PUBLISHED disk image's sha256 differs from {dsum} (main is not pushed)")
+        if os.read_bytes(d + '/latest.json') != os.read_bytes(man):
+            rt.die(f'the published latest.json differs from {man} (main is not pushed)')
+        url = json_str(man, 'pkg_url')
+        if not rt.ok(['curl', '-fsSL', '-o', d + '/public.pkg', url]):
+            rt.die(f'cannot download {url}')
+        if rt.sha256_file(d + '/public.pkg') != total:
+            rt.die(f'{url} serves a different file than the signed package')
+        durl = json_str(man, 'dmg_url')
+        if not rt.ok(['curl', '-fsSL', '-o', d + '/public.dmg', durl]):
+            rt.die(f'cannot download {durl}')
+        if rt.sha256_file(d + '/public.dmg') != dsum:
+            rt.die(f'{durl} serves a different file than the signed disk image')
+        rt.rmtree(d)
+        self.st_set('release_url', f'https://github.com/{self.slug}/releases/tag/{tag}')
+        self.note(f'published and verified: sha256 {total}, {url}; disk image sha256 {dsum}, {durl}')
+
+    async def step_push(self):
+        rt.banner('push', f'the release commit to {self.branch}')
+        self.in_clone()
+        self.verify_state_tree()
+        c = self.st_get('commit_sha')
+        if c == '':
+            rt.die('no release commit is recorded (the commit step has not finished)')
+        if self.dry:
+            self.say(f'DRY RUN: would push {self.short(c)} to origin/{self.branch}.')
+            return
+        # only a release whose assets were published and verified (publish sets release_url last) may change what the site shows
+        if self.st_get('release_url') == '':
+            rt.die('the publish step has not finished: main is pushed only after the assets are live and verified')
+        if self.no_push:
+            self.say(f'--no-push: the release commit {self.short(c)} stays unpushed in {self.clone} on the signing Mac. Push it with: git -C {self.clone} push origin {c}:refs/heads/{self.branch}')
+            self.st_set('pushed', 'no')
+            return
+        if not self.git_ok(['fetch', '-q', 'origin']):
+            rt.die('git fetch origin failed')
+        if self.git_ok(['merge-base', '--is-ancestor', c, f'origin/{self.branch}']):   # an earlier push got through (or it was merged and pushed by hand): nothing to push
+            self.st_set('pushed', 'yes')
+            self.note(f'the release commit {self.short(c)} is already on origin/{self.branch}')
+            return
+        # exactly the recorded release commit, never whatever HEAD is now
+        if not self.git_ok(['push', 'origin', f'{c}:refs/heads/{self.branch}']):
+            rt.die(f'pushing {self.branch} failed (someone pushed meanwhile?). The release is published; the commit is in {self.clone}: merge origin/{self.branch} into it and push by hand: git -C {self.clone} pull --no-rebase origin {self.branch} && git -C {self.clone} push origin HEAD:{self.branch} (a merge, not a rebase: the published tag must stay an ancestor of main), then run this again with --resume')
+        self.git(['fetch', '-q', 'origin'])
+        if not self.git_ok(['merge-base', '--is-ancestor', c, f'origin/{self.branch}']):
+            rt.die(f'origin/{self.branch} does not contain the release commit after the push')
+        self.st_set('pushed', 'yes')
+        self.note(f'pushed {self.short(c)} to origin/{self.branch}')
+
+    async def step_summary(self):
+        self.in_clone()
+        v = self.st_get('version')
+        extra = ''
+        if self.dry:
+            extra = ' (DRY RUN: nothing was published or pushed)'
+        rt.banner('summary', f'Tomato {v}{extra}')
+        self.say(f'version:        {v}')
+        self.say(f"tests:          {self.st_get('tests')}")
+        self.say(f"benchmarks:     {self.st_get('bench')}   instruction counts: {self.st_get('counts')}")
+        if self.st_get('bench') != 'skipped' and ospath.isfile('benchmarks/results/results.md'):
+            self.say('')
+            self.say("Tomato's time divided by each language's time (below 1.0 Tomato is faster, above 1.0 slower):")
+            for row in ratio_rows('benchmarks/results/results.md', ''):
+                self.say(row)
+            self.say('')
+        self.say('')
+        self.say(f"LINUX x86-64 ({self.linux_host}): {self.st_get('linux')}")
+        warn = ''
+        if self.st_get('linux_load_warn') != '':
+            warn = '  [' + self.st_get('linux_load_warn') + ']'
+        self.say(f"  tests: {self.st_get('linux_tests')}{warn}")
+        lt = self.st_get('linux_tests')
+        if lt.startswith('FAILED') or lt == 'not run':
+            self.say('  !! the Linux tests did not pass or did not run: read this before trusting the release')
+        lres = 'benchmarks/results/linux-x86_64/results.md'
+        if ospath.isfile(lres) and ('"tomato": "' + v + '"') in rt.read_or('benchmarks/results/linux-x86_64/results.json'):
+            self.say("  Tomato's time divided by each language's (Linux; below 1.0 Tomato is faster):")
+            for row in ratio_rows(lres, '  '):
+                self.say(row)
+        self.say('')
+        self.say(f"notarization:   {self.st_get('notarization')}")
+        self.say(f"package sha256: {self.st_get('pkg_sha256')}")
+        self.say(f"disk image sha256: {self.st_get('dmg_sha256')}")
+        self.say(f"tarball sha256: {self.st_get('tar_sha256')}")
+        if self.dry:
+            self.say('release URL:    (not published: dry run)')
+        else:
+            self.say(f"release URL:    {self.st_get('release_url')}")
+        pushed = self.st_get('pushed')
+        if self.dry:
+            pushed = 'no, dry run'
+        self.say(f"release commit: {self.st_get('commit_sha')} in {self.clone}  (pushed: {pushed})")
+        started = int(self.st_get('run_started'))
+        self.say(f'elapsed:        {(rt.now() - started) // 60} minutes of wall time since the run began')
+        self.st_set('status', 'finished')
+
+    # ---- running the steps ---------------------------------------------------------------------------------------------------------
+
+    async def run_step(self, s: str):
+        if s == 'preflight':
+            await self.step_preflight()
+        elif s == 'version':
+            await self.step_version()
+        elif s == 'test':
+            await self.step_test()
+        elif s == 'bump':
+            await self.step_bump()
+        elif s == 'linux':
+            await self.step_linux()
+        elif s == 'bench':
+            await self.step_bench()
+        elif s == 'snapshot':
+            await self.step_snapshot()
+        elif s == 'build':
+            await self.step_build()
+        elif s == 'sign':
+            await self.step_sign()
+        elif s == 'commit':
+            await self.step_commit()
+        elif s == 'publish':
+            await self.step_publish()
+        elif s == 'push':
+            await self.step_push()
+        elif s == 'summary':
+            await self.step_summary()
+
+    def is_done(self, s: str) -> bool:
+        return (' ' + self.st_get('done') + ' ').find(' ' + s + ' ') >= 0
+
+    # --from STEP: continue at STEP as if the run had just stopped there. Every step before it must be finished (--from does not skip
+    # anything: what a skipped step would have left undone could not be told from what is done); STEP and the steps after it are
+    # forgotten, so a later --resume goes back to STEP if this run fails; and what they changed is undone: up to the bump the clone goes
+    # back to the commit the run started from, up to the commit step the release commit is taken off again (its changes stay).
+    # Once the tag is pushed the release commit is public, so only publish, push and summary can be run again.
+    def rewind(self, r: str):
+        unfinished = ''
+        for s in steps():
+            if s == r:
+                break
+            if not self.is_done(s):
+                unfinished += ' ' + s
+        if unfinished != '':
+            rt.die(f'--from {r}: the earlier step(s){unfinished} did not finish, and --from does not skip them (a later --resume could not tell what was left undone). Use --resume to continue at the first unfinished step; --skip-bench, --no-linux and the other flags turn steps into no-ops.')
+        rp = step_pos(r)
+        if rp <= step_pos('commit') and (self.st_get('tagging') + self.st_get('published')) != '':
+            ver = self.st_get('version')
+            rt.die(f'--from {r}: the release commit of v{ver} was tagged and pushed (or published): steps before publish cannot be run again. Continue with --resume or --from publish|push|summary; to start over, undo the release first (gh release delete v{ver} --cleanup-tag -y --repo {self.slug}) and use --restart.')
+        rb = self.st_get('base_sha')
+        if rp <= step_pos('commit') and rb != '':
+            self.in_clone()
+            if rp <= step_pos('bump'):
+                if not (self.git_ok(['reset', '-q', '--hard', rb]) and self.git_ok(['clean', '-fdxq'])):
+                    rt.die(f'could not reset the clone to {rb}')
+                self.note(f'--from {r}: the clone is back at {self.short(rb)}, where this run started')
+            elif self.st_get('commit_sha') != '':
+                if not self.git_ok(['reset', '-q', '--mixed', rb]):
+                    rt.die('could not take the release commit off the clone')
+                self.note(f'--from {r}: the release commit is taken off again; its changes stay in the clone')
+        keep: list[str] = []
+        forget: list[str] = []
+        hit = False
+        for s in steps():
+            if s == r:
+                hit = True
+            if not hit:
+                keep.append(s)
+                continue
+            if s == 'test':
+                forget += ['tests']
+            elif s == 'linux':
+                forget += ['linux', 'linux_tests', 'linux_passed', 'linux_machine', 'linux_load_warn']   # (linux_fetched stays: the finished remote run is of the same commit)
+            elif s == 'bench':
+                forget += ['bench', 'counts']
+            elif s == 'build':
+                forget += ['pkg_built_sha256', 'pkg_signed_sha256']   # (a package this run signed stays signed for --from sign: only a build makes an unsigned one)
+            elif s == 'sign':
+                forget += ['pkg_sha256', 'dmg_sha256', 'tar_sha256', 'notarization']
+            elif s == 'commit':
+                forget += ['commit_sha']
+            elif s == 'push':
+                forget += ['pushed']
+        for k in forget:
+            self.st_set(k, '')
+        self.st_set('done', ' '.join(keep))
+        self.st_set('failed_step', '')
+
+    def mode_word(self) -> str:
+        if self.dry:
+            return 'dry'
+        return 'real'
+
+    # Starts, resumes or restarts the run and gives the first step to run, and whether this is a resume
+    def begin(self) -> tuple[str, str]:
+        start = ''
+        mode = ''
+        if self.resume or self.from_step != '':
+            if not ospath.isfile(self.state):
+                rt.die(f'no earlier run to resume (no {self.state})')
+            if self.st_get('status') == 'finished' and self.resume:
+                rt.die('the last run finished; start a new one')
+            if self.st_get('mode') != self.mode_word():
+                rt.die(f"the earlier run was a {self.st_get('mode')} run; resume it with the same --dry-run setting (or use --restart)")
+            if self.resume:
+                for s in steps():
+                    if not self.is_done(s):
+                        start = s
+                        break
+                if start == '':
+                    start = 'summary'
+            else:
+                self.rewind(self.from_step)
+                start = self.from_step
+            if self.st_get('status') == 'finished':
+                self.st_set('status', 'running')
+            mode = 'resume'
+        else:
+            if ospath.isfile(self.state) and self.st_get('status') != 'finished' and not self.restart:
+                rt.die(f"an earlier release run (v{self.st_get('version')}, {self.st_get('mode')}, failed at '{self.st_get('failed_step')}') is unfinished. Continue it with --resume (or --from STEP), or discard it with --restart.")
+            prev_status = self.st_get('status')   # what the last run left in the clone decides whether preflight may reset it
+            prev_mode = self.st_get('mode')
+            rt.rm(self.state)
+            start = 'preflight'
+            mode = 'fresh'
+            self.st_set('status', 'running')
+            self.st_set('run_started', str(self.started))
+            self.st_set('mode', self.mode_word())
+            # leftovers of an earlier run may be thrown away from the clone only after --restart or a finished dry run; recorded, so that a
+            # --resume after a preflight that failed before the clone was synced still may (it dies on a clone it has no right to reset)
+            if self.restart or (prev_status == 'finished' and prev_mode == 'dry'):
+                self.st_set('reset_clone', 'yes')
+            if self.version != '':
+                self.st_set('requested_version', self.version)
+            if self.bump != '':
+                self.st_set('requested_bump', self.bump)
+        return (start, mode)
+
+    async def run_all(self) -> int:
+        begun = self.begin()
+        start = begun[0]
+        mode = begun[1]
+        if self.st_get('run_started') == '':
+            self.st_set('run_started', str(self.started))
+        # a version given on the command line wins; otherwise the state's
+        if self.version == '':
+            self.version = self.st_get('requested_version')
+        if self.version == '' and self.bump == '':
+            self.bump = self.st_get('requested_bump')
+        self.say(f"release run: {self.st_get('mode')}, branch {self.branch}, origin {self.origin}, work dir {self.work_dir}")
+        self.say('steps: ' + ' '.join(steps()) + f'; starting at {start}')
+        running = False
+        for s in steps():
+            if s == start:
+                running = True
+            if s == 'preflight' and mode == 'resume':
+                running = True
+            if not running:
+                continue
+            self.cur_step = s
+            failed = False
+            try:
+                await self.run_step(s)
+            catch rt.Fatal as e:
+                sys.write_stderr('error: ' + e.message + '\n')
+                failed = True
+            catch Error as e:
+                if rt.interrupted_by(e) != 0:
+                    raise e
+                sys.write_stderr('error: ' + e.message + '\n')
+                failed = True
+            if failed:
+                self.st_set('failed_step', s)
+                sys.write_stderr(f'\nFAILED at step {s}. Fix the cause, then continue with:\n  {self.invoked} --resume\n(or --from STEP; --restart throws the run away)\n')
+                sys.write_stderr(f'Logs are in {self.logs} on the signing Mac.\n')
+                return 1
+            if not self.is_done(s):
+                self.st_set('done', self.st_get('done') + ' ' + s)
+            # a resumed run starts at its own step; preflight itself is not a "next" step then
+            if s == 'preflight' and mode == 'resume' and start != 'preflight':
+                running = False
+        return 0
+
+    # the interrupted-by-a-signal exit: the step is the failed one, which --resume continues at
+    def on_signal(self, name: str, status: int) -> int:
+        if self.cur_step != '' and ospath.isfile(self.state):
+            self.st_set('failed_step', self.cur_step)
+        what = ''
+        if self.cur_step != '':
+            what = f' during step {self.cur_step}; continue with: {self.invoked} --resume'
+        sys.write_stderr(f'\ninterrupted ({name}){what}\n')
+        return status
+
+# ---- small helpers ------------------------------------------------------------------------------------------------------------
+
+def last_of(text: str) -> str:
+    ls = lines_of(text)
+    if len(ls) == 0:
+        return ''
+    return ls[len(ls) - 1]
+
+def starting(text: str, prefix: str) -> list[str]:
+    out: list[str] = []
+    for line in text.split('\n'):
+        if line.startswith(prefix):
+            out.append(line)
+    return out
+
+# The names of the entries of a folder that start with prefix, as paths (a glob `DIR/PREFIX*`)
+def globs(folder: str, prefix: str) -> list[str]:
+    out: list[str] = []
+    if folder == '' or not ospath.isdir(folder):
+        return out
+    for n in sorted(os.listdir(folder)):
+        if n.startswith(prefix):
+            out.append(folder + '/' + n)
+    return out
+
+# The version text in the `return '...'` line of `def version(` in std/sys.tom (and its copy for the browser): only that line, and only
+# when it holds a version (the file has other functions that return text, and some of them return an empty one)
+def bump_sys_version(path: str, v: str):
+    out: list[str] = []
+    inside = False
+    done = False
+    for line in rt.read_or(path).split('\n'):
+        if line.startswith('def version('):
+            inside = True
+        elif inside and not done and re.fullmatch("    return '[0-9A-Za-z.-]+'", line) is not None:
+            line = "    return '" + v + "'"
+            done = True
+        elif inside and line != '' and not line.startswith(' '):
+            inside = False
+        out.append(line)
+    rt.replace_file(path, '\n'.join(out))
+
+# replaces, in each line of a file, what a regular expression matches
+def replace_lines(path: str, pat: str, repl: str):
+    out: list[str] = []
+    for line in rt.read_or(path).split('\n'):
+        out.append(re.sub(pat, repl, line))
+    rt.replace_file(path, '\n'.join(out))
+
+# "Accepted, submission X" from the line "notarized (submission X)" a signing tool printed (sed -n 's/^PREFIX (\(.*\))$/Accepted, \1/p' | tail -1)
+def accepted(log: str, prefix: str) -> str:
+    found = ''
+    for line in log.split('\n'):
+        if line.startswith(prefix + ' (') and line.endswith(')'):
+            found = 'Accepted, ' + line[len(prefix) + 2:len(line) - 1]
+    return found
+
+# ---- the arguments --------------------------------------------------------------------------------------------------------------
+
+def read_conf(r: Rel):
+    path = os.getenv('TOMATO_RELEASE_CONF')
+    if path is None or path == '':
+        path = 'dev/release.conf'
+        if not ospath.isfile(path) and ospath.isfile('release/release.conf'):
+            path = 'release/release.conf'   # where it was while the release tools were shell scripts
+    if not ospath.isfile(path):
+        return
+    for line in rt.read_or(path).split('\n'):   # key=value lines; read, never executed
+        if line == '' or line.startswith('#'):
+            continue
+        k = line.partition('=')[0].replace(' ', '')
+        v = line.partition('=')[2].strip()
+        if len(v) >= 2 and v.startswith('"') and v.endswith('"'):
+            v = v[1:len(v) - 1]
+        if k == 'host':
+            r.host = v
+        elif k == 'branch':
+            r.branch = v
+        elif k == 'origin':
+            r.origin = v
+        elif k == 'work_dir':
+            r.work_dir = v
+        elif k == 'wasi_sdk':
+            r.wasi = v
+        elif k == 'max_load':
+            r.max_load = v
+        elif k == 'wait_quiet':
+            if v.isdigit():
+                r.wait_quiet = int(v)
+
+# the option's value, or a usage error
+def value_of(args: list[str], i: int) -> str:
+    if i + 1 >= len(args):
+        sys.write_stderr(f'error: {args[i]} needs a value (see --help)\n')
+        sys.exit(2)
+    return args[i + 1]
+
+def parse(args: list[str]) -> Rel:
+    r = Rel()
+    read_conf(r)
+    h = os.getenv('TOMATO_RELEASE_HOST')
+    if h is not None and h != '':
+        r.host = h
+    skipnext = False
+    for a in args:
+        r.orig_args.append(a)
+        if skipnext:
+            skipnext = False
+            continue
+        if a == '--resume' or a == '--restart' or a == '--on-host':
+            continue
+        if a == '--from' or a == '--invoked':
+            skipnext = True
+            continue
+        r.hint_args.append(a)   # the flags a resume must repeat
+    i = 0
+    while i < len(args):
+        a = args[i]
+        step = 1
+        if a == '--host':
+            r.host = value_of(args, i)
+            step = 2
+        elif a == '--on-host':
+            r.on_host = True
+        elif a == '--invoked':
+            r.invoked = value_of(args, i)
+            step = 2
+        elif a == '--dry-run':
+            r.dry = True
+        elif a == '--skip-bench':
+            r.skip_bench = True
+        elif a == '--no-push':
+            r.no_push = True
+        elif a == '--version':
+            r.version = value_of(args, i)
+            step = 2
+        elif a == '--bump':
+            r.bump = value_of(args, i)
+            step = 2
+        elif a == '--next-version':
+            r.next_from = value_of(args, i)
+            step = 2
+        elif a == '--resume':
+            r.resume = True
+        elif a == '--from':
+            r.from_step = value_of(args, i)
+            step = 2
+        elif a == '--restart':
+            r.restart = True
+        elif a == '--seed':
+            r.seed = value_of(args, i)
+            step = 2
+        elif a == '--runs':
+            r.runs = value_of(args, i)
+            step = 2
+        elif a == '--max-load':
+            r.max_load = value_of(args, i)
+            step = 2
+        elif a == '--wait-quiet':
+            r.wait_quiet = int(value_of(args, i))
+            step = 2
+        elif a == '--no-load-check':
+            r.load_check = False
+        elif a == '--branch':
+            r.branch = value_of(args, i)
+            step = 2
+        elif a == '--origin':
+            r.origin = value_of(args, i)
+            step = 2
+        elif a == '--work-dir':
+            r.work_dir = value_of(args, i)
+            step = 2
+        elif a == '--wasi-sdk':
+            r.wasi = value_of(args, i)
+            step = 2
+        elif a == '--skip-notarize':
+            r.skip_notarize = True
+        elif a == '--no-linux':
+            r.no_linux = True
+        elif a == '--ignore-linux-failures':
+            r.ignore_linux = True
+        elif a == '--linux-host':
+            r.linux_host = value_of(args, i)
+            step = 2
+        elif a == '--linux-tools':
+            r.linux_tools = value_of(args, i)
+            step = 2
+        elif a == '--linux-max-load':
+            r.linux_max_load = value_of(args, i)
+            step = 2
+        elif a == '--linux-wait':
+            r.linux_wait = value_of(args, i)
+            step = 2
+        elif a == '--no-sign':
+            r.no_sign = True
+            r.skip_notarize = True
+        elif a == '--unlock-keychain':
+            r.unlock = True
+        elif a == '--list-steps':
+            for s in steps():
+                print(s)
+            sys.exit(0)
+        elif a == '-h' or a == '--help':
+            sys.write_stdout(usage())
+            sys.exit(0)
+        else:
+            sys.write_stderr(f'unknown option: {a} (see --help)\n')
+            sys.exit(2)
+        i += step
+    if r.branch == '':
+        r.branch = 'main'
+    if r.origin == '':
+        r.origin = 'git@github.com:sirbuffalo/tomato.git'
+    if r.bump != '' and r.bump != 'major' and r.bump != 'minor' and r.bump != 'patch':
+        sys.write_stderr(f"error: --bump takes major, minor or patch, not '{r.bump}'\n")
+        sys.exit(2)
+    if r.version != '' and r.bump != '':
+        sys.write_stderr('error: use only one of --version and --bump\n')
+        sys.exit(2)
+    if r.next_from != '':
+        out = sv.pick_version(r.next_from, False, r.version, r.bump)
+        print(out)
+        if out.startswith('error:'):
+            sys.exit(1)
+        sys.exit(0)
+    if r.from_step != '' and not step_known(r.from_step):
+        sys.write_stderr(f"error: unknown step '{r.from_step}' (steps: " + ' '.join(steps()) + ')\n')
+        sys.exit(2)
+    if r.skip_notarize and not r.dry:
+        sys.write_stderr('error: --skip-notarize and --no-sign are only allowed with --dry-run (an un-notarized package must never be published)\n')
+        sys.exit(2)
+    n = 0
+    if r.resume:
+        n += 1
+    if r.restart:
+        n += 1
+    if r.from_step != '':
+        n += 1
+    if n > 1:
+        sys.write_stderr('error: use only one of --resume, --from and --restart\n')
+        sys.exit(2)
+    return r
+
+# The GitHub owner/name of an origin URL: `git@github.com:o/n.git`, `https://github.com/o/n`; '' for anything else
+def slug_of(origin: str) -> str:
+    m = re.search('github\\.com[:/]([^/]*/[^/]*[^/.])(\\.git)?$', origin)
+    if m is None:
+        return ''
+    s = m.group(1)
+    if s.endswith('.git'):
+        s = s[:len(s) - 4]
+    return s
+
+# ---- the program --------------------------------------------------------------------------------------------------------------------
+
+@main
+async def main(*args: tuple[str]):
+    words: list[str] = []
+    for a in args:
+        words.append(a)
+    r = parse(words)
+    if r.host == '':
+        r.host = 'local'
+    if r.invoked == '':
+        inv = 'tomato run dev/release.tom main'
+        for a in r.hint_args:
+            inv += ' ' + q(a)
+        r.invoked = inv
+    if r.host != 'local' and not r.on_host:
+        sys.exit(await drive_remote(r))
+    sys.exit(await run_here(r))
+
+# One private temp folder for the whole run: every temporary folder (and any tool that honours TMPDIR) lands in it, and it is removed at
+# the end however the run ended: by a `die`, an error or a signal (INT, TERM and HUP are taken where the program waits, the `finally`
+# blocks run, and the status is 128 plus the signal). The interrupted step is the failed one in the state, which --resume continues at.
+async def run_here(r: Rel) -> int:
+    base = os.getenv('TMPDIR')
+    if base is None or base == '':
+        base = '/tmp'
+    tmpd = ''
+    try:
+        tmpd = rt.mkdtemp('tomato-release-tmp.')
+    catch IOError:
+        sys.write_stderr('error: cannot make a temp folder\n')
+        return 1
+    r.tmpd = tmpd
+    os.putenv('TMPDIR', tmpd)
+    rt.watch_signals()
+    status = 0
+    caf: sys.Process | None = None
+    try:
+        # TOMATO_RELEASE_TEST_BIN (dev/release_resume.tom only): a folder of stand-ins for the Mac, gh and the signing tools, searched first
+        pre = ''
+        tb = os.getenv('TOMATO_RELEASE_TEST_BIN')
+        if tb is not None and tb != '':
+            pre = tb + ':'
+        home = os.getenv('HOME')
+        if home is None:
+            home = ''
+        oldpath = os.getenv('PATH')
+        if oldpath is None:
+            oldpath = ''
+        os.putenv('PATH', f'{pre}/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/go/bin:{home}/.cargo/bin:{home}/go/bin:{oldpath}')
+        if rt.have('caffeinate'):   # no idle sleep while the release runs
+            try:
+                caf = sys.spawn(['caffeinate', '-i', '-w', str(os.getpid())], True)
+            catch IOError:
+                caf = None
+        if r.work_dir == '':
+            r.work_dir = home + '/.tomato-release'
+        r.clone = r.work_dir + '/tomato'
+        r.state = r.work_dir + '/state'
+        r.logs = r.work_dir + '/logs'
+        rt.mkdirs(r.work_dir)
+        rt.mkdirs(r.logs)
+        r.app_sign = env_or('TOMATO_APP_SIGN', 'Developer ID Application: Davis McDowell (39BK8TGQ26)')
+        r.pkg_sign = env_or('TOMATO_PKG_SIGN', 'Developer ID Installer: Davis McDowell (39BK8TGQ26)')
+        r.profile = env_or('TOMATO_NOTARY_PROFILE', 'tomato-notary')
+        r.slug = slug_of(r.origin)
+        r.started = rt.now()
+        status = await r.run_all()
+    catch rt.Fatal as e:
+        sys.write_stderr('error: ' + e.message + '\n')
+        status = 1
+    catch Error as e:
+        n = rt.interrupted_by(e)
+        if n == 0:
+            raise e
+        status = r.on_signal(rt.signal_name(n), 128 + n)
+    finally:
+        if caf is not None:
+            caf.stop()
+        rt.rmtree(tmpd)
+    return status
+
+def env_or(name: str, default: str) -> str:
+    v = os.getenv(name)
+    if v is None or v == '':
+        return default
+    return v
+
+# --host USER@HOST: the release program's own source is sent over ssh and run there (the signing Mac needs `tomato` and nothing else of
+# this checkout: the release works in its own clone)
+async def drive_remote(r: Rel) -> int:
+    host = r.host
+    sshopt = ['-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=10', '-o', 'ConnectTimeout=15']
+    errf = rt.mkdtemp('release.err.')
+    status = 0
+    try:
+        probe = rt.run(['ssh'] + sshopt + ['-o', 'BatchMode=yes', host, 'true'])
+        if probe.status != 0:
+            for line in lines_of(probe.stderr):
+                sys.write_stderr('  ' + line + '\n')
+            sys.write_stderr('\n')
+            sys.write_stderr(f'error: cannot ssh to {host} without a password:\n')
+            sys.write_stderr("On that Mac: System Settings > General > Sharing > turn on Remote Login (allow the release user).\n")
+            sys.write_stderr(f"From this machine (once): ssh-copy-id {host}   (or append this machine's ~/.ssh/id_ed25519.pub to ~/.ssh/authorized_keys there).\n")
+            sys.write_stderr(f"If the message above is 'Host key verification failed', run 'ssh {host}' once by hand and accept the key.\n")
+            return 1
+        if r.unlock:
+            sys.write_stderr(f"== unlocking the login keychain on {host} (type that Mac's login password; it is not stored)\n")
+            u = sys.run(['ssh', '-t'] + sshopt + [host, 'security unlock-keychain "$HOME/Library/Keychains/login.keychain-db"'], False)
+            if u.status != 0:
+                sys.write_stderr('error: could not unlock the keychain\n')
+                return 1
+        tar = errf + '/dev.tar'
+        if not rt.ok(['tar', '-cf', tar, 'dev']):
+            sys.write_stderr('error: cannot pack dev/ (run it from the root of the repository)\n')
+            return 1
+        sys.write_stderr(f'== {host}: sending dev/\n')
+        if not rt.ok(['scp', '-q'] + sshopt + [tar, f'{host}:.tomato-release-dev.tar']):
+            sys.write_stderr('error: cannot copy dev/ to ' + host + '\n')
+            return 1
+        words = ''
+        for a in r.orig_args:
+            words += ' ' + q(a)
+        remote = 'export PATH=/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH; d=$(mktemp -d /tmp/tomato-release-src.XXXXXX) && tar -xf ~/.tomato-release-dev.tar -C "$d" && rm -f ~/.tomato-release-dev.tar && cd "$d" && tomato run dev/release.tom main --on-host --invoked ' + q(r.invoked) + words
+        status = sys.run(['ssh', '-T'] + sshopt + [host, remote], False).status
+    finally:
+        rt.rmtree(errf)
+    return status

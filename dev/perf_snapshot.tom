@@ -1,0 +1,287 @@
+# Writes the "## vVERSION snapshot" section of docs/performance.md from the last benchmark run (the port of release/perf-snapshot.sh):
+# benchmarks/results/results.{json,md}; instructions.md when it was made for this VERSION; and, when the release tool ran the Linux step,
+# benchmarks/results/linux-x86_64/{results.json,results.md,instructions.md}.
+# The section holds the median seconds per program and Tomato's time divided by each language's time (below 1.0 Tomato is faster, above
+# 1.0 slower), with the Linux x86-64 columns next to the Mac ones. The previous newest snapshot is marked "(earlier)"; running this twice
+# replaces its own section.
+#
+#     tomato run dev/perf_snapshot.tom main VERSION [DOC]       (DOC defaults to docs/performance.md; run it from the repository root)
+#
+# The script's awk programs are plain functions here: secs_of, ratio_rows and join_rows keep the awk rules line by line (a table is read
+# from its heading to its first line that is not a row, fields are split at `|` and trimmed of spaces only). json values are read with
+# the same lenient rule as the script's `jget` (the first line holding "KEY":, the last such key on it, the text after it up to a quote,
+# comma or closing brace), not with a JSON parser, so a results file that is not strict JSON still gives the same answer.
+import sys
+import os
+import ospath
+import re
+import rtool as rt
+
+# The name the section's first paragraph gives for the tool that wrote it (the script's own name in the old text).
+const WRITTEN_BY = 'release/perf-snapshot.sh'
+
+const USAGE = 'usage: tomato run dev/perf_snapshot.tom main VERSION [DOC]'
+
+# ---- the awk helpers -----------------------------------------------------------------------------------------------------------
+
+# The lines awk reads from a text: split at newlines, and a last line without one is a line too.
+def awk_lines(text: str) -> list[str]:
+    parts = text.split('\n')
+    if len(parts) > 0 and parts[len(parts) - 1] == '':
+        parts.pop()
+    return parts
+
+def file_lines(path: str) -> list[str]:
+    return awk_lines(os.read_text(path))
+
+# Field N (from 1) of an awk -F'|' record; '' past the last field
+def field(parts: list[str], n: int) -> str:
+    if n - 1 < len(parts):
+        return parts[n - 1]
+    return ''
+
+# gsub(/ /, "", s)
+def no_spaces(s: str) -> str:
+    return s.replace(' ', '')
+
+# gsub(/^ +| +$/, "", s)
+def trim_spaces(s: str) -> str:
+    return s.strip(' ')
+
+# jget FILE KEY: sed -n "s/.*\"KEY\": *\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" FILE | head -1
+def jget(path: str, key: str) -> str:
+    needle = '"' + key + '":'
+    for line in file_lines(path):
+        k = line.rfind(needle)
+        if k < 0:
+            continue
+        rest = line[k + len(needle):]
+        i = 0
+        while i < len(rest) and rest[i] == ' ':
+            i += 1
+        if i < len(rest) and rest[i] == '"':
+            i += 1
+        j = i
+        while j < len(rest) and rest[j] != '"' and rest[j] != ',' and rest[j] != '}':
+            j += 1
+        return rest[i:j]
+    return ''
+
+# The Tomato column of the seconds table (release mode): "fib 0.156, sieve 0.068, ..."
+def secs_of(path: str) -> str:
+    found = ''
+    n = 0
+    t = False
+    for line in file_lines(path):
+        if re.search('^\\| benchmark \\| input \\| tomato \\(s\\)', line) is not None:
+            t = True
+            continue
+        if t and line.startswith('| ---'):
+            continue
+        if t and line.startswith('| '):
+            parts = line.split('|')
+            if n > 0:
+                found += ', '
+            found += no_spaces(field(parts, 2)) + ' ' + no_spaces(field(parts, 4))
+            n += 1
+            continue
+        if t:
+            break
+    return found
+
+# A ratio table (benchmark, ÷ go, ÷ rust, ÷ python) from the file, after the line matching the pattern: rows only, "name|go|rust|python"
+def ratio_rows(path: str, pat: str) -> list[str]:
+    rows: list[str] = []
+    t = False
+    for line in file_lines(path):
+        if re.search(pat, line) is not None:
+            t = True
+            continue
+        if t and line.startswith('| ') and not line.startswith('| benchmark') and not line.startswith('| ---'):
+            parts = line.split('|')
+            cells: list[str] = []
+            for i in range(2, 6):
+                cells.append(trim_spaces(field(parts, i)))
+            rows.append('|'.join(cells))
+            continue
+        if t and len(rows) > 0:
+            break
+    return rows
+
+# Joins two row lists on the benchmark name: "name|a|b|c" + "name|d|e|f" -> a markdown row; "n/a" cells for a missing row. As in awk's
+# `NR == FNR` idiom, an empty SECOND list leaves the table without rows.
+def join_rows(first: list[str], second: list[str]) -> list[str]:
+    found: list[str] = []
+    other: dict[str, str] = {}
+    for r in second:
+        p = r.split('|')
+        other[field(p, 1)] = field(p, 2) + '|' + field(p, 3) + '|' + field(p, 4)
+    if len(second) == 0:
+        return found
+    for r in first:
+        p = r.split('|')
+        o = 'n/a|n/a|n/a'
+        name = field(p, 1)
+        if name in other:
+            o = other[name]
+        b = o.split('|')
+        found.append(f'| {name} | {field(p, 2)} | {field(p, 3)} | {field(p, 4)} | {field(b, 1)} | {field(b, 2)} | {field(b, 3)} |')
+    return found
+
+# the plain table: "| name | a | b | c |"
+def plain_rows(rows: list[str]) -> list[str]:
+    found: list[str] = []
+    for r in rows:
+        p = r.split('|')
+        found.append(f'| {field(p, 1)} | {field(p, 2)} | {field(p, 3)} | {field(p, 4)} |')
+    return found
+
+# grep -q "^Tomato v$version " FILE (the version is a basic regular expression there, as here)
+def made_for(path: str, version: str) -> bool:
+    if not ospath.isfile(path):
+        return False
+    for line in file_lines(path):
+        if re.search('^Tomato v' + version + ' ', line) is not None:
+            return True
+    return False
+
+# ---- the section ---------------------------------------------------------------------------------------------------------------
+
+def build_section(version: str, res: str, lin: str, have_linux: bool, mac_secs: str, mac_t: list[str]) -> list[str]:
+    s: list[str] = []
+    rj = res + '/results.json'
+    s.append(f'## v{version} snapshot')
+    s.append('')
+    s.append(f'v{version}, median of {jget(rj, "runs")} runs per program (Python too), all runs in one shuffled order (seed {jget(rj, "seed")}), {jget(rj, "cpu")}, load average (1, 5 and 15 minutes) {jget(rj, "load_before")} before and {jget(rj, "load_after")} after. Written by `{WRITTEN_BY}` from `benchmarks/results/results.md`, which has the full tables. Seconds (release mode): {mac_secs}.')
+    s.append('')
+    pat_t = '^Tomato.s time divided by'
+    pat_i = "^Tomato.s instructions divided by"
+    if have_linux:
+        lj = lin + '/results.json'
+        lin_t = ratio_rows(lin + '/results.md', pat_t)
+        s.append(f'Linux x86-64 (`benchmarks/results/linux-x86_64/results.md`): {jget(lj, "cpu")}, {jget(lj, "cores")} cores, median of {jget(lj, "runs")} runs, seed {jget(lj, "seed")}, load average {jget(lj, "load_before")} before and {jget(lj, "load_after")} after (a shared machine: read its times with that load in mind). Seconds (release mode): {secs_of(lin + "/results.md")}.')
+        s.append('')
+        s.append("Tomato's time divided by each language's time (below 1.0 Tomato is faster, above 1.0 it is slower):")
+        s.append('')
+        s.append('| benchmark | Tomato ÷ Go (Mac) | Tomato ÷ Rust (Mac) | Tomato ÷ Python (Mac) | Tomato ÷ Go (Linux) | Tomato ÷ Rust (Linux) | Tomato ÷ Python (Linux) |')
+        s.append('| --- | ---: | ---: | ---: | ---: | ---: | ---: |')
+        s += join_rows(mac_t, lin_t)
+    else:
+        s.append("Tomato's time divided by each language's time (below 1.0 Tomato is faster, above 1.0 it is slower):")
+        s.append('')
+        s.append('| benchmark | Tomato ÷ Go | Tomato ÷ Rust | Tomato ÷ Python |')
+        s.append('| --- | ---: | ---: | ---: |')
+        s += plain_rows(mac_t)
+    ic = res + '/instructions.md'
+    lic = lin + '/instructions.md'
+    mac_ic = made_for(ic, version)
+    lin_ic = have_linux and made_for(lic, version)
+    if mac_ic and lin_ic:
+        mac_i = ratio_rows(ic, pat_i)
+        lin_i = ratio_rows(lic, pat_i)
+        s.append('')
+        s.append("Instructions executed (deterministic, `benchmarks/count.sh`, callgrind), Tomato's count divided by each language's (below 1.0 Tomato executes fewer): arm64 in a Linux VM on the Mac, and x86-64 on the Linux machine.")
+        s.append('')
+        s.append('| benchmark | Tomato ÷ Go (arm64) | Tomato ÷ Rust (arm64) | Tomato ÷ Python (arm64) | Tomato ÷ Go (x86-64) | Tomato ÷ Rust (x86-64) | Tomato ÷ Python (x86-64) |')
+        s.append('| --- | ---: | ---: | ---: | ---: | ---: | ---: |')
+        s += join_rows(mac_i, lin_i)
+    elif mac_ic or lin_ic:
+        f = ic
+        which = ', arm64 Linux VM'
+        if lin_ic:
+            f = lic
+            which = ', Linux x86-64'
+        one_i = ratio_rows(f, pat_i)
+        s.append('')
+        s.append(f"Instructions executed (deterministic, `benchmarks/count.sh`, callgrind{which}), Tomato's count divided by each language's (below 1.0 Tomato executes fewer):")
+        s.append('')
+        s.append('| benchmark | Tomato ÷ Go | Tomato ÷ Rust | Tomato ÷ Python |')
+        s.append('| --- | ---: | ---: | ---: |')
+        s += plain_rows(one_i)
+    s.append('')
+    return s
+
+# Drops an older section for this very version, marks the other snapshots "(earlier)" and puts the new one first.
+def insert_section(doc_lines: list[str], section: list[str], version: str) -> list[str]:
+    rest: list[str] = []
+    skip = False
+    for line in doc_lines:
+        if re.search('^## v' + version + ' snapshot', line) is not None:
+            skip = True
+            continue
+        if line.startswith('## '):
+            skip = False
+        if skip:
+            continue
+        if re.search('^## v[0-9A-Za-z.-]+ snapshot$', line) is not None:
+            rest.append(line + ' (earlier)')
+            continue
+        rest.append(line)
+    found: list[str] = []
+    done = False
+    for line in rest:
+        if not done and re.search('^## v[0-9A-Za-z.-]+ snapshot', line) is not None:
+            found += section
+            done = True
+        found.append(line)
+    return found
+
+def run(words: list[str], root: str) -> int:
+    version = words[0]
+    doc = root + '/docs/performance.md'
+    if len(words) >= 2 and words[1] != '':
+        doc = words[1]
+    res = root + '/benchmarks/results'
+    lin = res + '/linux-x86_64'
+    if not (ospath.isfile(res + '/results.md') and ospath.isfile(res + '/results.json')):
+        rt.die(f'no benchmark results in {res}')
+    if not ospath.isfile(doc):
+        rt.die(f'{doc} not found')
+    rj = res + '/results.json'
+    if jget(rj, 'tomato') != version:
+        rt.die(f'benchmarks/results is for Tomato v{jget(rj, "tomato")}, not v{version}')
+    have_linux = False
+    if ospath.isfile(lin + '/results.json') and ospath.isfile(lin + '/results.md'):
+        if jget(lin + '/results.json', 'tomato') == version:
+            have_linux = True
+        else:
+            rt.eprint(f'note: {lin} is for another version; left out')
+    mac_secs = secs_of(res + '/results.md')
+    if mac_secs == '':
+        rt.die('cannot read the seconds table from results.md')
+    mac_t = ratio_rows(res + '/results.md', '^Tomato.s time divided by')
+    if len(mac_t) < 4:
+        rt.die('cannot read the ratio table from results.md')
+    section = build_section(version, res, lin, have_linux, mac_secs, mac_t)
+    new = insert_section(file_lines(doc), section, version)
+    wanted = '^## v' + version + ' snapshot$'
+    seen = False
+    for line in new:
+        if re.search(wanted, line) is not None:
+            seen = True
+            break
+    if not seen:
+        rt.die(f'no earlier snapshot heading in {doc} to insert before')
+    text = ''
+    for line in new:
+        text += line + '\n'
+    os.write_text(doc, text)
+    rt.say(f'wrote the v{version} snapshot in {doc}')
+    return 0
+
+@main
+def main(*args: tuple[str]):
+    words: list[str] = []
+    for a in args:
+        words.append(a)
+    if len(words) < 1:
+        sys.write_stderr(USAGE + '\n')
+        sys.exit(2)
+    root = ospath.abspath(os.getcwd())
+    status = 0
+    try:
+        status = run(words, root)
+    catch rt.Fatal as e:
+        sys.write_stderr('error: ' + e.message + '\n')
+        status = 1
+    sys.exit(status)

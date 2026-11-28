@@ -1,0 +1,749 @@
+# The generated tables of runtime/tomato_rt.c (the port of tools/gen_case_table.py, tools/gen_width_table.py and
+# tools/check_ctype_table.py; docs/shell-to-tomato-plan.md, stage 5, decision 8). tools/gen_ctype_table.c stays what it is.
+#
+#     tomato run dev/tables.tom main case [--check] FILE --ucd DIR     the case tables between the BEGIN/END GENERATED CASE TABLES markers
+#     tomato run dev/tables.tom main width [--check] FILE --ucd DIR    the width tables between the BEGIN/END GENERATED WIDTH TABLES markers
+#     tomato run dev/tables.tom main ctype FILE --ucd DIR              ctype_alpha_rows and ctype_digit_rows against the Unicode data
+#     tomato run dev/tables.tom main check-all [FILE] [--ucd DIR]      the three checks, `ok   ...` / `FAIL ...` lines (FILE: runtime/tomato_rt.c)
+#     tomato run dev/tables.tom main download --ucd DIR                fetches the four Unicode data files (curl) into DIR
+#
+# Without --check `case` and `width` rewrite the tables in FILE; with it they leave FILE alone and exit 1 when its tables are not the ones
+# this makes. Exit status 0: fine; 1: the tables differ (or a download failed); 2: it cannot say (no or wrong Unicode data, no markers,
+# usage).
+#
+# The old Python versions took their data from Python 3.14's `unicodedata` (Unicode 16.0.0). A Tomato program cannot: its own str.upper
+# and friends use the very tables made here. So this reads the Unicode Character Database of version 16.0.0 from a folder, --ucd DIR (or
+# the environment variable TOMATO_UCD_DIR), holding
+#     UnicodeData.txt  SpecialCasing.txt  DerivedCoreProperties.txt  EastAsianWidth.txt
+# which `download` fetches from https://www.unicode.org/Public/16.0.0/ucd/. It reproduces what CPython 3.14 computes from those files
+# (Tools/unicode/makeunicodedata.py), as the Python scripts asked unicodedata for it:
+#
+#   upper, lower, title of a code point   the unconditional lines of SpecialCasing.txt (no condition field) give the full mapping and
+#                                         replace UnicodeData's simple one (fields 12, 13, 14; an empty field is the code point itself);
+#                                         title is the titlecase mapping
+#   islower, isupper                      the Lowercase and Uppercase properties of DerivedCoreProperties.txt
+#   cased                                 islower or isupper or general category Lt (UnicodeData field 2)
+#   case ignorable                        the Case_Ignorable property of DerivedCoreProperties.txt (that is what str.lower() skips when it looks
+#                                         for the neighbours of a capital sigma, which is how the Python generator read it back)
+#   width 0                               category Mn, Me or Cf except U+110BD and U+110CD, and the Hangul Jamo vowels and final consonants
+#   width 2                               East Asian Width W or F (EastAsianWidth.txt, its `@missing` lines first, so that the unassigned code
+#                                         points of the CJK blocks and planes 2 and 3 are W, as unicodedata has them)
+#   isalpha, isdigit                      category Lu Ll Lt Lm Lo; UnicodeData field 7 (the digit value) not empty
+#   <..., First> and <..., Last> pairs    in UnicodeData.txt stand for every code point between them (CJK, Hangul, Private Use, surrogates)
+#
+# Everything in the generated text is as the Python scripts wrote it, including `as Python 3.14 has it` in the comment line (the data is
+# the data of Python 3.14); the BEGIN line is kept as the file has it, so renaming the generator in the file's marker is an edit of the file.
+import sys
+import os
+import ospath
+import rtool as rt
+
+const UNICODE = '16.0.0'
+const PYTHON = '3.14'
+const BASE_URL = 'https://www.unicode.org/Public/16.0.0/ucd/'
+def file_names() -> list[str]:
+    return ['UnicodeData.txt', 'SpecialCasing.txt', 'DerivedCoreProperties.txt', 'EastAsianWidth.txt']
+const DIGITS = '0123456789ABCDEF'
+const CASE_BEGIN = '/* BEGIN GENERATED CASE TABLES ('
+const CASE_END = '/* END GENERATED CASE TABLES */\n'
+const WIDTH_BEGIN = '/* BEGIN GENERATED WIDTH TABLES ('
+const WIDTH_END = '/* END GENERATED WIDTH TABLES */\n'
+const CP_END = 1114112     # 0x110000
+
+def usage() -> str:
+    names = ', '.join(file_names())
+    return ''.join([
+        'usage: tomato run dev/tables.tom main case [--check] FILE [--ucd DIR]\n',
+        '       tomato run dev/tables.tom main width [--check] FILE [--ucd DIR]\n',
+        '       tomato run dev/tables.tom main ctype FILE [--ucd DIR]\n',
+        '       tomato run dev/tables.tom main check-all [FILE] [--ucd DIR]\n',
+        '       tomato run dev/tables.tom main download [--ucd DIR]\n',
+        f'DIR holds the Unicode {UNICODE} data files ({names}); it can come from TOMATO_UCD_DIR instead of --ucd.\n',
+        f'Get them with: tomato run dev/tables.tom main download --ucd DIR   (from {BASE_URL})\n'])
+
+# The tool cannot say (status 2): the Unicode data is missing or is not version 16.0.0, a marker is missing, a file is unreadable.
+class Unsure(Error):
+    pass
+
+# ---- numbers and text ----------------------------------------------------------------------------------------------------------
+
+def hexu(n: int) -> str:
+    if n == 0:
+        return '0'
+    s = ''
+    v = n
+    while v > 0:
+        s = DIGITS[v % 16] + s
+        v = v // 16
+    return s
+
+def hexpad(n: int, width: int) -> str:
+    s = hexu(n)
+    while len(s) < width:
+        s = '0' + s
+    return s
+
+def hexval(text: str) -> int:
+    t = text.strip()
+    if t == '':
+        raise Unsure(f"a code point is missing in the Unicode data ('{text}')")
+    n = 0
+    for c in t:
+        k = ord(c)
+        if k >= 48 and k <= 57:
+            n = n * 16 + (k - 48)
+        elif k >= 65 and k <= 70:
+            n = n * 16 + (k - 55)
+        elif k >= 97 and k <= 102:
+            n = n * 16 + (k - 87)
+        else:
+            raise Unsure(f"'{t}' is not a code point of the Unicode data")
+    return n
+
+# `XXXX` or `XXXX..YYYY` as [first, last]
+def cp_range(text: str) -> list[int]:
+    t = text.strip()
+    k = t.find('..')
+    if k < 0:
+        v = hexval(t)
+        return [v, v]
+    a = hexval(t[:k])
+    b = hexval(t[k + 2:])
+    if b < a or b >= CP_END:
+        raise Unsure(f"'{t}' is not a range of code points of the Unicode data")
+    return [a, b]
+
+def hexlist(text: str) -> list[int]:
+    found: list[int] = []
+    for w in text.split(' '):
+        if w != '':
+            found.append(hexval(w))
+    return found
+
+def is_surrogate(cp: int) -> bool:
+    return cp >= 55296 and cp < 57344
+
+# a line of a UCD file without its `# comment`
+def data_part(line: str) -> str:
+    k = line.find('#')
+    if k >= 0:
+        return line[:k].strip()
+    return line.strip()
+
+# ---- the Unicode data ----------------------------------------------------------------------------------------------------------
+
+class Ucd:
+    folder: str = ''
+    cat: list[str] = []            # general category of every code point ('Cn' where UnicodeData.txt has none)
+    digit: list[bool] = []         # UnicodeData field 7 not empty
+    up1: dict[int, int] = {}       # simple mappings (fields 12, 13, 14), only where given
+    lo1: dict[int, int] = {}
+    ti1: dict[int, int] = {}
+    sc_lo: dict[int, list[int]] = {}   # SpecialCasing.txt, unconditional lines: full lower, title and upper case
+    sc_ti: dict[int, list[int]] = {}
+    sc_up: dict[int, list[int]] = {}
+    props: list[int] = []          # DerivedCoreProperties.txt: 1 Lowercase, 2 Uppercase, 4 Case_Ignorable
+    eaw: list[str] = []            # East Asian Width
+
+    @init
+    def make(self, folder: str):
+        self.folder = folder
+        self.cat = []
+        self.digit = []
+        self.up1 = {}
+        self.lo1 = {}
+        self.ti1 = {}
+        self.sc_lo = {}
+        self.sc_ti = {}
+        self.sc_up = {}
+        self.props = []
+        self.eaw = []
+
+def ucd_help(folder: str) -> str:
+    return f'get the Unicode {UNICODE} data with: tomato run dev/tables.tom main download --ucd {folder}   (from {BASE_URL})'
+
+# The text of a data file, after checking that it is there and (for the files that say) that it is of version 16.0.0.
+def read_ucd(folder: str, name: str) -> str:
+    path = folder + '/' + name
+    if not ospath.isdir(folder):
+        raise Unsure(f"{folder}: the Unicode data folder is missing; {ucd_help(folder)}")
+    if not ospath.isfile(path):
+        raise Unsure(f"{path}: not found (the Unicode data folder needs {', '.join(file_names())}); {ucd_help(folder)}")
+    text = ''
+    try:
+        text = os.read_text(path)
+    catch IOError as e:
+        raise Unsure(f'{path}: cannot be read: {e.message}')
+    if name == 'UnicodeData.txt':
+        # no header line: version 16.0.0 is the one that has U+1C89 CYRILLIC CAPITAL LETTER TJE (Unicode 15.1 has not)
+        if ('\n1C89;CYRILLIC CAPITAL LETTER TJE;' not in text) and not text.startswith('1C89;CYRILLIC CAPITAL LETTER TJE;'):
+            raise Unsure(f'{path}: is not the Unicode {UNICODE} UnicodeData.txt (U+1C89 CYRILLIC CAPITAL LETTER TJE is missing); {ucd_help(folder)}')
+    else:
+        first = text.split('\n')[0]
+        if ('-' + UNICODE + '.') not in first:
+            raise Unsure(f"{path}: is not Unicode {UNICODE} (its first line is '{first}'); {ucd_help(folder)}")
+    return text
+
+def load_unicode_data(u: Ucd):
+    text = read_ucd(u.folder, 'UnicodeData.txt')
+    u.cat = ['Cn'] * CP_END
+    u.digit = [False] * CP_END
+    first = -1
+    for line in text.split('\n'):
+        if line == '':
+            continue
+        f = line.split(';')
+        if len(f) < 8:
+            raise Unsure(f'{u.folder}/UnicodeData.txt: a line with fewer than 8 fields: {line}')
+        cp = hexval(f[0])
+        if cp >= CP_END:
+            raise Unsure(f'{u.folder}/UnicodeData.txt: code point {f[0]} is beyond U+10FFFF')
+        name = f[1]
+        lo = cp
+        if name.startswith('<') and name.endswith(', First>'):
+            first = cp
+            continue
+        if name.startswith('<') and name.endswith(', Last>'):
+            if first < 0 or first > cp:
+                raise Unsure(f'{u.folder}/UnicodeData.txt: a <..., Last> line without its First: {line}')
+            lo = first
+            first = -1
+        isdig = f[7] != ''
+        for c in range(lo, cp + 1):
+            u.cat[c] = f[2]
+            u.digit[c] = isdig
+        if len(f) >= 15 and lo == cp:
+            if f[12] != '':
+                u.up1[cp] = hexval(f[12])
+            if f[13] != '':
+                u.lo1[cp] = hexval(f[13])
+            if f[14] != '':
+                u.ti1[cp] = hexval(f[14])
+
+def load_special_casing(u: Ucd):
+    text = read_ucd(u.folder, 'SpecialCasing.txt')
+    for line in text.split('\n'):
+        body = data_part(line)
+        if body == '':
+            continue
+        f = body.split(';')
+        if len(f) < 4:
+            raise Unsure(f'{u.folder}/SpecialCasing.txt: a line with fewer than 4 fields: {line}')
+        # a condition (Final_Sigma, language, context) makes it depend on more than the character: skipped, as CPython does
+        # (the capital sigma is handled in the C of unicodeobject.c)
+        if len(f) >= 5 and f[4].strip() != '':
+            continue
+        cp = hexval(f[0])
+        u.sc_lo[cp] = hexlist(f[1])
+        u.sc_ti[cp] = hexlist(f[2])
+        u.sc_up[cp] = hexlist(f[3])
+
+def load_core_properties(u: Ucd):
+    text = read_ucd(u.folder, 'DerivedCoreProperties.txt')
+    u.props = [0] * CP_END
+    for line in text.split('\n'):
+        body = data_part(line)
+        if body == '':
+            continue
+        f = body.split(';')
+        if len(f) < 2:
+            continue
+        p = f[1].strip()
+        bit = 0
+        if p == 'Lowercase':
+            bit = 1
+        elif p == 'Uppercase':
+            bit = 2
+        elif p == 'Case_Ignorable':
+            bit = 4
+        if bit == 0:
+            continue
+        r = cp_range(f[0])
+        for c in range(r[0], r[1] + 1):
+            u.props[c] = u.props[c] | bit
+
+def load_east_asian_width(u: Ucd):
+    text = read_ucd(u.folder, 'EastAsianWidth.txt')
+    u.eaw = ['N'] * CP_END
+    lines = text.split('\n')
+    # `# @missing: 0000..10FFFF; N` and the ranges of the CJK blocks give the width of what the data lines leave out
+    for line in lines:
+        if line.startswith('# @missing:'):
+            f = line[len('# @missing:'):].split(';')
+            if len(f) >= 2:
+                r = cp_range(f[0])
+                w = data_part(f[1])
+                for c in range(r[0], r[1] + 1):
+                    u.eaw[c] = w
+    for line in lines:
+        body = data_part(line)
+        if body == '':
+            continue
+        f = body.split(';')
+        if len(f) < 2:
+            raise Unsure(f'{u.folder}/EastAsianWidth.txt: a line without a width: {line}')
+        r = cp_range(f[0])
+        w = f[1].strip()
+        for c in range(r[0], r[1] + 1):
+            u.eaw[c] = w
+
+# ---- the case tables -----------------------------------------------------------------------------------------------------------
+
+def rows_text(name: str, keys: list[int], delta: dict[int, int]) -> str:
+    parts: list[str] = ['static const int32_t ' + name + '[][4] = {\n']
+    n = len(keys)
+    i = 0
+    while i < n:
+        cp = keys[i]
+        d = delta[cp]
+        step = 1
+        if i + 1 < n and keys[i + 1] == cp + 2 and delta[keys[i + 1]] == d and (cp + 1) not in delta:
+            step = 2
+        last = cp
+        i += 1
+        while i < n and keys[i] == last + step and delta[keys[i]] == d:
+            last = keys[i]
+            i += 1
+        parts.append('    {0x' + hexu(cp) + ', 0x' + hexu(last) + ', ' + str(d) + ', ' + str(step) + '},\n')
+    parts.append('};\n')
+    return ''.join(parts)
+
+def full_text(name: str, cps: list[int], maps: dict[int, list[int]]) -> str:
+    parts: list[str] = ['static const int32_t ' + name + '[][5] = {\n']
+    for cp in cps:
+        m = maps[cp]
+        if len(m) < 2 or len(m) > 3:
+            raise Unsure(f'U+{hexpad(cp, 4)} has a full mapping of {len(m)} code points: the runtime tables hold two or three')
+        third = '0'
+        if len(m) == 3:
+            third = '0x' + hexu(m[2])
+        parts.append('    {0x' + hexu(cp) + ', ' + str(len(m)) + ', 0x' + hexu(m[0]) + ', 0x' + hexu(m[1]) + ', ' + third + '},\n')
+    parts.append('};\n')
+    return ''.join(parts)
+
+# one-code-point mapping of cp as [code point], or the full one
+def mapping(cp: int, full: dict[int, list[int]], simple: dict[int, int]) -> list[int]:
+    if cp in full:
+        return full[cp]
+    if cp in simple:
+        return [simple[cp]]
+    return [cp]
+
+def case_text(u: Ucd, begin: str) -> str:
+    load_unicode_data(u)
+    load_special_casing(u)
+    load_core_properties(u)
+    # the code points that have any mapping; the others change under no case
+    have: dict[int, bool] = {}
+    for d1 in [u.up1, u.lo1, u.ti1]:
+        for k in d1:
+            have[k] = True
+    for d2 in [u.sc_lo, u.sc_ti, u.sc_up]:
+        for k in d2:
+            have[k] = True
+    keys_all: list[int] = []
+    for k in have:
+        keys_all.append(k)
+    cps = sorted(keys_all)
+    ups: dict[int, int] = {}
+    lows: dict[int, int] = {}
+    titles: dict[int, int] = {}
+    up_keys: list[int] = []
+    low_keys: list[int] = []
+    title_keys: list[int] = []
+    upper_full: dict[int, list[int]] = {}
+    lower_full: dict[int, list[int]] = {}
+    title_full: dict[int, list[int]] = {}
+    upper_cps: list[int] = []
+    lower_cps: list[int] = []
+    title_cps: list[int] = []
+    for cp in cps:
+        if cp < 128 or is_surrogate(cp):
+            continue
+        up = mapping(cp, u.sc_up, u.up1)
+        lo = mapping(cp, u.sc_lo, u.lo1)
+        ti = mapping(cp, u.sc_ti, u.ti1)
+        if len(up) == 1:
+            if up[0] != cp:
+                ups[cp] = up[0] - cp
+                up_keys.append(cp)
+        else:
+            upper_full[cp] = up
+            upper_cps.append(cp)
+        if len(lo) == 1:
+            if lo[0] != cp:
+                lows[cp] = lo[0] - cp
+                low_keys.append(cp)
+        else:
+            lower_full[cp] = lo
+            lower_cps.append(cp)
+        if ti != up:
+            if len(ti) == 1:
+                titles[cp] = ti[0] - cp
+                title_keys.append(cp)
+            else:
+                title_full[cp] = ti
+                title_cps.append(cp)
+    # the properties: where they change, from 0x80 on: (code point << 2) | flags, 1 = cased, 2 = case ignorable
+    runs: list[str] = []
+    prev = -1
+    for cp in range(128, CP_END):
+        f = 0
+        if not is_surrogate(cp):
+            p = u.props[cp]
+            if (p & 3) != 0 or u.cat[cp] == 'Lt':
+                f = 1
+            if (p & 4) != 0:
+                f = f | 2
+        if f != prev:
+            runs.append('0x' + hexu(cp * 4 + f) + ',')
+            prev = f
+    s: list[str] = [begin]
+    s.append(f'/* Unicode {UNICODE} case mapping as Python {PYTHON} has it: str.upper, str.lower and str.title of every code point from 0x80 up. */\n')
+    s.append(rows_text('case_upper_rows', up_keys, ups))
+    s.append(rows_text('case_lower_rows', low_keys, lows))
+    s.append(rows_text('case_title_rows', title_keys, titles))
+    s.append(full_text('case_upper_full', upper_cps, upper_full))
+    s.append(full_text('case_lower_full', lower_cps, lower_full))
+    s.append(full_text('case_title_full', title_cps, title_full))
+    s.append('static const uint32_t case_prop_runs[] = {\n')
+    i = 0
+    while i < len(runs):
+        s.append('    ' + ' '.join(runs[i:i + 8]) + '\n')
+        i += 8
+    s.append('};\n')
+    s.append(CASE_END)
+    return ''.join(s)
+
+# ---- the width tables ----------------------------------------------------------------------------------------------------------
+
+def ranges_text(name: str, pred: list[bool]) -> str:
+    rs: list[str] = []
+    cp = 768       # 0x300
+    while cp < CP_END:
+        if not pred[cp]:
+            cp += 1
+            continue
+        last = cp
+        while last + 1 < CP_END and pred[last + 1]:
+            last += 1
+        rs.append('{0x' + hexpad(cp, 4) + ',0x' + hexpad(last, 4) + '}')
+        cp = last + 1
+    s: list[str] = ['static const CpRange ' + name + '[] = {\n']
+    i = 0
+    while i < len(rs):
+        s.append('    ' + ','.join(rs[i:i + 8]) + ',\n')
+        i += 8
+    s.append('};\n')
+    return ''.join(s)
+
+def width_text(u: Ucd, begin: str) -> str:
+    load_unicode_data(u)
+    load_east_asian_width(u)
+    zero: list[bool] = [False] * CP_END
+    wide: list[bool] = [False] * CP_END
+    for cp in range(768, CP_END):
+        if is_surrogate(cp):
+            continue
+        if cp >= 4448 and cp <= 4607:        # 0x1160..0x11FF
+            zero[cp] = True
+        elif cp >= 55216 and cp <= 55295:    # 0xD7B0..0xD7FF
+            zero[cp] = True
+        else:
+            c = u.cat[cp]
+            # the Kaithi number signs U+110BD and U+110CD are drawn over a following digit and take a cell of their own in terminals
+            if (c == 'Mn' or c == 'Me' or c == 'Cf') and cp != 69821 and cp != 69837:
+                zero[cp] = True
+        w = u.eaw[cp]
+        if w == 'W' or w == 'F':
+            wide[cp] = True
+    s: list[str] = [begin]
+    s.append(f'/* Unicode {UNICODE} as Python {PYTHON} has it (unicodedata): width 0 for Mn, Me and Cf, width 2 for East Asian Width W and F. */\n')
+    s.append(ranges_text('width0', zero))
+    s.append(ranges_text('width2', wide))
+    s.append(WIDTH_END)
+    return ''.join(s)
+
+# ---- the letter and digit tables -----------------------------------------------------------------------------------------------
+
+# The set of code points (as flags) of an array `static const int32_t NAME[][2] = {{first, last}, ...};` in the text
+def table_rows(text: str, name: str) -> list[bool]:
+    head = 'static const int32_t ' + name + '[][2] = {'
+    a = text.find(head)
+    if a < 0:
+        raise Unsure(f'{name} not found')
+    b = text.find('\n};', a)
+    if b < 0:
+        raise Unsure(f'the end of {name} not found')
+    have: list[bool] = [False] * CP_END
+    for chunk in text[a + len(head):b].split('{')[1:]:
+        inner = chunk.partition('}')[0]
+        parts = inner.split(',')
+        if len(parts) != 2:
+            raise Unsure(f'{name}: a row that is not {{first, last}}: {{{inner}}}')
+        lo = hexval(parts[0].strip()[2:])
+        hi = hexval(parts[1].strip()[2:])
+        for c in range(lo, hi + 1):
+            have[c] = True
+    return have
+
+# 0: the tables are the Unicode data's (with the message nothing), else the messages of what differs
+def ctype_problems(u: Ucd, text: str) -> list[str]:
+    load_unicode_data(u)
+    problems: list[str] = []
+    for name in ['ctype_alpha_rows', 'ctype_digit_rows']:
+        have = table_rows(text, name)
+        diff: list[int] = []
+        count = 0
+        for cp in range(0, CP_END):
+            want = False
+            if cp < 128:
+                want = False       # ASCII is handled before the tables: nothing of it belongs in them
+            elif name == 'ctype_alpha_rows':
+                c = u.cat[cp]
+                want = c == 'Lu' or c == 'Ll' or c == 'Lt' or c == 'Lm' or c == 'Lo'
+            else:
+                want = u.digit[cp]
+            if want != have[cp]:
+                count += 1
+                if len(diff) < 5:
+                    diff.append(cp)
+        if count > 0:
+            shown: list[str] = []
+            for cp in diff:
+                who = 'UCD only'
+                if have[cp]:
+                    who = 'table only'
+                shown.append(f'U+{hexpad(cp, 4)} ({who})')
+            problems.append(f"{name} differs from the Unicode data at {count} code points, first: {', '.join(shown)}")
+    return problems
+
+# ---- the commands --------------------------------------------------------------------------------------------------------------
+
+class Opts:
+    check: bool = False
+    file: str = ''
+    ucd: str = ''
+    files: int = 0
+
+    @init
+    def make(self):
+        self.check = False
+        self.file = ''
+        self.ucd = ''
+        self.files = 0
+
+# --check, --ucd DIR (or --ucd=DIR), one FILE; TOMATO_UCD_DIR is the folder when --ucd is not there. None when the arguments are wrong.
+def parse_opts(args: list[str], allow_check: bool) -> Opts | None:
+    o = Opts()
+    env = os.getenv('TOMATO_UCD_DIR')
+    if env is not None:
+        o.ucd = env
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--check' and allow_check:
+            o.check = True
+        elif a == '--ucd':
+            if i + 1 >= len(args):
+                return None
+            o.ucd = args[i + 1]
+            i += 1
+        elif a.startswith('--ucd='):
+            o.ucd = a[6:]
+        elif a.startswith('-') and a != '-':
+            return None
+        else:
+            o.file = a
+            o.files += 1
+        i += 1
+    return o
+
+def no_ucd() -> str:
+    return f'no Unicode data folder: give --ucd DIR or set TOMATO_UCD_DIR (DIR holds {', '.join(file_names())} of Unicode {UNICODE}); {ucd_help('DIR')}'
+
+# The text of FILE and where its tables are: [start of the BEGIN line, its end, the position after the END line]
+def find_tables(path: str, text: str, begin: str, end: str, what: str) -> list[int]:
+    a = text.find(begin)
+    b = text.find(end)
+    if a < 0 or b < 0 or b < a:
+        raise Unsure(f'{path}: the BEGIN/END GENERATED {what} TABLES markers are missing')
+    eol = text.find('\n', a)
+    return [a, eol + 1, b + len(end)]
+
+def read_file(path: str) -> str:
+    if not ospath.isfile(path):
+        raise Unsure(f'{path}: cannot be read (not a file)')
+    try:
+        return os.read_text(path)
+    catch IOError as e:
+        raise Unsure(f'{path}: cannot be read: {e.message}')
+
+# The new text of FILE with its tables (kind: case or width) made from the Unicode data in folder: [old text, new text]
+def regenerate(kind: str, path: str, folder: str) -> list[str]:
+    text = read_file(path)
+    begin = CASE_BEGIN
+    end = CASE_END
+    what = 'CASE'
+    if kind == 'width':
+        begin = WIDTH_BEGIN
+        end = WIDTH_END
+        what = 'WIDTH'
+    pos = find_tables(path, text, begin, end, what)
+    begin_line = text[pos[0]:pos[1]]
+    u = Ucd(folder)
+    made = ''
+    if kind == 'case':
+        made = case_text(u, begin_line)
+    else:
+        made = width_text(u, begin_line)
+    return [text, text[:pos[0]] + made + text[pos[2]:]]
+
+# 0 fine, 1 the tables differ
+def run_table(kind: str, o: Opts) -> int:
+    if o.ucd == '':
+        raise Unsure(no_ucd())
+    r = regenerate(kind, o.file, o.ucd)
+    if o.check:
+        if r[1] != r[0]:
+            sys.write_stderr(f'{o.file}: the {kind} tables are not what dev/tables.tom {kind} makes: run it without --check\n')
+            return 1
+        return 0
+    try:
+        os.write_text(o.file, r[1])
+    catch IOError as e:
+        raise Unsure(f'{o.file}: cannot be written: {e.message}')
+    return 0
+
+def run_ctype(o: Opts) -> int:
+    if o.ucd == '':
+        raise Unsure(no_ucd())
+    problems = ctype_problems(Ucd(o.ucd), read_file(o.file))
+    for p in problems:
+        sys.write_stdout(p + '\n')
+    if len(problems) > 0:
+        return 1
+    return 0
+
+def run_download(o: Opts) -> int:
+    if o.ucd == '':
+        raise Unsure(no_ucd())
+    try:
+        os.makedirs(o.ucd, True)
+    catch IOError as e:
+        raise Unsure(f'{o.ucd}: cannot be made: {e.message}')
+    for name in file_names():
+        target = o.ucd + '/' + name
+        part = target + '.part'
+        rt.say(f'downloading {BASE_URL}{name}')
+        r = rt.run(['curl', '-fsSL', '-o', part, BASE_URL + name])
+        if r.status != 0:
+            rt.rm(part)
+            sys.write_stderr(f'download of {name} failed (curl status {r.status}): {r.stderr.strip()}\n')
+            return 1
+        os.rename(part, target)
+    # the files must be what was asked for
+    for name in file_names():
+        _text = read_ucd(o.ucd, name)
+    rt.say(f'the Unicode {UNICODE} data is in {o.ucd}')
+    return 0
+
+# `ok   NAME` / `FAIL NAME` and the detail under it, indented by 5, as tests/run.sh prints them; returns whether it was fine
+def report(name: str, problem: str) -> bool:
+    if problem == '':
+        sys.write_stdout('ok   ' + name + '\n')
+        return True
+    sys.write_stdout('FAIL ' + name + '\n')
+    for line in problem.split('\n'):
+        sys.write_stdout('     ' + line + '\n')
+    return False
+
+# The three checks. A check that cannot say is a FAIL here: the Unicode data was given, so it should be usable.
+def run_check_all(o: Opts) -> int:
+    path = o.file
+    if path == '':
+        path = 'runtime/tomato_rt.c'
+    if o.ucd == '':
+        ci = os.getenv('CI')
+        if ci is not None and ci != '':
+            _bad = report('generated tables', 'the Unicode 16.0.0 data (--ucd DIR or TOMATO_UCD_DIR) is required in CI: the case, width and letter/digit tables cannot be checked')
+            return 1
+        sys.write_stdout(f'skip: no Unicode {UNICODE} data (--ucd DIR or TOMATO_UCD_DIR) to check the generated case, width and letter/digit tables\n')
+        return 0
+    failed = 0
+    for kind in ['case', 'width']:
+        label = f'generated {kind} tables'
+        problem = ''
+        try:
+            r = regenerate(kind, path, o.ucd)
+            if r[1] != r[0]:
+                problem = f'{path}: the {kind} tables are not what dev/tables.tom {kind} makes (rewrite with: tomato run dev/tables.tom main {kind} {path} --ucd {o.ucd})'
+        catch Unsure as e:
+            problem = e.message
+        name = f'generated {kind} tables in {path} are what dev/tables.tom {kind} makes'
+        if problem != '':
+            name = label
+        if not report(name, problem):
+            failed += 1
+    problem2 = ''
+    try:
+        found = ctype_problems(Ucd(o.ucd), read_file(path))
+        if len(found) > 0:
+            problem2 = '\n'.join(found) + ' (regenerate with tools/gen_ctype_table.c, see its header)'
+    catch Unsure as e:
+        problem2 = e.message
+    name2 = f'isalpha/isdigit tables in {path} agree with the Unicode {UNICODE} data (dev/tables.tom ctype)'
+    if problem2 != '':
+        name2 = 'isalpha/isdigit tables'
+    if not report(name2, problem2):
+        failed += 1
+    if failed > 0:
+        return 1
+    return 0
+
+@main
+def main(*args: tuple[str]):
+    given: list[str] = []
+    for a in args:
+        given.append(a)
+    if len(given) == 0 or given[0] == '-h' or given[0] == '--help':
+        sys.write_stderr(usage())
+        sys.exit(2)
+    cmd = given[0]
+    rest = given[1:]
+    status = 2
+    try:
+        o = parse_opts(rest, cmd == 'case' or cmd == 'width')
+        if o is None:
+            sys.write_stderr(usage())
+            sys.exit(2)
+        opts = Opts()
+        if o is not None:
+            opts = o
+        if cmd == 'case' or cmd == 'width':
+            if opts.files != 1:
+                sys.write_stderr(usage())
+                sys.exit(2)
+            status = run_table(cmd, opts)
+        elif cmd == 'ctype':
+            if opts.files != 1:
+                sys.write_stderr(usage())
+                sys.exit(2)
+            status = run_ctype(opts)
+        elif cmd == 'check-all':
+            if opts.files > 1:
+                sys.write_stderr(usage())
+                sys.exit(2)
+            status = run_check_all(opts)
+        elif cmd == 'download':
+            if opts.files != 0:
+                sys.write_stderr(usage())
+                sys.exit(2)
+            status = run_download(opts)
+        else:
+            sys.write_stderr(usage())
+            sys.exit(2)
+    catch Unsure as e:
+        sys.write_stderr(f'dev/tables.tom {cmd}: {e.message}\n')
+        sys.exit(2)
+    sys.exit(status)

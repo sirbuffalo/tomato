@@ -2,3 +2,4 @@ build/
 release/out/
 release/release.conf
 release/*.bak
+dev/release.conf

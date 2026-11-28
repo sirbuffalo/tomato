@@ -1,0 +1,346 @@
+# Installs the toolchains the Linux x86-64 part of a release needs (dev/release.tom, step "linux") into one folder, with no root:
+# clang (LLVM prebuilt), Go, Rust (rustup, minimal profile), Valgrind (built from source). release/linux-setup.sh and
+# release/check-lto.sh over again. Run it ON the Linux machine, from a checkout (it needs dev/rtool.tom beside it, and `tomato`):
+#     tomato run dev/linux_setup.tom main              install (or complete) the toolchains
+#     tomato run dev/linux_setup.tom check_lto         check that clang really links with cross-module LTO (exit 1 when not)
+# Environment: TOMATO_LINUX_TOOLS (default ~/.tomato-release/linux-tools), LLVM_VERSION (21.1.8), GO_VERSION (1.27.4),
+# VALGRIND_VERSION (3.26.0). Re-running skips what is already installed. Needs curl, tar, xz, bzip2, gcc, make and nm (binutils), and cmake when libxml2 has to be built.
+# Checksums: Go is verified against go.dev's published sha256, rustup-init against static.rust-lang.org's, libxml2 (built for lld) against
+# the .sha256sum that download.gnome.org publishes beside it; LLVM and Valgrind come
+# over https from their official download locations and their sha256 is written to SHA256SUMS in the folder for later comparison.
+import sys
+import os
+import ospath
+import re
+import rtool as rt
+
+# A command that failed where the shell script had `set -e`: the program ends with its status (nothing more is printed: the command
+# printed its own error).
+class Stop(Error):
+    code: int = 1
+
+    @init
+    def make(self, code: int):
+        self.code = code
+
+def log(text: str):
+    sys.write_stdout('== ' + text + '\n')
+
+def fail(text: str):
+    sys.write_stderr('error: ' + text + '\n')
+
+# a program run with its output shown; a status other than 0 ends the program (`set -e`)
+def must(argv: list[str], env: dict[str, str] | None = None):
+    status = rt.run_shown(argv, None, env)
+    if status != 0:
+        raise Stop(status)
+
+# a program run with its output (both streams) in a log file, as `cmd > FILE 2>&1`; a status other than 0 ends the program
+def must_logged(argv: list[str], logfile: str, cwd: str | None = None):
+    r = rt.run(argv, cwd)
+    rt.write(logfile, r.stdout + r.stderr)
+    if r.status != 0:
+        raise Stop(r.status)
+
+def must_download(url: str, dest: str):
+    must(['curl', '-fsSL', '-o', dest, url])
+
+# The text a download gives, '' when it fails (curl's own error is shown, as in a pipeline)
+def fetch(url: str) -> str:
+    r = rt.run(['curl', '-fsSL', url])
+    if r.status != 0:
+        sys.write_stderr(r.stderr)
+        return ''
+    return r.stdout
+
+# ---- tar: the one place that unpacks an archive (std's tarfile and gzip replace it) --------------------------------------------------
+# kind: 'z' (gzip), 'J' (xz) or 'j' (bzip2); strip: leading folders to drop (--strip-components)
+def untar(archive: str, folder: str, kind: str, strip: int = 0):
+    argv = ['tar', '-C', folder]
+    if strip > 0:
+        argv.append(f'--strip-components={strip}')
+    argv.append('-x' + kind + 'f')
+    argv.append(archive)
+    must(argv)
+
+def sha_of(path: str) -> str:
+    return rt.sha256_file(path)
+
+# one line of SHA256SUMS: `shasum -a 256 FILE >> SHA256SUMS`; False when the file cannot be hashed
+def record(prefix: str, path: str) -> bool:
+    h = sha_of(path)
+    if h == '':
+        return False
+    rt.append(prefix + '/SHA256SUMS', f'{h}  {path}\n')
+    return True
+
+# `ln -sf TARGET PATH`
+def link_force(target: str, path: str):
+    rt.rm(path)
+    rt.symlink(target, path)
+
+def first_field(text: str) -> str:
+    found: list[str] = []
+    for line in text.rstrip('\n').split('\n'):
+        found.append(line.partition(' ')[0])
+    return '\n'.join(found)
+
+# ---- the LTO probe, shared by the installer and `check_lto` ----------------------------------------------------------------------------
+
+# Two C files, linked with clang -O2 -flto: value is defined in one and used in the other, so cross-module LTO inlines it and the linked
+# program has no symbol `value`. Gives how it ended: '' when LTO worked, else 'compile' (clang failed), 'run' (the program failed),
+# 'nomain' (nm does not list main, so the check cannot tell) or 'value' (value is still there); and the status of the failing command.
+class LtoResult:
+    why: str = ''
+    status: int = 0
+
+    @init
+    def make(self, why: str, status: int):
+        self.why = why
+        self.status = status
+
+def lto_probe(folder: str) -> LtoResult:
+    rt.write(folder + '/a.c', 'int value(void) { return 42; }\n')
+    rt.write(folder + '/b.c', 'int value(void); int main(void) { return value() != 42; }\n')
+    status = rt.run_shown(['clang', '-O2', '-flto', folder + '/a.c', folder + '/b.c', '-o', folder + '/test'])
+    if status != 0:
+        return LtoResult('compile', status)
+    status = rt.run_shown([folder + '/test'])
+    if status != 0:
+        return LtoResult('run', status)
+    listing = rt.run(['nm', folder + '/test']).stdout
+    names_main = False
+    names_value = False
+    for line in listing.split('\n'):
+        if line.endswith(' main'):
+            names_main = True
+        if line.endswith(' value'):
+            names_value = True
+    if not names_main:
+        return LtoResult('nomain', 1)
+    if names_value:
+        return LtoResult('value', 1)
+    return LtoResult('', 0)
+
+# release/check-lto.sh: check the actual linker, not just whether clang accepts -flto. LTO removes value across translation units.
+def check_lto() -> int:
+    if not rt.have('nm'):
+        fail('nm is required to verify LTO')
+        return 1
+    rt.watch_signals()
+    work = rt.mkdtemp('tmp.')
+    status = 1
+    try:
+        r = lto_probe(work)
+        if r.why == 'compile' or r.why == 'run':
+            status = r.status
+        elif r.why == 'nomain':
+            fail('nm does not list main in a linked program, so the LTO check cannot tell')
+            status = 1
+        elif r.why == 'value':
+            fail('cross-module LTO did not eliminate value')
+            status = 1
+        else:
+            print('LTO cross-module optimization verified')
+            status = 0
+    catch Error as e:
+        n = rt.interrupted_by(e)
+        if n == 0:
+            raise e
+        status = 128 + n
+    finally:
+        rt.rmtree(work)
+    return status
+
+# ---- the installer ------------------------------------------------------------------------------------------------------------------------
+
+def env_or(name: str, default: str) -> str:
+    v = os.getenv(name)
+    if v is None or v == '':
+        return default
+    return v
+
+def home_dir() -> str:
+    h = os.getenv('HOME')
+    if h is None:
+        return ''
+    return h
+
+# The sha256 that go.dev's JSON publishes for a file: the text is cut at every ',' and '{' (one field per line), and the first
+# "sha256" field after the one that names the file is the value
+def go_sha256(listing: str, filename: str) -> str:
+    hit = False
+    for seg in listing.replace('{', ',').split(','):
+        if not hit and re.search('"filename": *"' + re.escape(filename) + '"', seg) is not None:
+            hit = True
+        if hit and '"sha256"' in seg:
+            m = re.search('"sha256": *"([^"]*)"', seg)
+            if m is None:
+                return ''
+            return m.group(1)
+    return ''
+
+def install(prefix: str) -> int:
+    llvm = env_or('LLVM_VERSION', '21.1.8')
+    gov = env_or('GO_VERSION', '1.27.4')
+    vg = env_or('VALGRIND_VERSION', '3.26.0')
+    if sys.platform() != 'linux' or rt.out(['uname', '-m']) != 'x86_64':
+        fail('this installs Linux x86-64 tools')
+        return 1
+    for t in ['curl', 'tar', 'xz', 'bzip2', 'gcc', 'make', 'nm']:
+        if not rt.have(t):
+            fail(f'{t} is needed to install the toolchains')
+            return 1
+    dl = prefix + '/dl'
+    rt.mkdirs(prefix + '/bin')
+    rt.mkdirs(dl)
+    os.chdir(dl)
+    path = prefix + '/bin:' + prefix + '/llvm/bin:' + prefix + '/go/bin:' + prefix + '/cargo/bin'
+    old = os.getenv('PATH')
+    if old is not None:
+        path += ':' + old
+    os.putenv('PATH', path)
+
+    if not rt.have('go') or ('go' + gov + ' ') not in rt.out_any(['go', 'version']):
+        log(f'Go {gov}')
+        f = f'go{gov}.linux-amd64.tar.gz'
+        must_download('https://go.dev/dl/' + f, dl + '/' + f)
+        want = go_sha256(fetch('https://go.dev/dl/?mode=json&include=all'), f)
+        if want == '' or sha_of(dl + '/' + f) != want:
+            fail(f"Go tarball checksum mismatch (want '{want}')")
+            return 1
+        rt.rmtree(prefix + '/go')
+        untar(dl + '/' + f, prefix, 'z')
+        link_force(prefix + '/go/bin/go', prefix + '/bin/go')
+        link_force(prefix + '/go/bin/gofmt', prefix + '/bin/gofmt')
+    must(['go', 'version'])
+
+    if not rt.have('rustc'):
+        log('Rust (rustup, minimal)')
+        u = 'https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init'
+        must_download(u, dl + '/rustup-init')
+        want = first_field(fetch(u + '.sha256'))
+        if sha_of(dl + '/rustup-init') != want:
+            fail('rustup-init checksum mismatch')
+            return 1
+        rt.chmod_x([dl + '/rustup-init'])
+        must([dl + '/rustup-init', '-y', '--profile', 'minimal', '--no-modify-path', '--default-toolchain', 'stable'], {'RUSTUP_HOME': prefix + '/rustup', 'CARGO_HOME': prefix + '/cargo'})
+        # cargo needs the same homes every time: small wrappers
+        for b in ['rustc', 'cargo']:
+            rt.write(prefix + '/bin/' + b, f'#!/bin/sh\nRUSTUP_HOME="{prefix}/rustup" CARGO_HOME="{prefix}/cargo" exec "{prefix}/cargo/bin/{b}" "$@"\n')
+            rt.chmod_x([prefix + '/bin/' + b])
+    must(['rustc', '--version'])
+
+    # (The wrapper below runs $prefix/llvm/bin/clang, so a matching clang elsewhere is not enough.)
+    if not ospath.isfile(prefix + '/llvm/bin/clang') or not rt.is_exec(prefix + '/llvm/bin/clang') or ('version ' + llvm) not in rt.out_any([prefix + '/llvm/bin/clang', '--version']):
+        log(f'clang {llvm} (LLVM prebuilt)')
+        f = f'LLVM-{llvm}-Linux-X64.tar.xz'
+        must_download(f'https://github.com/llvm/llvm-project/releases/download/llvmorg-{llvm}/{f}', dl + '/' + f)
+        _ok = record(prefix, dl + '/' + f)
+        rt.rmtree(prefix + '/llvm')
+        rt.mkdirs(prefix + '/llvm')
+        untar(dl + '/' + f, prefix + '/llvm', 'J', 1)
+        rt.rm(dl + '/' + f)
+    # The LLVM prebuilt lld needs libxml2.so.2, absent on newer Ubuntu releases. Build that ABI locally, and use lld explicitly:
+    # the LLVM archive does not include the LLVMgold plugin needed by the system linker. Wrappers keep the library path local to lld.
+    if not ospath.isfile(prefix + '/libxml2/lib/libxml2.so.2'):
+        log('libxml2 2.13.9 (for lld)')
+        if not rt.have('cmake'):
+            fail('cmake is needed to build libxml2 for lld')
+            return 1
+        f = 'libxml2-2.13.9.tar.xz'
+        must_download('https://download.gnome.org/sources/libxml2/2.13/' + f, dl + '/' + f)
+        want = ''
+        for line in fetch('https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.9.sha256sum').split('\n'):
+            parts = line.replace('\t', ' ').split(' ')
+            fields: list[str] = []
+            for p in parts:
+                if p != '':
+                    fields.append(p)
+            if len(fields) >= 2 and fields[1] == f:
+                want = fields[0]
+        got = sha_of(dl + '/' + f)
+        if want == '' or want != got:
+            fail(f'{f} does not match the sha256 that download.gnome.org publishes')
+            rt.rm(dl + '/' + f)
+            return 1
+        if not record(prefix, dl + '/' + f):
+            return 1
+        rt.rmtree(dl + '/src-libxml2')
+        rt.mkdirs(dl + '/src-libxml2')
+        untar(dl + '/' + f, dl + '/src-libxml2', 'J', 1)
+        must_logged(['cmake', '-S', 'src-libxml2', '-B', 'src-libxml2/build', f'-DCMAKE_INSTALL_PREFIX={prefix}/libxml2', '-DCMAKE_INSTALL_LIBDIR=lib', '-DLIBXML2_WITH_PYTHON=OFF', '-DLIBXML2_WITH_LZMA=OFF', '-DLIBXML2_WITH_ICONV=OFF', '-DLIBXML2_WITH_TESTS=OFF'], dl + '/src-libxml2/configure.log')
+        must_logged(['cmake', '--build', 'src-libxml2/build', '-j', '2'], dl + '/src-libxml2/build.log')
+        must_logged(['cmake', '--install', 'src-libxml2/build'], dl + '/src-libxml2/install.log')
+    rt.rm(prefix + '/bin/clang')
+    rt.rm(prefix + '/bin/ld.lld')
+    rt.write(prefix + '/bin/clang', f'#!/bin/sh\nexec "{prefix}/llvm/bin/clang" -Wno-unused-command-line-argument --ld-path="{prefix}/bin/ld.lld" "$@"\n')
+    rt.write(prefix + '/bin/ld.lld', f'#!/bin/sh\nLD_LIBRARY_PATH="{prefix}/libxml2/lib${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}" exec "{prefix}/llvm/bin/ld.lld" "$@"\n')
+    rt.chmod_x([prefix + '/bin/clang', prefix + '/bin/ld.lld'])
+    print(rt.out_any(['clang', '--version']).partition('\n')[0])
+    probe = rt.mkdtemp('tmp.')
+    why = 'compile'
+    try:
+        why = lto_probe(probe).why
+    finally:
+        rt.rmtree(probe)
+    if why != '':
+        fail('clang did not perform cross-module LTO')
+        return 1
+
+    if not rt.have('valgrind') or vg not in rt.out_any(['valgrind', '--version']):
+        log(f'Valgrind {vg} (from source)')
+        f = f'valgrind-{vg}.tar.bz2'
+        must_download('https://sourceware.org/pub/valgrind/' + f, dl + '/' + f)
+        _ok = record(prefix, dl + '/' + f)
+        rt.rmtree(dl + '/src-valgrind')
+        rt.mkdirs(dl + '/src-valgrind')
+        untar(dl + '/' + f, dl + '/src-valgrind', 'j', 1)
+        sdir = dl + '/src-valgrind'
+        jobs = rt.out(['nproc'])
+        built = False
+        try:
+            must_logged(['./configure', f'--prefix={prefix}/valgrind'], sdir + '/configure.log', sdir)
+            must_logged(['make', '-j' + jobs], sdir + '/make.log', sdir)
+            must_logged(['make', 'install'], sdir + '/install.log', sdir)
+            built = True
+        catch Stop:
+            built = False
+        if not built:
+            fail(f'building Valgrind failed (see {prefix}/dl/src-valgrind/*.log)')
+            return 1
+        link_force(prefix + '/valgrind/bin/valgrind', prefix + '/bin/valgrind')
+    must(['valgrind', '--version'])
+    # does it work on this system's C library (some need libc6-dbg symbols for ld.so redirection)?
+    r = rt.run(['valgrind', '--tool=none', '/bin/true'])
+    rt.write(dl + '/vg-probe.txt', r.stdout + r.stderr)
+    if r.status != 0:
+        sys.write_stderr(r.stdout + r.stderr)
+        fail('valgrind cannot run /bin/true here (needs libc debug symbols: apt-get download libc6-dbg, dpkg -x it, and point valgrind at it with --extra-debuginfo-path)')
+        return 1
+    print(f'linux tools ready in {prefix} (add {prefix}/bin to PATH; dev/release.tom does that itself)')
+    return 0
+
+def run_install() -> int:
+    prefix = env_or('TOMATO_LINUX_TOOLS', home_dir() + '/.tomato-release/linux-tools')
+    status = 1
+    try:
+        status = install(prefix)
+    catch Stop as e:
+        status = e.code
+    catch IOError as e:
+        sys.write_stderr(e.message + '\n')
+        status = 1
+    return status
+
+def exit_with(code: int):
+    if code != 0:
+        sys.exit(code)
+
+@main
+def main():
+    exit_with(run_install())
+
+@check_lto
+def entry_check_lto():
+    exit_with(check_lto())

@@ -112,7 +112,7 @@ await_object() { # waits for the bootstrap object t_compiler_build makes; fails 
 job_run() { # id, function and arguments: runs it in a folder of its own
   id="$1"; shift; work="$shared/j$id"; mkdir -p "$work"; eval "section_name=\$sec_$id"
   case "$1" in   # (the ones that do not link a program with the runtime do not wait for it)
-    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_release_resume|t_wasm_*|t_error_templates|t_error_raises|t_errors_append_only|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists|t_std_public_fields|t_shell_portability) ;;
+    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_release_resume|t_release_versions_tom|t_release_resume_tom|t_release_build_tom|t_pkg_scripts|t_generated_tables_tom|t_wasm_*|t_error_templates|t_error_raises|t_errors_append_only|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists|t_std_public_fields|t_shell_portability) ;;
     *) await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")" ;;
   esac
   if [ -n "$times" ]; then
@@ -3318,6 +3318,50 @@ t_release_versions() { # the version release/release.sh picks (--next-version: n
   check "release.sh refuses older, malformed and build-tagged versions" "refused refused refused refused refused refused refused" \
     "$(nv 1.0.0-rc.2 --version 1.0.0-rc.1) $(nv 1.0.0 --version 1.0.0-rc.1) $(nv 1.0.0 --version 0.99.0) $(nv 1.0.0 --version 1.0.1+b) $(nv 1.0.0 --version 1.0.1-rc.01) $(nv 1.0.0 --version 1.0) $(nv 1.0.0-rc.1 --bump patch)"
 }
+t_release_versions_tom() { # the same table through the Tomato port, dev/release.tom (stage 5): it must pick and refuse the very same versions
+  need_install
+  nv() { cur="$1"; shift; r="$(PATH="$home/bin:$PATH" "$t" run dev/release.tom main "$@" --next-version "$cur" 2>&1)" && echo "$r" || echo refused; }
+  check "release.tom picks MAJOR.MINOR.PATCH and SemVer pre-releases" "refused 1.0.0 1.0.0-rc.1 1.0.0 1.0.1 1.1.0 2.0.0 refused 1.0.0 1.0.0-rc.2 1.0.0-rc.10" \
+    "$(nv 0.51) $(nv 0.51 --version 1.0.0) $(nv 0.51 --version 1.0.0-rc.1) $(nv 0.51 --bump major) $(nv 1.0.0) $(nv 1.0.0 --bump minor) $(nv 1.4.2 --bump major) $(nv 1.0.0-rc.1) $(nv 1.0.0-rc.1 --version 1.0.0) $(nv 1.0.0-rc.1 --version 1.0.0-rc.2) $(nv 1.0.0-rc.9 --version 1.0.0-rc.10)"
+  check "release.tom refuses older, malformed and build-tagged versions" "refused refused refused refused refused refused refused" \
+    "$(nv 1.0.0-rc.2 --version 1.0.0-rc.1) $(nv 1.0.0 --version 1.0.0-rc.1) $(nv 1.0.0 --version 0.99.0) $(nv 1.0.0 --version 1.0.1+b) $(nv 1.0.0 --version 1.0.1-rc.01) $(nv 1.0.0 --version 1.0) $(nv 1.0.0-rc.1 --bump patch)"
+}
+t_release_resume_tom() { # dev/release.tom after a failure, in the sandbox of dev/release_resume.tom (fakebin.tom's fake Mac tools and a local "origin"): the same 141 checks under the same names as tests/release_resume.sh
+  need_install
+  PATH="$home/bin:$PATH" TOMATO="$t" "$t" run dev/release_resume.tom main "$work/rrt" > "$work/rrt.out" 2>&1; rc=$?
+  while IFS= read -r l; do case "$l" in "ok   "*) echo x >> "$shared/passed" ;; "FAIL "*) echo x >> "$shared/failed" ;; esac; done < "$work/rrt.out"
+  cat "$work/rrt.out"
+  [ "$rc" = 0 ] || [ -n "$(grep '^FAIL' "$work/rrt.out")" ] || bad "release resume sandbox tests (Tomato) ran (status $rc)"
+}
+t_release_build_tom() { # dev/build.tom (stage 5) makes the files release/build.sh makes: the same latest.json, and an archive with the same files, contents and modes
+  need_install
+  fo="$work/bo"; fn="$work/bn"; u="file://$work/t.tar.gz"
+  TOMATO_RELEASE_OUT="$fo" sh release/build.sh "$u" > /dev/null 2>&1
+  PATH="$home/bin:$PATH" TOMATO_RELEASE_OUT="$fn" "$t" run dev/build.tom main "$u" > /dev/null 2>&1
+  check "build.tom: latest.json is the same, but for the archive's own sha256" "$(sed 's/"sha256.*//' "$fo/latest.json")" "$(sed 's/"sha256.*//' "$fn/latest.json")"
+  check "build.tom: latest.json has the archive's sha256" "$(sed -n 's/.*"sha256" *: *"\([^"]*\)".*/\1/p' "$fn/latest.json")" "$(if command -v shasum > /dev/null 2>&1; then shasum -a 256 "$fn"/tomato-*.tar.gz; else sha256sum "$fn"/tomato-*.tar.gz; fi | cut -d' ' -f1)"
+  mkdir -p "$fo/x" "$fn/x"; tar -xzf "$fo"/tomato-*.tar.gz -C "$fo/x"; tar -xzf "$fn"/tomato-*.tar.gz -C "$fn/x"
+  check "build.tom: the archive holds the same files with the same contents" "" "$(diff -r "$fo/x" "$fn/x" 2>&1 | head -5)"
+  check "build.tom: ... and the same modes" "$(cd "$fo/x" && find . -type f -exec ls -l {} + | awk '{ print $1, $NF }' | sort)" "$(cd "$fn/x" && find . -type f -exec ls -l {} + | awk '{ print $1, $NF }' | sort)"
+}
+t_pkg_scripts() { # the package's installer steps (dev/pkg_scripts.tom, built and installed as preinstall and postinstall): keep a foreign tomato, leave our own link, never fail
+  need_install
+  PATH="$home/bin:$PATH" "$t" build dev/pkg_scripts.tom -o "$work/preinstall" --entry main > "$work/ps.log" 2>&1 || { bad "pkg scripts build" "$(tail -3 "$work/ps.log")"; return; }
+  cp "$work/preinstall" "$work/postinstall"
+  tg="$work/target"; mkdir -p "$tg/usr/local/bin" "$tg/usr/local/lib/tomato"; echo foreign > "$tg/usr/local/bin/tomato"
+  "$work/preinstall" pkg / "$tg" /; rc=$?
+  check "preinstall keeps a tomato that is not ours as tomato.old, and ends with status 0" "0 tomato.old foreign" "$rc $(ls "$tg/usr/local/bin" | tr '\n' ' ' | sed 's/ $//') $(cat "$tg/usr/local/bin/tomato.old")"
+  ln -s ../lib/tomato/native/bin/tomato "$tg/usr/local/bin/tomato"
+  "$work/preinstall" pkg / "$tg" /; rc=$?
+  check "preinstall leaves a link (our own install) alone" "0 tomato tomato.old" "$rc $(ls "$tg/usr/local/bin" | tr '\n' ' ' | sed 's/ $//')"
+  "$work/postinstall" pkg / "$tg" /; rc=$?; "$work/preinstall"; rc2=$?
+  check "postinstall and a call with no arguments end with status 0" "0 0" "$rc $rc2"
+}
+t_generated_tables_tom() { # the Unicode tables of runtime/tomato_rt.c, checked by dev/tables.tom (no Python) against the Unicode 16.0.0 data in $TOMATO_UCD_DIR; a skip without it
+  need_install
+  PATH="$home/bin:$PATH" "$t" run dev/tables.tom main check-all runtime/tomato_rt.c > "$work/tables.out" 2>&1
+  while IFS= read -r l; do case "$l" in "ok   "*) echo x >> "$shared/passed"; echo "$l" ;; "FAIL "*) echo x >> "$shared/failed"; echo "$l" ;; *) echo "$l" ;; esac; done < "$work/tables.out"
+}
 t_release_resume() { # release/release.sh after a failure (--resume, --from, --restart), in a sandbox: tests/release_resume.sh has the fake Mac tools and a local "origin", so nothing is signed, published or pushed anywhere
   sh tests/release_resume.sh "$work/rr" > "$work/rr.out" 2>&1; rc=$?
   while IFS= read -r l; do case "$l" in "ok   "*) echo x >> "$shared/passed" ;; "FAIL "*) echo x >> "$shared/failed" ;; esac; done < "$work/rr.out"
@@ -3671,6 +3715,10 @@ spawn_free t_atomic_install
 spawn_free t_atomic_update
 spawn_free t_release_versions
 spawn_free t_release_resume
+spawn_free t_release_versions_tom
+spawn_free t_release_resume_tom
+spawn_free t_release_build_tom
+spawn_free t_pkg_scripts
 spawn_cli t_cli_no_lto
 spawn_cli t_cli_require_lto
 spawn_cli t_cli_debug_link
@@ -4427,6 +4475,7 @@ t_cli_reserved_seeds() { # a seed may not take a name std keeps for a module it 
 section "== error ids =="
 spawn_free t_error_templates
 spawn_free t_generated_tables
+spawn_free t_generated_tables_tom
 spawn_free t_error_raises
 spawn_free t_errors_append_only
 spawn_free t_sys_version
@@ -4610,10 +4659,15 @@ for f in tests/known_gaps/*.tom; do spawn t_gap "$f"; done
 
 # ---- release files ------------------------------------------------------------------------------------------------------
 t_docs_in_sync() { for d in specification decisions decision-inventory open-questions; do cmp -s "docs/$d.md" "site/docs/$d.md" && ok "site/docs/$d.md is in sync" || bad "site/docs/$d.md is in sync" "run site/build.sh"; done; }
-t_release_pkg() { # macOS only, and serial (last): it builds the installer package and a disk image, which mounts it
+t_release_pkg() { # macOS only, and serial (last): it builds the installer package and a disk image, which mounts it; "tom" as the argument runs dev/build.tom, pkg.tom and dmg.tom (stage 5) instead of the shell scripts
   fake="$work/fake"; mkdir -p "$fake"
-  TOMATO_RELEASE_OUT="$fake/out" sh release/build.sh "file://$fake/t.tar.gz" > /dev/null
-  TOMATO_RELEASE_OUT="$fake/out" sh release/pkg.sh > /dev/null 2>&1; pkg="$(ls "$fake"/out/tomato-*.pkg 2>/dev/null)"
+  if [ "$1" = tom ]; then
+    need_install
+    r_build() { PATH="$home/bin:$PATH" "$t" run dev/build.tom main "$@"; }; r_pkg() { PATH="$home/bin:$PATH" "$t" run dev/pkg.tom main; }
+    r_dmg() { PATH="$home/bin:$PATH" "$t" run dev/dmg.tom main "$@"; }
+  else r_build() { sh release/build.sh "$@"; }; r_pkg() { sh release/pkg.sh; }; r_dmg() { sh release/dmg.sh "$@"; }; fi
+  TOMATO_RELEASE_OUT="$fake/out" r_build "file://$fake/t.tar.gz" > /dev/null
+  TOMATO_RELEASE_OUT="$fake/out" r_pkg > /dev/null 2>&1; pkg="$(ls "$fake"/out/tomato-*.pkg 2>/dev/null)"
   if [ -n "$pkg" ] && pkgutil --expand-full "$pkg" "$work/pkgx" 2>/dev/null; then
     pp="$work/pkgx/component.pkg/Payload"
     check "pkg: the compiler is universal" "arm64 x86_64" "$(lipo -archs "$pp/usr/local/lib/tomato/native/bin/tomatoc" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
@@ -4632,8 +4686,8 @@ t_release_pkg() { # macOS only, and serial (last): it builds the installer packa
   # the disk image around the package, unsigned (a release signs, notarizes and staples it); run twice, as a resumed release would
   if [ -n "$pkg" ]; then
     lj="$fake/out/latest.json"; tsum="$(shasum -a 256 "$fake"/out/tomato-*.tar.gz | cut -d' ' -f1)"
-    if TOMATO_NO_SIGN=1 TOMATO_LATEST_JSON="$lj" sh release/dmg.sh "$pkg" "$work/t.dmg" > "$work/dmg.log" 2>&1 &&
-       TOMATO_NO_SIGN=1 TOMATO_LATEST_JSON="$lj" sh release/dmg.sh "$pkg" "$work/t.dmg" > "$work/dmg.log" 2>&1; then
+    if TOMATO_NO_SIGN=1 TOMATO_LATEST_JSON="$lj" r_dmg "$pkg" "$work/t.dmg" > "$work/dmg.log" 2>&1 &&
+       TOMATO_NO_SIGN=1 TOMATO_LATEST_JSON="$lj" r_dmg "$pkg" "$work/t.dmg" > "$work/dmg.log" 2>&1; then
       ok "dmg: builds, and holds exactly the package (dmg.sh mounts it and compares)"
       check "dmg: latest.json records the image's sha256" "$(shasum -a 256 "$work/t.dmg" | cut -d' ' -f1)" "$(sed -n 's/.*"dmg_sha256" *: *"\([^"]*\)".*/\1/p' "$lj")"
       plutil -convert xml1 -o /dev/null "$lj" 2>/dev/null && ok "dmg: latest.json is still valid JSON" || bad "dmg: latest.json is still valid JSON" "$(cat "$lj")"
@@ -4645,7 +4699,7 @@ t_release_pkg() { # macOS only, and serial (last): it builds the installer packa
 }
 section "== release files =="
 spawn_free t_docs_in_sync
-if [ "$(uname)" = Darwin ] && command -v pkgbuild >/dev/null 2>&1; then last t_release_pkg; fi   # the macOS installer package
+if [ "$(uname)" = Darwin ] && command -v pkgbuild >/dev/null 2>&1; then last t_release_pkg; last t_release_pkg tom; fi   # the macOS installer package, by the shell scripts and by the Tomato tools
 
 # ---- benchmarks and the rest --------------------------------------------------------------------------------------------
 # One benchmark at a time (so they run beside the other tests): benchmarks/run.sh --smoke builds it in Tomato and in the other languages and
