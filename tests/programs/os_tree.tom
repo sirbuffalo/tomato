@@ -1,0 +1,283 @@
+# The file functions that are new in stage 1 of docs/shell-to-tomato-plan.md: copy, chmod, symlink, readlink, realpath, utime, mkdtemp,
+# mkstemp, walk (also over a tree with a symbolic link that loops), glob, rmtree, copytree and which, and the machine's facts. Native only
+# (the browser raises RuntimeError for each: os_new_browser.tom). The first input is a folder for this test's files. Nothing here writes to
+# standard error, and nothing depends on the system or on the machine except through a comparison.
+import os
+import sys
+
+def mode_of(path: str) -> str:
+    m = os.stat(path).mode % 512
+    return f'{m // 64}{(m // 8) % 8}{m % 8}'
+
+def fails(label: str, e: Error):
+    print(label, e.id)
+
+def names_under(root: str, entries: list[tuple[str, list[str], list[str]]]) -> list[str]:
+    out: list[str] = []
+    for entry in entries:
+        out.append(entry[0].replace(root, '@') + ' d=' + ','.join(entry[1]) + ' f=' + ','.join(entry[2]))
+    return out
+
+def sections_copy(work: str):
+    a = work + '/a.txt'
+    os.write_text(a, 'hello')
+    os.chmod(a, 488)
+    print('mode after chmod', mode_of(a))
+    os.copy(a, work + '/b.txt')
+    print('copy', os.read_text(work + '/b.txt'), mode_of(work + '/b.txt'))
+    os.chmod(a, 420)
+    os.write_text(work + '/c.txt', 'was here')
+    os.chmod(work + '/c.txt', 256)
+    os.copy(a, work + '/c.txt')                      # replaces what is there, with the mode of the original
+    print('replaced', os.read_text(work + '/c.txt'), mode_of(work + '/c.txt'))
+    os.symlink('a.txt', work + '/link.txt')
+    os.copy(work + '/link.txt', work + '/fromlink.txt')    # a link is followed
+    print('from a link', os.read_text(work + '/fromlink.txt'), os.stat(work + '/fromlink.txt').is_symlink)
+    big = 'x' * 200000
+    os.write_text(work + '/big.txt', big)
+    os.copy(work + '/big.txt', work + '/big2.txt')
+    print('big', len(os.read_text(work + '/big2.txt')))
+    try:
+        os.copy(work + '/nothing', work + '/d.txt')
+    catch FileNotFoundError as e:
+        fails('missing source', e)
+    try:
+        os.copy(work, work + '/d.txt')
+    catch IsADirectoryError as e:
+        fails('directory source', e)
+    try:
+        os.copy(a, work + '/no/folder/d.txt')
+    catch FileNotFoundError as e:
+        fails('missing folder', e)
+    os.mkdir(work + '/adir')
+    try:
+        os.copy(a, work + '/adir')
+    catch IsADirectoryError as e:
+        fails('onto a directory', e)
+    print('no leftovers', [n for n in os.listdir(work) if '.tomato-copy.' in n])
+
+def sections_links(work: str):
+    os.write_text(work + '/target.txt', 'T')
+    os.mkdir(work + '/sub')
+    os.symlink('../target.txt', work + '/sub/rel')
+    os.symlink(work + '/target.txt', work + '/sub/abs')
+    os.symlink('nowhere', work + '/sub/broken')
+    print('readlink', os.readlink(work + '/sub/rel'), os.readlink(work + '/sub/abs') == work + '/target.txt', os.readlink(work + '/sub/broken'))
+    print('realpath', os.realpath(work + '/sub/rel') == os.realpath(work + '/target.txt'), os.realpath(work + '/sub/../sub/./abs').endswith('/target.txt'))
+    print('lstat', os.stat(work + '/sub/rel').is_symlink, os.stat(work + '/target.txt').is_symlink)
+    try:
+        os.readlink(work + '/target.txt')
+    catch IOError as e:
+        fails('readlink of a file', e)
+    try:
+        os.readlink(work + '/missing')
+    catch FileNotFoundError as e:
+        fails('readlink missing', e)
+    try:
+        os.realpath(work + '/sub/broken')
+    catch FileNotFoundError as e:
+        fails('realpath of a broken link', e)
+    try:
+        os.symlink('x', work + '/sub/rel')
+    catch FileExistsError as e:
+        fails('symlink exists', e)
+    try:
+        os.chmod(work + '/missing', 420)
+    catch FileNotFoundError as e:
+        fails('chmod missing', e)
+
+def sections_utime(work: str):
+    f = work + '/t.txt'
+    os.write_text(f, 'x')
+    os.utime(f, 1000000000.0)
+    print('utime', os.stat(f).mtime)
+    os.utime(f, 1234567890.5)
+    print('utime fraction', os.stat(f).mtime)
+    os.utime(f)
+    print('utime now', os.stat(f).mtime > 1700000000.0)
+    try:
+        os.utime(work + '/missing', 5.0)
+    catch FileNotFoundError as e:
+        fails('utime missing', e)
+
+def sections_temp(work: str):
+    d = os.mkdtemp('job-', work)
+    print('mkdtemp', d.startswith(work + '/job-'), len(d) - len(work), os.stat(d).is_dir, mode_of(d))
+    f = os.mkstemp('log-', '.txt', d)
+    print('mkstemp', f.startswith(d + '/log-'), f.endswith('.txt'), os.stat(f).size, mode_of(f))
+    seen: set[str] = {}
+    for i in range(50):
+        seen.add(os.mkstemp('n', '', d))
+    print('50 different names', len(seen))
+    os.putenv('TMPDIR', work)
+    t = os.mkdtemp()
+    print('TMPDIR used', t.startswith(work + '/tmp-'))
+    os.unsetenv('TMPDIR')
+    for bad in ['a/b']:
+        try:
+            os.mkdtemp(bad, work)
+        catch ValueError as e:
+            fails('slash in prefix', e)
+    try:
+        os.mkdtemp('x', work + '/missing')
+    catch FileNotFoundError as e:
+        fails('mkdtemp in a missing folder', e)
+    os.rmtree(d)
+    os.rmtree(t)
+
+def sections_walk(work: str):
+    root = work + '/tree'
+    os.makedirs(root + '/a/b/c')
+    os.makedirs(root + '/d')
+    os.write_text(root + '/top.txt', '1')
+    os.write_text(root + '/a/one.txt', '1')
+    os.write_text(root + '/a/b/two.txt', '2')
+    os.write_text(root + '/a/b/c/three.txt', '3')
+    os.symlink('..', root + '/a/b/up')                # leads back to a: a loop
+    os.symlink('../d', root + '/a/to_d')              # a link to a directory that is also reached directly
+    os.symlink('top.txt', root + '/filelink')
+    os.symlink('nowhere', root + '/broken')
+    for line in names_under(root, os.walk(root)):
+        print('walk', line)
+    print('--')
+    for line in names_under(root, os.walk(root, follow_links=True)):
+        print('walk follow', line)
+    try:
+        os.walk(work + '/missing')
+    catch FileNotFoundError as e:
+        fails('walk missing', e)
+    try:
+        os.walk(root + '/top.txt')
+    catch NotADirectoryError as e:
+        fails('walk a file', e)
+
+def show(root: str, pattern: str):
+    print('glob', pattern.replace(root, '@'), [p.replace(root, '@') for p in os.glob(pattern)])
+
+def sections_glob(work: str):
+    root = work + '/tree'
+    os.write_text(root + '/.hidden.txt', '')
+    os.write_text(root + '/a/.dot', '')
+    show(root, root + '/*.txt')
+    show(root, root + '/*')
+    show(root, root + '/.*')
+    show(root, root + '/a/*.txt')
+    show(root, root + '/a/b/*.txt')
+    show(root, root + '/**/*.txt')
+    show(root, root + '/**/three.txt')
+    show(root, root + '/*/b')
+    show(root, root + '/?/*')
+    show(root, root + '/[ab]*')
+    show(root, root + '/[!a]*')
+    show(root, root + '/a/[a-c].txt')
+    show(root, root + '/top.txt')
+    show(root, root + '/nothing/*.txt')
+    show(root, root + '/a/')
+    show(root, root + '/**')
+    show(root, root + '/a/b/**/*.txt')
+    old = os.getcwd()
+    os.chdir(root)
+    print('relative', os.glob('a/*.txt'), os.glob('*.txt'), os.glob('**/*.txt'))
+    os.chdir(old)
+
+def sections_rmtree(work: str):
+    root = work + '/doomed'
+    os.makedirs(root + '/x/y')
+    os.write_text(root + '/x/y/f.txt', 'f')
+    os.symlink(work + '/tree', root + '/x/link_to_tree')
+    os.symlink(work + '/tree/top.txt', root + '/x/link_to_file')
+    os.rmtree(root)
+    print('rmtree', ('doomed' in os.listdir(work)), os.stat(work + '/tree/top.txt').size)
+    print('the tree behind the link is untouched', len(os.walk(work + '/tree')))
+    try:
+        os.rmtree(root)
+    catch FileNotFoundError as e:
+        fails('rmtree missing', e)
+    os.rmtree(root, missing_ok=True)
+    os.symlink(work + '/tree', work + '/treelink')
+    try:
+        os.rmtree(work + '/treelink')
+    catch NotADirectoryError as e:
+        fails('rmtree of a link', e)
+    try:
+        os.rmtree(work + '/a.txt')
+    catch NotADirectoryError as e:
+        fails('rmtree of a file', e)
+
+def sections_copytree(work: str):
+    src = work + '/tree'
+    dst = work + '/tree2'
+    os.chmod(src + '/a', 448)
+    os.chmod(src, 493)
+    os.copytree(src, dst)
+    left = [l.replace(src, '@') for l in names_under(src, os.walk(src))]
+    right = [l.replace(dst, '@') for l in names_under(dst, os.walk(dst))]
+    print('copytree same shape', left == right, len(right))
+    print('links kept as links', os.readlink(dst + '/a/b/up'), os.readlink(dst + '/filelink'), os.readlink(dst + '/broken'), os.stat(dst + '/a/b/up').is_symlink)
+    print('dir mode kept', mode_of(dst + '/a'), mode_of(dst))
+    print('file', os.read_text(dst + '/a/b/c/three.txt'))
+    try:
+        os.copytree(src, dst)
+    catch FileExistsError as e:
+        fails('copytree onto a folder', e)
+    try:
+        os.copytree(work + '/missing', work + '/tree3')
+    catch FileNotFoundError as e:
+        fails('copytree missing', e)
+    try:
+        os.copytree(work + '/a.txt', work + '/tree3')
+    catch NotADirectoryError as e:
+        fails('copytree of a file', e)
+    os.chmod(src + '/a', 493)
+    os.chmod(dst + '/a', 493)
+
+def sections_which(work: str):
+    print('which sh', os.which('sh') is not None, os.which('definitely-no-such-program'), os.which(''))
+    script = work + '/runme'
+    os.write_text(script, '#!/bin/sh\nexit 0\n')
+    print('not executable yet', os.which('runme', work), os.which(script))
+    os.chmod(script, 493)
+    print('executable', os.which('runme', work) == script, os.which(script) == script, os.which('./runme') is None)
+    os.mkdir(work + '/notdir')
+    print('a directory is not a program', os.which('notdir', work))
+    os.putenv('PATH', work + ':/nonexistent')
+    print('PATH used', os.which('runme') == script)
+    os.putenv('PATH', '/usr/bin:/bin')
+    print('with a PATH given', os.which('runme', '/nonexistent:' + work) == script, os.which('runme', ''))
+
+def sections_machine():
+    print('cpu', os.cpu_count() >= 1)
+    load = os.loadavg()
+    print('load', load[0] >= 0.0, load[1] >= 0.0, load[2] >= 0.0)
+    u = os.uname()
+    print('uname', u.sysname == 'Linux' or u.sysname == 'Darwin', len(u.nodename) > 0, len(u.release) > 0, len(u.version) > 0, len(u.machine) > 0)
+    print('arch', sys.arch() in ['x86_64', 'arm64'], (sys.arch() == u.machine) or (sys.arch() == 'arm64' and u.machine == 'aarch64') or u.machine == 'x86_64')
+    home = os.getenv('HOME')
+    os.putenv('HOME', '/home/someone')
+    os.unsetenv('XDG_CACHE_HOME')
+    mac = sys.platform() == 'darwin'
+    print('cache_dir', os.cache_dir() == ('/home/someone/Library/Caches' if mac else '/home/someone/.cache'))
+    os.putenv('XDG_CACHE_HOME', '/var/cache/x')
+    print('XDG_CACHE_HOME', os.cache_dir() == ('/home/someone/Library/Caches' if mac else '/var/cache/x'))
+    os.putenv('XDG_CACHE_HOME', 'relative/path')
+    print('relative XDG_CACHE_HOME is ignored', os.cache_dir() == ('/home/someone/Library/Caches' if mac else '/home/someone/.cache'))
+    os.unsetenv('HOME')
+    try:
+        os.cache_dir()
+    catch IOError as e:
+        fails('cache_dir without HOME', e)
+    if home is not None:
+        os.putenv('HOME', home)
+
+@main
+def main(work: str):
+    sections_copy(work)
+    sections_links(work)
+    sections_utime(work)
+    sections_temp(work)
+    sections_walk(work)
+    sections_glob(work)
+    sections_rmtree(work)
+    sections_copytree(work)
+    sections_which(work)
+    sections_machine()

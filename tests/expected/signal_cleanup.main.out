@@ -1,0 +1,28 @@
+2 15 1 INT TERM SIG40
+E662 'NOPE' is not a signal name this module knows (HUP, INT, QUIT, KILL, USR1, USR2, ALRM, TERM)
+E662 the signal KILL cannot be watched
+nothing pending
+caught USR1 True E661 True
+forward=False 0 0 True
+and nothing is left for check
+executable True
+no such process E515
+check INT status 130 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+check TERM status 143 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+check HUP status 129 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run INT status 130 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run TERM status 143 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run HUP status 129 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run_capture INT status 130 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run_capture TERM status 143 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run_capture HUP status 129 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run_async INT status 130 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run_async TERM status 143 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+run_async HUP status 129 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+spawn INT status 130 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+spawn TERM status 143 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+spawn HUP status 129 signal 0 before ['deeper', 'inside.txt'] folder removed True said 0 0
+unwatched TERM 143 15
+first INT: still running True
+second INT 130 2
+leftovers []

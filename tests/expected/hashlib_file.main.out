@@ -1,0 +1,27 @@
+empty e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+abc ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+two blocks 248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1
+a million a cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0
+size 1 True
+size 55 True
+size 56 True
+size 57 True
+size 63 True
+size 64 True
+size 65 True
+size 119 True
+size 120 True
+size 121 True
+size 127 True
+size 128 True
+size 129 True
+size 1000 True
+size 1048575 True
+size 1048576 True
+size 1048577 True
+size 2097152 True
+size 2097153 True
+utf-8 text True
+missing E505
+directory E508
+NUL E511

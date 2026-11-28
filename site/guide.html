@@ -390,6 +390,23 @@ async def main():
     await p.wait()
     print(p.status)                                   # 0</code></pre>
 <p><code>sys.run(args, capture=True, cwd=None, env=None, stdin='', check=False, timeout=None)</code> starts <code>args[0]</code> with the rest as its arguments, waits for it and returns a <code>RunResult</code> with <code>status</code> (128 plus the signal number when a signal ended it), <code>signal</code>, <code>stdout</code> and <code>stderr</code>. There is no shell, so there is no quoting or expansion; a name without a <code>/</code> is looked up in the <code>PATH</code>. <code>capture=False</code> lets the program use this program's own standard streams. <code>env</code> adds variables, <code>cwd</code> sets the folder, and a <code>timeout</code> (in seconds, a float) kills the program and raises <code>ProcessTimeout</code>, a <code>ProcessError</code>. A program that cannot be started raises <code>FileNotFoundError</code>, <code>PermissionError</code> or another <code>IOError</code> that names it. <code>sys.run</code> blocks the whole program; <code>await sys.run_async(...)</code> takes the same arguments and lets other tasks run meanwhile (cancelling it kills the program). <code>sys.spawn(args, capture=True, cwd=None, env=None, stdin=False)</code> returns a <code>Process</code> at once, with <code>pid</code>, <code>await wait()</code>, <code>done()</code>, <code>status</code> and <code>signal</code> (once it ended), <code>kill(signal=9)</code>, <code>stop()</code>, <code>close()</code>, <code>await write(text)</code> and <code>close_stdin()</code> (with <code>stdin=True</code>), and <code>stdout</code> and <code>stderr</code> readers with <code>await read_line()</code> (the line with its newline, <code>''</code> at the end), <code>await read()</code> and <code>read_available()</code>. A program that writes a lot to both streams needs two tasks reading them (or <code>run_async</code>), and every <code>Process</code> must be waited for. The captured output is text: bytes that are not UTF-8 become U+FFFD, so a child's binary output cannot be captured; have it write a file and read that with <code>os.read_bytes</code>. None of this works in the browser playground, where <code>sys.run</code> raises <code>RuntimeError</code>.</p>
+<h2>Programs, folders and signals</h2>
+<pre><code>import os
+import signal
+import sys
+
+@main
+def main():
+    signal.watch()                                   # Ctrl-C, kill and a closed terminal raise sys.Interrupted
+    work = os.mkdtemp('build-')                      # a new private folder in $TMPDIR or /tmp
+    try:
+        os.write_text(work + '/main.c', 'int main(void) { return 0; }\n')
+        r = sys.run(['clang', '-o', work + '/a.out', work + '/main.c'], check=True)
+        os.copy(work + '/a.out', 'a.out')            # keeps the permission bits
+        print(os.glob('*.out'), os.which('clang'))
+    finally:
+        os.rmtree(work)                              # runs on Ctrl-C too; the program then ends with status 130</code></pre>
+<p><code>sys.run(args)</code> starts a program with no shell (every word is passed as it is), waits, and gives its status and what it wrote; <code>check=True</code> raises <code>ProcessError</code> for a failure, and <code>sys.spawn</code> and <code>sys.run_async</code> run programs while other tasks go on. <code>os</code> has <code>copy</code>, <code>copytree</code>, <code>rmtree</code>, <code>walk</code> (a list of <code>(folder, folders, files)</code>), <code>glob('src/**/*.tom')</code>, <code>symlink</code>, <code>readlink</code>, <code>realpath</code>, <code>chmod</code>, <code>utime</code>, <code>mkdtemp</code>, <code>mkstemp</code>, <code>which</code> and <code>exchange(a, b)</code>, which swaps two names in one step so that no reader finds one missing. <code>hashlib.sha256_file(path)</code> gives the digest of a big file, and <code>await requests.download(url, path)</code> saves an answer to a file, https only (also after a redirect). These are new and unstable: any of them may change in a later release, and the compiler says so once in a build (<code># allow: unstable</code> silences it). They need a system: in the browser they raise <code>RuntimeError</code>. The <a href="docs.html#specification">specification</a> has the details.</p>
 <h2>Errors</h2>
 <pre><code>@main
 def main():

@@ -1,13 +1,14 @@
 # The process: the command-line words, ending the program, the standard streams, the platform and the version, and starting
 # another program (run, run_async and spawn). Functions and classes only, no module-level values (D49b). Works natively and in the
 # browser playground (Wave 2, pack A), except run, run_async and spawn, which need a process to start and raise RuntimeError there
-# (D98a, D98b).
+# (D98a, D98b). The waits here (run, run_async, Process.wait) are the places where a signal that signal.watch() recorded is taken
+# and raised as Interrupted (stage 1 of docs/shell-to-tomato-plan.md; the class is here, so that `import sys` needs no other module).
 !tomato_args(out: list[str]) -> int
 !tomato_exit(code: int) -> int
 !tomato_write_fd(fd: int, text: str) -> int
 !tomato_flush_std() -> int
 !tomato_platform() -> str
-!tomato_run(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, text: str, capture: int, timeout_ms: int, out: list[str], info: list[int]) -> int
+!tomato_run(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, text: str, capture: int, timeout_ms: int, forward: int, out: list[str], info: list[int]) -> int
 !tomato_os_error(what: str) -> str
 !tomato_file_read_bytes(path: str, out: list[bytes]) -> int
 !tomato_proc_spawn(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, flags: int, info: list[int]) -> int
@@ -22,6 +23,10 @@
 !tomato_pstream_fill(h: int) -> int
 !tomato_pstream_line(h: int, out: list[str]) -> int
 !tomato_pstream_take(h: int, out: list[str]) -> int
+!tomato_signal_take() -> int
+!tomato_signal_watching() -> int
+!tomato_os_arch() -> str
+!tomato_proc_exe(out: list[str]) -> int
 
 # All the words of the command line: argv()[0] is the program as it was started, then the inputs. An entry point that takes
 # `*args: tuple[str]` receives the inputs after its fixed ones.
@@ -65,13 +70,41 @@ export class RunResult:
     signal: int = 0
     stdout: str = ''
     stderr: str = ''
+    interrupted: int = 0        # with run(forward=False): the watched signal that came while the program ran, else 0
 
     @init
-    def make(self, status: int, signal: int, stdout: str, stderr: str):
+    def make(self, status: int, signal: int, stdout: str, stderr: str, interrupted: int = 0):
         self.status = status
         self.signal = signal
         self.stdout = stdout
         self.stderr = stderr
+        self.interrupted = interrupted
+
+# Raised where a signal that signal.watch() recorded is taken: signal.check(), run(), run_async() and Process.wait(). `number` is the
+# signal, `name` its name ('INT'). A direct subclass of Error (as AssertionError is), so `catch RuntimeError` and `catch IOError` do not hide
+# it. When nothing catches it the program ends with status 128 plus the number, without a message. New (unstable): see std/signal.tom.
+export class Interrupted(Error):
+    number: int = 0
+    name: str = ''
+
+    @init
+    def make_interrupted(self, code: int, id: str = 'E661'):
+        sig_name = _signal_name(code)
+        Error.start(self, f'interrupted by the signal {sig_name} ({code})', id)
+        self.number = code
+        self.name = sig_name
+
+def _signal_name(code: int) -> str:
+    mac = platform() == 'darwin'
+    for known in [(1, 'HUP'), (2, 'INT'), (3, 'QUIT'), (9, 'KILL'), (14, 'ALRM'), (15, 'TERM'), (30 if mac else 10, 'USR1'), (31 if mac else 12, 'USR2')]:
+        if known[0] == code:
+            return known[1]
+    return f'SIG{code}'
+
+def _check_signal():
+    n = !tomato_signal_take()
+    if n != 0:
+        raise Interrupted(n, 'E661')
 
 # Raised by run(check=True) when the program does not succeed, and by run() itself for a program that was stopped for taking longer
 # than its timeout (ProcessTimeout), so `catch ProcessError` handles every failure of a program that ran. The message says which
@@ -186,12 +219,17 @@ def _prepare(args: list[str], cwd: str | None, env: dict[str, str] | None, stdin
 #   check      True: a program that does not succeed (status other than 0) raises ProcessError
 #   timeout    seconds; a program that has not ended by then is killed (SIGKILL) and run() raises ProcessTimeout. The program's own
 #              children are not killed. Without a timeout run() waits as long as it takes.
+#   forward    what a signal that signal.watch() recorded while the program runs does: True (the default) passes it to the program (which
+#              is killed if it is still there 5 seconds later) and raises Interrupted when it has ended; False leaves the program alone
+#              (it gets the signal from the terminal on its own, as a program in the foreground does, and decides itself), takes the
+#              signal, and gives its number in result.interrupted (0 when none came), with no error. For a program that has the
+#              terminal and may catch Ctrl-C and go on (an editor, a shell, a repl).
 # A program that cannot be started raises FileNotFoundError, PermissionError or another IOError, with a message that names the
 # program (or the directory, when cwd cannot be entered). The program is always waited for, so none is left running or as a zombie.
 # The program gets only its standard streams: every other file and socket this program has open is closed in it (D98b).
 # run() blocks the whole program, as the functions of os do: other tasks do not run until the program ends (run_async does not
 # block them). In the browser playground there are no processes: run() raises RuntimeError.
-export def run(args: list[str], capture: bool = True, cwd: str | None = None, env: dict[str, str] | None = None, stdin: str = '', check: bool = False, timeout: float | None = None) -> RunResult:
+export def run(args: list[str], capture: bool = True, cwd: str | None = None, env: dict[str, str] | None = None, stdin: str = '', check: bool = False, timeout: float | None = None, forward: bool = True) -> RunResult:
     if platform() == 'wasi':
         raise RuntimeError('run is not available in the browser playground (it cannot start a process)', 'E514')
     prepared = _prepare(args, cwd, env, stdin, timeout)
@@ -200,12 +238,15 @@ export def run(args: list[str], capture: bool = True, cwd: str | None = None, en
     limit = prepared[2]
     out: list[str] = []
     info: list[int] = []
-    kind = !tomato_run(args, extra, where, 1 if cwd is not None else 0, stdin, 1 if capture else 0, limit, out, info)
+    kind = !tomato_run(args, extra, where, 1 if cwd is not None else 0, stdin, 1 if capture else 0, limit, 1 if forward else 0, out, info)
     if kind != 0:
         if info[0] == 1:
             _raise(kind, !tomato_os_error(f"change to the directory '{where}' to run '{args[0]}'"))
         _raise_start(kind, args[0], where, cwd is not None, !tomato_os_error(f"run '{args[0]}'"))
-    result = RunResult(info[0], info[1], out[0], out[1])
+    result = RunResult(info[0], info[1], out[0], out[1], 0 if forward else info[3])
+    if info[3] != 0 and forward:
+        # a watched signal came while it ran: it got the signal too (and was killed after 5 seconds if it stayed)
+        raise Interrupted(info[3], 'E661')
     if info[2] != 0:
         raise ProcessTimeout(_failure_text(f"'{args[0]}' did not finish within {timeout} seconds and was killed", out[1]), args[0], info[0], info[1], out[0], out[1], 'E589')
     if check and info[0] != 0:
@@ -301,6 +342,33 @@ export class PipeReader:
         out: list[str] = []
         _r = !tomato_pstream_take(self.h, out)
         return out[0]
+
+    # Reads the stream to its end, a line at a time, and writes every line to the file `path` (made, or replaced; with append=True written
+    # after what is there) as it comes, and with echo=True also to this program's own standard output (to its standard error for the
+    # stream that is a program's standard error), the way the `tee` program does. The file is flushed after each line, so a log can be
+    # followed while the program runs. Gives the number of lines. Waits without blocking other tasks. A file that cannot be opened is an
+    # IOError (the classes of os), before anything is read. New (unstable): stage 1 of docs/shell-to-tomato-plan.md.
+    async def tee(self, path: str, echo: bool = True, append: bool = False) -> int:
+        self.check()
+        _no_nul(path)
+        f = open(path, 'a' if append else 'w')
+        lines = 0
+        try:
+            while True:
+                line = await self.read_line()
+                if line == '':
+                    break
+                f.write(line)
+                f.flush()
+                if echo:
+                    if self.name == 'standard error':
+                        write_stderr(line)
+                    else:
+                        write_stdout(line)
+                lines += 1
+        finally:
+            f.close()
+        return lines
 
     # Takes what the pipe holds into the stream without waiting, so that a program that has ended and written all it will write gives
     # up its pipe (Process.wait() does it for both streams). Nothing is lost: it is still there to read.
@@ -401,6 +469,7 @@ export class Process:
     async def wait(self) -> int:
         nap = 0.0005
         while not self.reap():
+            _check_signal()
             await sleep(nap)
             if nap < 0.02:
                 nap = nap * 2.0
@@ -485,6 +554,23 @@ async def _expire(p: Process, seconds: float, running: list[task[str]], fired: l
             t.cancel()
     return ''
 
+# when a watched signal comes (signal.watch) while the program runs: tells the program, stops the readers, and notes the signal
+async def _sigwatch(p: Process, seconds: float, running: list[task[str]], fired: list[int]) -> str:
+    while not p.done():
+        n = !tomato_signal_take()
+        if n != 0:
+            fired.append(n)
+            p.kill(n)
+            for t in running:
+                if not t.done():
+                    t.cancel()
+            await sleep(5.0)           # the program has had time to end by itself
+            if not p.done():
+                p.kill(9)
+            return ''
+        await sleep(seconds)
+    return ''
+
 # the text a collecting task gathered: its result, or (when it was cancelled by the timeout) what had come
 async def _text(t: task[str], r: PipeReader) -> str:
     try:
@@ -521,6 +607,7 @@ export async def run_async(args: list[str], capture: bool = True, cwd: str | Non
     feeders: list[task[str]] = []
     timers: list[task[str]] = []
     fired: list[int] = []
+    heard: list[int] = []
     try:
         if stdin != '':
             feeders.append(start _feed(p, stdin))
@@ -530,9 +617,13 @@ export async def run_async(args: list[str], capture: bool = True, cwd: str | Non
         running = readers + feeders
         if timeout is not None:
             timers.append(start _expire(p, timeout, running, fired))
+        if !tomato_signal_watching() > 0:
+            timers.append(start _sigwatch(p, 0.02, running, heard))
         for t in running:
             await _settle(t)
         status = await p.wait()
+        if len(heard) > 0:
+            raise Interrupted(heard[0], 'E661')
         out = ''
         err = ''
         if capture:
@@ -555,6 +646,22 @@ export async def run_async(args: list[str], capture: bool = True, cwd: str | Non
                 await t
             catch Error:
                 pass
+
+# The absolute path of the file this program runs from, with links resolved (/proc/self/exe on Linux, _NSGetExecutablePath on macOS);
+# where the system cannot say, argv()[0] made absolute. A RuntimeError in the browser playground. New (unstable).
+export def executable() -> str:
+    if platform() == 'wasi':
+        raise RuntimeError('executable is not available in the browser playground (there is no program file)', 'E514')
+    out: list[str] = []
+    kind = !tomato_proc_exe(out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error('find the file this program runs from'))
+    return out[0]
+
+# The processor this program was built for: 'x86_64' or 'arm64' (what a Mac says, and Linux calls aarch64), else what the system says;
+# 'wasm32' in the browser playground. New (unstable): stage 1 of docs/shell-to-tomato-plan.md.
+export def arch() -> str:
+    return !tomato_os_arch()
 
 # The version of Tomato, the same text as `tomato version`. tests/run.sh (t_sys_version) checks the literal below against the VERSION file,
 # and the release script's bump step writes it (release/release.sh).

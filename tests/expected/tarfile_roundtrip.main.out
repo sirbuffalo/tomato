@@ -1,0 +1,59 @@
+source 14
+deterministic True
+plain and gzip hold the same True
+entries 15 pkg dir pkg/bin dir 493 1700000000
+kinds {'dir': 6, 'file': 6, 'symlink': 3}
+gzip -t 0
+tar -tzf agrees True tar -tf True
+tar -xzf 0 0
+the system tar extracts the same tree True
+we extract the same tree True
+strip=1 True 1700000000.0
+mode kept 755 600 700
+system tar, plain extracted here True 11
+system tar, gz extracted here True 11
+long names: host lists True 4
+long names: round trip True
+long names: host extracts 0 True
+long non-ASCII names round trip True 191
+dotdot TarError E675
+dotdot inside TarError E675
+absolute TarError E675
+absolute dir TarError E675
+link out TarError E675
+link absolute TarError E675
+link deep TarError E675
+write through a link TarError E675
+write through a link to a folder TarError E675
+folder through a link TarError E675
+hard link TarError E674
+device TarError E674
+pipe TarError E674
+sparse TarError E674
+file over a folder TarError E675
+setuid extracted ['prog']
+nothing outside False 0
+fine extracted ['a/b', 'a/b/c.txt', 'a/l', 'a/up']
+replace extracted ['f', 'l']
+replaced new file now new
+file over folder on disk TarError E675
+max_size TarError E676
+what came before the entry that went over stays ['a']
+max_size fits extracted ['a', 'b']
+gnu long name extracted ['gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg.txt']
+gnu name True
+pax path extracted ['pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp']
+pax name 130
+empty file extracted []
+not a tar TarError E673
+cut in the data TarError E673
+cut in a header TarError E673
+bad checksum TarError E673
+cut gzip GzipError E666
+damaged gzip GzipError E667
+no such archive IOError E505
+a folder as the archive IOError E508
+entries of a cut gzip E666
+create in a missing folder E505
+create from a file E509
+leftovers [] []

@@ -1,0 +1,11 @@
+files second first
+folders ['in2'] ['in']
+folder and file second ['in2']
+missing E505 True
+both missing E505 True
+after failure ['in2'] second
+fallback False first ['in2']
+fallback missing E505 True
+fallback both missing E505 True
+fallback after failure first ['in2'] ['d1', 'd2', 'x', 'y']
+reader 0 swapped while it read: True no name was ever missing: True saw both versions: True

@@ -1,0 +1,31 @@
+wasi wasm32 1
+copy E514 copy is not available in the browser playground
+chmod E514 chmod is not available in the browser playground
+symlink E514 symlink is not available in the browser playground
+readlink E514 readlink is not available in the browser playground
+realpath E514 realpath is not available in the browser playground
+utime E514 utime is not available in the browser playground
+mkdtemp E514 mkdtemp is not available in the browser playground
+mkstemp E514 mkstemp is not available in the browser playground
+walk E514 walk is not available in the browser playground
+glob E514 glob is not available in the browser playground
+rmtree E514 rmtree is not available in the browser playground
+copytree E514 copytree is not available in the browser playground
+which E514 which is not available in the browser playground
+exchange E514 exchange is not available in the browser playground
+loadavg E514 loadavg is not available in the browser playground
+uname E514 uname is not available in the browser playground
+cache_dir E514 cache_dir is not available in the browser playground
+tar create E514 tarfile.create is not available in the browser playground
+tar extract E514 tarfile.extract is not available in the browser playground
+tar entries E514 tarfile.entries is not available in the browser playground
+executable E514 executable is not available in the browser playground (there is no program file)
+watch E514 signal.watch is not available in the browser playground (it has no signals)
+unwatch E514 signal.unwatch is not available in the browser playground (it has no signals)
+send E514 signal.send is not available in the browser playground (it has no signals)
+gzip works there True True
+signal.check: nothing to raise 2 TERM
+sha256_file ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+sha256_file missing E505
+download E364 requests is not available in the browser playground (it has no network access from here); run the program with 'tomato run'
+run E514

@@ -1,0 +1,11 @@
+one
+threefour
+
+lines 2 1 one|threefour| two|
+appended 1 one|threefour|more|
+not captured E595
+x
+bad file E25
+rest y
+
+long 2 300006

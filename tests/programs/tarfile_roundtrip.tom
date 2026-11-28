@@ -1,0 +1,303 @@
+# tarfile (stage 1 of docs/shell-to-tomato-plan.md): archives made here are read by the system tar and gzip, archives made by the system tar are read
+# here (also with long names and a link), the same folder gives the same archive, and an archive that is hostile or damaged is refused with the
+# error it deserves and nothing is written outside the folder. Native only. The first input is a folder for this test's files.
+import gzip
+import os
+import sys
+import tarfile
+
+def mode_text(path: str) -> str:
+    m = os.stat(path).mode % 512
+    return f'{m // 64}{(m // 8) % 8}{m % 8}'
+
+# what a folder holds, one line for each thing: its path below the folder, what it is, its size and mode, where a link points
+def describe(root: str) -> list[str]:
+    lines: list[str] = []
+    for entry in os.walk(root):
+        base = entry[0]
+        rel = base[len(root):]
+        for name in entry[1]:
+            full = base + '/' + name
+            try:
+                lines.append(f'{rel}/{name} -> {os.readlink(full)}')
+            catch IOError:
+                lines.append(f'{rel}/{name}/ dir {mode_text(full)}')
+        for name in entry[2]:
+            full = base + '/' + name
+            try:
+                lines.append(f'{rel}/{name} -> {os.readlink(full)}')
+            catch IOError:
+                lines.append(f'{rel}/{name} file {os.stat(full).size} {mode_text(full)} {len(os.read_bytes(full))}')
+    lines.sort()
+    return lines
+
+def noise(n: int, seed: int) -> bytes:
+    out: list[int] = []
+    x = seed
+    for i in range(n):
+        x = (x * 1103515245 + 12345) % 2147483648
+        out.append((x >> 16) % 256)
+    return bytes(out)
+
+def make_tree(root: str):
+    os.makedirs(root + '/bin')
+    os.makedirs(root + '/docs/deep/deeper')
+    os.makedirs(root + '/empty')
+    for d in ['', '/bin', '/docs', '/docs/deep', '/docs/deep/deeper']:
+        os.chmod(root + d, 493)                     # (the mode of a folder made by makedirs is the umask's)
+    os.write_bytes(root + '/bin/tool', noise(70000, 1))
+    os.chmod(root + '/bin/tool', 493)
+    os.write_text(root + '/docs/readme.txt', 'hello\n' * 100)
+    os.write_text(root + '/docs/deep/deeper/note.txt', 'x')
+    os.write_text(root + '/zero', '')
+    os.write_text(root + '/naïve ✓.txt', 'unicode name')
+    os.write_bytes(root + '/secret', b'private')
+    os.chmod(root + '/secret', 384)
+    os.symlink('bin/tool', root + '/tool-link')
+    os.symlink('../docs', root + '/bin/up-link')
+    os.symlink('nowhere', root + '/dangling')
+    os.chmod(root + '/empty', 448)
+
+def run(args: list[str], cwd: str | None = None) -> sys.RunResult:
+    return sys.run(args, cwd=cwd, env={'COPYFILE_DISABLE': '1'})
+
+def names_of(entries: list[tarfile.Entry]) -> list[str]:
+    out: list[str] = []
+    for e in entries:
+        out.append(e.name)
+    out.sort()
+    return out
+
+def host_names(args: list[str]) -> list[str]:
+    r = run(args)
+    out: list[str] = []
+    for line in r.stdout.split('\n'):
+        text = line.strip()
+        if text != '':
+            out.append(text.rstrip('/'))
+    out.sort()
+    return out
+
+def attempt(label: str, archive: str, dest: str, strip: int = 0, max_size: int | None = None):
+    try:
+        made = tarfile.extract(archive, dest, strip=strip, max_size=max_size)
+        print(label, 'extracted', made)
+    catch tarfile.TarError as e:
+        print(label, 'TarError', e.id)
+    catch gzip.GzipError as e:
+        print(label, 'GzipError', e.id)
+    catch IOError as e:
+        print(label, 'IOError', e.id)
+
+# ---- hand-made archives, for the cases a program that makes archives would never make
+
+def oct_text(v: int, width: int) -> str:
+    s = ''
+    x = v
+    while x > 0:
+        s = chr(48 + x % 8) + s
+        x = x // 8
+    if s == '':
+        s = '0'
+    while len(s) < width:
+        s = '0' + s
+    return s
+
+def raw_field(text: str, n: int) -> bytes:
+    b = text.encode()
+    return b + bytes(n - len(b))
+
+def raw_header(name: str, flag: str, size: int, link: str = '', mode: int = 420) -> bytes:
+    head = raw_field(name, 100) + (oct_text(mode, 7) + chr(0)).encode() + bytes(16) + (oct_text(size, 11) + chr(0)).encode() + (oct_text(1000000, 11) + chr(0)).encode()
+    tail = flag.encode() + raw_field(link, 100) + b'ustar\x0000' + bytes(32 + 32 + 16 + 155 + 12)
+    total = 256
+    for x in head:
+        total += x
+    for x in tail:
+        total += x
+    return head + (oct_text(total, 6) + chr(0) + ' ').encode() + tail
+
+def entry_bytes(name: str, flag: str, content: bytes = b'', link: str = '', mode: int = 420) -> bytes:
+    pad = (len(content) + 511) // 512 * 512 - len(content)
+    return raw_header(name, flag, len(content), link, mode) + content + bytes(pad)
+
+def write_tar(path: str, parts: list[bytes]):
+    out = b''
+    for p in parts:
+        out += p
+    os.write_bytes(path, out + bytes(1024))
+
+def sections_ours(work: str):
+    src = work + '/src'
+    make_tree(src)
+    want = describe(src)
+    print('source', len(want))
+    tarfile.create(work + '/a.tar.gz', src, prefix='pkg', mtime=1700000000)
+    tarfile.create(work + '/a.tar', src, prefix='pkg', mtime=1700000000)
+    tarfile.create(work + '/again.tar.gz', src, prefix='pkg', mtime=1700000000)
+    print('deterministic', os.read_bytes(work + '/a.tar.gz') == os.read_bytes(work + '/again.tar.gz'))
+    print('plain and gzip hold the same', gzip.decompress(os.read_bytes(work + '/a.tar.gz')) == os.read_bytes(work + '/a.tar'))
+    es = tarfile.entries(work + '/a.tar.gz')
+    print('entries', len(es), es[0].name, es[0].kind, es[1].name, es[1].kind, es[1].mode, es[1].mtime)
+    kinds: dict[str, int] = {}
+    for e in es:
+        kinds[e.kind] = kinds.get(e.kind, 0) + 1
+    print('kinds', kinds)
+    print('gzip -t', run(['gzip', '-t', work + '/a.tar.gz']).status)
+    mine = names_of(es)
+    print('tar -tzf agrees', host_names(['tar', '-tzf', work + '/a.tar.gz']) == mine, 'tar -tf', host_names(['tar', '-tf', work + '/a.tar']) == mine)
+    os.mkdir(work + '/host')
+    r = run(['tar', '-xzf', work + '/a.tar.gz', '-C', work + '/host'])
+    print('tar -xzf', r.status, len(r.stderr))
+    got = describe(work + '/host/pkg')
+    print('the system tar extracts the same tree', got == want)
+    tarfile.extract(work + '/a.tar.gz', work + '/mine')
+    print('we extract the same tree', describe(work + '/mine/pkg') == want)
+    tarfile.extract(work + '/a.tar', work + '/mine2', strip=1)
+    print('strip=1', describe(work + '/mine2') == want, os.stat(work + '/mine2/docs/readme.txt').mtime)
+    print('mode kept', mode_text(work + '/mine2/bin/tool'), mode_text(work + '/mine2/secret'), mode_text(work + '/mine2/empty'))
+
+def sections_host(work: str):
+    # an archive made by the system tar, with long names and a link
+    root = work + '/hsrc'
+    deep = root
+    for i in range(6):
+        deep += '/' + 'd' * 50 + str(i)
+    os.makedirs(deep)
+    os.write_text(deep + '/' + 'f' * 90 + '.txt', 'long names')
+    os.write_text(root + '/short.txt', 'short')
+    os.symlink('short.txt', root + '/ln')
+    for d in ['', '/' + 'd' * 50 + '0', '/' + 'd' * 50 + '0/' + 'd' * 50 + '1', '/' + 'd' * 50 + '0/' + 'd' * 50 + '1/' + 'd' * 50 + '2', '/' + 'd' * 50 + '0/' + 'd' * 50 + '1/' + 'd' * 50 + '2/' + 'd' * 50 + '3', '/' + 'd' * 50 + '0/' + 'd' * 50 + '1/' + 'd' * 50 + '2/' + 'd' * 50 + '3/' + 'd' * 50 + '4', deep[len(root):]]:
+        os.chmod(root + d, 493)
+    os.symlink('d' * 50 + '0/' + 'd' * 50 + '1/' + 'd' * 50 + '2/' + 'd' * 50 + '3/' + 'd' * 50 + '4/' + 'd' * 50 + '5/' + 'f' * 90 + '.txt', root + '/longlink')
+    want = describe(root)
+    for style in ['plain', 'gz']:
+        name = work + '/h.' + ('tgz' if style == 'gz' else 'tar')
+        flags = '-czf' if style == 'gz' else '-cf'
+        r = run(['tar', flags, name, '-C', work, 'hsrc'])
+        if r.status != 0:
+            print('tar failed', r.stderr)
+        dest = work + '/hx.' + style
+        tarfile.extract(name, dest)
+        print('system tar,', style, 'extracted here', describe(dest + '/hsrc') == want, len(tarfile.entries(name)))
+    # a long name of our own, one that needs the prefix field and one that needs a pax header
+    os.mkdir(work + '/lsrc')
+    split = work + '/lsrc/' + 'p' * 80
+    os.makedirs(split)
+    os.write_text(split + '/' + 'q' * 90, 'prefix split')
+    pax = work + '/lsrc/' + 'x' * 120
+    os.makedirs(pax)
+    os.write_text(pax + '/' + 'e' * 70, 'pax record')
+    for d in ['/lsrc', '/lsrc/' + 'p' * 80, '/lsrc/' + 'x' * 120]:
+        os.chmod(work + d, 493)
+    tarfile.create(work + '/l.tar', work + '/lsrc')
+    print('long names: host lists', host_names(['tar', '-tf', work + '/l.tar']) == names_of(tarfile.entries(work + '/l.tar')), len(tarfile.entries(work + '/l.tar')))
+    tarfile.extract(work + '/l.tar', work + '/lx')
+    print('long names: round trip', describe(work + '/lx') == describe(work + '/lsrc'))
+    os.mkdir(work + '/lhost')
+    print('long names: host extracts', run(['tar', '-xf', work + '/l.tar', '-C', work + '/lhost']).status, describe(work + '/lhost') == describe(work + '/lsrc'))
+    # a long name that is not ASCII needs a pax header with UTF-8 (the system tar needs a UTF-8 locale for it, so only this program reads it)
+    os.makedirs(work + '/usrc/' + 'y' * 120)
+    os.write_text(work + '/usrc/' + 'y' * 120 + '/' + 'é' * 70, 'utf-8 pax record')
+    tarfile.create(work + '/u.tar', work + '/usrc')
+    tarfile.extract(work + '/u.tar', work + '/ux')
+    print('long non-ASCII names round trip', describe(work + '/ux') == describe(work + '/usrc'), len(tarfile.entries(work + '/u.tar')[1].name))
+
+def sections_hostile(work: str):
+    d = work + '/bad'
+    os.mkdir(d)
+    cases: list[tuple[str, list[bytes]]] = [
+        ('dotdot', [entry_bytes('../evil.txt', '0', b'x')]),
+        ('dotdot inside', [entry_bytes('a/../../evil.txt', '0', b'x')]),
+        ('absolute', [entry_bytes('/tmp/tomato-evil.txt', '0', b'x')]),
+        ('absolute dir', [entry_bytes('/etc/', '5')]),
+        ('link out', [entry_bytes('l', '2', link='../..')]),
+        ('link absolute', [entry_bytes('l', '2', link='/etc')]),
+        ('link deep', [entry_bytes('a/b/l', '2', link='../../..')]),
+        ('write through a link', [entry_bytes('d', '5', mode=493), entry_bytes('d/l', '2', link='.'), entry_bytes('d/l/f.txt', '0', b'x')]),
+        ('write through a link to a folder', [entry_bytes('t', '5', mode=493), entry_bytes('l', '2', link='t'), entry_bytes('l/f.txt', '0', b'x')]),
+        ('folder through a link', [entry_bytes('t', '5', mode=493), entry_bytes('l', '2', link='t'), entry_bytes('l/sub/', '5')]),
+        ('hard link', [entry_bytes('f', '0', b'x'), entry_bytes('h', '1', link='f')]),
+        ('device', [entry_bytes('dev', '3')]),
+        ('pipe', [entry_bytes('pipe', '6')]),
+        ('sparse', [entry_bytes('s', 'S', b'x')]),
+        ('file over a folder', [entry_bytes('t/', '5', mode=493), entry_bytes('t', '0', b'x')]),
+        ('setuid', [entry_bytes('prog', '0', b'x', mode=2541)]),
+    ]
+    for c in cases:
+        dest = d + '/' + c[0].replace(' ', '_')
+        write_tar(d + '/' + c[0].replace(' ', '_') + '.tar', c[1])
+        attempt(c[0], d + '/' + c[0].replace(' ', '_') + '.tar', dest)
+    print('nothing outside', ('evil.txt' in os.listdir(work)), os.stat(d + '/setuid/prog').mode % 4096 // 512)
+    # a link that is fine, and a name with ./ and // that is fine
+    write_tar(d + '/ok.tar', [entry_bytes('./a//b/', '5', mode=493), entry_bytes('a/b/c.txt', '0', b'ok'), entry_bytes('a/l', '2', link='b/c.txt'), entry_bytes('a/up', '2', link='../a')])
+    attempt('fine', d + '/ok.tar', d + '/ok')
+    # entries replace what is there, and a folder is never replaced
+    os.mkdir(d + '/over')
+    os.write_text(d + '/over/f', 'old')
+    os.symlink('f', d + '/over/l')
+    write_tar(d + '/over.tar', [entry_bytes('f', '0', b'new'), entry_bytes('l', '0', b'file now')])
+    attempt('replace', d + '/over.tar', d + '/over')
+    print('replaced', os.read_text(d + '/over/f'), os.read_text(d + '/over/l'), os.read_text(d + '/over/f'))
+    os.mkdir(d + '/over/dir')
+    write_tar(d + '/over2.tar', [entry_bytes('dir', '0', b'x')])
+    attempt('file over folder on disk', d + '/over2.tar', d + '/over')
+    # a limit
+    write_tar(d + '/big.tar', [entry_bytes('a', '0', bytes(3000)), entry_bytes('b', '0', bytes(3000))])
+    attempt('max_size', d + '/big.tar', d + '/lim', max_size=5000)
+    print('what came before the entry that went over stays', os.listdir(d + '/lim'))
+    attempt('max_size fits', d + '/big.tar', d + '/lim2', max_size=6000)
+    # gnu long name, pax size
+    longname = 'g' * 150 + '.txt'
+    write_tar(d + '/gnu.tar', [entry_bytes('././@LongLink', 'L', longname.encode() + b'\x00'), entry_bytes('truncated-name', '0', b'gnu')])
+    attempt('gnu long name', d + '/gnu.tar', d + '/gnu')
+    print('gnu name', os.listdir(d + '/gnu') == [longname])
+    body = b' path=' + b'p' * 130 + b'\n'
+    rec = str(len(body) + 3).encode() + body
+    write_tar(d + '/pax.tar', [entry_bytes('PaxHeader', 'x', rec), entry_bytes('short', '0', b'pax')])
+    attempt('pax path', d + '/pax.tar', d + '/pax')
+    print('pax name', len(os.listdir(d + '/pax')[0]))
+
+def sections_damaged(work: str):
+    d = work + '/dmg'
+    os.mkdir(d)
+    good = work + '/a.tar'
+    data = os.read_bytes(good)
+    gz = os.read_bytes(work + '/a.tar.gz')
+    os.write_bytes(d + '/empty.tar', b'')
+    attempt('empty file', d + '/empty.tar', d + '/o1')
+    os.write_bytes(d + '/text.tar', b'this is not a tar archive. ' * 100)
+    attempt('not a tar', d + '/text.tar', d + '/o2')
+    os.write_bytes(d + '/cut.tar', data[:5000])
+    attempt('cut in the data', d + '/cut.tar', d + '/o3')
+    os.write_bytes(d + '/cut2.tar', data[:700])
+    attempt('cut in a header', d + '/cut2.tar', d + '/o4')
+    os.write_bytes(d + '/sum.tar', data[:20] + bytes([data[20] ^ 1]) + data[21:])
+    attempt('bad checksum', d + '/sum.tar', d + '/o5')
+    os.write_bytes(d + '/cut.tar.gz', gz[:len(gz) // 2])
+    attempt('cut gzip', d + '/cut.tar.gz', d + '/o6')
+    os.write_bytes(d + '/flip.tar.gz', gz[:2000] + bytes([gz[2000] ^ 255]) + gz[2001:])
+    attempt('damaged gzip', d + '/flip.tar.gz', d + '/o7')
+    attempt('no such archive', d + '/nothing.tar', d + '/o8')
+    attempt('a folder as the archive', d, d + '/o9')
+    try:
+        tarfile.entries(d + '/cut.tar.gz')
+    catch gzip.GzipError as e:
+        print('entries of a cut gzip', e.id)
+    # no archive is left half-made
+    try:
+        tarfile.create(work + '/nope/x.tar', work + '/src')
+    catch FileNotFoundError as e:
+        print('create in a missing folder', e.id)
+    try:
+        tarfile.create(d + '/c.tar', work + '/src/zero')
+    catch NotADirectoryError as e:
+        print('create from a file', e.id)
+    print('leftovers', [n for n in os.listdir(d) if '.tomato-tar.' in n], [n for n in os.listdir(work) if '.tomato-tar.' in n])
+
+@main
+def main(work: str):
+    sections_ours(work)
+    sections_host(work)
+    sections_hostile(work)
+    sections_damaged(work)

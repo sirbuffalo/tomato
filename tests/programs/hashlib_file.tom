@@ -1,0 +1,38 @@
+# hashlib.sha256_file (stage 1 of docs/shell-to-tomato-plan.md): the digest of a file read by the runtime in pieces, compared with the vectors of
+# the standard and with the Hash class (written in Tomato) at every size where the padding changes and around the size of one piece (1 MiB).
+# The first input is a folder for this test's files.
+import hashlib
+import os
+
+def digest_of(work: str, text: str) -> str:
+    os.write_text(work + '/f', text)
+    return hashlib.sha256_file(work + '/f')
+
+def same_as_hash(work: str, size: int) -> bool:
+    data = bytes([(i * 7 + 3) % 256 for i in range(size)])
+    os.write_bytes(work + '/g', data)
+    return hashlib.sha256_file(work + '/g') == hashlib.sha256(data).hexdigest()
+
+@main
+def main(work: str):
+    print('empty', digest_of(work, ''))
+    print('abc', digest_of(work, 'abc'))
+    print('two blocks', digest_of(work, 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'))
+    print('a million a', digest_of(work, 'a' * 1000000))
+    for size in [1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129, 1000]:
+        print('size', size, same_as_hash(work, size))
+    for size in [1048575, 1048576, 1048577, 2097152, 2097153]:
+        print('size', size, same_as_hash(work, size))
+    print('utf-8 text', digest_of(work, 'héllo wörld ✓') == hashlib.sha256('héllo wörld ✓'.encode()).hexdigest())
+    try:
+        hashlib.sha256_file(work + '/missing')
+    catch FileNotFoundError as e:
+        print('missing', e.id)
+    try:
+        hashlib.sha256_file(work)
+    catch IsADirectoryError as e:
+        print('directory', e.id)
+    try:
+        hashlib.sha256_file('a' + chr(0) + 'b')
+    catch ValueError as e:
+        print('NUL', e.id)

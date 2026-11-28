@@ -88,7 +88,7 @@ function markdown(src) {
 // ---- syntax highlighting for <pre><code> blocks (same token classes as editors/vscode/syntaxes/tomato.tmLanguage.json)
 (function () {
   var KW = /^(def|class|interface|implements|private|const|override|return|if|elif|else|while|for|in|pass|break|continue|try|catch|finally|raise|assert|yield|import|from|export|async|await|as|is|and|or|xor|not)$/;
-  var MOD = /^(asyncio|base64|cache|csv|datetime|hex|hashlib|hmac|html|io|itertools|json|lineedit|math|os|ospath|random|rational|re|requests|secrets|socket|statistics|struct|sys|terminal|testing|textwrap|time|toml|urlparse|utf8|uuid|value|zlib)$/;
+  var MOD = /^(asyncio|base64|cache|csv|datetime|gzip|hex|hashlib|hmac|html|io|itertools|json|lineedit|math|os|ospath|random|rational|re|requests|secrets|signal|socket|statistics|struct|sys|tarfile|terminal|testing|textwrap|time|toml|urlparse|utf8|uuid|value|zlib)$/;
   var TY = /^(int|uint|float|rational|bool|str|bytes|list|dict|set|tuple|File|range|Error|RuntimeError|IOError|FileNotFoundError|FileExistsError|PermissionError|IsADirectoryError|NotADirectoryError|TimeoutError|ConnectionError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|EOFError|CancelledError|Sized|bitarray|frozenbitarray|bytearray)$/;
   var BI = /^(print|len|str|int|float|rational|range|open|input|sleep|clock|min|max|sum|abs|chr|ord|round|divmod|any|all|hash|sorted|reversed|enumerate|zip|map|filter|list|dict|set|tuple|bool|bytes)$/;
   var TOKEN = /(#[^\n]*)|((?:\b[fb])?(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'))|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(!?[A-Za-z_]\w*)|(->|\*\*|\/\/|==|!=|<=|>=|[-+*\/%<>=&|^])|(@\w+)/g;

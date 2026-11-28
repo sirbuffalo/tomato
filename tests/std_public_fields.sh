@@ -11,6 +11,7 @@ cd "$(dirname "$0")/.." || exit 1
 #   progress_bar: ...           the runtime calls write text to a terminal; the fields are read and written by checked Tomato code
 #   Socket, Server, DatagramSocket: fd, ...   a descriptor number: the runtime calls only pass it to the system, which refuses a wrong one
 #   PipeReader: name, piped     the runtime's handle (`h`) is private
+#   tarfile _Reader, _Writer: h, path, fixed_mtime   module-private classes (not exported, so no program can make or reach one); the runtime checks every handle it is given
 #   Process: pid, ...           a process number, passed to the system (`h`, `fd_in` are private)
 #   Terminal: fd, colors        a descriptor number, as for a socket
 #   value.Str, value.Dict: v, fields   the runtime call quotes a text
@@ -21,6 +22,8 @@ std/socket.tom:Server: fd host port
 std/socket.tom:DatagramSocket: fd host port
 std/sys.tom:PipeReader: name piped
 std/sys.tom:Process: pid stdout stderr status signal
+std/tarfile.tom:_Reader: h path
+std/tarfile.tom:_Writer: h path fixed_mtime
 std/terminal.tom:Terminal: fd colors
 std/value.tom:Str: v
 std/value.tom:Dict: fields"

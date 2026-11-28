@@ -1,0 +1,88 @@
+# os.exchange (stage 1 of docs/shell-to-tomato-plan.md): two names swap in one step, so a program that reads either name at any moment finds
+# one whole version, never a missing one. The same program is the reader (TOMATO_EXCHANGE_CHILD names the folder it reads). Where a system or
+# file system cannot swap in one step, exchange does three renames (the variable TOMATO_TEST_NO_EXCHANGE makes this system take that path
+# too), and then the reader is not checked: a moment with no name is what that path is. Native only. The first input is a folder for this
+# test's files.
+import os
+import sys
+
+def reader(work: str) -> str:
+    failures = 0
+    seen_a = 0
+    seen_b = 0
+    for i in range(3000):
+        for name in ['one', 'two']:
+            try:
+                text = os.read_text(work + '/' + name + '/f')
+                if text == 'A':
+                    seen_a += 1
+                elif text == 'B':
+                    seen_b += 1
+                else:
+                    failures += 1
+            catch IOError:
+                failures += 1
+    return f'{failures} {seen_a > 0} {seen_b > 0}'
+
+def attempt(a: str, b: str) -> str:
+    try:
+        return str(os.exchange(a, b))
+    catch IOError as e:
+        return f'{e.id} {e.message.startswith("could not exchange")}'
+
+@main
+async def main(work: str):
+    mine = os.getenv('TOMATO_EXCHANGE_CHILD')
+    if mine is not None:
+        print(reader(mine))
+        return
+    # files
+    os.write_text(work + '/x', 'first')
+    os.write_text(work + '/y', 'second')
+    _r = os.exchange(work + '/x', work + '/y')     # (True where the system swaps in one step; the answer differs by system, so it is not printed)
+    print('files', os.read_text(work + '/x'), os.read_text(work + '/y'))
+    # folders (also of different kinds: a folder and a file)
+    os.mkdir(work + '/d1')
+    os.mkdir(work + '/d2')
+    os.write_text(work + '/d1/in', 'one')
+    os.write_text(work + '/d2/in2', 'two')
+    _r = os.exchange(work + '/d1', work + '/d2')
+    print('folders', os.listdir(work + '/d1'), os.listdir(work + '/d2'))
+    _r = os.exchange(work + '/d1', work + '/x')
+    print('folder and file', os.read_text(work + '/d1'), os.listdir(work + '/x'))
+    # failures leave both as they were
+    print('missing', attempt(work + '/x', work + '/nothing'))
+    print('both missing', attempt(work + '/nothing', work + '/neither'))
+    print('after failure', os.listdir(work + '/x'), os.read_text(work + '/d1'))
+    # the same with the fallback of three renames
+    os.putenv('TOMATO_TEST_NO_EXCHANGE', '1')
+    print('fallback', os.exchange(work + '/x', work + '/y'), os.read_text(work + '/x'), os.listdir(work + '/y'))
+    print('fallback missing', attempt(work + '/x', work + '/nothing'))
+    print('fallback both missing', attempt(work + '/gone', work + '/nothing'))
+    print('fallback after failure', os.read_text(work + '/x'), os.listdir(work + '/y'), sorted_names(work))
+    os.unsetenv('TOMATO_EXCHANGE_CHILD')
+    os.unsetenv('TOMATO_TEST_NO_EXCHANGE')
+    # a reader in another process looks at both names while they swap
+    os.mkdir(work + '/rw')
+    for name in ['one', 'two']:
+        os.mkdir(work + '/rw/' + name)
+    os.write_text(work + '/rw/one/f', 'A')
+    os.write_text(work + '/rw/two/f', 'B')
+    p = sys.spawn([sys.argv()[0], work], env={'TOMATO_EXCHANGE_CHILD': work + '/rw'})
+    swaps = 0
+    atomic = True
+    while not p.done():
+        if not os.exchange(work + '/rw/one', work + '/rw/two'):
+            atomic = False
+        swaps += 1
+        await sleep(0.0005)
+    out = (await p.stdout.read()).strip()
+    words = out.split(' ')
+    print('reader', p.status, 'swapped while it read:', swaps > 10, 'no name was ever missing:', words[0] == '0' or not atomic, 'saw both versions:', words[1] == 'True' and words[2] == 'True')
+
+def sorted_names(work: str) -> list[str]:
+    out: list[str] = []
+    for n in os.listdir(work):
+        if n in ['d1', 'd2', 'x', 'y']:           # (the folder may hold other files of the test run)
+            out.append(n)
+    return out

@@ -1,0 +1,105 @@
+# Signals, new in stage 1 of docs/shell-to-tomato-plan.md (unstable: docs/provisional.md U7). A program that makes temporary files or
+# starts other programs wants to clean up when it is stopped with Ctrl-C (INT), `kill` (TERM) or a closed terminal (HUP). Use it with:
+#
+#     import signal
+#     signal.watch()                         # INT, TERM and HUP no longer end the program at once
+#     folder = os.mkdtemp()
+#     try:
+#         sys.run(['make'], capture=False)   # a watched signal passes to the program, and then raises sys.Interrupted here
+#     finally:
+#         os.rmtree(folder)                  # runs, and then the program ends with status 128 plus the number (130 for Ctrl-C)
+#
+# A watched signal is only recorded when it comes; the program takes it at a place where it can stop in order, and there raises
+# sys.Interrupted, so the `finally` blocks run. Those places are check(), sys.run (the program it runs gets the signal first, and is killed
+# if it is still there after 5 seconds), sys.run_async, Process.wait() and the other waits of sys. A program that is only sleeping or
+# waiting for a socket does not look: call check() in its loop. An sys.Interrupted that nothing catches ends the program, without an
+# error message, with status 128 plus the signal number. A second signal of a kind that was not taken yet has its default effect (the
+# program ends at once), so a program that never looks can still be stopped. In the browser playground there are no signals: watch and
+# send raise RuntimeError, and check never has anything to raise.
+import sys
+!tomato_signal_watch(sig: int, on: int) -> int
+!tomato_signal_take() -> int
+!tomato_signal_send(pid: int, sig: int) -> int
+!tomato_os_error(what: str) -> str
+!tomato_platform() -> str
+
+# The signal names this module knows, and their numbers on this system.
+def _number(word: str) -> int:
+    text = word
+    if text.startswith('SIG'):
+        text = text[3:]
+    mac = !tomato_platform() == 'darwin'
+    if text == 'HUP':
+        return 1
+    if text == 'INT':
+        return 2
+    if text == 'QUIT':
+        return 3
+    if text == 'KILL':
+        return 9
+    if text == 'USR1':
+        return 30 if mac else 10
+    if text == 'USR2':
+        return 31 if mac else 12
+    if text == 'ALRM':
+        return 14
+    if text == 'TERM':
+        return 15
+    raise ValueError(f"'{word}' is not a signal name this module knows (HUP, INT, QUIT, KILL, USR1, USR2, ALRM, TERM)", 'E662')
+
+# The number of a signal given by its name ('INT', or 'SIGINT'): HUP 1, INT 2, QUIT 3, KILL 9, ALRM 14, TERM 15, and USR1 and USR2
+# (10 and 12 on Linux, 30 and 31 on macOS). For Process.kill. New (unstable).
+export def number(signal_name: str) -> int:
+    return _number(signal_name)
+
+# The name of a signal number that number() knows ('INT'), else its number as text ('SIG34').
+export def name(n: int) -> str:
+    for known in ['HUP', 'INT', 'QUIT', 'KILL', 'USR1', 'USR2', 'ALRM', 'TERM']:
+        if _number(known) == n:
+            return known
+    return f'SIG{n}'
+
+def _browser(what: str):
+    if !tomato_platform() == 'wasi':
+        raise RuntimeError(f'signal.{what} is not available in the browser playground (it has no signals)', 'E514')
+
+def _watch(names: list[str], on: int):
+    _browser('watch' if on == 1 else 'unwatch')
+    numbers: list[int] = []
+    for n in names:
+        k = _number(n)
+        if k == 9:
+            raise ValueError('the signal KILL cannot be watched', 'E662')
+        numbers.append(k)
+    for k in numbers:
+        kind = !tomato_signal_watch(k, on)
+        if kind != 0:
+            raise IOError(!tomato_os_error(f'watch the signal {name(k)}'), 'E515')
+
+# From now on the signals named (by default INT, TERM and HUP) do not end the program: each is recorded, and the next place that looks
+# (check(), sys.run, ...) raises sys.Interrupted. Calling it again for a signal that is watched changes nothing. New (unstable).
+export def watch(names: list[str] = ['INT', 'TERM', 'HUP']):
+    _watch(names, 1)
+
+# Gives the named signals (by default INT, TERM and HUP) their usual effect again (they end the program). One that was recorded and not
+# taken is forgotten.
+export def unwatch(names: list[str] = ['INT', 'TERM', 'HUP']):
+    _watch(names, 0)
+
+# Raises sys.Interrupted if a watched signal has come since the last look (the lowest number first; each signal is raised once), else does
+# nothing. Call it in a long loop that does not wait for a program or a stream.
+export def check():
+    n = !tomato_signal_take()
+    if n != 0:
+        raise sys.Interrupted(n, 'E661')
+
+# Sends a signal (by name) to the process with that id: `send(p.pid, 'TERM')`. A process that is not there is an IOError (E515);
+# one that belongs to someone else, a PermissionError. New (unstable).
+export def send(pid: int, signal_name: str):
+    _browser('send')
+    n = _number(signal_name)
+    kind = !tomato_signal_send(pid, n)
+    if kind == 3:
+        raise PermissionError(!tomato_os_error(f'send the signal {signal_name} to the process {pid}'), 'E507')
+    if kind != 0:
+        raise IOError(!tomato_os_error(f'send the signal {signal_name} to the process {pid}'), 'E515')

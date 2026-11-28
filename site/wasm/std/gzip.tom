@@ -1,0 +1,72 @@
+# gzip, new in stage 1 of docs/shell-to-tomato-plan.md (unstable: docs/provisional.md U7): deflate and inflate written in C inside the runtime, with
+# no library behind them, so they work in the browser too. Data is `bytes`. The files written follow RFC 1951 and RFC 1952 (the system `gzip -t`
+# and `gunzip` read them; `gzip` output is read here, also a file of several members put end to end):
+#
+#     packed = gzip.compress(b'hello' * 1000)         # about 50 bytes
+#     print(gzip.decompress(packed) == b'hello' * 1000)
+#
+# This is the in-memory form; tarfile reads and writes .tar.gz files a piece at a time. A text that is not gzip data, is cut short, is damaged
+# or has something after its end raises GzipError.
+!tomato_gz_compress(data: bytes, level: int, out: list[bytes]) -> int
+!tomato_gz_decompress(data: bytes, max_out: int, out: list[bytes]) -> int
+
+# The data is not good gzip data. `id` says which of the ways: E664 it does not start like gzip, E665 it is damaged, E666 it ends too soon,
+# E667 its checksum or size is wrong, E668 it is longer than max_size, E669 something follows its end, E670 a file could not be read.
+export class GzipError(ValueError):
+    pass
+
+# The text of a gzip error code of the runtime (1 to 7).
+def _explain(code: int) -> str:
+    if code == 1:
+        return 'it does not start like gzip data (the first bytes are not 1f 8b 08)'
+    if code == 2:
+        return 'the compressed data is damaged'
+    if code == 3:
+        return 'the compressed data ends too soon (it is cut short)'
+    if code == 4:
+        return 'the data does not match its checksum or its size'
+    if code == 5:
+        return 'the data is larger than max_size'
+    if code == 6:
+        return 'there is something after the end of the gzip data'
+    return 'the data could not be read'
+
+# The error that goes with a code of the runtime (1 to 7).
+def _error_for(code: int, what: str) -> GzipError:
+    text = f'{what}: {_explain(code)}'
+    if code == 1:
+        return GzipError(text, 'E664')
+    if code == 2:
+        return GzipError(text, 'E665')
+    if code == 3:
+        return GzipError(text, 'E666')
+    if code == 4:
+        return GzipError(text, 'E667')
+    if code == 5:
+        return GzipError(text, 'E668')
+    if code == 6:
+        return GzipError(text, 'E669')
+    return GzipError(text, 'E670')
+
+# The data packed as gzip, at level 1 (fastest) to 9 (smallest); the default 6 is about what the system gzip does. The same data and level
+# give the same bytes (the time stamp in the header is 0). A level outside 1 to 9 is a ValueError.
+export def compress(data: bytes, level: int = 6) -> bytes:
+    if level < 1 or level > 9:
+        raise ValueError('the gzip level must be from 1 to 9', 'E671')
+    out: list[bytes] = []
+    _r = !tomato_gz_compress(data, level, out)
+    return out[0]
+
+# The data unpacked (every member, when there are several). With max_size the result may not be longer than that many bytes (a small gzip
+# file can hold gigabytes: set it for data you do not trust); longer is a GzipError.
+export def decompress(data: bytes, max_size: int | None = None) -> bytes:
+    limit = 0
+    if max_size is not None:
+        if max_size < 1:
+            raise ValueError('max_size must be 1 or more', 'E672')
+        limit = max_size
+    out: list[bytes] = []
+    kind = !tomato_gz_decompress(data, limit, out)
+    if kind != 0:
+        raise _error_for(kind - 100, 'could not unpack the gzip data')
+    return out[0]

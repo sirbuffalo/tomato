@@ -4,12 +4,12 @@
 
 # every module in std/ (the help of "cannot find the module", and the shadow warning)
 export def std_modules() -> list[str]:
-    return ['asyncio', 'base64', 'bitarray', 'bytearray', 'cache', 'csv', 'datetime', 'hashlib', 'hex', 'hmac', 'html', 'io', 'itertools', 'json', 'lineedit', 'math', 'os', 'ospath', 'random', 'rational', 're', 'requests', 'secrets', 'socket', 'statistics', 'struct', 'sys', 'terminal', 'testing', 'textwrap', 'time', 'toml', 'urlparse', 'utf8', 'uuid', 'value', 'zlib']
+    return ['asyncio', 'base64', 'bitarray', 'bytearray', 'cache', 'csv', 'datetime', 'gzip', 'hashlib', 'hex', 'hmac', 'html', 'io', 'itertools', 'json', 'lineedit', 'math', 'os', 'ospath', 'random', 'rational', 're', 'requests', 'secrets', 'signal', 'socket', 'statistics', 'struct', 'sys', 'tarfile', 'terminal', 'testing', 'textwrap', 'time', 'toml', 'urlparse', 'utf8', 'uuid', 'value', 'zlib']
 
 # the names std keeps for modules it may add: a seed may not provide one, and a project file of that name is allowed
 # (it will shadow the module, with a warning, when std gets it)
 export def planned_modules() -> list[str]:
-    return ['http', 'https', 'log', 'logging', 'argparse', 'cli', 'subprocess', 'process', 'path', 'pathlib', 'string', 'types', 'typing', 'enum', 'dataclasses', 'collections', 'functools', 'operator', 'bytes', 'array', 'queue', 'threading', 'signal', 'tempfile', 'shutil', 'glob', 'fnmatch', 'heapq', 'bisect', 'copy', 'pickle', 'sqlite', 'xml', 'yaml', 'unittest', 'inspect', 'gc', 'abc', 'contextlib', 'weakref', 'decimal', 'fractions', 'numbers', 'locale', 'gettext', 'codecs', 'unicodedata', 'ssl', 'select', 'ipaddress', 'email', 'smtplib']
+    return ['http', 'https', 'log', 'logging', 'argparse', 'cli', 'subprocess', 'process', 'path', 'pathlib', 'string', 'types', 'typing', 'enum', 'dataclasses', 'collections', 'functools', 'operator', 'bytes', 'array', 'queue', 'threading', 'tempfile', 'shutil', 'glob', 'fnmatch', 'heapq', 'bisect', 'copy', 'pickle', 'sqlite', 'xml', 'yaml', 'unittest', 'inspect', 'gc', 'abc', 'contextlib', 'weakref', 'decimal', 'fractions', 'numbers', 'locale', 'gettext', 'codecs', 'unicodedata', 'ssl', 'select', 'ipaddress', 'email', 'smtplib']
 
 # std's modules and the planned ones: the names a seed cannot take
 export def reserved_modules() -> list[str]:

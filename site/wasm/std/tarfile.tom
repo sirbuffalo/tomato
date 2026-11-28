@@ -1,0 +1,613 @@
+# tar archives, new in stage 1 of docs/shell-to-tomato-plan.md (unstable: docs/provisional.md U7): make a .tar or .tar.gz from a folder, list one,
+# and extract one into a folder. A piece at a time (the archive is never held whole in memory; a file of it is written as it is read). Natively
+# only: the browser playground raises RuntimeError (E514), as for the file functions of os. Use it with:
+#
+#     tarfile.create('pkg.tar.gz', 'build/pkg', prefix='tomato-1.0')   # 'tomato-1.0/...' in the archive; gzip because of the name
+#     for e in tarfile.entries('pkg.tar.gz'):
+#         print(e.kind, e.name, e.size)
+#     tarfile.extract('pkg.tar.gz', 'here', strip=1)                  # without the first part of each name
+#
+# What is read: ustar, GNU (long names and long links, 'L' and 'K') and pax ('x', the path, linkpath, size and mtime records; the others are
+# ignored) archives, plain or gzip (told by the first bytes), files, folders and symbolic links. What is written: ustar, with the pax path for a name
+# that does not fit, root as the owner (no user names), the permission bits (no setuid), the modification time of each file or the one you give
+# (the same folder and the same mtime give the same archive, byte for byte). Hard links, devices, pipes, sparse files and any other kind of entry are
+# an error on extraction (TarError, E674), never a file; a hard link in a folder you archive is archived as a copy.
+# Extraction is careful with what it is given: a name that is absolute or has a `..` part, a link that points out of the folder (absolute, or
+# `..` above it), and any entry that would be written through a link in the folder, are refused with TarError (E675), and nothing is written
+# for that entry. What was extracted before it stays (as with tar). setuid and setgid bits are never set. A file of the archive replaces a file
+# or link of the same name; it never replaces a folder.
+import gzip
+import os
+!tomato_zs_open(path: str, write: int, gz: int, level: int, max_out: int) -> int
+!tomato_zs_read(h: int, n: int, out: list[bytes]) -> int
+!tomato_zs_skip(h: int, n: int) -> int
+!tomato_zs_extract(h: int, n: int, path: str, mode: int) -> int
+!tomato_zs_write(h: int, data: bytes) -> int
+!tomato_zs_write_file(h: int, path: str, size: int) -> int
+!tomato_zs_close(h: int) -> int
+!tomato_os_error(what: str) -> str
+!tomato_platform() -> str
+
+# The archive is damaged or is not a tar archive (E673), holds an entry that cannot be extracted (E674), would leave the folder (E675), is
+# larger than max_size (E676), or a folder holds something that cannot be archived (E677).
+export class TarError(ValueError):
+    pass
+
+# One entry of an archive: its name (with the strip done and the folder's trailing / left off), what it is ('file', 'dir', 'symlink', 'hardlink'
+# or 'other'), the size of its data, the permission bits (mode & 0o777), the time (seconds since the epoch) and, for a link, where it points.
+export class Entry:
+    name: str = ''
+    kind: str = ''
+    size: int = 0
+    mode: int = 0
+    mtime: int = 0
+    link: str = ''
+
+    @init
+    def make(self, name: str, kind: str, size: int, mode: int, mtime: int, link: str):
+        self.name = name
+        self.kind = kind
+        self.size = size
+        self.mode = mode
+        self.mtime = mtime
+        self.link = link
+
+def _not_in_browser(what: str):
+    if !tomato_platform() == 'wasi':
+        raise RuntimeError(f'tarfile.{what} is not available in the browser playground', 'E514')
+
+def _gzip_text(code: int) -> str:
+    if code == 1:
+        return 'it does not start like gzip data (the first bytes are not 1f 8b 08)'
+    if code == 2:
+        return 'the compressed data is damaged'
+    if code == 3:
+        return 'the compressed data ends too soon (it is cut short)'
+    if code == 4:
+        return 'the data does not match its checksum or its size'
+    if code == 5:
+        return 'the data is larger than the limit'
+    if code == 6:
+        return 'there is something after the end of the gzip data'
+    return 'the data could not be read'
+
+# the error for what a stream call gave back: 101 to 107 a gzip error, 1 to 6 a failure of the system
+def _failure(kind: int, what: str) -> Error:
+    if kind == 120:
+        return TarError(f'{what}: the archive ends in the middle of an entry', 'E673')
+    if kind > 100:
+        text = f'{what}: {_gzip_text(kind - 100)}'
+        if kind == 101:
+            return gzip.GzipError(text, 'E664')
+        if kind == 102:
+            return gzip.GzipError(text, 'E665')
+        if kind == 103:
+            return gzip.GzipError(text, 'E666')
+        if kind == 104:
+            return gzip.GzipError(text, 'E667')
+        if kind == 105:
+            return gzip.GzipError(text, 'E668')
+        if kind == 106:
+            return gzip.GzipError(text, 'E669')
+        return gzip.GzipError(text, 'E670')
+    message = !tomato_os_error(what)
+    if kind == 1:
+        return FileNotFoundError(message, 'E505')
+    if kind == 2:
+        return FileExistsError(message, 'E506')
+    if kind == 3:
+        return PermissionError(message, 'E507')
+    if kind == 4:
+        return IsADirectoryError(message, 'E508')
+    if kind == 5:
+        return NotADirectoryError(message, 'E509')
+    return IOError(message, 'E515')
+
+class _Reader:
+    h: int = 0
+    path: str = ''
+
+    @init
+    def make(self, h: int, path: str):
+        self.h = h
+        self.path = path
+
+    # n bytes (fewer only at the end of the archive)
+    def read(self, n: int) -> bytes:
+        out: list[bytes] = []
+        kind = !tomato_zs_read(self.h, n, out)
+        if kind != 0:
+            raise _failure(kind, f"could not read '{self.path}'")
+        return out[0]
+
+    # drops n bytes; an archive that ends first is a TarError
+    def skip(self, n: int):
+        if n <= 0:
+            return
+        got = !tomato_zs_skip(self.h, n)
+        if got < 0:
+            raise _failure(-got, f"could not read '{self.path}'")
+        if got < n:
+            raise TarError(f"the archive '{self.path}' ends in the middle of an entry", 'E673')
+
+    # reads what is left of the stream to its end: for a gzip file this is where its checksum is found to be wrong, or something after it
+    def finish(self):
+        while True:
+            got = !tomato_zs_skip(self.h, 1073741824)
+            if got < 0:
+                raise _failure(-got, f"could not read '{self.path}'")
+            if got < 1073741824:
+                return
+
+    def close(self):
+        if self.h != 0:
+            h = self.h
+            self.h = 0
+            _r = !tomato_zs_close(h)
+
+def _open_reader(path: str) -> _Reader:
+    if chr(0) in path:
+        raise ValueError('a path or name cannot contain a NUL character', 'E511')
+    h = !tomato_zs_open(path, 0, 2, 6, 0)
+    if h <= 0:
+        raise _failure(-h, f"could not open '{path}'")
+    return _Reader(h, path)
+
+def _is_zero(b: bytes) -> bool:
+    for x in b:
+        if x != 0:
+            return False
+    return True
+
+# the text of a header field: up to the first NUL
+def _text(b: bytes, start: int, end: int) -> str:
+    field = b[start:end]
+    z = field.find(b'\x00')
+    if z >= 0:
+        field = field[:z]
+    return field.decode(errors='replace')
+
+# the number of a header field: octal text, or (GNU) a run of bytes with the top bit of the first set
+def _number(b: bytes, start: int, end: int, path: str) -> int:
+    if b[start] >= 128:
+        v = b[start] & 127
+        for i in range(start + 1, end):
+            v = v * 256 + b[i]
+        return v
+    v = 0
+    seen = False
+    for i in range(start, end):
+        c = b[i]
+        if c == 0 or c == 32:
+            if seen:
+                break
+            continue
+        if c < 48 or c > 55:
+            raise TarError(f"the archive '{path}' is damaged: a number in a header is not octal", 'E673')
+        v = v * 8 + (c - 48)
+        seen = True
+    return v
+
+def _checksum_ok(b: bytes, path: str) -> bool:
+    total = 256
+    for i in range(0, 148):
+        total += b[i]
+    for i in range(156, 512):
+        total += b[i]
+    return total == _number(b, 148, 156, path)
+
+def _padded(size: int) -> int:
+    return (size + 511) // 512 * 512
+
+# the records of a pax header: 'LEN KEY=VALUE\n' each
+def _pax(data: bytes, path: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    at = 0
+    while at < len(data):
+        sp = data.find(b' ', at)
+        if sp < 0:
+            raise TarError(f"the archive '{path}' is damaged: a pax record has no length", 'E673')
+        n = 0
+        for i in range(at, sp):
+            if data[i] < 48 or data[i] > 57:
+                raise TarError(f"the archive '{path}' is damaged: a pax record has a bad length", 'E673')
+            n = n * 10 + (data[i] - 48)
+        if n < sp - at + 2 or at + n > len(data):
+            raise TarError(f"the archive '{path}' is damaged: a pax record has a bad length", 'E673')
+        record = data[sp + 1:at + n - 1].decode(errors='replace')
+        eq = record.find('=')
+        if eq > 0:
+            out[record[:eq]] = record[eq + 1:]
+        at += n
+    return out
+
+# a number in a pax record (a size, or a time with a fraction): the whole seconds
+def _pax_int(text: str, path: str) -> int:
+    whole = text.split('.')[0]
+    if whole == '' or not whole.isdigit():
+        raise TarError(f"the archive '{path}' is damaged: a pax record holds '{text}' where a number is meant", 'E673')
+    return int(whole)
+
+# The next entry of the archive, with its long name, long link and pax records applied, or None at the end. Its data is next in the stream.
+def _next(r: _Reader) -> Entry | None:
+    name_over = ''
+    link_over = ''
+    have_name = False
+    have_link = False
+    size_over = -1
+    mtime_over = -1
+    while True:
+        b = r.read(512)
+        if len(b) == 0:
+            return None
+        if len(b) < 512:
+            raise TarError(f"the archive '{r.path}' ends in the middle of a header", 'E673')
+        if _is_zero(b):
+            return None
+        if not _checksum_ok(b, r.path):
+            raise TarError(f"the archive '{r.path}' is damaged: a header does not match its checksum (is it a tar archive?)", 'E673')
+        flag = chr(b[156])
+        size = _number(b, 124, 136, r.path)
+        if flag == 'L' or flag == 'K' or flag == 'x' or flag == 'g':
+            if size > 1048576:
+                raise TarError(f"the archive '{r.path}' is damaged: a header with extra text claims {size} bytes", 'E673')
+            data = r.read(size)
+            if len(data) < size:
+                raise TarError(f"the archive '{r.path}' ends in the middle of an entry", 'E673')
+            r.skip(_padded(size) - size)
+            if flag == 'L':
+                name_over = _text(data, 0, len(data))
+                have_name = True
+            elif flag == 'K':
+                link_over = _text(data, 0, len(data))
+                have_link = True
+            elif flag == 'x':
+                records = _pax(data, r.path)
+                if 'path' in records:
+                    name_over = records['path']
+                    have_name = True
+                if 'linkpath' in records:
+                    link_over = records['linkpath']
+                    have_link = True
+                if 'size' in records:
+                    size_over = _pax_int(records['size'], r.path)
+                if 'mtime' in records:
+                    mtime_over = _pax_int(records['mtime'], r.path)
+            continue
+        name = _text(b, 0, 100)
+        prefix = _text(b, 345, 500)
+        if prefix != '' and _text(b, 257, 262) == 'ustar':
+            name = prefix + '/' + name
+        if have_name:
+            name = name_over
+        link = _text(b, 157, 257)
+        if have_link:
+            link = link_over
+        if size_over >= 0:
+            size = size_over
+        mtime = _number(b, 136, 148, r.path)
+        if mtime_over >= 0:
+            mtime = mtime_over
+        mode = _number(b, 100, 108, r.path) & 511
+        kind = 'other'
+        if flag == '0' or flag == chr(0) or flag == '7':
+            kind = 'file'
+        elif flag == '5':
+            kind = 'dir'
+        elif flag == '2':
+            kind = 'symlink'
+        elif flag == '1':
+            kind = 'hardlink'
+        if kind == 'file' and name.endswith('/'):
+            kind = 'dir'
+        if kind == 'dir' and name.endswith('/'):
+            name = name[:len(name) - 1]
+        if kind != 'file' and kind != 'other':
+            size = 0
+        return Entry(name, kind, size, mode, mtime, link)
+
+# The entries of an archive (.tar, or .tar.gz: told by its first bytes), in order, without reading their data.
+export def entries(archive: str) -> list[Entry]:
+    _not_in_browser('entries')
+    r = _open_reader(archive)
+    out: list[Entry] = []
+    try:
+        while True:
+            e = _next(r)
+            if e is None:
+                break
+            out.append(e)
+            r.skip(_padded(e.size))
+        r.finish()
+    finally:
+        r.close()
+    return out
+
+# the parts of a name in an archive, with the first `strip` dropped; [] when nothing is left. A name that is absolute or has a .. part is refused.
+def _parts(name: str, strip: int, archive: str) -> list[str]:
+    if name.startswith('/'):
+        raise TarError(f"the archive '{archive}' holds the absolute name '{name}': not extracted", 'E675')
+    parts: list[str] = []
+    for part in name.split('/'):
+        if part == '..':
+            raise TarError(f"the archive '{archive}' holds the name '{name}', which leaves the folder: not extracted", 'E675')
+        if part != '' and part != '.':
+            parts.append(part)
+    if len(parts) <= strip:
+        return []
+    return parts[strip:]
+
+# is something there, and is it a link / a folder (no link followed)
+def _link_of(path: str) -> str | None:
+    try:
+        return os.readlink(path)
+    catch IOError:
+        return None
+
+def _exists(path: str) -> bool:
+    try:
+        os.stat(path)
+        return True
+    catch IOError:
+        return False
+
+# makes the folders of parts under dest, refusing to go through a link or a file
+def _ensure(dest: str, parts: list[str], archive: str):
+    here = dest
+    for part in parts:
+        here = here + '/' + part
+        if _link_of(here) is not None:
+            raise TarError(f"the archive '{archive}' would write through the link '{here}': not extracted", 'E675')
+        if _exists(here):
+            if not os.stat(here).is_dir:
+                raise TarError(f"the archive '{archive}' would put a folder where the file '{here}' is: not extracted", 'E675')
+        else:
+            os.mkdir(here)
+
+# a link text that stays under dest when the link is at `depth` folders down: no absolute path, no more .. than there are folders
+def _link_stays(link: str, depth: int) -> bool:
+    if link.startswith('/') or link == '':
+        return False
+    level = depth
+    for part in link.split('/'):
+        if part == '..':
+            level -= 1
+            if level < 0:
+                return False
+        elif part != '' and part != '.':
+            level += 1
+    return True
+
+# Extracts the archive (.tar or .tar.gz) into the folder dest (made when it is not there) and gives the names it made, with `strip` parts of each
+# name left out first (strip=1 drops a top folder; an entry left with no name is skipped). max_size, when given, is the most the files may
+# hold together, in bytes: a larger archive is a TarError at the entry that goes over it (what came before it stays). The file times and permission bits are set (folders
+# last, so that a read-only folder can be filled); setuid and setgid are not. See the top of this file for what is refused.
+export def extract(archive: str, dest: str, strip: int = 0, max_size: int | None = None) -> list[str]:
+    _not_in_browser('extract')
+    if chr(0) in dest:
+        raise ValueError('a path or name cannot contain a NUL character', 'E511')
+    if strip < 0:
+        raise ValueError('strip cannot be negative', 'E678')
+    os.makedirs(dest, exist_ok=True)
+    root = os.realpath(dest)
+    r = _open_reader(archive)
+    made: list[str] = []
+    dirs: list[Entry] = []
+    total = 0
+    try:
+        while True:
+            e = _next(r)
+            if e is None:
+                break
+            parts = _parts(e.name, strip, archive)
+            if len(parts) == 0:
+                r.skip(_padded(e.size))
+                continue
+            here = root + '/' + '/'.join(parts)
+            shown = '/'.join(parts)
+            if e.kind == 'dir':
+                _ensure(root, parts, archive)
+                dirs.append(Entry(here, 'dir', 0, e.mode, e.mtime, ''))
+            elif e.kind == 'symlink':
+                if not _link_stays(e.link, len(parts) - 1):
+                    raise TarError(f"the archive '{archive}' holds the link '{e.name}' to '{e.link}', which points out of the folder: not extracted", 'E675')
+                _ensure(root, parts[:len(parts) - 1], archive)
+                _clear(here, archive)
+                os.symlink(e.link, here)
+            elif e.kind == 'file':
+                total += e.size
+                if max_size is not None and total > max_size:
+                    raise TarError(f"the archive '{archive}' holds more than {max_size} bytes of files: stopped at '{e.name}'", 'E676')
+                _ensure(root, parts[:len(parts) - 1], archive)
+                _clear(here, archive)
+                kind = !tomato_zs_extract(r.h, e.size, here, 384)
+                if kind != 0:
+                    raise _failure(kind, f"could not extract '{e.name}' to '{here}'")
+                r.skip(_padded(e.size) - e.size)
+                os.chmod(here, e.mode)
+                if e.mtime > 0:
+                    os.utime(here, float(e.mtime))
+            elif e.kind == 'hardlink':
+                raise TarError(f"the archive '{archive}' holds the hard link '{e.name}': hard links are not extracted", 'E674')
+            else:
+                raise TarError(f"the archive '{archive}' holds '{e.name}', which is not a file, a folder or a symbolic link (a device, a pipe or a sparse file): not extracted", 'E674')
+            made.append(shown)
+        r.finish()
+    finally:
+        r.close()
+    i = len(dirs) - 1
+    while i >= 0:
+        os.chmod(dirs[i].name, dirs[i].mode)
+        if dirs[i].mtime > 0:
+            os.utime(dirs[i].name, float(dirs[i].mtime))
+        i -= 1
+    return made
+
+# removes a file or link that is in the way of a new file or link; a folder in the way is refused
+def _clear(path: str, archive: str):
+    if _link_of(path) is not None:
+        os.remove(path)
+    elif _exists(path):
+        if os.stat(path).is_dir:
+            raise TarError(f"the archive '{archive}' would replace the folder '{path}' by a file: not extracted", 'E675')
+        os.remove(path)
+
+# ---- writing
+
+def _oct(v: int, width: int) -> str:
+    s = ''
+    x = v
+    while x > 0:
+        s = chr(48 + x % 8) + s
+        x = x // 8
+    if s == '':
+        s = '0'
+    while len(s) < width:
+        s = '0' + s
+    return s
+
+def _field(text: str, n: int) -> bytes:
+    b = text.encode()
+    if len(b) > n:
+        b = b[:n]
+    return b + bytes(n - len(b))
+
+def _num(v: int, n: int) -> bytes:
+    if v >= 8 ** (n - 1):
+        raise TarError(f'a number ({v}) does not fit in a tar header (a file of 8 GiB or more cannot be archived)', 'E677')
+    return (_oct(v, n - 1) + chr(0)).encode()
+
+# one 512-byte header
+def _block(name: str, prefix: str, flag: str, mode: int, size: int, mtime: int, link: str) -> bytes:
+    head = _field(name, 100) + _num(mode, 8) + _num(0, 8) + _num(0, 8) + _num(size, 12) + _num(mtime, 12)
+    tail = flag.encode() + _field(link, 100) + b'ustar\x0000' + bytes(32) + bytes(32) + bytes(16) + _field(prefix, 155) + bytes(12)
+    total = 256
+    for x in head:
+        total += x
+    for x in tail:
+        total += x
+    return head + (_oct(total, 6) + chr(0) + ' ').encode() + tail
+
+# the records for a pax header
+def _record(key: str, value: str) -> bytes:
+    body = f' {key}={value}\n'.encode()
+    n = len(body) + 1
+    while len(str(n)) + len(body) != n:
+        n = len(str(n)) + len(body)
+    return str(n).encode() + body
+
+# the blocks of an entry's header: a pax header first when the name or link does not fit a ustar header
+def _header(name: str, flag: str, mode: int, size: int, mtime: int, link: str) -> list[bytes]:
+    blocks: list[bytes] = []
+    short = name
+    prefix = ''
+    records = b''
+    nb = name.encode()
+    if len(nb) > 100:
+        cut = -1
+        i = 0
+        for part in name.split('/'):
+            i += len(part.encode()) + 1
+            rest = len(nb) - i
+            if i - 1 <= 155 and rest <= 100 and rest > 0 and i > 0:
+                cut = i - 1
+                break
+        if cut >= 0:
+            prefix = nb[:cut].decode()
+            short = nb[cut + 1:].decode()
+        else:
+            records += _record('path', name)
+            short = nb[:99].decode(errors='replace')
+    if len(link.encode()) > 100:
+        records += _record('linkpath', link)
+    if len(records) > 0:
+        blocks.append(_block('././@PaxHeader', '', 'x', 420, len(records), mtime, ''))
+        padded = records + bytes(_padded(len(records)) - len(records))
+        blocks.append(padded)
+    blocks.append(_block(short, prefix, flag, mode, size, mtime, link))
+    return blocks
+
+class _Writer:
+    h: int = 0
+    path: str = ''
+    fixed_mtime: int = -1
+
+    @init
+    def make(self, h: int, path: str, fixed_mtime: int):
+        self.h = h
+        self.path = path
+        self.fixed_mtime = fixed_mtime
+
+    def put(self, data: bytes):
+        kind = !tomato_zs_write(self.h, data)
+        if kind != 0:
+            raise _failure(kind, f"could not write '{self.path}'")
+
+    def time_of(self, st_mtime: float) -> int:
+        if self.fixed_mtime >= 0:
+            return self.fixed_mtime
+        return int(st_mtime)
+
+def _add(w: _Writer, folder: str, arc: str):
+    for name in os.listdir(folder):
+        full = folder + '/' + name
+        arc_name = arc + name
+        link = _link_of(full)
+        if link is not None:
+            for block in _header(arc_name, '2', 511, 0, w.time_of(0.0), link):
+                w.put(block)
+            continue
+        st = os.stat(full)
+        if st.is_dir:
+            for block in _header(arc_name + '/', '5', st.mode & 511, 0, w.time_of(st.mtime), ''):
+                w.put(block)
+            _add(w, full, arc_name + '/')
+        elif st.is_file:
+            for block in _header(arc_name, '0', st.mode & 511, st.size, w.time_of(st.mtime), ''):
+                w.put(block)
+            kind = !tomato_zs_write_file(w.h, full, st.size)
+            if kind != 0:
+                raise _failure(kind, f"could not archive '{full}' (is it still the same size?)")
+            w.put(bytes(_padded(st.size) - st.size))
+        else:
+            raise TarError(f"'{full}' is not a file, a folder or a symbolic link: not archived", 'E677')
+
+# Makes the archive from the contents of the folder: every file, folder and symbolic link under it (links are stored, not followed), sorted by
+# name, with `prefix` in front of each name ('tomato-1.0' gives 'tomato-1.0/bin/tomato'; None or '' for none). The archive is gzip when its name
+# ends in .gz or .tgz, at the level (1 to 9), else plain. mtime (seconds since the epoch) is used for every entry when given, which makes the
+# same folder give the same archive every time. It is made under another name and renamed when whole, so a failure leaves no half archive.
+export def create(archive: str, folder: str, prefix: str = '', level: int = 6, mtime: int | None = None):
+    _not_in_browser('create')
+    if chr(0) in archive or chr(0) in folder or chr(0) in prefix:
+        raise ValueError('a path or name cannot contain a NUL character', 'E511')
+    if level < 1 or level > 9:
+        raise ValueError('the gzip level must be from 1 to 9', 'E671')
+    if not os.stat(folder).is_dir:
+        raise NotADirectoryError(f"could not archive '{folder}': it is not a folder", 'E509')
+    gz = 1 if archive.endswith('.gz') or archive.endswith('.tgz') else 0
+    spare = archive + '.tomato-tar.' + str(os.getpid())
+    h = !tomato_zs_open(spare, 1, gz, level, 0)
+    if h <= 0:
+        raise _failure(-h, f"could not write '{archive}'")
+    w = _Writer(h, archive, -1 if mtime is None else mtime)
+    done = False
+    try:
+        arc = ''
+        top = prefix
+        while top.endswith('/'):
+            top = top[:len(top) - 1]
+        if top != '':
+            for block in _header(top + '/', '5', 493, 0, w.time_of(os.stat(folder).mtime), ''):
+                w.put(block)
+            arc = top + '/'
+        _add(w, folder, arc)
+        w.put(bytes(1024))
+        done = True
+    finally:
+        closed = !tomato_zs_close(h)
+        if done and closed != 0:
+            os.remove(spare)
+            raise _failure(closed, f"could not write '{archive}'")
+        if not done:
+            os.remove(spare)
+    os.rename(spare, archive)

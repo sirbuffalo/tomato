@@ -656,3 +656,23 @@ CompileError a bytearray can change, so it cannot be a dict key or set element
 CompileError a 'catch' clause names one error class, so it cannot list several
 CompileError 'catch' needs an error class, but '{}' is not defined
 RuntimeError this variable has no value yet
+ValueError the prefix and suffix of a temporary name cannot contain a /
+IOError the cache folder is not known: HOME is not set
+Interrupted interrupted by the signal {} ({})
+ValueError this is not a signal name this module knows, or it cannot be watched
+ValueError max_bytes cannot be negative
+GzipError the data does not start like gzip data
+GzipError the compressed data is damaged
+GzipError the compressed data ends too soon
+GzipError the data does not match its checksum or its size
+GzipError the data is larger than max_size
+GzipError there is something after the end of the gzip data
+GzipError the data could not be read
+ValueError the gzip level must be from 1 to 9
+ValueError max_size must be 1 or more
+TarError the archive is damaged or is not a tar archive
+TarError the archive holds an entry that cannot be extracted
+TarError an entry would leave the folder it is extracted into
+TarError the archive holds more than max_size bytes of files
+TarError a folder holds something that cannot be archived
+ValueError strip cannot be negative

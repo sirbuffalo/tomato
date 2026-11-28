@@ -1,0 +1,133 @@
+# signal.watch and Interrupted (stage 1 of docs/shell-to-tomato-plan.md): a program that makes a temporary folder is stopped with INT, TERM and
+# HUP while it waits in each of the places that take a signal, and still removes the folder; it ends with status 128 plus the number, and
+# says nothing. The parent starts this same program as the child (the variable TOMATO_SIGNAL_CHILD says which wait the child makes). Native only
+# (the browser has no signals: os_new_browser.tom). The first input is a folder for this test's files; nothing is written to standard error.
+import os
+import signal
+import sys
+
+# what the child does: makes a folder, tells the parent its name, and waits in one place until a signal comes
+async def child(how: str, work: str):
+    signal.watch()
+    folder = os.mkdtemp('sig-', work)
+    try:
+        os.write_text(folder + '/inside.txt', 'x')
+        os.mkdir(folder + '/deeper')
+        os.write_text(folder + '/deeper/more.txt', 'y')
+        print(folder)
+        sys.flush()
+        if how == 'check':
+            while True:
+                signal.check()
+                await sleep(0.005)
+        elif how == 'run':
+            sys.run(['sleep', '30'], capture=False)
+        elif how == 'run_capture':
+            sys.run(['sleep', '30'])
+        elif how == 'run_async':
+            await sys.run_async(['sleep', '30'])
+        else:
+            p = sys.spawn(['sleep', '30'])
+            await p.wait()
+    finally:
+        os.rmtree(folder)
+
+# the parent: starts the child, waits until it says its folder, sends the signal, and looks at how the child ended
+async def parent(how: str, name: str, work: str):
+    me = sys.argv()[0]
+    p = sys.spawn([me, work], env={'TOMATO_SIGNAL_CHILD': how})
+    folder = (await p.stdout.read_line()).strip()
+    there_before = os.listdir(folder)
+    await sleep(0.05)                    # the child is waiting by now (a signal that came earlier is taken as soon as it looks)
+    signal.send(p.pid, name)
+    status = await p.wait()
+    rest = await p.stdout.read()
+    err = await p.stderr.read()
+    gone = not exists(folder)
+    print(how, name, 'status', status, 'signal', p.signal, 'before', there_before, 'folder removed', gone, 'said', len(rest), len(err))
+
+def exists(path: str) -> bool:
+    try:
+        os.stat(path)
+        return True
+    catch IOError:
+        return False
+
+# a signal that is not watched has its usual effect, and a program that never looks can be stopped by sending the signal twice
+async def plain(work: str):
+    p = sys.spawn([sys.argv()[0], work], env={'TOMATO_SIGNAL_CHILD': 'plain'})
+    await p.stdout.read_line()
+    p.kill(signal.number('TERM'))
+    status = await p.wait()
+    print('unwatched TERM', status, p.signal)
+    q = sys.spawn([sys.argv()[0], work], env={'TOMATO_SIGNAL_CHILD': 'stubborn'})
+    await q.stdout.read_line()
+    q.kill(signal.number('INT'))
+    await sleep(0.2)
+    print('first INT: still running', not q.done())
+    q.kill(signal.number('INT'))
+    status = await q.wait()
+    print('second INT', status, q.signal)
+
+async def stubborn():
+    signal.watch()
+    print('ready')
+    sys.flush()
+    while True:                          # never looks
+        await sleep(0.005)
+
+async def unwatched():
+    print('ready')
+    sys.flush()
+    while True:
+        await sleep(0.005)
+
+def names():
+    print(signal.number('INT'), signal.number('SIGTERM'), signal.number('HUP'), signal.name(2), signal.name(15), signal.name(40))
+    try:
+        signal.number('NOPE')
+    catch ValueError as e:
+        print(e.id, e.message)
+    try:
+        signal.watch(['KILL'])
+    catch ValueError as e:
+        print(e.id, e.message)
+    signal.check()
+    print('nothing pending')
+    signal.watch(['USR1'])
+    signal.send(os.getpid(), 'USR1')
+    try:
+        signal.check()
+    catch sys.Interrupted as e:
+        print('caught', e.name, e.number == signal.number('USR1'), e.id, e.message.startswith('interrupted by'))
+    signal.check()
+    # forward=False: the signal is taken and reported, the program is left alone (the stage 2 CLI waits for an interactive program so)
+    signal.send(os.getpid(), 'USR1')
+    r = sys.run(['sleep', '0.2'], forward=False)
+    print('forward=False', r.status, r.signal, r.interrupted == signal.number('USR1'))
+    signal.check()
+    print('and nothing is left for check')
+    print('executable', sys.executable() == os.realpath(sys.argv()[0]))
+    signal.unwatch(['USR1'])
+    try:
+        signal.send(2147483646, 'TERM')
+    catch IOError as e:
+        print('no such process', e.id)
+
+@main
+async def main(work: str):
+    how = os.getenv('TOMATO_SIGNAL_CHILD')
+    if how is not None:
+        if how == 'plain':
+            await unwatched()
+        elif how == 'stubborn':
+            await stubborn()
+        else:
+            await child(how, work)
+        return
+    names()
+    for mode in ['check', 'run', 'run_capture', 'run_async', 'spawn']:
+        for sig in ['INT', 'TERM', 'HUP']:
+            await parent(mode, sig, work)
+    await plain(work)
+    print('leftovers', [n for n in os.listdir(work) if n.startswith('sig-')])

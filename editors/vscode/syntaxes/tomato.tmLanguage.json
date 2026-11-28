@@ -108,7 +108,7 @@
       "captures": { "1": { "name": "keyword.control.async.tomato" } }
     },
     "import-module": {
-      "match": "\\b(import|from)\\s+(asyncio|base64|cache|csv|datetime|hex|hashlib|hmac|html|io|itertools|json|lineedit|math|os|ospath|random|rational|re|requests|secrets|socket|statistics|struct|sys|terminal|testing|textwrap|time|toml|urlparse|utf8|uuid|value|zlib)\\b",
+      "match": "\\b(import|from)\\s+(asyncio|base64|cache|csv|datetime|gzip|hex|hashlib|hmac|html|io|itertools|json|lineedit|math|os|ospath|random|rational|re|requests|secrets|signal|socket|statistics|struct|sys|tarfile|terminal|testing|textwrap|time|toml|urlparse|utf8|uuid|value|zlib)\\b",
       "captures": { "1": { "name": "keyword.control.import.tomato" }, "2": { "name": "entity.name.namespace.tomato" } }
     },
     "generic-type": { "name": "support.type.primitive.tomato", "match": "\\b(task|Iterable)(?=\\s*\\[)" },

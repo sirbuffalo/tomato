@@ -1,0 +1,40 @@
+round trip 0  20 20 20
+round trip 1  24 24 24
+round trip 11  34 34 34
+round trip 3000  1% 1% 1%
+round trip 100000  0% 0% 0%
+round trip 70000  100% 100% 100%
+round trip 300000  20% 14% 14%
+round trip 5120  6% 6% 6%
+same input, same bytes True b'\x1f\x8b\x08\x00' b'\x00\x00\x00\x00'
+level 9 is not larger than level 1 True True
+big True
+gzip hello b'hello world'
+two members b'hello worldhello world'
+empty member True b'x'
+empty E664 it does not start like gzip data (the first bytes are not 1f 8b 08)
+not gzip E664 it does not start like gzip data (the first bytes are not 1f 8b 08)
+cut short E666 the compressed data ends too soon (it is cut short)
+cut in the header E666 the compressed data ends too soon (it is cut short)
+trailer cut E666 the compressed data ends too soon (it is cut short)
+damaged E665 the compressed data is damaged
+bad checksum E667 the data does not match its checksum or its size
+bad size E667 the data does not match its checksum or its size
+after the end E669 there is something after the end of the gzip data
+zeros after the end E669 there is something after the end of the gzip data
+limit too small E668 the data is larger than max_size
+limit exact ok 1000
+limit larger ok 1000
+level 0 E671
+level 10 E671
+max_size 0 E672
+gzip -t reads ours 0 0
+gzip -dc gives the data back True
+we read gzip -1 True
+we read gzip -6 True
+we read gzip -9 True
+two members from files True
+gzip -t reads two 0
+we read gzip of rnd True
+we read gzip of zeros True
+we read gzip of empty True

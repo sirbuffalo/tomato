@@ -169,6 +169,16 @@ busy machine; `TOMATO_WASM_TIMEOUT_MS` changes it, and jsc, which has no environ
 stopped (the toolchain prints `error[E369]`) is run again with three times the limit, at most three runs; a wrong answer, a compile
 error or a crash is the first run's result and is never run again, so a retry cannot hide a real failure.
 
+## The processes-and-files std (stage 1 of the shell-to-Tomato plan)
+
+`tests/programs/os_tree`, `os_exchange`, `signal_cleanup`, `hashlib_file` and `sys_tee` take a folder for their files as their input and run in
+the "decided rules" section, with AddressSanitizer and its leak check (`asan_specs2`). Four of them start programs (`sh`, `sleep`, `gzip`,
+`tar`, `ps`: the ones every Linux and macOS has), and `signal_cleanup` and `os_exchange` start themselves as the child (the variables
+`TOMATO_SIGNAL_CHILD` and `TOMATO_EXCHANGE_CHILD` say which part). `requests_download` needs the local server of `tests/http_server.c` and runs as
+part 4 of `t_requests`. `t_sha256_file_speed` makes a 100 MB file, checks the sum against `sha256sum` or `shasum` and that `hashlib.sha256_file`
+takes under 2 seconds (three tries on a busy machine; it prints the time). `os_new_browser` runs through WebAssembly only and checks that each of
+these functions raises the "not available in the browser playground" error there. All of them were also run by hand on a Mac (arm64).
+
 ## Adding a test
 
 Write `t_NAME` (it runs in `$work`, its own folder), and register it where it belongs with `spawn t_NAME args` (or `spawn_first` for one

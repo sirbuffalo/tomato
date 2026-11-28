@@ -2,7 +2,10 @@
 # helpers (Wave 2, pack A). Paths and names are text; a path with a NUL is a ValueError. A failing call raises FileNotFoundError,
 # FileExistsError, PermissionError, IsADirectoryError or NotADirectoryError (all IOErrors), or a plain IOError for another
 # reason. Path text functions are in ospath. In the browser playground the files and directories are the page's own (kept in
-# memory); chdir, getpid, putenv and unsetenv are not available there and raise RuntimeError.
+# memory); chdir, getpid, putenv and unsetenv are not available there and raise RuntimeError. So do the functions that are new in
+# stage 1 of docs/shell-to-tomato-plan.md (marked "new" below, and on the unstable list of docs/provisional.md, U7): copy, chmod, symlink,
+# readlink, realpath, utime, mkdtemp, mkstemp, walk, glob, rmtree, copytree, which, exchange, loadavg, uname and cache_dir. (cpu_count
+# says 1 there.)
 import sys
 !tomato_env_has(name: str) -> int
 !tomato_env_get(name: str) -> str
@@ -23,6 +26,18 @@ import sys
 !tomato_os_kind() -> int
 !tomato_file_read_bytes(path: str, out: list[bytes]) -> int
 !tomato_file_write_bytes_mode(path: str, data: bytes, append: int) -> int
+!tomato_os_copy(src: str, dst: str) -> int
+!tomato_os_chmod(path: str, mode: int) -> int
+!tomato_os_symlink(target: str, path: str) -> int
+!tomato_os_readlink(path: str, out: list[str]) -> int
+!tomato_os_realpath(path: str, out: list[str]) -> int
+!tomato_os_utime(path: str, has: int, secs: int, nanos: int) -> int
+!tomato_os_mktemp(dir: str, prefix: str, suffix: str, is_dir: int, out: list[str]) -> int
+!tomato_os_executable(path: str) -> int
+!tomato_os_exchange(a: str, b: str) -> int
+!tomato_os_cpu_count() -> int
+!tomato_os_loadavg(out: list[int]) -> int
+!tomato_os_uname(out: list[str]) -> int
 
 export class StatResult:
     size: int = 0
@@ -221,3 +236,499 @@ export def write_bytes(path: str, data: bytes, append: bool = False):
     code = !tomato_file_write_bytes_mode(path, data, 1 if append else 0)
     if code != 0:
         _raise(!tomato_os_kind(), !tomato_file_error(path, code))
+
+# ---- new in stage 1 of docs/shell-to-tomato-plan.md (unstable, docs/provisional.md U7): copying, links, temporary files, trees --------
+
+# the kind of what a path is, without following a symbolic link: 1 a file, 2 a directory, 3 a symbolic link, 0 anything else,
+# -1 when there is nothing (or it cannot be looked at)
+def _lkind(path: str) -> int:
+    out: list[int] = []
+    if !tomato_stat(path, 0, out) != 0:
+        return -1
+    return out[4]
+
+# the same, following symbolic links (one that leads nowhere is -1)
+def _kind(path: str) -> int:
+    out: list[int] = []
+    if !tomato_stat(path, 1, out) != 0:
+        return -1
+    return out[4]
+
+def _join(base: str, name: str) -> str:
+    if base == '':
+        return name
+    if base.endswith('/'):
+        return base + name
+    return base + '/' + name
+
+# Copies the file src to dst and keeps its permission bits (a symbolic link is followed; the umask does not change the mode). The copy
+# is made under another name beside dst and renamed over it when it is whole, so dst is never half a copy, an existing dst is replaced
+# (also one that is a program that is running) and a failure leaves it alone. A directory is an IsADirectoryError (copytree copies one).
+# New (unstable).
+export def copy(src: str, dst: str):
+    _no_nul(src)
+    _no_nul(dst)
+    _not_in_browser('copy')
+    kind = !tomato_os_copy(src, dst)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"copy '{src}' to '{dst}'"))
+
+# Sets the permission bits of a file or directory (the low 12 bits of mode, as in chmod). New (unstable).
+export def chmod(path: str, mode: int):
+    _no_nul(path)
+    _not_in_browser('chmod')
+    kind = !tomato_os_chmod(path, mode)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"change the mode of '{path}'"))
+
+# Makes the symbolic link `path` that holds the text `target` (which need not exist). New (unstable).
+export def symlink(target: str, path: str):
+    _no_nul(target)
+    _no_nul(path)
+    _not_in_browser('symlink')
+    kind = !tomato_os_symlink(target, path)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"make the symbolic link '{path}'"))
+
+# The text of a symbolic link (where it points, as written). A path that is not a link is an IOError. New (unstable).
+export def readlink(path: str) -> str:
+    _no_nul(path)
+    _not_in_browser('readlink')
+    out: list[str] = []
+    kind = !tomato_os_readlink(path, out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"read the symbolic link '{path}'"))
+    return out[0]
+
+# The absolute path with every symbolic link, '.' and '..' resolved; the path must exist. New (unstable).
+export def realpath(path: str) -> str:
+    _no_nul(path)
+    _not_in_browser('realpath')
+    out: list[str] = []
+    kind = !tomato_os_realpath(path, out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"resolve '{path}'"))
+    return out[0]
+
+# Sets the modification and access time of a file or directory to mtime (seconds since the epoch), or to now when it is not given.
+# New (unstable).
+export def utime(path: str, mtime: float | None = None):
+    _no_nul(path)
+    _not_in_browser('utime')
+    has = 0
+    secs = 0
+    nanos = 0
+    if mtime is not None:
+        has = 1
+        secs = int(mtime)
+        if float(secs) > mtime:
+            secs -= 1
+        nanos = int((mtime - float(secs)) * 1000000000.0)
+        if nanos < 0:
+            nanos = 0
+        if nanos > 999999999:
+            nanos = 999999999
+    kind = !tomato_os_utime(path, has, secs, nanos)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"set the time of '{path}'"))
+
+def _tmp_parent(dir: str | None) -> str:
+    if dir is not None:
+        _no_nul(dir)
+        return dir
+    t = getenv('TMPDIR')
+    if t is not None and t != '':
+        return t
+    return '/tmp'
+
+def _tmp_part(text: str):
+    _no_nul(text)
+    if '/' in text:
+        raise ValueError('the prefix and suffix of a temporary name cannot contain a /', 'E659')
+
+# Makes a new directory (permissions rwx------) named prefix + 10 random letters and digits, in dir (TMPDIR, or /tmp, when it is not given), and
+# gives its path. Nobody else can have made it first. Remove it with rmtree. New (unstable).
+export def mkdtemp(prefix: str = 'tmp-', dir: str | None = None) -> str:
+    _tmp_part(prefix)
+    _not_in_browser('mkdtemp')
+    where = _tmp_parent(dir)
+    out: list[str] = []
+    kind = !tomato_os_mktemp(where, prefix, '', 1, out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"make a temporary directory in '{where}'"))
+    return out[0]
+
+# Makes a new empty file (permissions rw-------) named prefix + 10 random letters and digits + suffix, in dir (TMPDIR, or /tmp), and gives its path.
+# The file is closed: open it or write_text to it. New (unstable).
+export def mkstemp(prefix: str = 'tmp-', suffix: str = '', dir: str | None = None) -> str:
+    _tmp_part(prefix)
+    _tmp_part(suffix)
+    _not_in_browser('mkstemp')
+    where = _tmp_parent(dir)
+    out: list[str] = []
+    kind = !tomato_os_mktemp(where, prefix, suffix, 0, out)
+    if kind != 0:
+        _raise(kind, !tomato_os_error(f"make a temporary file in '{where}'"))
+    return out[0]
+
+# Every directory under top, top first and each directory before the ones inside it, as (path, names of its directories, names of its
+# files), the names in the order of listdir. A symbolic link to a directory is listed among the directories, and is entered only with
+# follow_links=True; then a link that leads to a directory above it (a loop) is not entered, so the walk always ends. A directory that
+# cannot be read is left out; top itself must be readable (the errors of listdir). The whole walk is made before it returns. New (unstable).
+export def walk(top: str, follow_links: bool = False) -> list[tuple[str, list[str], list[str]]]:
+    _no_nul(top)
+    _not_in_browser('walk')
+    out: list[tuple[str, list[str], list[str]]] = []
+    above: list[str] = []
+    if follow_links:
+        above.append(realpath(top))
+    _walk(top, follow_links, out, above, True)
+    return out
+
+# above: the real paths of the directories that lead to top, top's own last (kept only when links are followed)
+def _walk(top: str, follow: bool, out: list[tuple[str, list[str], list[str]]], above: list[str], first: bool):
+    names: list[str] = []
+    if first:
+        names = listdir(top)
+    else:
+        try:
+            names = listdir(top)
+        catch IOError:
+            return
+    dirs: list[str] = []
+    files: list[str] = []
+    for name in names:
+        if _kind(_join(top, name)) == 2:
+            dirs.append(name)
+        else:
+            files.append(name)
+    out.append((top, dirs, files))
+    for name in dirs:
+        full = _join(top, name)
+        if follow:
+            real = ''
+            try:
+                real = realpath(full)
+            catch IOError:
+                continue
+            if real in above:
+                continue
+            above.append(real)
+            _walk(full, follow, out, above, False)
+            above.pop()
+        elif _lkind(full) != 3:
+            _walk(full, follow, out, above, False)
+
+def _has_magic(seg: str) -> bool:
+    return '*' in seg or '?' in seg or '[' in seg
+
+# the class that starts at p[at] (a '['): the position after its ']' and whether c is in it; (-1, 0) when there is no closing ']'
+def _class(p: str, at: int, c: str) -> tuple[int, int]:
+    i = at + 1
+    negate = False
+    if i < len(p) and (p[i] == '!' or p[i] == '^'):
+        negate = True
+        i += 1
+    start = i
+    hit = False
+    while i < len(p):
+        if p[i] == ']' and i > start:
+            if hit == negate:
+                return (i + 1, 0)
+            return (i + 1, 1)
+        if i + 2 < len(p) and p[i + 1] == '-' and p[i + 2] != ']':
+            if ord(p[i]) <= ord(c) and ord(c) <= ord(p[i + 2]):
+                hit = True
+            i += 3
+        else:
+            if p[i] == c:
+                hit = True
+            i += 1
+    return (-1, 0)
+
+# does the name match the pattern: * any run of characters, ? one character, [abc] [a-z] [!abc] one of a set
+def _fnmatch(p: str, s: str) -> bool:
+    pi = 0
+    si = 0
+    star = -1
+    mark = 0
+    while si < len(s):
+        step = -1                       # where the pattern goes on if its element matches s[si]
+        if pi < len(p) and p[pi] == '*':
+            star = pi
+            mark = si
+            pi += 1
+            continue
+        if pi < len(p) and p[pi] == '?':
+            step = pi + 1
+        elif pi < len(p) and p[pi] == '[':
+            r = _class(p, pi, s[si])
+            if r[0] < 0:
+                if s[si] == '[':
+                    step = pi + 1
+            elif r[1] == 1:
+                step = r[0]
+        elif pi < len(p) and p[pi] == s[si]:
+            step = pi + 1
+        if step >= 0:
+            pi = step
+            si += 1
+        elif star >= 0:
+            pi = star + 1
+            mark += 1
+            si = mark
+        else:
+            return False
+    while pi < len(p) and p[pi] == '*':
+        pi += 1
+    return pi == len(p)
+
+def _glob_all(base: str, out: set[str]):
+    names: list[str] = []
+    try:
+        names = listdir(base if base != '' else '.')
+    catch IOError:
+        return
+    for name in names:
+        if name.startswith('.'):
+            continue
+        full = _join(base, name)
+        out.add(full)
+        if _lkind(full) == 2:
+            _glob_all(full, out)
+
+def _glob(base: str, segs: list[str], i: int, out: set[str]):
+    if i == len(segs):
+        out.add(base)
+        return
+    seg = segs[i]
+    if seg == '**':
+        if i + 1 == len(segs):
+            out.add(base)               # a ** at the end matches the directory itself and everything below it, files too
+            _glob_all(base, out)
+            return
+        _glob(base, segs, i + 1, out)
+        names: list[str] = []
+        try:
+            names = listdir(base if base != '' else '.')
+        catch IOError:
+            return
+        for name in names:
+            if name.startswith('.'):
+                continue
+            full = _join(base, name)
+            if _lkind(full) == 2:
+                _glob(full, segs, i, out)
+        return
+    if not _has_magic(seg):
+        full = _join(base, seg)
+        if _lkind(full) >= 0:
+            if i + 1 == len(segs) or _kind(full) == 2:
+                _glob(full, segs, i + 1, out)
+        return
+    found: list[str] = []
+    try:
+        found = listdir(base if base != '' else '.')
+    catch IOError:
+        return
+    for name in found:
+        if name.startswith('.') and not seg.startswith('.'):
+            continue
+        if not _fnmatch(seg, name):
+            continue
+        full = _join(base, name)
+        if i + 1 == len(segs) or _kind(full) == 2:
+            _glob(full, segs, i + 1, out)
+
+# The paths that match a pattern, sorted. The pattern is a path whose parts may hold * (any run of characters), ? (one character) and
+# [abc], [a-z], [!abc] (one of a set), and a part that is just ** stands for any number of directories (none too); the parts are matched
+# one directory at a time, and a name that starts with '.' is matched only by a part that starts with '.' too. A pattern with no
+# wildcard gives the path itself when it exists. The paths come out spelled as the pattern is ('src/*.tom' gives 'src/a.tom'); a
+# trailing / is ignored; symbolic links are not followed by **, and a ** at the end matches everything below (files too). New (unstable).
+export def glob(pattern: str) -> list[str]:
+    _no_nul(pattern)
+    _not_in_browser('glob')
+    segs: list[str] = []
+    for part in pattern.split('/'):
+        if part != '':
+            segs.append(part)
+    base = ''
+    if pattern.startswith('/'):
+        base = '/'
+    found: set[str] = {}
+    if len(segs) > 0:
+        _glob(base, segs, 0, found)
+    out: list[str] = []
+    for path in found:
+        out.append(path)
+    out.sort()
+    return out
+
+# Removes a directory and everything in it. Symbolic links inside are removed, not followed. The path itself must be a directory, not a
+# link to one (NotADirectoryError); a path that is not there is a FileNotFoundError, or nothing with missing_ok=True. New (unstable).
+export def rmtree(path: str, missing_ok: bool = False):
+    _no_nul(path)
+    _not_in_browser('rmtree')
+    k = _lkind(path)
+    if k < 0:
+        if missing_ok:
+            return
+        raise FileNotFoundError(f"could not remove '{path}': No such file or directory", 'E505')
+    if k != 2:
+        raise NotADirectoryError(f"could not remove '{path}': it is not a directory (a symbolic link is not followed; use remove)", 'E509')
+    _rm_tree(path)
+
+def _rm_tree(path: str):
+    for name in listdir(path):
+        full = _join(path, name)
+        if _lkind(full) == 2:
+            _rm_tree(full)
+        else:
+            remove(full)
+    rmdir(path)
+
+# Copies the directory src and everything in it to dst, which must not exist (its parent must). Files are copied with their permission bits
+# (copy), directories get the mode of the original, and a symbolic link is made again with the same text (not followed). A file that is
+# neither a file, a directory nor a link (a pipe, a socket) is an IOError. A failure leaves the part already made. New (unstable).
+export def copytree(src: str, dst: str):
+    _no_nul(src)
+    _no_nul(dst)
+    _not_in_browser('copytree')
+    if _kind(src) != 2:
+        if _kind(src) < 0:
+            raise FileNotFoundError(f"could not copy '{src}': No such file or directory", 'E505')
+        raise NotADirectoryError(f"could not copy '{src}': it is not a directory", 'E509')
+    _copy_tree(src, dst)
+
+def _copy_tree(src: str, dst: str):
+    mkdir(dst)
+    for name in listdir(src):
+        a = _join(src, name)
+        b = _join(dst, name)
+        k = _lkind(a)
+        if k == 2:
+            _copy_tree(a, b)
+        elif k == 3:
+            symlink(readlink(a), b)
+        elif k == 1:
+            copy(a, b)
+        else:
+            raise IOError(f"could not copy '{a}': it is not a file, a directory or a symbolic link", 'E515')
+    chmod(dst, stat(src).mode)
+
+# The file a program name stands for: the first directory of path (the PATH variable when it is not given) that has a file of that name
+# that this program may run, joined with the name (as written, not made absolute); None when there is none. A name with a / is checked as
+# it is. New (unstable).
+export def which(name: str, path: str | None = None) -> str | None:
+    _no_nul(name)
+    _not_in_browser('which')
+    if name == '':
+        return None
+    if '/' in name:
+        if !tomato_os_executable(name) == 1:
+            return name
+        return None
+    search = '/usr/bin:/bin'
+    if path is not None:
+        _no_nul(path)
+        search = path
+    else:
+        found = getenv('PATH')
+        if found is not None:
+            search = found
+    for dir in search.split(':'):
+        where = dir
+        if where == '':
+            where = '.'
+        candidate = _join(where, name)
+        if !tomato_os_executable(candidate) == 1:
+            return candidate
+    return None
+
+# Swaps what a and b name, in one step where the system can do that (Linux: renameat2 with RENAME_EXCHANGE; macOS: renamex_np with
+# RENAME_SWAP, on file systems that have it): anyone who looks sees either the old pair or the new, never a moment with one of them
+# missing. Both must exist; they may be files or directories. Where the system or file system cannot, it is done with three renames
+# (a to a temporary name beside it, b to a, the temporary name to b), undone if one fails, and there is a moment between them with
+# no a. Gives True when the swap was one step, False when it was done with renames. New (unstable).
+export def exchange(a: str, b: str) -> bool:
+    _no_nul(a)
+    _no_nul(b)
+    _not_in_browser('exchange')
+    kind = !tomato_os_exchange(a, b)
+    if kind == 0:
+        return True
+    if kind != 100:
+        _raise(kind, !tomato_os_error(f"exchange '{a}' and '{b}'"))
+    for one in [a, b]:
+        if _lkind(one) < 0:
+            raise FileNotFoundError(f"could not exchange '{a}' and '{b}': '{one}' does not exist", 'E505')
+    spare = a + '.exchange.' + str(getpid())
+    rename(a, spare)
+    try:
+        rename(b, a)
+    catch IOError:
+        rename(spare, a)
+        raise
+    try:
+        rename(spare, b)
+    catch IOError:
+        rename(a, b)
+        rename(spare, a)
+        raise
+    return False
+
+# ---- new in stage 1: the machine (unstable) ----------------------------------------------------------------------------------------
+
+# How many processors the system has online (at least 1; always 1 in the browser). New (unstable).
+export def cpu_count() -> int:
+    return !tomato_os_cpu_count()
+
+# The load average of the last 1, 5 and 15 minutes (the number of programs that wanted to run, as the system counts). New (unstable).
+export def loadavg() -> tuple[float, float, float]:
+    _not_in_browser('loadavg')
+    got: list[int] = []
+    kind = !tomato_os_loadavg(got)
+    if kind != 0:
+        _raise(kind, !tomato_os_error('read the load average'))
+    return (float(got[0]) / 1000.0, float(got[1]) / 1000.0, float(got[2]) / 1000.0)
+
+# What the system calls itself (the fields of uname(2): 'Linux' or 'Darwin', the host name, the release, the version and the machine).
+export class Uname:
+    sysname: str = ''
+    nodename: str = ''
+    release: str = ''
+    version: str = ''
+    machine: str = ''
+
+    @init
+    def make(self, sysname: str, nodename: str, release: str, version: str, machine: str):
+        self.sysname = sysname
+        self.nodename = nodename
+        self.release = release
+        self.version = version
+        self.machine = machine
+
+# New (unstable).
+export def uname() -> Uname:
+    _not_in_browser('uname')
+    got: list[str] = []
+    kind = !tomato_os_uname(got)
+    if kind != 0:
+        _raise(kind, !tomato_os_error('read the system name'))
+    return Uname(got[0], got[1], got[2], got[3], got[4])
+
+# The folder for files a program can make again (a cache): ~/Library/Caches on macOS, else $XDG_CACHE_HOME when it is a full path, else
+# ~/.cache. It is not made, and no program folder is added. The home folder is $HOME; without it this is an IOError. New (unstable).
+export def cache_dir() -> str:
+    _not_in_browser('cache_dir')
+    home = getenv('HOME')
+    if sys.platform() == 'darwin':
+        if home is None or home == '':
+            raise IOError('the cache folder is not known: HOME is not set', 'E660')
+        return _join(home, 'Library/Caches')
+    xdg = getenv('XDG_CACHE_HOME')
+    if xdg is not None and xdg.startswith('/'):
+        return xdg
+    if home is None or home == '':
+        raise IOError('the cache folder is not known: HOME is not set', 'E660')
+    return _join(home, '.cache')

@@ -5,7 +5,7 @@ What changed in each release, for people who use Tomato. The GitHub release page
 (D78a and so on) point into `docs/decisions.md`.
 
 From 1.0.0 on the language (syntax and rules) is frozen: a program that works on 1.0.0 works the same on every later 1.x
-release (except the 6 features on the unstable list in `docs/provisional.md`, which can change in any release). The standard
+release (except the 7 features on the unstable list in `docs/provisional.md`, which can change in any release). The standard
 library follows Python's rule: a module or function may be removed in a new minor version (1.1.0 and later), but only after an
 earlier minor version deprecated it with a compile-time warning (its section lists it under **Deprecated**); otherwise std only
 adds. A minor version's section lists each change that can break a program under **Breaking changes**; a patch release has
@@ -134,6 +134,7 @@ on an older install moves to 1.0.0 as usual.
 
 ### Standard library
 
+- **New and unstable (U7, D139a): the processes-and-files std of the shell-to-Tomato plan, stage 1.** `os.copy`, `chmod`, `symlink`, `readlink`, `realpath`, `utime`, `mkdtemp`, `mkstemp`, `walk`, `glob`, `rmtree`, `copytree`, `which`, `exchange` (an atomic swap of two names where the system has one), `cpu_count`, `loadavg`, `uname`, `cache_dir`; `sys.arch`; `sys.executable`; the new module `signal` (`watch` makes INT, TERM and HUP raise `sys.Interrupted` where the program looks, so `finally` blocks clean up; `sys.run`, `run_async` and `Process.wait` look); `PipeReader.tee`; `hashlib.sha256_file` (100 MB in about half a second); `requests.download(url, path, https_only=True, ...)`, which streams to a file and refuses http and a redirect to http; `gzip` (`compress`, `decompress`, written in C, no library) and `tarfile` (`create`, `entries`, `extract` for `.tar` and `.tar.gz`, with the path rules of a careful extractor), so that no system `tar` or `gzip` is needed. The compiler warns once for them (`unstable`, silenced with `# allow: unstable`), and any of them may change or go in a minor or patch release.
 - `random.Random.randbytes(n)`, and a `requests` body may be `bytes` (`data=b'...'`), sent as it is (D17e).
 New modules: `asyncio` (`gather`, `wait_all`, `wait_for`, `Queue`, `Lock`, `Semaphore`, `Event`), `socket` (TCP, UDP,
 asynchronous address lookup), `re` (regular expressions, D79a), `datetime` (`date`, `time`, `datetime`, `timedelta`

@@ -270,3 +270,10 @@ bytearray_inplace
 union_narrowing_and
 optional_container_text
 unset_variable
+os_tree
+os_exchange
+hashlib_file
+sys_tee
+signal_cleanup
+gzip_basic
+tarfile_roundtrip

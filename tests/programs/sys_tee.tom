@@ -1,0 +1,42 @@
+# PipeReader.tee (stage 1 of docs/shell-to-tomato-plan.md): the lines of a program's streams are written to a file as they come, and echoed.
+# The first input is a folder for this test's files.
+import os
+import sys
+
+def show(text: str) -> str:
+    return text.replace('\n', '|')
+
+@main
+async def main(work: str):
+    p = sys.spawn(['sh', '-c', 'echo one; echo two >&2; printf three; echo four'])
+    a = start p.stdout.tee(work + '/out.log')
+    b = start p.stderr.tee(work + '/err.log', echo=False)
+    n1 = await a
+    n2 = await b
+    await p.wait()
+    print()
+    print('lines', n1, n2, show(os.read_text(work + '/out.log')), show(os.read_text(work + '/err.log')))
+    # append, and no echo
+    q = sys.spawn(['echo', 'more'])
+    n3 = await q.stdout.tee(work + '/out.log', echo=False, append=True)
+    await q.wait()
+    print('appended', n3, show(os.read_text(work + '/out.log')))
+    # a stream that was not captured, and a file that cannot be made
+    r = sys.spawn(['echo', 'x'], capture=False)
+    try:
+        await r.stdout.tee(work + '/none.log')
+    catch ValueError as e:
+        print('not captured', e.id)
+    await r.wait()
+    s = sys.spawn(['echo', 'y'])
+    try:
+        await s.stdout.tee(work + '/no/such/dir/x.log')
+    catch FileNotFoundError as e:
+        print('bad file', e.id)
+    print('rest', await s.stdout.read())
+    await s.wait()
+    # a long output with no newline at the end, and output over a pipe's size
+    t = sys.spawn(['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" x; echo; echo tail'])
+    n4 = await t.stdout.tee(work + '/long.log', echo=False)
+    await t.wait()
+    print('long', n4, os.stat(work + '/long.log').size)

@@ -5,7 +5,11 @@
 #     print(h.hexdigest())                       # the digest as hex text
 #     print(hashlib.sha1_hex(b'abc'))
 #     print(hashlib.pbkdf2_hmac('sha256', b'password', b'salt', 1000))
+#     print(hashlib.sha256_file('big.tar.gz'))   # the digest of a whole file as hex text, without holding it (new, unstable)
 import utf8
+!tomato_sha256_file(path: str, out: list[str]) -> int
+!tomato_os_error(what: str) -> str
+!tomato_os_kind() -> int
 
 def _rotr(x: int, n: int) -> int:
     return ((x >> n) | (x << (32 - n))) & 4294967295
@@ -267,3 +271,25 @@ export def pbkdf2_hmac(hash_name: str, password: bytes, salt: bytes, iterations:
         out.extend(result)
         block += 1
     return bytes(out[:dklen])
+
+# The SHA-256 of a whole file as 64 hex digits, read in pieces by the runtime (so a file of any size takes a megabyte of memory, and the
+# digest of 100 MB takes well under a second natively; the Hash class above is written in Tomato and is far slower). A file that cannot
+# be read raises the classes of os (FileNotFoundError, PermissionError, IsADirectoryError, or an IOError). Works in the browser playground
+# on the page's own files. New in stage 1 of docs/shell-to-tomato-plan.md (unstable, docs/provisional.md U7).
+export def sha256_file(path: str) -> str:
+    if chr(0) in path:
+        raise ValueError('a path or name cannot contain a NUL character', 'E511')
+    out: list[str] = []
+    kind = !tomato_sha256_file(path, out)
+    if kind != 0:
+        message = !tomato_os_error(f"read '{path}'")
+        if kind == 1:
+            raise FileNotFoundError(message, 'E505')
+        if kind == 3:
+            raise PermissionError(message, 'E507')
+        if kind == 4:
+            raise IsADirectoryError(message, 'E508')
+        if kind == 5:
+            raise NotADirectoryError(message, 'E509')
+        raise IOError(message, 'E515')
+    return out[0]

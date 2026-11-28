@@ -1,0 +1,86 @@
+mode after chmod 750
+copy hello 750
+replaced hello 644
+from a link hello False
+big 200000
+missing source E505
+directory source E508
+missing folder E505
+onto a directory E508
+no leftovers []
+readlink ../target.txt True nowhere
+realpath True True
+lstat True False
+readlink of a file E515
+readlink missing E505
+realpath of a broken link E505
+symlink exists E506
+chmod missing E505
+utime 1000000000.0
+utime fraction 1234567890.5
+utime now True
+utime missing E505
+mkdtemp True 15 True 700
+mkstemp True True 0 600
+50 different names 50
+TMPDIR used True
+slash in prefix E659
+mkdtemp in a missing folder E505
+walk @ d=a,d f=broken,filelink,top.txt
+walk @/a d=b,to_d f=one.txt
+walk @/a/b d=c,up f=two.txt
+walk @/a/b/c d= f=three.txt
+walk @/d d= f=
+--
+walk follow @ d=a,d f=broken,filelink,top.txt
+walk follow @/a d=b,to_d f=one.txt
+walk follow @/a/b d=c,up f=two.txt
+walk follow @/a/b/c d= f=three.txt
+walk follow @/a/to_d d= f=
+walk follow @/d d= f=
+walk missing E505
+walk a file E509
+glob @/*.txt ['@/top.txt']
+glob @/* ['@/a', '@/broken', '@/d', '@/filelink', '@/top.txt']
+glob @/.* ['@/.hidden.txt']
+glob @/a/*.txt ['@/a/one.txt']
+glob @/a/b/*.txt ['@/a/b/two.txt']
+glob @/**/*.txt ['@/a/b/c/three.txt', '@/a/b/two.txt', '@/a/one.txt', '@/top.txt']
+glob @/**/three.txt ['@/a/b/c/three.txt']
+glob @/*/b ['@/a/b']
+glob @/?/* ['@/a/b', '@/a/one.txt', '@/a/to_d']
+glob @/[ab]* ['@/a', '@/broken']
+glob @/[!a]* ['@/broken', '@/d', '@/filelink', '@/top.txt']
+glob @/a/[a-c].txt []
+glob @/top.txt ['@/top.txt']
+glob @/nothing/*.txt []
+glob @/a/ ['@/a']
+glob @/** ['@', '@/a', '@/a/b', '@/a/b/c', '@/a/b/c/three.txt', '@/a/b/two.txt', '@/a/b/up', '@/a/one.txt', '@/a/to_d', '@/broken', '@/d', '@/filelink', '@/top.txt']
+glob @/a/b/**/*.txt ['@/a/b/c/three.txt', '@/a/b/two.txt']
+relative ['a/one.txt'] ['top.txt'] ['a/b/c/three.txt', 'a/b/two.txt', 'a/one.txt', 'top.txt']
+rmtree False 1
+the tree behind the link is untouched 5
+rmtree missing E505
+rmtree of a link E509
+rmtree of a file E509
+copytree same shape True 5
+links kept as links .. top.txt nowhere True
+dir mode kept 700 755
+file 3
+copytree onto a folder E506
+copytree missing E505
+copytree of a file E509
+which sh True None None
+not executable yet None None
+executable True True True
+a directory is not a program None
+PATH used True
+with a PATH given True None
+cpu True
+load True True True
+uname True True True True True
+arch True True
+cache_dir True
+XDG_CACHE_HOME True
+relative XDG_CACHE_HOME is ignored True
+cache_dir without HOME E660

@@ -1,0 +1,67 @@
+# requests.download (stage 1 of docs/shell-to-tomato-plan.md) against the local test server of tests/http_server.c: no internet. The inputs are the
+# server's address and a folder for this test's files. https is refused by default, an http redirect is refused when https is required, a bad
+# answer leaves no file (and no earlier file is lost), the limit and the timeout stop a download, and nothing is left beside the files.
+import hashlib
+import os
+import requests
+
+async def attempt(label: str, url: str, path: str, https_only: bool = True, max_bytes: int | None = None, timeout: float = 0.0):
+    try:
+        n = await requests.download(url, path, https_only=https_only, max_bytes=max_bytes, timeout=timeout)
+        print(label, 'ok', n)
+    catch requests.HTTPError as e:
+        print(label, 'HTTPError', e.status, e.id)
+    catch requests.InvalidURL as e:
+        print(label, 'InvalidURL', e.id)
+    catch requests.RequestError as e:
+        print(label, 'RequestError', e.id, e.message)
+    catch TimeoutError as e:
+        print(label, 'TimeoutError', e.id)
+    catch IOError as e:
+        print(label, 'IOError', e.id)
+
+@main
+async def main(base: str, work: str):
+    out = work + '/out.bin'
+    await attempt('binary', base + '/binary', out, https_only=False)
+    data = os.read_bytes(out)
+    print('content', len(data), data[0], data[255], hashlib.sha256_file(out) == hashlib.sha256(data).hexdigest())
+    await attempt('big', base + '/big', work + '/big.bin', https_only=False)
+    print('big file', os.stat(work + '/big.bin').size)
+    # a failure leaves an earlier file as it was, and makes no file of its own
+    os.write_text(work + '/keep.txt', 'old')
+    await attempt('404', base + '/status/404', work + '/keep.txt', https_only=False)
+    await attempt('503', base + '/status/503', work + '/none.txt', https_only=False)
+    print('after errors', os.read_text(work + '/keep.txt'), os.listdir(work))
+    # https is the default: an http address is refused before anything is sent
+    await attempt('http refused', base + '/hello', work + '/refused.txt')
+    print('refused file', ('refused.txt' in os.listdir(work)))
+    # a redirect to http is refused when https is required (the first http address is allowed for this test only)
+    os.putenv('TOMATO_DOWNLOAD_ALLOW_HTTP_FIRST', '1')
+    await attempt('redirect refused', base + '/redirect/2', work + '/redirected.txt')
+    print('redirected file', ('redirected.txt' in os.listdir(work)))
+    await attempt('first allowed, no redirect', base + '/hello', work + '/hello.txt')
+    print('hello', os.read_text(work + '/hello.txt'))
+    os.unsetenv('TOMATO_DOWNLOAD_ALLOW_HTTP_FIRST')
+    # with https_only=False the redirect is followed, and an existing file is replaced
+    await attempt('redirect followed', base + '/redirect/2', work + '/keep.txt', https_only=False)
+    print('replaced', os.read_text(work + '/keep.txt'))
+    # the limit and the timeout
+    await attempt('limit', base + '/big', work + '/limited.bin', https_only=False, max_bytes=1000)
+    await attempt('exact limit', base + '/hello', work + '/five.txt', https_only=False, max_bytes=5)
+    await attempt('timeout', base + '/slow/3000', work + '/slow.txt', https_only=False, timeout=0.3)
+    await attempt('unwritable', base + '/hello', work + '/no/such/folder/x.txt', https_only=False)
+    await attempt('not a url', 'ftp://example.invalid/x', work + '/ftp.txt', https_only=False)
+    try:
+        await requests.download(base + '/hello', work + '/neg.txt', https_only=False, max_bytes=-1)
+    catch ValueError as e:
+        print('negative limit', e.id)
+    # file:// only with the variable the tests set
+    os.write_text(work + '/source.txt', 'from a file')
+    await attempt('file refused', 'file://' + work + '/source.txt', work + '/copy1.txt', https_only=False)
+    os.putenv('TOMATO_DOWNLOAD_ALLOW_FILE', '1')
+    await attempt('file allowed', 'file://' + work + '/source.txt', work + '/copy2.txt', https_only=False)
+    await attempt('file with https_only', 'file://' + work + '/source.txt', work + '/copy3.txt')
+    os.unsetenv('TOMATO_DOWNLOAD_ALLOW_FILE')
+    print('copy2', os.read_text(work + '/copy2.txt'))
+    print('files', os.listdir(work))

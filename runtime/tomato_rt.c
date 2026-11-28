@@ -3053,7 +3053,7 @@ static void sleeper_wake(int64_t i) {
  * are driven by curl's multi interface from the scheduler: a task that waits for one is parked here, and tomato_sched_idle
  * lets the network make progress when nothing else can run, so requests overlap with each other and with other tasks.
  * The browser has no sockets, so there every request fails at once with a message that says so. */
-enum { HK_NONE = 0, HK_CONNECTION = 1, HK_TIMEOUT = 2, HK_URL = 3, HK_REDIRECTS = 4, HK_OTHER = 5 };
+enum { HK_NONE = 0, HK_CONNECTION = 1, HK_TIMEOUT = 2, HK_URL = 3, HK_REDIRECTS = 4, HK_OTHER = 5, HK_FILE = 6, HK_TOOBIG = 7 };
 typedef struct {
     int used, done, kind, status;
     void *frame;                    /* the task waiting for it (retained), or NULL */
@@ -3061,6 +3061,8 @@ typedef struct {
     char *head; int64_t head_n, head_cap;
     char *err, *final_url, *post;
     void *easy, *slist;
+    /* a download (requests.download): the body goes to the file dl_tmp, which becomes dl_path when the answer is a success */
+    FILE *dl; char *dl_tmp, *dl_path; int64_t dl_max, dl_n; int dl_toobig, dl_errno;
 } HttpReq;
 static HttpReq **http_t; static int64_t http_n;      /* by handle: index + 1 */
 static int64_t http_active;                          /* requests added to curl and not finished */
@@ -3122,6 +3124,7 @@ static int curl_load(void) {
 #define CURLOPT_POSTFIELDSIZE 60
 #define CURLOPT_NOBODY 44
 #define CURLOPT_FOLLOWLOCATION 52
+#define CURLOPT_PROTOCOLS 181
 #define CURLOPT_REDIR_PROTOCOLS 182
 #define CURLOPT_MAXREDIRS 68
 #define CURLOPT_NOSIGNAL 99
@@ -3146,6 +3149,16 @@ static void http_append(char **buf, int64_t *n, int64_t *cap, const char *p, siz
 }
 static size_t http_on_body(char *p, size_t size, size_t nmemb, void *user) {
     HttpReq *r = user; size_t len = size * nmemb;
+    if (r->dl_path) {
+        long st = 0;
+        cu.easy_getinfo(r->easy, CURLINFO_RESPONSE_CODE, &st);
+        if (st != 0 && (st < 200 || st > 299)) return len;       /* the body of a redirect or of an error is not the file */
+        if (r->dl_max >= 0 && r->dl_n + (int64_t)len > r->dl_max) { r->dl_toobig = 1; return 0; }
+        errno = 0;
+        if (len > 0 && fwrite(p, 1, len, r->dl) != len) { r->dl_errno = errno ? errno : EIO; return 0; }
+        r->dl_n += (int64_t)len;
+        return len;
+    }
     if (r->body_n + (int64_t)len > ((int64_t)1 << 30)) return 0;      /* more than 1 GiB: stop the transfer */
     http_append(&r->body, &r->body_n, &r->body_cap, p, len); return len;
 }
@@ -3155,6 +3168,20 @@ static size_t http_on_head(char *p, size_t size, size_t nmemb, void *user) {
     http_append(&r->head, &r->head_n, &r->head_cap, p, len); return len;
 }
 
+/* the end of a download: the file is closed, and becomes the named file when the answer was a success, else it is removed */
+static void http_finish_file(HttpReq *r, int success) {
+    if (!r->dl) return;
+    int bad = fclose(r->dl) != 0;
+    int why = errno;
+    r->dl = NULL;
+    if (success && bad) { r->kind = HK_FILE; r->dl_errno = why ? why : EIO; success = 0; }
+    if (success && rename(r->dl_tmp, r->dl_path) != 0) { r->kind = HK_FILE; r->dl_errno = errno; success = 0; }
+    if (!success) unlink(r->dl_tmp);
+    if (r->kind == HK_FILE) {
+        char msg[300]; snprintf(msg, sizeof msg, "could not write '%.100s': %s", r->dl_path, strerror(r->dl_errno));
+        free(r->err); r->err = http_dup(msg);
+    }
+}
 static void http_finish(HttpReq *r, int code) {
     if (code == 0) {
         long st = 0; char *u = NULL;
@@ -3162,8 +3189,15 @@ static void http_finish(HttpReq *r, int code) {
         cu.easy_getinfo(r->easy, CURLINFO_EFFECTIVE_URL, &u);
         r->status = (int)st; r->done = 1; r->kind = HK_NONE;
         if (u) r->final_url = http_dup(u);
+        http_finish_file(r, st == 0 || (st >= 200 && st <= 299));
         return;
     }
+    if (r->dl_toobig) {
+        char msg[200]; snprintf(msg, sizeof msg, "the download is larger than max_bytes (%lld bytes)", (long long)r->dl_max);
+        http_fail(r, HK_TOOBIG, msg); http_finish_file(r, 0); r->kind = HK_TOOBIG; return;
+    }
+    if (r->dl_errno) { http_fail(r, HK_FILE, ""); r->kind = HK_FILE; http_finish_file(r, 0); return; }
+    http_finish_file(r, 0);
     int kind = (code == 28) ? HK_TIMEOUT : (code == 3 || code == 1) ? HK_URL : code == 47 ? HK_REDIRECTS : (code == 23 || code == 61 || code == 62) ? HK_OTHER : HK_CONNECTION;
     const char *detail = r->err && r->err[0] ? r->err : cu.strerror(code);
     http_fail(r, kind, detail);
@@ -3203,7 +3237,10 @@ static void http_block(int ms) { (void)ms; }
 
 /* start a request; always returns a handle (a failure to start shows up when its result is read). headers is "Name: value"
  * lines; body_mode 0 means no body, 1 a body (possibly empty). timeout is in seconds (0 or less: none). */
-int64_t tomato_http_start(void *method, void *url, void *headers, void *body, int64_t body_mode, double timeout, int64_t follow, int64_t max_redirects) {
+/* protos: a mask of the protocols a request may use for its first address and for a redirect (1 http, 2 https, 1024 file, as libcurl's
+ * CURLPROTO_ values); dl_path, when it is not NULL, makes the body go to that file (at most dl_max bytes when that is not negative) */
+static int64_t http_start_ex(void *method, void *url, void *headers, void *body, int64_t body_mode, double timeout, int64_t follow, int64_t max_redirects,
+                             long first_protos, long redir_protos, const char *dl_path, int64_t dl_max) {
     HttpReq *r = calloc(1, sizeof *r);
     if (!r) out_of_memory();
     int64_t slot = -1;
@@ -3216,12 +3253,16 @@ int64_t tomato_http_start(void *method, void *url, void *headers, void *body, in
     http_t[slot] = r; r->used = 1;
 #if defined(TOMATO_WASM) || defined(__wasi__)
     (void)method; (void)url; (void)headers; (void)body; (void)body_mode; (void)timeout; (void)follow; (void)max_redirects;
+    (void)first_protos; (void)redir_protos; (void)dl_path; (void)dl_max;
     http_fail(r, HK_CONNECTION, "requests is not available in the browser playground (it has no network access from here); run the program with 'tomato run'");
 #else
     Str *m = method, *u = url, *h = headers, *b = body;
     if (!curl_load()) { http_fail(r, HK_CONNECTION, cu.why); return slot + 1; }
-    if (!((u->bytes >= 7 && memcmp(u->data, "http://", 7) == 0) || (u->bytes >= 8 && memcmp(u->data, "https://", 8) == 0)) || memchr(u->data, 0, (size_t)u->bytes)) {
-        http_fail(r, HK_URL, "the url must start with http:// or https://"); return slot + 1;
+    int is_http = u->bytes >= 7 && memcmp(u->data, "http://", 7) == 0, is_https = u->bytes >= 8 && memcmp(u->data, "https://", 8) == 0;
+    int is_file = u->bytes >= 8 && memcmp(u->data, "file:///", 8) == 0;
+    if (!((is_http && (first_protos & 1)) || (is_https && (first_protos & 2)) || (is_file && (first_protos & 1024))) || memchr(u->data, 0, (size_t)u->bytes)) {
+        http_fail(r, HK_URL, (first_protos & 1) ? "the url must start with http:// or https://" : "the url must start with https:// (only https is allowed here)");
+        return slot + 1;
     }
     char *cu_url = malloc((size_t)u->bytes + 1), *cm = malloc((size_t)m->bytes + 1);
     if (!cu_url || !cm) out_of_memory();
@@ -3240,7 +3281,28 @@ int64_t tomato_http_start(void *method, void *url, void *headers, void *body, in
     cu.easy_setopt(e, CURLOPT_ACCEPT_ENCODING, "");           /* every encoding curl supports; it decodes for us */
     cu.easy_setopt(e, CURLOPT_FOLLOWLOCATION, follow ? 1L : 0L);
     cu.easy_setopt(e, CURLOPT_MAXREDIRS, (long)max_redirects);
-    cu.easy_setopt(e, CURLOPT_REDIR_PROTOCOLS, 3L);          /* a redirect may only lead to http or https (CURLPROTO_HTTP | CURLPROTO_HTTPS) */
+    cu.easy_setopt(e, CURLOPT_REDIR_PROTOCOLS, redir_protos);   /* a redirect may only lead to http or https (CURLPROTO_HTTP | CURLPROTO_HTTPS), or only https */
+    if (first_protos != 3) cu.easy_setopt(e, CURLOPT_PROTOCOLS, first_protos);
+    if (dl_path) {
+        size_t n = strlen(dl_path) + 48;
+        r->dl_path = http_dup(dl_path); r->dl_tmp = malloc(n); r->dl_max = dl_max;
+        if (!r->dl_tmp) out_of_memory();
+        int fd = -1;
+        for (int k = 0; k < 1000; k++) {
+            snprintf(r->dl_tmp, n, "%s.tomato-download.%ld.%d", dl_path, (long)getpid(), k);
+            fd = open(r->dl_tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+            if (fd >= 0 || errno != EEXIST) break;
+        }
+        if (fd >= 0) r->dl = fdopen(fd, "wb");
+        if (!r->dl) {
+            int why = errno ? errno : EIO;
+            if (fd >= 0) { close(fd); unlink(r->dl_tmp); }
+            char msg[300]; snprintf(msg, sizeof msg, "could not write '%.100s': %s", dl_path, strerror(why));
+            http_fail(r, HK_FILE, msg);
+            cu.easy_cleanup(e); r->easy = NULL; free(cu_url); free(cm);
+            return slot + 1;
+        }
+    }
     if (timeout > 0 && timeout < 1e9) cu.easy_setopt(e, CURLOPT_TIMEOUT_MS, (long)(timeout * 1000.0 + 0.5));   /* longer: none */
     if (strcmp(cm, "HEAD") == 0) cu.easy_setopt(e, CURLOPT_NOBODY, 1L);
     else if (strcmp(cm, "GET") != 0 && strcmp(cm, "POST") != 0) cu.easy_setopt(e, CURLOPT_CUSTOMREQUEST, cm);
@@ -3265,6 +3327,25 @@ int64_t tomato_http_start(void *method, void *url, void *headers, void *body, in
 #endif
     return slot + 1;
 }
+int64_t tomato_http_start(void *method, void *url, void *headers, void *body, int64_t body_mode, double timeout, int64_t follow, int64_t max_redirects) {
+    return http_start_ex(method, url, headers, body, body_mode, timeout, follow, max_redirects, 3, 3, NULL, -1);
+}
+/* requests.download: a GET whose body is written to the file path (made complete under another name beside it and renamed at the end; a
+ * failure removes it). https_only 1 allows only https for the first address and for every redirect. The environment variables
+ * TOMATO_DOWNLOAD_ALLOW_FILE (a file:/// address may be the first) and TOMATO_DOWNLOAD_ALLOW_HTTP_FIRST (with https_only, the first address
+ * may be http: a redirect still may not) are for the tests of this library and of the update; nothing else turns the rule off. max_bytes
+ * is -1 for no limit. */
+int64_t tomato_http_download(void *url, void *path, int64_t https_only, int64_t max_bytes, double timeout) {
+    long first = https_only ? 2 : 3, redir = https_only ? 2 : 3;
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+    if (getenv("TOMATO_DOWNLOAD_ALLOW_FILE")) first |= 1024;
+    if (https_only && getenv("TOMATO_DOWNLOAD_ALLOW_HTTP_FIRST")) first |= 1;
+#endif
+    void *none = tomato_str_from_cstr(""), *get = tomato_str_from_cstr("GET");
+    int64_t id = http_start_ex(get, url, none, none, 0, timeout, 1, 20, first, redir, ((Str *)path)->data, max_bytes);
+    tomato_release(none); tomato_release(get);
+    return id;
+}
 
 /* the task waits for request id (compiled code suspends right after this call) */
 void tomato_http_wait(void *frame, int64_t id) {
@@ -3286,6 +3367,7 @@ static int http_cancel_frame(void *frame) {
 }
 
 int64_t tomato_http_status(int64_t id) { HttpReq *r = http_get(id); return r ? r->status : 0; }
+int64_t tomato_http_dl_size(int64_t id) { HttpReq *r = http_get(id); return r ? r->dl_n : 0; }     /* the bytes a download wrote */
 int64_t tomato_http_error_kind(int64_t id) { HttpReq *r = http_get(id); return r ? r->kind : HK_OTHER; }
 void *tomato_http_error_text(int64_t id) { HttpReq *r = http_get(id); return tomato_str_from_cstr(r && r->kind && r->err ? r->err : ""); }
 static Str *bytes_new(const void *data, int64_t n);
@@ -3329,6 +3411,8 @@ void tomato_http_free(int64_t id) {
     if (r->slist) cu.slist_free_all(r->slist);
 #endif
     if (r->frame) tomato_release(r->frame);
+    if (r->dl) { fclose(r->dl); unlink(r->dl_tmp); }
+    free(r->dl_tmp); free(r->dl_path);
     free(r->body); free(r->head); free(r->err);
     free(r->final_url); free(r->post);
     free(r); http_t[id - 1] = NULL;
@@ -5002,7 +5086,10 @@ static void print_uncaught(void *obj, int line, int runtime, int mode, const cha
     }
 }
 
+static int sg_exit_status(void *obj);   /* std/signal.tom: 128 plus the signal for an Interrupted that nothing caught, else 0 */
 void tomato_report_uncaught(void *obj, int line, int runtime, int mode) {
+    int by_signal = sg_exit_status(obj);
+    if (by_signal) { fflush(stdout); tty_restore_all(); exit(by_signal); }       /* stopped by a signal the program watched: no message */
     print_uncaught(obj, line, runtime, mode, "");
     exit(1);
 }
@@ -8447,6 +8534,959 @@ int64_t tomato_stat(void *path, int64_t follow, void *out) {
     return 0;
 }
 
+/* ---- gzip: an inflater that is pulled from and a deflater that is pushed to (std/gzip.tom, std/tarfile.tom). No zlib: this is the whole of RFC 1951 and
+ * the gzip framing of RFC 1952, so a program that uses it needs no library and the browser build has it too. The inflater reads from a FILE or from memory
+ * and gives bytes as they are asked for, with a 32 KiB window, so an archive is never in memory whole; the deflater takes bytes in pieces, finds matches
+ * with hash chains (one step of lazy matching), and writes a dynamic Huffman block for about every 16,000 matches (or a stored block, when that is smaller). */
+static uint32_t zs_crc_table[256];
+static int zs_crc_ready;
+static uint32_t zs_crc(uint32_t crc, const unsigned char *p, size_t n) {
+    if (!zs_crc_ready) {
+        for (uint32_t i = 0; i < 256; i++) { uint32_t c = i; for (int k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1; zs_crc_table[i] = c; }
+        zs_crc_ready = 1;
+    }
+    crc = ~crc;
+    while (n--) crc = zs_crc_table[(crc ^ *p++) & 255] ^ (crc >> 8);
+    return ~crc;
+}
+
+/* the errors of the inflater; the library words them */
+enum { ZE_NONE = 0, ZE_HEADER = 1, ZE_CORRUPT = 2, ZE_TRUNCATED = 3, ZE_CHECKSUM = 4, ZE_TOOBIG = 5, ZE_GARBAGE = 6, ZE_IO = 7 };
+
+#define ZS_WSIZE 32768
+typedef struct {
+    FILE *f; const unsigned char *mem; size_t mem_n, mem_i;
+    unsigned char ibuf[65536]; size_t ib_n, ib_i;
+    uint64_t bits; int nbits;
+    int state, final;                      /* 0 member header, 1 block header, 2 stored, 3 huffman, 4 trailer, 5 done */
+    uint32_t stored_left;
+    int pend_len, pend_dist;
+    uint16_t lit_tab[1 << 15], dist_tab[1 << 15];
+    unsigned char win[ZS_WSIZE]; uint32_t wpos;
+    uint32_t crc, isize; uint64_t total, max_out;
+    int members, ioerr, err;                /* err: an error found after some data was given back, said by the next call */
+} Inf;
+
+static int inf_byte(Inf *z) {
+    if (z->f) {
+        if (z->ib_i == z->ib_n) {
+            z->ib_n = fread(z->ibuf, 1, sizeof z->ibuf, z->f); z->ib_i = 0;
+            if (z->ib_n == 0) { if (ferror(z->f)) z->ioerr = 1; return -1; }
+        }
+        return z->ibuf[z->ib_i++];
+    }
+    return z->mem_i < z->mem_n ? z->mem[z->mem_i++] : -1;
+}
+/* fills the bit buffer to at least n bits when the input has them; returns 1 when it does */
+static int inf_fill(Inf *z, int n) {
+    while (z->nbits < n) {
+        int c = inf_byte(z);
+        if (c < 0) return 0;
+        z->bits |= (uint64_t)c << z->nbits; z->nbits += 8;
+    }
+    return 1;
+}
+static int inf_bits(Inf *z, int n, uint32_t *v) {      /* n at most 32 */
+    if (n == 0) { *v = 0; return 1; }
+    if (!inf_fill(z, n)) return 0;
+    *v = (uint32_t)(z->bits & (((uint64_t)1 << n) - 1)); z->bits >>= n; z->nbits -= n;
+    return 1;
+}
+/* the table for canonical codes lens[0..n): entry = length << 9 | symbol, indexed by the next 15 bits of input (first bit lowest). 0 on a code that
+ * has more codes than bits allow; a code that is not complete leaves holes (length 0) that are an error when they are met */
+static int inf_table(uint16_t *tab, const unsigned char *lens, int n) {
+    int count[16] = { 0 }, next[16];
+    memset(tab, 0, (1 << 15) * sizeof *tab);
+    for (int i = 0; i < n; i++) count[lens[i]]++;
+    count[0] = 0;
+    int left = 1;
+    for (int b = 1; b <= 15; b++) { left <<= 1; left -= count[b]; if (left < 0) return 0; }
+    next[1] = 0;
+    for (int b = 1; b < 15; b++) next[b + 1] = (next[b] + count[b]) << 1;
+    for (int i = 0; i < n; i++) {
+        int L = lens[i];
+        if (!L) continue;
+        int code = next[L]++, rev = 0;
+        for (int k = 0; k < L; k++) rev |= ((code >> k) & 1) << (L - 1 - k);
+        for (int f = rev; f < (1 << 15); f += 1 << L) tab[f] = (uint16_t)(L << 9 | i);
+    }
+    return 1;
+}
+static const uint16_t zs_len_base[29] = { 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258 };
+static const unsigned char zs_len_extra[29] = { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0 };
+static const uint16_t zs_dist_base[30] = { 1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577 };
+static const unsigned char zs_dist_extra[30] = { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
+
+static Inf *inf_new(FILE *f, const unsigned char *mem, size_t n, uint64_t max_out) {
+    Inf *z = calloc(1, sizeof *z);
+    if (!z) out_of_memory();
+    z->f = f; z->mem = mem; z->mem_n = n; z->max_out = max_out;
+    return z;
+}
+static int inf_member_header(Inf *z) {      /* 0, or the error */
+    uint32_t b[10];
+    for (int i = 0; i < 10; i++) if (!inf_bits(z, 8, &b[i])) return z->members > 0 ? ZE_GARBAGE : i == 0 ? ZE_HEADER : ZE_TRUNCATED;
+    if (b[0] != 0x1f || b[1] != 0x8b || b[2] != 8 || (b[3] & 0xe0)) return z->members == 0 ? ZE_HEADER : ZE_GARBAGE;
+    uint32_t flg = b[3], v;
+    if (flg & 4) { uint32_t lo, hi; if (!inf_bits(z, 8, &lo) || !inf_bits(z, 8, &hi)) return ZE_TRUNCATED; for (uint32_t k = 0; k < (lo | hi << 8); k++) if (!inf_bits(z, 8, &v)) return ZE_TRUNCATED; }
+    for (int k = 0; k < 2; k++) if (flg & (k ? 16 : 8)) { do { if (!inf_bits(z, 8, &v)) return ZE_TRUNCATED; } while (v); }
+    if (flg & 2) { if (!inf_bits(z, 16, &v)) return ZE_TRUNCATED; }
+    z->crc = 0; z->isize = 0; z->members++;
+    return 0;
+}
+static int inf_dynamic(Inf *z) {
+    uint32_t hlit, hdist, hclen, v;
+    if (!inf_bits(z, 5, &hlit) || !inf_bits(z, 5, &hdist) || !inf_bits(z, 4, &hclen)) return ZE_TRUNCATED;
+    hlit += 257; hdist += 1; hclen += 4;
+    if (hlit > 286 || hdist > 30) return ZE_CORRUPT;
+    static const unsigned char order[19] = { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
+    unsigned char cl[19] = { 0 }, lens[320];
+    for (uint32_t i = 0; i < hclen; i++) { if (!inf_bits(z, 3, &v)) return ZE_TRUNCATED; cl[order[i]] = (unsigned char)v; }
+    uint16_t *tab = z->dist_tab;                    /* the table of the code lengths is built in the distance table's room, which is rebuilt below */
+    if (!inf_table(tab, cl, 19)) return ZE_CORRUPT;
+    uint32_t i = 0;
+    while (i < hlit + hdist) {
+        inf_fill(z, 15);
+        uint16_t e = tab[z->bits & 0x7fff];
+        int L = e >> 9;
+        if (L == 0) return z->nbits < 15 && !(z->bits & 0x7fff) ? ZE_TRUNCATED : ZE_CORRUPT;
+        if (L > z->nbits) return ZE_TRUNCATED;
+        z->bits >>= L; z->nbits -= L;
+        int sym = e & 511;
+        if (sym < 16) { lens[i++] = (unsigned char)sym; continue; }
+        uint32_t rep, prev = 0;
+        if (sym == 16) { if (i == 0) return ZE_CORRUPT; prev = lens[i - 1]; if (!inf_bits(z, 2, &rep)) return ZE_TRUNCATED; rep += 3; }
+        else if (sym == 17) { if (!inf_bits(z, 3, &rep)) return ZE_TRUNCATED; rep += 3; }
+        else { if (!inf_bits(z, 7, &rep)) return ZE_TRUNCATED; rep += 11; }
+        if (i + rep > hlit + hdist) return ZE_CORRUPT;
+        while (rep--) lens[i++] = (unsigned char)prev;
+    }
+    if (lens[256] == 0) return ZE_CORRUPT;
+    if (!inf_table(z->lit_tab, lens, (int)hlit) || !inf_table(z->dist_tab, lens + hlit, (int)hdist)) return ZE_CORRUPT;
+    return 0;
+}
+static void inf_fixed(Inf *z) {
+    unsigned char lens[320];
+    for (int i = 0; i < 144; i++) lens[i] = 8;
+    for (int i = 144; i < 256; i++) lens[i] = 9;
+    for (int i = 256; i < 280; i++) lens[i] = 7;
+    for (int i = 280; i < 288; i++) lens[i] = 8;
+    inf_table(z->lit_tab, lens, 288);
+    for (int i = 0; i < 30; i++) lens[i] = 5;
+    inf_table(z->dist_tab, lens, 30);
+}
+/* up to n bytes into dst: the number written (0 at the end of the data), or minus an error. */
+static int64_t inf_read(Inf *z, unsigned char *dst, size_t n) {
+    size_t out = 0, folded = 0;                       /* folded: how much of dst the checksum and size of the member already hold */
+    int err = 0;
+    if (z->err) return -z->err;
+#define ZPUT(b) do { unsigned char c_ = (unsigned char)(b); dst[out++] = c_; z->win[z->wpos++ & (ZS_WSIZE - 1)] = c_; } while (0)
+#define ZFOLD() do { z->crc = zs_crc(z->crc, dst + folded, out - folded); z->isize += (uint32_t)(out - folded); z->total += out - folded; folded = out; } while (0)
+    while (out < n && !err) {
+        if (z->pend_len > 0) {
+            while (z->pend_len > 0 && out < n) { ZPUT(z->win[(z->wpos - (uint32_t)z->pend_dist) & (ZS_WSIZE - 1)]); z->pend_len--; }
+            continue;
+        }
+        switch (z->state) {
+        case 0:
+            err = inf_member_header(z);
+            z->state = 1; z->final = 0;
+            break;
+        case 1: {
+            uint32_t fin, type;
+            if (!inf_bits(z, 1, &fin) || !inf_bits(z, 2, &type)) { err = ZE_TRUNCATED; break; }
+            z->final = (int)fin;
+            if (type == 0) {
+                z->bits >>= z->nbits & 7; z->nbits -= z->nbits & 7;
+                uint32_t len, nlen;
+                if (!inf_bits(z, 16, &len) || !inf_bits(z, 16, &nlen)) { err = ZE_TRUNCATED; break; }
+                if ((len ^ 0xffff) != nlen) { err = ZE_CORRUPT; break; }
+                z->stored_left = len; z->state = 2;
+            } else if (type == 1) { inf_fixed(z); z->state = 3; }
+            else if (type == 2) { err = inf_dynamic(z); z->state = 3; }
+            else err = ZE_CORRUPT;
+            break; }
+        case 2: {
+            if (z->stored_left == 0) { z->state = z->final ? 4 : 1; break; }
+            uint32_t v;
+            if (!inf_bits(z, 8, &v)) { err = ZE_TRUNCATED; break; }
+            ZPUT(v); z->stored_left--;
+            break; }
+        case 3: {
+            inf_fill(z, 15);
+            uint16_t e = z->lit_tab[z->bits & 0x7fff];
+            int L = e >> 9, sym = e & 511;
+            if (L == 0) { err = z->nbits < 15 ? ZE_TRUNCATED : ZE_CORRUPT; break; }
+            if (L > z->nbits) { err = ZE_TRUNCATED; break; }
+            z->bits >>= L; z->nbits -= L;
+            if (sym < 256) { ZPUT(sym); break; }
+            if (sym == 256) { z->state = z->final ? 4 : 1; break; }
+            sym -= 257;
+            if (sym >= 29) { err = ZE_CORRUPT; break; }
+            uint32_t x;
+            if (!inf_bits(z, zs_len_extra[sym], &x)) { err = ZE_TRUNCATED; break; }
+            int len = zs_len_base[sym] + (int)x;
+            inf_fill(z, 15);
+            e = z->dist_tab[z->bits & 0x7fff];
+            L = e >> 9; sym = e & 511;
+            if (L == 0) { err = z->nbits < 15 ? ZE_TRUNCATED : ZE_CORRUPT; break; }
+            if (L > z->nbits) { err = ZE_TRUNCATED; break; }
+            z->bits >>= L; z->nbits -= L;
+            if (sym >= 30) { err = ZE_CORRUPT; break; }
+            if (!inf_bits(z, zs_dist_extra[sym], &x)) { err = ZE_TRUNCATED; break; }
+            int dist = zs_dist_base[sym] + (int)x;
+            if ((z->isize < ZS_WSIZE && (uint64_t)dist > (uint64_t)z->isize + (out - folded)) || dist > ZS_WSIZE) { err = ZE_CORRUPT; break; }
+            z->pend_len = len; z->pend_dist = dist;
+            break; }
+        case 4: {                                  /* the end of the last block: the member's checksum and size follow, on a byte boundary */
+            ZFOLD();
+            z->bits >>= z->nbits & 7; z->nbits -= z->nbits & 7;
+            uint32_t crc, size;
+            if (!inf_bits(z, 32, &crc) || !inf_bits(z, 32, &size)) { err = ZE_TRUNCATED; break; }
+            if (crc != z->crc || size != z->isize) { err = ZE_CHECKSUM; break; }
+            z->state = inf_fill(z, 8) ? 0 : 5;     /* more input: another member (a gzip file may hold several); none: the end */
+            if (z->state == 0 && z->ioerr) err = ZE_IO;
+            break; }
+        case 5: goto done;
+        }
+        if (z->max_out && z->total + (out - folded) > z->max_out) err = ZE_TOOBIG;
+    }
+done:
+    ZFOLD();
+    if (err == ZE_TRUNCATED && z->ioerr) err = ZE_IO;
+    if (err) { if (out == 0) { z->err = err; return -err; } z->err = err; }
+    return (int64_t)out;
+#undef ZPUT
+#undef ZFOLD
+}
+
+/* ---- the deflater */
+#define ZD_LITBUF 16384
+#define ZD_BUFSZ (4 * ZS_WSIZE)
+#define ZD_MINLOOK 262                       /* the longest match, 258, and the 3 bytes a hash needs, and one more */
+#define ZD_MAXDIST (ZS_WSIZE - ZD_MINLOOK)
+typedef struct {
+    FILE *f; unsigned char *mem; size_t mem_n, mem_cap;      /* the sink: a file, or memory that grows */
+    unsigned char obuf[65536]; size_t on;
+    uint64_t obits; int onbits;
+    int max_chain, nice, lazy, err;
+    unsigned char buf[ZD_BUFSZ];
+    uint32_t strstart, end, block_start, ins;
+    int32_t head[1 << 15], prev[ZS_WSIZE];                    /* index + 1 of a position in buf, 0 for none */
+    int carried, cl, cd;                                      /* a match found for strstart already (by the look at the next byte of the one before) */
+    uint16_t tok_len[ZD_LITBUF], tok_arg[ZD_LITBUF];          /* a literal: length 0 and the byte; a match: its length and distance */
+    uint32_t ntok, crc, isize;
+} Def;
+
+static void d_sink(Def *d, const unsigned char *p, size_t n) {
+    if (d->f) { if (fwrite(p, 1, n, d->f) != n && !d->err) d->err = errno ? errno : EIO; return; }
+    if (d->mem_n + n > d->mem_cap) {
+        d->mem_cap = d->mem_cap ? d->mem_cap * 2 : 65536;
+        while (d->mem_cap < d->mem_n + n) d->mem_cap *= 2;
+        d->mem = realloc(d->mem, d->mem_cap);
+        if (!d->mem) out_of_memory();
+    }
+    memcpy(d->mem + d->mem_n, p, n); d->mem_n += n;
+}
+static void d_put(Def *d, uint32_t v, int nbits) {
+    d->obits |= (uint64_t)v << d->onbits; d->onbits += nbits;
+    while (d->onbits >= 8) {
+        d->obuf[d->on++] = (unsigned char)d->obits; d->obits >>= 8; d->onbits -= 8;
+        if (d->on == sizeof d->obuf) { d_sink(d, d->obuf, d->on); d->on = 0; }
+    }
+}
+static void d_align(Def *d) { if (d->onbits) d_put(d, 0, 8 - d->onbits); }
+static void d_flushout(Def *d) { if (d->on) { d_sink(d, d->obuf, d->on); d->on = 0; } }
+
+/* code lengths of at most maxbits for the weights freq[0..n) (a weight of 0 gets no code): Huffman's tree by two queues, and when it is
+ * too deep the weights are halved (kept at 1 or more) and it is done again */
+static void zs_lengths(const uint32_t *freq, int n, int maxbits, unsigned char *lens) {
+    uint32_t w[640];
+    int order[320], used = 0, parent[640];
+    for (int i = 0; i < n; i++) { lens[i] = 0; if (freq[i]) order[used++] = i; }
+    if (used == 0) return;
+    if (used == 1) { lens[order[0]] = 1; return; }
+    uint32_t f[320];
+    for (int i = 0; i < n; i++) f[i] = freq[i];
+    for (;;) {
+        for (int a = 1; a < used; a++) { int x = order[a], b = a - 1; while (b >= 0 && f[order[b]] > f[x]) { order[b + 1] = order[b]; b--; } order[b + 1] = x; }
+        for (int i = 0; i < used; i++) w[i] = f[order[i]];
+        int li = 0, ni = used, nn = used;       /* next leaf, next internal node to take, count of nodes */
+        for (int k = 0; k < used - 1; k++) {
+            int pick[2];
+            for (int t = 0; t < 2; t++) {
+                if (li < used && (ni >= nn || w[li] <= w[ni])) pick[t] = li++; else pick[t] = ni++;
+            }
+            w[nn] = w[pick[0]] + w[pick[1]]; parent[pick[0]] = parent[pick[1]] = nn; nn++;
+        }
+        int depth[640], deepest = 0;
+        depth[nn - 1] = 0;
+        for (int i = nn - 2; i >= 0; i--) { depth[i] = depth[parent[i]] + 1; if (i < used && depth[i] > deepest) deepest = depth[i]; }
+        if (deepest <= maxbits) { for (int i = 0; i < used; i++) lens[order[i]] = (unsigned char)depth[i]; return; }
+        for (int i = 0; i < used; i++) f[order[i]] = (f[order[i]] + 1) / 2;
+    }
+}
+/* the canonical codes of lens, with their bits reversed, for writing the first bit first */
+static void zs_codes(const unsigned char *lens, int n, uint16_t *codes) {
+    int count[16] = { 0 }, next[16];
+    for (int i = 0; i < n; i++) count[lens[i]]++;
+    count[0] = 0; next[1] = 0;
+    for (int b = 1; b < 15; b++) next[b + 1] = (next[b] + count[b]) << 1;
+    for (int i = 0; i < n; i++) {
+        int L = lens[i], c = L ? next[L]++ : 0, r = 0;
+        for (int k = 0; k < L; k++) r |= ((c >> k) & 1) << (L - 1 - k);
+        codes[i] = (uint16_t)r;
+    }
+}
+static int zs_lencode(int len) { int s = 28; while (zs_len_base[s] > len) s--; return s; }
+static int zs_distcode(int dist) { int s = 29; while (zs_dist_base[s] > dist) s--; return s; }
+
+/* writes the tokens of the block as a dynamic Huffman block, or the bytes as stored blocks when that is smaller */
+static void d_block(Def *d, int final) {
+    uint32_t raw = d->strstart - d->block_start;
+    if (d->ntok == 0 && raw == 0) {
+        if (final) { d_put(d, 1, 1); d_put(d, 1, 2); d_put(d, 0, 7); }      /* an empty fixed block: just the end-of-block code */
+        return;
+    }
+    uint32_t lf[286] = { 0 }, df[30] = { 0 };
+    for (uint32_t k = 0; k < d->ntok; k++) {
+        if (d->tok_len[k] == 0) lf[d->tok_arg[k]]++;
+        else { lf[257 + zs_lencode(d->tok_len[k])]++; df[zs_distcode(d->tok_arg[k])]++; }
+    }
+    lf[256] = 1;
+    unsigned char ll[286], dl[30], all[316], cl[19] = { 0 }, rle[330], rlex[330];
+    uint16_t lc[286], dc[30], cc[19];
+    zs_lengths(lf, 286, 15, ll); zs_lengths(df, 30, 15, dl);
+    int hlit = 286, hdist = 30;
+    while (hlit > 257 && ll[hlit - 1] == 0) hlit--;
+    while (hdist > 1 && dl[hdist - 1] == 0) hdist--;
+    memcpy(all, ll, (size_t)hlit); memcpy(all + hlit, dl, (size_t)hdist);
+    int nr = 0, total = hlit + hdist;
+    for (int i = 0; i < total;) {                       /* the lengths as symbols of the code-length code: runs of a length, runs of zeros */
+        int j = i; while (j < total && all[j] == all[i]) j++;
+        int run = j - i;
+        if (all[i] == 0 && run >= 3) { while (run >= 3) { int r = run > 138 ? 138 : run; if (r >= 11) { rle[nr] = 18; rlex[nr++] = (unsigned char)(r - 11); } else { rle[nr] = 17; rlex[nr++] = (unsigned char)(r - 3); } run -= r; } while (run--) { rle[nr] = 0; rlex[nr++] = 0; } }
+        else if (all[i] != 0 && run >= 4) { rle[nr] = all[i]; rlex[nr++] = 0; run--; while (run >= 3) { int r = run > 6 ? 6 : run; rle[nr] = 16; rlex[nr++] = (unsigned char)(r - 3); run -= r; } while (run--) { rle[nr] = all[i]; rlex[nr++] = 0; } }
+        else while (run--) { rle[nr] = all[i]; rlex[nr++] = 0; }
+        i = j;
+    }
+    uint32_t cf[19] = { 0 };
+    for (int k = 0; k < nr; k++) cf[rle[k]]++;
+    zs_lengths(cf, 19, 7, cl);
+    static const unsigned char order[19] = { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
+    int hclen = 19;
+    while (hclen > 4 && cl[order[hclen - 1]] == 0) hclen--;
+    zs_codes(ll, 286, lc); zs_codes(dl, 30, dc); zs_codes(cl, 19, cc);
+    uint64_t bits = 3 + 14 + 3 * (uint64_t)hclen;       /* the size of the dynamic block, in bits */
+    for (int k = 0; k < nr; k++) bits += cl[rle[k]] + (rle[k] == 16 ? 2 : rle[k] == 17 ? 3 : rle[k] == 18 ? 7 : 0);
+    for (int i = 0; i < 286; i++) bits += (uint64_t)lf[i] * ll[i] + (i >= 257 ? (uint64_t)lf[i] * zs_len_extra[i - 257] : 0);
+    for (int i = 0; i < 30; i++) bits += (uint64_t)df[i] * (dl[i] + zs_dist_extra[i]);
+    uint64_t stored = ((uint64_t)raw + 5 * ((raw + 65534) / 65535)) * 8;
+    if (stored <= bits) {                                 /* incompressible: the bytes as they are, in blocks of at most 65535 */
+        const unsigned char *p = d->buf + d->block_start;
+        uint32_t left = raw;
+        do {
+            uint32_t n = left > 65535 ? 65535 : left;
+            d_put(d, final && n == left ? 1 : 0, 1); d_put(d, 0, 2); d_align(d);
+            d_put(d, n & 0xffff, 16); d_put(d, ~n & 0xffff, 16);
+            for (uint32_t k = 0; k < n; k++) d_put(d, p[k], 8);
+            p += n; left -= n;
+        } while (left > 0);
+    } else {
+        d_put(d, (uint32_t)final, 1); d_put(d, 2, 2);
+        d_put(d, (uint32_t)(hlit - 257), 5); d_put(d, (uint32_t)(hdist - 1), 5); d_put(d, (uint32_t)(hclen - 4), 4);
+        for (int i = 0; i < hclen; i++) d_put(d, cl[order[i]], 3);
+        for (int k = 0; k < nr; k++) {
+            d_put(d, cc[rle[k]], cl[rle[k]]);
+            if (rle[k] == 16) d_put(d, rlex[k], 2); else if (rle[k] == 17) d_put(d, rlex[k], 3); else if (rle[k] == 18) d_put(d, rlex[k], 7);
+        }
+        for (uint32_t k = 0; k < d->ntok; k++) {
+            if (d->tok_len[k] == 0) { d_put(d, lc[d->tok_arg[k]], ll[d->tok_arg[k]]); continue; }
+            int len = d->tok_len[k], dist = d->tok_arg[k], ls = zs_lencode(len), ds = zs_distcode(dist);
+            d_put(d, lc[257 + ls], ll[257 + ls]);
+            if (zs_len_extra[ls]) d_put(d, (uint32_t)(len - zs_len_base[ls]), zs_len_extra[ls]);
+            d_put(d, dc[ds], dl[ds]);
+            if (zs_dist_extra[ds]) d_put(d, (uint32_t)(dist - zs_dist_base[ds]), zs_dist_extra[ds]);
+        }
+        d_put(d, lc[256], ll[256]);
+    }
+    d->ntok = 0; d->block_start = d->strstart;
+}
+static void d_token(Def *d, int len, int arg, uint32_t advance) {
+    d->tok_len[d->ntok] = (uint16_t)len; d->tok_arg[d->ntok] = (uint16_t)arg; d->ntok++;
+    d->strstart += advance;
+    if (d->ntok == ZD_LITBUF || d->strstart - d->block_start >= 60000) d_block(d, 0);
+}
+static uint32_t d_hash(const unsigned char *p) { return (((uint32_t)p[0] << 10) ^ ((uint32_t)p[1] << 5) ^ p[2]) & 0x7fff; }
+static void d_insert(Def *d, uint32_t p) {
+    if (p + 2 < d->end) { uint32_t h = d_hash(d->buf + p); d->prev[p & (ZS_WSIZE - 1)] = d->head[h]; d->head[h] = (int32_t)p + 1; }
+    d->ins = p + 1;
+}
+static int d_find(Def *d, uint32_t i, int *dist) {
+    uint32_t maxlen = d->end - i > 258 ? 258 : d->end - i;
+    if (maxlen < 3) return 0;
+    int best = 2, chain = d->max_chain;
+    int32_t cand = d->head[d_hash(d->buf + i)];
+    const unsigned char *s = d->buf + i;
+    while (cand > 0 && chain-- > 0) {
+        uint32_t p = (uint32_t)cand - 1;
+        if (p >= i || i - p > ZD_MAXDIST) break;
+        const unsigned char *t = d->buf + p;
+        if (t[best] == s[best] && t[0] == s[0] && t[1] == s[1]) {
+            uint32_t l = 2;
+            while (l < maxlen && t[l] == s[l]) l++;
+            if ((int)l > best) { best = (int)l; *dist = (int)(i - p); if (l >= maxlen || (int)l >= d->nice) break; }
+        }
+        cand = d->prev[p & (ZS_WSIZE - 1)];
+    }
+    return best >= 3 ? best : 0;
+}
+/* the matching: goes on while the bytes ahead are enough to find a longest match (all of them when finishing) */
+static void d_run(Def *d, int finish) {
+    while (d->strstart < d->end && (finish || d->end - d->strstart >= ZD_MINLOOK)) {
+        uint32_t i = d->strstart;
+        int cl = 0, cd = 0;
+        if (d->carried) { cl = d->cl; cd = d->cd; d->carried = 0; } else cl = d_find(d, i, &cd);
+        d_insert(d, i);
+        if (cl >= 3) {
+            if (cl < d->lazy && i + 1 < d->end) {
+                int nd = 0, nl = d_find(d, i + 1, &nd);
+                if (nl > cl) { d->carried = 1; d->cl = nl; d->cd = nd; d_token(d, 0, d->buf[i], 1); continue; }
+            }
+            for (uint32_t p = i + 1; p < i + (uint32_t)cl; p++) d_insert(d, p);
+            d_token(d, cl, cd, (uint32_t)cl);
+        } else d_token(d, 0, d->buf[i], 1);
+    }
+}
+static void d_slide(Def *d) {                   /* keeps the last 32 KiB of what was seen and moves everything else out */
+    if (d->block_start < d->strstart - ZS_WSIZE) d_block(d, 0);
+    uint32_t delta = d->strstart - ZS_WSIZE;
+    memmove(d->buf, d->buf + delta, d->end - delta);
+    d->strstart -= delta; d->end -= delta; d->block_start -= delta; d->ins -= delta;
+    for (int i = 0; i < (1 << 15); i++) d->head[i] = d->head[i] > (int32_t)delta ? d->head[i] - (int32_t)delta : 0;
+    for (int i = 0; i < ZS_WSIZE; i++) d->prev[i] = d->prev[i] > (int32_t)delta ? d->prev[i] - (int32_t)delta : 0;
+}
+static Def *d_new(FILE *f, int level, int gz) {
+    Def *d = calloc(1, sizeof *d);
+    if (!d) out_of_memory();
+    d->f = f;
+    static const int chain[10] = { 0, 4, 8, 16, 32, 64, 128, 256, 512, 1024 }, nice[10] = { 0, 8, 16, 32, 32, 64, 128, 128, 258, 258 }, lazy[10] = { 0, 0, 4, 8, 16, 16, 32, 128, 258, 258 };
+    if (level < 1) level = 1;
+    if (level > 9) level = 9;
+    d->max_chain = chain[level]; d->nice = nice[level]; d->lazy = lazy[level];
+    if (gz) { unsigned char h[10] = { 0x1f, 0x8b, 8, 0, 0, 0, 0, 0, (unsigned char)(level == 9 ? 2 : level == 1 ? 4 : 0), 3 }; d_sink(d, h, 10); }
+    return d;
+}
+static void d_write(Def *d, const unsigned char *p, size_t n) {
+    d->crc = zs_crc(d->crc, p, n); d->isize += (uint32_t)n;
+    while (n > 0) {
+        if (d->end == ZD_BUFSZ) { d_run(d, 0); d_slide(d); }
+        size_t c = ZD_BUFSZ - d->end;
+        if (c > n) c = n;
+        memcpy(d->buf + d->end, p, c); d->end += (uint32_t)c; p += c; n -= c;
+        if (d->end == ZD_BUFSZ) { d_run(d, 0); d_slide(d); }
+    }
+}
+/* the end of the data: the last block and, for gzip, the checksum and size. 0, or the errno of a failed write */
+static int d_finish(Def *d, int gz) {
+    d_run(d, 1);
+    d_block(d, 1);
+    d_align(d);
+    if (gz) { unsigned char t[8]; for (int i = 0; i < 4; i++) { t[i] = (unsigned char)(d->crc >> (8 * i)); t[4 + i] = (unsigned char)(d->isize >> (8 * i)); } for (int i = 0; i < 8; i++) d_put(d, t[i], 8); }
+    d_flushout(d);
+    return d->err;
+}
+
+/* ---- the calls of std/gzip.tom and std/tarfile.tom. A gzip error comes back as 100 plus its number (ZE_*), a failure of the system as a kind of tomato_os_error. */
+int64_t tomato_gz_compress(void *data, int64_t level, void *out) {
+    Str *s = data;
+    Def *d = d_new(NULL, (int)level, 1);
+    d_write(d, (const unsigned char *)s->data, (size_t)s->bytes);
+    d_finish(d, 1);
+    *(void **)tomato_list_push(out, 8) = bytes_new(d->mem, (int64_t)d->mem_n);
+    free(d->mem); free(d);
+    return 0;
+}
+/* max_out 0 for no limit */
+int64_t tomato_gz_decompress(void *data, int64_t max_out, void *out) {
+    Str *s = data;
+    Inf *z = inf_new(NULL, (const unsigned char *)s->data, (size_t)s->bytes, (uint64_t)max_out);
+    unsigned char *buf = NULL;
+    size_t n = 0, cap = 0;
+    int64_t got, err = 0;
+    for (;;) {
+        if (n + 65536 > cap) { cap = cap ? cap * 2 : 65536; buf = realloc(buf, cap); if (!buf) out_of_memory(); }
+        got = inf_read(z, buf + n, 65536);
+        if (got <= 0) { err = -got; break; }
+        n += (size_t)got;
+    }
+    if (!err) *(void **)tomato_list_push(out, 8) = bytes_new(buf, (int64_t)n);
+    free(buf); free(z);
+    return err ? 100 + err : 0;
+}
+
+typedef struct { int write, gz; FILE *f; Inf *inf; Def *def; int err; } ZS;
+static ZS **zs_t; static int64_t zs_n;
+static ZS *zs_get(int64_t h) { return h >= 1 && h <= zs_n ? zs_t[h - 1] : NULL; }
+/* opens a file to read (gz 1: gzip, 0: as it is, 2: gzip when it starts like it) or to write (gz 1 or 0, at level); a handle, or minus the kind */
+int64_t tomato_zs_open(void *path, int64_t write, int64_t gz, int64_t level, int64_t max_out) {
+    FILE *f = fopen(((Str *)path)->data, write ? "wb" : "rb");
+    if (!f) return -os_fail(errno);
+    ZS *z = calloc(1, sizeof *z);
+    if (!z) out_of_memory();
+    z->write = (int)write; z->f = f;
+    if (!write && gz == 2) {
+        unsigned char two[2];
+        size_t got = fread(two, 1, 2, f);
+        gz = got == 2 && two[0] == 0x1f && two[1] == 0x8b;
+        rewind(f);
+    }
+    z->gz = (int)gz;
+    if (gz && write) z->def = d_new(f, (int)level, 1);
+    if (gz && !write) z->inf = inf_new(f, NULL, 0, (uint64_t)max_out);
+    for (int64_t i = 0; i < zs_n; i++) if (!zs_t[i]) { zs_t[i] = z; return i + 1; }
+    zs_t = realloc(zs_t, (size_t)(zs_n + 1) * sizeof *zs_t);
+    if (!zs_t) out_of_memory();
+    zs_t[zs_n++] = z;
+    return zs_n;
+}
+/* up to n bytes into buf: how many (fewer than n only at the end), or minus a gz error (-100 - ZE) or the kind of a failure of the system (-1 to -6) */
+static int64_t zs_fill(ZS *z, unsigned char *buf, size_t n) {
+    size_t have = 0;
+    if (z->err) return -z->err;
+    while (have < n) {
+        int64_t got;
+        if (z->gz) { got = inf_read(z->inf, buf + have, n - have); if (got < 0) { if (have > 0) { z->err = (int)(100 - got); return (int64_t)have; } return -(100 - got); } }
+        else {
+            got = (int64_t)fread(buf + have, 1, n - have, z->f);
+            if (got == 0 && ferror(z->f)) { int64_t k = os_fail(errno); if (have > 0) { z->err = (int)k; return (int64_t)have; } return -k; }
+        }
+        if (got == 0) break;
+        have += (size_t)got;
+    }
+    return (int64_t)have;
+}
+int64_t tomato_zs_read(int64_t h, int64_t n, void *out) {
+    ZS *z = zs_get(h);
+    if (!z || n < 0 || n > ((int64_t)1 << 28)) return os_fail(EINVAL);
+    unsigned char *buf = malloc((size_t)n + 1);
+    if (!buf) out_of_memory();
+    int64_t got = zs_fill(z, buf, (size_t)n);
+    if (got >= 0) *(void **)tomato_list_push(out, 8) = bytes_new(buf, got);
+    free(buf);
+    return got < 0 ? -got : 0;
+}
+/* drops up to n bytes: how many were dropped, or minus an error as zs_fill says */
+int64_t tomato_zs_skip(int64_t h, int64_t n) {
+    ZS *z = zs_get(h);
+    if (!z) return -os_fail(EINVAL);
+    static unsigned char sink[65536];
+    int64_t left = n;
+    while (left > 0) {
+        int64_t got = zs_fill(z, sink, left > (int64_t)sizeof sink ? sizeof sink : (size_t)left);
+        if (got < 0) return got;
+        if (got == 0) break;
+        left -= got;
+    }
+    return n - left;
+}
+#if defined(TOMATO_WASM) || defined(__wasi__)
+int64_t tomato_zs_extract(int64_t h, int64_t n, void *path, int64_t mode) { (void)h; (void)n; (void)path; (void)mode; return os_fail(ENOSYS); }
+int64_t tomato_zs_write_file(int64_t h, void *path, int64_t size) { (void)h; (void)path; (void)size; return os_fail(ENOSYS); }
+#else
+/* the next n bytes become a new file at path (it must not exist, and is not followed if it is a link); 0, or an error: 100 + the gz error, 120 when the data ends before n bytes, or a kind */
+int64_t tomato_zs_extract(int64_t h, int64_t n, void *path, int64_t mode) {
+    ZS *z = zs_get(h);
+    if (!z) return os_fail(EINVAL);
+    int fd = open(((Str *)path)->data, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, (mode_t)(mode & 0777));
+    if (fd < 0) return os_fail(errno);
+    static unsigned char chunk[65536];
+    int64_t left = n, result = 0;
+    while (left > 0 && !result) {
+        int64_t got = zs_fill(z, chunk, left > (int64_t)sizeof chunk ? sizeof chunk : (size_t)left);
+        if (got < 0) { result = -got; break; }
+        if (got == 0) { result = 120; break; }                 /* the archive ended before the file did */
+        for (int64_t off = 0; off < got;) {
+            ssize_t w = write(fd, chunk + off, (size_t)(got - off));
+            if (w < 0 && errno == EINTR) continue;
+            if (w < 0) { result = os_fail(errno ? errno : EIO); break; }
+            off += w;
+        }
+        left -= got;
+    }
+    if (close(fd) != 0 && !result) result = os_fail(errno);
+    if (result) unlink(((Str *)path)->data);
+    return result;
+}
+/* writes the file at path, which must be exactly size bytes, to the stream; 0, or a kind (EIO, "the file changed", for a size that is not size) */
+int64_t tomato_zs_write_file(int64_t h, void *path, int64_t size) {
+    ZS *z = zs_get(h);
+    if (!z || !z->write) return os_fail(EINVAL);
+    FILE *in = fopen(((Str *)path)->data, "rb");
+    if (!in) return os_fail(errno);
+    static unsigned char chunk[65536];
+    int64_t left = size, result = 0;
+    while (left > 0) {
+        size_t want = left > (int64_t)sizeof chunk ? sizeof chunk : (size_t)left;
+        size_t got = fread(chunk, 1, want, in);
+        if (got == 0) { result = os_fail(ferror(in) ? errno : EIO); break; }
+        if (z->gz) d_write(z->def, chunk, got); else if (fwrite(chunk, 1, got, z->f) != got) { result = os_fail(errno ? errno : EIO); break; }
+        left -= (int64_t)got;
+    }
+    if (!result && fread(chunk, 1, 1, in) == 1) result = os_fail(EIO);      /* it grew while it was archived */
+    fclose(in);
+    return result;
+}
+#endif
+int64_t tomato_zs_write(int64_t h, void *data) {
+    ZS *z = zs_get(h);
+    Str *s = data;
+    if (!z || !z->write) return os_fail(EINVAL);
+    if (z->gz) d_write(z->def, (const unsigned char *)s->data, (size_t)s->bytes);
+    else if (s->bytes > 0 && fwrite(s->data, 1, (size_t)s->bytes, z->f) != (size_t)s->bytes) return os_fail(errno ? errno : EIO);
+    return 0;
+}
+/* finishes (a gzip stream gets its last block and its checksum), closes and frees; 0, or a kind */
+int64_t tomato_zs_close(int64_t h) {
+    ZS *z = zs_get(h);
+    if (!z) return 0;
+    int64_t result = 0;
+    if (z->write && z->gz) { int e = d_finish(z->def, 1); if (e) result = os_fail(e); }
+    if (z->write && z->gz && z->def->err == 0 && fflush(z->f) != 0) result = os_fail(errno);
+    if (fclose(z->f) != 0 && !result) result = os_fail(errno);
+    free(z->def); free(z->inf); free(z);
+    zs_t[h - 1] = NULL;
+    return result;
+}
+
+/* ---- more of the file system, the system, signals and the digest of a file (stage 1 of docs/shell-to-tomato-plan.md; std/os.tom,
+ * std/sys.tom, std/signal.tom, std/hashlib.tom). Each call returns 0, or the kind of the failure (as the calls above) and keeps the reason
+ * for tomato_os_error. The browser has no such calls: there each is the failure ENOSYS (the library raises its own error first), except the
+ * digest of a file, which reads the page's own files like open() does. */
+static void sha256_blocks(uint32_t *h, const unsigned char *p, size_t blocks) {
+    static const uint32_t k[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2 };
+#define ROR32(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
+    while (blocks--) {
+        uint32_t w[64], a, b, c, d, e, f, g, hh;
+        for (int i = 0; i < 16; i++) w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
+        for (int i = 16; i < 64; i++) {
+            uint32_t s0 = ROR32(w[i - 15], 7) ^ ROR32(w[i - 15], 18) ^ (w[i - 15] >> 3), s1 = ROR32(w[i - 2], 17) ^ ROR32(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4]; f = h[5]; g = h[6]; hh = h[7];
+        for (int i = 0; i < 64; i++) {
+            uint32_t t1 = hh + (ROR32(e, 6) ^ ROR32(e, 11) ^ ROR32(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+            uint32_t t2 = (ROR32(a, 2) ^ ROR32(a, 13) ^ ROR32(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+        p += 64;
+    }
+#undef ROR32
+}
+/* the SHA-256 of the file at path, as 64 hex digits pushed onto out: read in chunks, so a file of any size takes 1 MiB. 0 or a kind. */
+int64_t tomato_sha256_file(void *path, void *out) {
+    FILE *f = fopen(((Str *)path)->data, "rb");
+    if (!f) return os_fail(errno);
+    struct stat st;
+    if (fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode)) { fclose(f); return os_fail(EISDIR); }
+    uint32_t h[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+    size_t cap = 1 << 20, fill = 0;
+    unsigned char *buf = malloc(cap + 128);
+    if (!buf) out_of_memory();
+    uint64_t total = 0;
+    errno = 0;
+    for (;;) {
+        size_t got = fread(buf + fill, 1, cap - fill, f);
+        fill += got;
+        if (fill == cap) { sha256_blocks(h, buf, fill / 64); total += fill; fill = 0; continue; }
+        if (got == 0) break;
+    }
+    int failed = ferror(f), why = errno;
+    fclose(f);
+    if (failed) { free(buf); return os_fail(why ? why : EIO); }
+    size_t whole = fill / 64 * 64;
+    sha256_blocks(h, buf, whole / 64);
+    total += fill;
+    size_t rest = fill - whole;
+    memmove(buf, buf + whole, rest);
+    buf[rest++] = 0x80;
+    size_t pad = rest <= 56 ? 56 : 120;
+    memset(buf + rest, 0, pad - rest);
+    for (int i = 0; i < 8; i++) buf[pad + i] = (unsigned char)((total * 8) >> (56 - 8 * i));
+    sha256_blocks(h, buf, (pad + 8) / 64);
+    free(buf);
+    char hex[65];
+    for (int i = 0; i < 8; i++) snprintf(hex + 8 * i, 9, "%08x", h[i]);
+    push_text(out, hex, 64);
+    return 0;
+}
+
+#if defined(TOMATO_WASM) || defined(__wasi__)
+int64_t tomato_os_copy(void *src, void *dst) { (void)src; (void)dst; return os_fail(ENOSYS); }
+int64_t tomato_os_chmod(void *path, int64_t mode) { (void)path; (void)mode; return os_fail(ENOSYS); }
+int64_t tomato_os_symlink(void *target, void *path) { (void)target; (void)path; return os_fail(ENOSYS); }
+int64_t tomato_os_readlink(void *path, void *out) { (void)path; (void)out; return os_fail(ENOSYS); }
+int64_t tomato_os_realpath(void *path, void *out) { (void)path; (void)out; return os_fail(ENOSYS); }
+int64_t tomato_os_utime(void *path, int64_t has, int64_t secs, int64_t nanos) { (void)path; (void)has; (void)secs; (void)nanos; return os_fail(ENOSYS); }
+int64_t tomato_os_mktemp(void *dir, void *prefix, void *suffix, int64_t is_dir, void *out) { (void)dir; (void)prefix; (void)suffix; (void)is_dir; (void)out; return os_fail(ENOSYS); }
+int64_t tomato_os_executable(void *path) { (void)path; return 0; }
+int64_t tomato_os_exchange(void *a, void *b) { (void)a; (void)b; return os_fail(ENOSYS); }
+int64_t tomato_os_cpu_count(void) { return 1; }
+int64_t tomato_os_loadavg(void *out) { (void)out; return os_fail(ENOSYS); }
+int64_t tomato_os_uname(void *out) { (void)out; return os_fail(ENOSYS); }
+void *tomato_os_arch(void) { return tomato_str_from_cstr("wasm32"); }
+int64_t tomato_signal_watch(int64_t sig, int64_t on) { (void)sig; (void)on; return os_fail(ENOSYS); }
+int64_t tomato_signal_take(void) { return 0; }
+int64_t tomato_proc_exe(void *out) { (void)out; return os_fail(ENOSYS); }
+int64_t tomato_signal_watching(void) { return 0; }
+int64_t tomato_signal_send(int64_t pid, int64_t sig) { (void)pid; (void)sig; return os_fail(ENOSYS); }
+#else
+#include <fcntl.h>
+#include <sys/utsname.h>
+#if defined(__APPLE__)
+#include <sys/random.h>
+#include <mach-o/dyld.h>
+#endif
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
+/* copies the file src (what a symbolic link points at) to dst: written under another name beside dst and renamed over it when all is
+ * there, so dst is never half a copy and a running program can be replaced; the mode bits are those of src (the umask does not change them) */
+int64_t tomato_os_copy(void *src, void *dst) {
+    const char *s = ((Str *)src)->data, *d = ((Str *)dst)->data;
+    int in = open(s, O_RDONLY | O_CLOEXEC);
+    if (in < 0) return os_fail(errno);
+    struct stat st;
+    if (fstat(in, &st) != 0) { int e = errno; close(in); return os_fail(e); }
+    if (S_ISDIR(st.st_mode)) { close(in); return os_fail(EISDIR); }
+    size_t n = strlen(d) + 48;
+    char *tmp = malloc(n);
+    if (!tmp) out_of_memory();
+    int out = -1, e = 0;
+    for (int k = 0; k < 1000; k++) {
+        snprintf(tmp, n, "%s.tomato-copy.%ld.%d", d, (long)getpid(), k);
+        out = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (out >= 0 || errno != EEXIST) break;
+    }
+    if (out < 0) { e = errno; close(in); free(tmp); return os_fail(e); }
+    char *chunk = malloc(1 << 16);
+    if (!chunk) out_of_memory();
+    for (;;) {
+        ssize_t got = read(in, chunk, 1 << 16);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) { e = errno; break; }
+        if (got == 0) break;
+        for (ssize_t done = 0; done < got;) {
+            ssize_t w = write(out, chunk + done, (size_t)(got - done));
+            if (w < 0 && errno == EINTR) continue;
+            if (w < 0) { e = errno ? errno : EIO; break; }
+            done += w;
+        }
+        if (e) break;
+    }
+    free(chunk);
+    close(in);
+    if (!e && fchmod(out, st.st_mode & 07777) != 0) e = errno;
+    if (close(out) != 0 && !e) e = errno ? errno : EIO;
+    if (!e && rename(tmp, d) != 0) e = errno;
+    if (e) unlink(tmp);
+    free(tmp);
+    return e ? os_fail(e) : 0;
+}
+int64_t tomato_os_chmod(void *path, int64_t mode) {
+    if (chmod(((Str *)path)->data, (mode_t)(mode & 07777)) != 0) return os_fail(errno);
+    return 0;
+}
+int64_t tomato_os_symlink(void *target, void *path) {
+    if (symlink(((Str *)target)->data, ((Str *)path)->data) != 0) return os_fail(errno);
+    return 0;
+}
+int64_t tomato_os_readlink(void *path, void *out) {
+    size_t cap = 256;
+    for (;;) {
+        char *buf = malloc(cap);
+        if (!buf) out_of_memory();
+        ssize_t n = readlink(((Str *)path)->data, buf, cap);
+        if (n < 0) { free(buf); return os_fail(errno == EINVAL ? EINVAL : errno); }
+        if ((size_t)n < cap) { push_text(out, buf, (size_t)n); free(buf); return 0; }
+        free(buf);
+        cap *= 4;
+    }
+}
+int64_t tomato_os_realpath(void *path, void *out) {
+    char *r = realpath(((Str *)path)->data, NULL);
+    if (!r) return os_fail(errno);
+    push_text(out, r, strlen(r));
+    free(r);
+    return 0;
+}
+/* sets the access and modification time: to now when has is 0, else to secs and nanos since the epoch */
+int64_t tomato_os_utime(void *path, int64_t has, int64_t secs, int64_t nanos) {
+    struct timespec ts[2];
+    if (has) { ts[0].tv_sec = ts[1].tv_sec = (time_t)secs; ts[0].tv_nsec = ts[1].tv_nsec = (long)nanos; }
+    else { ts[0].tv_sec = ts[1].tv_sec = 0; ts[0].tv_nsec = ts[1].tv_nsec = UTIME_NOW; }
+    if (utimensat(AT_FDCWD, ((Str *)path)->data, ts, 0) != 0) return os_fail(errno);
+    return 0;
+}
+/* makes a new file (mode 0600) or directory (mode 0700) named dir/prefix + 10 random letters and digits + suffix, and pushes its path */
+int64_t tomato_os_mktemp(void *dir, void *prefix, void *suffix, int64_t is_dir, void *out) {
+    Str *d = dir, *p = prefix, *s = suffix;
+    static const char alphabet[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+    size_t n = (size_t)(d->bytes + p->bytes + s->bytes) + 32;
+    char *path = malloc(n);
+    if (!path) out_of_memory();
+    for (int attempt = 0; attempt < 1000; attempt++) {
+        unsigned char rnd[10];
+        char word[11];
+        if (getentropy(rnd, sizeof rnd) != 0) { free(path); return os_fail(errno ? errno : EIO); }
+        for (int i = 0; i < 10; i++) word[i] = alphabet[rnd[i] % 36];
+        word[10] = 0;
+        snprintf(path, n, "%s%s%s%s%s", d->data, d->bytes > 0 && d->data[d->bytes - 1] == '/' ? "" : "/", p->data, word, s->data);
+        int ok;
+        if (is_dir) ok = mkdir(path, 0700) == 0;
+        else { int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600); ok = fd >= 0; if (ok) close(fd); }
+        if (ok) { push_text(out, path, strlen(path)); free(path); return 0; }
+        if (errno != EEXIST) { int e = errno; free(path); return os_fail(e); }
+    }
+    free(path);
+    return os_fail(EEXIST);
+}
+/* 1 when path is a file that this process may run */
+int64_t tomato_os_executable(void *path) {
+    struct stat st;
+    return stat(((Str *)path)->data, &st) == 0 && S_ISREG(st.st_mode) && access(((Str *)path)->data, X_OK) == 0;
+}
+/* swaps two paths in one step where the system can (renameat2 with RENAME_EXCHANGE on Linux, renamex_np with RENAME_SWAP on macOS); 0 when
+ * it did, 100 when this system or file system cannot (the library then does two renames), else a kind */
+int64_t tomato_os_exchange(void *a, void *b) {
+    const char *pa = ((Str *)a)->data, *pb = ((Str *)b)->data;
+    int r = -1;
+    if (getenv("TOMATO_TEST_NO_EXCHANGE")) return 100;      /* tests only: makes the library take the path of a system that cannot exchange */
+#if defined(__linux__) && defined(SYS_renameat2)
+    r = (int)syscall(SYS_renameat2, AT_FDCWD, pa, AT_FDCWD, pb, 2u /* RENAME_EXCHANGE */);
+#elif defined(__APPLE__) && defined(RENAME_SWAP)
+    r = renamex_np(pa, pb, RENAME_SWAP);
+#else
+    (void)pa; (void)pb;
+    errno = ENOSYS;
+#endif
+    if (r == 0) return 0;
+    if (errno == ENOSYS || errno == EINVAL || errno == ENOTSUP || errno == EOPNOTSUPP) return 100;
+    return os_fail(errno);
+}
+int64_t tomato_os_cpu_count(void) {
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? n : 1;
+}
+/* the load averages of the last 1, 5 and 15 minutes, each times 1000 */
+int64_t tomato_os_loadavg(void *out) {
+    double l[3];
+    if (getloadavg(l, 3) != 3) return os_fail(ENOSYS);
+    for (int i = 0; i < 3; i++) push_int(out, (int64_t)(l[i] * 1000.0 + 0.5));
+    return 0;
+}
+int64_t tomato_os_uname(void *out) {
+    struct utsname u;
+    if (uname(&u) != 0) return os_fail(errno);
+    push_text(out, u.sysname, strlen(u.sysname)); push_text(out, u.nodename, strlen(u.nodename)); push_text(out, u.release, strlen(u.release));
+    push_text(out, u.version, strlen(u.version)); push_text(out, u.machine, strlen(u.machine));
+    return 0;
+}
+/* the processor this program was built for: 'x86_64' or 'arm64' (what a Mac says; Linux says aarch64), else what uname says */
+void *tomato_os_arch(void) {
+#if defined(__x86_64__)
+    return tomato_str_from_cstr("x86_64");
+#elif defined(__aarch64__)
+    return tomato_str_from_cstr("arm64");
+#else
+    struct utsname u;
+    return tomato_str_from_cstr(uname(&u) == 0 ? u.machine : "unknown");
+#endif
+}
+
+/* ---- signals (std/signal.tom). A watched signal does not end the program: its handler only records it, and the library takes it at a
+ * point where the program can stop in order (signal.check, run, Process.wait). A second signal of a kind that was recorded and not yet
+ * taken has its default action (so a program that never looks cannot be left unstoppable by Ctrl-C). The handlers are installed without
+ * SA_RESTART, so a blocked read or poll ends with EINTR; the places that wait here look every 100 ms as well, since a signal that comes
+ * between a check and the wait would otherwise be seen late. */
+static volatile sig_atomic_t sg_flag[65];
+static int sg_watching;                 /* how many kinds are watched */
+static int sg_last;                     /* the kind taken last: an uncaught signal.Interrupted ends the program with 128 + this */
+static void sg_handler(int sig) {
+    if (sig < 1 || sig > 64) return;
+    if (sg_flag[sig]) { signal(sig, SIG_DFL); raise(sig); return; }
+    sg_flag[sig] = 1;
+}
+static int sg_peek(void) {
+    for (int i = 1; i <= 64; i++) if (sg_flag[i]) return i;
+    return 0;
+}
+int64_t tomato_signal_take(void) {
+    int s = sg_peek();
+    if (s) { sg_flag[s] = 0; sg_last = s; }
+    return s;
+}
+/* watches (on 1) or stops watching (on 0, the default action again) a signal */
+int64_t tomato_signal_watch(int64_t sig, int64_t on) {
+    static unsigned char watched[65];
+    if (sig < 1 || sig > 64) return os_fail(EINVAL);
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = on ? sg_handler : SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction((int)sig, &sa, NULL) != 0) return os_fail(errno);
+    if (on && !watched[sig]) { watched[sig] = 1; sg_watching++; }
+    if (!on && watched[sig]) { watched[sig] = 0; sg_watching--; sg_flag[sig] = 0; }
+    return 0;
+}
+int64_t tomato_signal_watching(void) { return sg_watching; }
+#endif
+/* the Interrupted of std/signal.tom has the id E661 (the line of std/errors.txt); the signal taken last is the one that ends the program */
+static int sg_exit_status(void *obj) {
+#if defined(TOMATO_WASM) || defined(__wasi__)
+    (void)obj;
+    return 0;
+#else
+    typedef struct { Hdr header; Str *message; Str *id; } ErrorFields;
+    ErrorFields *e = obj;
+    if (sg_last > 0 && e->id && e->id->bytes == 4 && memcmp(e->id->data, "E661", 4) == 0 && strcmp(tomato_class_names[((Hdr *)obj)->type & TYPE_MASK], "Interrupted") == 0)
+        return 128 + sg_last;
+    return 0;
+#endif
+}
+#if !defined(TOMATO_WASM) && !defined(__wasi__)
+/* the file this program runs from: its absolute path with links resolved */
+int64_t tomato_proc_exe(void *out) {
+    char buf[8192];
+#if defined(__linux__)
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    if (n > 0) { buf[n] = 0; push_text(out, buf, (size_t)n); return 0; }
+#elif defined(__APPLE__)
+    uint32_t size = sizeof buf;
+    if (_NSGetExecutablePath(buf, &size) == 0) {
+        char *r = realpath(buf, NULL);
+        if (r) { push_text(out, r, strlen(r)); free(r); return 0; }
+    }
+#endif
+    if (saved_argc > 0 && strchr(saved_argv[0], '/')) {      /* where the system cannot say: the word the program was started with */
+        char *r = realpath(saved_argv[0], NULL);
+        if (r) { push_text(out, r, strlen(r)); free(r); return 0; }
+    }
+    return os_fail(ENOENT);
+}
+int64_t tomato_signal_send(int64_t pid, int64_t sig) {
+    if (kill((pid_t)pid, (int)sig) != 0) return os_fail(errno);
+    return 0;
+}
+#endif
+
 /* ---- starting a process (std/sys.tom run(), D98a). tomato_run starts the program argv[0] with the words argv[1:] directly (no shell), waits
  * for it, and puts what it wrote to standard output and error (when capture is 1) in out as two texts, bytes that are not valid UTF-8
  * becoming U+FFFD, and [status, signal, timed_out] in info (status is the exit status, or 128 + the signal when a signal ended the
@@ -8460,8 +9500,8 @@ int64_t tomato_stat(void *path, int64_t follow, void *out) {
  * Nothing in the browser can start a process: there it is the failure ENOSYS (the library raises its own error first). This blocks the
  * whole program, as every call of std/os does: other tasks do not run until the program ends. */
 #if defined(TOMATO_WASM) || defined(__wasi__)
-int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void *input, int64_t capture, int64_t timeout_ms, void *out, void *info) {
-    (void)argv; (void)extra_env; (void)cwd; (void)has_cwd; (void)input; (void)capture; (void)timeout_ms; (void)out;
+int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void *input, int64_t capture, int64_t timeout_ms, int64_t forward, void *out, void *info) {
+    (void)forward; (void)argv; (void)extra_env; (void)cwd; (void)has_cwd; (void)input; (void)capture; (void)timeout_ms; (void)out;
     push_int(info, 0);
     return os_fail(ENOSYS);
 }
@@ -8694,7 +9734,16 @@ static char **run_argv(List *words) {
     cargv[words->len] = NULL;
     return cargv;
 }
-int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void *input, int64_t capture, int64_t timeout_ms, void *out, void *info) {
+/* a watched signal that has come is passed on to the program, which is then killed if it is still there 5 seconds later (when forward is 0 it
+ * is only taken, and the program is left alone) */
+static void run_signals(pid_t pid, int *intr, int64_t *kill_at, int forward) {
+    if (!*intr) {
+        int s = (int)tomato_signal_take();
+        if (s) { *intr = s; if (forward) { kill(pid, s); *kill_at = run_now_ms() + 5000; } }   /* not forward: the program has the terminal and decides itself */
+    }
+    if (*intr && *kill_at >= 0 && run_now_ms() >= *kill_at) { kill(pid, SIGKILL); *kill_at = -1; }
+}
+int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void *input, int64_t capture, int64_t timeout_ms, int64_t forward, void *out, void *info) {
     Str *in = input;
     const char *dir = has_cwd ? ((Str *)cwd)->data : NULL;
     char **cargv = run_argv(argv);
@@ -8706,6 +9755,8 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
     struct sigaction ign, old_pipe;
     int pipe_saved = 0;
     int use_in = in->bytes > 0;
+    int intr = 0;                               /* the watched signal (std/signal.tom) that came while the program ran, passed on to it */
+    int64_t kill_at = -1;                       /* when the program, if it is still there, is killed for it */
     RunProc pr;
     memset(&ign, 0, sizeof ign);
     ign.sa_handler = SIG_IGN;
@@ -8730,6 +9781,7 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
         for (;;) {
             struct pollfd pf[3];
             int which[3], np = 0;
+            if (sg_watching) run_signals(pid, &intr, &kill_at, (int)forward);
             if (in_fd >= 0) { pf[np].fd = in_fd; pf[np].events = POLLOUT; pf[np].revents = 0; which[np++] = 0; }
             if (out_fd >= 0) { pf[np].fd = out_fd; pf[np].events = POLLIN; pf[np].revents = 0; which[np++] = 1; }
             if (err_fd >= 0) { pf[np].fd = err_fd; pf[np].events = POLLIN; pf[np].revents = 0; which[np++] = 2; }
@@ -8740,6 +9792,7 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
                 if (left <= 0) { timed_out = 1; break; }
                 wait = left > 1000000000 ? 1000000000 : (int)left;
             }
+            if (sg_watching && (wait < 0 || wait > 100)) wait = 100;
             int r = poll(pf, (nfds_t)np, wait);
             if (r < 0) { if (errno == EINTR) continue; break; }
             for (int i = 0; i < np && r > 0; i++) {
@@ -8758,14 +9811,17 @@ int64_t tomato_run(void *argv, void *extra_env, void *cwd, int64_t has_cwd, void
             }
         }
         int ws = 0, reaped = 0;
-        if (!timed_out && deadline >= 0) {      /* the pipes are done: wait for the program, but not past the deadline */
+        if (!timed_out && (deadline >= 0 || sg_watching)) {      /* the pipes are done: wait for the program, but not past the deadline, and looking for a signal */
+            long nap_ns = 1000000;
             for (;;) {
                 pid_t w = waitpid(pid, &ws, WNOHANG);
                 if (w == pid) { reaped = 1; break; }
                 if (w < 0 && errno != EINTR) break;
-                if (run_now_ms() >= deadline) { timed_out = 1; break; }
-                struct timespec nap = { 0, 1000000 };
+                if (deadline >= 0 && run_now_ms() >= deadline) { timed_out = 1; break; }
+                if (sg_watching) run_signals(pid, &intr, &kill_at, (int)forward);
+                struct timespec nap = { 0, nap_ns };
                 nanosleep(&nap, NULL);
+                if (nap_ns < 20000000) nap_ns *= 2;
             }
         }
         if (timed_out) kill(pid, SIGKILL);
@@ -8797,6 +9853,7 @@ done:
     push_int(info, status);
     push_int(info, sig);
     push_int(info, timed_out);
+    push_int(info, intr);
     return 0;
 }
 

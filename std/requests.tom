@@ -26,6 +26,8 @@ from value import Value
 !tomato_http_headers(id: int) -> str
 !tomato_http_text(id: int) -> str
 !tomato_http_free(id: int)
+!tomato_http_download(url: str, path: str, https_only: int, max_bytes: int, timeout: float) -> int
+!tomato_http_dl_size(id: int) -> int
 
 # Every failure of a request is an IOError, so `catch IOError` handles any of them. A failure that is not about the connection or
 # the time it took is a RequestError (below). The two that are, ConnectionError and TimeoutError, extend the built-in classes of those
@@ -257,3 +259,49 @@ export async def patch(url: str, params: dict[str, str] = {}, data: str | bytes 
                        follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('PATCH', url, params=params, data=data, form=form, json=json, headers=headers,
                          timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)
+
+# Downloads url to the file `path` and gives the number of bytes written, without holding the body in memory. The answer is written under
+# another name beside `path` and renamed over it when it arrived whole and the status was a success (200 to 299), so `path` is never half a
+# download and a failure leaves any earlier file as it was (and no partial file). A 4xx or 5xx answer raises HTTPError, and nothing is written.
+#   https_only   True (the default): the address, and every redirect on the way, must be https://; an http:// address is an InvalidURL before
+#                anything is sent, and a redirect to http:// ends the download with an InvalidURL. False allows http:// as well. (Only the
+#                tests of this library and of `tomato update` can turn on file:// addresses and an http:// first address with https_only,
+#                with the variables TOMATO_DOWNLOAD_ALLOW_FILE and TOMATO_DOWNLOAD_ALLOW_HTTP_FIRST; the answer is not checked against anything
+#                here: check its sha256_file.)
+#   max_bytes    stops the download with a RequestError when the body is longer than this (None: no limit)
+#   timeout      seconds for the whole download (0 means no limit); TimeoutError when it runs out
+# Redirects are followed (at most 20). A file that cannot be written is an IOError. New (unstable): stage 1 of docs/shell-to-tomato-plan.md.
+export async def download(url: str, path: str, https_only: bool = True, max_bytes: int | None = None, timeout: float = 0.0) -> int:
+    if chr(0) in path:
+        raise ValueError('a path or name cannot contain a NUL character', 'E511')
+    limit = -1
+    if max_bytes is not None:
+        if max_bytes < 0:
+            raise ValueError('max_bytes cannot be negative', 'E663')
+        limit = max_bytes
+    id = !tomato_http_download(url, path, 1 if https_only else 0, limit, float(timeout))
+    try:
+        await _http_wait(id)
+        kind = !tomato_http_error_kind(id)
+        if kind != 0:
+            message = !tomato_http_error_text(id)
+            if kind == 2:
+                raise TimeoutError(message, 'E360')
+            if kind == 3:
+                raise InvalidURL(message, 'E361')
+            if kind == 4:
+                raise TooManyRedirects(message, 'E362')
+            if kind == 5 or kind == 7:
+                raise RequestError(message, 'E363')
+            if kind == 6:
+                raise IOError(message, 'E515')
+            raise ConnectionError(message, 'E364')
+        status = !tomato_http_status(id)
+        if status >= 400:
+            what = 'Server Error' if status >= 500 else 'Client Error'
+            raise HTTPError(f'{status} {what} for url: {url}', status, 'E358')
+        if status != 0 and (status < 200 or status > 299):
+            raise RequestError(f'the answer to the download was {status}, not a success', 'E363')
+        return !tomato_http_dl_size(id)
+    finally:
+        !tomato_http_free(id)

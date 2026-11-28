@@ -365,6 +365,7 @@ get the std additions and the binary early; stages 4 to 6 are for the project it
 - Acceptance: `tests/cli_contract/` passes on the shell `tomato`, and the current numbers of section 2 are in `docs/performance.md`.
 
 **Stage 1: processes, files and archives in std (A to G, and I).** Additive.
+- **Status (2026-11-27, D139a):** A and B (D98a, D98b) and C, D, E, F, G are built, tested on Linux and on a Mac, and marked unstable (row U7 of the unstable list); the signal design differs from the sketch above (`signal.watch` records, the program looks, `Interrupted` is raised, no handler function; D139a item 6), and B gained `PipeReader.tee`. Item I (gzip and tar) is built too (D140a: `gzip` and `tarfile`; the engine is C, measured first as the plan said). `H` is not built.
 - Std: A (sibling), B, C, D, E, F, G, and I (gzip and tar in Tomato). About 700 C lines and 1,650 Tomato lines in all
   (*estimate*, 900 of the Tomato being I); `H` is optional.
 - Acceptance, per function: a test program in `tests/programs` that runs on macOS and Linux under the leak check; `sys.run`

@@ -1,0 +1,90 @@
+# The functions that stage 1 of docs/shell-to-tomato-plan.md added, in the browser playground (tests/run.sh runs this through WebAssembly only):
+# each one that needs the system raises RuntimeError (E514) before it does anything, and the few that can answer there do (cpu_count is 1,
+# sys.arch is 'wasm32', signal.check has nothing to raise, hashlib.sha256_file reads the page's own files).
+import gzip
+import hashlib
+import os
+import requests
+import signal
+import sys
+import tarfile
+
+def blocked(what: str):
+    try:
+        if what == 'copy':
+            os.copy('a', 'b')
+        elif what == 'chmod':
+            os.chmod('a', 420)
+        elif what == 'symlink':
+            os.symlink('a', 'b')
+        elif what == 'readlink':
+            os.readlink('a')
+        elif what == 'realpath':
+            os.realpath('a')
+        elif what == 'utime':
+            os.utime('a')
+        elif what == 'mkdtemp':
+            os.mkdtemp()
+        elif what == 'mkstemp':
+            os.mkstemp()
+        elif what == 'walk':
+            os.walk('/')
+        elif what == 'glob':
+            os.glob('*')
+        elif what == 'rmtree':
+            os.rmtree('/x')
+        elif what == 'copytree':
+            os.copytree('/x', '/y')
+        elif what == 'which':
+            os.which('sh')
+        elif what == 'exchange':
+            os.exchange('a', 'b')
+        elif what == 'loadavg':
+            os.loadavg()
+        elif what == 'uname':
+            os.uname()
+        elif what == 'cache_dir':
+            os.cache_dir()
+        elif what == 'tar create':
+            tarfile.create('/x.tar', '/')
+        elif what == 'tar extract':
+            tarfile.extract('/x.tar', '/y')
+        elif what == 'tar entries':
+            tarfile.entries('/x.tar')
+        elif what == 'executable':
+            sys.executable()
+        elif what == 'watch':
+            signal.watch()
+        elif what == 'unwatch':
+            signal.unwatch()
+        elif what == 'send':
+            signal.send(1, 'TERM')
+        else:
+            print('not tested', what)
+        print(what, 'did not raise')
+    catch RuntimeError as e:
+        print(what, e.id, e.message)
+
+@main
+async def main():
+    print(sys.platform(), sys.arch(), os.cpu_count())
+    for what in ['copy', 'chmod', 'symlink', 'readlink', 'realpath', 'utime', 'mkdtemp', 'mkstemp', 'walk', 'glob', 'rmtree', 'copytree', 'which', 'exchange', 'loadavg', 'uname', 'cache_dir', 'tar create', 'tar extract', 'tar entries', 'executable', 'watch', 'unwatch', 'send']:
+        blocked(what)
+    data = gzip.compress(b'browser ' * 500)
+    print('gzip works there', len(data) < 100, gzip.decompress(data) == b'browser ' * 500)
+    signal.check()
+    print('signal.check: nothing to raise', signal.number('INT'), signal.name(15))
+    os.write_text('/page.txt', 'abc')
+    print('sha256_file', hashlib.sha256_file('/page.txt'))
+    try:
+        hashlib.sha256_file('/nothing.txt')
+    catch FileNotFoundError as e:
+        print('sha256_file missing', e.id)
+    try:
+        await requests.download('https://example.com/x', '/x.bin')
+    catch ConnectionError as e:
+        print('download', e.id, e.message)
+    try:
+        sys.run(['true'])
+    catch RuntimeError as e:
+        print('run', e.id)

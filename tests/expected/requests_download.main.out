@@ -1,0 +1,26 @@
+binary ok 256
+content 256 0 255 True
+big ok 4194304
+big file 4194304
+404 HTTPError 404 E358
+503 HTTPError 503 E358
+after errors old ['big.bin', 'keep.txt', 'out.bin']
+http refused InvalidURL E361
+refused file False
+redirect refused InvalidURL E361
+redirected file False
+first allowed, no redirect ok 5
+hello hello
+redirect followed ok 5
+replaced hello
+limit RequestError E363 the download is larger than max_bytes (1000 bytes)
+exact limit ok 5
+timeout TimeoutError E360
+unwritable IOError E515
+not a url InvalidURL E361
+negative limit E663
+file refused InvalidURL E361
+file allowed ok 11
+file with https_only ok 11
+copy2 from a file
+files ['big.bin', 'copy2.txt', 'copy3.txt', 'five.txt', 'hello.txt', 'keep.txt', 'out.bin', 'source.txt']
