@@ -1,0 +1,19 @@
+# D12bh, P15: an interface-typed value converts to a class with `Tag(n)` (it fails if the object is not a Tag). Today it is refused (E324).
+interface Named:
+    def name(self) -> str
+
+class Tag implements Named:
+    t: str
+
+    @init
+    def init(self, t: str):
+        self.t = t
+
+    def name(self) -> str:
+        return self.t
+
+@main
+def main():
+    n: Named = Tag('x')
+    t = Tag(n)
+    print(t.t)

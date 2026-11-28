@@ -18,6 +18,8 @@ Today's programs:
 | `should_work_union_entry_input` | D28b | E157: entry inputs must be `int`, `bool` or `str` |
 | `should_work_interface_intersection` | D23h | `Named & Sized` as a parameter type gives E313 |
 | `should_work_compact_list_declared` | P86 | `list[int[length=8]]` gives E318 |
+| `should_work_class_conversion` | D12az | `Circle(s)` with `s: Shape` gives E128 (the provisional row P15 was removed in the triage, D109a) |
+| `should_work_interface_conversion` | D12bh | `Tag(n)` with `n: Named` gives E324 (same) |
 
 A `NAME.expected` file next to a `should_work_*` program holds the output the decisions call for (a regression oracle for
 when the feature is rebuilt; `tests/run.sh` does not compare it while the gap stands).

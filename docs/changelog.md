@@ -5,7 +5,7 @@ What changed in each release, for people who use Tomato. The GitHub release page
 (D78a and so on) point into `docs/decisions.md`.
 
 From 1.0.0 on, all releases of one minor version (1.0.0, 1.0.1, ...) are compatible with each other: a program that
-works on one works the same on the others (except the 7 features on the unstable list in `docs/provisional.md`). A new minor version
+works on one works the same on the others (except the 4 features on the unstable list in `docs/provisional.md`). A new minor version
 (1.1.0) may change behaviour, and its section lists each such change under **Breaking changes**; a patch release has
 none. `tomato update` installs patch releases at once and a new minor version only with `tomato update --minor`.
 
