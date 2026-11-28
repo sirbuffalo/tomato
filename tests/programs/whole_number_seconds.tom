@@ -1,0 +1,45 @@
+# A whole number is as good as a float for the time and tolerance arguments of std (D134a, and the edges that were left): the ttl of a
+# Cache (of every arity), of one entry and of a Memo, and assert_close. (read_key's timeout is checked in tests/lineedit_logic.tom.)
+from cache import Cache, Memo, Clock
+from testing import assert_close, assert_raises
+
+class FakeClock(Clock):
+    t: float = 0.0
+
+    override def now(self) -> float:
+        return self.t
+
+def plus_one(x: int) -> int:
+    return x + 1
+
+def too_far():
+    assert_close(1, 2)
+
+@main
+def main():
+    clk = FakeClock()
+    c = Cache[str, int](5, 10, clk)
+    c.set('a', 1)
+    c.set('b', 2, ttl=3)
+    clk.t = 5.0
+    print(c.peek('a', -1), c.peek('b', -1))
+    clk.t = 10.0
+    print(c.peek('a', -1))
+    pair = Cache[int, int, str](3, 2, clk)
+    pair.set(1, 2, 'x')
+    clk.t = 11.0
+    print(pair.peek(1, 2, '-'))
+    clk.t = 12.0
+    print(pair.peek(1, 2, '-'))
+    clk.t = 0.0
+    m = Memo[int, int](plus_one, 4, 5, clk)
+    print(m.call(1), m.call(1), m.results.hits)
+    clk.t = 5.0
+    print(m.call(1), m.results.expirations)
+    assert_close(3, 3.0)
+    assert_close(2.5, 5 / 2)
+    assert_close(1000000, 1000001, 1e-3)
+    assert_close(10, 11, 0, 2)
+    assert_close(actual=1, expected=1)
+    assert_raises(too_far, 'AssertionError')
+    print('close ok')

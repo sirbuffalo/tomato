@@ -38,7 +38,7 @@ True 2
 4 -1 3 5 1 [b'a', b'b.c'] b'abXc' b'-a-b-c-' b'-a-b'
 b'hi' 01-02-03 b'\n\x0b' b'a?'
 b'\x7f\x1b'
-0 IndexError index out of range
+0 IndexError index 3 is out of range for a bytes value of 3 bytes
 1 ValueError a byte must be a whole number from 0 to 255
 2 ValueError a byte must be a whole number from 0 to 255, but item 1 is 256
 3 ValueError bytes() needs a count that is not negative, but got -1
@@ -52,7 +52,7 @@ Tomato knows 'utf-8' and 'ascii'
 encode it as 'utf-8', or with errors='replace' to put ? in its place
 9 ValueError an empty separator cannot be used to split bytes
 10 ValueError invalid ASCII: the byte 0x80 at position 0 is above 127
-11 IndexError index out of range
+11 IndexError index -4 is out of range for a bytes value of 3 bytes
 12 ValueError unknown error mode 'ignore'
 use 'strict' (bad bytes are a ValueError) or 'replace' (put U+FFFD in place of the bad bytes)
 13 ValueError slice step cannot be zero

@@ -1,0 +1,12 @@
+root E71 expected an int, but this is a dict
+a[0] E71 expected an int, but this is a str (at ['a'][0])
+b.s E71 expected an int, but this is a str (at ['b']['s'])
+n E71 expected an int, but this is a null (at ['n'])
+len E366 a null has no length (at ['n'])
+deep key E365 a str cannot be indexed (at ['a'][0])
+deep index E73 index 9 is out of range for a list of 2 (at ['b']['list'])
+wrong key E74 a dict needs a text key, but got the int 0 (at ['b'])
+via get E71 expected a dict, but this is a list (at ['b']['list'])
+built E71 expected an int, but this is a str (at ['k'])
+no path E71 expected an int, but this is a str
+fine 2

@@ -1,4 +1,4 @@
-caught index out of range E04
+caught index 5 is out of range for a list of 3 items E04
 caught the key is not there E06
 caught the text is not a whole number E17
 caught division by zero E01

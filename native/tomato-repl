@@ -58,7 +58,7 @@ if [ $fast = 0 ] && [ -x "$jsc" ] && [ -f "$wasmdir/tomatoc.wasm" ] && [ -f "$wa
   fast=2
   echo "note: no C compiler could be used, so this session runs in the WebAssembly build: it has no real files, environment or processes (and sleep does not wait). Install the compiler (on a Mac: xcode-select --install) and start the repl again." >&2
 fi
-: > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; seq=0
+: > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; : > "$S/failed"; seq=0
 
 say() { printf '%s\n' "$*"; }
 # red errors when standard error is a terminal (TOMATO_COLOR=always or never, and NO_COLOR, decide too; see `tomato help`); the programs the
@@ -249,6 +249,7 @@ commit() {   # the candidate worked: keep it ($S/ch holds its declarations, one 
     while IFS= read -r key; do
       i=$((i + 1)); seq=$((seq + 1))
       [ "$key" = - ] && key="-$seq"
+      grep -v "^$key$(printf '\t')" "$S/failed" > "$S/failed.new"; mv "$S/failed.new" "$S/failed"
       cp "$S/ch/$i" "$S/d/$(printf '%04d' $seq)_$key"
     done < "$S/ch/keys"
   fi
@@ -260,6 +261,34 @@ commit() {   # the candidate worked: keep it ($S/ch holds its declarations, one 
 # A piece with no statements (only definitions) shows nothing either: a definition prints nothing itself, and one that changes what the
 # earlier lines print (a new print, say) must not show them again.
 show_new() { [ -n "$REDEF$REDECL" ] || [ ! -s "$STMT_FILE" ] || { new_output; end_open_line; }; }
+# A definition that the compiler refused is not in the session, so a later use of its name says it is not defined and may suggest a
+# nearby variable. $S/failed keeps each refused definition (name, kind and the error, tab separated) until the name is defined or
+# the session is reset; failed_hint says so under the error of a use of it, and failed_note records the definitions of the piece
+# that was just refused.
+failed_hint() {
+  [ -s "$S/failed" ] || return 0
+  tab="$(printf '\t')"
+  while IFS="$tab" read -r fname fkind fmsg; do
+    [ -n "$fname" ] || continue
+    if grep -qE "^error.*'$fname' is not defined" "$S/err" 2>/dev/null; then
+      err "hint: the $fkind '$fname' was not defined: its definition was refused with $fmsg"
+    fi
+  done < "$S/failed"
+}
+failed_note() {
+  [ -s "$S/cd" ] && [ -s "$S/ch/keys" ] || return 0
+  [ "$INTR" = 0 ] || return 0
+  grep -q "^in-definition" "$S/where" 2>/dev/null || return 0
+  msg="$(grep -m1 '^error' "$S/err" | cut -c1-300)"; [ -n "$msg" ] || return 0
+  tab="$(printf '\t')"; i=0
+  while IFS= read -r key; do
+    i=$((i + 1)); [ "$key" = - ] && continue
+    for f in "$S"/d/*; do [ -f "$f" ] && [ "$(declname "$f")" = "$key" ] && continue 2; done   # the earlier definition stays
+    kind="$(sed -n 1p "$S/ch/$i" | sed -E 's/^export +//; s/^async +//; s/^(def|class|interface) .*/\1/')"
+    case "$kind" in def) kind=function ;; class|interface) ;; *) kind=definition ;; esac
+    grep -v "^$key$tab" "$S/failed" > "$S/failed.new"; printf '%s\t%s\t%s\n' "$key" "$kind" "$msg" >> "$S/failed.new"; mv "$S/failed.new" "$S/failed"
+  done < "$S/ch/keys"
+}
 # a refused candidate: the compiler's error against what was typed; for a redefinition, also why the old definition is still there
 refused() {
   # a redeclaration refused in place is tried again at the end of the session (RETRY, see submit); its message is kept for when that fails too
@@ -272,6 +301,8 @@ refused_body() {
   show_new
   friendly
   grep -q "^in-definition" "$S/where" 2>/dev/null && grep -q "is not defined" "$S/err" 2>/dev/null && err "hint: a function or class defined here cannot read repl variables; pass them as arguments"
+  failed_hint
+  failed_note
   if [ -n "$REDEF" ] && ! grep -q "^in-definition" "$S/where" 2>/dev/null; then
     err "hint: the earlier lines of the session run again with the new $(printf '%s' "$REDEF" | paste -sd, - | sed 's/,/, /g'), and one of them does not work with it; the earlier definition is kept"
   fi
@@ -415,7 +446,7 @@ while :; do
     "") continue ;;
     :quit|:q|:exit|"leave()"|"exit()"|"quit()") break ;;
     :help) help; continue ;;
-    :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; say "session cleared"; continue ;;
+    :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; : > "$S/failed"; say "session cleared"; continue ;;
     :program) program; continue ;;
     :compile) program > "$S/p.tom"; "$tomato" compile "$S/p.tom"; continue ;;
     :save\ *) saved="${text#:save }"

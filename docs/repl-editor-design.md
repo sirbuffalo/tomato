@@ -185,7 +185,7 @@ export class Terminal:
     def leave(self)                                        # idempotent; restores the settings and the cursor
     def close(self)
     def size(self) -> tuple[int, int]                      # (rows, columns)
-    def read_key(self, timeout: float = -1.0) -> Key       # blocks; kind 'timeout' when timeout seconds passed
+    def read_key(self, timeout: int | float = -1.0) -> Key       # blocks; kind 'timeout' when timeout seconds passed
     def write(self, text: str)                             # one unbuffered write
 
 export class Key:

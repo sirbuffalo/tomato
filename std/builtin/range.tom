@@ -49,11 +49,12 @@ class range:
     @get
     def at(self, i: int) -> int:
         n = self.count()
-        if i < 0:
-            i += n
-        if i < 0 or i >= n:
-            raise IndexError('index out of range', 'E04')
-        return self.start + i * self.step
+        j = i
+        if j < 0:
+            j += n
+        if j < 0 or j >= n:
+            raise IndexError(f'index {i} is out of range for a range of {n} item{"" if n == 1 else "s"}', 'E04')
+        return self.start + j * self.step
 
     @contains
     def has(self, x: int) -> bool:

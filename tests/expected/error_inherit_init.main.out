@@ -5,4 +5,4 @@ gone E7
 thing #3 E999
 HEY
 []
-caught: index out of range
+caught: index 5 is out of range for a list of 1 item

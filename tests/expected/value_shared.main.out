@@ -35,15 +35,15 @@ str k = "ok"
 list [1,0.5,false]
 list msgpack b'\x93\x01\xcb?\xe0\x00\x00\x00\x00\x00\x00\xc2'
 list k = [1, 0.5, false]
-E71 expected an int, but this is a str
+E71 expected an int, but this is a str (at ['name'])
 E75 the key nope is not in this dict
-E73 index 7 is out of range for a list of 2
-E71 expected a list, but this is an int
-E366 an int has no length
-E71 expected an int, but this is a str
+E73 index 7 is out of range for a list of 2 (at ['tags'])
+E71 expected a list, but this is an int (at ['n'])
+E366 an int has no length (at ['n'])
+E71 expected an int, but this is a str (at ['name'])
 E75 the key nope is not in this dict
-E73 index 7 is out of range for a list of 2
-E71 expected a list, but this is an int
-E366 an int has no length
+E73 index 7 is out of range for a list of 2 (at ['tags'])
+E71 expected a list, but this is an int (at ['n'])
+E366 an int has no length (at ['n'])
 True False True True True False True
 {"z":3,"a":2} {"a":2,"z":3} z = 3 | a = 2 | 

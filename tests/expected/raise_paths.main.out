@@ -41,7 +41,7 @@ divide -> division by zero E01
 fixed 3 -> 253
 fixed 9 -> integer overflow E03
 index 2 -> c
-index 9 -> index out of range E04
+index 9 -> index 9 is out of range for a text of 4 characters E04
 caught_here local even 0
 caught_here caught local odd 1
 caught_here local even 2

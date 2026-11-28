@@ -418,7 +418,16 @@ export def assert_not_none[T](value: T | None, message: str = ''):
 
 # Python's math.isclose rule: |actual - expected| <= max(rel_tol * max(|actual|, |expected|), abs_tol). A float in Tomato is
 # always finite, so there is no NaN or infinity to special-case. The text is "expected X, got Y".
-export def assert_close(actual: float, expected: float, rel_tol: float = 1e-9, abs_tol: float = 0.0, message: str = ''):
+export def assert_close(actual: int | float, expected: int | float, rel_tol: int | float = 1e-9, abs_tol: int | float = 0.0, message: str = ''):
+    _close(_float(actual), _float(expected), _float(rel_tol), _float(abs_tol), message)
+
+# a whole number is as good as a float here (as for requests timeouts, D134a)
+def _float(x: int | float) -> float:
+    if x is int:
+        return float(x)
+    return x
+
+def _close(actual: float, expected: float, rel_tol: float, abs_tol: float, message: str):
     if rel_tol < 0.0 or abs_tol < 0.0:
         raise ValueError('a tolerance must not be negative', 'E524')
     if actual == expected:

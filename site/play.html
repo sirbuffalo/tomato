@@ -127,6 +127,9 @@ function isDef(t) { return /^(def|class|interface|from|import|@|export|async def
 function isBlock(t) { return tomatoOpensBlock(t.split("\n")[0]); }
 // the name a definition piece defines ("" for an import and the like): a definition of a name that is already defined replaces the old one, as in the installed repl
 function keyOf(t) { var ls = t.split("\n"), l = ls[0]; if (l[0] === "@" && ls.length > 1) l = ls[1]; var m = /^(?:export\s+)?(?:async\s+)?(?:def|class|interface)\s+(\w+)/.exec(l); return m ? m[1] : ""; }
+// a definition that the compiler refused is not in the session: a later use of its name says it is not defined, so the error also says why the
+// definition was refused (as the installed repl does)
+var failedDefs = {};
 function defIndex(t) { var k = keyOf(t); if (!k) return -1; for (var i = 0; i < defs.length; i++) if (keyOf(defs[i]) === k) return i; return -1; }
 // A compile error names a line of the generated session program, which nobody typed: say it as the line of the piece it is in
 // (repl:LINE:COL for the piece just entered, session:LINE:COL for an earlier one that the new piece broke), and show an echoed
@@ -151,7 +154,7 @@ function relocate(msg, ranges) {
 }
 function submit(text, echoed) {
   if (!echoed) log("in", text);
-  if (text === ":reset") { defs = []; stmts = []; shown = ""; replAnswers = []; log("out", "session cleared"); return Promise.resolve(); }
+  if (text === ":reset") { failedDefs = {}; defs = []; stmts = []; shown = ""; replAnswers = []; log("out", "session cleared"); return Promise.resolve(); }
   if (text === ":program") { log("out", program()); return Promise.resolve(); }
   if (text[0] === ":") { log("e", "commands here: :reset, :program"); return Promise.resolve(); }
   var asExpr = !isDef(text) && !isBlock(text) && !/^\w+(\s*:\s*[\w\[\], |]+)?\s*[-+*\/]?=[^=]/.test(text) && !/^(print|for|while|if|try|raise|return|pass|break|continue)\b/.test(text);
@@ -171,6 +174,11 @@ function submit(text, echoed) {
       function refuse(msg) {
         var r = relocate(msg, ranges), text = plain(r.text);
         if (isD && at >= 0 && r.where === "session") text += "\nhint: the earlier lines of the session run again with the new " + keyOf(t) + ", and one of them does not work with it; the earlier definition is kept";
+        Object.keys(failedDefs).forEach(function (n) {
+          if (new RegExp("^error.*'" + n + "' is not defined", "m").test(text)) text += "\nhint: the " + failedDefs[n].kind + " '" + n + "' was not defined: its definition was refused with " + failedDefs[n].msg;
+        });
+        var first = /^error.*$/m.exec(text);
+        if (isD && at < 0 && r.where === "repl" && keyOf(t) && first) failedDefs[keyOf(t)] = { kind: /^(?:export\s+)?(?:async\s+)?def\b/.test(t.split("\n")[t[0] === "@" ? 1 : 0] || "") ? "function" : "class", msg: first[0].slice(0, 300) };
         log("e", text);
       }
       if (!d.ok) {
@@ -184,7 +192,7 @@ function submit(text, echoed) {
       var out = d.stdout, fresh = out.indexOf(shown) === 0 ? out.slice(shown.length) : out;
       if (d.timed_out) { shown = savedShown; log("e", "error[E369]: Stopped: ran longer than 5 seconds."); return; }
       if (d.exit !== 0) { shown = savedShown; log("e", plain((d.stderr || "error").trim())); return; }
-      if (isD) { if (at >= 0) defs[at] = t; else defs.push(t); fresh = ""; } else stmts.push(t);   // a definition prints nothing of its own
+      if (isD) { if (at >= 0) defs[at] = t; else defs.push(t); delete failedDefs[keyOf(t)]; fresh = ""; } else stmts.push(t);   // a definition prints nothing of its own
       shown = out; replAnswers = d.answers;
       if (fresh) log("out", fresh.replace(/\n$/, ""));
     });

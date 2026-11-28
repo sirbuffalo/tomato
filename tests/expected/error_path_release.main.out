@@ -1,21 +1,21 @@
 print: boom
 n1 print later: cannot show it
 concat: boom
-fstring: index out of range
-value: index out of range
-max: index out of range
-replace: index out of range
+fstring: index 7 is out of range for a list of 3 items
+value: index 9 is out of range for a list of 3 items
+max: index 9 is out of range for a list of 3 items
+replace: index 9 is out of range for a list of 3 items
 empty: an empty text cannot be used to replace
 split: an empty text cannot be used to split
-find: index out of range
-join: index out of range
-strip: index out of range
-open: index out of range
-insert: index out of range
-insert field: index out of range
-item: index out of range
-key: index out of range
-get: index out of range
+find: index 9 is out of range for a list of 3 items
+join: index 9 is out of range for a list of 3 items
+strip: index 9 is out of range for a list of 3 items
+open: index 9 is out of range for a list of 3 items
+insert: index 9 is out of range for a list of 1 item
+insert field: index 9 is out of range for a list of 1 item
+item: index 5 is out of range for a list of 1 item
+key: index 9 is out of range for a list of 3 items
+get: index 9 is out of range for a list of 3 items
 extern: boom
 async extern: boom
 left: boom

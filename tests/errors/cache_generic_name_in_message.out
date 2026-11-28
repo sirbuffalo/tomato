@@ -1,4 +1,4 @@
-error[E324]: argument 2 of cache.Cache[Point, int] has type str, but float is expected
+error[E324]: argument 2 of cache.Cache[Point, int] has type str, but float | int is expected
   --> tests/errors/cache_generic_name_in_message.tom:12:9
    |
 12 |     c = Cache[Point, int](3, 'forever')

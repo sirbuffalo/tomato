@@ -1,0 +1,60 @@
+# a union type test narrows the two values of a conditional expression and the body of a `while` (D55a, D135a left them out)
+
+class Dog:
+    name: str = 'rex'
+
+class Cat:
+    name: str = 'tom'
+
+def size(x: int | str) -> int:
+    return x + 1 if x is int else len(x)
+
+def size_not(x: int | str) -> int:
+    return len(x) if x is not int else x * 2
+
+def both(x: int | str, y: int | str) -> int:
+    return x + y if x is int and y is int else -1
+
+def either(x: int | str | float) -> str:
+    return str(x) + '!' if x is int or x is float else x
+
+def negated(x: int | str) -> int:
+    return len(x) if not (x is int) else x
+
+def nested(x: int | str, flag: bool) -> str:
+    return ('big' if x > 100 else 'small') if x is int else (x if flag else x + x)
+
+def named(a: Dog | Cat) -> str:
+    return a.name + '!' if a is Dog else a.name + '?'
+
+def countdown(x: int | str) -> int:
+    n = 0
+    i = 0
+    while x is int and i < x:
+        i += 1
+        n += x
+    return n
+
+def rest(x: int | str | float) -> int:
+    k = 0
+    while x is not str and k < 3:
+        k += 1
+    return k
+
+def words(x: int | str) -> int:
+    total = 0
+    n = 0
+    while x is str and n < len(x):
+        total += 1
+        n += 1
+    return total
+
+@main
+def main():
+    print(size(4), size('abcd'), size_not(4), size_not('ab'))
+    print(both(1, 2), both(1, 'a'), both('a', 2))
+    print(either(3), either(2.5), either('s'))
+    print(negated(7), negated('abc'))
+    print(nested(500, True), nested(5, True), nested('ab', True), nested('ab', False))
+    print(named(Dog()), named(Cat()))
+    print(countdown(3), countdown('x'), rest(1), rest('s'), rest(1.5), words('abcde'), words(3))

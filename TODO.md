@@ -28,14 +28,8 @@
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
 - Run the new `sys_async` test on macOS
   Check the kqueue wait on pipes and the `/dev/fd` listing (`tests/programs/sys_async.tom`, and the open-files check in `tests/programs/sys_run.tom`); everything of D98b was tested on Linux only.
-- Name the key in a value.ValueTypeError (fourth audit P11, the part that is left)
-  `j["a"][0].as_int()` on a text raises `ValueTypeError: expected an int, but this is a str` and names neither the key nor the path of the value in the document (`a[0]`); the rest of P10 to P13 (the shadowed module and function, the help of E189 and E377 for a `value.Value`, `Int` without its import, the folder in a module's errors and the doubled `from` import) is done (D136a).
-- Add help lines for the repl case after a failed class definition (fourth audit P22)
-  In the repl, after a class definition that failed, `A(3)` is E340 with "did you mean 'v'?"; say that the class `A` failed to define and what the error was. P19 and P21 are done (D136a).
 - Choose how the arm64 Linux binary is built and tested
   A Lima arm64 VM on the signing Mac (as `benchmarks/count.sh` already uses Lima), or an arm64 CI runner; D130a and `docs/shell-to-tomato-plan.md` section 4 leave it open. Needed for the Linux arm64 tarball of stage 2.
-- Give the index and the length in `index out of range` (fourth audit P27)
-  `xs = [1, 2, 3]; xs[10]` says only `error[E04]: index out of range`, natively (debug and release) and in wasm. Every bounds check (`list_slot`, text and bytes indexing, `insert`, `std/builtin/range.tom`, the runtime's own) raises with a constant text, and release mode shares one outlined raise per message: carry the index and the length to the raise (a text made at the raise, as `tomato_limit_message` does for E528), then update the dozen expected outputs under `tests/expected/` and `tests/runtime/`, the explain goldens and `docs/errors.md`.
 - Port the remaining test functions of tests/run.sh to dev/test.tom in slices (input, requests, C tests, small checks first; CLI/update/repl last, with their fakes)
   Stage 4 of `docs/shell-to-tomato-plan.md`. `dev/test.tom` already runs the scheduler, tiers, `-j`, `--times`, and ports the examples, programs, AddressSanitizer builds, rejected programs, error texts, runtime errors, known gaps, WebAssembly programs and the three entries; the others still run one process each through `TOMATO_TEST_BRIDGE=job` in `tests/run.sh`. Compare names and verdicts with `run.sh` after each slice.
 - Interrupt cleanup in dev/test.tom with std signal once stage 1 lands (INT/TERM/HUP: kill children, remove the shared folder, exit 128+n), and a test for it
@@ -44,15 +38,13 @@
   The fast tier on Linux and macOS and the full tier on Linux matched `run.sh` name for name in the first slice; the macOS full tier and the wall-time and interrupt checks of the plan's stage 4 acceptance are still open.
 - Remove the `k-` key owner from `tomato seed check`
   `tomato seed check` still accepts a `k-` key owner (`publishable_owner` in `compiler/src/seeds.tom`, and the text of E580), which contradicts D117a (owners are git-host owners, no key-only owners). Remove it, reword E580's template, and remove or change the tests that expect a `k-` owner to pass. It changes the compiler, so `compiler/bootstrap/tomatoc.ll` and `site/wasm/*.wasm` must be regenerated.
-- Widen the other whole-number-for-float edges in std
-  `Cache`/`LruCache` `ttl`, `terminal`/`lineedit` `read_key(timeout)` and `testing.assert_close` take only a `float` (a whole number is E324 with the "write 5.0" help, D134a); `requests` timeouts already take `int | float`. Also decide whether a union may hold None with two other types (E458), so that `sys.run(timeout=5)` can work (a language question).
-- Narrow a union type test in a conditional expression and a while condition
-  `a if x is int else b` and `while x is int and ...` do not narrow a union variable, as `if` and the right side of `and`/`or` now do (D135a left them out).
-- Drop the trace post-processing that marks std frames in tomato test
-  `native/tomato` (the awk in `point_trace`) and `compiler/src/cli_test.tom` write `testing.NAME` on frames of `std/testing.tom`; frames now carry their module from the compiler (D136a), so the rewriting can go.
+- Decide whether a union may hold None with two other types (E458), so that `sys.run(timeout=5)` and `os.utime(path, 5)` can work
+  `sys.run`/`run_async` `timeout` and `os.utime` `mtime` are `float | None`, so a whole number is E324 ("write 5.0", D134a); `float | int | None` is a union of None with two other types, which E458 refuses. The other whole-number edges of std (`Cache`/`Memo` `ttl`, `Terminal.read_key`, `assert_close`, `requests.download`) take `int | float` now (D143a). A language question for Davis.
 - Split dev/test.tom (scheduler and the shared Test/Run classes in one module, the ported tests in several) before porting the t_cli_* tests
   `dev/test.tom` is over 1,300 lines: the scheduler, the `Test`/`Run` classes, `host` helpers and every `native_*` test in one file. Move the shared classes and helpers (compile to a file, link, `tjsc`, `shared_path`) into one module and the ported tests into several (`dev/checks.tom` already holds the file-reading checks), so the `t_cli_*` tests of `tests/run.sh` (about 3,000 lines of shell, 67 functions still run through `TOMATO_TEST_BRIDGE`) can be ported in slices. Compare names and verdicts with `tests/run.sh` after each.
-- Run the os_exchange test on file systems that lack RENAME_EXCHANGE
-  Try `tests/programs/os_exchange.tom` on a Linux file system without `renameat2` `RENAME_EXCHANGE` (tmpfs on older kernels, some network file systems) and on a Mac volume that is not APFS. The three-rename fallback of `os.exchange` is only exercised here through the `TOMATO_TEST_NO_EXCHANGE` switch.
+- Run the os_exchange test on a Mac volume that is not APFS
+  `os.exchange` and `tests/programs/os_exchange.tom` on a volume without `RENAME_SWAP`. The fallback of three renames (also taken on ENOSYS, EINVAL, ENOTSUP, EOPNOTSUPP and EPERM now, D143a) runs on every file system through `TOMATO_TEST_NO_EXCHANGE`, and the test's output is the same where the system cannot swap; no Linux file system here lacked `RENAME_EXCHANGE` (ext4 and tmpfs have it), so a real one has not been tried.
 - Have the ported release tooling run `freeze_errors.tom freeze` for 1.0.0
   `tomato run dev/freeze_errors.tom freeze` writes `std/errors_frozen.txt` (the count and sha256 of the frozen lines of `std/errors.txt`, D142a); today it is a manual step of `docs/releasing.md` step 1. The tool could also refuse a smaller frozen count than the one in the file.
+- Remove the duplicate block of sections D131a to D138a from docs/decisions.md
+  `docs/decisions.md` holds sections D131a to D138a twice (the first copy ends at D138a, the second starts again at D131a); the repeat came in with the stage 1 commit. Remove one copy and run `site/build.sh` so that `site/docs/decisions.md` follows.

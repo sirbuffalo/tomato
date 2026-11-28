@@ -31,8 +31,18 @@ export class ValueTypeError(ValueError):
     pass
 
 export class Value:
+    # where the value was last read through v['key'] or v[0] or v.get('key'), from the document's root, as `['a'][0]` ('' for the root and
+    # for a value that was never read that way); it is only for the text of an error, and a program may leave it alone
+    path: str = ''
+
     def kind(self) -> str:
         return 'value'
+
+    # ' (at ['a'][0])' for the text of an error about this value, or nothing
+    def where(self) -> str:
+        if self.path == '':
+            return ''
+        return f' (at {self.path})'
 
     def what(self) -> str:
         k = self.kind()
@@ -42,57 +52,57 @@ export class Value:
         return False
 
     def as_bool(self) -> bool:
-        raise ValueTypeError(f'expected a bool, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a bool, but this is {self.what()}{self.where()}', 'E71')
 
     def as_int(self) -> int:
-        raise ValueTypeError(f'expected an int, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected an int, but this is {self.what()}{self.where()}', 'E71')
 
     def as_float(self) -> float:
-        raise ValueTypeError(f'expected a number, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a number, but this is {self.what()}{self.where()}', 'E71')
 
     def as_str(self) -> str:
-        raise ValueTypeError(f'expected a str, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a str, but this is {self.what()}{self.where()}', 'E71')
 
     def as_list(self) -> list[Value]:
-        raise ValueTypeError(f'expected a list, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a list, but this is {self.what()}{self.where()}', 'E71')
 
     def as_dict(self) -> dict[str, Value]:
-        raise ValueTypeError(f'expected a dict, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a dict, but this is {self.what()}{self.where()}', 'E71')
 
     # a Moment (a TOML date or time)
     def as_moment(self) -> Moment:
-        raise ValueTypeError(f'expected a date or time, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a date or time, but this is {self.what()}{self.where()}', 'E71')
 
     # MessagePack values: a byte string, an extension value, a timestamp
     def as_bytes(self) -> bytes:
-        raise ValueTypeError(f'expected a bin or ext, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a bin or ext, but this is {self.what()}{self.where()}', 'E71')
 
     def ext_type(self) -> int:
-        raise ValueTypeError(f'expected an ext, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected an ext, but this is {self.what()}{self.where()}', 'E71')
 
     def seconds(self) -> int:
-        raise ValueTypeError(f'expected a timestamp, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a timestamp, but this is {self.what()}{self.where()}', 'E71')
 
     def nanos(self) -> int:
-        raise ValueTypeError(f'expected a timestamp, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a timestamp, but this is {self.what()}{self.where()}', 'E71')
 
     # v['name'] on a Dict, v[0] on a List
     @get
     def at(self, key: int | str) -> Value:
-        raise ValueTypeError(f'{self.what()} cannot be indexed', 'E365')
+        raise ValueTypeError(f'{self.what()} cannot be indexed{self.where()}', 'E365')
 
     # the value of a key of a Dict, or None when the key is missing
     def get(self, key: str) -> Value | None:
-        raise ValueTypeError(f'expected a dict, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a dict, but this is {self.what()}{self.where()}', 'E71')
 
     @len
     def length(self) -> int:
-        raise ValueTypeError(f'{self.what()} has no length', 'E366')
+        raise ValueTypeError(f'{self.what()} has no length{self.where()}', 'E366')
 
     # 'name' in v: whether a Dict has the key
     @contains
     def has(self, key: str) -> bool:
-        raise ValueTypeError(f'expected a dict, but this is {self.what()}', 'E71')
+        raise ValueTypeError(f'expected a dict, but this is {self.what()}{self.where()}', 'E71')
 
     # what == means for the kind (the kinds are known to be equal): each kind overrides it
     def equals(self, other: Value) -> bool:
@@ -232,10 +242,12 @@ export class List(Value):
     @get
     override def at(self, key: int | str) -> Value:
         if key is str:
-            raise ValueTypeError(f'a list needs an int index, but got the text {key}', 'E72')
+            raise ValueTypeError(f'a list needs an int index, but got the text {key}{self.where()}', 'E72')
         if key >= len(self.items) or key < -len(self.items):
-            raise ValueTypeError(f'index {key} is out of range for a list of {len(self.items)}', 'E73')
-        return self.items[key]
+            raise ValueTypeError(f'index {key} is out of range for a list of {len(self.items)}{self.where()}', 'E73')
+        item = self.items[key]
+        item.path = f'{self.path}[{key}]'
+        return item
 
     @len
     override def length(self) -> int:
@@ -276,15 +288,19 @@ export class Dict(Value):
     @get
     override def at(self, key: int | str) -> Value:
         if key is int:
-            raise ValueTypeError(f'a dict needs a text key, but got the int {key}', 'E74')
+            raise ValueTypeError(f'a dict needs a text key, but got the int {key}{self.where()}', 'E74')
         if key not in self.fields:
-            raise ValueTypeError(f'the key {key} is not in this dict', 'E75')
-        return self.fields[key]
+            raise ValueTypeError(f'the key {key} is not in this dict{self.where()}', 'E75')
+        field = self.fields[key]
+        field.path = f"{self.path}['{key}']"
+        return field
 
     override def get(self, key: str) -> Value | None:
         if key not in self.fields:
             return None
-        return self.fields[key]
+        field = self.fields[key]
+        field.path = f"{self.path}['{key}']"
+        return field
 
     @len
     override def length(self) -> int:

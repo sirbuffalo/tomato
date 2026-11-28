@@ -271,7 +271,7 @@ export async def patch(url: str, params: dict[str, str] = {}, data: str | bytes 
 #   max_bytes    stops the download with a RequestError when the body is longer than this (None: no limit)
 #   timeout      seconds for the whole download (0 means no limit); TimeoutError when it runs out
 # Redirects are followed (at most 20). A file that cannot be written is an IOError. New (unstable): stage 1 of docs/shell-to-tomato-plan.md.
-export async def download(url: str, path: str, https_only: bool = True, max_bytes: int | None = None, timeout: float = 0.0) -> int:
+export async def download(url: str, path: str, https_only: bool = True, max_bytes: int | None = None, timeout: int | float = 0.0) -> int:
     if chr(0) in path:
         raise ValueError('a path or name cannot contain a NUL character', 'E511')
     limit = -1
@@ -279,7 +279,7 @@ export async def download(url: str, path: str, https_only: bool = True, max_byte
         if max_bytes < 0:
             raise ValueError('max_bytes cannot be negative', 'E663')
         limit = max_bytes
-    id = !tomato_http_download(url, path, 1 if https_only else 0, limit, float(timeout))
+    id = !tomato_http_download(url, path, 1 if https_only else 0, limit, _seconds(timeout))
     try:
         await _http_wait(id)
         kind = !tomato_http_error_kind(id)

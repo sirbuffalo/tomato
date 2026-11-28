@@ -5253,12 +5253,14 @@ class Gen:
         for e in reversed(self.held):
             self.release(e)
 
-    def fail_if(self, bad: str, message: str, live: list[Ex] = []):
+    def fail_if(self, bad: str, message: str, live: list[Ex] = [], ixs: list[str] = []):
         # bad is an i1; when true, raise the specific RuntimeError subclass (D22a). live are the owned operands of the
         # failing operation itself, which the error path frees together with the temporaries held by the enclosing expressions.
-        self.fail_with(bad, self.mod.error_class(self.mod.error_kind(message)), message, live)
+        # ixs: the kind of container (0 a list, 1 a text, 2 bytes), the index and the length of an index out of range: the runtime
+        # makes the text that names them (tomato_index_message) and message only chooses the error
+        self.fail_with(bad, self.mod.error_class(self.mod.error_kind(message)), message, live, 0, ixs)
 
-    def fail_with(self, bad: str, cls: str, message: str, live: list[Ex] = [], limit: int = 0):
+    def fail_with(self, bad: str, cls: str, message: str, live: list[Ex] = [], limit: int = 0, ixs: list[str] = []):
         # limit: the id (528 or 529) of an error whose message has a configured limit in it (D77g): the runtime makes the text
         # (tomato_limit_message) and message is not used
         if self.bail != '':
@@ -5269,13 +5271,15 @@ class Gen:
         self.cold_br(bad, stop, ok, True)
         self.place(stop)
         if self.mod.mode == 2:
-            self.fail_call(cls, message, live, limit)
+            self.fail_call(cls, message, live, limit, ixs)
         else:
             for v in live:
                 self.release(v)
             if limit > 0:
                 text = self.limit_text(limit)
                 self.raise_here(cls, text, True, self.mod.error_id(limit))
+            elif len(ixs) > 0:
+                self.raise_here(cls, self.index_text(ixs[0], ixs[1], ixs[2]), True, self.mod.error_id(self.mod.error_kind(message)))
             else:
                 self.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)))
         self.place(ok)
@@ -5287,7 +5291,14 @@ class Gen:
         self.emit(f'{text} = call ptr @tomato_limit_message(i32 {limit})')
         return text
 
-    def fail_call(self, cls: str, message: str, live: list[Ex], limit: int = 0):
+    def index_text(self, kind: str, idx: str, length: str) -> str:
+        # the message of an index out of range, with the index and the length in it, as a new text
+        self.mod.declare('declare ptr @tomato_index_message(i32, i64, i64)')
+        text = self.tmp('ixtext')
+        self.emit(f'{text} = call ptr @tomato_index_message(i32 {kind}, i64 {idx}, i64 {length})')
+        return text
+
+    def fail_call(self, cls: str, message: str, live: list[Ex], limit: int = 0, ixs: list[str] = []):
         # release mode: the error of fail_with is raised by a function of its own, @tomato.fail.N, one for each error and each
         # list of types of the values to free (live, then the held temporaries), which it frees first. It is marked cold and is
         # never inlined, so a check costs a function only a branch and a call when clang decides whether to inline it.
@@ -5301,6 +5312,8 @@ class Gen:
         key = cls + ' ' + message
         if limit > 0:
             key += f' limit {limit}'
+        if len(ixs) > 0:
+            key += f' index {ixs[0]}'
         for v in values:
             key += ' ' + v.ty
         if key not in self.mod.fails:
@@ -5315,9 +5328,14 @@ class Gen:
                 given = ex(f'%val.{k}', v.ty)
                 given.fresh = True
                 h.release(given)
+            if len(ixs) > 0:
+                sig.append('i64 %ix')
+                sig.append('i64 %lx')
             sig.append('i32 %line')
             if limit > 0:
                 h.raise_here(cls, h.limit_text(limit), True, self.mod.error_id(limit), '%line')
+            elif len(ixs) > 0:
+                h.raise_here(cls, h.index_text(ixs[0], '%ix', '%lx'), True, self.mod.error_id(self.mod.error_kind(message)), '%line')
             else:
                 h.raise_here(cls, self.mod.intern(message), False, self.mod.error_id(self.mod.error_kind(message)), '%line')
             h.attrs = 'cold noinline'
@@ -5325,6 +5343,9 @@ class Gen:
         args: list[str] = []
         for v in values:
             args.append(f'{llvm_type(v.ty)} {v.reg}')
+        if len(ixs) > 0:
+            args.append(f'i64 {ixs[1]}')
+            args.append(f'i64 {ixs[2]}')
         args.append(f'i32 {self.line_word(self.line)}')
         self.emit(f'call void {self.mod.fails[key]}(' + ', '.join(args) + ')')
         self.br(self.unwind_target())
@@ -5653,7 +5674,9 @@ class Gen:
         known: list[str] = []
         self.opt_names(val_node(n.fields[0]), True, known)
         self.opt_push_in(known, val_node(n.fields[1]))
+        entered = self.narrow_cond(val_node(n.fields[0]), True)       # (a if x is int else b: x is an int in a)
         a = self.expr(val_node(n.fields[1]), expected)
+        self.leave_narrowed(entered)
         self.opt_pop_to(opt_base)
         wide = is_union(expected) or is_optional(expected)
         if wide:
@@ -5677,7 +5700,9 @@ class Gen:
         known = []
         self.opt_names(val_node(n.fields[0]), False, known)
         self.opt_push_in(known, val_node(n.fields[2]))
+        entered = self.narrow_cond(val_node(n.fields[0]), False)      # (a if x is int else b: x is not an int in b)
         b = self.expr(val_node(n.fields[2]), hint)
+        self.leave_narrowed(entered)
         self.opt_pop_to(opt_base)
         if b.ty != ty:
             if ty == 'None' and (b.ty == 'str' or is_list(b.ty) or is_class(b.ty)):
@@ -6045,7 +6070,7 @@ class Gen:
         ln = self.list_length(lst)
         bad = self.tmp('oob')
         self.emit(f'{bad} = icmp uge i64 {i.reg}, {ln}')
-        self.fail_if(bad, 'index out of range', live)
+        self.fail_if(bad, 'index out of range', live, ['0', i.reg, ln])
         data = ''
         if lst.list_name != '' and lst.list_name in self.list_datas:
             data = self.list_datas[lst.list_name]
@@ -6674,7 +6699,7 @@ class Gen:
             self.emit(f'{pos} = select i1 {neg}, i64 {shifted}, i64 {raw_at}')
             bad_at = self.tmp('oob')
             self.emit(f'{bad_at} = icmp uge i64 {pos}, {blen}')
-            self.fail_if(bad_at, 'index out of range', [s])
+            self.fail_if(bad_at, 'index out of range', [s], ['2', raw_at, blen])
             base_p = self.tmp('bdata')
             self.emit(f'{base_p} = getelementptr i8, ptr {s.reg}, i64 32')
             bp = self.tmp('bp')
@@ -6690,12 +6715,21 @@ class Gen:
         i = self.want(i, 'int', n.line, 'an index')
         self.drop_held(held_before)
         r = self.tmp('ch')
-        self.emit(f'{r} = call ptr @tomato_str_index(ptr {s.reg}, i64 {self.int_raw(i, [s])})')
+        raw_i = self.int_raw(i, [s])
+        self.emit(f'{r} = call ptr @tomato_str_index(ptr {s.reg}, i64 {raw_i})')
         bad = self.tmp('oob')
         self.emit(f'{bad} = icmp eq ptr {r}, null')
-        self.fail_if(bad, 'index out of range', [s])
+        self.fail_if(bad, 'index out of range', [s], ['1', raw_i, self.str_chars(s)])
         self.release(s)
         return ex(r, 'str')
+
+    def str_chars(self, s: Ex) -> str:
+        # the number of characters of a text, read from its header (the length of the text is at byte 24, runtime/tomato_rt.c)
+        at = self.tmp('charsp')
+        self.emit(f'{at} = getelementptr i8, ptr {s.reg}, i64 24')
+        n = self.tmp('chars')
+        self.emit(f'{n} = load i64, ptr {at}')
+        return n
 
     def norm_index(self, s: Ex, i: str, n: Node | None = None) -> str:
         # a negative position counts from the end, as in Python: i + len when i < 0. n is the index as written, when there is one
@@ -6898,7 +6932,7 @@ class Gen:
         self.emit(f'{c} = call i32 @tomato_str_char_eq(ptr {t.reg}, i64 {raw}, ptr {o.reg})')
         bad = self.tmp('oob')
         self.emit(f'{bad} = icmp slt i32 {c}, 0')
-        self.fail_if(bad, 'index out of range', [o])
+        self.fail_if(bad, 'index out of range', [o], ['1', raw, self.str_chars(t)])
         self.release(o)
         r = self.tmp('same')
         self.emit(f'{r} = icmp {"eq" if op == "!=" else "ne"} i32 {c}, 0')
@@ -8605,8 +8639,9 @@ class Gen:
             # 0 up to the length is allowed (a negative index counts from the end); anything else is out of range
             idx = self.norm_index(obj, raw)
             bad = self.tmp('oob')
-            self.emit(f'{bad} = icmp ugt i64 {idx}, {self.list_len(obj)}')
-            self.fail_if(bad, 'index out of range', [v, obj])
+            n_items = self.list_len(obj)
+            self.emit(f'{bad} = icmp ugt i64 {idx}, {n_items}')
+            self.fail_if(bad, 'index out of range', [v, obj], ['0', idx, n_items])
             slot = self.tmp('slot')
             self.emit(f'{slot} = call ptr @tomato_list_insert_slot(ptr {obj.reg}, i64 {idx}, i64 {w})')
             self.store_item(obj.ty, v, slot)
@@ -11035,6 +11070,13 @@ class Gen:
         out.append([target[0], saved[0], saved[1]])
         return out
 
+    def leave_narrowed(self, entered: list[list[str]]):
+        # leave what narrow_cond entered, the last one first
+        k = len(entered) - 1
+        while k >= 0:
+            self.leave_narrow(entered[k][0], [entered[k][1], entered[k][2]])
+            k -= 1
+
     def enter_narrow(self, name: str, member: str) -> list[str]:
         # inside the branch the variable is the member's own type: a copy of the value taken out of the box.
         # When several members are left (member is a union) the variable keeps its box and only its type gets smaller.
@@ -12214,7 +12256,9 @@ class Gen:
         self.push_loop(end, head)
         opt_base = len(self.opts)
         self.opt_push_all(self.opt_cond_names(val_node(s.fields[0]), True, []))
+        entered = self.narrow_cond(val_node(s.fields[0]), True)       # (while x is int and ...: x is an int in the body)
         self.block(val_nodes(s.fields[1]))
+        self.leave_narrowed(entered)
         self.opt_pop_to(opt_base)
         self.loop_depth -= 1
         if not self.terminated:

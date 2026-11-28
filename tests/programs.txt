@@ -86,6 +86,7 @@ toml_invalid
 toml_api
 toml_big
 value_shared
+value_paths
 math_builtins
 function_values
 lambdas
@@ -268,6 +269,7 @@ text_split_words
 bytes_sized_iterable
 bytearray_inplace
 union_narrowing_and
+union_narrowing_expr
 optional_container_text
 unset_variable
 os_tree
@@ -277,3 +279,4 @@ sys_tee
 signal_cleanup
 gzip_basic
 tarfile_roundtrip
+whole_number_seconds

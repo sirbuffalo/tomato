@@ -319,7 +319,7 @@ async def run_all(s: Settings, items: list[Item], tfilter: str, tmode: str, seco
             nfailed += 1
             status = 1
             print(f'FAIL {f}  ({why})')
-            show_out(point_trace(out, f, kind, home + '/std/testing.tom'))
+            show_out(point_trace(out, f, kind))
     if tfilter != '' and nfiles == 0:
         die(s, f"no test file name contains '{tfilter}'")
     print(f"tomato test: {nfiles} {'file' if nfiles == 1 else 'files'}, {npassed} passed, {nfailed} failed, {nskipped} skipped: {'ok' if status == 0 else 'FAILED'}")
@@ -516,12 +516,10 @@ def ends_with_number(line: str, mark: str) -> int:
         return at
     return -1
 
-# The failure text of a test file, so that its trace says where each frame is. A frame's line number is in the file of its function, and the
-# trace names no file: a function of std/testing.tom (a failed check raises inside it) is written testing.NAME, and the first frame of a
-# function of the test file is given the file, so the line of the check reads `at main (tests/a.tom line 6)`. In release mode there is no
-# trace: the error is one `error[E519]: Class: message (line 306)` and a note says so.
-def point_trace(out: str, file: str, kind: str, testing: str) -> str:
-    lib = defined_names(testing)
+# The failure text of a test file, so that its trace says where the check is. A frame carries the module of its function (`at testing.assert_equal
+# (line 376)`), but a frame of the test file names no file: the first one is given the file, so the line of the check reads `at main (tests/a.tom
+# line 6)`. In release mode there is no trace: the error is one `error[E519]: Class: message (line 306)` and a note says so.
+def point_trace(out: str, file: str, kind: str) -> str:
     mine = defined_names(file)
     text = text_lines(out)
     where = -1
@@ -543,11 +541,8 @@ def point_trace(out: str, file: str, kind: str, testing: str) -> str:
         if kind == 'main':
             fm = frame(l)
         if len(fm) > 0:
-            base = after_dot(fm[0])
             if i == where:
                 l = f'  at {fm[0]} ({file} line {hit})'
-            elif '.' not in fm[0] and base in lib and base not in mine:
-                l = f'  at testing.{fm[0]} (line {fm[1]})'
         elif kind == 'main' and where >= 0 and not headed and ends_with_number(l, 'raised on line') >= 0:
             # the line the runtime names is where the error was raised: in std/testing.tom for a failed check; the test is what matters
             l = l[:ends_with_number(l, 'raised on line')] + f' (raised at {file} line {hit})'

@@ -1,0 +1,46 @@
+# a ValueTypeError names the keys and indexes the value was read through, as `(at ['a'][0])` (fourth audit P11)
+from json import loads
+from value import Value, ValueTypeError, Dict, Str
+
+def show(label: str, f: fn(Value) -> int, v: Value):
+    try:
+        print(label, f(v))
+    catch ValueTypeError as e:
+        print(label, e.id, e.message)
+
+def as_int(v: Value) -> int:
+    return v.as_int()
+
+def size(v: Value) -> int:
+    return len(v)
+
+def deep_key(v: Value) -> int:
+    return v['a'][0]['nope'].as_int()
+
+def deep_index(v: Value) -> int:
+    return v['b']['list'][9].as_int()
+
+def wrong_key(v: Value) -> int:
+    return v['b'][0].as_int()
+
+def via_get(v: Value) -> int:
+    inner = v.get('b')
+    if inner is None:
+        return -1
+    return inner['list'].as_dict()['x'].as_int()
+
+@main
+def main():
+    j = loads('{"a": ["text", 2], "b": {"list": [1, 2], "s": "str"}, "n": null}')
+    show('root', as_int, j)
+    show('a[0]', as_int, j['a'][0])
+    show('b.s', as_int, j['b']['s'])
+    show('n', as_int, j['n'])
+    show('len', size, j["n"])
+    show('deep key', deep_key, j)
+    show('deep index', deep_index, j)
+    show('wrong key', wrong_key, j)
+    show('via get', via_get, j)
+    show('built', as_int, Dict({'k': Str('v')})['k'])
+    show('no path', as_int, Str('x'))
+    show('fine', as_int, j['a'][1])

@@ -9,9 +9,9 @@ division by zero
 division by zero
 division by zero
 division by zero
-index out of range
+index 5 is out of range for a list of 2 items
 the key is not there
-index out of range
+index 40 is out of range for a text of 4 characters
 slice step cannot be zero
 division by zero
 division by zero

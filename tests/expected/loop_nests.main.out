@@ -10,27 +10,27 @@
 [30, 45, 40, 36893488147419103299, 36893488147419103273] [[1, 7, 13, 19, 5], [16, 2, 8, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 36893488147419103274]]
 [80, 115, 110, 73786976294838206633, 73786976294838206551]
 3 3004
-rows IndexError: index out of range
+rows IndexError: index 4 is out of range for a list of 4 items
 [[1, 7, 13, 19, 5], [16, 2, 8, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 10]]
-cols IndexError: index out of range
+cols IndexError: index 5 is out of range for a list of 5 items
 [[3, 15, 27, 39, 11], [16, 2, 8, 14, 20], [11, 17, 3, 9, 15], [6, 12, 18, 4, 10]]
 21 46116860184273879039 5
 3 2 3 1
 1006 910 107
 993133 [-3, 0, 3, 6]
 503823 [-3, 4611686018427387902, 3, -4611686018427387902]
-wrap IndexError: index out of range
+wrap IndexError: index 4 is out of range for a list of 4 items
 [-7, 4611686018427387900, 3, -4611686018427387900]
 divide 25
 divide ZeroDivisionError: division by zero
 divide ZeroDivisionError: modulo by zero
 divide ZeroDivisionError: division by zero
 [20, 17]
-divide IndexError: index out of range
+divide IndexError: index 2 is out of range for a list of 2 items
 [25, 21]
 747179 [2, 3, 4, 0] [[22, 15, 18, 6], [9, 12, 15, 9, 41505174165846491136]]
 536829 [4611686018427387905, -4611686018427387903, 9223372036854775809, 0] [[22, 18446744073709551636, 18, 6], [9, 12, 15, 9, 41505174165846491136]]
-short IndexError: index out of range
+short IndexError: index 2 is out of range for a list of 2 items
 44 2.32421875 31 -96845406386975145949 0.0 0 0 0.0 3
 99 41505174165846491138 0
 302003 -4611686018427087906 388
@@ -251,23 +251,23 @@ nn
 nn
  nnnn
 yy
- IndexError: index out of range
+ IndexError: index 1 is out of range for a text of 1 character
 nn
- IndexError: index out of range
+ IndexError: index 1 is out of range for a text of 1 character
 nn
- IndexError: index out of range
+ IndexError: index 1 is out of range for a text of 1 character
 nn
- IndexError: index out of range
+ IndexError: index 1 is out of range for a text of 1 character
 nn
- IndexError: index out of range
+ IndexError: index 1 is out of range for a text of 1 character
 nn
- IndexError: index out of range
-past IndexError: index out of range
-past IndexError: index out of range
-past IndexError: index out of range
-past IndexError: index out of range
+ IndexError: index 1 is out of range for a text of 1 character
+past IndexError: index 3 is out of range for a text of 3 characters
+past IndexError: index -4 is out of range for a text of 3 characters
+past IndexError: index 3 is out of range for a text of 3 characters
+past IndexError: index -4 is out of range for a text of 3 characters
 past OverflowError: the number is too big here
-empty IndexError: index out of range
+empty IndexError: index 0 is out of range for a text of 0 characters
 [4611686018427387904, 8, 5, 3, 0, -1, -4611686018427387904] [-9223372036854775808, 1, 9223372036854775808]
 [0, -1, 1, 2, -2, -3, 3, -4, 4, -5, 5, 6, -6, 7, -7, -8, 8, 9, -9, -10]
 [12.5, 12.25, 12.0, 11.75, 11.5, 11.25, 11.0, 10.75] [-2.5, -0.0, 0.0, 2.5]

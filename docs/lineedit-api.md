@@ -141,7 +141,7 @@ no fields), so the colors are `Editor.colors` rather than a field of the termina
 
 ```
 export interface TermIO:
-    def read_key(self, timeout: float = -1.0) -> Key
+    def read_key(self, timeout: int | float = -1.0) -> Key
     def write(self, text: str)
     def size(self) -> tuple[int, int]
     def enter_raw(self)

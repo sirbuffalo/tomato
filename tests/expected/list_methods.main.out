@@ -28,9 +28,9 @@ True True
 True False
 pop() raised pop from an empty list
 pop(0) raised pop from an empty list
-pop(100) raised index out of range
-pop(-100) raised index out of range
-insert(100) raised index out of range
-insert(-100) raised index out of range
+pop(100) raised index 100 is out of range for a list of 10 items
+pop(-100) raised index -100 is out of range for a list of 10 items
+insert(100) raised index 100 is out of range for a list of 10 items
+insert(-100) raised index -100 is out of range for a list of 10 items
 sort(cmp) raised division by zero
 [9, 9, 8, 8, 7, 7, 5, 5, 4, 1] ['zz', 'zz', 'fig', 'kiwi']

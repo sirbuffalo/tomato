@@ -232,6 +232,12 @@ and eight more comparison languages; Linux x86-64 results are published next to 
 
 ### Fixes
 
+- `index out of range` says which index and how long: `error[E04]: index 10 is out of range for a list of 3 items` (also for a text, in characters, for bytes and for a range; `insert` and `pop(i)` too). The id is still E04 (D143a).
+- A `value.ValueTypeError` says where in the document the value is: `expected an int, but this is a str (at ['a'][0])` (D143a).
+- In the repl, a use of a class or function whose definition was refused says why it was refused, instead of only `'A' is not defined` (D143a).
+- A union type test narrows the two values of a conditional expression and the body of a `while` (`size = x + 1 if x is int else len(x)`), as it does an `if` (D143a).
+- `Cache`, `Memo` (`ttl`), `Terminal.read_key` (`timeout`), `testing.assert_close` and `requests.download` (`timeout`) take a whole number of seconds or a tolerance as well as a float (D143a). A class that implements `lineedit.TermIO` has to write `read_key(self, timeout: int | float = -1.0)`.
+- `os.exchange` falls back to three renames where a sandbox filters the system call (EPERM), as it did for a file system without the swap (D143a).
 - Using the value of a call that gives none (`def nothing(xs: list[int])` then `print(nothing(xs))`, `str(...)`, an f-string, `nothing(xs) + 1`, an argument, a condition, `x = nothing(xs)`, `await` of an async function that returns nothing) is one error, E652 "'nothing' gives no value, so it cannot be used inside an expression" with the caret under the name; it was a raw clang error in the first three, E190 with an empty type name in the operator, "cannot be guessed from None" in `x = nothing(xs)`, and E170 "a list item needs a value" in `[nothing(xs)]` (D132a).
 - `tomato test --filter TEXT` that keeps no file is an error (status 1), not a warning with status 0, and the summary says `1 file` (D133a).
 - A failed `tomato build` removes the old program it would have replaced, so it cannot run old code; `-o` into a folder that is not there is a clear error; `wrote` shows a path below the current folder without it (D133a).

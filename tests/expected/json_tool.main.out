@@ -17,4 +17,4 @@ Expecting property name enclosed in double quotes: line 1 column 9 (char 8)
 Expecting ',' delimiter: line 1 column 6 (char 5)
 Leading zeros are not allowed: line 1 column 8 (char 7)
 Invalid control character at: line 1 column 5 (char 4)
-expected an int, but this is a str
+expected an int, but this is a str (at ['customer'])

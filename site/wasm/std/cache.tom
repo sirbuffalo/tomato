@@ -29,7 +29,7 @@
 # a use; `contains`, `peek` and `keys` do not. Every operation takes constant time: a dict finds the entry and a doubly
 # linked list keeps the use order (the most recent entry first), so a use moves one entry to the front.
 #
-# Entries can expire. `Cache[int, float](100, 60.0)` gives every entry 60 seconds; `c.set(3, 9.0, ttl=5.0)` gives one
+# Entries can expire. `Cache[int, float](100, 60.0)` gives every entry 60 seconds (a ttl is a float or a whole number of seconds); `c.set(3, 9.0, ttl=5.0)` gives one
 # entry its own time (a ttl of 0 or less means "no limit"). An expired entry is dropped when it is next looked at, and
 # counts as a miss. Time comes from `clock()`; a test passes its own `Clock` subclass (the third argument,
 # `Cache[int, float](100, 60.0, fake)`) whose `now()` it controls:
@@ -60,6 +60,12 @@ export class CacheMiss(KeyError):
 export class Clock:
     def now(self) -> float:
         return clock()
+
+# a time in seconds as a float: a whole number of seconds is as good as a float (as for requests, D134a)
+def _seconds(t: int | float) -> float:
+    if t is int:
+        return float(t)
+    return t
 
 # one key part as text: the length of its `str` text, a colon and the text
 def part[T](x: T) -> str:
@@ -253,8 +259,8 @@ export class Cache[K, R]:
     expirations: int = 0
 
     @init
-    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
-        self.core = Lru[K, R](capacity, ttl, timer)
+    def make(self, capacity: int, ttl: int | float = 0.0, timer: Clock | None = None):
+        self.core = Lru[K, R](capacity, _seconds(ttl), timer)
 
     # copies the core's counters (the entries and the use order live in the core)
     def sync(self):
@@ -293,8 +299,8 @@ export class Cache[K, R]:
         self.sync()
         return found
 
-    def set(self, key: K, value: R, ttl: float = 0.0):
-        self.core.set(part(key), key, value, ttl)
+    def set(self, key: K, value: R, ttl: int | float = 0.0):
+        self.core.set(part(key), key, value, _seconds(ttl))
         self.sync()
 
     # true when the key was there (and live)
@@ -323,8 +329,8 @@ export class Cache[K1, K2, R]:
     expirations: int = 0
 
     @init
-    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
-        self.core = Lru[tuple[K1, K2], R](capacity, ttl, timer)
+    def make(self, capacity: int, ttl: int | float = 0.0, timer: Clock | None = None):
+        self.core = Lru[tuple[K1, K2], R](capacity, _seconds(ttl), timer)
 
     # copies the core's counters (the entries and the use order live in the core)
     def sync(self):
@@ -363,8 +369,8 @@ export class Cache[K1, K2, R]:
         self.sync()
         return found
 
-    def set(self, k1: K1, k2: K2, value: R, ttl: float = 0.0):
-        self.core.set(part(k1) + part(k2), (k1, k2), value, ttl)
+    def set(self, k1: K1, k2: K2, value: R, ttl: int | float = 0.0):
+        self.core.set(part(k1) + part(k2), (k1, k2), value, _seconds(ttl))
         self.sync()
 
     # true when the key was there (and live)
@@ -393,8 +399,8 @@ export class Cache[K1, K2, K3, R]:
     expirations: int = 0
 
     @init
-    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
-        self.core = Lru[tuple[K1, K2, K3], R](capacity, ttl, timer)
+    def make(self, capacity: int, ttl: int | float = 0.0, timer: Clock | None = None):
+        self.core = Lru[tuple[K1, K2, K3], R](capacity, _seconds(ttl), timer)
 
     # copies the core's counters (the entries and the use order live in the core)
     def sync(self):
@@ -433,8 +439,8 @@ export class Cache[K1, K2, K3, R]:
         self.sync()
         return found
 
-    def set(self, k1: K1, k2: K2, k3: K3, value: R, ttl: float = 0.0):
-        self.core.set(part(k1) + part(k2) + part(k3), (k1, k2, k3), value, ttl)
+    def set(self, k1: K1, k2: K2, k3: K3, value: R, ttl: int | float = 0.0):
+        self.core.set(part(k1) + part(k2) + part(k3), (k1, k2, k3), value, _seconds(ttl))
         self.sync()
 
     # true when the key was there (and live)
@@ -463,8 +469,8 @@ export class Cache[K1, K2, K3, K4, R]:
     expirations: int = 0
 
     @init
-    def make(self, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
-        self.core = Lru[tuple[K1, K2, K3, K4], R](capacity, ttl, timer)
+    def make(self, capacity: int, ttl: int | float = 0.0, timer: Clock | None = None):
+        self.core = Lru[tuple[K1, K2, K3, K4], R](capacity, _seconds(ttl), timer)
 
     # copies the core's counters (the entries and the use order live in the core)
     def sync(self):
@@ -503,8 +509,8 @@ export class Cache[K1, K2, K3, K4, R]:
         self.sync()
         return found
 
-    def set(self, k1: K1, k2: K2, k3: K3, k4: K4, value: R, ttl: float = 0.0):
-        self.core.set(part(k1) + part(k2) + part(k3) + part(k4), (k1, k2, k3, k4), value, ttl)
+    def set(self, k1: K1, k2: K2, k3: K3, k4: K4, value: R, ttl: int | float = 0.0):
+        self.core.set(part(k1) + part(k2) + part(k3) + part(k4), (k1, k2, k3, k4), value, _seconds(ttl))
         self.sync()
 
     # true when the key was there (and live)
@@ -545,7 +551,7 @@ export class Memo[K, V]:
     results: Cache[K, V]
 
     @init
-    def make_memo(self, f: fn(K) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+    def make_memo(self, f: fn(K) -> V, capacity: int, ttl: int | float = 0.0, timer: Clock | None = None):
         self.f = f
         self.results = Cache[K, V](capacity, ttl, timer)
 
@@ -573,7 +579,7 @@ export class Memo[K1, K2, V]:
     results: Cache[K1, K2, V]
 
     @init
-    def make_memo(self, f: fn(K1, K2) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+    def make_memo(self, f: fn(K1, K2) -> V, capacity: int, ttl: int | float = 0.0, timer: Clock | None = None):
         self.f = f
         self.results = Cache[K1, K2, V](capacity, ttl, timer)
 
@@ -601,7 +607,7 @@ export class Memo[K1, K2, K3, V]:
     results: Cache[K1, K2, K3, V]
 
     @init
-    def make_memo(self, f: fn(K1, K2, K3) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+    def make_memo(self, f: fn(K1, K2, K3) -> V, capacity: int, ttl: int | float = 0.0, timer: Clock | None = None):
         self.f = f
         self.results = Cache[K1, K2, K3, V](capacity, ttl, timer)
 
@@ -629,7 +635,7 @@ export class Memo[K1, K2, K3, K4, V]:
     results: Cache[K1, K2, K3, K4, V]
 
     @init
-    def make_memo(self, f: fn(K1, K2, K3, K4) -> V, capacity: int, ttl: float = 0.0, timer: Clock | None = None):
+    def make_memo(self, f: fn(K1, K2, K3, K4) -> V, capacity: int, ttl: int | float = 0.0, timer: Clock | None = None):
         self.f = f
         self.results = Cache[K1, K2, K3, K4, V](capacity, ttl, timer)
 

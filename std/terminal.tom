@@ -821,9 +821,14 @@ export class Terminal:
     # The next key. It waits for one when timeout is negative (the default), at most that many seconds otherwise (0 only looks): kind 'timeout'
     # when the time ran out. A lone Escape is told from the start of a sequence by waiting about 100 ms for more bytes. 'resize' says the window
     # changed, 'eof' that the input ended (or the terminal went away; it keeps saying so).
-    def read_key(self, timeout: float = -1.0) -> Key:
+    def read_key(self, timeout: int | float = -1.0) -> Key:
         if self.fd < 0:
             raise TerminalError('the terminal is closed', 'E532')
+        limit = -1.0
+        if timeout is int:
+            limit = float(timeout)
+        else:
+            limit = timeout
         start = monotonic()
         while True:
             if len(self.queue) > 0:
@@ -831,8 +836,8 @@ export class Terminal:
                 self.queue = self.queue[1:]
                 return key
             wait = -1
-            if timeout >= 0.0:
-                left = timeout - (monotonic() - start)
+            if limit >= 0.0:
+                left = limit - (monotonic() - start)
                 wait = 0
                 if left > 0.0:
                     wait = int(left * 1000.0) + 1

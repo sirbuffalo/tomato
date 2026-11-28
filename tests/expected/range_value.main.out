@@ -36,7 +36,7 @@ False True
 8
 6
 caught range step cannot be zero
-caught index out of range
-caught index out of range
+caught index 5 is out of range for a range of 5 items
+caught index -6 is out of range for a range of 5 items
 caught slice step cannot be zero
 caught min() of an empty sequence

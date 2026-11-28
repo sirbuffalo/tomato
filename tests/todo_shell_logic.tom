@@ -16,7 +16,7 @@ class FakeTerminal implements TermIO:
     keys: list[Key] = []
     writes: list[str] = []
 
-    def read_key(self, timeout: float = -1.0) -> Key:
+    def read_key(self, timeout: int | float = -1.0) -> Key:
         if len(self.keys) == 0:
             return Key('eof')
         k = self.keys[0]

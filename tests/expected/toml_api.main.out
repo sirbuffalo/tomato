@@ -5,9 +5,9 @@ True False True
 ['port', 'ratio', 'hosts']
 x
 y
-expected an int, but this is a str
+expected an int, but this is a str (at ['title'])
 the key nope is not in this dict
-index 5 is out of range for a list of 2
+index 5 is out of range for a list of 2 (at ['server']['hosts'])
 4 1 19 Invalid number
 Invalid number: line 4 column 1 (char 19)
 datetime 1979 5 27 7 32 0 500000000 -420

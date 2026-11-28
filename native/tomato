@@ -486,14 +486,13 @@ $project_cfg|$user_cfg"
       if [ "$n" -gt 120 ]; then { head -n 40 "$1"; printf '... %d lines left out ...\n' $((n - 100)); tail -n 60 "$1"; } | sed 's/^/    /'
       else sed 's/^/    /' "$1"; fi
     }
-    # point_trace FILE KIND: the failure text of a debug-mode test file, so that its trace says where each frame is. A frame's line
-    # number is in the file of its function, and the trace names no file: a function of std/testing.tom (a failed check raises inside
-    # it) is written testing.NAME, and the first frame of a function of the test file is given the file, so the line of the check
-    # reads `at main (tests/a.tom line 6)`. In release mode there is no trace: the error is one `error[E519]: Class: message (line 306)` and a note says so.
+    # point_trace FILE KIND: the failure text of a debug-mode test file, so that its trace says where the check is. A frame carries the
+    # module of its function (`at testing.assert_equal (line 376)`), but a frame of the test file names no file: the first one is given
+    # the file, so the line of the check reads `at main (tests/a.tom line 6)`. In release mode there is no trace: the error is one `error[E519]: Class: message (line 306)` and a note says so.
     point_trace() {
-      awk -v testing="$std/testing.tom" -v file="$1" -v kind="$2" '
+      awk -v file="$1" -v kind="$2" '
         function names(path, set,    l) { while ((getline l < path) > 0) if (match(l, /^[ \t]*(export +)?(async +)?def +[A-Za-z_][A-Za-z_0-9]*/)) { sub(/^[ \t]*(export +)?(async +)?def +/, "", l); sub(/[^A-Za-z_0-9].*$/, "", l); set[l] = 1 } close(path) }
-        BEGIN { names(testing, lib); names(file, mine) }
+        BEGIN { names(file, mine) }
         { text[NR] = $0 }
         END {
           # the first frame of the test file: where the check is
@@ -508,7 +507,6 @@ $project_cfg|$user_cfg"
             if (kind == "main" && match(l, /^  at [A-Za-z_][A-Za-z_0-9.]* \(line [0-9]+\)$/)) {
               split(l, w, " "); base = w[2]; sub(/^.*[.]/, "", base)
               if (i == where) { l = "  at " w[2] " (" file " line " hit ")" }
-              else if (w[2] !~ /[.]/ && base in lib && !(base in mine)) l = "  at testing." w[2] " " w[3] " " w[4]
             } else if (kind == "main" && where > 0 && match(l, / [(]raised on line [0-9]+[)]$/) && !headed) {
               # the line the runtime names is where the error was raised: in std/testing.tom for a failed check; the test is what matters
               pre = substr(l, 1, RSTART - 1); l = pre " (raised at " file " line " hit ")"; headed = 1

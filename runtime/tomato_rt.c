@@ -9378,7 +9378,9 @@ int64_t tomato_os_exchange(void *a, void *b) {
     errno = ENOSYS;
 #endif
     if (r == 0) return 0;
-    if (errno == ENOSYS || errno == EINVAL || errno == ENOTSUP || errno == EOPNOTSUPP) return 100;
+    /* ENOSYS: an old kernel; EINVAL, ENOTSUP, EOPNOTSUPP: a file system without the flag (some network and FAT file systems); EPERM: a
+     * sandbox that filters the call (older container profiles). A real permission failure is raised again by the renames of the fallback. */
+    if (errno == ENOSYS || errno == EINVAL || errno == ENOTSUP || errno == EOPNOTSUPP || errno == EPERM) return 100;
     return os_fail(errno);
 }
 int64_t tomato_os_cpu_count(void) {
@@ -11028,6 +11030,18 @@ void *tomato_limit_message(int32_t kind) {
     char text[160];
     if (kind == 528) { snprintf(text, sizeof text, "the result is too large to calculate: its exponent would have more than %lld bits", (long long)(bf_pow_limit_bits ? bf_pow_limit_bits : bf_max_exp_bits)); bf_pow_limit_bits = 0; }
     else snprintf(text, sizeof text, "the number is too large to write with f: it has more than %lld digits before the point", (long long)bf_max_format_digits);
+    return tomato_str_from_cstr(text);
+}
+
+/* the message of an index out of range (E04) with the index and the length in it, for the compiled code that raises it. kind: 0 a list,
+ * 1 a text, 2 bytes. A list is given the index after a negative one was counted from the end (the compiled code only has that), so
+ * one that is still negative is turned back into the index the program wrote; the other kinds are given the index as written. */
+void *tomato_index_message(int32_t kind, int64_t index, int64_t length) {
+    char text[160];
+    if (kind == 0 && index < 0) index -= length;
+    const char *what = kind == 0 ? "a list" : kind == 1 ? "a text" : "a bytes value";
+    const char *unit = kind == 0 ? "item" : kind == 1 ? "character" : "byte";
+    snprintf(text, sizeof text, "index %lld is out of range for %s of %lld %s%s", (long long)index, what, (long long)length, unit, length == 1 ? "" : "s");
     return tomato_str_from_cstr(text);
 }
 

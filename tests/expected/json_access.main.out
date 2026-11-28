@@ -14,24 +14,24 @@ ok bool
 none null
 nested dict
 3 hi
-as_int on text: error: expected an int, but this is a str
-as_int on float: error: expected an int, but this is a float
-as_int on null: error: expected an int, but this is a null
-as_int on list: error: expected an int, but this is a list
+as_int on text: error: expected an int, but this is a str (at ['name'])
+as_int on float: error: expected an int, but this is a float (at ['f'])
+as_int on null: error: expected an int, but this is a null (at ['none'])
+as_int on list: error: expected an int, but this is a list (at ['tags'])
 as_int on dict: error: expected an int, but this is a dict
 as_int ok: 3
 0 error: the key missing is not in this dict
-1 error: index 2 is out of range for a list of 2
-2 error: index -3 is out of range for a list of 2
-3 error: a list needs an int index, but got the text x
+1 error: index 2 is out of range for a list of 2 (at ['tags'])
+2 error: index -3 is out of range for a list of 2 (at ['tags'])
+3 error: a list needs an int index, but got the text x (at ['tags'])
 4 error: a dict needs a text key, but got the int 0
-5 error: an int cannot be indexed
-6 error: an int has no length
-7 error: expected a dict, but this is a list
-error: expected a str, but this is an int
-error: expected a list, but this is an int
-error: expected a dict, but this is an int
-error: expected a bool, but this is an int
-error: expected a dict, but this is an int
+5 error: an int cannot be indexed (at ['n'])
+6 error: an int has no length (at ['n'])
+7 error: expected a dict, but this is a list (at ['tags'])
+error: expected a str, but this is an int (at ['n'])
+error: expected a list, but this is an int (at ['n'])
+error: expected a dict, but this is an int (at ['n'])
+error: expected a bool, but this is an int (at ['n'])
+error: expected a dict, but this is an int (at ['n'])
 Expecting value: line 2 column 7 (char 15)
 Expecting ',' delimiter 1 6 5

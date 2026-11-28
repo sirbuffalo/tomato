@@ -1,8 +1,9 @@
 # os.exchange (stage 1 of docs/shell-to-tomato-plan.md): two names swap in one step, so a program that reads either name at any moment finds
 # one whole version, never a missing one. The same program is the reader (TOMATO_EXCHANGE_CHILD names the folder it reads). Where a system or
 # file system cannot swap in one step, exchange does three renames (the variable TOMATO_TEST_NO_EXCHANGE makes this system take that path
-# too), and then the reader is not checked: a moment with no name is what that path is. Native only. The first input is a folder for this
-# test's files.
+# too), and then the reader is not checked: a moment with no name is what that path is. The output is the same either way, so the test also
+# passes, and checks the fallback, on a file system that has no swap (the answer of exchange is not printed except for the fallback itself).
+# Native only. The first input is a folder for this test's files.
 import os
 import sys
 

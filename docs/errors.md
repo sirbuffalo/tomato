@@ -205,7 +205,8 @@ Other messages that used to be rough:
 
 Built-in errors have an ID formed from `E` and their line number in `std/errors.txt` (`E04` is `IndexError`, `index out of range`). The table
 only grows, so an id never changes meaning. A compile error shows its id in the label (`error[E227]: name 'tets' is not defined`) and an
-uncaught runtime error does too (`error[E04]: index out of range`). A program that catches an error can read `e.id` and `e.message`.
+uncaught runtime error does too (`error[E04]: index 10 is out of range for a list of 3 items`: the line of the table is the kind of error,
+and the message of a list, text, bytes or range index names the index as it was written and the length). A program that catches an error can read `e.id` and `e.message`.
 
 The language raises these classes, all of them a `RuntimeError` (so `catch RuntimeError` catches any of them) except `AssertionError`:
 
@@ -251,7 +252,7 @@ Error
     KeyError            CacheMiss (cache)
     ValueError          StructError (struct), JSONDecodeError, JSONEncodeError, MsgpackError (json),
                         ValueTypeError (value: a wrong kind, a missing key or an index out of range in a value read by
-                        json or toml, D122a; it was json.JSONTypeError), TOMLDecodeError (toml), RegexError (re)
+                        json or toml, D122a; it was json.JSONTypeError; its message ends with `(at ['a'][0])`, the keys and indexes the value was read through, D143a), TOMLDecodeError (toml), RegexError (re)
     IOError             FileNotFoundError, FileExistsError, PermissionError, IsADirectoryError, NotADirectoryError,
                         TerminalError (terminal), requests.RequestError (InvalidURL, TooManyRedirects, HTTPError)
       TimeoutError      asyncio.TimeoutError, requests.TimeoutError
@@ -303,7 +304,7 @@ line N)` (above), because there the class name is the only clue to what went wro
 class can give its own (one method marked `@str`, any name) and `print` then uses that, found through the object's own class, so a
 value typed `Error` that holds an `Own` shows `Own`'s text (D111a), but the uncaught-error report does not: it
 always prints the class name and the `message` field. Release builds print the same on one line, with the line and no trace:
-`error[E11]: ClassName: message (line 12)`, or `error[E04]: index out of range (line 12)` for a runtime failure.
+`error[E11]: ClassName: message (line 12)`, or `error[E04]: index 10 is out of range for a list of 3 items (line 12)` for a runtime failure.
 `tomato explain E04:12 prog.tom` shows the diagnostic and line from the supplied file. `tomato explain E04`
 shows the class and message without a file. A line of zero means the runtime has no source location, for example when startup
 input is invalid or the machine runs out of memory. These process failures and stack exhaustion print `error[ID]: message`
