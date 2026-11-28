@@ -124,7 +124,7 @@ async def main(base: str):
     catch CancelledError as e:
         print('cancelled')
     print(requests.quote('a b/ü€'))
-    # r.json() and a Json value for json=
+    # r.json() and a Value value for json=
     r = await requests.get(base + '/json')
     j = r.json()
     print(j['ok'].as_bool(), len(j['items']), j['items'][2].as_int())

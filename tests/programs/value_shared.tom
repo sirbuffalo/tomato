@@ -1,0 +1,90 @@
+# One dynamic value for json and toml (D122a): a document read by one is written by the other, the kinds and accessors are the same,
+# and each format refuses the kinds it cannot hold.
+import json
+import toml
+from value import Value, Dict, List, Str, Int, Float, Bool, Null, Bin, Ext, Timestamp, ValueTypeError
+
+def kinds(v: Value) -> str:
+    k = v.kind()
+    if k == 'dict':
+        parts: list[str] = []
+        for key in v.as_dict():
+            parts.append(key + ':' + kinds(v[key]))
+        return '{' + ','.join(parts) + '}'
+    if k == 'list':
+        parts: list[str] = []
+        for x in v.as_list():
+            parts.append(kinds(x))
+        return '[' + ','.join(parts) + ']'
+    return k
+
+def attempt(name: str, v: Value):
+    try:
+        print(name, json.dumps(v))
+    catch RuntimeError as e:
+        print(name, 'JSON', e.id, e.message)
+    try:
+        print(name, 'msgpack', json.dumps_msgpack(v))
+    catch RuntimeError as e:
+        print(name, 'MessagePack', e.id, e.message)
+    try:
+        print(name, toml.dumps(Dict({'k': v})).strip())
+    catch RuntimeError as e:
+        print(name, 'TOML', e.id, e.message)
+
+@main
+def main():
+    # the same tree from both readers
+    j = json.loads('{"name": "tomato", "n": 3, "pi": 2.5, "ok": true, "tags": ["a", "b"], "sub": {"x": 1}}')
+    t = toml.loads('name = "tomato"\nn = 3\npi = 2.5\nok = true\ntags = ["a", "b"]\n[sub]\nx = 1\n')
+    print(kinds(j))
+    print(kinds(t))
+    print(j == t, j == Dict({}), j['tags'] == t['tags'], j['sub'] == t['sub'])
+    # each format writes what the other read
+    print(toml.dumps(j).replace('\n', ' | '))
+    print(json.dumps(t))
+    print(json.dumps(t, indent=1, sort_keys=True).replace('\n', ' '))
+    print(json.dumps(json.loads_msgpack(json.dumps_msgpack(t))) == json.dumps(t))
+    # one set of accessors: the same calls on either
+    for v in [j, t]:
+        print(v['name'].as_str(), v['n'].as_int(), v['n'].as_float(), v['pi'].as_float(), v['ok'].as_bool(), len(v), len(v['tags']), 'sub' in v, 'zz' in v, v.get('zz') is None, v['tags'][-1].as_str())
+    # str() is compact JSON-style text on both
+    print(j)
+    print(t)
+    # the kinds only one format has
+    print(kinds(toml.loads('a = 1979-05-27T07:32:00Z\nb = 07:32:00\nc = inf\nd = nan')))
+    print(Dict({'m': json.loads('null')}), Bin([1, 2, 3]), Ext(5, [9]), Timestamp(10, 5))
+    # a value a format cannot hold
+    m = toml.loads('when = 1979-05-27')['when']
+    attempt('date', m)
+    attempt('inf', toml.loads('x = inf')['x'])
+    attempt('null', Null())
+    attempt('bin', Bin([1]))
+    attempt('ext', Ext(3, [1]))
+    attempt('timestamp', Timestamp(5))
+    attempt('str', Str('ok'))
+    attempt('list', List([Int(1), Float(0.5), Bool(False)]))
+    # wrong kinds and missing keys are ValueTypeError from either format
+    for v in [j, t]:
+        for what in range(5):
+            try:
+                if what == 0:
+                    v['name'].as_int()
+                elif what == 1:
+                    print(v['nope'])
+                elif what == 2:
+                    v['tags'][7]
+                elif what == 3:
+                    v['n'].as_list()
+                else:
+                    print(len(v['n']))
+            catch ValueTypeError as e:
+                print(e.id, e.message)
+    # equality sees kind and content
+    print(Int(1) == Int(1), Int(1) == Float(1.0), Str('a') == Str('a'), Null() == Null(), Bin([1]) == Bin([1]), Bin([1]) == Ext(0, [1]), Dict({'a': Int(1), 'b': Int(2)}) == Dict({'b': Int(2), 'a': Int(1)}))
+    # a Dict keeps the order its keys were added in, and as_dict() is the dict itself
+    d = Dict({})
+    d.as_dict()['z'] = Int(1)
+    d.as_dict()['a'] = Int(2)
+    d.as_dict()['z'] = Int(3)
+    print(d, json.dumps(d, sort_keys=True), toml.dumps(d).replace('\n', ' | '))

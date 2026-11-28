@@ -1,0 +1,5 @@
+from datetime import date
+
+@main
+def main():
+    print(date.fromisoformat('2024-03-09'))

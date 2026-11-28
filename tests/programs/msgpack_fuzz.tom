@@ -1,12 +1,13 @@
 # Mutates and truncates MessagePack data thousands of times: loads_msgpack must answer or raise MsgpackError, never crash
-from json import loads, loads_msgpack, dumps_msgpack, MsgpackError, JsonBin, JsonExt, JsonTimestamp
+from json import loads, loads_msgpack, dumps_msgpack, MsgpackError
+from value import Bin, Ext, Timestamp
 
 @main
 def main():
     doc = loads('{"a": [1, -2500, true, false, null, 1.5, "x\\ny\\u00e9\\ud83d\\ude00"], "b": {"c": {}, "d": [], "e": 18446744073709551615}, "f": "日本語"}')
-    doc.as_dict()['bin'] = JsonBin([1, 2, 3])
-    doc.as_dict()['ext'] = JsonExt(7, [1, 2, 3, 4])
-    doc.as_dict()['ts'] = JsonTimestamp(1700000000, 42)
+    doc.as_dict()['bin'] = Bin([1, 2, 3])
+    doc.as_dict()['ext'] = Ext(7, [1, 2, 3, 4])
+    doc.as_dict()['ts'] = Timestamp(1700000000, 42)
     base = dumps_msgpack(doc)
     seed = 4242
     ok = 0

@@ -1,0 +1,5 @@
+import testing
+
+@main
+def main():
+    testing._run_all(['one'], [], ())

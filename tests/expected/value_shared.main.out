@@ -1,0 +1,49 @@
+{name:str,n:int,pi:float,ok:bool,tags:[str,str],sub:{x:int}}
+{name:str,n:int,pi:float,ok:bool,tags:[str,str],sub:{x:int}}
+True False True True
+name = "tomato" | n = 3 | pi = 2.5 | ok = true | tags = ["a", "b"] |  | [sub] | x = 1 | 
+{"name":"tomato","n":3,"pi":2.5,"ok":true,"tags":["a","b"],"sub":{"x":1}}
+{  "n": 3,  "name": "tomato",  "ok": true,  "pi": 2.5,  "sub": {   "x": 1  },  "tags": [   "a",   "b"  ] }
+True
+tomato 3 3.0 2.5 True 6 2 True False True b
+tomato 3 3.0 2.5 True 6 2 True False True b
+{"name":"tomato","n":3,"pi":2.5,"ok":true,"tags":["a","b"],"sub":{"x":1}}
+{"name":"tomato","n":3,"pi":2.5,"ok":true,"tags":["a","b"],"sub":{"x":1}}
+{a:datetime,b:local-time,c:float,d:float}
+{"m":null} <bin of 3 bytes> <ext 5 of 1 bytes> <timestamp 10 s 5 ns>
+date JSON E617 a date or time cannot be written as JSON text (write it as a Str)
+date MessagePack E618 a date or time cannot be written as MessagePack (use a Timestamp)
+date k = 1979-05-27
+inf JSON E81 the float inf is not valid JSON
+inf MessagePack E619 the float inf cannot be written as MessagePack
+inf k = inf
+null null
+null msgpack [192]
+null TOML E620 a null value cannot be written as TOML
+bin JSON E77 a bin value cannot be written as JSON text (use dumps_msgpack)
+bin msgpack [196, 1, 1]
+bin TOML E620 a bin value cannot be written as TOML
+ext JSON E78 an ext value cannot be written as JSON text (use dumps_msgpack)
+ext msgpack [212, 3, 1]
+ext TOML E620 an ext value cannot be written as TOML
+timestamp JSON E79 a timestamp cannot be written as JSON text (use dumps_msgpack)
+timestamp msgpack [214, 255, 0, 0, 0, 5]
+timestamp TOML E620 a timestamp value cannot be written as TOML
+str "ok"
+str msgpack [162, 111, 107]
+str k = "ok"
+list [1,0.5,false]
+list msgpack [147, 1, 203, 63, 224, 0, 0, 0, 0, 0, 0, 194]
+list k = [1, 0.5, false]
+E71 expected an int, but this is a str
+E75 the key nope is not in this dict
+E73 index 7 is out of range for a list of 2
+E71 expected a list, but this is an int
+E366 an int has no length
+E71 expected an int, but this is a str
+E75 the key nope is not in this dict
+E73 index 7 is out of range for a list of 2
+E71 expected a list, but this is an int
+E366 an int has no length
+True False True True True False True
+{"z":3,"a":2} {"a":2,"z":3} z = 3 | a = 2 | 

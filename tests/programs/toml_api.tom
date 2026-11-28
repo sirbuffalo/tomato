@@ -1,5 +1,7 @@
-# The toml library's API: accessors, builders, dumps layout, load(path), date/time values and errors.
-from toml import loads, load, dumps, table, array, string, integer, real, boolean, moment, Moment, Toml, TOMLDecodeError
+# The toml library's API: accessors on the shared Value, building a document, dumps layout, load(path), date/time values and errors.
+from toml import loads, load, dumps, TOMLDecodeError
+import json
+from value import Value, Dict, List, Str, Int, Float, Bool, Null, Bin, Timestamp, Moment, ValueTypeError
 
 @main
 def main(dir: str = '/tmp'):
@@ -7,23 +9,23 @@ def main(dir: str = '/tmp'):
     doc = loads('title = "demo"\nported = true\n[server]\nport = 8080\nratio = 0.25\nhosts = ["a", "b"]\n[[user]]\nname = "x"\n[[user]]\nname = "y"\n')
     print(doc['title'].as_str(), doc['ported'].as_bool())
     print(doc['server']['port'].as_int(), doc['server']['ratio'].as_float(), doc['server']['port'].as_float())
-    print(len(doc), len(doc['server']['hosts']), doc['server']['hosts'].at(1).as_str(), doc['server']['hosts'].at(-1).as_str())
+    print(len(doc), len(doc['server']['hosts']), doc['server']['hosts'][1].as_str(), doc['server']['hosts'][-1].as_str())
     print('server' in doc, 'nope' in doc, 'port' in doc['server'])
-    print(doc['server'].keys())
-    for u in doc['user'].items:
+    print(list(doc['server'].as_dict().keys()))
+    for u in doc['user'].as_list():
         print(u['name'].as_str())
     # wrong kinds and missing keys are ordinary errors
     try:
         doc['title'].as_int()
-    catch RuntimeError as e:
+    catch ValueTypeError as e:
         print(e.message)
     try:
         print(doc['nope'])
-    catch RuntimeError as e:
+    catch ValueTypeError as e:
         print(e.message)
     try:
-        doc['server']['hosts'].at(5)
-    catch RuntimeError as e:
+        doc['server']['hosts'][5]
+    catch ValueTypeError as e:
         print(e.message)
     # the error carries its position
     try:
@@ -34,60 +36,66 @@ def main(dir: str = '/tmp'):
     # dates and times
     t = loads('a = 1979-05-27T07:32:00.5-07:00\nb = 1979-05-27\nc = 07:32:00')
     m = t['a'].as_moment()
-    print(m.kind, m.year, m.month, m.day, m.hour, m.minute, m.second, m.nano, m.offset)
-    print(t['b'].as_moment().kind, t['c'].as_moment().kind, t['b'].kind, t['c'].kind)
+    print(m.form, m.year, m.month, m.day, m.hour, m.minute, m.second, m.nano, m.offset)
+    print(t['b'].as_moment().form, t['c'].as_moment().form, t['b'].kind(), t['c'].kind())
     print(m)
     print(m == loads('x = 1979-05-27T07:32:00.5-07:00')['x'].as_moment())
     # inf and nan are kept as text, since a Tomato float cannot hold them
     f = loads('a = inf\nb = -inf\nc = nan\nd = 2.5')
-    print(f['a'].special, f['b'].special, f['c'].special, repr_f(f['d']))
+    print(special(f['a']), special(f['b']), special(f['c']), repr_f(f['d']))
     # building a document and dumping it
-    d = table()
-    d.put('name', string('he said "hi"\n\tand left \\ é'))
-    d.put('count', integer(12345678901234))
-    d.put('pi', real(3.25))
-    d.put('on', boolean(True))
+    d = Dict({})
+    fields = d.as_dict()
+    fields['name'] = Str('he said "hi"\n\tand left \\ é')
+    fields['count'] = Int(12345678901234)
+    fields['pi'] = Float(3.25)
+    fields['on'] = Bool(True)
     mo = Moment()
-    mo.kind = 'local-date'
+    mo.form = 'local-date'
     mo.year = 2024
     mo.month = 2
     mo.day = 29
-    d.put('when', moment(mo))
-    d.put('empty list', array())
-    nums = array()
-    nums.append(integer(1))
-    nums.append(string('mixed'))
-    inner = array()
-    inner.append(integer(2))
-    nums.append(inner)
-    d.put('nums', nums)
-    owner = table()
-    owner.put('first', string('A'))
-    owner.put('a.b', integer(1))
-    d.put('owner', owner)
-    sub = table()
-    sub.put('deep', boolean(False))
-    owner.put('sub', sub)
-    items = array()
+    fields['when'] = mo
+    fields['empty list'] = List([])
+    inner = List([Int(2)])
+    fields['nums'] = List([Int(1), Str('mixed'), inner])
+    owner = Dict({})
+    fields['owner'] = owner
+    owner.as_dict()['first'] = Str('A')
+    owner.as_dict()['a.b'] = Int(1)
+    owner.as_dict()['sub'] = Dict({'deep': Bool(False)})
+    items = List([])
     for k in range(2):
-        it = table()
-        it.put('id', integer(k))
-        items.append(it)
-    d.put('item', items)
+        items.as_list().append(Dict({'id': Int(k)}))
+    fields['item'] = items
     out = dumps(d)
     print(out)
     back = loads(out)
     print(back == d)
-    print(dumps(table()) == '')
+    print(dumps(Dict({})) == '')
     # load(path)
     f2 = open(dir + '/tomato_toml_api_test.toml', 'w')
     f2.write(out)
     f2.close()
     print(load(dir + '/tomato_toml_api_test.toml') == d)
     try:
-        dumps(integer(1))
-    catch RuntimeError as e:
+        dumps(Int(1))
+    catch ValueError as e:
         print(e.message)
+    # a value TOML has no way to write
+    for bad in [Dict({'a': Null()}), Dict({'a': List([Bin([1])])}), Dict({'a': Timestamp(1)})]:
+        try:
+            dumps(bad)
+        catch ValueError as e:
+            print(e.message)
+    # the same tree goes to json and back
+    j = json.loads(json.dumps(doc))
+    print(j == doc, json.dumps(doc["server"]))
 
-def repr_f(v: Toml) -> str:
+def special(v: Value) -> str:
+    if v is Float:
+        return v.special
+    return ''
+
+def repr_f(v: Value) -> str:
     return str(v.as_float())

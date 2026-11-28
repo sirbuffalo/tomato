@@ -1,0 +1,8 @@
+# abs, min, max and ** are built in (math has no copies of them, D122a); math keeps the integer helpers and the float functions
+from math import gcd, lcm, isqrt, sqrt, floor, is_prime
+
+@main
+def main():
+    print(abs(-7), abs(-2.5), min(3, 9), max(3, 9), min(1.5, 0.5), max([4, 8, 6]))
+    print(2 ** 10, (-3) ** 3, 2.0 ** 0.5 > 1.41)
+    print(gcd(-12, 18), lcm(4, -6), isqrt(99), sqrt(16), floor(2.7), is_prime(97))

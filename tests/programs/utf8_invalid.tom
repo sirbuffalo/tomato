@@ -2,7 +2,8 @@
 # A character is then a lead byte and the continuation bytes after it, as len() counts them: indexing gives exactly those
 # bytes, ord() of a broken character is U+FFFD, and dumps(ensure_ascii=True) writes one � for it. None of them reads
 # past the end of the text.
-from json import dumps, JsonStr
+from json import dumps
+from value import Str
 
 def read(name: str) -> str:
     f = open('tests/json_data/' + name + '.json', 'r')
@@ -14,11 +15,11 @@ def read(name: str) -> str:
 def main():
     ff = read('bad_ff')                 # [ " a b 0xFF " ]: the byte 0xFF is never UTF-8
     print(len(ff), len(ff[4]), ord(ff[4]), ord(ff[4:5]), ff[5])
-    print(dumps(JsonStr(ff), ensure_ascii=True))
+    print(dumps(Str(ff), ensure_ascii=True))
     cut = read('bad_truncated')         # [ " 0xF0 0x9F 0x98 " ]: a four-byte character without its last byte
     print(len(cut), len(cut[2]), ord(cut[2]), ord(cut[2:3]), cut[3], cut[-3] == cut[2])
-    print(dumps(JsonStr(cut), ensure_ascii=True))
+    print(dumps(Str(cut), ensure_ascii=True))
     tail = cut[:3]                      # the broken character is the last one
-    print(len(tail), ord(tail[-1]), dumps(JsonStr(tail), ensure_ascii=True))
+    print(len(tail), ord(tail[-1]), dumps(Str(tail), ensure_ascii=True))
     good = read('good_emoji')           # a whole four-byte character still decodes
-    print(len(good), ord(good[2]), dumps(JsonStr(good[2]), ensure_ascii=True))
+    print(len(good), ord(good[2]), dumps(Str(good[2]), ensure_ascii=True))

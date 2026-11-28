@@ -1,6 +1,7 @@
 # json load_msgpack(path) / dump_msgpack(value, path): round trips through binary files, large values, bad bytes in the
 # file, and paths that cannot be opened, read or written (the IOError names the file, as open() does).
-from json import loads, dumps, loads_msgpack, dumps_msgpack, load_msgpack, dump_msgpack, MsgpackError, Json, JsonBin, JsonExt, JsonTimestamp, JsonInt, JsonFloat, JsonStr, JsonList, JsonDict, JsonNull, JsonBool
+from json import loads, dumps, loads_msgpack, dumps_msgpack, load_msgpack, dump_msgpack, MsgpackError
+from value import Value, Bin, Ext, Timestamp, Int, Float, Str, List, Dict, Null, Bool
 
 def hexs(b: list[int]) -> str:
     digits = '0123456789abcdef'
@@ -10,7 +11,7 @@ def hexs(b: list[int]) -> str:
     return ''.join(out)
 
 # the file holds exactly the bytes of dumps_msgpack, and reading it back gives the same value
-def round_trip(label: str, j: Json, path: str):
+def round_trip(label: str, j: Value, path: str):
     dump_msgpack(j, path)
     back = load_msgpack(path)
     print(label, dumps_msgpack(back) == dumps_msgpack(j), back.kind())
@@ -29,7 +30,7 @@ def try_load(label: str, path: str, dir: str):
     catch IOError as e:
         print(label, 'IOError', e.id, e.message.replace(dir, '<dir>'))
 
-def try_dump(label: str, j: Json, path: str, dir: str):
+def try_dump(label: str, j: Value, path: str, dir: str):
     try:
         dump_msgpack(j, path)
         print(label, 'written')
@@ -38,10 +39,10 @@ def try_dump(label: str, j: Json, path: str, dir: str):
     catch IOError as e:
         print(label, 'IOError', e.id, e.message.replace(dir, '<dir>'))
 
-def nested(depth: int) -> Json:
-    j: Json = JsonInt(1)
+def nested(depth: int) -> Value:
+    j: Value = Int(1)
     for i in range(depth):
-        j = JsonList([j])
+        j = List([j])
     return j
 
 @main
@@ -49,34 +50,34 @@ def main(dir: str = '/tmp'):
     # tests/run.sh passes its own temporary folder: a fixed name in a shared /tmp can belong to another user
     path = dir + '/tomato_msgpack_files_test.msgpack'
     print('-- round trips')
-    every = JsonDict({
-        'null': JsonNull(), 'yes': JsonBool(True), 'no': JsonBool(False),
-        'ints': JsonList([JsonInt(0), JsonInt(127), JsonInt(-32), JsonInt(255), JsonInt(-129), JsonInt(65536), JsonInt(-2147483649), JsonInt(9223372036854775807), JsonInt(-9223372036854775808), JsonInt(18446744073709551615)]),
-        'floats': JsonList([JsonFloat(0.5), JsonFloat(-0.0), JsonFloat(1e300), loads_msgpack([203, 127, 248, 0, 0, 0, 0, 0, 0]), loads_msgpack([203, 255, 240, 0, 0, 0, 0, 0, 0])]),
-        'text': JsonStr('tomato é ✓ 🍅'), 'empty': JsonStr(''),
-        'bin': JsonBin([0, 1, 127, 128, 255]), 'ext': JsonExt(5, [1, 2, 3]),
-        'ts': JsonTimestamp(1700000000, 123456789), 'old': JsonTimestamp(-1, 0),
-        'nest': JsonList([JsonDict({}), JsonList([]), JsonDict({'a': JsonList([JsonNull()])})])})
+    every = Dict({
+        'null': Null(), 'yes': Bool(True), 'no': Bool(False),
+        'ints': List([Int(0), Int(127), Int(-32), Int(255), Int(-129), Int(65536), Int(-2147483649), Int(9223372036854775807), Int(-9223372036854775808), Int(18446744073709551615)]),
+        'floats': List([Float(0.5), Float(-0.0), Float(1e300), loads_msgpack([203, 127, 248, 0, 0, 0, 0, 0, 0]), loads_msgpack([203, 255, 240, 0, 0, 0, 0, 0, 0])]),
+        'text': Str('tomato é ✓ 🍅'), 'empty': Str(''),
+        'bin': Bin([0, 1, 127, 128, 255]), 'ext': Ext(5, [1, 2, 3]),
+        'ts': Timestamp(1700000000, 123456789), 'old': Timestamp(-1, 0),
+        'nest': List([Dict({}), List([]), Dict({'a': List([Null()])})])})
     round_trip('every kind', every, path)
     back = load_msgpack(path)
     print(back['text'].as_str(), back['ints'][9].as_int(), back['bin'].as_bytes(), back['ext'].ext_type(), back['ts'].nanos(), back['old'].seconds())
     print(str(back['floats'][3].as_float()), str(back['floats'][4].as_float()))
-    tops: list[Json] = [JsonNull(), JsonBool(True), JsonInt(-1), JsonFloat(2.5), JsonStr('x'), JsonBin([]), JsonList([]), JsonDict({})]
+    tops: list[Value] = [Null(), Bool(True), Int(-1), Float(2.5), Str('x'), Bin([]), List([]), Dict({})]
     for j in tops:
         round_trip('top level', j, path)
     # the exact bytes: [1, "a", nil] is 93 01 a1 61 c0
     dump_msgpack(loads('[1, "a", null]'), path)
     print(hexs(dumps_msgpack(load_msgpack(path))))
     # a bin of 150 a's is c4 96 61 61 ..., which is also UTF-8 text (U+0116 and 150 a's), so open() can check the file
-    dump_msgpack(JsonBin([97] * 150), path)
+    dump_msgpack(Bin([97] * 150), path)
     f = open(path, 'r')
     print(f.read() == chr(278) + 'a' * 150)
     f.close()
     # a shorter value replaces the file (no bytes of the longer one are left at the end)
     dump_msgpack(every, path)
-    dump_msgpack(JsonInt(7), path)
+    dump_msgpack(Int(7), path)
     print(dumps(load_msgpack(path)))
-    # the same Json as loads gives for a JSON document
+    # the same Value as loads gives for a JSON document
     doc = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3, "big": 123456789012345678901, "f": 0.25}')
     try_dump('too big for 64 bits', doc, path, dir)
     doc = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3, "f": 0.25}')
@@ -86,32 +87,32 @@ def main(dir: str = '/tmp'):
     round_trip('path with a space and é', doc, odd)
 
     print('-- large values')
-    ints: list[Json] = []
+    ints: list[Value] = []
     for i in range(200000):
-        ints.append(JsonInt(i * 7919 - 500000))
-    round_trip('200000 ints', JsonList(ints), path)
+        ints.append(Int(i * 7919 - 500000))
+    round_trip('200000 ints', List(ints), path)
     print(len(load_msgpack(path)), load_msgpack(path)[199999].as_int())
-    round_trip('5 MB str', JsonStr('tomato🍅' * 500000), path)
+    round_trip('5 MB str', Str('tomato🍅' * 500000), path)
     print(len(load_msgpack(path).as_str()))
     bytes: list[int] = []
     for i in range(300000):
         bytes.append(i % 256)
-    round_trip('300000-byte bin', JsonBin(bytes), path)
+    round_trip('300000-byte bin', Bin(bytes), path)
     print(load_msgpack(path).as_bytes() == bytes)
-    fields: dict[str, Json] = {}
+    fields: dict[str, Value] = {}
     for i in range(20000):
-        fields[f'key{i}'] = JsonList([JsonInt(i), JsonStr(str(i)), JsonFloat(i / 4)])
-    round_trip('20000-key dict', JsonDict(fields), path)
+        fields[f'key{i}'] = List([Int(i), Str(str(i)), Float(i / 4)])
+    round_trip('20000-key dict', Dict(fields), path)
     print(load_msgpack(path)['key19999'][1].as_str())
     round_trip('512 levels', nested(511), path)
 
     print('-- values MessagePack cannot hold leave the file alone')
-    dump_msgpack(JsonStr('kept'), path)
+    dump_msgpack(Str('kept'), path)
     try_dump('513 levels', nested(513), path, dir)
-    try_dump('65-bit int', JsonInt(36893488147419103232), path, dir)
-    try_dump('bad byte', JsonBin([1, 256]), path, dir)
-    try_dump('bad ext type', JsonExt(-1, [1]), path, dir)
-    try_dump('bad nanos', JsonTimestamp(0, 1000000000), path, dir)
+    try_dump('65-bit int', Int(36893488147419103232), path, dir)
+    try_dump('bad byte', Bin([1, 256]), path, dir)
+    try_dump('bad ext type', Ext(-1, [1]), path, dir)
+    try_dump('bad nanos', Timestamp(0, 1000000000), path, dir)
     try_load('still', path, dir)
 
     print('-- bad bytes in the file')
@@ -136,9 +137,9 @@ def main(dir: str = '/tmp'):
         print('open():', e.id, e.message)
     try_load('load missing dir', missing, dir)
     try_load('load missing file', dir + '/tomato_msgpack_files_never_written.msgpack', dir)
-    try_dump('dump missing dir', JsonNull(), missing, dir)
+    try_dump('dump missing dir', Null(), missing, dir)
     try_load('load a directory', dir, dir)
-    try_dump('dump a directory', JsonNull(), dir, dir)
+    try_dump('dump a directory', Null(), dir, dir)
     try:
         load_msgpack(missing)
     catch RuntimeError as e:

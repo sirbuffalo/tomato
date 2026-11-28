@@ -1,11 +1,11 @@
 # `import module as name` and `from module import a as b` (D115a): only the new name is bound. Modules come from std (math,
-# rational, itertools) and from the project (shapes_lib); `from math import min as small` gives a builtin's name another one.
+# rational, itertools) and from the project (shapes_lib); `from math import gcd as small` gives a function another name (math has no min and max since D122a: they are built in).
 import math as m
 import rational as r
 import shapes_lib as shapes
 import itertools
 from shapes_lib import area as box_area, Box as Rect
-from math import min as small, max as big
+from math import gcd as small, lcm as big
 from math import sqrt as root, sqrt as len     # an import shadows a builtin's name in this file (D115a), so `len` is math's sqrt here
 from itertools import chain as join_all
 
@@ -36,7 +36,7 @@ def main():
     print(box_area(rect), isinstance_free(rect))
     print(small(4, 9), big(4, 9))
     print(root(25.0), len(36.0))
-    print(min(3, 2))     # the builtin min: `from math import min as small` leaves it alone
+    print(min(3, 2))     # the builtin min: `from math import gcd as small` leaves it alone
     print(list(join_all([1, 2], [3])))
     print(list(itertools.chain([7], [8])))
     xs: list[shapes.Box] = [box, rect]

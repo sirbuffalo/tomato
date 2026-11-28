@@ -4,7 +4,8 @@
 # tests/run.sh runs it under AddressSanitizer and in the browser's interpreter too.
 from math import sqrt, cbrt, exp, expm1, log, log2, log10, log1p, log_base, sinh, cosh, tanh, asinh, acosh, atan, atan2, hypot
 from math import sin, cos, tan, asin, rad
-from json import loads, dumps, JsonFloat, JsonList, loads_msgpack, dumps_msgpack, JSONDecodeError, JSONEncodeError, MsgpackError
+from json import loads, dumps, loads_msgpack, dumps_msgpack, JSONDecodeError, JSONEncodeError, MsgpackError
+from value import Float, List, Dict
 import toml
 
 def json_error(text: str) -> str:
@@ -42,23 +43,23 @@ def main():
     j = loads('[1e400, -2.5e-400, 1e-320, 4.9406564584124654e-324, 5e-324, 1.5e+1000000, 0.0, -0.0, 1e-5]')
     print(dumps(j))
     print(dumps(loads(dumps(j))) == dumps(j), j[3].as_float() == 2.0 ** -1074, j[4].as_float() == 2.0 ** -1074)
-    print(dumps(JsonList([JsonFloat(big), JsonFloat(exp(1000)), JsonFloat(2.0 ** -1074), JsonFloat(0.1)])))
+    print(dumps(List([Float(big), Float(exp(1000)), Float(2.0 ** -1074), Float(0.1)])))
     print(json_error('[1e' + '0' * 4299 + '1]'), json_error('[2e-' + '0' * 4298 + '17]'))
     print(json_error('[1e' + '0' * 4300 + '1]'), json_error('-1e-' + '1' * 4301))
     huge = 2.0 ** (2.0 ** 4100)
     try:
-        print(dumps(JsonFloat(huge)))
+        print(dumps(Float(huge)))
     catch JSONEncodeError as e:
         print('JSONEncodeError', e.id, e.message[:30])
     # MessagePack has only 64-bit floats
-    print(dumps_msgpack(JsonFloat(2.0 ** -1074)), dumps_msgpack(JsonFloat(1.5)))
+    print(dumps_msgpack(Float(2.0 ** -1074)), dumps_msgpack(Float(1.5)))
     # one in the subnormal range is written as the nearest double: 1e-310 read from JSON text is a float of its own
-    print(dumps_msgpack(loads('[1e-310, 2.5e-320]')), dumps_msgpack(JsonFloat(1.5 * 2.0 ** -1075)))
+    print(dumps_msgpack(loads('[1e-310, 2.5e-320]')), dumps_msgpack(Float(1.5 * 2.0 ** -1075)))
     # rounded twice (to 53 bits when read, then to a double): one unit of the last place above the double strtod reads (2 ** -1074)
     print(dumps_msgpack(loads('[7.4109846876186981e-324]')))
     for x in [big, tiny, -exp(1000), 2.0 ** -1075]:
         try:
-            print(dumps_msgpack(JsonFloat(x)))
+            print(dumps_msgpack(Float(x)))
         catch MsgpackError as e:
             print('MsgpackError', e.id, e.message)
     # TOML too
@@ -70,8 +71,8 @@ def main():
             print(toml.dumps(toml.loads(text)))
         catch toml.TOMLDecodeError as e:
             print('TOMLDecodeError', e.message)
-    t = toml.table()
-    t.put('h', toml.real(huge))
+    t = Dict({})
+    t.as_dict()["h"] = Float(huge)
     try:
         print(toml.dumps(t))
     catch ValueError as e:

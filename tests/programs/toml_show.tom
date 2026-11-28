@@ -1,29 +1,31 @@
 # Helpers for the toml tests: a compact one-line rendering of a decoded document, and a runner that decodes, prints the
 # rendering (or the error), and checks that dumps then loads gives back an equal document.
-from toml import loads, dumps, Toml, TOMLDecodeError
+from toml import loads, dumps, TOMLDecodeError
+from value import Value, Float
 
-export def show(v: Toml) -> str:
-    if v.kind == 'table':
+export def show(v: Value) -> str:
+    k = v.kind()
+    if k == 'dict':
         parts: list[str] = []
-        for k in v.keys():
-            parts.append(k + ': ' + show(v[k]))
+        for key in v.as_dict():
+            parts.append(key + ': ' + show(v[key]))
         return '{' + ', '.join(parts) + '}'
-    if v.kind == 'array':
+    if k == 'list':
         parts: list[str] = []
-        for x in v.items:
+        for x in v.as_list():
             parts.append(show(x))
         return '[' + ', '.join(parts) + ']'
-    if v.kind == 'string':
-        return 'str(' + v.text + ')'
-    if v.kind == 'integer':
-        return 'int(' + str(v.num) + ')'
-    if v.kind == 'float':
-        if v.special != '':
+    if k == 'str':
+        return 'str(' + v.as_str() + ')'
+    if k == 'int':
+        return 'int(' + str(v.as_int()) + ')'
+    if k == 'float':
+        if v is Float and v.special != '':
             return 'float(' + v.special + ')'
-        return 'float(' + str(v.real) + ')'
-    if v.kind == 'boolean':
-        return 'bool(' + str(v.flag) + ')'
-    return v.kind + '(' + str(v.as_moment()) + ')'
+        return 'float(' + str(v.as_float()) + ')'
+    if k == 'bool':
+        return 'bool(' + str(v.as_bool()) + ')'
+    return k + '(' + str(v) + ')'
 
 export def run(name: str, lines: list[str]):
     text = '\n'.join(lines)

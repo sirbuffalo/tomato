@@ -13,8 +13,8 @@
 #
 # Anything else is an error, a typo in a table or a key included. A file with neither [project] nor [seed] is the settings-only file
 # of D77g ([build], [limits]) and is read as a project's. Seeds are resolved elsewhere (seeds.tom); this file only reads and checks.
-from toml import Toml
-from config import ConfigError, read_toml, read_file
+from value import Value
+from config import ConfigError, read_toml, read_file, value_word, toml_text, is_table, is_array
 from modnames import planned_modules
 
 # one requirement of one table: the seed's name, the form it was written in, and the table it is in
@@ -318,43 +318,43 @@ def entry_problem(name: str) -> bool:
 # ---------------------------------------------------------------------------------------------------------------------
 # reading
 
-def kind_word(v: Toml) -> str:
-    return v.describe()
+def kind_word(v: Value) -> str:
+    return value_word(v)
 
-def need_table(path: str, v: Toml, what: str):
-    if not v.is_table():
+def need_table(path: str, v: Value, what: str):
+    if not is_table(v):
         fail_at(559, path, label_key(what), f'{what} must be a table, not {kind_word(v)}')
 
-def need_string(path: str, v: Toml, what: str) -> str:
-    if v.kind != 'string':
-        shown = v.show()
+def need_string(path: str, v: Value, what: str) -> str:
+    if v.kind() != 'str':
+        shown = toml_text(v)
         fail_at(559, path, label_key(what), f'{what} must be a string, not {shown}')
-    return v.text
+    return v.as_str()
 
-def known(path: str, table: Toml, table_name: str, names: list[str]):
+def known(path: str, table: Value, table_name: str, names: list[str]):
     # every key of the table is one of names
-    for key in table.keys():
+    for key in table.as_dict().keys():
         if key not in names:
             fail_at(558, path, f'{table_name}.{key}', f"unknown setting {table_name}.{key} (the settings of [{table_name}] are {', '.join(names)})")
 
-def required(path: str, table: Toml, table_name: str, key: str) -> str:
+def required(path: str, table: Value, table_name: str, key: str) -> str:
     if not table.has(key):
         fail_at(557, path, table_name, f'[{table_name}] needs the setting {key}')
-    return need_string(path, table.lookup(key), f'{table_name}.{key}')
+    return need_string(path, table[key], f'{table_name}.{key}')
 
-def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
+def read_seed_spec(m: Manifest, key: str, v: Value, table: str):
     # one requirement: a string (a minimum version) or a table with git and rev, or path
     where = 'seeds' if table == '' else 'test-seeds'
     req = SeedReq()
     req.name = key
     req.table = table
     label = f'{where}."{key}"'
-    if v.kind == 'string':
-        problem = version_problem(v.text, True)
+    if v.kind() == 'str':
+        problem = version_problem(v.as_str(), True)
         if problem != '':
-            fail_at(560, m.path, label, f'{label} is "{v.text}", which is not a version: {problem}')
-        req.version = v.text
-    elif v.is_table():
+            fail_at(560, m.path, label, f'{label} is "{v.as_str()}", which is not a version: {problem}')
+        req.version = v.as_str()
+    elif is_table(v):
         has_git = v.has('git') or v.has('rev') or v.has('tag') or v.has('branch')
         if has_git and not v.has('git') and v.has('path'):
             fail_at(568, m.path, label, f'{label} has path and also rev, tag or branch but no git: a path seed is only {{ path = "../folder" }}, and a git seed needs git (its path is the folder of the repository)')
@@ -368,15 +368,15 @@ def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
             if v.has('tag') and v.has('branch'):
                 fail_at(568, m.path, label, f'{label} has tag and also branch: a seed follows one or the other')
             if v.has('tag'):
-                req.tag = need_string(m.path, v.lookup('tag'), f'{label}.tag')
+                req.tag = need_string(m.path, v['tag'], f'{label}.tag')
             if v.has('branch'):
-                req.branch = need_string(m.path, v.lookup('branch'), f'{label}.branch')
+                req.branch = need_string(m.path, v['branch'], f'{label}.branch')
             if v.has('path'):
-                req.subdir = need_string(m.path, v.lookup('path'), f'{label}.path')
+                req.subdir = need_string(m.path, v['path'], f'{label}.path')
         elif v.has('path'):
             known(m.path, v, label, ['path'])
             req.kind = 'path'
-            req.path = need_string(m.path, v.lookup('path'), f'{label}.path')
+            req.path = need_string(m.path, v['path'], f'{label}.path')
             if req.path == '':
                 fail_at(559, m.path, f'{label}.path', f'{label}.path must not be empty')
         else:
@@ -390,31 +390,31 @@ def read_seed_spec(m: Manifest, key: str, v: Toml, table: str):
         fail_at(563, m.path, label, f'{label} is a {req.kind} seed, and only a project can use those: a seed can use only registered seeds, written as "1.2.0"')
     m.reqs.append(req)
 
-def read_seed_table(m: Manifest, t: Toml, table: str):
+def read_seed_table(m: Manifest, t: Value, table: str):
     # [seeds] (table '') or [test-seeds] (table 'test'): every key is a seed, written "owner/name" with a slash. D92b's tables
     # below them ([seeds.test], [seeds.greet.loud]) are gone (D94b): a table with no slash in its name is refused, with the way out
     where = 'seeds' if table == '' else 'test-seeds'
-    for key in t.keys():
-        v = t.lookup(key)
+    for key in t.as_dict().keys():
+        v = t[key]
         if '/' in key:
             read_seed_spec(m, key, v, table)
-        elif v.is_table():
+        elif is_table(v):
             fail_at(590, m.path, f'{where}.{key}', f'[{where}.{key}] is not allowed: a table in [{where}] names a seed with a slash, "owner/name"; seeds used only by tests go in [test-seeds], the one table for them')
         else:
             fail_at(555, m.path, f'{where}."{key}"', f'unknown key "{key}" in [{where}]: a seed is written "owner/name" with a slash')
 
-def read_mode(m: Manifest, v: Toml, label: str) -> str:
+def read_mode(m: Manifest, v: Value, label: str) -> str:
     text = need_string(m.path, v, label)
     if text != 'debug' and text != 'release':
         fail_at(565, m.path, label_key(label), f'{label} must be "debug" or "release", not "{text}"')
     return text
 
-def read_build_table(m: Manifest, t: Toml, table: str):
+def read_build_table(m: Manifest, t: Value, table: str):
     where = 'build' if table == '' else 'build.' + table
     b = BuildTable()
     b.table = table
-    for key in t.keys():
-        v = t.lookup(key)
+    for key in t.as_dict().keys():
+        v = t[key]
         if key == 'mode':
             b.mode = read_mode(m, v, f'{where}.mode')
         elif key == 'output':
@@ -423,7 +423,7 @@ def read_build_table(m: Manifest, t: Toml, table: str):
                 fail_at(559, m.path, f'{where}.output', f'{where}.output must not be empty')
         elif key == 'target':
             fail_at(566, m.path, f'{where}.target', f'{where}.target is reserved for a later version and cannot be set yet')
-        elif v.is_table():
+        elif is_table(v):
             sub = key if table == '' else table + '.' + key
             if entry_problem(sub):
                 fail_at(558, m.path, f'{where}.{key}', f'unknown setting {where}.{key} (the settings of [{where}] are mode and output, and a table [{where}.ENTRY] sets them for one entry)')
@@ -432,7 +432,7 @@ def read_build_table(m: Manifest, t: Toml, table: str):
             fail_at(558, m.path, f'{where}.{key}', f'unknown setting {where}.{key} (the settings of [{where}] are mode and output, and a table [{where}.ENTRY] sets them for one entry)')
     m.builds.append(b)
 
-def read_head(m: Manifest, t: Toml, name: str):
+def read_head(m: Manifest, t: Value, name: str):
     # [project] or [seed]
     need_table(m.path, t, f'[{name}]')
     if name == 'project':
@@ -455,15 +455,15 @@ def read_head(m: Manifest, t: Toml, name: str):
     if problem != '':
         fail_at(560, m.path, f'{name}.tomato', f'{name}.tomato is "{m.tomato}", which is not a version: {problem}')
     if t.has('description'):
-        m.description = need_string(m.path, t.lookup('description'), 'seed.description')
+        m.description = need_string(m.path, t['description'], 'seed.description')
     if t.has('license'):
-        m.license = need_string(m.path, t.lookup('license'), 'seed.license')
+        m.license = need_string(m.path, t['license'], 'seed.license')
     if t.has('modules'):
-        mods = t.lookup('modules')
-        if not mods.is_array():
+        mods = t['modules']
+        if not is_array(mods):
             fail_at(559, m.path, 'seed.modules', f'seed.modules must be an array of module names, not {kind_word(mods)}')
         m.has_modules = True
-        for item in mods.items:
+        for item in mods.as_list():
             text = need_string(m.path, item, 'seed.modules (each module name)')
             if text == '' or entry_problem(text) or '.' in text:
                 fail_at(559, m.path, 'seed.modules', f'seed.modules has "{text}", which is not a module name')
@@ -493,37 +493,37 @@ export def read_manifest(path: str) -> Manifest:
     at = path.rfind('/')
     if at >= 0:
         m.dir = path[:at + 1]
-    for key in doc.keys():
+    for key in doc.as_dict().keys():
         if key not in top_names():
-            what = 'table' if doc.lookup(key).is_table() else 'key'
+            what = 'table' if is_table(doc[key]) else 'key'
             shown = f'[{key}]' if what == 'table' else key
             fail_at(555, path, f'"{key}"', f"unknown {what} {shown} (the tables are {', '.join(top_names())}; every setting is in a table)")
     if doc.has('project') and doc.has('seed'):
         fail_at(556, path, 'seed', 'the file has both [project] and [seed]: a folder is a project (a program that uses seeds) or a seed (a package), not both')
     if doc.has('project'):
         m.kind = 'project'
-        read_head(m, doc.lookup('project'), 'project')
+        read_head(m, doc['project'], 'project')
     if doc.has('seed'):
         m.kind = 'seed'
-        read_head(m, doc.lookup('seed'), 'seed')
+        read_head(m, doc['seed'], 'seed')
     for name in ['seeds', 'test-seeds']:
         if doc.has(name):
             if m.kind == 'none':
                 fail_at(567, path, name, f'[{name}] needs a [project] table (a program) or a [seed] table (a package) in the same file')
-            need_table(path, doc.lookup(name), f'[{name}]')
-            read_seed_table(m, doc.lookup(name), '' if name == 'seeds' else 'test')
+            need_table(path, doc[name], f'[{name}]')
+            read_seed_table(m, doc[name], '' if name == 'seeds' else 'test')
     if doc.has('seed-store'):
-        store = doc.lookup('seed-store')
+        store = doc['seed-store']
         need_table(path, store, '[seed-store]')
         known(path, store, 'seed-store', ['vendor'])
         if store.has('vendor'):
-            m.vendor = need_string(path, store.lookup('vendor'), 'seed-store.vendor')
+            m.vendor = need_string(path, store['vendor'], 'seed-store.vendor')
             problem = vendor_problem(m.vendor)
             if problem != '':
                 fail_at(604, path, 'seed-store.vendor', f'seed-store.vendor is "{m.vendor}", which cannot be the vendor folder: {problem}')
     if doc.has('build'):
-        need_table(path, doc.lookup('build'), '[build]')
-        read_build_table(m, doc.lookup('build'), '')
+        need_table(path, doc['build'], '[build]')
+        read_build_table(m, doc['build'], '')
     return m
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -549,12 +549,12 @@ export def user_build_mode(path: str) -> str:
     doc = read_toml(path)
     if not doc.has('build'):
         return ''
-    t = doc.lookup('build')
+    t = doc['build']
     need_table(path, t, '[build]')
     mode = ''
-    for key in t.keys():
+    for key in t.as_dict().keys():
         if key == 'mode':
-            mode = need_string(path, t.lookup('mode'), 'build.mode')
+            mode = need_string(path, t['mode'], 'build.mode')
             if mode != 'debug' and mode != 'release':
                 fail_at(565, path, 'build.mode', f'build.mode must be "debug" or "release", not "{mode}"')
         else:

@@ -1,0 +1,5 @@
+from json import Json
+
+@main
+def main():
+    print(Json())

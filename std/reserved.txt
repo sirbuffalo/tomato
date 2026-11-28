@@ -41,6 +41,7 @@ toml std
 urlparse std
 utf8 std
 uuid std
+value std
 zlib std
 http planned
 https planned

@@ -214,8 +214,9 @@ Error
   RuntimeError
     IndexError, ZeroDivisionError, OverflowError, EOFError, CancelledError, LockError (asyncio)
     KeyError            CacheMiss (cache)
-    ValueError          StructError (struct), JSONDecodeError, JSONEncodeError, JSONTypeError, MsgpackError (json),
-                        TOMLDecodeError (toml), RegexError (re)
+    ValueError          StructError (struct), JSONDecodeError, JSONEncodeError, MsgpackError (json),
+                        ValueTypeError (value: a wrong kind, a missing key or an index out of range in a value read by
+                        json or toml, D122a; it was json.JSONTypeError), TOMLDecodeError (toml), RegexError (re)
     IOError             FileNotFoundError, FileExistsError, PermissionError, IsADirectoryError, NotADirectoryError,
                         TerminalError (terminal), requests.RequestError (InvalidURL, TooManyRedirects, HTTPError)
       TimeoutError      asyncio.TimeoutError, requests.TimeoutError

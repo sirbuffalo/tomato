@@ -1,20 +1,8 @@
-# The standard-library math module (D24a): integer helpers, angles, trigonometry and logarithms. Import with: from math import abs, gcd, is_prime,
+# The standard-library math module (D24a): integer helpers, angles, trigonometry and logarithms. Import with: from math import gcd, is_prime,
 # next_prime
-
-export def abs(n: int) -> int:
-    if n < 0:
-        return -n
-    return n
-
-export def min(a: int, b: int) -> int:
-    if a < b:
-        return a
-    return b
-
-export def max(a: int, b: int) -> int:
-    if a > b:
-        return a
-    return b
+#
+# `abs`, `min` and `max` are built in, and so is the power operator `**`; math has no copies of them, and no `pow` (D122a):
+# `from math import abs` (or min, max, pow) is a compile error that says what to write instead.
 
 export def gcd(a: int, b: int) -> int:
     x = abs(a)
@@ -24,14 +12,6 @@ export def gcd(a: int, b: int) -> int:
         x = y
         y = t
     return x
-
-export def pow(base: int, exponent: int) -> int:
-    if exponent < 0:
-        raise ValueError('pow needs a non-negative exponent', 'E41')
-    result = 1
-    for i in range(exponent):
-        result *= base
-    return result
 
 def _powmod(base: int, exponent: int, modulus: int) -> int:
     result = 1

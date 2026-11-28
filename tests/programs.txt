@@ -84,6 +84,8 @@ toml_valid
 toml_invalid
 toml_api
 toml_big
+value_shared
+math_builtins
 function_values
 lambdas
 sort_stable

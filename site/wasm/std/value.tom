@@ -1,0 +1,459 @@
+# The dynamic value that `json` (including its MessagePack functions) and `toml` read into and write from (D122a): one type, so a
+# document read by one can be written by the other, and a program that handles one handles the other.
+#
+#     from value import Value, Dict, List, Str, Int
+#     from json import loads, dumps
+#
+#     j = loads('{"name": "tomato", "tags": ["red", "round"], "n": 3}')
+#     print(j['name'].as_str(), j['tags'][1].as_str(), j['n'].as_int())     # tomato round 3
+#     built = Dict({'ok': Bool(True), 'ids': List([Int(1), Null(), Float(0.5)])})
+#
+# `Value` is the base class; the kinds below it are Null, Bool, Int, Float, Str, List and Dict (what both formats have), Bin, Ext
+# and Timestamp (MessagePack's), and Moment (TOML's four date and time types). A reader says which it made, and a writer refuses
+# the kinds its format cannot hold (JSONEncodeError, MsgpackError, or ValueError for TOML). `v.kind()` is the name of the kind:
+# 'null', 'bool', 'int', 'float', 'str', 'list', 'dict', 'bin', 'ext', 'timestamp', or a Moment's own form ('datetime',
+# 'local-datetime', 'local-date' or 'local-time'). `x is Str` is the type test (and narrows x), as for any class.
+#
+# Reading: the as_ methods give the Tomato value of a kind and raise ValueTypeError (E71) for any other kind (as_float also takes
+# an Int); `v['key']` reads a Dict and `v[0]` a List (a wrong kind of key, a missing key or an index out of range is a
+# ValueTypeError); `v.get('key')` is the value of a key of a Dict, or None when it is missing; `'key' in v` asks a Dict; `len(v)`
+# counts a Dict, a List, a Str (in characters) and a Bin or Ext (in bytes). `as_list()` and `as_dict()` give the list and the dict
+# the value holds, not copies, so changing them changes the value; a Dict keeps the order its keys were added in. `v == w`
+# compares two values by kind and content (a Float by value and special; a Dict ignoring order). `print(v)` and `str(v)` give
+# compact JSON-style text (a date or time written bare, nan and inf as TOML writes them, a Bin, Ext or Timestamp in angle
+# brackets): use json.dumps or toml.dumps for text that is a document in a format.
+
+!tomato_json_quote(text: str, ascii: int) -> str
+
+# Raised when a Value is used as the wrong kind (as_int() on a Str, v['a'] on a List), when a key is missing or an index is out of
+# range, and by as_float() on a TOML nan or infinity. A ValueError, as the JSON, MessagePack and TOML errors are (D114a).
+export class ValueTypeError(ValueError):
+    pass
+
+export class Value:
+    def kind(self) -> str:
+        return 'value'
+
+    def what(self) -> str:
+        k = self.kind()
+        return 'an ' + k if k[0] in 'aeiou' else 'a ' + k
+
+    def is_null(self) -> bool:
+        return False
+
+    def as_bool(self) -> bool:
+        raise ValueTypeError(f'expected a bool, but this is {self.what()}', 'E71')
+
+    def as_int(self) -> int:
+        raise ValueTypeError(f'expected an int, but this is {self.what()}', 'E71')
+
+    def as_float(self) -> float:
+        raise ValueTypeError(f'expected a number, but this is {self.what()}', 'E71')
+
+    def as_str(self) -> str:
+        raise ValueTypeError(f'expected a str, but this is {self.what()}', 'E71')
+
+    def as_list(self) -> list[Value]:
+        raise ValueTypeError(f'expected a list, but this is {self.what()}', 'E71')
+
+    def as_dict(self) -> dict[str, Value]:
+        raise ValueTypeError(f'expected a dict, but this is {self.what()}', 'E71')
+
+    # a Moment (a TOML date or time)
+    def as_moment(self) -> Moment:
+        raise ValueTypeError(f'expected a date or time, but this is {self.what()}', 'E71')
+
+    # MessagePack values: a byte string, an extension value, a timestamp
+    def as_bytes(self) -> list[int]:
+        raise ValueTypeError(f'expected a bin or ext, but this is {self.what()}', 'E71')
+
+    def ext_type(self) -> int:
+        raise ValueTypeError(f'expected an ext, but this is {self.what()}', 'E71')
+
+    def seconds(self) -> int:
+        raise ValueTypeError(f'expected a timestamp, but this is {self.what()}', 'E71')
+
+    def nanos(self) -> int:
+        raise ValueTypeError(f'expected a timestamp, but this is {self.what()}', 'E71')
+
+    # v['name'] on a Dict, v[0] on a List
+    @get
+    def at(self, key: int | str) -> Value:
+        raise ValueTypeError(f'{self.what()} cannot be indexed', 'E365')
+
+    # the value of a key of a Dict, or None when the key is missing
+    def get(self, key: str) -> Value | None:
+        raise ValueTypeError(f'expected a dict, but this is {self.what()}', 'E71')
+
+    @len
+    def length(self) -> int:
+        raise ValueTypeError(f'{self.what()} has no length', 'E366')
+
+    # 'name' in v: whether a Dict has the key
+    @contains
+    def has(self, key: str) -> bool:
+        raise ValueTypeError(f'expected a dict, but this is {self.what()}', 'E71')
+
+    # what == means for the kind (the kinds are known to be equal): each kind overrides it
+    def equals(self, other: Value) -> bool:
+        return False
+
+    @eq
+    def same(self, other: Value) -> bool:
+        return self.kind() == other.kind() and self.equals(other)
+
+    # appends the JSON-style text of the value (see the head of the file)
+    def show_to(self, out: list[str]):
+        out.append('<value>')
+
+    @str
+    def text(self) -> str:
+        out: list[str] = []
+        self.show_to(out)
+        return ''.join(out)
+
+export class Null(Value):
+    override def kind(self) -> str:
+        return 'null'
+
+    override def is_null(self) -> bool:
+        return True
+
+    override def equals(self, other: Value) -> bool:
+        return True
+
+    override def show_to(self, out: list[str]):
+        out.append('null')
+
+export class Bool(Value):
+    v: bool = False
+
+    @init
+    def make_bool(self, v: bool):
+        self.v = v
+
+    override def kind(self) -> str:
+        return 'bool'
+
+    override def as_bool(self) -> bool:
+        return self.v
+
+    override def equals(self, other: Value) -> bool:
+        return self.v == other.as_bool()
+
+    override def show_to(self, out: list[str]):
+        out.append('true' if self.v else 'false')
+
+export class Int(Value):
+    v: int = 0
+
+    @init
+    def make_int(self, v: int):
+        self.v = v
+
+    override def kind(self) -> str:
+        return 'int'
+
+    override def as_int(self) -> int:
+        return self.v
+
+    override def as_float(self) -> float:
+        return float(self.v)
+
+    override def equals(self, other: Value) -> bool:
+        return self.v == other.as_int()
+
+    override def show_to(self, out: list[str]):
+        out.append(str(self.v))
+
+# A float of any size. TOML has two things a Tomato float cannot hold, inf, -inf and nan: toml.loads makes them a Float whose
+# `special` is 'inf', '-inf' or 'nan' (and whose v is 0.0); every other Float has special ''. as_float() raises for them.
+export class Float(Value):
+    v: float = 0.0
+    special: str = ''
+
+    @init
+    def make_float(self, v: float, special: str = ''):
+        self.v = v
+        self.special = special
+
+    override def kind(self) -> str:
+        return 'float'
+
+    override def as_float(self) -> float:
+        if self.special != '':
+            raise ValueTypeError(f'the float is {self.special}, which a float variable cannot hold: check `special`', 'E66')
+        return self.v
+
+    override def equals(self, other: Value) -> bool:
+        if other is Float:
+            return self.special == other.special and self.v == other.v
+        return False
+
+    override def show_to(self, out: list[str]):
+        out.append(self.special if self.special != '' else str(self.v))
+
+export class Str(Value):
+    v: str = ''
+
+    @init
+    def make_str(self, v: str):
+        self.v = v
+
+    override def kind(self) -> str:
+        return 'str'
+
+    override def as_str(self) -> str:
+        return self.v
+
+    @len
+    override def length(self) -> int:
+        return len(self.v)
+
+    override def equals(self, other: Value) -> bool:
+        return self.v == other.as_str()
+
+    override def show_to(self, out: list[str]):
+        out.append(!tomato_json_quote(self.v, 0))
+
+export class List(Value):
+    items: list[Value] = []
+
+    @init
+    def make_list(self, items: list[Value]):
+        self.items = items
+
+    override def kind(self) -> str:
+        return 'list'
+
+    override def as_list(self) -> list[Value]:
+        return self.items
+
+    @get
+    override def at(self, key: int | str) -> Value:
+        if key is str:
+            raise ValueTypeError(f'a list needs an int index, but got the text {key}', 'E72')
+        if key >= len(self.items) or key < -len(self.items):
+            raise ValueTypeError(f'index {key} is out of range for a list of {len(self.items)}', 'E73')
+        return self.items[key]
+
+    @len
+    override def length(self) -> int:
+        return len(self.items)
+
+    override def equals(self, other: Value) -> bool:
+        theirs = other.as_list()
+        if len(self.items) != len(theirs):
+            return False
+        for i in range(len(self.items)):
+            if not self.items[i].same(theirs[i]):
+                return False
+        return True
+
+    override def show_to(self, out: list[str]):
+        out.append('[')
+        first = True
+        for item in self.items:
+            if not first:
+                out.append(',')
+            first = False
+            item.show_to(out)
+        out.append(']')
+
+export class Dict(Value):
+    fields: dict[str, Value] = {}
+
+    @init
+    def make_dict(self, fields: dict[str, Value]):
+        self.fields = fields
+
+    override def kind(self) -> str:
+        return 'dict'
+
+    override def as_dict(self) -> dict[str, Value]:
+        return self.fields
+
+    @get
+    override def at(self, key: int | str) -> Value:
+        if key is int:
+            raise ValueTypeError(f'a dict needs a text key, but got the int {key}', 'E74')
+        if key not in self.fields:
+            raise ValueTypeError(f'the key {key} is not in this dict', 'E75')
+        return self.fields[key]
+
+    override def get(self, key: str) -> Value | None:
+        if key not in self.fields:
+            return None
+        return self.fields[key]
+
+    @len
+    override def length(self) -> int:
+        return len(self.fields)
+
+    @contains
+    override def has(self, key: str) -> bool:
+        return key in self.fields
+
+    override def equals(self, other: Value) -> bool:
+        theirs = other.as_dict()
+        if len(self.fields) != len(theirs):
+            return False
+        for key in self.fields:
+            if key not in theirs:
+                return False
+            if not self.fields[key].same(theirs[key]):
+                return False
+        return True
+
+    override def show_to(self, out: list[str]):
+        out.append('{')
+        first = True
+        for key in self.fields:
+            if not first:
+                out.append(',')
+            first = False
+            out.append(!tomato_json_quote(key, 0))
+            out.append(':')
+            self.fields[key].show_to(out)
+        out.append('}')
+
+# A MessagePack bin: a byte string, as a list of ints from 0 to 255.
+export class Bin(Value):
+    data: list[int] = []
+
+    @init
+    def make_bin(self, data: list[int]):
+        self.data = data
+
+    override def kind(self) -> str:
+        return 'bin'
+
+    override def as_bytes(self) -> list[int]:
+        return self.data
+
+    @len
+    override def length(self) -> int:
+        return len(self.data)
+
+    override def equals(self, other: Value) -> bool:
+        return self.data == other.as_bytes()
+
+    override def show_to(self, out: list[str]):
+        out.append(f'<bin of {len(self.data)} bytes>')
+
+# A MessagePack extension value: a type code from -128 to 127 (not -1, which is a timestamp) and bytes.
+export class Ext(Value):
+    code: int = 0
+    data: list[int] = []
+
+    @init
+    def make_ext(self, code: int, data: list[int]):
+        self.code = code
+        self.data = data
+
+    override def kind(self) -> str:
+        return 'ext'
+
+    override def as_bytes(self) -> list[int]:
+        return self.data
+
+    override def ext_type(self) -> int:
+        return self.code
+
+    @len
+    override def length(self) -> int:
+        return len(self.data)
+
+    override def equals(self, other: Value) -> bool:
+        return self.code == other.ext_type() and self.data == other.as_bytes()
+
+    override def show_to(self, out: list[str]):
+        out.append(f'<ext {self.code} of {len(self.data)} bytes>')
+
+# The MessagePack timestamp (ext type -1): whole seconds since 1970-01-01 UTC and nanoseconds 0 to 999999999.
+export class Timestamp(Value):
+    secs: int = 0
+    ns: int = 0
+
+    @init
+    def make_timestamp(self, secs: int, ns: int = 0):
+        self.secs = secs
+        self.ns = ns
+
+    override def kind(self) -> str:
+        return 'timestamp'
+
+    override def seconds(self) -> int:
+        return self.secs
+
+    override def nanos(self) -> int:
+        return self.ns
+
+    override def equals(self, other: Value) -> bool:
+        return self.secs == other.seconds() and self.ns == other.nanos()
+
+    override def show_to(self, out: list[str]):
+        out.append(f'<timestamp {self.secs} s {self.ns} ns>')
+
+def _pad(n: int, width: int) -> str:
+    s = str(n)
+    return '0' * (width - len(s)) + s
+
+# One of the four TOML date and time types. `form` is 'datetime' (date, time and offset), 'local-datetime', 'local-date' or
+# 'local-time' (what kind() says); the fields that the form does not have stay 0. `offset` is minutes east of UTC. `nano` is the
+# fraction of a second in nanoseconds (digits beyond the ninth are dropped). str() writes it as TOML does.
+export class Moment(Value):
+    form: str = 'local-date'
+    year: int = 0
+    month: int = 0
+    day: int = 0
+    hour: int = 0
+    minute: int = 0
+    second: int = 0
+    nano: int = 0
+    offset: int = 0
+
+    override def kind(self) -> str:
+        return self.form
+
+    override def what(self) -> str:
+        return 'a date or time'
+
+    override def as_moment(self) -> Moment:
+        return self
+
+    def date_text(self) -> str:
+        return _pad(self.year, 4) + '-' + _pad(self.month, 2) + '-' + _pad(self.day, 2)
+
+    def time_text(self) -> str:
+        s = _pad(self.hour, 2) + ':' + _pad(self.minute, 2) + ':' + _pad(self.second, 2)
+        if self.nano != 0:
+            frac = _pad(self.nano, 9)
+            s += '.' + frac.rstrip('0')
+        return s
+
+    override def show_to(self, out: list[str]):
+        out.append(self.moment_text())
+
+    # the text TOML writes
+    def moment_text(self) -> str:
+        if self.form == 'local-date':
+            return self.date_text()
+        if self.form == 'local-time':
+            return self.time_text()
+        s = self.date_text() + 'T' + self.time_text()
+        if self.form == 'datetime':
+            if self.offset == 0:
+                return s + 'Z'
+            a = self.offset
+            sign = '+'
+            if a < 0:
+                a = -a
+                sign = '-'
+            return s + sign + _pad(a // 60, 2) + ':' + _pad(a % 60, 2)
+        return s
+
+    override def equals(self, other: Value) -> bool:
+        if other is Moment:
+            return self.year == other.year and self.month == other.month and self.day == other.day and self.hour == other.hour and self.minute == other.minute and self.second == other.second and self.nano == other.nano and self.offset == other.offset
+        return False

@@ -234,6 +234,8 @@ changes. Doing it after 1.0 means supporting both for a whole major version.
 
 ### 2.3 `@static` methods, and the std API that avoids them (Blocks 1.0 for the std names)
 
+**Decided 2026-11-27 and built (D122a):** the std names stay free functions, `date_fromisoformat`, `time_fromisoformat`, `datetime_fromisoformat`, `datetime_strptime`, `date_today`, `datetime_now` and `datetime_combine`, and no method of the same job is added; one documented style. A program that writes `date.fromisoformat(...)` gets E115 with a help line naming the free functions. A real `@static` stays a separate language question (the proposal below).
+
 **Problem.** `@static` exists, but it is built as a call on a fresh object made by the class's `@init` with no
 arguments (`compiler/src/compiler.tom`, the `info.op == 'static'` branch near line 7727). So:
 
@@ -562,6 +564,8 @@ part.
 
 ## 10. The standard library's shape (Blocks 1.0 for renames)
 
+**Decided 2026-11-27 and built (D122a):** `math.abs`, `math.min`, `math.max` and `math.pow` are gone (the first three are built in; there is no built-in `pow`, so `**` is the way); `testing._run_all` is not exported, and the test driver the compiler writes reaches it; `json` and `toml` read into and write from one `Value` type in the new std module `value`. The bullets below are the findings the decision answers.
+
 What is in std is broad and mostly modelled on Python, which is a good default. Before names freeze:
 
 - **`math.abs`, `math.min`, `math.max`, `math.pow`** are int-only functions (`std/math.tom` lines 4-28) with the same
@@ -624,8 +628,8 @@ In the order I would take them, with my recommendation for each. The first eight
 10. **The sleep clock (6.1).** Real time natively, with the logical clock as the test and browser mode.
 11. **`tomato run` inputs (11.1).** `--entry NAME` as `build` has, inputs positional.
 12. **D77g's limits (7.1).** Fixed constants, or project-file-only settings.
-13. **std names that would freeze (2.3, 10).** Real `@static` and `date.fromisoformat`-style names, or confirm the free
-    functions; remove or rename `math.pow` and friends.
+13. **std names that would freeze (2.3, 10).** *Decided 2026-11-27, built: D122a.* Free functions confirmed; `math.pow` and
+    friends removed; `testing._run_all` unexported; one value type for `json` and `toml`.
 
 Not ranked because they only add and can come in 1.x: `int | None` (3.1, the most valuable of them), error classes
 that inherit `@init` and print (3.3), closures (3.2), operator interfaces as generic bounds (2.1), keyword arguments for

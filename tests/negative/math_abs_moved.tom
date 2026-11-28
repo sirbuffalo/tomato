@@ -1,0 +1,5 @@
+from math import abs, gcd
+
+@main
+def main():
+    print(abs(-3), gcd(12, 18))

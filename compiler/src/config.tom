@@ -11,7 +11,8 @@
 # The user's file is read first and the project's file overrides it, setting by setting. Tables other than [limits] are not
 # looked at: a project's tomato.toml is also the manifest (compiler/src/manifest.tom), which checks the other tables, so a typo in
 # a table name is an error there; the user's config.toml is not checked for other tables.
-from toml import loads, Toml
+from toml import loads, dumps_value
+from value import Value
 
 # a problem with a configuration file: code is the id of the error (std/errors.txt, E539 to E543), message its text
 export class ConfigError(Error):
@@ -55,35 +56,61 @@ export def read_file(path: str) -> str:
         raise ConfigError(539, f'the configuration file {path} cannot be read: {e.message}')
 
 # the parsed TOML of a file: E539 when it cannot be read, E540 when it is not TOML
-export def read_toml(path: str) -> Toml:
+export def read_toml(path: str) -> Value:
     text = read_file(path)
     try:
         return loads(text)
     catch RuntimeError as e:
         raise ConfigError(540, f'the configuration file {path} is not valid TOML: {e.message}')
 
+# a TOML value in words ("a table", "an integer": the names TOML uses, which a Value's kind() spells shorter), and as TOML writes it
+export def value_word(v: Value) -> str:
+    k = v.kind()
+    if k == 'dict':
+        return 'a table'
+    if k == 'list':
+        return 'an array'
+    if k == 'str':
+        return 'a string'
+    if k == 'int':
+        return 'an integer'
+    if k == 'float':
+        return 'a float'
+    if k == 'bool':
+        return 'a boolean'
+    return 'a date or time'
+
+export def toml_text(v: Value) -> str:
+    return dumps_value(v)
+
+export def is_table(v: Value) -> bool:
+    return v.kind() == 'dict'
+
+export def is_array(v: Value) -> bool:
+    return v.kind() == 'list'
+
 def apply(out: Limits, path: str):
     doc = read_toml(path)
     if not doc.has('limits'):
         return
-    table = doc.lookup('limits')
-    if not table.is_table():
-        raise ConfigError(541, f'{path}: limits must be a table ([limits]), not {table.describe()}')
-    for key in table.keys():
+    table = doc['limits']
+    if not is_table(table):
+        raise ConfigError(541, f'{path}: limits must be a table ([limits]), not {value_word(table)}')
+    for key in table.as_dict().keys():
         if key != 'exp_bits' and key != 'format_digits':
             raise ConfigError(542, f'{path}: unknown setting limits.{key} (the settings are exp_bits and format_digits)')
-        v = table.lookup(key)
+        v = table[key]
         low = lowest(key)
-        if v.kind != 'integer' or v.num < low or v.num > highest():
-            shown = v.show()
-            if v.kind == 'integer':
-                shown = str(v.num)
+        if v.kind() != 'int' or v.as_int() < low or v.as_int() > highest():
+            shown = toml_text(v)
+            if v.kind() == 'int':
+                shown = str(v.as_int())
             raise ConfigError(543, f'{path}: limits.{key} must be a whole number from {low} to {highest()}, not {shown}')
         if key == 'exp_bits':
-            out.exp_bits = v.num
+            out.exp_bits = v.as_int()
             out.exp_from = path
         else:
-            out.format_digits = v.num
+            out.format_digits = v.as_int()
             out.digits_from = path
 
 # The limits for a build: the built-in defaults, then the user's file, then the project's ('' for a file there is none of)

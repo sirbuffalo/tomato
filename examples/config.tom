@@ -1,6 +1,7 @@
 # Reading a configuration file in TOML: `from toml import loads, load, dumps`.
 # `tomato run examples/config.tom main app.toml` reads that file; with no argument it uses the text below.
-from toml import loads, load, dumps, string, integer, TOMLDecodeError
+from toml import loads, load, dumps, TOMLDecodeError
+from value import Str, Int
 
 def sample() -> str:
     lines = [
@@ -36,13 +37,13 @@ def main(path: str = ''):
         print(f"listening on {server['host'].as_str()}:{server['port'].as_int()}",
               'timeout', server['timeout'].as_float())
         total = 0
-        for b in doc['backend'].items:
+        for b in doc['backend'].as_list():
             total += b['weight'].as_int()
-        for b in doc['backend'].items:
+        for b in doc['backend'].as_list():
             print(b['url'].as_str(), b['weight'].as_int() * 100 // total, 'percent')
         # change a value and write the document back out
-        server.put('port', integer(9090))
-        doc.put('owner', string('ops'))
+        server.as_dict()['port'] = Int(9090)
+        doc.as_dict()['owner'] = Str('ops')
         print(dumps(doc))
     catch TOMLDecodeError as e:
         print('bad config:', e.message)

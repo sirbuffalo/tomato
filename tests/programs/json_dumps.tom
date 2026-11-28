@@ -1,7 +1,8 @@
 # dumps: compact and indented output, sort_keys, ensure_ascii, builders, and what cannot be written
-from json import loads, dumps, Json, JsonStr, JsonDict, JsonInt, JsonBool, JsonList, JsonFloat, JsonNull, JSONEncodeError
+from json import loads, dumps, JSONEncodeError
+from value import Value, Str, Dict, Int, Bool, List, Float, Null
 
-def fails(j: Json):
+def fails(j: Value):
     try:
         print(dumps(j))
     catch JSONEncodeError as e:
@@ -17,16 +18,16 @@ def main():
     print(dumps(doc, sort_keys=True))
     print(dumps(doc, indent=4, sort_keys=True))
     # strings: escapes, non-ASCII, ensure_ascii
-    s = JsonStr('quote " slash \\ solidus / tab \t nl \n cr \r bell ' + chr(7) + ' del ' + chr(127) + ' é € 😀')
+    s = Str('quote " slash \\ solidus / tab \t nl \n cr \r bell ' + chr(7) + ' del ' + chr(127) + ' é € 😀')
     print(dumps(s))
     print(dumps(s, ensure_ascii=True))
-    print(dumps(JsonStr('')))
-    print(dumps(JsonDict({'é': JsonInt(1), '😀': JsonInt(2)}), ensure_ascii=True))
-    print(dumps(JsonDict({'é': JsonInt(1), 'e': JsonInt(2), 'z': JsonInt(3), 'A': JsonInt(4)}), sort_keys=True))
+    print(dumps(Str('')))
+    print(dumps(Dict({'é': Int(1), '😀': Int(2)}), ensure_ascii=True))
+    print(dumps(Dict({'é': Int(1), 'e': Int(2), 'z': Int(3), 'A': Int(4)}), sort_keys=True))
     # builders
-    built = JsonDict({'ok': JsonBool(True), 'ids': JsonList([JsonInt(1), JsonNull(), JsonFloat(0.5)]), 'big': JsonInt(2 ** 100)})
+    built = Dict({'ok': Bool(True), 'ids': List([Int(1), Null(), Float(0.5)]), 'big': Int(2 ** 100)})
     print(dumps(built))
-    print(dumps(JsonList([])), dumps(JsonDict({})), dumps(JsonList([]), indent=2))
+    print(dumps(List([])), dumps(Dict({})), dumps(List([]), indent=2))
     # round trips
     text = '{"name":"tomato","tags":["red","round"],"n":3,"f":1500.0,"nested":{"a":[true,false,null]}}'
     print(dumps(loads(text)) == text)
@@ -37,9 +38,9 @@ def main():
     catch JSONEncodeError as e:
         print('error:', e.message)
     # nesting: 512 levels can be written, 513 cannot
-    deep = JsonList([])
+    deep = List([])
     for i in range(511):
-        deep = JsonList([deep])
+        deep = List([deep])
     print(len(dumps(deep)))
-    deeper = JsonList([deep])
+    deeper = List([deep])
     fails(deeper)

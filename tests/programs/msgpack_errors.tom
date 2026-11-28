@@ -1,5 +1,6 @@
 # MessagePack data that must be rejected, and values that cannot be encoded
-from json import loads_msgpack, dumps_msgpack, Json, JsonInt, JsonExt, JsonBin, JsonTimestamp, JsonList, JsonDict, dumps, MsgpackError, JSONEncodeError
+from json import loads_msgpack, dumps_msgpack, dumps, MsgpackError, JSONEncodeError
+from value import Value, Int, Ext, Bin, Timestamp, List, Dict
 
 def nib(c: str) -> int:
     n = ord(c)
@@ -19,7 +20,7 @@ def bad(h: str):
     catch MsgpackError as e:
         print(h[0:20], e.message, e.pos)
 
-def cannot(j: Json):
+def cannot(j: Value):
     try:
         print('ENCODED', dumps_msgpack(j))
     catch MsgpackError as e:
@@ -67,23 +68,23 @@ def main():
     print(len(dumps(loads_msgpack(unhex(d + 'c0')))))
     bad('91' + d + 'c0')
     print('-- encoding')
-    cannot(JsonInt(18446744073709551616))
-    cannot(JsonInt(-9223372036854775809))
-    cannot(JsonInt(10 ** 40))
-    cannot(JsonExt(-1, [1]))
-    cannot(JsonExt(128, [1]))
-    cannot(JsonExt(-129, [1]))
-    cannot(JsonExt(1, [256]))
-    cannot(JsonBin([1, -1]))
-    cannot(JsonTimestamp(1, 1000000000))
-    cannot(JsonTimestamp(1, -1))
-    cannot(JsonTimestamp(4611686018427387904))
-    deep = JsonList([])
+    cannot(Int(18446744073709551616))
+    cannot(Int(-9223372036854775809))
+    cannot(Int(10 ** 40))
+    cannot(Ext(-1, [1]))
+    cannot(Ext(128, [1]))
+    cannot(Ext(-129, [1]))
+    cannot(Ext(1, [256]))
+    cannot(Bin([1, -1]))
+    cannot(Timestamp(1, 1000000000))
+    cannot(Timestamp(1, -1))
+    cannot(Timestamp(4611686018427387904))
+    deep = List([])
     for i in range(511):
-        deep = JsonList([deep])
+        deep = List([deep])
     print(len(dumps_msgpack(deep)))
-    cannot(JsonList([deep]))
-    cannot(JsonDict({'a': JsonList([deep])}))
+    cannot(List([deep]))
+    cannot(Dict({'a': List([deep])}))
     print('-- bytes that are not bytes')
     try:
         loads_msgpack([1, 2, 300])
@@ -98,7 +99,7 @@ def main():
     catch MsgpackError as e:
         print(e.message, e.pos)
     print('-- JSON text cannot hold these')
-    items: list[Json] = [JsonBin([1]), JsonExt(3, [1]), JsonTimestamp(5)]
+    items: list[Value] = [Bin([1]), Ext(3, [1]), Timestamp(5)]
     for j in items:
         try:
             print(dumps(j))

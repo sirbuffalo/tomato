@@ -1,0 +1,5 @@
+from toml import table
+
+@main
+def main():
+    print(table())

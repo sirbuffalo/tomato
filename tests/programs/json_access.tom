@@ -1,10 +1,11 @@
-# the Json accessors: indexing, kinds, conversions and the errors for using a value as the wrong kind
-from json import loads, Json, JsonDict, JsonList, JsonInt, JsonStr, JSONTypeError, JSONDecodeError
+# the Value accessors: indexing, kinds, conversions and the errors for using a value as the wrong kind
+from json import loads, JSONDecodeError
+from value import Value, Dict, List, Int, Str, ValueTypeError
 
-def attempt(label: str, j: Json):
+def attempt(label: str, j: Value):
     try:
         print(label, j.as_int())
-    catch JSONTypeError as e:
+    catch ValueTypeError as e:
         print(label, 'error:', e.message)
 
 @main
@@ -28,7 +29,7 @@ def main():
     for key in j.as_dict():
         print(key, j[key].kind())
     # building by hand and using the same accessors
-    made = JsonDict({'xs': JsonList([JsonInt(1), JsonInt(2)]), 's': JsonStr('hi')})
+    made = Dict({'xs': List([Int(1), Int(2)]), 's': Str('hi')})
     print(made['xs'][0].as_int() + made['xs'][1].as_int(), made['s'].as_str())
     # wrong kind
     attempt('as_int on text:', j['name'])
@@ -55,28 +56,28 @@ def main():
                 print(len(j['n']))
             else:
                 print('x' in j['tags'])
-        catch JSONTypeError as e:
+        catch ValueTypeError as e:
             print(bad, 'error:', e.message)
     try:
         print(j['n'].as_str())
-    catch JSONTypeError as e:
+    catch ValueTypeError as e:
         print('error:', e.message)
     try:
         print(j['n'].as_list())
-    catch JSONTypeError as e:
+    catch ValueTypeError as e:
         print('error:', e.message)
     try:
         print(j['n'].as_dict())
-    catch JSONTypeError as e:
+    catch ValueTypeError as e:
         print('error:', e.message)
     try:
         print(j['n'].as_bool())
-    catch JSONTypeError as e:
+    catch ValueTypeError as e:
         print('error:', e.message)
     try:
         g2 = j['n'].get('a')
         print(g2 is None)
-    catch JSONTypeError as e:
+    catch ValueTypeError as e:
         print('error:', e.message)
     # a JSONDecodeError carries its parts and is a RuntimeError
     try:

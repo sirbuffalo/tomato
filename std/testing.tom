@@ -12,7 +12,7 @@
 #     @test.adds
 #     def adds():
 #         assert_equal(1 + 1, 2)
-# The compiler adds a driver that calls _run_all with the names and functions in the order they are written. `tomato run FILE test.adds` runs one of them. docs/testing.md.
+# The compiler adds a driver that calls the runner (_run_all, which this module does not export) with the names and functions in the order they are written. `tomato run FILE test.adds` runs one of them. docs/testing.md.
 #
 # The generic helpers need the language to accept their operation for the type: assert_equal and assert_not_equal take types with ==
 # (not a class without an @eq method), assert_less and the other order checks take types with < and > (numbers and text, or a
@@ -437,7 +437,7 @@ export def assert_close(actual: float, expected: float, rel_tol: float = 1e-9, a
 def _error_names() -> list[str]:
     return ['SkipTest', 'AssertionError', 'FileNotFoundError', 'FileExistsError', 'PermissionError', 'IsADirectoryError', 'NotADirectoryError',
             'ZeroDivisionError', 'OverflowError', 'IndexError', 'CacheMiss', 'KeyError', 'StructError', 'JSONDecodeError', 'JSONEncodeError',
-            'JSONTypeError', 'MsgpackError', 'TOMLDecodeError', 'RegexError', 'ValueError', 'EOFError', 'CancelledError', 'ProcessTimeout',
+            'ValueTypeError', 'MsgpackError', 'TOMLDecodeError', 'RegexError', 'ValueError', 'EOFError', 'CancelledError', 'ProcessTimeout',
             'ProcessError', 'TerminalError', 'ConnectionRefusedError', 'ConnectionResetError', 'AddressError', 'SocketError', 'ConnectionError',
             'TimeoutError', 'InvalidURL', 'TooManyRedirects', 'HTTPError', 'RequestError', 'LockError', 'IOError', 'RuntimeError', 'Error']
 
@@ -522,8 +522,9 @@ def _bad_argument(text: str):
 # Runs the tests in the order given, one after another in this process, and prints one line each (ok, FAIL with the message and
 # the line, or skip), then the counts. args holds the words after the file name: `--filter TEXT` runs only the tests whose name
 # contains TEXT, `--progress FILE` is described above. The
-# program ends with status 1 when any test failed. Called by the driver the compiler writes for the entry `test`.
-export def _run_all(names: list[str], tests: list[fn()], args: tuple[str]):
+# program ends with status 1 when any test failed. Not exported (D122a): the compiler lets the driver it writes for the entry `test`
+# call it as testing._run_all, and no other program can.
+def _run_all(names: list[str], tests: list[fn()], args: tuple[str]):
     pattern = ''
     progress = ''
     wants = ''

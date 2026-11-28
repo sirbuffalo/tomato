@@ -61,18 +61,18 @@ ValueError atanh needs a number between -1 and 1
 ValueError min() of an empty
 ValueError max() of an empty
 ValueError cannot unpack {} values into {}
-ValueError expected a date or time
-ValueError expected {}, found {}
-ValueError the float is {}, which a float variable cannot hold
-KeyError the key {} is not in the table
-IndexError the array index is out of range
-ValueError a date or time value has no moment
+ValueError (retired: expected a date or time; Toml is gone since D122a and Value.as_moment() raises E71; never emitted; the id stays so that later ids do not move)
+ValueError (retired: expected {}, found {}; Toml is gone since D122a and the Value accessors raise E71; never emitted; the id stays so that later ids do not move)
+ValueTypeError the float is {}, which a float variable cannot hold
+KeyError (retired: the key {} is not in the table; a missing key of a Dict is a ValueTypeError, E75, since D122a; never emitted; the id stays so that later ids do not move)
+IndexError (retired: the array index is out of range; an index out of range of a List is a ValueTypeError, E73, since D122a; never emitted; the id stays so that later ids do not move)
+ValueError (retired: a date or time value has no moment; a Moment is a Value since D122a; never emitted; the id stays so that later ids do not move)
 ValueError dumps needs a table
-JSONTypeError expected {}, but this is {}
-JSONTypeError a list needs an int index
-JSONTypeError index {} is out of range for a list of {}
-JSONTypeError a dict needs a text key
-JSONTypeError the key {} is not in this dict
+ValueTypeError expected {}, but this is {}
+ValueTypeError a list needs an int index
+ValueTypeError index {} is out of range for a list of {}
+ValueTypeError a dict needs a text key
+ValueTypeError the key {} is not in this dict
 JSONEncodeError nesting is deeper than 512 levels
 JSONEncodeError a bin value cannot be written as JSON text
 JSONEncodeError an ext value cannot be written as JSON text
@@ -362,8 +362,8 @@ InvalidURL the request could not be sent because its URL or parameters are inval
 TooManyRedirects the server sent too many redirects
 RequestError the request could not be sent
 ConnectionError the server could not be reached
-JSONTypeError the JSON value cannot be indexed
-JSONTypeError the JSON value has no length
+ValueTypeError the value cannot be indexed
+ValueTypeError the value has no length
 CompileError internal compiler error: too many generic copies had to be made early
 CompileError the compiler could not complete compilation
 RuntimeError the program ran longer than 5 seconds
@@ -614,3 +614,7 @@ CompileError '@{}' uses a name the language reserves for its own markers ('{}')
 CompileError 'raise' with no error can only be used inside a 'catch' block
 ConfigError {}: the module '{}' has a name the standard library keeps for a module it may add (std/reserved.txt), so a program could not import both once it does: rename the file
 CompileError the name '{}' is already used by the import of the module '{}' on line {}
+JSONEncodeError a date or time cannot be written as JSON text
+MsgpackError a date or time cannot be written as MessagePack
+MsgpackError the float {} cannot be written as MessagePack
+ValueError {} value cannot be written as TOML

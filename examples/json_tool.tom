@@ -1,9 +1,9 @@
 # JSON (std/json.tom): read a document, look inside it, build a new one and write it out, with the errors a bad
 # document gives.
-from json import loads, dumps, Json, JsonDict, JsonList, JsonInt, JsonFloat, JsonStr, JsonBool, JsonNull
-from json import JSONDecodeError, JSONTypeError
+from json import loads, dumps, JSONDecodeError
+from value import Value, Dict, List, Int, Float, Str, Bool, Null, ValueTypeError
 
-def summarize(doc: Json) -> int:
+def summarize(doc: Value) -> int:
     total = 0
     for order in doc['orders'].as_list():
         for line in order['lines'].as_list():
@@ -26,11 +26,11 @@ def main():
     print(doc['note'].is_null())
 
     # build a new document from plain values
-    out = JsonDict({
+    out = Dict({
         'customer': doc['customer'],
-        'total_cents': JsonInt(summarize(doc)),
-        'average': JsonFloat(summarize(doc) / 3.0),
-        'tags': JsonList([JsonStr('repeat'), JsonBool(True), JsonNull()]),
+        'total_cents': Int(summarize(doc)),
+        'average': Float(summarize(doc) / 3.0),
+        'tags': List([Str('repeat'), Bool(True), Null()]),
     })
     print(dumps(out))
     print(dumps(out, indent=2, sort_keys=True))
@@ -43,5 +43,5 @@ def main():
             print(e.message)
     try:
         print(doc['customer'].as_int())
-    catch JSONTypeError as e:
+    catch ValueTypeError as e:
         print(e.message)

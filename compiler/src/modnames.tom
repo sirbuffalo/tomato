@@ -4,7 +4,7 @@
 
 # every module in std/ (the help of "cannot find the module", and the shadow warning)
 export def std_modules() -> list[str]:
-    return ['asyncio', 'base64', 'bitarray', 'cache', 'csv', 'datetime', 'hashlib', 'hex', 'hmac', 'html', 'io', 'itertools', 'json', 'lineedit', 'math', 'os', 'ospath', 'random', 'rational', 're', 'requests', 'secrets', 'socket', 'statistics', 'struct', 'sys', 'terminal', 'testing', 'textwrap', 'time', 'toml', 'urlparse', 'utf8', 'uuid', 'zlib']
+    return ['asyncio', 'base64', 'bitarray', 'cache', 'csv', 'datetime', 'hashlib', 'hex', 'hmac', 'html', 'io', 'itertools', 'json', 'lineedit', 'math', 'os', 'ospath', 'random', 'rational', 're', 'requests', 'secrets', 'socket', 'statistics', 'struct', 'sys', 'terminal', 'testing', 'textwrap', 'time', 'toml', 'urlparse', 'utf8', 'uuid', 'value', 'zlib']
 
 # the names std keeps for modules it may add: a seed may not provide one, and a project file of that name is allowed
 # (it will shadow the module, with a warning, when std gets it)

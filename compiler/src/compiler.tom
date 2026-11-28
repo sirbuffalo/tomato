@@ -1315,6 +1315,7 @@ class Mod:
     src_dir: str = ''                  # the src/ folder of the project (with its closing slash), searched after the program's own folder (D94b): a test in tests/ imports the modules of src/
     src_used: list[str] = []           # the modules that were read from src_dir
     all_entries: bool = False          # a built program (D94b): every entry is in it, and its first command-line word names the one to run
+    test_driver: bool = False          # the entry is `test` (D122a): the generated driver calls testing._run_all, which testing does not export; compile_with lets that one name through
     entry_map: list[str] = []          # all_entries: for each entry, `NAME TAB FUNCTION`: the function (or the generated driver of a group) that NAME runs
     warnings: list[str] = []      # the finished text of each warning (compiler/src/lint.tom), shown after a program compiles
     tvars: dict[str, str] = {}    # the type parameters in scope and the types they stand for (D60a)
@@ -1495,7 +1496,8 @@ class Mod:
     def find_method(self, cls: str, name: str, line: int) -> FuncInfo:
         found = self.lookup_method(cls, name)
         if found is None:
-            raise CompileError(f"'{shown('@' + cls)}' has no method '{name}'", line)
+            text = f"'{shown('@' + cls)}' has no method '{name}'"
+            raise CompileError(text + moved_method_hint(shown('@' + cls), name), line)
         return found
 
     def resolve(self, name: str) -> str:
@@ -1567,7 +1569,7 @@ class Mod:
         b = self.binding(module, name)
         if b is not None:
             if not b.exported:
-                raise CompileError(f"module '{module}' does not export '{name}'\nput 'export' before its definition in {module}.tom", line)
+                raise CompileError(f"module '{module}' does not export '{name}'\n{not_exported_help(module, name)}", line)
             return b.key
         names: list[str] = []
         for seen in self.scope:
@@ -1577,6 +1579,9 @@ class Mod:
         near = closest(name, names)
         if near != '':
             help = f"did you mean '{near}'?"
+        moved = moved_name_hint(module, name)
+        if moved != '':
+            help = moved
         if len(names) > 0:
             help += f"\nmodule '{module}' exports: " + ', '.join(names)
         raise CompileError(f"module '{module}' has no '{name}'\n{help}", line)
@@ -9723,7 +9728,12 @@ class Gen:
             # module.name where the module has the name but does not export it
             found = self.mod.binding(name[:dot], name[dot + 1:])
             if found is not None and not found.exported:
-                return f"module '{name[:dot]}' does not export '{name[dot + 1:]}'\nput 'export' before its definition in {name[:dot]}.tom"
+                return f"module '{name[:dot]}' does not export '{name[dot + 1:]}'\n{not_exported_help(name[:dot], name[dot + 1:])}"
+            # (the module the prefix stands for: `import math as m` makes m.pow the same mistake as math.pow)
+            module = self.mod.import_modules.get(f'{self.mod.cur}\t{name[:dot]}', name[:dot])
+            moved = moved_name_hint(module, name[dot + 1:])
+            if moved != '':
+                return f"the function '{name}' is not defined\n{moved}"
         near = closest(name, self.visible_names())
         if near != '':
             return f"the function '{name}' is not defined\ndid you mean '{near}'?"
@@ -14468,6 +14478,28 @@ def marker_selected(marker: str, entry_name: str) -> bool:
     # @test.a.b; `test.a` selects @test.a and @test.a.b, not @test.ab)
     return marker == entry_name or marker.startswith(entry_name + '.')
 
+# the help line of "module M does not export NAME": the way out for a module of the program, and for a name with a leading underscore
+# (internal by custom, and the whole of std's internals) the plain fact (D122a)
+def not_exported_help(module: str, name: str) -> str:
+    if name.startswith('_'):
+        return f"a name that starts with an underscore is internal to {module}.tom"
+    return f"put 'export' before its definition in {module}.tom"
+
+# What to tell a program that still uses a std name that was taken out (D122a): '' when there is nothing to say. The text is added as
+# help lines to the usual "has no" error, so the error's own first line (and its id) are unchanged.
+def moved_name_hint(module: str, name: str) -> str:
+    if module == 'math' and name in ['abs', 'min', 'max']:
+        return f"'{name}' is built in, and math no longer has its own: call {name}() directly, without importing it from math"
+    if module == 'math' and name == 'pow':
+        return "math has no pow: write base ** exponent, such as 2 ** 10"
+    return ''
+
+# the same for a method a Python program would write on a datetime class: the std module has free functions for those (D122a)
+def moved_method_hint(cls: str, name: str) -> str:
+    if cls in ['datetime.date', 'datetime.time', 'datetime.datetime'] and name in ['fromisoformat', 'strptime', 'today', 'now', 'combine']:
+        return '\nthe datetime module makes these values with free functions, not methods: date_fromisoformat(text), time_fromisoformat(text), datetime_fromisoformat(text), datetime_strptime(text, format), date_today(), datetime_now() and datetime_combine(date, time)'
+    return ''
+
 def all_entries_driver(mod: Mod, src: str, top: list[Node]) -> str:
     # D94b: a built program holds every entry. The names it answers to are each marker and each dotted beginning of one (`greet` for
     # @greet.loud), except the tests (`tomato test` runs those: their driver is made for that entry alone). A name that selects one
@@ -14581,6 +14613,7 @@ def entry_driver(mod: Mod, src: str, entry_name: str) -> str:
     text += "@test_main\ndef _tomato_test_driver(*args: tuple[str]):\n"
     text += "    testing._run_all([" + ', '.join([f"'{n}'" for n in names]) + "], [" + ', '.join(names) + "], args)\n"
     mod.entry_alias = 'test_main'
+    mod.test_driver = True
     return text
 
 def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: str) -> str:
@@ -14610,6 +14643,12 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     imports: list[ImportInfo] = []
     loaded: list[str] = []
     user = load_items(mod, dir, std, src, 'main', items, imports, loaded)
+    if mod.test_driver:
+        # D122a: testing does not export _run_all, and the driver the compiler writes for the entry `test` calls it: only for such a
+        # program is that one function marked exported, before the scopes are built (an `import testing` is expanded from the marks)
+        for top in items:
+            if top.module == 'testing' and top.node.kind == 'FuncDef' and top.node.fields[0].text == '_run_all':
+                top.node.exported = True
     build_scopes(mod, items, imports)
     warn_unstable(mod, items, imports)
     plain: list[TopItem] = []

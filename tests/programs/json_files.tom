@@ -1,5 +1,6 @@
 # json load(path) / dump(value, path), and toml dump(path): round trips, options, errors.
-from json import loads_msgpack, loads, load, dump, dumps, JsonNull, JSONDecodeError, JSONEncodeError
+from json import loads_msgpack, loads, load, dump, dumps, JSONDecodeError, JSONEncodeError
+from value import Null, Int
 import toml
 
 @main
@@ -17,7 +18,7 @@ def main(dir: str = '/tmp'):
     print(f.read())
     f.close()
     # a shorter value replaces the file
-    dump(JsonNull(), path)
+    dump(Null(), path)
     f = open(path, 'r')
     print(f.read())
     f.close()
@@ -53,7 +54,7 @@ def main(dir: str = '/tmp'):
     catch IOError as e:
         print('toml dump:', e.message)
     try:
-        toml.dump(toml.integer(1), tpath)
+        toml.dump(Int(1), tpath)
     catch RuntimeError as e:
         print(e.message)
     print(toml.dumps(toml.load(tpath)) == toml.dumps(t))

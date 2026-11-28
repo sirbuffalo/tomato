@@ -5,9 +5,9 @@ True False True
 ['port', 'ratio', 'hosts']
 x
 y
-expected an integer, found a string
-the key nope is not in the table
-the array index is out of range
+expected an int, but this is a str
+the key nope is not in this dict
+index 5 is out of range for a list of 2
 4 1 19 Invalid number
 Invalid number: line 4 column 1 (char 19)
 datetime 1979 5 27 7 32 0 500000000 -420
@@ -40,3 +40,7 @@ True
 True
 True
 dumps needs a table: a TOML document is a table of keys
+a null value cannot be written as TOML
+a bin value cannot be written as TOML
+a timestamp value cannot be written as TOML
+True {"port":8080,"ratio":0.25,"hosts":["a","b"]}

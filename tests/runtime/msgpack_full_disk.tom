@@ -1,9 +1,10 @@
 # dump_msgpack to /dev/full (Linux): the file opens, but the bytes cannot be written. tests/run.sh runs it where /dev/full exists.
-from json import dump_msgpack, JsonStr
+from json import dump_msgpack
+from value import Str
 
 @main
 def main():
     try:
-        dump_msgpack(JsonStr('x' * 10000), '/dev/full')
+        dump_msgpack(Str('x' * 10000), '/dev/full')
     catch IOError as e:
         print(e.id, e.message)
