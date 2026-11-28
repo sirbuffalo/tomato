@@ -1,0 +1,6 @@
+error[E324]: argument 1 of 'shout' (the parameter 's') has type bytes, but str is expected
+ --> tests/errors/bytes_for_text.tom:7:11
+  |
+7 |     print(shout(b'abc'))
+  |           ^^^^^
+  = help: decode it: b.decode() gives the text

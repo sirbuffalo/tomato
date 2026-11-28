@@ -1,5 +1,6 @@
-error[E324]: argument 1 of 'size' (the parameter 'data') has type bytearray.bytearray, but bytes is expected
+error[E324]: argument 1 of 'size' (the parameter 'data') has type bytearray, but bytes is expected
  --> tests/errors/bytearray_as_bytes.tom:8:11
   |
 8 |     print(size(a))
   |           ^^^^
+  = help: a bytearray is not bytes: bytes(a) gives the bytes it holds now (a copy)

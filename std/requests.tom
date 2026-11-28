@@ -112,6 +112,12 @@ def _form(fields: dict[str, str]) -> str:
         parts.append(f'{quote(k)}={quote(v)}')
     return '&'.join(parts)
 
+# the timeout as a float: a whole number of seconds is as good as a float (as for asyncio.wait_for)
+def _seconds(timeout: int | float) -> float:
+    if timeout is int:
+        return float(timeout)
+    return timeout
+
 def _header_lines(headers: dict[str, str]) -> str:
     out = ''
     for k, v in headers.items():
@@ -157,7 +163,7 @@ def _body_bytes(data: str | bytes) -> bytes:
 #   timeout  seconds for the whole request (0 means no limit); TimeoutError when it runs out
 #   follow_redirects, max_redirects   follow 3xx answers (the default), at most that many times
 export async def request(method: str, url: str, params: dict[str, str] = {}, data: str | bytes = '', form: dict[str, str] = {},
-                         json: str | Value = '', headers: dict[str, str] = {}, timeout: float = 0.0,
+                         json: str | Value = '', headers: dict[str, str] = {}, timeout: int | float = 0.0,
                          follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     hdr: dict[str, str] = {}
     for k, v in headers.items():
@@ -192,7 +198,7 @@ export async def request(method: str, url: str, params: dict[str, str] = {}, dat
         if len(body) > 0:
             has_body = 1
     follow = 1 if follow_redirects else 0
-    id = !tomato_http_start(method.upper(), full, _header_lines(hdr), body, has_body, float(timeout), follow,
+    id = !tomato_http_start(method.upper(), full, _header_lines(hdr), body, has_body, _seconds(timeout), follow,
                             max_redirects)
     try:
         await _http_wait(id)
@@ -219,35 +225,35 @@ export async def request(method: str, url: str, params: dict[str, str] = {}, dat
     finally:
         !tomato_http_free(id)
 
-export async def get(url: str, params: dict[str, str] = {}, headers: dict[str, str] = {}, timeout: float = 0.0,
+export async def get(url: str, params: dict[str, str] = {}, headers: dict[str, str] = {}, timeout: int | float = 0.0,
                      follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('GET', url, params=params, headers=headers, timeout=timeout,
                          follow_redirects=follow_redirects, max_redirects=max_redirects)
 
-export async def head(url: str, params: dict[str, str] = {}, headers: dict[str, str] = {}, timeout: float = 0.0,
+export async def head(url: str, params: dict[str, str] = {}, headers: dict[str, str] = {}, timeout: int | float = 0.0,
                       follow_redirects: bool = False, max_redirects: int = 20) -> Response:
     return await request('HEAD', url, params=params, headers=headers, timeout=timeout,
                          follow_redirects=follow_redirects, max_redirects=max_redirects)
 
-export async def delete(url: str, params: dict[str, str] = {}, headers: dict[str, str] = {}, timeout: float = 0.0,
+export async def delete(url: str, params: dict[str, str] = {}, headers: dict[str, str] = {}, timeout: int | float = 0.0,
                         follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('DELETE', url, params=params, headers=headers, timeout=timeout,
                          follow_redirects=follow_redirects, max_redirects=max_redirects)
 
 export async def post(url: str, params: dict[str, str] = {}, data: str | bytes = '', form: dict[str, str] = {},
-                      json: str | Value = '', headers: dict[str, str] = {}, timeout: float = 0.0,
+                      json: str | Value = '', headers: dict[str, str] = {}, timeout: int | float = 0.0,
                       follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('POST', url, params=params, data=data, form=form, json=json, headers=headers,
                          timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)
 
 export async def put(url: str, params: dict[str, str] = {}, data: str | bytes = '', form: dict[str, str] = {},
-                     json: str | Value = '', headers: dict[str, str] = {}, timeout: float = 0.0,
+                     json: str | Value = '', headers: dict[str, str] = {}, timeout: int | float = 0.0,
                      follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('PUT', url, params=params, data=data, form=form, json=json, headers=headers,
                          timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)
 
 export async def patch(url: str, params: dict[str, str] = {}, data: str | bytes = '', form: dict[str, str] = {},
-                       json: str | Value = '', headers: dict[str, str] = {}, timeout: float = 0.0,
+                       json: str | Value = '', headers: dict[str, str] = {}, timeout: int | float = 0.0,
                        follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('PATCH', url, params=params, data=data, form=form, json=json, headers=headers,
                          timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)

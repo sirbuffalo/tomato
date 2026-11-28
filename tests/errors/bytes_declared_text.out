@@ -1,0 +1,6 @@
+error[E324]: the value has type str, but bytes is expected
+ --> tests/errors/bytes_declared_text.tom:4:5
+  |
+4 |     data: bytes = 'abc'
+  |     ^^^^^^^^^^^^^^^^^^^
+  = help: encode it: s.encode() gives its UTF-8 bytes

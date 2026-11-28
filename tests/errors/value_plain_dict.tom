@@ -1,0 +1,7 @@
+# a plain dict where a value.Value is taken: the help says how to build one
+import json
+
+@main
+def main():
+    d = {'a': 1}
+    print(json.dumps(d))

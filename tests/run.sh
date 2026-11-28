@@ -337,7 +337,7 @@ fast_asan=" bare_raise bare_raise_async at_neg_rmul float_ownership loop_lifetim
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
 asan_specs1="tests/programs/error_tree: tests/programs/bare_raise: tests/programs/bare_raise_async: tests/programs/at_neg_rmul: tests/programs/angle_lists: tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/sort_field: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/big_shift: tests/programs/int_bitwise_big: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/big_decimal: tests/programs/big_karatsuba: tests/programs/big_ntt: tests/programs/big_division: tests/programs/int_bitwise_runs: tests/programs/big_bad_text: tests/programs/int64_convert: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/value_shared: tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_case_full: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/optional_values: tests/programs/optional_lookups: tests/programs/optional_narrowing: tests/programs/optional_narrowing_flow: tests/programs/optional_narrowing_assign: tests/programs/optional_compound_assign: tests/programs/union_narrowing_nests: tests/programs/union_narrowing_elif: tests/programs/type_is: tests/programs/type_is_nests: tests/programs/type_is_class: tests/programs/type_is_class_nests: tests/programs/optional_error_paths: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_floor_mod: tests/programs/float_ownership: tests/programs/float_loops: tests/programs/float_keys: tests/programs/float_nests: tests/programs/float_library: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
-asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/sys_run:WORK tests/programs/sys_async:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_loop_close:WORK tests/programs/file_modes:WORK tests/programs/file_closed:WORK tests/programs/file_drop_loop:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib: tests/programs/testing_diff: tests/programs/bytes_type: tests/programs/list_method_raise: tests/programs/bytes_gaps: tests/programs/bytearray_type: tests/programs/bytearray_names: tests/programs/catch_scope: tests/programs/interface_text:"
+asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/sys_run:WORK tests/programs/sys_async:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_loop_close:WORK tests/programs/file_modes:WORK tests/programs/file_closed:WORK tests/programs/file_drop_loop:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib: tests/programs/testing_diff: tests/programs/bytes_type: tests/programs/list_method_raise: tests/programs/bytes_gaps: tests/programs/bytearray_type: tests/programs/bytearray_names: tests/programs/text_split_words: tests/programs/bytes_sized_iterable: tests/programs/bytearray_inplace: tests/programs/catch_scope: tests/programs/interface_text:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
   want="$(sed -n '1s/^# borrowed loops: //p' "tests/programs/$2.tom")"
@@ -701,6 +701,16 @@ the number is too large to write with f: it has more than 1000 digits before the
   m="$(tjsc site/wasm compile "$work/wl.tom" "--config=$work/wl.toml" 2>&1)"
   case "$m" in *"error[E543]: /tomato.toml: limits.exp_bits must be a whole number from 2048 to 2147483647, not 5"*"~rc 1") ok "wasm: a bad tomato.toml is an error";; *) bad "wasm: a bad tomato.toml is an error" "$m";; esac
 }
+t_wasm_seeds_line() { # the `# seeds:` line is a plain comment to the browser (docs/manifest.md): no project there, so no E622, even for a line that is not valid
+  printf '# seeds: me/lib, other/thing>=1.2\n@main\ndef main():\n    print("ok")\n' > "$work/sd.tom"
+  m="$(tjsc site/wasm run "$work/sd.tom" 2>&1 | grep -v '^Could not open file: ')"
+  case "$m" in "ok
+~rc 0") ok "wasm: a # seeds: line is a comment in the browser";; *) bad "wasm: a # seeds: line is a comment in the browser" "$m";; esac
+  printf '# seeds: not a seed name\n@main\ndef main():\n    print("ok")\n' > "$work/sd2.tom"
+  m="$(tjsc site/wasm run "$work/sd2.tom" 2>&1 | grep -v '^Could not open file: ')"
+  case "$m" in "ok
+~rc 0") ok "wasm: a bad # seeds: line is a comment in the browser";; *) bad "wasm: a bad # seeds: line is a comment in the browser" "$m";; esac
+}
 t_wasm_unstable() { # the website's compiler (WebAssembly) gives the same unstable-feature and deprecation warnings as the native one: once for each feature, none when allowed or stable
   for n in errors/unstable_use errors/unstable_dotted errors/unstable_allow errors/unstable_quiet errors/unstable_markers errors/unstable_start deprecated/use deprecated/module deprecated/allow deprecated/quiet; do
     tjsc site/wasm compile "tests/$n.tom" 2> /dev/null | grep '^;! ' | sed 's/^;! //' | grep -v '^ *-->' > "$work/w.$(basename $n)"
@@ -714,7 +724,7 @@ t_std_public_fields() { r="$(sh tests/std_public_fields.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in optional_interface import_as trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_narrowing optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests union_narrowing_elif type_is type_is_nests type_is_class type_is_class_nests type_in_old optional_error_paths shadow_functions shadow_print shadow_library shadow_classes shadow_std shadow_locals shadow_core bare_raise bare_raise_async time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits bytes_type bytes_gaps bytearray_type bytearray_names catch_scope interface_text; do
+  for name in optional_interface import_as trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_narrowing optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests union_narrowing_elif type_is type_is_nests type_is_class type_is_class_nests type_in_old optional_error_paths shadow_functions shadow_print shadow_library shadow_classes shadow_std shadow_locals shadow_core bare_raise bare_raise_async time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits bytes_type bytes_gaps bytearray_type bytearray_names text_split_words bytes_sized_iterable bytearray_inplace catch_scope interface_text; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -745,7 +755,7 @@ if [ -n "$have_js" ]; then
   wasm_neg bytes_literal_non_ascii "a bytes literal holds only ASCII characters"
   wasm_rt bytes_decode_invalid "invalid UTF-8: the byte 0xc3 at position 1" 1
   wasm_neg bytes_literal_capital_b "a bytes literal starts with a lower case b, not B"
-  wasm_neg bytearray_bytes_mix "the value has type bytearray.bytearray, but bytes is expected"
+  wasm_neg bytearray_bytes_mix "the value has type bytearray, but bytes is expected"
   wasm_rt bytearray_byte_range "a byte must be a whole number from 0 to 255, but this is 256" 1
   wasm_neg trig_needs_angle "argument 1 of 'sin' (the parameter 'a') has type float, but math.Angle is expected"
   wasm_neg math_pow_moved "math has no pow: write base ** exponent"
@@ -790,6 +800,7 @@ if [ -n "$have_js" ]; then
   wasm_rt assert_failed "error[E519]: AssertionError: x should be 4, but is 3 (raised on line 3)" 1
   spawn_free t_wasm_test_entry
   spawn_free t_wasm_config
+  spawn_free t_wasm_seeds_line
   spawn_free t_wasm_site_errors
   spawn_free t_wasm_repl_import
   spawn_free t_wasm_play_repl
@@ -3563,8 +3574,8 @@ neg bytes_in_text_left "'in' with bytes needs an int (a byte) or bytes on its le
 neg bytes_item_assign "bytes cannot be changed: make a new value"
 neg bytes_literal_capital_b "a bytes literal starts with a lower case b, not B"
 neg bytearray_text_item "the assigned item has type str, but int is expected"
-neg bytearray_no_method "'bytearray.bytearray' has no method 'upper'"
-neg bytearray_bytes_mix "the value has type bytearray.bytearray, but bytes is expected"
+neg bytearray_no_method "'bytearray' has no method 'upper'"
+neg bytearray_bytes_mix "the value has type bytearray, but bytes is expected"
 neg bytearray_private_field "the field 'n' is private to class 'bytearray.bytearray'"
 neg bytearray_private_buffer "the field 'buf' is private to class 'bytearray.bytearray'"
 neg bytearray_private_method "the method '_room' is private to class 'bytearray.bytearray'"
@@ -4155,6 +4166,24 @@ t_exit_status() { # sys.exit: the status, what is flushed (print and write_stdou
   done
 }
 spawn t_exit_status
+
+t_stdout_full() { # standard output that cannot be written (/dev/full): the end of the program says so and the status is 1, where it was 0 and silent; sys.flush() and write_stdout raise an IOError (D134a)
+  if [ ! -w /dev/full ]; then ok "stdout full: the end of the program reports it (no /dev/full here)"; ok "stdout full: sys.flush and write_stdout raise IOError (no /dev/full here)"; return; fi
+  for n in stdout_full stdout_full_caught; do
+    "$c1" "tests/runtime/$n.tom" main std/ > "$work/$n.ll" 2>/dev/null && clang -O1 -w -o "$work/$n" "$work/$n.ll" "$rt_o" -lm || { bad "stdout full $n" "did not build"; return; }
+  done
+  err="$("$work/stdout_full" 2>&1 > /dev/full)"; code=$?
+  check "stdout full: the end of the program reports it" "error[E382]: could not write to standard output: No space left on device
+status 1" "$err
+status $code"
+  err="$("$work/stdout_full_caught" 2>&1 > /dev/full)"; code=$?
+  check "stdout full: sys.flush and write_stdout raise IOError" "caught E382: could not write to standard output: No space left on device
+caught E382: could not write to standard output: No space left on device
+done
+status 0" "$err
+status $code"
+}
+spawn t_stdout_full
 
 t_no_entropy() {
   n="$1"

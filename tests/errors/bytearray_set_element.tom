@@ -1,0 +1,6 @@
+# a bytearray cannot be a set element
+@main
+def main():
+    ba = bytearray(b'abc')
+    s = {ba}
+    print(len(s))

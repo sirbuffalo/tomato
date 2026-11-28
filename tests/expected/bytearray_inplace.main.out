@@ -1,0 +1,20 @@
+195 bytearray(b'ab')
+1 0
+6 bytearray(b'ababab')
+bytearray(b'xyz!xyz!') bytearray(b'xyz!xyz!') True
+bytearray(b'xyz!xyz!?') bytearray(b'xyz!xyz!')
+bytearray(b'xyz!xyz!-') bytearray(b'xyz!xyz!')
+bytearray(b'one two')
+20000
+bytearray(b'kv')
+[bytearray(b'0'), bytearray(b'11')]
+bytearray(b'abcde')
+E391 5
+bytearray(b'hello world') bytearray(b'hello world \n') bytearray(b'  hello world') bytearray(b'hello world')
+bytearray(b'ello world')
+bytearray(b'  hell0 w0rld \n') bytearray(b'  hell0 world \n') bytearray(b'  heo word \n')
+[bytearray(b'a'), bytearray(b'b'), bytearray(b''), bytearray(b'c')] 4 False
+[bytearray(b'a'), bytearray(b'b,,c')] [bytearray(b'abc')]
+bytearray(b'x, y, z') bytearray(b'')
+8 2 True True 9
+an empty separator cannot be used to split bytes

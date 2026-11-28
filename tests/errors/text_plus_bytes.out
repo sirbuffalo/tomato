@@ -1,0 +1,6 @@
+error[E190]: cannot use '+' with str and bytes
+ --> tests/errors/text_plus_bytes.tom:4:15
+  |
+4 |     print('a' + b'a')
+  |               ^
+  = help: bytes and text are different types: encode the text (s.encode()) or decode the bytes (b.decode())

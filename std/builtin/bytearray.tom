@@ -10,11 +10,13 @@
 #     data = bytes(a)                   # the immutable bytes of it (a copy); bytearray(data) goes the other way
 #
 # It is the mutable twin of bytes (D17e) with the same rules: `len`, `a[i]`, `a[i] = byte`, slices (`a[1:3]` is a new bytearray),
-# `+` (with bytes or a bytearray) and `*`, `for x in a` (ints), `x in a` (a byte or a run of bytes), `==` and the orderings between
-# two bytearrays, `list(a)`, `print(a)` as `bytearray(b'...')`; the methods append, extend, insert, pop, remove, clear, reverse and
-# copy, and the readers find, rfind, count, startswith, endswith, hex and decode, which work as the methods of bytes do (their
-# `sub` is bytes). A bytearray is not hashable (no dict key or set member, as a list is not). Bytes and bytearrays never mix by
-# themselves: there is no `a == b'..'`, and a function that takes bytes is given `bytes(a)`.
+# `+` (with bytes or a bytearray) and `*`, `a += data` (which extends a itself, D134a), `for x in a` (ints; the loop goes as far as the
+# bytearray reaches at each step), `x in a` (a byte or a run of bytes), `==` and the orderings between two bytearrays, `list(a)`,
+# `print(a)` as `bytearray(b'...')`; the methods append, extend (bytes, a bytearray or a list of ints), insert, pop, remove, clear,
+# reverse and copy, the readers find, rfind, count, startswith, endswith, hex and decode, and replace, split, join, strip, lstrip and
+# rstrip (new in D134a, giving new bytearrays), which work as the methods of bytes do (their `sub` is bytes or a bytearray). A
+# bytearray is not hashable (no dict key or set member, as a list is not). Bytes and bytearrays never mix by themselves: there is no
+# `a == b'..'`, and a function that takes bytes is given `bytes(a)`. Slice assignment and `del` are not there (a list has neither).
 #
 # Storage: one bytes value that the object owns (its length is the capacity, `n` of it is the contents), changed in place by the
 # runtime (tomato_bytearray_* in runtime/tomato_rt.c) and replaced by one twice as big when it is full, so a run of appends takes
@@ -96,10 +98,13 @@ export class bytearray:
         _check_byte(v)
         !tomato_bytearray_poke(self.buf, k, v)
 
+    # the length is read at every step, so a loop over a bytearray that changes goes as far as the bytearray reaches now (as for a list)
     @iter
     def each(self) -> int:
-        for i in range(self.n):
+        i = 0
+        while i < self.n:
             yield self.buf[i]
+            i += 1
 
     @contains
     def has(self, x: int | bytes) -> bool:
@@ -158,17 +163,23 @@ export class bytearray:
         !tomato_bytearray_poke(self.buf, self.n, v)
         self.n += 1
 
-    # a.extend(a) is fine: the length is read before anything is added
-    def extend(self, data: bytes | bytearray):
+    # a.extend(a) is fine: the length is read before anything is added. `a += data` is a.extend(data) too (D134a).
+    def extend(self, data: bytes | bytearray | list[int]):
         if data is bytes:
             self._room(len(data))
             !tomato_bytearray_move(self.buf, self.n, data, 0, len(data))
             self.n += len(data)
             return
-        count = data.n
-        self._room(count)
-        !tomato_bytearray_move(self.buf, self.n, data.buf, 0, count)
-        self.n += count
+        if data is bytearray:
+            count = data.n
+            self._room(count)
+            !tomato_bytearray_move(self.buf, self.n, data.buf, 0, count)
+            self.n += count
+            return
+        items = bytes(data)         # (a list of ints: ValueError E391 names the first item that is not a byte; nothing is added then)
+        self._room(len(items))
+        !tomato_bytearray_move(self.buf, self.n, items, 0, len(items))
+        self.n += len(items)
 
     # a.insert(i, v): v goes before position i (a negative i counts from the end, and one past either end is the end)
     def insert(self, i: int, v: int):
@@ -214,20 +225,49 @@ export class bytearray:
     def copy(self) -> bytearray:
         return bytearray(self)
 
-    def find(self, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
-        return self._to_bytes().find(sub, start, end)
+    # the bytes of an argument that is bytes or a bytearray
+    def private _raw(self, x: bytes | bytearray) -> bytes:
+        if x is bytes:
+            return x
+        return x._to_bytes()
 
-    def rfind(self, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
-        return self._to_bytes().rfind(sub, start, end)
+    def find(self, sub: bytes | bytearray, start: int = 0, end: int = 4611686018427387903) -> int:
+        return self._to_bytes().find(self._raw(sub), start, end)
 
-    def count(self, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
-        return self._to_bytes().count(sub, start, end)
+    def rfind(self, sub: bytes | bytearray, start: int = 0, end: int = 4611686018427387903) -> int:
+        return self._to_bytes().rfind(self._raw(sub), start, end)
 
-    def startswith(self, prefix: bytes) -> bool:
-        return self._to_bytes().startswith(prefix)
+    def count(self, sub: bytes | bytearray, start: int = 0, end: int = 4611686018427387903) -> int:
+        return self._to_bytes().count(self._raw(sub), start, end)
 
-    def endswith(self, suffix: bytes) -> bool:
-        return self._to_bytes().endswith(suffix)
+    def startswith(self, prefix: bytes | bytearray) -> bool:
+        return self._to_bytes().startswith(self._raw(prefix))
+
+    def endswith(self, suffix: bytes | bytearray) -> bool:
+        return self._to_bytes().endswith(self._raw(suffix))
+
+    # the methods that make new contents give a new bytearray (new in this release, D134a); they work as the methods of bytes do
+    def replace(self, old: bytes | bytearray, new: bytes | bytearray, count: int = -1) -> bytearray:
+        return bytearray(self._to_bytes().replace(self._raw(old), self._raw(new), count))
+
+    def split(self, sep: bytes | bytearray, maxsplit: int = -1) -> list[bytearray]:
+        out: list[bytearray] = []
+        for piece in self._to_bytes().split(self._raw(sep), maxsplit):
+            out.append(bytearray(piece))
+        return out
+
+    # a.join(items): the items (bytes), with the contents of a between them
+    def join(self, items: list[bytes]) -> bytearray:
+        return bytearray(self._to_bytes().join(items))
+
+    def strip(self, chars: bytes | bytearray = b' \t\n\r\x0b\x0c') -> bytearray:
+        return bytearray(self._to_bytes().strip(self._raw(chars)))
+
+    def lstrip(self, chars: bytes | bytearray = b' \t\n\r\x0b\x0c') -> bytearray:
+        return bytearray(self._to_bytes().lstrip(self._raw(chars)))
+
+    def rstrip(self, chars: bytes | bytearray = b' \t\n\r\x0b\x0c') -> bytearray:
+        return bytearray(self._to_bytes().rstrip(self._raw(chars)))
 
     def hex(self, sep: str = '') -> str:
         return self._to_bytes().hex(sep)

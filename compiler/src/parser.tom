@@ -1033,7 +1033,7 @@ export class Parser:
             check_target(e, t)
             v = self.expr()
             self.expect('NEWLINE')
-            return mk('Assign', t.line, [vn(e), vn(mk('BinOp', t.line, [vs(op), vn(e), vn(v)]))])
+            return mk('Assign', t.line, [vn(e), vn(mk('BinOp', t.line, [vs(op), vn(e), vn(v), vs('+=')]))])   # (the fourth field says it came from +=: a bytearray is extended in place)
         self.expect('NEWLINE')
         return mk('ExprStmt', t.line, [vn(e)])
 

@@ -182,6 +182,12 @@ Other messages that used to be rough:
 | `a, b = None` | `cannot unpack None into 2 variables` (E185); the hidden variable of the unpack is never named |
 | a wrong argument, or an unknown method, of `Cache[Point, int]` | the type is written as the program wrote it, `cache.Cache[Point, int]`, never with the compiler's internal `@Point` |
 | `print(nothing(xs))`, `str(nothing(xs))`, `f"{nothing(xs)}"`, `nothing(xs) + 1`, `x = nothing(xs)`, `await nothing(xs)` where `nothing` returns nothing | `'nothing' gives no value, so it cannot be used inside an expression` (E652), the caret under the name; one check in the compiler for every place a value is used (D132a). A call on a line of its own is fine |
+| a text where bytes are taken (`hashlib.sha256_hex('abc')`, `x: bytes = 'abc'`, `b'a' + 'a'`, `'a' in data`), bytes where text is taken, a `bytearray` where bytes are taken (`os.write_bytes(path, ba)`) or bytes where a `bytearray` is | the E324, E190 or E635 of before, with a help line: `encode it: s.encode() gives its UTF-8 bytes`, `decode it: b.decode() gives the text`, `a bytearray is not bytes: bytes(a) gives the bytes it holds now (a copy)`, `bytes cannot be changed: bytearray(b) makes a bytearray with a copy of them` (D134a). The type of a bytearray is written `bytearray` (and `bitarray`), as the program writes it, not `bytearray.bytearray` |
+| `{ba: 1}`, `{ba}` and `hash(ba)` with `ba` a `bytearray` | `a bytearray can change, so it cannot be a dict key or set element` with the help `use bytes(a), which cannot change, as the key` (it said to add an `@hash` method to the class) |
+| `bytes(range(4))`, `'é'.encode('ascii', 'ignore')` | E632 says `make a list of it first: bytes(list(range(4)))`; E626 for `encode` names the modes `'strict'` and `'replace'` and what replace puts in (`?`), where it spoke of U+FFFD, which is `decode`'s |
+| `half(5)` where `half` takes a `float`, or `float \| None` (`sys.run(args, timeout=5)`) | E324 with the help `an int is not a float: write the number with a point (5.0), or convert it with float(n)` |
+| `json.dumps(d)` with a `dict[str, int]`, `json.dumps('text')` | E324 with the help `a value.Value is built with the classes of the value module: from value import Value, Dict, List, Str, Int, Float, Bool` and an example (`Dict({'a': Int(1)})`) |
+| `ba + 'x'`, `ba += 'x'` with `ba` a `bytearray` | E190 `cannot use '+' with bytearray and str`, with the help `a bytearray and text are different types: encode the text (s.encode()) or decode the bytearray (a.decode())` |
 | `print(f)`, `str(f)` with `f` a `File`, or a task | `a value of type File cannot be printed` (E167), `... cannot be converted to text` (E166); they printed an empty line or were a raw clang error (D132a) |
 
 
@@ -212,9 +218,15 @@ written (a full disk, a closed pipe, no permission): `could not write to the fil
 `could not write to the file when closing it: ...` from `close()`. The C library buffers output, so a small write to a full disk
 may fail only at `close()`; call `close()` inside `try` and catch `IOError` to be sure the data arrived.
 
+Standard output is buffered the same way. When it cannot be written (`./prog > /dev/full`, a closed pipe that does not kill the
+program), `sys.flush()` and `sys.write_stdout()` raise `IOError` E382 (`could not write to standard output: No space left on device`),
+and a program that never looks is told at its end: the same line on standard error and status 1, where the status was 0 and
+nothing was said (D134a). `print` itself does not raise, because the text is only buffered when `print` returns; a program that must
+know sooner calls `sys.flush()` inside `try`. A killed process (`| head` ends the pipe with SIGPIPE, status 141) is as it was.
+
 A closed file is not an `IOError`: `close()` a second time does nothing, and `read()`, `readline()`, `readlines()`, `write()`, `writelines()`, `flush()` or a `for` loop over a file that `close()` was called on raise a `ValueError` (E547), `I/O operation on a closed file` (Python's rule; D93a). `f.closed()` is True after `close()`. A file whose last reference goes away (a variable reassigned, a function that returns, an error that unwinds) is closed too, so it is safe not to call `close()` on a file that was only read, though a file that was written should still be closed inside `try` to see a failed flush. `f.closed` without the parentheses is a compile error, E548 (`a file has no field 'closed'`): `closed` is a method.
 
-`open()` raises the class that matches the reason (`FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError`, else a plain `IOError`) and keeps the id E25; the `os` and `ospath` functions raise the same classes with E505 to E509 (`IOError` E515 for another reason) and the text `could not list the directory 'PATH': REASON`. A mode other than `r`, `w`, `a` or `x` with an optional `+` is a `ValueError` (E510). Reading a file that cannot be read (a file opened for writing) is E381.
+`open()` raises the class that matches the reason (`FileNotFoundError`, `FileExistsError`, `PermissionError`, `IsADirectoryError`, `NotADirectoryError`, else a plain `IOError`) and keeps the id E25; the `os` and `ospath` functions raise the same classes with E505 to E509 (`IOError` E515 for another reason) and the text `could not list the directory 'PATH': REASON`. That includes `os.read_text` and `os.write_text` (D134a: they read and write through `read_bytes` and `write_bytes`, so a missing file is E505 there and E25 from `open()`). A mode other than `r`, `w`, `a` or `x` with an optional `+` is a `ValueError` (E510). Reading a file that cannot be read (a file opened for writing) is E381.
 
 **One tree (D114a).** The libraries raise subclasses of their own, each also a `RuntimeError`, and the tree has one place for each:
 

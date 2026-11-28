@@ -1,0 +1,4 @@
+# bytes and text never mix: the error says how to convert (D17e)
+@main
+def main():
+    print('a' + b'a')

@@ -27,11 +27,14 @@ def _codec(encoding: str) -> int:
         return 1
     raise ValueError(f"unknown encoding '{encoding}'\nTomato knows 'utf-8' and 'ascii'", 'E625')
 
-def _errors_mode(errors: str) -> int:
+# what = 'decode' or 'encode': the help says what 'replace' puts in place of what cannot be converted
+def _errors_mode(errors: str, what: str) -> int:
     if errors == 'strict':
         return 0
     if errors == 'replace':
         return 1
+    if what == 'encode':
+        raise ValueError(f"unknown error mode '{errors}'\nuse 'strict' (a character the encoding cannot hold is a ValueError) or 'replace' (put ? in its place)", 'E626')
     raise ValueError(f"unknown error mode '{errors}'\nuse 'strict' (bad bytes are a ValueError) or 'replace' (put U+FFFD in place of the bad bytes)", 'E626')
 
 def _hex2(b: int) -> str:
@@ -40,7 +43,7 @@ def _hex2(b: int) -> str:
 # b.decode(encoding='utf-8', errors='strict'): the text of the bytes
 def _bytes_decode(b: bytes, encoding: str = 'utf-8', errors: str = 'strict') -> str:
     ascii = _codec(encoding)
-    replace = _errors_mode(errors)
+    replace = _errors_mode(errors, 'decode')
     if replace == 0:
         at = !tomato_bytes_decode_problem(b, ascii)
         if at >= 0:
@@ -83,7 +86,7 @@ def _utf8_problem(b: bytes, at: int) -> str:
 # s.encode(encoding='utf-8', errors='strict'): the bytes of a text
 def _str_encode(s: str, encoding: str = 'utf-8', errors: str = 'strict') -> bytes:
     ascii = _codec(encoding)
-    replace = _errors_mode(errors)
+    replace = _errors_mode(errors, 'encode')
     if ascii == 0:
         return !tomato_str_encode(s)
     if !tomato_str_nbytes(s) == len(s):

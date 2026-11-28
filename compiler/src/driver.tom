@@ -8,6 +8,7 @@ from diag import Diagnostic
 from manifest import entry_markers_of, read_manifest, check_tomato, build_for, describe_manifest, user_build_mode
 from seeds import module_map, install, check_seed, seed_hash, add, remove, vendor, update, verify, opts_from, AddSpec, add_spec_from_word, header_seeds, header_without_project, check_header, build_table_warnings
 from ospath import isdir
+from sys import platform
 
 # `tomato seed ...`: the subcommand (install, check, hash, add, remove, vendor, update or verify), `arg` the word it takes (the folder to hash,
 # a seed's name, the --path folder or the --git URL, or the names of `update`, separated by spaces, or the word of `add` with `word` among the
@@ -115,8 +116,8 @@ export def compile_ir(path: str, entry: str, std: str, mode: str, project: str, 
                 notes.append(f';% name {m.name}')
             if built.output != '':
                 notes.append(f';% output {built.output}')
-        else:
-            header_without_project(path, header_seeds(path, src))
+        elif platform() != 'wasi':
+            header_without_project(path, header_seeds(path, src))          # (the browser has no project: the line is a comment there, docs/manifest.md)
         if project == '' and mode == '':
             mode = user_mode
             if mode == '':

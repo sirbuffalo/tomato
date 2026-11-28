@@ -43,4 +43,11 @@ dumps needs a table: a TOML document is a table of keys
 a null value cannot be written as TOML
 a bin value cannot be written as TOML
 a timestamp value cannot be written as TOML
+E654 the integer 9223372036854775808 does not fit the 64 bits that TOML allows
+E654 the integer -9223372036854775809 does not fit the 64 bits that TOML allows
+E654 the integer 123456789012345678901234567890 does not fit the 64 bits that TOML allows
+lo = -9223372036854775808
+hi = 9223372036854775807
+
+True
 True {"port":8080,"ratio":0.25,"hosts":["a","b"]}

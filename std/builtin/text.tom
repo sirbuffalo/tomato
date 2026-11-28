@@ -98,6 +98,24 @@ def _str_rpartition(s: str, sep: str) -> tuple[str, str, str]:
         return ('', '', s)
     return (s[:i], sep, s[i + len(sep):])
 
+# s.split() with no separator: the pieces between runs of white space (a space, tab, newline or carriage return, as strip() and
+# rsplit() count it); the empty pieces at the ends and between are dropped, so '' and '   ' give []
+def _str_split_words(s: str) -> list[str]:
+    parts: list[str] = []
+    n = len(s)
+    i = 0
+    while i < n:
+        while i < n and s[i] in ' \t\n\r':
+            i += 1
+        if i == n:
+            break
+        j = i
+        while j < n and s[j] not in ' \t\n\r':
+            j += 1
+        parts.append(s[i:j])
+        i = j
+    return parts
+
 # s.rsplit(sep, maxsplit): split at most maxsplit times, from the right (all of them for a negative maxsplit); the empty
 # sep splits at runs of whitespace (a space, tab, newline or carriage return, as strip() does) and drops the empty pieces
 def _str_rsplit(s: str, sep: str = '', maxsplit: int = -1) -> list[str]:

@@ -1,5 +1,6 @@
-error[E324]: the right operand of == has type bytes, but bytearray.bytearray is expected
+error[E324]: the right operand of == has type bytes, but bytearray is expected
  --> tests/errors/bytearray_equals_bytes.tom:5:5
   |
 5 |     print(a == b'x')
   |     ^^^^^^^^^^^^^^^^
+  = help: bytes cannot be changed: bytearray(b) makes a bytearray with a copy of them

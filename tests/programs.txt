@@ -264,3 +264,6 @@ bytearray_type
 bytearray_names
 interface_text
 catch_scope
+text_split_words
+bytes_sized_iterable
+bytearray_inplace

@@ -1,0 +1,7 @@
+# the same where the parameter is float | None (sys.run(timeout=5) before it took a whole number)
+def wait(seconds: float | None = None):
+    print(seconds)
+
+@main
+def main():
+    wait(seconds=5)

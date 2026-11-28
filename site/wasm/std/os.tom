@@ -198,24 +198,14 @@ export def stat(path: str) -> StatResult:
         is_link = link[4] == 3
     return StatResult(out[0], float(out[2]) + float(out[3]) / 1000000000.0, out[1], out[4] == 1, out[4] == 2, is_link)
 
-# The whole file as text, or written (replacing the file, or after its end with append=True; the file is created).
+# The whole file as text, or written (replacing the file, or after its end with append=True; the file is created). Bytes that are not
+# valid UTF-8 read as U+FFFD, as for open(). A failure raises the same classes and ids as read_bytes and write_bytes (E505 to E509,
+# E515), where open() keeps E25.
 export def read_text(path: str) -> str:
-    _no_nul(path)
-    f = open(path)
-    text = ''
-    try:
-        text = f.read()
-    finally:
-        f.close()
-    return text
+    return read_bytes(path).decode('utf-8', 'replace')
 
 export def write_text(path: str, text: str, append: bool = False):
-    _no_nul(path)
-    f = open(path, 'a' if append else 'w')
-    try:
-        f.write(text)
-    finally:
-        f.close()
+    write_bytes(path, text.encode(), append)
 
 # The whole file as bytes, or written from bytes (replacing the file, or after its end with append=True).
 export def read_bytes(path: str) -> bytes:

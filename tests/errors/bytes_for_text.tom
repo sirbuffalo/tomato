@@ -1,0 +1,7 @@
+# bytes where text is wanted: the help says how to decode
+def shout(s: str) -> str:
+    return s.upper()
+
+@main
+def main():
+    print(shout(b'abc'))

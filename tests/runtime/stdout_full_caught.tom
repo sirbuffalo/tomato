@@ -1,0 +1,18 @@
+# sys.flush() and sys.write_stdout() raise an IOError (E382) when standard output has failed, which a program can catch; what was lost is
+# not reported a second time at the end. Run as `./prog > /dev/full`.
+import sys
+
+@main
+def main():
+    print('some text')
+    try:
+        sys.flush()
+        sys.write_stderr('flushed\n')
+    catch IOError as e:
+        sys.write_stderr(f'caught {e.id}: {e.message}\n')
+    try:
+        sys.write_stdout('x' * 100000)
+        sys.write_stderr('written\n')
+    catch IOError as e:
+        sys.write_stderr(f'caught {e.id}: {e.message}\n')
+    sys.write_stderr('done\n')

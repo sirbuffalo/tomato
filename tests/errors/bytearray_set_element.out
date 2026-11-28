@@ -1,0 +1,6 @@
+error[E655]: a bytearray can change, so it cannot be a dict key or set element
+ --> tests/errors/bytearray_set_element.tom:5:5
+  |
+5 |     s = {ba}
+  |     ^^^^^^^^
+  = help: use bytes(a), which cannot change, as the key

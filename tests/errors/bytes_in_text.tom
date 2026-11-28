@@ -1,0 +1,4 @@
+# 'a' in data with text on the left: the help says how to make bytes of it
+@main
+def main():
+    print('a' in b'abc')

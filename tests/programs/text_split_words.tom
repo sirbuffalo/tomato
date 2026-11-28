@@ -1,0 +1,26 @@
+# text.split() with no separator splits at runs of white space (a space, tab, newline or carriage return, as strip() and rsplit() count
+# it) and drops the empty pieces; split(sep) is unchanged (D134a)
+def words(line: str) -> int:
+    return len(line.split())
+
+@main
+def main():
+    print('a b'.split())
+    print('  leading and   trailing \t\n'.split())
+    print(''.split(), '   '.split(), '\t\r\n'.split())
+    print('one'.split())
+    print('héllo  wörld éx'.split())
+    for w in 'x  y\tz'.split():
+        print('word', w)
+    n = 0
+    for line in ['a b', 'c d e', '', '  ']:
+        n += words(line)
+    print(n)
+    print('a-b--c'.split('-'), 'a b'.split(' '), ',a,'.split(','))
+    print('a  b'.split() == 'a  b'.rsplit(), 'a  b'.rsplit(''))
+    big = ('word ' * 5000).split()
+    print(len(big), big[0], big[-1])
+    try:
+        print('a b'.split(''))
+    catch ValueError as e:
+        print(e.id, e.message)

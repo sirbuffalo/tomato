@@ -1,0 +1,6 @@
+# text where bytes are taken: the help says how to make them (D17e)
+import hashlib
+
+@main
+def main():
+    print(hashlib.sha256_hex('abc'))

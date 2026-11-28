@@ -125,6 +125,12 @@ def key_kind_of(t: str) -> int:
         return 4
     return 3
 
+# the help line for bytes or a bytearray used with text in an operator
+def bytes_text_help(other: str) -> str:
+    if other == '@bytearray.bytearray':
+        return '\na bytearray and text are different types: encode the text (s.encode()) or decode the bytearray (a.decode())'
+    return '\nbytes and text are different types: encode the text (s.encode()) or decode the bytes (b.decode())'
+
 # '' when a value of type t has the form of a dict key or set element, else why not. A class is checked for its @hash separately
 # (key_problem), because the methods of the classes are not all known when a type is written.
 def key_form_problem(t: str) -> str:
@@ -465,6 +471,28 @@ def shown_generic(name: str) -> str:
     parts: list[str] = [shown(p) for p in split_types(name[at + 1:-1])]
     return name[:at] + '[' + ', '.join(parts) + ']'
 
+# The help lines (each after a newline) for a value of type have where want is expected, for the mix-ups that come up again and again:
+# text for bytes and back, a bytearray for bytes and back, a whole number for a float, and a plain value for a value.Value. '' for any other.
+def mismatch_help(have: str, want: str) -> str:
+    wanted: list[str] = [want]
+    if is_union(want):
+        wanted = union_members(want)
+    elif is_optional(want):
+        wanted = [strip_optional(want)]
+    if have == 'str' and 'bytes' in wanted and 'str' not in wanted:
+        return '\nencode it: s.encode() gives its UTF-8 bytes'
+    if have == 'bytes' and 'str' in wanted and 'bytes' not in wanted:
+        return '\ndecode it: b.decode() gives the text'
+    if have == '@bytearray.bytearray' and 'bytes' in wanted:
+        return '\na bytearray is not bytes: bytes(a) gives the bytes it holds now (a copy)'
+    if have == 'bytes' and '@bytearray.bytearray' in wanted and 'bytes' not in wanted:
+        return '\nbytes cannot be changed: bytearray(b) makes a bytearray with a copy of them'
+    if have == 'int' and 'float' in wanted and 'int' not in wanted:
+        return '\nan int is not a float: write the number with a point (5.0), or convert it with float(n)'
+    if '@value.Value' in wanted and (have == 'str' or have == 'int' or have == 'float' or have == 'bool' or is_list(have) or is_dict(have)):
+        return "\na value.Value is built with the classes of the value module: from value import Value, Dict, List, Str, Int, Float, Bool\nfor example Dict({'a': Int(1)}), List([Str('x')]) or Str('text')"
+    return ''
+
 def shown(t: str) -> str:
     # a type as the user writes it
     if is_fn(t):
@@ -485,6 +513,8 @@ def shown(t: str) -> str:
         return f'Iterable[{shown(dyn_item(t))}] & Sized'
     if is_optional(t):
         return f'{shown(strip_optional(t))} | None'
+    if t == '@bytearray.bytearray' or t == '@bitarray.bitarray':
+        return t[t.find('.') + 1:]          # built-in names that need no import (D64a, D128a)
     if is_class(t) and t.find('[') > 0:
         return shown_generic(t[1:])
     if is_class(t) or is_iface(t):
@@ -1678,6 +1708,8 @@ class Mod:
     def iter_item(self, vt: str) -> str:
         if vt == 'str':
             return 'str'
+        if vt == 'bytes':
+            return 'int'
         if is_dict(vt):
             return dict_key(vt)
         if is_list(vt) or is_set(vt):
@@ -1690,7 +1722,7 @@ class Mod:
 
     # does len() work on a value of type vt?
     def has_length(self, vt: str) -> bool:
-        if vt == 'str' or is_list(vt) or is_dict(vt) or is_set(vt):
+        if vt == 'str' or vt == 'bytes' or is_list(vt) or is_dict(vt) or is_set(vt):
             return True
         if is_class(vt) and self.has_class(vt[1:]):
             f = self.find_op(vt[1:], 'len')
@@ -1715,6 +1747,8 @@ class Mod:
         out = [dyn_seq()]
         if self.dyn_accepts('str', dyn):
             out.append('str')
+        if self.dyn_accepts('bytes', dyn):
+            out.append('bytes')
         for c in self.classes:
             if self.dyn_accepts('@' + c.name, dyn):
                 out.append(f'@{c.name}')
@@ -3418,7 +3452,8 @@ class Gen:
         if is_dyn(ty) and not is_dyn(e.ty):
             return self.box_dyn(e, ty, line, what)
         if not self.mod.assignable(e.ty, ty):
-            raise CompileError(f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected', line)
+            said = f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected'
+            raise CompileError(said + mismatch_help(e.ty, ty), line)
         return e
 
     def union_member_for(self, vt: str, ty: str) -> str:
@@ -3434,10 +3469,11 @@ class Gen:
     def box_value(self, e: Ex, ty: str, line: int, what: str) -> Ex:
         # a value stored where a union is wanted: a small heap object holding the value and which member it is
         member = self.union_member_for(e.ty, ty)
+        said = f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected'
         if member == '':
-            raise CompileError(f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected', line)
+            raise CompileError(said + mismatch_help(e.ty, ty), line)
         if is_numeric(e.ty) and e.ty != member:
-            raise CompileError(f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected', line)
+            raise CompileError(said + mismatch_help(e.ty, ty), line)
         return self.box_as(e, member, ty)
 
     def box_as(self, e: Ex, member: str, ty: str) -> Ex:
@@ -5768,7 +5804,10 @@ class Gen:
             return self.builtin_call('_bytes_of_list', [v], line)
         if v.ty == 'str':
             raise CompileError("bytes() cannot take text, because text has no single byte form\nencode it: s.encode() gives its UTF-8 bytes", line)
-        raise CompileError(f'bytes() takes a count (int), a list of ints from 0 to 255, bytes or a bytearray, but this is {shown(v.ty)}', line)
+        said = f'bytes() takes a count (int), a list of ints from 0 to 255, bytes or a bytearray, but this is {shown(v.ty)}'
+        if v.ty == '@range':
+            said += '\nmake a list of it first: bytes(list(range(4)))'
+        raise CompileError(said, line)
 
     def list_builtin(self, name: str, args: list[Node], line: int) -> Ex:
         # sorted, reversed, sum, min and max of a list
@@ -6705,7 +6744,8 @@ class Gen:
         if is_fixed(a.ty):
             a = self.resize(a, 'int')
         if a.ty != 'int' and a.ty != 'bytes':
-            raise CompileError(f"'in' with bytes needs an int (a byte) or bytes on its left, but this is {shown(a.ty)}", line)
+            said = f"'in' with bytes needs an int (a byte) or bytes on its left, but this is {shown(a.ty)}"
+            raise CompileError(said + mismatch_help(a.ty, 'bytes'), line)
         c = self.tmp('c')
         if a.ty == 'int':
             self.emit(f'{c} = call i32 @tomato_bytes_has_byte(ptr {b.reg}, i64 {self.int_raw(a, [b])})')
@@ -7021,6 +7061,10 @@ class Gen:
     def cannot_use(self, op: str, a: Ex, b: Ex, help: str, line: int) -> CompileError:
         # E190, with the help lines of field_not_narrowed when there are any
         said = f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}"
+        if a.ty == 'str' and (b.ty == 'bytes' or b.ty == '@bytearray.bytearray'):
+            said += bytes_text_help(b.ty)
+        if b.ty == 'str' and (a.ty == 'bytes' or a.ty == '@bytearray.bytearray'):
+            said += bytes_text_help(a.ty)
         return CompileError(said + help, line)
 
     def field_not_narrowed(self, left: Node, a: Ex, right: Node, b: Ex) -> str:
@@ -7114,6 +7158,8 @@ class Gen:
             self.hold(a)                       # freed by the error path if the right side raises
             b = self.operand(right, True)
         self.drop_held(held_before)
+        if len(n.fields) > 3 and op == '+' and a.ty == '@bytearray.bytearray':
+            return self.bytearray_extend(a, b, n.line)          # ba += data (the parser marks the BinOp it makes from +=)
         is_compare = op == '==' or op == '!=' or op == '<' or op == '<=' or op == '>' or op == '>='
         if op == 'in':
             return self.membership(a, b, n.line)
@@ -7150,7 +7196,7 @@ class Gen:
                 return joined
         if a.ty == 'bytes' or b.ty == 'bytes':
             if a.ty == 'str' or b.ty == 'str':
-                raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\nbytes and text are different types: encode the text (s.encode()) or decode the bytes (b.decode())", n.line)
+                raise self.cannot_use(op, a, b, '', n.line)
             if a.ty != b.ty:
                 raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", n.line)
             if op == '+':
@@ -7286,6 +7332,18 @@ class Gen:
         if len(f.ptypes) != 0 or f.ret == '':
             raise CompileError(f"the @neg method '{f.name}' must take nothing besides self and return the result", line)
         return self.marker_call(v, f, [], line)
+
+    def bytearray_extend(self, a: Ex, b: Ex, line: int) -> Ex:
+        # `ba += data` on a bytearray adds the bytes to ba itself, as in Python (D134a), instead of making a new bytearray of `ba + data`;
+        # its value is ba, so the assignment that goes with it stores the same object back
+        info = self.mod.find_method('bytearray.bytearray', 'extend', line)
+        b = self.owned(b)
+        b = self.want(b, info.ptypes[0], line, 'the right operand of +=')
+        symbol = self.method_symbol(a, info)
+        self.emit(f'call {self.ret_llvm(info)} {symbol}(ptr {a.reg}, {llvm_type(b.ty)} {b.reg})')
+        self.check_error([a, b], symbol)
+        self.release(b)
+        return a
 
     def operator_call(self, a: Ex, b: Ex, op: str, line: int, reflected: bool = False) -> Ex:
         # a + b on a class whose method is marked @add (and the same for the other operators): the method of the left
@@ -8726,6 +8784,8 @@ class Gen:
             self.release(a[1])
             self.release(obj)
             return ex(r, 'str')
+        if name == 'split' and len(args) == 0:
+            return self.builtin_call('_str_split_words', [obj], line)          # split(): the runs of white space (D134a)
         if name == 'split':
             a = self.text_args(obj, name, args, 1, line)
             self.not_empty(a[0], 'split', [obj, a[0]])
@@ -14124,6 +14184,8 @@ def key_problem(mod: Mod, t: str) -> str:
         return key_problem(mod, strip_optional(t))
     if is_class(t):
         name = t[1:]
+        if name == 'bytearray.bytearray':
+            return 'a bytearray can change, so it cannot be a dict key or set element\nuse bytes(a), which cannot change, as the key'
         if mod.has_op(name, 'hash'):
             same = mod.find_op(name, 'eq')
             if same is not None and len(same.ptypes) == 1 and not mod.assignable(t, same.ptypes[0]):

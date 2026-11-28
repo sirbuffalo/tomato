@@ -1,0 +1,6 @@
+error[E324]: argument 1 of 'fill' (the parameter 'buf') has type bytes, but bytearray is expected
+ --> tests/errors/bytes_for_bytearray.tom:7:5
+  |
+7 |     fill(b'abc')
+  |     ^^^^
+  = help: bytes cannot be changed: bytearray(b) makes a bytearray with a copy of them

@@ -1,0 +1,6 @@
+error[E635]: 'in' with bytes needs an int (a byte) or bytes on its left, but this is str
+ --> tests/errors/bytes_in_text.tom:4:15
+  |
+4 |     print('a' in b'abc')
+  |               ^^
+  = help: encode it: s.encode() gives its UTF-8 bytes

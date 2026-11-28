@@ -1,0 +1,13 @@
+['a', 'b']
+['leading', 'and', 'trailing']
+[] [] []
+['one']
+['héllo', 'wörld', 'éx']
+word x
+word y
+word z
+5
+['a', 'b', '', 'c'] ['a', 'b'] ['', 'a', '']
+True ['a', 'b']
+5000 word word
+E15 an empty text cannot be used to split

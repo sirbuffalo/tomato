@@ -1,0 +1,6 @@
+error[E324]: argument 1 of 'sha256_hex' (the parameter 'data') has type str, but bytes is expected
+ --> tests/errors/bytes_arg_text.tom:6:19
+  |
+6 |     print(hashlib.sha256_hex('abc'))
+  |                   ^^^^^^^^^^
+  = help: encode it: s.encode() gives its UTF-8 bytes

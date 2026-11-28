@@ -651,3 +651,5 @@ ValueError the byte is not in the bytearray
 CompileError the name '{}' belongs to a catch block that has ended, so it has no value here
 CompileError '{}' gives no value, so it cannot be used inside an expression
 CompileError this gives no value, so it cannot be used inside an expression
+ValueError the integer {} does not fit the 64 bits that TOML allows
+CompileError a bytearray can change, so it cannot be a dict key or set element

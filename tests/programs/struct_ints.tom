@@ -28,6 +28,30 @@ def main():
         struct.unpack_ints('>H', bytes([1]))
     catch struct.StructError:
         print('StructError')
+    # a Reader asked for more than is left raises the StructError that unpack_ints does (D134a), and keeps its position
+    short = struct.Reader(b'\x01\x02\x03')
+    short.read_u8()
+    for k in range(7):
+        try:
+            if k == 0:
+                short.read_u16()
+                short.read_u16()
+            elif k == 1:
+                short.read_u32()
+            elif k == 2:
+                short.read_raw(5)
+            elif k == 3:
+                short.read_text(9)
+            elif k == 4:
+                short.read_f64()
+            elif k == 5:
+                short.read_i64()
+            else:
+                short.read_raw(-1)
+        catch struct.StructError as e:
+            print('short', k, e.id, e.message, short.pos)
+        catch ValueError as e:
+            print('value', k, e.id, e.message, short.pos)
     try:
         struct.pack_ints('B', [256])
     catch OverflowError:

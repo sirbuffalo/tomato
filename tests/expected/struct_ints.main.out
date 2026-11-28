@@ -9,6 +9,13 @@ b'\x124\xff\xff\xff\xfeh\xc3\xa9'
 short 0
 utf8 0
 StructError
+short 0 E503 not enough bytes 3
+short 1 E503 not enough bytes 3
+short 2 E503 not enough bytes 3
+short 3 E503 not enough bytes 3
+short 4 E503 not enough bytes 3
+short 5 E503 not enough bytes 3
+value 6 E499 length must be nonnegative 3
 OverflowError
 b'\x80\x7f'
 overflow

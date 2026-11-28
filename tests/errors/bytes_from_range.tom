@@ -1,0 +1,4 @@
+# bytes() of a range: the help names the spelling that works
+@main
+def main():
+    print(bytes(range(4)))

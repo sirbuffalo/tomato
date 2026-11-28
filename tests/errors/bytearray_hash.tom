@@ -1,0 +1,5 @@
+# hash() of a bytearray
+@main
+def main():
+    ba = bytearray(b'abc')
+    print(hash(ba))

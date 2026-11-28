@@ -1,0 +1,90 @@
+# bytearray: a for loop goes as far as the bytearray reaches now (D134a), `ba += data` extends in place (so an alias sees it), extend takes
+# a list of ints, and the new methods that make new contents (replace, split, join, strip, lstrip, rstrip)
+class Log:
+    data: bytearray = bytearray()
+
+    def add(self, more: bytes):
+        self.data += more
+
+def main_loop():
+    a = bytearray(b'abcd')
+    t = 0
+    for x in a:  # allow: loop-change
+        t += x
+        a.pop()
+    print(t, a)
+    b = bytearray(b'abcd')
+    seen = 0
+    for x in b:  # allow: loop-change
+        seen += 1
+        b.clear()
+    print(seen, len(b))
+    c = bytearray(b'ab')
+    n = 0
+    for x in c:  # allow: loop-change
+        n += 1
+        if n < 5:
+            c.append(x)
+    print(n, c)
+
+def in_place():
+    a = bytearray(b'x')
+    alias = a
+    a += b'yz'
+    a += bytearray(b'!')
+    a += a
+    print(a, alias, a is alias)
+    c = a + b'?'
+    print(c, a)
+    d = a
+    d = d + b'-'
+    print(d, a)
+    log = Log()
+    log.add(b'one ')
+    log.add(b'two')
+    print(log.data)
+    big = bytearray()
+    for i in range(20000):
+        big += b'a'
+    print(len(big))
+    ws = {'k': bytearray(b'k')}
+    ws['k'] += b'v'
+    print(ws['k'])
+    xs = [bytearray(b'0'), bytearray(b'1')]
+    xs[1] += b'1'
+    print(xs)
+
+def extend_list():
+    a = bytearray(b'a')
+    a.extend([98, 99])
+    a.extend(b'd')
+    a.extend(bytearray(b'e'))
+    nothing: list[int] = []
+    a.extend(nothing)
+    print(a)
+    try:
+        a.extend([1, 256, 3])
+    catch ValueError as e:
+        print(e.id, len(a))
+
+def new_methods():
+    a = bytearray(b'  hello world \n')
+    print(a.strip(), a.lstrip(), a.rstrip(), a.strip(b' \n'))
+    print(a.strip(bytearray(b' h\n')))
+    print(a.replace(b'o', b'0'), a.replace(b'o', b'0', 1), a.replace(bytearray(b'l'), b''))
+    parts = bytearray(b'a,b,,c').split(b',')
+    print(parts, len(parts), parts[0] is parts[1])
+    print(bytearray(b'a,b,,c').split(b',', 1), bytearray(b'abc').split(b'z'))
+    print(bytearray(b', ').join([b'x', b'y', b'z']), bytearray(b'-').join([]))
+    print(a.find(bytearray(b'world')), a.count(bytearray(b'o')), a.startswith(bytearray(b'  he')), a.endswith(bytearray(b'\n')), a.rfind(b'o'))
+    try:
+        a.split(b'')
+    catch ValueError as e:
+        print(e.message)
+
+@main
+def main():
+    main_loop()
+    in_place()
+    extend_list()
+    new_methods()

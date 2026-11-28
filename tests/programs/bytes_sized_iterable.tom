@@ -1,0 +1,37 @@
+# bytes and bytearray are Sized and Iterable[int], as text, list, tuple, set and dict are (D57a, D134a)
+def size(s: Sized) -> int:
+    return len(s)
+
+def total(xs: Iterable[int]) -> int:
+    t = 0
+    for x in xs:
+        t += x
+    return t
+
+def counted(xs: Iterable[int] & Sized) -> str:
+    return f'{len(xs)} items, sum {total(xs)}'
+
+def first[T](xs: Iterable[T]) -> T:
+    for x in xs:
+        return x
+    raise ValueError('empty')
+
+class Holder:
+    items: Sized = b'xyz'
+
+@main
+def main():
+    ba = bytearray(b'abc')
+    print(size(b'abc'), size(ba), size('abc'), size([1, 2]), size(b''))
+    print(total(b'abc'), total(ba), total([1, 2]), total(range(4)), total(b''))
+    print(counted(b'\x01\x02\x03'), '|', counted(bytearray([4, 5])), '|', counted([7]))
+    print(first(b'\xff\x00'), first(ba))
+    h = Holder()
+    print(len(h.items))
+    h.items = [1, 2]
+    print(len(h.items))
+    pieces: list[Sized] = [b'ab', ba, 'xyz', [1]]
+    t = 0
+    for p in pieces:
+        t += len(p)
+    print(t)

@@ -1,0 +1,6 @@
+# a bytearray can change, so it cannot be a key: the help names bytes(a)
+@main
+def main():
+    ba = bytearray(b'abc')
+    d = {ba: 1}
+    print(len(d))

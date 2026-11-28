@@ -5051,7 +5051,26 @@ static int collecting;
 
 void tomato_set_mode(int32_t mode) { unread_mode = mode; }
 void tomato_task_retrieved(void *h) { ((Hdr *)h)->type |= F_RETRIEVED; }
-int32_t tomato_exit_code(void) { return unread_failed; }
+/* Standard output is buffered, so a full disk or a closed pipe shows only when the buffer is written out: sys.flush() and sys.write_stdout()
+ * raise an IOError for it (the reason is left in open_errno for tomato_os_error), and the end of the program, and sys.exit(), say so on
+ * standard error and give status 1 (D134a). 1 when the stream has failed. */
+static int stdout_failed(int earlier) {   /* earlier: the errno of a write that has just failed, or 0 */
+    errno = 0;
+    int bad = fflush(stdout) != 0;
+    int why = errno ? errno : earlier;
+    if (!bad && !ferror(stdout)) return 0;
+    open_errno = why ? why : EIO;
+    clearerr(stdout);            /* reported once: a program that went on after the IOError is not told again for the same lost text */
+    return 1;
+}
+static int stdout_end_check(void) {
+    if (!stdout_failed(0)) return 0;
+    char text[160];
+    int n = snprintf(text, sizeof text, "could not write to standard output: %s", strerror(open_errno));
+    print_head("error[E382]", C_RED, text, n);
+    return 1;
+}
+int32_t tomato_exit_code(void) { return stdout_end_check() ? 1 : unread_failed; }
 static void *frame_starter(Hdr *h) { return (void *)(uintptr_t)*(uint64_t *)((char *)h + 72); }
 
 static void unread_report(void *err, int line, int rt) {
@@ -8232,7 +8251,7 @@ int32_t tomato_args_into(void *out, int32_t argc, void *argv, int32_t from) {
 }
 /* flushes standard output and error and every open file (exit does), then ends the process */
 int64_t tomato_exit(int64_t code) {
-    fflush(stdout);
+    if (stdout_end_check() && code == 0) code = 1;
     fflush(stderr);
     exit((int)code);
     return 0;
@@ -8246,13 +8265,16 @@ void *tomato_platform(void) {
     return tomato_str_from_cstr("linux");
 #endif
 }
+/* standard error is never reported (an error report must not fail again); standard output gives 1 when it has failed (see stdout_failed) */
 int64_t tomato_write_fd(int64_t fd, void *text) {
     Str *s = text;
     FILE *f = fd == 2 ? stderr : stdout;
+    errno = 0;
     if (s->bytes > 0) fwrite(s->data, 1, (size_t)s->bytes, f);
-    return 0;
+    if (fd == 2) return 0;
+    return ferror(stdout) ? stdout_failed(errno) : 0;
 }
-int64_t tomato_flush_std(void) { fflush(stdout); fflush(stderr); return 0; }
+int64_t tomato_flush_std(void) { int bad = stdout_failed(0); fflush(stderr); return bad; }
 
 int64_t tomato_env_has(void *name) { return getenv(((Str *)name)->data) != NULL; }
 void *tomato_env_get(void *name) {

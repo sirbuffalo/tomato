@@ -1,5 +1,6 @@
-error[E324]: argument 1 of bytearray.bytearray has type str, but bytearray.bytearray | bytes | int | list[int] is expected
+error[E324]: argument 1 of bytearray has type str, but bytearray | bytes | int | list[int] is expected
  --> tests/errors/bytearray_from_text.tom:4:5
   |
 4 |     a = bytearray('x')
   |     ^^^^^^^^^^^^^^^^^^
+  = help: encode it: s.encode() gives its UTF-8 bytes

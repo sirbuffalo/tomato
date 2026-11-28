@@ -1,0 +1,7 @@
+error[E324]: argument 1 of 'dumps' (the parameter 'value') has type dict[str, int], but value.Value is expected
+ --> tests/errors/value_plain_dict.tom:7:16
+  |
+7 |     print(json.dumps(d))
+  |                ^^^^^
+  = help: a value.Value is built with the classes of the value module: from value import Value, Dict, List, Str, Int, Float, Bool
+  = help: for example Dict({'a': Int(1)}), List([Str('x')]) or Str('text')

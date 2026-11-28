@@ -1,0 +1,7 @@
+# bytes where a bytearray is taken
+def fill(buf: bytearray):
+    buf.append(1)
+
+@main
+def main():
+    fill(b'abc')

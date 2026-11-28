@@ -1,0 +1,6 @@
+error[E324]: argument 1 of 'half' (the parameter 'x') has type int, but float is expected
+ --> tests/errors/int_for_float.tom:7:11
+  |
+7 |     print(half(5))
+  |           ^^^^
+  = help: an int is not a float: write the number with a point (5.0), or convert it with float(n)

@@ -88,6 +88,14 @@ def main(dir: str = '/tmp'):
             dumps(bad)
         catch ValueError as e:
             print(e.message)
+    # an Int outside the 64 bits that loads accepts is refused (D134a), so dumps never writes what loads cannot read; the limits themselves are written
+    for big in [2 ** 63, -(2 ** 63) - 1, 123456789012345678901234567890]:
+        try:
+            dumps(Dict({'n': Int(big)}))
+        catch ValueError as e:
+            print(e.id, e.message)
+    print(dumps(Dict({'lo': Int(-(2 ** 63)), 'hi': Int(2 ** 63 - 1)})))
+    print(loads(dumps(Dict({'lo': Int(-(2 ** 63))}))) == Dict({'lo': Int(-(2 ** 63))}))
     # the same tree goes to json and back
     j = json.loads(json.dumps(doc))
     print(j == doc, json.dumps(doc["server"]))

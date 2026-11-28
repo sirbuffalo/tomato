@@ -13,7 +13,7 @@ False True
 True
 [r, s]
 False False
-read_text E25 could not open '<dir>/tomato_os_files/missing': No such file or directory
+read_text E505 could not open '<dir>/tomato_os_files/missing': No such file or directory
 listdir E505 could not list the directory '<dir>/tomato_os_files/missing': No such file or directory
 stat E505 could not stat '<dir>/tomato_os_files/missing': No such file or directory
 remove E505 could not remove '<dir>/tomato_os_files/missing': No such file or directory
@@ -24,10 +24,10 @@ makedirs exists E506
 makedirs on a file E506
 makedirs under a file E509
 remove dir E508 could not remove '<dir>/tomato_os_files': Is a directory
-read_text dir E25 could not open '<dir>/tomato_os_files': Is a directory
-write_text dir E25
+read_text dir E508 could not read '<dir>/tomato_os_files': Is a directory
+write_text dir E508
 listdir file E509 could not list the directory '<dir>/tomato_os_files/a.txt': Not a directory
-read inside file E25
+read inside file E509
 rmdir not empty E515 could not remove the directory '<dir>/tomato_os_files': Directory not empty
 rmdir file E509
 getsize E505

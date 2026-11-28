@@ -1,0 +1,6 @@
+# a plain text where a value.Value is taken
+import json
+
+@main
+def main():
+    print(json.dumps('hello'))

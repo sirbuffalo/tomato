@@ -17,7 +17,7 @@ b'\x00\x01\xfe\xff\x07'
 listdir E505
 mkdir E506
 mkdir parent E505
-read_text dir E25
+read_text dir E508
 listdir file E509
 rmdir E515
 remove dir E508

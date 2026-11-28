@@ -1,0 +1,7 @@
+# a whole number where a float is taken: the help says how to write one
+def half(x: float) -> float:
+    return x / 2.0
+
+@main
+def main():
+    print(half(5))

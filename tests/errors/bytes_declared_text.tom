@@ -1,0 +1,5 @@
+# text stored where bytes are declared
+@main
+def main():
+    data: bytes = 'abc'
+    print(data)

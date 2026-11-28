@@ -1,0 +1,5 @@
+# ba += text: the right side must be bytes or a bytearray (the help says how to make bytes of text)
+@main
+def main():
+    ba = bytearray(b'abc')
+    ba += 'x'

@@ -12,7 +12,9 @@
 #
 # `doc['key']` reads a table and `doc['key'] = ...` is not available: change the dict that doc.as_dict() gives. Errors in the
 # text raise TOMLDecodeError with the position (line and column count from 1, pos is the character offset from 0).
-# dumps and dumps_value raise ValueError (E620) for a value TOML has no way to write: a Null, Bin, Ext or Timestamp.
+# dumps and dumps_value raise ValueError (E620) for a value TOML has no way to write: a Null, Bin, Ext or Timestamp; an Int outside
+# the 64-bit range that loads accepts is a ValueError too (E654), so what dumps writes is what loads reads back (a Float of any size is
+# read back, so it is written as it is, except one whose exponent cannot be written in decimal: E527).
 from value import Value, Bool, Int, Float, Str, List, Dict, Moment
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -862,7 +864,10 @@ def _inline(v: Value) -> str:
     if k == 'str':
         return _escape(v.as_str())
     if k == 'int':
-        return str(v.as_int())
+        n = v.as_int()
+        if n > 9223372036854775807 or n < -9223372036854775808:
+            raise ValueError(f'the integer {n} does not fit the 64 bits that TOML allows', 'E654')
+        return str(n)
     if k == 'float':
         return _float_text(v)
     if k == 'bool':

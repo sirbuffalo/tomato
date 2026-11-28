@@ -37,15 +37,20 @@ export def exit(code: int = 0):
         raise ValueError('an exit status must be from 0 to 255', 'E513')
     _r = !tomato_exit(code)
 
-# Writes text to standard error or standard output (no newline is added). Standard output goes through the same buffer as print.
+# Writes text to standard error or standard output (no newline is added). Standard output goes through the same buffer as print. When
+# standard output cannot be written (a full disk, a closed pipe), write_stdout() and flush() raise IOError (E382); the text of an
+# earlier print() that was lost is reported by the first of them to run after the buffer was written out, and a program that never
+# calls them is told at its end (the same message on standard error, status 1: D134a).
 export def write_stderr(text: str):
     _r = !tomato_write_fd(2, text)
 
 export def write_stdout(text: str):
-    _r = !tomato_write_fd(1, text)
+    if !tomato_write_fd(1, text) != 0:
+        raise IOError(!tomato_os_error('write to standard output'), 'E382')
 
 export def flush():
-    _r = !tomato_flush_std()
+    if !tomato_flush_std() != 0:
+        raise IOError(!tomato_os_error('write to standard output'), 'E382')
 
 # 'linux', 'darwin' or 'wasi' (the browser playground)
 export def platform() -> str:

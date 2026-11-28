@@ -10,6 +10,10 @@
 import utf8
 import math
 
+# What pack_ints, unpack_ints, calcsize, Packer and Reader raise for a bad format or for data of the wrong size: a Reader asked for
+# more bytes than are left (read_raw, read_text and every read_ method, E503, 'not enough bytes') raises it as unpack_ints does
+# (D134a). A ValueError for another reason (a byte order that does not exist, a negative length, a NaN or infinity bit pattern) is
+# a plain ValueError (E499).
 export class StructError(ValueError):
     pass
 def _order(byteorder: str) -> bool:
@@ -319,15 +323,19 @@ export class Reader:
         return len(self.data) - self.pos
 
     def read_raw(self, n: int) -> bytes:
-        if n < 0 or n > self.remaining():
-            raise ValueError('not enough bytes', 'E499')
+        if n < 0:
+            raise ValueError('length must be nonnegative', 'E499')
+        if n > self.remaining():
+            raise StructError('not enough bytes', 'E503')
         out = self.data[self.pos:self.pos+n]
         self.pos += n
         return out
 
     def read_text(self, n: int) -> str:
-        if n < 0 or n > self.remaining():
-            raise ValueError('not enough bytes', 'E499')
+        if n < 0:
+            raise ValueError('length must be nonnegative', 'E499')
+        if n > self.remaining():
+            raise StructError('not enough bytes', 'E503')
         out = utf8.decode(self.data[self.pos:self.pos+n])
         self.pos += n
         return out
@@ -358,7 +366,7 @@ export class Reader:
 
     def _peek(self, n: int) -> bytes:
         if n > self.remaining():
-            raise ValueError('not enough bytes', 'E499')
+            raise StructError('not enough bytes', 'E503')
         return self.data[self.pos:self.pos+n]
 
     def read_f32(self) -> float:
