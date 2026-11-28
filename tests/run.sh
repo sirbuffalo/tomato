@@ -2541,6 +2541,31 @@ hi Ann" "$(printf "name = await input('Name? ')\nAnn\nprint('hi', name)\n:quit\n
   check "repl: leave() leaves" "a" "$(printf "print('a')\nleave()\nprint('b')\n" | $t repl)"
   fi
 }
+t_cli_repl_host() {   # D138a: a repl session is a native program, so it has the real files, environment and processes on every system (on a Mac it was the WebAssembly build: E25, E505, None, E514)
+  cli_setup
+  hd="$work/replhost"; mkdir -p "$hd"
+  check "repl: a file is written and read, and the folder lists it" "hello
+True
+['x.txt']" "$(printf "f = open('$hd/x.txt', 'w')\nf.write('hello')\nf.close()\nimport os\nprint(os.read_text('$hd/x.txt'))\nprint(os.getenv('HOME') is not None)\nprint(os.listdir('$hd'))\n:quit\n" | HOME="${HOME:-/nonexistent}" $t repl 2>&1)"
+  check "repl: the environment is the real one" "from-the-test True" "$(printf "import os\nprint(os.getenv('TOMATO_REPL_HOST_TEST'), os.getpid() > 1)\n:quit\n" | TOMATO_REPL_HOST_TEST=from-the-test $t repl 2>&1)"
+  check "repl: sys.run starts a process" "x 0" "$(printf "import sys\nr = sys.run(['echo', 'x'])\nprint(r.stdout.strip(), r.status)\n:quit\n" | $t repl 2>&1)"
+  check "repl: the platform is the real one, not the browser's" "True" "$(printf "import sys\nprint(sys.platform() != 'wasi')\n:quit\n" | $t repl 2>&1)"
+  # without a usable compiler (a clang that fails) the repl falls back to the WebAssembly build through jsc, and says so once; jsc is macOS's, else
+  # a stand-in that runs node (native/jsc-on-node.js), so the fallback is covered where there is no Mac
+  fbjsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
+  mkdir -p "$work/noclang"
+  if [ ! -x "$fbjsc" ] && command -v node >/dev/null 2>&1; then
+    fbjsc="$work/noclang/jsc"; printf '#!/bin/sh\nexec node "%s/native/jsc-on-node.js" "$@"\n' "$root" > "$fbjsc"; chmod +x "$fbjsc"
+  fi
+  if [ -x "$fbjsc" ]; then
+    printf '#!/bin/sh\n[ "$1" = --version ] && { echo "clang version 0 (test)"; exit 0; }\nexit 1\n' > "$work/noclang/clang"; chmod +x "$work/noclang/clang"
+    r="$(printf "print(1 + 2)\nimport os\nprint(os.getenv('HOME'))\n:quit\n" | PATH="$work/noclang:$PATH" TOMATO_CACHE_DIR="$work/noclang/cache" TOMATO_JSC="$fbjsc" $t repl 2>&1)"
+    case "$r" in "note: no C compiler could be used, so this session runs in the WebAssembly build"*) ok "repl: without a compiler it falls back to WebAssembly and says so";; *) bad "repl: without a compiler it falls back to WebAssembly and says so" "$r";; esac
+    case "$r" in *"3"*"None"*) ok "repl: the WebAssembly fallback runs the session";; *) bad "repl: the WebAssembly fallback runs the session" "$r";; esac
+  else
+    [ -n "$CI" ] && bad "repl: the WebAssembly fallback" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available, so the repl's WebAssembly fallback was not tested"
+  fi
+}
 t_cli_repl_redef() {   # a function, class or interface defined again replaces the earlier one (it was E120 "defined twice")
   cli_setup
   P1='class P:\n    x: int\n    @init\n    def make(self, x: int):\n        self.x = x\n\n'
@@ -3341,6 +3366,7 @@ spawn_cli t_cli_warnings 2
 spawn_cli t_cli_repl_2 1
 spawn_cli t_cli_repl_2 2
 spawn_cli t_cli_repl_2 3
+spawn_cli t_cli_repl_host
 spawn_cli t_cli_repl_redef
 spawn_cli t_cli_repl_polish
 spawn_cli t_cli_repl_history

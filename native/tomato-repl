@@ -39,14 +39,25 @@ trap 'rm -rf "$S"' EXIT
 intr=0; INTR=0
 trap 'intr=1' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 mkdir -p "$S/d"
-# Speed: the runtime is compiled to an object once, and each line then costs one tomatoc run plus a quick unoptimized
-# link, instead of compiling the whole runtime with optimization on every line.
+# The session runs as a native program (fast=1): the runtime is compiled to an object once (kept in the cache folder that `tomato run`
+# uses, native/rtcache.sh), and each line then costs one tomatoc run plus a quick unoptimized link, instead of compiling the whole
+# runtime with optimization on every line. Real files, the environment, processes, real sleeping, sockets and progress bars all work,
+# as on Linux (D133). Where a native program cannot be had (no clang, or tomatoc or the runtime not beside this script) the session runs
+# in the website's WebAssembly build through macOS's jsc (fast=2, see tomato-jsc.js), which has an in-memory file system, no processes
+# and a clock that does not wait: the repl says so once, because a session there can give other results. Neither is chosen for speed.
 tomatoc="${TOMATO_TOMATOC:-}"; runtime="${TOMATO_RUNTIME:-}"; std="${TOMATO_STD:-}"
 jsc="${TOMATO_JSC:-/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc}"
 wasmdir="${TOMATO_WASM:-}"
-fast=0
-if [ -x "$jsc" ] && [ -f "$wasmdir/tomatoc.wasm" ] && [ -f "$wasmdir/current" ] && [ -f "${TOMATO_JSC_JS:-}" ]; then fast=2   # no new native program per line (see tomato-jsc.js)
-elif [ -x "$tomatoc" ] && [ -f "$runtime" ] && clang -O0 -w -pthread -c -o "$S/rt.o" "$runtime" 2>/dev/null; then fast=1; fi
+fast=0; rt_o=""
+if [ -x "$tomatoc" ] && [ -f "$runtime" ]; then
+  [ -f "$(dirname "$0")/rtcache.sh" ] && . "$(dirname "$0")/rtcache.sh"
+  if type rtcache_get > /dev/null 2>&1 && rt_o="$(rtcache_get "$S" o "$runtime" -O0 -pthread -w)"; then fast=1
+  elif clang -O0 -w -pthread -c -o "$S/rt.o" "$runtime" 2>/dev/null; then rt_o="$S/rt.o"; fast=1; fi
+fi
+if [ $fast = 0 ] && [ -x "$jsc" ] && [ -f "$wasmdir/tomatoc.wasm" ] && [ -f "$wasmdir/current" ] && [ -f "${TOMATO_JSC_JS:-}" ]; then
+  fast=2
+  echo "note: no C compiler could be used, so this session runs in the WebAssembly build: it has no real files, environment or processes (and sleep does not wait). Install the compiler (on a Mac: xcode-select --install) and start the repl again." >&2
+fi
 : > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; seq=0
 
 say() { printf '%s\n' "$*"; }
@@ -137,7 +148,7 @@ try_once() {
     if ! "$tomatoc" "$S/try.tom" main "$std" > "$S/try.ll" 2> "$S/err"; then
       : > "$S/out"; return 1
     fi
-    clang -O0 -w -o "$S/try" "$S/try.ll" "$S/rt.o" -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl) 2> "$S/err" || return 1   # -ldl as native/tomato links: older glibc keeps dlopen in libdl
+    clang -O0 -w -o "$S/try" "$S/try.ll" "$rt_o" -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl) 2> "$S/err" || return 1   # -ldl as native/tomato links: older glibc keeps dlopen in libdl
     TOMATO_INPUT_ASK=1 "$S/try" < "$S/inputs.try" > "$S/out" 2> "$S/err"; rc=$?
     RUN_RC=$rc
     sed -e 's/ (raised on line [0-9]*)//' -e '/^  at /d' -e '/^  \.\.\. and /d' "$S/err" > "$S/err2"; mv "$S/err2" "$S/err"
