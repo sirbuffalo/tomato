@@ -1,6 +1,6 @@
 - Run the LTO release checks through the real `release/release.sh` and on a quiet biggie
   Done on 2026-11-25 at load about 65 (not quiet): `release/check-lto.sh`, the full tier with `TOMATO_TEST_REQUIRE_LTO=1` (842 passed, 0 failed) and the release's Linux remote script piped to biggie by hand (tests, benchmarks and instruction counts all fine); see `tests/README.md`. Still to do: one real `release/release.sh` Linux step from the Mac (the ssh, fetch-back and publish-gate parts were not exercised; the next release does it), and the full tier timed once on a quiet biggie (load never fell below 32; another account's `prst` jobs). Use `~/.tomato-release/linux-tools/bin` first on PATH and run `release/check-lto.sh` first.
-- Run `release/release.sh --dry-run` on the signing Mac once to exercise the real Linux step
+- Run `release/release.sh --dry-run` on the signing Mac once to exercise the real Linux step (the precondition of stage 5, the release tools, and so of 1.0.0)
   Use `--dry-run --version 1.0.0` (or `--from linux`) so ssh, copy-back, the publish gate and the snapshot are exercised end to end, with `--linux-host` reachable from the Mac. The Linux step's remote script alone ran fine on biggie: the full tier passed 842 tests with `TOMATO_TEST_REQUIRE_LTO=1` at load about 62 (not quiet).
 - Answer the seed registry open questions, then build the rest of stage 3 onward
   Davis answered questions 1, 2, 4, 5 and 8 on 2026-11-27 (D117a); questions 3 (new syntax), 9, 10, 11 and the proposed details of 7 (5 names per owner, 90-day hold, listed first) are still open in section 19 of `docs/package-registry-design.md`. The local part is built (D95a, `docs/manifest.md`: the strict manifest reader, `[build]`, path and git seeds with the store, `tomato.lock`, `tomato seed install/add/remove/vendor/check/hash`, the foreign-symbol question, D100a, no helper program); what is left is the registry, signatures, the index client and everything under "Not built yet" in the sheet.
@@ -10,6 +10,20 @@
   The shortcuts `gh:`, `gitlab:`, `codeberg:`, `srht:`, the handle grammar, the E571 refusal of a registry name and a handle owner in `seed check` are built (D124a). What waits for the index client (stage 4 of `docs/package-registry-design.md`, section 1.10): looking `dave/thing` up in the index (the entry holds the git URL, commit and content hash), the signed `[[request]]` and the maintainers' `[[handle]]` grant, and the lock's `index` field.
 - Resolve the `# seeds:` line of a program that is outside every project
   The line is read and checked against the project's lock by `run`, `build` and `compile` (D124a), but a program with no `tomato.toml` above it is an error, since the line names seeds and versions and never a source. Once the index client exists, decide where such a program's lock lives (beside the file, or in the user's folder), let `tomato seed install` take the program, and have `run`/`build` still never fetch.
+- Shell-to-Tomato stage 1: processes, files and archives in std (`docs/shell-to-tomato-plan.md`, section 5, items A to G and I)
+  `sys.spawn`, file operations (`copytree`, `exchange`, `walk`, ...), `signal`, `os.cpu_count`/`loadavg`/`cache_dir`, `requests.download`, `hashlib.sha256_file`, and gzip and tar written in Tomato (Davis, 2026-11-27: not the system `tar`; item I is sized in the plan by its parts, with no time estimate). Stage 0 (the CLI contract tests in `tests/cli_contract/`) comes first. Part of the gate on 1.0.0.
+- Shell-to-Tomato stage 2: the `tomato` CLI as entries, shipped as one binary with the compiler (`tomato.ll`)
+  Plan section 12. One IR (Davis, 2026-11-27); Linux x86-64 and arm64 glibc tarballs built on glibc 2.34 (the writer's choice of floor, to confirm). Needs stage 1. Gate on 1.0.0.
+- Shell-to-Tomato stage 3: install, update, `doctor`, the repl driver (3b) and std embedded in the binary (3c)
+  Plan section 12. Embedding std and the runtime source is decided (Davis); folding in the repl editor (decision 3) and recording the atomic install as a D-number (decision 10) are still open and recommended. Needs stage 2. Gate on 1.0.0.
+- Shell-to-Tomato stage 4: the test runner in Tomato (`dev/test.tom`) replaces `tests/run.sh`
+  Plan section 10.1 and 12. Needs stage 1. Gate on 1.0.0.
+- Shell-to-Tomato stage 5: the release tools in Tomato (`dev/release.tom`, pkg, sign, dmg, site, bench, `fakebin.tom`), keeping the 141 `release_resume` checks
+  Plan section 10.2 and 12. Precondition: the real dry run above. The Python table generators (decision 8) are recommended here and still open. Needs stage 1 and the contract tests. Gate on 1.0.0.
+- Shell-to-Tomato stage 6: the bootstrap (`tomato.ll`, one clang command, no `.sh` file left in the repository)
+  Plan section 7 and 12. Last stage; its acceptance gates the 1.0.0 tag (`docs/releasing.md`). The split build (decision 9) is recommended as `tomato build --jobs` and still open.
+- Add a Windows-not-1.0 line and the one-command build to the download page when stage 6 lands
+  The page already says Windows has no native build (done with D130a); the one-command build from `tomato.ll` for other systems is added once `tomato.ll` exists.
 - Check the shell-to-Tomato plan's open Mac points on a Mac
   Time the first-run cost of a freshly installed signed binary, check that `renamex_np` with `RENAME_SWAP` swaps two folders atomically, and check that `pkgbuild` accepts compiled executables as package scripts. All three are marked "to verify" in `docs/shell-to-tomato-plan.md`.
 - Run the new `sys_async` test on macOS
@@ -18,3 +32,5 @@
   `json.dumps(d)` with a `dict[str, int]` says only "has type dict[str, int], but value.Value is expected", with no help on how to build one (`from value import Value, Dict, Str, Int, ...`, e.g. `Dict({"a": Int(1)})`, or `json.dumps` of the built value). The text is in `Gen.want` (`compiler/src/compiler.tom`); a help line there changes the compiler, so `compiler/bootstrap/tomatoc.ll` and `site/wasm/*.wasm` must be regenerated, and `std/errors.txt` stays as it is (same template, help follows the `\n`). Add a whole-text test in `tests/errors/`.
 - Fill in the `bytearray` gaps that D128a left out
   Slice assignment (`ba[1:3] = b'..'`) and `del`, the methods that make new bytes (`split`, `join`, `replace`, `strip`), `index`, `extend` with a list of ints, bytearray accepted where bytes are taken, and an in-place `+=` (today `ba += x` makes a new bytearray).
+- Choose how the arm64 Linux binary is built and tested
+  A Lima arm64 VM on the signing Mac (as `benchmarks/count.sh` already uses Lima), or an arm64 CI runner; D130a and `docs/shell-to-tomato-plan.md` section 4 leave it open. Needed for the Linux arm64 tarball of stage 2.

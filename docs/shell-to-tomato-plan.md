@@ -6,6 +6,12 @@ entries written in Tomato. Three tasks run beside this one and are read here as 
 (not started: no changes yet), "Project layout and CLI" (`init`, `run`, `build` over `tomato.toml`) and "Test library 1.0"
 (`tomato test` discovery). Numbers marked *estimate* are guesses to size the work, not measurements.
 
+**Davis's answers of 2026-11-27 are applied below** (D130a): all six stages ship before the 1.0.0 tag (decision 1), one IR
+(2), std and the runtime source embedded in the binary (4), Linux x86-64 and arm64 binaries plus a one-command build from
+`tomato.ll` elsewhere (5), gzip and tar written in std (7). Decisions 3, 6, 8, 9 and 10 were not answered and stay marked
+*recommended (open)*. Where the text below says "1.0" it means the 1.0.0 that these six stages gate; where it names a plan
+number or a size it is an estimate, not a promise of a date.
+
 ## 1. Premises (decided by Davis)
 
 1. **The shipped `tomato` is one precompiled program** (the CLI entries and the compiler together). Users never compile it, and
@@ -132,7 +138,7 @@ Replaced by the binary: `bin/tomatoc`, `bin/tomato` (script), `bin/tomato-repl`,
 
 **What a user's machine still needs:** a C compiler and linker, `clang` or `cc`, for every `tomato run` and `tomato build`; libc,
 libm, pthread (and `dl` on Linux); `libcurl` only for programs that use `requests` (the runtime opens it with `dlopen`).
-`tomato update` needs HTTPS (libcurl; today it needs the `curl` program) and, until std has archives, `tar`.
+`tomato update` needs HTTPS (libcurl; today it needs the `curl` program); gzip and tar are in std (item I), so it needs no `tar` program.
 **`tomato doctor`** (new) and the first `run`/`build` print what is missing, not a raw clang error. The logic is one module,
 `cli/toolchain.tom`, shared by `doctor`, the first-run check, `install` and `update` (stage 3 has all of it; the binary of stage 2
 only finds a compiler and prints the same fix text when none is found):
@@ -142,9 +148,23 @@ only finds a compiler and prints the same fix text when none is found):
 - the message for a missing compiler names the fix and the exact line: macOS `xcode-select --install`; Debian and Ubuntu
   `sudo apt install clang`; Fedora `sudo dnf install clang`; Arch `sudo pacman -S clang`; Alpine `apk add clang musl-dev`.
 
-**Linux binary portability.** This host has glibc 2.43, so a binary built here will not run on an older distribution. The
-release build must run on the oldest glibc we support (a container or a toolchain folder, like `linux-setup.sh`), or link
-statically. Which libc floor to support is decision 5. Linux arm64 is not shipped today (README: x86-64); it stays out.
+**Linux binary portability (decided: Davis, 2026-11-27, decision 5; the floor is the writer's choice, not Davis's).** This host
+has glibc 2.43, so a binary built here will not run on an older distribution. The release ships **two Linux binaries,
+x86-64 and arm64, both dynamically linked against glibc and built on the oldest glibc we support** (in a container or a
+toolchain folder, as `linux-setup.sh` does today), so each runs on that glibc and every later one. **The floor is glibc 2.34**:
+it is what Red Hat Enterprise Linux 9 and its rebuilds (Rocky, Alma) ship, supported to 2032; Debian 12 ships 2.36 and Ubuntu
+22.04 2.35, so both run it. Davis named Debian 12 as the floor or "whichever oldest you can justify"; 2.34 is the oldest
+that is still a current enterprise release and it is also the glibc that merged `libpthread` and `libdl` into `libc`, so the
+binary needs no separate library for them. Debian 11 (glibc 2.31) and Ubuntu 20.04 are out of support and are not targeted.
+This is to be checked when the build container exists (that it has a clang new enough for the compiler's LTO checks and
+that the binary runs on a Debian 12 and a Rocky 9 container); if 2.34 turns out not to be buildable, Debian 12's 2.36 is the fallback.
+How each architecture is built and tested is open: x86-64 stays on biggie; for arm64 an arm64 Linux VM under Lima on the
+signing Mac (Apple silicon; `benchmarks/count.sh` already uses Lima), or an arm64 CI runner, would run the whole suite.
+musl and static linking are not shipped.
+
+**Other systems** (Alpine and other musl Linux, the BSDs, other architectures) are not release targets: they build from the
+checked-in `compiler/bootstrap/tomato.ll` with the one clang command of section 7, which is documented on the website
+(download page) and in the bootstrap README. **Windows is not a 1.0 target** (section 11).
 
 ## 5. What std must gain (named and sized)
 
@@ -161,7 +181,16 @@ raises "not in the browser", the pattern `os` already follows (`_not_in_browser`
 | F | `requests.download(url, path, https_only, max_bytes, timeout)`: stream to a file, `--proto =https` and redirect rule of `curl_safe`, `file://` only behind the test override | update, release, linux-setup | S, 40 C + 60 T (libcurl is already loaded by `dlopen`) |
 | G | `hashlib.sha256_file(path)`: stream a file without a `list[int]` of its bytes | cache key, update, seeds, release | S, 40 T |
 | H | pty for `sys.spawn(pty=True)` so the terminal tests need no `expect` | `tests/*.exp` | M, 150 C + 80 T (optional) |
-| I | gzip, deflate, tar | tarballs | **not built**: use the system `tar` through `sys.run` (decision 7) |
+| I | **gzip (deflate and inflate) and tar (ustar, with long names), written in Tomato** (`gzip`, `tarfile` modules; decided: Davis, 2026-11-27, decision 7, not the system `tar`). Reading and writing `.tar.gz` and plain `.tar`; entry modes, symlinks and times kept; a path that leaves the folder (`..`, absolute, a link out) refused when extracting; streaming, so a 15 MB archive is never one `bytes` in memory twice | update, install, `release/build.sh`, linux-setup, tests | **M-L, about 900 T (*estimate*) plus a C fast path for the deflate inner loop if the Tomato one is too slow (measure first)**; unsized by any review time, see below |
+
+**Item I is sized by its parts, not by a duration.** Davis questioned the earlier plan's "a month of review", which was a guess
+with nothing behind it, and it is removed. The work is: inflate (about 250 lines), deflate with LZ77 and Huffman coding
+(about 350), gzip framing with its CRC (`zlib.crc32` exists; about 60), tar read and write (about 200) and `extract` with the path
+rules (about 60), roughly 900 lines of Tomato, *estimate*. It is bigger than one more `os` function because correctness has
+to be checked against two independent implementations: the acceptance of stage 1 below does that (round trips against the
+system `gzip`, `tar` and `bsdtar` in both directions, a corpus of odd archives, truncated and hostile input, and the memory
+and leak checks), and nothing in the plan assumes how long that takes. Item I is on the path of stages 3 and 5 (the update archive and
+the release tarball), so it is built with stage 1, and the deflate speed is measured before the C fast path is decided.
 
 What is already there and enough: `os.getenv/environ/putenv`, `getcwd`, `listdir`, `mkdir/makedirs`, `remove`, `rmdir`, `rename`
 (atomic), `stat`, `read_text/write_text/read_bytes/write_bytes`, `ospath`, `time.monotonic`, `time.format_duration`, `hashlib`
@@ -187,7 +216,8 @@ installer), `dev/` about 4,000. `compiler/src` is 17.9 K lines, so a combined pr
 **One binary, not two.** `tomatoc` and `tomato` become one program, so a compile is a function call. The bootstrap file is then
 the whole CLI: `compiler/bootstrap/tomatoc.ll` becomes `tomato.ll` and one clang command gives a working `tomato` (section 7).
 The wasm build (`site/wasm/build.sh`) needs the compiler without the process code: the process, signal and archive functions
-raise "not in the browser", and the WASI runtime stubs them (decision 2: one IR or two).
+raise "not in the browser", and the WASI runtime stubs them. **Decided (Davis, 2026-11-27): one IR**, the compiler and the CLI
+are one program, `tomato.ll`; the two-IR alternative (a smaller wasm, two 18 MB files in git) is dropped.
 
 **Compatibility, 1.0.x.** D84a promises that 1.0.x releases behave alike and a minor may change behaviour. The CLI is part of
 what scripts depend on: flags, exit statuses (0, 1, 2, 130, 143), what goes to standard output and error, the error texts and
@@ -195,8 +225,10 @@ colors, and the environment variables (`TOMATO_HOME`, `TOMATO_BIN`, `TOMATO_CACH
 `NO_COLOR`, `TOMATO_WARNINGS`, `TOMATO_UPDATE_*`). So **the contract is written down as tests before the rewrite**: the CLI
 section of `tests/run.sh` (about 25 `t_cli_*` functions, plus `t_atomic_*` and `t_release_*`) is kept as it is and added to with golden files
 for `tomato help`, `explain`, `config` and the error texts (`tests/cli_contract/`). A rewrite passes them unchanged. A deliberate
-change goes in the changelog; in a 1.0.x patch there is none. Stage 2 is meant for **1.1.0**, after 1.0.0 is tagged with the shell
-CLI (decision 1), so the promise is made once and kept by the rewrite, and `tomato update --minor` is how users opt in.
+change goes in the changelog; in a 1.0.x patch there is none. **All six stages ship before 1.0.0** (Davis,
+2026-11-27, decision 1; the earlier recommendation, 1.0.0 with the shell CLI and the rewrite as 1.1.0, is overruled), so the
+1.x promise is made once, on the Tomato CLI, and no release under it ever shipped the shell one. The contract tests are
+therefore the only thing that holds the rewrite to the behaviour of the 0.51 shell script, and they must be complete before stage 2 starts.
 
 **A compiler bug that breaks the shipped CLI** is the new failure mode (today a miscompile breaks `tomatoc`, and the same
 exposure exists, but the script around it still works). Defences, in order:
@@ -235,11 +267,14 @@ contributor's `tomato build`:
 For the tarball and for contributors, `tomato install [--prefix DIR]` is an entry of the binary itself: it copies the running
 binary and the folders next to it into a staged folder `$TOMATO_HOME/.native.new.PID`, runs the new binary
 (`version`, `doctor`), swaps, links `~/.local/bin/tomato`, and tells the user to add the folder to `PATH`, as `install-native.sh`
-does. No installer script is shipped. Embedding `std/` and the runtime source in the binary (decision 4) would make the
-install one file and remove a class of mixed-version errors; it is not needed to start.
+does. No installer script is shipped. `std/` and the runtime source are **embedded in the binary** (decided, Davis,
+2026-11-27, decision 4; built after stage 3, step 3c of section 12): the install is one file plus `examples/` and `VERSION`,
+no mixed-version errors are possible, an update is one rename, and a first run writes the runtime source to the cache keyed
+by its hash (the cache is keyed that way already). The cost is that users cannot read or patch `std/` in place; they can
+still compile a copy. Until 3c the package holds the folders of section 4.
 
 **Update, and what it must keep** (rules in `docs/releasing.md` "How an update installs" and D43a, D84a; the atomic install has
-no D-number of its own, which this plan suggests recording): HTTPS only, including after redirects (`curl_safe`); the manifest
+no D-number of its own: decision 10, not yet answered, recommends recording one with stage 3): HTTPS only, including after redirects (`curl_safe`); the manifest
 carries a valid 64-hex sha256 and an official URL; only an upgrade (SemVer precedence); a minor or major only with `--minor`; a
 pre-release only with `--pre` or from a pre-release; the install is never changed in place; any failure or signal leaves the old
 install as it was; leftovers of a killed update are cleaned up on the next one.
@@ -247,7 +282,7 @@ install as it was; leftovers of a killed update are cleaned up on the next one.
 **Replacing the running binary.** On Linux and macOS a running program keeps its file, so the swap of the whole folder (or a
 rename over the binary) does not disturb the running `tomato update`. Two cases need care and are tests:
 1. the running process must read nothing from the install after the swap (it reads std and the runtime lazily today; the
-   same hazard exists for a `tomato run` in flight, and a binary with std embedded removes it);
+   same hazard exists for a `tomato run` in flight, and a binary with std embedded, which is decided (decision 4), removes it);
 2. a `tomato run` that starts during the swap must see a whole install. `os.exchange` (C in section 5) gives that on both systems
    where the file system supports it; the two-rename fallback is not atomic for a moment, as today.
 A package install's `/usr/local/lib/tomato` stays writable for the console user (the `postinstall` of 3.1), so no `sudo`.
@@ -303,39 +338,52 @@ runs on both (`tests.yml` on macOS, `linux.yml`), so each std addition needs a t
 
 **Windows is out of scope for 1.0.** No installer, no `sys.run`, no signals, no `os.exchange`, the C runtime is POSIX, and the
 tests and the release run on a Mac and on Linux. The plan keeps the door open by putting every platform fact in `sys`/`os`
-(never in `cli/`), but it makes no Windows promise. (Decision 6.)
+(never in `cli/`), but it makes no Windows promise. Davis's answer to decision 5 confirms it: Windows is not a 1.0 target, and the website's download page says so. (Decision 6 itself stays open, *recommended*, for after 1.0.)
 
 ## 12. Stages
 
-Each stage ships alone, and each leaves the repository with fewer shell lines than it found and a green suite.
+Each stage leaves the repository with fewer shell lines than it found and a green suite. **All six ship before the 1.0.0 tag**
+(Davis, 2026-11-27): the tag is gated on the acceptance of stage 6 (the repository holds no `.sh` file, the release is made
+by the Tomato tools), and on the dry run of stage 5. Stages 1 to 3 can still be released as 0.NN versions as they land, so users
+get the std additions and the binary early; stages 4 to 6 are for the project itself and are not visible to users.
 
 **Stage 0: freeze (no code; now).**
 - Land the two sibling tasks as they are; no further command logic goes into `native/tomato`.
 - Write the CLI contract tests of section 6 against main after both land.
 - Acceptance: `tests/cli_contract/` passes on the shell `tomato`, and the current numbers of section 2 are in `docs/performance.md`.
 
-**Stage 1: processes and files in std (A to G).** Additive, so it can go in a patch release.
-- Std: A (sibling), B, C, D, E, F, G. About 700 C lines and 750 Tomato lines in all (*estimate*); `H` is optional.
+**Stage 1: processes, files and archives in std (A to G, and I).** Additive.
+- Std: A (sibling), B, C, D, E, F, G, and I (gzip and tar in Tomato). About 700 C lines and 1,650 Tomato lines in all
+  (*estimate*, 900 of the Tomato being I); `H` is optional.
 - Acceptance, per function: a test program in `tests/programs` that runs on macOS and Linux under the leak check; `sys.run`
   of `true`, `false`, a missing program, a killed child, large output on both streams (no deadlock), env and cwd, `check=True`;
   `os.exchange` while another process reads either name; `signal` cleans a temp folder on INT, TERM and HUP; `requests.download`
   refuses `http://` and an `http` redirect; `sha256_file` of a 100 MB file in under 2 s (to check) and the right sum; walk of a
-  tree with a symlink loop; and the browser build raising the "not in the browser" error for each.
+  tree with a symlink loop; and the browser build raising the "not in the browser" error for each. For I: an archive made
+  by std is read by the system `tar` (GNU and BSD) and `gzip -t`, and an archive made by them is read by std (long names, a symlink,
+  an empty file, a sparse or pax header it does not support refused with a clear error); extraction
+  refuses `..`, absolute paths and links that leave the folder; a truncated or corrupt `.gz` fails with an error, never a crash;
+  the leak check passes; the deflate speed on a 15 MB tarball is measured and written down.
 
 **Stage 2: the CLI as entries, shipped as a binary.**
 - `cli/` for `init`, `build`, `run`, `compile`, `test`, `explain`, `config`, `seed`, `version`, `help`, the runtime cache, and the compiler-presence message; the
-  program, built by `tomato build` in the release pipeline, replaces `bin/tomatoc` and the script in the Mac package and in a
-  new Linux x86-64 tarball (the release scripts get a small edit for this; they are replaced in stage 5).
+  program, built by `tomato build` in the release pipeline, replaces `bin/tomatoc` and the script in the Mac package and in
+  new Linux tarballs for x86-64 and arm64 (the release scripts get a small edit for this; they are replaced in stage 5).
 - `native/tomato` stays in the checkout for contributors until the contract tests pass on the binary, then it is deleted;
-  `tomato update` from a 1.0 shell install to the 1.1 binary uses the old script's update and the old installer (the new
-  archive keeps an `install-native.sh` that only copies, for that one hop; removed in 1.2).
+  `tomato update` from an existing 0.51 shell install to the first binary release uses the old script's update, which extracts
+  the archive with the system `tar` and runs `install-native.sh` from it: so the archive of that one release carries a
+  copy-only `install-native.sh` that release tooling writes into it (it is not a file in the repository, so stage 6's "no `.sh`
+  in the repository" holds), and the next release drops it. The hop is a test; the archive must unpack with GNU and BSD `tar`.
 - Acceptance: all CLI contract tests and the whole current suite pass with the binary; the startup budget of section 2 on both
   systems; a PATH with no compiler gives the fix text; the binary reproduces itself; the same program through the old and the new
   `tomato` gives the same IR; signals during `run`, `build` and `test` leave no temp folder or cache file.
 
 **Stage 3: install, update, `doctor` (3) and the repl (3b).**
 - `cli/install.tom`, `cli/update.tom`, `cli/doctor.tom` with the full `toolchain.tom`, `install-native.sh` deleted; `previous`
-  kept and `tomato update --rollback`. 3b moves the repl driver (section 9).
+  kept and `tomato update --rollback`; the update unpacks its archive with std (item I). 3b moves the repl driver (section 9).
+  **3c: embed `std/` and the runtime source in the binary** (decision 4), after 3 and 3b work: the install holds the
+  binary, `examples/` and `VERSION`; the runtime is written to the cache by hash on first use; a test runs `tomato` with the folders
+  of std moved away.
 - Acceptance: `doctor` and the first run with no compiler, a compiler that cannot link and one without LTO, on both systems,
   with the exact fix line for macOS and each named distro; the update and install tests of `run.sh` (`t_atomic_*` and the `t_cli*` update cases: interrupt at each point,
   full disk, an unwritable `/usr/local`, a stale manifest, a bad checksum, an `http` URL, a foreign `tomato` kept as
@@ -358,42 +406,53 @@ Each stage ships alone, and each leaves the repository with fewer shell lines th
   files that name times and paths.
 
 **Stage 6: the bootstrap (last).**
-- `tomatoc.ll` becomes `tomato.ll`; `bootstrap/README.md` carries the one command; `refresh` is an entry; the split build is
+- `tomatoc.ll` becomes `tomato.ll` (one IR, decision 2); `bootstrap/README.md` and the download page carry the one command; `refresh` is an entry; the split build is
   `tomato build --jobs`; `build-object.sh`, `split.awk`, `refresh.sh` are deleted.
 - Acceptance: on a machine with only clang and a checkout, the one command gives a `tomato` that passes the CLI contract; the
   fixed point holds; `tomato build cli/tomato.tom` from that binary gives the same binary; a checkout with no `sh` on PATH
   builds and tests. The repository then holds no `.sh` file (`git ls-files | grep -E '\.sh$'` is empty, and a test says so).
+- **This acceptance, with the dry run of stage 5, is the gate of the 1.0.0 tag** (`docs/releasing.md`).
 
-## 13. Open decisions for Davis
+## 13. Davis's decisions
 
-1. **Before or after 1.0.0?** Recommend: tag 1.0.0 with the shell CLI as it is, ship stage 1 in 1.0.x (additive), and ship stage 2
-   as 1.1.0 so users opt in with `--minor`. Doing the rewrite before the tag puts the largest rewrite on the critical path of the
-   promise.
-2. **One IR or two?** One program with the compiler and CLI (`tomato.ll`, one bootstrap command, no process spawn per compile) or
-   a compiler IR for wasm and the fixed point plus a second for the CLI (smaller wasm, two 18 MB files in git). Recommend one,
-   with process code stubbed in the browser.
+Answered on 2026-11-27 (recorded as D130a; the sentence after each is what the plan did with it):
+
+1. **Before or after 1.0.0? Answered: all six stages before the 1.0.0 tag**, not 1.1. The recommendation (tag 1.0.0 with the shell
+   CLI) is overruled. 1.0.0 is gated on stage 6 and the dry run of stage 5; sections 6 and 12 and `docs/releasing.md` say so.
+2. **One IR or two? Answered: one**, the compiler and the CLI are one program, `tomato.ll`; process code is stubbed in the browser.
+4. **Embed std and the runtime source in the binary? Answered: yes**, after stage 3 (step 3c). `examples/` and docs stay as files.
+5. **The Linux floor. Answered: prebuilt binaries for Linux x86-64 and arm64, glibc, built on the oldest glibc justified; Mac as
+   today; every other system builds from `tomato.ll` with one clang command; Windows is not a 1.0 target.** Davis offered Debian 12
+   or the oldest justifiable floor: the plan names glibc 2.34 (RHEL 9, which Debian 12 and Ubuntu 22.04 exceed), as the writer's
+   choice to confirm (section 4). The earlier "arm64 after 1.0" is overruled.
+7. **Archives. Answered: write gzip and tar in std**, not the system `tar`. Davis questioned the "a month of review" estimate;
+   it was a guess and is gone, and item I of section 5 is sized by its parts and acceptance instead.
+
+**Not answered yet; the recommendation stands and the item stays open:**
+
 3. **Fold the repl editor into the binary** as an entry (one file, no second universal build) or keep `tomato-repl-edit`.
-   Recommend: fold it in, in stage 3b; it is a Tomato program already.
-4. **Embed std and the runtime source in the binary.** Recommend yes, after stage 3: one file to ship, update by one rename, no
-   mixed versions, a first run that writes the runtime to the cache keyed by its hash (the cache already is). Keep `examples/` and
-   docs as files. Cost: users cannot read or patch `std/` in place (they can still `tomato` a copy).
-5. **The Linux floor.** Build on the oldest glibc we want to support (name it, for example Debian 12 or Ubuntu 22.04), or link
-   statically (musl)? Recommend: oldest-glibc build in a container, x86-64 only; arm64 Linux after 1.0.
-6. **Windows.** Recommend: out of scope for 1.0, stated on the website and in this plan; reconsider after 1.0 when `sys` is
-   proven on two systems.
-7. **Archives.** Use the system `tar` through `sys.run` (recommended: present on macOS, Linux and current Windows) or write
-   gzip and tar in std (about 900 lines of Tomato, a month of review for a feature no other stage needs).
-8. **The Python table generators in `tools/`** (`gen_case_table.py`, `gen_width_table.py`) break "no Python" (D46a). Recommend:
-   port to Tomato in stage 5 (they need Unicode data files downloaded and checked; 265 lines of Python); keep `gen_ctype_table.c`.
-9. **The bootstrap split build.** Recommend: the one `clang` command in the README, and the fast build through `tomato build --jobs`
-   once a `tomato` exists. Do not keep an awk split for a bare machine; 41 s (loaded) once per fresh checkout is acceptable.
+   *Recommended (open):* fold it in, in stage 3b; it is a Tomato program already.
+6. **Windows.** *Recommended (open):* out of scope for 1.0, stated on the website and in this plan; reconsider after 1.0 when `sys` is
+   proven on two systems. (Davis's answer to 5 already says Windows is not a 1.0 target and asked that the site and this plan
+   say so; the site's download page and section 11 do. The decision stays open for what comes after 1.0.)
+8. **The Python table generators in `tools/`** (`gen_case_table.py`, `gen_width_table.py`) break "no Python" (D46a).
+   *Recommended (open):* port to Tomato in stage 5 (they need Unicode data files downloaded and checked; 265 lines of Python);
+   keep `gen_ctype_table.c`. Stage 6's "no `.sh`" gate does not cover Python, so this does not gate 1.0.0 unless Davis says so.
+9. **The bootstrap split build.** *Recommended (open):* the one `clang` command in the README, and the fast build through
+   `tomato build --jobs` once a `tomato` exists. Do not keep an awk split for a bare machine; 41 s (loaded) once per fresh
+   checkout is acceptable.
 10. **Record the atomic install as a D-number** (D43a and D84a cover the update rules; the atomic swap is only in
-    `docs/releasing.md` and comments)? Recommend: yes, with stage 3, with the previous-install rule. Post-1.0, not decided
+    `docs/releasing.md` and comments)? *Recommended (open):* yes, with stage 3, with the previous-install rule. Post-1.0, not decided
     now: our own backend so no `clang` is needed, and signed update archives (`docs/language-design-review.md` 11.3).
 
 ## 14. Risks that remain
 
 - A miscompile of the CLI by the compiler that builds it: reduced by the four defences of section 6, not removed.
-- Stages 4 and 5 are large (about 5,000 lines) and give users nothing visible; the gain is tooling tested by its own language
-  and the same on macOS and Linux. The stages are independent, so work can stop after any of them.
+- Stages 4 and 5 are large (about 5,000 lines) and give users nothing visible, and with decision 1 they are on the path to the
+  1.0.0 tag: the date of 1.0.0 is set by the slowest stage and the plan gives no duration for any of them. The stages are still
+  independent in what they need (4, 5 and 6 need stages 1 to 3, not each other), so they can run in parallel and a stage can be
+  reviewed alone; if Davis wants to ship earlier, the decision to move a stage after 1.0.0 is his to reopen.
+- Two architectures and two Mac sides mean four binaries to build, sign and test per release; the arm64 Linux host is not chosen.
+- gzip and tar written here are new code on the update path: a bug in them could refuse or corrupt an update. The defences are the
+  checksum of the archive, the staged smoke test of section 6, and the cross-tests against the system tools in stage 1.
 - `sys.run` is on every critical path, and the 1.0.x CLI promise holds only as far as the contract tests reach.
