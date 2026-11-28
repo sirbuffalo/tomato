@@ -43,11 +43,14 @@ before it runs. The checks are:
 | `shadow` | a variable has the name of a built-in, or of a function, class or constant of the same file | `the variable 'len' has the same name as a function or class, which it hides here` |
 | `loop-change` | a list is changed (`append`, `pop`, `remove` ...) inside a `for` loop that goes through it | `'xs' is changed while the loop goes through it` |
 | `module-shadow` | a file of the project (next to the program or in `src/`) has the name of a std module, so `import json` gets the file; once for each name, at its first import (D115a) | `the file json.tom of this project shadows the standard module 'json'` |
+| `unstable` | a program uses a feature that is still on the unstable list of `docs/provisional.md` (section 1): `progress_bar`, or `random.choice`, `shuffle` or `sample`; once for each feature in a build, at its first use (D121a) | `'progress_bar' is an unstable feature (U3, the text progress_bar draws)` |
 | `type-test` | `x in T` with a type on the right, the old spelling of the type test `x is T` (D23i); it still works in 1.0.x | `'in' with a type is the old spelling of the type test` |
 
 To silence one, write `# allow: KIND` as a comment on the line the warning points at (`total = 0  # allow: unused`). A name
 that starts with `_` is meant to be unused, and loop variables, `catch` variables and parameters are never reported as unused.
 `tomato run --no-warnings` (or `TOMATO_WARNINGS=off`) hides them all. The repl never shows warnings.
+
+The `unstable` warning is given once for each feature of the unstable list, at the first use, whatever file it is in; it is about code you write, so a standard library module, a seed's module or a file with the std module's own name never gives it. It points at the `from module import name` line or at the first `module.name` (or `alias.name`) that names the feature. `# allow: unstable` on that line hides that use; the next use on a line without the comment warns instead. The list is `compiler/src/unstable.tom`, and the suite checks that it agrees with `docs/provisional.md`. Two features of the list, the wording of messages and the host's input protocol, are not written in a program, so there is nothing to warn about.
 
 A warning is silent when a case is unclear, and the compiler, the standard library and the examples compile with none.
 A lambda's parameters are its own names: `key=b -> -b` does not read a variable `b` of the function around it, so it never gives `unassigned`.
@@ -118,6 +121,7 @@ the runtime is inlined into the program, and no leak report or exit-time cycle c
 - Warnings come from `compiler/src/lint.tom` (`lint_items` reads the syntax tree of one file and gives `Finding`s). The compiler
   formats them and appends them to the IR as `;! ` comment lines, which `tomato`, the repl and `site/wasm/tomato.js` take out
   and show. Add a check there, give it a kind word, keep it quiet when unsure, and make the repo's own code pass it.
+- The `unstable` warning is not made by `lint.tom` (it needs the names the compiler resolved): `warn_unstable` in `compiler/src/compiler.tom` reads `compiler/src/unstable.tom`, the one list of the unstable features. Add a feature there and in the table of `docs/provisional.md`; `tests/run.sh` (`t_unstable_features`) fails when the two differ.
 - `tests/errors/NAME.tom` with the whole expected text in `NAME.out` (the error, or the warnings) is checked by `tests/run.sh`.
 - Color is not the compiler's job: `tomato paint` (awk, in `native/tomato`), `use_color` in `runtime/tomato_rt.c` and
   `tomatoErrors` in `site/site.js` implement the same table.

@@ -1,0 +1,18 @@
+# nothing here is on the unstable list: the promoted parts of random and itertools, and a name of another module that is also called
+# choice or progress_bar, never warn
+import random
+import itertools
+from itertools import chain, pairwise
+from random import Random
+
+def choice(xs: list[int]) -> int:
+    return xs[0]
+
+def progress_bar(n: int) -> int:
+    return n + 1
+
+@main
+def main():
+    rng = Random(3)
+    print(choice([rng.randint(1, 1)]), progress_bar(1), random.Random(1).random() < 2.0)
+    print(list(chain([1], [2])), list(pairwise([1, 2, 3])), len(list(itertools.batched([1, 2, 3], 2))))

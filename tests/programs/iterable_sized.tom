@@ -1,5 +1,5 @@
 # Iterable[T] and Sized: built-in interfaces that anything with the matching loop or length satisfies, with no `implements`.
-from itertools import progress_bar
+from itertools import progress_bar  # allow: unstable
 class Countdown:
     start: int
 

@@ -28,7 +28,7 @@ Each has my recommendation. Answer with the number and "yes", or say what to do 
 12. **Review items that block 1.0 and are not rows of this file.** If any is still open at 1.0, it must be added to the unstable list, because it would otherwise be a promise nobody decided (1.3, 1.4 and 2.2 are decided and built since: D34c, D108a, D23i): `File` safety (5.1, built as a default by D93a), the sleep clock (6.1), D77g's limits (7.1), `bytes` (8.1), reserved std module names (9.1), `tomato run` inputs (11.1), and the std names that would freeze (2.3, 10: `math.pow`, `datetime_*`, `testing._run_all`). *Recommendation: decide them before 1.0 in the review's ranked order; this triage lists none of them as unstable because that would be a guess.*
 13. **The Unicode version (review 1.5).** Not written into the promise: the tables follow Unicode 16.0, and a new Unicode version changes `isalpha`, `isdigit`, case mapping and widths. Since a minor release may change behaviour and lists it, that is already allowed. *Recommendation: say nothing more, but name the Unicode version in the changelog of the release that changes it.*
 
-Not a question: **a compiler warning** when a program uses an unstable feature (review 1.1's suggestion) is not built. The warning needs a new lint kind in `compiler/src/lint.tom`, a bootstrap IR refresh and a wasm rebuild, so it is a follow-up rather than something to slip into a docs change.
+Not a question: **a compiler warning** when a program uses an unstable feature (review 1.1's suggestion) is built (D121a): kind `unstable`, once for each feature in a build, for U3 and U4 (U1 and U2 are not written in a program); `# allow: unstable` or `--no-warnings` hides it. It was first left as a follow-up because it needed a bootstrap IR refresh and a wasm rebuild.
 
 **Still open for Davis after D116a:** judgments 5 to 13. Judgment 1 (the error promise) was answered yes on 2026-11-27 (D117a); U1 error message wording stays on the list as the promise says. Of the review's other blockers, the error class tree (4.1, D114a) and reserved std module names with `import ... as` (9.1, D115a) are built on `main`; `bytes` (8.1) is not decided in `decisions.md`, so this file does not count it.
 
@@ -46,6 +46,6 @@ The 25 rows that were marked superseded before this triage ended as: 19 removed,
 
 ## Follow-ups (not done here)
 
-- A compiler warning for the 4 unstable features, as the review suggests (needs `compiler/src/lint.tom`, a bootstrap IR refresh and a wasm rebuild).
+- ~~A compiler warning for the 4 unstable features, as the review suggests~~ done (D121a): `warn_unstable` in `compiler/src/compiler.tom`, the list in `compiler/src/unstable.tom`; U1 and U2 have no warning because no program text shows them.
 - ~~A `tests/known_gaps` program for P15~~ done: `should_work_class_conversion` (D12az) and `should_work_interface_conversion` (D12bh), and the Types row of the specification's status table names both.
 - Update `docs/provisional.md` and `docs/releasing.md` when a judgment above is answered differently: the number of features (7) is written in `releasing.md`, `provisional.md`, `decisions.md` (D109a) and `decision-inventory.md`.

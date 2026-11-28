@@ -1,0 +1,7 @@
+warning: 'it.progress_bar' is an unstable feature (U3, the text progress_bar draws)
+ --> tests/errors/unstable_dotted.tom:4:16
+  |
+4 | def total(bar: it.progress_bar[int]) -> int:
+  |                ^^^^^^^^^^^^^^^
+  = help: it may change in any release, a patch release included: the line the bar draws may change, for example to show the speed and the time left
+  = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line

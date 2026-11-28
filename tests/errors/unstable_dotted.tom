@@ -1,0 +1,9 @@
+# a use through `import module` (no `from`): in a type, and through an alias, is found too
+import itertools as it
+
+def total(bar: it.progress_bar[int]) -> int:
+    return bar.total
+
+@main
+def main():
+    print(total(it.progress_bar([1, 2])))

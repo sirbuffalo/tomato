@@ -1,0 +1,7 @@
+warning: 'choice' is an unstable feature (U4, random.choice, random.shuffle and random.sample)
+ --> unstable.tom:1:28
+  |
+1 | from random import Random, choice, sample
+  |                            ^^^^^^
+  = help: it may change in any release, a patch release included: they may become methods, such as rng.choice(items)
+  = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line

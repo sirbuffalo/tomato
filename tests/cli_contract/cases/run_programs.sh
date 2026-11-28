@@ -91,3 +91,9 @@ printf '@main\ndef main():\n    unused = 1\n    print(2)\n' > warn.tom
 try "run: a warning is shown on standard error, then the program runs" 0 "2" @warning.txt run warn.tom
 try "run --no-warnings hides it" 0 "2" "" run warn.tom --no-warnings
 ( export TOMATO_WARNINGS=off; try "run: TOMATO_WARNINGS=off hides it too" 0 "2" "" run warn.tom )
+# a feature on the unstable list (docs/provisional.md, D121a) warns too, once, and the program still runs; the allow comment and the switches hide it
+printf 'from random import Random, choice, sample\n\n@main\ndef main():\n    rng = Random(1)\n    print(len(sample(rng, [1, 2, 3], 2)), choice(rng, [7]))\n' > unstable.tom
+try "run: a feature of the unstable list warns on standard error, then the program runs" 0 "2 7" @unstable_warning.txt run unstable.tom
+try "run --no-warnings hides the unstable-feature warning" 0 "2 7" "" run unstable.tom --no-warnings
+sed 's/^from random import .*/&  # allow: unstable/' unstable.tom > unstable_ok.tom
+try "run: # allow: unstable on the import line hides it" 0 "2 7" "" run unstable_ok.tom

@@ -1,4 +1,4 @@
-from itertools import progress_bar, repeat
+from itertools import progress_bar, repeat  # allow: unstable
 
 @main
 def main():

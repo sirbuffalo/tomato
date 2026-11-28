@@ -10,7 +10,7 @@ A new placeholder may be added to this file only on the unstable list. Row numbe
 
 ## 1. The unstable list (outside the 1.0 promise)
 
-**4 features.** A program that uses one of them may behave differently, or stop compiling, in any later release, a patch release included; the changelog lists every such change (under Breaking changes when a program stops working). The compiler does not warn about them yet: a warning when a program uses one is a follow-up in `provisional-triage.md`.
+**4 features.** A program that uses one of them may behave differently, or stop compiling, in any later release, a patch release included; the changelog lists every such change (under Breaking changes when a program stops working). The compiler warns when a program uses one that program text can show (U3 and U4): `warning: 'progress_bar' is an unstable feature (U3, the text progress_bar draws)`, once for each feature in a build, silenced by `# allow: unstable` on the line or by `--no-warnings` (D121a; `docs/errors.md`). U1 and U2 are not written in a program, so they have no warning. The list is kept in `compiler/src/unstable.tom`, and `tests/run.sh` checks that it and this table list the same features.
 
 | # | Feature (row) | What may change | Why | Behaviour today |
 | --- | --- | --- | --- | --- |

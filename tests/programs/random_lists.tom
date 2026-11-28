@@ -1,6 +1,6 @@
 # choice, shuffle and sample of std/random.tom (free functions taking the generator: no generic methods yet), and the
 # errors of the whole module.
-from random import Random, choice, shuffle, sample
+from random import Random, choice, shuffle, sample  # allow: unstable
 
 def attempt(label: str, rng: Random, what: int):
     try:

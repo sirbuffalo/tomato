@@ -1,4 +1,4 @@
-from random import Random, sample
+from random import Random, sample  # allow: unstable
 
 @main
 def main():

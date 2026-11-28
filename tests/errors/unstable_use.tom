@@ -1,0 +1,25 @@
+# the features on the unstable list of docs/provisional.md warn once each, at the first use: progress_bar (U3) through its import,
+# random.choice (U4) through an alias, and not again for the other uses (random.shuffle is U4 too)
+from itertools import progress_bar, chain
+import random as r
+import random
+import itertools
+
+def total(xs: list[int]) -> int:
+    n = 0
+    for x in progress_bar(xs, 'sum'):
+        n += x
+    return n
+
+def pick(xs: list[int]) -> int:
+    rng = random.Random(7)
+    r.shuffle(rng, xs)
+    return r.choice(rng, xs) + len(list(chain(xs, xs)))
+
+def typed(xs: list[int]) -> int:
+    bar: itertools.progress_bar[int] = itertools.progress_bar(xs)
+    return bar.total
+
+@main
+def main():
+    print(total([1, 2]), pick([3, 4]), typed([5]))

@@ -1,4 +1,4 @@
-from itertools import progress_bar, permutations, combinations, combinations_with_replacement, product, product_repeat, chain, pairwise, batched, repeat
+from itertools import progress_bar, permutations, combinations, combinations_with_replacement, product, product_repeat, chain, pairwise, batched, repeat  # allow: unstable
 
 class Dog:
     name: str = ''

@@ -1,0 +1,14 @@
+warning: 'progress_bar' is an unstable feature (U3, the text progress_bar draws)
+ --> tests/errors/unstable_use.tom:3:23
+  |
+3 | from itertools import progress_bar, chain
+  |                       ^^^^^^^^^^^^
+  = help: it may change in any release, a patch release included: the line the bar draws may change, for example to show the speed and the time left
+  = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line
+warning: 'r.shuffle' is an unstable feature (U4, random.choice, random.shuffle and random.sample)
+  --> tests/errors/unstable_use.tom:16:5
+   |
+16 |     r.shuffle(rng, xs)
+   |     ^^^^^^^^^
+   = help: it may change in any release, a patch release included: they may become methods, such as rng.choice(items)
+   = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line

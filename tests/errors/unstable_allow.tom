@@ -1,0 +1,17 @@
+# `# allow: unstable` on the line of a use silences that use; the next use on a line without it warns instead (once for the feature)
+from random import Random, choice, shuffle  # allow: unstable
+from itertools import progress_bar  # allow: unstable
+import random
+
+def first(xs: list[int]) -> int:
+    rng = Random(2)
+    shuffle(rng, xs)
+    return random.choice(rng, xs)  # allow: unstable
+
+def second(xs: list[int]) -> int:
+    return random.choice(Random(1), xs) + choice(Random(1), xs)
+
+@main
+def main():
+    for x in progress_bar([1]):
+        print(first([x]), second([x]))

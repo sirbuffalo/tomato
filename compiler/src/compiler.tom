@@ -11,6 +11,7 @@ from lexer import LexError, parse_format_spec
 from diag import Diagnostic, format_error, closest
 from lint import lint_items, falls_through
 from modnames import std_modules
+from unstable import unstable_rows
 from config import default_exp_bits, default_format_digits
 from utf8 import encode
 
@@ -1291,6 +1292,7 @@ class Mod:
     cur: str = 'main'             # the module whose names are being resolved
     loading: str = ''             # the module being parsed, for a syntax error
     scope: list[Binding] = []     # the names each module can see, in the order they were declared
+    unstable_warned: list[str] = []  # the unstable features (U3, U4 ... of compiler/src/unstable.tom) already warned about (once for each in a build)
     shadow_warned: list[str] = []  # the std modules a project file has shadowed, already warned about (once for each in a build)
     renamed: dict[str, str] = {}   # `importer TAB name`: the name that `import name as alias` or `from m import name as alias` gave it there, for the help when the program writes the old name
     import_modules: dict[str, str] = {}    # `importer TAB prefix`: the module that `import module` or `import module as prefix` made importer's prefix.name names (for the help of an unknown name)
@@ -14159,6 +14161,82 @@ def warn_shadow(mod: Mod, name: str, file: str, line: int):
         line = 0        # (a std module's import is not the project's line to change)
     mod.warnings.append(format_error(f"the file {file} of this project shadows the standard module '{name}'\nimporting '{name}' gets the file, not the standard library's module; rename the file to get the standard one\nto keep the file on purpose, write '# allow: module-shadow' on the import line", line, 0, src, source_path(mod, module), 'warning'))
 
+class UnstableUse:
+    module: str = ''
+    line: int = 0
+    written: str = ''       # the name as the program wrote it (r.choice)
+    key: str = ''           # the std name it stands for (random.choice)
+
+# Does a module's code belong to the program's author (the main file, a file of the project, src/)? A std module, a seed's module and the
+# built-ins do not: what they use is not the author's to change.
+def is_user_module(mod: Mod, module: str) -> bool:
+    if module == 'builtin' or module not in mod.sources or module in mod.seed_used:
+        return False
+    return module == 'main' or module in mod.src_used or module not in std_modules()
+
+# The unstable features (docs/provisional.md section 1, compiler/src/unstable.tom) a program names: `from module import name` and the
+# dotted `module.name` (or `alias.name`) of `import module`, in a call, a value or a type, found by the bindings the scopes made.
+def unstable_uses(mod: Mod, items: list[TopItem], imports: list[ImportInfo], keys: list[str]) -> list[UnstableUse]:
+    found: list[UnstableUse] = []
+    for ii in imports:
+        if len(ii.names) == 0 or ii.names[0] == '*':
+            continue
+        for nm in ii.names:
+            if f'{ii.module}.{nm}' in keys and is_user_module(mod, ii.importer):
+                found.append(unstable_use(ii.importer, ii.line, nm, f'{ii.module}.{nm}'))
+    for top in items:
+        if is_user_module(mod, top.module):
+            unstable_walk(mod, top.module, vn(top.node), keys, found)
+    return found
+
+def unstable_use(module: str, line: int, written: str, key: str) -> UnstableUse:
+    u = UnstableUse()
+    u.module = module
+    u.line = line
+    u.written = written
+    u.key = key
+    return u
+
+def unstable_walk(mod: Mod, module: str, v: Val, keys: list[str], found: list[UnstableUse]):
+    if v.tag == 'n':
+        n = val_node(v)
+        if (n.kind == 'Name' or n.kind == 'TypeRef') and not n.core and '.' in n.fields[0].text:
+            b = mod.binding(module, n.fields[0].text)
+            if b is not None and b.key in keys:
+                found.append(unstable_use(module, n.line, n.fields[0].text, b.key))
+        for f in n.fields:
+            unstable_walk(mod, module, f, keys, found)
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            unstable_walk(mod, module, item, keys, found)
+
+# A warning, once for each unstable feature in a build, at its first use, when a program uses one (D121a). `# allow: unstable` on the line
+# of a use silences that use (the next use, on a line without it, warns instead), as for every kind of warning; --no-warnings hides them all.
+def warn_unstable(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
+    rows = unstable_rows()
+    keys: list[str] = []
+    for row in rows:
+        fields = row.split('|')
+        if fields[2] != '':
+            keys += fields[2].split(',')
+    uses = unstable_uses(mod, items, imports, keys)
+    order: list[str] = []
+    for top in items:
+        if top.module not in order:
+            order.append(top.module)
+    for module in order:
+        mine = [u for u in uses if u.module == module and u.key.split('.')[0] not in mod.shadow_warned]
+        for u in sorted(mine, key=u -> u.line):
+            src = mod.sources[module]
+            lines = src.split('\n')
+            if 1 <= u.line and u.line <= len(lines) and 'allow: unstable' in lines[u.line - 1]:
+                continue
+            for row in rows:
+                fields = row.split('|')
+                if u.key in fields[2].split(',') and fields[0] not in mod.unstable_warned:
+                    mod.unstable_warned.append(fields[0])
+                    mod.warnings.append(format_error(f"'{u.written}' is an unstable feature ({fields[0]}, {fields[1]})\nit may change in any release, a patch release included: {fields[3]}\nsee docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line", u.line, 0, src, source_path(mod, module), 'warning'))
+
 def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
     # a module next to the program, else one in the project's src/ folder (mod.src_dir, D94b), else one from a seed the run uses
     # (mod.seed_files), else one from the standard library
@@ -14533,6 +14611,7 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     loaded: list[str] = []
     user = load_items(mod, dir, std, src, 'main', items, imports, loaded)
     build_scopes(mod, items, imports)
+    warn_unstable(mod, items, imports)
     plain: list[TopItem] = []
     for top in items:
         if is_generic_item(top.node):

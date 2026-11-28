@@ -652,6 +652,13 @@ the number is too large to write with f: it has more than 1000 digits before the
   m="$(tjsc site/wasm compile "$work/wl.tom" "--config=$work/wl.toml" 2>&1)"
   case "$m" in *"error[E543]: /tomato.toml: limits.exp_bits must be a whole number from 2048 to 2147483647, not 5"*"~rc 1") ok "wasm: a bad tomato.toml is an error";; *) bad "wasm: a bad tomato.toml is an error" "$m";; esac
 }
+t_wasm_unstable() { # the website's compiler (WebAssembly) gives the same unstable-feature warnings as the native one: once for each feature, none when allowed or stable
+  for n in unstable_use unstable_dotted unstable_allow unstable_quiet; do
+    tjsc site/wasm compile "tests/errors/$n.tom" 2> /dev/null | grep '^;! ' | sed 's/^;! //' | grep -v '^ *-->' > "$work/w.$n"
+    grep -v '^ *-->' "tests/errors/$n.out" > "$work/n.$n"
+    if cmp -s "$work/w.$n" "$work/n.$n"; then ok "wasm warnings: $n"; else bad "wasm warnings: $n" "$(diff "$work/w.$n" "$work/n.$n" | head -6)"; fi
+  done
+}
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
 t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ] && ok "highlighters know every lexer keyword and built-in" || bad "highlighters" "$r"; }
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
@@ -661,6 +668,7 @@ if [ -n "$have_js" ]; then
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
+  spawn_free t_wasm_unstable
   spawn_free t_wasm_sockets
   wasm_neg foreign_runtime_decl "belongs to the runtime and cannot be used here"
   wasm_neg type_mismatch "cannot use '+' with int and str"
@@ -2392,7 +2400,7 @@ t_cli_repl_history() {   # the pty session is slow (it compiles after each line)
 t_progress_streams() { # progress_bar never opens /dev/stderr: plain lines on a pipe, nothing breaks with stderr closed, stdout stays clean
   cli_setup
   cat > "$work/pb.tom" <<'EOT'
-from itertools import progress_bar
+from itertools import progress_bar  # allow: unstable
 @main
 def main():
     for i in progress_bar(range(1, 21), 'p', 10):
@@ -2416,7 +2424,7 @@ t_progress_break() { # a break (or return) out of `for x in progress_bar(...)` o
   cli_setup
   if ! command -v expect >/dev/null 2>&1; then ok "progress_bar break on a terminal (skipped: no expect)"; return; fi
   cat > "$work/pbb.tom" <<'EOT'
-from itertools import progress_bar
+from itertools import progress_bar  # allow: unstable
 def first_big(xs: list[int]) -> int:
     for x in progress_bar(xs, 'r', 10):
         if x > 1:
@@ -3545,6 +3553,62 @@ t_module_names() { # a project file with the name of a std module warns (once fo
   "$c1" "$d/two_files.tom" main std/ > "$work/mn.ll" 2> "$work/mn.err"; grep -c '^;! warning: the file json.tom' "$work/mn.ll" > "$work/mn.count"
   check "module names: the warning comes once for each name in a build, though two files import it" "1" "$(cat "$work/mn.count")"
 }
+t_unstable_features() { # the unstable list (D121a): compiler/src/unstable.tom against section 1 of docs/provisional.md, and the warning in a project
+  bad_list=""
+  ids="$(sed -n "s/^ *'\(U[0-9][0-9]*\)|.*/\1/p" compiler/src/unstable.tom | tr '\n' ' ')"
+  doc_ids="$(grep '^| U[0-9][0-9]* |' docs/provisional.md | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | tr '\n' ' ')"
+  [ -n "$ids" ] || bad_list="$bad_list compiler/src/unstable.tom has no rows;"
+  [ "$ids" = "$doc_ids" ] || bad_list="$bad_list the ids differ (unstable.tom: $ids / docs/provisional.md section 1: $doc_ids);"
+  [ "$(echo $ids | tr ' ' '\n' | sort | uniq -d)" = "" ] || bad_list="$bad_list an id is listed twice in unstable.tom;"
+  count="$(echo $ids | wc -w | tr -d ' ')"
+  grep -q "^\*\*$count features\.\*\* " docs/provisional.md || bad_list="$bad_list docs/provisional.md does not say '**$count features.**' at the head of section 1;"
+  grep -q "^1\. \*\*$count rows stay provisional\*\*" docs/provisional.md || bad_list="$bad_list docs/provisional.md does not say '$count rows stay provisional' in its introduction;"
+  for row in $(sed -n "s/^ *'\(U[0-9][0-9]*|[^|]*|[^|]*\)|.*/\1/p" compiler/src/unstable.tom | tr ' ' '_'); do
+    id="${row%%|*}"; keys="${row##*|}"
+    docrow="$(grep "^| $id |" docs/provisional.md | awk -F'|' '{ print $3 }')"
+    for key in $(echo "$keys" | tr ',' ' '); do
+      case "$docrow" in *"${key##*.}"*) ;; *) bad_list="$bad_list $id lists $key but the feature column of its row in docs/provisional.md does not name ${key##*.};" ;; esac
+      grep -q "^export \(class\|def\) ${key##*.}\b" "std/${key%%.*}.tom" || bad_list="$bad_list $key is not exported by std/${key%%.*}.tom;"
+    done
+  done
+  [ -z "$bad_list" ] && ok "the unstable list: compiler/src/unstable.tom and docs/provisional.md agree" || bad "the unstable list: compiler/src/unstable.tom and docs/provisional.md agree" "$bad_list"
+  # a file of the project warns (once for the feature, naming its own line), a project file with the name of the module does not (it is its own code)
+  d="$work/us"; mkdir -p "$d"
+  printf 'from random import Random, choice\nexport def pick(xs: list[int]) -> int:\n    return choice(Random(1), xs)\n' > "$d/helper.tom"
+  printf 'import helper\nfrom helper import pick\n\n@main\ndef main():\n    print(pick([1]), helper.pick([2]))\n' > "$d/app.tom"
+  "$c1" "$d/app.tom" main std/ > "$work/us.ll" 2> "$work/us.err"; grep '^;! ' "$work/us.ll" | sed 's/^;! //' >> "$work/us.err"
+  check "unstable list: a project file that imports a feature warns, at its own line" "warning: 'choice' is an unstable feature (U4, random.choice, random.shuffle and random.sample)
+ --> helper.tom:1:28
+  |
+1 | from random import Random, choice
+  |                            ^^^^^^
+  = help: it may change in any release, a patch release included: they may become methods, such as rng.choice(items)
+  = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line" "$(cat "$work/us.err")"
+  mkdir -p "$d/own"
+  printf 'export def choice(xs: list[int]) -> int:\n    return xs[0]\n' > "$d/own/random.tom"
+  printf 'import random\n\n@main\ndef main():\n    print(random.choice([4]))\n' > "$d/own/app.tom"
+  "$c1" "$d/own/app.tom" main std/ > "$work/us.ll" 2> "$work/us.err"; grep '^;! ' "$work/us.ll" | sed 's/^;! //' | grep -c 'unstable feature' > "$work/us.count"
+  check "unstable list: a project file named like the module is its own code, not the unstable function" "0" "$(cat "$work/us.count")"
+}
+t_cli_unstable() { # `tomato run` shows the warning, then the program runs; --no-warnings, TOMATO_WARNINGS=off and # allow: unstable hide it; the repl never shows it
+  cli_setup
+  printf 'from itertools import progress_bar\n\n@main\ndef main():\n    for i in progress_bar([1, 2], "", 4):\n        print(i)\n' > "$work/ub.tom"
+  check "unstable feature: a warning is shown on stderr, then the program runs" "warning: 'progress_bar' is an unstable feature (U3, the text progress_bar draws)
+ --> $work/ub.tom:1:23
+  |
+1 | from itertools import progress_bar
+  |                       ^^^^^^^^^^^^
+  = help: it may change in any release, a patch release included: the line the bar draws may change, for example to show the speed and the time left
+  = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line
+1
+2" "$($t run "$work/ub.tom" 2>&1 >/dev/null | sed -n 1,7p; $t run "$work/ub.tom" 2>/dev/null)"
+  check "unstable feature: the warning does not change the exit status" "0" "$($t run "$work/ub.tom" > /dev/null 2>&1; echo $?)"
+  check "unstable feature: --no-warnings hides it" "" "$($t run "$work/ub.tom" --no-warnings 2>&1 >/dev/null | grep unstable)"
+  check "unstable feature: TOMATO_WARNINGS=off hides it" "" "$(TOMATO_WARNINGS=off $t run "$work/ub.tom" 2>&1 >/dev/null | grep unstable)"
+  sed 's/^from itertools import progress_bar$/&  # allow: unstable/' "$work/ub.tom" > "$work/ub2.tom"
+  check "unstable feature: # allow: unstable on the import line hides it" "" "$($t run "$work/ub2.tom" 2>&1 >/dev/null | grep unstable)"
+  check "unstable feature: the repl does not show it" "1" "$(printf 'from itertools import progress_bar\nprint(1)\n:quit\n' | $t repl 2>&1)"
+}
 t_cli_reserved_seeds() { # a seed may not take a name std keeps for a module it may add (tomato seed check, and a project that lists one)
   cli_setup
   W="$work/rs"; mkdir -p "$W/q/src" "$W/app" "$work/uh"
@@ -3568,6 +3632,8 @@ spawn_free t_builtin_folder
 spawn t_std_modules
 spawn_free t_reserved_names
 spawn t_module_names
+spawn t_unstable_features
+spawn_cli t_cli_unstable
 spawn_cli t_cli_reserved_seeds
 
 # ---- error messages -----------------------------------------------------------------------------------------------------

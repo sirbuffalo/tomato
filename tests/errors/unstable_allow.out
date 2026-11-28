@@ -1,0 +1,7 @@
+warning: 'random.choice' is an unstable feature (U4, random.choice, random.shuffle and random.sample)
+  --> tests/errors/unstable_allow.tom:12:12
+   |
+12 |     return random.choice(Random(1), xs) + choice(Random(1), xs)
+   |            ^^^^^^^^^^^^^
+   = help: it may change in any release, a patch release included: they may become methods, such as rng.choice(items)
+   = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line
