@@ -6,6 +6,7 @@ import sys
 import os
 import ospath
 import host
+import freeze_errors
 
 export class Outcome:
     passed: bool = True
@@ -154,6 +155,10 @@ export def versions() -> list[Outcome]:
     wasm = host.sha256_files(['site/wasm/tomatoc.wasm', 'site/wasm/runtime.wasm'])
     out.append(_check('the checked-in wasm files are the ones that were built', '\n'.join(recorded[1:3]), '\n'.join(wasm)))
     return out
+
+# std/errors.txt is append-only from the 1.0.0 tag on: the first N lines (N in std/errors_frozen.txt, 0 until 1.0.0) are the frozen ones
+export def errors_append_only() -> list[Outcome]:
+    return [_verdict(freeze_errors.problems() == '', 'std/errors.txt keeps its frozen lines (append-only after 1.0)', freeze_errors.problems())]
 
 # every raise of a standard-library class has an id, and the id is the one of that class in std/errors.txt
 export def error_raises() -> list[Outcome]:

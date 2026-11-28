@@ -1,0 +1,65 @@
+# The append-only promise of std/errors.txt (D117a, D142a): an error id is a line number, so from the 1.0.0 tag on no existing line may
+# change or move. std/errors_frozen.txt holds one line, `COUNT SHA256`: the number of frozen lines and the sha256 (hex) of those first
+# lines, each followed by a newline. Until 1.0.0 the count is 0 (the hash is that of the empty text) and the check passes.
+#   tomato run dev/freeze_errors.tom check     prints `ok`, or the problem (exit status 1)
+#   tomato run dev/freeze_errors.tom freeze    freezes every line now in std/errors.txt (the release checklist, step 1, for 1.0.0)
+# `problems()` is what the suite's check (checks.errors_append_only) uses.
+import sys
+import os
+import hashlib
+import ospath
+
+def _table_lines() -> list[str]:
+    out = os.read_text('std/errors.txt').split('\n')
+    if len(out) > 0 and out[len(out) - 1] == '':
+        out.pop()
+    return out
+
+# the hash of the first n lines of the file (each with its newline): the bytes up to and including the n-th newline
+export def hash_of(n: int) -> str:
+    data = os.read_bytes('std/errors.txt')
+    seen = 0
+    end = 0
+    while end < len(data) and seen < n:
+        if data[end] == 10:
+            seen += 1
+        end += 1
+    return hashlib.sha256_hex(data[:end])
+
+# the frozen count and hash; the problem text in `bad` when the file is unreadable or malformed
+def _read_frozen() -> tuple[int, str, str]:
+    if not ospath.exists('std/errors_frozen.txt'):
+        return (0, '', 'std/errors_frozen.txt is missing (one line: COUNT SHA256; `tomato run dev/freeze_errors.tom freeze` writes it)')
+    words = os.read_text('std/errors_frozen.txt').strip().split(' ')
+    if len(words) != 2 or not words[0].isdigit() or len(words[1]) != 64:
+        return (0, '', 'std/errors_frozen.txt must be one line, COUNT SHA256')
+    return (int(words[0]), words[1], '')
+
+# '' when the first COUNT lines of std/errors.txt are the frozen ones, else what is wrong
+export def problems() -> str:
+    got = _read_frozen()
+    if got[2] != '':
+        return got[2]
+    lines = _table_lines()
+    n = got[0]
+    if len(lines) < n:
+        return f'std/errors.txt is append-only after 1.0: it has {len(lines)} lines and {n} are frozen (a line was removed or moved). Add new errors at the end; to retire one, leave a tombstone line (`Class (retired: why; the id stays so that later ids do not move)`), never delete it.'
+    if hash_of(n) != got[1]:
+        return f'std/errors.txt is append-only after 1.0: one of its first {n} lines changed or moved. Add new errors at the end; to retire one, leave a tombstone line (`Class (retired: why; the id stays so that later ids do not move)`) instead of editing or deleting it. (An id is a line number and never changes its meaning, docs/releasing.md, Compatibility.)'
+    return ''
+
+@check
+def entry_check():
+    p = problems()
+    if p == '':
+        print('ok')
+        return
+    print(p)
+    sys.exit(1)
+
+@freeze
+def entry_freeze():
+    lines = _table_lines()
+    n = len(lines)
+    os.write_text('std/errors_frozen.txt', f'{n} {hash_of(n)}\n')
+    print(f'froze the first {n} lines of std/errors.txt (std/errors_frozen.txt)')

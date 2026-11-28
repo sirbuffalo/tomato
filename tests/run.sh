@@ -112,7 +112,7 @@ await_object() { # waits for the bootstrap object t_compiler_build makes; fails 
 job_run() { # id, function and arguments: runs it in a folder of its own
   id="$1"; shift; work="$shared/j$id"; mkdir -p "$work"; eval "section_name=\$sec_$id"
   case "$1" in   # (the ones that do not link a program with the runtime do not wait for it)
-    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_release_resume|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists|t_std_public_fields|t_shell_portability) ;;
+    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_release_resume|t_wasm_*|t_error_templates|t_error_raises|t_errors_append_only|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists|t_std_public_fields|t_shell_portability) ;;
     *) await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")" ;;
   esac
   if [ -n "$times" ]; then
@@ -4202,6 +4202,11 @@ t_sys_version() {
   done
   [ -z "$wrong" ] && ok "sys.version() says what VERSION says" || bad "sys.version() says what VERSION says" "$wrong"
 }
+t_errors_append_only() {   # from 1.0.0 on the first N lines of std/errors.txt (N and their sha256 in std/errors_frozen.txt) never change (dev/freeze_errors.tom)
+  read -r n want < std/errors_frozen.txt
+  got="$(if [ "$n" = 0 ]; then printf '' ; else head -n "$n" std/errors.txt; fi | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1)"
+  [ "$got" = "$want" ] && ok "std/errors.txt keeps its frozen lines (append-only after 1.0)" || bad "std/errors.txt keeps its frozen lines (append-only after 1.0)" "std/errors.txt is append-only after 1.0: one of its first $n lines changed or moved. Add new errors at the end; to retire one, leave a tombstone line instead of editing or deleting it."
+}
 t_error_raises() {
   missing="$(awk '
     NR == FNR { classes[NR] = $1; next }
@@ -4401,6 +4406,7 @@ section "== error ids =="
 spawn_free t_error_templates
 spawn_free t_generated_tables
 spawn_free t_error_raises
+spawn_free t_errors_append_only
 spawn_free t_sys_version
 spawn_free t_builtin_folder
 spawn t_std_modules
