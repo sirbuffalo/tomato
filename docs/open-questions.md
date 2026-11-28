@@ -94,7 +94,7 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 58. ~~Generics~~: classes and functions are built (D60a). Open: generic interfaces, generic methods, bounds, generic functions as values.
 59. ~~Missing values~~: `None` exists (D23a) and an optional is `T | None` (D23b). Open: general unions and operators on optionals; narrowing of an optional by `is None` is D102a (narrowing by assignment of a value that is not `None` is D102b).
 60. ~~Errors~~ exist with try/catch/finally/else (D22a); `raise` and the runtime error classes with ids are built (P29, P88). The final error class tree and the rethrow (a bare `raise` in a `catch`) are decided: D114a (2026-11-27).
-61. ~~Modules~~: import and export exist (D24a), `import module` with `module.name` is built (D62a). Open: aliases, re-exports (items 8-9), search paths.
+61. ~~Modules~~: import and export exist (D24a), `import module` with `module.name` is built (D62a). Aliases are built (`import m as n`, `from m import a as b`, D115a). Open: re-exports (items 8-9), search paths.
 62. ~~A standard library~~ exists (D24a). Open: its contents, its names, and where `range` lives (D18a).
 63. Input and output: `open` exists (D26a) and `await input()` reads a line (D50a). Open: environment, line-by-line file reading, file modes.
 64. Web servers: how a Tomato program listens, routes and answers requests (R09); and concurrency, which web servers need.
@@ -114,7 +114,7 @@ Davis asked to grow the prototype toward a real, full language. These are not de
 75. The static type checker (D33a: types are checked at compile time). Open: inference rules, `None` and optional types, generics, monomorphization.
 76. Errors in compiled code: unwinding or result codes (D22a).
 77. Memory layout (a first slice is built: heap objects with a {count, type code} header, D36a): a value is a 64-bit type code plus 64-bit data (D35a, reading to confirm). Open: code assignments, inline types, reference-count placement, strings (chunked, D17c), lists, dicts, sets and objects.
-78. Modules have separate namespaces (D24c) and `import module` gives qualified names (D24b, D62a). Open: aliases, the end of Davis's sentence, re-exports, and a build layout.
+78. Modules have separate namespaces (D24c) and `import module` gives qualified names (D24b, D62a). Aliases are built (D115a). Open: the end of Davis's sentence, re-exports, and a build layout.
 79. Concurrency: async only for now, tentatively (D31b); `async def`, `await`, `start` and `sleep` are built (D51a-c, D58a-e). The threading library (D31a) is deferred. Open: threads, timeouts, `t.cancelled()`, the web-server model.
 80. ~~Types of `!x` LLVM functions~~: declared with `!name(a: T) -> R` (D27b, my design). Open: pointers, aggregates, where the IR comes from.
 81. ~~The self-hosting plan~~: done. The compiler written in Tomato compiles itself; the Python prototype that ran it first was retired in v0.6 (D46a).

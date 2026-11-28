@@ -1,0 +1,5 @@
+from math import sqrt as f, floor as f
+
+@main
+def main():
+    print(f(4.0))

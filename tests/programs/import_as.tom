@@ -1,0 +1,55 @@
+# `import module as name` and `from module import a as b` (D115a): only the new name is bound. Modules come from std (math,
+# rational, itertools) and from the project (shapes_lib); `from math import min as small` gives a builtin's name another one.
+import math as m
+import rational as r
+import shapes_lib as shapes
+import itertools
+from shapes_lib import area as box_area, Box as Rect
+from math import min as small, max as big
+from math import sqrt as root, sqrt as len     # an import shadows a builtin's name in this file (D115a), so `len` is math's sqrt here
+from itertools import chain as join_all
+
+def describe(t: shapes.Box) -> str:
+    return f'{t.w}x{t.h}'
+
+def dims(m: shapes.Box) -> int:
+    return m.w + m.h     # `m` is the parameter here, not `import math as m`: a name the function binds wins over the alias
+
+def local_name() -> int:
+    m = Rect(6, 7)
+    total = m.w * m.h
+    for r in [Rect(1, 1)]:
+        total += r.w
+    return total + int(m_pi())
+
+def m_pi() -> float:
+    return m.pi          # the alias is the module again where no `m` is bound
+
+@main
+def main():
+    print(m.sqrt(16.0), m.gcd(12, 18))
+    half = r.rational(1, 2)
+    print(half + r.rational(1, 3))
+    box = shapes.Box(3, 4)
+    print(shapes.area(box), box_area(box), describe(box))
+    rect = Rect(2, 5)
+    print(box_area(rect), isinstance_free(rect))
+    print(small(4, 9), big(4, 9))
+    print(root(25.0), len(36.0))
+    print(min(3, 2))     # the builtin min: `from math import min as small` leaves it alone
+    print(list(join_all([1, 2], [3])))
+    print(list(itertools.chain([7], [8])))
+    xs: list[shapes.Box] = [box, rect]
+    print(len_of(xs))
+    print(m.pi > 3)
+    print(dims(box), local_name())
+    print(f'{m.gcd(8, 12)} {shapes.area(box)}')
+
+def isinstance_free(b: Rect) -> int:
+    return b.w * b.h
+
+def len_of(xs: list[shapes.Box]) -> int:
+    n = 0
+    for _ in xs:
+        n += 1
+    return n

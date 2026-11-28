@@ -399,11 +399,23 @@ export def lint_items(items: list[Node]) -> list[Finding]:
                 words(f, used)
     for item in items:
         if item.kind == 'Import' and not item.exported:
-            for nm in item.fields[1].items:
+            imported_names = item.fields[1].items
+            for k, nm in enumerate(imported_names):
+                alias = item.fields[2].items[k].text
                 if nm.text == '*':
                     prefix = item.fields[0].text + '.'
+                    shown_name = item.fields[0].text
+                    if alias != '':
+                        prefix = alias + '.'
+                        shown_name = f'{item.fields[0].text} as {alias}'
                     if not any_starts(used, prefix):
-                        found.append(finding(item.line, 'unused', f"the module '{item.fields[0].text}' is imported but never used\nremove the import line"))
-                elif nm.text not in used:
-                    found.append(finding(item.line, 'unused', f"'{nm.text}' is imported but never used\nremove it from the import line"))
+                        found.append(finding(item.line, 'unused', f"the module '{shown_name}' is imported but never used\nremove the import line"))
+                else:
+                    bound = nm.text
+                    shown_name = nm.text
+                    if alias != '':
+                        bound = alias
+                        shown_name = f'{nm.text} as {alias}'
+                    if bound not in used:
+                        found.append(finding(item.line, 'unused', f"'{shown_name}' is imported but never used\nremove it from the import line"))
     return found

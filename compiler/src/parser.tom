@@ -259,6 +259,56 @@ def check_target(e: Node, t: Token):
     if not (e.kind == 'Name' or e.kind == 'Attr' or e.kind == 'Index'):
         raise ParseError('cannot assign to this expression\nthe left side of = must be a variable, a field or a list item', t.line, t.col)
 
+# The names a function binds: its parameters and the variables it declares, assigns (also by unpacking and as a loop variable), catches
+# or takes in a lambda, in whatever depth of its body.
+def collect_bound(v: Val, out: list[str]):
+    if v.tag == 'n' and v.node is not None:
+        n = v.node
+        if n.kind == 'Param' or n.kind == 'Declare' or n.kind == 'For' or n.kind == 'AsyncFor':
+            out.append(n.fields[0].text)
+        elif n.kind == 'Assign' and n.fields[0].tag == 'n' and n.fields[0].node is not None and n.fields[0].node.kind == 'Name':
+            out.append(n.fields[0].node.fields[0].text)
+        elif n.kind == 'Lambda':
+            for nm in n.fields[0].items:
+                out.append(nm.text)
+        elif n.kind == 'Try':
+            for h in n.fields[1].items:
+                if h.items[1].tag == 's':
+                    out.append(h.items[1].text)
+        for f in n.fields:
+            collect_bound(f, out)
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            collect_bound(item, out)
+
+# `import math as m` made every `m.name` of the file one name (qualify); in a function that binds `m` itself (a parameter, a variable)
+# that is the variable's field or method, so the one name is split back into `m` and `.name` (D115a). A function's own names win over
+# an import's prefix wherever the function binds them, as they win over a built-in's name; the module is `math.sqrt` there.
+def split_local_prefixes(v: Val, prefixes: list[str], bound: list[str]):
+    if v.tag == 'n' and v.node is not None:
+        n = v.node
+        if n.kind == 'Name':
+            text = n.fields[0].text
+            dot = text.find('.')
+            if dot > 0 and text[:dot] in prefixes and text[:dot] in bound:
+                base = mk('Name', n.line, [vs(text[:dot])])
+                n.kind = 'Attr'
+                n.fields = [vn(base), vs(text[dot + 1:])]
+            return
+        for f in n.fields:
+            split_local_prefixes(f, prefixes, bound)
+    elif v.tag == 'l' or v.tag == 't':
+        for item in v.items:
+            split_local_prefixes(item, prefixes, bound)
+
+def split_function_prefixes(f: Node, prefixes: list[str]):
+    bound: list[str] = []
+    collect_bound(vn(f), bound)
+    for b in bound:
+        if b in prefixes:
+            split_local_prefixes(vn(f), prefixes, bound)
+            return
+
 export class Parser:
     toks: list[Token] = []
     p: int = 0
@@ -357,6 +407,20 @@ export class Parser:
                 body.extend(val_nodes(item.fields[0]))     # `C implements A, B`: one Implements per interface
             else:
                 body.append(item)
+        prefixes: list[str] = []
+        for item in body:
+            if item.kind == 'Import' and len(item.fields[1].items) == 1 and item.fields[1].items[0].text == '*':
+                if item.fields[2].items[0].text != '':
+                    prefixes.append(item.fields[2].items[0].text)
+                else:
+                    prefixes.append(item.fields[0].text)
+        if len(prefixes) > 0:
+            for item in body:
+                if item.kind == 'FuncDef':
+                    split_function_prefixes(item, prefixes)
+                elif item.kind == 'ClassDef':
+                    for m in val_nodes(item.fields[4]):
+                        split_function_prefixes(m, prefixes)
         return mk('Module', 1, [vnodes(body)])
 
     def top_item(self) -> Node:
@@ -385,20 +449,38 @@ export class Parser:
             d.exported = True
             return d
         if self.is_kw('from'):
+            # from module import a, b as c: each name may be given another name for this file (D115a); the Import's third field lists the
+            # names it is bound to ('' for the same name)
             self.adv()
             mod = self.expect('NAME').text
             self.expect_kw('import')
-            names = self.name_list()
+            names: list[Val] = []
+            aliases: list[Val] = []
+            while True:
+                names.append(vs(self.expect('NAME').text))
+                if self.accept_kw('as'):
+                    aliases.append(vs(self.expect('NAME').text))
+                else:
+                    aliases.append(vs(''))
+                if not self.accept_op(','):
+                    break
             self.expect('NEWLINE')
-            return mk('Import', t.line, [vs(mod), vlist(names)])
+            return mk('Import', t.line, [vs(mod), vlist(names), vlist(aliases)])
         if self.is_kw('import'):
             # import module: afterwards `module.name` stands for the exported name (a NAME token written 'module.name'), so
-            # the module's names are reached without bringing them in bare (D24b, D24c)
+            # the module's names are reached without bringing them in bare (D24b, D24c). `import module as m` binds only m, so
+            # `m.name` is the name and `module` is not bound (D115a)
             self.adv()
             mod = self.expect('NAME').text
+            alias = mod
+            bound = ''
+            if self.accept_kw('as'):
+                alias = self.expect('NAME').text
+                if alias != mod:
+                    bound = alias
             self.expect('NEWLINE')
-            self.qualify(mod)
-            return mk('Import', t.line, [vs(mod), vlist([vs('*')])])
+            self.qualify(alias)
+            return mk('Import', t.line, [vs(mod), vlist([vs('*')]), vlist([vs(bound)])])
         if self.is_op('@'):
             self.adv()
             m = self.expect('NAME')

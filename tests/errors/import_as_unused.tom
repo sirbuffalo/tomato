@@ -1,0 +1,7 @@
+import math as m
+import json as j
+from math import sqrt as root, floor as down
+
+@main
+def main():
+    print(j.dumps(j.loads("[1]")), root(4.0))

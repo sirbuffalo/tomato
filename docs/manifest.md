@@ -111,7 +111,7 @@ mode = "debug"                         # tomato test uses debug
   optional pre-release. If `tomato version` is older, the build stops with E562 and "install a newer release with `tomato
   update`". `1.2.0-rc.1` is older than `1.2`, so a pre-release compiler does not satisfy a release.
 - A seed name is `owner/name` with one slash: the owner is lowercase letters, digits, dots and hyphens (a registry takes a
-  domain name or `k-` and a key hash, which `tomato seed check` asks for), the name is `[a-z][a-z0-9_-]{0,63}` (E561).
+  domain name or `k-` and a key hash, which `tomato seed check` asks for), the name is `[a-z][a-z0-9_-]{0,63}` (E561), and its module stem (the name with `-` as `_`) is not a name `std/reserved.txt` lists as `planned` (a module std may add, D115a): `acme.example/queue` is E561, `acme.example/queue-x` is fine.
 
 ### Which tables a build reads (D94b)
 
@@ -170,7 +170,7 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   owner `yourdomain.example` (the placeholders `tomato init --seed` writes) are warnings too.
 - A seed's folder holds `tomato.toml` with `[seed]` and its modules as `.tom` files directly in `src/`: all of them, or the
   ones listed in `seed.modules`. Each module is `stem.tom` or `stem_*.tom` where the stem is the seed's name with `-` as `_`
-  (`acme.example/json5` provides `json5` and `json5_pretty`), and no module has the name of a standard module (E575, E579).
+  (`acme.example/json5` provides `json5` and `json5_pretty`), and no module has the name of a standard module (E575, E579) or of a `planned` one in `std/reserved.txt` (E615, D115a).
   The key in `[seeds]` (or `[test-seeds]`) must be the seed's own name (E573). A seed that itself lists `[seeds]` cannot be installed yet (E574).
 - **The content hash** (design section 6, seed hash v1) is `sha256:` and the sha256 of the lines `sha256-of-file  mode  path`
   (mode `755` when the owner's execute bit is set, else `644`, as git records it; paths sorted bytewise) of every file under the folder except a `.git` folder and a top-level `builds/` folder (D94b); a symbolic link is
@@ -185,7 +185,7 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   folder, so a build does **not** re-hash it (edit it freely): `tomato seed install --locked` is the check that the lock matches
   the files (E578), for a CI.
 - **Where the compiler looks for `import m`:** `m.tom` next to the program (as before; it shadows anything), then `m.tom` in the project's `src/` folder
-  (D94b: the `src/` of the folder that holds the nearest `tomato.toml`), then a module of a seed the build uses (the module map, `module TAB file TAB label` lines the compiler gets from the lock), then the standard
+  (D94b: the `src/` of the folder that holds the nearest `tomato.toml`; a file there or next to the program with the name of a std module warns, once for each name, D115a), then a module of a seed the build uses (the module map, `module TAB file TAB label` lines the compiler gets from the lock), then the standard
   library. A name in both a seed and the standard library is a compile error naming both (E581). Two seeds providing one module
   stop `install` (E577). An error in a seed's code shows `acme.example/thing 0.3.0: src/thing.tom:2:5`, and its warnings are not shown.
 - A plain version (a registry seed) is read and checked but cannot be installed: E571 says so.
@@ -303,6 +303,7 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E579 | a seed module has a standard module's name |
 | E580 | `tomato seed check`: the owner is not one a registry accepts |
 | E581 | (a compile error) a module is in a seed and in the standard library |
+| E615 | a seed module has a name that `std/reserved.txt` keeps for a std module that does not exist yet |
 | E582 | (a compile error) a file of a seed cannot be read |
 | E583 | (a compile error) the same entry marker on two functions (D96a) |
 | E584 | (a compile error) an entry that runs several functions has one that takes inputs or is `async` (D96a) |

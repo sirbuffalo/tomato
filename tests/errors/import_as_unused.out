@@ -1,0 +1,12 @@
+warning: the module 'math as m' is imported but never used
+ --> tests/errors/import_as_unused.tom:1:8
+  |
+1 | import math as m
+  |        ^^^^^^^^^
+  = help: remove the import line
+warning: 'floor as down' is imported but never used
+ --> tests/errors/import_as_unused.tom:3:32
+  |
+3 | from math import sqrt as root, floor as down
+  |                                ^^^^^^^^^^^^^
+  = help: remove it from the import line

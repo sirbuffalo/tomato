@@ -657,7 +657,7 @@ t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_narrowing optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests type_is type_is_nests type_is_class type_is_class_nests type_in_old optional_error_paths shadow_functions shadow_print shadow_library shadow_classes shadow_std bare_raise bare_raise_async time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits; do
+  for name in import_as trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_narrowing optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests type_is type_is_nests type_is_class type_is_class_nests type_in_old optional_error_paths shadow_functions shadow_print shadow_library shadow_classes shadow_std bare_raise bare_raise_async time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -2138,7 +2138,7 @@ t_manedit_logic() { # the text editor of tomato.toml behind `tomato seed add` an
 }
 t_manifest_logic() { # the rules of compiler/src/manifest.tom as @test functions, and its version order against the shell's semver_cmp
   cli_setup
-  mkdir -p "$work/ml"; cp compiler/src/manifest.tom compiler/src/config.tom tests/manifest_logic.tom "$work/ml/"
+  mkdir -p "$work/ml"; cp compiler/src/manifest.tom compiler/src/config.tom compiler/src/modnames.tom tests/manifest_logic.tom "$work/ml/"
   r="$(cd "$work/ml" && $t run manifest_logic.tom test 2>&1 | tail -n 1)"
   case "$r" in *" passed, 0 failed, 0 skipped") ok "manifest: the reader's rules: $r";; *) bad "manifest: the reader's rules" "$(cd "$work/ml" && $t run manifest_logic.tom test 2>&1 | grep -v '^ok ' | head -12)";; esac
   # the order of versions: Tomato's compare_versions and the shell's semver_cmp give the same answer for every pair
@@ -3335,6 +3335,16 @@ neg entry_group_result "an entry point (a function marked with @main or similar)
 neg entry_dotted_unmatched "no function is marked @greet.whisper" greet.whisper
 neg entry_dotted_unmatched_test "no function is marked @test.missing" test.missing
 neg entry_marker_dot_end "expected a name" greet
+neg import_as_original_name "'math' is imported as 'm' in this file, so write m"
+neg import_as_module_not_bound "name 'math' is not defined"
+neg from_import_as_original_name "'sqrt' is imported as 'root' in this file, so write root"
+neg import_as_same_name_twice "the name 'm' is already used by the import of the module 'math' on line 1"
+neg from_import_as_same_name_twice "'f' is defined twice in module 'main'"
+neg import_as_missing_name "expected a name, but found the end of the line"
+neg from_import_as_unknown_name "module 'math' has no 'nope'"
+neg import_as_unknown_member "the module 'math' (imported as 'm') has no 'nope'"
+neg import_as_unknown_module "cannot find the module 'nomodule'"
+neg import_as_list "expected the end of the line, but found ','"
 neg entry_reserved_bench "'@bench' uses a name the language reserves for its own markers"
 neg entry_reserved_example "'@example' uses a name the language reserves for its own markers"
 neg entry_reserved_setup "'@setup' uses a name the language reserves for its own markers"
@@ -3488,9 +3498,66 @@ t_builtin_folder() { # every file of std/builtin/ is a part of the built-ins or 
   [ -z "$missing" ] && ok "std/builtin/ matches the compiler's list and the website's" || bad "std/builtin/ matches the compiler's list and the website's" "$missing"
 }
 t_std_modules() { # std_modules() in the compiler (the help of "cannot find the module") lists every module of std/
-  names="$(sed -n '/^\(export \)\{0,1\}def std_modules()/,/return/p' compiler/src/compiler.tom | sed -n 's/^ *return \[//p' | tr -d "]',")"
+  names="$(sed -n '/^\(export \)\{0,1\}def std_modules()/,/return/p' compiler/src/modnames.tom | sed -n 's/^ *return \[//p' | tr -d "]',")"
   have="$(ls std/*.tom std/builtin/bitarray.tom | sed 's#.*/##; s#\.tom$##' | sort | tr '\n' ' ')"
   [ "$(echo $names | tr ' ' '\n' | sort | tr '\n' ' ')" = "$have" ] && ok "std_modules lists the modules of std/" || bad "std_modules lists the modules of std/" "compiler: $names / std: $have"
+}
+t_reserved_names() { # std/reserved.txt (D115a): the one published list of the module names std has or keeps, against the compiler's copy and the files
+  bad_list=""
+  names="$(grep -v '^#' std/reserved.txt | awk 'NF { print $1 }' | sort | tr '\n' ' ')"
+  have_std="$(grep -v '^#' std/reserved.txt | awk '$2 == "std" { print $1 }' | sort | tr '\n' ' ')"
+  planned="$(grep -v '^#' std/reserved.txt | awk '$2 == "planned" { print $1 }' | sort | tr '\n' ' ')"
+  extra="$(grep -v '^#' std/reserved.txt | awk 'NF && $2 != "std" && $2 != "planned" { print $1 ":" $2 }' | tr '\n' ' ')"
+  [ -z "$extra" ] || bad_list="$bad_list a line of std/reserved.txt has a status other than std or planned: $extra;"
+  [ "$(echo $names | tr ' ' '\n' | uniq -d)" = "" ] || bad_list="$bad_list a name is listed twice: $(echo $names | tr ' ' '\n' | uniq -d | tr '\n' ' ');"
+  files="$(ls std/*.tom std/builtin/bitarray.tom | sed 's#.*/##; s#\.tom$##' | sort | tr '\n' ' ')"
+  [ "$have_std" = "$files" ] || bad_list="$bad_list the names marked std are not the modules of std/ (list: $have_std / files: $files);"
+  for n in $planned; do
+    { [ -e "std/$n.tom" ] || [ -e "std/builtin/bitarray.tom" -a "$n" = bitarray ]; } && bad_list="$bad_list $n is marked planned but std has the module (mark it std);"
+    if find tests examples -name "$n.tom" | grep -q .; then bad_list="$bad_list a file $n.tom in tests/ or examples/ has a reserved name (it would shadow the module std may add);"; fi
+    if sed '/^t_cli_reserved_seeds()/,/^}/d' tests/run.sh | grep -q "src/$n\.tom\|acme.example/$n\""; then bad_list="$bad_list tests/run.sh builds a seed fixture with the reserved name $n;"; fi
+  done
+  comp="$(sed -n '/^export def std_modules()/,/return/p;/^export def planned_modules()/,/return/p' compiler/src/modnames.tom | sed -n 's/^ *return \[//p' | tr -d "]'," | tr ' ' '\n' | sort | tr '\n' ' ')"
+  [ "$(echo $comp)" = "$(echo $names)" ] || bad_list="$bad_list compiler/src/modnames.tom lists other names than std/reserved.txt (compiler: $(echo $comp) / file: $(echo $names));"
+  [ -z "$bad_list" ] && ok "std/reserved.txt: the reserved names match the compiler's list and the files" || bad "std/reserved.txt: the reserved names match the compiler's list and the files" "$bad_list"
+}
+t_module_names() { # a project file with the name of a std module warns (once for each name), and a file with a planned name does not (D115a)
+  d="$work/mn"; mkdir -p "$d"
+  printf 'export def hello() -> str:\n    return "mine"\n' > "$d/json.tom"
+  printf 'export def q() -> int:\n    return 1\n' > "$d/queue.tom"
+  printf 'import json\nfrom json import hello\nimport queue\n\n@main\ndef main():\n    print(json.hello(), hello(), queue.q())\n' > "$d/shadow.tom"
+  "$c1" "$d/shadow.tom" main std/ > "$work/mn.ll" 2> "$work/mn.err"; grep '^;! ' "$work/mn.ll" | sed 's/^;! //' >> "$work/mn.err"
+  check "module names: a file with a std module's name warns once, naming both" "warning: the file json.tom of this project shadows the standard module 'json'
+ --> $d/shadow.tom:1:8
+  |
+1 | import json
+  |        ^^^^
+  = help: importing 'json' gets the file, not the standard library's module; rename the file to get the standard one
+  = help: to keep the file on purpose, write '# allow: module-shadow' on the import line" "$(cat "$work/mn.err")"
+  printf 'import json  # allow: module-shadow\nimport queue\n\n@main\ndef main():\n    print(json.hello(), queue.q())\n' > "$d/quiet.tom"
+  "$c1" "$d/quiet.tom" main std/ > "$work/mn.ll" 2> "$work/mn.err"; grep '^;! ' "$work/mn.ll" | sed 's/^;! //' >> "$work/mn.err"
+  check "module names: # allow: module-shadow silences it, and a planned name (queue) never warns" "" "$(cat "$work/mn.err")"
+  printf 'import json as j\n\n@main\ndef main():\n    print(j.hello())\n' > "$d/aliased.tom"
+  "$c1" "$d/aliased.tom" main std/ > "$work/mn.ll" 2> "$work/mn.err"; grep '^;! ' "$work/mn.ll" | sed 's/^;! //' | head -1 >> "$work/mn.err"
+  check "module names: an alias does not hide the shadowing" "warning: the file json.tom of this project shadows the standard module 'json'" "$(cat "$work/mn.err")"
+  printf 'import json\nexport def x() -> str:\n    return json.hello()\n' > "$d/uses_json.tom"
+  printf 'import json\nimport uses_json\n\n@main\ndef main():\n    print(json.hello(), uses_json.x())\n' > "$d/two_files.tom"
+  "$c1" "$d/two_files.tom" main std/ > "$work/mn.ll" 2> "$work/mn.err"; grep -c '^;! warning: the file json.tom' "$work/mn.ll" > "$work/mn.count"
+  check "module names: the warning comes once for each name in a build, though two files import it" "1" "$(cat "$work/mn.count")"
+}
+t_cli_reserved_seeds() { # a seed may not take a name std keeps for a module it may add (tomato seed check, and a project that lists one)
+  cli_setup
+  W="$work/rs"; mkdir -p "$W/q/src" "$W/app" "$work/uh"
+  noconf() { TOMATO_HOME="$work/uh" "$@"; }
+  printf '[seed]\nname = "acme.example/queue"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/q/tomato.toml"
+  printf 'export def f() -> int:\n    return 1\n' > "$W/q/src/queue.tom"
+  here="$(cd "$W" && pwd -P)"
+  check "reserved names: tomato seed check refuses a seed named like a planned std module" "error[E561]: $here/q/tomato.toml:2: seed.name \"acme.example/queue\" is not a seed name: the module name queue is one the standard library keeps for a module it may add (std/reserved.txt), so a seed cannot provide it: choose another name, such as queue_x" "$(cd "$W/q" && noconf $t seed check 2>&1)"
+  printf '[project]\nname = "app"\nversion = "0.1.0"\ntomato = "0.51"\n[seeds]\n"acme.example/queue" = { path = "../q" }\n' > "$W/app/tomato.toml"
+  check "reserved names: a project that lists one is refused when its manifest is read" "error[E561]: $here/app/tomato.toml:6: \"acme.example/queue\" in [seeds] is not a seed name: the module name queue is one the standard library keeps for a module it may add (std/reserved.txt), so a seed cannot provide it: choose another name, such as queue_x" "$(cd "$W/app" && noconf $t seed install 2>&1)"
+  printf '[seed]\nname = "acme.example/queue-x"\nversion = "1.0.0"\ntomato = "0.51"\n' > "$W/q/tomato.toml"
+  mv "$W/q/src/queue.tom" "$W/q/src/queue_x.tom"
+  case "$(cd "$W/q" && noconf $t seed check 2>&1)" in "acme.example/queue-x 1.0.0: ok"*) ok "reserved names: queue_x is a fine name for a seed";; *) bad "reserved names: queue_x is a fine name for a seed" "$(cd "$W/q" && noconf $t seed check 2>&1)";; esac
 }
 section "== error ids =="
 spawn_free t_error_templates
@@ -3499,6 +3566,9 @@ spawn_free t_error_raises
 spawn_free t_sys_version
 spawn_free t_builtin_folder
 spawn t_std_modules
+spawn_free t_reserved_names
+spawn t_module_names
+spawn_cli t_cli_reserved_seeds
 
 # ---- error messages -----------------------------------------------------------------------------------------------------
 t_error_text() {

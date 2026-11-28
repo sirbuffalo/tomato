@@ -8,7 +8,7 @@
 from toml import Toml, table, array, string, integer, boolean, dumps, dumps_value
 from config import ConfigError, read_toml
 from manifest import Manifest, SeedReq, entry_markers_of, read_manifest, check_tomato, seeds_for, same_line, compare_versions, module_stem
-from compiler import std_modules
+from modnames import std_modules, reserved_modules
 from parser import parse
 from manedit import add_entry, remove_entries
 from seedstore import store_dir, make_scratch, remove_tree, fetch_tree, resolve_ref, git_url_problem, is_commit_id, ref_problem, subdir_problem
@@ -119,6 +119,8 @@ export def seed_modules(sm: Manifest, folder: str) -> list[str]:
             fail(575, sm.path, f"the module '{mod}' has no file {folder}/src/{mod}.tom")
         if mod in std_modules():
             fail(579, sm.path, f"the module '{mod}' has the name of a standard module, so imports of it would change meaning")
+        if mod in reserved_modules():
+            fail(615, sm.path, f"the module '{mod}' has a name the standard library keeps for a module it may add (std/reserved.txt), so a program could not import both once it does: rename the file")
     if len(mods) == 0:
         fail(575, sm.path, f'the seed has no modules: put {stem}.tom in {folder}/src')
     return mods

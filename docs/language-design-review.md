@@ -523,7 +523,17 @@ the door open. Either is cheap compared with changing a dozen std modules after 
 
 ## 9. Modules and seeds
 
-### 9.1 One flat module namespace, with std shadowed silently (Blocks 1.0: reserve the names)
+### 9.1 One flat module namespace, with std shadowed silently (Blocks 1.0: reserve the names; decided and built, D115a)
+
+> **Status (2026-11-27).** Davis decided all three points of the proposal, and they are built as D115a in
+> `docs/decisions.md`: std's module names are reserved by a published list, `std/reserved.txt` (every std module and 55
+> names it may add; the compiler's copy is `compiler/src/modnames.tom`, checked by the suite); a seed may not provide a
+> reserved name (the manifest reader and `tomato seed check` refuse it); a project file that shadows an existing std module
+> still wins but gives a warning, once for each name, naming both (`# allow: module-shadow`); a file with a reserved but
+> not yet existing name is allowed and silent, and keeps shadowing the module with the warning once std adds it; and
+> `import x as y`, `from x import a as b` exist (the original name is not bound). A list was chosen over a `std.` prefix.
+> What stays open: re-exports, folders of modules, and Davis's trimming of the list. The text below is the original problem
+> statement; the "today" in it is before D115a.
 
 **Problem.**
 
@@ -607,7 +617,7 @@ In the order I would take them, with my recommendation for each. The first eight
    `x is T` (2.2 decided and built, D23i).
 5. **`bytes` (8.1).** A `bytes` type before 1.0, or at least `list[uint[length=8]]` in every binary std signature.
 6. **`File` safety (5.1).** A closed flag, an idempotent `close()`, close on the last reference (built as a default, D93a, for Davis to confirm or change); `with` soon after.
-7. **Module names (9.1).** Reserve std's future names, warn when a project file shadows std, add `import ... as`.
+7. **Module names (9.1).** Reserve std's future names, warn when a project file shadows std, add `import ... as`. *Decided by Davis on 2026-11-27 and built (D115a).*
 8. **The `!` C interface (1.6).** Decided and built (D112a): open for any symbol except `tomato_*`, which only `std/` may use.
 9. **The error class tree (4.1; decided and built, D114a).** One `TimeoutError` and `ConnectionError` that module errors subclass; bare `raise`
    rethrows.

@@ -1,0 +1,16 @@
+# The names of the standard library's modules: the ones it has (std_modules) and the ones it keeps for later (reserved_modules).
+# std/reserved.txt is the published list (its docs are there); tests/run.sh checks that this file says the same, and that
+# std_modules is the folder std/. Kept apart from compiler.tom so that the manifest reader can use them without the compiler.
+
+# every module in std/ (the help of "cannot find the module", and the shadow warning)
+export def std_modules() -> list[str]:
+    return ['asyncio', 'base64', 'bitarray', 'cache', 'csv', 'datetime', 'hashlib', 'hex', 'hmac', 'html', 'io', 'itertools', 'json', 'lineedit', 'math', 'os', 'ospath', 'random', 'rational', 're', 'requests', 'secrets', 'socket', 'statistics', 'struct', 'sys', 'terminal', 'testing', 'textwrap', 'time', 'toml', 'urlparse', 'utf8', 'uuid', 'zlib']
+
+# the names std keeps for modules it may add: a seed may not provide one, and a project file of that name is allowed
+# (it will shadow the module, with a warning, when std gets it)
+export def planned_modules() -> list[str]:
+    return ['http', 'https', 'log', 'logging', 'argparse', 'cli', 'subprocess', 'process', 'path', 'pathlib', 'string', 'types', 'typing', 'enum', 'dataclasses', 'collections', 'functools', 'operator', 'bytes', 'bytearray', 'array', 'queue', 'threading', 'signal', 'tempfile', 'shutil', 'glob', 'fnmatch', 'heapq', 'bisect', 'copy', 'pickle', 'sqlite', 'xml', 'yaml', 'unittest', 'inspect', 'gc', 'abc', 'contextlib', 'weakref', 'decimal', 'fractions', 'numbers', 'locale', 'gettext', 'codecs', 'unicodedata', 'ssl', 'select', 'ipaddress', 'email', 'smtplib']
+
+# std's modules and the planned ones: the names a seed cannot take
+export def reserved_modules() -> list[str]:
+    return std_modules() + planned_modules()

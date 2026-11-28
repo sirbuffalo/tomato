@@ -170,7 +170,11 @@ the proof is public and any client can re-check it.
   (section 5), so it must be a valid Tomato identifier.
 - A name that is also a standard module (`json`, `math`, ... : the list in `std_modules()`, copied into the index's
   `config.toml`) is refused for every owner, and so is anything beginning `std_` or `builtin`. This keeps today's
-  imports from changing meaning when a seed appears (section 5).
+  imports from changing meaning when a seed appears (section 5). **Reserved names are built (D115a, 2026-11-27):** the refused
+  list is `std/reserved.txt`, which holds every std module and the names std may add later (`http`, `log`, `queue`, ... 55 of
+  them); the index's `config.toml` copies that file (the compiler's copy is `compiler/src/modnames.tom`, and the suite checks the
+  two), not only `std_modules()`. `tomato seed check` and the manifest reader already refuse a seed whose stem is a `planned`
+  name (E561) and a module of any reserved name (E579, E615); a std module name was refused at the module check before.
 - `owner/name` in text has exactly one slash: a domain has none and a name has none, so it splits unambiguously.
 
 ### 1.3 The owner's keys and the proof
@@ -678,7 +682,11 @@ New lookup order in `read_module`, replacing today's two steps (**built, D95a**;
 `module TAB file TAB label` lines made by `tomatoc` from `tomato.lock`, not as a file; the label, `name version`, names the seed in errors):
 
 1. **The project's own file**: `{dir}{name}.tom`, as now, so a project can still shadow anything (as it can shadow
-   `std` today). When a project file shadows a seed module, `tomato seed` prints a warning at install and check time.
+   `std` today). When a project file shadows a seed module, `tomato seed` prints a warning at install and check time. A
+   project file that shadows a **std** module now gives a compiler warning too (**built, D115a**): once for each name in a
+   build, at the first import of it, naming both, `# allow: module-shadow` silences it. A file with a name that is only
+   *reserved* (`queue.tom`, `std/reserved.txt` lists it as `planned`) is allowed and silent; when std adds the module the file
+   keeps shadowing it, with that warning, so no program changes meaning by std's addition.
 2. **A seed module**, from a module map (below).
 3. **The standard library**, as now.
 
@@ -706,8 +714,10 @@ empty). No map means today's behavior exactly, so every existing program and tes
 
 ### What stays out
 
-- **No new import syntax** in the first versions: no `from acme.example/json5 import x`, no `as`. Both would be language
-  decisions about D24b and D24c (aliases, qualified names) and are open question 3.
+- **No import syntax with the owner** (`from acme.example/json5 import x`): a language decision, open question 3. `as` is
+  built (D115a, 2026-11-27): `import json5 as j`, `from json5 import parse as parse5`, which resolve the two collisions of
+  "What a seed's module is called" without renaming files (a program imports the module it wants under a name it chooses; two
+  seeds that provide one module still stop `install`, E577, since one program holds one copy of a module).
 - **No subfolders of modules.** The compiler's lookup is flat (inside `src/`), so a seed is flat too.
 - **The browser** supports no project folder today, so seeds do not run on the website at first. Because a seed is only
   Tomato source, `extra` files already carry one: the playground could ship the lock's modules in the same way later
@@ -1589,11 +1599,12 @@ resolves to every version entry.
    direct `--git` adds? Domains cost money, which is a natural brake on flooding; keys are free and need a
    proof-of-work and a daily cap. *Recommended: accept both: some authors have no domain and the cost of the rules
    is small, and show every key owner as unverified.*
-3. **How do `.tom` files name a seed?** *Recommended: no language change for now: import the module (`from json5 import
-   parse`), made unique by the rule "a seed provides only `name` and `name_*`", with a clear error when two owners'
-   same-named seeds meet.* The alternatives are new syntax (`from acme.example/json5 import parse`, `import ... as j`),
-   which decides D24b and D24c, and per-importer module renaming, which allows two majors of a seed in one program.
-   Choose them together later, not in this design.
+3. **How do `.tom` files name a seed?** **Partly decided (D115a, 2026-11-27):** `import ... as` and `from ... import a as b` are in
+   the language, and std's module names are reserved (`std/reserved.txt`); a file still imports the seed's module by its own
+   name (`from json5 import parse`), made unique by the rule "a seed provides only `name` and `name_*`", with a clear error when
+   two owners' same-named seeds meet, and may rename it with `as`. **Still open:** new syntax with the owner
+   (`from acme.example/json5 import parse`) and per-importer module renaming, which would allow two majors of a seed in one
+   program. *Recommended: no more language change for now; choose those two together later, not in this design.*
 4. **Does `std` get a way to run a program** (**built as `sys.run`, D98a, 2026-11-27**; the question that is left is whether `tomato seed` moves onto it) (`os.run(args) -> (status, output)`, no shell), or does `tomato seed` stay a
    shell front end plus a Tomato helper? *Recommended: keep the split for the first stages (no runtime or WebAssembly
    change, ships soonest), and decide `os.run` on its own merits; it would make a version of the helper in pure Tomato

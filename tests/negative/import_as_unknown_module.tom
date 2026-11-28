@@ -1,0 +1,5 @@
+import nomodule as nm
+
+@main
+def main():
+    print(1)

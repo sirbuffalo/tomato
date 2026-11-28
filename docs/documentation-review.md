@@ -61,7 +61,7 @@ and the claims in the status table.
    so since this review). Decide whether to restore one program per unbuilt rule.
 9. **Historical text.** Large parts of `docs/provisional.md` (P35, P36, P47-P54...) and many decisions describe the retired
     Python prototype. An archive pass would make both files shorter and more honest.
-10. **Import aliases** (`from toml import loads as tl`) are a parse error. If that is intended, say so in the spec; it is not
+10. **Import aliases** (`from toml import loads as tl`) were a parse error; they are built now (D115a). If that is intended, say so in the spec; it is not
     mentioned anywhere.
 
 ## Suspected compiler and runtime bugs found while checking (not fixed; compiler source is out of scope)

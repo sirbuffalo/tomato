@@ -1,0 +1,5 @@
+import math as
+
+@main
+def main():
+    print(1)

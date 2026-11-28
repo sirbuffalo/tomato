@@ -10,6 +10,7 @@ from parser import Node, Val, parse, path_text, is_operator_marker, ParseError, 
 from lexer import LexError, parse_format_spec
 from diag import Diagnostic, format_error, closest
 from lint import lint_items, falls_through
+from modnames import std_modules
 from config import default_exp_bits, default_format_digits
 from utf8 import encode
 
@@ -1082,6 +1083,7 @@ class ImportInfo:
     importer: str = ''
     module: str = ''
     names: list[str] = []
+    aliases: list[str] = []    # the name each of names is bound to in the importer ('' for the name itself); for `import module as m` (names is ['*']) the one alias
     line: int = 0
 
 class IfaceInfo:
@@ -1289,6 +1291,9 @@ class Mod:
     cur: str = 'main'             # the module whose names are being resolved
     loading: str = ''             # the module being parsed, for a syntax error
     scope: list[Binding] = []     # the names each module can see, in the order they were declared
+    shadow_warned: list[str] = []  # the std modules a project file has shadowed, already warned about (once for each in a build)
+    renamed: dict[str, str] = {}   # `importer TAB name`: the name that `import name as alias` or `from m import name as alias` gave it there, for the help when the program writes the old name
+    import_modules: dict[str, str] = {}    # `importer TAB prefix`: the module that `import module` or `import module as prefix` made importer's prefix.name names (for the help of an unknown name)
     helpers: dict[str, FuncInfo] = {}  # functions the compiler writes for itself (printing a list, sorted, ...), by kind and type
     extra_funcs: list[Node] = []
     lambda_count: int = 0
@@ -9682,9 +9687,18 @@ class Gen:
         out.extend(['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range'])
         return out
 
+    def renamed_hint(self, name: str) -> str:
+        # '' or a line saying that the name was imported under another one in this file (import math as m)
+        key = f'{self.mod.cur}\t{name}'
+        if key in self.mod.renamed:
+            return f"'{name}' is imported as '{self.mod.renamed[key]}' in this file, so write {self.mod.renamed[key]}"
+        return ''
+
     def name_hint(self, name: str) -> str:
         if self.mod.resolve(name) != '':
             return f"\n'{name}' is a function or class, not a variable; call it, such as {name}()"
+        if self.renamed_hint(name) != '':
+            return '\n' + self.renamed_hint(name)
         near = closest(name, self.visible_names())
         if near != '':
             return f"\ndid you mean '{near}'?"
@@ -9697,6 +9711,8 @@ class Gen:
             return f"'{name}' is not available\nuse a for loop instead"
         if name in ['pow', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'format']:
             return f"'{name}' is not built in"
+        if self.renamed_hint(name) != '':
+            return f"the function '{name}' is not defined\n" + self.renamed_hint(name)
         dot = name.rfind('.')
         if dot > 0:
             # module.name where the module has the name but does not export it
@@ -9706,7 +9722,22 @@ class Gen:
         near = closest(name, self.visible_names())
         if near != '':
             return f"the function '{name}' is not defined\ndid you mean '{near}'?"
+        dot = name.find('.')
+        if dot > 0 and f'{self.mod.cur}\t{name[:dot]}' in self.mod.import_modules:
+            return self.unknown_qualified(name, name[:dot], name[dot + 1:])
         return f"the function '{name}' is not defined\ncheck its spelling, or import it with 'from module import {name}'"
+
+    def unknown_qualified(self, name: str, prefix: str, member: str) -> str:
+        # `m.nope` where m is `import module as m` (or the module itself): what the module has, under the name the program uses
+        module = self.mod.import_modules[f'{self.mod.cur}\t{prefix}']
+        names: list[str] = []
+        for seen in self.mod.scope:
+            if seen.module == self.mod.cur and seen.name.startswith(prefix + '.'):
+                names.append(seen.name)
+        said = f"the module '{module}'"
+        if prefix != module:
+            said = f"the module '{module}' (imported as '{prefix}')"
+        return f"the function '{name}' is not defined\n{said} has no '{member}'\nit has: " + ', '.join(names)
 
     def no_method(self, name: str, ty: str) -> str:
         known: list[str] = []
@@ -14095,10 +14126,6 @@ def builtin_parts() -> list[str]:
 def builtin_modules() -> list[str]:
     return ['bitarray']
 
-# every module in std/ (a test checks this list against the folder), for the help of "cannot find the module"
-export def std_modules() -> list[str]:
-    return ['asyncio', 'base64', 'bitarray', 'cache', 'csv', 'datetime', 'hashlib', 'hex', 'hmac', 'html', 'io', 'itertools', 'json', 'lineedit', 'math', 'os', 'ospath', 'random', 'rational', 're', 'requests', 'secrets', 'socket', 'statistics', 'struct', 'sys', 'terminal', 'testing', 'textwrap', 'time', 'toml', 'urlparse', 'utf8', 'uuid', 'zlib']
-
 def std_path(std: str, name: str) -> str:
     # the file of a standard library module
     if name in builtin_modules():
@@ -14111,6 +14138,24 @@ def shadows_seed(mod: Mod, name: str, where: str, line: int):
     if name in mod.seed_files:
         raise CompileError(f"the module '{name}' is in {where} and in the seed {mod.seed_labels[name]}, so the import is ambiguous\nrename the project's module, or leave the seed out", line)
 
+# a file of the project with the name of a module of std (D115a, language design review 9.1): imports of the name use the file, as they
+# always did, and this says so, once for each name in a build, at the first import of it (the line is 0 for an import the compiler adds,
+# which has none to show it at). `# allow: module-shadow` on the import line, or the importing file being a seed's, silences it.
+def warn_shadow(mod: Mod, name: str, file: str, line: int):
+    if name not in std_modules() or name in mod.shadow_warned or line < 1:
+        return
+    mod.shadow_warned.append(name)
+    module = mod.cur
+    if module in mod.seed_used or module not in mod.sources:
+        return
+    src = mod.sources[module]
+    lines = src.split('\n')
+    if line <= len(lines) and 'allow: module-shadow' in lines[line - 1]:
+        return
+    if module in std_modules() and module not in mod.src_used and module != 'main':
+        line = 0        # (a std module's import is not the project's line to change)
+    mod.warnings.append(format_error(f"the file {file} of this project shadows the standard module '{name}'\nimporting '{name}' gets the file, not the standard library's module; rename the file to get the standard one\nto keep the file on purpose, write '# allow: module-shadow' on the import line", line, 0, src, source_path(mod, module), 'warning'))
+
 def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
     # a module next to the program, else one in the project's src/ folder (mod.src_dir, D94b), else one from a seed the run uses
     # (mod.seed_files), else one from the standard library
@@ -14119,6 +14164,7 @@ def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
         f = open(f'{dir}{name}.tom')
         text = f.read()
         f.close()
+        warn_shadow(mod, name, f'{name}.tom', line)
         if dir == mod.src_dir:                  # (a file next to a program elsewhere shadows a seed's module on purpose; one in src/ is ambiguous)
             shadows_seed(mod, name, f'{dir}{name}.tom', line)
     catch IOError:
@@ -14130,6 +14176,7 @@ def read_module(mod: Mod, dir: str, std: str, name: str, line: int) -> str:
                 if name == 'main':
                     raise CompileError("cannot import 'main': it is the name the program itself has\nput the shared code in a module with another name, such as src/app.tom, and import that", line)
                 shadows_seed(mod, name, f'{mod.src_dir}{name}.tom', line)
+                warn_shadow(mod, name, f'src/{name}.tom', line)
                 mod.src_used.append(name)
                 return text
             catch IOError:
@@ -14255,6 +14302,7 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
             ii.module = wanted
             ii.line = item.line
             ii.names = [nm.text for nm in item.fields[1].items]
+            ii.aliases = [al.text for al in item.fields[2].items]
             imports.append(ii)
             if wanted not in loaded:
                 mod.cur = module
@@ -14266,6 +14314,7 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
         ib.importer = module
         ib.module = 'bitarray'
         ib.names = ['bitarray', 'frozenbitarray']
+        ib.aliases = ['', '']
         imports.append(ib)
         if 'bitarray' not in loaded:
             mod.cur = module
@@ -14278,6 +14327,12 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
             items.append(top_item(item, module))
     collect_warnings(mod, mine, module, src)
     return own
+
+def import_prefix(ii: ImportInfo) -> str:
+    # the word before the dot of the names an `import module` binds: the module, or the alias of `import module as alias`
+    if ii.aliases[0] != '':
+        return ii.aliases[0]
+    return ii.module
 
 def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
     # every module sees its own declarations, the built-ins, and what it imports (D24c)
@@ -14300,19 +14355,32 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
                     arities[gid] = [count]
             mod.cur = top.module        # a name declared twice is reported in the module that declares it (not the last one loaded)
             mod.declare_name(top.module, name, mod.key_for(top.module, name), item.exported, item.line)
-    for ii in imports:
+    for pos, ii in enumerate(imports):
         mod.cur = ii.importer   # an error in an import is the importing module's, not that of the module loaded last
         if len(ii.names) == 1 and ii.names[0] == '*':
-            # import module: every exported name of the module, written module.name
+            # import module: every exported name of the module, written module.name (or alias.name for `import module as alias`, which
+            # binds only the alias, D115a)
+            prefix = import_prefix(ii)
+            mod.import_modules[ii.importer + '\t' + prefix] = ii.module
+            if prefix != ii.module:
+                mod.renamed[ii.importer + '\t' + ii.module] = prefix
+            for before in imports[:pos]:
+                if before.importer == ii.importer and len(before.names) == 1 and before.names[0] == '*' and import_prefix(before) == prefix:
+                    raise CompileError(f"the name '{prefix}' is already used by the import of the module '{before.module}' on line {before.line}\nchoose another name after 'as'", ii.line)
             for top in items:
                 item = top.node
                 if top.module == ii.module and item.exported and (item.kind == 'FuncDef' or item.kind == 'ClassDef' or item.kind == 'InterfaceDef' or item.kind == 'ConstDef'):
-                    if is_generic_item(item) and mod.binding(ii.importer, ii.module + '.' + item.fields[0].text) is not None:
+                    if is_generic_item(item) and mod.binding(ii.importer, prefix + '.' + item.fields[0].text) is not None:
                         continue     # another overload of a generic name that is already bound
-                    mod.declare_name(ii.importer, ii.module + '.' + item.fields[0].text, mod.key_for(top.module, item.fields[0].text), False, ii.line)
+                    mod.declare_name(ii.importer, prefix + '.' + item.fields[0].text, mod.key_for(top.module, item.fields[0].text), False, ii.line)
             continue
-        for nm in ii.names:
-            mod.declare_name(ii.importer, nm, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
+        for k, nm in enumerate(ii.names):
+            bound = nm
+            if ii.aliases[k] != '':
+                bound = ii.aliases[k]
+            mod.declare_name(ii.importer, bound, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
+            if bound != nm:
+                mod.renamed[ii.importer + '\t' + nm] = bound
 
 def marker_selected(marker: str, entry_name: str) -> bool:
     # D96a: an entry name selects the functions marked with it or with a dotted extension of it (`test` selects @test, @test.a and
@@ -14382,7 +14450,7 @@ def entry_driver(mod: Mod, src: str, entry_name: str) -> str:
     seen: dict[str, str] = {}
     picked: list[Node] = []
     for item in top:
-        if item.kind == 'Import' and item.fields[0].text == 'testing' and len(item.fields[1].items) == 1 and item.fields[1].items[0].text == '*':      # (how the parser writes a plain `import testing`; there is no `from testing import *`)
+        if item.kind == 'Import' and item.fields[0].text == 'testing' and len(item.fields[1].items) == 1 and item.fields[1].items[0].text == '*' and item.fields[2].items[0].text == '':      # (how the parser writes a plain `import testing`; there is no `from testing import *`)
             imported = True
         if item.kind == 'FuncDef' and item.fields[6].tag == 's' and item.fields[6].text.startswith('entry:'):
             marker = item.fields[6].text[6:]

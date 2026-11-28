@@ -1,0 +1,7 @@
+error[E340]: the function 'm.nope' is not defined
+ --> tests/errors/import_as_unknown_member.tom:5:11
+  |
+5 |     print(m.nope(4.0))
+  |           ^^^^^^
+  = help: the module 'math' (imported as 'm') has no 'nope'
+  = help: it has: m.abs, m.min, m.max, m.gcd, m.pow, m.is_prime, m.next_prime, m.prev_prime, m.primes_up_to, m.nth_prime, m.prime_factors, m.factorize, m.prime_count, m.totient, m.is_coprime, m.lcm, m.pi, m.tau, m.e, m.Angle, m.Degrees, m.Radians, m.Turns, m.Gradians, m.deg, m.rad, m.turn, m.grad, m.degrees, m.radians, m.turns, m.gradians, m.sin, m.cos, m.tan, m.asin, m.acos, m.atan, m.atan2, m.sqrt, m.cbrt, m.hypot, m.exp, m.expm1, m.log, m.log_base, m.log2, m.log10, m.log1p, m.sinh, m.cosh, m.tanh, m.asinh, m.acosh, m.atanh, m.floor, m.ceil, m.trunc, m.isnan, m.isinf, m.isfinite, m.copysign, m.factorial, m.comb, m.perm, m.isqrt, m.fsum, m.prod

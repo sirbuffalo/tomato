@@ -1,0 +1,97 @@
+# The module names std keeps for itself: every module std has, and the ones it may add later.
+# One name per line, then `std` (a module std has now) or `planned` (not written yet). Blank lines and lines
+# starting with # are ignored. The compiler's own copy of this list is compiler/src/modnames.tom; tests/run.sh
+# checks the two against each other and against the files of std/.
+#
+# A seed may not provide a module with any of these names (tomato seed check refuses it), and a project file with the
+# name of a `std` module shadows it with a warning. A project file with a `planned` name is allowed and silent today;
+# once std adds the module, that file keeps shadowing it, with the warning. Adding a name here is cheap; removing one is a
+# change to the promise of docs/language-design-review.md 9.1 (a decision), so add the names you may want.
+asyncio std
+base64 std
+bitarray std
+cache std
+csv std
+datetime std
+hashlib std
+hex std
+hmac std
+html std
+io std
+itertools std
+json std
+lineedit std
+math std
+os std
+ospath std
+random std
+rational std
+re std
+requests std
+secrets std
+socket std
+statistics std
+struct std
+sys std
+terminal std
+testing std
+textwrap std
+time std
+toml std
+urlparse std
+utf8 std
+uuid std
+zlib std
+http planned
+https planned
+log planned
+logging planned
+argparse planned
+cli planned
+subprocess planned
+process planned
+path planned
+pathlib planned
+string planned
+types planned
+typing planned
+enum planned
+dataclasses planned
+collections planned
+functools planned
+operator planned
+bytes planned
+bytearray planned
+array planned
+queue planned
+threading planned
+signal planned
+tempfile planned
+shutil planned
+glob planned
+fnmatch planned
+heapq planned
+bisect planned
+copy planned
+pickle planned
+sqlite planned
+xml planned
+yaml planned
+unittest planned
+inspect planned
+gc planned
+abc planned
+contextlib planned
+weakref planned
+decimal planned
+fractions planned
+numbers planned
+locale planned
+gettext planned
+codecs planned
+unicodedata planned
+ssl planned
+select planned
+ipaddress planned
+email planned
+smtplib planned

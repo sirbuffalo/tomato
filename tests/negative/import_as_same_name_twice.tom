@@ -1,0 +1,6 @@
+import math as m
+import json as m
+
+@main
+def main():
+    print(m.pi)

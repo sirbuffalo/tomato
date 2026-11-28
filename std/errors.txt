@@ -612,3 +612,5 @@ CompileError the function '!{}' belongs to the runtime and cannot be used here
 ConfigError {}: a seed declares a runtime function (!tomato_*), which only the standard library may use
 CompileError '@{}' uses a name the language reserves for its own markers ('{}')
 CompileError 'raise' with no error can only be used inside a 'catch' block
+ConfigError {}: the module '{}' has a name the standard library keeps for a module it may add (std/reserved.txt), so a program could not import both once it does: rename the file
+CompileError the name '{}' is already used by the import of the module '{}' on line {}

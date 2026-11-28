@@ -42,6 +42,7 @@ before it runs. The checks are:
 | `unassigned` | a variable is read where some path to it did not give it a value | `'label' might not have a value here, because some paths above do not give it one` |
 | `shadow` | a variable has the name of a built-in, or of a function, class or constant of the same file | `the variable 'len' has the same name as a function or class, which it hides here` |
 | `loop-change` | a list is changed (`append`, `pop`, `remove` ...) inside a `for` loop that goes through it | `'xs' is changed while the loop goes through it` |
+| `module-shadow` | a file of the project (next to the program or in `src/`) has the name of a std module, so `import json` gets the file; once for each name, at its first import (D115a) | `the file json.tom of this project shadows the standard module 'json'` |
 | `type-test` | `x in T` with a type on the right, the old spelling of the type test `x is T` (D23i); it still works in 1.0.x | `'in' with a type is the old spelling of the type test` |
 
 To silence one, write `# allow: KIND` as a comment on the line the warning points at (`total = 0  # allow: unused`). A name

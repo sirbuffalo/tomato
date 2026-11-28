@@ -15,6 +15,7 @@
 # of D77g ([build], [limits]) and is read as a project's. Seeds are resolved elsewhere (seeds.tom); this file only reads and checks.
 from toml import Toml
 from config import ConfigError, read_toml, read_file
+from modnames import planned_modules
 
 # one requirement of one table: the seed's name, the form it was written in, and the table it is in
 export class SeedReq:
@@ -274,7 +275,8 @@ def ident_char(c: str, first: bool) -> bool:
 
 # the problem with a seed name `owner/name`, '' when it is fine (section 1.2): the owner is lowercase letters, digits, dots and
 # hyphens (a published seed's owner is a domain with a dot, or k- and a key hash: `tomato seed check` asks for that), the name is
-# `[a-z][a-z0-9_-]{0,63}`
+# `[a-z][a-z0-9_-]{0,63}`, and not the name of a module std keeps for later (a name std has already is refused where the seed's modules
+# are read, E579)
 export def name_problem(text: str) -> str:
     parts = text.split('/')
     if len(parts) != 2:
@@ -295,6 +297,8 @@ export def name_problem(text: str) -> str:
     for c in name:
         if not (is_lower(c) or is_digit(c)) and c != '_' and c != '-':
             return 'the name has lowercase letters, digits, underscores and hyphens only'
+    if name.replace('-', '_') in planned_modules():
+        return f"the module name {name.replace('-', '_')} is one the standard library keeps for a module it may add (std/reserved.txt), so a seed cannot provide it: choose another name, such as {name}_x"
     return ''
 
 # the stem of the module files of a seed: `json-5` is `json_5` (so json_5.tom and json_5_pretty.tom)
