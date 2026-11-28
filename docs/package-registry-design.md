@@ -15,8 +15,10 @@ older open questions stay open; questions 6 to 11 are new (section 19).
 handles (`dave/thing`) and host shortcuts (`gh:`, `gitlab:`, `codeberg:`, `srht:`) are **in for 1.0**; maintainers may yank in an emergency,
 **listing only**; owners are git-host owners, **no key-only owners**; `tomato run` and `build` never fetch; a `.tom` file names its seeds in a
 `# seeds:` header comment; `tomato seed` is usable from `sys.run`. The 5 names per owner, the 90-day hold and "listed first" are **not decided**.
-Where an older section below still says "key owner" or "if Davis agrees", question 2 and question 1 as answered in section 19 win; the
-sections are not yet rewritten.
+**The sections below were rewritten to match D117a on 2026-11-27 (task "Rewrite registry design sections"):** the `k-...` key
+owner is gone (what remains of it is marked *not adopted for 1.0*), a maintainer's emergency yank is designed (sections 1.4, 4,
+17, 18.9.4 and stages 4 and 5), and handles and host shortcuts read as decided. Signing keys stay: every statement is still signed by a
+key, but the key is never an identity by itself.
 
 **Update, 2026-11-27 (D100a in `docs/decisions.md`):** Davis added that **short (bare) names** are granted by a **reviewed
 pull request**, Homebrew-like: "you put in a pull request and it probably will be accepted". A pull request here is any
@@ -25,8 +27,8 @@ git host) and **listing** (automatic under the `policy.toml` ramp above, to whic
 **unchanged**. A short name is `tomato seed add json5`: one listed seed per name, decided by a maintainer (at first Davis)
 after automatic checks, lightly, usually accepted; a maintainer may later release it, and **never touches `owner/name` use or
 a locked build**. There is no invitation chain and no inviter key (an earlier form of the same day, dropped).
-**Proposed, pending Davis's yes:** handles (`dave/thing`, granted the same way, section 1.10) and host shortcuts
-(`gh:dave/thing`, section 6). Sections 1.2, 1.4, 1.5, 1.7, 1.9, 1.10, 6, 9, 10, 12, 13, 15, 17 and 18 carry it; questions 1
+Handles (`dave/thing`, granted the same way, section 1.10) and host shortcuts
+(`gh:dave/thing`, section 6) were proposed here and **decided on the same day (D117a)**. Sections 1.2, 1.4, 1.5, 1.7, 1.9, 1.10, 6, 9, 10, 12, 13, 15, 17 and 18 carry it; questions 1
 (in part), 6 to 11 and 8 are updated in section 19.
 
 ## The requirement
@@ -37,16 +39,23 @@ Davis wants to share Tomato code the way other languages share packages, with th
   `tomato seed add owner/name`.
 - Names are `owner/name` from day one. There are **no flat global names**, so nothing can be squatted the way names on
   PyPI and crates.io are.
+- **Owners are git-host owners (D117a):** a domain that proves control, or a handle that a maintainer grants on a reviewed pull request.
+  There are **no key-only owners**. Signing keys may later be an addition, never an identity.
 - **Nothing depends on GitHub.** A seed's source and the registry are git repositories on any host: self-hosted, Gitea,
   GitLab, plain ssh or https. A host is storage, never an identity.
 - **No curator, no human approval step anywhere in publishing.** An owner proves who they are, signs what they
-  publish, and the registry accepts a change by an automatic rule check (valid signature, rules, rate limits).
+  publish, and the registry accepts a change by an automatic rule check (valid signature, rules, rate limits). The humans
+  are the **maintainers**, and they decide only short names, handles and the policy's numbers, and may hide a version in an
+  emergency (a listing-only yank, section 18.9.4); they never decide use, publishing or listing of one seed.
 - Users do not type long names every day: short names come from a local alias layer and, for a listed seed that a
   maintainer has given one by a reviewed pull request, from the default index (`tomato seed add json5`, section 1.7);
   `tomato.lock` pins what was chosen. A direct git URL stays available as an escape hatch for an unregistered seed.
 - The manifest is `tomato.toml` and the lockfile `tomato.lock`, with content hashes. Configuration in general is TOML
   (the huge-float limits, D77g, are its first user: `[limits]` in `tomato.toml` and `config.toml`; section 13).
 - Written policies: no squatting, a way to reclaim abandoned work, yank instead of delete.
+- **`tomato run` and `tomato build` never fetch** (D117a): only `tomato seed add` and `tomato seed install` use the network, and a
+  missing seed is an error that says to run `tomato seed install`. A single `.tom` file names its seeds in a header line,
+  `# seeds: dave/thing>=1.2` (section 5).
 - The registry index is designed so a hosted service can replace the git repository later without changing any seed.
 - **Homebrew-like use (added 2026-11-26):** any seed is usable as `owner/name` at once, with no approval and no registry
   needed; the default index's listing starts with **no requirements** beyond structural validity, and requirements are
@@ -59,13 +68,14 @@ names below are only examples.
 
 ## Recommendation in short
 
-1. **Owner identity is self-proving.** An owner is a **domain** (`acme.example`) whose web server publishes the owner's
-   signing key at `/.well-known/tomato-seeds.toml`, or a **key** (`k-<fingerprint>`) for someone with no domain. There
-   is no account system and no first-come name table, so there is nothing to squat at the owner level and nothing
-   inside an owner's names that anyone else can take (section 1).
+1. **Owner identity is proved by a git-host owner, never by a bare key.** An owner is a **domain** (`acme.example`) whose web
+   server publishes the owner's signing key at `/.well-known/tomato-seeds.toml`, or a **handle** (`dave`) that a maintainer
+   grants to one signing key on a reviewed pull request, for an author with no domain (D117a). There is no account system,
+   no first-come name table and no `k-...` key owner, so there is nothing to squat at the owner level and nothing inside
+   an owner's names that anyone else can take (section 1).
 2. **The registry is untrusted storage of signed statements.** It is one git repository holding one TOML file per owner
-   and per seed. Every statement in it (a key, a source URL, a version, a yank) is signed by the owner's key, and the
-   client verifies the signatures itself. The registry's jobs are discovery, availability, an append-only history and
+   and per seed. Every statement in it (a key, a source URL, a version, a yank) is signed by the owner's key (a maintainer's
+   statements, by a maintainer's key), and the client verifies the signatures itself. The registry's jobs are discovery, availability, an append-only history and
    rate limiting; it is never asked to be honest (sections 1 and 8).
 3. **Changes to the registry are accepted by a program, not a person**: `tomato seed index-check` is a pure function of
    (the tree before, the tree after) and either accepts or rejects. Whether it runs as a push hook, a merge bot or a
@@ -82,13 +92,14 @@ names below are only examples.
 7. **Versions resolve by minimal version selection (MVS), not semver ranges** (section 4). The reason is not taste: the
    compiler has one flat module namespace, so a program can hold only one copy of a seed, and that is the case MVS
    handles best.
-8. **`tomato seed` is a shell front end plus a small helper program written in Tomato** (section 14), because the
-   standard library cannot start a process today.
+8. **`tomato seed` is part of the compiler's own program, written in Tomato** (the built part, D101a, runs `git` through `sys.run`;
+   section 14); a program can run `tomato seed ...` like any command (D117a). The shell front end only passes the arguments on.
 9. **Seven small stages**, each shippable alone; the first three need no registry at all (section 15).
 10. **Use is open, listing is a ratchet.** `owner/name` always works. The default index's listing starts with structural
     checks only; tests, endorsements and a score are collected from the first day, and `policy.toml` raises the bar for **new**
     listings with a notice period, grandfathering what is already listed (section 18). A **short name** is the one thing a
-    person decides: a maintainer reviews a pull request lightly and usually accepts (section 18.9).
+    person decides: a maintainer reviews a pull request lightly and usually accepts (section 18.9). The one other power a
+    maintainer has is an **emergency yank**, which only hides a version from the index and never stops a build (section 18.9.4).
 
 ## What exists today
 
@@ -130,7 +141,8 @@ Read from the source (nothing here is new behavior):
 | Word | Meaning |
 | --- | --- |
 | **seed** | a package: a folder of `.tom` files plus a `tomato.toml` with a `[seed]` table (the manifest's tables: section 2) |
-| **owner** | the self-proving identity that signs for a set of seeds: a domain or a key |
+| **owner** | the identity that signs for a set of seeds: a domain, or a handle a maintainer granted (never a bare key, D117a) |
+| **maintainer** | a person whose key is in the index's `config.toml`: decides short names, handles and the policy's numbers, and may hide a version with an emergency yank (listing-only); section 18.9.3 |
 | **index** | the registry's data: a git repository of signed TOML files |
 | **version entry** | the signed statement "version V of owner/name is commit C of git URL U with hash H" |
 | **store** | the user's local, content-addressed folder of fetched seeds (`~/.tomato/seeds/`) |
@@ -150,16 +162,19 @@ not be needed, and no person may have to approve an owner. What is left to answe
 | Owner kind | Spelled | Proof | Who can squat | Recovery if the key is lost | Human-readable |
 | --- | --- | --- | --- | --- | --- |
 | **Domain** (recommended) | `acme.example/json5` | a file on the domain's web server lists the signing key | nobody: only the domain's operator can prove it, and a lookalike is a different string | prove the domain again (section 1.6) | yes |
-| **Key** | `k-5kq3x…/json5` | possession of the private key | nobody: the name is a hash of the key | none: the identity is the key | no, so aliases carry it |
+| ~~**Key**~~ (**not adopted for 1.0**, D117a) | `k-5kq3x…/json5` | possession of the private key | nobody: the name is a hash of the key | none: the identity is the key | no, so aliases carry it |
 | Host account (GitHub, GitLab, ...) | `acme/json5` | the host says so | the host's first-come table | the host's account recovery | yes |
 | Git URL as identity (Go-like) | `git.example.net/acme/json5` | none: the URL is the name | nobody, but moving the repo renames the seed | none | long |
-| Registry-granted handle | `dave/json5` | a maintainer grants it on a reviewed pull request (section 1.10, **proposed**) | no first come: a person decides, and lookalikes are refused | a maintainer re-grants it | yes |
+| **Registry-granted handle** (**decided for 1.0**, D117a) | `dave/json5` | a maintainer grants it on a reviewed pull request (section 1.10) | no first come: a person decides, and lookalikes are refused | a maintainer re-grants it | yes |
 
-The host account and the URL rows are rejected: the host account needs an authority (an account system) and the URL is a
-location, and a seed that moves host must keep its name. The handle row was rejected in the first design because it needed a
-curator; since D100a the default index has maintainers for **short names**, so handles are **proposed as an optional extra**
-beside domain and key owners and never instead of them (section 1.10). Domain and key owners need no authority at all:
-the proof is public and any client can re-check it.
+The URL row is rejected: it is a location, and a seed that moves host must keep its name. The **key** row was kept in the
+first design for authors with no domain; Davis ruled it out on 2026-11-27 (D117a: "owners are git-host owners, no key-only
+owners"), so an author with no domain gets a **handle** instead. The host account row is what D117a means by a git-host owner,
+but a registry that trusts "the host says so" needs an account system, so the design reads it as the two forms that need none:
+a domain, whose proof is public and which any client can re-check, and a handle that a person grants (the first design
+rejected handles because they needed a curator; since D100a the default index has maintainers, and D117a took handles into 1.0,
+section 1.10). Signing keys are not dropped: every statement is signed by a key, but a key is the *signer* of an owner and never
+the owner (a later release may add keys as an addition, D117a).
 
 ### 1.2 The owner string and the seed name
 
@@ -167,11 +182,12 @@ the proof is public and any client can re-check it.
   trailing hyphen, no `xn--` label in version 1 (no internationalised names), at most 253 characters. Any domain or
   subdomain may be an owner; `git.acme.example` and `acme.example` are two owners and neither controls the other's
   names.
-- A **key owner** is `k-` followed by 26 base32 characters (lowercase `a-z2-7`): the first 130 bits of the sha256 of the
-  key's public blob. It has no dot, so it never collides with a domain.
-- A **handle owner** (**proposed**, section 1.10) is a short name the default index's maintainers grant: `[a-z][a-z0-9-]{1,31}`,
-  no dot, not beginning `k-`, not reserved (`local`, `std`, `tomato`, a std module name). It has no dot and no `k-`, so it
-  never collides with a domain or a key owner.
+- A **handle owner** (**decided for 1.0**, D117a, section 1.10) is a short name the default index's maintainers grant:
+  `[a-z][a-z0-9-]{1,31}`, no dot, not beginning `k-`, not reserved (`local`, `std`, `tomato`, a std module name). It has no
+  dot, so it never collides with a domain.
+- **There is no key owner** (D117a). The `k-<26 base32 characters>` form of the first design is not adopted; an owner that
+  begins `k-` is refused as an unknown kind, and the handle rule keeps the prefix free in case signing keys are later added
+  as an owner kind.
 - A **seed name** is `[a-z][a-z0-9_-]{0,63}`. Two names in one owner are the same name when `-` is replaced by `_`
   (`json-5` and `json_5` cannot both exist). The name with `-` turned into `_` is also the seed's **module name** stem
   (section 5), so it must be a valid Tomato identifier.
@@ -186,7 +202,7 @@ the proof is public and any client can re-check it.
 
 ### 1.3 The owner's keys and the proof
 
-An owner signs with one or more **ed25519 keys in OpenSSH format**. That is not decoration: `ssh-keygen -t ed25519`
+An owner (a domain or a handle) signs with one or more **ed25519 keys in OpenSSH format**. That is not decoration: `ssh-keygen -t ed25519`
 exists on every machine that runs Tomato, `ssh-keygen -Y sign` and `-Y verify` produce and check detached signatures
 (OpenSSH 8.0 or newer), and git itself already uses these keys for signed commits. Signatures use the namespace
 `tomato-seeds-v1`.
@@ -202,8 +218,10 @@ exists on every machine that runs Tomato, `ssh-keygen -Y sign` and `-Y verify` p
 
   A DNS TXT record (`_tomato-seeds.DOMAIN`) as an alternative for a domain with no web server is a later stage
   (section 15); it needs a DNS lookup that the shell front end does not have to hand.
-- **Key owner.** The owner string is the proof: the first statement is signed by that key, and the checker confirms the
-  string is the hash of the key. A key owner is shown everywhere as **unverified: no domain**.
+- **Handle owner.** The proof is the maintainers' grant of the key written in the request (section 1.10): the first statement
+  is signed by that key, and the checker confirms it is the key of a `[[handle]]` in `names.toml`.
+- **Key owner: not adopted for 1.0** (D117a). The first design let the hash of a key be the owner (`k-...`, shown as
+  "unverified: no domain", with a proof of work on the claim and a daily cap). Davis ruled it out: an owner is a git-host owner.
 
 ### 1.4 The statements and where they live
 
@@ -213,16 +231,18 @@ another name). There are five kinds:
 
 | Statement | In file | Says |
 | --- | --- | --- |
-| `[[key]]` | `owners/OWNER.toml` | this public key may sign for OWNER (the first is `root`, proved by the domain or by being the owner's own hash; later ones are `rotate`, signed by an earlier key) |
+| `[[key]]` | `owners/OWNER.toml` | this public key may sign for OWNER (the first is `root`, proved by the domain or, for a handle, by the maintainers' grant; later ones are `rotate`, signed by an earlier key) |
 | `[[source]]` | `seeds/OWNER/NAME.toml` | the seed's git URL (and optional `path` and `mirrors`); repeatable, the **last** one in the file applies |
 | `[[version]]` | the same | version V is commit C, content hash H, with these seeds and modules |
-| `[[yank]]` | the same | version V is yanked, with a reason and a kind (`bug`, `security`, `malware`) |
+| `[[yank]]` | the same | the **owner** yanks version V, with a reason and a kind (`bug`, `security`, `malware`) |
 | `[moved]` | the same | the seed continues as another `owner/name` (a notice, never an automatic redirect) |
 
 Those five are the **owner's** statements, accepted by a program. A second family belongs to the **maintainers** of the
 registry and is signed by their keys (sections 1.5 and 18.9): `[[request]]` (an owner's signed ask for a short name or a
-handle, in `requests/OWNER.toml`) and, in `names.toml`, `[[name]]`, `[[unname]]`, `[[handle]]` and `[[unhandle]]`. They say
-what the **default index calls**; they change nothing about what a seed *is* and are never needed to use it.
+handle, in `requests/OWNER.toml`), in `names.toml`, `[[name]]`, `[[unname]]`, `[[handle]]` and `[[unhandle]]`, and, in
+`yanks.toml`, the maintainers' **emergency yank** `[[yank]]` and its `[[unyank]]` (section 18.9.4, **listing-only**). The first group says
+what the **default index calls**; the yank says what it **shows**. None changes what a seed *is*: they are never needed to use a
+seed, never touch a lock, and none can delete or edit anything.
 
 Because each statement is self-contained and signed, **an index file can come from anywhere**: the registry repository,
 a mirror, a hosted service, or the owner's own server at `https://DOMAIN/.well-known/tomato-seeds/NAME.toml`. A client
@@ -236,32 +256,31 @@ without any seed noticing.
 - **The open path** (rules 1 to 8 below): `owners/`, `seeds/`, `endorsements/` and the runner's `results/`. A program checks the
   change and accepts it within seconds, for anyone. This is what makes a seed **usable** as `owner/name`, and what
   the automatic listing of section 18.3 is computed from.
-- **The reviewed path**: `requests/`, `names.toml`, `policy.toml` and `config.toml`. A request is the owner's own signed ask
+- **The reviewed path**: `requests/`, `names.toml`, `yanks.toml`, `policy.toml` and `config.toml`. A request is the owner's own signed ask
   (so only the owner can ask for its name); the change that **grants** it is signed by a **maintainer** key (the keys in
   `config.toml`, which a client takes from its own configuration, section 18.9.3) after a light review on a pull request
   (section 18.9). The program checks the same rules on it and, in addition, that the signature is a maintainer's. Nothing on
   this path can touch a statement of the open path.
 
-`tomato seed claim DOMAIN` (or `claim --key`) writes `owners/OWNER.toml` with the root key and signs it; the owner then
-sends the change to the index and a program runs the rules:
+`tomato seed claim DOMAIN` writes `owners/OWNER.toml` with the root key and signs it (a handle owner is not claimed but granted:
+section 1.10); the owner then sends the change to the index and a program runs the rules:
 
 1. **Format and paths.** Only files under `owners/` and `seeds/` change (on the open path), only for owners whose statements are present,
    and every file parses and matches the format version in the index's `config.toml`.
 2. **Proof.** A new domain owner: the checker fetches the well-known file over https (certificate verified, no
-   redirect to another host) and requires the signing key in it. A new key owner: the string equals the hash of the
-   key, and the claim carries a small proof of work (a nonce so that sha256 of the claim has a stated number of zero
-   bits, a few seconds of computing), because keys are free.
+   redirect to another host) and requires the signing key in it. A handle owner is accepted only when a maintainer's
+   `[[handle]]` in `names.toml` names that key (the reviewed path, section 18.9). There is no third kind (D117a).
 3. **Signatures.** Every added or changed statement verifies against a key that is valid for that owner **in the tree
    before the change** (a new owner's root key is the exception).
-4. **Append only.** Existing bytes never change: a statement can be added, never edited or removed. (`yank`, `moved`
+4. **Append only.** Existing bytes never change: a statement can be added, never edited or removed. (`yank`, `unyank`, `moved`
    and a key rotation are new statements.) So a version, once published, is immutable in the index.
 5. **Source check** for each new `[[version]]`: the checker fetches the source (section 6) and recomputes the
    content hash; reads `tomato.toml` at that commit and requires the same name, version, `[seeds]` (`[test-seeds]` is not in the index) and module
    list; and applies the seed checks of section 11 (size, file types, module names; a foreign declaration is allowed, and the listing records its symbols).
 6. **Names.** The name rules above, and one deterministic look-alike rule (section 1.8).
 7. **Rate limits.** At most a stated number of new versions per owner per day, a maximum size per seed, a maximum
-   number of new key owners per day (a separate allowance from domain owners, so free keys cannot starve domains),
-   and a maximum number of seeds per owner. The numbers live in the index's `config.toml`, so they can change without
+   number of new owners per day, and a maximum number of seeds per owner. (Handles are rate-limited by the reviewed path: a
+   person grants each.) The numbers live in the index's `config.toml`, so they can change without
    changing the checker.
 8. **Order.** Where two changes conflict, the one the acceptor sees first wins; the other is rejected on the base
    it did not have, and its sender rebases. This is the only "first come" in the system, and it covers a version
@@ -296,9 +315,9 @@ history (the lock's key pin and the content hash still hold for anything already
   setting), a second change completes it: the new key becomes the root, the old ones are retired. The delay lets a
   live owner stop a takeover by signing anything; the lock's key pin (section 3) tells every consumer that the owner's
   key changed. No person is involved.
-- **Loss of every key, a key owner**: none. The identity is the key. The owner publishes under a new key and, if the
-  old key still exists, signs a `[moved]` notice. This is the price of owners that need no domain; anything people
-  depend on should have a domain owner (and the docs say so).
+- **Loss of every key, a handle owner**: a new request signed by the new key, re-granted by a maintainer with the delay and
+  the veto of section 1.10. (There is no key owner to lose, D117a: the identity is the domain or the granted handle, never
+  the key.) A seed that people depend on should have a domain owner, whose recovery needs no person.
 - **Abandoned owners and seeds.** A name inside an owner can only be used by that owner, so the squatting that
   worries other registries does not arise: nobody else *wants* `acme.example/json5`, they publish
   `theirs.example/json5`. The reclaim paths are therefore about owners: a domain that **expires and is bought by someone
@@ -330,7 +349,7 @@ json5 = "acme.example/json5"
      with the usual summary line, and proceeds. Short names come only from the registry the user's configuration names (and
      its maintainer keys, section 18.9.3); a project cannot make a user's tool pick a different seed.
   3. **Neither (the seed has no short name): the candidates list.** The client searches the index for seeds called `json5` and
-     prints the candidates (owner, first-seen date, number of versions, signing domain, handle or "unverified: no domain"),
+     prints the candidates (owner, first-seen date, number of versions, signing domain or handle),
      **listed seeds first** with their score and signals, then the rest under `not listed`; it stops with exit status 2 and the
      user picks one with the full name or sets an alias. There is no popularity ranking and no automatic "default" owner for
      a name: only a maintainer's short name (step 2) is one, and it is a reviewed decision, not first come.
@@ -338,7 +357,7 @@ json5 = "acme.example/json5"
   name, so a project means the same thing on every machine and a short name that is later moved or released changes
   nothing already locked. Aliases are not read from a project's `tomato.toml`, and a project cannot give a user an alias.
 - Direct add is the escape hatch: `tomato seed add --git URL [--rev COMMIT|--tag TAG] [--name NAME]`, the host shortcuts
-  `gh:USER/REPO`, `gitlab:USER/REPO`, `codeberg:USER/REPO` and `--path DIR` (section 12). They have no owner and no signature, so
+  `gh:USER/REPO`, `gitlab:USER/REPO`, `codeberg:USER/REPO`, `srht:~USER/REPO` (decided for 1.0, D117a) and `--path DIR` (section 12). They have no owner and no signature, so
   they are allowed only in a project, never in a seed that is published, and `add` prints that the seed is **unregistered**.
 
 ### 1.8 What remains without a curator, honestly
@@ -348,14 +367,14 @@ json5 = "acme.example/json5"
 | **Squatting a name** | cannot happen inside an owner; cannot happen at the owner level either, since owners prove control | none needed | squatting *domains*, a domain-market problem, not ours |
 | **Taking over a name** (hijack) | an attacker needs the owner's key, or the domain | signatures checked by every client; lock pins the key; immutable, hash-pinned versions; re-root delay and veto | an owner whose domain lapses (above): consumers are warned, **new** consumers are only informed |
 | **Typosquatting**, `acme.exampel/json5`, `acme-example.com/json5` | **nothing stops it**: anyone can own a lookalike domain | owner and name shown at `add` (with age and signer); the full name is stored once and never retyped; a warn-only **skeleton** check on owners (below); first-seen date; a lookalike costs a domain | a user who types the wrong owner the first time and does not read the summary |
-| **Flooding** the index | key owners are free | proof of work on key claims; separate daily allowances; per-owner and per-seed caps | an attacker who spends real money on domains |
-| **Malware** in a seed | no one reviews code | none in the index; the language has no sandbox (section 8); hash pins keep a good version good | a malicious *owner* stays in the index until their key or domain is gone; section 8 and open question 1 |
+| **Flooding** the index | domains cost money and a handle needs a pull request a person reviews (there are no free key owners, D117a) | daily allowances; per-owner and per-seed caps; at most `max_handles_per_key` handles | an attacker who spends real money on domains |
+| **Malware** in a seed | no one reviews code | the language has no sandbox (section 8); hash pins keep a good version good; the owner's yank, and in an emergency a maintainer's **listing-only** yank (section 18.9.4), hide a bad version from `add`, `update` and `search` | a bad version that is already locked still builds (that is the promise of D117a), and a malicious *owner* stays in the index |
 | **Abandonment** | not detected | consumers see the last version date in `tomato seed outdated` | nobody is forced to fix anything |
 
 The **skeleton rule** (automatic and deterministic) is **warn-only for owners and refusing only for names inside one
 owner**:
 
-- *Owners.* Two owners have "the same skeleton" when they are equal after lowercasing, mapping `0->o`, `1->l`, `rn->m`,
+- *Owners* (domains; a handle is compared the same way, section 1.10). Two owners have "the same skeleton" when they are equal after lowercasing, mapping `0->o`, `1->l`, `rn->m`,
   `vv->w` and dropping a `www.` label. The checker **never refuses** an owner for this: a refusal would be first-come
   squatting (an attacker who proves `acrne.example` first would lock the real `acme.example` out of the index), which
   is exactly what this design removes. Instead each owner is marked `similar = "other.owner"` in the index when a
@@ -376,7 +395,7 @@ four.
 | | Curated (maintainers approve) | Automatic (this design) |
 | --- | --- | --- |
 | Lookalike owners and names | a person can refuse them | a deterministic lookalike check that **warns** (owners) and refuses only inside one owner's own names; the rest is shown, not stopped |
-| Malicious seeds | can be removed | cannot be removed, only yanked by their owner |
+| Malicious seeds | can be removed | cannot be removed; hidden by the owner's yank or, in an emergency, a maintainer's listing-only yank (section 18.9.4) |
 | Scaling and delay | a queue of reviews | none: accepted in seconds |
 | Who is trusted | the maintainers (a single point of trust and failure) | nobody but the owner's own key and domain |
 | Subjectivity | "is this name too generic or hyped?" | rules are written down and apply to everyone |
@@ -388,13 +407,13 @@ time; it sets rules for everyone and cannot touch one seed. His direction of 202
 back where discovery is shaped: a maintainer reviews a pull request for a **short name**, lightly, and usually accepts. That
 is the "curated" column's subjectivity and single point of trust, limited to short names (and handles, if adopted) and bounded
 by what a maintainer cannot do (section 18.9.3: no deleting or editing, no listing or delisting one seed, no touching
-`owner/name` use or a lock). Davis answered the remaining point on 2026-11-27 (D117a): maintainers **may** yank a version in an emergency, listing-only (open question 1).
+`owner/name` use or a lock). Davis answered the remaining point on 2026-11-27 (D117a): maintainers **may** yank a version in an emergency, **listing-only**, designed in section 18.9.4 (open question 1).
 
-### 1.10 Handles: `dave/thing` (**decided for 1.0, Davis, 2026-11-27, D117a**; the details marked proposed below are still open)
+### 1.10 Handles: `dave/thing` (**decided for 1.0, Davis, 2026-11-27, D117a**; the numbers marked proposed below are still open)
 
 Davis asked for `username/x` names and for hosts other than GitHub. With short names decided by a reviewed pull request, a
-short **handle** is possible without an account system, and it is **optional**: domain owners and key owners keep working
-exactly as before, with no pull request.
+short **handle** is possible without an account system. With key-only owners ruled out (D117a) a handle is **how an author with
+no domain gets an owner**; it stays optional, because a domain owner needs no pull request.
 
 - **What a handle is.** An owner name with no dot, like `dave`, granted to **one owner**: a key (OpenSSH ed25519,
   section 1.3) written in the request, the handle's root key. `dave/thing` is then the seed `thing` of owner `dave`, stored in
@@ -417,7 +436,7 @@ exactly as before, with no pull request.
 - **Recovery and release.** A lost key is replaced by a new request signed by the new key and re-granted by a maintainer,
   as a public `[[handle]]` that supersedes the old one with the delay and the key-change warning of section 1.6 (a veto by the
   old key stops it). A handle is **released** by its owner's signed request or by a maintainer's `[[unhandle]]` with a
-  reason, and is **held** for 90 days (a setting) before it can be given to a different key. Releasing a handle does not
+  reason, and is **held** for 90 days (**proposed, not decided**: a setting) before it can be given to a different key. Releasing a handle does not
   remove the seeds in `seeds/dave/`: they stay usable (their statements are append only) but have no owner to sign new
   versions until it is re-granted to the same key.
 - **A handle belongs to one registry.** `dave/thing` means what the registry in use says (the default one, or
@@ -589,6 +608,9 @@ modules = ["scratch"]
   `seed update` ask again.
 - `key` pins who signed it. `tomato seed update` refuses a new version signed by a key that is not in the owner's
   chain from this key, unless told `--accept-owner-change` (section 1.6).
+- A lock does **not** record whether a version is **yanked or unlisted** (by the owner, or by a maintainer's emergency yank,
+  section 18.9.4): that is index data, and `run`, `build`, `install --locked` and `verify` ignore it, so a yank never changes
+  what a lock builds.
 - A lock does **not** record the URL of the index, the compiler version, or any setting. It does record the registry's
   *name* so a mirror under a different URL is the same registry.
 - `tomato seed install --locked` fails if the manifest would produce a different lock. This is the CI mode.
@@ -634,9 +656,18 @@ also the only one of the two whose solver is small enough to write, test and tru
   raises the minimum of the seeds named (or all) to the newest in their line and re-locks.
   (**Built without the index, D103a:** `update` of a git seed that follows a `tag` or `branch` moves the commit to where it points now and always writes the new content hash into the lock; there are no versions to compare, so a new version is shown, never refused.) **`install`** never changes
   versions.
-- **Yanked versions** (section 17) are skipped by `add` and `update`. A requirement that names a yanked version still
-  resolves to it, with a warning, so existing locks keep building; a yank of kind `malware` is an error unless
-  `--allow-yanked` is given.
+- **Yanked versions** (section 17) are skipped by `add` and `update`, whoever yanked them: the owner, or a maintainer in an
+  emergency (section 18.9.4). A requirement that names a yanked version still resolves to it, **and the build still
+  succeeds**, so existing locks keep building (**D117a**: a maintainer's yank is **listing-only**). The warning appears
+  wherever the local clone of the index is read: `tomato seed install`, `verify`, `outdated`, `tree` and `update` print
+  `acme.example/json5 1.1.0 is yanked (security): reason` (a maintainer's yank says so). `tomato run`, `build`, `compile`
+  and `test` never read the index (section 6), so they print nothing and are never stopped by a yank.
+  **No yank, by anyone, stops `run`, `build` or `install --locked` of a seed already in the lock and the store.** The older
+  rule that a `malware` yank is an error unless `--allow-yanked` is given is **replaced** by: an *owner's* `malware` yank makes
+  `tomato seed install` and `add` **refuse to fetch that version into the store** unless `--allow-yanked` is given (a fetch
+  is a decision to bring code in, which the yank answers; a build is not), and a maintainer's yank only warns. (**Proposed**,
+  the one consequence of D117a that is not stated in it: the stop moves from the build, which no longer reads the index, to
+  the fetch.)
 - **`[test-seeds]`** (D94b) uses the same rules. `tomato seed install`, `add` and `update` run MVS once, over
   the **union** of both tables, and the lock holds that result: **one version per seed, the same for every build**.
   `tomato build`, `run` and `test` do not resolve again: the tables the build reads (section 2) only choose **which** locked
@@ -718,6 +749,17 @@ empty). No map means today's behavior exactly, so every existing program and tes
   not declare. v1 only *checks* it, in `tomato seed check` by reading import lines; the compiler can enforce it once the
   map says which seed owns which module and which seeds a module may see (stage 7).
 
+### A single `.tom` file: the `# seeds:` header (decided, D117a; the grammar is not)
+
+A program that is one file, with no `tomato.toml`, names the seeds it needs in a **header comment line**, for example
+`# seeds: dave/thing>=1.2`, and `tomato run` and `tomato build` read it. **Decided (D117a, question 3, the file half):** the line
+is a comment, so a compiler that does not read it ignores it; and `run` and `build` still **never fetch**: a seed that is
+missing from the store is an error that says `tomato seed install` (section 6). **Not decided and left to whoever implements
+it, to be proposed first:** the exact grammar, the form for several seeds, and how the line meets a `tomato.toml` and the lock
+(a project with a manifest ignores the line, or the two must agree; a lock for a single file). The names in the line follow
+the same rule as the manifest's: the full `owner/name` or a handle, never an alias or a short name (section 1.7). New
+import syntax (`from acme.example/json5 import parse`) and per-importer renaming stay open (question 3).
+
 ### What stays out
 
 - **No import syntax with the owner** (`from acme.example/json5 import x`): a language decision, open question 3. `as` is
@@ -757,7 +799,7 @@ always stores the real URL, the commit and the content hash, never a shortcut or
 
 1. a registered `owner/name` or a **handle** `dave/thing` (section 1.10): the index entry holds the URL;
 2. `tomato seed add --git URL --rev TAG|COMMIT` (unregistered, a project only);
-3. a **host shortcut** (**proposed, pending Davis's yes**), expanded by `add` before it does anything else: `gh:USER/REPO`,
+3. a **host shortcut** (**decided for 1.0**, D117a), expanded by `add` before it does anything else: `gh:USER/REPO`,
    `gitlab:USER/REPO`, `codeberg:USER/REPO`, `srht:~USER/REPO`, equal to `--git https://github.com/USER/REPO.git`,
    `https://gitlab.com/USER/REPO.git`, `https://codeberg.org/USER/REPO.git` and `https://git.sr.ht/~USER/REPO`. The table is
    built in and a user may add entries in `[git-hosts]` of the user's configuration; a project's `tomato.toml` cannot, so a
@@ -854,8 +896,9 @@ files, sockets and processes through `std`. **Hash pinning and signatures say "t
 | A host serves different bytes than were published | the content hash in the lock; a mismatch is fatal and nothing is stored |
 | A host rewrites history or deletes the repository | hash identifies content; store, vendor folder, mirrors; stage 6 archives |
 | The index is altered (a bad clone, a hostile mirror) | statements are signed by the owner's key and verified by the client; a statement with no valid signature is ignored. A hostile index can still **hide** versions or replay an old state; the lock's pins and `outdated` are the defence |
-| Someone publishes as an owner | needs the owner's private key or the domain; first `add` re-fetches the well-known file live and compares |
+| Someone publishes as an owner | needs the owner's private key or the domain (or, for a handle, the maintainers' grant); first `add` re-fetches the well-known file live and compares |
 | A key is stolen | rotation and revocation statements; `yank`; the lock's `key` pin makes a surprise key visible |
+| A seed version is malware, illegal or leaks secrets, and its owner will not or cannot yank it | the **maintainers' emergency yank** (section 18.9.4): the version disappears from `add`, `update` and `search` and a public, signed statement says why. It is **listing-only**: it cannot stop a build that is already locked, and nothing is deleted. A user who has it in a lock learns of it at the next `install`, `outdated` or `verify` |
 | A domain lapses and is re-registered | re-root only after the delay and a veto window; consumers' locks pin the old key; `--accept-owner-change` |
 | Typosquat | section 1.8: owner and age shown, skeleton rule, store the full name once; open |
 | Dependency confusion (a public seed shadows an internal one) | project files shadow seeds; unregistered git/path dependencies are explicit; a seed can only be depended on by its full `owner/name` |
@@ -888,19 +931,21 @@ HTTPS `GET`s for a hosted service).
 ```
 config.toml                     index format version, the rule numbers (rate limits, delays, proof-of-work bits),
                                 the reserved names (every std module, `std_*`, `builtin*`), the index's own name
-owners/<owner>.toml             [owner]  and  [[key]] statements (section 1.4); <owner> is a domain, a key or (section 1.10) a handle
+owners/<owner>.toml             [owner]  and  [[key]] statements (section 1.4); <owner> is a domain or (section 1.10) a handle
 seeds/<owner>/<name>.toml       [[source]], [[version]], [[yank]] and [moved] statements, in the order they were accepted
 policy.toml                     what listing requires, versioned, every requirement off at launch (section 18.3)
 endorsements/<owner>.toml       [[endorse]] and [[unendorse]] statements by that owner (section 18.6)
 results/<owner>/<name>.toml     [[result]] and [[host]] statements signed by a runner key (section 18.4)
 requests/<owner>.toml           [[request]]: the owner's signed ask for a short name or a handle (section 18.9)
 names.toml                      the maintainers' signed [[name]], [[unname]], [[handle]], [[unhandle]] (section 18.9)
+yanks.toml                      the maintainers' signed emergency [[yank]] and [[unyank]]: LISTING-ONLY (section 18.9.4)
 listing.toml                    GENERATED: status, score, level and notices of each seed; verifiable, never hand-edited
 ```
 
 `config.toml` also holds the **maintainer keys** and the runner keys. The first four content files and the runner's
-`results/` are the **open path** (section 1.5); `requests/`, `names.toml`, `policy.toml` and `config.toml` are the
-**reviewed path**. `names.toml` and `listing.toml` are never needed to resolve a full name or to build a seed.
+`results/` are the **open path** (section 1.5); `requests/`, `names.toml`, `yanks.toml`, `policy.toml` and `config.toml` are the
+**reviewed path**. `names.toml`, `yanks.toml` and `listing.toml` are never needed to resolve a full name or to build a seed: a client
+reads `yanks.toml` only to hide a version and to warn (section 4).
 
 ```toml
 # seeds/acme.example/json5.toml
@@ -930,6 +975,24 @@ signed_by = "SHA256:Qn3..."
 signature = "..."
 ```
 
+```toml
+# yanks.toml (the maintainers', reviewed path; append only; proposed shape, section 18.9.4)
+[[yank]]
+seed = "acme.example/json5"
+version = "1.1.0"
+kind = "malware"            # security or malware (a maintainer's yank is for an emergency, not for a bug)
+reason = "exfiltrates ~/.ssh: see SECURITY.md advisory 2026-12-04"
+signed_by = "SHA256:Maint..."    # a maintainer key of config.toml
+signature = "..."
+
+[[unyank]]                  # a maintainer undoes their own mistake: a new statement, never an edit
+seed = "acme.example/json5"
+version = "1.1.0"
+reason = "reported by mistake"
+signed_by = "SHA256:Maint..."
+signature = "..."
+```
+
 - **Why one file per seed, with every version in it.** A client resolving a seed reads one file (one `GET` on a hosted
   service) and an append-only rule is easy to check on a file. Different owners and seeds are different files, so changes
   by different people never conflict.
@@ -953,13 +1016,15 @@ signature = "..."
 2. The author tags a release in their own repository, on any host.
 3. `tomato seed check` lints the seed (section 11) and `tomato seed hash` prints its content hash.
 4. `tomato seed claim acme.example` (once): prints the key to place in `/.well-known/tomato-seeds.toml` and writes the owner
-   statement signed with it.
+   statement signed with it. An author with no domain asks for a **handle** instead (`tomato seed request-handle dave`, section
+   1.10) and publishes after the grant.
 5. `tomato seed publish [--rev TAG]` writes the signed `[[source]]` and `[[version]]` statements into a clone of the index.
 6. The author sends the change to the index however the index accepts changes (a push, a pull or merge request, a
    patch): the acceptor runs `index-check` and applies it or rejects it with the rule that failed.
 7. A later version is steps 2, 3 and 5 only.
 
-`tomato seed yank acme.example/json5 1.1.0 --kind security --reason "..."` writes a `[[yank]]` statement the same way.
+`tomato seed yank acme.example/json5 1.1.0 --kind security --reason "..."` writes a `[[yank]]` statement the same way (the owner's;
+a maintainer's emergency yank is `tomato seed maintain yank`, section 18.9.4).
 
 **Optional, for a short name or a handle (D100a):** after step 6 the seed is usable, and listed automatically by the policy
 (section 18.3). To get a short name, `tomato seed request-name acme.example/json5` writes a signed `[[request]]` into the
@@ -987,7 +1052,7 @@ and gates nothing at launch (section 18.4), so this rule about the acceptor stay
 ## 12. The `tomato seed` commands
 
 `tomato seed` is a subcommand of the existing command; the others keep working unchanged. `OWNER/NAME` is the full
-name (the owner a domain, a key or, if section 1.10 is accepted, a handle); an alias or a short name (section 1.7) is also
+name (the owner a domain or a handle, section 1.10); an alias or a short name (section 1.7) is also
 accepted wherever a name is added.
 
 ```
@@ -996,7 +1061,7 @@ tomato seed add NAME[@VERSION]              add (or raise) a requirement, update
 tomato seed add --git URL [--rev R|--tag T|--branch B] [--subdir DIR] [--name N]    unregistered source, by git URL (a project only). Built (D103a) except --name:
                                             --tag and --branch look the ref up once and write its commit as the rev (the name is kept for `update`); --subdir is `path`
 tomato seed add gh:USER/REPO | gitlab:USER/REPO | codeberg:USER/REPO | srht:~USER/REPO  [--rev R|--tag T] [--name N]
-                                            host shortcuts (proposed): expanded to the full https URL at once, then as --git;
+                                            host shortcuts (decided for 1.0, D117a): expanded to the full https URL at once, then as --git;
                                             the lock stores the URL and the hash, never the shortcut (section 6, "Any git host")
 tomato seed add --path DIR                  unregistered source, a local folder (a project only; for development)
 tomato seed add NAME --from-owner | --index-only    use only the owner's server (domain owners), or never fall back to it (section 18.2)
@@ -1019,17 +1084,19 @@ tomato seed score NAME                      the listing status, policy level and
 
 # for a seed's author:
 tomato seed check                           the seed checks (section 11);  tomato seed hash    print the content hash
-tomato seed claim DOMAIN | --key            write the owner statement and the well-known file to place
+tomato seed claim DOMAIN                    write the owner statement and the well-known file to place (no `--key`: key owners are not adopted, D117a)
 tomato seed publish [--rev REV]             write the signed [[source]] and [[version]] statements into an index clone
-tomato seed yank NAME VERSION --kind K --reason TEXT      write a signed [[yank]]
+tomato seed yank NAME VERSION --kind K --reason TEXT      write the owner's signed [[yank]]
 tomato seed index-check BASE HEAD           the registry's rules, for the acceptor and for anyone
 tomato seed admit-check NAME [VERSION]      reproduce a test result locally (runs the seed's tests: use a sandbox)
 tomato seed listing-verify                  recompute listing.toml from the index files; runs nothing
 tomato seed request-name NAME               a signed request for a short name, for a pull request (section 18.9)
-tomato seed request-handle HANDLE           a signed request for a handle, for a pull request (section 1.10, proposed)
+tomato seed request-handle HANDLE           a signed request for a handle, for a pull request (section 1.10, decided for 1.0)
 
 # for a maintainer of an index (section 18.9.3):
 tomato seed maintain name|unname|handle|unhandle|notice ...    write a statement signed by the maintainer's key
+tomato seed maintain yank NAME VERSION --kind K --reason TEXT | unyank NAME VERSION --reason TEXT
+                                            the emergency yank, listing-only, into yanks.toml (section 18.9.4)
 ```
 
 `add` prints one summary line before it changes anything and **never prompts** (so scripts behave like terminals):
@@ -1040,11 +1107,13 @@ imported as: from json5 import ...
 ```
 
 On the first `add` of an owner, `add` also fetches the domain's well-known file live (https only) and requires the signing
-key in the index to be listed there; a key owner is unverified by definition. A first-time owner (first seen under 30 days ago), a re-rooted owner, a key-only owner and an unregistered source
+key in the index to be listed there; a handle owner is shown as `handle dave (granted ... by the default index)`, not as verified by a domain. A first-time owner (first seen under 30 days ago), a re-rooted owner, a handle owner and an unregistered source
 each print a clearly worded extra line instead of a silent difference.
 
 `tomato run FILE` looks for `tomato.toml` in the program's folder and each parent; with none (every existing program) it
-behaves exactly as today.
+behaves exactly as today, except that it reads a `# seeds:` header line of the file itself (section 5). **`run` and `build` never
+fetch and never read the index** (D117a): a seed that is not in the store is an error that says `tomato seed install`. Only `add`
+and `install` use the network, and `tomato seed` can be run from a program with `sys.run` like any other command.
 
 ## 13. Configuration in TOML
 
@@ -1063,7 +1132,7 @@ needs no `tomato-seed config get`, because the compiler (written in Tomato) alre
 - **Precedence**, highest first: the command line, the project's `tomato.toml`, the user's `config.toml`, the built-in
   default. A dependency's `tomato.toml` is **never** consulted for settings (section 2).
 - **Tables** reserved now: `[registry]`/`[registries.NAME]` (default registry and index URLs; `only_listed` and `maintainers`, user file only,
-  section 18), `[aliases]` (user file
+  section 18; and **proposed, open**: `honor_maintainer_yanks`, default true, section 18.9.4), `[aliases]` (user file
   only), `[git-hosts]` (extra host shortcuts, user file only, section 6), `[seed-store]` (vendor folder, offline), `[limits]` (the float limits and the like) and `[build]`/`[build.ENTRY]` (D92c: `mode` and `output`; `target` reserved; section 2).
   Unknown tables and keys are errors, so a typo is not silently a default. `[build]` is read from a project's `tomato.toml` only
   (not a seed's, and, taking "only in a project" at its word, not the user's file either; that last reading is not yet
@@ -1114,6 +1183,12 @@ needs no `tomato-seed config get`, because the compiler (written in Tomato) alre
 
 ## 14. How `tomato seed` is built
 
+**Status note (2026-11-27).** The local part was built in Tomato, not as the shell-and-helper split below: the manifest reader,
+the fetch and the store are in the compiler's own source (`compiler/src/manifest.tom`, `seedstore.tom`; D95a, D101a, D104a),
+using `sys.run` for `git`. The text below is the original plan and is kept for the parts not built yet (signatures through
+`ssh-keygen -Y`, the index client and `index-check`). D117a answered question 4: `tomato seed` is usable from `sys.run`
+with nothing special.
+
 When this section was written the standard library could not start a process; `sys.run` (D98a, 2026-11-27) now can, but the
 design below was made without it and is unchanged: a Tomato program could now run `git` or `ssh-keygen`. Adding one to the runtime would be a C change that must also be built for WebAssembly
 (`docs/next-features.md` item 9; the release gate compares `site/wasm/*.wasm` byte for byte). So the work is split:
@@ -1149,8 +1224,8 @@ already give a useful local package workflow. Sizes are rough guesses of hand-wr
 | 1 | `tomato-seed` helper skeleton and `seed check` and `seed hash`: read and validate `tomato.toml`, the naming rule, the seed hash v1 with test vectors cross-checked in shell; no network, no compiler change; measure the helper's first-use compile time | 700 | low |
 | 2 | **Compiler**: module map argument, the lookup order, seed names in errors, hidden warnings from seeds, the `src/` lookup; `tomato run` finds `tomato.toml`; works with `path` dependencies by hand-written lock; a test that compiles a seeded program twice and compares the IR | 350 + 300 test | medium: `tomatoc` is regenerated into `compiler/bootstrap/tomatoc.ll` and the wasm files |
 | 3 | `tomato.lock`, the store, **`add --git`, `add --path`, `install`, `verify`, `vendor`, `--offline`/`--locked`**, the hardened fetch; no registry yet. **Built (D101a, 27 Nov 2026; the bare-clone cache D104a); `verify`, `update` and the `[[source]]` `path` followed (D103a); the fetch is in Tomato (`compiler/src/seedstore.tom`) through `sys.run`, not in the shell** | 900 + 400 test | medium: git handling and hostile trees |
-| 4 | **Index client**: `config.toml`, `policy.toml`, `owners/`, `seeds/`, `requests/` and `names.toml` formats, parsing, signature verification through `ssh-keygen -Y`, MVS, `add NAME` (an alias, a short name or a full name, section 1.7), host shortcuts (`gh:`, `gitlab:`, `codeberg:`, `srht:`, **decided for 1.0**, D117a), handles `dave/thing` (**decided**, section 1.10: request, grant and lookup), the `# seeds:` header of a single `.tom` file read by `tomato run`/`build` (**decided**; a missing seed is an error telling you to `tomato seed install`, never a fetch), the maintainers' emergency yank in `index-check` and `yank` (listing-only), **`add` from the owner's own server (automatic fallback when the index has no entry or is unreachable, and the `--from-owner` and `--index-only` flags; moved up from stage 6: the tap-like path with no registry, section 18.2)**, `registry add`, `update`, `outdated`, `tree`, `why`, `search`, `info`, aliases; tested against a fixture index checked into `tests/` | 1,300 + 600 test | medium |
-| 5 | **The registry and its checker, launched at policy level 0**: `index-check` with the rules (proof, signatures, append only, source check, names and skeleton, rate limits, the `policy.toml` notice rule, a request's owner signature and a maintainer's signature on `names.toml`), `claim`, `publish`, `yank`, `endorse`, `request-name`, `maintain`, the policy text as `POLICY.md` (with the short-name review guidance) and `SECURITY.md` in the index, a `policy.toml` with every requirement off, the maintainer keys in `config.toml` (Davis first), the first index repository and its acceptor. Endorsements and the acceptor's age stamps are collected from the first day. Short names and, if accepted, handles are statements of this stage | 1,400 + 700 test | **high**: this is the security-critical program and runs on untrusted input from strangers |
+| 4 | **Index client**: `config.toml`, `policy.toml`, `owners/`, `seeds/`, `requests/` and `names.toml` formats, parsing, signature verification through `ssh-keygen -Y`, MVS, `add NAME` (an alias, a short name or a full name, section 1.7), host shortcuts (`gh:`, `gitlab:`, `codeberg:`, `srht:`, **decided for 1.0**, D117a), handles `dave/thing` (**decided**, section 1.10: request, grant and lookup), the `# seeds:` header of a single `.tom` file read by `tomato run`/`build` (**decided**; a missing seed is an error telling you to `tomato seed install`, never a fetch), **the maintainers' emergency yank, client half** (listing-only, section 18.9.4): read `yanks.toml`, hide a maintainer-yanked version from `add`, `update`, `search` and `outdated`'s candidates, warn at `install`, `verify`, `outdated` and `tree` (never at `run`/`build`, which do not read the index), keep every locked build working, and the proposed `honor_maintainer_yanks` setting, **`add` from the owner's own server (automatic fallback when the index has no entry or is unreachable, and the `--from-owner` and `--index-only` flags; moved up from stage 6: the tap-like path with no registry, section 18.2)**, `registry add`, `update`, `outdated`, `tree`, `why`, `search`, `info`, aliases; tested against a fixture index checked into `tests/` | 1,300 + 600 test | medium |
+| 5 | **The registry and its checker, launched at policy level 0** (no key owners, so no proof-of-work rule or separate key allowance): `index-check` with the rules (proof, signatures, append only, source check, names and skeleton, rate limits, the `policy.toml` notice rule, a request's owner signature and a maintainer's signature on `names.toml`), `claim`, `publish`, `yank`, `endorse`, `request-name`, `maintain`, the policy text as `POLICY.md` (with the short-name review guidance) and `SECURITY.md` in the index, a `policy.toml` with every requirement off, the maintainer keys in `config.toml` (Davis first), **the maintainers' emergency yank, registry half** (`yanks.toml`; `index-check` accepts a `[[yank]]` or `[[unyank]]` only when a maintainer's key signs it, only for an existing version, only as an appended statement, and refuses any change that edits or removes one; `tomato seed maintain yank|unyank`; the written procedure for an emergency in `SECURITY.md`; a test that a locked build is unchanged by a maintainer's yank), the first index repository and its acceptor. Endorsements and the acceptor's age stamps are collected from the first day. Short names and, if accepted, handles are statements of this stage | 1,400 + 700 test | **high**: this is the security-critical program and runs on untrusted input from strangers |
 | 5b | **Signals and the ramp machinery (section 18.3 to 18.6)**: the sandboxed runner and its signed `[[result]]` statements, the pure score function with test vectors, the star counts of the host (`[[host]]`), the generated `listing.toml` with the shadow score ("would pass level N"), `score`, `admit-check`, `listing-verify`, `only_listed`. **Still gates nothing**: every threshold stays at 0 until Davis raises one (open question 10) | 1,000 + 600 test | **high** for the runner (it runs strangers' code; the sandbox is the work), medium for the rest |
 | 6 | Re-root with delay and veto, mirrors, DNS TXT proof; a hosted service that serves the same files, accepts the same signed statements and keeps archives by hash | separate design | medium |
 | 7 | The compiler enforces which seeds a module may import; seeds in the playground and the repl through `extra`; in-Tomato ed25519 verification | separate design | medium |
@@ -1169,8 +1244,10 @@ refusing form, inside an owner's own names, cannot be appealed by a person, so i
 ## 16. Alternatives considered
 
 - **Flat global names** (`json5`): rejected by Davis; they invite squatting and force a curator.
-- **Host accounts or a registry-granted handle** (`acme/json5`): short and pleasant, but need an authority, which is the
-  thing removed (section 1.1).
+- **Host accounts as the identity** (`acme/json5` because the host says so): need an account system, the thing removed
+  (section 1.1). **A registry-granted handle** was rejected by the first design for the same reason and is **in for 1.0** since
+  D100a and D117a, granted by a reviewed pull request (section 1.10). **Key-only owners** (`k-...`) were kept by the first design
+  and are **not adopted** (D117a).
 - **The URL as the name (Go style)**: no authority, but moving a repository renames the seed and names are long; Davis
   dislikes typing them. Domain owners keep Go's best property (the proof is public and re-checkable) with a short
   `owner/name` and a source URL that can move.
@@ -1190,34 +1267,41 @@ These are the written rules. Most are enforced by the checker, so they do not de
 
 1. **No squatting.** Names are scoped by an owner who proved control, so there is no first-come name to take. The shared
    namespaces (short names, handles) are not first come either: a maintainer decides each, one seed per name. Claiming an
-   owner requires its proof (a domain's well-known file, or a key's own hash with proof of work). A lookalike owner is
+   owner requires its proof (a domain's well-known file, or a handle's maintainer grant); there are no key-only owners (D117a). A lookalike owner is
    marked and warned about, never refused (a refusal would itself be a first-come squat); within one owner, a name that
    is the same skeleton as one of that owner's own is refused. Placeholder seeds with no
    modules are refused. Owners may not hold more than a stated number of seeds with no published version.
 2. **Reclaim.** A seed under a live owner stays with that owner; anyone may fork under their own owner. An owner whose
    domain control moves is re-rooted by the rule in section 1.6 (a pending state, a delay, a veto by the old key), with
-   no person involved and with the consumers' locks warning of the key change. A key owner's identity is the key and
-   cannot be reclaimed.
+   no person involved and with the consumers' locks warning of the key change. A handle whose key is lost is re-granted to a new
+   key by a maintainer, with a delay and the old key's veto (section 1.10).
 3. **Yank, never delete.** A published version stays in the index for ever. An owner may add a `[[yank]]` with a kind and a
-   reason; new resolutions skip a yanked version, existing locks keep building with a warning, and a `malware` yank
-   stops a build unless told otherwise. The checker rejects any change that removes or edits an existing statement,
-   including a yank's removal (an un-yank is a new statement).
+   reason, and **in an emergency a maintainer may add one too** (`yanks.toml`, section 18.9.4; D117a). Both are **listing-only**:
+   new resolutions (`add`, `update`, `search`) skip a yanked version, and **existing locks keep building** (a warning at
+   `install`, `verify` and `outdated`, none at `run` or `build`, which never read the index). **No yank stops a build.** An owner's
+   `malware` yank also makes `install` refuse to fetch that version unless `--allow-yanked` is given (section 4, proposed). A
+   maintainer's yank is public, signed, carries a reason, and is not for ordinary bugs. The checker rejects any change that
+   removes or edits an existing statement, including a yank's removal (an un-yank is a new statement, and a maintainer may
+   only un-yank their own yank).
 4. **Immutable versions.** A version number is published once. Fixing it is a new version.
 5. **Honest metadata.** The version entry must equal the seed's own `tomato.toml` at the commit; the checker verifies it.
 6. **No secrets, no binaries.** A tree with a file that looks like a private key, or a file that is not text up to the size
    cap, is rejected (the exact rule is stage 5's).
-7. **Naming.** Owners and names follow section 1.2: ASCII only, no std names, no confusable collisions.
+7. **Naming.** Owners and names follow section 1.2: ASCII only, no std names, no confusable collisions. A **short name** has at most
+   5 per owner and a **released name is held** for 90 days before it can go to another owner's seed (**proposed**, not decided,
+   D117a), and a seed must be **listed** before it asks for one (**proposed**, not decided).
 8. **Changes of rules** are changes to `config.toml`, `policy.toml` and `POLICY.md` in the index, announced there and effective
    for later statements only, never retroactively; a tightening of what listing needs takes effect after a notice period
    and grandfathers what is already listed (section 18.3).
 9. **No approval to use, publish or be listed.** No person decides whether a seed is accepted, usable, listed or delisted. A
    listing requirement is a written rule that a program applies to everyone, starts at "structurally valid" (level 0), and
    is raised only by a public `policy.toml` change with notice. Delisting never deletes a seed, never affects a lock, and
-   never stops `owner/name` from being used. **The one human decision is a short name (or a handle)**: a maintainer reviews a
-   pull request lightly and usually accepts; it is public, may be released later, and never touches use or a lock
-   (section 18.9).
+   never stops `owner/name` from being used. **The human decisions are a short name or a handle** (a maintainer reviews a
+   pull request lightly and usually accepts; it is public, may be released later, and never touches use or a lock, section
+   18.9) **and the emergency yank** (a maintainer hides a version from the index, listing-only, in public with a reason;
+   it never touches a lock or a build, section 18.9.4).
 10. **Security reports.** The index has a `SECURITY.md` and shows an owner's optional `security` contact; the registry's only
-    automatic reaction to a report is the owner's own yank (a maintainer's emergency yank is a person's act, listing-only, open question 1).
+    automatic reaction to a report is the owner's own yank. A **maintainer's emergency yank** is a person's act on a report: listing-only, signed, public and with a reason (section 18.9.4, D117a).
 
 ## 18. Open use and the default index: launch open, tighten over time; short names by reviewed pull request (Davis's directions of 2026-11-26, D89a, and 2026-11-27, D100a)
 
@@ -1244,7 +1328,7 @@ asking is shown by the owner's own signature on the request (section 18.9), not 
 | --- | --- | --- |
 | "something like homebrew ... you can it username/whatever easy" | Anyone can use a seed as `owner/name`, at once, from their own git repository on any host, like a Homebrew tap (`brew install user/tap/formula`). | high |
 | "not paproval" | **No approval step**, at launch or ever: nobody decides whether a seed may be used or listed. | high |
-| "username" | The `owner` part. Owners are a domain or a key (section 1), not a free-text username, because a username table needs an authority; the alias layer (section 1.7) gives the short spelling. | medium: open question 8 |
+| "username" | The `owner` part. Owners are a domain or a **handle** (a maintainer-granted short owner, `dave/thing`, D117a), not a free-text username and not a bare key; the alias layer (section 1.7) also gives a short spelling. | high: answered, question 8 |
 | "to get a full thing with just test you need star recommendations" | A **later** level of the default index asks for passing tests and for recommendations ("stars") from other people. | high |
 | "not relay reuirements" | Those signals are **soft**: they are not hard conditions on their own, and they are switched on later. At launch there is none. | high |
 | "named packages, no accounts, are invite only" and "you put in a pull request and it probably will be accepted" (2026-11-27) | **Short names** (`tomato seed add json5`) are granted by a pull request to the index that a maintainer (at first Davis) reviews lightly and usually accepts; one seed per name. Not listing, which stays automatic, and not use. | high for the PR; medium that "named packages" means short names and not every listing (the correction says it does): open question 7 |
@@ -1433,8 +1517,9 @@ signed_by = "SHA256:..."
 signature = "..."
 ```
 
-`tomato seed endorse owner/name` and `unendorse` write them; any key owner or domain owner can send one, so a person who
-only wants to recommend a seed makes a key (`tomato seed claim --key`, a few seconds of proof of work) and does that.
+`tomato seed endorse owner/name` and `unendorse` write them; any owner (a domain or a handle) can send one, so a person who
+only wants to recommend a seed and has no domain asks for a handle (section 1.10). With key owners not adopted (D117a) an
+endorser is never free, which is the Sybil protection the old 0.25 weight stood in for.
 The weight of an endorser is computed from the index files, never stated by anyone:
 
 - Counted once per endorser per seed, only while it is not withdrawn, and only while the endorser's key is valid (a
@@ -1442,7 +1527,8 @@ The weight of an endorser is computed from the index files, never stated by anyo
 - **Eligible endorser:** at least 30 days old (by the acceptor's stamp); not the seed's own owner and not an owner whose
   domain is a subdomain of it or the other way round; not holding more than 25 active endorsements (so a farm of keys cannot
   endorse everything cheaply).
-- **Weight:** a domain owner counts 1, a key owner 0.25 (keys are free, domains cost money). Two owners who endorse each other
+- **Weight:** a domain owner counts 1; a handle owner counts 1 too (**proposed**: a person approved it and one key holds at most
+  `max_handles_per_key` handles, so it is not free). Question 11, which asked about key owners' weight of 0.25, is moot (D117a). Two owners who endorse each other
   count half each. An owner with a `malware` yank against it counts zero.
 - **Points:** `min(30, round(10 * log2(1 + total weight)))`: a total weight of 7 saturates, so the first few matter and the
   hundredth does not.
@@ -1451,7 +1537,7 @@ Abuse and Sybil resistance, honestly:
 
 | Attack | Cost to the attacker | What it gains | Left over |
 | --- | --- | --- | --- |
-| Many keys endorse one seed | PoW per key, the daily cap on new key owners, a 30-day wait, weight 0.25 each | a few points | needs about 28 keys for a full 30 points |
+| Many handles endorse one seed | a reviewed pull request each, `max_handles_per_key`, the lookalike rule, a 30-day wait | up to the full 30 points | needs about 7 handles granted by a maintainer: the review and the public log are the brake |
 | Many domains endorse one seed | about 7 real domains and a month | the full 30 points | a few tens of dollars a year: **this is the real hole** |
 | A ring of mutual endorsements | the same | half weight | still possible, only less |
 | Endorsement of a good seed by a bad actor | none | nothing: it is a vote for a seed | |
@@ -1466,15 +1552,15 @@ trustworthy without an account system or a person; the cap is what bounds the ha
 
 | Risk | At level 0 | What stays from day one | What is left |
 | --- | --- | --- | --- |
-| **Malware** | anyone can list a seed that does harm; "listed" means "structurally valid" and nothing more | no code runs at fetch or install (section 8); **hash pins**, so a bad version cannot replace a good one; signatures; **yank by the owner's key** (kind `malware` stops builds, section 4); immutable versions; a **security contact** (below); the foreign symbols a seed declares are listed at `add` and asked about once (section 8) | a malicious owner who does not yank their own seed. **Without a human power (open question 1) the registry cannot remove one; only the owner can.** Say this to users |
-| **Squatting and typosquatting** | no name can be squatted inside an owner; lookalike *owners* are allowed | the warn-only skeleton rule, first-seen date and age shown at `add`, the full name stored once (section 1.8); the daily caps and PoW for key owners | a user who types a lookalike owner and does not read the line. Unchanged from section 1.8, and a listing at level 0 gives no extra signal |
+| **Malware** | anyone can list a seed that does harm; "listed" means "structurally valid" and nothing more | no code runs at fetch or install (section 8); **hash pins**, so a bad version cannot replace a good one; signatures; **yank by the owner's key** and, in an emergency, **by a maintainer's key, listing-only** (a yank hides a version from `add` and `update` and never stops a locked build, sections 4 and 18.9.4); immutable versions; a **security contact** (below); the foreign symbols a seed declares are listed at `add` and asked about once (section 8) | a malicious owner who does not yank their own seed: a maintainer can hide the bad version, in public, but cannot delete it and **cannot stop a build that has it locked** (D117a). Say this to users |
+| **Squatting and typosquatting** | no name can be squatted inside an owner; lookalike *owners* are allowed | the warn-only skeleton rule, first-seen date and age shown at `add`, the full name stored once (section 1.8); the daily caps | a user who types a lookalike owner and does not read the line. Unchanged from section 1.8, and a listing at level 0 gives no extra signal |
 | **Abandoned and junk seeds** | nothing is removed or flagged; search fills with unmaintained work | rate limits and per-owner caps; `outdated` shows the last-publish date; the signals of section 18.4, so a later level can sort and filter on facts | search is poor at first. Mitigation without ranking power: default sort by endorsement weight, then by number of versions, shown with the numbers; `only_listed` becomes useful only at level 1 |
-| **Flooding** | a script can fill the index with valid seeds | per-owner and per-day caps; key owners are limited separately; every statement is a small text file | an attacker who buys domains pays for it |
+| **Flooding** | a script can fill the index with valid seeds | per-owner and per-day caps; a handle needs a reviewed pull request; every statement is a small text file | an attacker who buys domains pays for it |
 | **Short names (a person's judgment)** | a maintainer decides each, lightly; this is the one place subjectivity is back (section 1.9) | the automatic name and lookalike checks bind the maintainer too; `POLICY.md` guidance; public, append-only decisions; a short name is released in public and never touches use or a lock; a second maintainer | a slow or arbitrary decision costs the author a typing shortcut, never use or listing |
 | **A weak "default" meaning** | users may take "listed" for "trusted" | the summary line says `policy level 0: structural checks only` | |
 
 **Minimal safeguards that never wait for a later level:** hash pinning and the lock; signatures and the owner proof; no
-code at install; the structural checks of section 11; yank by the owner's key (and, in an emergency, by the maintainers' keys, listing-only; open question 1, answered); and a **security contact**: `SECURITY.md` in the index, plus an optional `security = "..."` (an email or
+code at install; the structural checks of section 11; yank by the owner's key (and, in an emergency, by the maintainers' keys, listing-only, section 18.9.4; open question 1, answered); and a **security contact**: `SECURITY.md` in the index, plus an optional `security = "..."` (an email or
 a URL) that an owner may put in `[seed]`, shown by `tomato seed info`. A report goes to that contact; the registry itself
 has no staff queue to wait on, so the only action it can take automatically is the yank rule above.
 
@@ -1495,12 +1581,12 @@ has no staff queue to wait on, so the only action it can take automatically is t
 
 A **short name** is a label in the default index for **one listed seed**: `tomato seed add json5` instead of
 `tomato seed add acme.example/json5` (section 1.7). It is the shared namespace that owner-scoped names avoid, so it is
-**decided by a person, not taken first come and not given by popularity or by score**. A **handle** (**proposed**, section
+**decided by a person, not taken first come and not given by popularity or by score**. A **handle** (**decided for 1.0**, D117a, section
 1.10) is granted the same way. Listing, by contrast, is automatic (18.3).
 
 #### 18.9.1 The request and the review
 
-1. The seed is **listed** under the policy (18.3) when a short name is asked for; a handle needs no seed.
+1. The seed is **listed** under the policy (18.3) when a short name is asked for (**proposed, not decided**, D117a: "listed first"); a handle needs no seed.
 2. `tomato seed request-name acme.example/json5` (or `request-handle dave`) writes a `[[request]]` statement, signed by the
    **owner's** key, into `requests/OWNER.toml` of a clone of the index. Only the owner can ask for its own seed's name, so
    nobody can nominate someone else's, and the owner's signature is the whole identity of the asker (no account).
@@ -1526,13 +1612,11 @@ A **short name** is a label in the default index for **one listed seed**: `tomat
   by score alone). The other stays listed and usable as `owner/name`.
 - **Checked automatically, and binding the maintainers too:** the name is not reserved (a std module name, `std_*`,
   `builtin*`; section 1.2); no other short name is equal to it after the rules of 1.2 or has the same skeleton
-  (section 1.8); it is not **held** (below); the owner has at most the number of short names `config.toml` allows (a
-  proposal: 5). Refusing a lookalike here is not the first-come squat that section 1.8 avoids for owners: a person is
+  (section 1.8); it is not **held** (below); the owner has at most the number of short names `config.toml` allows (**proposed, not decided** (D117a): 5). Refusing a lookalike here is not the first-come squat that section 1.8 avoids for owners: a person is
   deciding and the refusal costs nobody's use.
 - **Release.** A short name is released when its owner asks (a signed `[[request]]`, `ask = "release"`), or when a
   maintainer releases it (`[[unname]]` with a reason). A seed that is **not listed** (demoted, 18.3) keeps its name but the name
-  **does not resolve** while it is unlisted (`add json5` shows the candidates list instead). A **released name is held**, a
-  proposal of 90 days (a setting, by the acceptor's clock), before it can go to a **different owner's** seed, so a name cannot
+  **does not resolve** while it is unlisted (`add json5` shows the candidates list instead). A **released name is held**, **proposed, not decided** (D117a): 90 days (a setting, by the acceptor's clock), before it can go to a **different owner's** seed, so a name cannot
   be re-pointed under users' fingers and a mistake can be undone. Giving it back to the same seed, or to the seed named by
   its `[moved]` notice (section 1.4), is not held.
 - **Renames.** A seed that changes its own name is a new seed (`[moved]`, section 1.6): the short name stays with the old
@@ -1559,13 +1643,45 @@ depends on it), so the recommendation is a second maintainer as soon as there is
 | change `policy.toml` and add or remove a maintainer, by a signed pull request with the notice rule of 18.3 | delete or edit **any** statement: the index is append only and the program refuses a change that does |
 | | touch a **lock**, an existing version, an owner's keys or a yank |
 | | give a short name or a handle to a seed or an owner that **did not ask** (the request carries the owner's signature) |
-| | add anything **but a listing-only emergency yank** (open question 1, answered D117a) to someone's version: the yank hides the version from the index and never stops an existing lock |
+| hide a version with an **emergency yank, listing-only** (`yanks.toml`, 18.9.4), in public, with a reason | stop a build, touch a lock, or **delete or edit** a version: the yank hides it from the index and never stops an existing lock |
+| | add **anything else** to someone's seed or version: no edit, no key change, no new version, no `[[source]]` |
 
-This answers open question 1 **partly**: the registry now has a human power, **maintainers**, but over short names, handles
-and the policy's numbers only; every use of it is a signed, public, append-only statement, and none can remove a seed or
-stop its use. Davis later allowed the same keys an emergency yank, listing-only (open question 1, D117a).
+This answers open question 1: the registry has a human power, **maintainers**, over short names, handles, the policy's numbers
+and (D117a) an **emergency yank that is listing-only**; every use of it is a signed, public, append-only statement, and none can remove a seed or
+stop its use or a locked build.
 
-A released or declined short name, an unlisted seed and a seed with no short name all **stay usable**: `tomato.lock` does not
+#### 18.9.4 The emergency yank (decided, D117a; the details are proposed)
+
+**What Davis decided (2026-11-27, question 1):** a maintainer may yank a published version in an emergency; the index hides it
+(`add`, `update` and `search` skip it); **existing locks still build**; the yank is a signed, public statement in the index with a
+reason; nothing is deleted or edited. The first design's recommendation, a signed `malware` or `legal` yank by security keys that
+**may stop builds**, was **not** taken.
+
+**Proposed shape** (the details, to be settled when stage 5 is built):
+
+- **Who and what.** A maintainer key (18.9.3) signs a `[[yank]]` in **`yanks.toml`** (section 9), naming `seed`, `version`, a `kind` of
+  `security` or `malware` (an emergency, not an ordinary bug, which is the owner's call) and a `reason`. It is a statement of the
+  reviewed path and cannot touch a statement of the open path: `seeds/OWNER/NAME.toml` is never edited. `index-check` accepts it
+  only when the signature is a maintainer's, the version exists, and nothing existing is edited or removed. A maintainer's
+  mistake is undone by a new `[[unyank]]` signed by a maintainer, never by an edit, and the owner's own yank (section 1.4) is not
+  affected by either.
+- **What a client does.** The same as for an owner's yank (section 4): `add`, `update` and `search` skip the version, and a lock that
+  names it **still builds** (`install --locked`, `run`, `build`). A warning (`1.1.0 is yanked by a maintainer (malware): reason`)
+  is printed by `install`, `verify`, `outdated` and `tree`; `run` and `build` read no index, so they never warn and are never
+  stopped. A maintainer's yank has **no `--allow-yanked` rule**: unlike the owner's `malware` yank (section 4) it never refuses
+  an `install`, because the maintainers' yank must not stop a build and installing a locked seed is how a build is made.
+- **Review and public log.** There is no pull-request review (it is an emergency), but the statement is public at once, carries a
+  reason, and `SECURITY.md` says who may use it and for what (a report of malware, a leaked secret, or a legal demand), so it is
+  not a mood. A second maintainer, when there is one, may `[[unyank]]`.
+- **Open (not decided, D117a):** **whether a client may decline maintainers' yanks.** *Proposed:* a setting
+  `[registries.NAME] honor_maintainer_yanks` (user file only, default true; a project cannot set it); false makes `add` and `update`
+  treat a maintainer's yank as absent, and the warning remains. Because a maintainer's yank is only a listing change, declining
+  it costs the user nothing they cannot already do by naming the version, which `add NAME@VERSION` does anyway; the setting
+  matters mainly to someone who runs their own registry and does not trust another's maintainers.
+- **What it cannot do:** delete a seed or a version, edit or add a statement of the open path, stop a locked build, change a key or
+  a source, or act on a seed's *owner* (an owner whose seed is yanked stays an owner and may publish a fixed version).
+
+A released or declined short name, an unlisted seed, a seed with no short name and a maintainer-yanked version all **stay usable**: `tomato.lock` does not
 record any of it (section 3), `install --locked` and `verify` do not look at it, and an `owner/name` requirement still
 resolves to every version entry.
 
@@ -1576,14 +1692,14 @@ resolves to every version entry.
   maintainer's signature (18.9). Section 11's last paragraph is kept: the acceptor never runs seed code, and the runner of
   18.4 is the only thing that does.
 - `index-check` additionally checks `policy.toml` changes (the notice rule), a request's owner signature, a maintainer's
-  signature on `names.toml`, the name rules of 18.9, and accepts `[[endorse]]`, `[[unendorse]]` and the runner's
+  signature on `names.toml` and `yanks.toml`, the name rules of 18.9, the emergency-yank rules of 18.9.4, and accepts `[[endorse]]`, `[[unendorse]]` and the runner's
   `[[result]]` and `[[host]]` statements under the same signed, append-only rules.
-- New files in the index: `policy.toml`, `endorsements/<owner>.toml`, `results/<owner>/<name>.toml`, `requests/<owner>.toml`
-  and `names.toml` (the maintainers' signed short names and handles, 18.9), and the **generated** `listing.toml` (status,
+- New files in the index: `policy.toml`, `endorsements/<owner>.toml`, `results/<owner>/<name>.toml`, `requests/<owner>.toml`,
+  `names.toml` (the maintainers' signed short names and handles, 18.9), `yanks.toml` (the maintainers' emergency yanks, 18.9.4) and the **generated** `listing.toml` (status,
   score, `listed_under`, notices; rebuilt by the program, never edited by hand, and verifiable with
   `tomato seed listing-verify`).
 - New commands: `tomato seed endorse|unendorse`, `score`, `admit-check`, `listing-verify`, `registry add`,
-  `request-name`, `request-handle`, `maintain ...` (a maintainer's); `add` shows the status line and resolves short names;
+  `request-name`, `request-handle`, `maintain ...` (a maintainer's, including `maintain yank|unyank`); `add` shows the status line and resolves short names;
   `search` shows the listing and the numbers behind it (`--all` includes unlisted seeds).
 - New settings in the user's configuration: `[registry] only_listed = false`, and `maintainers = [...]` on a registry. They are a
   user's preference or trust only: a project's `tomato.toml` cannot set them, so a seed cannot make a user's tool stricter
@@ -1592,11 +1708,12 @@ resolves to every version entry.
 
 ## 19. Open questions for Davis
 
-**Answered on 2026-11-27 (D117a):** 1, 2, 4, 5 and 8, and the `.tom`-file half of 3. **Partly answered:** 7 (the three proposals
-below are still open). **Still open:** the rest of 3 (new syntax), 9, 10 and 11. Each answered question keeps the original text
+**Answered on 2026-11-27 (D117a):** 1, 2, 4, 5 and 8, and the `.tom`-file half of 3; 11 is moot (no key owners). **Partly answered:** 1 (whether
+a client may decline maintainers' yanks, and the setting of section 18.9.4, are open), 7 (the three proposals
+below are still open). **Still open:** the rest of 3 (new syntax), 9 and 10. Each answered question keeps the original text
 and starts with its answer.
 
-1. **ANSWERED (Davis, 2026-11-27, D117a): yes, one narrow power. Maintainers may yank a published seed version in an emergency, and the yank is listing-only: the index hides the version (`add`, `update` and `search` skip it), but existing locks still build with a warning, and the yank is a signed, public statement in the index, with a reason. Nothing is deleted or edited.** *Not decided: whether a client may decline maintainers' yanks, and the exact `malware` kind rule of section 4 for a maintainer's yank (today a `malware` yank stops builds unless `--allow-yanked`; a maintainer's yank must not, by this answer).* Original question: **Does the registry keep any human power at all, even yank-only?** Everything routine is automatic, but nobody
+1. **ANSWERED (Davis, 2026-11-27, D117a): yes, one narrow power. Maintainers may yank a published seed version in an emergency, and the yank is listing-only: the index hides the version (`add`, `update` and `search` skip it), but existing locks still build with a warning, and the yank is a signed, public statement in the index, with a reason. Nothing is deleted or edited.** *Designed in sections 4, 17 and 18.9.4 (a maintainer's yank never stops a build or an install; an owner's `malware` yank refuses an `install` of that version, a proposal). Not decided: whether a client may decline maintainers' yanks (proposed: a user-only setting `honor_maintainer_yanks`).* Original question: **Does the registry keep any human power at all, even yank-only?** Everything routine is automatic, but nobody
    could remove a seed that is malware, illegal or leaking secrets from a registry I host, except by the owner's own
    yank. *Recommended: automatic for every routine step, plus a narrow emergency power held by a small set of named
    security keys listed in `config.toml`: they can add a `malware` or `legal` yank to any version (never delete, edit,
@@ -1604,7 +1721,7 @@ and starts with its answer.
    anything a publisher does. **Partly answered by D100a (2026-11-27):** the registry now has **maintainers** (at first Davis;
    section 18.9.3), but only for **short names**, handles and the numbers of `policy.toml`, never for use, listing of one seed,
    or deleting anything. **Still open:** whether the same keys may also add the narrow `malware` or `legal` yank above.
-2. **ANSWERED (Davis, 2026-11-27, D117a): no key-only owners. Owners are git-host owners (a domain or a host account that proves control); signing keys may come later as an addition, not as an identity.** Sections 1.3, 1.8 and 18 that describe `k-...` key owners describe what is **not** adopted for 1.0; they are kept until the design is rewritten for stage 4. Original question: **Are key-only owners (`k-...`) accepted into the shared registry**, or only domain owners, with key owners limited to
+2. **ANSWERED (Davis, 2026-11-27, D117a): no key-only owners. Owners are git-host owners (a domain or a host account that proves control); signing keys may come later as an addition, not as an identity.** The `k-...` key owners of the first design are **not adopted** and the sections that described them were rewritten on 2026-11-27 (sections 1.1 to 1.3, 1.5, 1.6, 1.8, 17, 18.6 and 18.7). Original question: **Are key-only owners (`k-...`) accepted into the shared registry**, or only domain owners, with key owners limited to
    direct `--git` adds? Domains cost money, which is a natural brake on flooding; keys are free and need a
    proof-of-work and a daily cap. *Recommended: accept both: some authors have no domain and the cost of the rules
    is small, and show every key owner as unverified.*
@@ -1639,9 +1756,9 @@ and starts with its answer.
 8. **ANSWERED (Davis, 2026-11-27, D117a): both are in for 1.0. Handles (`dave/thing`) as proposed in section 1.10, and the host shortcuts `gh:`, `gitlab:`, `codeberg:` and `srht:` (section 6).** Handles stay optional and, with question 2 answered, are how an author without a domain gets a short owner; the 5-names limit, the 90-day hold and listed-first below are still open. Original question: **Is "username" a domain or key owner, or do you want short handles** (`dave/thing`)? A handle table needs someone to hand
    them out (section 1.1). **Proposed:** *handles granted by a reviewed pull
    request* (a maintainer decides, one owner per handle, lookalikes refused), with the index entry holding the git URL
-   on any host, pinned by commit and content hash; **domain and key owners still work without a pull request**, and a
-   handle is never required. If he says no, the earlier recommendation stands: keep domain and key owners and the alias
-   layer. Host shortcuts (`gh:dave/thing`, section 6) are a separate small proposal, expanded at `add` time and never
+   on any host, pinned by commit and content hash; **domain owners still work without a pull request** (key owners were dropped, question 2), and a
+   handle is never required. (Had he said no, the earlier recommendation would have stood: keep domain owners and the alias
+   layer.) Host shortcuts (`gh:dave/thing`, section 6) are a separate small proposal, expanded at `add` time and never
    stored.
 9. **Who may edit `policy.toml`?** It sets the rules for everyone and can never touch one named seed (section 18.3).
    **Decided (D100a):** the **maintainers** (at first Davis alone), who are the same people who review short names: each change
@@ -1657,7 +1774,7 @@ and starts with its answer.
     listed seeds would pass level 1; level 1 is "a license and passing tests"; stars enter as points at level 2, never as a
     condition, unless Davis chooses a `min_stars`; demotion last. Pick the first non-zero number only when the shadow score
     shows what it would do.* The meaning of "@74" is still his to say.
-11. **Do key owners' endorsements count** (weight 0.25 in section 18.6), or only domain owners'? Keys are free and
+11. **MOOT (D117a: no key owners).** Original question: **Do key owners' endorsements count** (weight 0.25 in section 18.6), or only domain owners'? Endorsers are now domain and handle owners (section 18.6; a handle's weight of 1 is a proposal). Keys are free and
     make Sybil attacks cheaper; domains exclude ordinary users from recommending. **Unchanged in kind, a little smaller in
     stakes** (D100a): endorsements are score points and a possible `min_endorsements`, and a maintainer who reviews a short name
     reads them as a hint. *Recommended: count keys at 0.25 with the 25-endorsement cap, and revisit when the data shows
