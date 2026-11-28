@@ -198,6 +198,11 @@ for when Enter submits, the indent of a new line and colors (`Validator`, `Inden
   lists a seed and locks it, `tomato seed remove NAME` drops it, `tomato seed vendor` copies the locked seeds into `vendor/`, and
   `install`, `add` and `vendor` take `--offline` (never run git). `seed add` lists the `!name(...)` foreign symbols a seed declares
   and asks to accept them (`--yes` does not ask).
+- Host shortcuts and the `# seeds:` line (D124a, `docs/manifest.md`): `tomato seed add gh:USER/REPO --rev COMMIT` (also `gitlab:`, `codeberg:`
+  and `srht:~USER/REPO`; `--tag`, `--branch`, `--subdir`, `--test` work as for `--git`) adds a git seed from that host and writes only the full https URL.
+  A registry name such as `dave/thing` (a handle) or `acme.example/json5` is recognised and reported as not available yet (E571: there is no registry).
+  A program may name the seeds it needs in a comment at the top, `# seeds: dave/thing>=1.2`, which `tomato run`, `build` and `compile` check against the
+  project's `tomato.toml` and `tomato.lock` (E622) without ever fetching; a program outside every project with such a line is an error for now.
 
 ### Performance
 

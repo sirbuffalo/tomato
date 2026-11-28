@@ -9,7 +9,7 @@
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
 #   tomato seed install [--locked] [--offline] [--yes]                lock the seeds of tomato.toml (path and git seeds) into tomato.lock, fetching a git seed into ~/.tomato/seeds; --locked checks without writing, --offline never runs git
-#   tomato seed add --path DIR | --git URL (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]   list a local or git seed in [seeds] (--test: [test-seeds]) of tomato.toml and lock it; a tag or branch is looked up once and its commit written as the rev (update follows it), --subdir is the folder of the repository that holds the seed; it lists the !name(...) symbols the seed declares and asks to accept them (--yes: do not ask)
+#   tomato seed add --path DIR | --git URL | gh:USER/REPO | gitlab:USER/REPO | codeberg:USER/REPO | srht:~USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]   list a local or git seed in [seeds] (--test: [test-seeds]) of tomato.toml and lock it (a host shortcut is the https URL of that repository on its host; only the URL is written); a registry name such as dave/thing is an error until there is a registry; a tag or branch is looked up once and its commit written as the rev (update follows it), --subdir is the folder of the repository that holds the seed; it lists the !name(...) symbols the seed declares and asks to accept them (--yes: do not ask)
 #   tomato seed update [NAME...] [--dry-run] [--yes]                  lock the named seeds (all with no name) again: a git seed that follows a tag or branch gets the commit it points at now (new rev in tomato.toml, new hash in tomato.lock); asks only about new !name(...) symbols; --dry-run writes nothing
 #   tomato seed verify                                                hash every locked seed in the store, the vendor folder and the path folders again and compare with tomato.lock: exit 1 on a missing or changed copy
 #   tomato seed remove NAME                                           drop a seed from [seeds] and [test-seeds] and lock again
@@ -599,8 +599,8 @@ case "$cmd" in
                  esac
                  shift
                done ;;
-      add) mode_set=0; arev=""; atag=""; abranch=""; asub=""
-           addusage="usage: tomato seed add --path DIR | --git URL (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]"
+      add) mode_set=0; arev=""; atag=""; abranch=""; asub=""; aword=""
+           addusage="usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]"
            while [ $# -gt 0 ]; do
              case "$1" in
                --path) [ $# -ge 2 ] || die "--path needs a folder ($addusage)"; arg="$2"; mode_set=$((mode_set + 1)); shift ;;
@@ -610,7 +610,9 @@ case "$cmd" in
                --branch) [ $# -ge 2 ] || die "--branch needs a branch name"; abranch="$2"; shift ;;
                --subdir) [ $# -ge 2 ] || die "--subdir needs a folder of the repository"; asub="$2"; shift ;;
                --test) seedopt test ;; --yes) seedopt yes ;; --offline) seedopt offline ;;
-               *) die "unknown option '$1' for 'tomato seed add' ($addusage)" ;;
+               -*) die "unknown option '$1' for 'tomato seed add' ($addusage)" ;;
+               *) [ -z "$aword" ] || die "tomato seed add takes one seed at a time: '$aword' and '$1' ($addusage)"
+                  aword="$1"; mode_set=$((mode_set + 100)) ;;
              esac
              shift
            done
@@ -620,7 +622,10 @@ case "$cmd" in
                  [ "$n" = 1 ] || die "a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH ($addusage)"
                  seedopt git
                  rev="$(printf '%s\t%s\t%s\t%s' "$arev" "$atag" "$abranch" "$asub")" ;;
-             *) die "tomato seed add takes --path DIR or --git URL --rev COMMIT, one of them once (a registry name is not supported yet: there is no registry)" ;;
+             100) # a host shortcut (gh:USER/REPO) or a seed name: the compiler expands or explains it
+                  arg="$aword"; seedopt word
+                  rev="$(printf '%s\t%s\t%s\t%s' "$arev" "$atag" "$abranch" "$asub")" ;;
+             *) die "tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed ($addusage)" ;;
            esac ;;
       update) while [ $# -gt 0 ]; do
                 case "$1" in

@@ -154,6 +154,7 @@ tomato seed install [--locked] [--offline] [--yes]   lock every seed of both tab
                                  (--locked: check it, write nothing; --offline: never run git; --yes: accept foreign symbols)
 tomato seed add --path DIR       list a local seed in [seeds] of tomato.toml and lock it (--test: in [test-seeds])
 tomato seed add --git URL --rev COMMIT   the same for a seed from git (the rev is a full 40-digit commit id)
+tomato seed add gh:USER/REPO --rev COMMIT   a host shortcut: gh:, gitlab:, codeberg: or srht:~USER/REPO, the https URL of that repository (D124a, below)
 tomato seed add --git URL --tag TAG | --branch BRANCH   the same, looking the tag or branch up once; its commit is the rev and `update` follows it
 tomato seed add --git URL --rev COMMIT --subdir DIR   the seed is the folder DIR of the repository (several seeds in one repository)
 tomato seed remove NAME          drop the seed from [seeds] and [test-seeds], lock again
@@ -204,6 +205,31 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   from what it meant, puts the file back as it was and prints the line to write by hand (E603). Every edit is read again with the manifest reader and must be
   exactly the intended change; if the lock then fails (an unreadable seed, a clash of modules, a refused symbol) the manifest is put back too.
 - `add` and `remove` print one line for the manifest and the lines of `install`. They never fetch for a seed that the lock and the store have.
+
+### Host shortcuts, handles and the `# seeds:` line (D124a)
+
+- **Host shortcuts.** `tomato seed add gh:USER/REPO`, `gitlab:USER/REPO`, `codeberg:USER/REPO` and `srht:~USER/REPO` are `--git` with the URL
+  `https://github.com/USER/REPO.git`, `https://gitlab.com/USER/REPO.git`, `https://codeberg.org/USER/REPO.git` and `https://git.sr.ht/~USER/REPO`
+  (a Sourcehut user starts with `~`). The word is expanded by `add` before anything else; **only the full URL reaches `tomato.toml` and `tomato.lock`**, so a shortcut that
+  later changed meaning would change nothing already locked. A shortcut names no owner and no signature: it is an unregistered source, like `--git`. It takes the same
+  `--rev`, `--tag`, `--branch`, `--subdir`, `--test`, `--yes` and `--offline`, and **needs one of `--rev`, `--tag` and `--branch`** (no default branch is guessed). It is exactly one user and one
+  repository of letters, digits, dots, underscores and hyphens (not starting with a hyphen, not ending in `.git`); a repository in a deeper folder (a GitLab subgroup) is `--git URL` and
+  `--subdir`. A bad shortcut, or a word with another colon (`sftp:x/y`, `https://...`, which belongs after `--git`), is E621. The user's `[git-hosts]` table of design section 13 is not built.
+- **Handles.** A handle is an owner with no dot, `[a-z][a-z0-9-]{1,31}` (2 to 32 characters), not starting with `k-` and not `local`, `std`, `tomato` or a name `std/reserved.txt`
+  lists. `dave/thing` is the seed `thing` of the handle `dave`. A **handle is granted by the registry** (a reviewed pull request, design section 1.10) and there is no registry yet, so what
+  exists is the shape: `tomato seed add dave/thing` (or `acme.example/json5`, with `@VERSION` allowed) recognises a registry name and stops with **E571**, naming the owner kind and the ways to add
+  the seed today (a shortcut, `--git`, `--path`); a word that is not a seed name or a shortcut is E621. `tomato seed check` accepts a handle-shaped owner and notes that a registry has to grant it
+  (`local` and other reserved names are still E580). Nothing in `tomato.toml` or the lock changes for a handle: a seed whose own manifest says `dave/thing` is listed under that name, from its git URL or a path.
+- **The `# seeds:` line.** A program (the file given to `tomato run`, `build` or `compile`) may name the seeds it needs in its **leading comment block**: the lines from the top that are
+  blank or start with `#` (a first `#!` line is part of it); the first other line ends the block, and a `# seeds:` line below it is an ordinary comment. A line is `# seeds:` and one or more
+  entries separated by commas, each `owner/name` or `owner/name>=VERSION` (`>=1.2` is `>=1.2.0`; `>=` is the only comparison); several `# seeds:` lines add up, and a seed named twice keeps the higher
+  minimum. A line that cannot be read, with the line number of the bad entry, is **E622**. Only the program's own file is read, not the modules it imports.
+- **What it does.** `run`, `build` and `compile` **never fetch**: the line is **checked** against the project's `tomato.toml` and `tomato.lock` (the project found as for every build), after the
+  ordinary check of the lock and the store. Every seed it names must be one the build uses (listed in `[seeds]`, or in `[test-seeds]` under `--test-seeds`/`tomato test`) and the locked version must meet the
+  minimum by the rule of `[seeds]` (the same or a later version of the same compatible line); otherwise E622 names the file, the seed and the command to run (`tomato seed add ...`). A listed seed
+  that is not locked or not in the store is the error of every build, E569, `run: tomato seed install`. The line only names and bounds; where a seed comes from is the project's business, so **a program
+  outside every project** (no `tomato.toml` above it) **with a `# seeds:` line is E622** (it has no lock to take the seeds from). The line is a plain comment to the browser and to anything that is not
+  `tomato run`, `build` or `compile`.
 
 ### Git seeds and the store (D101a)
 
@@ -324,9 +350,11 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E607 | (a compile error) a module next to the program or in `src/` has the name of a module of a seed the run uses |
 | E611 | (a compile error) a `!tomato_*` declaration or call in a module that is not part of `std/` (D112a) |
 | E612 | a seed declares a `!tomato_*` function (D112a); `seed add` and `install` refuse it |
+| E621 | `seed add`: a word that is no host shortcut or seed name, a bad shortcut, or a shortcut with none of `--rev`, `--tag`, `--branch` (D124a) |
+| E622 | the `# seeds:` line of a program cannot be used: not `NAME[>=VERSION]` entries, no project to lock the seeds, a seed the project does not list, or a locked version below the minimum (D124a) |
 
 ## Not built yet
 
-The registry, `index`, signatures, `tomato seed outdated/tree/why/registry`, `seed verify --inputs`, `seed update --accept-owner-change`, seeds that use seeds, MVS over a graph,
+The registry (so looking up a handle such as `dave/thing`, a handle's grant and the `# seeds:` line of a program outside a project), `index`, signatures, `tomato seed outdated/tree/why/registry`, `seed verify --inputs`, `seed update --accept-owner-change`, seeds that use seeds, MVS over a graph,
 the index listing's record of symbols, visibility of which seed may import which
 (`docs/package-registry-design.md` sections 5 to 8, 12 and 15 stages 4 to 7).

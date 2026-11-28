@@ -8,7 +8,7 @@
 from toml import dumps, dumps_value
 from value import Value, Dict, List, Str, Int, Bool
 from config import ConfigError, read_toml, is_table, is_array
-from manifest import Manifest, SeedReq, entry_markers_of, read_manifest, check_tomato, seeds_for, same_line, compare_versions, module_stem
+from manifest import Manifest, SeedReq, entry_markers_of, read_manifest, check_tomato, seeds_for, same_line, compare_versions, module_stem, name_problem, version_problem
 from modnames import std_modules, reserved_modules
 from parser import parse
 from manedit import add_entry, remove_entries
@@ -673,6 +673,228 @@ export class AddSpec:
     branch: str = ''           # git: a branch, the same
     subdir: str = ''           # git: the folder of the repository that holds the seed (--subdir)
 
+# ---------------------------------------------------------------------------------------------------------------------
+# host shortcuts and handles (design sections 1.10 and 6; D117a: both are in for 1.0). `tomato seed add gh:USER/REPO --rev COMMIT` is
+# `--git https://github.com/USER/REPO.git --rev COMMIT`: the word is expanded here, before anything else, and only the full URL ever reaches
+# tomato.toml and tomato.lock (a shortcut that later changed meaning would change nothing already locked). A shortcut has no owner and no
+# signature and is an unregistered source, like --git. A handle (`dave/thing`) is a registry name whose owner a maintainer granted: with no
+# registry (stage 4) it can be recognised and checked, not looked up, so `add` says where to get the seed instead.
+
+def host_base(host: str) -> str:
+    if host == 'gh':
+        return 'https://github.com/'
+    if host == 'gitlab':
+        return 'https://gitlab.com/'
+    if host == 'codeberg':
+        return 'https://codeberg.org/'
+    if host == 'srht':
+        return 'https://git.sr.ht/'
+    return ''
+
+# a user or repository part of a shortcut: letters, digits, dots, underscores and hyphens, not starting with a hyphen, not . or ..
+def host_part_ok(s: str) -> bool:
+    if s == '' or s == '.' or s == '..' or s.startswith('-'):
+        return False
+    for c in s:
+        if not (('a' <= c and c <= 'z') or ('A' <= c and c <= 'Z') or ('0' <= c and c <= '9')) and c != '.' and c != '_' and c != '-':
+            return False
+    return True
+
+# the https URL of a shortcut word `HOST:USER/REPO` (srht: `srht:~USER/REPO`); E621 when the part after the colon is not exactly that
+export def expand_shortcut(path: str, word: str) -> str:
+    at = word.find(':')
+    host = word[:at]
+    rest = word[at + 1:]
+    form = f'{host}:~USER/REPO' if host == 'srht' else f'{host}:USER/REPO'
+    parts = rest.split('/')
+    if len(parts) != 2 or parts[0] == '' or parts[1] == '':
+        fail(621, path, f'"{word}" is not a host shortcut: write {form} (exactly one user and one repository; a repository in a deeper folder takes --git URL and --subdir)')
+    user = parts[0]
+    repo = parts[1]
+    if host == 'srht':
+        if not user.startswith('~'):
+            fail(621, path, f'"{word}" is not a host shortcut: a Sourcehut user starts with ~, so write {form}')
+        user = user[1:]
+    if not host_part_ok(user) or not host_part_ok(repo):
+        fail(621, path, f'"{word}" is not a host shortcut: a user and a repository have letters, digits, dots, underscores and hyphens only; write {form}')
+    if repo.endswith('.git'):
+        fail(621, path, f'"{word}" is not a host shortcut: write the repository without .git ({form}); the shortcut adds what the host needs')
+    if host == 'srht':
+        return host_base(host) + '~' + user + '/' + repo
+    return host_base(host) + user + '/' + repo + '.git'
+
+# why `owner` is not a handle, '' when it is (design section 1.2, 1.10): a short name `[a-z][a-z0-9-]{1,31}`, no dot, not k- (a key), not a name
+# the registry keeps (local, std, tomato) or a standard module's or one std keeps for later. Whether a maintainer has granted it is the registry's to say
+export def handle_problem(owner: str) -> str:
+    if len(owner) < 2 or len(owner) > 32:
+        return 'a handle is 2 to 32 characters'
+    for i in range(len(owner)):
+        c = owner[i]
+        low = 'a' <= c and c <= 'z'
+        if i == 0 and not low:
+            return 'a handle starts with a lowercase letter'
+        if not low and not ('0' <= c and c <= '9') and c != '-':
+            return 'a handle has lowercase letters, digits and hyphens only (a dot would make it a domain)'
+    if owner.startswith('k-'):
+        return 'a handle does not start with k-, which is for keys'
+    if owner == 'local' or owner == 'std' or owner == 'tomato' or owner in reserved_modules():
+        return 'that name is reserved'
+    return ''
+
+# the AddSpec of the word given to `tomato seed add` (neither --path nor --git): a host shortcut becomes a git source, a seed name
+# (`dave/thing`, `acme.example/json5`, with `@VERSION` allowed) is a registry seed, which cannot be added until there is a registry (E571)
+export def add_spec_from_word(path: str, word: str, rev: str, tag: str, branch: str, subdir: str) -> AddSpec:
+    if ':' in word:
+        host = word[:word.find(':')]
+        if host_base(host) == '':
+            more = f' (a git URL goes after --git: tomato seed add --git {word} --rev COMMIT)' if '://' in word else ''
+            fail(621, path, f'"{word}" is not a seed: a word with a colon is a host shortcut, and the shortcuts are gh:USER/REPO, gitlab:USER/REPO, codeberg:USER/REPO and srht:~USER/REPO{more}')
+        spec = AddSpec()
+        spec.kind = 'git'
+        spec.url = expand_shortcut(path, word)
+        spec.rev = rev
+        spec.tag = tag
+        spec.branch = branch
+        spec.subdir = subdir
+        n = 0
+        for x in [rev, tag, branch]:
+            if x != '':
+                n += 1
+        if n != 1:
+            fail(621, path, f'a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH: {word} is {spec.url}')
+        return spec
+    name = word
+    if '@' in word:
+        name = word[:word.find('@')]
+        problem = version_problem(word[word.find('@') + 1:], True)
+        if problem != '':
+            fail(621, path, f'"{word}" has a version that is not one: {problem}')
+    problem = name_problem(name)
+    if problem != '':
+        fail(621, path, f'"{word}" is not a seed name or a host shortcut: {problem} (a folder is --path DIR, a git URL is --git URL)')
+    owner = name.split('/')[0]
+    kind = f'the domain {owner}'
+    if '.' not in owner:
+        problem = handle_problem(owner)
+        if problem != '':
+            fail(621, path, f'"{word}" is not a seed name: the owner {owner} has no dot, so it would be a handle, and it is not one ({problem}); a domain owner has a dot (acme.example)')
+        kind = f'the handle {owner}'
+    fail(571, path, f'{name} is a registry seed (owner: {kind}), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT (also gitlab:, codeberg: and srht:), tomato seed add --git URL --rev COMMIT, or --path DIR')
+    return AddSpec()
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the `# seeds:` header of a single .tom file (design sections 5 and 6; D117a): a program names the seeds it needs in a comment line at the
+# top, `# seeds: dave/thing>=1.2, acme.example/json5`, and `tomato run`, `build` and `compile` read it. They never fetch: the line is
+# checked against the project's tomato.toml and tomato.lock, which say where each seed comes from and which commit and hash it is; the
+# line itself holds names and minimum versions only, so with no registry to look a name up it cannot make a seed appear. A seed the line
+# names that the project does not list is an error with the command to run; a listed seed that is not locked or not in the store is the
+# error of every build, `run: tomato seed install` (E569).
+
+# one seed of the header: the name and the minimum version, written MAJOR.MINOR.PATCH ('' when the line sets none)
+export class HeaderReq:
+    name: str = ''
+    version: str = ''
+
+def header_word(file: str, n: int, item: str) -> HeaderReq:
+    where = f'{file}:{n}'
+    r = HeaderReq()
+    r.name = item
+    at = item.find('>=')
+    if at >= 0:
+        r.name = item[:at].strip()
+        r.version = item[at + 2:].strip()
+    else:
+        for c in ['=', '<', '>', '~', '^', '!', '@', ' ']:
+            if c in item:
+                fail(622, where, f'"{item}" in the "# seeds:" line is not NAME or NAME>=VERSION: a version is written as a minimum, dave/thing>=1.2 (the line has no other comparison)')
+    problem = name_problem(r.name)
+    if problem != '':
+        fail(622, where, f'"{r.name}" in the "# seeds:" line is not a seed name: {problem}')
+    if r.version != '':
+        problem = version_problem(r.version, False)
+        if problem != '':
+            fail(622, where, f'">={r.version}" in the "# seeds:" line is not a version: {problem}')
+        core = r.version
+        pre = ''
+        hy = r.version.find('-')
+        if hy >= 0:
+            core = r.version[:hy]
+            pre = r.version[hy:]
+        if len(core.split('.')) == 2:
+            r.version = core + '.0' + pre
+    return r
+
+# the seeds the leading comment block of `src` names, in the order written, a seed named twice once with the higher minimum. The block is
+# every line from the top that is blank or starts with # (a first line `#!...` too); the first other line ends it, so a `# seeds:` line
+# further down is an ordinary comment. A line is `# seeds: ` and one or more `NAME` or `NAME>=VERSION` separated by commas (E622); more
+# than one such line may be written
+export def header_seeds(file: str, src: str) -> list[HeaderReq]:
+    out: list[HeaderReq] = []
+    n = 0
+    for raw in src.split('\n'):
+        n += 1
+        line = raw.strip()
+        if line == '' or (n == 1 and line.startswith('#!')):
+            continue
+        if not line.startswith('#'):
+            break
+        text = line[1:].strip()
+        if not text.startswith('seeds:'):
+            continue
+        body = text[6:].strip()
+        if body == '':
+            fail(622, f'{file}:{n}', 'the "# seeds:" line names no seed: write # seeds: dave/thing>=1.2')
+        for piece in body.split(','):
+            item = piece.strip()
+            if item == '':
+                fail(622, f'{file}:{n}', 'the "# seeds:" line has an empty entry (a comma with no seed beside it)')
+            r = header_word(file, n, item)
+            at = -1
+            for i in range(len(out)):
+                if out[i].name == r.name:
+                    at = i
+            if at < 0:
+                out.append(r)
+            elif r.version != '' and (out[at].version == '' or compare_versions(r.version, out[at].version) > 0):
+                out[at].version = r.version
+    return out
+
+def header_shown(h: HeaderReq) -> str:
+    if h.version == '':
+        return h.name
+    return f'{h.name}>={h.version}'
+
+# a program outside every project (no tomato.toml) with a header: there is no lock to take the seeds from
+export def header_without_project(file: str, want: list[HeaderReq]):
+    if len(want) == 0:
+        return
+    names = ', '.join([header_shown(h) for h in want])
+    fail(622, file, f'the "# seeds:" line names {names}, but there is no tomato.toml in this folder or a parent folder, so no seed is locked for it\n  = help: start a project (tomato init), then add the seeds there (tomato seed add gh:USER/REPO --rev COMMIT, or --git URL, or --path DIR); a name alone cannot be fetched until there is a registry')
+
+# the header of a program in a project, after the project's own seeds were checked (module_map): every seed it names must be one the build
+# uses, at the version it asks or a later one of the same line (the rule of a minimum in [seeds], design section 4)
+export def check_header(m: Manifest, file: str, want: list[HeaderReq], tests: bool):
+    if len(want) == 0:
+        return
+    used = seeds_for(m, tests, False)
+    lock = old_lock(m)
+    for h in want:
+        listed = False
+        for r in used.reqs:
+            if r.name == h.name:
+                listed = True
+        if not listed:
+            more = ''
+            for r in m.reqs:
+                if r.name == h.name:
+                    more = ' (it is in [test-seeds], which only tomato test reads)'
+            fail(622, m.path, f'{file} names the seed {header_shown(h)} in its "# seeds:" line, but tomato.toml does not list it in [seeds]{more}\n  = help: tomato seed add gh:USER/REPO --rev COMMIT (or --git URL, or --path DIR) adds a seed and locks it; a name alone cannot be fetched until there is a registry')
+        if h.version == '':
+            continue
+        for s in lock:
+            if s.name == h.name and (compare_versions(s.version, h.version) < 0 or not same_line(s.version, h.version)):
+                fail(622, m.path, f'{file} asks for {header_shown(h)} in its "# seeds:" line, but tomato.lock has {s.name} {s.version}: a minimum is met by the same version or a later one of the same compatible line\n  = help: use a seed of that version (tomato seed update, or add it at another rev), or change the line')
+
 # the manifest's value of a git seed: { git = "URL", rev = "COMMIT" } and, when set, tag or branch, and path
 def git_value(r: SeedReq) -> str:
     v = '{ git = ' + dumps_value(Str(r.url)) + ', rev = ' + dumps_value(Str(r.rev))
@@ -1062,12 +1284,15 @@ export def verify(manifest_path: str, have: str) -> list[str]:
 # ---------------------------------------------------------------------------------------------------------------------
 # tomato seed check and tomato seed hash
 
-# is the owner of a seed name one a registry would accept: a domain name (a dot in it) or k- and a key hash?
+# is the owner of a seed name one a registry would accept: a domain name (a dot in it), a handle (a short name with no dot, D117a: the
+# registry grants it, so only its shape is checked here) or k- and a key hash?
 def publishable_owner(name: str) -> bool:
     owner = name.split('/')[0]
     if '.' in owner:
         return True
-    return owner.startswith('k-') and len(owner) == 28
+    if owner.startswith('k-') and len(owner) == 28:
+        return True
+    return handle_problem(owner) == ''
 
 # the entry markers (`x.y` of `@x.y`) written in the .tom files of a seed's src/ and tests/ folders
 def folder_markers(folder: str) -> list[str]:
@@ -1095,9 +1320,13 @@ export def check_seed(manifest_path: str, have: str) -> list[str]:
     folder = m.dir[:len(m.dir) - 1] if m.dir != '' else '.'
     mods = seed_modules(m, folder)
     said: list[str] = []
+    owner = m.name.split('/')[0]
     if not publishable_owner(m.name):
-        fail(580, manifest_path, f'the owner "{m.name.split("/")[0]}" is not one a registry accepts: it is a domain name with a dot (acme.example) or k- and a key hash')
+        why = f' ({handle_problem(owner)})' if '.' not in owner else ''
+        fail(580, manifest_path, f'the owner "{owner}" is not one a registry accepts: it is a domain name with a dot (acme.example), a handle (a short name with no dot, 2 to 32 characters) or k- and a key hash{why}')
     said.append(f'{m.name} {m.version}: ok')
+    if '.' not in owner and not owner.startswith('k-'):
+        said.append(f'note: the owner {owner} is a handle: a registry has to grant it (a reviewed pull request), and there is no registry yet, so the seed is used from its git URL')
     said.append(f"modules: {', '.join(mods)}")
     if m.description == '':
         said.append('note: seed.description is not set')

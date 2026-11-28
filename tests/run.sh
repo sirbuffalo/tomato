@@ -1664,10 +1664,10 @@ tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked < /dev/null
   urlcheck --git "$gsurl" --rev v1.0; case "$r" in *"is not a full commit id (40 lowercase hex digits)"*) ok "seed add --git: a tag as the rev is refused (a tag moves)";; *) bad "seed add --git: a tag as the rev is refused" "$r";; esac
   check "seed add --git: a rev of 40 digits that the repository does not have is a git error, and nothing is stored" "error[E599]:" "$(cd "$A" && tm $t seed add --git "$gsurl" --rev 0123456789012345678901234567890123456789 2>&1 | cut -c1-12)"
   check "seed add --offline: a git seed that the lock does not know is an error, git is not run" "error[E605]:" "$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C1" --offline 2>&1 | cut -c1-12)"
-  check "seed add: --git needs --rev" "error: a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH (usage: tomato seed add --path DIR | --git URL (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --git "$gsurl" 2>&1)"
+  check "seed add: --git needs --rev" "error: a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH (usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --git "$gsurl" 2>&1)"
   check "seed add: --path takes no --rev" "error: --rev, --tag, --branch and --subdir go with --git, not with --path" "$(cd "$A" && tm $t seed add --path ../loc --rev "$C1" 2>&1)"
-  check "seed add: it takes --path or --git, not a name (there is no registry)" "error: unknown option 'acme.example/x' for 'tomato seed add' (usage: tomato seed add --path DIR | --git URL (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add acme.example/x 2>&1)"
-  check "seed add: with no source" "error: tomato seed add takes --path DIR or --git URL --rev COMMIT, one of them once (a registry name is not supported yet: there is no registry)" "$(cd "$A" && tm $t seed add --test 2>&1)"
+  check "seed add: a registry name is recognised, and there is no registry to look it up (E571)" "error[E571]: HERE/app/tomato.toml: acme.example/x is a registry seed (owner: the domain acme.example), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT (also gitlab:, codeberg: and srht:), tomato seed add --git URL --rev COMMIT, or --path DIR" "$(cd "$A" && tm $t seed add acme.example/x 2>&1 | norm)"
+  check "seed add: with no source" "error: tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed (usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --test 2>&1)"
   # ---- seed vendor and [seed-store] vendor
   (cd "$A" && printf '%s' "$head" > tomato.toml && rm -f tomato.lock && tm $t seed add --path ../loc --yes >/dev/null 2>&1 && tm $t seed add --git "$gsurl" --rev "$C1" >/dev/null 2>&1)
   r="$(cd "$A" && tm $t seed vendor 2>&1 | norm)"
@@ -1697,6 +1697,152 @@ hi from git" "$(cd "$A" && tm $t run src/main.tom 2>&1; tm $t run src/usegs.tom 
   printf 'x\n' >> "$W/loc/src/loc.tom"
   case "$(cd "$A" && tm $t seed vendor 2>&1 | norm)" in "error[E578]: HERE/app/tomato.toml: tomato.lock does not match this manifest: the files of the path seed acme.example/loc (../loc) changed since the lock was written (hash "*"... in tomato.lock, "*"... now): run \`tomato seed install\` and commit the new lock") ok "seed vendor: a lock that is out of date is an error (install first)";; *) bad "seed vendor: a lock that is out of date is an error (install first)" "$(cd "$A" && tm $t seed vendor 2>&1 | norm)";; esac
   cd "$work" || true
+}
+t_cli_seed_handles() { # host shortcuts and handles of tomato seed add, and the `# seeds:` line of a program (D117a); no network: a `git` shim serves a local repository for the hosts' URLs
+  cli_setup
+  if ! command -v git >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "seed handles: git is required in CI" || echo "skip: git is not installed, so the seed handle tests did not run"
+    return
+  fi
+  W="$work/sh"; mkdir -p "$W"; cd "$W" || return 1
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t.t
+  th="$W/home"; mkdir -p "$th"; here="$(pwd -P)"
+  tm() { TOMATO_HOME="$th" "$@"; }
+  norm() { sed "s#$here#HERE#g"; }
+  # the seed `dave/gs` (a handle-shaped owner) in a repository with a tag, and a git that sends the four hosts' URLs to it and records them
+  git init -q -b main "$W/gs"; mkdir -p "$W/gs/src"
+  printf '[seed]\nname = "dave/gs"\nversion = "1.2.0"\ntomato = "0.51"\n' > "$W/gs/tomato.toml"
+  printf 'export def hi() -> str:\n    return "hi from gs"\n' > "$W/gs/src/gs.tom"
+  git -C "$W/gs" add -A >/dev/null && git -C "$W/gs" commit -q -m one && C1="$(git -C "$W/gs" rev-parse HEAD)" && git -C "$W/gs" tag v1
+  git clone -q --bare "$W/gs" "$W/gs.git"
+  mkdir -p "$W/shim"; real_git="$(command -v git)"
+  cat > "$W/shim/git" <<EOF
+#!/bin/sh
+n=\$#
+while [ \$n -gt 0 ]; do
+  a="\$1"; shift
+  case "\$a" in
+    https://github.com/dave/gs.git|https://gitlab.com/dave/gs.git|https://codeberg.org/dave/gs.git|https://git.sr.ht/~dave/gs) echo "\$a" >> "$W/urls.log"; a="$W/gs.git" ;;
+    https://*|ssh://*) echo "\$a" >> "$W/urls.log" ;;
+  esac
+  set -- "\$@" "\$a"; n=\$((n - 1))
+done
+GIT_ALLOW_PROTOCOL=https:ssh:file exec "$real_git" "\$@"
+EOF
+  chmod +x "$W/shim/git"; : > "$W/urls.log"
+  PATH="$W/shim:$PATH"; export PATH
+  head='[project]
+name = "app"
+version = "0.1.0"
+tomato = "0.51"
+'
+  fresh() { rm -rf "$W/app"; mkdir -p "$W/app/src"; printf '%s' "$head" > "$W/app/tomato.toml"; }   # an empty project
+  err() { (cd "$W/app" && tm $t "$@" 2>&1 | norm); }
+  # ---- the four shortcuts: expanded before anything is done, only the URL is written
+  for pair in "gh:dave/gs|https://github.com/dave/gs.git" "gitlab:dave/gs|https://gitlab.com/dave/gs.git" "codeberg:dave/gs|https://codeberg.org/dave/gs.git" "srht:~dave/gs|https://git.sr.ht/~dave/gs"; do
+    word="${pair%%|*}"; url="${pair#*|}"; fresh
+    r="$(err seed add "$word" --rev "$C1")"
+    check "seed handles: $word is added from $url" "added dave/gs 1.2.0 to [seeds] of HERE/app/tomato.toml" "$(echo "$r" | sed -n 1p)"
+    check "seed handles: $word: tomato.toml and tomato.lock hold the URL and the commit, never the shortcut" "git = \"$url\", rev = \"$C1\"|git = \"$url\"|0" "$(sed -n 's/^"dave\/gs" = { \(.*\) }$/\1/p' "$W/app/tomato.toml" | tr -d '\n')|$(sed -n 's/^\(git = ".*"\)$/\1/p' "$W/app/tomato.lock" | tr -d '\n')|$(cat "$W/app/tomato.toml" "$W/app/tomato.lock" | grep -c "$word")"
+  done
+  check "seed handles: each shortcut asked git for the URL it stands for" "https://github.com/dave/gs.git
+https://gitlab.com/dave/gs.git
+https://codeberg.org/dave/gs.git
+https://git.sr.ht/~dave/gs" "$(awk '!seen[$0]++' "$W/urls.log")"
+  fresh
+  r="$(err seed add gitlab:dave/gs --tag v1 --test)"
+  check "seed handles: a shortcut takes --tag (looked up once, its commit is the rev) and --test" "added dave/gs 1.2.0 to [test-seeds] of HERE/app/tomato.toml (tag v1 is at $(echo "$C1" | cut -c1-12))" "$(echo "$r" | sed -n 1p)"
+  fresh
+  r="$(err seed add gh:dave/gs --branch main)"
+  check "seed handles: and --branch" "added dave/gs 1.2.0 to [seeds] of HERE/app/tomato.toml (branch main is at $(echo "$C1" | cut -c1-12))" "$(echo "$r" | sed -n 1p)"
+  fresh
+  # ---- what a shortcut or a name may be
+  bads() { # NAME EXPECTED-START ARGS...: the command stops, and the message starts so
+    n="$1"; e="$2"; shift 2; r="$(err seed add "$@")"
+    case "$r" in "$e"*) ok "seed handles: $n" ;; *) bad "seed handles: $n" "expected: $e
+got:      $r" ;; esac
+  }
+  bads "a shortcut needs --rev, --tag or --branch" 'error[E621]: HERE/app/tomato.toml: a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH: gh:dave/gs is https://github.com/dave/gs.git' gh:dave/gs
+  bads "a shortcut is exactly USER/REPO" 'error[E621]: HERE/app/tomato.toml: "gh:dave" is not a host shortcut: write gh:USER/REPO' gh:dave --rev "$C1"
+  bads "a deeper path is not a shortcut" 'error[E621]: HERE/app/tomato.toml: "gitlab:g/s/r" is not a host shortcut: write gitlab:USER/REPO (exactly one user and one repository; a repository in a deeper folder takes --git URL and --subdir)' gitlab:g/s/r --rev "$C1"
+  bads "a Sourcehut user starts with ~" 'error[E621]: HERE/app/tomato.toml: "srht:dave/gs" is not a host shortcut: a Sourcehut user starts with ~, so write srht:~USER/REPO' srht:dave/gs --rev "$C1"
+  bads "a repository is written without .git" 'error[E621]: HERE/app/tomato.toml: "codeberg:dave/gs.git" is not a host shortcut: write the repository without .git' codeberg:dave/gs.git --rev "$C1"
+  bads "a user cannot start with a hyphen (it could be an option of git)" 'error[E621]: HERE/app/tomato.toml: "gh:-x/gs" is not a host shortcut: a user and a repository have letters, digits, dots, underscores and hyphens only' gh:-x/gs --rev "$C1"
+  bads "a word with another colon is no shortcut" 'error[E621]: HERE/app/tomato.toml: "sftp:dave/gs" is not a seed: a word with a colon is a host shortcut, and the shortcuts are gh:USER/REPO' sftp:dave/gs --rev "$C1"
+  bads "a URL is pointed at --git" 'error[E621]: HERE/app/tomato.toml: "https://example.org/x.git" is not a seed:' https://example.org/x.git --rev "$C1"
+  bads "a handle is recognised, and there is no registry to look it up" 'error[E571]: HERE/app/tomato.toml: dave/thing is a registry seed (owner: the handle dave), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT' dave/thing
+  bads "a name with a version too" 'error[E571]: HERE/app/tomato.toml: dave/thing is a registry seed (owner: the handle dave)' dave/thing@1.2.0
+  bads "a domain owner is a registry seed as well" 'error[E571]: HERE/app/tomato.toml: acme.example/json5 is a registry seed (owner: the domain acme.example)' acme.example/json5
+  bads "a reserved handle is not one" 'error[E621]: HERE/app/tomato.toml: "local/x" is not a seed name: the owner local has no dot, so it would be a handle, and it is not one (that name is reserved)' local/x
+  bads "a std module's name is a reserved handle" 'error[E621]: HERE/app/tomato.toml: "json/x" is not a seed name: the owner json has no dot, so it would be a handle, and it is not one (that name is reserved)' json/x
+  bads "a key-like owner is not a handle" 'error[E621]: HERE/app/tomato.toml: "k-abc/x" is not a seed name: the owner k-abc has no dot, so it would be a handle, and it is not one (a handle does not start with k-, which is for keys)' k-abc/x
+  bads "a one-letter handle is too short" 'error[E621]: HERE/app/tomato.toml: "d/x" is not a seed name: the owner d has no dot, so it would be a handle, and it is not one (a handle is 2 to 32 characters)' d/x
+  bads "a capital letter is no seed name" 'error[E621]: HERE/app/tomato.toml: "Dave/x" is not a seed name or a host shortcut: the owner has lowercase letters, digits, dots and hyphens only' Dave/x
+  bads "a bad version after @" 'error[E621]: HERE/app/tomato.toml: "dave/thing@1.2" has a version that is not one: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0' dave/thing@1.2
+  usage_add='usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]'
+  check "seed handles: two words are one too many" "error: tomato seed add takes one seed at a time: 'gh:dave/gs' and 'gh:a/b' ($usage_add)" "$(cd "$W/app" && tm $t seed add gh:dave/gs gh:a/b 2>&1)"
+  check "seed handles: a word does not go with --git" "error: tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed ($usage_add)" "$(cd "$W/app" && tm $t seed add gh:dave/gs --git "$W/gs.git" --rev "$C1" 2>&1)"
+  check "seed handles: none of the refused words touched tomato.toml" "$(printf '%s' "$head")" "$(cat "$W/app/tomato.toml")"
+  # ---- tomato seed check: a handle-shaped owner is accepted, with a note
+  r="$(cd "$W/gs" && tm $t seed check 2>&1 | head -n 2)"
+  check "seed handles: seed check accepts a handle as the owner, and says the registry grants it" "dave/gs 1.2.0: ok
+note: the owner dave is a handle: a registry has to grant it (a reviewed pull request), and there is no registry yet, so the seed is used from its git URL" "$r"
+  # ---- the # seeds: line of a program
+  fresh; : > "$W/urls.log"
+  (cd "$W/app" && tm $t seed add gh:dave/gs --rev "$C1" >/dev/null 2>&1)
+  lines_before="$(wc -l < "$W/urls.log" | tr -d ' ')"
+  hdr() { # LINES... : a program whose leading comment block is the lines, then a main that uses the seed
+    { printf '%s\n' "$@"; printf 'from gs import hi\n\n@main\ndef main():\n    print(hi())\n'; } > "$W/app/src/main.tom"
+  }
+  hdr '# seeds: dave/gs>=1.2'
+  check "seeds header: a seed the project locks is used; the line is checked, not fetched" "hi from gs" "$(cd "$W/app" && tm $t run 2>&1)"
+  check "seeds header: build reads it too" "wrote builds/app" "$(cd "$W/app" && tm $t build 2>&1)"
+  hdr '#!/usr/bin/env tomato' '' '# a program' '# seeds: dave/gs' '# seeds: dave/gs>=1.0.1, dave/gs>=1.1' ''
+  check "seeds header: after a #! line, comments and blank lines, several lines, a name alone or with a minimum" "hi from gs" "$(cd "$W/app" && tm $t run 2>&1)"
+  printf '@main\ndef main():\n    print("no header")\n\n# seeds: dave/nothing\n' > "$W/app/src/main.tom"
+  check "seeds header: a line below the first code is an ordinary comment" "no header" "$(cd "$W/app" && tm $t run 2>&1)"
+  hdr '# seeds are good' '# seeds : dave/nothing' '#seeds:dave/gs'
+  check "seeds header: other comments are comments, and # seeds: needs no space after the #" "hi from gs" "$(cd "$W/app" && tm $t run 2>&1)"
+  hdr '# seeds: dave/gs>=1.3'
+  check "seeds header: a minimum above the locked version is an error naming both" 'error[E622]: HERE/app/tomato.toml: src/main.tom asks for dave/gs>=1.3.0 in its "# seeds:" line, but tomato.lock has dave/gs 1.2.0: a minimum is met by the same version or a later one of the same compatible line
+  = help: use a seed of that version (tomato seed update, or add it at another rev), or change the line' "$(err run)"
+  hdr '# seeds: dave/gs>=2.0'
+  check "seeds header: another major line does not meet it either" 'error[E622]: HERE/app/tomato.toml: src/main.tom asks for dave/gs>=2.0.0 in its "# seeds:" line, but tomato.lock has dave/gs 1.2.0' "$(err run | head -n 1 | sed 's/\(lock has dave\/gs 1.2.0\): .*/\1/')"
+  hdr '# seeds: dave/gs, other.example/x>=1.0'
+  check "seeds header: a seed the project does not list is an error with the command to run" 'error[E622]: HERE/app/tomato.toml: src/main.tom names the seed other.example/x>=1.0.0 in its "# seeds:" line, but tomato.toml does not list it in [seeds]
+  = help: tomato seed add gh:USER/REPO --rev COMMIT (or --git URL, or --path DIR) adds a seed and locks it; a name alone cannot be fetched until there is a registry' "$(err run)"
+  hdrbad() { # NAME EXPECTED LINES...: a line that cannot be read
+    n="$1"; e="$2"; shift 2; hdr "$@"; r="$(err run)"
+    case "$r" in "$e"*) ok "seeds header: $n" ;; *) bad "seeds header: $n" "expected: $e
+got:      $r" ;; esac
+  }
+  hdrbad "no seed after the colon" 'error[E622]: src/main.tom:1: the "# seeds:" line names no seed: write # seeds: dave/thing>=1.2' '# seeds:'
+  hdrbad "an empty entry" 'error[E622]: src/main.tom:1: the "# seeds:" line has an empty entry (a comma with no seed beside it)' '# seeds: dave/gs,'
+  hdrbad "only >= is a comparison" 'error[E622]: src/main.tom:1: "dave/gs==1.2" in the "# seeds:" line is not NAME or NAME>=VERSION: a version is written as a minimum, dave/thing>=1.2 (the line has no other comparison)' '# seeds: dave/gs==1.2'
+  hdrbad "a space inside a name" 'error[E622]: src/main.tom:1: "dave/gs 1.2" in the "# seeds:" line is not NAME or NAME>=VERSION' '# seeds: dave/gs 1.2'
+  hdrbad "a version needs two numbers at least" 'error[E622]: src/main.tom:1: ">=1" in the "# seeds:" line is not a version: it needs MAJOR.MINOR or MAJOR.MINOR.PATCH, such as 1.0 or 1.2.0' '# seeds: dave/gs>=1'
+  hdrbad "a name with no owner" 'error[E622]: src/main.tom:1: "gs" in the "# seeds:" line is not a seed name: a seed name is owner/name with exactly one slash' '# seeds: gs'
+  hdrbad "the line number is the line of the bad entry" 'error[E622]: src/main.tom:3: "Dave/gs" in the "# seeds:" line is not a seed name:' '# one' '# two' '# seeds: Dave/gs'
+  hdrbad "a host shortcut is not a seed name in the line" 'error[E622]: src/main.tom:1: "gh:dave/gs" in the "# seeds:" line is not a seed name' '# seeds: gh:dave/gs'
+  # ---- never the network: nothing above ran git again, and a missing copy is the error that says to install
+  check "seeds header: run and build never started git (the URL log is as it was after the add)" "$lines_before" "$(wc -l < "$W/urls.log" | tr -d ' ')"
+  hdr '# seeds: dave/gs>=1.2'
+  rm -rf "$th/seeds/store"
+  r="$(err run)"
+  case "$r" in "error[E569]: HERE/app/tomato.toml: the seed dave/gs is not in the seed store ("*"
+  = help: run: tomato seed install") ok "seeds header: a locked seed that is not in the store is the error to run tomato seed install" ;; *) bad "seeds header: a locked seed that is not in the store is the error to run tomato seed install" "$r" ;; esac
+  r="$(err build)"
+  case "$r" in "error[E569]: "*"run: tomato seed install") ok "seeds header: and build says the same" ;; *) bad "seeds header: and build says the same" "$r" ;; esac
+  check "seeds header: the failed run and build did not fetch" "$lines_before" "$(wc -l < "$W/urls.log" | tr -d ' ')"
+  check "seeds header: seed install brings it back (the only command that fetches)" "hi from gs" "$(cd "$W/app" && tm $t seed install >/dev/null 2>&1; tm $t run 2>&1)"
+  # ---- a program with no project has no lock to take its seeds from
+  mkdir -p "$W/lone"; printf '# seeds: dave/gs>=1.2\n@main\ndef main():\n    print(1)\n' > "$W/lone/x.tom"
+  check "seeds header: a program outside every project with a # seeds: line is an error" 'error[E622]: x.tom: the "# seeds:" line names dave/gs>=1.2.0, but there is no tomato.toml in this folder or a parent folder, so no seed is locked for it
+  = help: start a project (tomato init), then add the seeds there (tomato seed add gh:USER/REPO --rev COMMIT, or --git URL, or --path DIR); a name alone cannot be fetched until there is a registry' "$(cd "$W/lone" && tm $t run x.tom 2>&1 | norm)"
+  check "seeds header: and so is build" "error[E622]: x.tom: the \"# seeds:\" line names dave/gs>=1.2.0, but there is no tomato.toml" "$(cd "$W/lone" && tm $t build x.tom -o xb 2>&1 | norm | head -n 1 | sed 's/ but there is no tomato.toml.*/ but there is no tomato.toml/;s/, but there is no tomato.toml.*/, but there is no tomato.toml/')"
+  printf '@main\ndef main():\n    print(1)\n' > "$W/lone/y.tom"
+  check "seeds header: a program with no line runs as before" "1" "$(cd "$W/lone" && tm $t run y.tom 2>&1)"
+  cd "$root" || return 1
 }
 t_cli_seed_update() { # tomato seed verify, seed update (tag and branch, --dry-run, the question about new symbols) and the git seed's path (a folder of a repository); local bare git repos only, no network
   cli_setup
@@ -3064,6 +3210,7 @@ spawn_cli t_cli_build_tables
 spawn_cli t_cli_seeds
 spawn_cli t_cli_seed_store
 spawn_cli t_cli_seed_update
+spawn_cli t_cli_seed_handles
 spawn_cli t_cli_project
 spawn_cli t_manifest_logic
 spawn_cli t_manedit_logic

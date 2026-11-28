@@ -20,6 +20,12 @@ owner is gone (what remains of it is marked *not adopted for 1.0*), a maintainer
 17, 18.9.4 and stages 4 and 5), and handles and host shortcuts read as decided. Signing keys stay: every statement is still signed by a
 key, but the key is never an identity by itself.
 
+**Update, 2026-11-27 (D124a in `docs/decisions.md`):** what D117a decided and the registry does not need is **built**: the host shortcuts in
+`tomato seed add` (section 6, item 3; only the https URL is stored), the handle grammar and the refusal of a registry name while there is no
+registry (section 1.10), and the `# seeds:` line of a program, read by `run`/`build`/`compile` and checked against the project's lock, never
+fetching (sections 5 and 6; `docs/manifest.md`). Looking up a handle, its grant, `request-handle`, `[git-hosts]` and the lock of a program outside every project
+are not built (stage 4).
+
 **Update, 2026-11-27 (D100a in `docs/decisions.md`):** Davis added that **short (bare) names** are granted by a **reviewed
 pull request**, Homebrew-like: "you put in a pull request and it probably will be accepted". A pull request here is any
 request to merge a change into the index, on whatever host the index lives. Use (`owner/name`, no approval, no accounts, any
@@ -409,7 +415,7 @@ is the "curated" column's subjectivity and single point of trust, limited to sho
 by what a maintainer cannot do (section 18.9.3: no deleting or editing, no listing or delisting one seed, no touching
 `owner/name` use or a lock). Davis answered the remaining point on 2026-11-27 (D117a): maintainers **may** yank a version in an emergency, **listing-only**, designed in section 18.9.4 (open question 1).
 
-### 1.10 Handles: `dave/thing` (**decided for 1.0, Davis, 2026-11-27, D117a**; the numbers marked proposed below are still open)
+### 1.10 Handles: `dave/thing` (**decided for 1.0, Davis, 2026-11-27, D117a**; the numbers marked proposed below are still open; **built so far, D124a:** the shape `[a-z][a-z0-9-]{1,31}` with the reserved names, `seed add dave/thing` recognising a registry name and stopping with E571, and `seed check` accepting a handle owner; the request, the grant and the lookup wait for the registry)
 
 Davis asked for `username/x` names and for hosts other than GitHub. With short names decided by a reviewed pull request, a
 short **handle** is possible without an account system. With key-only owners ruled out (D117a) a handle is **how an author with
@@ -799,7 +805,7 @@ always stores the real URL, the commit and the content hash, never a shortcut or
 
 1. a registered `owner/name` or a **handle** `dave/thing` (section 1.10): the index entry holds the URL;
 2. `tomato seed add --git URL --rev TAG|COMMIT` (unregistered, a project only);
-3. a **host shortcut** (**decided for 1.0**, D117a), expanded by `add` before it does anything else: `gh:USER/REPO`,
+3. a **host shortcut** (**decided for 1.0**, D117a; **built D124a** except the user's `[git-hosts]`), expanded by `add` before it does anything else: `gh:USER/REPO`,
    `gitlab:USER/REPO`, `codeberg:USER/REPO`, `srht:~USER/REPO`, equal to `--git https://github.com/USER/REPO.git`,
    `https://gitlab.com/USER/REPO.git`, `https://codeberg.org/USER/REPO.git` and `https://git.sr.ht/~USER/REPO`. The table is
    built in and a user may add entries in `[git-hosts]` of the user's configuration; a project's `tomato.toml` cannot, so a
@@ -848,7 +854,7 @@ edited, so there is no "dirty store".
 - **`tomato run`, `build`, `compile` and `test` never use the network** and never fetch. They read the lock and the
   store (or `vendor/`), and if a seed is missing or the lock is out of step with `tomato.toml` they stop with one line:
   `run: tomato seed install`. Fetching and running third-party code in one command is the habit this design avoids
-  (decision, open question 5).
+  (decision, open question 5). A program's `# seeds:` line (D117a, built D124a) is checked against the same lock and store and changes nothing about this: it names seeds and minimum versions, and the project says where they come from.
 - **`tomato seed install --offline`** fails rather than trying the network; with a complete store or vendor folder it
   is a no-op check.
 - The **source host disappearing** is the real offline risk of "source in the author's own repo": the store, a vendor
@@ -1060,8 +1066,8 @@ tomato seed init [OWNER/NAME]               start a seed (`[seed]`, src/), or wi
 tomato seed add NAME[@VERSION]              add (or raise) a requirement, update tomato.toml and tomato.lock, fetch into the store
 tomato seed add --git URL [--rev R|--tag T|--branch B] [--subdir DIR] [--name N]    unregistered source, by git URL (a project only). Built (D103a) except --name:
                                             --tag and --branch look the ref up once and write its commit as the rev (the name is kept for `update`); --subdir is `path`
-tomato seed add gh:USER/REPO | gitlab:USER/REPO | codeberg:USER/REPO | srht:~USER/REPO  [--rev R|--tag T] [--name N]
-                                            host shortcuts (decided for 1.0, D117a): expanded to the full https URL at once, then as --git;
+tomato seed add gh:USER/REPO | gitlab:USER/REPO | codeberg:USER/REPO | srht:~USER/REPO  [--rev R|--tag T|--branch B] [--subdir D]
+                                            host shortcuts (built, D124a; `--name` is not): expanded to the full https URL at once, then as --git;
                                             the lock stores the URL and the hash, never the shortcut (section 6, "Any git host")
 tomato seed add --path DIR                  unregistered source, a local folder (a project only; for development)
 tomato seed add NAME --from-owner | --index-only    use only the owner's server (domain owners), or never fall back to it (section 18.2)
@@ -1731,6 +1737,7 @@ and starts with its answer.
    two owners' same-named seeds meet, and may rename it with `as`. **Still open:** new syntax with the owner
    (`from acme.example/json5 import parse`) and per-importer module renaming, which would allow two majors of a seed in one
    program. *Recommended: no more language change for now; choose those two together later, not in this design.*
+   **Built (D124a):** the header is read by `run`, `build` and `compile` and checked against the project's lock; the choices made for the grammar and for a program with no project are in D124a and need Davis's yes.
    **Answered for the header (Davis, 2026-11-27, D117a):** a single `.tom` file names the seeds it needs in a **header comment line**, for example
    `# seeds: dave/thing>=1.2`, which `tomato run` and `tomato build` read (details of the line, the multi-seed form and how it meets
    `tomato.toml`, are the implementer's to propose). New import syntax and per-importer renaming are still open.
