@@ -16,5 +16,3 @@
   Check the kqueue wait on pipes and the `/dev/fd` listing (`tests/programs/sys_async.tom`, and the open-files check in `tests/programs/sys_run.tom`); everything of D98b was tested on Linux only.
 - Decide whether local variables and parameters shadow builtins in calls
   Ask Davis whether local variables and parameters should shadow builtins in calls too (Python's rule). Today the `shadow` warning says a local 'hides' the name, but a call `len(x)` still reaches the builtin. Changing it could break programs that have a local `len` and call `len(x)`.
-- Fix the failing repl test expectation for a refused redeclaration of a variable
-  The check `repl: a refused redeclaration of a variable keeps the old variable and its value` in `tests/run.sh` expects `print(x + 1)` in the shown session program, but the repl now writes `_core_print(x + 1)`. Failing on main's code, unrelated to the optional-interface task.

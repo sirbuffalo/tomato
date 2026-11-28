@@ -2342,7 +2342,7 @@ hint: the earlier lines of the session run again with the new P, and one of them
 @main
 def tomato_repl_main():
     x: int = 1
-    print(x + 1)" "$(printf 'x: int = 1\nx: int = "a"\nx + 1\n:program\n:quit\n' | $t repl 2>&1)"
+    _core_print(x + 1)" "$(printf 'x: int = 1\nx: int = "a"\nx + 1\n:program\n:quit\n' | $t repl 2>&1)"
   check "repl: a redeclared variable takes the place of the old one, so an earlier line that used it runs with the new value" "1
 2
 @main
