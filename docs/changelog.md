@@ -4,10 +4,13 @@ What changed in each release, for people who use Tomato. The GitHub release page
 (`release/release.sh` creates it with `--generate-notes`); this file is the short, readable version. Decision numbers
 (D78a and so on) point into `docs/decisions.md`.
 
-From 1.0.0 on, all releases of one minor version (1.0.0, 1.0.1, ...) are compatible with each other: a program that
-works on one works the same on the others (except the 4 features on the unstable list in `docs/provisional.md`). A new minor version
-(1.1.0) may change behaviour, and its section lists each such change under **Breaking changes**; a patch release has
-none. `tomato update` installs patch releases at once and a new minor version only with `tomato update --minor`.
+From 1.0.0 on the language (syntax and rules) is frozen: a program that works on 1.0.0 works the same on every later 1.x
+release (except the 6 features on the unstable list in `docs/provisional.md`, which can change in any release). The standard
+library follows Python's rule: a module or function may be removed in a new minor version (1.1.0 and later), but only after an
+earlier minor version deprecated it with a compile-time warning (its section lists it under **Deprecated**); otherwise std only
+adds. A minor version's section lists each change that can break a program under **Breaking changes**; a patch release has
+none (`docs/releasing.md`, Compatibility). When the Unicode version behind the text functions changes, the changelog names it
+(it is not part of the promise). `tomato update` installs patch releases at once and a new minor version only with `tomato update --minor`.
 
 ## 1.0.0 (draft, not released yet)
 
@@ -111,7 +114,7 @@ on an older install moves to 1.0.0 as usual.
   others), so they work on lists of angles (D85b).
 - `tuple[A, B]` parses in expression position; mixed tuples, lists and objects inside unions print properly.
 - `set.discard(x)` compiles correctly.
-- **The compatibility promise has a short list of exceptions (D109a).** `docs/provisional.md` was triaged: 58 of its 91 rows are decided, 26 removed and 7 are the *unstable list* that 1.0.x does not promise (error message wording, the edges of the type test, `!name` foreign functions, entry markers other than `@main`, the host input protocol, the text `progress_bar` draws, `random.choice`/`shuffle`/`sample`). Proposed, to be confirmed: an error id never changes its meaning, the class an operation raises does not change within a minor version, and message text may be reworded in a patch release (`docs/releasing.md`). `docs/errors.md` says how two branches that each add an error resolve the id clash.
+- **The compatibility promise (D109a, D117a, D126a).** The language (syntax and rules) is frozen in 1.x, among them that a block starts no scope, conditions must be `bool`, a name declared again with the same type is accepted (another type is E292) and a subclass may not redeclare a field. The standard library follows Python's rule: a module or function may be removed in a minor release, but only after an earlier minor release deprecated it with a compile-time warning; otherwise std only adds (the warning does not exist yet, so nothing is removed before it is built). `docs/provisional.md` was triaged: 61 of its 91 rows are decided, 26 removed, and the *unstable list* that the promise does not cover has 6 features, any of which can change in a 1.x release (error message wording, the host input protocol, the text `progress_bar` draws, `random.choice`/`shuffle`/`sample`, the operator and protocol marker names beyond `@add`, the order async tasks run in). The edge cases of the number-theory helpers (`is_prime` above 3.3 * 10^24, `prev_prime`, `nth_prime`, `totient`, `is_coprime`, `lcm`) and the Unicode version are not promised, and neither are the debug-mode leak report and `TOMATO_GC_STATS`. Also adopted: an error id never changes its meaning, the class an operation raises does not change within a minor version, and message text may be reworded in a patch release (`docs/releasing.md`). `docs/errors.md` says how two branches that each add an error resolve the id clash.
 
 ### Faster big integers
 

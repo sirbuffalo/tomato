@@ -30,7 +30,9 @@ fractions and found no wrong results in `*`, `//`, `%`, `str`, `int(text)` or th
 
 ## 1. The compatibility promise itself
 
-### 1.1 The exemption for `docs/provisional.md` is too large (Blocks 1.0)
+### 1.1 The exemption for `docs/provisional.md` is too large (Blocks 1.0) — done, and answered by Davis (2026-11-27, D109a, D126a)
+
+**Outcome.** The table was triaged (D109a) and Davis answered the judgment calls the same day (D126a, `docs/provisional-triage.md`): the language itself (syntax and rules) is frozen in 1.x, including P7, P8, P14 and P17; the standard library follows Python's rule (a module or function may be removed in a minor release, but only after an earlier minor release warned about it at compile time; otherwise std only adds); the unstable list has 6 features, with the marker names beyond `@add` (P23, P65) and the order async tasks run in (P85) added to the four that were there, any of which can change in a 1.x; the number-theory edge cases (P67, P70, P71, P73, P77, P78, P79) are not frozen; decided rules the compiler does not enforce (P15, P16) stay out of the promise. His principle: freeze less rather than more. The promise is in `docs/releasing.md`, Compatibility. The text below is the original problem and proposal.
 
 **Problem.** `docs/releasing.md` (Compatibility) promises that 1.0.x releases are compatible "except for the placeholders
 in `docs/provisional.md`". That file has 91 placeholder rows (`grep -c '^| P[0-9]' docs/provisional.md`), 25 of them
@@ -128,7 +130,9 @@ keep growing builtins.
 
 **Cost.** A name-resolution change in `compiler/src/compiler.tom`, plus tests. It decides how std grows after 1.0.
 
-### 1.5 The Unicode version is part of the behaviour (Do soon)
+### 1.5 The Unicode version is part of the behaviour (Do soon) — answered by Davis (2026-11-27, D126a): no Unicode promise; the changelog names the version when it changes
+
+**Answered.** Davis accepted the recommendation of `docs/provisional-triage.md` judgment 13 (2026-11-27, D126a): the promise says nothing about the Unicode version, so a release may change it, and the changelog of the release that does names the new version. The proposal below, to promise that it changes only in minor releases, is not adopted (freeze less).
 
 **Problem.** `upper()`, `lower()`, `title()`, `isalpha()` and `isdigit()` follow Unicode 16.0 tables in the runtime
 (D17d, P89). The terminal width table was Unicode 15.1 until it was regenerated for 16.0 (`tools/gen_width_table.py`). A new Unicode
@@ -616,7 +620,7 @@ commit `a95070c5` is good: this audit found no way to lose the old install.
 In the order I would take them, with my recommendation for each. The first eight are the ones 1.0 locks in.
 
 1. **The compatibility promise's exceptions (1.1, 1.2).** Promote most `docs/provisional.md` rows to decided, keep a
-   short named unstable list, and state that error ids and classes are stable while message text is not.
+   short named unstable list, and state that error ids and classes are stable while message text is not. *Decided and written (D109a, D117a, D126a): the language is frozen in 1.x, std may lose a module or function only after a minor release deprecated it, and the unstable list has 6 features.*
 2. **Release-mode error output (1.3).** Print the class and message of every uncaught error in release mode.
 3. **Builtins versus user names (1.4).** A module's own definitions shadow builtins. *Decided by Davis on 2026-11-27 and built (D108a).*
 4. **The `@` namespace and the type test (2.1, 2.2).** Entry points other than `main` as `@entry`; type tests as
