@@ -1,0 +1,6 @@
+error[E651]: the name 'e' belongs to a catch block that has ended, so it has no value here
+ --> tests/errors/catch_name_after_try.tom:7:11
+  |
+7 |     print(e.message)
+  |           ^
+  = help: use it inside the block, or copy the error to a variable declared before the try (last: ValueError | None = None, then last = e in the block)

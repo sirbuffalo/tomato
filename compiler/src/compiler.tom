@@ -9,7 +9,7 @@
 from parser import Node, Val, parse, path_text, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
 from lexer import LexError, parse_format_spec
 from diag import Diagnostic, format_error, closest
-from lint import lint_items, falls_through, builtin_names
+from lint import lint_items, falls_through, builtin_names, catch_name_read
 from modnames import std_modules
 from unstable import unstable_rows
 from deprecated import deprecated_rows
@@ -13106,6 +13106,9 @@ def param_types(f: Node, info: FuncInfo) -> list[str]:
 # after the body: a function that gives a value must not reach its end (if the check cannot tell, reaching it stops the
 # program); one that gives nothing returns from there
 def end_body(g: Gen, f: Node, info: FuncInfo):
+    stale = catch_name_read(param_names(f), val_nodes(f.fields[3]))
+    if stale.line != 0:
+        raise CompileError(f"the name '{stale.message}' belongs to a catch block that has ended, so it has no value here\nuse it inside the block, or copy the error to a variable declared before the try (last: ValueError | None = None, then last = e in the block)", stale.line)
     if info.ret != '' and falls_through(val_nodes(f.fields[3])):
         raise CompileError(f"the function '{info.name}' can reach its end without returning a value\nend every path with a return, for example give the last if an else that returns", f.line)
     if g.terminated:

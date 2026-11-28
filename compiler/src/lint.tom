@@ -372,6 +372,93 @@ def lint_function(f: Node, module_names: list[str], found: list[Finding]):
 def scan_node(n: Node, u: Usage):
     scan(vn(n), u)
 
+# ---- a catch name read after its catch block (an error, not a warning: the name has no value there, and a read of it stops the program)
+
+class Scope:
+    bound: list[str] = []      # the names that have been given a value so far (in the order written), a catch name inside its block included
+    dead: list[str] = []       # catch names whose block has ended and that nothing else gave a value
+    line: int = 0              # the first read of a dead name (0: none)
+    name: str = ''
+
+def scope_bind(sc: Scope, name: str):
+    if name not in sc.bound:
+        sc.bound.append(name)
+    sc.dead = [d for d in sc.dead if d != name]
+
+def scope_reads(sc: Scope, v: Val):
+    names: list[Node] = []
+    reads(v, names)
+    for r in names:
+        if sc.line == 0 and r.fields[0].text in sc.dead:
+            sc.line = r.line
+            sc.name = r.fields[0].text
+    comps: list[str] = []
+    comp_bound(v, comps)           # a comprehension's variable stays a variable of the function (D53c)
+    for c in comps:
+        scope_bind(sc, c)
+
+def scope_block(sc: Scope, body: list[Node]):
+    for s in body:
+        scope_stmt(sc, s)
+
+def scope_stmt(sc: Scope, s: Node):
+    k = s.kind
+    if k == 'Assign':
+        scope_reads(sc, s.fields[1])
+        target = val_node(s.fields[0])
+        if target.kind == 'Name':
+            scope_bind(sc, target.fields[0].text)
+        else:
+            scope_reads(sc, s.fields[0])
+    elif k == 'Declare':
+        scope_reads(sc, s.fields[2])
+        scope_bind(sc, s.fields[0].text)
+    elif k == 'Multi':
+        scope_block(sc, val_nodes(s.fields[0]))
+    elif k == 'If':
+        for branch in s.fields[0].items:
+            scope_reads(sc, branch.items[0])
+            scope_block(sc, val_nodes(branch.items[1]))
+        if s.fields[1].tag == 'l':
+            scope_block(sc, val_nodes(s.fields[1]))
+    elif k == 'While':
+        for _ in range(2):                  # a second time round: what the end of the body leaves dead is what its start sees
+            scope_reads(sc, s.fields[0])
+            scope_block(sc, val_nodes(s.fields[1]))
+    elif k == 'For' or k == 'AsyncFor':
+        scope_reads(sc, s.fields[1])
+        for _ in range(2):
+            scope_bind(sc, s.fields[0].text)
+            scope_block(sc, val_nodes(s.fields[2]))
+    elif k == 'Try':
+        scope_block(sc, val_nodes(s.fields[0]))
+        for h in s.fields[1].items:
+            var = ''
+            fresh = False
+            if h.items[1].tag == 's':
+                var = h.items[1].text
+                fresh = var not in sc.bound         # a name that had a value before the try keeps it: it is an ordinary variable too
+                scope_bind(sc, var)
+            scope_block(sc, val_nodes(h.items[2]))
+            if fresh:
+                sc.bound = [b for b in sc.bound if b != var]
+                sc.dead.append(var)
+        if s.fields[2].tag == 'l':
+            scope_block(sc, val_nodes(s.fields[2]))
+        if s.fields[3].tag == 'l':
+            scope_block(sc, val_nodes(s.fields[3]))
+    else:
+        for f in s.fields:
+            scope_reads(sc, f)
+
+# The first read, in a function, of a `catch ... as e` name after the catch block that bound it (the finding's message is the name),
+# or a finding with line 0. A name that had a value before the try (a parameter or a variable) is an ordinary variable and is not checked.
+export def catch_name_read(params: list[str], body: list[Node]) -> Finding:
+    sc = Scope()
+    sc.bound = params[:]
+    scope_block(sc, body)
+    return finding(sc.line, 'catch-name', sc.name)
+
 # ---- a whole file
 
 def any_starts(names: list[str], prefix: str) -> bool:

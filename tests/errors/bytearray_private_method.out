@@ -1,0 +1,6 @@
+error[E280]: the method '_room' is private to class 'bytearray.bytearray'
+ --> tests/errors/bytearray_private_method.tom:4:7
+  |
+4 |     a._room(100)
+  |       ^^^^^
+  = help: only its own methods can call it

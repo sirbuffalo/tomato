@@ -35,8 +35,8 @@ def _check_byte(v: int):
         raise ValueError(f'a byte must be a whole number from 0 to 255, but this is {v}', 'E648')
 
 export class bytearray:
-    buf: bytes = b''
-    n: int = 0
+    private buf: bytes = b''
+    private n: int = 0
 
     @init
     def make(self, value: int | bytes | list[int] | bytearray = 0):
@@ -59,11 +59,11 @@ export class bytearray:
         self.n = len(data)
 
     # the bytes of the contents, a copy: bytes(a) is this (the compiler calls it), and so are the readers below
-    def _to_bytes(self) -> bytes:
+    def private _to_bytes(self) -> bytes:
         return !tomato_bytearray_take(self.buf, self.n)
 
     # makes room for `extra` more bytes: a bigger slab, twice the size so that appending is linear, when the one it has is full
-    def _room(self, extra: int):
+    def private _room(self, extra: int):
         need = self.n + extra
         if need > len(self.buf):
             cap = len(self.buf) * 2
@@ -74,7 +74,7 @@ export class bytearray:
             self.buf = !tomato_bytearray_slab(self.buf, self.n, cap)
 
     # the position i names (a negative one counts from the end), or IndexError
-    def _index(self, i: int) -> int:
+    def private _index(self, i: int) -> int:
         k = i
         if k < 0:
             k += self.n
@@ -236,5 +236,5 @@ export class bytearray:
         return self._to_bytes().decode(encoding, errors)
 
     @str
-    def text(self) -> str:
+    def private text(self) -> str:
         return f'bytearray({self._to_bytes()})'

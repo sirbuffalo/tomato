@@ -648,3 +648,4 @@ IndexError bytearray index is out of range
 ValueError a byte must be a whole number from 0 to 255, but this is
 IndexError pop from an empty bytearray
 ValueError the byte is not in the bytearray
+CompileError the name '{}' belongs to a catch block that has ended, so it has no value here

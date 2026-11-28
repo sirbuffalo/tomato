@@ -1,0 +1,6 @@
+@main
+def main():
+    a = bytearray(b'abc')
+    a.n = 100000
+    a[99999] = 7
+    print(a[99999])

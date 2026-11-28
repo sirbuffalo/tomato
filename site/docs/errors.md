@@ -255,6 +255,13 @@ Anywhere else a bare `raise` is a compile error, E614 (`'raise' with no error ca
 `catch`, in the `try` body or its `finally`, and in a function that a `catch` calls (give that function the error as an argument and
 `raise e`; `raise e` makes the error leave from that line, with a trace that starts there).
 
+**The `catch` name belongs to its block (D131a).** In `catch ValueError as e:` the name `e` has a value only inside that block. Reading it after
+the block (after the `try`, in its `else` or `finally`, or in the next pass of a loop) is a compile error, E651 (`the name 'e' belongs to a catch
+block that has ended, so it has no value here`), because no error was caught on the path that skips the block and the program would stop there. To use the error afterwards,
+copy it to a variable declared before the `try` (`last: ValueError | None = None`, then `last = e` in the block). A name that already had a value before the `try`
+(a parameter, or a variable assigned earlier) is an ordinary variable that the `catch` gives a new value, and stays usable; the same name in two `catch` blocks
+is fine. A variable that a loop or an `if` gives a value to is still the function's (P7), and the `unassigned` warning below covers it.
+
 Write your own with `class MyError(RuntimeError)`. A class that declares no fields of its own inherits its parent's `@init`
 (D93b), so `class NotFound(Error): pass` is made with `NotFound('no such user')` or `NotFound('no such user', 'E7')` (message,
 then an optional id; both may be left out, and the message is then `""`), and so is `class Missing(NotFound): pass`. The class can give its own `@init` to take other arguments,

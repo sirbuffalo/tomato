@@ -1,0 +1,6 @@
+error[E280]: the method 'text' is private to class 'bytearray.bytearray'
+ --> tests/errors/bytearray_private_text.tom:4:13
+  |
+4 |     print(a.text())
+  |             ^^^^
+  = help: only its own methods can call it

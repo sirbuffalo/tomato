@@ -1,0 +1,6 @@
+error[E267]: the field 'buf' is private to class 'bytearray.bytearray'
+ --> tests/errors/bytearray_private_buffer.tom:4:17
+  |
+4 |     print(len(a.buf))
+  |                 ^^^
+  = help: only its own methods can use it

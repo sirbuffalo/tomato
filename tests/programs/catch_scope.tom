@@ -1,0 +1,96 @@
+# The name of `catch ... as e` belongs to its block (the fourth audit, blocker 4): reading it after the block is a compile error
+# (tests/errors/catch_name_*). What stays allowed is every use where the name has a value: inside the block, a name that had a value
+# before the try (a parameter or a variable: an ordinary variable that the catch gives a new value), the same name in several
+# catch blocks, a name bound again inside its own block, and a copy of the error kept in another variable.
+def after_param(e: ValueError, fail: bool) -> str:
+    try:
+        if fail:
+            raise ValueError('param-new')
+    catch ValueError as e:
+        print('caught', e.message)
+    return e.message
+
+async def in_task(n: int) -> str:
+    try:
+        if n > 0:
+            raise KeyError(f'task {n}')
+    catch KeyError as ex:
+        return ex.message
+    return 'no error'
+
+class Probe:
+    last: str = ''
+
+    def run(self, fail: bool):
+        try:
+            if fail:
+                raise IOError('probe failed')
+        catch IOError as err:
+            self.last = err.message
+        else:
+            self.last = 'fine'
+        finally:
+            print('probe done', self.last)
+
+@main
+async def main():
+    # a variable that had a value: the catch gives it a new one, and it stays after the block
+    e = ValueError('first')
+    try:
+        print('nothing raised')
+    catch ValueError as e:
+        print('not reached')
+    print(e.message)
+    try:
+        raise ValueError('second')
+    catch ValueError as e:
+        print('caught', e.message)
+    print(e.message)
+    print(after_param(ValueError('given'), False))
+    print(after_param(ValueError('given'), True))
+    # the same name in two blocks, each used inside its own block
+    try:
+        raise IOError('one')
+    catch IOError as err:
+        print(err.message)
+    try:
+        raise IOError('two')
+    catch IOError as err:
+        print(err.message)
+    # one name for two classes of error, one block after the other
+    try:
+        raise ValueError('as value error')
+    catch ValueError as who:
+        print(who.message)
+    try:
+        raise KeyError('as key error')
+    catch KeyError as who:
+        print(who.message)
+    # the name bound again inside its own block
+    try:
+        raise ValueError('outer')
+    catch ValueError as o:
+        try:
+            raise ValueError('inner')
+        catch ValueError as o:
+            print(o.message)
+        print(o.message)
+    # each pass of a loop binds it again
+    for i in range(3):
+        try:
+            if i != 1:
+                raise ValueError(f'pass {i}')
+        catch ValueError as le:
+            print(le.message)
+    # a copy of the error kept for after the try
+    kept: ValueError | None = None
+    try:
+        raise ValueError('kept error')
+    catch ValueError as ce:
+        kept = ce
+    if kept is not None:
+        print(kept.message)
+    print(await in_task(7))
+    p = Probe()
+    p.run(False)
+    p.run(True)

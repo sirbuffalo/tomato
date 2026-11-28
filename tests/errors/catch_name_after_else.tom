@@ -1,0 +1,15 @@
+class Probe:
+    def run(self) -> str:
+        try:
+            print('ok')
+        catch IOError as err:
+            return err.message
+        else:
+            print('else')
+        finally:
+            print(err.message)
+        return 'done'
+
+@main
+def main():
+    print(Probe().run())

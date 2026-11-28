@@ -1,0 +1,6 @@
+error[E267]: the field 'n' is private to class 'bytearray.bytearray'
+ --> tests/errors/bytearray_private_field.tom:4:7
+  |
+4 |     a.n = 100000
+  |       ^
+  = help: only its own methods can use it
