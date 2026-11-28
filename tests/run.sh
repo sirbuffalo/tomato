@@ -107,7 +107,7 @@ await_object() { # waits for the bootstrap object t_compiler_build makes; fails 
 job_run() { # id, function and arguments: runs it in a folder of its own
   id="$1"; shift; work="$shared/j$id"; mkdir -p "$work"; eval "section_name=\$sec_$id"
   case "$1" in   # (the ones that do not link a program with the runtime do not wait for it)
-    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_release_resume|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists) ;;
+    t_install|t_compiler_build|t_cli_update|t_cli_update_versions|t_atomic_install|t_atomic_update|t_release_versions|t_release_resume|t_wasm_*|t_error_templates|t_error_raises|t_sys_version|t_builtin_folder|t_docs_in_sync|t_versions|t_highlighter_lists|t_shell_portability) ;;
     *) await_file "$shared/rt_o.path"; rt_o="$(cat "$shared/rt_o.path")" ;;
   esac
   if [ -n "$times" ]; then
@@ -739,7 +739,9 @@ if [ -n "$have_js" ]; then
   spawn_free t_wasm_site_editor
 else spawn_free t_wasm_missing; fi
 
+t_shell_portability() { r="$(sh tests/shell_portability.sh 2>&1)"; [ "$r" = ok ] && ok "no shipped shell script has a case inside a command substitution (bash 3.2)" || bad "shell portability" "$r"; }
 spawn_free t_highlighter_lists
+spawn_free t_shell_portability
 
 # ---- command line -------------------------------------------------------------------------------------------------------
 need_install() { # waits (up to 10 minutes) for t_install; a job whose install never reported fails instead of waiting for ever

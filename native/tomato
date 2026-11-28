@@ -171,7 +171,9 @@ case "$cmd" in
     if [ "$(semver_cmp "$latest" "$have")" != 1 ]; then echo "tomato v$have is the latest"; exit 0; fi
     if [ "$minor" = 0 ] && [ "${have%%.*}" != 0 ] && [ "$(semver_cmp "$(echo "$latest" | cut -d. -f1,2).0" "$(echo "$have" | cut -d. -f1,2).0")" = 1 ]; then
       echo "tomato v$latest is out, a new minor or major version: it may change how programs behave (see its release notes)."
-      echo "You have v$have. Install it with: tomato update --minor$(case "$latest" in *-*) echo " --pre" ;; esac)"; exit 0
+      pre_flag=""
+      case "$latest" in *-*) pre_flag=" --pre" ;; esac
+      echo "You have v$have. Install it with: tomato update --minor$pre_flag"; exit 0
     fi
     echo "updating v$have -> v$latest"
     # everything is downloaded and checked in a temporary folder, which goes on any exit, error or signal (Ctrl-C, SIGTERM): a
@@ -279,7 +281,10 @@ case "$cmd" in
     for f in tomato.toml "$mainfile" tests/example.tom .gitignore; do
       if [ -e "$f" ] || [ -L "$f" ]; then existing="$existing${existing:+, }$f"; fi
     done
-    [ -z "$existing" ] || die "tomato init will not overwrite: $existing (nothing was written; move them away, or use another folder)$(case "$existing" in *.gitignore*) echo "; an existing .gitignore needs the line builds/ added by hand" ;; esac)"
+    # the hint is built here, not by a case inside a command substitution in the double quotes: bash 3.2 (macOS /bin/sh) mis-parses that
+    gi_hint=""
+    case "$existing" in *.gitignore*) gi_hint="; an existing .gitignore needs the line builds/ added by hand" ;; esac
+    [ -z "$existing" ] || die "tomato init will not overwrite: $existing (nothing was written; move them away, or use another folder)$gi_hint"
     for d in src tests; do
       if [ -e "$d" ] && [ ! -d "$d" ]; then die "$d exists and is not a folder (nothing was written)"; fi
     done
