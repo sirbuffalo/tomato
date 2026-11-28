@@ -1,0 +1,559 @@
+# `tomato test [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] [FILE]... | FILE ENTRY [INPUTS...]` (D81a, D97a, D94b). Each file in a
+# tests/ folder is one test: a program that passes when it ends with status 0 (nothing was raised) and fails otherwise; a file with functions
+# marked @test.NAME is run through the driver of the entry `test` (even if it has a @main), and passes when all of them do. Every file is built
+# once (by this program, started again as `tomato build`, so a compiler that fails on one file stops only that file) and run as a process of
+# its own, so a sys.exit, a crash or a hang ends only that file. The words: one that ends in .tom or has a / is a file (a folder stands for
+# its *.tom files, except those whose name starts with _); a bare word before any file is an error (write x.tom). After a file, a word that
+# is not a file is the ENTRY to run in it, as `tomato run FILE ENTRY INPUTS...` (the entry may be a dotted @test.NAME), and the words after
+# it are the inputs of that entry's function; with no ENTRY the file runs as a whole and takes no inputs.
+# With no word, every tests/*.tom. --filter TEXT keeps the files whose name contains TEXT; --timeout N stops a file that runs for more than
+# N seconds; -v also shows the output of the files that pass. One line for each file, then one line for CI; the status is 1 when any file
+# failed (did not compile, raised, ended with another status, timed out), else 0.
+import os
+import sys
+import time
+from ospath import isdir, isfile, dirname
+from cli_term import Settings, check_color, die, die_usage
+from cli_sys import mkdtemp, rmtree, exe_path, watch_signals
+from cli_config import find_config
+from cli_build import file_word
+from cli_explain import text_lines
+from cli_toolchain import require_clang
+
+class Item:
+    file: str = ''
+    entry: str = ''
+    args: list[str] = []
+    has_args: bool = False
+
+# How one program run ended: its status, whether the time limit stopped it, and everything it wrote (standard output and error together, in
+# the order it came).
+class Ran:
+    status: int = 0
+    timed_out: bool = False
+    out: str = ''
+
+def option_after_file(w: str) -> bool:
+    return w in ['--filter', '--timeout', '--mode', '-v', '--verbose', '--color', '--no-warnings'] or w.startswith('--color=')
+
+def value_of(s: Settings, words: list[str], i: int) -> str:
+    if i + 1 >= len(words):
+        die_usage(s, f'{words[i]} needs a value')
+    return words[i + 1]
+
+# the *.tom files of a folder, in name order, without the helper modules (a name that starts with _) and hidden files
+def folder_files(folder: str) -> list[str]:
+    names: list[str] = []
+    try:
+        names = os.listdir(folder)
+    catch IOError:
+        return []
+    names.sort()
+    base = folder[:len(folder) - 1] if folder.endswith('/') else folder
+    got: list[str] = []
+    for n in names:
+        if n.endswith('.tom') and not n.startswith('_') and not n.startswith('.') and isfile(base + '/' + n):
+            got.append(base + '/' + n)
+    return got
+
+# a line that starts the marker @test or @test.NAME (the file is run with the entry test)
+def marks_test(line: str) -> bool:
+    if not line.startswith('@test'):
+        return False
+    rest = line[5:]
+    if rest.startswith('.'):
+        return len(rest) > 1 and (rest[1] == '_' or (rest[1] >= 'a' and rest[1] <= 'z') or (rest[1] >= 'A' and rest[1] <= 'Z'))
+    rest = rest.strip(' \t')
+    return rest == '' or rest.startswith('#')
+
+def has_test_marker(path: str) -> bool:
+    try:
+        for line in os.read_text(path).split('\n'):
+            if marks_test(line):
+                return True
+    catch IOError:
+        return False
+    catch ValueError:
+        return False
+    return False
+
+export async def test_command(s: Settings, words: list[str], home: str, version: str) -> int:
+    tfilter = ''
+    tmode = ''
+    ttimeout = ''
+    verbose = False
+    # the options are read only before the first FILE (or ENTRY) word; the first word that is not an option ends them, and everything after
+    # it is a file, the entry or raw input, even a word that starts with - (`tomato test x.tom e --filter` passes --filter to e). `--` ends
+    # the options earlier, and the next word is still the first file.
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w == '--':
+            i += 1
+            break
+        if w == '--filter':
+            tfilter = value_of(s, words, i)
+            i += 2
+        elif w == '--mode':
+            tmode = value_of(s, words, i)
+            i += 2
+        elif w == '--timeout':
+            ttimeout = value_of(s, words, i)
+            i += 2
+        elif w.startswith('--color='):
+            s.color = w[8:]
+            i += 1
+        elif w == '--color':
+            if i + 1 >= len(words):
+                die_usage(s, '--color needs a value (auto, always or never)')
+            s.color = words[i + 1]
+            i += 2
+        elif w == '--no-warnings':
+            s.warnings = False
+            i += 1
+        elif w == '-v' or w == '--verbose':
+            verbose = True
+            i += 1
+        elif len(w) > 1 and w.startswith('-'):
+            die(s, f"unknown option '{w}' for 'tomato test' (options go before the files: the words after a file or its entry are not options; run 'tomato help')")
+        else:
+            break
+    check_color(s)
+    seconds = 0
+    if ttimeout != '':
+        ok = ttimeout != '0' and not ttimeout.startswith('00')
+        for c in ttimeout:
+            if c not in '0123456789':
+                ok = False
+        if not ok:
+            die(s, f"--timeout takes a whole number of seconds above 0, not '{ttimeout}'")
+        seconds = int(ttimeout)
+    rest = words[i:]
+    if len(rest) == 0:
+        if isdir('tests'):
+            rest = ['tests']
+        else:
+            # from a folder below the project's (src/, say), as run and build do: the tests/ of the folder that holds the nearest tomato.toml
+            found = find_config('.')
+            troot = dirname(found.project) if found.project != '' else ''
+            if troot != '' and not isdir(troot + '/tests'):
+                die(s, f'the project in {troot} has no tests folder: run tomato test FILE..., or put test files in {troot}/tests/ (each tests/NAME.tom is one test)')
+            if troot == '':
+                die(s, 'no tests folder here: run tomato test FILE..., or put test files in tests/ (each tests/NAME.tom is one test)')
+            rest = [troot + '/tests']
+    items: list[Item] = []
+    k = 0
+    while k < len(rest):
+        a = rest[k]
+        k += 1
+        if isdir(a):
+            files = folder_files(a)
+            if len(files) == 0:
+                d = a[:len(a) - 1] if a.endswith('/') else a
+                die(s, f'no test file in {d} (each {d}/NAME.tom is one test; a name that starts with _ is a helper module, not a test)')
+            for f in files:
+                it = Item()
+                it.file = f
+                items.append(it)
+        elif file_word(a):
+            it = Item()
+            it.file = a
+            items.append(it)
+            if k < len(rest):
+                nxt = rest[k]
+                if option_after_file(nxt):
+                    die(s, f"'{nxt}' comes after a file, so it is not an option (options go before the files: tomato test {nxt} {a}); it can only be an input of an entry (tomato test {a} ENTRY {nxt})")
+                if len(nxt) > 1 and nxt.startswith('-'):
+                    die(s, f"'{nxt}' comes after a file, so it is not an option (and tomato test has no option '{nxt}': run 'tomato help'); it can only be an input of an entry (tomato test {a} ENTRY {nxt})")
+                # FILE [ENTRY [INPUTS...]]: a word that is not a file is the entry to run, and every word after it an input of that entry's function
+                if not file_word(nxt) and not isdir(nxt):
+                    it.entry = nxt
+                    it.args = rest[k + 1:]
+                    it.has_args = len(it.args) > 0
+                    k = len(rest)
+        else:
+            die(s, f"'{a}' is not a file: write tomato test {a}.tom (or tests/{a}.tom); a word that is not a file is only accepted right after a file, as the entry to run in it (tomato test x.tom {a})")
+    for it in items:
+        if not isfile(it.file):
+            die(s, f'cannot read {it.file}')
+    require_clang(s)
+    watch_signals()
+    tmpd = mkdtemp('tomato-test-')
+    try:
+        return await run_all(s, items, tfilter, tmode, seconds, verbose, home, tmpd)
+    finally:
+        rmtree(tmpd)
+
+async def run_all(s: Settings, items: list[Item], tfilter: str, tmode: str, seconds: int, verbose: bool, home: str, tmpd: str) -> int:
+    me = exe_path()
+    prog = tmpd + '/prog'
+    progress = tmpd + '/progress'
+    nfiles = 0
+    npassed = 0
+    nfailed = 0
+    nskipped = 0
+    status = 0
+    for it in items:
+        f = it.file
+        if tfilter != '' and tfilter not in f:
+            continue
+        nfiles += 1
+        for p in [prog, progress]:
+            if isfile(p):
+                os.remove(p)
+        out = ''
+        # what runs: the entry named after the file, else the file as a whole: the functions marked @test (the entry test, through the
+        # driver, whatever else the file has: its [build.test] and [test-seeds] apply), or, with none, the program (@main; a file with
+        # neither says what is missing)
+        entry = it.entry
+        kind = 'main'
+        if entry != '':
+            if entry == 'test' or entry.startswith('test.'):
+                kind = 'test'
+        else:
+            entry = 'main'
+            if has_test_marker(f):
+                entry = 'test'
+                kind = 'test'
+        verdict = 'ok'
+        why = ''
+        if kind == 'test' and it.has_args:
+            verdict = 'FAIL'
+            why = 'the entry test (the functions marked @test) takes no inputs'
+        else:
+            argv = [me, 'build', f, '--test-seeds', '--entry', entry]
+            if tmode != '':
+                argv += ['--mode', tmode]
+            argv += ['-o', prog]
+            b = sys.run(argv, env={'TOMATO_WARNINGS': 'on' if s.warnings else 'off'})
+            out += b.stderr
+            if b.status != 0:
+                verdict = 'FAIL'
+                why = 'did not compile'
+            else:
+                run_argv = [prog, '--progress', progress] if kind == 'test' else [prog] + it.args
+                ran = await run_prog(run_argv, seconds)
+                out += ran.out
+                prc = ran.status
+                state = ''
+                passed = 0
+                failed = 0
+                skipped = 0
+                total = 0
+                name = ''
+                if isfile(progress):
+                    fields = progress_fields(progress)
+                    state = fields[0]
+                    passed = to_int(fields[1])
+                    failed = to_int(fields[2])
+                    skipped = to_int(fields[3])
+                    total = to_int(fields[4])
+                    name = fields[6]
+                if ran.timed_out:
+                    verdict = 'FAIL'
+                    why = f'timed out after {seconds} seconds'
+                    if name != '' and name != '-':
+                        why += f', in {name}'
+                elif kind == 'test' and state != 'done' and prc != 2:
+                    verdict = 'FAIL'
+                    if state == '':
+                        why = f'the program ended before it ran a test (status {prc})'
+                    elif prc > 128:
+                        why = f'the program ended in {name} with status {prc} (killed by signal {prc - 128}, or sys.exit({prc}))'
+                    else:
+                        why = f'the program ended in {name} with status {prc} (a test must not call sys.exit)'
+                elif prc > 128:
+                    verdict = 'FAIL'
+                    why = f'exit status {prc} (killed by signal {prc - 128}, or sys.exit({prc}))'
+                elif prc != 0:
+                    # an uncaught skip() ends a file with this error id (E523, SkipTest): the file is skipped, not failed
+                    reason = skip_reason(out)
+                    if kind == 'main' and said_skip(out):
+                        verdict = 'skip'
+                        why = reason
+                    else:
+                        verdict = 'FAIL'
+                        why = f'exit status {prc}'
+                        if kind == 'test' and failed != 0:
+                            why = f'{failed} of {total} tests failed'
+                        # an entry (main, by default) with an input that has no default cannot run with none: say the rule (the runtime's
+                        # own line follows)
+                        if kind == 'main' and not it.has_args and 'error[E352' in out:
+                            why = f'exit status {prc}: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...)'
+                elif kind == 'test':
+                    why = f'{passed} passed'
+                    if skipped != 0:
+                        why += f', {skipped} skipped'
+                    # a file whose tests were all skipped did not test anything: it is skipped, as a file that ends with skip() is
+                    if passed == 0 and skipped > 0:
+                        verdict = 'skip'
+                        why = '1 skipped' if skipped == 1 else f'all {skipped} skipped'
+        if verdict == 'ok':
+            npassed += 1
+            print(f'ok   {f}  ({why})' if why != '' else f'ok   {f}')
+            if verbose:
+                show_out(out)
+        elif verdict == 'skip':
+            nskipped += 1
+            print(f'skip {f}  ({why})' if why != '' else f'skip {f}')
+            if verbose:
+                show_out(out)
+        else:
+            nfailed += 1
+            status = 1
+            print(f'FAIL {f}  ({why})')
+            show_out(point_trace(out, f, kind, home + '/std/testing.tom'))
+    if tfilter != '' and nfiles == 0:
+        print(f"warning: no file name contains '{tfilter}'")
+    print(f"tomato test: {nfiles} files, {npassed} passed, {nfailed} failed, {nskipped} skipped: {'ok' if status == 0 else 'FAILED'}")
+    return status
+
+def to_int(t: str) -> int:
+    if t == '':
+        return 0
+    for c in t:
+        if c not in '0123456789':
+            return 0
+    return int(t)
+
+# the words of the first line of the progress file (std/testing.tom writes it): state passed failed skipped total index name, the last
+# one taking the rest of the line, as `read -r a b c ...` gives them
+def progress_fields(path: str) -> list[str]:
+    line = ''
+    try:
+        line = os.read_text(path).split('\n')[0]
+    catch IOError:
+        line = ''
+    fields: list[str] = []
+    rest = line.strip(' \t')
+    while len(fields) < 6:
+        if rest == '':
+            fields.append('')
+            continue
+        cut = 0
+        while cut < len(rest) and rest[cut] != ' ' and rest[cut] != '\t':
+            cut += 1
+        fields.append(rest[:cut])
+        rest = rest[cut:].lstrip(' \t')
+    fields.append(rest)
+    return fields
+
+# `error[E523]` or `error E523` at the start of a line: the program ended with an uncaught skip()
+def said_skip(out: str) -> bool:
+    for line in out.split('\n'):
+        if line.startswith('error[E523') or line.startswith('error E523'):
+            return True
+    return False
+
+def skip_reason(out: str) -> str:
+    head = 'error[E523]: SkipTest: '
+    for line in out.split('\n'):
+        if line.startswith(head):
+            r = line[len(head):]
+            for tail in [' (raised on line ', ' (line ']:
+                at = r.rfind(tail)
+                if at >= 0 and r.endswith(')') and digits(r[at + len(tail):len(r) - 1]):
+                    return r[:at]
+            return r
+    return ''
+
+def digits(t: str) -> bool:
+    if t == '':
+        return False
+    for c in t:
+        if c not in '0123456789':
+            return False
+    return True
+
+# The program and its words, with standard input empty and its two output streams gathered as they come, and the time limit when there is
+# one (seconds above 0): a program still running then is stopped with every process below it (what it started with sys.run or sys.spawn),
+# TERM first and KILL a second later.
+async def run_prog(argv: list[str], seconds: int) -> Ran:
+    ran = Ran()
+    p = sys.spawn(argv, capture=True)
+    started = time.monotonic()
+    nap = 0.001
+    out = ''
+    while True:
+        out += p.stdout.read_available() + p.stderr.read_available()
+        if p.done():
+            break
+        if seconds > 0 and time.monotonic() - started >= float(seconds):
+            ran.timed_out = True
+            tree = proc_tree(p.pid)
+            for pid in tree:
+                _r = quiet(['kill', '-TERM', str(pid)])
+            await sleep(1.0)
+            for pid in tree:
+                _r = quiet(['kill', '-KILL', str(pid)])
+            await p.wait()
+            break
+        await sleep(nap)
+        if nap < 0.02:
+            nap = nap * 2.0
+    out += read_rest(p)
+    ran.out = out
+    ran.status = p.status
+    p.close()
+    return ran
+
+def read_rest(p: sys.Process) -> str:
+    got = ''
+    for _ in range(100000):
+        more = p.stdout.read_available() + p.stderr.read_available()
+        if more == '':
+            break
+        got += more
+    return got
+
+def quiet(argv: list[str]) -> int:
+    try:
+        return sys.run(argv).status
+    catch IOError:
+        return 127
+
+# pid and every process below it
+def proc_tree(pid: int) -> list[int]:
+    got = [pid]
+    try:
+        r = sys.run(['pgrep', '-P', str(pid)])
+        for w in r.stdout.split('\n'):
+            w = w.strip()
+            if w != '' and digits(w):
+                got += proc_tree(int(w))
+    catch IOError:
+        pass
+    return got
+
+# What a file printed, indented; a long output keeps its first 40 and its last 60 lines (the end holds the error and its trace).
+def show_out(text: str):
+    lines = text_lines(text)
+    if len(lines) > 120:
+        shown = lines[:40] + [f'... {len(lines) - 100} lines left out ...'] + lines[len(lines) - 60:]
+        lines = shown
+    for line in lines:
+        print('    ' + line)
+
+# the names of the functions a file defines (a line `def NAME`, `export def NAME`, `async def NAME`, at any indent)
+def defined_names(path: str) -> dict[str, bool]:
+    names: dict[str, bool] = {}
+    text = ''
+    try:
+        text = os.read_text(path)
+    catch IOError:
+        return names
+    catch ValueError:
+        return names
+    for line in text.split('\n'):
+        l = line.lstrip(' \t')
+        if l.startswith('export '):
+            l = l[7:].lstrip(' ')
+        if l.startswith('async '):
+            l = l[6:].lstrip(' ')
+        if not l.startswith('def '):
+            continue
+        l = l[4:].lstrip(' ')
+        n = 0
+        while n < len(l) and (l[n] == '_' or (l[n] >= 'a' and l[n] <= 'z') or (l[n] >= 'A' and l[n] <= 'Z') or (n > 0 and l[n] >= '0' and l[n] <= '9')):
+            n += 1
+        if n > 0:
+            names[l[:n]] = True
+    return names
+
+def ident(t: str, dots: bool) -> bool:
+    if t == '':
+        return False
+    for i in range(len(t)):
+        c = t[i]
+        ok = c == '_' or (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (i > 0 and c >= '0' and c <= '9') or (dots and i > 0 and c == '.')
+        if not ok:
+            return False
+    return True
+
+# a frame line `  at NAME (line N)` of a debug trace: [NAME, N], else []
+def frame(line: str) -> list[str]:
+    if not line.startswith('  at ') or not line.endswith(')'):
+        return []
+    body = line[5:]
+    sp = body.find(' (line ')
+    if sp < 0:
+        return []
+    name = body[:sp]
+    n = body[sp + 7:len(body) - 1]
+    if not ident(name, True) or not digits(n):
+        return []
+    return [name, n]
+
+def after_dot(name: str) -> str:
+    d = name.rfind('.')
+    return name[d + 1:] if d >= 0 else name
+
+# a line that ends with ` (MARK N)`, N a number: the position of the space before the (, else -1
+def ends_with_number(line: str, mark: str) -> int:
+    if not line.endswith(')'):
+        return -1
+    at = line.rfind(' (' + mark + ' ')
+    if at < 0:
+        return -1
+    if digits(line[at + len(mark) + 3:len(line) - 1]):
+        return at
+    return -1
+
+# The failure text of a test file, so that its trace says where each frame is. A frame's line number is in the file of its function, and the
+# trace names no file: a function of std/testing.tom (a failed check raises inside it) is written testing.NAME, and the first frame of a
+# function of the test file is given the file, so the line of the check reads `at main (tests/a.tom line 6)`. In release mode there is no
+# trace: the error is one `error[E519]: Class: message (line 306)` and a note says so.
+def point_trace(out: str, file: str, kind: str, testing: str) -> str:
+    lib = defined_names(testing)
+    mine = defined_names(file)
+    text = text_lines(out)
+    where = -1
+    hit = ''
+    note = f'(release mode keeps no call trace, and this line is in the program or in std/testing.tom; run it in debug mode, tomato test --mode debug {file}, to see the line of the check)'
+    if kind == 'main':
+        for i in range(len(text)):
+            fr = frame(text[i])
+            if len(fr) > 0 and after_dot(fr[0]) in mine:
+                where = i
+                hit = fr[1]
+                break
+    shown: list[str] = []
+    inerr = False
+    headed = False
+    for i in range(len(text)):
+        l = text[i]
+        fm: list[str] = []
+        if kind == 'main':
+            fm = frame(l)
+        if len(fm) > 0:
+            base = after_dot(fm[0])
+            if i == where:
+                l = f'  at {fm[0]} ({file} line {hit})'
+            elif '.' not in fm[0] and base in lib and base not in mine:
+                l = f'  at testing.{fm[0]} (line {fm[1]})'
+        elif kind == 'main' and where >= 0 and not headed and ends_with_number(l, 'raised on line') >= 0:
+            # the line the runtime names is where the error was raised: in std/testing.tom for a failed check; the test is what matters
+            l = l[:ends_with_number(l, 'raised on line')] + f' (raised at {file} line {hit})'
+            headed = True
+        elif kind == 'main' and error_head(l):
+            inerr = True
+            if ends_with_number(l, 'line') >= 0:
+                l = l + '\n' + note
+                inerr = False
+        elif kind == 'main' and inerr and ends_with_number(l, 'line') >= 0:
+            l = l + '\n' + note
+            inerr = False
+        elif kind == 'test' and ends_with_number(l, 'raised on line') >= 1 and l[ends_with_number(l, 'raised on line') - 1] == ' ':
+            at = ends_with_number(l, 'raised on line')
+            l = l[:at - 1] + f'  (raised at {file}:{l[at + 17:len(l) - 1]})'
+        shown.append(l)
+    return '\n'.join(shown) + ('\n' if len(shown) > 0 else '')
+
+# `error[E123]: ` at the start of a line
+def error_head(l: str) -> bool:
+    if not l.startswith('error[E'):
+        return False
+    j = 7
+    while j < len(l) and l[j] in '0123456789':
+        j += 1
+    return j > 7 and l[j:j + 3] == ']: '

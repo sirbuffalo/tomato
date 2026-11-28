@@ -210,6 +210,18 @@ function with its own entry marker, in its own file, so it is run and tested alo
 | `cli/` | `tomato.tom` (dispatch), `build.tom`, `run.tom`, `test.tom`, `init.tom`, `seed.tom`, `config.tom`, `explain.tom`, `update.tom`, `install.tom`, `doctor.tom`, `repl.tom`, `toolchain.tom`, `rtcache.tom`, `term.tom` (colors, `paint`, `semver`) | in the binary |
 | `dev/` | `test.tom` (the suite), `release.tom` and its steps, `pkg.tom`, `bench.tom`, `site.tom`, `tables.tom` | no (the repository only) |
 
+**As built (stage 2, 2026-11-27).** The program is `compiler/src/tomato.tom`, not `cli/tomato.tom`, and its commands are the modules
+`compiler/src/cli_*.tom` (`cli_build` for run, build and compile, `cli_test`, `cli_init`, `cli_seed`, `cli_config`, `cli_explain`, `cli_update`,
+`cli_repl`, `cli_rtcache`, `cli_toolchain`, `cli_term` for colors, messages and SemVer, `cli_help`, and `cli_sys`, the one place that stands in
+for stage 1's std until it is on main), with `driver.tom` holding what a compile is (shared with the old `ctool.tom` entry). The reason is
+the module lookup: a module is found next to the program, in a project's `src/`, in a seed or in std, so a program in `cli/` cannot
+import `compiler.tom` without a new import rule. And there is one `@main` that reads the first word, not an entry per command: `init` and
+`test` are reserved markers (the constructor, and the test driver of D81a), so `@init` and `@test` cannot be commands. Any command
+runs from the source as `tomato run compiler/src/tomato.tom main build src/main.tom -o x`. Run under the name `tomatoc` (a link), the
+program is the old compiler command (`tomatoc FILE ENTRY STD ...`), so the scripts that still call it (the repl, `refresh.sh`, `pkg.sh`,
+the benchmarks, the wasm build, whose JS passes `tomatoc` as `argv[0]`) keep working until their stages replace them. The CLI is
+about 2,600 lines of Tomato, and the combined IR is 25.0 MB against 22.5 MB for the compiler alone (+11%).
+
 Size *estimate*: `cli/` about 1,200 lines of Tomato (for 430 to 600 lines of dense shell, the 44-line cache and the 98-line
 installer), `dev/` about 4,000. `compiler/src` is 17.9 K lines, so a combined program is about +7% on the IR.
 
@@ -377,6 +389,13 @@ get the std additions and the binary early; stages 4 to 6 are for the project it
 - Acceptance: all CLI contract tests and the whole current suite pass with the binary; the startup budget of section 2 on both
   systems; a PATH with no compiler gives the fix text; the binary reproduces itself; the same program through the old and the new
   `tomato` gives the same IR; signals during `run`, `build` and `test` leave no temp folder or cache file.
+- *Status (2026-11-27):* every command of `native/tomato` is written in Tomato (section 6, "As built"). `tests/run.sh` builds the
+  program from the sources with the bootstrap compiler and runs the whole CLI contract against it beside the shell script (483 checks
+  each). It also checks that the program reproduces itself, that every example gives the same IR through both commands, that it works
+  as `tomatoc`, the fix text with no clang on PATH, and the startup budget of `version`. Still to come: the stand-ins of `cli_sys.tom`
+  swapped for stage 1's std and the signal acceptance (both wait for stage 1 on main); then the packaging. Packaging means the bootstrap
+  IR becomes this program (one IR), `install-native.sh` and the Mac package install it, the suite's install and update tests are
+  rewritten for it, `native/tomato` and `native/rtcache.sh` are deleted, and the release archives get the Linux binaries.
 
 **Stage 3: install, update, `doctor` (3) and the repl (3b).**
 - `cli/install.tom`, `cli/update.tom`, `cli/doctor.tom` with the full `toolchain.tom`, `install-native.sh` deleted; `previous`

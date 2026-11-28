@@ -1,0 +1,23 @@
+# `tomato repl [FILE ...]` (also `tomato shell`): type Tomato one piece at a time. The repl is still the bash script bin/tomato-repl of the
+# install (docs/shell-to-tomato-plan.md, section 9: it moves into this program in stage 3b); this starts it with the terminal and tells it
+# where the compiler, the runtime, std and the line editor are.
+import os
+import sys
+from cli_term import Settings, die
+
+export def repl_command(s: Settings, words: list[str], home: str) -> int:
+    edit = os.getenv('TOMATO_REPL_EDIT')
+    env = {
+        'TOMATO_REPL_EDIT': edit if edit is not None and edit != '' else home + '/bin/tomato-repl-edit',
+        'TOMATO_CMD': home + '/bin/tomato',
+        'TOMATO_TOMATOC': home + '/bin/tomatoc',
+        'TOMATO_RUNTIME': home + '/runtime/tomato_rt.c',
+        'TOMATO_STD': home + '/std/',
+        'TOMATO_WASM': home + '/wasm',
+        'TOMATO_JSC_JS': home + '/wasm/tomato-jsc.js',
+    }
+    try:
+        return sys.run(['bash', home + '/bin/tomato-repl'] + words, capture=False, env=env).status
+    catch IOError as e:
+        die(s, f'cannot start the repl: {e.message}')
+    return 1

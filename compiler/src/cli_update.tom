@@ -1,0 +1,147 @@
+# `tomato update [--minor] [--pre]`: read the manifest, and if a newer release exists download it and run its installer. site/latest.json
+# names the latest stable release only; a pre-release (1.1.0-rc.1) is in site/latest-pre.json, read only with --pre or when the installed
+# version is itself a pre-release, so a stable install is never moved to an rc unasked, while an rc install moves to a later rc or to the
+# release. Patch releases keep programs working (docs/releasing.md, Version numbers), so they install at once; a newer MAJOR.MINOR from 1.0
+# on needs --minor, because a minor version may change behaviour. Downloads are https only, including after redirects (file:// only for
+# tests, with the override); the manifest is the only integrity anchor, so it must carry a checksum and name an official download.
+# This is the shell command's update as it was (stage 3 of docs/shell-to-tomato-plan.md replaces the installer it runs with `tomato install`).
+import os
+import sys
+from ospath import isfile, isdir, islink, dirname
+from cli_term import Settings, die, semver_cmp
+from cli_sys import which, mkdtemp, rmtree, physical_dir, sha256_file, untar_gz, download, fetch_text, watch_signals
+
+def getenv_or(name: str, default: str) -> str:
+    v = os.getenv(name)
+    return v if v is not None and v != '' else default
+
+# the value of the first "KEY": "VALUE" of the manifest, as `sed -n 's/.*"KEY" *: *"\([^"]*\)".*/\1/p' | head -1` reads it (the last one on
+# the first line that has one)
+export def manifest_value(manifest: str, key: str) -> str:
+    for line in manifest.split('\n'):
+        at = line.rfind('"' + key + '"')
+        while at >= 0:
+            j = at + len(key) + 2
+            while j < len(line) and line[j] == ' ':
+                j += 1
+            if j < len(line) and line[j] == ':':
+                j += 1
+                while j < len(line) and line[j] == ' ':
+                    j += 1
+                if j < len(line) and line[j] == '"':
+                    end = line.find('"', j + 1)
+                    if end >= 0:
+                        return line[j + 1:end]
+            at = line.rfind('"' + key + '"', 0, at) if at > 0 else -1
+    return ''
+
+def major_minor_zero(v: str) -> str:
+    parts = v.split('.')
+    return '.'.join(parts[:2]) + '.0'
+
+export def update_command(s: Settings, words: list[str], home: str, version: str) -> int:
+    # only an install is replaced: run from a checkout, home is the repository (it has install-native.sh and compiler/), and the installer
+    # would swap its native/ folder for an install
+    if isfile(home + '/install-native.sh') and isdir(home + '/compiler'):
+        die(s, f'tomato update replaces an install, and {home} is not one (run ./install-native.sh in a checkout)')
+    minor = False
+    pre = False
+    for a in words:
+        if a == '--minor':
+            minor = True
+        elif a == '--pre':
+            pre = True
+        else:
+            die(s, f'tomato update takes --minor and --pre, not {a}')
+    url = getenv_or('TOMATO_UPDATE_URL', 'https://tomato.davismcd.com/latest.json')
+    pre_url = getenv_or('TOMATO_UPDATE_PRE_URL', 'https://tomato.davismcd.com/latest-pre.json')
+    have = version
+    if which('curl') is None:
+        die(s, 'tomato update needs curl')
+    allow_any = getenv_or('TOMATO_UPDATE_ALLOW_ANY_URL', '') != ''
+    allow_fetch = allow_any or getenv_or('TOMATO_UPDATE_ALLOW_FILE', '') != ''
+    # the site's own HTTPS may not be ready (GitHub issues its certificate after DNS is set up), so fall back to the same manifest attached
+    # to the latest GitHub release (not the main branch, and never a pre-release: GitHub's "latest" skips them); plain HTTP is never used
+    # because the manifest carries the checksum
+    got = fetch_text(url, allow_fetch)
+    if got is None:
+        got = fetch_text(getenv_or('TOMATO_UPDATE_FALLBACK', 'https://github.com/sirbuffalo/tomato/releases/latest/download/latest.json'), allow_fetch)
+    if got is None:
+        die(s, f'cannot read {url}')
+    manifest: str = got if got is not None else ''
+    latest = manifest_value(manifest, 'version')
+    if '-' in have:
+        pre = True
+    if pre:
+        pgot = fetch_text(pre_url, allow_fetch)
+        if pgot is not None:
+            platest = manifest_value(pgot, 'version')
+            if platest != '' and (latest == '' or semver_cmp(platest, latest) == 1):
+                manifest = pgot
+                latest = platest
+    archive = manifest_value(manifest, 'url')
+    if latest == '' or archive == '':
+        die(s, f'the manifest at {url} is not understood')
+    # only upgrade: an older or equal version (a stale cache, a rolled-back manifest) is left alone
+    if semver_cmp(latest, have) != 1:
+        print(f'tomato v{have} is the latest')
+        return 0
+    if not minor and have.split('.')[0] != '0' and semver_cmp(major_minor_zero(latest), major_minor_zero(have)) == 1:
+        print(f'tomato v{latest} is out, a new minor or major version: it may change how programs behave (see its release notes).')
+        pre_flag = ' --pre' if '-' in latest else ''
+        print(f'You have v{have}. Install it with: tomato update --minor{pre_flag}')
+        return 0
+    print(f'updating v{have} -> v{latest}')
+    sys.flush()
+    want = manifest_value(manifest, 'sha256')
+    valid = len(want) == 64
+    for c in want:
+        if c not in '0123456789abcdef':
+            valid = False
+    if not valid:
+        die(s, 'the manifest has no valid sha256: not updating')
+    if not allow_any and not archive.startswith('https://github.com/sirbuffalo/tomato/releases/download/'):
+        die(s, 'the download is not an official release URL: not updating')
+    # everything is downloaded and checked in a temporary folder, which goes on any exit or error. The install itself is replaced as a
+    # whole by the archive's install-native.sh (staged beside the old one, then one rename), so an update that fails or is interrupted
+    # leaves the old install as it was.
+    watch_signals()
+    work = mkdtemp('tomato-update-')
+    try:
+        tgz = work + '/tomato.tar.gz'
+        if not download(archive, tgz, allow_fetch):
+            die(s, f'cannot download {archive}')
+        if sha256_file(tgz) != want:
+            die(s, 'the download does not match its checksum')
+        if not untar_gz(tgz, work):
+            die(s, 'the download is not a valid archive')
+        installer = ''
+        names = os.listdir(work)
+        names.sort()
+        for n in names:
+            if n.startswith('tomato-') and isfile(f'{work}/{n}/install-native.sh'):
+                installer = f'{work}/{n}/install-native.sh'
+                break
+        if installer == '':
+            die(s, 'the download has no installer: not updating')
+        # the link directory: where this command was reached through a symlink, else the default (never the real bin folder)
+        bindir = ''
+        argv = sys.argv()
+        invoked = argv[0] if len(argv) > 0 else ''
+        if invoked != '' and '/' not in invoked:
+            found = which(invoked)
+            invoked = found if found is not None else ''
+        if invoked != '' and islink(invoked):
+            d = physical_dir(dirname(invoked) if dirname(invoked) != '' else '.')
+            bindir = d if d is not None else ''
+        if bindir == '':
+            h = os.getenv('HOME')
+            bindir = getenv_or('TOMATO_BIN', (h if h is not None else '') + '/.local/bin')
+        # reinstall where this copy lives, not into the default folders
+        th = home[:len(home) - 7] if home.endswith('/native') else home
+        r = sys.run(['sh', installer], capture=False, env={'TOMATO_HOME': th, 'TOMATO_BIN': bindir})
+        if r.status != 0:
+            die(s, 'the installer failed')
+    finally:
+        rmtree(work)
+    return 0

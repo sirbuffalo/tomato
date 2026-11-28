@@ -1,0 +1,161 @@
+# The `tomato` command (docs/shell-to-tomato-plan.md, stage 2): one program, the command line and the compiler together, so a compile is a
+# function call. The first word names the command; each command is a module (cli_*.tom). Built with
+#     tomato build compiler/src/tomato.tom --entry main -o tomato --mode release
+# and run from an install (native/bin/tomato, with std/, runtime/ and VERSION in native/) or from the root of a checkout (std/ beside it).
+#
+# The contract of the command (its words, texts, exit statuses and files) is tests/cli_contract: it passed the shell script native/tomato,
+# and this program passes it unchanged. Statuses: 0 done, 1 an error with a message, 2 a usage error (the help on standard error); a
+# program that `tomato run` ran gives its own status.
+#
+# Started under the name `tomatoc` (bin/tomatoc is a link to it), the program is the old compiler command instead, for the scripts that still
+# call it (the repl, compiler/bootstrap/refresh.sh, release/pkg.sh, the benchmarks): tomatoc FILE [ENTRY [STD [MODE [PROJECT [USER [FLAGS]]]]]]
+# prints the IR (ENTRY --config and --seed as in ctool.tom).
+import os
+import sys
+from ospath import basename
+from diag import Diagnostic
+from driver import compile_ir, config_report, seed_command
+from cli_term import Settings, CliExit, check_color, die_usage, paint
+from cli_help import help_text
+from cli_sys import home_dir
+from cli_explain import explain
+from cli_init import init
+from cli_config import config
+from cli_build import build_command
+from cli_test import test_command
+from cli_seed import seed_cmd
+from cli_update import update_command
+from cli_repl import repl_command
+
+@main
+async def main(*args: tuple[str]):
+    words: list[str] = []
+    for a in args:
+        words.append(a)
+    argv = sys.argv()
+    if len(argv) > 0 and basename(argv[0]) == 'tomatoc':
+        sys.exit(as_tomatoc(words))
+    status = 0
+    try:
+        status = await command(words)
+    catch CliExit as e:
+        status = e.status
+    sys.exit(status)
+
+# The version of this install: its VERSION file (an install made from a checkout's bootstrap file knows only the version its compiler was
+# built at), else the one compiled in.
+def install_version(home: str) -> str:
+    try:
+        v = os.read_text(home + '/VERSION').strip()
+        if v != '':
+            return v
+    catch IOError:
+        pass
+    return sys.version()
+
+def usage():
+    sys.write_stderr(help_text())
+    raise CliExit(2)
+
+# The options every command takes, read first from anywhere before a `--` (run and test read their own: they stop at the entry, and what
+# follows it is raw input): --color=auto|always|never, --color VALUE, --no-warnings. Gives the other words, in their order.
+def common_options(s: Settings, words: list[str]) -> list[str]:
+    rest: list[str] = []
+    i = 0
+    stop = False
+    while i < len(words):
+        w = words[i]
+        i += 1
+        if stop:
+            rest.append(w)
+        elif w == '--':
+            stop = True
+            rest.append(w)
+        elif w.startswith('--color='):
+            s.color = w[8:]
+        elif w == '--color':
+            if i >= len(words):
+                die_usage(s, '--color needs a value (auto, always or never)')
+            s.color = words[i]
+            i += 1
+        elif w == '--no-warnings':
+            s.warnings = False
+        else:
+            rest.append(w)
+    return rest
+
+async def command(all_words: list[str]) -> int:
+    if len(all_words) == 0:
+        usage()
+    cmd = all_words[0]
+    words = all_words[1:]
+    s = Settings()
+    if cmd != 'run' and cmd != 'test':
+        words = common_options(s, words)
+    check_color(s)
+    if cmd == 'help' or cmd == '--help' or cmd == '-h':
+        sys.write_stdout(help_text())
+        return 0
+    if cmd == 'version' or cmd == '--version' or cmd == '-V':
+        print(f'Tomato v{install_version(home_dir())} (compiler written in Tomato)')
+        return 0
+    if cmd == 'paint':          # for the repl: `tomato paint` colors error text read from standard input
+        f = open('/dev/stdin')
+        text = f.read()
+        f.close()
+        if text != '':
+            nl = text.endswith('\n')
+            body = text[:len(text) - 1] if nl else text
+            sys.write_stdout(paint(body) + '\n')
+        return 0
+    home = home_dir()
+    version = install_version(home)
+    if cmd == 'explain':
+        explain(s, words, home)
+        return 0
+    if cmd == 'init':
+        init(s, words, version)
+        return 0
+    if cmd == 'config':
+        config(s, words, version)
+        return 0
+    if cmd == 'run' or cmd == 'build' or cmd == 'compile':
+        return build_command(s, cmd, words, home, version)
+    if cmd == 'test':
+        return await test_command(s, words, home, version)
+    if cmd == 'seed':
+        return seed_cmd(s, words, home, version)
+    if cmd == 'update':
+        return update_command(s, words, home, version)
+    if cmd == 'repl' or cmd == 'shell':
+        return repl_command(s, words, home)
+    sys.write_stderr(f"error: unknown command '{cmd}'\nrun 'tomato help' for the commands\n")
+    return 2
+
+# The old compiler command: tomatoc FILE [ENTRY [STD [MODE [PROJECT [USER [FLAGS]]]]]] prints the IR and the comment lines after it; ENTRY
+# --config prints what the two files set and --seed runs a seed command (FILE is the subcommand, MODE its word, USER the rev, FLAGS the
+# flags). A compile error is the finished error text on standard error, status 1. The version the manifest's `tomato` key is checked
+# against is TOMATO_VERSION, else the one compiled in.
+def as_tomatoc(words: list[str]) -> int:
+    if len(words) == 0:
+        sys.write_stderr('usage: tomatoc FILE [ENTRY [STD [MODE [PROJECT [USER [FLAGS]]]]]]\n')
+        return 2
+    given = ['', 'main', 'std/', 'debug', '', '', '']
+    for i in range(min(len(words), 7)):
+        given[i] = words[i]
+    have = os.getenv('TOMATO_VERSION')
+    if have is None or have == '':
+        have = sys.version()
+    try:
+        if given[1] == '--config':
+            for line in config_report(given[4], given[5]):
+                print(line)
+        elif given[1] == '--seed':
+            for line in seed_command(given[0], given[3], given[4], given[5], given[6].split(' '), have):
+                print(line)
+        else:
+            print(compile_ir(given[0], given[1], given[2], given[3], given[4], given[5], given[6], have))
+    catch Diagnostic as d:
+        sys.write_stderr(d.message + '\n')
+        return 1
+    return 0

@@ -1,0 +1,455 @@
+# `tomato run`, `tomato build` and `tomato compile`: read the words, find the program and its settings files, compile it (in this process:
+# driver.compile_ir), then for run and build link it with clang and the compiled runtime (cli_rtcache.tom), and for run start it.
+#   tomato run [FILE] [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]
+#   tomato build [FILE] [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]
+#   tomato compile [FILE] [--entry NAME] [--mode MODE]
+# A FILE is a word that ends in .tom or has a / in it; any other word where a FILE could be is an ENTRY (D94b). With no FILE: the project's
+# src/main.tom (the folder that holds the nearest tomato.toml). In `run` the options are read until the entry, and everything after the
+# entry is raw input (no flag is read there; `--` ends the options earlier, and the next word is still the FILE or the ENTRY).
+import os
+import sys
+from ospath import isfile, isdir, basename, dirname, exists
+from diag import Diagnostic
+from driver import compile_ir
+from cli_term import Settings, CliExit, check_color, die, die_usage, die_id, show_error
+from cli_help import help_text
+from cli_sys import mkdtemp, rmtree, physical_dir, watch_signals
+from cli_config import find_config
+from cli_rtcache import runtime_object
+from cli_toolchain import require_clang
+
+export def file_word(w: str) -> bool:
+    return w.endswith('.tom') or '/' in w
+
+def usage():
+    sys.write_stderr(help_text())
+    raise CliExit(2)
+
+# What one run, build or compile was asked for.
+export class Request:
+    cmd: str = ''
+    file: str = ''
+    entry: str = ''
+    out: str = ''
+    mode: str = ''
+    mode_given: bool = False
+    llvm: list[str] = []
+    test_seeds: bool = False
+    inputs: list[str] = []          # run: the words after the entry, given to the program as they are
+
+# the value of an option that needs one (words[i] is the option), or the usage error
+def value_of(s: Settings, words: list[str], i: int) -> str:
+    if i + 1 >= len(words):
+        die_usage(s, f'{words[i]} needs a value')
+    return words[i + 1]
+
+def read_run_words(s: Settings, r: Request, words: list[str]):
+    dd = False
+    have_file = False
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if not dd:
+            if w == '--':
+                dd = True
+                i += 1
+                continue
+            if w.startswith('--color='):
+                s.color = w[8:]
+                i += 1
+                continue
+            if w == '--color':
+                if i + 1 >= len(words):
+                    die_usage(s, '--color needs a value (auto, always or never)')
+                s.color = words[i + 1]
+                i += 2
+                continue
+            if w == '--no-warnings':
+                s.warnings = False
+                i += 1
+                continue
+            if w == '--entry':
+                r.entry = value_of(s, words, i)
+                i += 2
+                continue
+            if w == '--mode':
+                r.mode = value_of(s, words, i)
+                r.mode_given = True
+                i += 2
+                continue
+            if w == '--llvm':
+                r.llvm.append(value_of(s, words, i))
+                i += 2
+                continue
+            if w == '--test-seeds':
+                r.test_seeds = True
+                i += 1
+                continue
+            if w == '-o':
+                usage()
+            if len(w) > 1 and w.startswith('-'):
+                die(s, f"unknown option '{w}' for 'tomato run' (options go before the entry: the words after it are its inputs, read as they are; after -- no word is an option)")
+        if not have_file and file_word(w):
+            r.file = w
+            have_file = True
+            i += 1
+            continue
+        if file_word(w):
+            die(s, f"'{w}' looks like a file, but the file is already {r.file}: after it comes an entry name such as main (tomato run FILE [ENTRY [INPUTS...]])")
+        r.entry = w
+        r.inputs = words[i + 1:]
+        break
+    check_color(s)
+
+def read_build_words(s: Settings, r: Request, words: list[str]):
+    dd = False
+    nfile = 0
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if not dd:
+            if w == '--':
+                dd = True
+                i += 1
+                continue
+            if w == '-o':
+                r.out = value_of(s, words, i)
+                i += 2
+                continue
+            if w == '--entry':
+                r.entry = value_of(s, words, i)
+                i += 2
+                continue
+            if w == '--mode':
+                r.mode = value_of(s, words, i)
+                r.mode_given = True
+                i += 2
+                continue
+            if w == '--llvm':
+                r.llvm.append(value_of(s, words, i))
+                i += 2
+                continue
+            if w == '--test-seeds':
+                r.test_seeds = True
+                i += 1
+                continue
+            if len(w) > 1 and w.startswith('-'):
+                die(s, f"unknown option '{w}' for 'tomato {r.cmd}' (run 'tomato help')")
+        if nfile != 0:
+            usage()
+        if not file_word(w):
+            die(s, f"'{w}' is not a file: a file ends in .tom or has a / in it (tomato {r.cmd} [FILE]; with no FILE it is the project's src/main.tom)")
+        r.file = w
+        nfile = 1
+        i += 1
+
+# the folder part of a path as dirname(1) gives it ('.' for a bare name)
+export def dir_of(path: str) -> str:
+    d = dirname(path)
+    return d if d != '' else '.'
+
+# the path with its folder resolved (`$(cd "$(dirname P)" && pwd -P)/$(basename P)`), or '' when the folder cannot be entered
+export def physical_path(path: str) -> str:
+    d = physical_dir(dir_of(path))
+    if d is None:
+        return ''
+    return (d if d != '/' else '') + '/' + basename(path)
+
+# the last `;% KEY VALUE` line of the compiler's notes after the IR, or ''
+export def note(lines: list[str], key: str) -> str:
+    got = ''
+    head = ';% ' + key + ' '
+    for line in lines:
+        if line.startswith(head):
+            got = line[len(head):]
+    return got
+
+def sanitized(name: str) -> str:
+    out = ''
+    for c in name:
+        if (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c in '._-':
+            out += c
+        else:
+            out += '-'
+    return out
+
+def make_folder_of(s: Settings, exe: str):
+    d = dirname(exe)
+    if d == '' or isdir(d):
+        return
+    try:
+        os.makedirs(d, True)
+    catch IOError:
+        die(s, f'cannot make the folder of the output {exe}')
+
+export def build_command(s: Settings, cmd: str, words: list[str], home: str, version: str) -> int:
+    r = Request()
+    r.cmd = cmd
+    if cmd == 'run':
+        read_run_words(s, r, words)
+    else:
+        read_build_words(s, r, words)
+    # no FILE: the project's program, src/main.tom of the folder that holds the nearest tomato.toml
+    if r.file == '':
+        found = find_config('.')
+        if found.project == '':
+            die(s, f"there is no tomato.toml in this folder or a parent folder, so there is no project's src/main.tom to {cmd}: name a file (tomato {cmd} FILE.tom), or start a project here with tomato init")
+        root = dirname(found.project)
+        if root == os.getcwd():
+            r.file = 'src/main.tom'
+        else:
+            r.file = root + '/src/main.tom'
+        if not isfile(r.file):
+            die(s, f'the project in {root} has no src/main.tom (the program of a project is src/main.tom; tomato {cmd} FILE.tom runs another file)')
+    if not isfile(r.file):
+        die(s, f'cannot read {r.file}')
+    # what the compiler is asked for: the entry (run and compile: the one named, else main); a build with no --entry holds every entry and
+    # takes [ENTRY [INPUTS...]] itself (D94b), a build with --entry holds that one and takes its inputs
+    flags = 'tests' if r.test_seeds else ''
+    if cmd == 'build' and r.entry == '':
+        flags += ' entries'
+    if r.entry == '':
+        r.entry = 'main'
+    if r.mode == '':
+        if r.mode_given:
+            die_id(s, 'E282', "the mode must be debug or release, not ''")
+    elif r.mode == 'normal':
+        die_id(s, 'E281', "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)")
+    elif r.mode != 'debug' and r.mode != 'release':
+        die_id(s, 'E282', f"the mode must be debug or release, not '{r.mode}'")
+    if cmd != 'compile':
+        require_clang(s)
+    watch_signals()
+    tmp = mkdtemp('tomato-')
+    try:
+        return compile_and_link(s, r, flags, home, version, tmp)
+    finally:
+        rmtree(tmp)
+
+def compile_and_link(s: Settings, r: Request, flags: str, home: str, version: str, tmp: str) -> int:
+    found = find_config(dir_of(r.file))
+    ir = ''
+    try:
+        ir = compile_ir(r.file, r.entry, home + '/std/', r.mode, found.project, found.user, flags, version)
+    catch Diagnostic as d:
+        show_error(s, d.message)       # the compiler's own error text: what is wrong, where, and the source line (docs/errors.md)
+        raise CliExit(1)
+    text = ir + '\n'
+    lines = text.split('\n')
+    if s.warnings:                     # warnings travel as comment lines at the end of the IR
+        shown: list[str] = []
+        for line in lines:
+            if line.startswith(';! '):
+                shown.append(line[3:])
+        if len(shown) > 0:
+            show_error(s, '\n'.join(shown))
+    if r.cmd == 'compile':
+        kept: list[str] = []
+        for line in lines[:len(lines) - 1]:
+            if not line.startswith(';! ') and not line.startswith(';% '):
+                kept.append(line)
+        sys.write_stdout('\n'.join(kept) + '\n')
+        return 0
+    program = tmp + '/program.ll'
+    os.write_text(program, text)
+    # with a tomato.toml the compiler says which mode it settled on ([build].mode when there is no --mode) and where [build].output wants
+    # the program
+    manifest_mode = note(lines, 'mode')
+    manifest_out = note(lines, 'output')
+    mode = manifest_mode if manifest_mode != '' else (r.mode if r.mode != '' else 'debug')
+    exe = tmp + '/program'
+    if r.cmd == 'build':
+        exe = r.out
+        if exe == '' and manifest_out != '':
+            exe = manifest_out
+            make_folder_of(s, exe)
+        if exe == '':
+            # builds/NAME in the project's folder (the current folder when there is no project): NAME is the project's name for its
+            # src/main.tom, else the file's name without .tom (D94b)
+            stem = r.file[:len(r.file) - 4] if r.file.endswith('.tom') else r.file
+            base = basename(stem)
+            manifest_name = sanitized(note(lines, 'name'))
+            if manifest_name != '' and found.project != '' and physical_path(r.file) == dirname(found.project) + '/src/main.tom':
+                base = manifest_name
+                if base.startswith('.') or base.startswith('-'):
+                    base = 'p' + base
+            bdir = '.'
+            if found.project != '':
+                bdir = dirname(found.project)
+                if bdir == os.getcwd():
+                    bdir = '.'
+            exe = 'builds/' + base if bdir == '.' else bdir + '/builds/' + base
+            make_folder_of(s, exe)
+        if exists(exe) and physical_path(exe) == physical_path(r.file):
+            die(s, f'the program would overwrite its own source {r.file}: name it with -o')
+    link(s, r, mode, program, exe, home, tmp)
+    if r.cmd == 'build':
+        print(f'wrote {exe}')
+        return 0
+    # ^C reaches the program too: its own exit status is the answer (130 when it died of the signal)
+    ran = sys.run([exe] + r.inputs, capture=False)
+    return ran.status
+
+# The link. Debug links at -O1 and keeps readable errors and the leak report; release links at -O2 (and prints each error on one line, with
+# no call trace, without the leak report). Release links with link-time optimisation, which inlines the runtime's small-number and
+# reference-count fast paths into the program; where the linker cannot do LTO (many Linux systems have a clang without the linker's LLVM
+# plugin), clang itself merges the runtime into the program before optimising it, which inlines the same fast paths, and if that fails too,
+# release falls back to a plain link. Debug mode does not use LTO at all (it costs about a second per build, most of the time of a small
+# program, and with clang 21 on Linux inlined nothing at -O1): runtime/tomato_inline.ll, small inline copies of those fast paths, is put in
+# front of the program IR (inline_merge), so an ordinary -O1 compile inlines them and the runtime is linked as a plain object.
+# A lost LTO link is never silent (it costs 2 to 3 times the speed): the warning comes once a fallback has produced the program, and shows
+# what the linker said. There is deliberately no switch to silence it (release/check-lto.sh tells you whether your clang does LTO).
+def link(s: Settings, r: Request, mode: str, program: str, exe: str, home: str, tmp: str):
+    runtime = home + '/runtime/tomato_rt.c'
+    release = mode == 'release'
+    opt = '-O2' if release else '-O1'
+    lto = ['-flto', '-DTOMATO_RELEASE'] if release else ['-flto']
+    nolto = ['-DTOMATO_RELEASE'] if release else []
+    rtobj = ''
+    if release:
+        rtobj = runtime_object(tmp, 'bc', runtime, [opt] + lto + ['-pthread'])
+    else:
+        rtobj = runtime_object(tmp, 'o', runtime, [opt, '-pthread', '-w'])
+    rt = rtobj if rtobj != '' else runtime
+    if not release:
+        inline = home + '/runtime/tomato_inline.ll'
+        why = ''
+        if not isfile(inline):
+            why = f'missing: {inline}\n'
+        else:
+            merged = tmp + '/program.inl.ll'
+            try:
+                os.write_text(merged, inline_merge(os.read_text(inline), os.read_text(program)))
+                got = clang(s, opt, [], merged, exe, r.llvm, rt, True)
+                if got.status == 0:
+                    return
+                why = got.stderr
+            catch IOError as e:
+                why = e.message + '\n'
+        if clang(s, opt, [], program, exe, r.llvm, rt, False).status != 0:
+            raise CliExit(1)
+        sys.write_stderr('warning: the inline fast paths could not be used; linked without them (slower)\n')
+        for line in first_lines(why, 5):
+            sys.write_stderr('  ' + line + '\n')
+        return
+    first = clang(s, opt, lto, program, exe, r.llvm, rt, True)
+    if first.status == 0:
+        return
+    said = first.stderr
+    if len(r.llvm) == 0 and rtobj != '':
+        # no LTO in the linker: the runtime as LLVM bitcode, merged into the program by clang (not with extra .ll files: each would get a copy)
+        bitmerge = run_quiet(['clang', opt, '-Xclang', '-mlink-bitcode-file', '-Xclang', rtobj, '-Wno-override-module', '-o', exe, program, '-pthread', '-lm'] + system_libs())
+        if bitmerge.status == 0:
+            lto_warn(said, 'using clang bitcode merge instead')
+            return
+        said += bitmerge.stderr
+    if clang(s, opt, nolto, program, exe, r.llvm, runtime, False).status != 0:
+        raise CliExit(1)
+    lto_warn(said, 'linking without cross-module optimization')
+
+def lto_warn(said: str, what: str):
+    sys.write_stderr(f'warning: LTO link failed; {what}\n')
+    for line in first_lines(said, 5):
+        sys.write_stderr('  the linker said: ' + line + '\n')
+
+def first_lines(text: str, n: int) -> list[str]:
+    lines = text.split('\n')
+    if len(lines) > 0 and lines[-1] == '':
+        lines.pop()
+    return lines[:n]
+
+# -ldl: the runtime loads libcurl with dlopen (older glibc keeps it in libdl)
+def system_libs() -> list[str]:
+    return ['-ldl'] if sys.platform() == 'linux' else []
+
+# a program run with its output kept (not shown); a program that cannot be started is a failed run
+def run_quiet(argv: list[str]) -> sys.RunResult:
+    try:
+        return sys.run(argv)
+    catch IOError as e:
+        return sys.RunResult(127, 0, '', e.message + '\n')
+
+# `clang OPT EXTRA -Wno-override-module -o EXE PROGRAM [LLVM...] RUNTIME -pthread -lm [-ldl]`: with quiet, what clang says is kept in the
+# result (for a fallback to show); otherwise it goes to standard error as clang says it.
+def clang(s: Settings, opt: str, extra: list[str], program: str, exe: str, llvm: list[str], rt: str, quiet: bool) -> sys.RunResult:
+    argv = ['clang', opt] + extra + ['-Wno-override-module', '-o', exe, program] + llvm + [rt, '-pthread', '-lm'] + system_libs()
+    if quiet:
+        return run_quiet(argv)
+    try:
+        return sys.run(argv, capture=False)
+    catch IOError as e:
+        show_error(s, 'error: ' + e.message)
+        return sys.RunResult(127, 0, '', '')
+
+# The program IR with the inline fast paths added. `inline` (runtime/tomato_inline.ll) defines internal alwaysinline functions called
+# tomato_inl_X; every call of the runtime function tomato_X in the program becomes a call of the copy, and the copies and the declarations
+# they need (the ones the program does not already make) go at the end. Only references to symbols change: the same text inside a quoted
+# string (a string constant of the program, c"...") is left as it is.
+export def inline_merge(inline: str, program: str) -> str:
+    pre = inline.split('\n')
+    if len(pre) > 0 and pre[-1] == '':
+        pre.pop()
+    real: dict[str, str] = {}
+    for line in pre:
+        if line.startswith('define '):
+            n = symbol_of(line)
+            if n.startswith('@tomato_inl_'):
+                real['@tomato_' + n[12:]] = n
+    seen: dict[str, bool] = {}
+    out: list[str] = []
+    lines = program.split('\n')
+    ends_nl = len(lines) > 0 and lines[-1] == ''
+    if ends_nl:
+        lines.pop()
+    for line in lines:
+        if line.startswith('declare '):
+            seen[symbol_of(line)] = True
+            out.append(line)
+        elif '@tomato_' in line and not line.startswith('define '):
+            out.append(rename_calls(line, real))
+        else:
+            out.append(line)
+    for line in pre:
+        if not (line.startswith('declare ') and symbol_of(line) in seen):
+            out.append(line)
+    return '\n'.join(out) + '\n'
+
+# the first `@NAME(` of a line, as `@NAME` ('' for none): an @ and then characters that are not ( or a space, up to a (
+def symbol_of(line: str) -> str:
+    at = line.find('@')
+    while at >= 0:
+        j = at + 1
+        while j < len(line) and line[j] != '(' and line[j] != ' ':
+            j += 1
+        if j < len(line) and line[j] == '(':
+            return line[at:j]
+        at = line.find('@', at + 1)
+    return ''
+
+def name_char(c: str) -> bool:
+    return (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '_'
+
+# every `@tomato_X(` outside a string constant whose X has an inline copy becomes `@tomato_inl_X(`
+def rename_calls(line: str, real: dict[str, str]) -> str:
+    out = ''
+    quotes = 0
+    pos = 0
+    while True:
+        at = line.find('@tomato_', pos)
+        if at < 0:
+            break
+        j = at + 8
+        while j < len(line) and name_char(line[j]):
+            j += 1
+        if j >= len(line) or line[j] != '(':
+            # not a call: keep the text and look after it
+            quotes += line[pos:j].count('"')
+            out += line[pos:j]
+            pos = j
+            continue
+        quotes += line[pos:at].count('"')
+        n = line[at:j]
+        out += line[pos:at]
+        out += real[n] if quotes % 2 == 0 and n in real else n
+        pos = j
+    return out + line[pos:]

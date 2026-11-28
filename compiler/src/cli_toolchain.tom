@@ -1,0 +1,49 @@
+# The C compiler and linker a program is built with (docs/shell-to-tomato-plan.md, section 4). `tomato run` and `tomato build` need clang:
+# the program's LLVM IR, the runtime's C and the link all go through it. Stage 2 of the plan only finds it and, when there is none, says
+# exactly what to install; `tomato doctor` (stage 3) will also check that it links and does LTO.
+import os
+import sys
+from cli_sys import which
+from cli_term import Settings, show_error, CliExit
+
+# The line that installs clang here: macOS's command line tools, else the package manager of the Linux distribution /etc/os-release names
+# (its ID, then the IDs in ID_LIKE). '' when the system is not one we know.
+export def install_line() -> str:
+    if sys.platform() == 'darwin':
+        return 'xcode-select --install'
+    ids: list[str] = []
+    try:
+        for line in os.read_text('/etc/os-release').split('\n'):
+            for key in ['ID=', 'ID_LIKE=']:
+                if line.startswith(key):
+                    for w in line[len(key):].strip().strip('"').strip("'").split(' '):
+                        if w != '':
+                            ids.append(w)
+    catch IOError:
+        pass
+    for id in ids:
+        if id == 'debian' or id == 'ubuntu':
+            return 'sudo apt install clang'
+        if id == 'fedora' or id == 'rhel' or id == 'centos':
+            return 'sudo dnf install clang'
+        if id == 'arch':
+            return 'sudo pacman -S clang'
+        if id == 'alpine':
+            return 'apk add clang musl-dev'
+        if id == 'opensuse' or id == 'suse':
+            return 'sudo zypper install clang'
+    return ''
+
+# The text when there is no clang on PATH: what is missing, then the line that installs it (or the lines for the systems we know).
+export def missing_text() -> str:
+    head = 'error: tomato needs clang to compile and link programs, and there is no clang on PATH'
+    line = install_line()
+    if line != '':
+        return head + f'\n  = help: install it with: {line}\n  = help: then run the command again (tomato compile, which prints the LLVM IR, works without it)'
+    return head + '\n  = help: install clang with your system\'s package manager: macOS `xcode-select --install`, Debian and Ubuntu `sudo apt install clang`, Fedora `sudo dnf install clang`, Arch `sudo pacman -S clang`, Alpine `apk add clang musl-dev`\n  = help: then run the command again (tomato compile, which prints the LLVM IR, works without it)'
+
+# Ends the command with that text when clang is missing.
+export def require_clang(s: Settings):
+    if which('clang') is None:
+        show_error(s, missing_text())
+        raise CliExit(1)

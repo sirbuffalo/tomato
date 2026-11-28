@@ -1,0 +1,155 @@
+# `tomato init [NAME] [--seed]` (D94b): a project in the current folder. tomato.toml at the root, code in src/ (the program is src/main.tom),
+# tests in tests/ (each file is one test: a program that passes when it runs without raising an error), what `tomato build` writes in
+# builds/ (left out of git). Nothing is overwritten: when any file would be, none is written and the message names them. With --seed the
+# folder is a seed (a package): its name is owner/name and its modules are src/STEM.tom.
+import os
+from ospath import basename, isdir, exists, islink
+from cli_term import Settings, die
+
+def lower_ascii(t: str) -> str:
+    out = ''
+    for c in t:
+        if c >= 'A' and c <= 'Z':
+            out += chr(ord(c) + 32)
+        else:
+            out += c
+    return out
+
+def in_set(c: str, chars: str) -> bool:
+    return len(c) == 1 and c in chars
+
+def lower_digits() -> str:
+    return 'abcdefghijklmnopqrstuvwxyz0123456789'
+
+# owner/name: an owner of lowercase letters, digits, dots and hyphens that starts and ends with a letter or digit; a name that starts with a
+# lowercase letter, then up to 63 lowercase letters, digits, _ and -
+export def is_seed_name(name: str) -> bool:
+    slash = name.find('/')
+    if slash <= 0:
+        return False
+    owner = name[:slash]
+    rest = name[slash + 1:]
+    if not in_set(owner[0], lower_digits()) or not in_set(owner[-1], lower_digits()):
+        return False
+    for c in owner:
+        if not in_set(c, lower_digits() + '.-'):
+            return False
+    if len(rest) < 1 or len(rest) > 64 or not in_set(rest[0], 'abcdefghijklmnopqrstuvwxyz'):
+        return False
+    for c in rest:
+        if not in_set(c, lower_digits() + '_-'):
+            return False
+    return True
+
+# a character a terminal shows (not a control character)
+def printable(t: str) -> bool:
+    for c in t:
+        n = ord(c)
+        if n < 32 or n == 127 or (n >= 128 and n < 160):
+            return False
+    return True
+
+def present(path: str) -> bool:
+    return exists(path) or islink(path)
+
+# The MAJOR.MINOR a new manifest's `tomato` key names: the oldest compiler that builds it is this one (a pre-release needs its own number,
+# 1.1 is newer than 1.1.0-rc.1).
+export def min_version(version: str) -> str:
+    if '-' in version:
+        return version
+    parts = version.split('.')
+    if len(parts) < 2:
+        return parts[0] + '.'
+    return parts[0] + '.' + parts[1]
+
+def write(path: str, lines: list[str]):
+    os.write_text(path, '\n'.join(lines) + '\n')
+
+export def init(s: Settings, words: list[str], version: str):
+    seed = False
+    name = ''
+    have_name = False
+    dd = False
+    for a in words:
+        if not dd:
+            if a == '--':
+                dd = True
+                continue
+            if a == '--seed':
+                seed = True
+                continue
+            if a.startswith('-'):
+                die(s, f"unknown option '{a}' for 'tomato init' (usage: tomato init [NAME] [--seed])")
+        if have_name:
+            die(s, f"tomato init takes one NAME, not '{name}' and '{a}'")
+        name = a
+        have_name = name != ''
+    folder = basename(os.getcwd())
+    mainfile = 'src/main.tom'
+    stem = ''
+    if seed:
+        if name == '':
+            cleaned = ''
+            for c in lower_ascii(folder):
+                cleaned += c if in_set(c, lower_digits() + '_-') else '-'
+            name = 'yourdomain.example/' + cleaned
+        if not is_seed_name(name):
+            die(s, f"'{name}' is not a seed name: write tomato init --seed owner/name (an owner is lowercase letters, digits, dots and hyphens, a name starts with a letter)")
+        stem = name[name.find('/') + 1:].replace('-', '_')
+        mainfile = f'src/{stem}.tom'
+    else:
+        if name == '':
+            name = folder
+        if name == '' or name == '/':
+            die(s, 'give the project a name: tomato init NAME')
+    if not printable(name):
+        die(s, 'the name must be plain printable text')
+    # a project's name becomes the file name of its program (builds/NAME), where a / turns into a -: a name that goes up or stays (../x,
+    # ./x, a/../b) is not a name
+    if not seed:
+        parts = name.split('/')
+        if '..' in parts or '.' in parts:
+            die(s, f"'{name}' is not a project name: it has a . or .. part, as a path does (tomato init NAME starts the project in this folder; to start it in another folder, go there first)")
+    existing: list[str] = []
+    for f in ['tomato.toml', mainfile, 'tests/example.tom', '.gitignore']:
+        if present(f):
+            existing.append(f)
+    if len(existing) > 0:
+        hint = '; an existing .gitignore needs the line builds/ added by hand' if '.gitignore' in existing else ''
+        die(s, f"tomato init will not overwrite: {', '.join(existing)} (nothing was written; move them away, or use another folder){hint}")
+    for d in ['src', 'tests']:
+        if present(d) and not isdir(d):
+            die(s, f'{d} exists and is not a folder (nothing was written)')
+    try:
+        for d in ['src', 'tests']:
+            if not isdir(d):
+                os.mkdir(d)
+    catch IOError:
+        die(s, 'cannot make the src and tests folders')
+    qname = name.replace('\\', '\\\\').replace('"', '\\"')
+    minv = min_version(version)
+    if seed:
+        write('tomato.toml', ['[seed]', f'name = "{qname}"', 'version = "0.1.0"', f'tomato = "{minv}"',
+            'description = "TODO: one line about what this seed is for"', 'license = "TODO: a license such as MIT"', '',
+            '# Seeds this seed uses, as "owner/name" = "minimum version":', '# [seeds]', '#',
+            '# Seeds only its tests use (tomato test reads them; whoever uses this seed never does):', '# [test-seeds]'])
+        write(mainfile, [f'# The modules of a seed are the .tom files in src/ named {stem}.tom or {stem}_*.tom: users write import {stem}.',
+            'export def hello(name: str) -> str:', "    return f'hello, {name}'"])
+        write('tests/example.tom', ['# A test is a file in tests/ that runs without raising an error: tomato test runs each one, and a failed assert raises.',
+            '# The modules of src/ are imported by name.', f'from {stem} import hello', '', '@main', 'def main():',
+            "    assert hello('tomato') == 'hello, tomato'"])
+    else:
+        write('tomato.toml', ['[project]', f'name = "{qname}"', 'version = "0.1.0"', f'tomato = "{minv}"', '',
+            '# Seeds this project uses, as "owner/name" = "minimum version" (or { path = "../folder" }):', '# [seeds]', '#',
+            '# Seeds only its tests use (tomato test reads them; a build does not):', '# [test-seeds]'])
+        write(mainfile, ['# The program starts at the function marked @main: tomato run runs it, tomato build writes it into builds/.',
+            '# Other .tom files in src/ are modules: import them by name.', '@main', 'def main():', "    print('hello, world')"])
+        write('tests/example.tom', ['# A test is a file in tests/ that runs without raising an error: tomato test runs each one, and a failed assert raises.',
+            '# The modules of src/ (not main.tom) are imported by name, as in: from util import double', '@main', 'def main():',
+            '    assert 1 + 1 == 2', "    assert 'tomato'.upper() == 'TOMATO'"])
+    os.write_text('.gitignore', 'builds/\n')
+    print(f'created tomato.toml, {mainfile}, tests/example.tom and .gitignore')
+    if seed:
+        print('next: edit tomato.toml (the owner, description and license), then tomato seed check')
+    else:
+        print('next: tomato run, tomato build, tomato test')

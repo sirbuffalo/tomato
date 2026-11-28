@@ -1,0 +1,35 @@
+# The text of `tomato help` (and the usage a misused command prints on standard error). It is part of the command's contract:
+# tests/cli_contract/golden/help.txt holds the same text, and a change to it is a change to the contract (docs/shell-to-tomato-plan.md, section 6).
+
+export def help_text() -> str:
+    lines = [
+        'The `tomato` command, built on the Tomato compiler written in Tomato (tomatoc). Needs only clang.',
+        '  tomato init [NAME] [--seed]                                       start a project in this folder: tomato.toml, src/main.tom, tests/ with an example test, .gitignore (--seed: a seed)',
+        "  tomato run [FILE] [ENTRY [INPUTS...]] [--mode MODE] [--llvm F.ll]   compile, link and run (no word: the project's src/main.tom; a first word that ends in .tom or has a / is the FILE, any",
+        '                                                                    other is an ENTRY of it; MODE: debug or release, debug is the default). Everything after the entry is raw input',
+        '  tomato build [FILE] [-o OUT] [--entry NAME] [--mode MODE] [--llvm F.ll]   write a native program, by default builds/NAME from src/main.tom; it takes [ENTRY [INPUTS...]]',
+        '  tomato compile [FILE] [--entry NAME] [--mode MODE]                print the LLVM IR',
+        '  tomato test [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] [FILE]... | FILE ENTRY [INPUTS...]   run each file as a test (no word: every tests/*.tom; FILE ENTRY INPUTS... as in `tomato run`; a bare word before a file is an error); one line per file and a summary; exit 1 if any failed',
+        '  tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)',
+        '  tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)',
+        '  tomato seed install [--locked] [--offline] [--yes]                lock the seeds of tomato.toml (path and git seeds) into tomato.lock, fetching a git seed into ~/.tomato/seeds; --locked checks without writing, --offline never runs git',
+        '  tomato seed add --path DIR | --git URL | gh:USER/REPO | gitlab:USER/REPO | codeberg:USER/REPO | srht:~USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]   list a local or git seed in [seeds] (--test: [test-seeds]) of tomato.toml and lock it (a host shortcut is the https URL of that repository on its host; only the URL is written); a registry name such as dave/thing is an error until there is a registry; a tag or branch is looked up once and its commit written as the rev (update follows it), --subdir is the folder of the repository that holds the seed; it lists the !name(...) symbols the seed declares and asks to accept them (--yes: do not ask)',
+        '  tomato seed update [NAME...] [--dry-run] [--yes]                  lock the named seeds (all with no name) again: a git seed that follows a tag or branch gets the commit it points at now (new rev in tomato.toml, new hash in tomato.lock); asks only about new !name(...) symbols; --dry-run writes nothing',
+        '  tomato seed verify                                                hash every locked seed in the store, the vendor folder and the path folders again and compare with tomato.lock: exit 1 on a missing or changed copy',
+        '  tomato seed remove NAME                                           drop a seed from [seeds] and [test-seeds] and lock again',
+        '  tomato seed vendor [--offline]                                    copy the locked seeds into the vendor folder ([seed-store] vendor, default vendor/)',
+        '  tomato seed check                                                 check the seed in this folder (its tomato.toml and src/ modules) and print its content hash',
+        '  tomato seed hash [FOLDER]                                         print the content hash (sha256:...) of a folder',
+        '  tomato repl [FILE ...]                                            type Tomato one piece at a time',
+        '  tomato update [--minor] [--pre]                                   install the newest release: patch releases (1.0.x) at once; a new',
+        '                                                                    minor or major version (1.1.0, 2.0.0), which may change behaviour, only',
+        '                                                                    with --minor; pre-releases (1.1.0-rc.1) only with --pre or when one is installed',
+        '  tomato version                                                    print the version (also --version)',
+        'Options of run, build and compile (tomato.toml: docs/manifest.md): --test-seeds also uses the seeds of [test-seeds] (tomato test does); [build] mode and output',
+        "(and [build.ENTRY]) are the defaults of --mode and -o; the flags win. In `run`, options go before the entry: the words after it are the entry's inputs, read raw.",
+        'Options for every command: --color=auto|always|never (red errors on a terminal; also TOMATO_COLOR, and NO_COLOR turns it off),',
+        '--no-warnings (hide the warnings the compiler gives about code that runs but looks wrong; also TOMATO_WARNINGS=off).',
+        'After `--`, no word is read as an option: `tomato run f.tom -- main -o` runs main with the input -o (the first word is still ENTRY).',
+        'The layout of a project (docs/manifest.md): tomato.toml at the root, code in src/ (the entry is src/main.tom), tests in tests/, programs built into builds/.',
+    ]
+    return '\n'.join(lines) + '\n'

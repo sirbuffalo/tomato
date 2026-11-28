@@ -1,0 +1,129 @@
+# What a compile is, given the files the `tomato` command found: the program's IR, the report of `tomato config`, and the `tomato seed`
+# commands. Two callers share it: the old compiler command (ctool.tom, the entry `compile`, which prints) and the `tomato` program itself
+# (tomato.tom and the cli_*.tom modules), which calls it in the same process. Each function gives its text back and raises a Diagnostic
+# whose message is the finished error text (docs/errors.md); nothing here prints or reads the command line.
+from compiler import compile_module
+from config import ConfigError, load_limits, describe
+from diag import Diagnostic
+from manifest import read_manifest, check_tomato, build_for, describe_manifest, user_build_mode
+from seeds import module_map, install, check_seed, seed_hash, add, remove, vendor, update, verify, opts_from, AddSpec, add_spec_from_word, header_seeds, header_without_project, check_header
+from ospath import isdir
+
+# `tomato seed ...`: the subcommand (install, check, hash, add, remove, vendor, update or verify), `arg` the word it takes (the folder to hash,
+# a seed's name, the --path folder or the --git URL, or the names of `update`, separated by spaces, or the word of `add` with `word` among the
+# flags: a host shortcut or a seed name), `rev` what `add --git` takes besides the URL, four texts joined by tabs: the --rev (a commit id),
+# --tag and --branch (a name each, one of the three) and --subdir; the flags are words (locked, offline, yes, tty, test, git, word, dry-run).
+# `have` is the version of this Tomato, for the manifest's `tomato` key. Gives the lines to print.
+export def seed_command(command: str, arg: str, project: str, rev: str, words: list[str], have: str) -> list[str]:
+    opts = opts_from(words)
+    try:
+        if command == 'hash':
+            if not isdir(arg):
+                raise ConfigError(572, f'{arg} is not a folder')
+            return [seed_hash(arg)]
+        if command == 'check':
+            return check_seed(project, have)
+        if command == 'add':
+            spec = AddSpec()
+            if 'word' in words:
+                # a host shortcut (gh:USER/REPO) or a seed name: `rev` holds the four texts, as for --git
+                parts = (rev + '\t\t\t').split('\t')
+                spec = add_spec_from_word(project, arg, parts[0], parts[1], parts[2], parts[3])
+            elif 'git' not in words:
+                spec.kind = 'path'
+                spec.path = arg
+            else:
+                parts = (rev + '\t\t\t').split('\t')
+                spec.kind = 'git'
+                spec.url = arg
+                spec.rev = parts[0]
+                spec.tag = parts[1]
+                spec.branch = parts[2]
+                spec.subdir = parts[3]
+            return add(project, have, spec, opts)
+        if command == 'remove':
+            return remove(project, have, arg, opts)
+        if command == 'vendor':
+            return vendor(project, have, opts)
+        if command == 'update':
+            return update(project, have, [n for n in arg.split(' ') if n != ''], opts)
+        if command == 'verify':
+            return verify(project, have)
+        return install(project, have, opts)
+    catch ConfigError as e:
+        raise Diagnostic(f'error[E{e.code}]: {e.message}')
+
+# `tomato config`: the settings in effect and where each came from (project and user are the paths of the tomato.toml and the config.toml,
+# '' for none). A mistake in either file stops this before anything is given back.
+export def config_report(project: str, user: str) -> list[str]:
+    try:
+        lines: list[str] = []
+        extra: list[str] = []
+        if project != '':
+            extra = describe_manifest(read_manifest(project))
+        lines.append(describe(project, user))
+        for line in extra:
+            lines.append(line)
+        if user_build_mode(user) != '':
+            lines.append(f'build.mode = {user_build_mode(user)}  ({user}, the default under a project\'s [build] and --mode)')
+        return lines
+    catch ConfigError as e:
+        raise Diagnostic(f'error[E{e.code}]: {e.message}')
+
+# The LLVM IR of the program in the file `path`, for the entry `entry`. project and user are the paths of the tomato.toml and the config.toml
+# to read ('' for none); an empty mode means "the mode the manifest's [build] says, else the user's, else debug". After the IR come comment
+# lines for the command: `;! TEXT` the warnings (from compile_module), and, only when there is a manifest, `;% mode MODE`, `;% name NAME` (a
+# project's name) and, when a [build] table gives one, `;% output PATH`. flags is words separated by spaces: `tests` reads [test-seeds] too
+# (`tomato test`, D94b) and `entries` puts every entry in the program, which takes ENTRY [INPUTS...] (`tomato build`). `have` is the version
+# of this Tomato, for the manifest's `tomato` key.
+export def compile_ir(path: str, entry: str, std: str, mode: str, project: str, user: str, flags: str, have: str) -> str:
+    exp_bits = 0
+    format_digits = 0
+    seeds: list[str] = []
+    notes: list[str] = []
+    src_dir = ''
+    src = ''
+    words = flags.split(' ')
+    try:
+        limits = load_limits(project, user)
+        exp_bits = limits.exp_bits
+        format_digits = limits.format_digits
+        user_mode = user_build_mode(user)          # (read even when --mode or the project's [build] decides: a mistake in the file is reported either way)
+        f = open(path)
+        src = f.read()
+        f.close()
+        if project != '':
+            m = read_manifest(project)
+            check_tomato(m, have)
+            wanted = header_seeds(path, src)          # the `# seeds:` line of the program (design section 6): checked, never fetched
+            seeds = module_map(m, 'tests' in words)
+            check_header(m, path, wanted, 'tests' in words)
+            if isdir(m.dir + 'src'):
+                src_dir = m.dir + 'src/'
+            built = build_for(m, entry)
+            if mode == '':
+                mode = built.mode
+            if mode == '':
+                mode = user_mode
+            if mode == '':
+                mode = 'debug'
+            notes.append(f';% mode {mode}')
+            if m.kind == 'project':
+                notes.append(f';% name {m.name}')
+            if built.output != '':
+                notes.append(f';% output {built.output}')
+        else:
+            header_without_project(path, header_seeds(path, src))
+        if project == '' and mode == '':
+            mode = user_mode
+            if mode == '':
+                mode = 'debug'
+            else:
+                notes.append(f';% mode {mode}')
+    catch ConfigError as e:
+        raise Diagnostic(f'error[E{e.code}]: {e.message}')
+    name = path.split('/')[-1]          # the program's folder is what comes before its file name
+    ir = compile_module(src, path[:len(path) - len(name)], std, entry, mode, path, exp_bits, format_digits, seeds, src_dir, 'entries' in words)
+    if len(notes) > 0:
+        ir += '\n'.join(notes) + '\n'
+    return ir

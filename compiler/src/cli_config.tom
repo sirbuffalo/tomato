@@ -1,0 +1,65 @@
+# The settings files (docs/decisions.md D77g) and `tomato config [FILE]`. The command only finds the two files: a project's tomato.toml (the one
+# in the program's folder or the nearest parent) and the user's config.toml (${TOMATO_HOME:-$HOME/.tomato}/config.toml); the compiler reads
+# them (compiler/src/config.tom, manifest.tom) and writes the settings into the program, so a built program reads no file when it runs.
+import os
+import sys
+from ospath import isfile, dirname
+from cli_term import Settings, show_error, CliExit
+from cli_help import help_text
+from cli_sys import physical_dir
+from diag import Diagnostic
+from driver import config_report
+
+# The two files for a program in `folder`: the path of the nearest tomato.toml at or above it ('' for none; '' too when the folder cannot
+# be entered) and of the user's config.toml ('' when there is none).
+export class Found:
+    project: str = ''
+    user: str = ''
+
+export def find_config(folder: str) -> Found:
+    found = Found()
+    home = os.getenv('TOMATO_HOME')
+    if home is None or home == '':
+        h = os.getenv('HOME')
+        home = (h if h is not None else '') + '/.tomato'
+    user = home + '/config.toml'
+    if isfile(user):
+        found.user = user
+    start = physical_dir(folder)
+    if start is None:
+        return found
+    d: str = start
+    while True:
+        if isfile(d + '/tomato.toml'):
+            found.project = (d if d != '/' else '') + '/tomato.toml'
+            return found
+        if d == '/':
+            return found
+        d = dirname(d)
+        if d == '':
+            return found
+
+# the text a command prints: the lines, as `printf '%s\n' "$(...)"` would (the trailing empty lines dropped, one newline at the end)
+export def as_output(lines: list[str]) -> str:
+    text = '\n'.join(lines)
+    while text.endswith('\n'):
+        text = text[:len(text) - 1]
+    return text + '\n'
+
+export def config(s: Settings, words: list[str], version: str):
+    if len(words) > 1:
+        sys.write_stderr(help_text())
+        raise CliExit(2)
+    folder = '.'
+    if len(words) == 1:
+        folder = dirname(words[0])
+        if folder == '':
+            folder = '.'
+    found = find_config(folder)
+    lines: list[str] = []
+    try:
+        lines = config_report(found.project, found.user)
+    catch Diagnostic as d:
+        show_error(s, d.message)
+        raise CliExit(1)
+    sys.write_stdout(as_output(lines))

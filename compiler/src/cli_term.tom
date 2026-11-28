@@ -1,0 +1,225 @@
+# What the `tomato` command prints and how it ends: the colors of error text (docs/errors.md), the error and usage messages, the exit
+# statuses (0 done, 1 an error with a message, 2 a usage error) and the SemVer comparison of `update` and `init`.
+import sys
+import os
+from terminal import is_tty
+
+# Raised to end the command with a status once the `finally` blocks have run (temporary folders are removed on the way out); tomato.tom
+# catches it and exits. The message has been printed already.
+export class CliExit(Error):
+    status: int = 0
+
+    @init
+    def make_exit(self, status: int):
+        Error.start(self, f'exit {status}')
+        self.status = status
+
+# The settings of one run of the command that every part reads: --color (auto, always, never, or '' for not given) and whether warnings show.
+export class Settings:
+    color: str = ''
+    warnings: bool = True
+
+    @init
+    def make(self):
+        w = os.getenv('TOMATO_WARNINGS')
+        self.warnings = w is None or w != 'off'
+
+# Does standard error get color? --color=always or never decides; auto asks for a terminal, no NO_COLOR and a TERM that is not dumb.
+export def want_color(s: Settings) -> bool:
+    c = s.color
+    if c == '':
+        env = os.getenv('TOMATO_COLOR')
+        c = env if env is not None else 'auto'
+    if c == 'always':
+        return True
+    if c == 'never':
+        return False
+    no = os.getenv('NO_COLOR')
+    if no is not None and no != '':
+        return False
+    term = os.getenv('TERM')
+    if term is not None and term == 'dumb':
+        return False
+    return is_tty(2)
+
+# --color takes auto, always or never; the value given is passed on (TOMATO_COLOR) to the program `tomato run` runs and to the repl.
+export def check_color(s: Settings):
+    if s.color not in ['', 'auto', 'always', 'never']:
+        die(s, f"--color takes auto, always or never, not '{s.color}'")
+    if s.color != '':
+        os.putenv('TOMATO_COLOR', s.color)
+
+def esc(code: str) -> str:
+    return chr(27) + '[' + code + 'm'
+
+# the length of the run of `c` at the start of text
+def run_of(text: str, c: str) -> int:
+    i = 0
+    while i < len(text) and text[i] == c:
+        i += 1
+    return i
+
+# The label of a first line of an error or a warning, `error`, `error[E04]`, `warning` or `warning[E04]`, when the line starts with one and
+# ': ' follows, else ''.
+def label_of(line: str) -> str:
+    word = ''
+    if line.startswith('error'):
+        word = 'error'
+    elif line.startswith('warning'):
+        word = 'warning'
+    else:
+        return ''
+    i = len(word)
+    if i + 1 < len(line) and line[i] == '[' and line[i + 1] == 'E':
+        j = i + 2
+        while j < len(line) and line[j] in '0123456789':
+            j += 1
+        if j > i + 2 and j < len(line) and line[j] == ']':
+            i = j + 1
+    if line[i:i + 2] == ': ':
+        return line[:i]
+    return ''
+
+# Error text with the colors: the label bold red (yellow for a warning), the message bold, the location cyan, the gutter blue, the caret
+# under the span red (the color of the label above it), hints green, the traceback dim. The words are not changed, so with the color off
+# the output is the same text.
+export def paint(text: str) -> str:
+    r = esc('0')
+    ccol = '31'
+    out: list[str] = []
+    lines = text.split('\n')
+    for line in lines:
+        label = label_of(line)
+        sp = run_of(line, ' ')
+        rest = line[sp:]
+        if label != '':
+            ccol = '33' if label.startswith('warning') else '31'
+            out.append(esc('1;' + ccol) + label + ':' + r + ' ' + esc('1') + line[len(label) + 2:] + r)
+        elif rest.startswith('--> '):
+            out.append(line[:sp] + esc('1;34') + '-->' + r + ' ' + esc('36') + rest[4:] + r)
+        elif gutter_at(line) >= 0:
+            g = gutter_at(line)
+            head = line[:g + 1]
+            after = line[g + 1:]
+            blank = run_of(after, ' ')
+            carets = run_of(after[blank:], '^')
+            if carets > 0 and blank + carets == len(after):
+                out.append(esc('1;34') + head + r + after[:blank] + esc('1;' + ccol) + after[blank:] + r)
+            else:
+                out.append(esc('1;34') + head + r + after)
+        elif rest.startswith('= help: '):
+            out.append(line[:sp] + esc('1;34') + '=' + r + ' ' + esc('1;32') + 'help:' + r + ' ' + esc('32') + rest[8:] + r)
+        elif line.startswith('  at ') or line.startswith('  ... and '):
+            out.append(esc('2') + line + r)
+        else:
+            out.append(line)
+    return '\n'.join(out)
+
+# where the `|` of a gutter line is (spaces, a line number or none, one space, then `|`), else -1
+def gutter_at(line: str) -> int:
+    i = run_of(line, ' ')
+    while i < len(line) and line[i] in '0123456789':
+        i += 1
+    # the space before the bar: the run of spaces (or the number) must leave one
+    if i < len(line) and line[i] == '|' and i > 0 and line[i - 1] == ' ':
+        return i
+    if i + 1 < len(line) and line[i] == ' ' and line[i + 1] == '|':
+        return i + 1
+    return -1
+
+# Shows error text (one or more lines; a missing last newline is added) on standard error, painted when the color is on.
+export def show_error(s: Settings, text: str):
+    if text == '':
+        return
+    body = text
+    if body.endswith('\n'):
+        body = body[:len(body) - 1]
+    if want_color(s):
+        body = paint(body)
+    sys.write_stderr(body + '\n')
+
+# An error with a message: `error: MESSAGE` on standard error, status 1.
+export def die(s: Settings, message: str):
+    show_error(s, 'error: ' + message)
+    raise CliExit(1)
+
+# A usage error that one line explains (a missing value, a missing name): status 2, as the whole usage gives, but without the help.
+export def die_usage(s: Settings, message: str):
+    show_error(s, 'error: ' + message)
+    raise CliExit(2)
+
+# An error with an id: `error[ID]: MESSAGE`, status 1.
+export def die_id(s: Settings, id: str, message: str):
+    show_error(s, f'error[{id}]: {message}')
+    raise CliExit(1)
+
+# SemVer 2.0 precedence of two version texts: -1, 0 or 1 (the first below, equal to or above the second). MAJOR.MINOR.PATCH by number, a
+# missing part counting as 0 (the old 0.NN numbers are 0.NN.0); then a -PRERELEASE is below the release itself, its dot-separated
+# identifiers compared in turn (numbers by value and below words, words in ASCII order, a longer list above its prefix: 1.0.0-alpha <
+# 1.0.0-alpha.1 < 1.0.0-beta < 1.0.0-rc.2 < 1.0.0-rc.10 < 1.0.0); +BUILD is ignored. The same rule as release/release.sh.
+export def semver_cmp(a: str, b: str) -> int:
+    for i in range(3):
+        x = version_part(a, i)
+        y = version_part(b, i)
+        if x != y:
+            return -1 if x < y else 1
+    xp = prerelease(a)
+    yp = prerelease(b)
+    if xp == yp:
+        return 0
+    if xp == '':
+        return 1
+    if yp == '':
+        return -1
+    u = xp.split('.')
+    t = yp.split('.')
+    i = 0
+    while i < len(u) and i < len(t):
+        xn = all_digits(u[i])
+        yn = all_digits(t[i])
+        if xn and yn:
+            if int(u[i]) != int(t[i]):
+                return -1 if int(u[i]) < int(t[i]) else 1
+        elif xn != yn:
+            return -1 if xn else 1
+        elif u[i] != t[i]:
+            return -1 if u[i] < t[i] else 1
+        i += 1
+    if len(u) == len(t):
+        return 0
+    return -1 if len(u) < len(t) else 1
+
+def all_digits(w: str) -> bool:
+    if w == '':
+        return False
+    for c in w:
+        if c not in '0123456789':
+            return False
+    return True
+
+# the number of the part MAJOR (0), MINOR (1) or PATCH (2): the leading digits of it, 0 when there are none (as awk's `+ 0`)
+def version_part(v: str, i: int) -> int:
+    core = v
+    for cut in ['-', '+']:
+        k = core.find(cut)
+        if k >= 0:
+            core = core[:k]
+    parts = core.split('.')
+    if i >= len(parts):
+        return 0
+    p = parts[i]
+    j = 0
+    while j < len(p) and p[j] in '0123456789':
+        j += 1
+    if j == 0:
+        return 0
+    return int(p[:j])
+
+# the -PRERELEASE of a version ('' for none), without its +BUILD
+def prerelease(v: str) -> str:
+    text = v
+    k = text.find('+')
+    if k >= 0:
+        text = text[:k]
+    d = text.find('-')
+    return text[d + 1:] if d >= 0 else ''

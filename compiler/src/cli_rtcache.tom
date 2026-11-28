@@ -1,0 +1,96 @@
+# The cache of the compiled C runtime. Compiling runtime/tomato_rt.c (thousands of lines of C) is most of what `tomato run` would cost, and
+# the result depends only on the runtime source, the flags and the clang that compiles it. So it is compiled once and kept in the user's
+# cache folder: the next run links the stored object (LLVM bitcode when the flags have -flto) and costs no more than the link itself.
+#
+# The file is named for a hash of the flags, the output of `clang --version` (which names the clang binary's folder and target too) and
+# the source text, so a change to any of them is a different file (a miss); nothing is ever updated in place. It is written under a
+# temporary name in the same folder and renamed, which is atomic: concurrent runs may both compile, but each only ever sees a whole file.
+# Files not used for 30 days are removed when a new one is stored. The folder is $TOMATO_CACHE_DIR, else ~/Library/Caches/tomato (macOS)
+# or ${XDG_CACHE_HOME:-~/.cache}/tomato; TOMATO_CACHE=off turns the cache off. When the folder cannot be used (off, read-only, full) the
+# object is built in the command's temporary folder instead. The key is the one native/rtcache.sh computes, so the shell command, the
+# test suite and this program share the stored files.
+import os
+import sys
+import time
+from hashlib import sha256
+from ospath import getsize, isfile
+from cli_sys import cache_dir, touch, age, temp_name
+
+def nonempty(path: str) -> bool:
+    try:
+        return isfile(path) and getsize(path) > 0
+    catch IOError:
+        return False
+
+# `clang FLAGS -c -o OUT SOURCE`, its error text dropped: did it make a file?
+def compile_to(flags: list[str], out: str, source: str) -> bool:
+    try:
+        r = sys.run(['clang'] + flags + ['-c', '-o', out, source])
+        return r.status == 0 and nonempty(out)
+    catch IOError:
+        return False
+
+# The path of the compiled runtime for these flags (ext: o, or bc for bitcode), or '' when it cannot be had (the caller then links the source).
+export def runtime_object(fallback: str, ext: str, source: str, flags: list[str]) -> str:
+    h = sha256(f'tomato runtime cache 1\n{" ".join(flags)}\n'.encode())
+    try:
+        v = sys.run(['clang', '--version'])
+        h.update((v.stdout + v.stderr).encode())
+        h.update(os.read_bytes(source))
+    catch IOError:
+        return ''
+    name = 'rt-' + h.hexdigest()[:32] + '.' + ext
+    folder = cache_dir()
+    off = os.getenv('TOMATO_CACHE')
+    usable = off is None or off != 'off'
+    if usable:
+        try:
+            os.makedirs(folder, True)
+        catch IOError:
+            usable = False
+        catch ValueError:
+            usable = False
+    if usable:
+        stored = folder + '/' + name
+        if nonempty(stored):
+            touch(stored)
+            return stored
+        part = temp_name(folder, '.tmp.')
+        if compile_to(flags, part, source):
+            try:
+                os.rename(part, stored)
+                sweep(folder)
+                return stored
+            catch IOError:
+                pass
+        try:
+            os.remove(part)
+        catch IOError:
+            pass
+    if fallback == '':
+        return ''
+    here = fallback + '/' + name
+    if compile_to(flags, here, source):
+        return here
+    return ''
+
+# the stored files not used for 30 days, and the temporary files of a compile that never finished (older than a day), go
+def sweep(folder: str):
+    now = time.time()
+    names: list[str] = []
+    try:
+        names = os.listdir(folder)
+    catch IOError:
+        return
+    for n in names:
+        p = folder + '/' + n
+        limit = -1.0
+        if n.startswith('rt-'):
+            limit = 31.0 * 86400.0
+        elif n.startswith('.tmp.'):
+            limit = 2.0 * 86400.0
+        if limit > 0.0 and age(p, now) > limit:
+            try:
+                os.remove(p)
+            catch IOError:
+                pass

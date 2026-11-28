@@ -1,0 +1,165 @@
+# `tomato seed install|add|remove|update|verify|vendor|check|hash`: the compiler's seed code does the work (it reads the manifest, hashes the
+# files, runs git for a git seed and writes tomato.toml and tomato.lock: driver.seed_command); this reads the words, finds the manifest and
+# prints what it gives. The commands that may ask (install, add, update) leave standard output alone, so their question reaches the
+# terminal; the seed code is told with `tty` that standard input is one.
+import sys
+from terminal import is_tty
+from diag import Diagnostic
+from driver import seed_command
+from cli_term import Settings, CliExit, die, die_usage, show_error
+from cli_help import help_text
+from cli_config import find_config, as_output
+
+def usage():
+    sys.write_stderr(help_text())
+    raise CliExit(2)
+
+def add_flag(flags: list[str], f: str):
+    if f not in flags:
+        flags.append(f)
+
+export def seed_cmd(s: Settings, words: list[str], home: str, version: str) -> int:
+    if len(words) == 0 or words[0] == '':
+        usage()
+    sub = words[0]
+    rest = words[1:]
+    arg = ''
+    rev = ''
+    flags: list[str] = []
+    if sub == 'install':
+        for w in rest:
+            if w == '--locked':
+                add_flag(flags, 'locked')
+            elif w == '--offline':
+                add_flag(flags, 'offline')
+            elif w == '--yes':
+                add_flag(flags, 'yes')
+            else:
+                die(s, f"unknown option '{w}' for 'tomato seed install' (run 'tomato help')")
+    elif sub == 'add':
+        mode_set = 0
+        arev = ''
+        atag = ''
+        abranch = ''
+        asub = ''
+        aword = ''
+        addusage = 'usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]'
+        i = 0
+        while i < len(rest):
+            w = rest[i]
+            more = i + 1 < len(rest)
+            if w == '--path':
+                if not more:
+                    die(s, f'--path needs a folder ({addusage})')
+                arg = rest[i + 1]
+                mode_set += 1
+                i += 1
+            elif w == '--git':
+                if not more:
+                    die(s, f'--git needs a URL ({addusage})')
+                arg = rest[i + 1]
+                mode_set += 10
+                i += 1
+            elif w == '--rev':
+                if not more:
+                    die(s, '--rev needs a commit id')
+                arev = rest[i + 1]
+                i += 1
+            elif w == '--tag':
+                if not more:
+                    die(s, '--tag needs a tag name')
+                atag = rest[i + 1]
+                i += 1
+            elif w == '--branch':
+                if not more:
+                    die(s, '--branch needs a branch name')
+                abranch = rest[i + 1]
+                i += 1
+            elif w == '--subdir':
+                if not more:
+                    die(s, '--subdir needs a folder of the repository')
+                asub = rest[i + 1]
+                i += 1
+            elif w == '--test':
+                add_flag(flags, 'test')
+            elif w == '--yes':
+                add_flag(flags, 'yes')
+            elif w == '--offline':
+                add_flag(flags, 'offline')
+            elif w.startswith('-'):
+                die(s, f"unknown option '{w}' for 'tomato seed add' ({addusage})")
+            else:
+                if aword != '':
+                    die(s, f"tomato seed add takes one seed at a time: '{aword}' and '{w}' ({addusage})")
+                aword = w
+                mode_set += 100
+            i += 1
+        if mode_set == 1:
+            if arev + atag + abranch + asub != '':
+                die(s, '--rev, --tag, --branch and --subdir go with --git, not with --path')
+        elif mode_set == 10:
+            n = 0
+            for given in [arev, atag, abranch]:
+                if given != '':
+                    n += 1
+            if n != 1:
+                die(s, f'a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH ({addusage})')
+            add_flag(flags, 'git')
+            rev = f'{arev}\t{atag}\t{abranch}\t{asub}'
+        elif mode_set == 100:
+            # a host shortcut (gh:USER/REPO) or a seed name: the compiler expands or explains it
+            arg = aword
+            add_flag(flags, 'word')
+            rev = f'{arev}\t{atag}\t{abranch}\t{asub}'
+        else:
+            die(s, f'tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed ({addusage})')
+    elif sub == 'update':
+        for w in rest:
+            if w == '--dry-run':
+                add_flag(flags, 'dry-run')
+            elif w == '--yes':
+                add_flag(flags, 'yes')
+            elif w.startswith('-'):
+                die(s, f"unknown option '{w}' for 'tomato seed update' (usage: tomato seed update [NAME...] [--dry-run] [--yes])")
+            else:
+                arg = w if arg == '' else arg + ' ' + w
+    elif sub == 'verify':
+        if len(rest) != 0:
+            die(s, 'tomato seed verify takes no words (usage: tomato seed verify)')
+    elif sub == 'remove':
+        if len(rest) < 1:
+            die_usage(s, 'tomato seed remove needs the name of a seed (usage: tomato seed remove NAME)')
+        if len(rest) != 1:
+            usage()
+        if rest[0].startswith('-'):
+            die(s, f"unknown option '{rest[0]}' for 'tomato seed remove' (usage: tomato seed remove NAME)")
+        arg = rest[0]
+    elif sub == 'vendor':
+        for w in rest:
+            if w == '--offline':
+                add_flag(flags, 'offline')
+            else:
+                die(s, f"unknown option '{w}' for 'tomato seed vendor' (run 'tomato help')")
+    elif sub == 'check':
+        if len(rest) != 0:
+            usage()
+    elif sub == 'hash':
+        if len(rest) > 1:
+            usage()
+        arg = rest[0] if len(rest) == 1 else '.'
+    else:
+        die(s, f"unknown seed command '{sub}' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check and hash)")
+    found = find_config('.')
+    if sub != 'hash' and found.project == '':
+        die(s, 'there is no tomato.toml in this folder or a parent folder')
+    asks = sub in ['install', 'add', 'remove', 'vendor', 'update', 'verify']
+    if asks and is_tty(0):
+        add_flag(flags, 'tty')
+    lines: list[str] = []
+    try:
+        lines = seed_command(sub, arg, found.project, rev if asks else '', [''] + flags if len(flags) > 0 else [''], version)
+    catch Diagnostic as d:
+        show_error(s, d.message)
+        raise CliExit(1)
+    sys.write_stdout(as_output(lines))
+    return 0

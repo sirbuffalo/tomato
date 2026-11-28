@@ -1,0 +1,239 @@
+# The few system functions the `tomato` command needs that std does not have on main yet: they are stage 1 of docs/shell-to-tomato-plan.md
+# (os.realpath, os.mkdtemp, os.rmtree, os.which, os.utime, os.cache_dir, signal.watch). Each is here once, built on what std has today
+# (os, ospath, sys.run), so that when stage 1 lands each one becomes a call of the std function in this file and nothing else changes.
+# Nothing outside this file may use a stand-in below directly in another way.
+import os
+import sys
+from ospath import isfile, isdir, islink, dirname, join, getmtime
+from secrets import token_hex
+
+# ---- where this program is ----------------------------------------------------------------------------------------------------------
+
+# The path of the running program, with every symbolic link resolved (an install is reached through ~/.local/bin/tomato, a link).
+# Stand-in for os.realpath: Linux names the program's file in /proc/self/maps (the first mapping is the program itself); elsewhere the
+# first word of the command line is looked up in PATH and its links are followed with readlink(1).
+export def exe_path() -> str:
+    if sys.platform() == 'linux':
+        try:
+            maps = os.read_text('/proc/self/maps')
+            first = maps.split('\n')[0]
+            at = first.find('/')
+            if at >= 0:
+                return first[at:]
+        catch IOError:
+            pass
+    words = sys.argv()
+    p = words[0] if len(words) > 0 else 'tomato'
+    if '/' not in p:
+        found = which(p)
+        if found is not None:
+            p = found
+    for _ in range(40):
+        if not islink(p):
+            break
+        try:
+            r = sys.run(['readlink', p])
+        catch IOError:
+            break
+        target = r.stdout.strip()
+        if r.status != 0 or target == '':
+            break
+        if not target.startswith('/'):
+            target = join(dirname(p), target)
+        p = target
+    if not p.startswith('/'):
+        p = join(os.getcwd(), p)
+    return p
+
+# The folder that holds std/, runtime/ and VERSION for this program: the folder of the program when std/ is beside it (a checkout's
+# build: ./tomato at the root of the repository), else the folder above it (an install: native/bin/tomato beside native/std/).
+export def home_dir() -> str:
+    d = dirname(exe_path())
+    if isfile(join(d, 'std', 'sys.tom')):
+        return d
+    up = dirname(d)
+    return up if up != '' else '/'
+
+# ---- programs on the PATH -----------------------------------------------------------------------------------------------------------
+
+# The file a program name stands for on the PATH (the first one that is a file this program may run), or None. Stand-in for os.which.
+export def which(name: str) -> str | None:
+    if '/' in name:
+        return name if runnable(name) else None
+    path = os.getenv('PATH')
+    if path is None:
+        return None
+    for d in path.split(':'):
+        folder = d if d != '' else '.'
+        p = folder + '/' + name
+        if runnable(p):
+            return p
+    return None
+
+def runnable(p: str) -> bool:
+    if not isfile(p):
+        return False
+    try:
+        return os.stat(p).mode & 73 != 0          # any of the execute bits (0o111)
+    catch IOError:
+        return False
+
+# ---- temporary files and folders ----------------------------------------------------------------------------------------------------
+
+# A new folder of this program's own in TMPDIR (or /tmp), named prefix and random letters. Stand-in for os.mkdtemp (which also makes it
+# rwx------).
+export def mkdtemp(prefix: str) -> str:
+    base = os.getenv('TMPDIR')
+    if base is None or base == '':
+        base = '/tmp'
+    if base.endswith('/') and len(base) > 1:
+        base = base[:len(base) - 1]
+    for _ in range(100):
+        p = f'{base}/{prefix}{token_hex(5)}'
+        try:
+            os.mkdir(p)
+            return p
+        catch FileExistsError:
+            continue
+    raise IOError(f'cannot make a temporary folder in {base}', 'E515')
+
+# A name for a new file in folder, that no file has yet (the file is not made). For a write under a temporary name and a rename.
+export def temp_name(folder: str, prefix: str) -> str:
+    for _ in range(100):
+        p = f'{folder}/{prefix}{token_hex(5)}'
+        if not exists_any(p):
+            return p
+    return f'{folder}/{prefix}{token_hex(8)}'
+
+def exists_any(p: str) -> bool:
+    return isfile(p) or isdir(p) or islink(p)
+
+# Removes a folder and everything in it (links inside are removed, not followed); nothing when it is not there. Stand-in for
+# os.rmtree(path, missing_ok=True).
+export def rmtree(path: str):
+    if islink(path) or isfile(path):
+        try:
+            os.remove(path)
+        catch IOError:
+            pass
+        return
+    if not isdir(path):
+        return
+    names: list[str] = []
+    try:
+        names = os.listdir(path)
+    catch IOError:
+        names = []
+    for n in names:
+        p = path + '/' + n
+        if islink(p) or not isdir(p):
+            try:
+                os.remove(p)
+            catch IOError:
+                pass
+        else:
+            rmtree(p)
+    try:
+        os.rmdir(path)
+    catch IOError:
+        pass
+
+# ---- the cache folder -----------------------------------------------------------------------------------------------------------
+
+# The user's cache folder for Tomato: TOMATO_CACHE_DIR, else ~/Library/Caches/tomato on macOS, else $XDG_CACHE_HOME/tomato (~/.cache/tomato).
+# Stand-in for os.cache_dir() + '/tomato'.
+export def cache_dir() -> str:
+    given = os.getenv('TOMATO_CACHE_DIR')
+    if given is not None and given != '':
+        return given
+    home = os.getenv('HOME')
+    if home is None or home == '':
+        home = '/nonexistent'
+    if sys.platform() == 'darwin':
+        return home + '/Library/Caches/tomato'
+    xdg = os.getenv('XDG_CACHE_HOME')
+    if xdg is not None and xdg != '':
+        return xdg + '/tomato'
+    return home + '/.cache/tomato'
+
+# Sets the file's modification time to now. Stand-in for os.utime(path).
+export def touch(path: str):
+    try:
+        _r = sys.run(['touch', path])
+    catch IOError:
+        pass
+
+# The seconds since the file last changed, or -1 when it cannot be looked at.
+export def age(path: str, now: float) -> float:
+    try:
+        return now - getmtime(path)
+    catch IOError:
+        return -1.0
+
+# ---- signals ----------------------------------------------------------------------------------------------------------------------
+
+# From now on INT, TERM and HUP do not end the command at once: the next wait for a program raises, the `finally` blocks remove the
+# temporary folders, and the command ends with 128 plus the signal. Stand-in for signal.watch(): until std/signal.tom is on main, a
+# signal still ends the command at once (as a killed shell script would), and a temporary folder can be left in TMPDIR.
+export def watch_signals():
+    pass
+
+# ---- folders --------------------------------------------------------------------------------------------------------------------------
+
+# The absolute path of a folder with its links resolved (what `cd FOLDER && pwd -P` prints), or None when it cannot be entered. Stand-in
+# for os.realpath: the current folder is changed to it and back, and the system's own getcwd gives the physical path.
+export def physical_dir(folder: str) -> str | None:
+    here = os.getcwd()
+    try:
+        os.chdir(folder)
+    catch IOError:
+        return None
+    got = os.getcwd()
+    os.chdir(here)
+    return got
+
+# ---- files ------------------------------------------------------------------------------------------------------------------------------
+
+# The sha256 of a file as 64 hex digits, or '' when it cannot be read. Stand-in for hashlib.sha256_file: shasum (macOS) or sha256sum (Linux)
+# reads it, as the shell command did, so a large download is not held in memory as bytes.
+export def sha256_file(path: str) -> str:
+    for argv in [['shasum', '-a', '256', path], ['sha256sum', path]]:
+        try:
+            r = sys.run(argv)
+            if r.status == 0:
+                sp = r.stdout.find(' ')
+                return r.stdout[:sp] if sp > 0 else r.stdout.strip()
+        catch IOError:
+            continue
+    return ''
+
+# Unpacks a .tar.gz into a folder. Stand-in for the gzip and tar of std (stage 1): the system's tar. Gives whether it worked.
+export def untar_gz(archive: str, folder: str) -> bool:
+    try:
+        return sys.run(['tar', '-xzf', archive, '-C', folder], capture=False).status == 0
+    catch IOError:
+        return False
+
+# Downloads url to path, https only (also after redirects) unless allow_any; file:// works only then (the tests' override). Stand-in for
+# requests.download: the system's curl, as the shell command did. Gives whether it worked.
+export def download(url: str, path: str, allow_any: bool) -> bool:
+    argv = ['curl', '-fsSL']
+    if not allow_any:
+        argv += ['--proto', '=https', '--proto-redir', '=https']
+    try:
+        return sys.run(argv + [url, '-o', path]).status == 0
+    catch IOError:
+        return False
+
+# The text at url (https only, as download), or None when it cannot be read.
+export def fetch_text(url: str, allow_any: bool) -> str | None:
+    argv = ['curl', '-fsSL']
+    if not allow_any:
+        argv += ['--proto', '=https', '--proto-redir', '=https']
+    try:
+        r = sys.run(argv + [url])
+        if r.status == 0:
+            return r.stdout
+    catch IOError:
+        pass
+    return None

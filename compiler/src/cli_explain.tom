@@ -1,0 +1,88 @@
+# `tomato explain CODE [FILE]`: an error id such as E04 (or E04:12, the id and line of a release build's error line): the class and message of
+# the error kind from std/errors.txt, and with a FILE and a line the source line, laid out like a compiler error.
+import os
+from ospath import isfile
+from cli_term import Settings, die, CliExit
+from cli_help import help_text
+import sys
+
+def digits_only(t: str) -> bool:
+    if t == '':
+        return False
+    for c in t:
+        if c not in '0123456789':
+            return False
+    return True
+
+def strip_zeros(t: str) -> str:
+    i = 0
+    while i < len(t) and t[i] == '0':
+        i += 1
+    return t[i:]
+
+# the lines of a text as awk reads them: a last line without a newline still counts, an empty end after the last newline does not
+export def text_lines(text: str) -> list[str]:
+    lines = text.split('\n')
+    if len(lines) > 0 and lines[-1] == '':
+        lines.pop()
+    return lines
+
+export def explain(s: Settings, words: list[str], home: str):
+    if len(words) < 1 or len(words) > 2:
+        sys.write_stderr(help_text())
+        raise CliExit(2)
+    code = words[0]
+    src_file = words[1] if len(words) == 2 else ''
+    bad = f'{code} is not an error id (they look like E04 or E04:12)'
+    colon = code.find(':')
+    head = code if colon < 0 else code[:colon]
+    if not (len(head) >= 3 and head[0] == 'E' and head[1] in '0123456789' and head[2] in '0123456789'):
+        die(s, bad)
+    if not digits_only(head[1:]):
+        die(s, bad)
+    kind = strip_zeros(head[1:])
+    if kind == '':
+        die(s, bad)
+    line = ''
+    if colon >= 0:
+        line = code[colon + 1:]
+        if not digits_only(line):
+            die(s, bad)
+    entry = ''
+    try:
+        table = text_lines(os.read_text(home + '/std/errors.txt'))
+        if len(kind) <= 9 and int(kind) <= len(table):
+            entry = table[int(kind) - 1]
+    catch IOError:
+        entry = ''
+    id = 'E' + kind if len(kind) > 1 else 'E0' + kind
+    if entry == '':
+        print(f'error[{id}]: an error the table does not list')
+    else:
+        sp = entry.find(' ')
+        cls = entry if sp < 0 else entry[:sp]
+        msg = entry if sp < 0 else entry[sp + 1:]
+        print(f'error[{id}]: {cls}: {msg}')
+    if src_file == '' or line == '':
+        return
+    line = strip_zeros(line)
+    if line == '':
+        return                          # line zero means the runtime had no source location
+    if not isfile(src_file):
+        die(s, f'cannot read {src_file}')
+    lines: list[str] = []
+    try:
+        lines = text_lines(os.read_text(src_file))
+    catch IOError:
+        die(s, f'cannot read {src_file}')
+    if len(line) > 9 or int(line) > len(lines):
+        print(f'  (line {line} is past the end of {src_file}: is this the file the program was built from?)')
+        return
+    text = lines[int(line) - 1]
+    trimmed = text.lstrip(' ')          # (a tab cannot indent Tomato)
+    indent = len(text) - len(trimmed)
+    pad = ' ' * len(line)
+    print(f' --> {src_file}:{line}')
+    print(f'{pad} |')
+    print(f'{line} | {text}')
+    print(f'{pad} | ' + ' ' * indent + '^' * len(trimmed))

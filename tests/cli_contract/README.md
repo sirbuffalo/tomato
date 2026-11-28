@@ -16,7 +16,8 @@ sh tests/cli_contract/run.sh --update CASE    rewrite the golden files of a case
 TOMATO=/path/to/tomato sh tests/cli_contract/startup_times.sh   the startup numbers of plan section 2 (reports only)
 ```
 
-`tests/run.sh` runs it as its own section ("CLI contract") against the installed command, one job per case; its fast tier skips the cases
+`tests/run.sh` runs it as its own section ("CLI contract") against the installed command, one job per case, and again against the
+command written in Tomato (`compiler/src/tomato.tom`, built by the suite: its lines say "cli contract (binary)"); its fast tier skips the cases
 whose second line is `# tier: full` (they build and run a program per check). The cases that look only at what `tomato` prints before it
 compiles anything (`help`, `version`, `explain`, `config`, `init`, `args`, `update`) are in both tiers.
 

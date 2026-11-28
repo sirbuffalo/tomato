@@ -3315,11 +3315,20 @@ spawn t_std_sheets
 # `tomato` (today the script, later the compiled Tomato program that replaces it) and to know nothing of how it is made. Here it runs against
 # the installed command ($t). One test per case file (tests/cli_contract/cases/NAME.sh); the fast tier skips the cases that link many
 # programs (the ones that say `# tier: full` on their second line) and runs the others. `sh tests/cli_contract/run.sh --help` runs it alone.
-t_cli_contract() { # NAME: the lines of the case become the suite's ok and FAIL lines
-  cli_setup
-  TOMATO="$t" CONTRACT_FAST="$fast" CONTRACT_JOBS=1 sh tests/cli_contract/run.sh "$1" > "$work/contract.out" 2>&1 < /dev/null; contract_rc=$?
+t_cli_contract() { # NAME [binary]: the lines of the case become the suite's ok and FAIL lines (with `binary`, against the tomato command
+  # written in Tomato, built by t_cli_binary_build, and named "cli contract (binary): ...")
+  if [ "${2:-}" = binary ]; then
+    await_file "$shared/cli_bin.rc" && [ "$(cat "$shared/cli_bin.rc")" = 0 ] || { bad "cli contract (binary): $1: the tomato command written in Tomato was not built"; return 1; }
+    under="$tb"; label="cli contract (binary): "
+  else cli_setup; under="$t"; label="cli contract: "; fi
+  TOMATO="$under" CONTRACT_FAST="$fast" CONTRACT_JOBS=1 sh tests/cli_contract/run.sh "$1" > "$work/contract.out" 2>&1 < /dev/null; contract_rc=$?
   detail=""; failing=""
   while IFS= read -r line; do
+    case "$line" in
+      "ok   cli contract: "*) line="ok   $label${line#ok   cli contract: }" ;;
+      "FAIL cli contract: "*) line="FAIL $label${line#FAIL cli contract: }" ;;
+      "skip cli contract: "*) line="skip $label${line#skip cli contract: }" ;;
+    esac
     case "$line" in
       "ok   "*) [ -z "$failing" ] || { bad "$failing" "$detail"; failing=""; detail=""; }; ok "${line#ok   }" ;;
       "FAIL "*) [ -z "$failing" ] || bad "$failing" "$detail"; failing="${line#FAIL }"; detail="" ;;
@@ -3337,6 +3346,60 @@ section "== CLI contract (tests/cli_contract: what a user sees of the tomato com
 for cf in tests/cli_contract/cases/*.sh; do
   cn="$(basename "$cf" .sh)"
   if [ -n "$fast" ] && sed -n '2p' "$cf" | grep -q '^# tier: full'; then skip "cli contract $cn"; else spawn_cli t_cli_contract "$cn"; fi
+done
+
+# ---- the tomato command written in Tomato ---------------------------------------------------------------------------------
+# compiler/src/tomato.tom and its cli_*.tom modules (docs/shell-to-tomato-plan.md, stage 2): the command line and the compiler as one
+# program. It is built here from the sources with the compiler of the first section ($c1) into a folder laid out as an install
+# ($bin_home/bin/tomato beside std/, runtime/ and VERSION, links to the checkout's), and must pass the CLI contract unchanged, as the
+# shell script native/tomato does. Under the name tomatoc it is the old compiler command.
+bin_home="$shared/binhome"; tb="$bin_home/bin/tomato"
+t_cli_binary_build() {
+  mkdir -p "$bin_home/bin" && for d in std runtime examples VERSION; do ln -s "$root/$d" "$bin_home/$d"; done
+  if "$c1" compiler/src/tomato.tom main std/ > "$shared/cli.ll" 2> "$work/e"; then ok "the tomato command compiles (compiler/src/tomato.tom)"
+  else bad "the tomato command compiles (compiler/src/tomato.tom)" "$(head -20 "$work/e")"; echo 1 > "$shared/cli_bin.rc"; return 1; fi
+  grep -q '^;! ' "$shared/cli.ll" && bad "the tomato command compiles without warnings" "$(grep '^;! ' "$shared/cli.ll" | head -6)" || ok "the tomato command compiles without warnings"
+  if compiler/bootstrap/build-object.sh "$work/cli.o" "$shared/cli.ll" 2> "$work/e" && clang -O1 -w -o "$tb" "$work/cli.o" "$rt_o" -pthread -lm $([ "$(uname)" = Linux ] && echo -ldl) 2>> "$work/e" && ln -s tomato "$bin_home/bin/tomatoc"
+  then ok "the tomato command links"; echo 0 > "$shared/cli_bin.rc"; else bad "the tomato command links" "$(head -20 "$work/e")"; echo 1 > "$shared/cli_bin.rc"; return 1; fi
+}
+t_cli_binary() { # what only the binary is checked for: it reproduces itself, it gives the shell command's IR, tomatoc, no compiler on PATH
+  await_file "$shared/cli_bin.rc" && [ "$(cat "$shared/cli_bin.rc")" = 0 ] || { bad "tomato (binary): it was not built"; return 1; }
+  cli_setup
+  "$tb" compile compiler/src/tomato.tom --entry main > "$work/self.ll" 2> "$work/e"
+  cmp -s "$work/self.ll" "$shared/cli.ll" && ok "tomato (binary): compiles itself to the IR it was built from (it reproduces itself)" || bad "tomato (binary): compiles itself to the IR it was built from (it reproduces itself)" "$(head -5 "$work/e")"
+  same=""; for f in examples/*.tom; do
+    for m in debug release; do
+      "$t" compile "$f" --mode "$m" > "$work/old.ll" 2>&1; ro=$?; "$tb" compile "$f" --mode "$m" > "$work/new.ll" 2>&1; rn=$?
+      [ "$ro" = "$rn" ] && cmp -s "$work/old.ll" "$work/new.ll" || same="$same $f($m)"
+    done
+  done
+  check "tomato (binary): every example compiles to the same IR through the shell command and the binary, in both modes" "" "$same"
+  "$bin_home/bin/tomatoc" examples/compiled.tom main std/ > "$work/a.ll" 2> "$work/e"; "$c1" examples/compiled.tom main std/ > "$work/b.ll" 2>&1
+  cmp -s "$work/a.ll" "$work/b.ll" && ok "tomato (binary): started as tomatoc it is the old compiler command" || bad "tomato (binary): started as tomatoc it is the old compiler command" "$(head -5 "$work/e")"
+  "$bin_home/bin/tomatoc" "$work/typo.tom" main std/ > /dev/null 2> "$work/e"; rc=$?
+  check "tomato (binary): as tomatoc, a compile error is the error text, status 1" "1 error[E227]: name 'tets' is not defined" "$rc $(head -1 "$work/e")"
+  # no clang on PATH: the fix text, not a raw error (compile needs no clang)
+  PATH="$work/nopath" "$tb" run "$work/top.tom" > "$work/o" 2> "$work/e"; rc=$?
+  check "tomato (binary): with no clang on PATH, run says what is missing and how to get it, status 1" "1 error: tomato needs clang to compile and link programs, and there is no clang on PATH" "$rc $(head -1 "$work/e")"
+  grep -q '^  = help: install' "$work/e" && ok "tomato (binary): with no clang, the help names the line that installs it" || bad "tomato (binary): with no clang, the help names the line that installs it" "$(cat "$work/e")"
+  PATH="$work/nopath" "$tb" build "$work/top.tom" -o "$work/x" > /dev/null 2>&1; check "tomato (binary): with no clang, build fails with status 1 too" 1 "$?"
+  printf '@main\ndef main():\n    print(1)\n' > "$work/one.tom"
+  PATH="$work/nopath" "$tb" compile "$work/one.tom" > "$work/o" 2>&1; rc=$?; check "tomato (binary): with no clang, compile still works" "0 yes" "$rc $(grep -q '^define i32 @main' "$work/o" && echo yes)"
+  # the startup budget of the plan (section 2): a command that builds nothing at most 33 ms; the check fails only above twice that, so a
+  # loaded machine does not fail the suite (the numbers: tests/cli_contract/startup_times.sh)
+  if command -v perl > /dev/null 2>&1; then
+    : > "$work/times"; i=0
+    while [ "$i" -lt 11 ]; do perl -MTime::HiRes=time -e '$t = time; system(@ARGV); printf STDERR "%d\n", (time - $t) * 1000' "$tb" version 2>> "$work/times" > /dev/null; i=$((i + 1)); done
+    med="$(sort -n "$work/times" | sed -n 6p)"
+    [ "$med" -le 66 ] && ok "tomato (binary): version starts within twice the budget of 33 ms (median ${med} ms)" || bad "tomato (binary): version starts within twice the budget of 33 ms" "median ${med} ms of 11 runs"
+  fi
+}
+section "== the tomato command written in Tomato (compiler/src/tomato.tom, built by the compiler above) =="
+spawn_first t_cli_binary_build
+spawn t_cli_binary        # (these wait for the build above; registered as ordinary tests, they start after the ones before them)
+for cf in tests/cli_contract/cases/*.sh; do
+  cn="$(basename "$cf" .sh)"
+  if [ -n "$fast" ] && sed -n '2p' "$cf" | grep -q '^# tier: full'; then skip "cli contract (binary) $cn"; else spawn t_cli_contract "$cn" binary; fi
 done
 
 # ---- rejected programs --------------------------------------------------------------------------------------------------
