@@ -38,6 +38,8 @@ of `dev/test.tom` is in `dev/host.tom`, the one file that changes when std gains
 `tests/run.sh` has it as its own section, one job per case; `--fast` skips the cases that link many programs. Run it alone with
 `sh tests/cli_contract/run.sh` (see `tests/cli_contract/README.md`).
 
+The repl's pty checks (`tests/repl_*.exp`) need `expect`; `tests/repl_interrupt.exp` sends Ctrl-C to an endless piece. The website repl's session logic (`site/play.html`) runs under node through `tests/play_repl.js`, with a stub page and the page's own toolchain.
+
 ## Browser entropy check
 
 Serve the repository over HTTP on localhost (a secure context for Web Crypto) and open

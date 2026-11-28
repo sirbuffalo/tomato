@@ -55,7 +55,7 @@ With no `ENTRY` the file runs as a whole: its `@test` functions through the driv
 
 | Option | Meaning |
 | --- | --- |
-| `--filter TEXT` | only the files whose name contains `TEXT` (a filter that keeps no file prints `warning: no file name contains 'TEXT'`; the status stays 0) |
+| `--filter TEXT` | only the files whose name contains `TEXT` (a filter that keeps no file is an error, `error: no test file name contains 'TEXT'`, with status 1: a typo must not pass) |
 | `--timeout N` | stop a file that has run for more than `N` seconds (a whole number; the compile is not counted) and fail it |
 | `-v`, `--verbose` | also show what the files that pass printed |
 | `--mode debug\|release` | as for `tomato run` |

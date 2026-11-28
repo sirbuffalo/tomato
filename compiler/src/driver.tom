@@ -5,8 +5,8 @@
 from compiler import compile_module
 from config import ConfigError, load_limits, describe
 from diag import Diagnostic
-from manifest import read_manifest, check_tomato, build_for, describe_manifest, user_build_mode
-from seeds import module_map, install, check_seed, seed_hash, add, remove, vendor, update, verify, opts_from, AddSpec, add_spec_from_word, header_seeds, header_without_project, check_header
+from manifest import entry_markers_of, read_manifest, check_tomato, build_for, describe_manifest, user_build_mode
+from seeds import module_map, install, check_seed, seed_hash, add, remove, vendor, update, verify, opts_from, AddSpec, add_spec_from_word, header_seeds, header_without_project, check_header, build_table_warnings
 from ospath import isdir
 
 # `tomato seed ...`: the subcommand (install, check, hash, add, remove, vendor, update or verify), `arg` the word it takes (the folder to hash,
@@ -101,6 +101,9 @@ export def compile_ir(path: str, entry: str, std: str, mode: str, project: str, 
             if isdir(m.dir + 'src'):
                 src_dir = m.dir + 'src/'
             built = build_for(m, entry)
+            if m.kind == 'project':
+                for w in build_table_warnings(m, m.dir[:len(m.dir) - 1] if m.dir != '' else '.', entry_markers_of(src)):
+                    notes.append(';! ' + w)
             if mode == '':
                 mode = built.mode
             if mode == '':

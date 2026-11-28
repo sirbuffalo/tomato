@@ -641,6 +641,19 @@ t_wasm_repl_import() {
   case "$m" in "42
 mine 5"*"~rc 0"*) ok "wasm repl: the echo uses the built-in print when the session defines print";; *) bad "wasm repl: the echo uses the built-in print when the session defines print" "$m";; esac
 }
+# the website repl's session logic (site/play.html) through node: a redefinition replaces the old one, a definition shows nothing, and an error
+# is reported at the piece that was typed (fourth audit 26); tests/play_repl.js stubs the page and runs the page's own script
+t_wasm_play_repl() {
+  if ! command -v node > /dev/null 2>&1; then echo "skip: node is not installed, so the website repl's session logic was not run"; return; fi
+  printf '%s' '["def f() -> int:\n    return 1\n", "print(f())", "def f() -> int:\n    return 2\n", "print(f())", "f() + 1", "def g(x: int) -> int:\n    return x\n", "g(1)", "def g(s: str) -> str:\n    return s\n", "1 +"]' > "$work/pieces.json"
+  r="$(node tests/play_repl.js < "$work/pieces.json" 2>&1 | sed 1d | grep -v '^in:')"
+  check "website repl: a function defined again replaces the old one, with no output of its own; an error is at the typed piece" "out:1
+out:2
+out:3
+out:1
+e:error[E324]: argument 1 of 'g' (the parameter 's') has type int, but str is expected |  --> session:1:7 |   | | 1 | print(g(1)) |   |       ^ | hint: the earlier lines of the session run again with the new g, and one of them does not work with it; the earlier definition is kept
+e:error[E335]: expected a value or expression, but found the end of the line |  --> repl:1:4 |   | | 1 | 1 + |   |    ^" "$r"
+}
 t_wasm_sockets() { r="$(tjsc site/wasm run tests/programs/socket_browser.tom 2>&1 | grep '^no ')"; check "wasm sockets raise SocketError" "no sockets: True E446
 no listening: E446
 no udp: E446
@@ -779,6 +792,7 @@ if [ -n "$have_js" ]; then
   spawn_free t_wasm_config
   spawn_free t_wasm_site_errors
   spawn_free t_wasm_repl_import
+  spawn_free t_wasm_play_repl
   spawn_free t_wasm_site_editor
 else spawn_free t_wasm_missing; fi
 
@@ -1195,9 +1209,9 @@ tomato = "0.51"
   check "build tables: build takes --entry the same way" "wrote e1" "$(cd "$P" && noconf $t build sub/prog.tom --entry crash -o e1 2>&1)"
   printf '%s[build]\nmode = "release"\n[build.test]\nmode = "debug"\n' "$head" > "$P/tomato.toml"
   r="$(noconf $t test "$P/sub/prog.tom" 2>&1)"
-  case "$r" in "ok   $P/sub/prog.tom  (1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "build tables: tomato test reads [build.test]";; *) bad "build tables: tomato test reads [build.test]" "$r";; esac
+  case "$r" in "ok   $P/sub/prog.tom  (1 passed)"*"tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok") ok "build tables: tomato test reads [build.test]";; *) bad "build tables: tomato test reads [build.test]" "$r";; esac
   r="$(noconf $t test --mode release "$P/sub/prog.tom" 2>&1)"
-  case "$r" in *"(1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "build tables: tomato test --mode release still runs";; *) bad "build tables: tomato test --mode release still runs" "$r";; esac
+  case "$r" in *"(1 passed)"*"tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok") ok "build tables: tomato test --mode release still runs";; *) bad "build tables: tomato test --mode release still runs" "$r";; esac
   # output
   printf '%s[build]\noutput = "out/app"\n[build.crash]\noutput = "/dev/null/never"\n' "$head" > "$P/tomato.toml"
   r="$(noconf $t build "$P/sub/prog.tom" 2>&1)"
@@ -1205,7 +1219,7 @@ tomato = "0.51"
   check "build tables: the program is there and runs" "1" "$("$P/out/app" 2>&1)"
   rm -rf "$P/out"
   r="$(cd "$work" && noconf $t build "$P/sub/prog.tom" -o "$work/other_app" 2>&1)"
-  check "build tables: -o wins over output" "wrote $work/other_app" "$r"
+  check "build tables: -o wins over output" "wrote other_app" "$r"
   [ ! -e "$P/out" ] && ok "build tables: -o leaves the output folder alone" || bad "build tables: -o leaves the output folder alone"
   r="$(noconf $t run "$P/sub/prog.tom" 2>&1)"
   check "build tables: run ignores output" "1" "$r"
@@ -1228,7 +1242,7 @@ tomato = "0.51"
   check "build tables: [build.grp] applies to grp.one (the dotted-prefix rule)" "debug" "$(mode_of noconf $t run "$P/sub/dot.tom" grp.one)"
   printf '%s[build]\nmode = "debug"\n[build.grp.one]\nmode = "release"\n' "$head" > "$P/tomato.toml"
   check "build tables: [build.grp.one] applies to grp.one and not to grp (a table below the entry is not used)" "release debug" "$(mode_of noconf $t run "$P/sub/dot.tom" grp.one) $(mode_of noconf $t run "$P/sub/dot.tom" grp)"
-  check "build tables: a table for the prefix text (grp.o) does not apply" "debug" "$(printf '%s[build]\nmode = "debug"\n[build.grp.o]\nmode = "release"\n' "$head" > "$P/tomato.toml"; mode_of noconf $t run "$P/sub/dot.tom" grp.one)"
+  check "build tables: a table for the prefix text (grp.o) does not apply" "debug" "$(printf '%s[build]\nmode = "debug"\n[build.grp.o]\nmode = "release"\n' "$head" > "$P/tomato.toml"; mode_of noconf $t run --no-warnings "$P/sub/dot.tom" grp.one)"   # (a table that names no entry is a warning now: --no-warnings keeps it out of the way)
   printf '%s[build]\nmode = "debug"\n[build.grp.one]\nmode = "release"\n' "$head" > "$P/tomato.toml"
   noconf $t build "$P/sub/dot.tom" --entry grp.one -o "$work/b_ent" > /dev/null 2>&1
   check "build tables: build --entry reads [build.ENTRY]" "release" "$(mode_of "$work/b_ent")"
@@ -1293,7 +1307,7 @@ tomato = "0.51"
   h="$(indep_hash "$W/thing")"
   r="$(cd "$W/app" && noconf $t seed install 2>&1)"
   check "seeds: install locks a path seed and says what it wrote" "acme.example/thing 0.3.0  $h  (path ../thing)
-wrote $here/app/tomato.lock (1 seed)" "$r"
+wrote tomato.lock (1 seed)" "$r"
   check "seeds: the lock holds the name, version, source, path, content hash and modules" '# tomato.lock: generated by `tomato seed install`, do not edit
 version = 1
 
@@ -1350,7 +1364,7 @@ test_only = true' "$(sed -n '/name = "acme.example\/other"/,/^test_only/p' "$W/a
   check "seeds: the option --test-seeds finds it" "7" "$(cd "$W/app" && noconf $t run --test-seeds sub/needs_other.tom 2>&1)"
   check "seeds: so does build --test-seeds" "7" "$(cd "$W/app" && noconf $t build sub/needs_other.tom --test-seeds -o "$work/no_bin" >/dev/null 2>&1 && "$work/no_bin" 2>&1)"
   r="$(cd "$W/app" && noconf $t test sub/needs_other.tom 2>&1)"
-  case "$r" in *"ok   sub/needs_other.tom  (1 passed)"*"tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok") ok "seeds: tomato test reads [test-seeds], so its seeds are found";; *) bad "seeds: tomato test reads [test-seeds], so its seeds are found" "$r";; esac
+  case "$r" in *"ok   sub/needs_other.tom  (1 passed)"*"tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok") ok "seeds: tomato test reads [test-seeds], so its seeds are found";; *) bad "seeds: tomato test reads [test-seeds], so its seeds are found" "$r";; esac
   printf '%s' "$head" > "$W/app/tomato.toml"
   # the lock must hold what the run uses
   r="$(cd "$W/app" && printf '# tomato.lock\nversion = 1\n' > tomato.lock && noconf $t run sub/prog.tom 2>&1)"
@@ -1516,16 +1530,16 @@ r="$(cd "$A" && tm $t run src/usegs.tom 2>&1 | norm)"
   seed_toml acme.example/loc 0.3.0 > "$W/loc/tomato.toml"
   cp "$A/tomato.toml" "$W/manifest.before"
   r="$(cd "$A" && tm $t seed add --path ../loc 2>&1 | norm)"
-  check "seed add: a path seed is listed and locked" "added acme.example/loc 0.3.0 to [seeds] of HERE/app/tomato.toml
+  check "seed add: a path seed is listed and locked" "added acme.example/loc 0.3.0 to [seeds] of tomato.toml
 b.example/b 1.0.0  $(indep_hash "$W/b")  (path ../b)
 acme.example/loc 0.3.0  $(indep_hash "$W/loc")  (path ../loc)
-wrote HERE/app/tomato.lock (2 seeds)" "$r"
+wrote tomato.lock (2 seeds)" "$r"
   check "seed add: only the new line is added, after the last seed of [seeds], with every comment and blank line where it was" '+"acme.example/loc" = { path = "../loc" }' "$(diff "$W/manifest.before" "$A/tomato.toml" | grep '^[<>]' | sed 's/^> */+/')"
   check "seed add: the lock holds the seeds, with the content hash of find, sort and sha256" "$(indep_hash "$W/loc")" "$(sed -n '/name = "acme.example\/loc"/,/^seeds/p' "$A/tomato.lock" | sed -n 's/^hash = "\(.*\)"/\1/p')"
   check "seed add: a program uses the seed" "loc" "$(cd "$A" && tm $t run 2>&1)"
   cp "$A/tomato.toml" "$W/manifest.once"; cp "$A/tomato.lock" "$W/lock.once"
   r="$(cd "$A" && tm $t seed add --path "$W/loc" 2>&1 | norm | sed -n 1p)"
-  check "seed add: the same seed again (as an absolute path) replaces its line" 'added acme.example/loc 0.3.0 to [seeds] of HERE/app/tomato.toml' "$r"
+  check "seed add: the same seed again (as an absolute path) replaces its line" 'added acme.example/loc 0.3.0 to [seeds] of tomato.toml' "$r"
   check "seed add: and keeps the order (one line differs, the path as written)" "+\"acme.example/loc\" = { path = \"$W/loc\" }" "$(diff "$W/manifest.once" "$A/tomato.toml" | grep '^>' | sed 's/^> */+/')"
   (cd "$A" && tm $t seed add --path ../loc >/dev/null 2>&1)
   cmp -s "$W/manifest.once" "$A/tomato.toml" && cmp -s "$W/lock.once" "$A/tomato.lock" && ok "seed add: add, add again and add the first form again end where it began" || bad "seed add: add again ends where it began"
@@ -1541,19 +1555,19 @@ wrote HERE/app/tomato.lock (2 seeds)" "$r"
   check "seed add: the lock marks it test_only" "test_only = true" "$(sed -n '/acme.example\/tl/,$p' "$A/tomato.lock" | grep test_only)"
   # ---- seed remove
   r="$(cd "$A" && tm $t seed remove acme.example/tl 2>&1 | norm)"
-  check "seed remove: says what it removed and locked" "removed acme.example/tl from [test-seeds] of HERE/app/tomato.toml
+  check "seed remove: says what it removed and locked" "removed acme.example/tl from [test-seeds] of tomato.toml
 b.example/b 1.0.0  $(indep_hash "$W/b")  (path ../b)
 acme.example/loc 0.3.0  $(indep_hash "$W/loc")  (path ../loc)
-wrote HERE/app/tomato.lock (2 seeds)" "$r"
+wrote tomato.lock (2 seeds)" "$r"
   check "seed remove: only its line goes (the now empty [test-seeds] and the comments stay)" '+[test-seeds]
 +' "$(diff "$W/manifest.once" "$A/tomato.toml" | grep '^[<>]' | sed 's/^> */+/')"
   check "seed remove: the lock no longer has it" "0" "$(grep -c 'acme.example/tl' "$A/tomato.lock")"
   r="$(cd "$A" && tm $t seed remove acme.example/nothing 2>&1 | norm; echo "rc=$?")"
-  check "seed remove: a seed that is not listed is an error" "error[E604]: HERE/app/tomato.toml: acme.example/nothing is not in [seeds] or [test-seeds] of this tomato.toml
+  check "seed remove: a seed that is not listed is an error" "error[E604]: acme.example/nothing is not in [seeds] or [test-seeds] of tomato.toml (the seeds there: b.example/b, acme.example/loc)
 rc=0" "$r"
   r="$(cd "$A" && tm $t seed remove acme.example/loc >/dev/null 2>&1; tm $t seed remove b.example/b 2>&1 | norm)"
-  check "seed remove: the last seed leaves a lock with no seeds" "removed b.example/b from [seeds] of HERE/app/tomato.toml
-wrote HERE/app/tomato.lock (0 seeds)" "$r"
+  check "seed remove: the last seed leaves a lock with no seeds" "removed b.example/b from [seeds] of tomato.toml
+wrote tomato.lock (0 seeds)" "$r"
   check "seed remove: a lock with no seeds is only the version" '# tomato.lock: generated by `tomato seed install`, do not edit
 version = 1' "$(cat "$A/tomato.lock")"
   # ---- forms that are not edited, and what is not a project
@@ -1578,9 +1592,9 @@ version = 1' "$(cat "$A/tomato.lock")"
   # ---- seed add --git: fetched with git into the store, named by the content hash
   printf '%s' "$head" > "$A/tomato.toml"; rm -f "$A/tomato.lock"
   r="$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C1" 2>&1 | norm)"
-  check "seed add --git: the seed is fetched, listed and locked" "added g.example/gs 1.0.0 to [seeds] of HERE/app/tomato.toml
+  check "seed add --git: the seed is fetched, listed and locked" "added g.example/gs 1.0.0 to [seeds] of tomato.toml
 g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
-wrote HERE/app/tomato.lock (1 seed)" "$r"
+wrote tomato.lock (1 seed)" "$r"
   check "seed add --git: the line has the URL and the commit" "\"g.example/gs\" = { git = \"$gsurl\", rev = \"$C1\" }" "$(sed -n '/^\[seeds\]/,$p' "$A/tomato.toml" | sed -n 2p)"
   check "seed add --git: the lock has source, git, commit and the hash that find, sort and sha256 give for the files at that commit" "source = \"git\"
 git = \"$gsurl\"
@@ -1597,7 +1611,7 @@ modules = [\"gs\"]" "$(sed -n '/^source/,/^modules/p' "$A/tomato.lock")"
   check "seed install --locked --offline: needs neither the repository nor git" "g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
 tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked --offline 2>&1 | norm)"
   check "seed install: and so does install with the repository gone" "g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
-wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
+wrote tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
   check "a build never fetches: it runs from the store with the repository gone" "hi from git" "$(cd "$A" && tm $t run src/usegs.tom 2>&1)"
   mv "$store" "$W/store.moved"
   r="$(cd "$A" && tm $t seed install --offline 2>&1 | norm)"
@@ -1613,7 +1627,7 @@ wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | nor
   rm -rf "$th/seeds/git"; mv "$W/git.moved" "$th/seeds/git"
   mv "$W/gs.moved" "$W/gs.git"
   check "seed install: with the repository back it fetches the missing seed" "g.example/gs 1.0.0  $H1  (git HERE/gs.git ${C1%????????????????????????????})
-wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
+wrote tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | norm)"
   check "seed install: and the store has it again, as it was" "$H1" "$(tm $t seed hash "$store")"
   # a store folder changed after it was stored is caught by a build and by install
   printf '# changed\n' >> "$store/src/gs.tom"
@@ -1650,9 +1664,9 @@ wrote HERE/app/tomato.lock (1 seed)" "$(cd "$A" && tm $t seed install 2>&1 | nor
   check "foreign symbols: --yes lists them and goes on" "the seed g.example/gs 1.1.0 declares foreign symbols, !name(...) declarations that link functions of the runtime or of C into your program, with no check of their types by the compiler:
   getpid  (src/gs.tom:1)
 accepted with --yes; they are recorded in tomato.lock
-added g.example/gs 1.1.0 to [seeds] of HERE/app/tomato.toml
+added g.example/gs 1.1.0 to [seeds] of tomato.toml
 g.example/gs 1.1.0  $H2  (git HERE/gs.git ${C2%????????????????????????????})
-wrote HERE/app/tomato.lock (1 seed)" "$r"
+wrote tomato.lock (1 seed)" "$r"
   check "foreign symbols: the lock records the accepted symbols" 'symbols = ["getpid"]' "$(grep '^symbols' "$A/tomato.lock")"
   check "foreign symbols: the manifest line has the new commit (an update is the same command with another --rev)" "\"g.example/gs\" = { git = \"$gsurl\", rev = \"$C2\" }" "$(sed -n '/^\[seeds\]/,$p' "$A/tomato.toml" | sed -n 2p)"
   check "foreign symbols: install asks nothing once they are in the lock" "g.example/gs 1.1.0  $H2  (git HERE/gs.git ${C2%????????????????????????????})
@@ -1716,7 +1730,7 @@ tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked < /dev/null
   check "seed add --offline: a git seed that the lock does not know is an error, git is not run" "error[E605]:" "$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C1" --offline 2>&1 | cut -c1-12)"
   check "seed add: --git needs --rev" "error: a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH (usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --git "$gsurl" 2>&1)"
   check "seed add: --path takes no --rev" "error: --rev, --tag, --branch and --subdir go with --git, not with --path" "$(cd "$A" && tm $t seed add --path ../loc --rev "$C1" 2>&1)"
-  check "seed add: a registry name is recognised, and there is no registry to look it up (E571)" "error[E571]: HERE/app/tomato.toml: acme.example/x is a registry seed (owner: the domain acme.example), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT (also gitlab:, codeberg: and srht:), tomato seed add --git URL --rev COMMIT, or --path DIR" "$(cd "$A" && tm $t seed add acme.example/x 2>&1 | norm)"
+  check "seed add: a registry name is recognised, and there is no registry to look it up (E571)" "error[E571]: acme.example/x is a registry seed (owner: the domain acme.example), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT (also gitlab:, codeberg: and srht:), tomato seed add --git URL --rev COMMIT, or --path DIR" "$(cd "$A" && tm $t seed add acme.example/x 2>&1 | norm)"
   check "seed add: with no source" "error: tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed (usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --test 2>&1)"
   # ---- seed vendor and [seed-store] vendor
   (cd "$A" && printf '%s' "$head" > tomato.toml && rm -f tomato.lock && tm $t seed add --path ../loc --yes >/dev/null 2>&1 && tm $t seed add --git "$gsurl" --rev "$C1" >/dev/null 2>&1)
@@ -1792,7 +1806,7 @@ tomato = "0.51"
   for pair in "gh:dave/gs|https://github.com/dave/gs.git" "gitlab:dave/gs|https://gitlab.com/dave/gs.git" "codeberg:dave/gs|https://codeberg.org/dave/gs.git" "srht:~dave/gs|https://git.sr.ht/~dave/gs"; do
     word="${pair%%|*}"; url="${pair#*|}"; fresh
     r="$(err seed add "$word" --rev "$C1")"
-    check "seed handles: $word is added from $url" "added dave/gs 1.2.0 to [seeds] of HERE/app/tomato.toml" "$(echo "$r" | sed -n 1p)"
+    check "seed handles: $word is added from $url" "added dave/gs 1.2.0 to [seeds] of tomato.toml" "$(echo "$r" | sed -n 1p)"
     check "seed handles: $word: tomato.toml and tomato.lock hold the URL and the commit, never the shortcut" "git = \"$url\", rev = \"$C1\"|git = \"$url\"|0" "$(sed -n 's/^"dave\/gs" = { \(.*\) }$/\1/p' "$W/app/tomato.toml" | tr -d '\n')|$(sed -n 's/^\(git = ".*"\)$/\1/p' "$W/app/tomato.lock" | tr -d '\n')|$(cat "$W/app/tomato.toml" "$W/app/tomato.lock" | grep -c "$word")"
   done
   check "seed handles: each shortcut asked git for the URL it stands for" "https://github.com/dave/gs.git
@@ -1801,10 +1815,10 @@ https://codeberg.org/dave/gs.git
 https://git.sr.ht/~dave/gs" "$(awk '!seen[$0]++' "$W/urls.log")"
   fresh
   r="$(err seed add gitlab:dave/gs --tag v1 --test)"
-  check "seed handles: a shortcut takes --tag (looked up once, its commit is the rev) and --test" "added dave/gs 1.2.0 to [test-seeds] of HERE/app/tomato.toml (tag v1 is at $(echo "$C1" | cut -c1-12))" "$(echo "$r" | sed -n 1p)"
+  check "seed handles: a shortcut takes --tag (looked up once, its commit is the rev) and --test" "added dave/gs 1.2.0 to [test-seeds] of tomato.toml (tag v1 is at $(echo "$C1" | cut -c1-12))" "$(echo "$r" | sed -n 1p)"
   fresh
   r="$(err seed add gh:dave/gs --branch main)"
-  check "seed handles: and --branch" "added dave/gs 1.2.0 to [seeds] of HERE/app/tomato.toml (branch main is at $(echo "$C1" | cut -c1-12))" "$(echo "$r" | sed -n 1p)"
+  check "seed handles: and --branch" "added dave/gs 1.2.0 to [seeds] of tomato.toml (branch main is at $(echo "$C1" | cut -c1-12))" "$(echo "$r" | sed -n 1p)"
   fresh
   # ---- what a shortcut or a name may be
   bads() { # NAME EXPECTED-START ARGS...: the command stops, and the message starts so
@@ -1812,23 +1826,23 @@ https://git.sr.ht/~dave/gs" "$(awk '!seen[$0]++' "$W/urls.log")"
     case "$r" in "$e"*) ok "seed handles: $n" ;; *) bad "seed handles: $n" "expected: $e
 got:      $r" ;; esac
   }
-  bads "a shortcut needs --rev, --tag or --branch" 'error[E621]: HERE/app/tomato.toml: a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH: gh:dave/gs is https://github.com/dave/gs.git' gh:dave/gs
-  bads "a shortcut is exactly USER/REPO" 'error[E621]: HERE/app/tomato.toml: "gh:dave" is not a host shortcut: write gh:USER/REPO' gh:dave --rev "$C1"
-  bads "a deeper path is not a shortcut" 'error[E621]: HERE/app/tomato.toml: "gitlab:g/s/r" is not a host shortcut: write gitlab:USER/REPO (exactly one user and one repository; a repository in a deeper folder takes --git URL and --subdir)' gitlab:g/s/r --rev "$C1"
-  bads "a Sourcehut user starts with ~" 'error[E621]: HERE/app/tomato.toml: "srht:dave/gs" is not a host shortcut: a Sourcehut user starts with ~, so write srht:~USER/REPO' srht:dave/gs --rev "$C1"
-  bads "a repository is written without .git" 'error[E621]: HERE/app/tomato.toml: "codeberg:dave/gs.git" is not a host shortcut: write the repository without .git' codeberg:dave/gs.git --rev "$C1"
-  bads "a user cannot start with a hyphen (it could be an option of git)" 'error[E621]: HERE/app/tomato.toml: "gh:-x/gs" is not a host shortcut: a user and a repository have letters, digits, dots, underscores and hyphens only' gh:-x/gs --rev "$C1"
-  bads "a word with another colon is no shortcut" 'error[E621]: HERE/app/tomato.toml: "sftp:dave/gs" is not a seed: a word with a colon is a host shortcut, and the shortcuts are gh:USER/REPO' sftp:dave/gs --rev "$C1"
-  bads "a URL is pointed at --git" 'error[E621]: HERE/app/tomato.toml: "https://example.org/x.git" is not a seed:' https://example.org/x.git --rev "$C1"
-  bads "a handle is recognised, and there is no registry to look it up" 'error[E571]: HERE/app/tomato.toml: dave/thing is a registry seed (owner: the handle dave), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT' dave/thing
-  bads "a name with a version too" 'error[E571]: HERE/app/tomato.toml: dave/thing is a registry seed (owner: the handle dave)' dave/thing@1.2.0
-  bads "a domain owner is a registry seed as well" 'error[E571]: HERE/app/tomato.toml: acme.example/json5 is a registry seed (owner: the domain acme.example)' acme.example/json5
-  bads "a reserved handle is not one" 'error[E621]: HERE/app/tomato.toml: "local/x" is not a seed name: the owner local has no dot, so it would be a handle, and it is not one (that name is reserved)' local/x
-  bads "a std module's name is a reserved handle" 'error[E621]: HERE/app/tomato.toml: "json/x" is not a seed name: the owner json has no dot, so it would be a handle, and it is not one (that name is reserved)' json/x
-  bads "a key-like owner is not a handle" 'error[E621]: HERE/app/tomato.toml: "k-abc/x" is not a seed name: the owner k-abc has no dot, so it would be a handle, and it is not one (a handle does not start with k-, which is for keys)' k-abc/x
-  bads "a one-letter handle is too short" 'error[E621]: HERE/app/tomato.toml: "d/x" is not a seed name: the owner d has no dot, so it would be a handle, and it is not one (a handle is 2 to 32 characters)' d/x
-  bads "a capital letter is no seed name" 'error[E621]: HERE/app/tomato.toml: "Dave/x" is not a seed name or a host shortcut: the owner has lowercase letters, digits, dots and hyphens only' Dave/x
-  bads "a bad version after @" 'error[E621]: HERE/app/tomato.toml: "dave/thing@1.2" has a version that is not one: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0' dave/thing@1.2
+  bads "a shortcut needs --rev, --tag or --branch" 'error[E621]: a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH: gh:dave/gs is https://github.com/dave/gs.git' gh:dave/gs
+  bads "a shortcut is exactly USER/REPO" 'error[E621]: "gh:dave" is not a host shortcut: write gh:USER/REPO' gh:dave --rev "$C1"
+  bads "a deeper path is not a shortcut" 'error[E621]: "gitlab:g/s/r" is not a host shortcut: write gitlab:USER/REPO (exactly one user and one repository; a repository in a deeper folder takes --git URL and --subdir)' gitlab:g/s/r --rev "$C1"
+  bads "a Sourcehut user starts with ~" 'error[E621]: "srht:dave/gs" is not a host shortcut: a Sourcehut user starts with ~, so write srht:~USER/REPO' srht:dave/gs --rev "$C1"
+  bads "a repository is written without .git" 'error[E621]: "codeberg:dave/gs.git" is not a host shortcut: write the repository without .git' codeberg:dave/gs.git --rev "$C1"
+  bads "a user cannot start with a hyphen (it could be an option of git)" 'error[E621]: "gh:-x/gs" is not a host shortcut: a user and a repository have letters, digits, dots, underscores and hyphens only' gh:-x/gs --rev "$C1"
+  bads "a word with another colon is no shortcut" 'error[E621]: "sftp:dave/gs" is not a seed: a word with a colon is a host shortcut, and the shortcuts are gh:USER/REPO' sftp:dave/gs --rev "$C1"
+  bads "a URL is pointed at --git" 'error[E621]: "https://example.org/x.git" is not a seed:' https://example.org/x.git --rev "$C1"
+  bads "a handle is recognised, and there is no registry to look it up" 'error[E571]: dave/thing is a registry seed (owner: the handle dave), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT' dave/thing
+  bads "a name with a version too" 'error[E571]: dave/thing is a registry seed (owner: the handle dave)' dave/thing@1.2.0
+  bads "a domain owner is a registry seed as well" 'error[E571]: acme.example/json5 is a registry seed (owner: the domain acme.example)' acme.example/json5
+  bads "a reserved handle is not one" 'error[E621]: "local/x" is not a seed name: the owner local has no dot, so it would be a handle, and it is not one (that name is reserved)' local/x
+  bads "a std module's name is a reserved handle" 'error[E621]: "json/x" is not a seed name: the owner json has no dot, so it would be a handle, and it is not one (that name is reserved)' json/x
+  bads "a key-like owner is not a handle" 'error[E621]: "k-abc/x" is not a seed name: the owner k-abc has no dot, so it would be a handle, and it is not one (a handle does not start with k-, which is for keys)' k-abc/x
+  bads "a one-letter handle is too short" 'error[E621]: "d/x" is not a seed name: the owner d has no dot, so it would be a handle, and it is not one (a handle is 2 to 32 characters)' d/x
+  bads "a capital letter is no seed name" 'error[E621]: "Dave/x" is not a seed name or a host shortcut: the owner has lowercase letters, digits, dots and hyphens only' Dave/x
+  bads "a bad version after @" 'error[E621]: "dave/thing@1.2" has a version that is not one: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0' dave/thing@1.2
   usage_add='usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]'
   check "seed handles: two words are one too many" "error: tomato seed add takes one seed at a time: 'gh:dave/gs' and 'gh:a/b' ($usage_add)" "$(cd "$W/app" && tm $t seed add gh:dave/gs gh:a/b 2>&1)"
   check "seed handles: a word does not go with --git" "error: tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed ($usage_add)" "$(cd "$W/app" && tm $t seed add gh:dave/gs --git "$W/gs.git" --rev "$C1" 2>&1)"
@@ -1854,12 +1868,12 @@ note: the owner dave is a handle: a registry has to grant it (a reviewed pull re
   hdr '# seeds are good' '# seeds : dave/nothing' '#seeds:dave/gs'
   check "seeds header: other comments are comments, and # seeds: needs no space after the #" "hi from gs" "$(cd "$W/app" && tm $t run 2>&1)"
   hdr '# seeds: dave/gs>=1.3'
-  check "seeds header: a minimum above the locked version is an error naming both" 'error[E622]: HERE/app/tomato.toml: src/main.tom asks for dave/gs>=1.3.0 in its "# seeds:" line, but tomato.lock has dave/gs 1.2.0: a minimum is met by the same version or a later one of the same compatible line
+  check "seeds header: a minimum above the locked version is an error naming both" 'error[E622]: src/main.tom:1: the "# seeds:" line asks for dave/gs>=1.3.0, but tomato.lock has dave/gs 1.2.0: a minimum is met by the same version or a later one of the same compatible line
   = help: use a seed of that version (tomato seed update, or add it at another rev), or change the line' "$(err run)"
   hdr '# seeds: dave/gs>=2.0'
-  check "seeds header: another major line does not meet it either" 'error[E622]: HERE/app/tomato.toml: src/main.tom asks for dave/gs>=2.0.0 in its "# seeds:" line, but tomato.lock has dave/gs 1.2.0' "$(err run | head -n 1 | sed 's/\(lock has dave\/gs 1.2.0\): .*/\1/')"
+  check "seeds header: another major line does not meet it either" 'error[E622]: src/main.tom:1: the "# seeds:" line asks for dave/gs>=2.0.0, but tomato.lock has dave/gs 1.2.0' "$(err run | head -n 1 | sed 's/\(lock has dave\/gs 1.2.0\): .*/\1/')"
   hdr '# seeds: dave/gs, other.example/x>=1.0'
-  check "seeds header: a seed the project does not list is an error with the command to run" 'error[E622]: HERE/app/tomato.toml: src/main.tom names the seed other.example/x>=1.0.0 in its "# seeds:" line, but tomato.toml does not list it in [seeds]
+  check "seeds header: a seed the project does not list is an error with the command to run" 'error[E622]: src/main.tom:1: the "# seeds:" line names the seed other.example/x>=1.0.0, but tomato.toml does not list it in [seeds]
   = help: tomato seed add gh:USER/REPO --rev COMMIT (or --git URL, or --path DIR) adds a seed and locks it; a name alone cannot be fetched until there is a registry' "$(err run)"
   hdrbad() { # NAME EXPECTED LINES...: a line that cannot be read
     n="$1"; e="$2"; shift 2; hdr "$@"; r="$(err run)"
@@ -1882,7 +1896,7 @@ got:      $r" ;; esac
   case "$r" in "error[E569]: HERE/app/tomato.toml: the seed dave/gs is not in the seed store ("*"
   = help: run: tomato seed install") ok "seeds header: a locked seed that is not in the store is the error to run tomato seed install" ;; *) bad "seeds header: a locked seed that is not in the store is the error to run tomato seed install" "$r" ;; esac
   r="$(err build)"
-  case "$r" in "error[E569]: "*"run: tomato seed install") ok "seeds header: and build says the same" ;; *) bad "seeds header: and build says the same" "$r" ;; esac
+  case "$r" in "error[E569]: "*"run: tomato seed install"*) ok "seeds header: and build says the same" ;; *) bad "seeds header: and build says the same" "$r" ;; esac
   check "seeds header: the failed run and build did not fetch" "$lines_before" "$(wc -l < "$W/urls.log" | tr -d ' ')"
   check "seeds header: seed install brings it back (the only command that fetches)" "hi from gs" "$(cd "$W/app" && tm $t seed install >/dev/null 2>&1; tm $t run 2>&1)"
   # ---- a program with no project has no lock to take its seeds from
@@ -1941,9 +1955,9 @@ tomato = "0.51"
   printf 'from gs import hi\n\n@main\ndef main():\n    print(hi())\n' > "$A/src/main.tom"
   # ---- seed add --tag: the tag is looked up once; the manifest holds the commit and the tag
   r="$(cd "$A" && tm $t seed add --git "$W/gs.git" --tag v1 2>&1 | norm)"
-  checkn "seed add --tag: says which commit the tag is at" "added g.example/gs 1.0.0 to [seeds] of HERE/app/tomato.toml (tag v1 is at $(c12 "$GC1"))
+  checkn "seed add --tag: says which commit the tag is at" "added g.example/gs 1.0.0 to [seeds] of tomato.toml (tag v1 is at $(c12 "$GC1"))
 g.example/gs 1.0.0  $GH1  (git HERE/gs.git $(c12 "$GC1"))
-wrote HERE/app/tomato.lock (1 seed)" "$r"
+wrote tomato.lock (1 seed)" "$r"
   checkn "seed add --tag: tomato.toml holds the commit and the tag" "\"g.example/gs\" = { git = \"$W/gs.git\", rev = \"$GC1\", tag = \"v1\" }" "$(sed -n '/^\[seeds\]/,$p' "$A/tomato.toml" | sed 1d | norm)"
   checkn "seed add --tag: the program uses the seed" "hi 1.0" "$(cd "$A" && tm $t run 2>&1)"
   checkn "seed add --tag: a lock that needs no path is still version 1" "version = 1" "$(sed -n 2p "$A/tomato.lock")"
@@ -1974,7 +1988,7 @@ the seeds above would move; run without --dry-run to do it" "$r"
 g.example/gs: 1.0.0 -> 1.1.0
   commit  $(c12 "$GC1") -> $(c12 "$GC2")
   hash    $(c19 "$GH1")... -> $(c19 "$GH2")...
-wrote HERE/app/tomato.lock (1 seed)" "$r"
+wrote tomato.lock (1 seed)" "$r"
   checkn "seed update: only the rev of the line changed, the tag stayed" "+\"g.example/gs\" = { git = \"$W/gs.git\", rev = \"$GC2\", tag = \"v1\" }" "$(diff "$W/manifest.before" "$A/tomato.toml" | grep '^>' | sed 's/^> */+/' | norm)"
   checkn "seed update: the lock has the new commit and the hash of find, sort and sha256" "$GC2 $GH2 1.1.0" "$(lockfield g.example/gs commit) $(lockfield g.example/gs hash) $(lockfield g.example/gs version)"
   checkn "seed update: the program uses the new version" "hi 1.1" "$(cd "$A" && tm $t run 2>&1)"
@@ -1993,13 +2007,13 @@ wrote HERE/app/tomato.lock (1 seed)" "$r"
   cmp -s "$W/manifest.before" "$A/tomato.toml" && cmp -s "$W/lock.before" "$A/tomato.lock" && ok "seed update: a refused question leaves tomato.toml and tomato.lock exactly as they were" || bad "seed update: a refused question leaves tomato.toml and tomato.lock exactly as they were" "$(diff "$W/manifest.before" "$A/tomato.toml")"
   r="$(cd "$A" && tm $t seed update --yes 2>&1 | norm | tail -n 3)"
   checkn "seed update --yes: accepts and records them" "accepted with --yes; they are recorded in tomato.lock
-wrote HERE/app/tomato.lock (1 seed)" "$(printf '%s\n' "$r" | tail -n 2)"
+wrote tomato.lock (1 seed)" "$(printf '%s\n' "$r" | tail -n 2)"
   checkn "seed update --yes: the lock has the symbol and the new commit" "getpid $GC3" "$(sed -n 's/^symbols = \["\(.*\)"\]/\1/p' "$A/tomato.lock") $(lockfield g.example/gs commit)"
   # ---- only the named seeds move; one that is pinned is said to be; a branch is followed
   r="$(cd "$A" && tm $t seed add --git "$W/br.git" --branch main 2>&1 | norm | sed -n 1p)"
-  checkn "seed add --branch: the branch is looked up and its commit written" "added b.example/br 0.1.0 to [seeds] of HERE/app/tomato.toml (branch main is at $(c12 "$BC1"))" "$r"
+  checkn "seed add --branch: the branch is looked up and its commit written" "added b.example/br 0.1.0 to [seeds] of tomato.toml (branch main is at $(c12 "$BC1"))" "$r"
   r="$(cd "$A" && tm $t seed add --git "$W/pin.git" --rev "$PC1" 2>&1 | norm | sed -n 1p)"
-  checkn "seed add --rev: a pinned seed (no tag, no branch)" "added p.example/pin 2.0.0 to [seeds] of HERE/app/tomato.toml" "$r"
+  checkn "seed add --rev: a pinned seed (no tag, no branch)" "added p.example/pin 2.0.0 to [seeds] of tomato.toml" "$r"
   printf 'export def f() -> int:\n    return 2\n' > "$W/br/src/br.tom"; seed_toml b.example/br 0.2.0 > "$W/br/tomato.toml"; BC2="$(commit "$W/br" two)"; bare "$W/br" "$W/br.git"
   printf 'export def hi() -> str:\n    return "hi 1.3"\n' > "$W/gs/src/gs.tom"; seed_toml g.example/gs 1.3.0 > "$W/gs/tomato.toml"; GC4="$(commit "$W/gs" four)"; git -C "$W/gs" tag -f v1 >/dev/null 2>&1; bare "$W/gs" "$W/gs.git"
   cp "$A/tomato.toml" "$W/manifest.before"; BH1="$(lockfield b.example/br hash)"
@@ -2011,13 +2025,13 @@ b.example/br: 0.1.0 -> 0.2.0
   hash    $(c19 "$BH1")... -> $(indep_hash "$W/br" | cut -c1-19)...
   note: 0.2.0 is not on the compatible line of 0.1.0 (a new major version, or a new minor one below 1.0)
 p.example/pin 2.0.0: unchanged
-wrote HERE/app/tomato.lock (3 seeds)" "$r"
+wrote tomato.lock (3 seeds)" "$r"
   checkn "seed update NAME...: g.example/gs was not named, so its rev did not move" "$GC3" "$(lockfield g.example/gs commit)"
   checkn "seed update NAME...: and only the branch seed's line differs" "+\"b.example/br\" = { git = \"$W/br.git\", rev = \"$BC2\", branch = \"main\" }" "$(diff "$W/manifest.before" "$A/tomato.toml" | grep '^>' | sed 's/^> */+/' | norm)"
   r="$(cd "$A" && tm $t seed update --yes 2>&1 | norm | grep -c 'is now at')"
   checkn "seed update: with no name every seed that follows a tag or branch moves" "1" "$r"
   r="$(cd "$A" && tm $t seed update nope.example/x 2>&1 | norm)"
-  checkn "seed update: a name that is not in the manifest is an error" "error[E604]: HERE/app/tomato.toml: nope.example/x is not in [seeds] or [test-seeds] of this tomato.toml (the seeds here: g.example/gs, b.example/br, p.example/pin)" "$r"
+  checkn "seed update: a name that is not in the manifest is an error" "error[E604]: nope.example/x is not in [seeds] or [test-seeds] of tomato.toml (the seeds there: g.example/gs, b.example/br, p.example/pin)" "$r"
   printf '%s[seeds]\n"x.example/y" = "1.0.0"\n' "$head" > "$W/regapp.toml"; mkdir -p "$W/reg"; cp "$W/regapp.toml" "$W/reg/tomato.toml"
   r="$(cd "$W/reg" && tm $t seed update 2>&1 | norm)"
   checkn "seed update: a registry seed cannot be updated (there is no registry)" 'error[E571]: HERE/reg/tomato.toml: the seed x.example/y 1.0.0 would come from a registry, and there is none yet; only { path = "../folder" } and { git = "URL", rev = "COMMIT" } seeds can be updated' "$r"
@@ -2048,9 +2062,9 @@ rc=0" "$r"
   printf '%s' "$head" > "$A/tomato.toml"; rm -f "$A/tomato.lock"
   r="$(cd "$A" && tm $t seed add --git "$W/mono.git" --rev "$MC1" --subdir seeds/a 2>&1 | norm)"
   MAH="$(indep_hash "$W/mono/seeds/a")"
-  checkn "seed add --subdir: the seed is the folder of the repository" "added m.example/a 1.0.0 to [seeds] of HERE/app/tomato.toml
+  checkn "seed add --subdir: the seed is the folder of the repository" "added m.example/a 1.0.0 to [seeds] of tomato.toml
 m.example/a 1.0.0  $MAH  (git HERE/mono.git $(c12 "$MC1") path seeds/a)
-wrote HERE/app/tomato.lock (1 seed)" "$r"
+wrote tomato.lock (1 seed)" "$r"
   checkn "seed add --subdir: tomato.toml has path" "\"m.example/a\" = { git = \"$W/mono.git\", rev = \"$MC1\", path = \"seeds/a\" }" "$(sed -n '/^\[seeds\]/,$p' "$A/tomato.toml" | sed 1d | norm)"
   checkn "seed add --subdir: the lock has path and is version 2 (version 1 cannot say it)" "version = 2 seeds/a" "$(sed -n 2p "$A/tomato.lock") $(lockfield m.example/a path)"
   checkn "seed add --subdir: the hash is that of the folder alone (find, sort, sha256), the mode of the tool kept" "$MAH 755" "$(lockfield m.example/a hash) $(stat -c %a "$(store_of "$MAH")/tool.sh" 2>/dev/null || stat -f %Lp "$(store_of "$MAH")/tool.sh")"
@@ -2297,7 +2311,7 @@ quiet" "$(builds/hello greet.loud 2>&1; builds/hello greet 2>&1)"
   check "build FILE: builds/STEM for another file" "wrote builds/util_main" "$(printf '@main\ndef main():\n    print(7)\n' > src/util_main.tom; noconf $t build src/util_main.tom 2>&1)"
   check "build: ... and it runs" "7" "$(builds/util_main 2>&1)"
   check "build: a word that is no file is refused" "error: 'prime' is not a file: a file ends in .tom or has a / in it (tomato build [FILE]; with no FILE it is the project's src/main.tom)" "$(noconf $t build prime 2>&1)"
-  check "build: [build] output of the manifest still applies (D92c)" "wrote $B/hello/out/app" "$(printf '[build]\noutput = "out/app"\n' >> tomato.toml; noconf $t build 2>&1)"
+  check "build: [build] output of the manifest still applies (D92c)" "wrote out/app" "$(printf '[build]\noutput = "out/app"\n' >> tomato.toml; noconf $t build 2>&1)"
   check "build: ... and builds/ is then left alone" "no" "$(rm -rf builds; noconf $t build >/dev/null 2>&1; [ -e builds ] && echo yes || echo no)"
   sed -i '/^\[build\]/,$d' tomato.toml
   check "build: from a folder below the project, builds/ is the project's" "wrote $B/hello/builds/hello" "$(cd tests && noconf $t build 2>&1)"
@@ -2347,7 +2361,7 @@ t_manedit_logic() { # the text editor of tomato.toml behind `tomato seed add` an
 }
 t_manifest_logic() { # the rules of compiler/src/manifest.tom as @test functions, and its version order against the shell's semver_cmp
   cli_setup
-  mkdir -p "$work/ml"; cp compiler/src/manifest.tom compiler/src/config.tom compiler/src/modnames.tom tests/manifest_logic.tom "$work/ml/"
+  mkdir -p "$work/ml"; cp compiler/src/manifest.tom compiler/src/config.tom compiler/src/diag.tom compiler/src/modnames.tom tests/manifest_logic.tom "$work/ml/"
   r="$(cd "$work/ml" && $t run manifest_logic.tom test 2>&1 | tail -n 1)"
   case "$r" in *" passed, 0 failed, 0 skipped") ok "manifest: the reader's rules: $r";; *) bad "manifest: the reader's rules" "$(cd "$work/ml" && $t run manifest_logic.tom test 2>&1 | grep -v '^ok ' | head -12)";; esac
   # the order of versions: Tomato's compare_versions and the shell's semver_cmp give the same answer for every pair
@@ -2538,7 +2552,7 @@ hint: the earlier lines of the session run again with the new P, and one of them
 @main
 def tomato_repl_main():
     x: int = 1
-    _core_print(x + 1)" "$(printf 'x: int = 1\nx: int = "a"\nx + 1\n:program\n:quit\n' | $t repl 2>&1)"
+    print(x + 1)" "$(printf 'x: int = 1\nx: int = "a"\nx + 1\n:program\n:quit\n' | $t repl 2>&1)"
   check "repl: a redeclared variable takes the place of the old one, so an earlier line that used it runs with the new value" "1
 2
 @main
@@ -2552,7 +2566,7 @@ def tomato_repl_main():
 def tomato_repl_main():
     x: float = 2.5
     print(x)
-    _core_print(x)" "$(printf 'x: int = 1\nprint(x)\nx: float = 2.5\nx\n:program\n:quit\n' | $t repl 2>&1)"
+    print(x)" "$(printf 'x: int = 1\nprint(x)\nx: float = 2.5\nx\n:program\n:quit\n' | $t repl 2>&1)"
   check "repl: a redeclaration an earlier line does not fit is refused at that line, with a hint, and the old variable and its value stay" "error[E190]: cannot use '+' with str and int
  --> session:2:7
   |
@@ -2587,6 +2601,31 @@ def f() -> int:
   check "repl: :load of a changed file replaces its definitions" "1
 9" "$(printf ':load %s\nprint(g())\n:load %s\nprint(g())\n:quit\n' "$work/g1.tom" "$work/g2.tom" | $t repl 2>&1)"
 }
+t_cli_repl_polish() {   # fourth audit P23 to P26: brackets in piped input, a defined print, :save, an untyped first assignment
+  cli_setup
+  check "repl: an open bracket goes on to the next line of piped input" "[1, 2, 3]" "$(printf 'a = [1, 2,\n3]\na\n:quit\n' | $t repl 2>&1)"
+  check "repl: a bracket inside a text or a comment does not continue the piece" "(
+2" "$(printf 'print("(")
+print(1 + 1)   # (
+:quit
+' | $t repl 2>&1)"
+  check "repl: defining print shows no earlier output again, and the echo still uses the built-in" "3
+hi
+7" "$(printf '1 + 2\nprint("hi")\ndef print(s: str):\n    pass\n\n7\n:quit\n' | $t repl 2>&1)"
+  check "repl: a refused redefinition shows the echo as it was typed" "1
+error[E324]: argument 1 of 'g' (the parameter 's') has type int, but str is expected
+ --> session:1:7
+  |
+1 | print(g(1))
+  |       ^
+hint: the earlier lines of the session run again with the new g, and one of them does not work with it; the earlier definition is kept" "$(printf 'def g(x: int) -> int:\n    return x\n\ng(1)\ndef g(s: str) -> str:\n    return s\n\n:quit\n' | $t repl 2>&1)"
+  check "repl: :program shows the echo of a bare expression as print" "@main
+def tomato_repl_main():
+    print(1 + 2)" "$(printf '1 + 2\n:program\n:quit\n' | $t repl 2>&1 | sed -n '/^@main/,$p')"
+  check "repl: :save into a folder that is not there is a clean error" "error: cannot write $work/nope/x.tom: No such file or directory" "$(printf ':save %s/nope/x.tom\n:quit\n' "$work" | $t repl 2>&1)"
+  check "repl: an annotated redeclaration replaces a first assignment made without an annotation" "now str" "$(printf 'x = 4\nx: str = "now str"\nx\n:quit\n' | $t repl 2>&1)"
+}
+
 t_cli_repl_history() {   # the pty session is slow (it compiles after each line): it is its own job, so it does not hold up the others
   cli_setup
   # the line editor install-native.sh built: the pty test fails (it never skips) when it is missing, so a helper that stops building is seen
@@ -2665,6 +2704,15 @@ t_repl_echo() { # the echo of a bare expression is immune to a session's own pri
 }
 spawn_cli t_repl_echo
 spawn_cli t_repl_progress
+t_repl_interrupt() { # Ctrl-C stops the piece that is running, not the session (fourth audit 25)
+  cli_setup
+  if ! command -v expect >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "repl interrupt test" "expect is required in CI" || echo "skip: expect is not installed, so the repl interrupt test did not run"
+    return
+  fi
+  check "repl: Ctrl-C stops the running piece and the session goes on" "ok" "$(PATH="$(dirname "$t"):$PATH" expect tests/repl_interrupt.exp 2>&1 | tail -1)"
+}
+spawn_cli t_repl_interrupt
 t_lineedit_logic() { # std/lineedit.tom without a terminal (Buffer, History, layout, frames, whole sessions on a FakeTerminal), debug and release
   cli_setup
   for mode in debug release; do
@@ -2933,18 +2981,17 @@ tomato test: 2 files, 2 passed, 0 failed, 0 skipped: ok
 $rc"
   r="$($t test --mode release tests/a_pass.tom 2>&1)"; rc=$?
   check "tomato test --mode release runs the file in release mode" "ok   tests/a_pass.tom
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   r="$($t test --filter pass tests 2>&1)"; rc=$?
   check "tomato test --filter keeps the files whose name contains the text; a folder stands for its test files" "ok   tests/a_pass.tom
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   r="$($t test --filter zzz tests/a_pass.tom 2>&1)"; rc=$?
-  check "tomato test --filter that keeps no file says so and the status stays 0" "warning: no file name contains 'zzz'
-tomato test: 0 files, 0 passed, 0 failed, 0 skipped: ok
-0" "$r
+  check "tomato test --filter that keeps no file is an error (a typo in CI must not pass)" "error: no test file name contains 'zzz'
+1" "$r
 $rc"
   r="$($t test tests/a_pass.tom tests/c_skip.tom 2>&1)"; rc=$?
   check "tomato test FILE FILE: the files in the order given, a skipped file does not fail the run" "ok   tests/a_pass.tom
@@ -2954,7 +3001,7 @@ tomato test: 2 files, 1 passed, 0 failed, 1 skipped: ok
 $rc"
   r="$($t test --mode release tests/c_skip.tom 2>&1)"
   check "tomato test: a skipped file in release mode" "skip tests/c_skip.tom  (no network)
-tomato test: 1 files, 0 passed, 0 failed, 1 skipped: ok" "$(printf '%s\n' "$r" | lines)"
+tomato test: 1 file, 0 passed, 0 failed, 1 skipped: ok" "$(printf '%s\n' "$r" | lines)"
   fi; if step 2; then
   # errors in the command line, a file that does not compile or has nothing to run
   printf 'from testing import assert_equal\n\n@main\ndef main():\n    assert_equal(undefined_name, 1)\n' > "$work/tbad.tom"
@@ -3004,11 +3051,11 @@ $rc"
   r="$($t test -v tests/f_defaults.tom 2>&1)"
   check "tomato test: a main whose inputs have defaults runs with none" "ok   tests/f_defaults.tom
     n = 3 word = w
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test "$work/tneeds.tom" 2>&1)"; rc=$?
   check "tomato test: a main with an input that has no default fails, says the rule and shows the runtime's message" "FAIL $work/tneeds.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
     error[E352]: the entry point takes 1 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))
-tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED
+tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED
 1" "$r
 $rc"
   fi; if step 3; then
@@ -3017,13 +3064,13 @@ $rc"
   r="$($t test -v "$work/tentries.tom" check 4 hi 2>&1)"; rc=$?
   check "tomato test FILE ENTRY INPUTS: the entry runs with the inputs" "ok   $work/tentries.tom
     check 4 hi
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   printf '@main\ndef main(n: int = 3):\n    assert n < 0\n' > "$work/tneg.tom"
   r="$($t test "$work/tneg.tom" main -5 2>&1)"; rc=$?
   check "tomato test FILE ENTRY -5: a word that starts with - after a file is an input, as for tomato run" "ok   $work/tneg.tom
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   # options are read only before the files: after a file or its entry every word is raw input, even --filter
@@ -3031,23 +3078,23 @@ $rc"
   r="$($t test -v "$work/tinp.tom" main --filter -v --mode 2>&1)"; rc=$?
   check "tomato test FILE ENTRY --filter -v --mode: the words after the entry are inputs, no option is read there" "ok   $work/tinp.tom
     inputs --filter -v --mode
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   r="$($t test -v "$work/tinp.tom" main -- --filter 2>&1)"
   check "tomato test FILE ENTRY -- --filter: a -- after the entry is an input too" "ok   $work/tinp.tom
     inputs -- --filter
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test --filter tinp -v --mode release "$work/tinp.tom" main --timeout 5 2>&1)"; rc=$?
   check "tomato test: options before the file still work, and --timeout after the entry is an input" "ok   $work/tinp.tom
     inputs --timeout 5
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   r="$($t test -v -- "$work/tinp.tom" main --filter x 2>&1)"
   check "tomato test -- FILE: the separator ends the options, the next word is the file" "ok   $work/tinp.tom
     inputs --filter x
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test -v -- --filter 2>&1)"; rc=$?
   check "tomato test -- --filter: after the separator an option-like word is no option (it is not a file either)" "error: '--filter' is not a file: write tomato test --filter.tom (or tests/--filter.tom); a word that is not a file is only accepted right after a file, as the entry to run in it (tomato test x.tom --filter)
 1" "$r
@@ -3058,31 +3105,31 @@ $rc"
 $rc"
   r="$($t test "$work/tinp.tom" main --color never -v 2>&1)"; rc=$?
   check "tomato test FILE ENTRY: --color and -v after the entry are inputs" "ok   $work/tinp.tom
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   r="$($t test "$work/tentries.tom" check 5 2>&1)"; rc=$?
   check "tomato test FILE ENTRY INPUTS: an assertion in the entry fails the file" "FAIL $work/tentries.tom  (exit status 1)
-tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED
+tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED
 1" "$(printf '%s\n' "$r" | grep -E '^(ok|FAIL|skip) |^tomato test: ')
 $rc"
   r="$($t test -v "$work/tentries.tom" main 2>&1)"
   check "tomato test FILE ENTRY: the entry main" "ok   $work/tentries.tom
     main ran
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test "$work/tentries.tom" check 2>&1)"
   check "tomato test FILE ENTRY with the inputs missing fails, says the rule and shows the runtime's message" "FAIL $work/tentries.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
     error[E352]: the entry point takes 2 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))
-tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
+tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
   r="$($t test "$work/tentries.tom" nosuch 2>&1)"
   check "tomato test FILE ENTRY: an entry that is not in the file fails with the compiler's message" "FAIL $work/tentries.tom  (did not compile)
     error[E228]: no function is marked @nosuch" "$(printf '%s\n' "$r" | sed -n 1,2p)"
   r="$($t test tests/e_group.tom test 2>&1)"
   check "tomato test FILE test: the entry test runs the file's @test functions, as when there is no @main" "ok   tests/e_group.tom  (2 passed, 1 skipped)
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "$r"
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test tests/e_group.tom test 1 2>&1)"
   check "tomato test FILE test INPUTS: the entry test takes no inputs" "FAIL tests/e_group.tom  (the entry test (the functions marked @test) takes no inputs)
-tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
+tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
   r="$($t test tests/a_pass.tom tests/e_group.tom 2>&1 | lines)"
   check "tomato test FILE FILE: a second file is a file, not an entry" "ok   tests/a_pass.tom
 ok   tests/e_group.tom  (2 passed, 1 skipped)
@@ -3104,7 +3151,7 @@ $rc"
   printf 'import sys\n\n@main\ndef main():\n    sys.exit(130)\n' > "$work/e130.tom"
   r="$($t test "$work/e130.tom" 2>&1)"
   check "tomato test: an exit status above 128 is not called a signal for sure" "FAIL $work/e130.tom  (exit status 130 (killed by signal 2, or sys.exit(130)))
-tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
+tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
   r="$($t test --timeout 2 "$work/hang.tom" tests/a_pass.tom 2>&1)"; rc=$?
   check "tomato test --timeout: a file that runs too long is stopped and named, the next file runs" "FAIL $work/hang.tom  (timed out after 2 seconds)
 ok   tests/a_pass.tom
@@ -3113,7 +3160,7 @@ tomato test: 2 files, 1 passed, 1 failed, 0 skipped: FAILED
 $rc"
   r="$($t test --timeout 30 tests/a_pass.tom 2>&1)"; rc=$?
   check "tomato test --timeout: a file that finishes in time is unaffected" "ok   tests/a_pass.tom
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   fi; if step 5; then
@@ -3210,12 +3257,12 @@ ok   a_y
   # tomato test FILE ENTRY with a dotted entry: one function (or a group) of a file, as a test
   r="$($t test "$work/tdot.tom" test.a 2>&1)"; rc=$?
   check "tomato test FILE test.a: the entry is a group of the file's @test functions" "ok   $work/tdot.tom  (2 passed)
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok
 0" "$r
 $rc"
   r="$($t test "$work/tdot.tom" test.fails 2>&1)"; rc=$?
   check "tomato test FILE test.fails: a failing function fails the file" "FAIL $work/tdot.tom  (1 of 1 tests failed)
-tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED
+tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED
 1" "$(printf '%s\n' "$r" | grep -E '^(ok|FAIL|skip) |^tomato test: ')
 $rc"
   r="$($t test "$work/tdot.tom" test.zzz 2>&1)"; rc=$?
@@ -3277,6 +3324,7 @@ spawn_cli t_cli_repl_2 1
 spawn_cli t_cli_repl_2 2
 spawn_cli t_cli_repl_2 3
 spawn_cli t_cli_repl_redef
+spawn_cli t_cli_repl_polish
 spawn_cli t_cli_repl_history
 spawn_cli t_cli_compile
 spawn_cli t_cli_test 1

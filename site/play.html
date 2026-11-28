@@ -125,6 +125,30 @@ function plain(msg) { return msg.replace(/^ {2}(at |\.\.\. and ).*\n?/gm, "").re
 function program(extra) { return defs.concat(stmts, extra || []).join("\n") + "\n"; }
 function isDef(t) { return /^(def|class|interface|from|import|@|export|async def)\b|^!/.test(t) || /^\w+ implements /.test(t); }
 function isBlock(t) { return tomatoOpensBlock(t.split("\n")[0]); }
+// the name a definition piece defines ("" for an import and the like): a definition of a name that is already defined replaces the old one, as in the installed repl
+function keyOf(t) { var ls = t.split("\n"), l = ls[0]; if (l[0] === "@" && ls.length > 1) l = ls[1]; var m = /^(?:export\s+)?(?:async\s+)?(?:def|class|interface)\s+(\w+)/.exec(l); return m ? m[1] : ""; }
+function defIndex(t) { var k = keyOf(t); if (!k) return -1; for (var i = 0; i < defs.length; i++) if (keyOf(defs[i]) === k) return i; return -1; }
+// A compile error names a line of the generated session program, which nobody typed: say it as the line of the piece it is in
+// (repl:LINE:COL for the piece just entered, session:LINE:COL for an earlier one that the new piece broke), and show an echoed
+// expression as it was typed. ranges: the line span of each chunk of the session program, in the numbering of the error.
+function relocate(msg, ranges) {
+  var ls = msg.split("\n"), where = "";
+  for (var i = 0; i < ls.length; i++) {
+    var m = /^\s*--> [^:\s]*:(\d+):(\d+)$/.exec(ls[i]);
+    if (!m) continue;
+    var L = +m[1], col = +m[2], r = null;
+    ranges.forEach(function (x) { if (L >= x.start && L < x.start + x.n) r = x; });
+    if (!r || i + 3 >= ls.length) break;
+    var rel = L - r.start + 1, pad = new Array(String(rel).length + 1).join(" ");
+    var src = ls[i + 2].replace(/^\s*\d+ \| ?/, ""), car = ls[i + 3].slice(ls[i + 3].indexOf("|") + 2);
+    if (/^_core_print\(/.test(src)) { src = src.replace(/^_core_print\(/, "print("); col = Math.max(1, col - 6); car = car.slice(6); }
+    ls[i] = pad + "--> " + r.label + ":" + rel + ":" + col; ls[i + 1] = pad + " |"; ls[i + 2] = rel + " | " + src; ls[i + 3] = pad + " | " + car;
+    for (var j = i + 4; j < ls.length; j++) ls[j] = ls[j].replace(/^\s*= help:/, pad + " = help:");
+    where = r.label;
+    break;
+  }
+  return { text: ls.join("\n"), where: where };
+}
 function submit(text, echoed) {
   if (!echoed) log("in", text);
   if (text === ":reset") { defs = []; stmts = []; shown = ""; replAnswers = []; log("out", "session cleared"); return Promise.resolve(); }
@@ -134,22 +158,34 @@ function submit(text, echoed) {
   var attempt = asExpr ? ["_core_print(" + text + ")", text] : [text];
   var firstError = "";
   function tryOne(k) {
-    var t = attempt[k], isD = isDef(t);
-    var src = isD ? program().replace(/\n$/, "") + "\n" + t + "\n" : program(t);
+    var t = attempt[k], isD = isDef(t), at = isD ? defIndex(t) : -1;
+    // the session program: the definitions (the new one in the place of the old one it replaces), then the statements, then a new statement
+    var nd = defs.slice(); if (isD) { if (at >= 0) nd[at] = t; else nd.push(t); }
+    var chunks = nd.map(function (c, i) { return { text: c, label: isD && i === (at >= 0 ? at : nd.length - 1) ? "repl" : "session" }; })
+      .concat(stmts.map(function (c) { return { text: c, label: "session" }; }));
+    if (!isD) chunks.push({ text: t, label: "repl" });
+    var line = 1, ranges = chunks.map(function (c) { var n = c.text.split("\n").length, r = { start: line, n: n, label: c.label }; line += n; return r; });
+    var src = chunks.map(function (c) { return c.text; }).join("\n") + "\n";
     var savedShown = shown;
     return runCandidate(src).then(function (d) {
+      function refuse(msg) {
+        var r = relocate(msg, ranges), text = plain(r.text);
+        if (isD && at >= 0 && r.where === "session") text += "\nhint: the earlier lines of the session run again with the new " + keyOf(t) + ", and one of them does not work with it; the earlier definition is kept";
+        log("e", text);
+      }
       if (!d.ok) {
         shown = savedShown;
         if (k === 0) firstError = d.error || "failed";
         if (k + 1 < attempt.length) return tryOne(k + 1);
         var msg = d.error || "failed";
         // a bare expression that is not a call fails as a statement too; the print(...) attempt explains it better
-        log("e", plain(/as statements yet/.test(msg) && firstError ? firstError : msg)); return;
+        refuse(/as statements yet/.test(msg) && firstError ? firstError : msg); return;
       }
       var out = d.stdout, fresh = out.indexOf(shown) === 0 ? out.slice(shown.length) : out;
       if (d.timed_out) { shown = savedShown; log("e", "error[E369]: Stopped: ran longer than 5 seconds."); return; }
       if (d.exit !== 0) { shown = savedShown; log("e", plain((d.stderr || "error").trim())); return; }
-      (isD ? defs : stmts).push(t); shown = out; replAnswers = d.answers;
+      if (isD) { if (at >= 0) defs[at] = t; else defs.push(t); fresh = ""; } else stmts.push(t);   // a definition prints nothing of its own
+      shown = out; replAnswers = d.answers;
       if (fresh) log("out", fresh.replace(/\n$/, ""));
     });
   }

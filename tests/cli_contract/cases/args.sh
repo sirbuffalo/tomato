@@ -85,11 +85,10 @@ mkdir -p notests
 within notests try "test: no tests folder" 1 "" "error: no tests folder here: run tomato test FILE..., or put test files in tests/ (each tests/NAME.tom is one test)" test
 mkdir -p notests/tests
 within notests try "test: an empty tests folder" 1 "" "error: no test file in tests (each tests/NAME.tom is one test; a name that starts with _ is a helper module, not a test)" test
-within t try "test: a filter that no file matches only warns, and passes" 0 "warning: no file name contains 'zzz'
-tomato test: 0 files, 0 passed, 0 failed, 0 skipped: ok" "" test --filter zzz
+within t try "test: a filter that no file matches is an error, so a typo does not pass" 1 "" "error: no test file name contains 'zzz'" test --filter zzz
 within t try "test: an option after a file is refused, and the message says where it goes" 1 "" "error: '--filter' comes after a file, so it is not an option (options go before the files: tomato test --filter tests/ok.tom); it can only be an input of an entry (tomato test tests/ok.tom ENTRY --filter)" test tests/ok.tom --filter x
 within t try "test: -- ends the options, the next word is still the first file" 0 "ok   tests/ok.tom
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "" test -- tests/ok.tom
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "" test -- tests/ok.tom
 within t try "test: --color and --no-warnings are options too, before the files" 0 "ok   tests/ok.tom
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "" test --color=never --no-warnings tests/ok.tom
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "" test --color=never --no-warnings tests/ok.tom
 within t try "test: a bad --color value is refused" 1 "" "error: --color takes auto, always or never, not 'bogus'" test --color=bogus tests/ok.tom

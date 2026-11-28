@@ -35,7 +35,7 @@ check "test: a file with @main only does not (its entry is main)" "debug" "$(mod
 check "test --mode release wins" "release" "$(mode_of "$TOMATO" test --mode release sub/mainfails.tom)"
 # output: relative to the folder of the manifest, made when missing; -o wins; run ignores it; build with the file but no -o uses it
 printf '%s[build]\noutput = "out/app"\n' "$head" > tomato.toml
-try "build: [build] output is the program's place, relative to the manifest's folder (the folder is made)" 0 "wrote $W/p/out/app" "" build sub/prog.tom
+try "build: [build] output is the program's place, relative to the manifest's folder (the folder is made)" 0 "wrote out/app" "" build sub/prog.tom
 [ -x out/app ] && ok "build: the program is at out/app" || bad "build: the program is at out/app"
 rm -rf out
 cd sub && try "build from a subfolder: the same place, the manifest's folder" 0 "wrote $W/p/out/app" "" build prog.tom; cd ..

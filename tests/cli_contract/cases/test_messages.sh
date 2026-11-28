@@ -36,7 +36,7 @@ FAIL tests/errors.tom  (3 of 3 tests failed)
     0 passed, 3 failed, 0 skipped
 tomato test: 2 files, 0 passed, 2 failed, 0 skipped: FAILED" "" test tests/spaces.tom tests/errors.tom
 try "test: a file whose tests were all skipped is skipped, not passed" 0 "skip tests/allskip.tom  (all 2 skipped)
-tomato test: 1 files, 0 passed, 0 failed, 1 skipped: ok" "" test tests/allskip.tom
+tomato test: 1 file, 0 passed, 0 failed, 1 skipped: ok" "" test tests/allskip.tom
 try "test: a long output keeps its first lines and says how many were left out" 1 "~    ... 402 lines left out ..." "" test tests/long.tom
 try "test: a long output keeps its last lines, with the error" 1 "~    error[E519]: AssertionError: after the lines (raised at tests/long.tom line 5)" "" test tests/long.tom
 try "run: an entry that no function is marked with lists the entries" 1 "" "error[E228]: no function is marked @nope
@@ -44,5 +44,5 @@ try "run: an entry that no function is marked with lists the entries" 1 "" "erro
 try "test FILE ENTRY: the same list" 1 "FAIL entries.tom  (did not compile)
     error[E228]: no function is marked @test.nope
       = help: write @test.nope on the line above the function that should start the program; the entries of this program are: check, test.a, test
-tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "" test entries.tom test.nope
+tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED" "" test entries.tom test.nope
 try "run: @test.x before export def says that export goes first" 1 "" "~error[E335]: expected a function after @test.x (write export before the marker: export @test.x), but found the word 'export'" run misplaced.tom

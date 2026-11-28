@@ -28,5 +28,5 @@ try "compile does not show the warning in the IR, nor anywhere else it prints" 0
 "$TOMATO" compile warn.tom 2> /dev/null > ir.ll
 check "compile: no warning comment lines in the IR" "0" "$(grep -c '^;! ' ir.ll)"
 try "build shows the warning too" 0 "wrote w" @warning.txt build warn.tom -o w
-try "test: --no-warnings is accepted, the file passes" 0 "~tomato test: 1 files, 1 passed" "" test --no-warnings warn.tom
+try "test: --no-warnings is accepted, the file passes" 0 "~tomato test: 1 file, 1 passed" "" test --no-warnings warn.tom
 try "explain and version take --color too" 0 "error[E01]: ZeroDivisionError: division by zero" "" explain E01 --color=always

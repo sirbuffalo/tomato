@@ -19,7 +19,7 @@ within "$P" try "config FILE: the nearest tomato.toml is found from a parent fol
 within "$P/sub/deep" try "config: found from a subfolder of the project" 0 @config_project.txt "" config
 try "config FILE given as a path from elsewhere" 0 @config_project.txt "" config "$P/sub/deep/x.tom"
 printf '[project]\nname = "demo"\nversion = "0.3.0"\ntomato = "%s"\n\n[build]\nmode = "release"\noutput = "out/app"\n[build.crash]\nmode = "debug"\n' "$minv" > "$P/tomato.toml"
-within "$P" try "config shows the [build] table (not [build.ENTRY])" 0 @config_build.txt "" config
+within "$P" try "config shows the [build] table and the [build.ENTRY] tables" 0 @config_build.txt "" config
 
 # the user's file, and the project's file over it, setting by setting
 printf '[limits]\nexp_bits = 4096\nformat_digits = 7000\n' > "$TOMATO_HOME/config.toml"

@@ -11,7 +11,8 @@
 # The user's file is read first and the project's file overrides it, setting by setting. Tables other than [limits] are not
 # looked at: a project's tomato.toml is also the manifest (compiler/src/manifest.tom), which checks the other tables, so a typo in
 # a table name is an error there; the user's config.toml is not checked for other tables.
-from toml import loads, dumps_value
+from toml import loads, dumps_value, TOMLDecodeError
+from diag import format_error
 from value import Value
 
 # a problem with a configuration file: code is the id of the error (std/errors.txt, E539 to E543), message its text
@@ -60,6 +61,10 @@ export def read_toml(path: str) -> Value:
     text = read_file(path)
     try:
         return loads(text)
+    catch TOMLDecodeError as e:
+        # the source line and a caret, as the compiler shows a mistake in a program (the label is cut off: ConfigError adds error[E540])
+        shown = format_error(f'the configuration file {path} is not valid TOML: {e.reason}', e.line, e.column, text, path, 'x')
+        raise ConfigError(540, shown[3:])
     catch RuntimeError as e:
         raise ConfigError(540, f'the configuration file {path} is not valid TOML: {e.message}')
 

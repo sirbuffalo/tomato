@@ -13,9 +13,11 @@ import os
 import sys
 import time
 from ospath import isdir, isfile, dirname
-from cli_term import Settings, check_color, die, die_usage
+from cli_term import Settings, check_color, die, die_usage, show_error, CliExit
 from cli_sys import mkdtemp, rmtree, exe_path, watch_signals
 from cli_config import find_config
+from diag import Diagnostic
+from driver import config_report
 from cli_build import file_word
 from cli_explain import text_lines
 from cli_toolchain import require_clang
@@ -176,6 +178,19 @@ export async def test_command(s: Settings, words: list[str], home: str, version:
     for it in items:
         if not isfile(it.file):
             die(s, f'cannot read {it.file}')
+    # a tomato.toml or config.toml that cannot be read stops the whole run once, not once per file
+    checked: list[str] = []
+    for it in items:
+        found = find_config(dirname(it.file) if dirname(it.file) != '' else '.')
+        key = found.project + '|' + found.user
+        if key in checked or key == '|':
+            continue
+        checked.append(key)
+        try:
+            config_report(found.project, found.user)
+        catch Diagnostic as d:
+            show_error(s, d.message)
+            raise CliExit(1)
     require_clang(s)
     watch_signals()
     tmpd = mkdtemp('tomato-test-')
@@ -225,6 +240,8 @@ async def run_all(s: Settings, items: list[Item], tfilter: str, tmode: str, seco
             if tmode != '':
                 argv += ['--mode', tmode]
             argv += ['-o', prog]
+            if isfile(prog):
+                os.remove(prog)      # (the program of the file before this one is not left for a failed build to remove, and say so)
             b = sys.run(argv, env={'TOMATO_WARNINGS': 'on' if s.warnings else 'off'})
             out += b.stderr
             if b.status != 0:
@@ -304,8 +321,8 @@ async def run_all(s: Settings, items: list[Item], tfilter: str, tmode: str, seco
             print(f'FAIL {f}  ({why})')
             show_out(point_trace(out, f, kind, home + '/std/testing.tom'))
     if tfilter != '' and nfiles == 0:
-        print(f"warning: no file name contains '{tfilter}'")
-    print(f"tomato test: {nfiles} files, {npassed} passed, {nfailed} failed, {nskipped} skipped: {'ok' if status == 0 else 'FAILED'}")
+        die(s, f"no test file name contains '{tfilter}'")
+    print(f"tomato test: {nfiles} {'file' if nfiles == 1 else 'files'}, {npassed} passed, {nfailed} failed, {nskipped} skipped: {'ok' if status == 0 else 'FAILED'}")
     return status
 
 def to_int(t: str) -> int:

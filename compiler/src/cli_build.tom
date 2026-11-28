@@ -8,13 +8,13 @@
 # entry is raw input (no flag is read there; `--` ends the options earlier, and the next word is still the FILE or the ENTRY).
 import os
 import sys
-from ospath import isfile, isdir, basename, dirname, exists
+from ospath import isfile, isdir, islink, basename, dirname, exists
 from diag import Diagnostic
-from driver import compile_ir
+from driver import compile_ir, config_report
 from cli_term import Settings, CliExit, check_color, die, die_usage, die_id, show_error
 from cli_help import help_text
 from cli_sys import mkdtemp, rmtree, physical_dir, watch_signals
-from cli_config import find_config
+from cli_config import find_config, Found
 from cli_rtcache import runtime_object
 from cli_toolchain import require_clang
 
@@ -217,16 +217,79 @@ export def build_command(s: Settings, cmd: str, words: list[str], home: str, ver
         die_id(s, 'E281', "the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)")
     elif r.mode != 'debug' and r.mode != 'release':
         die_id(s, 'E282', f"the mode must be debug or release, not '{r.mode}'")
+    if cmd == 'build' and r.out != '' and not isdir(dir_of(r.out)):
+        die(s, f'cannot write {r.out}: the folder {dir_of(r.out)} does not exist (make it, or name another file with -o)')
     if cmd != 'compile':
         require_clang(s)
     watch_signals()
     tmp = mkdtemp('tomato-')
+    made = Made()
     try:
-        return compile_and_link(s, r, flags, home, version, tmp)
+        return compile_and_link(s, r, flags, home, version, tmp, made)
+    catch CliExit as e:
+        if cmd == 'build' and e.status == 1 and not made.done:
+            drop_stale(s, r, made.exe)
+        raise
     finally:
         rmtree(tmp)
 
-def compile_and_link(s: Settings, r: Request, flags: str, home: str, version: str, tmp: str) -> int:
+# builds/NAME in the project's folder (the current folder when there is no project): NAME is the project's name for its src/main.tom,
+# else the file's name without .tom (D94b)
+def default_exe(r: Request, found: Found, project_name: str) -> str:
+    stem = r.file[:len(r.file) - 4] if r.file.endswith('.tom') else r.file
+    base = basename(stem)
+    manifest_name = sanitized(project_name)
+    if manifest_name != '' and found.project != '' and physical_path(r.file) == dirname(found.project) + '/src/main.tom':
+        base = manifest_name
+        if base.startswith('.') or base.startswith('-'):
+            base = 'p' + base
+    bdir = '.'
+    if found.project != '':
+        bdir = dirname(found.project)
+        if bdir == os.getcwd():
+            bdir = '.'
+    return 'builds/' + base if bdir == '.' else bdir + '/builds/' + base
+
+# where the program of a build that failed would have been written (the old program of that name must not stay to run the old code):
+# the --output or the program's own path once known, else the --o, else the default one, whose name needs the project's name
+def stale_output(r: Request, exe: str) -> str:
+    if exe != '':
+        return exe
+    if r.out != '':
+        return r.out
+    found = find_config(dir_of(r.file))
+    name = ''
+    if found.project != '':
+        try:
+            for line in config_report(found.project, found.user):
+                if name == '' and line.startswith('project: '):
+                    name = line[9:].split(' ')[0]
+        catch Diagnostic:
+            return ''
+    return default_exe(r, found, name)
+
+# remove the program of a failed build when it is a plain executable program (not a link, a script or a source)
+def drop_stale(s: Settings, r: Request, exe: str):
+    old = stale_output(r, exe)
+    if old == '' or old.endswith('.tom') or not isfile(old) or islink(old) or physical_path(old) == physical_path(r.file):
+        return
+    try:
+        if os.stat(old).mode % 512 // 64 % 2 == 0:       # the owner's execute bit
+            return
+        head = os.read_bytes(old)[:2]
+        if head == b'#!':
+            return
+        os.remove(old)
+    catch IOError:
+        return
+    sys.write_stderr(f'note: removed the old {old}, so a failed build leaves no program that runs the old code\n')
+
+# what a build knows of its program while it runs: where it writes it, and whether it did
+class Made:
+    exe: str = ''
+    done: bool = False
+
+def compile_and_link(s: Settings, r: Request, flags: str, home: str, version: str, tmp: str, made: Made) -> int:
     found = find_config(dir_of(r.file))
     ir = ''
     try:
@@ -264,27 +327,16 @@ def compile_and_link(s: Settings, r: Request, flags: str, home: str, version: st
             exe = manifest_out
             make_folder_of(s, exe)
         if exe == '':
-            # builds/NAME in the project's folder (the current folder when there is no project): NAME is the project's name for its
-            # src/main.tom, else the file's name without .tom (D94b)
-            stem = r.file[:len(r.file) - 4] if r.file.endswith('.tom') else r.file
-            base = basename(stem)
-            manifest_name = sanitized(note(lines, 'name'))
-            if manifest_name != '' and found.project != '' and physical_path(r.file) == dirname(found.project) + '/src/main.tom':
-                base = manifest_name
-                if base.startswith('.') or base.startswith('-'):
-                    base = 'p' + base
-            bdir = '.'
-            if found.project != '':
-                bdir = dirname(found.project)
-                if bdir == os.getcwd():
-                    bdir = '.'
-            exe = 'builds/' + base if bdir == '.' else bdir + '/builds/' + base
+            exe = default_exe(r, found, note(lines, 'name'))
             make_folder_of(s, exe)
         if exists(exe) and physical_path(exe) == physical_path(r.file):
             die(s, f'the program would overwrite its own source {r.file}: name it with -o')
+        made.exe = exe
     link(s, r, mode, program, exe, home, tmp)
     if r.cmd == 'build':
-        print(f'wrote {exe}')
+        made.done = True
+        here = os.getcwd() + '/'
+        print('wrote ' + (exe[len(here):] if exe.startswith(here) else exe))     # a path below the current folder is shown without it
         return 0
     # ^C reaches the program too: its own exit status is the answer (130 when it died of the signal)
     ran = sys.run([exe] + r.inputs, capture=False)

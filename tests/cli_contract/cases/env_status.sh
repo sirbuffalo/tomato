@@ -32,11 +32,11 @@ try "run: a usage error gives 2" 2 "" "error: --mode needs a value" run --mode
 mkdir -p tests
 printf 'import sys\n\n@main\ndef main():\n    sys.exit(130)\n' > tests/e130.tom
 try "test: a file that exits with 130 says it may have been killed by SIGINT" 1 "FAIL tests/e130.tom  (exit status 130 (killed by signal 2, or sys.exit(130)))
-tomato test: 1 files, 0 passed, 1 failed, 0 skipped: FAILED" "" test
+tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED" "" test
 rm tests/e130.tom
 printf 'import os\nimport sys\n\n@main\ndef main():\n    sys.run(["kill", "-TERM", str(os.getpid())])\n' > tests/killed.tom
 try "test: a file killed by SIGTERM says so" 1 "~FAIL tests/killed.tom  (exit status 143 (killed by signal 15, or sys.exit(143)))" "" test
 rm tests/killed.tom
 printf 'from testing import skip\n\n@main\ndef main():\n    skip("later")\n' > tests/skipped.tom
 try "test: a skipped file is not a failure: status 0" 0 "skip tests/skipped.tom  (later)
-tomato test: 1 files, 0 passed, 0 failed, 1 skipped: ok" "" test
+tomato test: 1 file, 0 passed, 0 failed, 1 skipped: ok" "" test

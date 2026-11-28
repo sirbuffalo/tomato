@@ -442,6 +442,19 @@ case "$cmd" in
     while IFS= read -r line; do
       f="${line#*|}"; [ -f "$f" ] || die "cannot read $f"
     done < "$tmpd/list"
+    # a tomato.toml or config.toml that cannot be read stops the whole run once, not once per file
+    checked=""
+    while IFS= read -r line; do
+      f="${line#*|}"; find_config "$(dirname "$f")"
+      case "
+$checked" in *"
+$project_cfg|$user_cfg"*) continue ;; esac
+      checked="$checked
+$project_cfg|$user_cfg"
+      if [ -n "$project_cfg$user_cfg" ]; then
+        cerr="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>&1 >/dev/null)" || { printf '%s\n' "$cerr" | show_error; exit 1; }
+      fi
+    done < "$tmpd/list"
     prog="$tmpd/prog"; progress="$tmpd/progress"; out="$tmpd/out"
     nfiles=0; npassed=0; nfailed=0; nskipped=0; status=0
     # run_prog: the program and its words, the output in $out, with the time limit when there is one; sets prc (its status) and timed_out.
@@ -529,6 +542,7 @@ case "$cmd" in
         verdict=FAIL; why="the entry test (the functions marked @test) takes no inputs"
       else
         if [ -n "$tmode" ]; then set -- --mode "$tmode"; else set --; fi
+        rm -f "$prog"      # (the program of the file before this one is not left for a failed build to remove, and say so)
         if ! TOMATO_WARNINGS="$warnings" "$invoked" build "$f" --test-seeds --entry "$entry" "$@" -o "$prog" 2>> "$out" >/dev/null; then
           verdict=FAIL; why="did not compile"
         else
@@ -571,9 +585,10 @@ case "$cmd" in
            point_trace "$f" "$kind"; show_out "$out.shown" ;;
       esac
     done 3< "$tmpd/list"
-    [ -z "$tfilter" ] || [ "$nfiles" -gt 0 ] || echo "warning: no file name contains '$tfilter'"
+    [ -z "$tfilter" ] || [ "$nfiles" -gt 0 ] || die "no test file name contains '$tfilter'"
     if [ "$status" -eq 0 ]; then verdict=ok; else verdict=FAILED; fi
-    printf 'tomato test: %d files, %d passed, %d failed, %d skipped: %s\n' "$nfiles" "$npassed" "$nfailed" "$nskipped" "$verdict"
+    nword=files; [ "$nfiles" -ne 1 ] || nword=file
+    printf 'tomato test: %d %s, %d passed, %d failed, %d skipped: %s\n' "$nfiles" "$nword" "$npassed" "$nfailed" "$nskipped" "$verdict"
     exit $status ;;
   config)
     # tomato config [FILE]: the settings in effect for FILE (without one, for the current folder) and where each came from; the
@@ -754,8 +769,41 @@ esac
 # cache file half written by an interrupted runtime compile (rtcache_get runs in a subshell, so its name is not known here) stays in
 # the cache folder as .tmp.XXXXXX until the next store's sweep removes it a day later. A signal that comes while a compile or link
 # runs is taken once that command ends (the terminal's ^C ends it at once, as it reaches the whole foreground group).
+if [ "$cmd" = build ] && [ -n "$out" ] && [ ! -d "$(dirname "$out")" ]; then
+  die "cannot write $out: the folder $(dirname "$out") does not exist (make it, or name another file with -o)"
+fi
 tmp="$(mktemp -d)" || die "cannot make a temporary folder"
-trap 'rm -rf "$tmp"' EXIT
+# a build that fails removes the program an earlier build left where this one would have written it (a failed build must not leave a
+# program that runs the old code): stale_output says where that is, and only a plain executable file that is not a script or a source is removed
+built=0; exe_final=""
+stale_output() {
+  if [ -n "$exe_final" ]; then echo "$exe_final"; return; fi
+  [ -z "$out" ] || { echo "$out"; return; }
+  base="$(basename "${file%.tom}")"; cfg=""
+  if [ -n "$project_cfg" ]; then
+    cfg="$(TOMATO_VERSION="$(tomato_version)" "$tomatoc" "" --config "$std" debug "$project_cfg" "$user_cfg" 2>/dev/null)" || return 0
+    if [ "$(cd "$(dirname "$file")" 2>/dev/null && pwd -P)/$(basename "$file")" = "$(dirname "$project_cfg")/src/main.tom" ]; then
+      pname="$(printf '%s\n' "$cfg" | sed -n 's/^project: \([^ ]*\) .*/\1/p' | head -n 1 | tr -c 'A-Za-z0-9._\n-' '-')"
+      if [ -n "$pname" ]; then base="$pname"; case "$base" in .*|-*) base="p$base" ;; esac; fi
+    fi
+    bdir="$(dirname "$project_cfg")"; [ "$bdir" != "$(pwd -P)" ] || bdir="."
+  else bdir="."; fi
+  [ "$bdir" = . ] && echo "builds/$base" || echo "$bdir/builds/$base"
+}
+finish() {
+  rc=$?
+  if [ "$cmd" = build ] && [ "$built" = 0 ] && [ "$rc" = 1 ]; then
+    old="$(stale_output)"
+    case "$old" in
+      ''|*.tom) ;;
+      *) if [ -f "$old" ] && [ ! "$old" -ef "$file" ] && [ ! -L "$old" ] && [ -x "$old" ] && [ "$(head -c 2 "$old")" != "#!" ] && [ "$old" != "$file" ]; then
+           rm -f "$old" && echo "note: removed the old $old, so a failed build leaves no program that runs the old code" >&2
+         fi ;;
+    esac
+  fi
+  rm -rf "$tmp"
+}
+trap 'finish' EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 find_config "$(dirname "$file")"
 if ! TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$file" "$entry" "$std" "$mode" "$project_cfg" "$user_cfg" "$cflags" > "$tmp/program.ll" 2> "$tmp/errors"; then
@@ -794,6 +842,7 @@ if [ "$cmd" = build ]; then
   fi
 fi
 [ "$cmd" = build ] && [ "$exe" -ef "$file" ] && die "the program would overwrite its own source $file: name it with -o"
+[ "$cmd" != build ] || exe_final="$exe"
 # The runtime is compiled once per mode, clang and runtime source, and kept in the cache folder (native/rtcache.sh); each run then
 # links the stored object (release: bitcode, for link-time optimisation) instead of compiling the 8,000 lines of C again. Without a
 # usable object (the compile or the cache failed) the runtime source is linked, as before.
@@ -864,6 +913,11 @@ elif ! link "$ltoflags" "${rtobj:-$runtime}" 2>"$tmp/lto-error"; then
     lto_warn "linking without cross-module optimization"
   fi
 fi
-[ "$cmd" = build ] && { echo "wrote $exe"; exit 0; }
+if [ "$cmd" = build ]; then
+  built=1
+  # a path below the current folder is shown without it ([build].output is absolute)
+  case "$exe" in "$PWD"/*) exe="${exe#"$PWD"/}" ;; esac
+  echo "wrote $exe"; exit 0
+fi
 trap 'exit $?' INT     # ^C reaches the program too: its own exit status is the answer (130 when it died of the signal)
 "$exe" "$@"

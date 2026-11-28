@@ -53,6 +53,7 @@ A change to a golden file is a change to the contract: review its diff, and in a
 | `build_tables` | `[build]` and `[build.ENTRY]` for `run`, `build` and `test`, `output`, the flags winning, the user's file's mode |
 | `seed` | `seed hash`, `check`, `install`, `install --locked`, the lock file, a path seed used by a program |
 | `test_all`, `test_forms`, `test_messages` | `tomato test` over a folder of every kind of file, the forms of its words, `--filter`, `--timeout`, `--mode`, `-v`; what a failed file shows (the file and line of the check, the diffs, the class of an error, a long output cut, an all-skipped file) and the entry list of E228 |
+| `polish` | the fourth audit's polish: `seed remove` by short name and the seed message wording, a `[build.ENTRY]` that names no entry, `config` listing `[build.ENTRY]`, `test --filter` that keeps nothing, a manifest that is not TOML (line and caret, once), `build -o` into a missing folder, a failed build removing the old program |
 | `color` | `--color`, `TOMATO_COLOR`, `NO_COLOR`, `--no-warnings`, `TOMATO_WARNINGS`, the painted error text |
 | `env_status` | `TOMATO_CACHE_DIR` and `TOMATO_CACHE`, exit statuses for `sys.exit` and signals, how `test` says them |
 

@@ -20,7 +20,8 @@
 #
 # Editing: Up and Down recall earlier pieces, a block as a whole; the arrows move within it and between its lines. Enter runs the
 # piece when it is complete (a block ends at an empty line; an open bracket goes on to the next line), Tab completes a name (keywords,
-# built-ins, what the session uses, standard modules after import, :commands) or indents, Ctrl-C cancels. The
+# built-ins, what the session uses, standard modules after import, :commands) or indents, Ctrl-C cancels what is typed, and stops a piece that is
+# running (an endless loop, say) without leaving the session. The
 # code is colored as you type it (keywords red, texts green, ...) on a terminal with colors: --color=always|never, TOMATO_COLOR and
 # NO_COLOR decide, as for the error colors.
 #
@@ -33,7 +34,10 @@ tomato="${TOMATO_CMD:-tomato}"
 [ -t 2 ] && export TOMATO_PROGRESS_TTY=1
 S="$(mktemp -d)" || { echo "error: cannot make a temporary folder" >&2; exit 1; }
 trap 'rm -rf "$S"' EXIT
-trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP      # the session folder goes on Ctrl-C, SIGTERM and hangup too
+# Ctrl-C stops the piece that is running (the program and the compile are in the terminal's foreground group, so they get it too) and the
+# session goes on at the prompt: the trap only notes it (intr). SIGTERM and hangup end the session, and its folder goes with it.
+intr=0; INTR=0
+trap 'intr=1' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 mkdir -p "$S/d"
 # Speed: the runtime is compiled to an object once, and each line then costs one tomatoc run plus a quick unoptimized
 # link, instead of compiling the whole runtime with optimization on every line.
@@ -97,7 +101,11 @@ decl_chunks() {
 program() {   # the session as one program on stdout
   for f in "$S"/d/*; do [ -f "$f" ] && ! redefined "$f" && { cat "$f"; echo; }; done
   echo "@main"; echo "$(main_kw "$S/stmts") tomato_repl_main():"
-  if [ -s "$S/stmts" ]; then sed 's/^/    /' "$S/stmts"; else echo "    pass"; fi
+  # the echo of a bare expression is kept as _core_print(...) inside the session (a program that defines its own print still echoes with the
+  # built-in); shown as print(...), what was typed, unless the session defines print
+  if [ -s "$S/stmts" ]; then
+    if grep -qE '^(def|async def) +print\b' "$S"/d/* 2>/dev/null; then sed 's/^/    /' "$S/stmts"; else sed -e 's/^_core_print(/print(/' -e 's/^/    /' "$S/stmts"; fi
+  else echo "    pass"; fi
 }
 
 # the session runs inside one function; it must be async when a statement awaits, starts a task or loops over statuses
@@ -146,11 +154,15 @@ try_run() {
   cp "$S/inputs" "$S/inputs.try"; cp "$S/shown" "$S/shown.try"; asked=0
   while :; do
     try_once "$1" "$2"; ok=$?
+    if [ "$intr" = 1 ] || [ "$RUN_RC" = 130 ]; then INTR=1; intr=0; cp "$S/shown" "$S/shown.try"; return 1; fi
     if [ "$RUN_RC" = 75 ]; then
       asked=1
       new_output "$S/shown.try"
       cp "$S/out" "$S/shown.try"
-      if ! readline ""; then echo; : > "$S/err"; cp "$S/shown.try" "$S/shown"; return 1; fi
+      if ! readline ""; then
+        [ "$intr" = 1 ] && { INTR=1; intr=0; echo; return 1; }
+        echo; : > "$S/err"; cp "$S/shown.try" "$S/shown"; return 1
+      fi
       printf '%s\n' "$REPLY_LINE" >> "$S/inputs.try"
       [ $interactive = 0 ] && say "$REPLY_LINE"
       printf '%s\n' "$REPLY_LINE" >> "$S/shown.try"
@@ -185,6 +197,7 @@ friendly_plain() {   # reads $S/err, prints the message on stderr; writes "in-de
         }
         if (mapped) {
           k = 0; while ((getline t < file) > 0) { k++; if (k == ul) { src = t; break } } close(file)
+          if (src ~ /^_core_print\(/) { sub(/^_core_print\(/, "print(", src); uc -= 6 }   # the echo of a bare expression, as it was typed
           if (uc < 1) uc = 1
           car = l[h + 3]; w = gsub(/\^/, "^", car); if (w < 1) w = 1
           pad = sp(digits(ul)); carets = ""; for (j = 0; j < w; j++) carets = carets "^"
@@ -233,14 +246,18 @@ commit() {   # the candidate worked: keep it ($S/ch holds its declarations, one 
 
 # the output of a candidate that is kept or refused. A redefinition runs the earlier lines again with the new definition, so the part
 # of the output that is "new" cannot be told from them: it shows nothing (what the earlier lines printed was shown when they ran).
-show_new() { [ -n "$REDEF$REDECL" ] || { new_output; end_open_line; }; }
+# A piece with no statements (only definitions) shows nothing either: a definition prints nothing itself, and one that changes what the
+# earlier lines print (a new print, say) must not show them again.
+show_new() { [ -n "$REDEF$REDECL" ] || [ ! -s "$STMT_FILE" ] || { new_output; end_open_line; }; }
 # a refused candidate: the compiler's error against what was typed; for a redefinition, also why the old definition is still there
 refused() {
   # a redeclaration refused in place is tried again at the end of the session (RETRY, see submit); its message is kept for when that fails too
-  if [ -n "$REDECL" ] && [ "$INPLACE" = 1 ]; then RETRY=1; refused_body 2> "$S/msg"; else refused_body; fi
+  if [ -n "$REDECL" ] && [ "$INPLACE" = 1 ] && [ "$INTR" = 0 ]; then RETRY=1; refused_body 2> "$S/msg"; else refused_body; fi
 }
 refused_body() {
   FAILED=1
+  if [ "$INTR" = 1 ]; then INTR=0; echo; err "interrupted (the piece was stopped; the session is as it was)"
+  else
   show_new
   friendly
   grep -q "^in-definition" "$S/where" 2>/dev/null && grep -q "is not defined" "$S/err" 2>/dev/null && err "hint: a function or class defined here cannot read repl variables; pass them as arguments"
@@ -249,6 +266,7 @@ refused_body() {
   fi
   if [ -n "$REDECL" ] && grep -q "^in-session" "$S/where" 2>/dev/null; then
     err "hint: the earlier lines of the session run again with the new declaration of $REDECL, and one of them does not work with it; the earlier declaration is kept"
+  fi
   fi
   [ -f "$S/stmts.keep" ] && cp "$S/stmts.keep" "$S/stmts"   # a redeclared variable that is refused: the old declaration stays, with its value
   rm -f "$S/stmts.keep"; REDECL=""; RL=0
@@ -260,7 +278,7 @@ refused_body() {
 # which works for the first case; when that fails too, the error of the in-place attempt is shown.
 INPLACE=1; RETRY=0; FAILED=0
 submit() {
-  INPLACE=1; RETRY=0; FAILED=0
+  INPLACE=1; RETRY=0; FAILED=0; intr=0; INTR=0
   submit_piece "$1"
   if [ "$RETRY" = 1 ]; then
     INPLACE=0; RETRY=0; FAILED=0
@@ -278,11 +296,11 @@ submit_piece() {   # one piece of source text in $1
   REDECL=""; RL=0
   if [ -s "$S/cb" ]; then
     name=$(head -1 "$S/cb" | sed -nE 's/^([A-Za-z_][A-Za-z_0-9]*) *:[^=]*=.*/\1/p')
-    if [ -n "$name" ] && [ "$INPLACE" = 0 ] && grep -qE "^$name *:" "$S/stmts"; then   # at the end: the old declaration goes, the new one is added
-      cp "$S/stmts" "$S/stmts.keep"; grep -vE "^$name *:" "$S/stmts.keep" > "$S/stmts"
-    elif [ -n "$name" ] && grep -qE "^$name *:" "$S/stmts"; then
+    if [ -n "$name" ] && [ "$INPLACE" = 0 ] && grep -qE "^$name *(:|=[^=])" "$S/stmts"; then   # at the end: the old declaration goes, the new one is added
+      cp "$S/stmts" "$S/stmts.keep"; grep -vE "^$name *(:|=[^=])" "$S/stmts.keep" > "$S/stmts"
+    elif [ -n "$name" ] && grep -qE "^$name *(:|=[^=])" "$S/stmts"; then
       cp "$S/stmts" "$S/stmts.keep"; cp "$S/cb" "$S/cb.orig"
-      awk -v n="$name" -v f="$S/cb.orig" -v R="$S/rl" 'BEGIN { getline new < f } $0 ~ ("^" n " *:") { if (!done) { print new; done = 1; print NR > R }; next } { print }' "$S/stmts.keep" > "$S/stmts"
+      awk -v n="$name" -v f="$S/cb.orig" -v R="$S/rl" 'BEGIN { getline new < f } $0 ~ ("^" n " *(:|=[^=])") { if (!done) { print new; done = 1; print NR > R }; next } { print }' "$S/stmts.keep" > "$S/stmts"
       RL=$(cat "$S/rl"); REDECL="$name"
       tail -n +2 "$S/cb.orig" > "$S/cb"
     fi
@@ -310,6 +328,7 @@ submit_piece() {   # one piece of source text in $1
        && [ "$(wc -l < "$S/cb" | tr -d ' ')" = 1 ] && ! printf '%s' "$first" | grep -q ':$'; then
       printf '_core_print(%s)\n' "$first" > "$S/ce"
       if try_run "$S/cd" "$S/ce"; then new_output; end_open_line; commit "$S/cd"; return; fi
+      [ "$INTR" = 1 ] && { refused; return; }
     fi
   fi
   if try_run "$S/cd" "$S/cb"; then show_new; commit "$S/cd"; REDEF=""; REDECL=""; RL=0; rm -f "$S/stmts.keep"; else refused; fi
@@ -329,6 +348,15 @@ load_file() {
   fi
 }
 
+# is a bracket of the text still open? (quotes and comments are skipped; a rough count, as the editor's own is)
+bracket_open() {
+  printf '%s\n' "$1" | awk '{ n = length($0); for (i = 1; i <= n; i++) { c = substr($0, i, 1)
+      if (q != "") { if (c == "\\") i++; else if (c == q) q = ""; continue }
+      if (c == "#") break
+      if (c == "\"" || c == "\047") { q = c; continue }
+      if (c ~ /[(\[{]/) d++; else if (c ~ /[)\]}]/) d-- }
+      q = "" } END { exit !(d > 0) }'
+}
 help() { awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; }   # the comment block at the top of this file
 
 interactive=0; [ -t 0 ] && interactive=1
@@ -366,7 +394,8 @@ while :; do
       *) use_edit=0; [ $rc -ge 128 ] && echo; plain_note; continue ;;   # (killed by a signal: it may have left its prompt on the line)
     esac
   else
-    readline '>>> ' || { [ $interactive = 1 ] && echo; break; }
+    intr=0
+    readline '>>> ' || { [ "$intr" = 1 ] && { intr=0; echo; continue; }; [ $interactive = 1 ] && echo; break; }
     text="$REPLY_LINE"
   fi
   case "$text" in
@@ -378,11 +407,19 @@ while :; do
     :reset) rm -f "$S"/d/*; : > "$S/stmts"; : > "$S/shown"; : > "$S/inputs"; say "session cleared"; continue ;;
     :program) program; continue ;;
     :compile) program > "$S/p.tom"; "$tomato" compile "$S/p.tom"; continue ;;
-    :save\ *) program > "${text#:save }" && say "wrote ${text#:save }"; continue ;;
+    :save\ *) saved="${text#:save }"
+      if why="$( { program > "$saved"; } 2>&1 )"; then say "wrote $saved"; else err "error: cannot write $saved: ${why##*: }"; fi
+      continue ;;
     :load\ *) load_file "${text#:load }"; continue ;;
     :*) err "error: unknown command ${text%% *} (try :help)"; continue ;;
   esac
   if [ $use_edit = 0 ]; then
+    # an open bracket goes on to the next line (the editor does this itself)
+    while bracket_open "$text"; do
+      readline '... ' "" || break
+      text="$text
+$REPLY_LINE"
+    done
     case "$text" in *:|@*)
       # a block: read lines until an empty one; each line starts with the previous line's indent (four more after a colon)
       prev="$text"

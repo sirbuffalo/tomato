@@ -654,19 +654,23 @@ export def check_tomato(m: Manifest, have: str):
     if m.tomato != '' and compare_versions(have, m.tomato) < 0:
         fail_at(562, m.path, f'{m.kind}.tomato', f'this needs Tomato {m.tomato} or newer, and this is Tomato {have}\n  = help: install a newer release with `tomato update`')
 
-# the lines `tomato config` adds for a manifest: what the folder is, and the top [build] table (the entry tables are not listed)
+# the lines `tomato config` adds for a manifest: what the folder is, and the [build] table and the [build.ENTRY] tables
 export def describe_manifest(m: Manifest) -> list[str]:
     lines: list[str] = []
     if m.kind != 'none':
         lines.append(f'{m.kind}: {m.name} {m.version} (needs Tomato {m.tomato} or newer)')
-    for b in m.builds:
-        if b.table == '':
+    # the [build] table first, then the [build.ENTRY] tables in the order written
+    for top in [True, False]:
+        for b in m.builds:
+            if (b.table == '') != top:
+                continue
             if m.kind == 'seed':
-                if b.mode != '' or b.output != '':
+                if top and (b.mode != '' or b.output != ''):
                     lines.append("build: ignored, the [build] of a seed is not read")
-            else:
-                if b.mode != '':
-                    lines.append(f'build.mode = {b.mode}  ({m.path})')
-                if b.output != '':
-                    lines.append(f'build.output = {b.output}  ({m.path})')
+                continue
+            name = 'build' if top else f'build.{b.table}'
+            if b.mode != '':
+                lines.append(f'{name}.mode = {b.mode}  ({m.path})')
+            if b.output != '':
+                lines.append(f'{name}.output = {b.output}  ({m.path})')
     return lines

@@ -157,7 +157,7 @@ tomato seed add --git URL --rev COMMIT   the same for a seed from git (the rev i
 tomato seed add gh:USER/REPO --rev COMMIT   a host shortcut: gh:, gitlab:, codeberg: or srht:~USER/REPO, the https URL of that repository (D124a, below)
 tomato seed add --git URL --tag TAG | --branch BRANCH   the same, looking the tag or branch up once; its commit is the rev and `update` follows it
 tomato seed add --git URL --rev COMMIT --subdir DIR   the seed is the folder DIR of the repository (several seeds in one repository)
-tomato seed remove NAME          drop the seed from [seeds] and [test-seeds], lock again
+tomato seed remove NAME          drop the seed from [seeds] and [test-seeds], lock again (NAME may be the short name `import` uses, `thing` for `acme.example/thing`, when one seed has it)
 tomato seed update [NAME...] [--dry-run] [--yes]   lock the named seeds (all with no name) again; a git seed that follows a tag or branch moves to its commit now
 tomato seed verify               hash every locked seed again (store, vendor folder, path folders) against tomato.lock; exit 1 on a problem
 tomato seed vendor               copy the locked seeds into the vendor folder ([seed-store] vendor, default vendor/)
@@ -165,7 +165,7 @@ tomato seed check                check the seed of this folder (its manifest, it
 tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
 ```
 
-- `tomato seed check` also prints a `warning:` line for each `[build.ENTRY]` table that names no entry: no function in the seed's `src/`
+- `tomato seed check` also prints a `warning:` line for each `[build.ENTRY]` table that names no entry (`tomato run`, `build` and `compile` print the same warning for a project's table, and `tomato config` lists the `[build.ENTRY]` tables): no function in the seed's `src/`
   or `tests/` is marked `@ENTRY` or `@ENTRY.something` (a typo such as `[build.mian]` is a valid table, D92c). It is a warning, not an
   error, and the table is ignored anyway (a seed's `[build]` is never used). A `description` or `license` that still starts with `TODO:` and the
   owner `yourdomain.example` (the placeholders `tomato init --seed` writes) are warnings too.
@@ -222,11 +222,11 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   (`local` and other reserved names are still E580). Nothing in `tomato.toml` or the lock changes for a handle: a seed whose own manifest says `dave/thing` is listed under that name, from its git URL or a path.
 - **The `# seeds:` line.** A program (the file given to `tomato run`, `build` or `compile`) may name the seeds it needs in its **leading comment block**: the lines from the top that are
   blank or start with `#` (a first `#!` line is part of it); the first other line ends the block, and a `# seeds:` line below it is an ordinary comment. A line is `# seeds:` and one or more
-  entries separated by commas, each `owner/name` or `owner/name>=VERSION` (`>=1.2` is `>=1.2.0`; `>=` is the only comparison); several `# seeds:` lines add up, and a seed named twice keeps the higher
-  minimum. A line that cannot be read, with the line number of the bad entry, is **E622**. Only the program's own file is read, not the modules it imports.
+  entries separated by commas, each `owner/name` or `owner/name>=VERSION` (`>=1.2` is `>=1.2.0`; `>=` is the only comparison); several `# seeds:` lines add up, and a seed named twice in different lines keeps the higher
+  minimum (twice in one line is **E622**). A line that cannot be read, with the line number of the bad entry, is **E622**. Only the program's own file is read, not the modules it imports.
 - **What it does.** `run`, `build` and `compile` **never fetch**: the line is **checked** against the project's `tomato.toml` and `tomato.lock` (the project found as for every build), after the
   ordinary check of the lock and the store. Every seed it names must be one the build uses (listed in `[seeds]`, or in `[test-seeds]` under `--test-seeds`/`tomato test`) and the locked version must meet the
-  minimum by the rule of `[seeds]` (the same or a later version of the same compatible line); otherwise E622 names the file, the seed and the command to run (`tomato seed add ...`). A listed seed
+  minimum by the rule of `[seeds]` (the same or a later version of the same compatible line); otherwise E622 names the file and the line of the `# seeds:` line (`src/h.tom:1`), the seed and the command to run (`tomato seed add ...`). A listed seed
   that is not locked or not in the store is the error of every build, E569, `run: tomato seed install`. The line only names and bounds; where a seed comes from is the project's business, so **a program
   outside every project** (no `tomato.toml` above it) **with a `# seeds:` line is E622** (it has no lock to take the seeds from). The line is a plain comment to the browser and to anything that is not
   `tomato run`, `build` or `compile`.

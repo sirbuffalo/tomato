@@ -55,6 +55,18 @@ export def opts_from(words: list[str]) -> Opts:
 def fail(code: int, path: str, text: str):
     raise ConfigError(code, f'{path}: {text}')
 
+# an error about a word of the command line (not about a file): no file in front of it
+def fail_word(code: int, text: str):
+    raise ConfigError(code, text)
+
+# a path as the user would type it: below the current folder it is written without that folder, so a message does not print a long
+# absolute path for tomato.toml in the folder the command was run from
+def shown_path(path: str) -> str:
+    here = getcwd()
+    if here != '/' and path.startswith(here + '/'):
+        return path[len(here) + 1:]
+    return path
+
 def seed_folder(m: Manifest, path: str) -> str:
     # the folder of a path seed, without a closing slash
     if path.startswith('/'):
@@ -574,7 +586,7 @@ def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], appro
         out.said.append('dry run: tomato.toml and tomato.lock are as they were')
         return out
     write_text(path, text)
-    out.said.append(f'wrote {path} ({len(out.seeds)} seed' + ('' if len(out.seeds) == 1 else 's') + ')')
+    out.said.append(f'wrote {shown_path(path)} ({len(out.seeds)} seed' + ('' if len(out.seeds) == 1 else 's') + ')')
     return out
 
 export def install(manifest_path: str, have: str, opts: Opts) -> list[str]:
@@ -708,17 +720,17 @@ export def expand_shortcut(path: str, word: str) -> str:
     form = f'{host}:~USER/REPO' if host == 'srht' else f'{host}:USER/REPO'
     parts = rest.split('/')
     if len(parts) != 2 or parts[0] == '' or parts[1] == '':
-        fail(621, path, f'"{word}" is not a host shortcut: write {form} (exactly one user and one repository; a repository in a deeper folder takes --git URL and --subdir)')
+        fail_word(621, f'"{word}" is not a host shortcut: write {form} (exactly one user and one repository; a repository in a deeper folder takes --git URL and --subdir)')
     user = parts[0]
     repo = parts[1]
     if host == 'srht':
         if not user.startswith('~'):
-            fail(621, path, f'"{word}" is not a host shortcut: a Sourcehut user starts with ~, so write {form}')
+            fail_word(621, f'"{word}" is not a host shortcut: a Sourcehut user starts with ~, so write {form}')
         user = user[1:]
     if not host_part_ok(user) or not host_part_ok(repo):
-        fail(621, path, f'"{word}" is not a host shortcut: a user and a repository have letters, digits, dots, underscores and hyphens only; write {form}')
+        fail_word(621, f'"{word}" is not a host shortcut: a user and a repository have letters, digits, dots, underscores and hyphens only; write {form}')
     if repo.endswith('.git'):
-        fail(621, path, f'"{word}" is not a host shortcut: write the repository without .git ({form}); the shortcut adds what the host needs')
+        fail_word(621, f'"{word}" is not a host shortcut: write the repository without .git ({form}); the shortcut adds what the host needs')
     if host == 'srht':
         return host_base(host) + '~' + user + '/' + repo
     return host_base(host) + user + '/' + repo + '.git'
@@ -748,7 +760,7 @@ export def add_spec_from_word(path: str, word: str, rev: str, tag: str, branch: 
         host = word[:word.find(':')]
         if host_base(host) == '':
             more = f' (a git URL goes after --git: tomato seed add --git {word} --rev COMMIT)' if '://' in word else ''
-            fail(621, path, f'"{word}" is not a seed: a word with a colon is a host shortcut, and the shortcuts are gh:USER/REPO, gitlab:USER/REPO, codeberg:USER/REPO and srht:~USER/REPO{more}')
+            fail_word(621, f'"{word}" is not a seed: a word with a colon is a host shortcut, and the shortcuts are gh:USER/REPO, gitlab:USER/REPO, codeberg:USER/REPO and srht:~USER/REPO{more}')
         spec = AddSpec()
         spec.kind = 'git'
         spec.url = expand_shortcut(path, word)
@@ -761,25 +773,25 @@ export def add_spec_from_word(path: str, word: str, rev: str, tag: str, branch: 
             if x != '':
                 n += 1
         if n != 1:
-            fail(621, path, f'a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH: {word} is {spec.url}')
+            fail_word(621, f'a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH: {word} is {spec.url}')
         return spec
     name = word
     if '@' in word:
         name = word[:word.find('@')]
         problem = version_problem(word[word.find('@') + 1:], True)
         if problem != '':
-            fail(621, path, f'"{word}" has a version that is not one: {problem}')
+            fail_word(621, f'"{word}" has a version that is not one: {problem}')
     problem = name_problem(name)
     if problem != '':
-        fail(621, path, f'"{word}" is not a seed name or a host shortcut: {problem} (a folder is --path DIR, a git URL is --git URL)')
+        fail_word(621, f'"{word}" is not a seed name or a host shortcut: {problem} (a folder is --path DIR, a git URL is --git URL)')
     owner = name.split('/')[0]
     kind = f'the domain {owner}'
     if '.' not in owner:
         problem = handle_problem(owner)
         if problem != '':
-            fail(621, path, f'"{word}" is not a seed name: the owner {owner} has no dot, so it would be a handle, and it is not one ({problem}); a domain owner has a dot (acme.example)')
+            fail_word(621, f'"{word}" is not a seed name: the owner {owner} has no dot, so it would be a handle, and it is not one ({problem}); a domain owner has a dot (acme.example)')
         kind = f'the handle {owner}'
-    fail(571, path, f'{name} is a registry seed (owner: {kind}), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT (also gitlab:, codeberg: and srht:), tomato seed add --git URL --rev COMMIT, or --path DIR')
+    fail_word(571, f'{name} is a registry seed (owner: {kind}), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT (also gitlab:, codeberg: and srht:), tomato seed add --git URL --rev COMMIT, or --path DIR')
     return AddSpec()
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -794,10 +806,12 @@ export def add_spec_from_word(path: str, word: str, rev: str, tag: str, branch: 
 export class HeaderReq:
     name: str = ''
     version: str = ''
+    line: int = 0
 
 def header_word(file: str, n: int, item: str) -> HeaderReq:
     where = f'{file}:{n}'
     r = HeaderReq()
+    r.line = n
     r.name = item
     at = item.find('>=')
     if at >= 0:
@@ -853,6 +867,8 @@ export def header_seeds(file: str, src: str) -> list[HeaderReq]:
             for i in range(len(out)):
                 if out[i].name == r.name:
                     at = i
+                    if out[i].line == n:
+                        fail(622, f'{file}:{n}', f'the "# seeds:" line names {r.name} twice')
             if at < 0:
                 out.append(r)
             elif r.version != '' and (out[at].version == '' or compare_versions(r.version, out[at].version) > 0):
@@ -888,12 +904,12 @@ export def check_header(m: Manifest, file: str, want: list[HeaderReq], tests: bo
             for r in m.reqs:
                 if r.name == h.name:
                     more = ' (it is in [test-seeds], which only tomato test reads)'
-            fail(622, m.path, f'{file} names the seed {header_shown(h)} in its "# seeds:" line, but tomato.toml does not list it in [seeds]{more}\n  = help: tomato seed add gh:USER/REPO --rev COMMIT (or --git URL, or --path DIR) adds a seed and locks it; a name alone cannot be fetched until there is a registry')
+            fail(622, f'{file}:{h.line}', f'the "# seeds:" line names the seed {header_shown(h)}, but tomato.toml does not list it in [seeds]{more}\n  = help: tomato seed add gh:USER/REPO --rev COMMIT (or --git URL, or --path DIR) adds a seed and locks it; a name alone cannot be fetched until there is a registry')
         if h.version == '':
             continue
         for s in lock:
             if s.name == h.name and (compare_versions(s.version, h.version) < 0 or not same_line(s.version, h.version)):
-                fail(622, m.path, f'{file} asks for {header_shown(h)} in its "# seeds:" line, but tomato.lock has {s.name} {s.version}: a minimum is met by the same version or a later one of the same compatible line\n  = help: use a seed of that version (tomato seed update, or add it at another rev), or change the line')
+                fail(622, f'{file}:{h.line}', f'the "# seeds:" line asks for {header_shown(h)}, but tomato.lock has {s.name} {s.version}: a minimum is met by the same version or a later one of the same compatible line\n  = help: use a seed of that version (tomato seed update, or add it at another rev), or change the line')
 
 # the manifest's value of a git seed: { git = "URL", rev = "COMMIT" } and, when set, tag or branch, and path
 def git_value(r: SeedReq) -> str:
@@ -1007,20 +1023,39 @@ export def add(manifest_path: str, have: str, spec: AddSpec, opts: Opts) -> list
     finally:
         if not done:
             write_text(manifest_path, original)
-    said.insert(0, f'added {s.name} {s.version} to [{where}] of {manifest_path}' + (f' (tag {req.tag} is at {req.rev[:12]})' if req.tag != '' else '') + (f' (branch {req.branch} is at {req.rev[:12]})' if req.branch != '' else ''))
+    said.insert(0, f'added {s.name} {s.version} to [{where}] of {shown_path(manifest_path)}' + (f' (tag {req.tag} is at {req.rev[:12]})' if req.tag != '' else '') + (f' (branch {req.branch} is at {req.rev[:12]})' if req.branch != '' else ''))
     return said
+
+# the seed a word names: the full name, or the short one `import` uses (`sd` for `me/sd`) when only one seed has it; otherwise the error
+# lists the names there are
+def full_seed_name(m: Manifest, word: str, where: str) -> str:
+    names: list[str] = []
+    short: list[str] = []
+    for r in m.reqs:
+        if r.name not in names:
+            names.append(r.name)
+        if r.name == word:
+            return word
+        if r.name.split('/')[-1] == word and r.name not in short:
+            short.append(r.name)
+    if len(short) == 1:
+        return short[0]
+    if len(short) > 1:
+        fail_word(604, f'{word} is the short name of more than one seed ({", ".join(short)}): write the full name')
+    here = ', '.join(names) if len(names) > 0 else 'none'
+    fail_word(604, f'{word} is not in [seeds] or [test-seeds] of {where} (the seeds there: {here})')
+    return word
 
 export def remove(manifest_path: str, have: str, name: str, opts: Opts) -> list[str]:
     m = read_manifest(manifest_path)
     check_tomato(m, have)
     if m.kind != 'project':
         fail(604, m.path, 'seeds are removed from a [project]; this file is not one')
+    name = full_seed_name(m, name, 'tomato.toml')
     tables: list[str] = []
     for r in m.reqs:
         if r.name == name:
             tables.append('[seeds]' if r.table == '' else '[test-seeds]')
-    if len(tables) == 0:
-        fail(604, m.path, f'{name} is not in [seeds] or [test-seeds] of this tomato.toml')
     original = read_text(manifest_path)
     edited = remove_entries(original, name)
     if edited[1] != len(tables):
@@ -1036,7 +1071,7 @@ export def remove(manifest_path: str, have: str, name: str, opts: Opts) -> list[
         if not done:
             write_text(manifest_path, original)
     where = ' and '.join(tables)
-    said.insert(0, f'removed {name} from {where} of {manifest_path}')
+    said.insert(0, f'removed {name} from {where} of {shown_path(manifest_path)}')
     return said
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1085,13 +1120,7 @@ export def update(manifest_path: str, have: str, names: list[str], opts: Opts) -
         what = 'a seed (a package can use only registered seeds, and there is no registry yet)' if m.kind == 'seed' else 'neither a project nor a seed'
         fail(604, m.path, f'seeds are updated in a [project], and this file is {what}')
     wanted = seeds_for(m, False, True)
-    for n in names:
-        known = False
-        for r in wanted.reqs:
-            if r.name == n:
-                known = True
-        if not known:
-            fail(604, m.path, f'{n} is not in [seeds] or [test-seeds] of this tomato.toml (the seeds here: {", ".join([r.name for r in wanted.reqs])})')
+    names = [full_seed_name(m, n, 'tomato.toml') for n in names]
     if len(wanted.reqs) == 0:
         return ['the manifest lists no seeds: nothing to update']
     selected: list[str] = []
@@ -1312,6 +1341,22 @@ def names_an_entry(table: str, markers: list[str]) -> bool:
             return True
     return False
 
+# the warnings for the [build.ENTRY] tables of a manifest that name no entry (no function of src/ or tests/, or of the program being built
+# (`extra`: its entry markers), is marked with them): a typo
+export def build_table_warnings(m: Manifest, folder: str, extra: list[str] = []) -> list[str]:
+    out: list[str] = []
+    markers: list[str] = []
+    looked = False
+    for b in m.builds:
+        if b.table == '' or (b.mode == '' and b.output == ''):
+            continue          # (a table with no setting is the parent of a dotted one, [build.grp] for [build.grp.one]: nothing to be unused)
+        if not looked:
+            markers = folder_markers(folder) + extra
+            looked = True
+        if not names_an_entry(b.table, markers):
+            out.append(f'warning: [build.{b.table}] names no entry: no function in src/ or tests/ is marked @{b.table} (or @{b.table}.something), so the table is never used (a typo?)')
+    return out
+
 export def check_seed(manifest_path: str, have: str) -> list[str]:
     m = read_manifest(manifest_path)
     if m.kind != 'seed':
@@ -1338,9 +1383,7 @@ export def check_seed(manifest_path: str, have: str) -> list[str]:
         said.append('warning: seed.license is still the placeholder `tomato init --seed` wrote: name a license such as MIT')
     if m.name.split('/')[0] == 'yourdomain.example':
         said.append('warning: the owner yourdomain.example is the placeholder `tomato init --seed` wrote: use a domain you own')
-    markers = folder_markers(folder)
-    for b in m.builds:
-        if b.table != '' and not names_an_entry(b.table, markers):
-            said.append(f'warning: [build.{b.table}] names no entry: no function in src/ or tests/ is marked @{b.table} (or @{b.table}.something), so the table is never used (a typo?)')
+    for w in build_table_warnings(m, folder):
+        said.append(w)
     said.append(seed_hash(folder))
     return said

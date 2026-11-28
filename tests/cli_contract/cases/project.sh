@@ -40,4 +40,4 @@ mkdir -p seeded; cd seeded || exit 1
 "$TOMATO" init --seed a.example/thing > /dev/null 2>&1
 try "run in a seed's folder: it has no src/main.tom" 1 "" "error: the project in $W/app/seeded has no src/main.tom (the program of a project is src/main.tom; tomato run FILE.tom runs another file)" run
 try "test in a seed's folder: the example test imports the module" 0 "ok   tests/example.tom
-tomato test: 1 files, 1 passed, 0 failed, 0 skipped: ok" "" test
+tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "" test
