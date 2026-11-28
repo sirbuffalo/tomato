@@ -416,15 +416,18 @@ get the std additions and the binary early; stages 4 to 6 are for the project it
 - Acceptance: for the same tree, the Tomato runner and `run.sh` print the same results (names and verdicts) on macOS and
   Linux, in the fast and the full tier; wall time within 10% of the old runner at the same `-j` (loaded-host numbers labelled);
   an interrupted run leaves nothing behind; `--times` matches.
-- Status (second slice, 2026-11-27): `dev/test.tom` runs the scheduler, ordering, tiers, `-j`, `--times`, the count and the exit status;
-  the tests not yet ported are run one process each by `tests/run.sh` through `TOMATO_TEST_BRIDGE` (the plan, prep and job modes of that
-  script). Ported, in Tomato: the compiler build, the fixed point and the install; the examples, programs, AddressSanitizer builds,
-  rejected programs, error texts, runtime errors, known gaps; the input tests (three of the six), the C tests of the big numbers, the
-  release-mode AddressSanitizer tests, the sort fallback and the lock-gc test; most WebAssembly checks; the checks that read files
-  (`dev/checks.tom`); `ci_report`, `error_templates` and `highlighter_lists` as entries. Still shell: about 3,000 lines in 67 functions,
-  mostly the command-line (`t_cli_*`) tests. Every process and file call is in `dev/host.tom`, to be swapped for stage 1's std. Not yet:
-  the workflows still call `run.sh` (they switch with the last slice, when the acceptance above is met on both systems); an interrupt
-  removes no folder until `signal` is in std (a run killed any way is swept by the next run).
+- Status (third slice, 2026-11-28): `dev/test.tom` is the scheduler (tiers, `-j`, `--times`, ordering, count, exit status); the ported tests are
+  in `dev/tests_*.tom` over the shared `dev/suite.tom`, and every process and file call is in `dev/host.tom`. Tests not yet ported are run
+  one process each by `tests/run.sh` through `TOMATO_TEST_BRIDGE` (`--legacy` runs a chosen set that way, to compare a port with the function
+  it replaced). Ported: the compiler build, fixed point and install; examples, programs, AddressSanitizer builds, rejected programs, error
+  texts, runtime errors, known gaps; three of the six input tests, the C big-number tests, the release-mode AddressSanitizer tests, most
+  WebAssembly checks; the file-reading checks (`dev/checks.tom`); and, in `tests_cli.tom`, the command-line tests that need only the
+  installed `tomato` (modes, explain, color, warnings, compile, release and inline-path checks, the `@test`-file families, the expect pty
+  tests). Still shell: the long fixture tests (`t_cli_config`, `manifest`, `build_tables`, `project`, `test`, the four seed tests, update,
+  atomic, repl, the tests with stand-in `clang`/`curl` on PATH, which wait for the multi-call `dev/fakebin.tom` of section 10.2), the timed-input
+  and local-server tests, and the macOS-only package tests. The workflows still call `run.sh` (they switch with the last slice, when the
+  acceptance above is met on both systems); an interrupt removes no folder until `signal` is in std (a run killed any way is swept by the
+  next run).
 
 **Stage 5: the release tools.**
 - `dev/release.tom` (the 13 steps, state, resume), `pkg`, `sign`, `dmg`, `build`, `site`, `perf-snapshot`, `bench`, `linux-setup`, the

@@ -1,0 +1,86 @@
+# The ported tests of files and scripts: the checks that only read files (dev/checks.tom), the shell and JavaScript tests of tests/, and the
+# error-template and highlighter checks. `run` does the test named by t.func and says whether it was one of these.
+import os
+import host
+import checks
+import highlighter_lists as hl
+import error_templates as et
+from suite import Test, Run, jsc_script
+
+# a JavaScript test of the website: it prints ok
+async def native_js_script(r: Run, t: Test, script: str, ok_name: str, bad_name: str):
+    out = (await jsc_script(r, t, [script])).rstrip('\n')
+    if out == 'ok':
+        t.ok(ok_name)
+    else:
+        t.bad(bad_name, out)
+
+# a shell script of tests/ that prints ok, or what is wrong
+async def native_sh_script(r: Run, t: Test, script: str, ok_name: str, bad_name: str):
+    res = await host.run(['sh', script], r.root, None, r.cpu_of(t))
+    out = (res.stdout + res.stderr).rstrip('\n')
+    if out == 'ok':
+        t.ok(ok_name)
+    else:
+        t.bad(bad_name, out)
+
+def native_error_templates(t: Test):
+    missing = ''
+    table = os.read_text('std/errors.txt').split('\n')
+    for tpl in et.templates():
+        if len(tpl.replace('{}', '')) < 12:
+            continue
+        if 'CompileError ' + tpl not in table:
+            missing += '\n  ' + tpl
+    if missing == '':
+        t.ok('every extracted compile error template has an id in std/errors.txt')
+    else:
+        t.bad('every extracted compile error template has an id in std/errors.txt', 'add these lines (CompileError TEMPLATE):' + missing)
+
+def native_highlighter_lists(t: Test):
+    found = hl.problems()
+    if len(found) == 0:
+        t.ok('highlighters know every lexer keyword and built-in')
+    else:
+        t.bad('highlighters', '\n'.join(found))
+
+# the functions of tests/run.sh (t_NAME) that this module ports
+export def names() -> list[str]:
+    return ['t_sys_version', 't_docs_in_sync', 't_versions', 't_error_raises', 't_errors_append_only', 't_builtin_folder', 't_std_modules', 't_reserved_names', 't_std_sheets', 't_generated_tables', 't_wasm_site_errors', 't_wasm_site_editor', 't_shell_portability', 't_std_public_fields', 't_error_templates', 't_highlighter_lists']
+
+export async def run(r: Run, t: Test, rt_o: str) -> bool:
+    if t.func == 't_sys_version':
+        t.outcomes(checks.sys_version())
+    elif t.func == 't_docs_in_sync':
+        t.outcomes(checks.docs_in_sync())
+    elif t.func == 't_versions':
+        t.outcomes(checks.versions())
+    elif t.func == 't_error_raises':
+        t.outcomes(checks.error_raises())
+    elif t.func == 't_errors_append_only':
+        t.outcomes(checks.errors_append_only())
+    elif t.func == 't_builtin_folder':
+        t.outcomes(checks.builtin_folder())
+    elif t.func == 't_std_modules':
+        t.outcomes(checks.std_modules())
+    elif t.func == 't_reserved_names':
+        t.outcomes(checks.reserved_names(os.read_text('tests/run.sh')))
+    elif t.func == 't_std_sheets':
+        t.outcomes(checks.std_sheets())
+    elif t.func == 't_generated_tables':
+        t.outcomes(checks.generated_tables())
+    elif t.func == 't_wasm_site_errors':
+        await native_js_script(r, t, 'tests/site_errors.js', 'website: tomatoErrors keeps the words, escapes them, styles with classes', 'website: tomatoErrors')
+    elif t.func == 't_wasm_site_editor':
+        await native_js_script(r, t, 'tests/site_editor.js', 'website: editor auto-indent after a colon, backspace and tab', 'website: editor auto-indent')
+    elif t.func == 't_shell_portability':
+        await native_sh_script(r, t, 'tests/shell_portability.sh', 'no shipped shell script has a case inside a command substitution (bash 3.2)', 'shell portability')
+    elif t.func == 't_std_public_fields':
+        await native_sh_script(r, t, 'tests/std_public_fields.sh', 'no std class that calls the runtime has an unlisted public field', 'std public fields')
+    elif t.func == 't_error_templates':
+        native_error_templates(t)
+    elif t.func == 't_highlighter_lists':
+        native_highlighter_lists(t)
+    else:
+        return False
+    return True

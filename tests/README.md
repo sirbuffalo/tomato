@@ -25,12 +25,14 @@ tomato run dev/test.tom highlighter_lists      check the highlighters against th
 
 (Options go after the entry word `main`: `tomato run FILE ENTRY INPUTS...` reads everything after the entry as input. `--only WORDS`, a
 dev option, runs just the tests whose function name (`t_NAME`) holds one of the comma-separated words, after building the compiler, for
-working on one test.) Until the last test is ported, the list of tests is still registered by `tests/run.sh`, which `dev/test.tom` asks
+working on one test; with `--legacy` the same tests run through `tests/run.sh` instead of their ports, to compare the two.) Until the last test is ported, the list of tests is still registered by `tests/run.sh`, which `dev/test.tom` asks
 for it (`TOMATO_TEST_BRIDGE=plan`), and a test that has no port yet is run by `tests/run.sh`, one process per test
 (`TOMATO_TEST_BRIDGE=job`). The ported ones (`native_*` in `dev/test.tom`) run in Tomato and print the very lines the old functions
 printed: the compiler build, the fixed point and the install, the examples, the programs, the AddressSanitizer builds, the rejected
 programs, the error texts, the runtime errors, the known gaps, the input tests, the C tests of the big numbers, the release-mode
-AddressSanitizer tests, most of the WebAssembly checks, and the checks that only read files (`dev/checks.tom`). Every system call of
+AddressSanitizer tests, most of the WebAssembly checks, and the checks that only read files (`dev/checks.tom`). The code is in
+`dev/test.tom` (the scheduler), `dev/suite.tom` (the classes and helpers the ports share) and the ported tests in `dev/tests_programs.tom`,
+`tests_wasm.tom`, `tests_build.tom`, `tests_cli.tom` (the command-line tests that need only the installed `tomato`) and `tests_misc.tom`. Every system call of
 `dev/test.tom` is in `dev/host.tom`, the one file that changes when std gains the processes-and-files additions of stage 1.
 
 ## CLI contract

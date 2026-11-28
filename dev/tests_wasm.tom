@@ -1,0 +1,168 @@
+# The ported tests that run through WebAssembly (site/wasm: the website's compiler, in jsc on macOS or in node), the ports of the t_wasm_*
+# functions of tests/run.sh. `run` does the test named by t.func and says whether it was one of these.
+import os
+import host
+from suite import Test, Run, tjsc, holds_in_order, without_could_not_open, lines_with, jsc_script
+
+async def native_wasm_program(r: Run, t: Test):
+    name = t.args[0]
+    got = await tjsc(r, t, ['site/wasm', 'run', 'tests/programs/' + name + '.tom'])
+    expected = 'tests/expected/' + name + '.main.out'
+    # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
+    if got[0].rstrip('\n') == host.read_text_lossy(expected).rstrip('\n'):
+        t.ok('wasm ' + name)
+    else:
+        os.write_text(t.work + '/js.out', got[0])
+        detail = host.diff_head(t.work + '/js.out', expected, 4)
+        for line in got[1].split('\n')[:2]:
+            detail.append(line)
+        t.bad('wasm ' + name, '\n'.join(detail).rstrip('\n'))
+
+# rejected programs and runtime errors through the same path (the messages and failures must agree with native)
+async def native_wasm_neg(r: Run, t: Test):
+    got = await tjsc(r, t, ['site/wasm', 'run', 'tests/negative/' + t.args[0] + '.tom'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if holds_in_order(m, [t.args[1], '~rc 1']):
+        t.ok('wasm rejects ' + t.args[0])
+    else:
+        t.bad('wasm rejects ' + t.args[0], 'wanted: ' + t.args[1] + '\ngot: ' + m)
+
+async def native_wasm_rt(r: Run, t: Test):
+    got = await tjsc(r, t, ['site/wasm', 'run', 'tests/runtime/' + t.args[0] + '.tom'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if holds_in_order(m, [t.args[1], '~rc ' + t.args[2]]):
+        t.ok('wasm runtime ' + t.args[0])
+    else:
+        t.bad('wasm runtime ' + t.args[0], f'wanted: {t.args[1]} (rc {t.args[2]})\ngot: {m}')
+
+# the browser path takes the limits from a tomato.toml given to the compiler (D77g); without one the defaults apply
+async def native_wasm_config(r: Run, t: Test):
+    os.write_text(t.work + '/wl.tom', 'from math import exp\n@main\ndef main():\n    try:\n        print(len(str(exp(float(\'1e5000\')))) > 0)\n    catch OverflowError as e:\n        print(e.message, e.id)\n    try:\n        print(len(f"{float(\'1e1500\'):.1f}"))\n    catch OverflowError as e:\n        print(e.message, e.id)\n')
+    os.write_text(t.work + '/wl.toml', '[limits]\nexp_bits = 2048\nformat_digits = 1000\n')
+    got = await tjsc(r, t, ['site/wasm', 'run', t.work + '/wl.tom'])
+    m = without_could_not_open((got[0] + got[1])).rstrip('\n')
+    if m == 'True\n1503\n~rc 0':
+        t.ok('wasm: no tomato.toml means the default limits')
+    else:
+        t.bad('wasm: no tomato.toml means the default limits', m)
+    got = await tjsc(r, t, ['site/wasm', 'run', t.work + '/wl.tom', '--config=' + t.work + '/wl.toml'])
+    m = without_could_not_open((got[0] + got[1])).rstrip('\n')
+    if m == 'the result is too large to calculate: its exponent would have more than 2048 bits E528\nthe number is too large to write with f: it has more than 1000 digits before the point E529\n~rc 0':
+        t.ok('wasm: the limits come from a tomato.toml given to the compiler')
+    else:
+        t.bad('wasm: the limits come from a tomato.toml given to the compiler', m)
+    os.write_text(t.work + '/wl.toml', '[limits]\nexp_bits = 5\n')
+    got = await tjsc(r, t, ['site/wasm', 'compile', t.work + '/wl.tom', '--config=' + t.work + '/wl.toml'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if holds_in_order(m, ['error[E543]: /tomato.toml: limits.exp_bits must be a whole number from 2048 to 2147483647, not 5']) and m.endswith('~rc 1'):
+        t.ok('wasm: a bad tomato.toml is an error')
+    else:
+        t.bad('wasm: a bad tomato.toml is an error', m)
+
+# the website's compiler (WebAssembly) gives the same unstable-feature and deprecation warnings as the native one: once for each feature, none when allowed or stable
+async def native_wasm_unstable(r: Run, t: Test):
+    for n in ['errors/unstable_use', 'errors/unstable_dotted', 'errors/unstable_allow', 'errors/unstable_quiet', 'errors/unstable_markers', 'errors/unstable_start', 'deprecated/use', 'deprecated/module', 'deprecated/allow', 'deprecated/quiet']:
+        base = n.rpartition('/')[2]
+        got = await tjsc(r, t, ['site/wasm', 'compile', 'tests/' + n + '.tom'])
+        mine = ''
+        for line in got[0].split('\n'):
+            if line.startswith(';! '):
+                text = line[3:]
+                if not text.lstrip(' ').startswith('-->'):
+                    mine += text + '\n'
+        want = ''
+        for line in host.read_text_lossy('tests/' + n + '.out').split('\n'):
+            if not line.lstrip(' ').startswith('-->') and line != '':
+                want += line + '\n'
+        if mine == want:
+            t.ok('wasm warnings: ' + n)
+        else:
+            os.write_text(t.work + '/w.' + base, mine)
+            os.write_text(t.work + '/n.' + base, want)
+            t.bad('wasm warnings: ' + n, '\n'.join(host.diff_head(t.work + '/w.' + base, t.work + '/n.' + base, 6)))
+
+async def native_wasm_browser(r: Run, t: Test):
+    got = await tjsc(r, t, ['site/wasm', 'run', 'tests/programs/requests_browser.tom'])
+    found = lines_with(got[0] + got[1], 'no network', False)
+    t.check('wasm requests raise ConnectionError', 'no network: True', '\n'.join(found))
+
+async def native_wasm_sockets(r: Run, t: Test):
+    got = await tjsc(r, t, ['site/wasm', 'run', 'tests/programs/socket_browser.tom'])
+    found = lines_with(got[0] + got[1], 'no ', True)
+    t.check('wasm sockets raise SocketError', 'no sockets: True E446\nno listening: E446\nno udp: E446\nno lookup: E446', '\n'.join(found))
+
+# the website repl wraps what you type in a program (wrapMain): a piece with only an import must still be checked, not fail with "no @main"
+async def native_wasm_repl_import(r: Run, t: Test):
+    wrapped = await jsc_script(r, t, ['tests/repl_wrap.js', '--', 'from itertools import progres_bar'])
+    os.write_text(t.work + '/imp.tom', wrapped)
+    got = await tjsc(r, t, ['site/wasm', 'run', t.work + '/imp.tom'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if holds_in_order(m, ["error[E226]: module 'itertools' has no 'progres_bar'", "did you mean 'progress_bar'?", '~rc 1']):
+        t.ok('wasm repl: a bad import is reported as itself')
+    else:
+        t.bad('wasm repl: a bad import is reported as itself', m)
+    wrapped = await jsc_script(r, t, ['tests/repl_wrap.js', '--', 'from itertools import progress_bar'])
+    os.write_text(t.work + '/imp2.tom', wrapped)
+    got = await tjsc(r, t, ['site/wasm', 'run', t.work + '/imp2.tom'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if '~rc 0' in m:
+        t.ok('wasm repl: a good import alone runs')
+    else:
+        t.bad('wasm repl: a good import alone runs', m)
+    # the echo of a bare expression (site/play.html) is _core_print(...): the built-in, even where the session defines print
+    os.write_text(t.work + '/echo.tom', 'def print(x: int):\n    _core_print("mine", x)\n\n@main\ndef m():\n    _core_print(6 * 7)\n    print(5)\n')
+    got = await tjsc(r, t, ['site/wasm', 'run', t.work + '/echo.tom'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if m.startswith('42\nmine 5') and '~rc 0' in m[len('42\nmine 5'):]:
+        t.ok('wasm repl: the echo uses the built-in print when the session defines print')
+    else:
+        t.bad('wasm repl: the echo uses the built-in print when the session defines print', m)
+
+# the entry name `test` in the browser path: the driver runs the @test functions, with the line, and the status is 1
+async def native_wasm_test_entry(r: Run, t: Test):
+    os.write_text(t.work + '/wt.tom', 'from testing import assert_equal, skip\n\n@test.adds\ndef adds():\n    assert_equal(1 + 1, 2)\n\n@test.fails\ndef fails():\n    assert_equal(1 + 1, 3)\n\n@test.lookup\ndef lookup():\n    skip("no network")\n')
+    got = await tjsc(r, t, ['site/wasm', 'run', t.work + '/wt.tom', '--entry=test'])
+    m = without_could_not_open(got[0] + got[1]).rstrip('\n')
+    if m == 'ok   adds\nFAIL fails\n     expected 3, got 2  (raised on line 9)\nskip lookup  (no network)\n1 passed, 1 failed, 1 skipped\n~rc 1':
+        t.ok('wasm: the entry test runs the @test functions')
+    else:
+        t.bad('wasm: the entry test runs the @test functions', m)
+    got = await tjsc(r, t, ['site/wasm', 'run', t.work + '/wt.tom', '--entry=test.adds'])
+    m = without_could_not_open(got[0] + got[1]).rstrip('\n')
+    if m == 'ok   adds\n1 passed, 0 failed, 0 skipped\n~rc 0':
+        t.ok('wasm: the entry test.adds runs one test')
+    else:
+        t.bad('wasm: the entry test.adds runs one test', m)
+    got = await tjsc(r, t, ['site/wasm', 'run', t.work + '/wt.tom'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if holds_in_order(m, ['no function is marked @main']) and m.endswith('~rc 1'):
+        t.ok('wasm: a test file without @main is not a program')
+    else:
+        t.bad('wasm: a test file without @main is not a program', m)
+
+# the functions of tests/run.sh (t_NAME) that this module ports
+export def names() -> list[str]:
+    return ['t_wasm_program', 't_wasm_neg', 't_wasm_rt', 't_wasm_config', 't_wasm_unstable', 't_wasm_browser', 't_wasm_sockets', 't_wasm_repl_import', 't_wasm_test_entry']
+
+export async def run(r: Run, t: Test, rt_o: str) -> bool:
+    if t.func == 't_wasm_program':
+        await native_wasm_program(r, t)
+    elif t.func == 't_wasm_neg':
+        await native_wasm_neg(r, t)
+    elif t.func == 't_wasm_rt':
+        await native_wasm_rt(r, t)
+    elif t.func == 't_wasm_config':
+        await native_wasm_config(r, t)
+    elif t.func == 't_wasm_unstable':
+        await native_wasm_unstable(r, t)
+    elif t.func == 't_wasm_browser':
+        await native_wasm_browser(r, t)
+    elif t.func == 't_wasm_sockets':
+        await native_wasm_sockets(r, t)
+    elif t.func == 't_wasm_repl_import':
+        await native_wasm_repl_import(r, t)
+    elif t.func == 't_wasm_test_entry':
+        await native_wasm_test_entry(r, t)
+    else:
+        return False
+    return True

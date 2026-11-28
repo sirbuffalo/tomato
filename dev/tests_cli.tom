@@ -1,0 +1,507 @@
+# The ported tests of the command line (`tomato run`, `build`, `compile`, `explain`, release mode, colors, warnings): the ports of the
+# t_cli_* functions of tests/run.sh that need nothing but the installed `tomato` (the install of dev/tests_build.tom is what they wait for).
+# The command-line tests that bend the world with stand-ins on PATH (a clang that fails, a curl that hangs) wait for dev/fakebin.tom
+# (docs/shell-to-tomato-plan.md, 10.2) and stay in tests/run.sh until then. `run` does the test named by t.func and says whether it was one
+# of these.
+import os
+import ospath
+import host
+from suite import Test, Run, tjsc, js_shell, holds_in_order
+
+# the functions of tests/run.sh (t_NAME) that this module ports
+export def names() -> list[str]:
+    return ['t_manedit_logic', 't_manifest_logic', 't_terminal_logic', 't_lineedit_logic', 't_repledit_logic', 't_lexer_spans', 't_todo_shell_logic', 't_terminal_pty', 't_todo_shell_pty', 't_repl_progress', 't_repl_echo', 't_cli_modes', 't_cli_release_like_debug', 't_cli_release_no_leak', 't_cli_build_keeps_source', 't_cli_inline_paths', 't_cli_explain', 't_cli_color', 't_cli_warnings', 't_cli_compile']
+
+export async def run(r: Run, t: Test, rt_o: str) -> bool:
+    part = '1'
+    if len(t.args) > 0:
+        part = t.args[0]
+    if t.func == 't_manedit_logic':
+        await logic_manedit(r, t)
+    elif t.func == 't_manifest_logic':
+        await logic_manifest(r, t)
+    elif t.func == 't_terminal_logic':
+        await logic_modes(r, t, 'tests/terminal_logic.tom', 'terminal: the @test functions pass')
+    elif t.func == 't_lineedit_logic':
+        await logic_modes(r, t, 'tests/lineedit_logic.tom', 'lineedit: the @test functions pass')
+    elif t.func == 't_repledit_logic':
+        await logic_repledit(r, t)
+    elif t.func == 't_lexer_spans':
+        await logic_lexer_spans(r, t)
+    elif t.func == 't_todo_shell_logic':
+        await logic_todo_shell(r, t)
+    elif t.func == 't_terminal_pty':
+        await pty_terminal(r, t)
+    elif t.func == 't_todo_shell_pty':
+        await pty_expect(r, t, 'tests/todo_shell_pty.exp', 'todo_shell pty test', 'todo_shell example: completion, history and paste on a pty')
+    elif t.func == 't_repl_progress':
+        await pty_expect(r, t, 'tests/repl_progress.exp', 'repl progress test', 'repl: a progress bar draws on the terminal and the loop output follows')
+    elif t.func == 't_repl_echo':
+        await pty_expect(r, t, 'tests/repl_echo.exp', 'repl echo test', 'repl: a bare expression is echoed with the built-in print on a terminal even when the session defines print')
+    elif t.func == 't_cli_modes':
+        await cli_modes(r, t, part)
+    elif t.func == 't_cli_release_like_debug':
+        if await cli_setup(r, t):
+            t.check('release mode runs ' + part + ' like debug', expected_of(part), await out2(r, t, ['run', 'tests/programs/' + part + '.tom', '--mode', 'release', '--no-warnings']))
+    elif t.func == 't_cli_release_no_leak':
+        if await cli_setup(r, t):
+            _x = await tom(r, t, ['build', 'tests/programs/cycle.tom', '-o', t.work + '/cyc_rel', '--mode', 'release'])
+            _rc = await host.redirect([t.work + '/cyc_rel'], t.work + '/cyc.out', r.root, None, r.cpu_of(t))
+            t.check('release mode does not print a leak report', expected_of('cycle'), host.read_text_lossy(t.work + '/cyc.out'))
+    elif t.func == 't_cli_build_keeps_source':
+        await cli_build_keeps_source(r, t)
+    elif t.func == 't_cli_inline_paths':
+        if await cli_setup(r, t):
+            t.check('debug link runs ' + part + ' like the plain link', expected_of(part), await out2(r, t, ['run', 'tests/programs/' + part + '.tom', '--no-warnings']))
+    elif t.func == 't_cli_explain':
+        await cli_explain(r, t)
+    elif t.func == 't_cli_color':
+        await cli_color(r, t, part)
+    elif t.func == 't_cli_warnings':
+        await cli_warnings(r, t, part)
+    elif t.func == 't_cli_compile':
+        if await cli_setup(r, t):
+            res = await tom(r, t, ['compile', 'examples/shapes.tom'], None, '', '', False)
+            t.check('compile writes IR', 'yes', 'yes' if host.file_has(res.out, 'define i32 @main') else '')
+    else:
+        return False
+    return True
+
+# ---- what the shell tests had as helpers ----
+
+# the expected output of a program of tests/programs
+def expected_of(name: str) -> str:
+    return host.read_text_lossy('tests/expected/' + name + '.main.out')
+
+# waits (up to 10 minutes) for the install; a job whose install never reported fails instead of waiting for ever
+async def need_install(r: Run, t: Test) -> bool:
+    i = 0
+    while not ospath.exists(r.shared + '/install.rc'):
+        await sleep(0.05)
+        i += 1
+        if i > 12000:
+            t.bad('install-native.sh did not finish')
+            return False
+    return True
+
+# each job makes its own copies of the small programs the checks use, and waits for the install
+async def cli_setup(r: Run, t: Test) -> bool:
+    if not await need_install(r, t):
+        return False
+    w = t.work
+    os.write_text(w + '/top.tom', 'print(1)\n')
+    os.write_text(w + '/dz.tom', '@main\ndef main():\n    x = 0\n    print(5 // x)\n')
+    os.write_text(w + '/typo.tom', '@main\ndef main():\n    print(tets)\n')
+    os.write_text(w + '/echo.tom', '@main\ndef main(a: str, b: str):\n    print("[" + a + "][" + b + "]")\n')
+    os.write_text(w + '/rangeprint.tom', '@main\ndef main():\n    print(range(100))\n    print(range(1, 100))\n    print(range(5, 10, 2))\n')
+    os.write_text(w + '/trace.tom', '@main\ndef main():\n    half(0)\n\ndef half(n: int) -> int:\n    return 10 // n\n')
+    os.write_text(w + '/raised.tom', '@main\ndef main():\n    raise Error("bad")\n')
+    os.write_text(w + '/warn.tom', '@main\ndef main():\n    unused = 1\n    print(2)\n')
+    return True
+
+class Said:
+    out: str = ''           # the file the standard output (and error, when they were joined) went to
+    text: str = ''
+    status: int = 0
+
+    @init
+    def make(self, out: str, text: str, status: int):
+        self.out = out
+        self.text = text
+        self.status = status
+
+# runs the installed `tomato` (the one this run installed); `joined`: standard error goes where standard output goes (`2>&1`), else it is
+# left in the test's output as the shell left it. `stdin_path` is the file it reads, `cwd` where it runs.
+async def tom(r: Run, t: Test, args: list[str], env: dict[str, str] | None = None, stdin_path: str = '', cwd: str = '', joined: bool = True) -> Said:
+    extra: dict[str, str] = {}
+    extra['TOMATO_HOME'] = r.shared + '/home'
+    extra['TOMATO_BIN'] = r.shared + '/home/bin'
+    if env is not None:
+        for k, v in env.items():
+            extra[k] = v
+    t.counter += 1
+    out = t.work + '/said.' + str(t.counter)
+    where = r.root
+    if cwd != '':
+        where = cwd
+    errfile = ''
+    if not joined:
+        errfile = out + '.err'
+    rc = await host.redirect([r.shared + '/home/bin/tomato'] + args, out, where, extra, r.cpu_of(t), None, stdin_path, errfile)
+    if not joined:
+        t.text += host.read_text_lossy(errfile)
+    return Said(out, host.read_text_lossy(out), rc)
+
+# the output of the command, standard error joined: $($t ... 2>&1)
+async def out2(r: Run, t: Test, args: list[str]) -> str:
+    res = await tom(r, t, args)
+    return res.text
+
+# the lines of a text from the first (head -n)
+def head(text: str, n: int) -> str:
+    out: list[str] = []
+    for line in text.split('\n'):
+        if len(out) >= n:
+            break
+        out.append(line)
+    return '\n'.join(out)
+
+# what `cat -v` shows: control characters as ^X, DEL as ^?; newline and tab stay
+def cat_v(text: str) -> str:
+    out = ''
+    for c in text:
+        o = ord(c)
+        if o == 10 or o == 9:
+            out += c
+        elif o < 32:
+            out += '^' + chr(o + 64)
+        elif o == 127:
+            out += '^?'
+        else:
+            out += c
+    return out
+
+# the shell's case pattern *A*B (B at the end)
+def glob_ab(text: str, a: str, b: str) -> bool:
+    i = text.find(a)
+    if i < 0 or not text.endswith(b):
+        return False
+    return len(text) - len(b) >= i + len(a)
+
+# the shell's case pattern "PREFIX"*"(line "[1-9]*")" of a release-mode error line
+def release_line_match(text: str, prefix: str) -> bool:
+    if not text.startswith(prefix) or not text.endswith(')'):
+        return False
+    i = len(prefix)
+    while True:
+        j = text.find('(line ', i)
+        if j < 0:
+            return False
+        k = j + len('(line ')
+        if k < len(text) and text[k] >= '1' and text[k] <= '9':
+            return True
+        i = j + 1
+
+# ---- the tests ----
+
+async def cli_build_keeps_source(r: Run, t: Test):
+    if not await cli_setup(r, t):
+        return
+    host.make_dir(t.work + '/bk')
+    os.write_text(t.work + '/bk/noext', '@main\ndef main():\n    print(7)\n')
+    os.write_text(t.work + '/bk/p q.tom', '@main\ndef main():\n    print(7)\n')
+    a = await tom(r, t, ['build', 'noext'], None, '', t.work + '/bk')
+    b = await tom(r, t, ['build', t.work + '/bk/p q.tom', '-o', t.work + '/bk/p q.tom'])
+    kept = 0
+    for f in ['noext', 'p q.tom']:
+        for line in host.read_text_lossy(t.work + '/bk/' + f).split('\n'):
+            if 'print(7)' in line:
+                kept += 1
+    t.check('build refuses to overwrite its own source', '1 1 2', f'{a.status} {b.status} {kept}')
+
+async def cli_explain(r: Run, t: Test):
+    if not await cli_setup(r, t):
+        return
+    w = t.work
+    dz = w + '/dz.tom'
+    t.check('explain decodes a release code', 'error[E01]: ZeroDivisionError: division by zero', head(await out2(r, t, ['explain', 'E01:4', dz]), 1))
+    t.check('explain shows the source line like a compile error', 'error[E01]: ZeroDivisionError: division by zero\n --> ' + dz + ':4\n  |\n4 |     print(5 // x)\n  |     ^^^^^^^^^^^^^', (await tom(r, t, ['explain', 'E01:4', dz], None, '', '', False)).text)
+    t.check('explain decodes an id without a file', 'error[E04]: IndexError: index out of range', (await tom(r, t, ['explain', 'E04'], None, '', '', False)).text)
+    t.check('explain accepts an ID with no source location', 'error[E350]: RuntimeError: stack overflow: a function calls itself too deeply', (await tom(r, t, ['explain', 'E350:0', dz], None, '', '', False)).text)
+    bad_line = await tom(r, t, ['explain', 'E04:4abc', dz])
+    t.check('explain rejects a malformed source line', '1', str(bad_line.status))
+    t.check('run with inputs', '17 True', (await tom(r, t, ['run', 'examples/args.tom', 'prime', '17'], None, '', '', False)).text)
+    t.check('run with inputs and *args', '8 2 True\nb\nc', (await tom(r, t, ['run', 'tests/programs/sys_args.tom', 'main', '7', 'b', 'c'], None, '', '', False)).text)
+    os.write_text(w + '/bigin.tom', '@main\ndef main(n: int = 3):\n    print(n)\n')
+    t.check('a big number given to an input with a default is freed', '99999999999999999999999', await out2(r, t, ['run', w + '/bigin.tom', 'main', '99999999999999999999999']))
+    version = (await tom(r, t, ['version'], None, '', '', False)).text
+    t.check('--version is version', version, (await tom(r, t, ['--version'], None, '', '', False)).text)
+    helped = (await tom(r, t, ['help'], None, '', '', False)).text.rstrip('\n')
+    if holds_in_order(helped, ['tomato explain', 'tomato version']):
+        t.ok('help lists every command')
+    else:
+        t.bad('help lists every command', helped)
+    t.check('explain says when the line is not in the file', 'error[E01]: ZeroDivisionError: division by zero\n  (line 999 is past the end of ' + dz + ': is this the file the program was built from?)', (await tom(r, t, ['explain', 'E01:999', dz], None, '', '', False)).text)
+    unknown = await tom(r, t, ['wghwrltghs'])
+    t.check('unknown command exits 2', '2', str(unknown.status))
+
+async def cli_color(r: Run, t: Test, part: str):
+    if not await cli_setup(r, t):
+        return
+    w = t.work
+    trace = w + '/trace.tom'
+    typo = w + '/typo.tom'
+    if part == '1':
+        t.check('tomato run prints a range as range(start, stop, step)', 'range(0, 100, 1)\nrange(1, 100, 1)\nrange(5, 10, 2)', await out2(r, t, ['run', w + '/rangeprint.tom']))
+        t.check('tomato run shows the same error text', "error[E227]: name 'tets' is not defined\n --> " + typo + ':3:11', head(await out2(r, t, ['run', typo]), 2))
+        t.check('an uncaught error shows the call trace, innermost first', 'error[E01]: division by zero\n  at half (line 6)\n  at main (line 3)', await out2(r, t, ['run', trace]))
+        t.check('an error the program raises shows where, then the trace', 'error: Error: bad (raised on line 3)\n  at main (line 3)', await out2(r, t, ['run', w + '/raised.tom']))
+    elif part == '2':
+        t.check('--color=always paints a runtime error and its trace', '^[[1;31merror[E01]:^[[0m ^[[1mdivision by zero^[[0m\n^[[2m  at half (line 6)^[[0m\n^[[2m  at main (line 3)^[[0m', cat_v(await out2(r, t, ['run', trace, '--color=always'])))
+        t.check('--color=never keeps the plain words', 'error[E01]: division by zero\n  at half (line 6)\n  at main (line 3)', cat_v(await out2(r, t, ['run', trace, '--color=never'])))
+        env_color: dict[str, str] = {}
+        env_color['TOMATO_COLOR'] = 'always'
+        t.check('TOMATO_COLOR=always works like the flag', '^[[1;31merror[E01]:^[[0m ^[[1mdivision by zero^[[0m', head(cat_v((await tom(r, t, ['run', trace], env_color)).text), 1))
+    elif part == '3':
+        env_plain: dict[str, str] = {}
+        env_plain['NO_COLOR'] = '1'
+        t.check('without a terminal the color stays off (and NO_COLOR keeps it off)', 'error[E01]: division by zero', head((await tom(r, t, ['run', trace], env_plain)).text, 1))
+        t.check('a bad --color value is refused', "error: --color takes auto, always or never, not 'blue'", await out2(r, t, ['run', trace, '--color=blue']))
+        t.check('--color=always paints a compile error: label, location, gutter, caret', "^[[1;31merror[E227]:^[[0m ^[[1mname 'tets' is not defined^[[0m\n ^[[1;34m-->^[[0m ^[[36m" + typo + ':3:11^[[0m\n^[[1;34m  |^[[0m\n^[[1;34m3 |^[[0m     print(tets)\n^[[1;34m  |^[[0m           ^[[1;31m^^^^^[[0m', cat_v(await out2(r, t, ['run', typo, '--color=always'])))
+
+async def cli_warnings(r: Run, t: Test, part: str):
+    if not await cli_setup(r, t):
+        return
+    w = t.work
+    warn = w + '/warn.tom'
+    if part == '1':
+        t.check('a warning is shown, then the program runs', "warning: the variable 'unused' is given a value that is never used\n --> " + warn + ":3:5\n  |\n3 |     unused = 1\n  |     ^^^^^^\n  = help: remove it, or rename it '_unused' to show that this is intended\n2", await out2(r, t, ['run', warn]))
+        t.check('--no-warnings hides warnings', '2', await out2(r, t, ['run', warn, '--no-warnings']))
+        t.check('a warning is yellow with --color=always', "^[[1;33mwarning:^[[0m ^[[1mthe variable 'unused' is given a value that is never used^[[0m", head(cat_v(await out2(r, t, ['run', warn, '--color=always'])), 1))
+        compiled = await tom(r, t, ['compile', warn], None, '', '', False)
+        t.check('compile prints the IR without the warning comments', '0', str(host.count_lines_matching(compiled.out, '^;! ')))
+    elif part == '2':
+        os.write_text(w + '/in1', 'unused = 1\nprint(3)\n:quit\n')
+        t.check('repl: warnings are not shown', '3', (await tom(r, t, ['repl'], None, w + '/in1')).text)
+        os.write_text(w + '/in2', 'print(1 + "a")\n:quit\n')
+        t.check('repl: --color=always paints the label red', "^[[1;31merror[E190]:^[[0m ^[[1mcannot use '+' with int and str^[[0m", head(cat_v((await tom(r, t, ['repl', '--color=always'], None, w + '/in2')).text), 1))
+        os.write_text(w + '/in3', 'x = 0\nprint(1 // x)\n:quit\n')
+        t.check('repl: a runtime error shows no call trace of the generated program', 'error[E01]: division by zero', (await tom(r, t, ['repl'], None, w + '/in3')).text)
+
+async def cli_modes(r: Run, t: Test, part: str):
+    if not await cli_setup(r, t):
+        return
+    w = t.work
+    dz = w + '/dz.tom'
+    if part == '1':
+        code = ''
+        if ospath.exists(r.shared + '/install.rc'):
+            code = os.read_text(r.shared + '/install.rc').rstrip('\n')
+        if code == '0':
+            t.ok('install-native.sh')
+        else:
+            t.bad('install-native.sh')
+        top = await out2(r, t, ['run', w + '/top.tom'])
+        if 'put it inside a function marked @main' in top:
+            t.ok('top-level code gives a clear hint')
+        else:
+            t.bad('top-level code gives a clear hint', top)
+        t.check('version', 'Tomato v' + os.read_text('VERSION').rstrip('\n') + ' (compiler written in Tomato)', (await tom(r, t, ['version'], None, '', '', False)).text)
+        t.check('mode debug is readable', 'error[E01]: division by zero\n  at main (line 4)', await out2(r, t, ['run', dz]))
+        t.check('mode release prints the error on one line', 'error[E01]: division by zero (line 4)', await out2(r, t, ['run', dz, '--mode', 'release']))
+    elif part == '2':
+        t.check('release keeps caught messages and IDs', host.read_text_lossy('tests/runtime/error_classes.out'), await out2(r, t, ['run', 'tests/runtime/error_classes.tom', '--mode', 'release']))
+        t.check('open error keeps its message and ID in release', expected_of('open_errors'), await out2(r, t, ['run', 'tests/programs/open_errors.tom', '--mode', 'release']))
+    elif part == '3':
+        missing = "'/nonexistent_dir_for_tomato/missing.txt'"
+        t.check('uncaught open error has its debug ID', 'error[E25]: could not open ' + missing + ': No such file or directory\n  at main (line 3)', await out2(r, t, ['run', 'tests/runtime/open_missing.tom']))
+        long_text = ''
+        for _i in range(2000):
+            long_text += 'port '
+        t.check('release: a long message is printed whole on one line', 'error[E11]: ValueError: config file missing key ' + long_text + ' (line 5)', await out2(r, t, ['run', 'tests/runtime/release_long_message.tom', '--mode', 'release']))
+        t.check('release: a runtime error keeps its message, and no trace', 'error[E01]: division by zero (line 4)', await out2(r, t, ['run', 'tests/runtime/divide_by_zero.tom', '--mode', 'release']))
+        t.check('uncaught open error has its release ID', 'error[E25]: could not open ' + missing + ': No such file or directory (line 3)', await out2(r, t, ['run', 'tests/runtime/open_missing.tom', '--mode', 'release']))
+        t.check('an uncaught use of a closed file has its debug ID and line', 'error[E547]: I/O operation on a closed file\n  at main (line 7)', await out2(r, t, ['run', 'tests/runtime/file_closed_uncaught.tom']))
+        t.check('an uncaught use of a closed file has its release ID and line', 'error[E547]: I/O operation on a closed file (line 7)', await out2(r, t, ['run', 'tests/runtime/file_closed_uncaught.tom', '--mode', 'release']))
+        said = (await out2(r, t, ['run', 'tests/runtime/std_error_line.tom'])).rstrip('\n')
+        t.check("an error raised in std shows the program's line (debug)", "error[E505]: FileNotFoundError: could not list the directory '/nonexistent_dir_for_tomato/': No such file or directory (raised on line 6)", head(said, 1))
+        if glob_ab(said, '  at os.listdir (line ', '  at main (line 6)'):
+            t.ok('an error raised in std: the trace names the module of each std frame')
+        else:
+            t.bad('an error raised in std: the trace names the module of each std frame', said)
+        t.check("an error raised in std shows the program's line (release)", "error[E505]: FileNotFoundError: could not list the directory '/nonexistent_dir_for_tomato/': No such file or directory (line 6)", await out2(r, t, ['run', 'tests/runtime/std_error_line.tom', '--mode', 'release']))
+        t.check("an error raised in a built-in written in Tomato shows the program's line, in release too", 'error[E391]: ValueError: a byte must be a whole number from 0 to 255, but item 1 is 256 (line 4)', await out2(r, t, ['run', 'tests/runtime/builtin_error_line.tom', '--mode', 'release']))
+    elif part == '4':
+        said = (await out2(r, t, ['run', 'tests/runtime/msgpack_missing.tom', '--mode', 'release'])).rstrip('\n')
+        if release_line_match(said, 'error[E25]: IOError: could not open'):
+            t.ok('load_msgpack open error has its release ID')
+        else:
+            t.bad('load_msgpack open error has its release ID', said)
+    elif part == '5':
+        said = (await out2(r, t, ['run', 'tests/runtime/error_std_uncaught.tom', '--mode', 'release'])).rstrip('\n')
+        if release_line_match(said, 'error[E51]: ValueError: sqrt needs'):
+            t.ok('release prints a library error ID and line')
+        else:
+            t.bad('release prints a library error ID and line', said)
+        t.check('mode normal was renamed to release', "error[E281]: the mode 'normal' was renamed to 'release': use --mode release (the old release mode is gone)", await out2(r, t, ['run', dz, '--mode', 'normal']))
+        t.check('unknown mode is refused', "error[E282]: the mode must be debug or release, not 'fast'", await out2(r, t, ['run', dz, '--mode', 'fast']))
+    elif part == '6':
+        _b = await tom(r, t, ['build', dz, '-o', w + '/dz_rel', '--mode', 'release'])
+        _rc = await host.redirect([w + '/dz_rel'], w + '/dzr.out', r.root, None, r.cpu_of(t))
+        t.check('build --mode release makes a release binary', 'error[E01]: division by zero (line 4)', host.read_text_lossy(w + '/dzr.out'))
+        rel = await tom(r, t, ['compile', dz, '--mode', 'release'])
+        if host.file_has(rel.out, 'tomato_report_uncaught'):
+            t.ok('compile --mode release works')
+        else:
+            t.bad('compile --mode release works', head(rel.text, 3))
+        os.write_text(w + '/names.tom', 'class Point:\n    x: int = 0\n\nclass MyError(Error):\n    pass\n\n@main\ndef main():\n    p = Point()\n    print(p.x)\n    raise MyError("m")\n')
+        named = await tom(r, t, ['compile', w + '/names.tom', '--mode', 'release'])
+        name = 'release names the error classes (an uncaught error prints its class) and no others'
+        if host.file_has(named.out, 'c"Point\\\\00"') or not host.file_has(named.out, 'c"MyError\\\\00"'):
+            t.bad(name)
+        else:
+            t.ok(name)
+        if host.file_has(rel.out, 'br i1 .*label %stop\\.[0-9]+, label %ok\\.[0-9]+, !prof !1$', True) and host.file_has(rel.out, '^!1 = !{!"branch_weights", i32 1, i32 10}$'):
+            t.ok('release marks error branches unlikely')
+        else:
+            t.bad('release marks error branches unlikely')
+        dbg = await tom(r, t, ['compile', dz, '--mode', 'debug'])
+        if host.file_has(dbg.out, 'br i1 .*label %stop\\.[0-9]+, label %ok\\.[0-9]+$', True) and not host.file_has(dbg.out, '!prof'):
+            t.ok('debug error branches remain unweighted')
+        else:
+            t.bad('debug error branches remain unweighted')
+        if len(js_shell(r)) > 0:
+            errs = await tom(r, t, ['compile', 'tests/runtime/error_classes.tom', '--mode', 'release'])
+            got = await tjsc(r, t, ['site/wasm', 'run-ir', errs.out])
+            t.check('wasm interpreter runs weighted error branches', host.read_text_lossy('tests/runtime/error_classes.out'), got[0])
+            rc_ok = False
+            for line in got[1].split('\n'):
+                if line == '~rc 0':
+                    rc_ok = True
+            if rc_ok:
+                t.ok('weighted wasm run succeeds')
+            else:
+                t.bad('weighted wasm run succeeds', got[1].rstrip('\n'))
+
+# ---- the @test files: `tomato run FILE test` ends with "N passed, 0 failed, 0 skipped" ----
+
+# the last line of a text, as `tail -1` shows it
+def last_line(text: str) -> str:
+    lines = text.split('\n')
+    if text.endswith('\n'):
+        lines.pop()
+    if len(lines) == 0:
+        return ''
+    return lines[len(lines) - 1]
+
+# the lines of a text that do not start with "ok " (grep -v '^ok '), the first n
+def not_ok_lines(text: str, n: int) -> str:
+    out: list[str] = []
+    for line in text.split('\n'):
+        if not line.startswith('ok '):
+            out.append(line)
+    return head('\n'.join(out), n)
+
+# runs the @test functions of a file (`tomato run [--mode M] FILE test`) and judges the last line
+async def test_file(r: Run, t: Test, file: str, ok_name: str, bad_name: str, mode: str = '', cwd: str = '') -> bool:
+    args = ['run']
+    if mode != '':
+        args = ['run', '--mode', mode]
+    res = await tom(r, t, args + [file, 'test'], None, '', cwd)
+    seen = last_line(res.text)
+    if seen.endswith(' passed, 0 failed, 0 skipped'):
+        t.ok(ok_name + ': ' + seen)
+        return True
+    t.bad(bad_name, not_ok_lines(res.text, 12))
+    return False
+
+async def logic_modes(r: Run, t: Test, file: str, label: str):
+    if not await cli_setup(r, t):
+        return
+    for mode in ['debug', 'release']:
+        _ok = await test_file(r, t, file, label + ' (' + mode + ' mode)', label + ' (' + mode + ' mode)', mode)
+
+async def logic_manedit(r: Run, t: Test):
+    if not await cli_setup(r, t):
+        return
+    host.copy_files(['compiler/src/manedit.tom', 'tests/manedit_logic.tom'], t.work + '/me')
+    _ok = await test_file(r, t, 'manedit_logic.tom', "manedit: the editor's rules", "manedit: the editor's rules", '', t.work + '/me')
+
+async def logic_manifest(r: Run, t: Test):
+    if not await cli_setup(r, t):
+        return
+    d = t.work + '/ml'
+    host.copy_files(['compiler/src/manifest.tom', 'compiler/src/config.tom', 'compiler/src/diag.tom', 'compiler/src/modnames.tom', 'tests/manifest_logic.tom'], d)
+    _ok = await test_file(r, t, 'manifest_logic.tom', "manifest: the reader's rules", "manifest: the reader's rules", '', d)
+    # the order of versions: Tomato's compare_versions and the shell's semver_cmp give the same answer for every pair
+    versions = '0.9 0.51 0.51.0 1.0.0-alpha 1.0.0-alpha.1 1.0.0-alpha.beta 1.0.0-beta 1.0.0-beta.2 1.0.0-beta.11 1.0.0-rc.1 1.0.0-rc.2 1.0.0-rc.10 1.0.0 1.0 1.0.1 1.0.10 1.0.9 1.1.0 2.0.0 10.0.0 1.0.0-0 1.0.0-1 1.0.0-x-y'
+    script = 'eval "$(sed -n \'/^semver_cmp() {/,/^}/p\' native/tomato)"; for a in $1; do for b in $1; do printf " %s" "$(semver_cmp "$a" "$b")"; done; done'
+    want = await host.shell_out(script, [versions], r.root)
+    pairs: list[str] = []
+    for a in versions.split(' '):
+        for b in versions.split(' '):
+            pairs.append(a + ':' + b)
+    os.write_text(d + '/order.tom', 'from manifest import compare_versions\n@main\ndef main(*pairs: tuple[str]):\n    out: list[str] = []\n    for p in pairs:\n        w = p.split(":")\n        out.append(str(compare_versions(w[0], w[1])))\n    print(" ".join(out))\n')
+    got = await tom(r, t, ['run', 'order.tom', 'main'] + pairs, None, '', d)
+    t.check("manifest: compare_versions agrees with native/tomato's semver_cmp on every pair", want.stdout.lstrip(' '), got.text)
+
+async def logic_repledit(r: Run, t: Test):
+    if not await cli_setup(r, t):
+        return
+    w = t.work
+    host.copy_files(['compiler/src/repledit.tom', 'compiler/src/lexer.tom', 'compiler/src/hltomato.tom', 'tests/repledit_logic.tom'], w)
+    _a = await test_file(r, t, w + '/repledit_logic.tom', 'repl editor: the validator, the indenter and the history rules', 'repl editor: the validator, the indenter and the history rules')
+    host.copy_files(['tests/hltomato_logic.tom'], w)
+    _b = await test_file(r, t, w + '/hltomato_logic.tom', 'repl editor: the highlighter and the palette', 'repl editor: the highlighter and the palette')
+    built = 'no'
+    if ospath.isfile(r.shared + '/home/native/bin/tomato-repl-edit'):
+        built = 'yes'
+    t.check('install-native.sh built the repl line editor', 'yes', built)
+    # standard input that is not a terminal never uses the editor, even when one is named (this one would fail)
+    failing = host.which('false')
+    if failing is None:
+        failing = '/usr/bin/false'
+    os.write_text(w + '/in', 'print(3)\n:quit\n')
+    env: dict[str, str] = {}
+    env['TOMATO_REPL_EDIT'] = failing
+    t.check('repl: piped input does not use the line editor', '3', (await tom(r, t, ['repl'], env, w + '/in')).text)
+
+async def logic_lexer_spans(r: Run, t: Test):
+    if not await cli_setup(r, t):
+        return
+    host.copy_files(['compiler/src/lexer.tom', 'tests/lexer_spans.tom'], t.work)
+    _ok = await test_file(r, t, t.work + '/lexer_spans.tom', 'lexer: lex_spans is tolerant and agrees with lex', 'lexer: lex_spans is tolerant and agrees with lex')
+
+async def logic_todo_shell(r: Run, t: Test):
+    if not await cli_setup(r, t):
+        return
+    w = t.work
+    host.copy_files(['examples/todo_shell.tom', 'tests/todo_shell_logic.tom'], w)
+    for mode in ['debug', 'release']:
+        _ok = await test_file(r, t, w + '/todo_shell_logic.tom', 'todo_shell example: the @test functions pass (' + mode + ' mode)', 'todo_shell example: the @test functions pass (' + mode + ' mode)', mode)
+    os.write_text(w + '/in', 'add milk\nlist\ndone 1\nquit\nadd never\n')
+    t.check('todo_shell example: piped input runs the commands', 'todo shell: add, done, undo, rm, list, clear, help, quit\nadded 1: milk\n  1 [ ] milk\n1 is done: milk\nbye', (await tom(r, t, ['run', 'examples/todo_shell.tom'], None, w + '/in')).text)
+
+# ---- on a pseudo-terminal, through expect ----
+
+# is expect there? When it is not: a failure in CI, a skip line elsewhere (as the shell tests did)
+def have_expect(t: Test, bad_name: str, skip_text: str) -> bool:
+    if host.which('expect') is not None:
+        return True
+    ci = os.getenv('CI')
+    if ci is not None and ci != '':
+        t.bad(bad_name, 'expect is required in CI')
+    else:
+        t.text += 'skip: ' + skip_text + '\n'
+    return False
+
+async def run_expect(r: Run, t: Test, args: list[str], with_path: bool) -> str:
+    env: dict[str, str] = {}
+    if with_path:
+        path = os.getenv('PATH')
+        base = ''
+        if path is not None:
+            base = path
+        env['PATH'] = r.shared + '/home/bin:' + base
+    env['TOMATO_HOME'] = r.shared + '/home'
+    env['TOMATO_BIN'] = r.shared + '/home/bin'
+    _rc = await host.redirect(['expect'] + args, t.work + '/expect.out', r.root, env, r.cpu_of(t))
+    return last_line(host.read_text_lossy(t.work + '/expect.out'))
+
+async def pty_terminal(r: Run, t: Test):
+    if not await cli_setup(r, t):
+        return
+    if not have_expect(t, 'terminal pty test', 'expect is not installed, so the terminal pty test did not run'):
+        return
+    built = await tom(r, t, ['build', 'tests/terminal_pty.tom', '--entry', 'main', '-o', t.work + '/terminal_pty'])
+    if built.status == 0:
+        t.check('terminal: raw mode, keys, size, resize and the restore on a pty', 'ok', await run_expect(r, t, ['tests/terminal_pty.exp', t.work + '/terminal_pty'], False))
+    else:
+        t.bad('terminal pty test: tests/terminal_pty.tom does not build', head(built.text, 5))
+
+async def pty_expect(r: Run, t: Test, script: str, bad_name: str, ok_name: str):
+    if not await cli_setup(r, t):
+        return
+    if not have_expect(t, bad_name, 'expect is not installed, so the ' + bad_name + ' did not run'):
+        return
+    t.check(ok_name, 'ok', await run_expect(r, t, [script], True))

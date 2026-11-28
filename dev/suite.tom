@@ -1,0 +1,352 @@
+# The shared part of the test suite in Tomato (docs/shell-to-tomato-plan.md, stage 4): the classes the scheduler and the ported tests
+# use (Test: one test and what it printed; Run: one run of the suite), and the helpers that several ported tests share (compile to a file,
+# link, the JavaScript shell for the WebAssembly checks). dev/test.tom schedules; dev/tests_*.tom hold the ported tests.
+import sys
+import os
+import ospath
+import asyncio
+import host
+import checks
+
+# One test (or heading) of the plan, in the order of the output.
+export class Test:
+    num: int = 0
+    kind: str = ''        # s: a heading, t: a test, l: a test that must be run alone, after the others
+    place: str = ''       # free, long, first, early, gate, cli or rest: when it is started
+    section: str = ''
+    func: str = ''        # the function of tests/run.sh (t_NAME)
+    args: list[str] = []
+    text: str = ''        # what it printed
+    done: bool = False
+    rc: int = 0
+    passed: int = 0
+    failed: int = 0
+    work: str = ''
+    counter: int = 0          # for the names of the files a test's commands write
+    cpu: list[int] = [0]
+
+    @init
+    def make(self, num: int, kind: str, place: str, section: str):
+        self.num = num
+        self.kind = kind
+        self.place = place
+        self.section = section
+        self.args = []
+        self.cpu = [0]
+
+    def ok(self, name: str):
+        self.text += 'ok   ' + name + '\n'
+        self.passed += 1
+
+    # FAIL name, and the detail under it, every line indented by 5
+    def bad(self, name: str, detail: str = ''):
+        self.text += 'FAIL ' + name + '\n'
+        self.failed += 1
+        if detail != '':
+            self.indent(detail)
+
+    def indent(self, detail: str):
+        for line in detail.split('\n'):
+            self.text += '     ' + line + '\n'
+
+    # the shell's check: the two texts are equal once the newlines at their ends are taken off (as $(...) does)
+    def check(self, name: str, expected: str, got: str):
+        if expected.rstrip('\n') == got.rstrip('\n'):
+            self.ok(name)
+        else:
+            self.bad(name, 'expected: ' + expected.rstrip('\n') + '\ngot:      ' + got.rstrip('\n'))
+
+    # the results of a check of dev/checks.tom
+    def outcomes(self, results: list[checks.Outcome]):
+        for o in results:
+            if o.note != '':
+                self.text += o.note + '\n'
+            elif o.passed:
+                self.ok(o.name)
+            else:
+                self.bad(o.name, o.detail)
+
+# The AddressSanitizer build of one program, made once by the first test that needs it.
+export class AsanBuild:
+    done: asyncio.Event = asyncio.Event()
+    built: bool = False
+    ll: str = ''
+    err: str = ''
+    exe: str = ''
+
+export class Row:
+    wall: int = 0
+    section: str = ''
+    label: str = ''
+    cpu: int = 0
+
+    @init
+    def make(self, wall: int, section: str, label: str, cpu: int):
+        self.wall = wall
+        self.section = section
+        self.label = label
+        self.cpu = cpu
+
+export class Run:
+    root: str = ''
+    shared: str = ''
+    script: str = ''
+    jobs: int = 1
+    cores: int = 1
+    fast: bool = False
+    times: bool = False
+    tests: list[Test] = []
+    skipped: list[str] = []
+    next_print: int = 0
+    slots: asyncio.Semaphore = asyncio.Semaphore(1)
+    asan: dict[str, AsanBuild] = {}
+    rows: list[Row] = []
+    legacy: bool = False      # --legacy: run every test through tests/run.sh (to compare a port with the function it replaced)
+    only: list[str] = []      # --only: run just the tests whose function (t_NAME) holds one of these words (for working on a test)
+
+    @init
+    def make(self, root: str, shared: str, jobs: int, cores: int, fast: bool, times: bool):
+        self.root = root
+        self.shared = shared
+        self.script = root + '/tests/run.sh'
+        self.jobs = jobs
+        self.cores = cores
+        self.fast = fast
+        self.times = times
+        self.tests = []
+        self.skipped = []
+        self.slots = asyncio.Semaphore(jobs)
+        self.asan = {}
+        self.rows = []
+        self.only = []
+
+    # tests/run.sh is started as the bridge: what it should do, and the folder it shares
+    def bridge(self, what: str) -> dict[str, str]:
+        env: dict[str, str] = {}
+        env['TOMATO_TEST_BRIDGE'] = what
+        env['TOMATO_TEST_SHARED'] = self.shared
+        return env
+
+    def flags(self) -> list[str]:
+        out = ['-j', '1']
+        if self.fast:
+            out.append('--fast')
+        if self.times:
+            out.append('--times')
+        return out
+
+    # for the CPU time of a test, when --times asks for it
+    def cpu_of(self, t: Test) -> list[int] | None:
+        if self.times:
+            return t.cpu
+        return None
+
+export def env_flag(name: str) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return False
+    return v != '' and v != '0'
+
+# The words of text, as the shell splits an unquoted variable (without looking for files)
+export def words(text: str) -> list[str]:
+    out: list[str] = []
+    for w in text.replace('\t', ' ').replace('\n', ' ').split(' '):
+        if w != '':
+            out.append(w)
+    return out
+
+# What the shell's `eval` reads out of a line of words each in single quotes, as tests/run.sh registers them
+export def unquote_words(line: str) -> list[str]:
+    out: list[str] = []
+    cur = ''
+    have = False
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if c == "'":
+            j = line.find("'", i + 1)
+            if j < 0:
+                j = n
+            cur += line[i + 1:j]
+            have = True
+            i = j + 1
+        elif c == '\\' and i + 1 < n:
+            cur += line[i + 1]
+            have = True
+            i += 2
+        elif c == ' ':
+            if have:
+                out.append(cur)
+                cur = ''
+                have = False
+            i += 1
+        else:
+            cur += c
+            have = True
+            i += 1
+    if have:
+        out.append(cur)
+    return out
+
+export async def await_file(path: str) -> bool:
+    i = 0
+    while not ospath.exists(path):
+        await sleep(0.05)
+        i += 1
+        if i > 12000:
+            return False
+    return True
+
+# the path that a file of the shared folder names (the runtime objects, made by `prepare`)
+export async def shared_path(r: Run, name: str) -> str:
+    _ok = await await_file(r.shared + '/' + name)
+    return os.read_text(r.shared + '/' + name).rstrip('\n')
+
+export def errors_in(marked: list[str]) -> bool:
+    return len(marked) > 0
+
+# the first n of the lines of the IR that start with ";! " (what the compiler said)
+export def warning_lines(marked: list[str], n: int) -> list[str]:
+    out: list[str] = []
+    for line in marked:
+        out.append(line)
+        if len(out) >= n:
+            break
+    return out
+
+# Does the IR carry a warning other than the unstable-feature one? A program of tests/programs may use the marker names and `start` (U5,
+# U6: D129a) without `# allow: unstable` on every use; the warning is tested by tests/errors/unstable_* and the CLI tests.
+export def own_warnings(marked: list[str]) -> bool:
+    skip = False
+    for line in marked:
+        if line.startswith(';! warning') or line.startswith(';! error'):
+            skip = 'is an unstable feature' in line
+        if not skip:
+            return True
+    return False
+
+# A program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
+export def lent_loops_ok(ll: str, name: str) -> bool:
+    first = host.read_text_lossy('tests/programs/' + name + '.tom').split('\n')[0]
+    if not first.startswith('# borrowed loops: '):
+        return True
+    want = first[len('# borrowed loops: '):]
+    if want == '':
+        return True
+    return str(host.count_matching(ll, 'lent\\.slot\\.[0-9]* = alloca')) == want
+
+# the programs that write files get the folder of their test; some take inputs
+export def program_arg(name: str, work: str) -> list[str]:
+    for w in ['toml_api', 'json_files', 'msgpack_files', 'msgpack_file_basics', 'os_files', 'file_lines', 'file_loop_close', 'file_modes', 'file_closed', 'file_drop_loop', 'bytes_files', 'sys_run', 'sys_async']:
+        if name == w:
+            return [work]
+    if name == 'sys_basics':
+        return ['alpha']
+    if name == 'sys_args':
+        return ['7', 'b', 'c']
+    return []
+
+# compiles a program with the compiler of this run (c1) and keeps the IR in `ll`
+# (the IR goes straight to the file, as `> ll` does: it is megabytes, and this one process reads the output of every test)
+export async def compile_ir(r: Run, t: Test, args: list[str], ll: str) -> sys.RunResult:
+    rc = await host.redirect([r.shared + '/c1'] + args, ll, r.root, None, r.cpu_of(t), None, '', ll + '.err')
+    return sys.RunResult(rc, 0, '', host.read_text_lossy(ll + '.err'))
+
+# a compile of which only the messages are wanted (`2>&1 >/dev/null`): its status and standard error
+export async def compile_messages(r: Run, t: Test, args: list[str], work: str) -> sys.RunResult:
+    rc = await host.redirect([r.shared + '/c1'] + args, '/dev/null', r.root, None, r.cpu_of(t), None, '', work + '/messages')
+    return sys.RunResult(rc, 0, '', host.read_text_lossy(work + '/messages'))
+
+# a clang that links `ll` with the runtime object `rt` into `exe`: its status
+export async def link(r: Run, t: Test, ll: str, rt: str, exe: str) -> int:
+    res = await host.run(['clang', '-O1', '-w', '-o', exe, ll, rt, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+    if res.status != 0:
+        t.text += res.stdout + res.stderr
+    return res.status
+
+# does the program's output (both streams in `out`) equal the expected file
+export def same_bytes(a: str, b: str) -> bool:
+    return host.read_bytes_or_empty(a) == host.read_bytes_or_empty(b) and ospath.exists(a) and ospath.exists(b)
+
+export def js_shell(r: Run) -> list[str]:
+    mac = '/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc'
+    if ospath.isfile(mac):
+        return [mac]
+    node = host.which('node')
+    if node is not None:
+        return ['node', r.root + '/native/jsc-on-node.js']
+    return []
+
+# The toolchain script, with the run limit. A run the limit stopped (the toolchain says error[E369]: it ran out of time, on a machine that is
+# busy) is run again with three times the limit, up to three runs in all; a wrong answer, a compile error, a crash or anything else is the
+# first run's result, never run again. Gives what the last run printed (standard output, then standard error) and its status.
+export async def tjsc(r: Run, t: Test, args: list[str]) -> tuple[str, str, int]:
+    limit = 30000
+    v = os.getenv('TOMATO_WASM_TIMEOUT_MS')
+    if v is not None and v.isdigit():
+        limit = int(v)
+    tries = 1
+    while True:
+        res = await host.run(js_shell(r) + ['native/tomato-jsc.js', '--', f'--timeout-ms={limit}'] + args, r.root, None, r.cpu_of(t))
+        if tries < 3 and '\nerror[E369]' in '\n' + res.stderr:
+            limit = limit * 3
+            tries += 1
+            continue
+        return (res.stdout, res.stderr, res.status)
+
+# does the text hold each of the pieces, in this order (the shell's case pattern *A*B*)
+export def holds_in_order(text: str, pieces: list[str]) -> bool:
+    at = 0
+    for piece in pieces:
+        i = text.find(piece, at)
+        if i < 0:
+            return False
+        at = i + len(piece)
+    return True
+
+# the text of the first n lines of a file (head -n), without the newline at its end
+export def head_lines(path: str, n: int) -> str:
+    out: list[str] = []
+    for line in host.read_text_lossy(path).split('\n'):
+        if len(out) >= n:
+            break
+        out.append(line)
+    return '\n'.join(out).rstrip('\n')
+
+# the last of the lines of IR that the compiler marks as warnings, without their marker, as text (grep '^;! ' | sed 's/^;! //')
+export def warnings_text(ll: str) -> str:
+    out = ''
+    for line in host.marked_lines(ll):
+        out += line[3:] + '\n'
+    return out
+
+export def first_lines(text: str, n: int) -> str:
+    out: list[str] = []
+    for line in text.split('\n'):
+        if len(out) >= n:
+            break
+        out.append(line)
+    return '\n'.join(out).rstrip('\n')
+
+# what the shell's `grep -v '^Could not open file: '` leaves of a text (real jsc's read() prints that on standard error for each std module
+# it looks for beside the program, caught or not; tomato-repl drops it too)
+export def without_could_not_open(text: str) -> str:
+    kept: list[str] = []
+    for line in text.split('\n'):
+        if not line.startswith('Could not open file: '):
+            kept.append(line)
+    return '\n'.join(kept)
+
+# the lines of a text that start with / contain a word (grep)
+export def lines_with(text: str, word: str, at_start: bool) -> list[str]:
+    out: list[str] = []
+    for line in text.split('\n'):
+        if (at_start and line.startswith(word)) or (not at_start and word in line):
+            out.append(line)
+    return out
+
+# a script of the JavaScript shell, with no run limit
+export async def jsc_script(r: Run, t: Test, args: list[str]) -> str:
+    res = await host.run(js_shell(r) + args, r.root, None, r.cpu_of(t))
+    return res.stdout + res.stderr

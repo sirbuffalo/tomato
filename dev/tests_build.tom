@@ -1,0 +1,105 @@
+# The compiler everything else uses (built from the bootstrap IR, and its fixed point) and the installed `tomato` that the command-line tests
+# use: the ports of t_compiler_build, t_fixed_point and t_install of tests/run.sh. `run` does the test named by t.func and says whether it
+# was one of these.
+import os
+import ospath
+import host
+from suite import Test, Run, shared_path, warning_lines, first_lines
+
+# the compiler everything else uses: shared/c0 (from the bootstrap IR) and shared/c1 (built by c0); gives 0, or 1 when it could not be made
+async def native_compiler_build(r: Run, t: Test) -> int:
+    # the IR is compiled while the runtime object is made (or fetched from the cache), then they are linked: the same program as one clang command
+    ir = start host.run([r.root + '/compiler/bootstrap/build-object.sh', r.shared + '/c0.o'], r.root)  # allow: unstable
+    rt_o = await shared_path(r, 'rt_o.path')
+    built = await ir
+    errors = built.stderr
+    if built.status == 0:
+        os.write_text(r.shared + '/c0.o.done', '')
+    else:
+        os.write_text(r.shared + '/c0.o.failed', '')
+    # build-object.sh falls back to one clang process when the parallel build fails; that works, so the suite would stay green and only slow: fail it here
+    if 'the split build failed' in errors:
+        t.bad('the bootstrap IR compiles in parallel parts', first_lines(errors, 5))
+    else:
+        t.ok('the bootstrap IR compiles in parallel parts')
+    linked = False
+    if ospath.exists(r.shared + '/c0.o.done'):
+        c = await host.run(['clang', '-O1', '-w', '-o', r.shared + '/c0', r.shared + '/c0.o', rt_o, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+        errors += c.stderr
+        linked = c.status == 0
+    if linked:
+        t.ok('builds from the bootstrap IR')
+    else:
+        t.bad('builds from the bootstrap IR', first_lines(errors, 5))
+        return 1
+    rc = await host.redirect([r.shared + '/c0', 'compiler/src/ctool.tom', 'compile'], r.shared + '/ir1.ll', r.root, None, r.cpu_of(t), None, '', t.work + '/ctool.err')
+    if rc == 0:
+        t.ok('compiles its own source')
+    else:
+        t.bad('compiles its own source', host.read_text_lossy(t.work + '/ctool.err').rstrip('\n'))
+    # c1 is c0 compiled from ir1.ll: when ir1.ll is the checked-in IR (the normal case, and what t_fixed_point checks) that is the very
+    # program c0 already is, so it is not built a second time (half a minute); when it is not, c1 is built, and the tests use it
+    if host.same_file(r.shared + '/ir1.ll', 'compiler/bootstrap/tomatoc.ll'):
+        _x = await host.run(['cp', r.shared + '/c0', r.shared + '/c1'])
+    else:
+        _x = await host.run(['clang', '-O1', '-w', '-o', r.shared + '/c1', r.shared + '/ir1.ll', rt_o, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+    if ospath.isfile(r.shared + '/c1'):
+        return 0
+    return 1
+
+async def native_fixed_point(r: Run, t: Test):
+    ir2 = t.work + '/ir2.ll'
+    _rc = await host.redirect([r.shared + '/c1', 'compiler/src/ctool.tom', 'compile'], ir2, r.root, None, r.cpu_of(t), None, '', t.work + '/ctool.err')
+    if host.same_file(r.shared + '/ir1.ll', ir2):
+        t.ok('stage 2 reproduces itself (fixed point)')
+    else:
+        t.bad('stage 2 reproduces itself (fixed point)')
+    if host.same_file(ir2, 'compiler/bootstrap/tomatoc.ll'):
+        t.ok('compiler/bootstrap/tomatoc.ll is current')
+    else:
+        t.bad('compiler/bootstrap/tomatoc.ll is current', 'run compiler/bootstrap/refresh.sh')
+    marked = warning_lines(host.marked_lines(r.shared + '/ir1.ll'), 6)
+    if len(marked) > 0:
+        t.bad("the compiler's own source compiles without warnings", '\n'.join(marked))
+    else:
+        t.ok("the compiler's own source compiles without warnings")
+
+# the installed `tomato` command: the command line tests use it, and only read it. Installation reuses the same completed bootstrap
+# object while still compiling the runtime and linking for real.
+async def native_install(r: Run, t: Test):
+    code = 1
+    # (the object never comes when the compiler build has failed: the install fails too, at once)
+    i = 0
+    waiting = True
+    while waiting:
+        if ospath.exists(r.shared + '/c0.o.done'):
+            break
+        if ospath.exists(r.shared + '/c0.o.failed') or i > 12000:
+            waiting = False
+            break
+        await sleep(0.05)
+        i += 1
+    if waiting:
+        env: dict[str, str] = {}
+        env['TOMATO_TEST_BOOTSTRAP_OBJECT'] = r.shared + '/c0.o'
+        env['TOMATO_HOME'] = r.shared + '/home'
+        env['TOMATO_BIN'] = r.shared + '/home/bin'
+        res = await host.run([r.root + '/install-native.sh'], r.root, env, r.cpu_of(t))
+        code = res.status
+    os.write_text(r.shared + '/install.tmp', str(code) + '\n')
+    os.rename(r.shared + '/install.tmp', r.shared + '/install.rc')
+
+# the functions of tests/run.sh (t_NAME) that this module ports
+export def names() -> list[str]:
+    return ['t_compiler_build', 't_fixed_point', 't_install']
+
+export async def run(r: Run, t: Test, rt_o: str) -> bool:
+    if t.func == 't_compiler_build':
+        t.rc = await native_compiler_build(r, t)
+    elif t.func == 't_fixed_point':
+        await native_fixed_point(r, t)
+    elif t.func == 't_install':
+        await native_install(r, t)
+    else:
+        return False
+    return True

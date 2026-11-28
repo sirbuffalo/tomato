@@ -283,3 +283,30 @@ export def same_file(a: str, b: str) -> bool:
     if not ospath.exists(a) or not ospath.exists(b):
         return False
     return sys.run(['cmp', '-s', a, b]).status == 0
+
+# Does a file hold a line that matches the regular expression (grep -q; -E: extended)? How many lines (grep -c)?
+export def count_lines_matching(path: str, pattern: str, extended: bool = False) -> int:
+    args = ['grep', '-a', '-c']
+    if extended:
+        args.append('-E')
+    r = sys.run(args + ['-e', pattern, path])
+    text = r.stdout.strip()
+    if text.isdigit():
+        return int(text)
+    return 0
+
+export def file_has(path: str, pattern: str, extended: bool = False) -> bool:
+    return count_lines_matching(path, pattern, extended) > 0
+
+# Copies files into a folder (cp), keeping what is needed to run them.
+export def copy_files(paths: list[str], dest: str):
+    host_make_dir_if(dest)
+    _r = sys.run(['cp'] + paths + [dest], True, None, None, '', True)
+
+def host_make_dir_if(path: str):
+    os.makedirs(path, True)
+
+# What a program prints when started by the shell with this redirection text, as a string: the one place where the redirections that std
+# cannot express yet (a closed descriptor, /dev/full, a pipe into `head`) are left to `sh -c`. `args` are $1, $2 ... of the script.
+export async def shell_out(script: str, args: list[str], cwd: str | None = None, env: dict[str, str] | None = None) -> sys.RunResult:
+    return await sys.run_async(['sh', '-c', script, 'sh'] + args, True, cwd, env)

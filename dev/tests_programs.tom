@@ -1,0 +1,568 @@
+# The ported tests that compile and run programs: the examples, the programs, the AddressSanitizer builds, the rejected programs, the error
+# texts, the runtime errors, the known gaps, the input tests, the C tests of the big numbers and the release-mode tests (the ports of the
+# t_* functions of tests/run.sh of the same names). `run` does the test named by t.func and says whether it was one of these.
+import os
+import ospath
+import host
+from suite import Test, AsanBuild, Run, words, shared_path, errors_in, warning_lines, own_warnings, lent_loops_ok, program_arg, compile_ir, compile_messages, link, same_bytes, js_shell, tjsc, head_lines, warnings_text
+
+async def native_example(r: Run, t: Test, rt_o: str):
+    name = t.args[0]
+    entry = t.args[1]
+    rest = t.args[2]
+    tag = name + ' ' + entry
+    ll = t.work + '/p.ll'
+    res = await compile_ir(r, t, ['examples/' + name + '.tom', entry, 'std/'], ll)
+    if res.status != 0:
+        t.text += f'FAIL {tag}: {res.stderr.rstrip(chr(10))}\n'
+        t.failed += 1
+        return
+    marked = host.marked_lines(ll)
+    if errors_in(marked):
+        t.text += f'FAIL {tag}: warnings\n'
+        t.indent('\n'.join(warning_lines(marked, 6)))
+        t.failed += 1
+        return
+    if await link(r, t, ll, rt_o, t.work + '/p') != 0:
+        t.text += f'FAIL {tag}: link\n'
+        t.failed += 1
+        return
+    out = t.work + '/out'
+    _rc = await host.redirect([t.work + '/p'] + words(rest), out, r.root, None, r.cpu_of(t))
+    expected = 'tests/expected/' + name + '.' + entry + '.out'
+    if same_bytes(out, expected):
+        t.text += f'ok   {tag}\n'
+        t.passed += 1
+    else:
+        t.text += f'FAIL {tag}\n'
+        t.indent('\n'.join(host.diff_head(out, expected, 5)))
+        t.failed += 1
+
+async def native_program(r: Run, t: Test, rt_o: str):
+    name = t.args[0]
+    ll = t.work + '/p.ll'
+    res = await compile_ir(r, t, ['tests/programs/' + name + '.tom', 'main', 'std/'], ll)
+    if own_warnings(host.marked_lines(ll)):
+        t.text += f'FAIL program {name} has warnings\n'
+        t.failed += 1
+        return
+    if not lent_loops_ok(ll, name):
+        t.text += f'FAIL program {name}: the number of loops that borrow their item changed\n'
+        t.failed += 1
+        return
+    out = t.work + '/out'
+    if ospath.getsize(ll) > 0 and await link(r, t, ll, rt_o, t.work + '/p') == 0:
+        _rc = await host.redirect([t.work + '/p'] + program_arg(name, t.work), out, r.root, None, r.cpu_of(t))
+    expected = 'tests/expected/' + name + '.main.out'
+    if same_bytes(out, expected):
+        t.text += f'ok   program {name}\n'
+        t.passed += 1
+    else:
+        t.text += f'FAIL program {name}\n'
+        detail: list[str] = []
+        for line in res.stderr.split('\n')[:3]:
+            if line != '':
+                detail.append(line)
+        t.indent('\n'.join(detail + host.diff_head(out, expected, 5)))
+        t.failed += 1
+
+# The IR of a program, with what the compiler said, and its AddressSanitizer build. Made once, by the first of the tests that need it
+# (the others wait for it); `built` is False when this clang cannot build with AddressSanitizer.
+async def asan_build(r: Run, t: Test, path: str) -> AsanBuild:
+    key = path.replace('/', '_')
+    known = r.asan.get(key)
+    if known is not None:
+        await known.done.wait()
+        return known
+    b = AsanBuild()
+    dir = r.shared + '/asan'
+    host.make_dir(dir)
+    b.ll = dir + '/' + key + '.ll'
+    b.err = dir + '/' + key + '.err'
+    b.exe = dir + '/' + key + '.exe'
+    r.asan[key] = b
+    try:
+        rt_asan = await shared_path(r, 'rt_asan.path')
+        res = await compile_ir(r, t, [path + '.tom', 'main', 'std/'], b.ll)
+        os.write_text(b.err, res.stderr)
+        if rt_asan != '':
+            c = await host.run(['clang', '-O1', '-w', '-g', '-fsanitize=address', '-o', b.exe + '.tmp', b.ll, rt_asan, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+            if c.status == 0:
+                os.rename(b.exe + '.tmp', b.exe)
+                b.built = True
+    finally:
+        b.done.set()
+    return b
+
+# the same test as native_program, for a program that an AddressSanitizer test builds too: its output (standard output and standard
+# error) from that build, which asan_build makes once for both
+async def native_program_asan(r: Run, t: Test):
+    name = t.args[0]
+    b = await asan_build(r, t, 'tests/programs/' + name)
+    if own_warnings(host.marked_lines(b.ll)):
+        t.text += f'FAIL program {name} has warnings\n'
+        t.failed += 1
+        return
+    if not lent_loops_ok(b.ll, name):
+        t.text += f'FAIL program {name}: the number of loops that borrow their item changed\n'
+        t.failed += 1
+        return
+    out = t.work + '/out'
+    if b.built:
+        _rc = await host.redirect([b.exe] + program_arg(name, t.work), out, r.root, None, r.cpu_of(t))
+    expected = 'tests/expected/' + name + '.main.out'
+    if same_bytes(out, expected):
+        t.text += f'ok   program {name}\n'
+        t.passed += 1
+    else:
+        t.text += f'FAIL program {name}\n'
+        detail: list[str] = []
+        for line in host.read_text_lossy(b.err).split('\n')[:3]:
+            if line != '':
+                detail.append(line)
+        t.indent('\n'.join(detail + host.diff_head(out, expected, 5)))
+        t.failed += 1
+
+# PATH:ARGUMENT, the argument being a folder the program may write into when it is WORK
+async def native_asan(r: Run, t: Test):
+    spec = t.args[0]
+    path = spec.partition(':')[0]
+    name = path.rpartition('/')[2]
+    arg = spec.partition(':')[2]
+    if arg == 'WORK':
+        arg = t.work
+    b = await asan_build(r, t, path)
+    if b.built:
+        # a failure shows the head of the sanitizer report (with ASAN_SYMBOLIZER_PATH set, as the Linux CI job does, that includes the
+        # leaking allocation's stack)
+        res = await host.run([b.exe] + words(arg), r.root, None, r.cpu_of(t))
+        head: list[str] = []
+        for line in res.stderr.split('\n')[:14]:
+            head.append(line)
+        out = '\n'.join(head).rstrip('\n')
+        if out == '':
+            t.ok('asan ' + name)
+        else:
+            t.bad('asan ' + name, out)
+    else:
+        t.bad('asan ' + name, 'this clang cannot build with -fsanitize=address')
+
+# FILE, the message the compiler must report, and the entry name (default main; `test` for the @test checks)
+async def native_neg(r: Run, t: Test):
+    entry = 'main'
+    if len(t.args) > 2 and t.args[2] != '':
+        entry = t.args[2]
+    res = await compile_messages(r, t, ['tests/negative/' + t.args[0] + '.tom', entry, 'std/'], t.work)
+    msg = res.stderr.rstrip('\n')
+    if t.args[1] in msg:
+        if res.status != 0:
+            t.ok('rejects ' + t.args[0])
+        else:
+            t.bad('rejects ' + t.args[0], 'exit status was 0')
+    else:
+        t.bad('rejects ' + t.args[0], 'wanted: ' + t.args[1] + '\ngot:    ' + msg)
+
+# the whole text of what the compiler says about a program (its errors, then its warnings: they travel as comment lines at the end of the IR)
+async def native_error_text(r: Run, t: Test):
+    f = t.args[0]
+    n = f.rpartition('/')[2]
+    n = n[:len(n) - 4]
+    res = await compile_ir(r, t, [f, 'main', 'std/'], t.work + '/err.ll')
+    got = res.stderr
+    for line in host.marked_lines(t.work + '/err.ll'):
+        got += line[3:] + '\n'
+    expected = 'tests/errors/' + n + '.out'
+    if got == host.read_text_lossy(expected):
+        t.ok('error text: ' + n)
+    else:
+        os.write_text(t.work + '/err.out', got)
+        t.bad('error text: ' + n, '\n'.join(host.diff_head(t.work + '/err.out', expected, 6)))
+
+# FILE, the text that the program's output (standard output, then standard error) must hold, and its exit status
+async def native_rt(r: Run, t: Test, rt_o: str):
+    name = t.args[0]
+    ll = t.work + '/r.ll'
+    res = await compile_ir(r, t, ['tests/runtime/' + name + '.tom', 'main', 'std/'], ll)
+    if res.status != 0 or await link(r, t, ll, rt_o, t.work + '/r') != 0:
+        t.bad('runtime ' + name, 'did not build')
+        return
+    ran = await host.run([t.work + '/r'], r.root, None, r.cpu_of(t))
+    seen = ran.stdout + ran.stderr
+    if t.args[1] in seen.rstrip('\n'):
+        if str(ran.status) == t.args[2]:
+            t.ok('runtime ' + name)
+        else:
+            t.bad('runtime ' + name, f'exit status {ran.status}, wanted {t.args[2]}')
+    else:
+        t.bad('runtime ' + name, f"wanted '{t.args[1]}', got: {seen.rstrip(chr(10))}")
+
+# Each file is a program a decision says must be rejected (should_reject_*) or must work (should_work_*). The test passes while the gap
+# exists and FAILS when the compiler gains the behavior, so the list cannot go stale.
+async def native_gap(r: Run, t: Test, rt_o: str):
+    f = t.args[0]
+    n = f.rpartition('/')[2]
+    n = n[:len(n) - 4]
+    accepted = 'no'
+    ll = t.work + '/g.ll'
+    res = await compile_ir(r, t, [f, 'main', 'std/'], ll)
+    if res.status == 0:
+        c = await host.run(['clang', '-O1', '-w', '-o', t.work + '/g', ll, rt_o, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+        if c.status == 0:
+            accepted = 'yes'
+            ran = await host.run([t.work + '/g'], r.root, None, r.cpu_of(t))
+            if ran.status != 0:
+                accepted = 'fails'
+    if n.startswith('should_reject_'):
+        if accepted == 'no':
+            t.bad('known gap closed: ' + n, 'move it to tests/negative')
+        else:
+            t.ok('known gap: ' + n + ' (still accepted)')
+    elif n.startswith('should_work_'):
+        if accepted == 'yes':
+            t.bad('known gap closed: ' + n, 'move it to tests/programs')
+        else:
+            t.ok('known gap: ' + n + ' (still unsupported)')
+
+async def native_reserved_all(r: Run, t: Test):
+    bad_names = ''
+    for n in ['bench', 'example', 'setup', 'teardown', 'deprecated', 'main', 'init', 'add', 'sub', 'mul', 'div', 'floordiv', 'mod', 'pow', 'eq', 'lt', 'le', 'gt', 'ge', 'str', 'iter', 'len', 'get', 'slice', 'contains', 'reversed', 'static', 'bitarray', 'set', 'bitand', 'bitor', 'bitxor', 'invert', 'neg', 'rmul', 'hash']:
+        src = t.work + '/res.tom'
+        os.write_text(src, f'@{n}.x\ndef f():\n    print(1)\n\n@main\ndef main():\n    pass\n')
+        res = await compile_messages(r, t, [src, 'main', 'std/'], t.work)
+        if f"'@{n}.x' uses a name the language reserves" not in res.stderr.rstrip('\n'):
+            bad_names += ' ' + n
+    if bad_names == '':
+        t.ok('every reserved marker name is refused when dotted')
+    else:
+        t.bad('every reserved marker name is refused when dotted', 'not refused:' + bad_names)
+
+# a project file with the name of a std module warns (once for each name), and a file with a planned name does not (D115a)
+async def native_module_names(r: Run, t: Test):
+    d = t.work + '/mn'
+    host.make_dir(d)
+    os.write_text(d + '/json.tom', 'export def hello() -> str:\n    return "mine"\n')
+    os.write_text(d + '/queue.tom', 'export def q() -> int:\n    return 1\n')
+    os.write_text(d + '/shadow.tom', 'import json\nfrom json import hello\nimport queue\n\n@main\ndef main():\n    print(json.hello(), hello(), queue.q())\n')
+    res = await compile_ir(r, t, [d + '/shadow.tom', 'main', 'std/'], d + '/mn.ll')
+    got = res.stderr + warnings_text(d + '/mn.ll')
+    t.check("module names: a file with a std module's name warns once, naming both", "warning: the file json.tom of this project shadows the standard module 'json'\n --> " + d + "/shadow.tom:1:8\n  |\n1 | import json\n  |        ^^^^\n  = help: importing 'json' gets the file, not the standard library's module; rename the file to get the standard one\n  = help: to keep the file on purpose, write '# allow: module-shadow' on the import line", got)
+    os.write_text(d + '/quiet.tom', 'import json  # allow: module-shadow\nimport queue\n\n@main\ndef main():\n    print(json.hello(), queue.q())\n')
+    res = await compile_ir(r, t, [d + '/quiet.tom', 'main', 'std/'], d + '/mn.ll')
+    t.check('module names: # allow: module-shadow silences it, and a planned name (queue) never warns', '', res.stderr + warnings_text(d + '/mn.ll'))
+    os.write_text(d + '/aliased.tom', 'import json as j\n\n@main\ndef main():\n    print(j.hello())\n')
+    res = await compile_ir(r, t, [d + '/aliased.tom', 'main', 'std/'], d + '/mn.ll')
+    first = warnings_text(d + '/mn.ll').split('\n')[0]
+    t.check('module names: an alias does not hide the shadowing', "warning: the file json.tom of this project shadows the standard module 'json'", res.stderr + first + '\n')
+    os.write_text(d + '/uses_json.tom', 'import json\nexport def x() -> str:\n    return json.hello()\n')
+    os.write_text(d + '/two_files.tom', 'import json\nimport uses_json\n\n@main\ndef main():\n    print(json.hello(), uses_json.x())\n')
+    _res = await compile_ir(r, t, [d + '/two_files.tom', 'main', 'std/'], d + '/mn.ll')
+    count = 0
+    for line in host.marked_lines(d + '/mn.ll'):
+        if line.startswith(';! warning: the file json.tom'):
+            count += 1
+    t.check('module names: the warning comes once for each name in a build, though two files import it', '1', str(count))
+
+async def native_input(r: Run, t: Test, rt_o: str):
+    f = t.args[0]
+    n = f.rpartition('/')[2]
+    n = n[:len(n) - 4]
+    ll = t.work + '/i.ll'
+    res = await compile_ir(r, t, [f, 'main', 'std/'], ll)
+    if res.status != 0 or await link(r, t, ll, rt_o, t.work + '/i') != 0:
+        t.bad('input ' + n, 'did not build: ' + res.stderr.rstrip('\n'))
+        return
+    out = t.work + '/o'
+    expected = 'tests/input/' + n + '.out'
+    _rc = await host.redirect([t.work + '/i'], out, r.root, None, r.cpu_of(t), None, 'tests/input/' + n + '.in')
+    if same_bytes(out, expected):
+        t.ok('input ' + n)
+    else:
+        t.bad('input ' + n, '\n'.join(host.diff_head(out, expected, 6)))
+    if len(js_shell(r)) > 0:
+        got = await tjsc(r, t, ['site/wasm', 'run', f, 'tests/input/' + n + '.in'])
+        kept: list[str] = []
+        for line in (got[0] + got[1]).split('\n'):
+            if not line.startswith('~rc '):
+                kept.append(line)
+        if '\n'.join(kept).rstrip('\n') == host.read_text_lossy(expected).rstrip('\n'):
+            t.ok('wasm input ' + n)
+        else:
+            t.bad('wasm input ' + n, '\n'.join((got[0] + got[1]).split('\n')[:6]).rstrip('\n'))
+
+# an endless socket exchange must not keep a waiting input from a line that is already there
+async def native_input_traffic(r: Run, t: Test, rt_o: str):
+    ll = t.work + '/i.ll'
+    res = await compile_ir(r, t, ['tests/input_traffic.tom', 'main', 'std/'], ll)
+    if res.status != 0 or await link(r, t, ll, rt_o, t.work + '/i') != 0:
+        t.bad('input with socket traffic', 'did not build: ' + res.stderr.rstrip('\n'))
+        return
+    os.write_text(t.work + '/in', 'ready\n')
+    _rc = await host.redirect([t.work + '/i'], t.work + '/o', r.root, None, r.cpu_of(t), None, t.work + '/in')
+    t.check('input with socket traffic', 'ready? line ready', host.read_text_lossy(t.work + '/o'))
+
+# with no answer in the pipe, the host is asked (exit 75) only after the task that was due has printed
+async def native_input_ask(r: Run, t: Test, rt_o: str):
+    ll = t.work + '/i.ll'
+    res = await compile_ir(r, t, ['tests/input_ask.tom', 'main', 'std/'], ll)
+    if res.status != 0 or await link(r, t, ll, rt_o, t.work + '/i') != 0:
+        t.bad('input asks last', 'did not build: ' + res.stderr.rstrip('\n'))
+        return
+    env: dict[str, str] = {}
+    env['TOMATO_INPUT_ASK'] = '1'
+    rc = await host.redirect([t.work + '/i'], t.work + '/o', r.root, env, r.cpu_of(t))
+    got = host.read_text_lossy(t.work + '/o') + f'rc={rc}'
+    t.check('input asks last', 'tick\nready? rc=75', got)
+
+async def native_c_test(r: Run, t: Test, source: str, flags: list[str], libs: list[str], args: list[str], ok_name: str, bad_name: str, bad_build_name: str):
+    c = await host.run(['clang', '-O1', '-w', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined'] + flags + ['-o', t.work + '/bin', source] + libs, r.root, None, r.cpu_of(t))
+    if c.status != 0:
+        first: list[str] = []
+        for line in c.stderr.split('\n')[:3]:
+            first.append(line)
+        t.bad(bad_build_name, source + ' does not build: ' + '\n'.join(first).rstrip('\n'))
+        return
+    _rc = await host.redirect([t.work + '/bin'] + args, t.work + '/o', r.root, None, r.cpu_of(t))
+    out = head_lines(t.work + '/o', 14)
+    if out == 'ok':
+        t.ok(ok_name)
+    else:
+        t.bad(bad_name, out)
+
+async def native_sort_fallback(r: Run, t: Test):
+    ll = t.work + '/p.ll'
+    res = await compile_ir(r, t, ['tests/programs/native_sort.tom', 'main', 'std/'], ll)
+    got = ''
+    if res.status == 0:
+        obj = await host.rtcache_object(r.root, t.work, 'o', r.root + '/runtime/tomato_rt.c', ['-O1', '-pthread', '-w', '-DSORT_DEPTH_MUL=0'])
+        c = await host.run(['clang', '-O1', '-w', '-o', t.work + '/p', ll, obj, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+        if c.status == 0:
+            _rc = await host.redirect([t.work + '/p'], t.work + '/out', r.root, None, r.cpu_of(t))
+            got = host.read_text_lossy(t.work + '/out')
+    t.check('sort with the depth limit forced to 0', host.read_text_lossy('tests/expected/native_sort.main.out'), got)
+
+# A task waiting for a lock that the cycle collector frees must leave the runtime's list of lock waiters: the deadlock report after it names
+# only the task that is really waiting, and AddressSanitizer sees no read of the freed frame or lock
+async def native_lock_gc(r: Run, t: Test):
+    name = 'lock waiters freed by the collector leave no stale report'
+    rt_asan = await shared_path(r, 'rt_asan.path')
+    ll = t.work + '/g.ll'
+    _res = await compile_ir(r, t, ['tests/runtime/async_lock_gc.tom', 'main', 'std/'], ll)
+    c = await host.run(['clang', '-O1', '-w', '-g', '-fsanitize=address', '-o', t.work + '/g', ll, rt_asan, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+    if c.status != 0:
+        t.bad(name, 'does not build')
+        return
+    env: dict[str, str] = {}
+    env['ASAN_OPTIONS'] = 'detect_leaks=0'
+    _rc = await host.redirect([t.work + '/g'], t.work + '/out', r.root, env, r.cpu_of(t))
+    text = host.read_text_lossy(t.work + '/out')
+    n = 0
+    for line in text.split('\n'):
+        if line.startswith('  task ') and ' is waiting' in line:
+            rest = line[len('  task '):].partition(' ')[0]
+            if rest == '' or rest.isdigit():
+                n += 1
+    if n == 1 and 'task 1 is waiting at line 31 for a lock held since line 30' in text and 'AddressSanitizer' not in text:
+        t.ok(name)
+    else:
+        t.bad(name, head_lines(t.work + '/out', 8))
+
+# program, "leaks" to look for leaks too
+async def native_release_asan(r: Run, t: Test):
+    name = t.args[0]
+    rt_asan = await shared_path(r, 'rt_asan.path')
+    arg: list[str] = []
+    if name == 'file_closed' or name == 'sys_run' or name == 'sys_async':
+        arg.append(t.work)             # it writes files: into this test's own folder
+    ll = t.work + '/p.ll'
+    _res = await compile_ir(r, t, ['tests/programs/' + name + '.tom', 'main', 'std/', 'release'], ll)
+    c = await host.run(['clang', '-O1', '-w', '-g', '-fsanitize=address', '-o', t.work + '/rel', ll, rt_asan, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+    if c.status != 0:
+        t.bad('release ' + name, 'does not build')
+        return
+    leaks = len(t.args) > 1 and t.args[1] == 'leaks'
+    env: dict[str, str] = {}
+    if not leaks:
+        env['ASAN_OPTIONS'] = 'detect_leaks=0'
+    _rc = await host.redirect([t.work + '/rel'] + arg, t.work + '/out', r.root, env, r.cpu_of(t), None, '', t.work + '/e')
+    body = host.read_bytes_or_empty(t.work + '/out')
+    err = host.read_bytes_or_empty(t.work + '/e')
+    if leaks:
+        body = body + err
+    else:
+        pieces = err.split(b'\n')
+        if len(pieces) > 0 and len(pieces[len(pieces) - 1]) == 0:
+            pieces.pop()
+        for piece in pieces:
+            if b'never freed' not in piece:
+                body = body + piece + b'\n'
+    os.write_bytes(t.work + '/out', body)
+    expected = 'tests/expected/' + name + '.main.out'
+    if same_bytes(t.work + '/out', expected):
+        t.ok('release ' + name)
+    else:
+        t.bad('release ' + name, '\n'.join(host.diff_head(t.work + '/out', expected, 5)))
+
+# fused expressions over big numbers; the test itself is tested by taking the frees out of the runtime
+async def native_release_leak(r: Run, t: Test):
+    rt_asan = await shared_path(r, 'rt_asan.path')
+    os.write_text(t.work + '/leak.tom', 'def work():\n    x = 2 ** 70\n    xs = [2 ** 65, 7]\n    for i in range(40):\n        x = x * 3 - i * xs[i % 2] + 1\n        xs[1] = xs[1] * xs[0] - x % 1000003\n    print(x % 97, xs[1] % 97)\n\n@main\ndef main():\n    work()\n')
+    ll = t.work + '/p.ll'
+    res = await compile_ir(r, t, [t.work + '/leak.tom', 'main', 'std/', 'release'], ll)
+    got = ''
+    if res.status == 0:
+        c = await host.run(['clang', '-O1', '-w', '-g', '-fsanitize=address', '-o', t.work + '/rel', ll, rt_asan, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+        if c.status == 0:
+            _rc = await host.redirect([t.work + '/rel'], t.work + '/o1', r.root, None, r.cpu_of(t))
+            got = host.read_text_lossy(t.work + '/o1')
+    t.check('release: big numbers in fused expressions are freed', '55 51', got)
+    kept: list[str] = []
+    for line in host.read_text_lossy('runtime/tomato_rt.c').split('\n'):
+        if line.startswith('#define INT_CONSUME(m, x, y) '):
+            kept.append('#define INT_CONSUME(m, x, y) do { } while (0)')
+        else:
+            kept.append(line)
+    os.write_text(t.work + '/leaky.c', '\n'.join(kept))
+    obj = await host.rtcache_object(r.root, t.work, 'o', t.work + '/leaky.c', ['-O1', '-pthread', '-w'])   # (kept in the cache by what the file holds)
+    c = await host.run(['clang', '-O1', '-w', '-o', t.work + '/leaky', ll, obj, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+    seen = ''
+    if c.status == 0:
+        _rc = await host.redirect([t.work + '/leaky'], t.work + '/o2', r.root, None, r.cpu_of(t))
+        seen = host.read_text_lossy(t.work + '/o2')
+    if 'never freed' in seen:
+        t.ok('release: a big number that is not freed is reported')
+    else:
+        t.bad('release: a big number that is not freed is reported')
+
+# An uncaught error in release mode prints one line, `error[ID]: Class: message (line N)` (a runtime failure: no class), and no trace.
+# The long message is 10000 bytes; the same programs run under AddressSanitizer, whose runtime reports nothing.
+async def native_release_error_line(r: Run, t: Test):
+    rt_asan = await shared_path(r, 'rt_asan.path')
+    long_text = 'config file missing key '
+    for _i in range(2000):
+        long_text += 'port '
+    long_want = 'error[E11]: ValueError: ' + long_text + ' (line 5)'
+    for spec in [('release_long_message', long_want), ('divide_by_zero', 'error[E01]: division by zero (line ')]:
+        name = spec[0]
+        want = spec[1]
+        ll = t.work + '/p.ll'
+        _res = await compile_ir(r, t, ['tests/runtime/' + name + '.tom', 'main', 'std/', 'release'], ll)
+        c = await host.run(['clang', '-O1', '-w', '-g', '-fsanitize=address', '-o', t.work + '/rel', ll, rt_asan, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+        if c.status != 0:
+            t.bad('release ASan: ' + name, 'does not build')
+            continue
+        env: dict[str, str] = {}
+        env['ASAN_OPTIONS'] = 'detect_leaks=0'
+        rc = await host.redirect([t.work + '/rel'], t.work + '/out', r.root, env, r.cpu_of(t), None, '', t.work + '/err')
+        err = host.read_text_lossy(t.work + '/err')
+        lines = 0
+        for ch in err:
+            if ch == '\n':
+                lines += 1
+        if err.rstrip('\n').startswith(want):
+            t.ok('release ASan: ' + name + ' prints the class, the message and the line')
+        else:
+            t.bad('release ASan: ' + name + ' prints the class, the message and the line', err[:300])
+        t.check('release ASan: ' + name + ' is one line, no trace, status 1', '1 1', f'{lines} {rc}')
+
+# the functions of tests/run.sh (t_NAME) that this module ports
+export def names() -> list[str]:
+    return ['t_exit_status', 't_no_entropy', 't_example', 't_program', 't_program_asan', 't_asan', 't_neg', 't_error_text', 't_rt', 't_gap', 't_reserved_all', 't_module_names', 't_input', 't_input_traffic', 't_input_ask', 't_bigfloat', 't_bigdiv', 't_bigmul', 't_bigdec', 't_sort_fallback', 't_lock_gc', 't_release_asan', 't_release_leak', 't_release_error_line']
+
+export async def run(r: Run, t: Test, rt_o: str) -> bool:
+    if t.func == 't_exit_status':
+        await native_exit_status(r, t, rt_o)
+    elif t.func == 't_no_entropy':
+        await native_no_entropy(r, t)
+    elif t.func == 't_example':
+        await native_example(r, t, rt_o)
+    elif t.func == 't_program':
+        await native_program(r, t, rt_o)
+    elif t.func == 't_program_asan':
+        await native_program_asan(r, t)
+    elif t.func == 't_asan':
+        await native_asan(r, t)
+    elif t.func == 't_neg':
+        await native_neg(r, t)
+    elif t.func == 't_error_text':
+        await native_error_text(r, t)
+    elif t.func == 't_rt':
+        await native_rt(r, t, rt_o)
+    elif t.func == 't_gap':
+        await native_gap(r, t, rt_o)
+    elif t.func == 't_reserved_all':
+        await native_reserved_all(r, t)
+    elif t.func == 't_module_names':
+        await native_module_names(r, t)
+    elif t.func == 't_input':
+        await native_input(r, t, rt_o)
+    elif t.func == 't_input_traffic':
+        await native_input_traffic(r, t, rt_o)
+    elif t.func == 't_input_ask':
+        await native_input_ask(r, t, rt_o)
+    elif t.func == 't_bigfloat':
+        await native_c_test(r, t, 'tests/bigfloat.c', [], ['-pthread', '-lm'], ['1500'], 'floats of any size (asan and ubsan, against an exact reference)', 'floats of any size', 'floats of any size')
+    elif t.func == 't_bigdiv':
+        await native_c_test(r, t, 'tests/bigdiv.c', [], ['-lm'], [], 'big integer division (asan and ubsan, against bitwise division)', 'big integer division', 'big integer division')
+    elif t.func == 't_bigmul':
+        await native_c_test(r, t, 'tests/bigmul.c', [], ['-lm'], [], 'big integer multiplication (asan and ubsan, Karatsuba and squaring against schoolbook)', 'big integer multiplication', 'big integer multiplication')
+    elif t.func == 't_bigdec':
+        flags = words(t.args[0])
+        shown = ''
+        if t.args[0] != '':
+            shown = ' (' + t.args[0] + ')'
+        await native_c_test(r, t, 'tests/bigdec.c', flags, ['-pthread', '-lm'], [], 'big integer decimal text' + shown + ' (asan and ubsan, against the plain loops)', 'big integer decimal text ' + t.args[0], 'big integer decimal text')
+    elif t.func == 't_sort_fallback':
+        await native_sort_fallback(r, t)
+    elif t.func == 't_lock_gc':
+        await native_lock_gc(r, t)
+    elif t.func == 't_release_asan':
+        await native_release_asan(r, t)
+    elif t.func == 't_release_leak':
+        await native_release_leak(r, t)
+    elif t.func == 't_release_error_line':
+        await native_release_error_line(r, t)
+    else:
+        return False
+    return True
+
+# sys.exit: the status, what is flushed (print and write_stdout), and what does not run (finally, the code after)
+async def native_exit_status(r: Run, t: Test, rt_o: str):
+    for spec in [('exit_status', '3'), ('exit_default', '0')]:
+        n = spec[0]
+        ll = t.work + '/x.ll'
+        res = await compile_ir(r, t, ['tests/runtime/' + n + '.tom', 'main', 'std/'], ll)
+        built = False
+        if res.status == 0:
+            c = await host.run(['clang', '-O1', '-w', '-o', t.work + '/x', ll, rt_o, '-lm'], r.root, None, r.cpu_of(t))
+            built = c.status == 0
+        if not built:
+            t.bad('sys.exit ' + n, 'did not build')
+            continue
+        rc = await host.redirect([t.work + '/x'], t.work + '/o', r.root, None, r.cpu_of(t))
+        want_out = 'partial line'
+        if n == 'exit_status':
+            want_out = 'before\npending '
+        t.check('sys.exit ' + n + ': output', want_out, host.read_text_lossy(t.work + '/o'))
+        t.check('sys.exit ' + n + ': status', spec[1], str(rc))
+
+async def native_no_entropy(r: Run, t: Test):
+    n = t.args[0]
+    ll = t.work + '/r.ll'
+    res = await compile_ir(r, t, ['tests/runtime/' + n + '.tom', 'main', 'std/'], ll)
+    obj = await host.rtcache_object(r.root, t.work, 'o', r.root + '/runtime/tomato_rt.c', ['-O1', '-pthread', '-w', '-DTOMATO_TEST_NO_ENTROPY'])
+    built = False
+    if res.status == 0 and obj != '':
+        c = await host.run(['clang', '-O1', '-w', '-o', t.work + '/r', ll, obj, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+        built = c.status == 0
+    if not built:
+        t.bad('runtime ' + n, 'did not build')
+        return
+    ran = await host.run([t.work + '/r'], r.root, None, r.cpu_of(t))
+    seen = ran.stdout + ran.stderr
+    if 'secure random bytes are not available on this system' in seen:
+        if ran.status == 1:
+            t.ok('runtime ' + n)
+        else:
+            t.bad('runtime ' + n, f'exit status {ran.status}, wanted 1')
+    else:
+        t.bad('runtime ' + n, 'wanted the entropy error, got: ' + seen.rstrip('\n'))
