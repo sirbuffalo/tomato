@@ -1,0 +1,7 @@
+warning: '@eq' is an unstable feature (U5, the operator and protocol marker names beyond @add)
+  --> tests/errors/unstable_markers.tom:13:5
+   |
+13 |     @eq
+   |     ^^^
+   = help: it may change in any release, a patch release included: the marker names may be renamed, or what they do changed
+   = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line

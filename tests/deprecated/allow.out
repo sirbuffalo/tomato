@@ -1,0 +1,7 @@
+warning: 'deprecated_fixture.old_double' is deprecated since 1.1
+  --> tests/deprecated/allow.tom:12:12
+   |
+12 |     return deprecated_fixture.old_double(x)
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: use deprecated_fixture.double instead
+   = help: a later minor release may remove it (docs/releasing.md); to use it anyway and hide this, write '# allow: deprecated' on this line

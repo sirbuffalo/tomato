@@ -1,9 +1,24 @@
-# nothing here is on the unstable list: the promoted parts of random and itertools, and a name of another module that is also called
-# choice or progress_bar, never warn
+# nothing here is on the unstable list: the promoted parts of random and itertools, a name of another module that is also called
+# choice or progress_bar, and the markers that are not U5 (@add, @str, @init), never warn
 import random
 import itertools
 from itertools import chain, pairwise
 from random import Random
+
+class Money:
+    cents: int = 0
+
+    @init
+    def make(self, cents: int):
+        self.cents = cents
+
+    @add
+    def plus(self, other: Money) -> Money:
+        return Money(self.cents + other.cents)
+
+    @str
+    def show(self) -> str:
+        return f'{self.cents}c'
 
 def choice(xs: list[int]) -> int:
     return xs[0]
@@ -15,4 +30,5 @@ def progress_bar(n: int) -> int:
 def main():
     rng = Random(3)
     print(choice([rng.randint(1, 1)]), progress_bar(1), random.Random(1).random() < 2.0)
+    print(Money(1) + Money(2))
     print(list(chain([1], [2])), list(pairwise([1, 2, 3])), len(list(itertools.batched([1, 2, 3], 2))))

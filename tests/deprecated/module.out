@@ -1,0 +1,7 @@
+warning: 'deprecated_fixture_module' is deprecated since 1.1
+ --> tests/deprecated/module.tom:2:6
+  |
+2 | from deprecated_fixture_module import twice
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: use deprecated_fixture instead
+  = help: a later minor release may remove it (docs/releasing.md); to use it anyway and hide this, write '# allow: deprecated' on this line

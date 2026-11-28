@@ -1,0 +1,7 @@
+warning: 'old_double' is deprecated (deprecated_fixture.old_double, since 1.1)
+ --> tests/deprecated/use.tom:2:32
+  |
+2 | from deprecated_fixture import old_double, double
+  |                                ^^^^^^^^^^
+  = help: use deprecated_fixture.double instead
+  = help: a later minor release may remove it (docs/releasing.md); to use it anyway and hide this, write '# allow: deprecated' on this line

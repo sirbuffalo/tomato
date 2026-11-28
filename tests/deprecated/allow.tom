@@ -1,0 +1,16 @@
+# `# allow: deprecated` on the line of a use silences that use; the next use, on a line without it, warns instead (once for the name)
+from deprecated_fixture import old_double  # allow: deprecated
+import deprecated_fixture
+
+def first(x: int) -> int:
+    return old_double(x)
+
+def second(x: int) -> int:
+    return deprecated_fixture.old_double(x)  # allow: deprecated
+
+def third(x: int) -> int:
+    return deprecated_fixture.old_double(x)
+
+@main
+def main():
+    print(first(1), second(2), third(3))

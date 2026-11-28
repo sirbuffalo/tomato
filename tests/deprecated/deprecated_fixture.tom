@@ -1,0 +1,6 @@
+# A test-only module (compiler/src/deprecated.tom lists its `old_double`): the compiler warns for its use while no real std name is deprecated.
+export def old_double(x: int) -> int:
+    return x * 2
+
+export def double(x: int) -> int:
+    return x * 2

@@ -311,10 +311,13 @@ lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: 
   want="$(sed -n '1s/^# borrowed loops: //p' "tests/programs/$2.tom")"
   [ -z "$want" ] || [ "$(grep -c 'lent\.slot\.[0-9]* = alloca' "$1")" = "$want" ]
 }
+# Does the IR carry a warning other than the unstable-feature one? A program of tests/programs may use the marker names and `start` (U5, U6: D129a) without
+# `# allow: unstable` on every use (that would put the comment on about forty files); the warning is tested by tests/errors/unstable_* and the CLI tests.
+own_warnings() { awk '/^;! (warning|error)/ { skip = ($0 ~ /is an unstable feature/) } /^;! / && !skip { found = 1 } END { exit !found }' "$1"; }
 t_program() {
   name="$1"
   "$c1" "tests/programs/$name.tom" main std/ > "$work/p.ll" 2> "$work/e"
-  if grep -q '^;! ' "$work/p.ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
+  if own_warnings "$work/p.ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
   lent_loops_ok "$work/p.ll" "$name" || { echo "FAIL program $name: the number of loops that borrow their item changed"; echo x >> "$shared/failed"; return; }
   arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics|os_files|file_lines|file_loop_close|file_modes|file_closed|file_drop_loop|bytes_files|sys_run|sys_async) arg="$work" ;; sys_basics) arg="alpha" ;; sys_args) arg="7 b c" ;; esac   # they write files: into this test's own folder, not a shared /tmp; the sys programs take inputs
   # shellcheck disable=SC2086
@@ -325,7 +328,7 @@ t_program_asan() { # the same test as t_program, for a program that an AddressSa
   # from that build, which asan_build makes once for both: the same IR, the same -O1, with the checks of AddressSanitizer added
   name="$1"
   asan_build "tests/programs/$name"
-  if grep -q '^;! ' "$asan_ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
+  if own_warnings "$asan_ll"; then echo "FAIL program $name has warnings"; echo x >> "$shared/failed"; return; fi
   lent_loops_ok "$asan_ll" "$name" || { echo "FAIL program $name: the number of loops that borrow their item changed"; echo x >> "$shared/failed"; return; }
   arg=""; case "$name" in toml_api|json_files|msgpack_files|msgpack_file_basics|os_files|file_lines|file_loop_close|file_modes|file_closed|file_drop_loop|bytes_files|sys_run|sys_async) arg="$work" ;; sys_basics) arg="alpha" ;; sys_args) arg="7 b c" ;; esac   # they write files: into this test's own folder, not a shared /tmp; the sys programs take inputs
   # shellcheck disable=SC2086
@@ -519,7 +522,7 @@ t_requests() { # one local server for this job's own requests; three parts: 1 re
     use_asan
     if start_httpd; then
       "$c1" tests/programs/requests_local.tom main std/ > "$work/rq.ll" 2> "$work/e"
-      if grep -q '^;! ' "$work/rq.ll"; then bad "requests_local has warnings" "$(grep '^;! ' "$work/rq.ll" | head -4)"; fi
+      if own_warnings "$work/rq.ll"; then bad "requests_local has warnings" "$(grep '^;! ' "$work/rq.ll" | head -4)"; fi
       if clang -O1 -w -o "$work/rq" "$work/rq.ll" "$rt_o" -pthread -lm 2>/dev/null; then
         check "requests against the local server" "$(cat tests/expected/requests_local.main.out)" "$("$work/rq" "http://127.0.0.1:$port" 2>&1)"
         if clang -O1 -w -g -fsanitize=address -o "$work/rq_asan" "$work/rq.ll" "$rt_asan" -pthread -lm 2>/dev/null; then
@@ -652,11 +655,11 @@ the number is too large to write with f: it has more than 1000 digits before the
   m="$(tjsc site/wasm compile "$work/wl.tom" "--config=$work/wl.toml" 2>&1)"
   case "$m" in *"error[E543]: /tomato.toml: limits.exp_bits must be a whole number from 2048 to 2147483647, not 5"*"~rc 1") ok "wasm: a bad tomato.toml is an error";; *) bad "wasm: a bad tomato.toml is an error" "$m";; esac
 }
-t_wasm_unstable() { # the website's compiler (WebAssembly) gives the same unstable-feature warnings as the native one: once for each feature, none when allowed or stable
-  for n in unstable_use unstable_dotted unstable_allow unstable_quiet; do
-    tjsc site/wasm compile "tests/errors/$n.tom" 2> /dev/null | grep '^;! ' | sed 's/^;! //' | grep -v '^ *-->' > "$work/w.$n"
-    grep -v '^ *-->' "tests/errors/$n.out" > "$work/n.$n"
-    if cmp -s "$work/w.$n" "$work/n.$n"; then ok "wasm warnings: $n"; else bad "wasm warnings: $n" "$(diff "$work/w.$n" "$work/n.$n" | head -6)"; fi
+t_wasm_unstable() { # the website's compiler (WebAssembly) gives the same unstable-feature and deprecation warnings as the native one: once for each feature, none when allowed or stable
+  for n in errors/unstable_use errors/unstable_dotted errors/unstable_allow errors/unstable_quiet errors/unstable_markers errors/unstable_start deprecated/use deprecated/module deprecated/allow deprecated/quiet; do
+    tjsc site/wasm compile "tests/$n.tom" 2> /dev/null | grep '^;! ' | sed 's/^;! //' | grep -v '^ *-->' > "$work/w.$(basename $n)"
+    grep -v '^ *-->' "tests/$n.out" > "$work/n.$(basename $n)"
+    if cmp -s "$work/w.$(basename $n)" "$work/n.$(basename $n)"; then ok "wasm warnings: $n"; else bad "wasm warnings: $n" "$(diff "$work/w.$(basename $n)" "$work/n.$(basename $n)" | head -6)"; fi
   done
 }
 t_wasm_site_errors() { r="$(jsc tests/site_errors.js 2>&1)"; [ "$r" = ok ] && ok "website: tomatoErrors keeps the words, escapes them, styles with classes" || bad "website: tomatoErrors" "$r"; }
@@ -814,7 +817,7 @@ t_cli_modes() {
   fi
 }
 # release links with LTO and an inlined runtime: the same programs must print exactly what debug mode prints
-t_cli_release_like_debug() { cli_setup; check "release mode runs $1 like debug" "$(cat "tests/expected/$1.main.out")" "$($t run "tests/programs/$1.tom" --mode release 2>&1)"; }
+t_cli_release_like_debug() { cli_setup; check "release mode runs $1 like debug" "$(cat "tests/expected/$1.main.out")" "$($t run "tests/programs/$1.tom" --mode release --no-warnings 2>&1)"; }
 t_cli_no_lto() { # release with a clang whose linker has no LLVM plugin (-flto fails when linking): clang merges the runtime into the program instead
   cli_setup
   mkdir -p "$work/nolto"; printf '#!/bin/sh\ncase " $* " in *" -flto "*) case " $* " in *" -c "*) ;; *) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v clang)" > "$work/nolto/clang"; chmod +x "$work/nolto/clang"
@@ -871,7 +874,7 @@ EOS
   check "debug link: ... the strings are kept as written, the calls are renamed" "yes" "$(grep -q 'c"call void @tomato_retain(ptr' "$work/merged.ll" && ! grep -q 'c".*@tomato_inl_' "$work/merged.ll" && grep -q 'call i64 @tomato_inl_int_add_c(' "$work/merged.ll" && echo yes)"
 }
 t_cli_inline_paths() { # the inline copies must do what the runtime's functions do: programs about the edges of the small number range, in the debug link
-  cli_setup; check "debug link runs $1 like the plain link" "$(cat "tests/expected/$1.main.out")" "$($t run "tests/programs/$1.tom" 2>&1)"
+  cli_setup; check "debug link runs $1 like the plain link" "$(cat "tests/expected/$1.main.out")" "$($t run "tests/programs/$1.tom" --no-warnings 2>&1)"
 }
 t_cli_runtime_cache() { # the compiled runtime is kept in the cache folder: a hit, a miss for every change of key, concurrent runs, no cache
   # three parts, each with a cache folder of its own: 1 the entries (a hit, release is another entry), 2 the changes of the key (the runtime
@@ -3756,20 +3759,25 @@ t_unstable_features() { # the unstable list (D121a): compiler/src/unstable.tom a
   ids="$(sed -n "s/^ *'\(U[0-9][0-9]*\)|.*/\1/p" compiler/src/unstable.tom | tr '\n' ' ')"
   doc_ids="$(grep '^| U[0-9][0-9]* |' docs/provisional.md | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | tr '\n' ' ')"
   [ -n "$ids" ] || bad_list="$bad_list compiler/src/unstable.tom has no rows;"
-  # U5 and U6 (the marker names beyond @add, the async task order; D126a) are on the list in docs/provisional.md but not in unstable.tom yet:
-  # their warning needs compiler changes (TODO.md, "Warn for the marker-name and async-order unstable features"). Empty this when that is built.
-  pending_unstable="U5 U6"
-  [ "$(echo $ids $pending_unstable)" = "$(echo $doc_ids)" ] || bad_list="$bad_list the ids differ (unstable.tom: $ids plus pending: $pending_unstable / docs/provisional.md section 1: $doc_ids);"
-  [ "$(echo $ids $pending_unstable | tr ' ' '\n' | sort | uniq -d)" = "" ] || bad_list="$bad_list an id is listed twice in unstable.tom or pending;"
-  count="$(echo $ids $pending_unstable | wc -w | tr -d ' ')"
+  [ "$ids" = "$doc_ids" ] || bad_list="$bad_list the ids differ (unstable.tom: $ids/ docs/provisional.md section 1: $doc_ids);"
+  [ "$(echo $ids | tr ' ' '\n' | sort | uniq -d)" = "" ] || bad_list="$bad_list an id is listed twice in unstable.tom;"
+  count="$(echo $ids | wc -w | tr -d ' ')"
   grep -q "^\*\*$count features\.\*\* " docs/provisional.md || bad_list="$bad_list docs/provisional.md does not say '**$count features.**' at the head of section 1;"
   grep -q "^1\. \*\*$count rows stay provisional\*\*" docs/provisional.md || bad_list="$bad_list docs/provisional.md does not say '$count rows stay provisional' in its introduction;"
+  # a name that means a use: `module.name` (a std export), `@name` (U5: a method marker the parser takes, and the table row names it) or `start` (U6)
   for row in $(sed -n "s/^ *'\(U[0-9][0-9]*|[^|]*|[^|]*\)|.*/\1/p" compiler/src/unstable.tom | tr ' ' '_'); do
     id="${row%%|*}"; keys="${row##*|}"
     docrow="$(grep "^| $id |" docs/provisional.md | awk -F'|' '{ print $3 }')"
+    changes="$(grep "^| $id |" docs/provisional.md | awk -F'|' '{ print $4 }')"
     for key in $(echo "$keys" | tr ',' ' '); do
-      case "$docrow" in *"${key##*.}"*) ;; *) bad_list="$bad_list $id lists $key but the feature column of its row in docs/provisional.md does not name ${key##*.};" ;; esac
-      grep -q "^export \(class\|def\) ${key##*.}\b" "std/${key%%.*}.tom" || bad_list="$bad_list $key is not exported by std/${key%%.*}.tom;"
+      case "$key" in
+        @*) case "$changes" in *"$key"*) ;; *) bad_list="$bad_list $id lists $key but the 'what may change' column of its row in docs/provisional.md does not name it;" ;; esac
+            grep -q "'${key#@}'" compiler/src/parser.tom || bad_list="$bad_list $key is not a marker name of compiler/src/parser.tom;" ;;
+        start) [ "$id" = U6 ] || bad_list="$bad_list only U6 is the use of start;"
+               grep -q "t.text == 'start'" compiler/src/parser.tom || bad_list="$bad_list the parser no longer reads start;" ;;
+        *) case "$docrow" in *"${key##*.}"*) ;; *) bad_list="$bad_list $id lists $key but the feature column of its row in docs/provisional.md does not name ${key##*.};" ;; esac
+           grep -q "^export \(class\|def\) ${key##*.}\b" "std/${key%%.*}.tom" || bad_list="$bad_list $key is not exported by std/${key%%.*}.tom;" ;;
+      esac
     done
   done
   [ -z "$bad_list" ] && ok "the unstable list: compiler/src/unstable.tom and docs/provisional.md agree" || bad "the unstable list: compiler/src/unstable.tom and docs/provisional.md agree" "$bad_list"
@@ -3810,6 +3818,51 @@ t_cli_unstable() { # `tomato run` shows the warning, then the program runs; --no
   check "unstable feature: # allow: unstable on the import line hides it" "" "$($t run "$work/ub2.tom" 2>&1 >/dev/null | grep unstable)"
   check "unstable feature: the repl does not show it" "1" "$(printf 'from itertools import progress_bar\nprint(1)\n:quit\n' | $t repl 2>&1)"
 }
+t_deprecated() { # the deprecation warning (D129a): compiler/src/deprecated.tom against std and the table in docs/errors.md, and the text of the warning
+  bad_list=""
+  rows="$(sed -n "s/^ *'\([^'|]*|[^'|]*|[^'|]*\)',*.*/\1/p" compiler/src/deprecated.tom)"
+  real=""
+  for row in $rows; do
+    name="${row%%|*}"; module="${name%%.*}"; item="${name#*.}"
+    case "$module" in
+      deprecated_fixture|deprecated_fixture_module)   # test-only: a file of tests/deprecated stands for a std module
+        [ -f "tests/deprecated/$module.tom" ] || bad_list="$bad_list the fixture module tests/deprecated/$module.tom is missing;"
+        [ "$item" = "$name" ] || grep -q "^export \(class\|def\|const\) $item\b" "tests/deprecated/$module.tom" || bad_list="$bad_list $name is not exported by tests/deprecated/$module.tom;" ;;
+      *) real="$real $row"
+         [ -f "std/$module.tom" ] || bad_list="$bad_list $name: there is no std module $module;"
+         [ "$item" = "$name" ] || grep -q "^export \(class\|def\|const\|async def\) $item\b" "std/$module.tom" || bad_list="$bad_list $name is not exported by std/$module.tom;" ;;
+    esac
+    case "$row" in *"|1."*"|"*) ;; *) bad_list="$bad_list the row of $name does not give a version (1.N) as its second field;" ;; esac
+  done
+  # the table "Deprecated names" of docs/errors.md (rows `| `name` | 1.N | use |`) has the same names and versions as the real rows
+  have="$(for row in $real; do echo "${row%|*}"; done | sort | tr '\n' ' ')"
+  doc="$(grep '^| `[^`]*` | 1\.[0-9]' docs/errors.md | awk -F'|' '{ gsub(/[ `]/, "", $2); gsub(/ /, "", $3); print $2 "|" $3 }' | sort | tr '\n' ' ')"
+  [ "$have" = "$doc" ] || bad_list="$bad_list the rows of compiler/src/deprecated.tom ($have) and the table Deprecated names in docs/errors.md ($doc) differ;"
+  [ -z "$bad_list" ] && ok "the deprecated list: compiler/src/deprecated.tom names existing items and agrees with docs/errors.md" || bad "the deprecated list: compiler/src/deprecated.tom names existing items and agrees with docs/errors.md" "$bad_list"
+  # no real std name is deprecated yet when no row is real; the fixture rows are the only ones the compiler warns for here
+  for n in use module allow quiet; do
+    "$c1" "tests/deprecated/$n.tom" main std/ > "$work/dp.ll" 2> "$work/dp.out"
+    grep '^;! ' "$work/dp.ll" | sed 's/^;! //' >> "$work/dp.out"
+    if cmp -s "$work/dp.out" "tests/deprecated/$n.out"; then ok "deprecation warning: $n"; else bad "deprecation warning: $n" "$(diff "$work/dp.out" "tests/deprecated/$n.out" | head -6)"; fi
+  done
+}
+t_cli_deprecated() { # `tomato run` shows the warning and runs the program; --no-warnings, TOMATO_WARNINGS=off and # allow: deprecated hide it
+  cli_setup
+  cp tests/deprecated/deprecated_fixture.tom tests/deprecated/use.tom "$work/"
+  check "deprecated name: a warning is shown on stderr, then the program runs (exit status 0)" "warning: 'old_double' is deprecated (deprecated_fixture.old_double, since 1.1)
+ --> $work/use.tom:2:32
+  |
+2 | from deprecated_fixture import old_double, double
+  |                                ^^^^^^^^^^
+  = help: use deprecated_fixture.double instead
+  = help: a later minor release may remove it (docs/releasing.md); to use it anyway and hide this, write '# allow: deprecated' on this line
+4 6 8
+0" "$($t run "$work/use.tom" 2>&1 >/dev/null | sed -n 1,7p; $t run "$work/use.tom" 2>/dev/null; $t run "$work/use.tom" > /dev/null 2>&1; echo $?)"
+  check "deprecated name: --no-warnings hides it" "" "$($t run "$work/use.tom" --no-warnings 2>&1 >/dev/null | grep deprecated)"
+  check "deprecated name: TOMATO_WARNINGS=off hides it" "" "$(TOMATO_WARNINGS=off $t run "$work/use.tom" 2>&1 >/dev/null | grep deprecated)"
+  sed 's/^.*old_double.*$/&  # allow: deprecated/' "$work/use.tom" > "$work/use2.tom"
+  check "deprecated name: # allow: deprecated hides it" "" "$($t run "$work/use2.tom" 2>&1 >/dev/null | grep deprecated)"
+}
 t_cli_reserved_seeds() { # a seed may not take a name std keeps for a module it may add (tomato seed check, and a project that lists one)
   cli_setup
   W="$work/rs"; mkdir -p "$W/q/src" "$W/app" "$work/uh"
@@ -3835,6 +3888,8 @@ spawn_free t_reserved_names
 spawn t_module_names
 spawn t_unstable_features
 spawn_cli t_cli_unstable
+spawn t_deprecated
+spawn_cli t_cli_deprecated
 spawn_cli t_cli_reserved_seeds
 
 # ---- error messages -----------------------------------------------------------------------------------------------------

@@ -10,10 +10,10 @@ async def show(t: task[int, str]):
 
 @main
 async def main():
-    a = start worker("a", 3)
-    b = start worker("b", 2)
-    first = start show(a)
-    second = start show(b)
+    a = start worker("a", 3)  # allow: unstable (the order tasks run in may change, docs/provisional.md)
+    b = start worker("b", 2)  # allow: unstable
+    first = start show(a)  # allow: unstable
+    second = start show(b)  # allow: unstable
     await first
     await second
     print("results", await a, await b)

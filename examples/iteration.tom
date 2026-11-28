@@ -15,14 +15,14 @@ class Countdown:
     def make(self, start: int):
         self.start = start
 
-    @iter
+    @iter  # allow: unstable (the marker names may change, docs/provisional.md)
     def numbers(self) -> int:
         n = self.start
         while n > 0:
             yield n
             n -= 1
 
-    @len
+    @len  # allow: unstable
     def size(self) -> int:
         return self.start
 

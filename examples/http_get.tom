@@ -19,6 +19,6 @@ async def main(url: str = 'https://example.com'):
         print('could not fetch', url + ':', e.message)
 
     # requests started together run at the same time
-    tasks = [start size_of(url), start size_of(url + '/')]
+    tasks = [start size_of(url), start size_of(url + '/')]  # allow: unstable (the order tasks run in may change, docs/provisional.md)
     for t in tasks:
         print('length', await t)

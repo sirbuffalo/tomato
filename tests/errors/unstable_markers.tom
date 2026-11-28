@@ -1,0 +1,24 @@
+# U5: a method marker beyond @add warns once for the feature, at the marker line, even with a comment or a blank line between the marker and
+# its method. `# allow: unstable` on a marker line silences that marker (@lt); the next one without it (@eq) warns instead, and @iter, a
+# second marker of the feature, does not
+class Point:
+    x: int = 0
+
+    @lt  # allow: unstable
+    def less(self, other: Point) -> bool:
+        return self.x < other.x
+
+    # two points are equal when their x is
+
+    @eq
+    def same(self, other: Point) -> bool:
+        return self.x == other.x
+
+    @iter
+    def parts(self) -> int:
+        yield self.x
+
+@main
+def main():
+    a = Point()
+    print(a == a, a < a, [p for p in a])

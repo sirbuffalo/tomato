@@ -1,0 +1,11 @@
+# U6: starting a task warns once for the feature, at the first `start` that has no `# allow: unstable`; awaiting a call or sleeping does not
+async def work(n: int) -> int:
+    await sleep(0.0)
+    return n
+
+@main
+async def main():
+    a = start work(1)  # allow: unstable
+    b = start work(2)
+    c = start work(3)
+    print(await a, await b, await c, await work(4))

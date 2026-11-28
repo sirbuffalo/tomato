@@ -1,0 +1,10 @@
+# nothing here is deprecated: the replacement, and another module's name that is also called old_double
+import deprecated_fixture
+from deprecated_fixture import double
+
+def old_double(x: int) -> int:
+    return x + x
+
+@main
+def main():
+    print(double(1), deprecated_fixture.double(2), old_double(3))

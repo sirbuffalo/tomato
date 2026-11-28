@@ -7,8 +7,8 @@
 # One feature for each row, four fields joined by `|`:
 #   id      U1, U2, ...: the number in the first column of docs/provisional.md, which the warning quotes
 #   what    the feature in words, as the warning names it
-#   names   the std names that mean a use of it, `module.name` joined by commas; none for a feature that no program text can show
-#           (the wording of messages, the host's input protocol)
+#   names   what in a program means a use of it, joined by commas: a std name `module.name`, a method marker `@name` (U5) or `start` (U6);
+#           none for a feature that no program text can show (the wording of messages, the host's input protocol)
 #   change  what may change, as one phrase the warning gives
 export def unstable_rows() -> list[str]:
     return [
@@ -16,4 +16,6 @@ export def unstable_rows() -> list[str]:
         'U2|the host input protocol (TOMATO_INPUT_ASK, exit code 75)||the way a host asks a program for a line of input may change',
         'U3|the text progress_bar draws|itertools.progress_bar|the line the bar draws may change, for example to show the speed and the time left',
         'U4|random.choice, random.shuffle and random.sample|random.choice,random.shuffle,random.sample|they may become methods, such as rng.choice(items)',
+        'U5|the operator and protocol marker names beyond @add|@sub,@mul,@div,@floordiv,@mod,@pow,@eq,@lt,@le,@gt,@ge,@bitand,@bitor,@bitxor,@invert,@neg,@rmul,@hash,@set,@len,@get,@slice,@contains,@reversed,@iter|the marker names may be renamed, or what they do changed',
+        'U6|the order async tasks run in|start|which task runs first, and so the order of the output of several tasks, may change',
     ]

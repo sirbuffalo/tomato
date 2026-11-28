@@ -1,0 +1,3 @@
+# A test-only module that compiler/src/deprecated.tom lists as deprecated whole: any import of it warns, at the import.
+export def twice(x: int) -> int:
+    return x * 2

@@ -13,7 +13,7 @@ async def main():
     name = await ask('Name? ')
     n = int(await input('How many? '))
     print('hi', name, n * 2)
-    t = start count(n)
+    t = start count(n)  # allow: unstable
     async for s in t:
         print('status:', s)
     print('result', await t)

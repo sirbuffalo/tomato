@@ -1,0 +1,7 @@
+# a use of a deprecated name warns once for the name, at its first use, naming what replaces it; a second use and the new name do not
+from deprecated_fixture import old_double, double
+import deprecated_fixture as fx
+
+@main
+def main():
+    print(old_double(2), fx.old_double(3), double(4))

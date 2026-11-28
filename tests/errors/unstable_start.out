@@ -1,0 +1,7 @@
+warning: 'start' is an unstable feature (U6, the order async tasks run in)
+ --> tests/errors/unstable_start.tom:9:9
+  |
+9 |     b = start work(2)
+  |         ^^^^^
+  = help: it may change in any release, a patch release included: which task runs first, and so the order of the output of several tasks, may change
+  = help: see docs/provisional.md; to use it anyway and hide this, write '# allow: unstable' on this line

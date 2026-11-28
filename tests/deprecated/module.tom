@@ -1,0 +1,6 @@
+# a deprecated module warns at its import (the first one of the build), whatever the import form; the module's own names are not listed
+from deprecated_fixture_module import twice
+
+@main
+def main():
+    print(twice(2))
