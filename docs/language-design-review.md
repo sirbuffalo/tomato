@@ -51,7 +51,7 @@ features *(general knowledge)*. Then the promise can say "except the N features 
 
 **Cost.** Two or three hours of reading and a table edit. It changes no code. Without it, the promise means little.
 
-### 1.2 Say what is promised about errors: ids, classes, message text (Blocks 1.0)
+### 1.2 Say what is promised about errors: ids, classes, message text (Blocks 1.0) — adopted as proposed by Davis, 2026-11-27 (D117a); written in `docs/releasing.md`
 
 **Problem.** An error id is the line number of its template in `std/errors.txt` (`e.id` is `E04` for line 4, P88). A
 program can test `e.id` in a `catch`. Ids are therefore append-only for ever, which commit `e82d1ec2` already practises:

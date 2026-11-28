@@ -2468,3 +2468,20 @@ D81a built `tomato test FILE...` as a runner of functions marked `@test` and the
 - Not decided here: the error promise (triage judgment 1) is still an open judgment call for Davis, so error message wording (U1) stays on the list. `bytes` (review 8.1) has no decision yet.
 - Also: P15 (class conversion, D12az and D12bh) is recorded as two programs in `tests/known_gaps` and in the Types row of the specification's status table.
 - Supersedes / superseded by: narrows D109a's outcome ("7 on the unstable list" is now 4); changes nothing else in it.
+
+### D117a — Seeds: handles and host shortcuts are in for 1.0, maintainers may yank (listing only), owners are git-host owners, `run`/`build` never fetch, a `.tom` file names seeds in a header line; the error promise is adopted: decided (Davis, 2026-11-27)
+
+- Evidence: Davis's answers of 2026-11-27 (relayed by his lead agent) to the open questions of `docs/package-registry-design.md` section 19 and to the proposed error promise of `docs/releasing.md` (`docs/language-design-review.md` 1.2, `docs/provisional-triage.md` judgment call 1).
+- Decision:
+  1. **Handles (`dave/thing`) and host shortcuts (`gh:`, `gitlab:`, `codeberg:`, `srht:`) are both in for 1.0** (question 8; sections 1.10 and 6). Handles are granted by a reviewed pull request as D100a proposed; shortcuts are expanded at `add` time and never stored.
+  2. **The error promise is adopted as proposed.** Error ids never change meaning; error classes are stable within a minor release; message text may be reworded in a patch release (the first line keeps its id). The "proposed" mark in `docs/releasing.md` is gone. The fourth bullet (a decided rule the compiler does not enforce yet is enforced only in a minor release) was part of the proposal and is adopted with it. U1 (error message wording) stays on the unstable list, as the promise says.
+  3. **Maintainers may yank a published seed version in an emergency, listing-only** (question 1): the index hides the version, existing locks still build, and the yank is recorded publicly in the index (a signed `[[yank]]` with a reason). Nothing is deleted or edited.
+  4. **Owners are git-host owners; no key-only owners** (question 2). Signing keys may come later as an addition. The `k-...` owner of sections 1.3 and 1.8 is not adopted for 1.0.
+  5. **`tomato run` and `tomato build` never fetch from the network**; only `tomato seed add` and `tomato seed install` do. A missing seed is an error that tells you to install it (question 5).
+  6. **A single `.tom` file names the seeds it needs in a header comment line**, for example `# seeds: dave/thing>=1.2`, read by `tomato run` and `tomato build` (question 3, the file half). New import syntax is still open.
+  7. **`tomato seed` is usable from `sys.run` with nothing special** (question 4).
+- Not decided, still proposed or open: 5 short names per owner, the 90-day hold after a release, requiring a seed to be listed before it asks for a short name (question 7); whether a client may decline maintainers' yanks; the details of the `# seeds:` line (several seeds, how it meets `tomato.toml`); questions 3 (syntax), 9, 10 and 11.
+- Built: nothing. This task changed documents only. Implementation work is listed in the stages of the design (stage 4 for handles, shortcuts and the header; stage 5 for the emergency yank) and in `TODO.md`.
+- Alternatives: none were offered beyond the questions' own recommendations; Davis's answers for 1, 2 and 3 differ from them (2 recommended accepting key owners; 1 recommended a signed `malware`/`legal` yank by security keys that may stop builds).
+- Cost: the older sections of the design that describe key owners, the `malware` yank that stops a build and key-owner endorsement weights are not rewritten yet and say so at the top; stage 4 must reconcile them before it is built.
+- Supersedes / superseded by: answers and narrows D89a and D100a; D109a's "error promise (proposed)" is now adopted.
