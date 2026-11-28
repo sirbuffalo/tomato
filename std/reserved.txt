@@ -10,6 +10,7 @@
 asyncio std
 base64 std
 bitarray std
+bytearray std
 cache std
 csv std
 datetime std
@@ -62,7 +63,6 @@ collections planned
 functools planned
 operator planned
 bytes planned
-bytearray planned
 array planned
 queue planned
 threading planned

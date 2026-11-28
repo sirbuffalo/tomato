@@ -1,0 +1,4 @@
+# a bytes literal is on one line, with \n for a line break: triple quotes get a hint (D128a)
+@main
+def main():
+    print(b'''abc''')

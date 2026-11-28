@@ -1,0 +1,33 @@
+# The small gaps the audit of D17e found, closed (D128a): a bytes constant, a bytes key for sorted() and sort(), and an empty list given
+# to join() (which needs no declared type for bytes: the parameter says list[bytes]).
+const MAGIC = b'\x89PNG\r\n\x1a\n'
+export const SEP = b"--"
+const EMPTY = b''
+const QUOTE = b'it\'s'
+
+def by_second(b: bytes) -> bytes:
+    return b[1:]
+
+class Frame:
+    tag: bytes = MAGIC[1:4]
+
+    def wrapped(self) -> bytes:
+        return SEP + self.tag + SEP
+
+@main
+def main():
+    print(MAGIC, len(MAGIC), MAGIC[1:4], MAGIC == b'\x89PNG\r\n\x1a\n', SEP, EMPTY == b'', QUOTE)
+    print(Frame().wrapped(), MAGIC + SEP, MAGIC.startswith(b'\x89P'), 137 in MAGIC)
+    xs = [b'bz', b'a\x00', b'ay', b'', b'cx']
+    print(sorted(xs, key=by_second))
+    print(sorted(xs, key=x -> x[1:] + x[:1]))
+    ys = [b'b', b'a', b'\xff', b'a\x00']
+    ys.sort(key=x -> x)
+    print(ys)
+    ys.sort(key=x -> x[::-1])
+    print(ys)
+    zs = [(b'k2', 1), (b'k1', 2)]
+    print(sorted(zs, key=t -> t[0]))
+    print(b'-'.join([]), b'-'.join([b'a']), b'-'.join([b'a', b'b']), b''.join([]), len(SEP.join([])))
+    sep = b', '
+    print(sep.join([]), b'<' + b'|'.join([]) + b'>')

@@ -206,6 +206,9 @@ def scan_bytes(raw: str, i: int) -> Scan:
     n = len(raw)
     quote = raw[i + 1]
     j = i + 2
+    if j + 1 < n and raw[j] == quote and raw[j + 1] == quote:
+        # b'''...''' is the empty bytes b'' followed by a text that starts with a quote, which is never a program: say what is wanted
+        fail(s, TRIPLE_BYTES, i + 1, i, i + 3)
     while j < n and raw[j] != quote:
         c = raw[j]
         if c == '\\':
@@ -231,6 +234,10 @@ def scan_bytes(raw: str, i: int) -> Scan:
 
 def is_hex_digit(c: str) -> bool:
     return c in '0123456789abcdefABCDEF'
+
+const TRIPLE_BYTES = "a bytes literal cannot have triple quotes\nwrite it on one line with \\n for a line break, or join pieces: b'one\\n' + b'two'"
+
+const UPPER_B_BYTES = "a bytes literal starts with a lower case b, not B\nwrite b'...' or b\"...\""
 
 const BAD_BYTES_HEX = 'a \\x escape in a bytes literal needs two hex digits\nwrite a byte as \\x00 to \\xff'
 
@@ -502,6 +509,8 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             i = lex_number(raw, i, ln, toks)
         elif c == 'f' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
             i = lex_fstring(raw, i, ln, toks)
+        elif c == 'B' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
+            raise LexError(UPPER_B_BYTES, ln, i + 1)
         elif c == 'b' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
             s = scan_bytes(raw, i)
             if s.message != '':
@@ -711,6 +720,10 @@ class SpanLexer:
                     i = s.stop
             elif c == 'f' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
                 i = self.fstring(raw, i, ln, at)
+            elif c == 'B' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
+                self.add('error', ln, at + i, at + i + 1)
+                self.note(UPPER_B_BYTES, ln, at + i)
+                i += 1
             elif c == 'b' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
                 s = scan_bytes(raw, i)
                 self.string(raw, i, ln, at, s)

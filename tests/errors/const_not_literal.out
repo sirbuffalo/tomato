@@ -1,0 +1,6 @@
+error[E261]: the constant 'KEYS' must be a number, text, bytes or True or False written out
+ --> tests/errors/const_not_literal.tom:2:7
+  |
+2 | const KEYS = [1, 2]
+  |       ^^^^
+  = help: a constant is not code: write its value as a literal, such as 3.14

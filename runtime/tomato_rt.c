@@ -3954,6 +3954,49 @@ void tomato_bytes_into_list(void *b, void *list) {
     for (int64_t i = 0; i < s->bytes; i++) *(int64_t *)tomato_list_push(list, 8) = int_mk_small((unsigned char)s->data[i]);
 }
 
+/* ---- bytearray (D128a, std/builtin/bytearray.tom): the object owns a bytes slab (its length is the capacity, `used` of it are the
+ * contents) that these change in place. A slab is never shared: bytearray(b) and bytes(ba) copy, and a slice makes its own, so a change
+ * cannot be seen by anything else (a constant b'..' is never a slab). The Tomato code has checked every index and count. ---- */
+void *tomato_bytearray_slab(void *old, int64_t used, int64_t cap) {
+    if (cap > (int64_t)1000000000) out_of_memory();
+    Str *r = bytes_new(NULL, cap);
+    memset(r->data, 0, (size_t)cap);
+    if (old && used > 0) memcpy(r->data, ((Str *)old)->data, (size_t)used);
+    return r;
+}
+void tomato_bytearray_poke(void *slab, int64_t i, int64_t v) { ((Str *)slab)->data[i] = (char)v; }
+void tomato_bytearray_move(void *dst, int64_t at, void *src, int64_t from, int64_t count) {
+    if (count > 0) memmove(((Str *)dst)->data + at, ((Str *)src)->data + from, (size_t)count);
+}
+void tomato_bytearray_reverse(void *slab, int64_t used) {
+    char *d = ((Str *)slab)->data;
+    for (int64_t i = 0, j = used - 1; i < j; i++, j--) { char t = d[i]; d[i] = d[j]; d[j] = t; }
+}
+/* bytes(ba): a copy of the first `used` bytes */
+void *tomato_bytearray_take(void *slab, int64_t used) { return bytes_new(((Str *)slab)->data, used); }
+/* ba[lo:hi:step] as bytes, over the first `used` bytes (the step has been checked: not 0) */
+void *tomato_bytearray_slice(void *slab, int64_t used, int64_t lo, int64_t hi, int64_t step, int64_t flags) {
+    Str *s = slab;
+    int64_t start, n = slice_plan(used, lo, hi, step, (int)flags, &start);
+    if (n < 0) return NULL;
+    if (!(flags & 4)) step = 1;
+    Str *r = bytes_new(NULL, n);
+    for (int64_t k = 0; k < n; k++) r->data[k] = s->data[start + k * step];
+    return r;
+}
+/* the order of two bytearrays (their first `an` and `bn` bytes): -1, 0 or 1, byte by byte, the shorter first on a tie */
+int64_t tomato_bytearray_compare(void *a, int64_t an, void *b, int64_t bn) {
+    int64_t m = an < bn ? an : bn;
+    int c = m > 0 ? memcmp(((Str *)a)->data, ((Str *)b)->data, (size_t)m) : 0;
+    if (c != 0) return c < 0 ? -1 : 1;
+    return an < bn ? -1 : (an > bn ? 1 : 0);
+}
+/* the position of the first byte v in the first `used` bytes, or -1 */
+int64_t tomato_bytearray_index(void *slab, int64_t used, int64_t v) {
+    const char *p = used > 0 ? memchr(((Str *)slab)->data, (int)v, (size_t)used) : NULL;
+    return p ? (int64_t)(p - ((Str *)slab)->data) : -1;
+}
+
 /* s.encode(): the UTF-8 bytes of a text (any bytes it holds that are not UTF-8, from a file, are kept as they are) */
 void *tomato_str_encode(void *text) { Str *s = text; return bytes_new(s->data, s->bytes); }
 

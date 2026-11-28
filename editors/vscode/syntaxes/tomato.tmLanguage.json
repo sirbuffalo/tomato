@@ -128,7 +128,7 @@
     "constant": { "name": "constant.language.tomato", "match": "\\b(True|False|None)\\b" },
     "type": {
       "name": "support.type.primitive.tomato",
-      "match": "\\b(int|uint|float|rational|bool|str|bytes|list|dict|set|tuple|File|range|Error|RuntimeError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|IOError|FileNotFoundError|FileExistsError|PermissionError|IsADirectoryError|NotADirectoryError|TimeoutError|ConnectionError|EOFError|CancelledError|Sized|bitarray|frozenbitarray)\\b(?!\\s*\\()"
+      "match": "\\b(int|uint|float|rational|bool|str|bytes|list|dict|set|tuple|File|range|Error|RuntimeError|IndexError|KeyError|ValueError|ZeroDivisionError|OverflowError|IOError|FileNotFoundError|FileExistsError|PermissionError|IsADirectoryError|NotADirectoryError|TimeoutError|ConnectionError|EOFError|CancelledError|Sized|bitarray|frozenbitarray|bytearray)\\b(?!\\s*\\()"
     },
     "builtin": { "name": "support.function.builtin.tomato", "match": "\\b(print|len|str|int|float|rational|range|open|input|sleep|clock|min|max|sum|abs|chr|ord|round|divmod|any|all|hash|sorted|reversed|enumerate|zip|map|filter|list|dict|set|tuple|bool|bytes)(?=\\s*\\()" },
     "call": { "name": "entity.name.function.call.tomato", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" },

@@ -1,0 +1,184 @@
+# bytearray, the mutable byte buffer (D128a, std/builtin/bytearray.tom): making one, len, indexing and assigning, slices, + and *,
+# comparison, in, for, list(), printing, append/extend/insert/pop/remove/clear/reverse/copy, the read-only methods, conversion to and
+# from bytes (a copy each way), growth over many appends, aliasing, fields, optionals, unions, lists, generics, sorting and the
+# errors it raises. It needs no import.
+class Packet:
+    tag: str = ''
+    body: bytearray = bytearray()
+
+    @init
+    def make(self, tag: str):
+        self.tag = tag
+
+    def add(self, data: bytes):
+        self.body.extend(data)
+
+def first[T](xs: list[T]) -> T:
+    return xs[0]
+
+def fill(buf: bytearray, n: int):
+    for i in range(n):
+        buf.append(i % 256)
+
+def total(data: bytes) -> int:
+    t = 0
+    for x in data:
+        t += x
+    return t
+
+def maybe(flag: bool) -> bytearray | None:
+    if flag:
+        return bytearray(b'yes')
+    return None
+
+def fails(k: int):
+    a = bytearray(b'abc')
+    if k == 0:
+        print(a[3])
+    elif k == 1:
+        print(a[-4])
+    elif k == 2:
+        a[3] = 1
+    elif k == 3:
+        a[0] = 256
+    elif k == 4:
+        a[0] = -1
+    elif k == 5:
+        a.append(300)
+    elif k == 6:
+        a.insert(0, 256)
+    elif k == 7:
+        a.remove(7)
+    elif k == 8:
+        a.remove(256)
+    elif k == 9:
+        bytearray().pop()
+    elif k == 10:
+        a.pop(5)
+    elif k == 11:
+        print(bytearray(-1))
+    elif k == 12:
+        print(bytearray([1, 256]))
+    elif k == 13:
+        print(300 in a)
+    elif k == 14:
+        print(a[::0])
+    elif k == 15:
+        print(bytearray(b'a\xffb').decode())
+    elif k == 16:
+        print(a.hex(', '))
+    elif k == 17:
+        print(a.decode('latin-9'))
+    elif k == 18:
+        print(bytearray([2 ** 70]))
+
+@main
+def main():
+    a = bytearray(b'hello\x00\xff\n')
+    print(a, len(a), a[0], a[-1], a[1:3], a[::-1], a[10:], a[-100:100])
+    none: list[int] = []
+    print(bytearray(), bytearray(3), bytearray([1, 2, 255]), bytearray(b'xy'), bytearray(a), bytearray(none))
+    print(a + b'!', a + bytearray(b'?'), bytearray(b'ab') * 3, 3 * bytearray(b'x'), bytearray(b'ab') * 0, bytearray(b'ab') * -2)
+    print(a == bytearray(b'hello\x00\xff\n'), a != bytearray(b'x'), bytearray(b'abc') < bytearray(b'abd'), bytearray() < bytearray(b'a'))
+    print(bytearray(b'b') > bytearray(b'a'), bytearray(b'a') <= bytearray(b'a'), bytearray(b'a') >= bytearray(b'b'))
+    print(104 in a, b'll' in a, 7 in a, b'' in a, b'zz' in a)
+    n = 0
+    for x in a:
+        n += x
+    print(n, list(a), sum(list(a)), [x + 1 for x in bytearray(b'\x01\x02')])
+    ab = bytearray(b'ab')
+    for i, x in enumerate(ab):
+        print(i, x)
+
+    # changing it in place, and the copies at both ends
+    b = bytearray(b'abc')
+    c = b
+    c[0] = 65
+    c.append(100)
+    print(b, c, b == c)
+    data = bytes(b)
+    b[1] = 66
+    print(data, bytes(b), bytearray(data), type_of(data), type_of(b))
+    d = b.copy()
+    d.clear()
+    print(b, d, len(d), len(b))
+    b.extend(b)
+    b.extend(b'xyz')
+    b.extend(bytearray(b'123'))
+    print(b, len(b))
+    b.insert(0, 48)
+    b.insert(3, 49)
+    b.insert(100, 50)
+    b.insert(-100, 51)
+    b.insert(-1, 52)
+    print(b)
+    print(b.pop(), b.pop(0), b.pop(2), b.pop(-1), b)
+    b.remove(65)
+    b.remove(66)
+    b.reverse()
+    print(b, b.find(b'y'), b.rfind(b'B'), b.count(b'B'), b.startswith(b'3'), b.endswith(b'0'), b.find(b'zzz'), b.find(b'B', 3), b.count(b''))
+    e = bytearray()
+    e.reverse()
+    e.extend(b'')
+    e.extend(bytearray())
+    print(e, len(e), e == bytearray())
+    e.append(7)
+    print(e, e.pop(), e)
+
+    # many appends: the buffer grows by doubling and keeps what it holds
+    big = bytearray()
+    fill(big, 100000)
+    print(len(big), total(bytes(big)), big[99999], big[256], big[-256:-250])
+    big.extend(big)
+    print(len(big), big[100000], big[-1])
+    h = bytearray(b'caf\xc3\xa9')
+    print(h.decode(), h.hex(), h.hex(':'), bytearray(b'\xffA').decode(errors='replace'), h.decode('ascii', 'replace'))
+    print(f'{h} and {bytes(h)}', str(h), [h], (h, 1))
+
+    # fields, parameters, optionals, unions, lists, generics, functions
+    p = Packet('a')
+    p.add(b'abc')
+    p.body[1] = 66
+    p.body.append(33)
+    print(p.tag, p.body, len(p.body))
+    q = Packet('b')
+    print(q.body, p.body is q.body)
+    r = maybe(True)
+    if r is not None:
+        print(len(r), r[0])
+    print(maybe(False), maybe(True) == bytearray(b'yes'))
+    u: int | bytearray = bytearray(b'q')
+    print(u, [u])
+    if u is bytearray:
+        print('is bytearray', len(u))
+    xs = [bytearray(b'b'), bytearray(b'a'), bytearray(b'\xff'), bytearray()]
+    print(first(xs), xs == [bytearray(b'b'), bytearray(b'a'), bytearray(b'\xff'), bytearray()])
+    xs.sort()
+    print(xs, sorted(xs), max(xs), min(xs))
+    print(sorted(xs, key=x -> bytes(x)[::-1]))
+    f: fn(bytearray) -> int = x -> len(x) * 2
+    print(f(bytearray(b'abc')))
+    m: dict[str, bytearray] = {}
+    m['a'] = bytearray(b'1')
+    m['a'].extend(b'2')
+    print(m)
+    k = bytearray(b'abcdef')
+    print(k[::2], k[-3:], k[1:5:2], k[::-2], k[4:1:-1])
+    k[-1] = 90
+    print(k, bytes(k) + b'!', len(bytes(k)))
+    g = bytearray(5)
+    for i in range(5):
+        g[i] = i * 50
+    print(g, g[4], g.hex())
+    for t in range(19):
+        try:
+            fails(t)
+        catch IndexError as err:
+            print(t, 'IndexError', err)
+        catch ValueError as err:
+            print(t, 'ValueError', err)
+
+def type_of(x: bytes | bytearray) -> str:
+    if x is bytes:
+        return 'bytes'
+    return 'bytearray'

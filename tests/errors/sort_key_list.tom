@@ -1,0 +1,8 @@
+# the key function of sorted() returns an int, a float, text or bytes (D128a added bytes)
+def key(b: bytes) -> list[int]:
+    return [len(b)]
+
+@main
+def main():
+    xs = [b'a', b'bb']
+    print(sorted(xs, key=key))

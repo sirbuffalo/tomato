@@ -1,0 +1,5 @@
+# a slice of a bytearray can be read but not assigned (D128a: left out, a follow-up)
+@main
+def main():
+    a = bytearray(b'abc')
+    a[0:2] = b'zz'

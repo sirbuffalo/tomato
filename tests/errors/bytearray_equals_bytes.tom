@@ -1,0 +1,5 @@
+# a bytearray and bytes never mix by themselves: convert one (D128a)
+@main
+def main():
+    a = bytearray(b'x')
+    print(a == b'x')

@@ -1,0 +1,6 @@
+# a constant is a literal: numbers, text, bytes and booleans (D128a added bytes)
+const KEYS = [1, 2]
+
+@main
+def main():
+    print(KEYS)

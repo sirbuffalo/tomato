@@ -297,3 +297,9 @@ def bytes_literals():
     agree("y = b'café'", 'a bytes literal with a character that is not ASCII')
     agree("y = b'\\x4'", 'a bytes literal with a short hex escape')
     assert_equal(lex_error("print(b'\\x4g')"), 'a \\x escape in a bytes literal needs two hex digits\nwrite a byte as \\x00 to \\xff')
+    # a capital B and triple quotes are not bytes literals, and each says what to write instead
+    agree("y = B'abc'", 'a bytes literal with a capital B')
+    agree("y = b'''abc'''", 'a bytes literal with triple quotes')
+    assert_equal(lex_error("y = B'abc'"), 'a bytes literal starts with a lower case b, not B\nwrite b\'...\' or b"..."')
+    assert_equal(lex_error("y = b'''abc'''"), "a bytes literal cannot have triple quotes\nwrite it on one line with \\n for a line break, or join pieces: b'one\\n' + b'two'")
+    assert_equal(len(lex("y = b''")), 5)

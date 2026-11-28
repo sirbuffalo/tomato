@@ -1,0 +1,4 @@
+# bytes() names what it takes, a bytearray among them (D128a)
+@main
+def main():
+    print(bytes(1.5))

@@ -1,0 +1,7 @@
+# for bytearray_names.tom: reaches bytearray through `import bytearray`, as bytearray.bytearray
+import bytearray
+
+export def packed(data: bytes) -> list[int]:
+    buf = bytearray.bytearray(data)
+    buf.reverse()
+    return list(buf)

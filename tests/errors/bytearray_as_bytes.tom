@@ -1,0 +1,8 @@
+# a function that takes bytes is given bytes(a), not a bytearray (D128a)
+def size(data: bytes) -> int:
+    return len(data)
+
+@main
+def main():
+    a = bytearray(b'x')
+    print(size(a))

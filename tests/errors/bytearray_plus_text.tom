@@ -1,0 +1,5 @@
+# a bytearray and text never mix either (D128a)
+@main
+def main():
+    a = bytearray(b'x')
+    print(a + 'y')

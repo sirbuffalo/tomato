@@ -1,0 +1,6 @@
+error[E472]: 'bytearray.bytearray' has a method marked @eq but none marked @hash, so it cannot be a dict key or set element
+ --> tests/errors/bytearray_dict_key.tom:5:5
+  |
+5 |     d = {a: 1}
+  |     ^^^^^^^^^^
+  = help: add a method marked @hash that returns an int, the same for objects that are equal

@@ -1,0 +1,5 @@
+error[E190]: cannot use '+' with bytearray.bytearray and str
+ --> tests/errors/bytearray_plus_text.tom:5:13
+  |
+5 |     print(a + 'y')
+  |             ^

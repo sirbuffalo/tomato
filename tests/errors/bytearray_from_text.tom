@@ -1,0 +1,5 @@
+# bytearray() takes a count, bytes, a list of ints or a bytearray, not text (D128a)
+@main
+def main():
+    a = bytearray('x')
+    print(len(a))

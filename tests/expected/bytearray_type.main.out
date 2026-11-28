@@ -1,0 +1,57 @@
+bytearray(b'hello\x00\xff\n') 8 104 10 bytearray(b'el') bytearray(b'\n\xff\x00olleh') bytearray(b'') bytearray(b'hello\x00\xff\n')
+bytearray(b'') bytearray(b'\x00\x00\x00') bytearray(b'\x01\x02\xff') bytearray(b'xy') bytearray(b'hello\x00\xff\n') bytearray(b'')
+bytearray(b'hello\x00\xff\n!') bytearray(b'hello\x00\xff\n?') bytearray(b'ababab') bytearray(b'xxx') bytearray(b'') bytearray(b'')
+True True True True
+True True False
+True True False True False
+797 [104, 101, 108, 108, 111, 0, 255, 10] 797 [2, 3]
+0 97
+1 98
+bytearray(b'Abcd') bytearray(b'Abcd') True
+b'Abcd' b'ABcd' bytearray(b'Abcd') bytes bytearray
+bytearray(b'ABcd') bytearray(b'') 0 4
+bytearray(b'ABcdABcdxyz123') 14
+bytearray(b'30AB1cdABcdxyz12342')
+50 51 66 52 bytearray(b'0A1cdABcdxyz123')
+bytearray(b'321zyxdcAdc10') 4 -1 0 True True -1 -1 14
+bytearray(b'') 0 True
+bytearray(b'') 7 bytearray(b'')
+100000 12742320 159 0 bytearray(b'\xa0\xa1\xa2\xa3\xa4\xa5')
+200000 0 159
+café 636166c3a9 63:61:66:c3:a9 �A caf��
+bytearray(b'caf\xc3\xa9') and b'caf\xc3\xa9' bytearray(b'caf\xc3\xa9') [bytearray(b'caf\xc3\xa9')] (bytearray(b'caf\xc3\xa9'), 1)
+a bytearray(b'aBc!') 4
+bytearray(b'') False
+3 121
+None True
+bytearray(b'q') [bytearray(b'q')]
+is bytearray 1
+bytearray(b'b') True
+[bytearray(b''), bytearray(b'a'), bytearray(b'b'), bytearray(b'\xff')] [bytearray(b''), bytearray(b'a'), bytearray(b'b'), bytearray(b'\xff')] bytearray(b'\xff') bytearray(b'')
+[bytearray(b''), bytearray(b'a'), bytearray(b'b'), bytearray(b'\xff')]
+6
+{'a': bytearray(b'12')}
+bytearray(b'ace') bytearray(b'def') bytearray(b'bd') bytearray(b'fdb') bytearray(b'edc')
+bytearray(b'abcdeZ') b'abcdeZ!' 6
+bytearray(b'\x002d\x96\xc8') 200 00326496c8
+0 IndexError bytearray index 3 is out of range for a bytearray of 3
+1 IndexError bytearray index -4 is out of range for a bytearray of 3
+2 IndexError bytearray index 3 is out of range for a bytearray of 3
+3 ValueError a byte must be a whole number from 0 to 255, but this is 256
+4 ValueError a byte must be a whole number from 0 to 255, but this is -1
+5 ValueError a byte must be a whole number from 0 to 255, but this is 300
+6 ValueError a byte must be a whole number from 0 to 255, but this is 256
+7 ValueError the byte 7 is not in the bytearray
+8 ValueError a byte must be a whole number from 0 to 255, but this is 256
+9 IndexError pop from an empty bytearray
+10 IndexError bytearray index 5 is out of range for a bytearray of 3
+11 ValueError bytearray() needs a count that is not negative, but got -1
+12 ValueError a byte must be a whole number from 0 to 255, but item 1 is 256
+13 ValueError a byte must be a whole number from 0 to 255, but this is 300
+14 ValueError a slice step cannot be 0
+15 ValueError invalid UTF-8: the byte 0xff at position 1 cannot start a character
+decode with errors='replace' to put U+FFFD in its place
+16 ValueError the separator of hex() must be one character, but it is ', '
+17 ValueError unknown encoding 'latin-9'
+Tomato knows 'utf-8' and 'ascii'
+18 ValueError a byte must be a whole number from 0 to 255, but item 0 is 1180591620717411303424

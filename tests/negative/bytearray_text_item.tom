@@ -1,0 +1,4 @@
+@main
+def main():
+    a = bytearray(b'abc')
+    a[0] = 'x'

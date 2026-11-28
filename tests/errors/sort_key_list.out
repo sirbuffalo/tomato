@@ -1,0 +1,5 @@
+error[E278]: the key function must return an int, a float, text or bytes, but this one returns list[int]
+ --> tests/errors/sort_key_list.tom:8:5
+  |
+8 |     print(sorted(xs, key=key))
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^

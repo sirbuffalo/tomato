@@ -1,0 +1,240 @@
+# A mutable byte buffer, written in Tomato (D128a). `bytearray` needs no import, as `bitarray` does not (D64a): any file that uses the
+# name gets this module (`from bytearray import bytearray` also works).
+#
+#     a = bytearray()                   # empty
+#     b = bytearray(4)                  # four zero bytes
+#     c = bytearray(b'GET ')            # a copy of some bytes
+#     d = bytearray([72, 105])          # from a list of ints from 0 to 255 (ValueError for another item, as for bytes(items))
+#     a.append(33)                      # the byte 33; a.extend(b'ab') adds bytes (or another bytearray)
+#     a[0] = 72                         # a[i] is an int from 0 to 255, a negative index counts from the end
+#     data = bytes(a)                   # the immutable bytes of it (a copy); bytearray(data) goes the other way
+#
+# It is the mutable twin of bytes (D17e) with the same rules: `len`, `a[i]`, `a[i] = byte`, slices (`a[1:3]` is a new bytearray),
+# `+` (with bytes or a bytearray) and `*`, `for x in a` (ints), `x in a` (a byte or a run of bytes), `==` and the orderings between
+# two bytearrays, `list(a)`, `print(a)` as `bytearray(b'...')`; the methods append, extend, insert, pop, remove, clear, reverse and
+# copy, and the readers find, rfind, count, startswith, endswith, hex and decode, which work as the methods of bytes do (their
+# `sub` is bytes). A bytearray is not hashable (no dict key or set member, as a list is not). Bytes and bytearrays never mix by
+# themselves: there is no `a == b'..'`, and a function that takes bytes is given `bytes(a)`.
+#
+# Storage: one bytes value that the object owns (its length is the capacity, `n` of it is the contents), changed in place by the
+# runtime (tomato_bytearray_* in runtime/tomato_rt.c) and replaced by one twice as big when it is full, so a run of appends takes
+# linear time and the buffer costs one byte for each byte. The value is never shared (a copy is made going in and out), so nothing
+# else can see it change.
+
+!tomato_bytearray_slab(old: bytes, used: int, cap: int) -> bytes
+!tomato_bytearray_poke(slab: bytes, i: int, v: int)
+!tomato_bytearray_move(dst: bytes, at: int, src: bytes, start: int, count: int)
+!tomato_bytearray_reverse(slab: bytes, used: int)
+!tomato_bytearray_take(slab: bytes, used: int) -> bytes
+!tomato_bytearray_slice(slab: bytes, used: int, lo: int, hi: int, step: int, flags: int) -> bytes
+!tomato_bytearray_compare(a: bytes, an: int, b: bytes, bn: int) -> int
+!tomato_bytearray_index(slab: bytes, used: int, v: int) -> int
+
+def _check_byte(v: int):
+    if v < 0 or v > 255:
+        raise ValueError(f'a byte must be a whole number from 0 to 255, but this is {v}', 'E648')
+
+export class bytearray:
+    buf: bytes = b''
+    n: int = 0
+
+    @init
+    def make(self, value: int | bytes | list[int] | bytearray = 0):
+        if value is int:
+            if value < 0:
+                raise ValueError(f'bytearray() needs a count that is not negative, but got {value}', 'E646')
+            self.buf = !tomato_bytearray_slab(b'', 0, value)
+            self.n = value
+            return
+        if value is bytes:
+            self.buf = !tomato_bytearray_slab(value, len(value), len(value))
+            self.n = len(value)
+            return
+        if value is bytearray:
+            self.buf = !tomato_bytearray_slab(value.buf, value.n, value.n)
+            self.n = value.n
+            return
+        data = bytes(value)         # (a list of ints: ValueError E391 names the first item that is not a byte)
+        self.buf = !tomato_bytearray_slab(data, len(data), len(data))
+        self.n = len(data)
+
+    # the bytes of the contents, a copy: bytes(a) is this (the compiler calls it), and so are the readers below
+    def _to_bytes(self) -> bytes:
+        return !tomato_bytearray_take(self.buf, self.n)
+
+    # makes room for `extra` more bytes: a bigger slab, twice the size so that appending is linear, when the one it has is full
+    def _room(self, extra: int):
+        need = self.n + extra
+        if need > len(self.buf):
+            cap = len(self.buf) * 2
+            if cap < need:
+                cap = need
+            if cap < 16:
+                cap = 16
+            self.buf = !tomato_bytearray_slab(self.buf, self.n, cap)
+
+    # the position i names (a negative one counts from the end), or IndexError
+    def _index(self, i: int) -> int:
+        k = i
+        if k < 0:
+            k += self.n
+        if k < 0 or k >= self.n:
+            raise IndexError(f'bytearray index {i} is out of range for a bytearray of {self.n}', 'E647')
+        return k
+
+    @len
+    def size(self) -> int:
+        return self.n
+
+    @get
+    def at(self, i: int) -> int:
+        return self.buf[self._index(i)]
+
+    @set
+    def put(self, i: int, v: int):
+        k = self._index(i)
+        _check_byte(v)
+        !tomato_bytearray_poke(self.buf, k, v)
+
+    @iter
+    def each(self) -> int:
+        for i in range(self.n):
+            yield self.buf[i]
+
+    @contains
+    def has(self, x: int | bytes) -> bool:
+        if x is int:
+            _check_byte(x)
+            return !tomato_bytearray_index(self.buf, self.n, x) >= 0
+        return x in self._to_bytes()
+
+    @slice
+    def part(self, lo: int, hi: int, st: int, flags: int) -> bytearray:
+        if flags & 4 != 0 and st == 0:
+            raise ValueError('a slice step cannot be 0', 'E27')
+        r = bytearray()
+        r.buf = !tomato_bytearray_slice(self.buf, self.n, lo, hi, st, flags)
+        r.n = len(r.buf)
+        return r
+
+    @eq
+    def same(self, other: bytearray) -> bool:
+        return self.n == other.n and !tomato_bytearray_compare(self.buf, self.n, other.buf, other.n) == 0
+
+    @lt
+    def less(self, other: bytearray) -> bool:
+        return !tomato_bytearray_compare(self.buf, self.n, other.buf, other.n) < 0
+
+    @le
+    def at_most(self, other: bytearray) -> bool:
+        return !tomato_bytearray_compare(self.buf, self.n, other.buf, other.n) <= 0
+
+    @gt
+    def more(self, other: bytearray) -> bool:
+        return !tomato_bytearray_compare(self.buf, self.n, other.buf, other.n) > 0
+
+    @ge
+    def at_least(self, other: bytearray) -> bool:
+        return !tomato_bytearray_compare(self.buf, self.n, other.buf, other.n) >= 0
+
+    # a + b is a new bytearray: the bytes of a, then those of b (bytes or a bytearray)
+    @add
+    def plus(self, other: bytes | bytearray) -> bytearray:
+        r = bytearray(self)
+        r.extend(other)
+        return r
+
+    @mul
+    def times(self, count: int) -> bytearray:
+        return bytearray(self._to_bytes() * count)
+
+    @rmul
+    def scaled(self, count: int) -> bytearray:
+        return bytearray(self._to_bytes() * count)
+
+    def append(self, v: int):
+        _check_byte(v)
+        self._room(1)
+        !tomato_bytearray_poke(self.buf, self.n, v)
+        self.n += 1
+
+    # a.extend(a) is fine: the length is read before anything is added
+    def extend(self, data: bytes | bytearray):
+        if data is bytes:
+            self._room(len(data))
+            !tomato_bytearray_move(self.buf, self.n, data, 0, len(data))
+            self.n += len(data)
+            return
+        count = data.n
+        self._room(count)
+        !tomato_bytearray_move(self.buf, self.n, data.buf, 0, count)
+        self.n += count
+
+    # a.insert(i, v): v goes before position i (a negative i counts from the end, and one past either end is the end)
+    def insert(self, i: int, v: int):
+        _check_byte(v)
+        k = i
+        if k < 0:
+            k += self.n
+            if k < 0:
+                k = 0
+        if k > self.n:
+            k = self.n
+        self._room(1)
+        !tomato_bytearray_move(self.buf, k + 1, self.buf, k, self.n - k)
+        !tomato_bytearray_poke(self.buf, k, v)
+        self.n += 1
+
+    # a.pop() takes off and gives the last byte, a.pop(i) the byte at position i
+    def pop(self, i: int = -1) -> int:
+        if self.n == 0:
+            raise IndexError('pop from an empty bytearray', 'E649')
+        k = self._index(i)
+        v = self.buf[k]
+        !tomato_bytearray_move(self.buf, k, self.buf, k + 1, self.n - k - 1)
+        self.n -= 1
+        return v
+
+    # takes off the first byte that is v
+    def remove(self, v: int):
+        _check_byte(v)
+        k = !tomato_bytearray_index(self.buf, self.n, v)
+        if k < 0:
+            raise ValueError(f'the byte {v} is not in the bytearray', 'E650')
+        !tomato_bytearray_move(self.buf, k, self.buf, k + 1, self.n - k - 1)
+        self.n -= 1
+
+    def clear(self):
+        self.buf = b''
+        self.n = 0
+
+    def reverse(self):
+        !tomato_bytearray_reverse(self.buf, self.n)
+
+    def copy(self) -> bytearray:
+        return bytearray(self)
+
+    def find(self, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
+        return self._to_bytes().find(sub, start, end)
+
+    def rfind(self, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
+        return self._to_bytes().rfind(sub, start, end)
+
+    def count(self, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
+        return self._to_bytes().count(sub, start, end)
+
+    def startswith(self, prefix: bytes) -> bool:
+        return self._to_bytes().startswith(prefix)
+
+    def endswith(self, suffix: bytes) -> bool:
+        return self._to_bytes().endswith(suffix)
+
+    def hex(self, sep: str = '') -> str:
+        return self._to_bytes().hex(sep)
+
+    def decode(self, encoding: str = 'utf-8', errors: str = 'strict') -> str:
+        return self._to_bytes().decode(encoding, errors)
+
+    @str
+    def text(self) -> str:
+        return f'bytearray({self._to_bytes()})'

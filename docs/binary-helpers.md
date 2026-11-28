@@ -1,6 +1,6 @@
 # Binary helpers
 
-Binary data is `bytes` (D17e): an immutable run of bytes with literals such as `b'GET\r\n'` and `b'\x00\xff'`, `len`, `b[i]` (an int from 0 to 255), slices, `+`, `in`, `for`, `decode()`, `hex()` and the other methods in `docs/specification.md`. A list of ints becomes bytes with `bytes(items)` (a `ValueError` names the first item that is not from 0 to 255) and bytes become a list with `list(b)`. All of these modules work in native programs and the browser.
+Binary data is `bytes` (D17e): an immutable run of bytes with literals such as `b'GET\r\n'` and `b'\x00\xff'`, `len`, `b[i]` (an int from 0 to 255), slices, `+`, `in`, `for`, `decode()`, `hex()` and the other methods in `docs/specification.md`. A list of ints becomes bytes with `bytes(items)` (a `ValueError` names the first item that is not from 0 to 255) and bytes become a list with `list(b)`. All of these modules work in native programs and the browser. `bytearray` (D128a) is the mutable byte buffer for building or changing binary data (`buf.append(0x1f)`, `buf.extend(chunk)`, `buf[4] = 0`); no std API takes one, so hand it over with `bytes(buf)`, and make one from bytes with `bytearray(data)` (both copy).
 
 `utf8.encode(text)` returns the bytes of a string, preserving any invalid bytes already present in it (the same as `text.encode()`). `utf8.decode(data, errors='strict')` decodes UTF-8 (the same as `data.decode(errors=...)`); `'strict'` rejects malformed input and `'replace'` inserts U+FFFD as Python does. Other error modes are rejected.
 

@@ -200,7 +200,7 @@ the owner (a later release may add keys as an addition, D117a).
 - A name that is also a standard module (`json`, `math`, ... : the list in `std_modules()`, copied into the index's
   `config.toml`) is refused for every owner, and so is anything beginning `std_` or `builtin`. This keeps today's
   imports from changing meaning when a seed appears (section 5). **Reserved names are built (D115a, 2026-11-27):** the refused
-  list is `std/reserved.txt`, which holds every std module and the names std may add later (`http`, `log`, `queue`, ... 55 of
+  list is `std/reserved.txt`, which holds every std module and the names std may add later (`http`, `log`, `queue`, ... 54 of
   them); the index's `config.toml` copies that file (the compiler's copy is `compiler/src/modnames.tom`, and the suite checks the
   two), not only `std_modules()`. `tomato seed check` and the manifest reader already refuse a seed whose stem is a `planned`
   name (E561) and a module of any reserved name (E579, E615); a std module name was refused at the module check before.

@@ -259,3 +259,6 @@ shadow_locals
 shadow_core
 bytes_type
 list_method_raise
+bytes_gaps
+bytearray_type
+bytearray_names

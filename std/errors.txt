@@ -258,7 +258,7 @@ CompileError the argument '{}' of '{}' is given twice
 CompileError the body of a block goes on its own indented line
 CompileError the body of this lambda gives no value
 CompileError the const field '{}' cannot be changed after the object is created
-CompileError the constant '{}' must be a number, text or True or False written out
+CompileError the constant '{}' must be a number, text, bytes or True or False written out
 CompileError the constant {} does not fit in {}
 CompileError the default of a text input must be a plain text such as "abc"
 CompileError the default of an entry point input must be a whole number below 2 ** 61
@@ -275,7 +275,7 @@ CompileError the generator '{}' cannot take *args or **kwargs
 CompileError the generator '{}' must say what it yields
 CompileError the interface '{}
 CompileError the items of this list comprehension have no type
-CompileError the key function must return an int, a float or text, but this one returns {}
+CompileError the key function must return an int, a float, text or bytes, but this one returns {}
 CompileError the keyword argument '{}' is given twice
 CompileError the method '{}' is private to class '{}'
 CompileError the mode 'normal' was renamed to 'release': use --mode release (the old release mode, which printed nothing, is gone)
@@ -629,7 +629,7 @@ ValueError the text is not ASCII
 ValueError an empty separator cannot be used to
 CompileError bytes() cannot take text, because text has no single byte form
 CompileError 'bytes' does not take keyword arguments
-CompileError bytes() takes a count (int), a list of ints from 0 to 255 or bytes, but this is {}
+CompileError bytes() takes a count (int), a list of ints from 0 to 255, bytes or a bytearray, but this is {}
 CompileError bytes() takes at most one argument: bytes(), bytes(count), bytes(list_of_ints) or bytes(data)
 CompileError '{}' does not work on bytes
 CompileError 'in' with bytes needs an int (a byte) or bytes on its left, but this is {}
@@ -641,3 +641,10 @@ CompileError a bytes literal holds only ASCII characters, and {} is not one
 CompileError a bytes literal holds only printable ASCII characters, and this is the control character {}
 ValueError randbytes needs a length of 0 or more
 ValueError the separator of hex() must be one character
+CompileError a bytes literal cannot have triple quotes
+CompileError a bytes literal starts with a lower case b, not B
+ValueError bytearray() needs a count that is not negative
+IndexError bytearray index is out of range
+ValueError a byte must be a whole number from 0 to 255, but this is
+IndexError pop from an empty bytearray
+ValueError the byte is not in the bytearray

@@ -1,0 +1,4 @@
+# a bytes literal is written with a lower case b (D128a: the error says so)
+@main
+def main():
+    print(B'abc')

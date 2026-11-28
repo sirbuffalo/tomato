@@ -1,0 +1,11 @@
+# bytearray needs no import (bytearray_type), and every other way of reaching it works too (D126a): a from-import here, `import bytearray`
+# in a library module, and a library module that declares a `bytearray` of its own, which is that module's and does not touch this one.
+from bytearray import bytearray
+from bytearray_names_lib import packed
+from bytearray_own import describe
+
+@main
+def main():
+    a = bytearray(b'ab')
+    a.append(99)
+    print(a, packed(b'xyz'), describe())

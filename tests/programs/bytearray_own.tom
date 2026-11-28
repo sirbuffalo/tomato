@@ -1,0 +1,11 @@
+# for bytearray_names.tom: a module may declare its own `bytearray`; the built-in one is only bound in files that do not declare the name
+class bytearray:
+    n: int = 0
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+export def describe() -> str:
+    mine = bytearray(3)
+    return f'own bytearray of {mine.n}'

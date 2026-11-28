@@ -1,0 +1,9 @@
+b'\x89PNG\r\n\x1a\n' 8 b'PNG' True b'--' True b"it's"
+b'--PNG--' b'\x89PNG\r\n\x1a\n--' True True
+[b'', b'a\x00', b'cx', b'ay', b'bz']
+[b'', b'a\x00', b'cx', b'ay', b'bz']
+[b'a', b'a\x00', b'b', b'\xff']
+[b'a\x00', b'a', b'b', b'\xff']
+[(b'k1', 2), (b'k2', 1)]
+b'' b'a' b'a-b' b'' 0
+b'' b'<>'

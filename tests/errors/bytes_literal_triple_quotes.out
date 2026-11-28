@@ -1,0 +1,6 @@
+error[E644]: a bytes literal cannot have triple quotes
+ --> tests/errors/bytes_literal_triple_quotes.tom:4:11
+  |
+4 |     print(b'''abc''')
+  |           ^
+  = help: write it on one line with \n for a line break, or join pieces: b'one\n' + b'two'

@@ -5729,13 +5729,15 @@ class Gen:
             v = self.resize(v, 'int')
         if v.ty == 'bytes':
             return v
+        if v.ty == '@bytearray.bytearray':
+            return self.marker_call(v, self.mod.find_method('bytearray.bytearray', '_to_bytes', line), [], line)      # a copy of the contents (D126a)
         if v.ty == 'int':
             return self.builtin_call('_bytes_zeros', [v], line)
         if v.ty == 'list[int]' or v.ty == 'tuple[int]':
             return self.builtin_call('_bytes_of_list', [v], line)
         if v.ty == 'str':
             raise CompileError("bytes() cannot take text, because text has no single byte form\nencode it: s.encode() gives its UTF-8 bytes", line)
-        raise CompileError(f'bytes() takes a count (int), a list of ints from 0 to 255 or bytes, but this is {shown(v.ty)}', line)
+        raise CompileError(f'bytes() takes a count (int), a list of ints from 0 to 255, bytes or a bytearray, but this is {shown(v.ty)}', line)
 
     def list_builtin(self, name: str, args: list[Node], line: int) -> Ex:
         # sorted, reversed, sum, min and max of a list
@@ -5872,8 +5874,8 @@ class Gen:
         if len(params) != 1 or params[0] != elem:
             raise CompileError(f'key= needs a function of one {shown(elem)} item, but this is {shown(fv.ty)}', line)
         kt = fn_result(fv.ty)
-        if kt != 'int' and not is_float(kt) and kt != 'str':
-            raise CompileError(f'the key function must return an int, a float or text, but this one returns {shown(kt)}', line)
+        if kt != 'int' and not is_float(kt) and kt != 'str' and kt != 'bytes':
+            raise CompileError(f'the key function must return an int, a float, text or bytes, but this one returns {shown(kt)}', line)
         # the keys are worked out here, once per item; the runtime sorts them (stable) and builds the result
         info = self.mod.instance_func(self.mod.resolve('_keys'), [elem, kt], line)
         keys = self.tmp('keys')
@@ -14371,7 +14373,7 @@ def builtin_parts() -> list[str]:
 # Modules that also live in std/builtin/ but are loaded only when a program uses them, under their own names (so
 # `import bitarray` and `from bitarray import bitarray` are written as before).
 def builtin_modules() -> list[str]:
-    return ['bitarray']
+    return ['bitarray', 'bytearray']
 
 def std_path(std: str, name: str) -> str:
     # the file of a standard library module
@@ -14577,34 +14579,44 @@ def source_path(mod: Mod, module: str) -> str:
         return f'src/{module}.tom'
     return f'{module}.tom'
 
-# does the module declare something called bitarray or frozenbitarray itself? (then the names are its own, not the library's)
-def declares_bit_name(items: list[Node]) -> bool:
+# the modules of std/builtin/ that need no import (D64a, D126a) and the names each gives: a file that uses one of the names (as a value or
+# as a type) and does not import the module or declare the name itself gets `from MODULE import NAMES`
+def auto_modules() -> list[str]:
+    return ['bitarray', 'bytearray']
+
+def auto_names(module: str) -> list[str]:
+    if module == 'bytearray':
+        return ['bytearray']
+    return ['bitarray', 'frozenbitarray']
+
+# does the module declare something with one of these names itself? (then the names are its own, not the library's)
+def declares_auto_name(items: list[Node], names: list[str]) -> bool:
     for n in items:
-        if (n.kind == 'ClassDef' or n.kind == 'FuncDef' or n.kind == 'ConstDef') and (n.fields[0].text == 'bitarray' or n.fields[0].text == 'frozenbitarray'):
+        if (n.kind == 'ClassDef' or n.kind == 'FuncDef' or n.kind == 'ConstDef') and n.fields[0].text in names:
             return True
     return False
 
-# does any declaration use the name bitarray or frozenbitarray (as a value or as a type)?
-def mentions_bit_types(items: list[Node]) -> bool:
+# does any declaration use one of these names (as a value or as a type)?
+def mentions_auto_names(items: list[Node], names: list[str]) -> bool:
     for n in items:
-        if mentions_bit_node(n):
+        if mentions_auto_node(n, names):
             return True
     return False
 
-def mentions_bit_node(n: Node) -> bool:
-    if (n.kind == 'Name' or n.kind == 'TypeRef') and (n.fields[0].text == 'bitarray' or n.fields[0].text == 'frozenbitarray'):
+def mentions_auto_node(n: Node, names: list[str]) -> bool:
+    if (n.kind == 'Name' or n.kind == 'TypeRef') and n.fields[0].text in names:
         return True
     for f in n.fields:
-        if mentions_bit_val(f):
+        if mentions_auto_val(f, names):
             return True
     return False
 
-def mentions_bit_val(v: Val) -> bool:
+def mentions_auto_val(v: Val, names: list[str]) -> bool:
     if v.tag == 'n':
-        return mentions_bit_node(val_node(v))
+        return mentions_auto_node(val_node(v), names)
     if v.tag == 'l' or v.tag == 't':
         for it in v.items:
-            if mentions_bit_val(it):
+            if mentions_auto_val(it, names):
                 return True
     return False
 
@@ -14614,12 +14626,11 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
     mod.loading = module
     mine = val_nodes(parse(src).fields[0])
     mod.loading = ''
-    bits_imported = False
+    imported: list[str] = []
     for item in mine:
         if item.kind == 'Import':
             wanted = item.fields[0].text
-            if wanted == 'bitarray':
-                bits_imported = True
+            imported.append(wanted)
             ii = ImportInfo()
             ii.importer = module
             ii.module = wanted
@@ -14631,18 +14642,20 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
                 mod.cur = module
                 loaded.append(wanted)
                 load_items(mod, dir, std, read_module(mod, dir, std, wanted, item.line), wanted, items, imports, loaded)
-    if module != 'bitarray' and not bits_imported and not declares_bit_name(mine) and mentions_bit_types(mine):
-        # bitarray and frozenbitarray need no import: a module that uses either gets `from bitarray import bitarray, frozenbitarray`
-        ib = ImportInfo()
-        ib.importer = module
-        ib.module = 'bitarray'
-        ib.names = ['bitarray', 'frozenbitarray']
-        ib.aliases = ['', '']
-        imports.append(ib)
-        if 'bitarray' not in loaded:
-            mod.cur = module
-            loaded.append('bitarray')
-            load_items(mod, dir, std, read_module(mod, dir, std, 'bitarray', 0), 'bitarray', items, imports, loaded)
+    for am in auto_modules():
+        names = auto_names(am)
+        if module != am and am not in imported and not declares_auto_name(mine, names) and mentions_auto_names(mine, names):
+            # bitarray, frozenbitarray and bytearray need no import: a module that uses one gets `from MODULE import NAMES`
+            ib = ImportInfo()
+            ib.importer = module
+            ib.module = am
+            ib.names = names
+            ib.aliases = ['' for _ in names]
+            imports.append(ib)
+            if am not in loaded:
+                mod.cur = module
+                loaded.append(am)
+                load_items(mod, dir, std, read_module(mod, dir, std, am, 0), am, items, imports, loaded)
     own: list[Node] = []
     for item in mine:
         if item.kind != 'Import':
@@ -14961,8 +14974,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             cv = val_node(item.fields[1])
             if cv.kind == 'UnOp' and cv.fields[0].text == '-':
                 cv = val_node(cv.fields[1])
-            if not (cv.kind == 'IntLit' or cv.kind == 'FloatLit' or cv.kind == 'StrLit' or cv.kind == 'BoolLit'):
-                raise CompileError(f"the constant '{item.fields[0].text}' must be a number, text or True or False written out\na constant is not code: write its value as a literal, such as 3.14", item.line)
+            if not (cv.kind == 'IntLit' or cv.kind == 'FloatLit' or cv.kind == 'StrLit' or cv.kind == 'BytesLit' or cv.kind == 'BoolLit'):
+                raise CompileError(f"the constant '{item.fields[0].text}' must be a number, text, bytes or True or False written out\na constant is not code: write its value as a literal, such as 3.14", item.line)
             mod.consts[mod.key_for(top.module, item.fields[0].text)] = val_node(item.fields[1])
         elif item.kind == 'LlvmDecl':
             check_reserved_llvm(mod, top.module, item.fields[0].text, item.line)

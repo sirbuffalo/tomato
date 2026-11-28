@@ -1,0 +1,6 @@
+error[E645]: a bytes literal starts with a lower case b, not B
+ --> tests/errors/bytes_literal_capital_b.tom:4:11
+  |
+4 |     print(B'abc')
+  |           ^
+  = help: write b'...' or b"..."

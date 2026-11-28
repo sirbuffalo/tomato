@@ -1,0 +1,6 @@
+error[E182]: cannot assign to this expression
+ --> tests/errors/bytearray_slice_assign.tom:5:5
+  |
+5 |     a[0:2] = b'zz'
+  |     ^
+  = help: the left side of = must be a variable, a field or a list item

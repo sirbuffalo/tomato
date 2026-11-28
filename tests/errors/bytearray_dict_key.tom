@@ -1,0 +1,6 @@
+# a bytearray can change, so it is not hashable: no dict key or set element (D128a)
+@main
+def main():
+    a = bytearray(b'x')
+    d = {a: 1}
+    print(len(d))
