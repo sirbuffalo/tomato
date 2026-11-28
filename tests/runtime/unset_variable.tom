@@ -1,0 +1,9 @@
+# a reference variable that no assignment reached stops the program with an error (not a crash)
+def f(xs: list[str]) -> str:
+    for s in xs:
+        pass
+    return s
+
+@main
+def main():
+    print(f([]))

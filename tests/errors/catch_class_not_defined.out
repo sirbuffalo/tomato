@@ -1,0 +1,6 @@
+error[E657]: 'catch' needs an error class, but 'Nonsense' is not defined
+ --> tests/errors/catch_class_not_defined.tom:6:11
+  |
+6 |     catch Nonsense as e:
+  |           ^^^^^^^^
+  = help: check its spelling, or import it with 'from module import Nonsense'

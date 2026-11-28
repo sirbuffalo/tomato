@@ -1,0 +1,7 @@
+error[E377]: a for loop cannot loop over a 'value.Value' object
+ --> tests/errors/value_looped_over.tom:6:5
+  |
+6 |     for x in j:
+  |     ^^^^^^^^^^^
+  = help: a value.Value holds a JSON or TOML value of any kind: loop over its list or its dict: for x in j.as_list(): or for key in j.as_dict():
+  = help: the as_bool, as_int, as_float, as_str, as_list and as_dict methods raise ValueTypeError when it is another kind

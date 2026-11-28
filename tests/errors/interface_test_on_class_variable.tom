@@ -1,0 +1,12 @@
+# `y is Named` does not turn a class-typed variable into an interface (D110a)
+interface Named:
+    def name(self) -> str
+
+class Shape:
+    x: int = 1
+
+@main
+def main():
+    y: Shape = Shape()
+    if y is Named:
+        print(y.name())

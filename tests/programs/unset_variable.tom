@@ -1,0 +1,79 @@
+# a variable of a reference type that no assignment reached is an error that can be caught, not a crash (fourth audit 4, D137a):
+# a loop that ran no time, an `if` without an else, a comprehension's variable after it, a `catch` that did not assign
+
+class Box:
+    n: int = 0
+
+def after_loop(xs: list[str]) -> str:
+    for s in xs:
+        pass
+    return s
+
+def after_comp(xs: list[str]) -> str:
+    ys = [s for s in xs]
+    print(len(ys))
+    return s
+
+def after_if(c: bool) -> str:
+    if c:
+        s = 'abc'
+    return s  # allow: unassigned
+
+def after_while(n: int) -> list[int]:
+    while n > 0:
+        items = [n]
+        n -= 1
+    return items
+
+def after_try(c: bool) -> Box:
+    try:
+        if c:
+            raise ValueError('x')
+        b = Box()
+    catch ValueError:
+        pass
+    return b  # allow: unassigned
+
+def both_branches(c: bool) -> str:
+    if c:
+        s = 'a'
+    else:
+        s = 'b'
+    return s
+
+def loop_with_default(xs: list[str]) -> str:
+    last = ''
+    for s in xs:
+        last = s
+    return last
+
+def assigned_before_use(xs: list[str]) -> str:
+    out = ''
+    for s in xs:
+        out += s
+        print(s)
+    return out
+
+@main
+def main():
+    print(both_branches(True), both_branches(False), loop_with_default(['a', 'b']), assigned_before_use(['x', 'y']))
+    try:
+        print(after_loop(['q']), after_loop([]))
+    catch RuntimeError as e:
+        print('loop', e.id, e.message)
+    try:
+        print(after_comp([]))
+    catch RuntimeError as e:
+        print('comp', e.id)
+    try:
+        print(after_if(True), after_if(False))
+    catch RuntimeError as e:
+        print('if', e.id)
+    try:
+        print(after_while(2), after_while(0))
+    catch RuntimeError as e:
+        print('while', e.id)
+    try:
+        print(after_try(False).n, after_try(True).n)
+    catch RuntimeError as e:
+        print('try', e.id)

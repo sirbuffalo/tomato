@@ -1,0 +1,5 @@
+error[E190]: cannot use '>' with int | str and int
+ --> tests/errors/union_and_right_not_narrowed.tom:3:14
+  |
+3 |     return x > 0 and x is int
+  |              ^

@@ -1,0 +1,5 @@
+error[E324]: argument 1 of 'len' (the parameter 'x') has type list[int], but int is expected
+ --> tests/errors/argument_user_len_second.tom:7:19
+  |
+7 |     print(len(3), len([1]))
+  |                   ^^^

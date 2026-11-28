@@ -1,0 +1,7 @@
+error[E340]: the function 'enumerate' is not defined
+ --> tests/errors/function_hidden_by_later_variable.tom:3:11
+  |
+3 |     print(enumerate([1]))
+  |           ^^^^^^^^^
+  = help: 'enumerate' is also a variable of this function, given a value further down, and a variable hides what the name means in the whole function, before that line too
+  = help: rename the variable

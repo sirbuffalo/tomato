@@ -1,0 +1,6 @@
+warning: this 'catch ValueError' can never run: the clause for Error above it catches every ValueError first
+ --> tests/errors/catch_after_parent.tom:8:5
+  |
+8 |     catch ValueError:
+  |     ^^^^^^^^^^^^^^^^
+  = help: put the more specific clause first, or remove this one

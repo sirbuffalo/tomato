@@ -41,11 +41,11 @@ builds/NAME [ENTRY [INPUTS...]]      the program: no word runs main; an entry na
 - NAME is the project's `name` for its `src/main.tom`, else the file's name without `.tom`; `builds/` is in the project's folder (the
   current folder with no project). `[build.ENTRY] output` and `mode` (D92c) and the flags `-o` and `--mode` still apply, the flags winning.
 - A `main` that takes inputs should give each one a default (a `float` or `File` input cannot have one), so that `tomato run` and `builds/NAME` with no words always work; a missing
-  one stops the program with "the entry point takes N input(s), got 0 (an input can be left out only if it has a default ...)".
-- In the built program a first word that is no entry is the error E591, which lists the entries. An entry is every `@` marker and every
+  one stops the program with E352, which says how many inputs the entry takes, names them and shows the call: `main takes 1 to 2 inputs (name, times), but got 0`, then `usage: greet main NAME [TIMES]` (an input with a default is in brackets, the program's name is left out under `tomato run`). A word that does not fit its input is E351 and names the input: `input 2 (ratio) must be a number, found 'abc'`, with the same usage line.
+- The built program's first word `-h` or `--help` lists the entries and the inputs of each, on standard output, and exits with status 0 (the usage lines have each input's name in capitals, `[ ]` for an input with a default and `[NAME...]` for the rest). A first word that is no other entry is the error E591, which lists the entries. An entry is every `@` marker and every
   dotted beginning of one (`greet` for `@greet.loud`, which runs all `@greet.*`, as `tomato run FILE greet` does), except the tests; a
   name that would run several functions is an entry only when none of them takes inputs. `sys.argv()` is the program's name and then the inputs.
-- **Inputs are raw.** An entry takes its inputs as text with `*args: tuple[str]` (or one by one, each converted to its parameter's type:
+- **Inputs are raw.** An entry takes its inputs as text with `*args: tuple[str]` or `*files: tuple[File]` (the words that are left, each opened for reading like a `File` input: `def wc(*files: tuple[File])` makes a `wc a b c` tool; D136a) (or one by one, each converted to its parameter's type:
   `int`, `float`, `bool`, `str`, the fixed-width integers, and `File`). Everything after the FILE or the ENTRY is input: `tomato` reads no
   flag there. Its options go before the entry (`tomato run --mode release f.tom greet bob`; between FILE and ENTRY also works), and
   `--` ends the options earlier: `tomato run f.tom -- main -o` runs `main` with the input `-o`.

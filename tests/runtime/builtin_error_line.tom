@@ -1,0 +1,5 @@
+# the same for a built-in written in Tomato
+@main
+def main():
+    data = bytes([1, 256])
+    print(data)

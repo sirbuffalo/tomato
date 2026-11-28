@@ -1,5 +1,5 @@
 error[E221]: len() needs every member of int | str to have a length, but int does not
- --> tests/errors/union_elif_first_branch.tom:4:9
+ --> tests/errors/union_elif_first_branch.tom:4:16
   |
 4 |         return len(x)
-  |         ^^^^^^^^^^^^^
+  |                ^^^^^^

@@ -336,7 +336,7 @@ while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done
 fast_asan=" bare_raise bare_raise_async at_neg_rmul float_ownership loop_lifetime fast_paths loop_nests shapes objects cycle gc_cycles containers modules native_sort function_values lambdas sort_stable str_fast alloc_pool text_index json_accept json_fuzz msgpack_basic bigint_ownership bigint_unwind toml_valid toml_api value_shared json_files msgpack_file_basics open_errors mixed_tuples compact_lists temp_unwind async_tasks async_cancel async_sync socket_local socket_udp error_path_release error_classes time_module web_modules datetime_arith csv_module re_api re_limits sys_args sys_run sys_async os_files file_lines file_loop_close file_closed file_drop_loop string_io assert_ok testing_lib testing_diff "
 # What the AddressSanitizer tests build (PATH:ARGUMENT, see t_asan); a program that is also one of the "decided rules" programs is built
 # once, with AddressSanitizer, for both tests (t_program_asan)
-asan_specs1="tests/programs/error_tree: tests/programs/bare_raise: tests/programs/bare_raise_async: tests/programs/at_neg_rmul: tests/programs/angle_lists: tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/sort_field: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/big_shift: tests/programs/int_bitwise_big: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/big_decimal: tests/programs/big_karatsuba: tests/programs/big_ntt: tests/programs/big_division: tests/programs/int_bitwise_runs: tests/programs/big_bad_text: tests/programs/int64_convert: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/value_shared: tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_case_full: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/optional_values: tests/programs/optional_lookups: tests/programs/optional_narrowing: tests/programs/optional_narrowing_flow: tests/programs/optional_narrowing_assign: tests/programs/optional_compound_assign: tests/programs/union_narrowing_nests: tests/programs/union_narrowing_elif: tests/programs/type_is: tests/programs/type_is_nests: tests/programs/type_is_class: tests/programs/type_is_class_nests: tests/programs/optional_error_paths: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_floor_mod: tests/programs/float_ownership: tests/programs/float_loops: tests/programs/float_keys: tests/programs/float_nests: tests/programs/float_library: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module:"
+asan_specs1="tests/programs/error_tree: tests/programs/bare_raise: tests/programs/bare_raise_async: tests/programs/at_neg_rmul: tests/programs/angle_lists: tests/programs/loop_lifetime: tests/programs/fast_paths: tests/programs/loop_nests: examples/shapes: examples/objects:4 tests/programs/cycle: tests/programs/gc_cycles: tests/programs/containers: tests/programs/modules: tests/programs/borrow_elision: tests/programs/native_sort: tests/programs/function_values: tests/programs/lambdas: tests/programs/sort_stable: tests/programs/sort_errors: tests/programs/sort_key_cmp: tests/programs/sort_cmp_native: tests/programs/sort_field: tests/programs/str_fast: tests/programs/alloc_pool: tests/programs/text_index: tests/programs/fstring_fuse: tests/programs/cache_lru: tests/programs/cache_multi: tests/programs/memoize: tests/programs/bit_types: tests/programs/int_shift: tests/programs/big_shift: tests/programs/int_bitwise_big: tests/programs/bit_chunks: tests/programs/json_strict: tests/programs/json_accept: tests/programs/json_dumps: tests/programs/json_access: tests/programs/json_depth: tests/programs/json_utf8: tests/programs/json_fuzz: tests/programs/msgpack_basic: tests/programs/msgpack_errors: tests/programs/msgpack_fuzz: tests/programs/bigint_ownership: tests/programs/bigint_ops: tests/programs/bigint_frames: tests/programs/bigint_unwind: tests/programs/big_numbers: tests/programs/big_mul: tests/programs/big_decimal: tests/programs/big_karatsuba: tests/programs/big_ntt: tests/programs/big_division: tests/programs/int_bitwise_runs: tests/programs/big_bad_text: tests/programs/int64_convert: tests/programs/unlimited_int: tests/programs/toml_valid: tests/programs/toml_invalid: tests/programs/toml_api:WORK tests/programs/value_shared: tests/programs/json_files:WORK tests/programs/msgpack_files:WORK tests/programs/msgpack_file_basics:WORK tests/runtime/msgpack_full_disk: tests/programs/open_errors: tests/programs/unicode_case: tests/programs/unicode_case_full: tests/programs/unicode_class: tests/programs/mixed_tuples: tests/programs/tuple_type_args: tests/programs/union_show: tests/programs/optional_values: tests/programs/optional_lookups: tests/programs/optional_narrowing: tests/programs/optional_narrowing_flow: tests/programs/optional_narrowing_assign: tests/programs/optional_compound_assign: tests/programs/union_narrowing_nests: tests/programs/union_narrowing_elif: tests/programs/type_is: tests/programs/type_is_nests: tests/programs/type_is_class: tests/programs/type_is_class_nests: tests/programs/optional_error_paths: tests/programs/toml_big: tests/programs/compact_lists: tests/programs/compact_fuzz: tests/programs/temp_unwind: tests/programs/text_dict_methods: tests/programs/dict_literal_inference: tests/programs/dict_keys_any: tests/programs/dict_keys_objects: tests/programs/dict_keys_forms: tests/programs/dict_keys_cycles: tests/programs/tuple_for: tests/programs/list_methods: tests/programs/utf8_invalid: tests/programs/async_tasks: tests/programs/async_cancel: tests/programs/async_sleep: tests/programs/async_toolkit: tests/programs/async_sync: tests/programs/async_queue_drop: tests/programs/async_gc_release: tests/programs/socket_local: tests/programs/socket_udp: tests/programs/socket_fair: tests/programs/error_path_release: tests/programs/int_ranges: tests/programs/range_wide: tests/programs/int_to_float: tests/programs/float_any_size: tests/programs/float_floor_mod: tests/programs/float_ownership: tests/programs/float_loops: tests/programs/float_keys: tests/programs/float_nests: tests/programs/float_library: tests/programs/fast_ranges: tests/runtime/error_classes: tests/programs/time_module: tests/programs/url_parse: tests/programs/url_quote: tests/programs/html_escape: tests/programs/base64_codec: tests/programs/hex_codec: tests/programs/web_modules: tests/programs/html_fuzz: tests/programs/web_large: tests/programs/datetime_arith: tests/programs/datetime_format: tests/programs/datetime_parse: tests/runtime/datetime_errors: tests/programs/csv_module: tests/programs/textwrap_module: tests/programs/statistics_module: tests/programs/union_narrowing_and: tests/programs/optional_container_text: tests/programs/unset_variable:"
 asan_specs2="tests/programs/sys_args:7  tests/programs/os_env: tests/programs/os_files:WORK tests/programs/sys_run:WORK tests/programs/sys_async:WORK tests/programs/ospath_text: tests/programs/file_lines:WORK tests/programs/file_loop_close:WORK tests/programs/file_modes:WORK tests/programs/file_closed:WORK tests/programs/file_drop_loop:WORK tests/programs/bytes_files:WORK tests/programs/string_io: tests/programs/re_api: tests/programs/re_limits: tests/programs/hashlib_vectors: tests/programs/struct_ints: tests/programs/struct_floats: tests/programs/struct_float_sweep: tests/programs/wave2_bytes: tests/programs/hmac_vectors: tests/programs/round_divmod_any_all: tests/programs/text_methods_more: tests/programs/math_more: tests/programs/fstring_specs: tests/runtime/text_math_caught: tests/programs/assert_ok: tests/programs/testing_lib: tests/programs/testing_diff: tests/programs/bytes_type: tests/programs/list_method_raise: tests/programs/bytes_gaps: tests/programs/bytearray_type: tests/programs/bytearray_names: tests/programs/text_split_words: tests/programs/bytes_sized_iterable: tests/programs/bytearray_inplace: tests/programs/catch_scope: tests/programs/interface_text:"
 asan_paths=" $(printf '%s\n' $asan_specs1 $asan_specs2 | sed 's/:.*//' | tr '\n' ' ')"
 lent_loops_ok() { # IR NAME: a program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
@@ -724,7 +724,7 @@ t_std_public_fields() { r="$(sh tests/std_public_fields.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in optional_interface import_as trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_narrowing optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests union_narrowing_elif type_is type_is_nests type_is_class type_is_class_nests type_in_old optional_error_paths shadow_functions shadow_print shadow_library shadow_classes shadow_std shadow_locals shadow_core bare_raise bare_raise_async time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits bytes_type bytes_gaps bytearray_type bytearray_names text_split_words bytes_sized_iterable bytearray_inplace catch_scope interface_text; do
+  for name in optional_interface import_as trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_narrowing optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests union_narrowing_elif type_is type_is_nests type_is_class type_is_class_nests type_in_old optional_error_paths shadow_functions shadow_print shadow_library shadow_classes shadow_std shadow_locals shadow_core bare_raise bare_raise_async time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits bytes_type bytes_gaps bytearray_type bytearray_names text_split_words bytes_sized_iterable bytearray_inplace catch_scope interface_text union_narrowing_and optional_container_text unset_variable; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -853,6 +853,11 @@ t_cli_modes() {
   check "an uncaught use of a closed file has its debug ID and line" "error[E547]: I/O operation on a closed file
   at main (line 7)" "$($t run tests/runtime/file_closed_uncaught.tom 2>&1)"
   check "an uncaught use of a closed file has its release ID and line" "error[E547]: I/O operation on a closed file (line 7)" "$($t run tests/runtime/file_closed_uncaught.tom --mode release 2>&1)"
+  r="$($t run tests/runtime/std_error_line.tom 2>&1)"
+  check "an error raised in std shows the program's line (debug)" "error[E505]: FileNotFoundError: could not list the directory '/nonexistent_dir_for_tomato/': No such file or directory (raised on line 6)" "$(printf '%s\n' "$r" | head -n 1)"
+  case "$r" in *"  at os.listdir (line "*"  at main (line 6)") ok "an error raised in std: the trace names the module of each std frame";; *) bad "an error raised in std: the trace names the module of each std frame" "$r";; esac
+  check "an error raised in std shows the program's line (release)" "error[E505]: FileNotFoundError: could not list the directory '/nonexistent_dir_for_tomato/': No such file or directory (line 6)" "$($t run tests/runtime/std_error_line.tom --mode release 2>&1)"
+  check "an error raised in a built-in written in Tomato shows the program's line, in release too" "error[E391]: ValueError: a byte must be a whole number from 0 to 255, but item 1 is 256 (line 4)" "$($t run tests/runtime/builtin_error_line.tom --mode release 2>&1)"
   fi; if step 4; then
   r="$($t run tests/runtime/msgpack_missing.tom --mode release 2>&1)"
   case "$r" in "error[E25]: IOError: could not open"*"(line "[1-9]*")") ok "load_msgpack open error has its release ID";; *) bad "load_msgpack open error has its release ID" "$r";; esac
@@ -1346,7 +1351,7 @@ tomato.lock is up to date" "$(cd "$W/app" && noconf $t seed install --locked 2>&
   check "seeds: a file next to the program shadows the seed's module" "mine tomato
 MINE TOMATO" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)"
   printf 'export def greet(n: str) -> str:\n    unused = 1\n    return "mine " + n\n' > "$W/app/sub/thing.tom"
-  case "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)" in *"warning: the variable 'unused'"*" --> thing.tom:2:5"*) ok "seeds: a file that shadows a seed's module is the program's own code (its warnings show, with its own name)";; *) bad "seeds: a file that shadows a seed's module is the program's own code (its warnings show, with its own name)" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)";; esac
+  case "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)" in *"warning: the variable 'unused'"*" --> sub/thing.tom:2:5"*) ok "seeds: a file that shadows a seed's module is the program's own code (its warnings show, with its own name)";; *) bad "seeds: a file that shadows a seed's module is the program's own code (its warnings show, with its own name)" "$(cd "$W/app" && noconf $t run sub/prog.tom 2>&1)";; esac
   rm "$W/app/sub/thing.tom"
   printf 'export def extra() -> int:\n    return 1\n' > "$W/thing/src/thing_util.tom"; printf 'from thing_util import extra\n@main\ndef main():\n    print(extra())\n' > "$W/app/sub/util.tom"
   case "$(cd "$W/app" && noconf $t run sub/util.tom 2>&1)" in *"cannot find the module 'thing_util'"*"if a seed has a new module, run: tomato seed install"*) ok "seeds: a module added to a seed after the lock says to run install";; *) bad "seeds: a module added to a seed after the lock says to run install" "$(cd "$W/app" && noconf $t run sub/util.tom 2>&1)";; esac
@@ -1394,10 +1399,10 @@ test_only = true' "$(sed -n '/name = "acme.example\/other"/,/^test_only/p' "$W/a
   printf 'from thing_bad import bad\n@main\ndef main():\n    print(bad())\n' > "$W/app/sub/bad.tom"
   printf 'from thing_warn import w\n@main\ndef main():\n    w()\n    print("done")\n' > "$W/app/sub/warn.tom"
   check "seeds: an error in a seed names the seed, its version and the file" "error[E324]: the returned value has type str, but int is expected
- --> acme.example/thing 0.3.0: src/thing_bad.tom:2:5
+ --> acme.example/thing 0.3.0: src/thing_bad.tom:2:12
   |
 2 |     return \"x\"
-  |     ^^^^^^^^^^" "$(cd "$W/app" && noconf $t run sub/bad.tom 2>&1)"
+  |            ^^^" "$(cd "$W/app" && noconf $t run sub/bad.tom 2>&1)"
   check "seeds: a warning in a seed is not shown" "done" "$(cd "$W/app" && noconf $t run sub/warn.tom 2>&1)"
   rm "$W/thing/src/thing_bad.tom" "$W/thing/src/thing_warn.tom"
   (cd "$W/app" && noconf $t seed install >/dev/null 2>&1)
@@ -2284,8 +2289,8 @@ quiet" "$(noconf $t run greet.loud 2>&1; noconf $t run greet 2>&1)"
   check "run: an unknown option before the entry is refused" "error: unknown option '-x' for 'tomato run' (options go before the entry: the words after it are its inputs, read as they are; after -- no word is an option)" "$(noconf $t run -x 2>&1)"
   check "run: a second file word is refused with a hint" "error: 'src/util.tom' looks like a file, but the file is already src/main.tom: after it comes an entry name such as main (tomato run FILE [ENTRY [INPUTS...]])" "$(noconf $t run src/main.tom src/util.tom 2>&1)"
   r="$(noconf $t run nosuch 2>&1)"; case "$r" in "error[E"*"]: no function is marked @nosuch"*) ok "run: an entry that does not exist is a compile error";; *) bad "run: an entry that does not exist is a compile error" "$r";; esac
-  check "run: an input that is not a number names its position" "1" "$(noconf $t run prime x 2>&1 | grep -c "input 1 must be a whole number, found 'x'")"
-  check "run: too few inputs says that an input needs a default to be left out" "1" "$(noconf $t run nums 2>&1 | grep -c "takes 2 input(s), got 0 (an input can be left out only if it has a default")"
+  check "run: an input that is not a number names its position" "1" "$(noconf $t run prime x 2>&1 | grep -c "input 1 (n) must be a whole number, found 'x'")"
+  check "run: too few inputs says that an input needs a default to be left out" "1" "$(noconf $t run nums 2>&1 | grep -c "nums takes 1 to 2 inputs (a, b), but got 0")"
   # ---- File inputs
   printf 'one\ntwo\n' > in.txt
   check "File input: a file is opened for reading and closed after the entry" "> one
@@ -2294,7 +2299,7 @@ quiet" "$(noconf $t run greet.loud 2>&1; noconf $t run greet 2>&1)"
 > y" "$(printf 'x\ny\n' | noconf $t run lines - 2>&1)"
   check "File input: a missing file stops with a message naming the input before the entry runs" "error[E592]: input 1 must be a file that can be read, but 'nofile.txt' cannot be opened: No such file or directory" "$(noconf $t run lines nofile.txt 2>&1 | head -n 1)"
   check "File input: a folder cannot be read either" "1" "$(noconf $t run lines src 2>&1 | grep -c "input 1 must be a file that can be read, but 'src' cannot be opened")"
-  check "File input: no word for it is the usage error" "1" "$(noconf $t run lines 2>&1 | grep -c "takes 1 input(s), got 0")"
+  check "File input: no word for it is the usage error" "1" "$(noconf $t run lines 2>&1 | grep -c "lines takes 1 input (data), but got 0")"
   printf '@main\ndef main(f: File = None):\n    print(1)\n' > src/dflt.tom
   r="$(noconf $t run src/dflt.tom 2>&1 | head -n 1)"
   case "$r" in "error[E"*"]: a File input cannot have a default"*|"error[E"*"]: "*) ok "File input: a default is refused at compile time";; *) bad "File input: a default is refused at compile time" "$r";; esac
@@ -2555,10 +2560,10 @@ t_cli_repl_redef() {   # a function, class or interface defined again replaces t
 hint: the earlier lines of the session run again with the new P, and one of them does not work with it; the earlier definition is kept
 5" "$(printf "${P1}p = P(5)\n${P2}p.x\n:quit\n" | $t repl 2>&1)"
   check "repl: a refused redeclaration of a variable keeps the old variable and its value" "error[E324]: the value has type str, but int is expected
- --> repl:1:1
+ --> repl:1:10
   |
 1 | x: int = \"a\"
-  | ^^^^^^^^^^^^
+  |          ^^^
 2
 @main
 def tomato_repl_main():
@@ -3065,7 +3070,8 @@ $rc"
 tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test "$work/tneeds.tom" 2>&1)"; rc=$?
   check "tomato test: a main with an input that has no default fails, says the rule and shows the runtime's message" "FAIL $work/tneeds.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
-    error[E352]: the entry point takes 1 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))
+    error[E352]: main takes 1 input (n), but got 0
+    usage: main N
 tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED
 1" "$r
 $rc"
@@ -3130,7 +3136,8 @@ $rc"
 tomato test: 1 file, 1 passed, 0 failed, 0 skipped: ok" "$r"
   r="$($t test "$work/tentries.tom" check 2>&1)"
   check "tomato test FILE ENTRY with the inputs missing fails, says the rule and shows the runtime's message" "FAIL $work/tentries.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
-    error[E352]: the entry point takes 2 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))
+    error[E352]: check takes 1 to 2 inputs (n, word), but got 0
+    usage: check N [WORD]
 tomato test: 1 file, 0 passed, 1 failed, 0 skipped: FAILED" "$r"
   r="$($t test "$work/tentries.tom" nosuch 2>&1)"
   check "tomato test FILE ENTRY: an entry that is not in the file fails with the compiler's message" "FAIL $work/tentries.tom  (did not compile)
@@ -3953,7 +3960,7 @@ t_unstable_features() { # the unstable list (D121a): compiler/src/unstable.tom a
   printf 'import helper\nfrom helper import pick\n\n@main\ndef main():\n    print(pick([1]), helper.pick([2]))\n' > "$d/app.tom"
   "$c1" "$d/app.tom" main std/ > "$work/us.ll" 2> "$work/us.err"; grep '^;! ' "$work/us.ll" | sed 's/^;! //' >> "$work/us.err"
   check "unstable list: a project file that imports a feature warns, at its own line" "warning: 'choice' is an unstable feature (U4, random.choice, random.shuffle and random.sample)
- --> helper.tom:1:28
+ --> $d/helper.tom:1:28
   |
 1 | from random import Random, choice
   |                            ^^^^^^
@@ -4076,6 +4083,10 @@ t_rt() { # file, expected stderr text, expected exit status
 rt() { spawn t_rt "$@"; }
 section "== runtime errors and modes =="
 rt divide_by_zero "division by zero" 1
+rt error_own_id "error[MYID]: Error: words (raised on line 4)" 1
+rt error_own_id_short "error[E1]: Error: words (raised on line 4)" 1
+rt error_no_message "error: Silent (raised on line 7)" 1
+rt unset_variable "error[E658]: this variable has no value yet: 's' is read where no assignment to it has run" 1
 rt optional_int_none "None where a value is needed" 1
 rt optional_float_none "None where a value is needed" 1
 rt optional_narrow_ended "None where a value is needed" 1
@@ -4109,7 +4120,7 @@ rt exp_large "1.970071114017047e+434" 0
 rt log_zero "log needs a positive number, but got 0.0" 1
 rt log_base_zero "a logarithm base must be positive and not 1, but got 0.0" 1
 rt caught_domain "caught sqrt needs a number that is not negative" 0
-rt error_subclass_uncaught "error: Missing: the file is gone (raised on line 9)" 1
+rt error_subclass_uncaught "error[E7]: Missing: the file is gone (raised on line 9)" 1
 rt angle_base "Angle is a base class" 1
 rt chr_range "chr() takes a number from 0 to 1114111, not a surrogate" 1
 rt ord_length "ord() takes a text of exactly one character" 1

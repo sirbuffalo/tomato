@@ -1,0 +1,4 @@
+# a program input must be a type that a word of the command line can be read as: the error names the input, the entry and the types
+@main
+def main(name: str, arg: bytes):
+    print(name, arg)

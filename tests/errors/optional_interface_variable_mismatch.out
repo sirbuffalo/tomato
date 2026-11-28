@@ -1,5 +1,5 @@
 error[E324]: the returned value has type Named | None, but Tag | None is expected
- --> tests/errors/optional_interface_variable_mismatch.tom:9:5
+ --> tests/errors/optional_interface_variable_mismatch.tom:9:12
   |
 9 |     return n
-  |     ^^^^^^^^
+  |            ^

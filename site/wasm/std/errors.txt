@@ -154,7 +154,7 @@ CompileError a list of {} cannot be printed
 CompileError a number cannot be followed by letters, an underscore or a dot: {}
 CompileError a number cannot be followed by letters: {}
 CompileError a positional argument cannot follow a keyword argument
-CompileError a program input (a parameter of the @main function) must be an int, bool or str
+CompileError the input '{}' of the entry '{}' cannot have the type {}
 CompileError a program input cannot have a float default
 CompileError '{}' is not a format option that is supported
 CompileError (retired: a set can hold only int, bool or str values; sets hold any hashable type since D78a; never emitted; the id stays so that later ids do not move)
@@ -349,7 +349,7 @@ OverflowError (retired: the bitwise operators & | ^ on a very large int; they wo
 RuntimeError out of memory
 RuntimeError stack overflow: a function calls itself too deeply
 ValueError input {} must be {}, found '{}'
-ValueError the entry point takes {} input(s), got {}
+ValueError {} takes {}, but got {}
 OverflowError input {} ({}) does not fit the integer type
 RuntimeError the function ended without returning a value
 RuntimeError every task is waiting for something that can no longer happen
@@ -653,3 +653,6 @@ CompileError '{}' gives no value, so it cannot be used inside an expression
 CompileError this gives no value, so it cannot be used inside an expression
 ValueError the integer {} does not fit the 64 bits that TOML allows
 CompileError a bytearray can change, so it cannot be a dict key or set element
+CompileError a 'catch' clause names one error class, so it cannot list several
+CompileError 'catch' needs an error class, but '{}' is not defined
+RuntimeError this variable has no value yet

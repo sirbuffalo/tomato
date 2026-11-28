@@ -1,0 +1,5 @@
+import statistics
+
+@main
+def main():
+    print("a", statistics.mean([1, "x", 3]), "b")

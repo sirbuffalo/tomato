@@ -1,0 +1,7 @@
+# an error with no message is its class alone, with no dangling colon
+class Silent(Error):
+    pass
+
+@main
+def main():
+    raise Silent()

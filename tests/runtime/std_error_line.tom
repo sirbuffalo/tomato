@@ -1,0 +1,6 @@
+# an error raised inside the standard library is reported at this program's own line (D136a)
+import os
+
+@main
+def main():
+    os.listdir('/nonexistent_dir_for_tomato/')

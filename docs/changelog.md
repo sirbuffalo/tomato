@@ -20,6 +20,9 @@ on an older install moves to 1.0.0 as usual.
 
 ### Breaking changes
 
+- An import alias that is the name of a built-in type (`from math import sqrt as int`, `import math as str`, `as None`) is the error E608 (D135a); it was accepted and the alias ignored.
+- A built program given `-h` or `--help` as its first word prints its entries and their inputs and exits with status 0 (D136a); it was E591. The text of E352 (a wrong number of inputs) and E351 changed: they name the entry's inputs and add a `usage:` line; E157 is E157 at the parameter, saying which input and entry.
+- Reading a text, list or object variable that no assignment reached is the catchable error E658 (D137a); it stopped the program with a segmentation fault.
 - The name of `catch ... as e` cannot be read after its block (D131a): `try: ...` / `catch ValueError as e: pass` / `print(e.message)` was a segmentation fault when no error was raised, and is now a compile error (E651) that says to keep the error in a variable declared before the `try`. A name that had a value before the `try` (a parameter or an earlier variable) is not affected.
 - The fields and helper methods of `bytearray` (`buf`, `n`, `_room`, `_index`, `_to_bytes`, and `text`, which `print` uses) are `private` (D131a), so `a.n = 100000` is a compile error (E267) instead of a write past the buffer.
 - Binary data is the new `bytes` type, not `list[int]` (D17e), in every std API that takes or gives bytes: `base64`, `hex`, `utf8`, `hashlib`, `hmac`, `zlib`, `struct`, `uuid`, `secrets.token_bytes`, `os.read_bytes`/`write_bytes`, `socket` (`send`, `recv`, `sendto`, `recvfrom`), MessagePack (`loads_msgpack`, `dumps_msgpack`, `value.Bin`, `value.Ext`, `as_bytes`), `requests` (`Response.content`) and `terminal.KeyDecoder.feed`. The old `list[int]` forms are gone: write `b'hi'` or `bytes([104, 105])` (which checks that every item is from 0 to 255) where a list was passed, and `list(data)` where a list is still wanted. Printing shows `b'hi'` instead of `[104, 105]`; `recv` gives `b''` when the other side closes. The base64 and hex encoders still return text.
@@ -302,6 +305,11 @@ and eight more comparison languages; Linux x86-64 results are published next to 
 - A big number given to an entry input that has a default (`tomato run f.tom main 99999999999999999999999` for `main(n: int = 3)`)
   printed `warning: 1 big number(s) were never freed`.
 - `@greet . loud` (spaces around the dot) was taken as `@greet.loud`; a dotted entry marker is one word (E335 otherwise).
+- Compile errors put the caret under the expression at fault, not under the whole statement or the first of several calls; a `catch` clause is diagnosed on its own line, a `catch` after one for the same class or a parent warns (`catch-order`), and `catch A, B` says to write one clause for each (D135a).
+- A union type test narrows the right side of `and` and `or`, and the body of an `if` with several tests (`if x is int and y is int: return x + y`) (D135a).
+- A list or dict whose items can be `None` prints (`[a, None]`) (D135a).
+- An error raised inside the standard library is reported at the line of your call into it, in debug and release mode, and the call trace names the module of each frame (`at os.listdir (line 130)`) (D136a).
+- An entry can take `*files: tuple[File]`, so a tool over several files can be written (D136a); an error's own id (`Error('words', 'MYID')`) is shown, and an error with no message prints no dangling colon.
 
 ### Known issues
 

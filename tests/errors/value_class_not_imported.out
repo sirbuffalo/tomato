@@ -1,0 +1,6 @@
+error[E227]: name 'Int' is not defined
+ --> tests/errors/value_class_not_imported.tom:6:16
+  |
+6 |     print(j is Int)
+  |                ^^^
+  = help: 'Int' is in the value module: write value.Int after 'import value', or 'from value import Int'

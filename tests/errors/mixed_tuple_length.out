@@ -1,5 +1,5 @@
 error[E383]: this tuple has 3 items, but tuple[str, int] has 2
- --> tests/errors/mixed_tuple_length.tom:3:5
+ --> tests/errors/mixed_tuple_length.tom:3:29
   |
 3 |     pair: tuple[str, int] = ('ann', 31, 'x')
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                             ^^^^^^^^^^^^^^^^

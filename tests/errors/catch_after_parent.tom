@@ -1,0 +1,9 @@
+# a clause after one for a parent class can never run
+@main
+def main():
+    try:
+        print(1)
+    catch Error:
+        pass
+    catch ValueError:
+        pass

@@ -225,19 +225,68 @@ static int format_f64(double v, char *out) {
     return len;
 }
 
+/* What the wrapper of the entry point says about its inputs (D94b), so that an error about them can name the input and show how to call the
+ * program: the entry's name, its input names (separated by spaces), its usage text (`COUNT RATIO [LABEL]`), and the program's own name
+ * (NULL for `tomato run`, which has no program to name). */
+static const char *usage_entry = "main", *usage_names = "", *usage_args = "", *usage_prog = NULL;
+void tomato_set_usage(const char *entry, const char *names, const char *args, const char *prog) {
+    usage_entry = entry; usage_names = names; usage_args = args; usage_prog = prog;
+}
+/* ` (name)` for the input at this position (1 is the first), or "" when it has no name of its own (a word of the *rest) */
+static const char *input_label(int position, char *out, size_t room) {
+    const char *p = usage_names;
+    for (int k = 1; k < position && *p; k++) { while (*p && *p != ' ') p++; while (*p == ' ') p++; }
+    size_t n = 0;
+    while (p[n] && p[n] != ' ') n++;
+    if (position < 1 || n == 0 || n + 4 > room) { out[0] = '\0'; return out; }
+    snprintf(out, room, " (%.*s)", (int)n, p);
+    return out;
+}
+/* `usage: PROGRAM ENTRY INPUTS`, where PROGRAM is the name of the running program, without its folder */
+static void usage_line(char *out, size_t room) {
+    const char *base = usage_prog ? strrchr(usage_prog, '/') : NULL;
+    base = base ? base + 1 : usage_prog;
+    snprintf(out, room, "usage: %s%s%s%s%s", base ? base : "", base ? " " : "", usage_entry, *usage_args ? " " : "", usage_args);
+}
 static void bad_input(int position, const char *what, const char *text) {
-    char msg[256];
-    snprintf(msg, sizeof msg, "input %d must be %s, found '%s'", position, what, text);
+    char msg[1536], label[80], usage[600];
+    usage_line(usage, sizeof usage);
+    snprintf(msg, sizeof msg, "input %d%s must be %s, found '%.200s'\n%s", position, input_label(position, label, sizeof label), what, text, usage);
     tomato_fail_id(351, msg);
 }
 
-void tomato_usage(int expected, int got) {
-    char msg[256];
-    if (got < expected)
-        snprintf(msg, sizeof msg, "the entry point takes %d input(s), got %d (an input can be left out only if it has a default, as in def main(n: int = 10))", expected, got);
-    else
-        snprintf(msg, sizeof msg, "the entry point takes %d input(s), got %d", expected, got);
+/* the number of inputs is wrong: `max` is the most the entry takes (-1 for any number, a *rest), `min` the fewest (inputs with no default) */
+static const char *inputs_of(int n, char *out, size_t room) { snprintf(out, room, n == 0 ? "no inputs" : n == 1 ? "1 input" : "%d inputs", n); return out; }
+void tomato_usage(int max, int min, int got) {
+    char msg[1536], takes[160], usage[600], names[400], some[40];
+    if (max < 0 && min == 0) snprintf(takes, sizeof takes, "any number of inputs");
+    else if (max < 0) snprintf(takes, sizeof takes, "at least %s", inputs_of(min, some, sizeof some));
+    else if (min == max) inputs_of(min, takes, sizeof takes);
+    else snprintf(takes, sizeof takes, "%d to %d inputs", min, max);
+    size_t w = 0;
+    for (const char *c = usage_names; *c && w + 3 < sizeof names; c++) {
+        if (*c == ' ') { names[w++] = ','; names[w++] = ' '; } else names[w++] = *c;
+    }
+    names[w] = '\0';
+    usage_line(usage, sizeof usage);
+    snprintf(msg, sizeof msg, "%s takes %s%s%s%s, but got %d\n%s", usage_entry, takes, *names ? " (" : "", names, *names ? ")" : "", got, usage);
     tomato_fail_id(352, msg);
+}
+
+/* a program built with its entries (D94b) given -h or --help as its first word: the entries and what each takes, on standard output. `text`
+ * has one line for each entry: its name, then its usage text. */
+void tomato_entries_help(const char *prog, const char *text) {
+    const char *base = strrchr(prog, '/');
+    base = base ? base + 1 : prog;
+    printf("usage: %s [ENTRY [INPUTS...]]\nentries (the first word names one, and its inputs follow it):\n", base);
+    for (const char *p = text; *p;) {
+        const char *e = strchr(p, '\n');
+        if (!e) e = p + strlen(p);
+        printf("  %s %.*s\n", base, (int)(e - p), p);
+        p = *e ? e + 1 : e;
+    }
+    fflush(stdout);
+    exit(0);
 }
 
 /* a program built with all its entries (D94b) started with a first word that is none of them: the words are ENTRY [INPUTS...] */
@@ -4911,6 +4960,7 @@ int tomato_str_contains(void *hay, void *needle) { return find_bytes(hay, needle
 /* An error nobody caught reached the entry point (D22a). `runtime` is 1 for an implicit check emitted by the
  * compiler. Mode is 1 debug, 2 release (D34b). */
 static void print_uncaught(void *obj, int line, int runtime, int mode, const char *where) {
+    line &= 0x3fffffff;           /* bit 30 marks a line of the standard library (the compiler's Gen.line_word); one that was never replaced is shown as it is */
     fflush(stdout);
     tty_restore_all();
     /* The prefix of Error and its subclasses in std/builtin/errors.tom. Pointers are 32-bit on wasm. */
@@ -4918,8 +4968,13 @@ static void print_uncaught(void *obj, int line, int runtime, int mode, const cha
     ErrorFields *error = obj;
     Str *msg = error->message;
     Str *id = error->id;
-    int coded = id && id->bytes >= 3 && id->bytes < 16 && id->data[0] == 'E';
-    for (int i = 1; coded && i < id->bytes; ++i) coded = id->data[i] >= '0' && id->data[i] <= '9';
+    /* the id the error carries is shown as it was given: E04 of the runtime, or the program's own (Error('words', 'MYID')); one that holds
+     * more than letters, digits and _ . - (or is very long) is left out */
+    int coded = id && id->bytes >= 1 && id->bytes < 32;
+    for (int i = 0; coded && i < id->bytes; ++i) {
+        unsigned char c = (unsigned char)id->data[i];
+        coded = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == '.' || c == '-';
+    }
     /* Debug (1) and release (2) print the same head. Debug adds the call trace and says "raised on line N"; release is the one line
      * `error[ID]: Class: message (line N)` (an error the program made up has no id of its own and prints E11, "an error raised by
      * the program"; a runtime failure prints no class, its message says what it was) and never a trace (D34b, decision of 2026-11-27). */
@@ -4938,6 +4993,7 @@ static void print_uncaught(void *obj, int line, int runtime, int mode, const cha
             const char *at = mode == 2 ? "line" : "raised on line";
             if (runtime && mode == 1) snprintf(text, room, "%.*s", (int)msg->bytes, msg->data);
             else if (runtime) snprintf(text, room, "%.*s (line %d)%s", (int)msg->bytes, msg->data, line, where);
+            else if (msg->bytes == 0) snprintf(text, room, "%s (%s %d)%s", cls, at, line, where);     /* no message: the class alone, not `Silent:  (` */
             else snprintf(text, room, "%s: %.*s (%s %d)%s", cls, (int)msg->bytes, msg->data, at, line, where);
             print_head(label, C_RED, text, (int)strlen(text));
             free(text);
@@ -8247,6 +8303,12 @@ int64_t tomato_args(void *out) {
 int32_t tomato_args_into(void *out, int32_t argc, void *argv, int32_t from) {
     char **v = argv;
     for (int k = from; k < argc; k++) push_text(out, v[k], strlen(v[k]));
+    return 0;
+}
+/* the words from index from on, each opened for reading as a File and pushed onto a list of them (a last *files: tuple[File] of an entry point) */
+int32_t tomato_args_files_into(void *out, int32_t argc, void *argv, int32_t from, int64_t file_code) {
+    char **v = argv;
+    for (int k = from; k < argc; k++) *(void **)tomato_list_push(out, 8) = tomato_input_file(v[k], k, file_code);
     return 0;
 }
 /* flushes standard output and error and every open file (exit does), then ends the process */

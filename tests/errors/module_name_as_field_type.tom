@@ -1,0 +1,9 @@
+# after import bytearray, the name is the module
+import bytearray
+
+class A:
+    data: bytearray
+
+@main
+def main():
+    print(1)

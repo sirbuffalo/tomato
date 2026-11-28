@@ -8,8 +8,8 @@
 # A problem with the program is raised as a CompileError and reported by diag.tom.
 from parser import Node, Val, parse, path_text, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
 from lexer import LexError, parse_format_spec
-from diag import Diagnostic, format_error, closest
-from lint import lint_items, falls_through, builtin_names, catch_name_read
+from diag import Diagnostic, format_error, closest, first_quoted
+from lint import lint_items, falls_through, builtin_names, catch_name_read, mark_unset_reads
 from modnames import std_modules
 from unstable import unstable_rows
 from deprecated import deprecated_rows
@@ -26,6 +26,8 @@ class NeedsEarlyCopy(Error):
 export class CompileError(Error):
     line: int = 0
     col: int = 0
+    end: int = 0                # with col: the part of the line the error is about; region: the caret goes at the word of the message inside it (see diag.format_error)
+    region: bool = False
 
     @init
     def make(self, message: str, line: int, col: int = 0):
@@ -558,6 +560,16 @@ def zero_of(t: str) -> str:
         return 'null'
     return '0'
 
+# the help line for an operation a value.Value (or one of its kinds) does not have: it holds data of any kind, so the kind is asked for first
+def value_help(ty: str, general: str, how: str) -> str:
+    if ty.startswith('@value.'):
+        return f"a {shown(ty)} holds a JSON or TOML value of any kind: {how}\nthe as_bool, as_int, as_float, as_str, as_list and as_dict methods raise ValueTypeError when it is another kind"
+    return general
+
+# an import named with the name of a built-in type, which always means the type (D108a, D125a)
+def alias_of_type(name: str, line: int, col: int) -> CompileError:
+    return CompileError(f"'{name}' is the name of a built-in type, so it cannot be defined here\nchoose another name after 'as': a type name always means the built-in type", line, col)
+
 # a class or interface name that nothing declares or imports
 def not_found(what: str, name: str, line: int) -> CompileError:
     return CompileError(f"the {what} '{name}' does not exist\ncheck its spelling, or import it with 'from module import {name}'", line)
@@ -570,6 +582,7 @@ class Ex:
     small: bool = False       # an int known to be in the small form, or a float known to be a plain double: it owns nothing
     fin: bool = False         # a float known to be a finite double (so also small): no box, no infinity, no NaN
     list_name: str = ''     # the local list this was read from, when its length and data are kept in registers (see keep_lists)
+    node: Node | None = None    # the expression it was made from, so that an error about its value can put the caret under it
 
 def ex(reg: str, ty: str) -> Ex:
     e = Ex()
@@ -1098,6 +1111,8 @@ class FuncInfo:
     ret: str = ''
     ptypes: list[str] = []   # without self
     pnames: list[str] = []   # the names of the parameters, in order
+    plines: list[int] = []   # the line and the column each parameter is written at (the column is 0 when not known)
+    pcols: list[int] = []
     stars: int = 0           # how many trailing parameters are *args or **kwargs
     has_varargs: bool = False
     has_kwargs: bool = False
@@ -1118,6 +1133,8 @@ class ImportInfo:
     module: str = ''
     names: list[str] = []
     aliases: list[str] = []    # the name each of names is bound to in the importer ('' for the name itself); for `import module as m` (names is ['*']) the one alias
+    alias_cols: list[int] = []   # the column each alias is written at (0 for none)
+    name_cols: list[int] = []    # the column each name is written at
     line: int = 0
 
 class IfaceInfo:
@@ -1541,6 +1558,11 @@ class Mod:
         found = self.lookup_method(cls, name)
         if found is None:
             text = f"'{shown('@' + cls)}' has no method '{name}'"
+            for ic in self.ifaces:
+                for req in ic.reqs:
+                    if req.name == name and not is_iface('@' + cls):
+                        text += f"\n'{name}' is a method of the interface '{ic.name}': a test such as 'x is {ic.name}' does not turn a variable of the class '{cls}' into the interface\ndeclare the variable with the interface type, such as: n: {ic.name} = x"
+                        raise CompileError(text, line)
             raise CompileError(text + moved_method_hint(shown('@' + cls), name), line)
         return found
 
@@ -1599,9 +1621,9 @@ class Mod:
             raise not_found('interface', name, line)
         return key
 
-    def declare_name(self, module: str, name: str, key: str, exported: bool, line: int):
+    def declare_name(self, module: str, name: str, key: str, exported: bool, line: int, col: int = 0):
         if self.binding(module, name) is not None:
-            raise CompileError(f"'{name}' is defined twice in module '{module}'\nrename one of them", line)
+            raise CompileError(f"'{name}' is defined twice in module '{module}'\nrename one of them", line, col)
         b = Binding()
         b.module = module
         b.name = name
@@ -2913,6 +2935,13 @@ class Gen:
                 return False
         return True
 
+    def check_set(self, reg: str, name: str):
+        # a read of a reference variable that no assignment may have reached (lint.mark_unset_reads): its slot is still empty on some path, and
+        # the program stops with an error that can be caught, not a crash on the empty slot (D137a)
+        bad = self.tmp('unset')
+        self.emit(f'{bad} = icmp eq ptr {reg}, null')
+        self.fail_with(bad, 'RuntimeError', f"this variable has no value yet: '{name}' is read where no assignment to it has run")
+
     def expr_b(self, n: Node, others: list[Node]) -> Ex:
         # like expr, but a local variable is lent without a retain; release() ignores the result. others are the expressions
         # evaluated while the lent value is in use.
@@ -2920,6 +2949,8 @@ class Gen:
             name = n.fields[0].text
             r = self.tmp('bl')
             self.emit(f'{r} = load ptr, ptr {self.slots[name]}')
+            if n.unset and is_rc(self.types[name]) and not is_optional(self.types[name]):
+                self.check_set(r, name)
             lent = ex(r, self.types[name])
             if name in self.list_lens:
                 lent.list_name = name
@@ -3445,7 +3476,7 @@ class Gen:
             return self.box_as(e, e.ty, ty)
         if is_numeric(e.ty) and is_numeric(ty):
             if not contains(ty, e.ty):
-                raise CompileError(f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected\nconvert it explicitly first', line)
+                raise self.wrong_value(e, f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected\nconvert it explicitly first', line, what)
             return self.resize(e, ty)
         if is_union(ty) and not is_union(e.ty):
             return self.box_value(e, ty, line, what)
@@ -3453,8 +3484,18 @@ class Gen:
             return self.box_dyn(e, ty, line, what)
         if not self.mod.assignable(e.ty, ty):
             said = f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected'
-            raise CompileError(said + mismatch_help(e.ty, ty), line)
+            raise self.wrong_value(e, said + mismatch_help(e.ty, ty), line, what)
         return e
+
+    def wrong_value(self, e: Ex, message: str, line: int, what: str) -> CompileError:
+        # the error for a value of the wrong type: the caret goes under the expression that made the value, when it is known and on the
+        # line. (An argument of a call is the call's: the caret stays under the name that is called.)
+        err = CompileError(message, line)
+        nd = e.node
+        if nd is not None and nd.col > 0 and nd.line == line and not what.startswith('argument') and not what.startswith('an extra argument') and not what.startswith('keyword argument') and not what.startswith('the default'):
+            err.col = nd.col
+            err.end = nd.end
+        return err
 
     def union_member_for(self, vt: str, ty: str) -> str:
         # the member of union ty that a value of type vt belongs to: the same type first, else one it can be used as; '' when none
@@ -3471,9 +3512,9 @@ class Gen:
         member = self.union_member_for(e.ty, ty)
         said = f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected'
         if member == '':
-            raise CompileError(said + mismatch_help(e.ty, ty), line)
+            raise self.wrong_value(e, said + mismatch_help(e.ty, ty), line, what)
         if is_numeric(e.ty) and e.ty != member:
-            raise CompileError(said + mismatch_help(e.ty, ty), line)
+            raise self.wrong_value(e, said + mismatch_help(e.ty, ty), line, what)
         return self.box_as(e, member, ty)
 
     def box_as(self, e: Ex, member: str, ty: str) -> Ex:
@@ -3492,7 +3533,7 @@ class Gen:
         # a value stored where Iterable[T] or Sized is wanted (D50a). A set or dict that will be looped over is boxed as a
         # snapshot of its keys, which is what a for loop over it walks anyway.
         if not self.mod.dyn_accepts(e.ty, ty):
-            raise CompileError(f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected', line)
+            raise self.wrong_value(e, f'{what} has type {shown(e.ty)}, but {shown(ty)} is expected', line, what)
         if not (is_list(e.ty) or is_dict(e.ty) or is_set(e.ty)):
             return self.box_as(e, e.ty, ty)
         if dyn_iterable(ty) and not is_list(e.ty):
@@ -5284,7 +5325,7 @@ class Gen:
         args: list[str] = []
         for v in values:
             args.append(f'{llvm_type(v.ty)} {v.reg}')
-        args.append(f'i32 {self.line}')
+        args.append(f'i32 {self.line_word(self.line)}')
         self.emit(f'call void {self.mod.fails[key]}(' + ', '.join(args) + ')')
         self.br(self.unwind_target())
 
@@ -5300,7 +5341,7 @@ class Gen:
         if owned:
             self.emit(f'call void @tomato_release(ptr {text})')
         self.emit(f'store ptr {err}, ptr @tomato_exc')
-        where = at if at != '' else str(self.line)
+        where = at if at != '' else self.line_word(self.line)
         self.emit(f'store i32 {where}, ptr @tomato_exc_line')
         self.emit('store i32 1, ptr @tomato_exc_rt')
         self.trace(True)
@@ -5347,7 +5388,7 @@ class Gen:
         if not self.mod.subclass(v.ty, '@Error'):
             raise CompileError(f'raise needs an error object, but this is {shown(v.ty)}\nwrite raise Error("message") or raise one of your Error subclasses', line)
         self.emit('store ptr ' + v.reg + ', ptr @tomato_exc')            # the pending error owns the reference
-        self.emit(f'store i32 {line}, ptr @tomato_exc_line')
+        self.emit(f'store i32 {self.line_word(line)}, ptr @tomato_exc_line')
         self.emit('store i32 0, ptr @tomato_exc_rt')
         self.emit('store i32 1, ptr @tomato_exc_seen')
         self.br('epilogue')
@@ -5442,7 +5483,22 @@ class Gen:
     def expr(self, n: Node, expected: str = '') -> Ex:
         free = self.value_free
         self.value_free = False
-        v = self.expr_node(n, expected)
+        module = self.mod.cur
+        try:
+            v = self.expr_node(n, expected)
+        catch CompileError as e:
+            # an error that has no place of its own is about the innermost expression being compiled: the caret goes under it
+            if e.col == 0 and n.col > 0 and e.line == n.line and self.mod.cur == module:
+                e.col = n.col
+                e.end = n.end
+                e.region = True
+                if n.at > 0 and n.fields[0].tag == 's' and first_quoted(e.message) == n.fields[0].text:
+                    e.col = n.at              # an operator: under its symbol
+                    e.end = n.at + len(n.fields[0].text)
+                    e.region = False
+            raise
+        if v.node is None:
+            v.node = n
         if v.ty == '' and (n.kind == 'Call' or n.kind == 'Await') and not free:
             call = n
             how = 'call it on a line of its own, or give the function a return type (-> Type) so that it returns a value'
@@ -5500,6 +5556,8 @@ class Gen:
                 self.emit(f'{r} = bitcast double {d} to i64')
                 return exfin(r)
             self.emit(f'{r} = load {llvm_type(ty)}, ptr {self.slots[name]}')
+            if n.unset and is_rc(ty) and not is_optional(ty):
+                self.check_set(r, name)
             e = ex(r, ty)
             if ty == 'int' and self.bail != '':
                 if not self.fact_small(name):
@@ -5717,7 +5775,7 @@ class Gen:
         parts: list[str] = [f'{llvm_type(v.ty)} {v.reg}' for v in values]
         r = self.tmp('help')
         self.emit(r + ' = call ' + self.ret_llvm(info) + ' ' + function_symbol(self.mod, info) + '(' + ', '.join(parts) + ')')
-        self.check_error(values, function_symbol(self.mod, info))
+        self.check_error(values, function_symbol(self.mod, info), 'builtin')
         for v2 in values:
             self.release(v2)
         return ret_ex(r, info.ret)
@@ -5737,7 +5795,7 @@ class Gen:
             self.emit(f'{r} = {text}')
             result = ret_ex(r, info.ret)
         values = [a] + args
-        self.check_error(values, symbol)
+        self.check_error(values, symbol, info.module)
         for v in values:
             self.release(v)
         return result
@@ -6277,7 +6335,7 @@ class Gen:
         symbol = function_symbol(self.mod, info)
         r = self.tmp('hv')
         self.emit(f'{r} = call i64 {symbol}(ptr {k.reg})')
-        self.check_error(live, symbol)
+        self.check_error(live, symbol, 'builtin')
         w = self.tmp('hw')
         self.emit(f'{w} = call i64 @tomato_hash_word(i64 {r})')
         self.emit(f'call void @tomato_int_free(i64 {r})')
@@ -6295,7 +6353,7 @@ class Gen:
         symbol = function_symbol(self.mod, info)
         r = self.tmp('place')
         self.emit(f'{r} = call i64 {symbol}(ptr {d.reg}, ptr {k.reg}, i64 {tagged2})')
-        self.check_error(live, symbol)
+        self.check_error(live, symbol, 'builtin')
         loc = self.tmp('loc')
         self.emit(f'{loc} = ashr i64 {r}, 1')
         return [hw, loc]
@@ -6874,8 +6932,13 @@ class Gen:
         known: list[str] = []
         self.opt_names(val_node(n.fields[1]), op == 'and', known)       # (x is not None and ...: x is not None on the right)
         self.opt_push_in(known, val_node(n.fields[2]))
+        entered = self.narrow_cond(val_node(n.fields[1]), op == 'and')      # (x is int and x > 0: x is an int on the right)
         b = self.expr(val_node(n.fields[2]))
         b = self.want(b, 'bool', n.line, 'the right side of ' + op)
+        k = len(entered) - 1
+        while k >= 0:
+            self.leave_narrow(entered[k][0], [entered[k][1], entered[k][2]])
+            k -= 1
         self.opt_pop_to(opt_base)
         self.emit(f'store i64 {b.reg}, ptr {res}')
         self.br(end)
@@ -6912,6 +6975,34 @@ class Gen:
         if key != '' and self.mod.has_iface(key):
             return f'%{key}'
         return ''
+
+    def undefined_class_help(self, name: str) -> str:
+        # the line under "'X' is not defined" for a class name: where a standard error class of that name is, else a nearby name, else a general help
+        homes = std_class_homes(name)
+        if len(homes) > 0:
+            first = homes[0]
+            text = f"it is in the {first} module: write {first}.{name} after 'import {first}', or 'from {first} import {name}'"
+            if len(homes) > 1:
+                text += ' (the ' + ' and '.join(homes[1:]) + ' modules have one of that name too)'
+            return text
+        near = closest(name, self.visible_names())
+        if near != '':
+            return f"did you mean '{near}'?"
+        return f"check its spelling, or import it with 'from module import {name}'"
+
+    def warn_line(self, line: int, message: str, kind: str):
+        # a warning about a whole line of the user's code, once per line (a function compiled twice says it once); `# allow: KIND` on the line hides it
+        mod = self.mod
+        module = mod.cur
+        if module in mod.seed_used or module not in mod.sources or module in std_modules():
+            return
+        src = mod.sources[module]
+        lines = src.split('\n')
+        if 1 <= line and line <= len(lines) and f'allow: {kind}' in lines[line - 1]:
+            return
+        text = format_error(message, line, 0, src, source_path(mod, module), 'warning')
+        if text not in mod.warnings:
+            mod.warnings.append(text)
 
     def warn_old_type_test(self, line: int):
         # `x in T` still works in 1.0.x, with this warning (a default of D23i that Davis may change): once per line, not for a seed's code
@@ -7354,7 +7445,7 @@ class Gen:
             a, b = b, a                       # a is now the object and b its argument
         found = self.mod.find_op(a.ty[1:], marker)
         if found is None:
-            raise CompileError("cannot use '" + op + "' on '" + shown(a.ty) + "' objects\nadd a method marked @" + marker + ' to the class', line)
+            raise CompileError("cannot use '" + op + "' on '" + shown(a.ty) + "' objects\n" + value_help(a.ty, 'add a method marked @' + marker + ' to the class', 'ask it for the kind you expect first, as in j.as_int() + 1'), line)
         info = found
         if len(info.ptypes) != 1:
             raise CompileError(f"the @{marker} method '{info.name}' must take exactly one argument besides self", line)
@@ -7370,7 +7461,7 @@ class Gen:
             r = self.tmp('op')
             self.emit(f'{r} = {text}')
             result = ret_ex(r, info.ret)
-        self.check_error(values, symbol)
+        self.check_error(values, symbol, info.module)
         self.release(a)
         self.release(b)
         if marker == 'eq' or marker == 'lt' or marker == 'le' or marker == 'gt' or marker == 'ge':
@@ -8251,7 +8342,7 @@ class Gen:
             r = self.tmp('call')
             self.emit(f'{r} = {text}')
             result = ret_ex(r, info.ret)
-        self.check_error(values, symbol)
+        self.check_error(values, symbol, info.module)
         for v3 in values:
             self.release(v3)
         return self.need_small(result)
@@ -8275,9 +8366,23 @@ class Gen:
             self.emit(f'store {llvm_type(it.ty)} {it.reg}, ptr {slot}')
         return ex(d, t)
 
-    def check_error(self, values: list[Ex], callee: str = ''):
+    def std_module(self, module: str) -> bool:
+        # a module of the standard library (std/ and std/builtin/), as against the program's own
+        return module == 'builtin' or module in self.mod.std_used
+
+    def line_word(self, line: int) -> str:
+        # the line an error is raised at, as the runtime keeps it: a line of the standard library has bit 30 set. The first call from the
+        # program into the standard library that the error comes out of puts the line of that call in its place (see check_error), so that
+        # an error is reported at the program's own line (D136a); a line that is still marked when the error is reported is shown without it.
+        if self.std_module(self.mod.cur):
+            return str(line + 1073741824)
+        return str(line)
+
+    def check_error(self, values: list[Ex], callee: str = '', into: str = ''):
         # an error raised by the callee is pending: drop the borrowed arguments and leave this function (D22a). callee is the
-        # function that was called, when the call was direct: finish_bodies removes the test if that function cannot raise.
+        # function that was called, when the call was direct: finish_bodies removes the test if that function cannot raise. into is the
+        # module of the function that was called, when it is known: a call from the program into the standard library is where an
+        # error that was raised at a line of the library gets the line of this call.
         ex1 = self.tmp('ex')
         self.emit(f'{ex1} = load ptr, ptr @tomato_exc')
         has = self.tmp('has')
@@ -8291,6 +8396,16 @@ class Gen:
         # rest of the function looked rarely run, and the calls there were not inlined
         self.cold_br(has, bad, fine)
         self.place(bad)
+        if into != '' and self.std_module(into) and not self.std_module(self.mod.cur):
+            old = self.tmp('eline')
+            self.emit(f'{old} = load i32, ptr @tomato_exc_line')
+            marked = self.tmp('estd')
+            self.emit(f'{marked} = and i32 {old}, 1073741824')
+            is_std = self.tmp('isstd')
+            self.emit(f'{is_std} = icmp ne i32 {marked}, 0')
+            new = self.tmp('nline')
+            self.emit(f'{new} = select i1 {is_std}, i32 {self.line}, i32 {old}')
+            self.emit(f'store i32 {new}, ptr @tomato_exc_line')
         self.trace(False)
         for v in values:
             self.release(v)
@@ -8317,7 +8432,7 @@ class Gen:
         r = self.tmp('obj')
         symbol = '@tomato.new.' + str(self.mod.code_of('@' + c.name))
         self.emit(f'{r} = call ptr {symbol}(' + ', '.join(parts) + ')')
-        self.check_error(values, symbol)
+        self.check_error(values, symbol, c.module)
         for v in values:
             self.release(v)
         return ex(r, '@' + c.name)
@@ -9602,7 +9717,7 @@ class Gen:
         if is_class(v.ty):
             f = self.mod.find_op(v.ty[1:], 'len')
             if f is None or len(f.ptypes) != 0 or f.ret != 'int':
-                raise CompileError("'" + shown(v.ty) + "' objects have no length\nadd a method marked @len that takes no argument and returns int", line)
+                raise CompileError("'" + shown(v.ty) + "' objects have no length\n" + value_help(v.ty, 'add a method marked @len that takes no argument and returns int', 'ask for its length with j.length()'), line)
             return self.marker_call(v, f, [], line)
         if is_mtuple(v.ty):
             self.release(v)
@@ -9686,7 +9801,7 @@ class Gen:
         info = self.mod.helper('show', v.ty, line)
         r = self.tmp('shown')
         self.emit(f'{r} = call ptr {function_symbol(self.mod, info)}(ptr {v.reg})')
-        self.check_error([v], function_symbol(self.mod, info))
+        self.check_error([v], function_symbol(self.mod, info), 'builtin')
         self.release(v)
         return ex(r, 'str')
 
@@ -10011,9 +10126,20 @@ class Gen:
             return f"'{name}' is imported as '{self.mod.renamed[key]}' in this file, so write {self.mod.renamed[key]}"
         return ''
 
+    def later_variable_hint(self, name: str) -> str:
+        # '' or the line saying that a variable of this function, given a value further down, is why a module, function or class of the same name is not found here
+        if name in self.hidden and name not in self.slots:
+            return f"'{name}' is also a variable of this function, given a value further down, and a variable hides what the name means in the whole function, before that line too\nrename the variable"
+        return ''
+
     def name_hint(self, name: str) -> str:
+        if self.later_variable_hint(name) != '':
+            return '\n' + self.later_variable_hint(name)
         if self.mod.resolve(name) != '':
             return f"\n'{name}' is a function or class, not a variable; call it, such as {name}()"
+        if len(std_class_homes(name)) > 0:
+            home = std_class_homes(name)[0]
+            return f"\n'{name}' is in the {home} module: write {home}.{name} after 'import {home}', or 'from {home} import {name}'"
         if self.renamed_hint(name) != '':
             return '\n' + self.renamed_hint(name)
         near = closest(name, self.visible_names())
@@ -10027,6 +10153,8 @@ class Gen:
             if self.mod.resolve(name) != '' or name in builtin_names():
                 text += f"\nthe variable hides the function or class '{name}' here; rename the variable to call it"
             return text
+        if self.later_variable_hint(name) != '' and self.mod.resolve(name) == '':
+            return f"the function '{name}' is not defined\n{self.later_variable_hint(name)}"
         if name in ['reduce']:
             return f"'{name}' is not available\nuse a for loop instead"
         if name in ['pow', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'format']:
@@ -10602,7 +10730,7 @@ class Gen:
             if not self.mod.subclass(v.ty, '@Error'):
                 raise CompileError(f'raise needs an error object, but this is {shown(v.ty)}\nwrite raise Error("message") or raise one of your Error subclasses', s.line)
             self.emit('store ptr ' + v.reg + ', ptr @tomato_exc')            # the pending error owns the reference
-            self.emit(f'store i32 {s.line}, ptr @tomato_exc_line')
+            self.emit(f'store i32 {self.line_word(s.line)}, ptr @tomato_exc_line')
             self.trace(True)
             self.emit('store i32 0, ptr @tomato_exc_rt')
             self.emit('store i32 1, ptr @tomato_exc_seen')
@@ -10693,11 +10821,23 @@ class Gen:
 
     def try_stmt(self, s: Node):
         handlers = s.fields[1].items
+        caught: list[str] = []
         for h in handlers:
             written = h.items[0].text
+            hline = h.items[4].num
             ckey = self.mod.resolve(written)
-            if ckey == '' or not self.mod.has_class(ckey) or not self.mod.subclass('@' + ckey, '@Error'):
-                raise CompileError(f"'catch' needs an error class, but '{written}' is not one\nuse Error, RuntimeError, IOError or a class that extends Error", s.line)
+            if ckey == '':
+                raise CompileError(f"'catch' needs an error class, but '{written}' is not defined\n{self.undefined_class_help(written)}", hline, h.items[5].num)
+            if not self.mod.has_class(ckey) or not self.mod.subclass('@' + ckey, '@Error'):
+                raise CompileError(f"'catch' needs an error class, but '{written}' is not one\nuse Error, RuntimeError, IOError or a class that extends Error", hline, h.items[5].num)
+            for before in caught:
+                if self.mod.subclass('@' + ckey, '@' + before):
+                    if before == ckey:
+                        self.warn_line(hline, f"this 'catch {written}' can never run: an earlier clause already catches {written}\nremove it, or give it a different class", 'catch-order')
+                    else:
+                        self.warn_line(hline, f"this 'catch {written}' can never run: the clause for {before} above it catches every {written} first\nput the more specific clause first, or remove this one", 'catch-order')
+                    break
+            caught.append(ckey)
         info = TryInfo()
         info.catch_l = self.label('catch')
         info.prop_l = self.label('prop')
@@ -10745,7 +10885,7 @@ class Gen:
                 if var in self.slots and self.types[var] != '@' + cname:
                     reg = self.new_slot(var, '@' + cname)     # the name is bound again, to a new slot of the new type
                 else:
-                    reg = self.slot(var, '@' + cname, s.line)
+                    reg = self.slot(var, '@' + cname, h.items[4].num)
                 self.store_owned(reg, ex(pending, '@' + cname))
             else:
                 self.emit(f'call void @tomato_release(ptr {pending})')
@@ -10866,6 +11006,34 @@ class Gen:
         if not is_union(self.types[name]) or tt not in union_members(self.types[name]):
             return []
         return [name, tt, '!' if negated else '']
+
+    def narrow_cond(self, c: Node, truth: bool) -> list[list[str]]:
+        # the union variables that the condition c, found `truth`, narrows (D55a): `x is int` found true, `x is not int` found false, both
+        # sides of an `and` found true or of an `or` found false. The narrowing is entered here, one variable after the other (so the
+        # second test sees the first narrowing), and the caller leaves it with leave_narrow, in the opposite order. Gives [name, saved
+        # slot, saved type] for each one entered.
+        out: list[list[str]] = []
+        if c.kind == 'UnOp' and c.fields[0].text == 'not':
+            return self.narrow_cond(val_node(c.fields[1]), not truth)
+        if c.kind == 'BinOp' and ((c.fields[0].text == 'and' and truth) or (c.fields[0].text == 'or' and not truth)):
+            out = self.narrow_cond(val_node(c.fields[1]), truth)
+            for more in self.narrow_cond(val_node(c.fields[2]), truth):
+                out.append(more)
+            return out
+        target = self.narrow_target(c)
+        if len(target) == 0:
+            return out
+        avail = union_members(self.types[target[0]])
+        keep: list[str] = []
+        if (target[2] == '') == truth:
+            keep = [target[1]]
+        else:
+            keep = [m for m in avail if m != target[1]]
+        if len(keep) == 0 or len(keep) == len(avail):
+            return out
+        saved = self.narrow_to(target[0], keep)
+        out.append([target[0], saved[0], saved[1]])
+        return out
 
     def enter_narrow(self, name: str, member: str) -> list[str]:
         # inside the branch the variable is the member's own type: a copy of the value taken out of the box.
@@ -11203,7 +11371,14 @@ class Gen:
                 saved_rest = self.narrow_to(var, left)
             if len(target) > 0:
                 saved = self.narrow_to(target[0], inner)
+            conj: list[list[str]] = []
+            if len(target) == 0:
+                conj = self.narrow_cond(val_node(branch.items[0]), True)      # (if x is int and y is int: both are ints inside)
             self.block(val_nodes(branch.items[1]))
+            k = len(conj) - 1
+            while k >= 0:
+                self.leave_narrow(conj[k][0], [conj[k][1], conj[k][2]])
+                k -= 1
             if len(target) > 0:
                 self.leave_narrow(target[0], saved)
             if rest_known:
@@ -12510,7 +12685,7 @@ class Gen:
             return
         if not is_list(lst.ty):
             if is_class(lst.ty):
-                raise CompileError("a for loop cannot loop over a '" + shown(lst.ty) + "' object\ngive the class a method marked @iter that yields the items, or loop over a list field of it such as obj.items", s.line)
+                raise CompileError("a for loop cannot loop over a '" + shown(lst.ty) + "' object\n" + value_help(lst.ty, 'give the class a method marked @iter that yields the items, or loop over a list field of it such as obj.items', 'loop over its list or its dict: for x in j.as_list(): or for key in j.as_dict():'), s.line)
             raise CompileError(f'a for loop can loop over a range(), a list, a tuple, a set, a dict, text or an object with an @iter method, but this is {shown(lst.ty)}', s.line)
         elem = elem_of(lst.ty)
         in_nest = self.nest != '' and s.spot > 0
@@ -13009,10 +13184,14 @@ def finish_bodies(mod: Mod, entry: str) -> str:
     return '\n'.join(parts) + '\n'
 
 def trace_name(info: FuncInfo) -> str:
-    # the function as a call trace shows it: Class.method, or just the name
-    if info.owner == '':
-        return info.name
-    return info.owner.split('.')[-1] + '.' + info.name
+    # the function as a call trace shows it: Class.method, or just the name, and the module before it for a function outside the main
+    # program (os.listdir, testing.assert_equal), as the line numbers of the trace are those of that module's file
+    name = info.name
+    if info.owner != '':
+        name = info.owner.split('.')[-1] + '.' + info.name
+    if info.module != 'main':
+        return info.module + '.' + name
+    return name
 
 def entries_hint(items: list[Node]) -> str:
     # "; the entries of this program are: main, test.adds, test" for a message about an entry no function is marked with, or '' when the
@@ -13153,6 +13332,7 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo, small: bool = False):
         compile_function(f, mod, info, True)
     mod.cur = info.module
     mod.tvars = info.targs
+    mark_unset_reads(f)
     g = Gen()
     g.mod = mod
     g.owner = info.owner
@@ -13276,6 +13456,7 @@ def compile_async_function(f: Node, mod: Mod, info: FuncInfo) -> str:
     # and a resume function that runs the body from where it last stopped
     mod.cur = info.module
     mod.tvars = info.targs
+    mark_unset_reads(f)
     g = Gen()
     g.mod = mod
     g.owner = info.owner
@@ -13716,7 +13897,7 @@ def declarations(mod: Mod) -> str:
     d += 'declare i64 @tomato_hash_int(i64)\n'
     d += 'declare i64 @tomato_hash_str(ptr)\n'
     d += 'declare i64 @tomato_hash_mix(i64, i64)\n'
-    d += 'declare void @tomato_usage(i32, i32)\n'
+    d += 'declare void @tomato_usage(i32, i32, i32)\n'
     d += 'declare i64 @tomato_parse_i64(ptr, i32)\n'
     d += 'declare i64 @tomato_parse_u64(ptr, i32)\n'
     d += 'declare void @tomato_fit_signed(i64, i32, i32)\n'
@@ -13760,6 +13941,9 @@ def declarations(mod: Mod) -> str:
     d += 'declare i64 @tomato_open_kind()\n'
     d += 'declare void @tomato_set_args(i32, ptr)\n'
     d += 'declare i32 @tomato_args_into(ptr, i32, ptr, i32)\n'
+    d += 'declare i32 @tomato_args_files_into(ptr, i32, ptr, i32, i64)\n'
+    d += 'declare void @tomato_set_usage(ptr, ptr, ptr, ptr)\n'
+    d += 'declare void @tomato_entries_help(ptr, ptr)\n'
     d += 'declare i32 @tomato_file_write(ptr, ptr)\n'
     d += 'declare i32 @tomato_file_close(ptr)\n'
     d += 'declare ptr @tomato_file_write_error(i64)\n'
@@ -13814,25 +13998,73 @@ def literal_text(n: Node, ty: str) -> str:
         return '0'
     raise CompileError('an entry point input default must be a plain number, True or False', n.line)
 
+# what a program input can be, for the help line of an error about one
+const INPUT_TYPES_HELP = 'an input can be an int (of any width), a float, a bool, a str or a File; a last *name: tuple[str] or tuple[File] takes the words that are left\nthe words of the command line are text: take a number or a list you need from a str inside the function'
+
+def bad_input_type(info: FuncInfo, i: int, entry: str) -> CompileError:
+    # the input at position i (0 is the first) of the entry cannot be read from a word of the command line
+    line = info.line
+    col = 0
+    if i < len(info.plines):
+        line = info.plines[i]
+        col = info.pcols[i]
+    name = ''
+    if i < len(info.pnames):
+        name = info.pnames[i]
+    return CompileError(f"the input '{name}' of the entry '{entry}' cannot have the type {shown(info.ptypes[i])}\n{INPUT_TYPES_HELP}", line, col)
+
+def entry_usage_args(info: FuncInfo) -> str:
+    # `COUNT RATIO [LABEL] [FILES...]`: the inputs of an entry as a usage line writes them (an input with a default, and the rest, in brackets)
+    k = len(info.ptypes) - info.stars
+    low = k - len(info.defaults)
+    parts: list[str] = []
+    for i, name in enumerate(info.pnames):
+        if i >= k:
+            parts.append('[' + name.upper() + '...]')
+        elif i >= low:
+            parts.append('[' + name.upper() + ']')
+        else:
+            parts.append(name.upper())
+    return ' '.join(parts)
+
+def text_const(name: str, text: str) -> str:
+    # a global of plain characters with its closing zero, and a new line written as \0A (the usage lines hold only names and spaces)
+    size = len(text) + 1
+    return f'@{name} = private constant [{size} x i8] c"' + text.replace('\n', '\\0A') + '\\00"\n'
+
 def entry_wrapper(info: FuncInfo, mod: Mod, symbol: str = '') -> str:
     # main(): read the command-line inputs, run the entry point, report an error nobody caught (D28a, D22a). With a symbol, the
     # same code is a function of that name taking the command line as main does (a program with several entries, D94b: the one
     # `main` picks the entry by its first word and passes the words after it, the program's name first)
-    k = len(info.ptypes) - info.stars          # the fixed inputs; a last *args: tuple[str] takes the words beyond them (A-Q3)
-    if info.has_kwargs or (info.has_varargs and info.ptypes[k] != 'tuple[str]'):
-        raise CompileError('a program input (a parameter of the @main function) must be an int, bool or str', 0)
+    k = len(info.ptypes) - info.stars          # the fixed inputs; a last *args: tuple[str] (or tuple[File]) takes the words beyond them (A-Q3)
+    entry = info.name
+    if symbol.startswith('tomato_entry.'):
+        entry = symbol[13:]
+    if info.has_kwargs:
+        raise bad_input_type(info, len(info.ptypes) - 1, entry)
+    if info.has_varargs and info.ptypes[k] != 'tuple[str]' and info.ptypes[k] != 'tuple[File]':
+        raise bad_input_type(info, k, entry)
     low = k - len(info.defaults)
-    out = 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
+    sym = symbol if symbol != '' else 'main'
+    out = text_const(f'.u.{sym}.entry', entry) + text_const(f'.u.{sym}.names', ' '.join(info.pnames)) + text_const(f'.u.{sym}.args', entry_usage_args(info))
+    prog = 'null'
     if symbol != '':
-        out = f'define i32 @{symbol}(i32 %argc, ptr %argv) {{\nentry:\n  %n = sub i32 %argc, 1\n'
+        out += f'define i32 @{symbol}(i32 %argc, ptr %argv) {{\nentry:\n  %n = sub i32 %argc, 1\n'
+        out += '  %prog = load ptr, ptr %argv\n'
+        prog = '%prog'
     else:
+        out += 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  %n = sub i32 %argc, 1\n'
         out += set_limits_text(mod, True)
+    out += f'  call void @tomato_set_usage(ptr @.u.{sym}.entry, ptr @.u.{sym}.names, ptr @.u.{sym}.args, ptr {prog})\n'
     if info.has_varargs:
         out += f'  %ok = icmp sge i32 %n, {low}\n'
     else:
         out += f'  %lo = icmp sge i32 %n, {low}\n  %hi = icmp sle i32 %n, {k}\n  %ok = and i1 %lo, %hi\n'
     out += '  br i1 %ok, label %go, label %bad\n'
-    out += f'bad:\n  call void @tomato_usage(i32 {k}, i32 %n)\n  unreachable\ngo:\n'
+    most = str(k)
+    if info.has_varargs:
+        most = '-1'
+    out += f'bad:\n  call void @tomato_usage(i32 {most}, i32 {low}, i32 %n)\n  unreachable\ngo:\n'
     args: list[str] = []
     owned: list[str] = []
     owned_ints: list[str] = []
@@ -13874,7 +14106,7 @@ def entry_wrapper(info: FuncInfo, mod: Mod, symbol: str = '') -> str:
             out += f'  %a{si}.w = call i32 @tomato_parse_bool(ptr %a{si}.s, i32 {str(i + 1)})\n'
             out += f'  %a{si}.v = zext i32 %a{si}.w to i64\n'
         else:
-            raise CompileError('a program input (a parameter of the @main function) must be an int, bool or str', 0)
+            raise bad_input_type(info, i, entry)
         if optional:
             dflt = info.defaults[i - low]
             if t == 'File':
@@ -13906,7 +14138,10 @@ def entry_wrapper(info: FuncInfo, mod: Mod, symbol: str = '') -> str:
     if info.has_varargs:
         # the words beyond the fixed inputs, as the tuple[str] of *args
         out += f'  %rest = call ptr @tomato_list_new(i64 {mod.code_of(info.ptypes[k])})\n'
-        out += f'  %restn = call i32 @tomato_args_into(ptr %rest, i32 %argc, ptr %argv, i32 {k + 1})\n'
+        if info.ptypes[k] == 'tuple[File]':
+            out += f'  %restn = call i32 @tomato_args_files_into(ptr %rest, i32 %argc, ptr %argv, i32 {k + 1}, i64 {mod.code_of("File")})\n'
+        else:
+            out += f'  %restn = call i32 @tomato_args_into(ptr %rest, i32 %argc, ptr %argv, i32 {k + 1})\n'
         args.append('ptr %rest')
         owned.append('%rest')
     if info.is_async:
@@ -13940,7 +14175,7 @@ def c_text(text: str) -> str:
     # an LLVM constant for a text of plain characters (the entry names), with its closing zero
     return f'private constant [{len(text) + 1} x i8] c"{text}\\00"'
 
-def entries_main(names: list[str], mod: Mod) -> str:
+def entries_main(names: list[str], mod: Mod, usages: list[str]) -> str:
     # D94b: a program built with every entry in it. Its words are `[ENTRY [INPUTS...]]`: no word runs main with no inputs, a first
     # word that names an entry runs that entry with the words after it as its inputs, and any other first word is an error that
     # lists the entries (E591). The entry function gets the words after the entry's name with the program's name put in front of
@@ -13952,13 +14187,21 @@ def entries_main(names: list[str], mod: Mod) -> str:
     for i, name in enumerate(names):
         out += f'@.entry.{i} = {c_text(name)}\n'
     out += f'@.entries = {c_text(", ".join(names))}\n'
+    help_lines: list[str] = []
+    for i, name in enumerate(names):
+        help_lines.append((name + ' ' + usages[i]).rstrip(' '))
+    out += text_const('.help', '\n'.join(help_lines))
+    out += '@.opt.h = ' + c_text('-h') + '\n@.opt.help = ' + c_text('--help') + '\n'
+    mod.declare('declare void @tomato_entries_help(ptr, ptr)')
     out += 'define i32 @main(i32 %argc, ptr %argv) {\nentry:\n'
     out += set_limits_text(mod, False)
     out += '  %none = icmp sle i32 %argc, 1\n  br i1 %none, label %runmain, label %pick\nrunmain:\n'
     out += '  call void @tomato_set_args(i32 %argc, ptr %argv)\n'
     out += '  %rm = call i32 @tomato_entry.main(i32 %argc, ptr %argv)\n  ret i32 %rm\n'
     out += 'pick:\n  %p1 = getelementptr ptr, ptr %argv, i64 1\n  %given = load ptr, ptr %p1\n  %p0 = load ptr, ptr %argv\n  store ptr %p0, ptr %p1\n'
-    out += '  %argc1 = sub i32 %argc, 1\n  br label %t0\n'
+    out += '  %argc1 = sub i32 %argc, 1\n  %h1 = call i32 @strcmp(ptr %given, ptr @.opt.h)\n  %h2 = call i32 @strcmp(ptr %given, ptr @.opt.help)\n'
+    out += '  %ish1 = icmp eq i32 %h1, 0\n  %ish2 = icmp eq i32 %h2, 0\n  %ish = or i1 %ish1, %ish2\n  br i1 %ish, label %help, label %t0\n'
+    out += 'help:\n  call void @tomato_entries_help(ptr %p0, ptr @.help)\n  unreachable\n'
     for i, name in enumerate(names):
         out += f't{i}:\n  %c{i} = call i32 @strcmp(ptr %given, ptr @.entry.{i})\n  %e{i} = icmp eq i32 %c{i}, 0\n  br i1 %e{i}, label %go{i}, label %t{i + 1}\n'
         out += f'go{i}:\n  call void @tomato_set_args(i32 %argc1, ptr %p1)\n  %r{i} = call i32 @tomato_entry.{name}(i32 %argc1, ptr %p1)\n  ret i32 %r{i}\n'
@@ -14001,7 +14244,7 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
             why = mod.unsupported_type(item.fields[2])
             if why != '':
                 raise CompileError(why, item.line, mod.type_col)
-            raise CompileError('this return type is not supported\n' + unsupported_help(item.fields[2], 'a function can return int, bool, str, float, a list, a set, a dict or a class'), item.line, written_col(item.fields[2]))
+            raise CompileError('this return type is not supported\n' + unsupported_help(item.fields[2], 'a function can return int, bool, str, float, a list, a set, a dict or a class') + module_type_help(mod, item.fields[2]), item.line, written_col(item.fields[2]))
     seen: list[str] = []
     for p in val_nodes(item.fields[1]):
         if p.fields[0].text in seen:
@@ -14017,7 +14260,7 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
             why = mod.unsupported_type(p.fields[1])
             if why != '':
                 raise CompileError(why, p.line, mod.type_col)
-            raise CompileError('this parameter type is not supported\n' + unsupported_help(p.fields[1], 'a function can take int, bool, str, float, a list, a set, a dict or a class'), p.line, written_col(p.fields[1]))
+            raise CompileError('this parameter type is not supported\n' + unsupported_help(p.fields[1], 'a function can take int, bool, str, float, a list, a set, a dict or a class') + module_type_help(mod, p.fields[1]), p.line, written_col(p.fields[1]))
         if p.fields[3].tag == 's':
             if p.fields[3].text == '*' and not pt.startswith('tuple['):
                 raise CompileError(f"'*{p.fields[0].text}' needs a tuple type, such as tuple[int]", p.line)
@@ -14029,6 +14272,8 @@ def function_info(item: Node, mod: Mod, owner: str) -> FuncInfo:
             else:
                 info.has_kwargs = True
         info.pnames.append(p.fields[0].text)
+        info.plines.append(p.line)
+        info.pcols.append(p.col)
         info.ptypes.append(pt)
     return info
 
@@ -14041,6 +14286,15 @@ def written_col(v: Val) -> int:
     return 0
 
 # what to write instead of a type that is not supported: None alone is not a type, and says what to write instead
+# a written type that is the name of a module the file imported (`import bytearray`, then `data: bytearray`): the module wins over the class (D128a)
+def module_type_help(mod: Mod, v: Val) -> str:
+    if v.tag == 'n':
+        n = val_node(v)
+        if n.kind == 'TypeRef' and f'{mod.cur}\t{n.fields[0].text}' in mod.import_modules:
+            name = n.fields[0].text
+            return f"\n'{name}' here is the module that 'import {name}' brought in, not a type inside it: write {name}.{name}, or import the class with 'from {name} import {name}' instead of 'import {name}'"
+    return ''
+
 def unsupported_help(v: Val, general: str) -> str:
     if v.tag == 'n':
         n = val_node(v)
@@ -14269,7 +14523,7 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
     # Tomato source that shows the item `e` of type et inside a printed container
     if et == 'str':
         return f'_quote({e})'
-    if is_list(et) or is_dict(et) or is_set(et) or is_mtuple(et):
+    if is_list(et) or is_dict(et) or is_set(et) or is_mtuple(et) or (is_optional(et) and not is_value_optional(et)):
         return mod.helper('show', et, line).name + '(' + e + ')'
     if is_class(et):
         if not mod.has_op(et[1:], 'str'):
@@ -14360,6 +14614,9 @@ def helper_source(mod: Mod, name: str, kind: str, ty: str, line: int) -> str:
     err = '62' if kind == 'max' else '61'
     if kind == 'hash' or kind == 'keyeq' or kind == 'dloc':
         return key_helper_source(mod, name, kind, ty, line)
+    if kind == 'show' and is_optional(ty) and not is_value_optional(ty):
+        # an item that can be None (a text, a list, an object ...) shows None, else the way its own type is shown inside a container
+        return f"{head}    if x is None:\n        return 'None'\n    return " + show_item(mod, strip_optional(ty), 'x', line) + '\n'
     if kind == 'eq':
         # two tuples of mixed item types, compared item by item
         same: list[str] = []
@@ -14443,7 +14700,7 @@ def helper_types(mod: Mod, info: FuncInfo, kind: str, ty: str):
         info.ptypes[2] = 'int'
         info.ret = 'int'
         return
-    if is_class(ty):
+    if is_class(ty) and not is_optional(ty):
         info.ret = f'list[{iter_elem(mod, ty)}]' if kind == 'tolist' else iter_elem(mod, ty)
     elif kind == 'show':
         info.ret = 'str'
@@ -14507,7 +14764,7 @@ def resolve_class(mod: Mod, c: ClassInfo):
             why = mod.unsupported_type(fd.fields[1])
             if why != '':
                 raise CompileError(why, fd.line, mod.type_col)
-            raise CompileError('this field type is not supported\n' + unsupported_help(fd.fields[1], 'a field can hold int, bool, str, float, a list, a set, a dict or a class'), fd.line, written_col(fd.fields[1]))
+            raise CompileError('this field type is not supported\n' + unsupported_help(fd.fields[1], 'a field can hold int, bool, str, float, a list, a set, a dict or a class') + module_type_help(mod, fd.fields[1]), fd.line, written_col(fd.fields[1]))
         before = field_position(c, fd.fields[0].text)
         if before >= 0:
             if c.fields[before].owner == c.name:
@@ -14788,6 +15045,11 @@ def source_path(mod: Mod, module: str) -> str:
         return f'{mod.seed_labels[module]}: src/{module}.tom'
     if module in mod.src_used:
         return f'src/{module}.tom'
+    if module in mod.std_used or module == 'builtin':
+        return f'{module}.tom'
+    slash = mod.main_path.rfind('/')
+    if module not in std_modules() and slash >= 0:
+        return mod.main_path[:slash + 1] + f'{module}.tom'        # a module next to the program is shown with the program's folder
     return f'{module}.tom'
 
 # the modules of std/builtin/ that need no import (D64a, D126a) and the names each gives: a file that uses one of the names (as a value or
@@ -14848,6 +15110,8 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
             ii.line = item.line
             ii.names = [nm.text for nm in item.fields[1].items]
             ii.aliases = [al.text for al in item.fields[2].items]
+            ii.alias_cols = [c.num for c in item.fields[3].items]
+            ii.name_cols = [c.num for c in item.fields[4].items]
             imports.append(ii)
             if wanted not in loaded:
                 mod.cur = module
@@ -14862,6 +15126,8 @@ def load_items(mod: Mod, dir: str, std: str, src: str, module: str, items: list[
             ib.module = am
             ib.names = names
             ib.aliases = ['' for _ in names]
+            ib.alias_cols = [0 for _ in names]
+            ib.name_cols = [0 for _ in names]
             imports.append(ib)
             if am not in loaded:
                 mod.cur = module
@@ -14908,6 +15174,8 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
             # import module: every exported name of the module, written module.name (or alias.name for `import module as alias`, which
             # binds only the alias, D115a)
             prefix = import_prefix(ii)
+            if prefix != ii.module and (reserved_type_name(prefix) or prefix == 'None'):
+                raise alias_of_type(prefix, ii.line, ii.alias_cols[0])
             mod.import_modules[ii.importer + '\t' + prefix] = ii.module
             if prefix != ii.module:
                 mod.renamed[ii.importer + '\t' + ii.module] = prefix
@@ -14925,7 +15193,12 @@ def build_scopes(mod: Mod, items: list[TopItem], imports: list[ImportInfo]):
             bound = nm
             if ii.aliases[k] != '':
                 bound = ii.aliases[k]
-            mod.declare_name(ii.importer, bound, mod.exported_key(ii.module, nm, ii.line), False, ii.line)
+                if reserved_type_name(bound) or bound == 'None':
+                    raise alias_of_type(bound, ii.line, ii.alias_cols[k])
+            where = ii.name_cols[k]
+            if bound != nm:
+                where = ii.alias_cols[k]
+            mod.declare_name(ii.importer, bound, mod.exported_key(ii.module, nm, ii.line), False, ii.line, where)
             if bound != nm:
                 mod.renamed[ii.importer + '\t' + nm] = bound
 
@@ -14943,6 +15216,16 @@ def not_exported_help(module: str, name: str) -> str:
 
 # What to tell a program that still uses a std name that was taken out (D122a): '' when there is nothing to say. The text is added as
 # help lines to the usual "has no" error, so the error's own first line (and its id) are unchanged.
+# the standard modules that define an error class of this name (a program that catches it without importing it is told where it is)
+def std_class_homes(name: str) -> list[str]:
+    homes: list[str] = []
+    table = {'TimeoutError': ['asyncio', 'requests'], 'LockError': ['asyncio'], 'JSONDecodeError': ['json'], 'JSONEncodeError': ['json'], 'MsgpackError': ['json'], 'StructError': ['struct'], 'ProcessError': ['sys'], 'RequestError': ['requests'], 'ConnectionError': ['requests'], 'HTTPError': ['requests'], 'SocketError': ['socket'], 'ConnectionRefusedError': ['socket'], 'ConnectionResetError': ['socket'], 'AddressError': ['socket'], 'TerminalError': ['terminal'], 'ValueTypeError': ['value'], 'TOMLDecodeError': ['toml'], 'RegexError': ['re']}
+    for cls in ['Value', 'Null', 'Bool', 'Int', 'Float', 'Str', 'List', 'Dict', 'Bin', 'Ext', 'Timestamp', 'Moment']:
+        table[cls] = ['value']
+    if name in table:
+        homes = table[name]
+    return homes
+
 def moved_name_hint(module: str, name: str) -> str:
     if module == 'math' and name in ['abs', 'min', 'max']:
         return f"'{name}' is built in, and math no longer has its own: call {name}() directly, without importing it from math"
@@ -15248,9 +15531,11 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
         if entry_name not in funcs_of:
             no_entry_error(entry_name, entries_hint_of(order[1:]))
         wrapper = ''
+        usages: list[str] = []
         for n in order:
             wrapper += entry_wrapper(mod.find(funcs_of[n], 1), mod, 'tomato_entry.' + n)
-        wrapper += entries_main(order, mod)
+            usages.append(entry_usage_args(mod.find(funcs_of[n], 1)))
+        wrapper += entries_main(order, mod, usages)
         bodies.append(finish_bodies(mod, ''))
     else:
         wrapper = entry_wrapper(mod.find(entry, 1), mod)
@@ -15276,11 +15561,11 @@ def error_label(mod: Mod, message: str) -> str:
         kind = 368
     return 'error[' + mod.error_id(kind) + ']'
 
-def located(mod: Mod, message: str, line: int, col: int, module: str) -> str:
+def located(mod: Mod, message: str, line: int, col: int, module: str, end: int = 0, region: bool = False) -> str:
     # the error as the user sees it: the message, then the place and the source line of the module it is in
     if module in mod.sources:
         where = source_path(mod, module)
-        return format_error(message, line, col, mod.sources[module], where, error_label(mod, message))
+        return format_error(message, line, col, mod.sources[module], where, error_label(mod, message), end, region)
     return format_error(message, 0, 0, '', '', error_label(mod, message))
 
 export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: str = 'debug', path: str = '', exp_bits: int = 65536, format_digits: int = 100000, seeds: list[str] = [], src_dir: str = '', all_entries: bool = False) -> str:
@@ -15310,7 +15595,7 @@ export def compile_module(src: str, dir: str, std: str, entry_name: str, mode: s
         catch ParseError as e:
             raise Diagnostic(located(mod, e.message, e.line, e.col, mod.loading))
         catch CompileError as e:
-            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.cur))
+            raise Diagnostic(located(mod, e.message, e.line, e.col, mod.cur, e.end, e.region))
         for warning in mod.warnings:
             for text_line in warning.split('\n'):
                 result += f';! {text_line}\n'

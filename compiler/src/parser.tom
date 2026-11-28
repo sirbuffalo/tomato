@@ -83,6 +83,9 @@ def pair_locals(toks: list[Token], start: int) -> list[str]:
 def mark_core(v: Val):
     if v.tag == 'n' and v.node is not None:
         n = v.node
+        n.col = 0                  # the tree was read from text the compiler wrote, so its columns are not the user's
+        n.end = 0
+        n.at = 0
         if n.kind == 'Call':
             f = val_node(n.fields[0])
             if f.kind == 'Name':
@@ -145,6 +148,10 @@ export class Node:
     mark: int = 0            # the compiler numbers the statements of a small-int loop here while it compiles that loop
     spot: int = 0            # the same for the statements of a loop nest (see Gen.nest_loop in compiler.tom)
     exported: bool = False
+    col: int = 0             # for an expression written on one line: the column it starts at and the column just after it (1-based); 0 when not known
+    end: int = 0
+    at: int = 0              # the column of an operator's own symbol, for an operator node
+    unset: bool = False      # a Name that reads a local variable that no assignment may have reached (see lint.mark_unset_reads): the compiler checks it at run time
     core: bool = False       # a name the compiler's own desugaring wrote (the len of an enumerate loop, the str of an f-string): it means the built-in, even where the module defines the same name
     fields: list[Val] = []
 
@@ -333,6 +340,8 @@ def split_function_prefixes(f: Node, prefixes: list[str]):
             split_local_prefixes(vn(f), prefixes, bound)
             return
 
+const MULTI_CATCH = "a 'catch' clause names one error class, so it cannot list several\nwrite one 'catch' clause for each class, or catch their parent class (Error catches every error)"
+
 export class Parser:
     toks: list[Token] = []
     p: int = 0
@@ -358,7 +367,9 @@ export class Parser:
             joined = (i >= self.p and tk.kind == 'NAME' and tk.text == mod and i + 2 < len(toks) and toks[i + 1].kind == 'OP'
                       and toks[i + 1].text == '.' and toks[i + 2].kind == 'NAME' and not (i > 0 and toks[i - 1].kind == 'OP' and toks[i - 1].text == '.'))
             if joined:
-                out.append(make_token('NAME', mod + '.' + toks[i + 2].text, 0, tk.line, tk.col))
+                joined_tok = make_token('NAME', mod + '.' + toks[i + 2].text, 0, tk.line, tk.col)
+                joined_tok.end = toks[i + 2].end
+                out.append(joined_tok)
                 i += 3
             else:
                 out.append(tk)
@@ -369,6 +380,15 @@ export class Parser:
         t = self.toks[self.p]
         self.p += 1
         return t
+
+    # note where the expression n was written (from the token `first` to the last one read), when it is all on one line and its
+    # tokens are the user's own: an error about it can then put the caret under it (an expression that has a place keeps it)
+    def span(self, n: Node, first: Token) -> Node:
+        last = self.toks[self.p - 1]
+        if n.col == 0 and first.col > 0 and last.end > first.col and first.line == last.line and n.line == first.line:
+            n.col = first.col
+            n.end = last.end
+        return n
 
     def peek_is(self, k: int, kind: str, text: str) -> bool:
         t = self.peek(k)
@@ -481,16 +501,23 @@ export class Parser:
             self.expect_kw('import')
             names: list[Val] = []
             aliases: list[Val] = []
+            cols: list[Val] = []          # the column of each alias (0 for a name with none), for the errors about them
+            name_cols: list[Val] = []     # and of each name
             while True:
-                names.append(vs(self.expect('NAME').text))
+                first_name = self.expect('NAME')
+                names.append(vs(first_name.text))
+                name_cols.append(vi(first_name.col))
                 if self.accept_kw('as'):
-                    aliases.append(vs(self.expect('NAME').text))
+                    at = self.expect('NAME')
+                    aliases.append(vs(at.text))
+                    cols.append(vi(at.col))
                 else:
                     aliases.append(vs(''))
+                    cols.append(vi(0))
                 if not self.accept_op(','):
                     break
             self.expect('NEWLINE')
-            return mk('Import', t.line, [vs(mod), vlist(names), vlist(aliases)])
+            return mk('Import', t.line, [vs(mod), vlist(names), vlist(aliases), vlist(cols), vlist(name_cols)])
         if self.is_kw('import'):
             # import module: afterwards `module.name` stands for the exported name (a NAME token written 'module.name'), so
             # the module's names are reached without bringing them in bare (D24b, D24c). `import module as m` binds only m, so
@@ -499,13 +526,16 @@ export class Parser:
             mod = self.expect('NAME').text
             alias = mod
             bound = ''
+            bound_col = 0
             if self.accept_kw('as'):
-                alias = self.expect('NAME').text
+                at = self.expect('NAME')
+                alias = at.text
                 if alias != mod:
                     bound = alias
+                    bound_col = at.col
             self.expect('NEWLINE')
             self.qualify(alias)
-            return mk('Import', t.line, [vs(mod), vlist([vs('*')]), vlist([vs(bound)])])
+            return mk('Import', t.line, [vs(mod), vlist([vs('*')]), vlist([vs(bound)]), vlist([vi(bound_col)]), vlist([vi(0)])])
         if self.is_op('@'):
             self.adv()
             m = self.expect('NAME')
@@ -684,7 +714,10 @@ export class Parser:
                 raise ParseError(f"the parameter '{nm.text}' cannot come after '*args' or '**kwargs'\nmove it before them", nm.line, nm.col)
             elif default.tag == 'z' and self.any_default(out):
                 raise ParseError(f"the parameter '{nm.text}' needs a default value because an earlier parameter has one\ngive it a default such as '{nm.text}: int = 0', or move it before the others", nm.line, nm.col)
-            out.append(mk('Param', nm.line, [vs(nm.text), ty, default, vopt_text(star)]))
+            param = mk('Param', nm.line, [vs(nm.text), ty, default, vopt_text(star)])
+            param.col = nm.col                   # (the name's place, for an error about the parameter)
+            param.end = nm.end
+            out.append(param)
             if not self.accept_op(','):
                 break
         self.expect_op(')')
@@ -1097,16 +1130,25 @@ export class Parser:
         orelse = vz()
         final = vz()
         while self.is_kw('catch'):
-            self.adv()
-            cls = self.expect('NAME').text
+            ct = self.adv()
+            if self.is_op('('):
+                raise ParseError(MULTI_CATCH, self.cur().line, self.cur().col)
+            ctok = self.expect('NAME')
+            cls = ctok.text
+            if self.is_op(','):
+                raise ParseError(MULTI_CATCH, self.cur().line, self.cur().col)
             var = vz()
+            var_col = 0
             if self.accept_kw('as'):
-                var = vs(self.expect('NAME').text)
+                vtok = self.expect('NAME')
+                var = vs(vtok.text)
+                var_col = vtok.col
             self.expect_op(':')
             self.catches.append(0)
             hbody = self.block()
             again = self.catches.pop()      # 1 when the block has a bare `raise`: the compiler keeps the caught error for it
-            handlers.append(vtuple([vs(cls), var, vnodes(hbody), vb(again == 1)]))
+            # items 4 to 6: the line of the clause, the column of its class and the column of its name (0 for none), for the errors about them
+            handlers.append(vtuple([vs(cls), var, vnodes(hbody), vb(again == 1), vi(ct.line), vi(ctok.col), vi(var_col)]))
         if self.is_kw('else'):
             if len(handlers) == 0:
                 raise ParseError("'else' after 'try' needs a 'catch' block before it", self.cur().line, self.cur().col)
@@ -1144,15 +1186,16 @@ export class Parser:
     # expressions
     def expr(self) -> Node:
         # a if condition else b: the loosest operator, grouping to the right
+        first = self.cur()
         lam = self.lambda_expr()
         if lam is not None:
-            return lam
+            return self.span(lam, first)
         e = self.or_()
         if self.is_kw('if'):
             ln = self.adv().line
             cond = self.or_()
             self.expect_kw('else')
-            return mk('Cond', ln, [vn(cond), vn(e), vn(self.expr())])
+            return self.span(mk('Cond', ln, [vn(cond), vn(e), vn(self.expr())]), first)
         return e
 
     # a lambda: x -> expression, or (a, b) -> expression; its body is one expression
@@ -1187,34 +1230,41 @@ export class Parser:
         body = self.expr()
         return mk('Lambda', line, [vlist(names), vn(body)])
 
-    def binop(self, op: str, line: int, left: Node, right: Node) -> Node:
-        return mk('BinOp', line, [vs(op), vn(left), vn(right)])
+    def binop(self, op: str, line: int, left: Node, right: Node, first: Token, at: Token) -> Node:
+        n = mk('BinOp', line, [vs(op), vn(left), vn(right)])
+        n.at = at.col
+        return self.span(n, first)
 
     def or_(self) -> Node:
+        first = self.cur()
         e = self.xor_()
         while self.is_kw('or'):
-            ln = self.adv().line
-            e = self.binop('or', ln, e, self.xor_())
+            t = self.adv()
+            e = self.binop('or', t.line, e, self.xor_(), first, t)
         return e
 
     def xor_(self) -> Node:
+        first = self.cur()
         e = self.and_()
         while self.is_kw('xor'):
-            ln = self.adv().line
-            e = self.binop('xor', ln, e, self.and_())
+            t = self.adv()
+            e = self.binop('xor', t.line, e, self.and_(), first, t)
         return e
 
     def and_(self) -> Node:
+        first = self.cur()
         e = self.not_()
         while self.is_kw('and'):
-            ln = self.adv().line
-            e = self.binop('and', ln, e, self.not_())
+            t = self.adv()
+            e = self.binop('and', t.line, e, self.not_(), first, t)
         return e
 
     def not_(self) -> Node:
         if self.is_kw('not'):
-            ln = self.adv().line
-            return mk('UnOp', ln, [vs('not'), vn(self.not_())])
+            t = self.adv()
+            n = mk('UnOp', t.line, [vs('not'), vn(self.not_())])
+            n.at = t.col
+            return self.span(n, t)
         return self.cmp()
 
     def is_cmp_op(self) -> bool:
@@ -1222,90 +1272,105 @@ export class Parser:
         return t.kind == 'OP' and t.text in ['==', '!=', '<', '<=', '>', '>=']
 
     def cmp(self) -> Node:
+        first = self.cur()
         e = self.bit_or()
         if self.is_kw('is'):
             t = self.adv()
             op = 'is not' if self.accept_kw('not') else 'is'
-            return self.binop(op, t.line, e, self.bit_or())
+            return self.binop(op, t.line, e, self.bit_or(), first, t)
         if self.is_kw('in'):
             t = self.adv()
-            return self.binop('in', t.line, e, self.bit_or())
+            return self.binop('in', t.line, e, self.bit_or(), first, t)
         if self.is_kw('not') and self.peek_is(1, 'KW', 'in'):
             # x not in y is not (x in y)
             t = self.adv()
-            self.adv()
-            inner = self.binop('in', t.line, e, self.bit_or())
-            return mk('UnOp', t.line, [vs('not'), vn(inner)])
+            it = self.adv()
+            inner = self.binop('in', t.line, e, self.bit_or(), first, it)
+            outer = mk('UnOp', t.line, [vs('not'), vn(inner)])
+            outer.at = t.col
+            return self.span(outer, first)
         if self.is_cmp_op():
             t = self.adv()
-            e = self.binop(t.text, t.line, e, self.bit_or())
+            e = self.binop(t.text, t.line, e, self.bit_or(), first, t)
             if self.is_cmp_op():
                 raise ParseError('comparisons cannot be chained like a < b < c\nwrite a < b and b < c instead', self.cur().line, self.cur().col)
         return e
 
     def bit_or(self) -> Node:
+        first = self.cur()
         e = self.bit_xor()
         while self.is_op('|'):
             t = self.adv()
-            e = self.binop('|', t.line, e, self.bit_xor())
+            e = self.binop('|', t.line, e, self.bit_xor(), first, t)
         return e
 
     def bit_xor(self) -> Node:
+        first = self.cur()
         e = self.bit_and()
         while self.is_op('^'):
             t = self.adv()
-            e = self.binop('^', t.line, e, self.bit_and())
+            e = self.binop('^', t.line, e, self.bit_and(), first, t)
         return e
 
     def bit_and(self) -> Node:
+        first = self.cur()
         e = self.shift()
         while self.is_op('&'):
             t = self.adv()
-            e = self.binop('&', t.line, e, self.shift())
+            e = self.binop('&', t.line, e, self.shift(), first, t)
         return e
 
     def shift(self) -> Node:
+        first = self.cur()
         e = self.add()
         while self.is_op('<<') or self.is_op('>>'):
             t = self.adv()
-            e = self.binop(t.text, t.line, e, self.add())
+            e = self.binop(t.text, t.line, e, self.add(), first, t)
         return e
 
     def add(self) -> Node:
+        first = self.cur()
         e = self.mul()
         while self.is_op('+') or self.is_op('-'):
             t = self.adv()
-            e = self.binop(t.text, t.line, e, self.mul())
+            e = self.binop(t.text, t.line, e, self.mul(), first, t)
         return e
 
     def mul(self) -> Node:
+        first = self.cur()
         e = self.unary()
         while self.is_op('*') or self.is_op('/') or self.is_op('//') or self.is_op('%'):
             t = self.adv()
-            e = self.binop(t.text, t.line, e, self.unary())
+            e = self.binop(t.text, t.line, e, self.unary(), first, t)
         return e
 
     def unary(self) -> Node:
         if self.is_kw('await'):
-            ln = self.adv().line
-            return mk('Await', ln, [vn(self.unary())])
+            t = self.adv()
+            return self.span(mk('Await', t.line, [vn(self.unary())]), t)
         if self.is_op('-'):
-            ln = self.adv().line
-            return mk('UnOp', ln, [vs('-'), vn(self.unary())])
+            t = self.adv()
+            n = mk('UnOp', t.line, [vs('-'), vn(self.unary())])
+            n.at = t.col
+            return self.span(n, t)
         if self.is_op('~'):
-            ln = self.adv().line
-            return mk('UnOp', ln, [vs('~'), vn(self.unary())])
+            t = self.adv()
+            n = mk('UnOp', t.line, [vs('~'), vn(self.unary())])
+            n.at = t.col
+            return self.span(n, t)
         return self.power()
 
     def power(self) -> Node:
         # ** binds tighter than a minus sign on its left (-2 ** 2 is -4) and groups to the right
+        first = self.cur()
         e = self.postfix()
         if self.is_op('**'):
             t = self.adv()
-            return self.binop('**', t.line, e, self.unary())
+            return self.binop('**', t.line, e, self.unary(), first, t)
         return e
 
     def postfix(self) -> Node:
+        first = self.cur()
         e = self.atom()
         while True:
             if self.is_op('('):
@@ -1328,7 +1393,7 @@ export class Parser:
                     if not self.accept_op(','):
                         break
                 self.expect_op(')')
-                e = mk('Call', ln, [vn(e), vnodes(args), vlist(kwargs)])
+                e = self.span(mk('Call', ln, [vn(e), vnodes(args), vlist(kwargs)]), first)
             elif self.is_op('['):
                 ln = self.adv().line
                 lo = vz()
@@ -1340,7 +1405,7 @@ export class Parser:
                     while self.accept_op(','):
                         parts.append(self.expr())
                     self.expect_op(']')
-                    e = mk('Index', ln, [vn(e), vn(mk('TupleLit', ln, [vnodes(parts)]))])
+                    e = self.span(mk('Index', ln, [vn(e), vn(mk('TupleLit', ln, [vnodes(parts)]))]), first)
                 elif self.accept_op(':'):
                     hi = vz()
                     step = vz()
@@ -1350,13 +1415,13 @@ export class Parser:
                         if not self.is_op(']'):
                             step = vn(self.expr())
                     self.expect_op(']')
-                    e = mk('Slice', ln, [vn(e), lo, hi, step])
+                    e = self.span(mk('Slice', ln, [vn(e), lo, hi, step]), first)
                 else:
                     self.expect_op(']')
-                    e = mk('Index', ln, [vn(e), lo])
+                    e = self.span(mk('Index', ln, [vn(e), lo]), first)
             elif self.is_op('.'):
                 self.adv()
-                e = mk('Attr', e.line, [vn(e), vs(self.expect('NAME').text)])
+                e = self.span(mk('Attr', e.line, [vn(e), vs(self.expect('NAME').text)]), first)
             else:
                 return e
 
@@ -1378,6 +1443,10 @@ export class Parser:
         return mk('ListComp', line, [vn(mk('For', line, [vs(names[0]), vn(it), vnodes(body)]))])
 
     def atom(self) -> Node:
+        first = self.cur()
+        return self.span(self.atom_node(), first)
+
+    def atom_node(self) -> Node:
         t = self.cur()
         if t.kind == 'INT':
             self.adv()

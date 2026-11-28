@@ -1,0 +1,6 @@
+error[E657]: 'catch' needs an error class, but 'ProcessError' is not defined
+ --> tests/errors/catch_class_not_imported.tom:6:11
+  |
+6 |     catch ProcessError:
+  |           ^^^^^^^^^^^^
+  = help: it is in the sys module: write sys.ProcessError after 'import sys', or 'from sys import ProcessError'

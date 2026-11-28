@@ -1,0 +1,6 @@
+error[E324]: a list item has type int, but float is expected
+ --> tests/errors/value_in_middle_of_print.tom:5:33
+  |
+5 |     print("a", statistics.mean([1, "x", 3]), "b")
+  |                                 ^
+  = help: an int is not a float: write the number with a point (5.0), or convert it with float(n)

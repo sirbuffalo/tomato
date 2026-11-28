@@ -1,0 +1,7 @@
+# a function of the user's own that is named like a built-in: the second call is the wrong one
+def len(x: int) -> int:
+    return x
+
+@main
+def main():
+    print(len(3), len([1]))

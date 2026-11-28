@@ -1,0 +1,5 @@
+# the caret is under the value that has the wrong type, not the whole declaration
+@main
+def main():
+    y: int = 'a'
+    print(y)

@@ -1,0 +1,7 @@
+# the caret is on the catch clause
+@main
+def main():
+    try:
+        print(1)
+    catch ValueError as dict:
+        pass

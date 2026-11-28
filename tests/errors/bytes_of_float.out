@@ -1,5 +1,5 @@
 error[E632]: bytes() takes a count (int), a list of ints from 0 to 255, bytes or a bytearray, but this is float
- --> tests/errors/bytes_of_float.tom:4:5
+ --> tests/errors/bytes_of_float.tom:4:11
   |
 4 |     print(bytes(1.5))
-  |     ^^^^^^^^^^^^^^^^^
+  |           ^^^^^^^^^^

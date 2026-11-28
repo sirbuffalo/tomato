@@ -1,0 +1,6 @@
+error[E656]: a 'catch' clause names one error class, so it cannot list several
+ --> tests/errors/catch_list_of_classes.tom:5:21
+  |
+5 |     catch ValueError, KeyError as e:
+  |                     ^
+  = help: write one 'catch' clause for each class, or catch their parent class (Error catches every error)

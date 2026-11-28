@@ -1,0 +1,11 @@
+[animal a, None, animal b]
+{'k': animal c, 'n': None}
+[animal a, None, animal b]
+['x', None]
+[[1, 2], None]
+[1, None]
+(animal t, 1)
+(None, 2)
+[animal a, None, animal b]!
+{'z': [None, animal q]}
+{'a': 'b', 'c': None}

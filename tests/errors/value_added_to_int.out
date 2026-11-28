@@ -1,0 +1,7 @@
+error[E189]: cannot use '+' on 'value.Value' objects
+ --> tests/errors/value_added_to_int.tom:6:21
+  |
+6 |     print(j["a"][0] + 1)
+  |                     ^
+  = help: a value.Value holds a JSON or TOML value of any kind: ask it for the kind you expect first, as in j.as_int() + 1
+  = help: the as_bool, as_int, as_float, as_str, as_list and as_dict methods raise ValueTypeError when it is another kind

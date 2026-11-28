@@ -1,0 +1,7 @@
+error[E115]: 'Shape' has no method 'name'
+  --> tests/errors/interface_test_on_class_variable.tom:12:15
+   |
+12 |         print(y.name())
+   |               ^^^^^^^^
+   = help: 'name' is a method of the interface 'Named': a test such as 'x is Named' does not turn a variable of the class 'Shape' into the interface
+   = help: declare the variable with the interface type, such as: n: Named = x

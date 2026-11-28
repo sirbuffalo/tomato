@@ -1,0 +1,6 @@
+error[E630]: bytes() cannot take text, because text has no single byte form
+ --> tests/errors/error_in_argument_of_print.tom:4:14
+  |
+4 |     print(1, bytes('abc'), 2)
+  |              ^^^^^^^^^^^^
+  = help: encode it: s.encode() gives its UTF-8 bytes

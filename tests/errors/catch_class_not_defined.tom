@@ -1,0 +1,7 @@
+# a name that is nothing at all
+@main
+def main():
+    try:
+        print(1)
+    catch Nonsense as e:
+        pass

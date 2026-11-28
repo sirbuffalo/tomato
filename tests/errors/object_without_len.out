@@ -1,6 +1,6 @@
 error[E341]: 'Box' objects have no length
- --> tests/errors/object_without_len.tom:7:5
+ --> tests/errors/object_without_len.tom:7:11
   |
 7 |     print(len(b))
-  |     ^^^^^^^^^^^^^
+  |           ^^^^^^
   = help: add a method marked @len that takes no argument and returns int

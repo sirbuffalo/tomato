@@ -1,6 +1,6 @@
 error[E287]: the two values of this conditional expression have different types: int and str
- --> tests/errors/conditional_types.tom:4:5
+ --> tests/errors/conditional_types.tom:4:11
   |
 4 |     print(n if n > 1 else 'small')
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |           ^^^^^^^^^^^^^^^^^^^^^^^
   = help: convert one so that both have the same type

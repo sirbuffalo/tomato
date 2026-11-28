@@ -57,7 +57,11 @@ try "run: options go before the entry, between the file and the entry too" 0 "1 
 try "run: -- ends the options earlier; the next word is still the file or the entry" 0 "1 ('-o',)" "" run ent.tom -- echo -o
 try "run: -- first, then the file" 0 "1 ('-o',)" "" run -- ent.tom echo -o
 try "run: no entry named, no inputs: main with its defaults" 0 "[x] 3" "" run ent.tom
-try "run: no input for an input with no default" 1 "" "error[E352]: the entry point takes 2 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))" run ent.tom num
-try "run: more inputs than the entry takes" 1 "" "error[E352]: the entry point takes 0 input(s), got 1" run hi.tom main extra
-try "run: an option-like word after the entry is an input, the program refuses it" 1 "" "error[E352]: the entry point takes 0 input(s), got 1" run hi.tom main --bogus
-try "run: -o after the entry is an input too" 1 "" "error[E352]: the entry point takes 0 input(s), got 1" run hi.tom main -o
+try "run: no input for an input with no default" 1 "" "error[E352]: num takes 1 to 2 inputs (n, flag), but got 0
+usage: num N [FLAG]" run ent.tom num
+try "run: more inputs than the entry takes" 1 "" "error[E352]: main takes no inputs, but got 1
+usage: main" run hi.tom main extra
+try "run: an option-like word after the entry is an input, the program refuses it" 1 "" "error[E352]: main takes no inputs, but got 1
+usage: main" run hi.tom main --bogus
+try "run: -o after the entry is an input too" 1 "" "error[E352]: main takes no inputs, but got 1
+usage: main" run hi.tom main -o

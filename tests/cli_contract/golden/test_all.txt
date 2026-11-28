@@ -18,5 +18,6 @@ FAIL tests/h_mixed.tom  (1 of 2 tests failed)
          assertion failed  (raised at tests/h_mixed.tom:6)
     1 passed, 1 failed, 0 skipped
 FAIL tests/i_needs_input.tom  (exit status 1: a function run with no inputs must give every input a default (or be run with inputs: tomato test FILE ENTRY INPUTS...))
-    error[E352]: the entry point takes 1 input(s), got 0 (an input can be left out only if it has a default, as in def main(n: int = 10))
+    error[E352]: main takes 1 input (n), but got 0
+    usage: main N
 tomato test: 9 files, 3 passed, 5 failed, 1 skipped: FAILED

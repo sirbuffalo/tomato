@@ -1,0 +1,7 @@
+# the right side of `and` sees the member the left side tested, but not before the test
+def f(x: int | str) -> bool:
+    return x > 0 and x is int
+
+@main
+def main():
+    print(f(1))

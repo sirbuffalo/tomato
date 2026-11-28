@@ -51,7 +51,7 @@ How the words are read: a word that ends in `.tom` or contains a `/` is a file (
 | `tomato test a.tom test` | the functions marked `@test` or `@test.*` in `a.tom` (below) |
 | `tomato test a.tom test.parse` | only the functions marked `@test.parse` and `@test.parse.*` |
 
-With no `ENTRY` the file runs as a whole: its `@test` functions through the driver if it has any (even beside a `@main`, which stays for `tomato run`), else its `@main`. **No inputs can be given then, so a test's `main` may take inputs only if every one has a default** (`def main(n: int = 3)`); a `main` with an input that has none fails with the runtime's message (`the entry point takes 1 input(s), got 0`), and `tomato test` with no word can then not run that file. Inputs are for the entry form, to run one file with chosen values.
+With no `ENTRY` the file runs as a whole: its `@test` functions through the driver if it has any (even beside a `@main`, which stays for `tomato run`), else its `@main`. **No inputs can be given then, so a test's `main` may take inputs only if every one has a default** (`def main(n: int = 3)`); a `main` with an input that has none fails with the runtime's message (`main takes 1 input (n), but got 0` and its usage line), and `tomato test` with no word can then not run that file. Inputs are for the entry form, to run one file with chosen values.
 
 | Option | Meaning |
 | --- | --- |

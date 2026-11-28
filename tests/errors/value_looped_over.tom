@@ -1,0 +1,7 @@
+import json
+
+@main
+def main():
+    j = json.loads('[1, 2]')
+    for x in j:
+        print(x)

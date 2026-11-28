@@ -1,0 +1,7 @@
+# an error class of the library that is not imported: where it is
+@main
+def main():
+    try:
+        print(1)
+    catch ProcessError:
+        pass

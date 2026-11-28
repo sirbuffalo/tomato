@@ -1,0 +1,6 @@
+error[E656]: a 'catch' clause names one error class, so it cannot list several
+ --> tests/errors/catch_tuple_of_classes.tom:5:11
+  |
+5 |     catch (ValueError, KeyError):
+  |           ^
+  = help: write one 'catch' clause for each class, or catch their parent class (Error catches every error)

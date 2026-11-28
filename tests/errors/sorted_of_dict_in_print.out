@@ -1,0 +1,5 @@
+error[E331]: sorted() takes a list or a range, but this is dict[int, int]
+ --> tests/errors/sorted_of_dict_in_print.tom:4:19
+  |
+4 |     print("keys", sorted(d), "done")
+  |                   ^^^^^^^^^

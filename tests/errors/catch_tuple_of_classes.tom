@@ -1,0 +1,6 @@
+@main
+def main():
+    try:
+        print(1)
+    catch (ValueError, KeyError):
+        pass

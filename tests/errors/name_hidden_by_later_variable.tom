@@ -1,0 +1,8 @@
+# a variable hides the module of the same name in the whole function, so the first use does not find it
+import value
+
+@main
+def main():
+    print(value.Str("x"))
+    value = 1
+    print(value)

@@ -1,6 +1,6 @@
 error[E324]: a list item has type None, but int is expected
- --> tests/errors/list_none_item_hint.tom:3:5
+ --> tests/errors/list_none_item_hint.tom:3:10
   |
 3 |     xs = [1, None]
-  |     ^^^^^^^^^^^^^^
+  |          ^^^^^^^^^
   = help: to hold None, write the type of the list: xs: list[int | None] = ...

@@ -1,0 +1,58 @@
+# a union type test narrows the right side of `and` / `or` and the body of an `if` with several tests (fourth audit 11; D55a)
+
+class Dog:
+    name: str = 'rex'
+
+class Cat:
+    name: str = 'tom'
+
+def positive(x: int | str) -> bool:
+    return x is int and x > 0
+
+def both(x: int | str, y: int | str) -> int:
+    if x is int and y is int:
+        return x + y
+    return -1
+
+def three(x: int | str | float, y: int | str | float) -> str:
+    if x is int and y is str and len(y) > 1:
+        return str(x + 1) + y
+    elif x is str and y is float:
+        return x + str(y + 0.5)
+    return 'other'
+
+def either(x: int | str) -> bool:
+    return x is not int or x > 10
+
+def negated(x: int | str) -> bool:
+    return not (x is str) and x > 0
+
+def chain(a: int | str, b: int | str, c: int | str) -> int:
+    if a is int and b is int and c is int:
+        return a + b + c
+    return 0
+
+def classes(a: Dog | Cat, b: Dog | Cat) -> str:
+    if a is Dog and b is Dog:
+        return a.name + b.name
+    if a is Cat and b is Cat:
+        return a.name + '/' + b.name
+    return 'mixed'
+
+def in_loop(items: list[int | str]) -> int:
+    total = 0
+    for k, item in enumerate(items):
+        if k > 0 and item is int and item > 2:
+            total += item
+    return total
+
+@main
+def main():
+    print(positive(3), positive(-3), positive('a'))
+    print(both(1, 2), both(1, 'a'), both('a', 2))
+    print(three(1, 'ab'), three(1, 'a'), three('s', 2.0), three(1.5, 1))
+    print(either(20), either(5), either('z'))
+    print(negated(2), negated(-2), negated('s'))
+    print(chain(1, 2, 3), chain(1, 'x', 3))
+    print(classes(Dog(), Dog()), classes(Cat(), Cat()), classes(Dog(), Cat()))
+    print(in_loop([1, 5, 'a', 3, 9]))

@@ -1,0 +1,7 @@
+error[E300]: this field type is not supported
+ --> tests/errors/module_name_as_field_type.tom:5:5
+  |
+5 |     data: bytearray
+  |     ^^^^^^^^^^^^^^^
+  = help: a field can hold int, bool, str, float, a list, a set, a dict or a class
+  = help: 'bytearray' here is the module that 'import bytearray' brought in, not a type inside it: write bytearray.bytearray, or import the class with 'from bytearray import bytearray' instead of 'import bytearray'

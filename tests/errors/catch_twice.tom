@@ -1,0 +1,8 @@
+@main
+def main():
+    try:
+        print(1)
+    catch ValueError:
+        pass
+    catch ValueError as e:
+        print(e.message)

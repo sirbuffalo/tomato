@@ -221,6 +221,12 @@ class Usage:
     store_line: dict[str, int] = {}
     read: list[str] = []
     other: list[str] = []          # names bound some other way (loop variables, catch variables, parameters)
+    other_line: dict[str, int] = {}   # the line each of those was bound on (the first)
+
+def note_other(u: Usage, name: str, line: int):
+    u.other.append(name)
+    if name not in u.other_line:
+        u.other_line[name] = line
 
 def note_store(u: Usage, name: str, line: int):
     if name not in u.store_line:
@@ -252,11 +258,11 @@ def scan(v: Val, u: Usage):
         scan(n.fields[2], u)
         return
     if k == 'For' or k == 'AsyncFor':
-        u.other.append(n.fields[0].text)
+        note_other(u, n.fields[0].text, n.line)
     if k == 'Try':
         for h in n.fields[1].items:
             if h.items[1].tag == 's':
-                u.other.append(h.items[1].text)
+                note_other(u, h.items[1].text, h.items[4].num)
     for f in n.fields:
         scan(f, u)
 
@@ -346,6 +352,114 @@ def flow_stmt(s: Node, assigned: list[str], tracked: list[str], reported: list[s
         check_reads(f, tracked, assigned, reported, found)
     return assigned
 
+# ---- reads of a local variable that no assignment may have reached (D137a). The warning above is a hint (it takes what a loop assigns as
+# given); this walk is the sound one: it marks each such read on its node, and the compiler gives the read a run-time check, so that the
+# slot of a reference variable that was never filled is an error that can be caught, not a crash. A loop that may run no time, an `if`
+# with a branch that does not assign, a `catch` that does not assign: a name assigned only there is unset after it.
+
+def mark_reads(v: Val, tracked: list[str], assigned: list[str]):
+    names: list[Node] = []
+    reads(v, names)
+    for r in names:
+        name = r.fields[0].text
+        if name in tracked and name not in assigned:
+            r.unset = True
+
+def unset_flow(body: list[Node], start: list[str], tracked: list[str]) -> list[str]:
+    assigned = start[:]
+    for s in body:
+        assigned = unset_stmt(s, assigned, tracked)
+    return assigned
+
+def unset_stmt(s: Node, assigned: list[str], tracked: list[str]) -> list[str]:
+    k = s.kind
+    if k == 'Assign':
+        mark_reads(s.fields[1], tracked, assigned)
+        target = val_node(s.fields[0])
+        if target.kind == 'Name':
+            return assigned + [target.fields[0].text]
+        mark_reads(s.fields[0], tracked, assigned)
+        return assigned
+    if k == 'Declare':
+        mark_reads(s.fields[2], tracked, assigned)
+        return assigned + [s.fields[0].text]
+    if k == 'If':
+        paths: list[list[str]] = []
+        for branch in s.fields[0].items:
+            mark_reads(branch.items[0], tracked, assigned)
+            inner = val_nodes(branch.items[1])
+            after = unset_flow(inner, assigned, tracked)
+            if not block_exits(inner, False):
+                paths.append(after)
+        if s.fields[1].tag == 'l':
+            inner = val_nodes(s.fields[1])
+            after = unset_flow(inner, assigned, tracked)
+            if not block_exits(inner, False):
+                paths.append(after)
+        else:
+            paths.append(assigned)
+        if len(paths) == 0:
+            return tracked
+        result = paths[0]
+        for p in paths:
+            result = both(result, p)
+        return result
+    if k == 'Multi':
+        return unset_flow(val_nodes(s.fields[0]), assigned, tracked)
+    if k == 'While':
+        mark_reads(s.fields[0], tracked, assigned)
+        unset_flow(val_nodes(s.fields[1]), assigned, tracked)
+        return assigned
+    if k == 'For' or k == 'AsyncFor':
+        mark_reads(s.fields[1], tracked, assigned)
+        unset_flow(val_nodes(s.fields[2]), assigned + [s.fields[0].text], tracked)
+        return assigned
+    if k == 'Try':
+        body = val_nodes(s.fields[0])
+        paths = []
+        after = unset_flow(body, assigned, tracked)
+        if s.fields[2].tag == 'l':
+            after = unset_flow(val_nodes(s.fields[2]), after, tracked)
+        if not block_exits(body, False):
+            paths.append(after)
+        for h in s.fields[1].items:
+            inner = val_nodes(h.items[2])
+            start = assigned
+            if h.items[1].tag == 's':
+                start = assigned + [h.items[1].text]
+            hafter = unset_flow(inner, start, tracked)
+            if not block_exits(inner, False):
+                paths.append(hafter)
+        result = assigned
+        if len(paths) > 0:
+            result = paths[0]
+            for p in paths:
+                result = both(result, p)
+        if s.fields[3].tag == 'l':
+            unset_flow(val_nodes(s.fields[3]), assigned, tracked)       # (a finally block can start from any point of the try)
+        return result
+    for f in s.fields:
+        mark_reads(f, tracked, assigned)
+    return assigned
+
+# marks the Name nodes of a function that read a local variable which may have no value yet
+export def mark_unset_reads(f: Node):
+    if f.fields[3].tag != 'l':
+        return
+    body = val_nodes(f.fields[3])
+    params: list[str] = []
+    for p in val_nodes(f.fields[1]):
+        params.append(p.fields[0].text)
+    u = Usage()
+    for s in body:
+        scan_node(s, u)
+    tracked: list[str] = []
+    for name in u.stored + u.other:
+        if name not in params and name not in tracked:
+            tracked.append(name)
+    if len(tracked) > 0:
+        unset_flow(body, [], tracked)
+
 # the checks for one function: its parameters are names that are bound already
 def lint_function(f: Node, module_names: list[str], found: list[Finding]):
     if f.fields[3].tag != 'l':
@@ -353,7 +467,7 @@ def lint_function(f: Node, module_names: list[str], found: list[Finding]):
     body = val_nodes(f.fields[3])
     u = Usage()
     for p in val_nodes(f.fields[1]):
-        u.other.append(p.fields[0].text)
+        note_other(u, p.fields[0].text, p.line)
     for s in body:
         scan_node(s, u)
     for name in u.stored:
@@ -361,7 +475,7 @@ def lint_function(f: Node, module_names: list[str], found: list[Finding]):
             found.append(finding(u.store_line[name], 'unused', f"the variable '{name}' is given a value that is never used\nremove it, or rename it '_{name}' to show that this is intended"))
     for name in u.stored + u.other:
         if name in builtin_names() or name in module_names:
-            line = u.store_line.get(name, f.line)
+            line = u.store_line.get(name, u.other_line.get(name, f.line))
             found.append(finding(line, 'shadow', f"the variable '{name}' has the same name as a function or class, which it hides here\nchoose another name"))
     unreachable(body, found)
     loop_changes(body, found)

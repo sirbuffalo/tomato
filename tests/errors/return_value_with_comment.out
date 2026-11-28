@@ -1,0 +1,5 @@
+error[E324]: the returned value has type int, but str is expected
+ --> tests/errors/return_value_with_comment.tom:3:12
+  |
+3 |     return x   # the wrong type
+  |            ^

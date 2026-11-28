@@ -1,5 +1,5 @@
 error[E385]: the items of tuple[str, int] have different types, so its index must be a number written out, such as t[0]
- --> tests/errors/mixed_tuple_index_variable.tom:5:5
+ --> tests/errors/mixed_tuple_index_variable.tom:5:11
   |
 5 |     print(pair[i])
-  |     ^^^^^^^^^^^^^^
+  |           ^^^^^^^

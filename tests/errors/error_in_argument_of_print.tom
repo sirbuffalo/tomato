@@ -1,0 +1,4 @@
+# the caret is under bytes(...), not the whole print(...)
+@main
+def main():
+    print(1, bytes('abc'), 2)

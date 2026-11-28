@@ -1,6 +1,6 @@
 error[E169]: a value of type int is never None, so it cannot be compared with None
- --> tests/errors/compare_with_none.tom:4:5
+ --> tests/errors/compare_with_none.tom:4:8
   |
 4 |     if x is None:
-  |     ^^^^^^^^^^^^^
+  |        ^^^^^^^^^
   = help: only a value that can be None (such as T | None) may be compared with None

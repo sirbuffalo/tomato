@@ -1,0 +1,6 @@
+error[E120]: 'sqrt' is defined twice in module 'main'
+ --> tests/errors/from_import_twice.tom:1:24
+  |
+1 | from math import sqrt, sqrt
+  |                        ^^^^
+  = help: rename one of them

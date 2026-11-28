@@ -1,5 +1,5 @@
 error[E379]: get() takes a key and optionally a default value: get(key) or get(key, default)
- --> tests/errors/dict_get_arguments.tom:4:5
+ --> tests/errors/dict_get_arguments.tom:4:11
   |
 4 |     print(ages.get())
-  |     ^^^^^^^^^^^^^^^^^
+  |           ^^^^^^^^^^

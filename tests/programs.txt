@@ -267,3 +267,6 @@ catch_scope
 text_split_words
 bytes_sized_iterable
 bytearray_inplace
+union_narrowing_and
+optional_container_text
+unset_variable

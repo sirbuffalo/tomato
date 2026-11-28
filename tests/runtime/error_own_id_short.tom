@@ -1,0 +1,4 @@
+# a short id and a lower-case id are shown too
+@main
+def main():
+    raise Error('words', 'E1')

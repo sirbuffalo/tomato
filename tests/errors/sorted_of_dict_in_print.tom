@@ -1,0 +1,4 @@
+@main
+def main():
+    d = {1: 2}
+    print("keys", sorted(d), "done")

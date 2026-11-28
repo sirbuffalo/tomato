@@ -1,0 +1,6 @@
+error[E623]: 'dict' is the name of a built-in type, so a variable cannot have it
+ --> tests/errors/catch_variable_named_like_type.tom:6:25
+  |
+6 |     catch ValueError as dict:
+  |                         ^^^^
+  = help: choose another name: a type name always means the built-in type

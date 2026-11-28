@@ -1,6 +1,6 @@
 error[E537]: a union cannot be a type argument written in a call
-  --> tests/errors/union_type_argument.tom:10:5
+  --> tests/errors/union_type_argument.tom:10:9
    |
 10 |     b = Box[str | None]("a")
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+   |         ^^^^^^^^^^^^^^^^^^^^
    = help: a union can only come from a value: leave the brackets out and pass a variable of the union type, as in Box(x) with x: str | None, or wrap the union in a class

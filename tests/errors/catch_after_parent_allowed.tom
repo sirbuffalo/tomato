@@ -1,0 +1,9 @@
+# `# allow: catch-order` on the clause hides the warning
+@main
+def main():
+    try:
+        print(1)
+    catch Error:
+        pass
+    catch ValueError:  # allow: catch-order
+        pass

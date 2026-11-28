@@ -1,0 +1,6 @@
+from value import Value
+
+@main
+def main():
+    j: Value | int = 1
+    print(j is Int)

@@ -1,0 +1,7 @@
+error[E227]: name 'value' is not defined
+ --> tests/errors/name_hidden_by_later_variable.tom:6:11
+  |
+6 |     print(value.Str("x"))
+  |           ^^^^^
+  = help: 'value' is also a variable of this function, given a value further down, and a variable hides what the name means in the whole function, before that line too
+  = help: rename the variable

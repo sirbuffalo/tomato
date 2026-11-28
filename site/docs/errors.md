@@ -15,8 +15,11 @@ error[E227]: name 'tets' is not defined
 - The first line, `error[ID]: ...`, says what is wrong in plain words and quotes the offending name or text in single quotes.
 - `--> FILE:LINE:COLUMN` says where. Lines and columns count from 1. In the repl the file is `repl` and the line is the line
   you just typed; on the website the file is `program.tom`.
-- The next lines show that source line with a row of `^` under the offending text. When the compiler knows only the line, the
-  caret covers the statement.
+- The next lines show that source line with a row of `^` under the offending text. For a problem with a value the caret is under
+  the expression at fault (the whole `bytes('abc')` inside `print(1, bytes('abc'))`, the `'a'` of `y: int = 'a'`), and under the
+  call at fault when there are several of the same function on the line (`print(f(3), f([1]))` points at the second `f`); for
+  an operator it is under the operator's symbol; for a `catch` clause it is on the clause's own line. When the compiler knows only
+  the line, the caret covers the statement (without a comment at its end).
 - `= help: ...` lines, when present, say how to fix it. A name that is close to a known one gets `did you mean '...'?`.
 - A bad import is reported at its own line, in the repl and on the website too: a missing name (`E226`) gets a
   `did you mean` and lists what the module exports, and a missing module (`E183`) gets a `did you mean` and lists the standard modules.
@@ -45,6 +48,7 @@ before it runs. The checks are:
 | `module-shadow` | a file of the project (next to the program or in `src/`) has the name of a std module, so `import json` gets the file; once for each name, at its first import (D115a) | `the file json.tom of this project shadows the standard module 'json'` |
 | `unstable` | a program uses a feature that is still on the unstable list of `docs/provisional.md` (section 1): `progress_bar`, `random.choice`, `shuffle` or `sample`, a method marker beyond `@add` such as `@eq` or `@iter`, or `start`; once for each feature in a build, at its first use (D121a, D129a) | `'progress_bar' is an unstable feature (U3, the text progress_bar draws)` |
 | `deprecated` | a program uses a std function, class, constant or module that a minor release has deprecated, and a later minor release may remove (D129a); once for each name in a build, at its first use | `'old_double' is deprecated (deprecated_fixture.old_double, since 1.1)` |
+| `catch-order` | a `catch` clause comes after one for the same class or for a parent class, so it can never run (P16); `# allow: catch-order` on the clause hides it | `this 'catch ValueError' can never run: the clause for Error above it catches every ValueError first` |
 | `type-test` | `x in T` with a type on the right, the old spelling of the type test `x is T` (D23i); it still works in 1.0.x | `'in' with a type is the old spelling of the type test` |
 
 To silence one, write `# allow: KIND` as a comment on the line the warning points at (`total = 0  # allow: unused`). A name
@@ -188,6 +192,12 @@ Other messages that used to be rough:
 | `half(5)` where `half` takes a `float`, or `float \| None` (`sys.run(args, timeout=5)`) | E324 with the help `an int is not a float: write the number with a point (5.0), or convert it with float(n)` |
 | `json.dumps(d)` with a `dict[str, int]`, `json.dumps('text')` | E324 with the help `a value.Value is built with the classes of the value module: from value import Value, Dict, List, Str, Int, Float, Bool` and an example (`Dict({'a': Int(1)})`) |
 | `ba + 'x'`, `ba += 'x'` with `ba` a `bytearray` | E190 `cannot use '+' with bytearray and str`, with the help `a bytearray and text are different types: encode the text (s.encode()) or decode the bytearray (a.decode())` |
+| `catch A, B as e:` or `catch (A, B):` | `a 'catch' clause names one error class, so it cannot list several` (E656), with the help to write one clause for each class or catch their parent (D135a) |
+| `catch ProcessError:` with no import of `sys` | `'catch' needs an error class, but 'ProcessError' is not defined` (E657), and where the class is: `it is in the sys module: write sys.ProcessError after 'import sys', or 'from sys import ProcessError'` (D135a); a class that is no error is still E98 |
+| `from math import sqrt as int`, `import math as str` | `'int' is the name of a built-in type, so it cannot be defined here` (E608), at the alias (D135a) |
+| `def main(arg: bytes)`, `*ids: tuple[int]` of an entry | `the input 'arg' of the entry 'main' cannot have the type bytes` (E157), at the parameter, with what an input can be: int (of any width), float, bool, str, File, and a last `*name: tuple[str]` or `tuple[File]` (D136a) |
+| `./prog stats` for `def stats(count: int, ratio: float, label: str = 'x')` | `stats takes 2 to 3 inputs (count, ratio, label), but got 0` (E352) and `usage: prog stats COUNT RATIO [LABEL]`; a word that does not fit is `input 2 (ratio) must be a number, found 'abc'` (E351) with the same usage line; `./prog -h` lists the entries and their inputs (D136a) |
+| a text, list or object variable read where no assignment ran (`for s in items: ...` then `print(s)` when `items` is empty) | the catchable `RuntimeError` E658, `this variable has no value yet: 's' is read where no assignment to it has run` (D137a); the `unassigned` warning stays |
 | `print(f)`, `str(f)` with `f` a `File`, or a task | `a value of type File cannot be printed` (E167), `... cannot be converted to text` (E166); they printed an empty line or were a raw clang error (D132a) |
 
 

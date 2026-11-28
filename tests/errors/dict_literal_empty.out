@@ -1,6 +1,6 @@
 error[E289]: the type of an empty {} cannot be guessed
- --> tests/errors/dict_literal_empty.tom:3:5
+ --> tests/errors/dict_literal_empty.tom:3:9
   |
 3 |     d = {}
-  |     ^^^^^^
+  |         ^^
   = help: declare it, such as: m: dict[str, int] = {}

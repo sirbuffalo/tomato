@@ -1,0 +1,12 @@
+# a class that is no error: the caret is on its clause, not on the try
+class Foo:
+    x: int = 1
+
+@main
+def main():
+    try:
+        print(1)
+    catch ValueError:
+        pass
+    catch Foo:
+        pass

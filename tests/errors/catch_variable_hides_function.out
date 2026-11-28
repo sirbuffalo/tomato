@@ -1,0 +1,6 @@
+warning: the variable 'len' has the same name as a function or class, which it hides here
+ --> tests/errors/catch_variable_hides_function.tom:5:25
+  |
+5 |     catch ValueError as len:
+  |                         ^^^
+  = help: choose another name

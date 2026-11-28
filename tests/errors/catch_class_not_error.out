@@ -1,0 +1,6 @@
+error[E98]: 'catch' needs an error class, but 'Foo' is not one
+  --> tests/errors/catch_class_not_error.tom:11:11
+   |
+11 |     catch Foo:
+   |           ^^^
+   = help: use Error, RuntimeError, IOError or a class that extends Error

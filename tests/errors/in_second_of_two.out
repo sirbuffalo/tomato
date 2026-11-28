@@ -1,0 +1,5 @@
+error[E101]: 'in' can search only lists of int, bool, str or bytes
+ --> tests/errors/in_second_of_two.tom:5:26
+  |
+5 |     print(1 in [1, 2], a in [a])
+  |                          ^^

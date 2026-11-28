@@ -1,6 +1,6 @@
 error[E389]: a dict value needs a value that is not None
- --> tests/errors/dict_literal_none_value.tom:3:5
+ --> tests/errors/dict_literal_none_value.tom:3:9
   |
 3 |     d = {'a': None}
-  |     ^^^^^^^^^^^^^^^
+  |         ^^^^^^^^^^^
   = help: declare the type, such as: m: dict[str, int] = {...}

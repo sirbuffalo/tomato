@@ -1,0 +1,35 @@
+# a list, dict, set or tuple of items that can be None prints each item, None as None (fourth audit 10)
+
+class Animal:
+    name: str
+
+    @init
+    def make(self, name: str):
+        self.name = name
+
+    @str
+    def text(self) -> str:
+        return 'animal ' + self.name
+
+@main
+def main():
+    xs: list[Animal | None] = [Animal('a'), None, Animal('b')]
+    print(xs)
+    d: dict[str, Animal | None] = {'k': Animal('c'), 'n': None}
+    print(d)
+    print(f'{xs}')
+    names: list[str | None] = ['x', None]
+    print(names)
+    lists: list[list[int] | None] = [[1, 2], None]
+    print(lists)
+    nums: list[int | None] = [1, None]
+    print(nums)
+    t: tuple[Animal | None, int] = (Animal('t'), 1)
+    print(t)
+    u: tuple[Animal | None, int] = (None, 2)
+    print(u)
+    print(str(xs) + '!')
+    nested: dict[str, list[Animal | None]] = {'z': [None, Animal('q')]}
+    print(nested)
+    keyed: dict[str, str | None] = {'a': 'b', 'c': None}
+    print(keyed)

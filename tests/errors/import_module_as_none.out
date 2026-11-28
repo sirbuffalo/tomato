@@ -1,0 +1,6 @@
+error[E608]: 'None' is the name of a built-in type, so it cannot be defined here
+ --> tests/errors/import_module_as_none.tom:1:16
+  |
+1 | import math as None
+  |                ^^^^
+  = help: choose another name after 'as': a type name always means the built-in type

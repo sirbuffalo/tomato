@@ -20,7 +20,7 @@ def is_word_char(c: str) -> bool:
     return c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
 
 # the text between the first pair of single quotes, or ''
-def first_quoted(message: str) -> str:
+export def first_quoted(message: str) -> str:
     a = message.find("'")
     if a < 0:
         return ''
@@ -98,21 +98,50 @@ export def closest(name: str, candidates: list[str]) -> str:
                 best = c
     return best
 
+# the text of a source line without a trailing comment (a # outside a text), and without the spaces before it
+def code_part(text: str) -> str:
+    quote = ''
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if quote != '':
+            if c == '\\':
+                i += 1
+            elif c == quote:
+                quote = ''
+        elif c == "'" or c == '"':
+            quote = c
+        elif c == '#':
+            return text[:i].rstrip(' ')
+        i += 1
+    return text
+
 # Where in the source line the caret goes when the column is not known (0) or past the end (-1): at the word the message
-# quotes, else at the first number it names, else under the whole line. Gives the 1-based column and the caret width.
-def guess_span(head: str, text: str, at: int) -> tuple[int]:
+# quotes, else at the first number it names, else under the whole line (without a comment at its end). Gives the 1-based
+# column and the caret width. `lo` and `hi` (0-based, hi exclusive; hi 0 for the whole line) limit the search to the part
+# of the line that the error is about: with nothing found there, the caret goes under that whole part.
+def guess_span(head: str, text: str, at: int, lo: int = 0, hi: int = 0) -> tuple[int]:
     if at == -1:
         return (len(text) + 1, 1)
     q = first_quoted(head)
     if q == '':
         q = first_number(head)
-    found = find_word(text, q)
+    part = text
+    if hi > 0:
+        part = text[:hi]
+    found = find_word(part[lo:], q)
     if found >= 0:
-        return (found + 1, len(q))
-    indent = len(text) - len(text.lstrip(' '))
-    return (indent + 1, max(len(text.strip()), 1))
+        return (lo + found + 1, len(q))
+    if hi > 0:
+        return (lo + 1, max(hi - lo, 1))
+    code = code_part(text)
+    indent = len(code) - len(code.lstrip(' '))
+    return (indent + 1, max(len(code.strip()), 1))
 
-export def format_error(message: str, line: int, col: int, src: str, path: str, label: str = 'error') -> str:
+# `col` is where the caret starts (0: not known, so look for the word the message quotes). `end` is the column just after the part
+# the error is about: with `region` the caret goes at the quoted word inside col..end (else under all of it), without it the
+# caret is exactly col..end; with no `end` it is as wide as the word at col.
+export def format_error(message: str, line: int, col: int, src: str, path: str, label: str = 'error', end: int = 0, region: bool = False) -> str:
     parts = message.split('\n')
     head = parts[0]
     helps = parts[1:]
@@ -130,7 +159,11 @@ export def format_error(message: str, line: int, col: int, src: str, path: str, 
         at = -1
     text = lines[ln - 1].rstrip('\r')
     width = 1
-    if at <= 0:
+    if at > 0 and end > at and region:
+        at, width = guess_span(head, text, 0, at - 1, min(end - 1, len(text)))
+    elif at > 0 and end > at:
+        width = end - at
+    elif at <= 0:
         at, width = guess_span(head, text, at)
     else:
         width = token_width(text, at - 1)

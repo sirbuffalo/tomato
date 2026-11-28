@@ -1,0 +1,7 @@
+error[E157]: the input 'options' of the entry 'main' cannot have the type dict[str, int]
+ --> tests/errors/entry_input_kwargs.tom:2:20
+  |
+2 | def main(a: int, **options: dict[str, int]):
+  |                    ^^^^^^^
+  = help: an input can be an int (of any width), a float, a bool, a str or a File; a last *name: tuple[str] or tuple[File] takes the words that are left
+  = help: the words of the command line are text: take a number or a list you need from a str inside the function

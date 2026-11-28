@@ -1,6 +1,6 @@
 error[E166]: a value of type File cannot be converted to text
- --> tests/errors/no_text_file_str.tom:4:5
+ --> tests/errors/no_text_file_str.tom:4:11
   |
 4 |     print("file: " + str(f))
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^
+  |           ^^^^^^^^^^^^^^^^^
   = help: read its text with read(), or print the name of the file

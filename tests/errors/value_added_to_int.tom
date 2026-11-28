@@ -1,0 +1,6 @@
+import json
+
+@main
+def main():
+    j = json.loads('{"a": [1, 2]}')
+    print(j["a"][0] + 1)

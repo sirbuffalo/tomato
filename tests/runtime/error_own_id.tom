@@ -1,0 +1,4 @@
+# an id the program gives its error is shown as it is
+@main
+def main():
+    raise Error('words', 'MYID')

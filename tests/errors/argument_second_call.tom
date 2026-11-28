@@ -1,0 +1,7 @@
+# the caret is under the call that is wrong, not the first call of the same function on the line
+def f(x: int) -> int:
+    return x
+
+@main
+def main():
+    print(f(3), f([1]))

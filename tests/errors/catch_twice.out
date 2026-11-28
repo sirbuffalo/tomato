@@ -1,0 +1,6 @@
+warning: this 'catch ValueError' can never run: an earlier clause already catches ValueError
+ --> tests/errors/catch_twice.tom:7:5
+  |
+7 |     catch ValueError as e:
+  |     ^^^^^^^^^^^^^^^^
+  = help: remove it, or give it a different class

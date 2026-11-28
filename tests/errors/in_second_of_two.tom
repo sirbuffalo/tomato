@@ -1,0 +1,5 @@
+# the caret is under the second `in`, the one that cannot search
+@main
+def main():
+    a = 1.5
+    print(1 in [1, 2], a in [a])

@@ -1,6 +1,6 @@
 error[E553]: min() was given a value of type int first and then one of type float
- --> tests/errors/min_int_then_float.tom:3:5
+ --> tests/errors/min_int_then_float.tom:3:11
   |
 3 |     print(min(1, 2.5))
-  |     ^^^^^^^^^^^^^^^^^^
+  |           ^^^^^^^^^^^
   = help: the first value sets the type, so put the float value first, or convert the first one: write float(...) around it

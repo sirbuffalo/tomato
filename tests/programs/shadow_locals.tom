@@ -52,17 +52,17 @@ def own_name(xs: list[int]) -> int:
     return total
 
 # a loop variable, in the body and after the loop
-def loop_variable() -> int:  # allow: shadow
+def loop_variable() -> int:
     fs = [twice, thrice]
     out = 0
-    for len in fs:
+    for len in fs:  # allow: shadow
         out += len(7)
     return out + len(1)
 
 # a comprehension variable (it is a variable of the function, as in a for loop)
-def comprehension() -> list[int]:  # allow: shadow
+def comprehension() -> list[int]:
     fs = [twice, thrice, pick(True)]
-    return [max(5) for max in fs]
+    return [max(5) for max in fs]  # allow: shadow
 
 # a lambda's parameter, and a lambda that is called with a function
 def call_with(f: fn(fn(int) -> int) -> int, g: fn(int) -> int) -> int:
@@ -75,10 +75,10 @@ def sorted_by(xs: list[int]) -> list[int]:
     return sorted(xs, key=sum -> 0 - sum)  # allow: shadow
 
 # a catch variable is a variable: it is used as one
-def catch_variable() -> str:  # allow: shadow
+def catch_variable() -> str:
     try:
         raise ValueError('oops')
-    catch ValueError as len:
+    catch ValueError as len:  # allow: shadow
         return len.message + '?'
 
 # names bound by an unpacking

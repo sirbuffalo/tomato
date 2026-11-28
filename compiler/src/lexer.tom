@@ -24,6 +24,7 @@ export class Token:
     scale: int = 0       # for a FLOAT: the digits after the point, less the exponent
     line: int = 0
     col: int = 0
+    end: int = 0         # the column just after the token (1-based, on its line); 0 when the token is one the lexer wrote for itself
 
 export def make_token(kind: str, text: str, num: int, line: int, col: int = 0) -> Token:
     t = Token()
@@ -477,7 +478,9 @@ def lex_fstring(raw: str, i: int, ln: int, toks: list[Token]) -> int:
             inner: list[Token] = []
             lex_line(source, ln, inner, 0)
             for t in inner:
-                t.col = p.start + 2
+                t.col += p.start + 1            # the columns of the expression are counted from its own start: make them the line's
+                if t.end > 0:
+                    t.end += p.start + 1
                 toks.append(t)
             if spec != '':
                 push_op(toks, ',', ln, col)       # f'{x:spec}' is _format_spec(x, 'spec'); the compiler writes the text
@@ -545,6 +548,7 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             i += k
         if len(toks) > made:
             toks[made].col = start + 1
+            toks[len(toks) - 1].end = i + 1
     return depth
 
 # the column of the first bracket opened among toks[first:] and not closed again on the same line

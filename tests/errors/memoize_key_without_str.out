@@ -1,6 +1,6 @@
 error[E536]: 'Point' cannot be a cache key: it has no @str method
-  --> tests/errors/memoize_key_without_str.tom:11:5
+  --> tests/errors/memoize_key_without_str.tom:11:9
    |
 11 |     m = memoize(area, 10)
-   |     ^^^^^^^^^^^^^^^^^^^^^
+   |         ^^^^^^^^^^^^^^^^^
    = help: add a method marked @str that returns text that tells different keys apart, or use a text or an int as the key

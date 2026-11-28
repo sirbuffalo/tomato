@@ -1,0 +1,7 @@
+# the caret is under the returned value, and a comment after it is not underlined
+def f(x: int) -> str:
+    return x   # the wrong type
+
+@main
+def main():
+    print(f(1))

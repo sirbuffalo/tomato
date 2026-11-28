@@ -1,0 +1,5 @@
+error[E190]: cannot use '+' with int and str
+ --> tests/errors/operator_in_long_line.tom:5:28
+  |
+5 |     print("total " + str(n + "x") + " items")
+  |                            ^

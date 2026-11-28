@@ -1,0 +1,3 @@
+@main
+def main(a: int, **options: dict[str, int]):
+    print(a)

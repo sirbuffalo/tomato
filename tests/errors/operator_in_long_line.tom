@@ -1,0 +1,5 @@
+# the caret is under the operator that fails, not under an earlier one
+@main
+def main():
+    n = 3
+    print("total " + str(n + "x") + " items")
