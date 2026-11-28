@@ -48,3 +48,5 @@
   `a if x is int else b` and `while x is int and ...` do not narrow a union variable, as `if` and the right side of `and`/`or` now do (D135a left them out).
 - Drop the trace post-processing that marks std frames in tomato test
   `native/tomato` (the awk in `point_trace`) and `compiler/src/cli_test.tom` write `testing.NAME` on frames of `std/testing.tom`; frames now carry their module from the compiler (D136a), so the rewriting can go.
+- Split dev/test.tom (scheduler and the shared Test/Run classes in one module, the ported tests in several) before porting the t_cli_* tests
+  `dev/test.tom` is over 1,300 lines: the scheduler, the `Test`/`Run` classes, `host` helpers and every `native_*` test in one file. Move the shared classes and helpers (compile to a file, link, `tjsc`, `shared_path`) into one module and the ported tests into several (`dev/checks.tom` already holds the file-reading checks), so the `t_cli_*` tests of `tests/run.sh` (about 3,000 lines of shell, 67 functions still run through `TOMATO_TEST_BRIDGE`) can be ported in slices. Compare names and verdicts with `tests/run.sh` after each.

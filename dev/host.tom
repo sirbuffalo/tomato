@@ -154,16 +154,21 @@ def _add_cpu(path: str, cpu: list[int]):
         os.remove(path)
 
 # Runs a program with standard output and standard error both written, in the order they come, to the file `out` (as `> out 2>&1`),
-# and no standard input (< /dev/null); gives the status, 128 plus the signal when it was ended by one. The programs of the suite print
-# bytes that are not always text, and the expected files hold both streams as one, so the shell's redirection is the exact thing; std
-# has no way to join two streams or to send one to a file (stage 1 may add one: then this is a call of it).
-export async def redirect(args: list[str], out: str, cwd: str | None = None, env: dict[str, str] | None = None, cpu: list[int] | None = None, timeout: float | None = None) -> int:
-    script = '"$@" > "$TOMATO_TEST_OUT" 2>&1 < /dev/null'
+# and its standard input read from the file `stdin_path` (`< /dev/null` when it is ''); gives the status, 128 plus the signal when it was
+# ended by one. With `err` not '' standard error goes to that file instead (`> out 2> err`). The programs of the suite print bytes that
+# are not always text, and the expected files hold both streams as one, so the shell's redirection is the exact thing; std has no way to
+# join two streams or to send one to a file (stage 1 may add one: then this is a call of it).
+export async def redirect(args: list[str], out: str, cwd: str | None = None, env: dict[str, str] | None = None, cpu: list[int] | None = None, timeout: float | None = None, stdin_path: str = '', err: str = '') -> int:
+    script = '"$@" > "$TOMATO_TEST_OUT" 2>&1 < "$TOMATO_TEST_IN"'
+    if err != '':
+        script = '"$@" > "$TOMATO_TEST_OUT" 2> "$TOMATO_TEST_ERR" < "$TOMATO_TEST_IN"'
     extra: dict[str, str] = {}
     if env is not None:
         for k, v in env.items():
             extra[k] = v
     extra['TOMATO_TEST_OUT'] = out
+    extra['TOMATO_TEST_ERR'] = err
+    extra['TOMATO_TEST_IN'] = '/dev/null' if stdin_path == '' else stdin_path
     path = ''
     if cpu is not None:
         path = _cpu_path()
@@ -208,3 +213,73 @@ export def which(name: str) -> str | None:
         if ospath.isfile(candidate):
             return candidate
     return None
+
+# The sha256 of each file, as 64 hex digits (hashlib.sha256_file, stage 1): shasum on macOS, sha256sum where that is all there is.
+export def sha256_files(paths: list[str]) -> list[str]:
+    tool = ['sha256sum']
+    if which('shasum') is not None:
+        tool = ['shasum', '-a', '256']
+    r = sys.run(tool + paths, True, None, None, '', True)
+    out: list[str] = []
+    for line in r.stdout.split('\n'):
+        if line != '':
+            out.append(line.partition(' ')[0])
+    return out
+
+# The paths (below `roots`) of the files called `name` (find: os.walk, stage 1).
+export def find_named(roots: list[str], name: str) -> list[str]:
+    r = sys.run(['find'] + roots + ['-name', name])
+    out: list[str] = []
+    for line in r.stdout.split('\n'):
+        if line != '':
+            out.append(line)
+    return out
+
+# The compiled runtime for a source file and flags, from the cache that `tomato run` uses (native/rtcache.sh: the key is the flags, clang's
+# version and the source), or '' when it cannot be made. `fallback` is where it is built when the cache is off or unusable.
+export async def rtcache_object(root: str, fallback: str, ext: str, source: str, flags: list[str]) -> str:
+    r = await sys.run_async(['sh', '-c', '. "$1"; shift; rtcache_get "$@"', 'sh', root + '/native/rtcache.sh', fallback, ext, source] + flags)
+    if r.status != 0:
+        return ''
+    return r.stdout.strip()
+
+# The first of these programs that is Python with the given Unicode data version, or ''.
+export def python_with_unicode(version: str) -> str:
+    for p in ['python3.14', 'python3']:
+        if which(p) is None:
+            continue
+        try:
+            r = sys.run([p, '-I', '-c', 'import unicodedata; print(unicodedata.unidata_version)'])
+            if r.status == 0 and r.stdout.strip() == version:
+                return p
+        catch Error:
+            pass
+    return ''
+
+# The sha256 of the files one after the other, as one text (cat A B | sha256).
+export def sha256_concat(paths: list[str]) -> str:
+    r = sys.run(['sh', '-c', 'cat "$@" | { shasum -a 256 2>/dev/null || sha256sum; }', 'sh'] + paths, True, None, None, '', True)
+    return r.stdout.strip().partition(' ')[0]
+
+# The lines of a file of IR that the compiler marked as messages, those that start with ";! " (grep '^;! ').
+export def marked_lines(path: str) -> list[str]:
+    r = sys.run(['grep', '-a', '^;! ', path])
+    out: list[str] = []
+    for line in r.stdout.split('\n'):
+        if line != '':
+            out.append(line)
+    return out
+
+# How many lines of a file match a basic regular expression (grep -c).
+export def count_matching(path: str, pattern: str) -> int:
+    r = sys.run(['grep', '-a', '-c', pattern, path])
+    text = r.stdout.strip()
+    if text.isdigit():
+        return int(text)
+    return 0
+
+# Are the two files the same bytes (cmp -s)?
+export def same_file(a: str, b: str) -> bool:
+    if not ospath.exists(a) or not ospath.exists(b):
+        return False
+    return sys.run(['cmp', '-s', a, b]).status == 0

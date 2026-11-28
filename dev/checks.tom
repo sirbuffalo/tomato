@@ -1,0 +1,388 @@
+# The checks of the suite that only read files of the repository (no compiler, no program): the port of the shell tests t_sys_version,
+# t_docs_in_sync, t_versions, t_error_raises, t_builtin_folder, t_std_modules, t_reserved_names, t_std_sheets and t_generated_tables.
+# Each gives its results as a list of Outcome; dev/test.tom prints them as the shell functions did (`ok   NAME`, or `FAIL NAME` and the
+# detail under it, every line indented). The working directory is the repository root.
+import sys
+import os
+import ospath
+import host
+
+export class Outcome:
+    passed: bool = True
+    name: str = ''
+    detail: str = ''
+    note: str = ''        # a line printed as it is (the shell's `echo "skip: ..."`), with no verdict
+
+    @init
+    def make(self, passed: bool, name: str, detail: str = '', note: str = ''):
+        self.passed = passed
+        self.name = name
+        self.detail = detail
+        self.note = note
+
+def _good(name: str) -> Outcome:
+    return Outcome(True, name)
+
+def _verdict(good: bool, name: str, detail: str) -> Outcome:
+    if good:
+        return Outcome(True, name)
+    return Outcome(False, name, detail)
+
+def _lines(path: str) -> list[str]:
+    text = os.read_text(path)
+    out = text.split('\n')
+    if len(out) > 0 and out[len(out) - 1] == '':
+        out.pop()
+    return out
+
+def _read_bytes(path: str) -> bytes:
+    return os.read_bytes(path)
+
+def _word(text: str, word: str) -> bool:
+    return word in text.split(' ')
+
+# the text between the first and the second quote of a line ("return '1.0'" -> 1.0)
+def _between_quotes(line: str) -> str:
+    return line.partition("'")[2].partition("'")[0]
+
+# "x" in text as a whole word (grep -w): the characters around it are not letters, digits or _
+def _has_word(text: str, word: str) -> bool:
+    at = 0
+    while True:
+        i = text.find(word, at)
+        if i < 0:
+            return False
+        before = i == 0 or not _is_word_char(text[i - 1])
+        j = i + len(word)
+        after = j >= len(text) or not _is_word_char(text[j])
+        if before and after:
+            return True
+        at = i + 1
+
+def _is_word_char(c: str) -> bool:
+    return c.isalnum() or c == '_'
+
+# the version a line of site/latest.json (or config.js) holds: the last `"version": "X"` of the line (sed's greedy .*), or None
+def _json_version(line: str, key: str, sep: str) -> str | None:
+    i = line.rfind(key)
+    if i < 0:
+        return None
+    rest = line[i + len(key):].lstrip(' ')
+    if not rest.startswith(sep):
+        return None
+    rest = rest[len(sep):].lstrip(' ')
+    if not rest.startswith('"'):
+        return None
+    j = rest.find('"', 1)
+    if j < 0:
+        return None
+    return rest[1:j]
+
+# every such version of a file, one per line, joined by newlines (what `sed -n ... p` prints)
+def _versions_in(path: str, key: str, sep: str) -> str:
+    out: list[str] = []
+    if not ospath.exists(path):
+        return ''
+    for line in _lines(path):
+        v = _json_version(line, key, sep)
+        if v is not None:
+            out.append(v)
+    return '\n'.join(out)
+
+def _same(a: str, b: str) -> bool:
+    return a.rstrip('\n') == b.rstrip('\n')
+
+def _check(name: str, expected: str, got: str) -> Outcome:
+    return _verdict(_same(expected, got), name, 'expected: ' + expected + '\ngot:      ' + got)
+
+# sys.version() is a literal in std/sys.tom (and its copy for the website) that the release script's bump step rewrites: it must say what VERSION says
+export def sys_version() -> list[Outcome]:
+    v = os.read_text('VERSION').rstrip('\n')
+    wrong = ''
+    for f in ['std/sys.tom', 'site/wasm/std/sys.tom']:
+        got = ''
+        inside = False
+        for line in _lines(f):
+            if line.startswith('export def version()'):
+                inside = True
+                continue
+            if inside and 'return ' in line:
+                got = _between_quotes(line)
+                break
+        if got != v:
+            wrong += f" {f} says '{got}' but VERSION says '{v}';"
+    return [_verdict(wrong == '', 'sys.version() says what VERSION says', wrong)]
+
+export def docs_in_sync() -> list[Outcome]:
+    out: list[Outcome] = []
+    for d in ['specification', 'decisions', 'decision-inventory', 'open-questions']:
+        name = f'site/docs/{d}.md is in sync'
+        out.append(_verdict(_read_bytes(f'docs/{d}.md') == _read_bytes(f'site/docs/{d}.md'), name, 'run site/build.sh'))
+    return out
+
+export def versions() -> list[Outcome]:
+    out: list[Outcome] = []
+    version = os.read_text('VERSION').rstrip('\n')
+    out.append(_verdict(_read_bytes('docs/provisional.md') == _read_bytes('site/docs/PROVISIONAL.md'), 'site/docs/PROVISIONAL.md is in sync', 'run site/build.sh'))
+    # a stable VERSION is in site/latest.json and site/config.js; a pre-release (1.1.0-rc.1) in site/latest-pre.json, while those two keep
+    # the latest stable release (docs/releasing.md, Version numbers)
+    man = 'site/latest.json'
+    if '-' in version:
+        man = 'site/latest-pre.json'
+    out.append(_check(f'VERSION matches {man}', version, _versions_in(man, '"version"', ':')))
+    last = ''
+    for line in _lines('std/sys.tom'):
+        if line.startswith("    return '") and line.endswith("'") and len(line) > 13:
+            body = line[12:len(line) - 1]
+            good = body != ''
+            for c in body:
+                if not (c.isalnum() and ord(c) < 128) and c != '.' and c != '-':
+                    good = False
+            if good:
+                last = body
+    out.append(_check('VERSION matches std/sys.tom (sys.version)', version, last))
+    out.append(_check('site/config.js matches site/latest.json', _versions_in('site/latest.json', '"version"', ':'), _versions_in('site/config.js', 'TOMATO_VERSION', '=')))
+    # the checksum of the two files read one after the other
+    combined = host.sha256_concat(['compiler/bootstrap/tomatoc.ll', 'runtime/tomato_rt.c'])
+    recorded: list[str] = []
+    if ospath.exists('site/wasm/SOURCE.sha256'):
+        recorded = _lines('site/wasm/SOURCE.sha256')
+    first = ''
+    if len(recorded) > 0:
+        first = recorded[0]
+    out.append(_check('site/wasm matches the compiler IR and runtime', combined, first))
+    wasm = host.sha256_files(['site/wasm/tomatoc.wasm', 'site/wasm/runtime.wasm'])
+    out.append(_check('the checked-in wasm files are the ones that were built', '\n'.join(recorded[1:3]), '\n'.join(wasm)))
+    return out
+
+# every raise of a standard-library class has an id, and the id is the one of that class in std/errors.txt
+export def error_raises() -> list[Outcome]:
+    classes: list[str] = []
+    for line in _lines('std/errors.txt'):
+        classes.append(line.strip().partition(' ')[0])
+    files: list[str] = []
+    for f in sorted(os.listdir('std')):
+        if f.endswith('.tom'):
+            files.append('std/' + f)
+    for f in sorted(os.listdir('std/builtin')):
+        if f.endswith('.tom'):
+            files.append('std/builtin/' + f)
+    missing = ''
+    for path in files:
+        n = 0
+        for line in _lines(path):
+            n += 1
+            if line.lstrip(' ').startswith('#'):
+                continue
+            cls = _raised_class(line)
+            if cls is None:
+                continue
+            id_number = _trailing_id(line)
+            ok = False
+            if id_number >= 1 and id_number <= len(classes):
+                ok = classes[id_number - 1] == cls
+            if not ok:
+                if missing != '':
+                    missing += '\n'
+                missing += f'{path}:{n}: {line}'
+    return [_verdict(missing == '', 'standard-library raises have IDs for their classes', missing)]
+
+# `raise Name(` or `return NameError(` on the line (a function that makes an error returns it): the text after the last "raise " or "return ",
+# up to the first "("; None when the line has neither form with a capitalised name
+def _raised_class(line: str) -> str | None:
+    hit = False
+    i = 0
+    while i < len(line):
+        for key in ['raise ', 'return ']:
+            if line[i:].startswith(key):
+                j = i + len(key)
+                k = j
+                while k < len(line) and _is_word_char(line[k]):
+                    k += 1
+                if k < len(line) and line[k] == '(' and k > j and line[j] >= 'A' and line[j] <= 'Z':
+                    if key == 'raise ' or line[j:k].endswith('Error'):
+                        hit = True
+        i += 1
+    if not hit:
+        return None
+    last = max(line.rfind('raise '), line.rfind('return '))
+    rest = line[last:].partition(' ')[2]
+    return rest.partition('(')[0]
+
+# the number of a line that ends with 'E123') (an id), else -1
+def _trailing_id(line: str) -> int:
+    if not line.endswith("')"):
+        return -1
+    body = line[:len(line) - 2]
+    i = body.rfind("'E")
+    if i < 0:
+        return -1
+    digits = body[i + 2:]
+    if digits == '' or not digits.isdigit():
+        return -1
+    return int(digits)
+
+# the names that the `return [...]` lines of the functions in a file give: `def NAME()` up to the first line with "return", each such
+# line's list with the brackets, quotes and commas taken out
+def _listed(path: str, starts: list[str]) -> list[str]:
+    out: list[str] = []
+    on = False
+    for line in _lines(path):
+        if on:
+            t = line.lstrip(' ')
+            if t.startswith('return ['):
+                for w in t[len('return ['):].replace(']', '').replace("'", '').replace(',', '').split(' '):
+                    if w != '':
+                        out.append(w)
+            if 'return' in line:
+                on = False
+        else:
+            for s in starts:
+                if line.startswith(s):
+                    on = True
+    return out
+
+def _std_files() -> list[str]:
+    out: list[str] = []
+    for f in sorted(os.listdir('std')):
+        if f.endswith('.tom'):
+            out.append(f[:len(f) - 4])
+    out.append('bitarray')
+    out.append('bytearray')
+    return sorted(out)
+
+# every file of std/builtin/ is a part of the built-ins or a module found there (builtin_parts and builtin_modules in the compiler), and the
+# website loads it (TomatoWasm.STD in site/wasm/tomato.js)
+export def builtin_folder() -> list[Outcome]:
+    names = _listed('compiler/src/compiler.tom', ['def builtin_parts()', 'def builtin_modules()'])
+    site = os.read_text('site/wasm/tomato.js')
+    missing = ''
+    for f in sorted(os.listdir('std/builtin')):
+        if not f.endswith('.tom'):
+            continue
+        n = f[:len(f) - 4]
+        if n not in names:
+            missing += f' std/builtin/{f}(not named in compiler.tom)'
+        if '"builtin/' + n + '"' not in site:
+            missing += f' std/builtin/{f}(not in TomatoWasm.STD)'
+    for n in names:
+        if not ospath.exists(f'std/builtin/{n}.tom'):
+            missing += f' std/builtin/{n}.tom(missing)'
+    return [_verdict(missing == '', "std/builtin/ matches the compiler's list and the website's", missing)]
+
+# std_modules() in the compiler (the help of "cannot find the module") lists every module of std/
+export def std_modules() -> list[Outcome]:
+    names = _listed('compiler/src/modnames.tom', ['def std_modules()', 'export def std_modules()'])
+    have = _std_files()
+    ok = sorted(names) == have
+    return [_verdict(ok, "std_modules lists the modules of std/", 'compiler: ' + ' '.join(names) + ' / std: ' + ' '.join(have) + ' ')]
+
+# std/reserved.txt (D115a): the one published list of the module names std has or keeps, against the compiler's copy and the files
+export def reserved_names(run_sh_text: str) -> list[Outcome]:
+    bad_list = ''
+    names: list[str] = []
+    have_std: list[str] = []
+    planned: list[str] = []
+    extra = ''
+    for line in _lines('std/reserved.txt'):
+        if line.startswith('#'):
+            continue
+        words: list[str] = []
+        for w in line.replace('\t', ' ').split(' '):
+            if w != '':
+                words.append(w)
+        if len(words) == 0:
+            continue
+        names.append(words[0])
+        status = ''
+        if len(words) > 1:
+            status = words[1]
+        if status == 'std':
+            have_std.append(words[0])
+        elif status == 'planned':
+            planned.append(words[0])
+        else:
+            extra += words[0] + ':' + status + ' '
+    names = sorted(names)
+    have_std = sorted(have_std)
+    planned = sorted(planned)
+    if extra != '':
+        bad_list += ' a line of std/reserved.txt has a status other than std or planned: ' + extra + ';'
+    dup = ''
+    for i in range(1, len(names)):
+        if names[i] == names[i - 1]:
+            dup += names[i] + ' '
+    if dup != '':
+        bad_list += ' a name is listed twice: ' + dup + ';'
+    files = _std_files()
+    if have_std != files:
+        bad_list += ' the names marked std are not the modules of std/ (list: ' + ' '.join(have_std) + ' / files: ' + ' '.join(files) + ');'
+    # the text of tests/run.sh without the function that builds the seed fixtures with reserved names on purpose
+    kept: list[str] = []
+    skipping = False
+    for line in run_sh_text.split('\n'):
+        if line.startswith('t_cli_reserved_seeds()'):
+            skipping = True
+        if not skipping:
+            kept.append(line)
+        if skipping and line.startswith('}'):
+            skipping = False
+    body = '\n'.join(kept)
+    for n in planned:
+        if ospath.exists(f'std/{n}.tom') or (ospath.exists('std/builtin/bitarray.tom') and n == 'bitarray'):
+            bad_list += f' {n} is marked planned but std has the module (mark it std);'
+        if len(host.find_named(['tests', 'examples'], n + '.tom')) > 0:
+            bad_list += f' a file {n}.tom in tests/ or examples/ has a reserved name (it would shadow the module std may add);'
+        if f'src/{n}.tom' in body or f'acme.example/{n}"' in body:
+            bad_list += f' tests/run.sh builds a seed fixture with the reserved name {n};'
+    comp = sorted(_listed('compiler/src/modnames.tom', ['export def std_modules()', 'export def planned_modules()']))
+    if comp != names:
+        bad_list += ' compiler/src/modnames.tom lists other names than std/reserved.txt (compiler: ' + ' '.join(comp) + ' / file: ' + ' '.join(names) + ');'
+    return [_verdict(bad_list == '', "std/reserved.txt: the reserved names match the compiler's list and the files", bad_list)]
+
+# every name that std/terminal.tom and std/lineedit.tom export is in its API sheet (docs/terminal-api.md, docs/lineedit-api.md)
+export def std_sheets() -> list[Outcome]:
+    out: list[Outcome] = []
+    for m in ['terminal', 'lineedit']:
+        sheet = os.read_text(f'docs/{m}-api.md')
+        missing = ''
+        for line in _lines(f'std/{m}.tom'):
+            for kind in ['def ', 'class ', 'interface ', 'const ']:
+                if line.startswith('export ' + kind):
+                    rest = line[len('export ' + kind):]
+                    k = 0
+                    while k < len(rest) and _is_word_char(rest[k]):
+                        k += 1
+                    n = rest[:k]
+                    if n != '' and not _has_word(sheet, n):
+                        missing += ' ' + n
+        out.append(_verdict(missing == '', f'docs/{m}-api.md names everything std/{m}.tom exports', 'missing from the sheet:' + missing))
+    return out
+
+# The case and width tables (and, against Python itself, the isalpha/isdigit tables) in runtime/tomato_rt.c are written by tools/gen_case_table.py
+# and tools/gen_width_table.py from Python's unicodedata (Unicode 16.0.0 = Python 3.14): each generator is run in --check mode and must find the
+# file current. A Python with another Unicode version cannot say: that is a skip locally and a failure in CI.
+export def generated_tables() -> list[Outcome]:
+    out: list[Outcome] = []
+    py = host.python_with_unicode('16.0.0')
+    if py == '':
+        ci = os.getenv('CI')
+        if ci is not None and ci != '':
+            out.append(Outcome(False, 'generated tables', 'a Python 3.14 (Unicode 16.0.0) is required in CI: the case and width tables cannot be checked'))
+        else:
+            out.append(Outcome(True, '', '', 'skip: no Python with Unicode 16.0.0 (Python 3.14) to check the generated case and width tables'))
+        return out
+    for g in ['case', 'width']:
+        r = sys.run([py, '-I', f'tools/gen_{g}_table.py', '--check', 'runtime/tomato_rt.c'])
+        text = (r.stdout + r.stderr).rstrip('\n')
+        if r.status == 0:
+            out.append(Outcome(True, f'generated {g} tables in runtime/tomato_rt.c are what tools/gen_{g}_table.py makes'))
+        else:
+            out.append(Outcome(False, f'generated {g} tables', f'{text} (rewrite with: python3.14 -I tools/gen_{g}_table.py runtime/tomato_rt.c)'))
+    r = sys.run([py, '-I', 'tools/check_ctype_table.py', 'runtime/tomato_rt.c'])
+    text = (r.stdout + r.stderr).rstrip('\n')
+    if r.status == 0:
+        out.append(Outcome(True, 'isalpha/isdigit tables in runtime/tomato_rt.c agree with Python 3.14 (tools/check_ctype_table.py)'))
+    else:
+        out.append(Outcome(False, 'isalpha/isdigit tables', f'{text} (regenerate with tools/gen_ctype_table.c, see its header)'))
+    return out
