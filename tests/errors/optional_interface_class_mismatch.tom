@@ -1,0 +1,15 @@
+interface Named:
+    def name(self) -> str
+
+class Plain:
+    def name(self) -> str:
+        return 'plain'
+
+def describe(n: Named | None) -> str:
+    if n is None:
+        return 'nothing'
+    return n.name()
+
+@main
+def main():
+    print(describe(Plain()))

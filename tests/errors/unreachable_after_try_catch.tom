@@ -1,0 +1,11 @@
+# The body always raises, and the only catch leaves: the error is caught (and returns) or it is not (and leaves), so the last line never runs.
+def kind(e: Error) -> int:
+    try:
+        raise e
+    catch TimeoutError:
+        return 1
+    return 0
+
+@main
+def main():
+    print(kind(TimeoutError('late')))

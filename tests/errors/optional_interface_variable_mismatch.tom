@@ -1,0 +1,13 @@
+interface Named:
+    def name(self) -> str
+
+class Tag implements Named:
+    def name(self) -> str:
+        return 'tag'
+
+def keep(n: Named | None) -> Tag | None:
+    return n
+
+@main
+def main():
+    print(keep(Tag()) is None)

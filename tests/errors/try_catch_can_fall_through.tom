@@ -1,0 +1,29 @@
+# The body may finish, or a catch may let the error pass without leaving: the line after the try can run, so there is no warning.
+def risky(n: int) -> int:
+    return 10 // n
+
+def first(n: int) -> int:
+    try:
+        x = risky(n)
+    catch TimeoutError:
+        return 1
+    return x
+
+def second(e: Error) -> int:
+    try:
+        if len(e.message) > 3:
+            raise e
+    catch TimeoutError:
+        return 1
+    return 0
+
+def third(e: Error) -> int:
+    try:
+        raise e
+    catch TimeoutError:
+        pass
+    return 0
+
+@main
+def main():
+    print(first(2), second(Error('x')), third(TimeoutError('late')))

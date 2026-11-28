@@ -1632,6 +1632,9 @@ class Mod:
             return True
         if is_dyn(a) and is_dyn(b):
             return self.dyn_covers(a, b)
+        if is_optional(b) and is_iface(strip_optional(b)):
+            # Named | None takes None, and whatever a Named takes (the same pointer, null for None)
+            return a == 'None' or self.assignable(strip_optional(a), strip_optional(b))
         if is_iface(b):
             if is_class(a) and self.has_class(a[1:]):
                 return b[1:] in self.class_ifaces(a[1:])

@@ -251,3 +251,4 @@ entry_reserved_ok
 error_tree
 bare_raise
 bare_raise_async
+optional_interface

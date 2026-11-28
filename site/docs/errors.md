@@ -38,7 +38,7 @@ before it runs. The checks are:
 | Kind | When | Example message |
 | --- | --- | --- |
 | `unused` | a variable is given a value that nothing reads; an imported name is never used | `the variable 'total' is given a value that is never used` |
-| `unreachable` | a statement follows a `return`, `raise`, `break` or `continue` (or an `if`/`else` or `try` whose branches all leave) | `this code can never run, because the statement before it always leaves` |
+| `unreachable` | a statement follows a `return`, `raise`, `break` or `continue` (or an `if`/`else` or `try` whose branches all leave; a `try` whose body always raises and whose `catch` clauses all leave counts even when they do not cover every error class, as an uncaught error leaves too) | `this code can never run, because the statement before it always leaves` |
 | `unassigned` | a variable is read where some path to it did not give it a value | `'label' might not have a value here, because some paths above do not give it one` |
 | `shadow` | a variable has the name of a built-in, or of a function, class or constant of the same file | `the variable 'len' has the same name as a function or class, which it hides here` |
 | `loop-change` | a list is changed (`append`, `pop`, `remove` ...) inside a `for` loop that goes through it | `'xs' is changed while the loop goes through it` |

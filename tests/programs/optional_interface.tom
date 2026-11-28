@@ -1,0 +1,77 @@
+# An optional of an interface (Named | None) takes None, a Named value, or an instance of a class that implements Named,
+# wherever a value of that type is wanted: arguments, variables, returns, fields, list items. An `is` test on it checks the dynamic class.
+interface Named:
+    def name(self) -> str
+
+class Tag implements Named:
+    label: str
+
+    @init
+    def make(self, label: str):
+        self.label = label
+
+    def name(self) -> str:
+        return 'tag ' + self.label
+
+class Pet implements Named:
+    def name(self) -> str:
+        return 'pet'
+
+class Holder:
+    held: Named | None
+
+    @init
+    def make(self):
+        self.held = None
+
+    def keep(self, n: Named | None):
+        self.held = n
+
+def describe(n: Named | None) -> str:
+    if n is None:
+        return 'nothing'
+    if n is Tag:
+        return 'a Tag called ' + n.name()
+    return n.name()
+
+def maybe(flag: bool) -> Named | None:
+    if flag:
+        return Tag('returned')
+    return None
+
+def same(n: Named | None) -> Named | None:
+    return n
+
+def widen(t: Tag | None) -> Named | None:
+    return t
+
+@main
+def main():
+    tag = Tag('a')
+    named: Named = Pet()
+    print(describe(tag))
+    print(describe(named))
+    print(describe(Pet()))
+    print(describe(None))
+    slot: Named | None = Tag('b')
+    print(describe(slot))
+    slot = Pet()
+    print(describe(slot))
+    slot = None
+    print(describe(slot))
+    slot = named
+    print(describe(slot))
+    print(describe(maybe(True)), describe(maybe(False)))
+    print(describe(same(tag)), describe(same(None)))
+    some: Tag | None = Tag('c')
+    print(describe(widen(some)), describe(widen(None)))
+    items: list[Named | None] = [Tag('d'), None, named, Pet()]
+    for item in items:
+        print(describe(item))
+    holder = Holder()
+    print(describe(holder.held))
+    holder.keep(Tag('e'))
+    print(describe(holder.held))
+    holder.keep(tag)
+    holder.keep(None)
+    print(describe(holder.held))
