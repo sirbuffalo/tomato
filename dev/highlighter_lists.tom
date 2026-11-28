@@ -1,0 +1,217 @@
+# Fails when a keyword or built-in of the compiler is missing from the website highlighter (site/site.js) or the VS Code grammar
+# (editors/vscode/syntaxes/tomato.tmLanguage.json), and when the highlighters disagree with each other. The port of
+# tests/highlighter_lists.sh: the same checks, in the same order, saying the same words. `problems()` gives the lines it prints
+# (empty when everything is known); the entry `highlighter_lists` of dev/test.tom prints them, or "ok".
+import os
+
+# the lines of a file
+def _lines(path: str) -> list[str]:
+    return os.read_text(path).split('\n')
+
+# the lines of `lines` that contain `text` (grep text)
+def _having(lines: list[str], text: str) -> list[str]:
+    out: list[str] = []
+    for line in lines:
+        if text in line:
+            out.append(line)
+    return out
+
+# the lines that contain `text`, and the `after` lines that follow each (grep -A)
+def _having_after(lines: list[str], texts: list[str], after: int) -> list[str]:
+    keep: list[bool] = []
+    for _x in lines:
+        keep.append(False)
+    left = 0
+    for i in range(len(lines)):
+        hit = False
+        for text in texts:
+            if text in lines[i]:
+                hit = True
+        if hit:
+            left = after + 1
+        if left > 0:
+            keep[i] = True
+            left -= 1
+    out: list[str] = []
+    for i in range(len(lines)):
+        if keep[i]:
+            out.append(lines[i])
+    return out
+
+# the words in single quotes in the lines (grep -o "'[A-Za-z_]*'" | tr -d "'")
+def _quoted_words(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    for line in lines:
+        i = 0
+        while i < len(line):
+            if line[i] == "'":
+                j = i + 1
+                while j < len(line) and (line[j].isalpha() or line[j] == '_'):
+                    j += 1
+                if j < len(line) and line[j] == "'":
+                    out.append(line[i + 1:j])
+                    i = j + 1
+                    continue
+            i += 1
+    return out
+
+# does one of the lines hold `word` between "(" or "|" before and "|" or ")" after (grep -q "[(|]word[|)]")
+def _alternative(lines: list[str], word: str) -> bool:
+    for line in lines:
+        for before in ['(', '|']:
+            for after in ['|', ')']:
+                if before + word + after in line:
+                    return True
+    return False
+
+# the words of a "^(a|b|c)$" regular expression on a line of the website's script (sed 's/.*\^(//; s/)\$.*//' | tr '|' '\n')
+def _alternatives_of(line: str) -> list[str]:
+    i = line.rfind('^(')
+    rest = line[i + 2:] if i >= 0 else line
+    j = rest.find(')$')
+    if j >= 0:
+        rest = rest[:j]
+    return rest.split('|')
+
+# the words between the first and the second quote of a `const NAME = ' a b c '` line (sed "s/^[^']*'//; s/'.*//" | tr ' ' '\n' | grep .)
+def _const_words(lines: list[str], prefixes: list[str]) -> list[str]:
+    out: list[str] = []
+    for line in lines:
+        hit = False
+        for p in prefixes:
+            if line.startswith(p):
+                hit = True
+        if not hit:
+            continue
+        rest = line.partition("'")[2]
+        rest = rest.partition("'")[0]
+        for w in rest.split(' '):
+            if w != '':
+                out.append(w)
+    return out
+
+def _is_in(words: list[str], word: str) -> bool:
+    return word in words
+
+export def problems() -> list[str]:
+    grammar_path = 'editors/vscode/syntaxes/tomato.tmLanguage.json'
+    site = os.read_text('site/site.js')
+    site_lines = site.split('\n')
+    grammar = _lines(grammar_path)
+    lexer = _lines('compiler/src/lexer.tom')
+    out: list[str] = []
+    # the list of keywords: the lines of is_keyword() from its "def" to the first line with "]"
+    block: list[str] = []
+    on = False
+    for line in lexer:
+        if line.startswith('def is_keyword'):
+            on = True
+        if on:
+            block.append(line)
+            if ']' in line:
+                break
+    keywords = _quoted_words(block)
+    # the built-ins of the linter: the line after "def builtin_names" (the shell script looked for it at the start of a line, where
+    # `export def builtin_names` does not begin, so it found none; the same here), and the four that are always added
+    builtins: list[str] = []
+    lint = _lines('compiler/src/lint.tom')
+    for i in range(len(lint)):
+        if lint[i].startswith('def builtin_names') and i + 1 < len(lint):
+            builtins = _quoted_words([lint[i + 1]])
+    for w in ['round', 'divmod', 'any', 'all']:
+        builtins.append(w)
+    contextual = ['start', 'yields', 'None']
+    kw_site = _having(site_lines, 'var KW')
+    bi_site = _having(site_lines, 'var BI')
+    ty_site = _having(site_lines, 'var TY')
+    mod_site = _having(site_lines, 'var MOD')
+    constants = _having(grammar, '"constant"')
+    startish = _having_after(grammar, ['"start-expression"', '"yields-clause"'], 1)
+    keyword_rule: list[str] = []
+    inside = False
+    for line in grammar:
+        if line.startswith('    "keyword": {'):
+            inside = True
+        if line.startswith('    "constant"'):
+            inside = False
+        if inside:
+            keyword_rule.append(line)
+    builtin_rule = _having(grammar, '"builtin"')
+    for w in keywords + contextual:
+        if w == 'True' or w == 'False' or w == 'None':
+            if 'True|False|None' not in site:
+                out.append(f"site does not know the keyword '{w}'")
+        elif w == 'start' or w == 'yields':
+            if '"' + w + '"' not in site:
+                out.append(f"site does not know the keyword '{w}'")
+        else:
+            if not _alternative(kw_site, w):
+                out.append(f"site does not know the keyword '{w}'")
+        found = False
+        if w == 'True' or w == 'False' or w == 'None':
+            found = _alternative(constants, w)
+        elif w == 'start' or w == 'yields':
+            found = _alternative(startish, w)
+        else:
+            found = _alternative(keyword_rule, w)
+        if not found:
+            out.append(f"grammar does not know the keyword '{w}'")
+    for w in builtins:
+        if not _alternative(bi_site, w):
+            out.append(f"site does not know the built-in '{w}'")
+        if not _alternative(builtin_rule, w):
+            out.append(f"grammar does not know the built-in '{w}'")
+    # self is colored by both
+    if 'self' not in site:
+        out.append("site does not know the keyword 'self'")
+    if 'bself' not in os.read_text(grammar_path):
+        out.append("grammar does not know the keyword 'self'")
+    # the type names must be the same in both (the site's TY list and the grammar's "type" rule)
+    site_types: list[str] = []
+    if len(ty_site) > 0:
+        site_types = _alternatives_of(ty_site[len(ty_site) - 1])
+        site_types = sorted(site_types)
+    gram_types: list[str] = []
+    for line in _having_after(grammar, ['"type":'], 2):
+        i = line.find('b(int|')
+        while i >= 0:
+            j = line.find(')', i)
+            if j < 0:
+                j = len(line)
+            for t in line[i + 2:j].split('|'):
+                gram_types.append(t)
+            i = line.find('b(int|', j)
+    for w in site_types:
+        if not _is_in(gram_types, w):
+            out.append(f"grammar does not know the type '{w}'")
+    # the repl's highlighter (compiler/src/hltomato.tom) colors the same built-in functions and types as the website, and the linter's names
+    hl = _const_words(_lines('compiler/src/hltomato.tom'), ['const BUILTINS ', 'const TYPES '])
+    site_bi: list[str] = []
+    if len(bi_site) > 0:
+        site_bi = _alternatives_of(bi_site[len(bi_site) - 1])
+    for w in builtins + site_bi + site_types:
+        if not _is_in(hl, w):
+            out.append(f"hltomato does not know the built-in '{w}'")
+    for w in hl:
+        if not _is_in(site_bi, w) and not _is_in(site_types, w):
+            out.append(f"hltomato.tom knows '{w}', which the website does not")
+    # the repl's Tab completion (compiler/src/repledit.tom) offers the lexer's keywords, the contextual ones, and self: the same words
+    rk = _const_words(_lines('compiler/src/repledit.tom'), ['const KEYWORDS '])
+    expected = keywords + contextual + ['self']
+    for w in expected:
+        if not _is_in(rk, w):
+            out.append(f"repledit does not know the keyword '{w}'")
+    for w in rk:
+        if not _is_in(expected, w):
+            out.append(f"repledit.tom completes the keyword '{w}', which the lexer does not know")
+    # the standard library modules (std/NAME.tom) are colored after import/from
+    names = sorted(os.listdir('std'))
+    import_rule = _having_after(grammar, ['"import-module"'], 2)
+    for f in names:
+        if f.endswith('.tom'):
+            w = f[:len(f) - 4]
+            if not _alternative(mod_site, w):
+                out.append(f"site does not know the module '{w}'")
+            if not _alternative(import_rule, w):
+                out.append(f"grammar does not know the module '{w}'")
+    return out

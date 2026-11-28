@@ -1,0 +1,210 @@
+# The test runner's calls into the system, all in this one file (docs/shell-to-tomato-plan.md, stage 4). Each function here is
+# what a std function of stage 1 (os.cpu_count, os.loadavg, os.mkdtemp, os.rmtree, os.which, sys.run with stdout to a file) will
+# replace: when those are on main, only this file changes. Until then they start the system's own programs through sys.run
+# (never a shell script of this repository). The three that need a shell (`redirect`, the `times` accounting) say why.
+import sys
+import os
+import ospath
+import time
+
+# The first whole number a program prints, or -1 when it cannot be run or prints none.
+def _number_from(args: list[str]) -> int:
+    try:
+        r = sys.run(args)
+        if r.status != 0:
+            return -1
+        words = r.stdout.strip().split(' ')
+        if len(words) == 0 or words[0] == '':
+            return -1
+        return int(float(words[0]))
+    catch Error:
+        return -1
+
+# How many cores: getconf works on macOS and Linux.
+export def cpu_count() -> int:
+    n = _number_from(['getconf', '_NPROCESSORS_ONLN'])
+    if n < 1:
+        n = _number_from(['nproc'])
+    if n < 1:
+        n = _number_from(['sysctl', '-n', 'hw.ncpu'])
+    if n < 1:
+        return 4
+    return n
+
+# The load average of the last minute, as a whole number (-1 when it cannot be read): /proc on Linux, sysctl on macOS, else uptime.
+export def load() -> int:
+    if ospath.exists('/proc/loadavg'):
+        try:
+            return int(float(os.read_text('/proc/loadavg').split(' ')[0]))
+        catch Error:
+            pass
+    try:
+        r = sys.run(['sysctl', '-n', 'vm.loadavg'])
+        if r.status == 0:
+            words = r.stdout.strip().replace('{', ' ').replace('}', ' ').strip().split(' ')
+            if len(words) > 0 and words[0] != '':
+                return int(float(words[0]))
+    catch Error:
+        pass
+    try:
+        r = sys.run(['uptime'])
+        text = r.stdout
+        i = text.find('load average')
+        if i >= 0:
+            rest = text[i:].partition(':')[2].strip().split(' ')
+            if len(rest) > 0:
+                return int(float(rest[0].strip(',')))
+    catch Error:
+        pass
+    return -1
+
+# The first line of load as the shell script printed it at the end of --times: the one-minute load average as the system gives it.
+export def load_text() -> str:
+    if ospath.exists('/proc/loadavg'):
+        try:
+            return os.read_text('/proc/loadavg').split(' ')[0]
+        catch Error:
+            pass
+    try:
+        r = sys.run(['uptime'])
+        i = r.stdout.find('load average')
+        if i >= 0:
+            return r.stdout[i:].partition(':')[2].strip().split(' ')[0].strip(',')
+    catch Error:
+        pass
+    return '?'
+
+def _tmp_root() -> str:
+    folder = os.getenv('TMPDIR')
+    if folder is None or folder == '':
+        return '/tmp'
+    return folder.rstrip('/')
+
+# Is a process with this id running (kill -0; signal 0 of std, stage 1, will replace it)?
+def _alive(pid: int) -> bool:
+    try:
+        return sys.run(['kill', '-0', str(pid)]).status == 0
+    catch Error:
+        return False
+
+# A new folder in the system's temp folder named after this process (tomato-test.PID.XXXXXX), made by mktemp (os.mkdtemp, stage 1).
+# A run that was killed (SIGKILL, a power cut) cannot remove its folder: the next run removes the folders of processes that are gone.
+export def mkdtemp() -> str:
+    root = _tmp_root()
+    for name in os.listdir(root):
+        if not name.startswith('tomato-test.'):
+            continue
+        pid = name[len('tomato-test.'):].partition('.')[0]
+        if pid.isdigit() and not _alive(int(pid)):
+            rmtree(root + '/' + name)
+    r = sys.run(['mktemp', '-d', root + '/tomato-test.' + str(os.getpid()) + '.XXXXXX'], True, None, None, '', True)
+    return r.stdout.strip()
+
+# Removes a folder and everything in it (os.rmtree, stage 1); a path that is not there is not an error.
+export def rmtree(path: str):
+    if path == '' or path == '/':
+        raise ValueError('rmtree: refusing to remove ' + path)
+    _r = sys.run(['rm', '-rf', path])
+
+export def make_dir(path: str):
+    os.makedirs(path, True)
+
+# The CPU time, in milliseconds, in the text `times` of the shell prints for the children it waited for ("0m0.05s 0m0.01s").
+def _cpu_from_times(text: str) -> int:
+    lines = text.strip().split('\n')
+    if len(lines) < 2:
+        return 0
+    total = 0.0
+    for word in lines[1].strip().split(' '):
+        parts = word.partition('m')
+        if parts[2] == '':
+            continue
+        total += float(parts[0]) * 60.0 + float(parts[2].rstrip('s'))
+    return int(total * 1000.0)
+
+# Runs a program (without stopping the other tasks) with its output as text. `cpu` (when it is given, for --times) gets the CPU time the program and what it ran used, in
+# milliseconds, added to its first item; that needs the shell's `times`, which is why the program is then run through `sh -c`.
+export async def run(args: list[str], cwd: str | None = None, env: dict[str, str] | None = None, cpu: list[int] | None = None, timeout: float | None = None) -> sys.RunResult:
+    if cpu is None:
+        return await sys.run_async(args, True, cwd, env, '', False, timeout)
+    words = ['sh', '-c', '"$@"; r=$?; times > "$TOMATO_TEST_CPU_FILE"; exit $r', 'sh'] + args
+    extra: dict[str, str] = {}
+    if env is not None:
+        for k, v in env.items():
+            extra[k] = v
+    path = _cpu_path()
+    extra['TOMATO_TEST_CPU_FILE'] = path
+    r = await sys.run_async(words, True, cwd, extra, '', False, timeout)
+    _add_cpu(path, cpu)
+    return r
+
+# A file name for what `times` writes: in the system's temp folder, unique to this process and this call.
+def _cpu_path() -> str:
+    folder = os.getenv('TMPDIR')
+    if folder is None:
+        folder = '/tmp'
+    return folder + '/tomato-test-cpu.' + str(os.getpid()) + '.' + str(time.monotonic_ns())
+
+def _add_cpu(path: str, cpu: list[int]):
+    if ospath.exists(path):
+        try:
+            cpu[0] += _cpu_from_times(os.read_text(path))
+        catch Error:
+            pass
+        os.remove(path)
+
+# Runs a program with standard output and standard error both written, in the order they come, to the file `out` (as `> out 2>&1`),
+# and no standard input (< /dev/null); gives the status, 128 plus the signal when it was ended by one. The programs of the suite print
+# bytes that are not always text, and the expected files hold both streams as one, so the shell's redirection is the exact thing; std
+# has no way to join two streams or to send one to a file (stage 1 may add one: then this is a call of it).
+export async def redirect(args: list[str], out: str, cwd: str | None = None, env: dict[str, str] | None = None, cpu: list[int] | None = None, timeout: float | None = None) -> int:
+    script = '"$@" > "$TOMATO_TEST_OUT" 2>&1 < /dev/null'
+    extra: dict[str, str] = {}
+    if env is not None:
+        for k, v in env.items():
+            extra[k] = v
+    extra['TOMATO_TEST_OUT'] = out
+    path = ''
+    if cpu is not None:
+        path = _cpu_path()
+        extra['TOMATO_TEST_CPU_FILE'] = path
+        script = script + '; r=$?; times > "$TOMATO_TEST_CPU_FILE"; exit $r'
+    r = await sys.run_async(['sh', '-c', script, 'sh'] + args, True, cwd, extra, '', False, timeout)
+    if cpu is not None:
+        _add_cpu(path, cpu)
+    return r.status
+
+# The bytes of a file ('' bytes when it is not there).
+export def read_bytes_or_empty(path: str) -> bytes:
+    try:
+        return os.read_bytes(path)
+    catch Error:
+        return b''
+
+# The text of a file; bytes that are not UTF-8 become U+FFFD.
+export def read_text_lossy(path: str) -> str:
+    return read_bytes_or_empty(path).decode('utf-8', 'replace')
+
+# What `diff A B | head -N` prints (diff of two texts is not in std).
+export def diff_head(a: str, b: str, lines: int) -> list[str]:
+    r = sys.run(['diff', a, b])
+    out: list[str] = []
+    for line in r.stdout.split('\n'):
+        if len(out) >= lines:
+            break
+        if line != '':
+            out.append(line)
+    return out
+
+# The first program called `name` on PATH (os.which, stage 1), or None.
+export def which(name: str) -> str | None:
+    path = os.getenv('PATH')
+    if path is None:
+        return None
+    for folder in path.split(':'):
+        if folder == '':
+            continue
+        candidate = folder + '/' + name
+        if ospath.isfile(candidate):
+            return candidate
+    return None

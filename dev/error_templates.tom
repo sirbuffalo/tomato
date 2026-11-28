@@ -1,0 +1,99 @@
+# The message template of every error the compiler can raise (CompileError, ParseError, LexError) in compiler/src, one per line: the
+# first line of the message with each {expression} of an f-text turned into {}. Used to keep std/errors.txt complete: the suite checks
+# that every template is in the table (the table is the list of error ids). The port of tests/error_templates.sh (an awk program);
+# `templates()` gives the sorted, unique list, and the entry `error_templates` of dev/test.tom prints it.
+import os
+
+# The template of a message: `s` starts at the opening of the text, an optional f and then a quote; '' when it is not a text.
+def _template(text: str) -> str:
+    s = text
+    is_f = False
+    if s.startswith('f'):
+        is_f = True
+        s = s[1:]
+    if s == '':
+        return ''
+    q = s[0]
+    if q != '"' and q != "'":
+        return ''
+    out = ''
+    depth = 0
+    esc = False
+    i = 1
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if depth > 0:
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    out += '{}'
+            i += 1
+            continue
+        if esc:
+            esc = False
+            out += '\\' + c
+            i += 1
+            continue
+        if c == '\\':
+            esc = True
+            i += 1
+            continue
+        if c == q:
+            nxt = s[i + 1:i + 2]
+            if nxt == ' ' or nxt == '+':
+                if s[i + 1:].lstrip(' ').startswith('+'):
+                    out += '{}'
+            break
+        if is_f and c == '{':
+            if s[i + 1:i + 2] == '{':
+                out += '{'
+                i += 2
+                continue
+            depth = 1
+            i += 1
+            continue
+        out += c
+        i += 1
+    cut = out.find('\\n')
+    if cut >= 0:
+        out = out[:cut]
+    # Literal + diagnostics share E190 with the general binary-operator template.
+    if out == "cannot use '+' with {} and {}":
+        return "cannot use '{}' with {} and {}"
+    # The unknown escape message appends the escaped character and the closing apostrophe.
+    if out.startswith('this text has an unknown escape '):
+        return "this text has an unknown escape '{}'"
+    return out
+
+# the text after the last "raise CompileError(" (or ParseError, LexError) on a line; None when there is none
+def _after_raise(line: str) -> str | None:
+    best = -1
+    for name in ['CompileError', 'ParseError', 'LexError']:
+        key = 'raise ' + name + '('
+        i = line.rfind(key)
+        if i >= 0 and i + len(key) > best:
+            best = i + len(key)
+    if best < 0:
+        return None
+    return line[best:]
+
+# Every template, sorted and without repeats; the working directory is the repository root.
+export def templates() -> list[str]:
+    seen: dict[str, bool] = {}
+    found: list[str] = []
+    names = sorted(os.listdir('compiler/src'))
+    for f in names:
+        if not f.endswith('.tom'):
+            continue
+        for line in os.read_text('compiler/src/' + f).split('\n'):
+            rest = _after_raise(line)
+            if rest is None:
+                continue
+            t = _template(rest)
+            if t != '' and seen.get(t) is None:
+                seen[t] = True
+                found.append(t)
+    return sorted(found)

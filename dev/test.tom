@@ -1,0 +1,1015 @@
+# The test suite, in Tomato (docs/shell-to-tomato-plan.md, stage 4; tests/README.md says how to run it).
+#
+#     tomato run dev/test.tom main [-j N] [--fast] [--times]
+#     tomato run dev/test.tom ci_report LOGFILE
+#     tomato run dev/test.tom error_templates
+#     tomato run dev/test.tom highlighter_lists
+#
+# `main` is tests/run.sh over again: the same tiers (--fast, or TOMATO_TEST_FAST=1), the same -j (TOMATO_TEST_JOBS=N; the default is
+# half the cores, at most 64, less when the machine is busy), --times (TOMATO_TEST_TIMES=1), the same lines in the same order whatever
+# -j is, the same count and exit status. The tests are started longest first and printed in their place, as there.
+#
+# While the move is going on, the list of tests is still made by tests/run.sh: it registers them (`TOMATO_TEST_BRIDGE=plan`), this
+# program starts and orders them, and runs a test itself when it has been ported (a function `native_NAME` below); every other one is
+# run by tests/run.sh, one process each (`TOMATO_TEST_BRIDGE=job`), with the folder this program shares with it. A ported test prints
+# the very lines its old function printed, so the output of the two runners can be compared line for line. When the last test is
+# ported, the list moves here and tests/run.sh goes.
+import sys
+import os
+import ospath
+import time
+import asyncio
+import host
+import highlighter_lists as hl
+import error_templates as et
+import ci_report as ci
+
+const USAGE = 'usage: tomato run dev/test.tom main [-j N] [--fast] [--times]   (or TOMATO_TEST_JOBS=N, TOMATO_TEST_FAST=1, TOMATO_TEST_TIMES=1)'
+
+# One test (or heading) of the plan, in the order of the output.
+class Test:
+    num: int = 0
+    kind: str = ''        # s: a heading, t: a test, l: a test that must be run alone, after the others
+    place: str = ''       # free, long, first, early, gate, cli or rest: when it is started
+    section: str = ''
+    func: str = ''        # the function of tests/run.sh (t_NAME)
+    args: list[str] = []
+    text: str = ''        # what it printed
+    done: bool = False
+    rc: int = 0
+    passed: int = 0
+    failed: int = 0
+    work: str = ''
+    cpu: list[int] = [0]
+
+    @init
+    def make(self, num: int, kind: str, place: str, section: str):
+        self.num = num
+        self.kind = kind
+        self.place = place
+        self.section = section
+        self.args = []
+        self.cpu = [0]
+
+    def ok(self, name: str):
+        self.text += 'ok   ' + name + '\n'
+        self.passed += 1
+
+    # FAIL name, and the detail under it, every line indented by 5
+    def bad(self, name: str, detail: str = ''):
+        self.text += 'FAIL ' + name + '\n'
+        self.failed += 1
+        if detail != '':
+            self.indent(detail)
+
+    def indent(self, detail: str):
+        for line in detail.split('\n'):
+            self.text += '     ' + line + '\n'
+
+# The AddressSanitizer build of one program, made once by the first test that needs it.
+class AsanBuild:
+    done: asyncio.Event = asyncio.Event()
+    built: bool = False
+    ll: str = ''
+    err: str = ''
+    exe: str = ''
+
+class Row:
+    wall: int = 0
+    section: str = ''
+    label: str = ''
+    cpu: int = 0
+
+    @init
+    def make(self, wall: int, section: str, label: str, cpu: int):
+        self.wall = wall
+        self.section = section
+        self.label = label
+        self.cpu = cpu
+
+class Total:
+    wall: int = 0
+    cpu: int = 0
+    slowest: int = 0
+    count: int = 0
+
+class Run:
+    root: str = ''
+    shared: str = ''
+    script: str = ''
+    jobs: int = 1
+    cores: int = 1
+    fast: bool = False
+    times: bool = False
+    tests: list[Test] = []
+    skipped: list[str] = []
+    next_print: int = 0
+    slots: asyncio.Semaphore = asyncio.Semaphore(1)
+    asan: dict[str, AsanBuild] = {}
+    rows: list[Row] = []
+
+    @init
+    def make(self, root: str, shared: str, jobs: int, cores: int, fast: bool, times: bool):
+        self.root = root
+        self.shared = shared
+        self.script = root + '/tests/run.sh'
+        self.jobs = jobs
+        self.cores = cores
+        self.fast = fast
+        self.times = times
+        self.tests = []
+        self.skipped = []
+        self.slots = asyncio.Semaphore(jobs)
+        self.asan = {}
+        self.rows = []
+
+    # tests/run.sh is started as the bridge: what it should do, and the folder it shares
+    def bridge(self, what: str) -> dict[str, str]:
+        env: dict[str, str] = {}
+        env['TOMATO_TEST_BRIDGE'] = what
+        env['TOMATO_TEST_SHARED'] = self.shared
+        return env
+
+    def flags(self) -> list[str]:
+        out = ['-j', '1']
+        if self.fast:
+            out.append('--fast')
+        if self.times:
+            out.append('--times')
+        return out
+
+    # for the CPU time of a test, when --times asks for it
+    def cpu_of(self, t: Test) -> list[int] | None:
+        if self.times:
+            return t.cpu
+        return None
+
+def env_flag(name: str) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return False
+    return v != '' and v != '0'
+
+# The words of text, as the shell splits an unquoted variable (without looking for files)
+def words(text: str) -> list[str]:
+    out: list[str] = []
+    for w in text.replace('\t', ' ').replace('\n', ' ').split(' '):
+        if w != '':
+            out.append(w)
+    return out
+
+# What the shell's `eval` reads out of a line of words each in single quotes, as tests/run.sh registers them
+def unquote_words(line: str) -> list[str]:
+    out: list[str] = []
+    cur = ''
+    have = False
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if c == "'":
+            j = line.find("'", i + 1)
+            if j < 0:
+                j = n
+            cur += line[i + 1:j]
+            have = True
+            i = j + 1
+        elif c == '\\' and i + 1 < n:
+            cur += line[i + 1]
+            have = True
+            i += 2
+        elif c == ' ':
+            if have:
+                out.append(cur)
+                cur = ''
+                have = False
+            i += 1
+        else:
+            cur += c
+            have = True
+            i += 1
+    if have:
+        out.append(cur)
+    return out
+
+# ---- the plan ------------------------------------------------------------------------------------------------------------------
+
+async def load_plan(r: Run):
+    res = await host.run(['sh', r.script] + r.flags(), r.root, r.bridge('plan'))
+    if res.status != 0:
+        sys.write_stderr('dev/test.tom: tests/run.sh could not list the tests:\n' + res.stderr + res.stdout)
+        sys.exit(1)
+    for line in res.stdout.split('\n'):
+        if line == '':
+            continue
+        parts = line.split('\t')
+        if parts[0] == 'skip':
+            r.skipped.append(parts[1])
+            continue
+        t = Test(int(parts[0]), parts[1], parts[2], parts[3])
+        if t.kind != 's':
+            w = unquote_words(os.read_text(r.shared + '/cmd.' + parts[0]))
+            t.func = w[0]
+            t.args = w[1:]
+        if t.num != len(r.tests) + 1:
+            sys.write_stderr('dev/test.tom: the plan is out of order at ' + parts[0] + '\n')
+            sys.exit(1)
+        r.tests.append(t)
+
+# makes the runtime objects (while the compiler is built), as tests/run.sh does at its start
+async def prepare(r: Run):
+    _res = await host.run(['sh', r.script, '-j', '1'], r.root, r.bridge('prep'))
+
+# ---- running a test ------------------------------------------------------------------------------------------------------------
+
+def pump(r: Run):
+    while r.next_print < len(r.tests) and r.tests[r.next_print].done:
+        sys.write_stdout(r.tests[r.next_print].text)
+        r.next_print += 1
+
+# a test of tests/run.sh, run by it
+async def run_legacy(r: Run, t: Test):
+    env = r.bridge('job')
+    env['TOMATO_TEST_JOB'] = str(t.num)
+    env['TOMATO_TEST_CMD'] = os.read_text(r.shared + '/cmd.' + str(t.num))
+    env['TOMATO_TEST_SECTION'] = t.section
+    res = await host.run(['sh', r.script] + r.flags(), r.root, env)
+    t.text += res.stdout + res.stderr
+    t.rc = res.status
+    if res.signal != 0 or res.status > 128:      # killed by a signal
+        t.text += f'FAIL job died before it finished (status {res.status})\n'
+        t.failed += 1
+
+async def await_file(path: str) -> bool:
+    i = 0
+    while not ospath.exists(path):
+        await sleep(0.05)
+        i += 1
+        if i > 12000:
+            return False
+    return True
+
+# the path that a file of the shared folder names (the runtime objects, made by `prepare`)
+async def shared_path(r: Run, name: str) -> str:
+    _ok = await await_file(r.shared + '/' + name)
+    return os.read_text(r.shared + '/' + name).rstrip('\n')
+
+def is_native(func: str) -> bool:
+    for name in ['t_example', 't_program', 't_program_asan', 't_asan', 't_neg', 't_error_text', 't_rt', 't_gap', 't_wasm_program', 't_wasm_neg', 't_wasm_rt', 't_error_templates', 't_highlighter_lists']:
+        if func == name:
+            return True
+    return False
+
+# the ones that do not link a program with the runtime do not wait for it
+def needs_runtime(func: str) -> bool:
+    return func != 't_error_templates' and func != 't_highlighter_lists' and not func.startswith('t_wasm_')
+
+def short_name(t: Test) -> str:
+    name = t.func
+    if name.startswith('t_'):
+        name = name[2:]
+    first = ''
+    if len(t.args) > 0:
+        first = t.args[0]
+    return name + ' ' + first
+
+async def run_native(r: Run, t: Test):
+    t.work = r.shared + '/j' + str(t.num)
+    host.make_dir(t.work)
+    try:
+        rt_o = ''
+        if needs_runtime(t.func):
+            rt_o = await shared_path(r, 'rt_o.path')
+        started = time.monotonic_ns()
+        if t.func == 't_example':
+            await native_example(r, t, rt_o)
+        elif t.func == 't_program':
+            await native_program(r, t, rt_o)
+        elif t.func == 't_program_asan':
+            await native_program_asan(r, t)
+        elif t.func == 't_asan':
+            await native_asan(r, t)
+        elif t.func == 't_neg':
+            await native_neg(r, t)
+        elif t.func == 't_error_text':
+            await native_error_text(r, t)
+        elif t.func == 't_rt':
+            await native_rt(r, t, rt_o)
+        elif t.func == 't_gap':
+            await native_gap(r, t, rt_o)
+        elif t.func == 't_wasm_program':
+            await native_wasm_program(r, t)
+        elif t.func == 't_wasm_neg':
+            await native_wasm_neg(r, t)
+        elif t.func == 't_wasm_rt':
+            await native_wasm_rt(r, t)
+        elif t.func == 't_error_templates':
+            native_error_templates(t)
+        elif t.func == 't_highlighter_lists':
+            native_highlighter_lists(t)
+        if r.times:
+            wall = (time.monotonic_ns() - started) // 1000000
+            r.rows.append(Row(wall, t.section, short_name(t), t.cpu[0]))
+    finally:
+        _x = await sys.run_async(['rm', '-rf', t.work])
+
+async def execute(r: Run, t: Test):
+    try:
+        if is_native(t.func):
+            await run_native(r, t)
+        else:
+            await run_legacy(r, t)
+    catch Error as e:
+        t.text += f'FAIL {t.func}: the runner stopped it: {e.message}\n'
+        t.failed += 1
+    t.done = True
+    pump(r)
+
+# a job: it holds one of the slots while it runs
+async def job(r: Run, t: Test) -> int:
+    try:
+        await execute(r, t)
+    finally:
+        r.slots.release()
+    return t.rc
+
+async def launch(r: Run, t: Test) -> task[int]:
+    await r.slots.acquire()
+    return start job(r, t)  # allow: unstable
+
+# ---- the order: what tests/run.sh's run_all does ---------------------------------------------------------------------------------
+
+def of_place(r: Run, place: str) -> list[Test]:
+    out: list[Test] = []
+    for t in r.tests:
+        if t.kind != 's' and t.place == place:
+            out.append(t)
+    return out
+
+def cli_ready(r: Run, install: Test | None) -> bool:
+    if ospath.exists(r.shared + '/install.rc'):
+        return True
+    if install is not None and install.done:
+        os.write_text(r.shared + '/install.rc', '1\n')
+        return True
+    return False
+
+# Runs everything; gives 1 when the compiler could not be built (nothing else can run then), else 0.
+async def run_all(r: Run) -> int:
+    for t in r.tests:
+        if t.kind == 's':
+            t.text = t.section + '\n'
+            t.done = True
+    if r.jobs <= 1:                  # one after the other, in the order of the output
+        for t in r.tests:
+            if t.kind == 's':
+                pump(r)
+                continue
+            await execute(r, t)
+            if t.place == 'gate' and t.rc != 0:
+                pump(r)
+                return 1
+        pump(r)
+        return 0
+    running: list[task[int]] = []
+    early = of_place(r, 'early')
+    gate = of_place(r, 'gate')
+    free = of_place(r, 'free')
+    install: Test | None = None
+    if len(early) > 0:
+        install = early[0]
+    for t in early:
+        running.append(await launch(r, t))
+    if len(gate) > 0:                # the compiler: nothing else that uses it can start before it; the tests that do not run beside it
+        g = gate[0]
+        gate_task = await launch(r, g)
+        running.append(gate_task)
+        while len(free) > 0 and not g.done:
+            running.append(await launch(r, free.pop(0)))
+        await gate_task
+        if g.rc != 0:
+            await asyncio.wait_all(running)
+            pump(r)
+            return 1
+    todo = free + of_place(r, 'long') + of_place(r, 'first') + of_place(r, 'rest')
+    cli = of_place(r, 'cli')
+    deferred: list[Test] = []
+    while True:                      # the tests that need the installed `tomato` first, as soon as it is there; then the long ones; then the others
+        pick: Test | None = None
+        if len(cli) > 0 and cli_ready(r, install):
+            pick = cli.pop(0)
+        elif len(todo) > 0:
+            pick = todo.pop(0)
+        elif len(cli) > 0:
+            await sleep(0.05)
+            continue
+        else:
+            break
+        if pick is not None:
+            if pick.kind == 'l':
+                deferred.append(pick)
+            else:
+                running.append(await launch(r, pick))
+    await asyncio.wait_all(running)
+    pump(r)
+    for t in deferred:              # alone, after everything else
+        await execute(r, t)
+    pump(r)
+    return 0
+
+# ---- the ported tests ----------------------------------------------------------------------------------------------------------
+
+def errors_in(ir: str) -> bool:
+    return ir.startswith(';! ') or '\n;! ' in ir
+
+# the lines of the IR that start with ";! " (what the compiler said), the first n
+def warning_lines(ir: str, n: int) -> list[str]:
+    out: list[str] = []
+    for line in ir.split('\n'):
+        if line.startswith(';! '):
+            out.append(line)
+            if len(out) >= n:
+                break
+    return out
+
+# Does the IR carry a warning other than the unstable-feature one? A program of tests/programs may use the marker names and `start` (U5,
+# U6: D129a) without `# allow: unstable` on every use; the warning is tested by tests/errors/unstable_* and the CLI tests.
+def own_warnings(ir: str) -> bool:
+    if not errors_in(ir):
+        return False
+    skip = False
+    for line in ir.split('\n'):
+        if line.startswith(';! warning') or line.startswith(';! error'):
+            skip = 'is an unstable feature' in line
+        if line.startswith(';! ') and not skip:
+            return True
+    return False
+
+# A program whose first line says "# borrowed loops: N" must compile exactly N loops that borrow their item
+def lent_loops_ok(ir: str, name: str) -> bool:
+    first = host.read_text_lossy('tests/programs/' + name + '.tom').split('\n')[0]
+    if not first.startswith('# borrowed loops: '):
+        return True
+    want = first[len('# borrowed loops: '):]
+    if want == '':
+        return True
+    n = 0
+    for line in ir.split('\n'):
+        i = line.find('lent.slot.')
+        if i < 0:
+            continue
+        j = i + len('lent.slot.')
+        while j < len(line) and line[j].isdigit():
+            j += 1
+        if line[j:].startswith(' = alloca'):
+            n += 1
+    return str(n) == want
+
+# the programs that write files get the folder of their test; some take inputs
+def program_arg(name: str, work: str) -> list[str]:
+    for w in ['toml_api', 'json_files', 'msgpack_files', 'msgpack_file_basics', 'os_files', 'file_lines', 'file_loop_close', 'file_modes', 'file_closed', 'file_drop_loop', 'bytes_files', 'sys_run', 'sys_async']:
+        if name == w:
+            return [work]
+    if name == 'sys_basics':
+        return ['alpha']
+    if name == 'sys_args':
+        return ['7', 'b', 'c']
+    return []
+
+# compiles a program with the compiler of this run (c1) and keeps the IR in `ll`
+async def compile_ir(r: Run, t: Test, args: list[str], ll: str) -> sys.RunResult:
+    res = await host.run([r.shared + '/c1'] + args, r.root, None, r.cpu_of(t))
+    os.write_text(ll, res.stdout)
+    return res
+
+# a clang that links `ll` with the runtime object `rt` into `exe`: its status
+async def link(r: Run, t: Test, ll: str, rt: str, exe: str) -> int:
+    res = await host.run(['clang', '-O1', '-w', '-o', exe, ll, rt, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+    if res.status != 0:
+        t.text += res.stdout + res.stderr
+    return res.status
+
+# does the program's output (both streams in `out`) equal the expected file
+def same_bytes(a: str, b: str) -> bool:
+    return host.read_bytes_or_empty(a) == host.read_bytes_or_empty(b) and ospath.exists(a) and ospath.exists(b)
+
+async def native_example(r: Run, t: Test, rt_o: str):
+    name = t.args[0]
+    entry = t.args[1]
+    rest = t.args[2]
+    tag = name + ' ' + entry
+    ll = t.work + '/p.ll'
+    res = await compile_ir(r, t, ['examples/' + name + '.tom', entry, 'std/'], ll)
+    if res.status != 0:
+        t.text += f'FAIL {tag}: {res.stderr.rstrip(chr(10))}\n'
+        t.failed += 1
+        return
+    if errors_in(res.stdout):
+        t.text += f'FAIL {tag}: warnings\n'
+        t.indent('\n'.join(warning_lines(res.stdout, 6)))
+        t.failed += 1
+        return
+    if await link(r, t, ll, rt_o, t.work + '/p') != 0:
+        t.text += f'FAIL {tag}: link\n'
+        t.failed += 1
+        return
+    out = t.work + '/out'
+    _rc = await host.redirect([t.work + '/p'] + words(rest), out, r.root, None, r.cpu_of(t))
+    expected = 'tests/expected/' + name + '.' + entry + '.out'
+    if same_bytes(out, expected):
+        t.text += f'ok   {tag}\n'
+        t.passed += 1
+    else:
+        t.text += f'FAIL {tag}\n'
+        t.indent('\n'.join(host.diff_head(out, expected, 5)))
+        t.failed += 1
+
+async def native_program(r: Run, t: Test, rt_o: str):
+    name = t.args[0]
+    ll = t.work + '/p.ll'
+    res = await compile_ir(r, t, ['tests/programs/' + name + '.tom', 'main', 'std/'], ll)
+    if own_warnings(res.stdout):
+        t.text += f'FAIL program {name} has warnings\n'
+        t.failed += 1
+        return
+    if not lent_loops_ok(res.stdout, name):
+        t.text += f'FAIL program {name}: the number of loops that borrow their item changed\n'
+        t.failed += 1
+        return
+    out = t.work + '/out'
+    if len(res.stdout) > 0 and await link(r, t, ll, rt_o, t.work + '/p') == 0:
+        _rc = await host.redirect([t.work + '/p'] + program_arg(name, t.work), out, r.root, None, r.cpu_of(t))
+    expected = 'tests/expected/' + name + '.main.out'
+    if same_bytes(out, expected):
+        t.text += f'ok   program {name}\n'
+        t.passed += 1
+    else:
+        t.text += f'FAIL program {name}\n'
+        detail: list[str] = []
+        for line in res.stderr.split('\n')[:3]:
+            if line != '':
+                detail.append(line)
+        t.indent('\n'.join(detail + host.diff_head(out, expected, 5)))
+        t.failed += 1
+
+# The IR of a program, with what the compiler said, and its AddressSanitizer build. Made once, by the first of the tests that need it
+# (the others wait for it); `built` is False when this clang cannot build with AddressSanitizer.
+async def asan_build(r: Run, t: Test, path: str) -> AsanBuild:
+    key = path.replace('/', '_')
+    known = r.asan.get(key)
+    if known is not None:
+        await known.done.wait()
+        return known
+    b = AsanBuild()
+    dir = r.shared + '/asan'
+    host.make_dir(dir)
+    b.ll = dir + '/' + key + '.ll'
+    b.err = dir + '/' + key + '.err'
+    b.exe = dir + '/' + key + '.exe'
+    r.asan[key] = b
+    try:
+        rt_asan = await shared_path(r, 'rt_asan.path')
+        res = await host.run([r.shared + '/c1', path + '.tom', 'main', 'std/'], r.root, None, r.cpu_of(t))
+        os.write_text(b.ll, res.stdout)
+        os.write_text(b.err, res.stderr)
+        if rt_asan != '':
+            c = await host.run(['clang', '-O1', '-w', '-g', '-fsanitize=address', '-o', b.exe + '.tmp', b.ll, rt_asan, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+            if c.status == 0:
+                os.rename(b.exe + '.tmp', b.exe)
+                b.built = True
+    finally:
+        b.done.set()
+    return b
+
+# the same test as native_program, for a program that an AddressSanitizer test builds too: its output (standard output and standard
+# error) from that build, which asan_build makes once for both
+async def native_program_asan(r: Run, t: Test):
+    name = t.args[0]
+    b = await asan_build(r, t, 'tests/programs/' + name)
+    ir = host.read_text_lossy(b.ll)
+    if own_warnings(ir):
+        t.text += f'FAIL program {name} has warnings\n'
+        t.failed += 1
+        return
+    if not lent_loops_ok(ir, name):
+        t.text += f'FAIL program {name}: the number of loops that borrow their item changed\n'
+        t.failed += 1
+        return
+    out = t.work + '/out'
+    if b.built:
+        _rc = await host.redirect([b.exe] + program_arg(name, t.work), out, r.root, None, r.cpu_of(t))
+    expected = 'tests/expected/' + name + '.main.out'
+    if same_bytes(out, expected):
+        t.text += f'ok   program {name}\n'
+        t.passed += 1
+    else:
+        t.text += f'FAIL program {name}\n'
+        detail: list[str] = []
+        for line in host.read_text_lossy(b.err).split('\n')[:3]:
+            if line != '':
+                detail.append(line)
+        t.indent('\n'.join(detail + host.diff_head(out, expected, 5)))
+        t.failed += 1
+
+# PATH:ARGUMENT, the argument being a folder the program may write into when it is WORK
+async def native_asan(r: Run, t: Test):
+    spec = t.args[0]
+    path = spec.partition(':')[0]
+    name = path.rpartition('/')[2]
+    arg = spec.partition(':')[2]
+    if arg == 'WORK':
+        arg = t.work
+    b = await asan_build(r, t, path)
+    if b.built:
+        # a failure shows the head of the sanitizer report (with ASAN_SYMBOLIZER_PATH set, as the Linux CI job does, that includes the
+        # leaking allocation's stack)
+        res = await host.run([b.exe] + words(arg), r.root, None, r.cpu_of(t))
+        head: list[str] = []
+        for line in res.stderr.split('\n')[:14]:
+            head.append(line)
+        out = '\n'.join(head).rstrip('\n')
+        if out == '':
+            t.ok('asan ' + name)
+        else:
+            t.bad('asan ' + name, out)
+    else:
+        t.bad('asan ' + name, 'this clang cannot build with -fsanitize=address')
+
+# FILE, the message the compiler must report, and the entry name (default main; `test` for the @test checks)
+async def native_neg(r: Run, t: Test):
+    entry = 'main'
+    if len(t.args) > 2 and t.args[2] != '':
+        entry = t.args[2]
+    res = await host.run([r.shared + '/c1', 'tests/negative/' + t.args[0] + '.tom', entry, 'std/'], r.root, None, r.cpu_of(t))
+    msg = res.stderr.rstrip('\n')
+    if t.args[1] in msg:
+        if res.status != 0:
+            t.ok('rejects ' + t.args[0])
+        else:
+            t.bad('rejects ' + t.args[0], 'exit status was 0')
+    else:
+        t.bad('rejects ' + t.args[0], 'wanted: ' + t.args[1] + '\ngot:    ' + msg)
+
+# the whole text of what the compiler says about a program (its errors, then its warnings: they travel as comment lines at the end of the IR)
+async def native_error_text(r: Run, t: Test):
+    f = t.args[0]
+    n = f.rpartition('/')[2]
+    n = n[:len(n) - 4]
+    res = await host.run([r.shared + '/c1', f, 'main', 'std/'], r.root, None, r.cpu_of(t))
+    got = res.stderr
+    for line in warning_lines(res.stdout, 1000000000):
+        got += line[3:] + '\n'
+    expected = 'tests/errors/' + n + '.out'
+    if got == host.read_text_lossy(expected):
+        t.ok('error text: ' + n)
+    else:
+        os.write_text(t.work + '/err.out', got)
+        t.bad('error text: ' + n, '\n'.join(host.diff_head(t.work + '/err.out', expected, 6)))
+
+# FILE, the text that the program's output (standard output, then standard error) must hold, and its exit status
+async def native_rt(r: Run, t: Test, rt_o: str):
+    name = t.args[0]
+    ll = t.work + '/r.ll'
+    res = await host.run([r.shared + '/c1', 'tests/runtime/' + name + '.tom', 'main', 'std/'], r.root, None, r.cpu_of(t))
+    os.write_text(ll, res.stdout)
+    if res.status != 0 or await link(r, t, ll, rt_o, t.work + '/r') != 0:
+        t.bad('runtime ' + name, 'did not build')
+        return
+    run = await host.run([t.work + '/r'], r.root, None, r.cpu_of(t))
+    seen = run.stdout + run.stderr
+    if t.args[1] in seen.rstrip('\n'):
+        if str(run.status) == t.args[2]:
+            t.ok('runtime ' + name)
+        else:
+            t.bad('runtime ' + name, f'exit status {run.status}, wanted {t.args[2]}')
+    else:
+        t.bad('runtime ' + name, f"wanted '{t.args[1]}', got: {seen.rstrip(chr(10))}")
+
+# Each file is a program a decision says must be rejected (should_reject_*) or must work (should_work_*). The test passes while the gap
+# exists and FAILS when the compiler gains the behavior, so the list cannot go stale.
+async def native_gap(r: Run, t: Test, rt_o: str):
+    f = t.args[0]
+    n = f.rpartition('/')[2]
+    n = n[:len(n) - 4]
+    accepted = 'no'
+    ll = t.work + '/g.ll'
+    res = await host.run([r.shared + '/c1', f, 'main', 'std/'], r.root, None, r.cpu_of(t))
+    os.write_text(ll, res.stdout)
+    if res.status == 0:
+        c = await host.run(['clang', '-O1', '-w', '-o', t.work + '/g', ll, rt_o, '-pthread', '-lm'], r.root, None, r.cpu_of(t))
+        if c.status == 0:
+            accepted = 'yes'
+            run = await host.run([t.work + '/g'], r.root, None, r.cpu_of(t))
+            if run.status != 0:
+                accepted = 'fails'
+    if n.startswith('should_reject_'):
+        if accepted == 'no':
+            t.bad('known gap closed: ' + n, 'move it to tests/negative')
+        else:
+            t.ok('known gap: ' + n + ' (still accepted)')
+    elif n.startswith('should_work_'):
+        if accepted == 'yes':
+            t.bad('known gap closed: ' + n, 'move it to tests/programs')
+        else:
+            t.ok('known gap: ' + n + ' (still unsupported)')
+
+# ---- the same programs through WebAssembly (site/wasm, the website and repl path) ----------------------------------------------------
+# A JavaScript shell: jsc on macOS, else Node running the same script through native/jsc-on-node.js (the script is not changed).
+
+def js_shell(r: Run) -> list[str]:
+    mac = '/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc'
+    if ospath.isfile(mac):
+        return [mac]
+    node = host.which('node')
+    if node is not None:
+        return ['node', r.root + '/native/jsc-on-node.js']
+    return []
+
+# The toolchain script, with the run limit. A run the limit stopped (the toolchain says error[E369]: it ran out of time, on a machine that is
+# busy) is run again with three times the limit, up to three runs in all; a wrong answer, a compile error, a crash or anything else is the
+# first run's result, never run again. Gives what the last run printed (standard output, then standard error) and its status.
+async def tjsc(r: Run, t: Test, args: list[str]) -> tuple[str, str, int]:
+    limit = 30000
+    v = os.getenv('TOMATO_WASM_TIMEOUT_MS')
+    if v is not None and v.isdigit():
+        limit = int(v)
+    tries = 1
+    while True:
+        res = await host.run(js_shell(r) + ['native/tomato-jsc.js', '--', f'--timeout-ms={limit}'] + args, r.root, None, r.cpu_of(t))
+        if tries < 3 and '\nerror[E369]' in '\n' + res.stderr:
+            limit = limit * 3
+            tries += 1
+            continue
+        return (res.stdout, res.stderr, res.status)
+
+# does the text hold each of the pieces, in this order (the shell's case pattern *A*B*)
+def holds_in_order(text: str, pieces: list[str]) -> bool:
+    at = 0
+    for piece in pieces:
+        i = text.find(piece, at)
+        if i < 0:
+            return False
+        at = i + len(piece)
+    return True
+
+async def native_wasm_program(r: Run, t: Test):
+    name = t.args[0]
+    got = await tjsc(r, t, ['site/wasm', 'run', 'tests/programs/' + name + '.tom'])
+    expected = 'tests/expected/' + name + '.main.out'
+    # the runner drops one trailing newline and adds an "~rc" line; compare ignoring both
+    if got[0].rstrip('\n') == host.read_text_lossy(expected).rstrip('\n'):
+        t.ok('wasm ' + name)
+    else:
+        os.write_text(t.work + '/js.out', got[0])
+        detail = host.diff_head(t.work + '/js.out', expected, 4)
+        for line in got[1].split('\n')[:2]:
+            detail.append(line)
+        t.bad('wasm ' + name, '\n'.join(detail).rstrip('\n'))
+
+# rejected programs and runtime errors through the same path (the messages and failures must agree with native)
+async def native_wasm_neg(r: Run, t: Test):
+    got = await tjsc(r, t, ['site/wasm', 'run', 'tests/negative/' + t.args[0] + '.tom'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if holds_in_order(m, [t.args[1], '~rc 1']):
+        t.ok('wasm rejects ' + t.args[0])
+    else:
+        t.bad('wasm rejects ' + t.args[0], 'wanted: ' + t.args[1] + '\ngot: ' + m)
+
+async def native_wasm_rt(r: Run, t: Test):
+    got = await tjsc(r, t, ['site/wasm', 'run', 'tests/runtime/' + t.args[0] + '.tom'])
+    m = (got[0] + got[1]).rstrip('\n')
+    if holds_in_order(m, [t.args[1], '~rc ' + t.args[2]]):
+        t.ok('wasm runtime ' + t.args[0])
+    else:
+        t.bad('wasm runtime ' + t.args[0], f'wanted: {t.args[1]} (rc {t.args[2]})\ngot: {m}')
+
+def native_error_templates(t: Test):
+    missing = ''
+    table = os.read_text('std/errors.txt').split('\n')
+    for tpl in et.templates():
+        if len(tpl.replace('{}', '')) < 12:
+            continue
+        if 'CompileError ' + tpl not in table:
+            missing += '\n  ' + tpl
+    if missing == '':
+        t.ok('every extracted compile error template has an id in std/errors.txt')
+    else:
+        t.bad('every extracted compile error template has an id in std/errors.txt', 'add these lines (CompileError TEMPLATE):' + missing)
+
+def native_highlighter_lists(t: Test):
+    found = hl.problems()
+    if len(found) == 0:
+        t.ok('highlighters know every lexer keyword and built-in')
+    else:
+        t.bad('highlighters', '\n'.join(found))
+
+# ---- the end of the run: the count and --times ------------------------------------------------------------------------------------
+
+def count_lines(path: str) -> int:
+    if not ospath.exists(path):
+        return 0
+    n = 0
+    for line in os.read_text(path).split('\n'):
+        if line != '':
+            n += 1
+    return n
+
+def row_wall(x: Row) -> int:
+    return x.wall
+
+# the heading of a section as the --times report shows it: without the "== " and " ==" around it
+def plain_section(s: str) -> str:
+    out = s
+    if out.startswith('== '):
+        out = out[3:]
+    if out.endswith(' =='):
+        out = out[:len(out) - 3]
+    return out
+
+def fixed(ms: int, width: int) -> str:
+    whole = ms // 100            # tenths of a second, rounded to the nearest
+    if ms % 100 >= 50:
+        whole += 1
+    text = f'{whole // 10}.{whole % 10}'
+    while len(text) < width:
+        text = ' ' + text
+    return text
+
+def pad(n: int, width: int) -> str:
+    text = str(n)
+    while len(text) < width:
+        text = ' ' + text
+    return text
+
+# the times that the tests of tests/run.sh wrote (one line each: milliseconds, section, label, CPU milliseconds)
+def read_times(r: Run):
+    path = r.shared + '/times'
+    if r.times and ospath.exists(path):
+        for line in os.read_text(path).split('\n'):
+            parts = line.split('\t')
+            if len(parts) >= 4:
+                r.rows.append(Row(int(parts[0]), parts[1], parts[2], int(parts[3])))
+
+def report_times(r: Run, seconds: int):
+    rows = r.rows
+    if len(rows) == 0:
+        return
+    # wall seconds depend on what else the machine is doing; the CPU seconds (user and system, of the test and everything it started) mostly do not
+    print()
+    print(f"slowest 20 tests (wall seconds, and CPU seconds), of the whole run's {seconds} s:")
+    rows.sort(key=row_wall)
+    rows.reverse()
+    for x in rows[:20]:
+        print(f'{fixed(x.wall, 8)} {fixed(x.cpu, 8)}  {x.label}   [{plain_section(x.section)[:44]}]')
+    print()
+    print('per section (seconds): wall and CPU summed over its tests, the slowest test (wall), the number of tests')
+    sums: dict[str, Total] = {}
+    names: list[str] = []
+    for x in rows:
+        if sums.get(x.section) is None:
+            sums[x.section] = Total()
+            names.append(x.section)
+        s = sums[x.section]
+        s.wall += x.wall
+        s.cpu += x.cpu
+        if x.wall > s.slowest:
+            s.slowest = x.wall
+        s.count += 1
+    lines: list[tuple[int, str]] = []
+    wall_all = 0
+    cpu_all = 0
+    for name in names:
+        s = sums[name]
+        wall_all += s.wall
+        cpu_all += s.cpu
+        lines.append((s.wall, f'{fixed(s.wall, 9)} {fixed(s.cpu, 9)} {fixed(s.slowest, 8)} {pad(s.count, 5)}  {plain_section(name)[:60]}'))
+    lines.sort(key=line_wall)
+    lines.reverse()
+    for pair in lines:
+        print(pair[1])
+    print()
+    print(f'total over {len(rows)} tests: {(wall_all + 500) // 1000} s wall (summed), {(cpu_all + 500) // 1000} s CPU. CPU is what the machine paid; wall includes waiting for cores.')
+    print(f'load average at the end: {host.load_text()}, jobs: {r.jobs}, cores: {r.cores}')
+
+def line_wall(x: tuple[int, str]) -> int:
+    return x[0]
+
+# ---- the entries ---------------------------------------------------------------------------------------------------------------
+
+@main
+async def main(*args: tuple[str]):
+    jobs_text = ''
+    v = os.getenv('TOMATO_TEST_JOBS')
+    if v is not None:
+        jobs_text = v
+    times = env_flag('TOMATO_TEST_TIMES')
+    fast = env_flag('TOMATO_TEST_FAST')
+    i = 0
+    given: list[str] = []
+    for a0 in args:
+        given.append(a0)
+    while i < len(given):
+        a = given[i]
+        if a == '-j':
+            if i + 1 >= len(given):
+                sys.write_stderr('dev/test.tom: -j needs a number\n')
+                sys.exit(2)
+            jobs_text = given[i + 1]
+            i += 2
+        elif a.startswith('-j'):
+            jobs_text = a[2:]
+            i += 1
+        elif a == '--times':
+            times = True
+            i += 1
+        elif a == '--fast':
+            fast = True
+            i += 1
+        elif a == '--full':
+            fast = False
+            i += 1
+        elif a == '-h' or a == '--help':
+            print(USAGE)
+            return
+        else:
+            sys.write_stderr(USAGE + '\n')
+            sys.exit(2)
+    cores = host.cpu_count()
+    jobs = 0
+    if jobs_text == '':
+        jobs = cores // 2
+        if jobs > 64:
+            jobs = 64
+        load = host.load()
+        if load >= 0:                # a busy machine: about half of what is idle, but at least 4
+            free = (cores - load) // 2
+            if free < 4:
+                free = 4
+            if jobs > free:
+                jobs = free
+    else:
+        if not jobs_text.isdigit():
+            sys.write_stderr(f"dev/test.tom: the number of jobs must be a number, not '{jobs_text}'\n")
+            sys.exit(2)
+        jobs = int(jobs_text)
+    if jobs < 1:
+        jobs = 1
+    # The WebAssembly runner stops a program after 5 s, which a loaded machine or a hosted CI runner can exceed: give it more room.
+    wasm = os.getenv('TOMATO_WASM_TIMEOUT_MS')
+    if wasm is None or not wasm.isdigit() or wasm == '0':
+        os.putenv('TOMATO_WASM_TIMEOUT_MS', '30000')
+    root = ospath.abspath(os.getcwd())
+    if not ospath.isfile(root + '/tests/run.sh'):
+        sys.write_stderr('dev/test.tom: run it from the root of the repository: tomato run dev/test.tom main\n')
+        sys.exit(2)
+    started = time.time()
+    shared = host.mkdtemp()
+    r = Run(root, shared, jobs, cores, fast, times)
+    rc = 0
+    passes = 0
+    fails = 0
+    try:
+        await load_plan(r)
+        prep = start prepare(r)  # allow: unstable
+        rc = await run_all(r)
+        await prep
+        passes = count_lines(shared + '/passed')      # the ones tests/run.sh ran count in files of the shared folder
+        fails = count_lines(shared + '/failed')
+        read_times(r)
+    finally:
+        host.rmtree(shared)
+    if rc != 0:
+        sys.exit(rc)
+    for t in r.tests:
+        passes += t.passed
+        fails += t.failed
+    print()
+    print(f'{passes} passed, {fails} failed')
+    if fast:                         # the tests the fast tier did not run
+        print()
+        print(f'fast tier: {len(r.skipped)} tests were not run (tests/run.sh with no flag runs them all):')
+        for line in r.skipped:
+            print(line)
+    if times:
+        report_times(r, int(time.time() - started))
+    if fails != 0:
+        sys.exit(1)
+
+@ci_report
+def entry_ci_report(log: str, name: str = 'dev/test.tom'):
+    ci.report(log, name)
+
+@error_templates
+def entry_error_templates():
+    for t in et.templates():
+        print(t)
+
+@highlighter_lists
+def entry_highlighter_lists():
+    found = hl.problems()
+    if len(found) == 0:
+        print('ok')
+        return
+    for line in found:
+        print(line)
+    sys.exit(1)

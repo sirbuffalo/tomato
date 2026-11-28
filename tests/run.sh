@@ -67,7 +67,12 @@ case "$jobs" in ''|*[!0-9]*) echo "tests/run.sh: the number of jobs must be a nu
 case "${TOMATO_WASM_TIMEOUT_MS:-}" in ''|*[!0-9]*|0) TOMATO_WASM_TIMEOUT_MS=30000 ;; esac
 export TOMATO_WASM_TIMEOUT_MS
 t_start="$(date +%s)"
-work="$(mktemp -d)"; shared="$work"
+# dev/test.tom (the runner in Tomato, docs/shell-to-tomato-plan.md stage 4) runs the tests of this script that it has not ported yet, one
+# process each, with TOMATO_TEST_BRIDGE=plan (print the registered tests, one line each), prep (make the runtime objects) or job (run test
+# TOMATO_TEST_JOB, whose registered arguments are TOMATO_TEST_CMD) and the folder it shares with them in TOMATO_TEST_SHARED. A normal run
+# of this script sets none of them.
+bridge="${TOMATO_TEST_BRIDGE:-}"
+if [ -n "$bridge" ]; then work="${TOMATO_TEST_SHARED:?TOMATO_TEST_BRIDGE needs TOMATO_TEST_SHARED}"; shared="$work"; else work="$(mktemp -d)"; shared="$work"; fi
 sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }   # macOS has shasum, some Linux systems only sha256sum
 
 # ---- the job pool -------------------------------------------------------------------------------------------------------
@@ -82,7 +87,7 @@ nap() { sleep 0.05 2>/dev/null || sleep 1; }
 kill_tree() { for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$c"; done; kill "$1" 2>/dev/null; }
 cleanup() { # when interrupted: stop the jobs, and everything they started, that are still going; then remove the temp folder
   for p in $(pgrep -P $$ 2>/dev/null); do kill_tree "$p"; done
-  rm -rf "$work"
+  [ -n "$bridge" ] && [ "$work" = "$shared" ] || rm -rf "$work"   # (a bridged job removes its own folder, never the runner's shared one)
 }
 trap cleanup EXIT; trap 'exit 130' INT TERM
 ok() { echo x >> "$shared/passed"; echo "ok   $1"; }
@@ -154,6 +159,30 @@ skip() { # NAME: a test the fast tier does not run (listed at the end, under the
   skip_sec="${section_name#== }"; skip_sec="${skip_sec%% (*}"; skip_sec="${skip_sec%% ==*}"
   skipped="$skipped
   $skip_sec: $1"
+}
+if [ "$bridge" = job ]; then register() { :; }; section() { :; }; skip() { :; }; fi   # (a bridged job runs the one test it was given: it registers none)
+bridge_plan() { # the registered tests, one line each: NUMBER, KIND (s heading, t test, l test that runs alone, last), PLACE, SECTION (the function and arguments are in the file cmd.NUMBER); then the skipped ones
+  i=1
+  while [ "$i" -le "$n" ]; do
+    eval "k=\$kind_$i; s=\$sec_$i; c=\$cmd_$i"
+    p=rest
+    case " $free_ids " in *" $i "*) p=free ;; esac
+    case " $long_ids " in *" $i "*) p=long ;; esac
+    case " $first_ids " in *" $i "*) p=first ;; esac
+    case " $early_ids " in *" $i "*) p=early ;; esac
+    case " $cli_ids " in *" $i "*) p=cli ;; esac
+    [ "$gate_id" = "$i" ] && p=gate
+    [ "$k" = s ] || printf '%s' "$c" > "$shared/cmd.$i"   # (an argument can hold a newline: the line goes in a file of its own)
+    printf '%s\t%s\t%s\t%s\n' "$i" "$k" "$p" "$s"
+    i=$((i + 1))
+  done
+  printf '%s\n' "$skipped" | while IFS= read -r l; do [ -n "$l" ] && printf 'skip\t%s\n' "$l"; done
+  return 0
+}
+bridge_job() { # TOMATO_TEST_JOB: the number; TOMATO_TEST_CMD: the function and its arguments, as register made them; TOMATO_TEST_SECTION: its heading (for --times)
+  exec 2>&1
+  eval "sec_$TOMATO_TEST_JOB=\$TOMATO_TEST_SECTION"
+  ( eval "job_run $TOMATO_TEST_JOB $TOMATO_TEST_CMD" ) < /dev/null
 }
 sections_are_done() { # a heading needs no job: it is ready to be printed
   i=1
@@ -241,12 +270,15 @@ run_all() {
 # for the plain link, $rt_asan with AddressSanitizer (empty when this clang cannot build it: the tests then say so). They are made
 # in the background while the compiler is built; without a usable object the C file itself is linked, as it always was.
 . "$root/native/rtcache.sh"
+if [ -z "$bridge" ] || [ "$bridge" = prep ]; then
 ( p="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -pthread -w)" || p="$root/runtime/tomato_rt.c"; echo "$p" > "$shared/rt_o.tmp"; mv "$shared/rt_o.tmp" "$shared/rt_o.path" ) > /dev/null 2>&1 &
 ( p="$(rtcache_get "$shared" o "$root/runtime/tomato_rt.c" -O1 -pthread -w -g -fsanitize=address)" || p=""; echo "$p" > "$shared/rt_asan.tmp"; mv "$shared/rt_asan.tmp" "$shared/rt_asan.path" ) > /dev/null 2>&1 &
 # the runtimes that `tomato run` links, for the command-line tests: release's is bitcode (for link-time optimisation), debug's is the plain
 # object that the tests above already made (the same flags as $rt_o). Made now, while the install is running, so that when it is done they
 # all find it, instead of each of them compiling it at the same time (a cold cache)
 ( rtcache_get "$shared" bc "$root/runtime/tomato_rt.c" -O2 -flto -DTOMATO_RELEASE -pthread > /dev/null 2>&1 ) &
+fi
+[ "$bridge" = prep ] && { wait; exit 0; }   # (the runner started this to have the objects made while it builds the compiler)
 use_asan() { await_file "$shared/rt_asan.path"; rt_asan="$(cat "$shared/rt_asan.path")"; }
 cc() { clang -O1 -w -o "$1" "$2" "$rt_o" -pthread -lm; }
 c1="$shared/c1"
@@ -296,8 +328,8 @@ t_example() { # name, entry, the arguments
   if cmp -s "$work/out" "tests/expected/$name.$entry.out"; then echo "ok   $name $entry"; echo x >> "$shared/passed"; else echo "FAIL $name $entry"; diff "$work/out" "tests/expected/$name.$entry.out" | head -5 | sed 's/^/     /'; echo x >> "$shared/failed"; fi
 }
 section "== examples =="
-grep -v '^#' tests/examples.txt | while read -r name entry rest; do echo "$name $entry $rest"; done > "$shared/list"
-while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done < "$shared/list"
+grep -v '^#' tests/examples.txt | while read -r name entry rest; do echo "$name $entry $rest"; done > "$shared/list.$$"
+while read -r name entry rest; do spawn t_example "$name" "$entry" "$rest"; done < "$shared/list.$$"
 
 # ---- programs -----------------------------------------------------------------------------------------------------------
 # the fast tier builds only these with AddressSanitizer (one or two programs of each kind of thing the suite looks at)
@@ -336,12 +368,12 @@ t_program_asan() { # the same test as t_program, for a program that an AddressSa
   if cmp -s "$work/out" "tests/expected/$name.main.out"; then echo "ok   program $name"; echo x >> "$shared/passed"; else echo "FAIL program $name"; { head -3 "$asan_err"; diff "$work/out" "tests/expected/$name.main.out" | head -5; } | sed 's/^/     /'; echo x >> "$shared/failed"; fi
 }
 section "== decided rules (programs) =="
-grep -v '^#' tests/programs.txt > "$shared/list"
+grep -v '^#' tests/programs.txt > "$shared/list.$$"
 while read -r name; do
   # one that an AddressSanitizer test builds too (in this tier) is built once, with AddressSanitizer, for both
   if case "$asan_paths" in *" tests/programs/$name "*) true ;; *) false ;; esac && { [ -z "$fast" ] || case " $fast_asan " in *" $name "*) true ;; *) false ;; esac; }; then spawn_first t_program_asan "$name"
   else spawn t_program "$name"; fi
-done < "$shared/list"
+done < "$shared/list.$$"
 
 # ---- memory -------------------------------------------------------------------------------------------------------------
 asan_build() { # PATH (without .tom): the IR of a program, with what the compiler said, and its AddressSanitizer build: $asan_ll, $asan_err, $asan_exe.
@@ -365,7 +397,8 @@ t_asan() { # PATH:ARGUMENT, the argument being a folder the program may write in
   else bad "asan $name" "this clang cannot build with -fsanitize=address"; fi
 }
 spawn_asan() { # PATH:ARGUMENT
-  case " $fast_asan " in *" $(basename "${1%%:*}") "*) ;; *) [ -n "$fast" ] && { skip "asan $(basename "${1%%:*}")"; return; } ;; esac
+  sa_name="${1%%:*}"; sa_name="${sa_name##*/}"   # (the basename, without starting a process: this runs for every test of the section)
+  case " $fast_asan " in *" $sa_name "*) ;; *) [ -n "$fast" ] && { skip "asan $sa_name"; return; } ;; esac
   spawn_first t_asan "$1"
 }
 section "== memory (AddressSanitizer and the runtime's leak check) =="
@@ -4150,6 +4183,7 @@ spawn_free t_versions
 spawn_free t_wasm_sections
 if [ -n "$WASI_SDK" ]; then last t_wasm_rebuild; fi   # with the toolchain, rebuild and compare byte for byte
 
+case "$bridge" in plan) bridge_plan; exit 0 ;; job) bridge_job; exit $? ;; esac
 run_all
 t_end="$(date +%s)"
 passes=0; fails=0

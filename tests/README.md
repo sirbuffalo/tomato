@@ -10,6 +10,26 @@ tests/run.sh -j N            N tests at a time (TOMATO_TEST_JOBS=N)
 tests/run.sh --times         after the summary: the 20 slowest tests and the time per section
 ```
 
+## The runner in Tomato (`dev/test.tom`)
+
+The suite is moving from shell to Tomato (`docs/shell-to-tomato-plan.md`, stage 4). `dev/test.tom` runs it with the same tiers, `-j`,
+`--times`, output order, count and exit status as `tests/run.sh`, and needs a `tomato` on `PATH`:
+
+```
+tomato run dev/test.tom main                   the full suite (what CI and a release run)
+tomato run dev/test.tom main --fast -j 8 --times
+tomato run dev/test.tom ci_report LOGFILE      turn the FAIL lines of a log into GitHub annotations (tests/ci_report.sh)
+tomato run dev/test.tom error_templates        print every compiler error template (tests/error_templates.sh)
+tomato run dev/test.tom highlighter_lists      check the highlighters against the lexer (tests/highlighter_lists.sh); "ok" or what is missing
+```
+
+(Options go after the entry word `main`: `tomato run FILE ENTRY INPUTS...` reads everything after the entry as input.) Until the last test
+is ported, the list of tests is still registered by `tests/run.sh`, which `dev/test.tom` asks for it (`TOMATO_TEST_BRIDGE=plan`), and a test
+that has no port yet is run by `tests/run.sh`, one process per test (`TOMATO_TEST_BRIDGE=job`); the ones that are ported (`native_*` in
+`dev/test.tom`: the examples, the programs, the AddressSanitizer builds, the rejected programs, the error texts, the runtime errors, the
+known gaps, the error-template and highlighter checks) run in Tomato and print the very lines the old functions printed. Every system call
+of `dev/test.tom` is in `dev/host.tom`, the one file that changes when std gains the processes-and-files additions of stage 1.
+
 ## CLI contract
 
 `tests/cli_contract/` is a black-box suite of the `tomato` command (help, errors, exit statuses, `init`'s files, build tables, `config`,

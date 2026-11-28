@@ -396,6 +396,13 @@ get the std additions and the binary early; stages 4 to 6 are for the project it
 - Acceptance: for the same tree, the Tomato runner and `run.sh` print the same results (names and verdicts) on macOS and
   Linux, in the fast and the full tier; wall time within 10% of the old runner at the same `-j` (loaded-host numbers labelled);
   an interrupted run leaves nothing behind; `--times` matches.
+- Status (first slice, 2026-11-27): `dev/test.tom` runs the scheduler, ordering, tiers, `-j`, `--times`, the count and the exit status; the
+  tests not yet ported are run one process each by `tests/run.sh` through `TOMATO_TEST_BRIDGE` (the plan, prep and job modes of that
+  script), the ported ones (examples, programs, AddressSanitizer builds, rejected programs, error texts, runtime errors, known gaps,
+  WebAssembly programs, error templates, highlighter lists) in Tomato; `ci_report`, `error_templates` and `highlighter_lists` are entries.
+  Every process and file call is in `dev/host.tom`, to be swapped for stage 1's std. Not yet: the workflows still call `run.sh` (they
+  switch with the last slice, when the acceptance above is met on both systems); an interrupt removes no folder until `signal` is
+  in std (a run killed any way is swept by the next run); most of the ~100 other tests are still shell.
 
 **Stage 5: the release tools.**
 - `dev/release.tom` (the 13 steps, state, resume), `pkg`, `sign`, `dmg`, `build`, `site`, `perf-snapshot`, `bench`, `linux-setup`, the
