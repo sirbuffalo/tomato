@@ -1,0 +1,8 @@
+def nothing(xs: list[int]):
+    xs.append(1)
+
+@main
+def main():
+    xs = [1]
+    if nothing(xs):
+        print("yes")

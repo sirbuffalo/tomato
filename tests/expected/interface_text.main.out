@@ -1,0 +1,57 @@
+TAG a
+LOUD b
+TAG c
+<object>
+<<fancy>>
+a:TAG d:b
+a:<object>:b
+[LOUD e]
+TAG f
+TAG f
+[TAG f]
+m=TAG f.
+<object>
+[<object>]
+None
+None
+[None]
+[None]
+TAG given
+None
+TAG given/None
+x None TAG g TAG given 3
+LOUD h
+LOUD h
+<LOUD h>
+<object>
+<object>
+<<object>>
+7
+7
+<7>
+TAG i
+text
+text|text
+<<fancy>>
+[1, 2]
+<<fancy>>
+<<fancy>>!
+<<fancy>>
+[TAG j, <object>, LOUD k, <<fancy>>]
+[TAG j, <object>, LOUD k, <<fancy>>]
+[TAG j, <object>, LOUD k, <<fancy>>]
+{'a': TAG l, 'b': <<fancy>>}
+(LOUD m, 5)
+[TAG n, 4, <object>]
+LOUD o
+None
+TAG p
+LOUD o TAG p
+caught no text for me
+caught again no text for me
+caught union no text for me
+caught list no text for me
+caught no text for me
+caught again no text for me
+caught union no text for me
+caught list no text for me

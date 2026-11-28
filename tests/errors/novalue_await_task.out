@@ -1,0 +1,6 @@
+error[E652]: 'task' gives no value, so it cannot be used inside an expression
+  --> tests/errors/novalue_await_task.tom:11:20
+   |
+11 |     result = await task
+   |                    ^^^^
+   = help: await it on a line of its own, or give the async function a return type (-> Type) so that it returns a value

@@ -2576,6 +2576,7 @@ class Gen:
     frame_types: list[str] = []   # the type of each frame field after the fixed ones
     awaits: int = 0            # the number of places this function can stop at
     ret_yields: str = ''        # what a yield gives out, for an async function with a status
+    value_free: bool = False   # the next expression may give no value (see Gen.expr)
     async_ok: bool = False     # the call being compiled is directly under await or start, so it may be an async call
     fresh_frame: bool = False  # the last call made a new task frame
     fresh_reg: str = ''        # the register that frame is in
@@ -5398,7 +5399,35 @@ class Gen:
         self.async_ok = outer_ok
         return r
 
+    # The one place that refuses to use the value of a call that gives none (D132a): a function declared without a return type, or an
+    # await of one. Every consumer of a value (print, str, an operator, an argument, a condition, an index ...) gets its operand from
+    # here, so none of them has to look for the empty type itself. `value_free` is set by the two places that may take such a result
+    # (an await on a line of its own, and `return await t` in a generic function whose T is None) and is used up by the next expression.
     def expr(self, n: Node, expected: str = '') -> Ex:
+        free = self.value_free
+        self.value_free = False
+        v = self.expr_node(n, expected)
+        if v.ty == '' and (n.kind == 'Call' or n.kind == 'Await') and not free:
+            call = n
+            how = 'call it on a line of its own, or give the function a return type (-> Type) so that it returns a value'
+            if n.kind == 'Await':
+                call = val_node(n.fields[0])
+                how = 'await it on a line of its own, or give the async function a return type (-> Type) so that it returns a value'
+            name = ''
+            if call.kind == 'Name':
+                name = call.fields[0].text
+            elif call.kind == 'Call':
+                callee = val_node(call.fields[0])
+                if callee.kind == 'Name':
+                    name = callee.fields[0].text
+                elif callee.kind == 'Attr':
+                    name = callee.fields[1].text
+            if name == '':
+                raise CompileError(f'this gives no value, so it cannot be used inside an expression\n{how}', n.line)
+            raise CompileError(f"'{name}' gives no value, so it cannot be used inside an expression\n{how}", n.line)
+        return v
+
+    def expr_node(self, n: Node, expected: str = '') -> Ex:
         k = n.kind
         if k == 'Await':
             return self.await_expr(n)
@@ -9551,6 +9580,47 @@ class Gen:
         self.check_error([v], symbol)
         return ex(r, 'str')
 
+    def iface_text(self, v: Ex, line: int) -> Ex:
+        # print and str() of an interface value (the argument is not released, as with class_text): the method marked @str of the object's
+        # own class, whichever class it is (D132a, the rule of D111a). The classes that implement the interface need not all have one: an
+        # object whose class has none shows as <object>, as it does inside a union. Both are decided at run time, from the '@str' slot.
+        if '@str' not in self.mod.slots:
+            self.mod.slots.append('@str')
+        fn = self.dispatch(v, '@str')
+        has = self.tmp('hasstr')
+        self.emit(f'{has} = icmp ne ptr {fn}, null')
+        res = self.hidden_rc_slot('shown')
+        yes = self.label('ifacestr')
+        no = self.label('ifacenostr')
+        end = self.label('ifacestrend')
+        self.cond_br(has, yes, no)
+        self.place(yes)
+        r = self.tmp('shown')
+        self.emit(f'{r} = call ptr {fn}(ptr {v.reg})')
+        self.check_error([v], fn)
+        self.store_owned(res, ex(r, 'str'))
+        self.br(end)
+        self.place(no)
+        self.store_owned(res, ex(self.mod.intern('<object>'), 'str'))
+        self.br(end)
+        self.place(end)
+        out = self.tmp('text')
+        self.emit(f'{out} = load ptr, ptr {res}')
+        o = ex(out, 'str')
+        self.retain(o)
+        return o
+
+    def no_text(self, v: Ex, line: int, printing: bool):
+        # a value that has no text (a File, a task): said once, for print, str(), f-strings and the + of texts alike
+        msg = f'a value of type {shown(v.ty)} cannot be converted to text'
+        if printing:
+            msg = f'a value of type {shown(v.ty)} cannot be printed'
+        if v.ty == 'File':
+            msg += '\nread its text with read(), or print the name of the file'
+        elif is_task(v.ty):
+            msg += '\nawait it to get its result'
+        raise CompileError(msg, line)
+
     def show_text(self, v: Ex, line: int) -> Ex:
         # a list, tuple, set or dict as text, the way Python shows it: [1, 'a'] (the argument is released)
         info = self.mod.helper('show', v.ty, line)
@@ -9588,6 +9658,10 @@ class Gen:
             inner = self.unbox_value(v, m)
             if is_class(m):
                 t = self.class_text(inner, line)
+                self.release(inner)
+                self.store_owned(res, t)
+            elif is_iface(m):
+                t = self.iface_text(inner, line)
                 self.release(inner)
                 self.store_owned(res, t)
             else:
@@ -9735,6 +9809,10 @@ class Gen:
             shown_text = self.class_text(v, line)
             self.release(v)
             return shown_text
+        if is_iface(v.ty):
+            shown_iface = self.iface_text(v, line)
+            self.release(v)
+            return shown_iface
         if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty) or is_mtuple(v.ty):
             return self.show_text(v, line)
         r = self.tmp('text')
@@ -9756,10 +9834,12 @@ class Gen:
         elif v.ty == 'float':
             self.emit(f'{r} = call ptr @tomato_bf_str(i64 {v.reg})')
             self.release(v)
-        else:
+        elif v.ty == 'bool':
             w = self.tmp('w')
             self.emit(f'{w} = trunc i64 {v.reg} to i32')
             self.emit(f'{r} = call ptr @tomato_str_from_bool(i32 {w})')
+        else:
+            self.no_text(v, line, False)       # (a bool is the last type that has text)
         return ex(r, 'str')
 
     def print_call(self, args: list[Node]):
@@ -9815,13 +9895,20 @@ class Gen:
                 self.emit(f'call void @tomato_print_strobj(ptr {shown_text.reg})')
                 self.emit(f'call void @tomato_release(ptr {shown_text.reg})')
                 self.release(v)
+            elif is_iface(v.ty):
+                shown_iface = self.iface_text(v, self.line)
+                self.emit(f'call void @tomato_print_strobj(ptr {shown_iface.reg})')
+                self.emit(f'call void @tomato_release(ptr {shown_iface.reg})')
+                self.release(v)
             elif is_union(v.ty):
                 shown_union = self.union_text(v, False, self.line)
                 self.emit(f'call void @tomato_print_strobj(ptr {shown_union.reg})')
                 self.emit(f'call void @tomato_release(ptr {shown_union.reg})')
-            else:
+            elif v.ty == 'str':
                 self.emit(f'call void @tomato_print_strobj(ptr {v.reg})')
                 self.release(v)
+            else:
+                self.no_text(v, self.line, True)
             if k < len(values) - 1:
                 self.emit('call i32 @putchar(i32 32)')
         self.drop_held(held_before)
@@ -10314,7 +10401,9 @@ class Gen:
         if k == 'ExprStmt':
             e = val_node(s.fields[0])
             if e.kind != 'Call':
+                self.value_free = e.kind == 'Await'      # `await work()` on a line of its own may be an async function that gives nothing
                 shown_value = self.expr(e)
+                self.value_free = False
                 self.release(shown_value)
                 return
             result = self.call(e, True)
@@ -10431,6 +10520,7 @@ class Gen:
             else:
                 if self.ret == '':
                     raise CompileError('this function is declared to return nothing, so it cannot return a value\nremove the value, or add -> Type to the def', s.line)
+                self.value_free = self.ret == 'None'     # a generic function whose T is None: what it returns gives nothing
                 v = self.expr(val_node(s.fields[0]), self.ret)
                 if v.ty == '' and self.ret == 'None':
                     v = ex('null', 'None')        # a generic function whose T is None returns what gives nothing: return await t
@@ -14090,6 +14180,8 @@ def is_showable(mod: Mod, t: str) -> bool:
     # can a value of this type be shown inside a printed container (what show_item accepts)?
     if is_numeric(t) or t == 'bool' or is_float(t) or t == 'str' or t == 'bytes' or is_union(t) or is_value_optional(t):
         return True
+    if is_iface(t):
+        return True              # whichever class the object is: its own @str, or <object> (D132a)
     if is_class(t):
         return mod.has_op(t[1:], 'str')
     if is_list(t):
@@ -14107,7 +14199,7 @@ def is_showable(mod: Mod, t: str) -> bool:
 
 def is_showable_member(mod: Mod, t: str) -> bool:
     # a union member the box cannot show by itself (the runtime knows only numbers, text and bools) but a helper can
-    if is_class(t) or is_list(t) or is_set(t) or is_dict(t) or is_mtuple(t):
+    if is_class(t) or is_iface(t) or is_list(t) or is_set(t) or is_dict(t) or is_mtuple(t):
         return is_showable(mod, t)
     return False
 
@@ -14120,7 +14212,7 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
     if is_class(et):
         if not mod.has_op(et[1:], 'str'):
             raise CompileError("'" + et[1:] + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
-    elif not (is_numeric(et) or et == 'bool' or et == 'bytes' or is_float(et) or is_union(et) or is_value_optional(et)):
+    elif not (is_numeric(et) or et == 'bool' or et == 'bytes' or is_float(et) or is_union(et) or is_value_optional(et) or is_iface(et)):
         raise CompileError(f'a list of {shown(et)} cannot be printed\nprint its items one by one instead', line)
     if is_union(et):
         return f'_repr_box({e})'

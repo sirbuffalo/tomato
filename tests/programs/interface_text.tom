@@ -1,0 +1,178 @@
+# A value typed by an interface shows through its own class's method marked @str, whatever the class is (D132a): in print, str(), f-strings
+# and texts joined with +, alone, as Named | None, as a member of a union, and inside lists, tuples and dicts. An object whose class has no
+# @str shows as <object> there, the same as it does inside a union (D111a, `union_show`).
+interface Named:
+    def name(self) -> str
+
+interface Pretty(Named):
+    def pretty(self) -> str
+
+class Tag implements Named:
+    label: str
+
+    @init
+    def make(self, label: str):
+        self.label = label
+
+    def name(self) -> str:
+        return 'tag'
+
+    @str
+    def s(self) -> str:
+        return 'TAG ' + self.label
+
+class Loud(Tag):
+    @str
+    def shout(self) -> str:
+        return 'LOUD ' + self.label
+
+class Quiet(Tag):
+    pass
+
+class Plain implements Named:
+    def name(self) -> str:
+        return 'plain'
+
+class Fancy implements Pretty:
+    def name(self) -> str:
+        return 'fancy'
+
+    def pretty(self) -> str:
+        return '*fancy*'
+
+    @str
+    def text(self) -> str:
+        return '<<fancy>>'
+
+class Bad implements Named:
+    def name(self) -> str:
+        return 'bad'
+
+    @str
+    def text(self) -> str:
+        raise ValueError('no text for me')
+
+class Holder:
+    named: Named
+    maybe: Named | None
+
+    @init
+    def make(self, n: Named):
+        self.named = n
+        self.maybe = None
+
+def shown(n: Named):
+    print(n)
+
+def joined(n: Named) -> str:
+    return 'a:' + str(n) + ':b'
+
+def interpolated(n: Named | None) -> str:
+    return f'[{n}]'
+
+def either(n: Named | int):
+    print(n)
+    print(str(n))
+    print(f'<{n}>')
+
+def pretty_shown(p: Pretty):
+    print(p)
+    print(str(p) + '!')
+    n: Named = p
+    print(n)
+
+def give(flag: bool) -> Named | None:
+    if flag:
+        return Tag('given')
+    return None
+
+@main
+def main():
+    # an interface value
+    shown(Tag('a'))
+    shown(Loud('b'))
+    shown(Quiet('c'))
+    shown(Plain())
+    shown(Fancy())
+    print(joined(Tag('d')))
+    print(joined(Plain()))
+    print(interpolated(Loud('e')))
+
+    # an interface value that can be None
+    m: Named | None = Tag('f')
+    print(m)
+    print(str(m))
+    print(f'[{m}]')
+    print('m=' + str(m) + '.')
+    m = Plain()
+    print(m)
+    print(f'[{m}]')
+    m = None
+    print(m)
+    print(str(m))
+    print(f'[{m}]')
+    print(interpolated(None))
+    print(give(True))
+    print(give(False))
+    print(str(give(True)) + '/' + str(give(False)))
+    print('x', m, Tag('g'), give(True), 3)
+
+    # a union with an interface member
+    either(Loud('h'))
+    either(Plain())
+    either(7)
+    u: Named | str = Quiet('i')
+    print(u)
+    u = 'text'
+    print(u)
+    print(f'{u}|{u}')
+    w: Named | list[int] = Fancy()
+    print(w)
+    w = [1, 2]
+    print(w)
+
+    # a sub-interface, and an object held where its base interface is wanted
+    pretty_shown(Fancy())
+
+    # containers of interface values
+    items: list[Named] = [Tag('j'), Plain(), Loud('k'), Fancy()]
+    print(items)
+    print(str(items))
+    print(f'{items}')
+    names: dict[str, Named] = {'a': Tag('l'), 'b': Fancy()}
+    print(names)
+    pair: tuple[Named, int] = (Loud('m'), 5)
+    print(pair)
+    plan: list[Named | int] = [Tag('n'), 4, Plain()]
+    print(plan)
+
+    # a field
+    hold = Holder(Loud('o'))
+    print(hold.named)
+    print(hold.maybe)
+    hold.maybe = Tag('p')
+    print(hold.maybe)
+    print(f'{hold.named} {hold.maybe}')
+
+    # an @str that raises is a normal error, whatever the static type, and nothing leaks
+    for k in range(2):
+        try:
+            b: Named = Bad()
+            print(b)
+        catch ValueError as e:
+            print('caught', e.message)
+        try:
+            c: Named | None = Bad()
+            print(str(c))
+        catch ValueError as e:
+            print('caught again', e.message)
+        try:
+            d: Named | int = Bad()
+            print(f'{d}')
+        catch ValueError as e:
+            print('caught union', e.message)
+        try:
+            bads: list[Named] = [Plain(), Bad()]
+            print(bads)
+        catch ValueError as e:
+            print('caught list', e.message)

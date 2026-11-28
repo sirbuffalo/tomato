@@ -1,0 +1,6 @@
+error[E652]: 'nothing' gives no value, so it cannot be used inside an expression
+ --> tests/errors/novalue_operator.tom:7:11
+  |
+7 |     print(nothing(xs) + 1)
+  |           ^^^^^^^
+  = help: call it on a line of its own, or give the function a return type (-> Type) so that it returns a value

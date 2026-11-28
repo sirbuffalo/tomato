@@ -1,0 +1,8 @@
+def nothing(xs: list[int]):
+    xs.append(1)
+
+@main
+def main():
+    xs = [1]
+    print(xs.append(2))
+    nothing(xs)

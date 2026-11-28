@@ -1,0 +1,7 @@
+async def work() -> int:
+    return 1
+
+@main
+async def main():
+    task = start work()
+    print(f"task: {task}")

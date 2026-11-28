@@ -649,3 +649,5 @@ ValueError a byte must be a whole number from 0 to 255, but this is
 IndexError pop from an empty bytearray
 ValueError the byte is not in the bytearray
 CompileError the name '{}' belongs to a catch block that has ended, so it has no value here
+CompileError '{}' gives no value, so it cannot be used inside an expression
+CompileError this gives no value, so it cannot be used inside an expression

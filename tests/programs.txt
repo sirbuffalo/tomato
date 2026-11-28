@@ -262,4 +262,5 @@ list_method_raise
 bytes_gaps
 bytearray_type
 bytearray_names
+interface_text
 catch_scope

@@ -1,0 +1,6 @@
+error[E652]: 'append' gives no value, so it cannot be used inside an expression
+ --> tests/errors/novalue_method.tom:7:14
+  |
+7 |     print(xs.append(2))
+  |              ^^^^^^
+  = help: call it on a line of its own, or give the function a return type (-> Type) so that it returns a value

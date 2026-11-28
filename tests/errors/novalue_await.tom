@@ -1,0 +1,10 @@
+def tick(xs: list[int]):
+    xs.append(1)
+
+async def nothing(xs: list[int]):
+    tick(xs)
+
+@main
+async def main():
+    xs = [1]
+    print(await nothing(xs))

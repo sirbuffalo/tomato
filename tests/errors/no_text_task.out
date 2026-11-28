@@ -1,0 +1,6 @@
+error[E166]: a value of type task[int] cannot be converted to text
+ --> tests/errors/no_text_task.tom:7:5
+  |
+7 |     print(f"task: {task}")
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+  = help: await it to get its result

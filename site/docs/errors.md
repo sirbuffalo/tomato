@@ -181,6 +181,8 @@ Other messages that used to be rough:
 | `min(1, 2.5)`, `max(1, 2.5)` | `min() was given a value of type int first and then one of type float` (E553): the first value sets the type, so put the float first or write `float(...)` around the int (`min(2.5, 1)` works) |
 | `a, b = None` | `cannot unpack None into 2 variables` (E185); the hidden variable of the unpack is never named |
 | a wrong argument, or an unknown method, of `Cache[Point, int]` | the type is written as the program wrote it, `cache.Cache[Point, int]`, never with the compiler's internal `@Point` |
+| `print(nothing(xs))`, `str(nothing(xs))`, `f"{nothing(xs)}"`, `nothing(xs) + 1`, `x = nothing(xs)`, `await nothing(xs)` where `nothing` returns nothing | `'nothing' gives no value, so it cannot be used inside an expression` (E652), the caret under the name; one check in the compiler for every place a value is used (D132a). A call on a line of its own is fine |
+| `print(f)`, `str(f)` with `f` a `File`, or a task | `a value of type File cannot be printed` (E167), `... cannot be converted to text` (E166); they printed an empty line or were a raw clang error (D132a) |
 
 
 ## Error classes and ids

@@ -1,0 +1,6 @@
+error[E167]: a value of type File cannot be printed
+ --> tests/errors/no_text_file.tom:4:5
+  |
+4 |     print(f)
+  |     ^^^^^^^^
+  = help: read its text with read(), or print the name of the file
