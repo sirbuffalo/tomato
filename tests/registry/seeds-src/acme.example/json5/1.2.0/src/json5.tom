@@ -1,0 +1,4 @@
+from strutil import version as sv
+
+export def version() -> str:
+    return "json5 1.2.0 with " + sv()

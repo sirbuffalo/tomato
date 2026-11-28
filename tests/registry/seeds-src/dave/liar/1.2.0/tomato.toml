@@ -1,0 +1,7 @@
+[seed]
+name = "dave/liar"
+version = "1.2.0"
+tomato = "0.51"
+
+[seeds]
+"other.example/strutil" = "0.4.1"

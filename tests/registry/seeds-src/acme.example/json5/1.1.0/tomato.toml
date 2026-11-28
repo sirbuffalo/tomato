@@ -1,0 +1,4 @@
+[seed]
+name = "acme.example/json5"
+version = "1.1.0"
+tomato = "0.51"

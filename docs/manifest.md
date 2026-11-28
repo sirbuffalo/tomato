@@ -1,7 +1,7 @@
 # The manifest: `tomato.toml`
 
-The sheet of what is built (decisions D95a and D94b in `docs/decisions.md`). The design, with the registry that is **not** built, is in
-`docs/package-registry-design.md` sections 2 to 6; where the two differ this sheet says what the code does today.
+The sheet of what is built (decisions D95a and D94b in `docs/decisions.md`). The design is in `docs/package-registry-design.md` sections 2 to 6; where the two differ this sheet says what the code
+does today. The part that needs a registry (D141a) is in `docs/registry.md`: the user's settings, `tomato seed registry/alias`, `tomato seed add NAME`, the index formats and the registry entries of the lock.
 
 ## The layout of a project and a seed (D94b)
 
@@ -147,7 +147,9 @@ paths) is E564. As for `[seeds]`, a `[seed]` manifest cannot use `git` or `path`
 
 ## Seeds without a registry
 
-There is no registry, and no network use except what `git` does for a **git seed**. What works is **path seeds** and **git seeds** (D101a):
+This section is the part that needs no registry: **path seeds** and **git seeds** (D101a), whose only network use is what `git` does for a git seed. A **registry seed** (a plain version, `"acme.example/json5" = "1.2.0"`) is looked up in the index of a registry you set up, checked against its owner's signatures and locked like the others, with `source = "registry"` in the lock: see `docs/registry.md`. The two kinds mix in one project.
+
+**What works without a registry:**
 
 ```
 tomato seed install [--locked] [--offline] [--yes]   lock every seed of both tables into tomato.lock, fetching a git seed into the store
@@ -189,7 +191,7 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   (D94b: the `src/` of the folder that holds the nearest `tomato.toml`; a file there or next to the program with the name of a std module warns, once for each name, D115a), then a module of a seed the build uses (the module map, `module TAB file TAB label` lines the compiler gets from the lock), then the standard
   library. A name in both a seed and the standard library is a compile error naming both (E581). Two seeds providing one module
   stop `install` (E577). An error in a seed's code shows `acme.example/thing 0.3.0: src/thing.tom:2:5`, and its warnings are not shown.
-- A plain version (a registry seed) is read and checked but cannot be installed: E571 says so.
+- A plain version (a registry seed) is installed from the registry set up in `~/.tomato/config.toml` (`docs/registry.md`); with none set up E571 says how to set one up.
 
 ### `seed add` and `seed remove` (D101a)
 
@@ -217,9 +219,9 @@ tomato seed hash [FOLDER]        print the content hash, sha256:..., of a folder
   `--subdir`. A bad shortcut, or a word with another colon (`sftp:x/y`, `https://...`, which belongs after `--git`), is E621. The user's `[git-hosts]` table of design section 13 is not built.
 - **Handles.** A handle is an owner with no dot, `[a-z][a-z0-9-]{1,31}` (2 to 32 characters), not starting with `k-` and not `local`, `std`, `tomato` or a name `std/reserved.txt`
   lists. `dave/thing` is the seed `thing` of the handle `dave`. A **handle is granted by the registry** (a reviewed pull request, design section 1.10) and there is no registry yet, so what
-  exists is the shape: `tomato seed add dave/thing` (or `acme.example/json5`, with `@VERSION` allowed) recognises a registry name and stops with **E571**, naming the owner kind and the ways to add
-  the seed today (a shortcut, `--git`, `--path`); a word that is not a seed name or a shortcut is E621. `tomato seed check` accepts a handle-shaped owner and notes that a registry has to grant it
-  (`local` and other reserved names are still E580). Nothing in `tomato.toml` or the lock changes for a handle: a seed whose own manifest says `dave/thing` is listed under that name, from its git URL or a path.
+  exists is the shape: `tomato seed add dave/thing` (or `acme.example/json5`, with `@VERSION` allowed) is a **registry seed** (D141a): the registry set up with `tomato seed registry add` is asked, the handle's grant is checked against the maintainer keys you gave for that registry, and with no registry set up the command stops with **E571** and the ways to add the seed from its git host (a shortcut, `--git`, `--path`); a word that is not a seed name or a shortcut is E621. `tomato seed check` accepts a handle-shaped owner and notes that a registry has to grant it
+  (`local` and other reserved names are still E580). Nothing in `tomato.toml` or the lock changes for a handle: a registry seed's line holds its full name (never an alias or a short name), and
+  a seed whose own manifest says `dave/thing` can also be listed under that name from a git URL or a path: a seed whose own manifest says `dave/thing` is listed under that name, from its git URL or a path.
 - **The `# seeds:` line.** A program (the file given to `tomato run`, `build` or `compile`) may name the seeds it needs in its **leading comment block**: the lines from the top that are
   blank or start with `#` (a first `#!` line is part of it); the first other line ends the block, and a `# seeds:` line below it is an ordinary comment. A line is `# seeds:` and one or more
   entries separated by commas, each `owner/name` or `owner/name>=VERSION` (`>=1.2` is `>=1.2.0`; `>=` is the only comparison); several `# seeds:` lines add up, and a seed named twice in different lines keeps the higher
@@ -277,7 +279,7 @@ older commit records the older list. **A symbol's meaning is not checked**: it l
 
 ### `seed update` (D103a)
 
-`tomato seed update [NAME...] [--dry-run] [--yes]` locks the named seeds again (every seed with no name; a name that is not in the manifest is E604; a registry seed is E571). There is no registry, so nothing is "newest in its line": what moves is a git seed's commit.
+`tomato seed update [NAME...] [--dry-run] [--yes]` locks the named seeds again (every seed with no name; a name that is not in the manifest is E604; a registry seed is E571 until the next part of the index client is built: raise one by hand with `tomato seed add NAME@VERSION`). What moves is a git seed's commit; nothing is "newest in its line" for a git seed.
 
 - **A git seed with `tag` or `branch`**: git is asked where the tag or branch is now (one `git fetch --depth 1`). If it is the commit of the manifest nothing happens (`tag v1 is still at ...`). If not, the `rev` of its line (in both
   tables when it is in both) is replaced by the new commit with the same text edit as `add` (the comments, the order and the other keys stay), the seed is fetched, hashed and checked like any other, and **the new commit and the new content hash are always written into tomato.lock**.
@@ -291,7 +293,7 @@ older commit records the older list. **A symbol's meaning is not checked**: it l
 
 `tomato seed verify` hashes every copy of every locked seed again (seed hash v1) and compares it with `hash` in tomato.lock, writing one line for each: `ok`, `CHANGED` (another content hash, a file the lock's `modules` lists that is not there, or a link in the copy),
 `MISSING` (the copy is not there) or `skipped`. The copies are the **store folder** of a git seed, the **vendor folder** of every seed when `[seed-store] vendor` is set, and the **folder of a path seed** (a working folder that a build does not check; a lock that went out of date after an edit shows here, and `install` writes it again). A path seed's folder that is gone while a vendor copy serves the build is `skipped`, not a problem.
-Any `CHANGED`, `MISSING` or seed from a registry (which this version cannot check) makes the command end with E606 and exit status 1, after all the lines; with none it prints `verified N copies of M locked seeds: all match tomato.lock` and exits 0. It never fetches and never writes. With no lock and no seeds in the manifest there is nothing to verify (exit 0); seeds without a lock is E569.
+A registry seed is checked like a git seed (its copy is in the store). Any `CHANGED` or `MISSING` makes the command end with E606 and exit status 1, after all the lines; with none it prints `verified N copies of M locked seeds: all match tomato.lock` and exits 0. It never fetches and never writes. With no lock and no seeds in the manifest there is nothing to verify (exit 0); seeds without a lock is E569.
 `--inputs` and the list of revoked keys of design section 12 are not built (there are no signatures yet).
 
 ## Errors
@@ -318,7 +320,7 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E568 | a seed requirement is not a version, `{ path }` or `{ git, rev }` |
 | E569 | the lock is missing or does not hold what the run needs: run `tomato seed install` |
 | E570 | (retired: git seeds are installed since D101a) |
-| E571 | a registry seed (no registry yet) |
+| E571 | a registry seed, or a name that needs a registry, and none is set up (`tomato seed registry add`); or `tomato seed update` of a registry seed (not built yet) |
 | E572 | a seed folder is missing or is not a seed |
 | E573 | the seed's name is not the one it was listed under |
 | E574 | a seed that uses seeds (not supported yet) |
@@ -352,9 +354,9 @@ All are `ConfigError` (`tomato explain E555`); the message starts with the file'
 | E612 | a seed declares a `!tomato_*` function (D112a); `seed add` and `install` refuse it |
 | E621 | `seed add`: a word that is no host shortcut or seed name, a bad shortcut, or a shortcut with none of `--rev`, `--tag`, `--branch` (D124a) |
 | E622 | the `# seeds:` line of a program cannot be used: not `NAME[>=VERSION]` entries, no project to lock the seeds, a seed the project does not list, or a locked version below the minimum (D124a) |
+| E679 to E685 | the index client (D141a): the registry settings, an index this Tomato cannot read, `ssh-keygen` missing, a seed or version the registry does not have, requirements on two incompatible lines, a registry seed that is not what its signed entry says, an owner's malware yank (`docs/registry.md`, "Errors") |
 
 ## Not built yet
 
-The registry (so looking up a handle such as `dave/thing`, a handle's grant and the `# seeds:` line of a program outside a project), `index`, signatures, `tomato seed outdated/tree/why/registry`, `seed verify --inputs`, `seed update --accept-owner-change`, seeds that use seeds, MVS over a graph,
-the index listing's record of symbols, visibility of which seed may import which
+The `# seeds:` line of a program outside a project, `tomato seed update` of a registry seed, `outdated`, `tree`, `why`, `search`, `info`, `seed verify --inputs`, `seed update --accept-owner-change`, git and path seeds that use seeds (a registry seed's own seeds are resolved, D141a), the owner's own server (`--from-owner`), the live check of a domain owner, the index listing's record of symbols, visibility of which seed may import which
 (`docs/package-registry-design.md` sections 5 to 8, 12 and 15 stages 4 to 7).

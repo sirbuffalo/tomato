@@ -568,7 +568,7 @@ ConfigError {}: [{}] needs a [project] table (a program) or a [seed] table (a pa
 ConfigError {}: {} must be a version such as "1.2.0", or a table { git = "URL", rev = "COMMIT" } or { path = "../folder" }, not {}
 ConfigError {}: tomato.lock is missing or does not hold what tomato.toml needs (a seed, its source or its version): run tomato seed install
 ConfigError (retired: git seeds are installed now (D101a), so this is no longer raised; the id stays so that later ids do not move)
-ConfigError {}: the seed {} {} would come from a registry, and there is none yet
+ConfigError {}: the seed {} {} comes from a registry, and this command cannot use one: no registry is set up, or the command (tomato seed update) does not raise registry seeds yet
 ConfigError {}: the seed folder or manifest is not usable: it is missing, has no tomato.toml, or has no [seed] table
 ConfigError {}: "{}" is listed with the path "{}", but the seed there is called "{}"
 ConfigError {}: the seed {} itself uses the seed {}, and seeds that use seeds cannot be installed yet: there is no registry
@@ -676,3 +676,10 @@ TarError an entry would leave the folder it is extracted into
 TarError the archive holds more than max_size bytes of files
 TarError a folder holds something that cannot be archived
 ValueError strip cannot be negative
+ConfigError {}: the registry settings are not usable: [registry], [registries.NAME] or [aliases] of config.toml, a registry name or index URL, or the words of tomato seed registry, alias or unalias
+ConfigError {}: the index is not one this Tomato reads: it has no config.toml, is a newer format, or a file of it is not valid TOML
+ConfigError {}: the signatures of the index cannot be checked: ssh-keygen (OpenSSH 8.0 or newer) is missing
+ConfigError {}: the registry has no such seed or version, or a word is not an alias, a short name or a seed name
+ConfigError {}: the requirements of the seeds cannot all be met: two requirements are on different compatible lines of one seed, or the selection does not settle
+ConfigError {}: a registry seed is not what its signed entry says: its tomato.toml, modules or requirements differ, or the lock and the index disagree about a published version
+ConfigError {}: a version its owner yanked as malware is not fetched or added without --allow-yanked

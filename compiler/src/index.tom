@@ -1,0 +1,961 @@
+# The registry's index, as a client reads it (docs/package-registry-design.md sections 1.3 to 1.6, 9 and 18.9; stage 4, decision D141a): a
+# folder of TOML files, one signed statement after another, that the client takes from a clone of the index repository and checks itself.
+# The index is untrusted storage: every fact in it (a key, a source, a version, a yank, a short name) is a statement signed by a key, and a
+# statement whose signature does not verify against a key the client trusts for it is ignored, never believed. The files:
+#
+#   config.toml             format = 1, name = "..." (the rest is the acceptor's: rate limits, reserved names; a client reads these two only)
+#   policy.toml             what listing requires (read for the policy level the summary line of `add` shows; nothing is enforced here)
+#   owners/OWNER.toml       [[key]] statements: the owner's keys in order, the first a `root` signed by itself, then `rotate` and `revoke`
+#   seeds/OWNER/NAME.toml   [[source]], [[version]], [[yank]] and [moved] statements of the owner, in the order they were accepted
+#   requests/OWNER.toml     [[request]]: the owner's signed ask for a short name or a handle (read, not needed to use a seed)
+#   names.toml              the maintainers' [[name]], [[unname]], [[handle]] and [[unhandle]], signed by a maintainer key
+#   yanks.toml              the maintainers' emergency [[yank]] and [[unyank]]: they only hide a version from the listing
+#
+# A signature covers a fixed text (see `signing_text`): the format's name, the kind, the owner or owner/name it belongs to, then each field the
+# statement has in a fixed order, `name=value`. It is made by `ssh-keygen -Y sign -n tomato-seeds-v1` and checked here with `ssh-keygen -Y
+# verify`; the fingerprint a statement names (`signed_by`) is that of an OpenSSH ed25519 public key and nothing else is accepted. The order of
+# statements inside one file is what the rules use; the `accepted` stamp that the registry's acceptor adds is outside the signature and is
+# used only to say that a key was still valid when a statement was accepted (a key retired or revoked later does not undo it).
+from toml import dumps_value
+from value import Value
+from config import ConfigError, read_toml, is_table, is_array
+from base64 import b64decode, b64encode
+from hashlib import sha256, sha256_hex
+from utf8 import encode
+from os import listdir, write_text
+from ospath import exists, isfile, isdir
+from sys import run
+from manifest import version_problem, compare_versions, same_line, handle_problem
+from seedstore import make_scratch, remove_tree
+
+const NAMESPACE = 'tomato-seeds-v1'
+
+def fail(code: int, text: str):
+    raise ConfigError(code, text)
+
+# ---------------------------------------------------------------------------------------------------------------------
+# keys
+
+# why `text` is not an OpenSSH ed25519 public key ("ssh-ed25519 AAAA... comment"), '' when it is
+export def key_problem(text: str) -> str:
+    parts = [p for p in text.strip().split(' ') if p != '']
+    if len(parts) < 2:
+        return 'a public key is written `ssh-ed25519 AAAA...` (what ssh-keygen -t ed25519 puts in the .pub file)'
+    if parts[0] != 'ssh-ed25519':
+        return f'only ssh-ed25519 keys are used for seeds, not {parts[0]}'
+    blob = b''
+    try:
+        blob = b64decode(parts[1])
+    catch ValueError as e:
+        return 'the key is not base64 text'
+    # the wire form: a length-prefixed "ssh-ed25519" and a length-prefixed 32-byte key
+    if len(blob) != 51:
+        return 'the key has the wrong length for an ed25519 key'
+    want = b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20'
+    if blob[:19] != want:
+        return 'the key is not an ed25519 public key'
+    return ''
+
+# the key as the allowed-signers line and the statements hold it: "ssh-ed25519 AAAA..." with no comment
+export def key_line(text: str) -> str:
+    why = key_problem(text)
+    if why != '':
+        fail(681, f'"{text}" is not a public key: {why}')
+    parts = [p for p in text.strip().split(' ') if p != '']
+    return parts[0] + ' ' + parts[1]
+
+# the fingerprint ssh-keygen prints: SHA256: and the base64 of the SHA-256 of the key's wire form, without the padding
+export def key_fingerprint(text: str) -> str:
+    parts = key_line(text).split(' ')
+    blob = b64decode(parts[1])
+    return 'SHA256:' + b64encode(sha256(blob).digest()).rstrip('=')
+
+# ---------------------------------------------------------------------------------------------------------------------
+# names
+
+def is_lower_char(c: str) -> bool:
+    return 'a' <= c and c <= 'z'
+
+def is_digit_char(c: str) -> bool:
+    return '0' <= c and c <= '9'
+
+# why `owner` is not an owner a registry accepts, '' when it is (section 1.2): a domain (lowercase letters, digits and hyphens in dotted
+# labels, at least one dot, no xn-- label, at most 253 characters) or a handle (no dot: handle_problem)
+export def owner_problem(owner: str) -> str:
+    if '.' not in owner:
+        return handle_problem(owner)
+    if len(owner) > 253:
+        return 'a domain is at most 253 characters'
+    for label in owner.split('.'):
+        if label == '' or len(label) > 63:
+            return 'a domain has labels of 1 to 63 characters between its dots'
+        if label.startswith('-') or label.endswith('-'):
+            return 'a label of a domain does not start or end with a hyphen'
+        if label.startswith('xn--'):
+            return 'internationalised (xn--) names are not used in version 1'
+        for c in label:
+            if not (is_lower_char(c) or is_digit_char(c)) and c != '-':
+                return 'a domain has lowercase letters, digits, hyphens and dots only'
+    return ''
+
+# why `name` is not a seed's name, '' when it is: [a-z][a-z0-9_-]{0,63}
+export def seed_name_problem(name: str) -> str:
+    if name == '' or len(name) > 64:
+        return 'a seed name is 1 to 64 characters'
+    if not is_lower_char(name[0]):
+        return 'a seed name starts with a lowercase letter'
+    for c in name:
+        if not (is_lower_char(c) or is_digit_char(c)) and c != '_' and c != '-':
+            return 'a seed name has lowercase letters, digits, underscores and hyphens only'
+    return ''
+
+# the problem with a name `owner/name` of the index, '' when it is fine (the owner a domain or a handle)
+export def full_name_problem(full: str) -> str:
+    parts = full.split('/')
+    if len(parts) != 2:
+        return 'a seed name is owner/name with exactly one slash'
+    why = owner_problem(parts[0])
+    if why != '':
+        return f'the owner {parts[0]}: {why}'
+    why = seed_name_problem(parts[1])
+    if why != '':
+        return why
+    return ''
+
+# ---------------------------------------------------------------------------------------------------------------------
+# statements: what is signed
+
+# the stamp the acceptor adds, YYYY-MM-DDTHH:MM:SSZ ('' when it is fine): the one form, so that stamps compare as text
+export def stamp_problem(s: str) -> str:
+    if len(s) != 20:
+        return 'an accepted stamp is written 2026-12-01T10:15:00Z'
+    for i in range(20):
+        c = s[i]
+        if i == 4 or i == 7:
+            if c != '-':
+                return 'an accepted stamp is written 2026-12-01T10:15:00Z'
+        elif i == 10:
+            if c != 'T':
+                return 'an accepted stamp is written 2026-12-01T10:15:00Z'
+        elif i == 13 or i == 16:
+            if c != ':':
+                return 'an accepted stamp is written 2026-12-01T10:15:00Z'
+        elif i == 19:
+            if c != 'Z':
+                return 'an accepted stamp is written 2026-12-01T10:15:00Z'
+        elif not is_digit_char(c):
+            return 'an accepted stamp is written 2026-12-01T10:15:00Z'
+    return ''
+
+# the fields of each kind of statement, in the order the signature covers them: NAME:TYPE, a trailing ! when it is required. Types: s text,
+# l list of texts, d table of texts. `signature` and `accepted` are outside it. A statement with a field that is not here is not valid (it
+# would not be covered by the signature): a newer index format says so in config.toml.
+def schema(kind: str) -> list[str]:
+    if kind == 'key':
+        return ['kind:s!', 'public:s', 'retires:s', 'revokes:s', 'signed_by:s!']
+    if kind == 'source':
+        return ['git:s!', 'path:s', 'mirrors:l', 'signed_by:s!']
+    if kind == 'version':
+        return ['version:s!', 'commit:s!', 'hash:s!', 'tomato:s', 'modules:l!', 'seeds:d', 'published:s', 'signed_by:s!']
+    if kind == 'yank':
+        return ['version:s!', 'kind:s!', 'reason:s!', 'signed_by:s!']
+    if kind == 'moved':
+        return ['to:s!', 'signed_by:s!']
+    if kind == 'request':
+        return ['ask:s!', 'seed:s', 'handle:s', 'key:s', 'signed_by:s!']
+    if kind == 'name':
+        return ['name:s!', 'seed:s!', 'granted:s', 'signed_by:s!']
+    if kind == 'unname':
+        return ['name:s!', 'reason:s!', 'signed_by:s!']
+    if kind == 'handle':
+        return ['handle:s!', 'key:s!', 'granted:s', 'signed_by:s!']
+    if kind == 'unhandle':
+        return ['handle:s!', 'reason:s!', 'signed_by:s!']
+    if kind == 'maint-yank':
+        return ['seed:s!', 'version:s!', 'kind:s!', 'reason:s!', 'signed_by:s!']
+    if kind == 'maint-unyank':
+        return ['seed:s!', 'version:s!', 'reason:s!', 'signed_by:s!']
+    return []
+
+# one statement of an index file: its fields as text (lists and tables kept apart), where it is, and what became of it
+export class Stmt:
+    kind: str = ''
+    subject: str = ''          # the owner or owner/name (or short name, handle, seed) the signature is bound to
+    vals: dict[str, str] = {}
+    lists: dict[str, list[str]] = {}       # a list field, and a table field as sorted `key:value` items
+    signature: str = ''
+    accepted: str = ''
+    order: int = 0             # its place in its file, from 1
+    file: str = ''             # the file it came from, for messages
+    why: str = ''              # '' when the statement is well formed (parsed, not yet verified); else why it is ignored
+
+    def get(self, name: str) -> str:
+        if name in self.vals:
+            return self.vals[name]
+        return ''
+
+    def has(self, name: str) -> bool:
+        return name in self.vals or name in self.lists
+
+    def list_of(self, name: str) -> list[str]:
+        if name in self.lists:
+            return self.lists[name]
+        return []
+
+# a text that goes into a signed line: no control characters (a line break would let one field pose as the next), and for the elements of a
+# list or table no comma, which separates them, nor a colon in a table's key
+def plain_problem(text: str, item: bool) -> str:
+    for c in text:
+        if ord(c) < 32 or ord(c) == 127:
+            return 'a signed text has no control characters or line breaks'
+        if item and c == ',':
+            return 'an item of a signed list has no comma'
+    return ''
+
+# the text a signature covers: the format, the kind of statement, what it is bound to, and each of its fields in the schema's order
+export def signing_text(st: Stmt) -> str:
+    lines = [NAMESPACE, st.kind, st.subject]
+    for spec in schema(st.kind):
+        name = spec.split(':')[0]
+        if name in st.vals:
+            lines.append(f'{name}={st.vals[name]}')
+        elif name in st.lists:
+            lines.append(f'{name}=' + ','.join(st.lists[name]))
+    return '\n'.join(lines) + '\n'
+
+# the text of a TOML value that a statement field may be: a string, or a date or time (a published date written unquoted)
+def field_text(v: Value) -> str:
+    k = v.kind()
+    if k == 'str':
+        return v.as_str()
+    if k == 'dict' or k == 'list' or k == 'int' or k == 'float' or k == 'bool':
+        return ''
+    return dumps_value(v)
+
+# a statement of `kind` from a TOML table; `why` says what is wrong with it ('' when it is well formed)
+export def parse_stmt(kind: str, t: Value, subject: str, file: str, order: int) -> Stmt:
+    st = Stmt()
+    st.kind = kind
+    st.subject = subject
+    st.file = file
+    st.order = order
+    st.vals = {}
+    st.lists = {}
+    if not is_table(t):
+        st.why = 'it is not a table'
+        return st
+    specs = schema(kind)
+    known: dict[str, str] = {}
+    required: list[str] = []
+    for spec in specs:
+        known[spec.split(':')[0]] = spec.split(':')[1][0]
+        if spec.endswith('!'):
+            required.append(spec.split(':')[0])
+    for key in t.as_dict().keys():
+        v = t[key]
+        if key == 'signature':
+            if v.kind() != 'str':
+                st.why = 'signature is not text'
+                return st
+            st.signature = v.as_str()
+            continue
+        if key == 'accepted':
+            text = field_text(v)
+            why = stamp_problem(text)
+            if why != '':
+                st.why = f'accepted: {why}'
+                return st
+            st.accepted = text
+            continue
+        if key not in known:
+            st.why = f'it has a field {key}, which this version does not know (a newer index format? the signature would not cover it)'
+            return st
+        type = known[key]
+        if type == 's':
+            text = field_text(v)
+            if text == '' and v.kind() != 'str':
+                st.why = f'{key} is not text'
+                return st
+            bad = plain_problem(text, False)
+            if bad != '':
+                st.why = f'{key}: {bad}'
+                return st
+            st.vals[key] = text
+        elif type == 'l':
+            if not is_array(v):
+                st.why = f'{key} is not a list of text'
+                return st
+            items: list[str] = []
+            for x in v.as_list():
+                if x.kind() != 'str':
+                    st.why = f'{key} is not a list of text'
+                    return st
+                bad = plain_problem(x.as_str(), True)
+                if bad != '':
+                    st.why = f'{key}: {bad}'
+                    return st
+                items.append(x.as_str())
+            st.lists[key] = items
+        else:
+            if not is_table(v):
+                st.why = f'{key} is not a table of text'
+                return st
+            pairs: list[str] = []
+            for k2 in sorted(v.as_dict().keys()):
+                x = v[k2]
+                if x.kind() != 'str':
+                    st.why = f'{key} is not a table of text'
+                    return st
+                bad = plain_problem(k2, True) + plain_problem(x.as_str(), True)
+                if bad != '' or ':' in k2 or ':' in x.as_str():
+                    st.why = f'{key}: a name or a version in a signed table has no control character, comma or colon'
+                    return st
+                pairs.append(k2 + ':' + x.as_str())
+            st.lists[key] = pairs
+    for name in required:
+        if not st.has(name):
+            st.why = f'it has no {name}'
+            return st
+    if st.signature == '':
+        st.why = 'it has no signature'
+        return st
+    if len(st.signature) > 4096 or not st.signature.startswith('-----BEGIN SSH SIGNATURE-----'):
+        st.why = 'the signature is not an SSH signature'
+        return st
+    return st
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the open index
+
+export class KeyRec:
+    public: str = ''
+    fingerprint: str = ''
+    kind: str = ''                   # root or rotate
+    added: str = ''                  # the accepted stamp of the statement that added it
+    ended: str = ''                  # '' while valid, else retired or revoked
+    ended_at: str = ''               # the stamp of that statement ('' when it has none)
+
+export class OwnerRec:
+    name: str = ''
+    kind: str = ''                   # domain or handle
+    exists: bool = False             # owners/OWNER.toml is there and its first statement is a valid root
+    keys: list[KeyRec] = []
+    first_seen: str = ''             # the stamp of the root statement
+    similar: str = ''                # the owner the acceptor marked this one as like (the section 1.8 skeleton rule), '' for none
+    granted: str = ''                # a handle owner: the stamp or date of the maintainers' grant of its root key
+    grant_problem: str = ''          # a handle owner whose root key no maintainer granted: why it cannot be used
+    problems: list[str] = []
+
+export class VersionRec:
+    version: str = ''
+    commit: str = ''
+    hash: str = ''
+    tomato: str = ''
+    modules: list[str] = []
+    seeds: dict[str, str] = {}       # the seeds it needs, name to minimum version
+    published: str = ''
+    accepted: str = ''
+    key: str = ''                    # the fingerprint of the key that signed it
+    order: int = 0
+    yanked: str = ''                 # '' or 'owner' or 'maintainer'
+    yank_kind: str = ''
+    yank_reason: str = ''
+
+export class SeedRec:
+    owner: str = ''
+    name: str = ''
+    full: str = ''
+    git: str = ''                    # the source that applies (the last valid [[source]])
+    path: str = ''
+    mirrors: list[str] = []
+    versions: list[VersionRec] = []  # the valid ones, in file order
+    moved: str = ''                  # the seed continues as this owner/name ('' for none)
+    first_seen: str = ''
+    problems: list[str] = []
+
+export class NamesRec:
+    names: dict[str, str] = {}       # short name to owner/name, as granted now
+    granted: dict[str, str] = {}     # short name to the date it was granted
+    handles: dict[str, str] = {}     # handle to the key line of its latest grant now ('' when it was released)
+    handle_dates: dict[str, str] = {}
+    ever: dict[str, list[str]] = {}  # handle to every key line it was ever granted to
+
+# the keys the user trusts for the maintainers of this registry (a client takes them from its own configuration, never from the index)
+export class Index:
+    root: str = ''                   # the folder that holds config.toml
+    name: str = ''                   # the registry's name in the user's configuration
+    maintainers: list[str] = []      # public key lines
+    honor_maintainer_yanks: bool = True
+    scratch: str = ''                # where ssh-keygen's files go; made at the first check
+    checked: dict[str, bool] = {}    # a signature already checked in this run
+    owners: dict[str, OwnerRec] = {}
+    seeds_cache: dict[str, SeedRec] = {}
+    names_cache: NamesRec | None = None
+    yanks_cache: list[Stmt] = []
+    yanks_loaded: bool = False
+    problems: list[str] = []         # statements ignored and why, in the order they were met
+
+export def open_index(root: str, name: str, maintainers: list[str], honor_maintainer_yanks: bool) -> Index:
+    idx = Index()
+    idx.root = root.rstrip('/')
+    idx.name = name
+    for m in maintainers:
+        idx.maintainers.append(key_line(m))
+    idx.honor_maintainer_yanks = honor_maintainer_yanks
+    idx.checked = {}
+    idx.owners = {}
+    idx.seeds_cache = {}
+    idx.problems = []
+    return idx
+
+export def close_index(idx: Index):
+    if idx.scratch != '':
+        remove_tree(idx.scratch)
+        idx.scratch = ''
+
+# ---------------------------------------------------------------------------------------------------------------------
+# config.toml and policy.toml
+
+export class IndexConfig:
+    format: int = 0
+    name: str = ''
+
+export def read_index_config(idx: Index) -> IndexConfig:
+    path = idx.root + '/config.toml'
+    if not isfile(path):
+        fail(680, f'{idx.root} is not an index: it has no config.toml (is the registry URL right? `tomato seed registry update` fetches it again)')
+    doc = read_toml(path)
+    out = IndexConfig()
+    if not is_table(doc) or not doc.has('format') or doc['format'].kind() != 'int':
+        fail(680, f'{path}: config.toml needs format = 1 (an integer)')
+    out.format = doc['format'].as_int()
+    if out.format != 1:
+        fail(680, f'{path}: this index is format {out.format}, and this Tomato reads format 1 only: update Tomato')
+    if doc.has('name'):
+        if doc['name'].kind() != 'str':
+            fail(680, f'{path}: name must be text')
+        out.name = doc['name'].as_str()
+    return out
+
+# the policy of the index: whether it asks anything of a seed to be listed (level 0 is "structural checks only")
+export class Policy:
+    version: int = 0
+    level_zero: bool = True
+    asks: list[str] = []           # the requirements that are on, as `listing.min_score = 40`
+
+export def read_policy(idx: Index) -> Policy:
+    out = Policy()
+    path = idx.root + '/policy.toml'
+    if not isfile(path):
+        return out
+    doc = read_toml(path)
+    if not is_table(doc):
+        fail(680, f'{path}: policy.toml is not a table')
+    if doc.has('version') and doc['version'].kind() == 'int':
+        out.version = doc['version'].as_int()
+    for section in ['listing', 'short_name']:
+        if not doc.has(section):
+            continue
+        t = doc[section]
+        if not is_table(t):
+            fail(680, f'{path}: [{section}] must be a table')
+        for key in sorted(t.as_dict().keys()):
+            v = t[key]
+            on = False
+            if v.kind() == 'bool':
+                on = v.as_bool()
+            elif v.kind() == 'int':
+                on = v.as_int() != 0
+            else:
+                fail(680, f'{path}: {section}.{key} must be true, false or a whole number')
+            if on and section == 'listing':
+                out.level_zero = False
+                out.asks.append(f'{section}.{key}')
+    return out
+
+# ---------------------------------------------------------------------------------------------------------------------
+# signatures
+
+# does `signature` (an SSH signature, namespace tomato-seeds-v1) of `text` verify under the public key `public`? ssh-keygen -Y verify answers; the
+# allowed-signers file is made here from the key alone (never from a text of the index), and a result is remembered for this run
+def signature_ok(idx: Index, public: str, text: str, signature: str) -> bool:
+    memo = sha256_hex(encode(public + '\0' + signature + '\0' + text))
+    if memo in idx.checked:
+        return idx.checked[memo]
+    if idx.scratch == '':
+        idx.scratch = make_scratch()
+    allowed = idx.scratch + '/allowed'
+    sig = idx.scratch + '/sig'
+    write_text(allowed, f'tomato namespaces="{NAMESPACE}" {key_line(public)}\n')
+    write_text(sig, signature if signature.endswith('\n') else signature + '\n')
+    good = False
+    try:
+        r = run(['ssh-keygen', '-Y', 'verify', '-f', allowed, '-I', 'tomato', '-n', NAMESPACE, '-s', sig], stdin=text, env={'LC_ALL': 'C'})
+        good = r.status == 0
+    catch FileNotFoundError as e:
+        fail(681, 'ssh-keygen is needed to check the signatures of the index, and the command `ssh-keygen` was not found (it is part of OpenSSH 8.0 or newer)')
+    idx.checked[memo] = good
+    return good
+
+# the statement's signature against a key line: the whole check of one statement by one key
+export def stmt_signed_by(idx: Index, st: Stmt, public: str) -> bool:
+    return signature_ok(idx, public, signing_text(st), st.signature)
+
+def note(idx: Index, st: Stmt, why: str):
+    idx.problems.append(f'{st.file}: {st.kind} statement {st.order} is ignored: {why}')
+
+# ---------------------------------------------------------------------------------------------------------------------
+# files
+
+def table_list(path: str, doc: Value, key: str) -> list[Value]:
+    if not doc.has(key):
+        return []
+    v = doc[key]
+    if is_array(v):
+        return v.as_list()
+    if is_table(v):
+        return [v]
+    fail(680, f'{path}: {key} must be a table or a list of tables')
+    return []
+
+def owner_file(idx: Index, owner: str) -> str:
+    return idx.root + '/owners/' + owner + '.toml'
+
+def seed_file(idx: Index, owner: str, name: str) -> str:
+    return idx.root + '/seeds/' + owner + '/' + name + '.toml'
+
+# the owner's keys: the statements of owners/OWNER.toml in order. The first must be a root signed by its own key; each later one is signed
+# by a key that was valid when it was written. A statement that fails any rule is ignored (and noted), not fatal: the rest still holds.
+export def load_owner(idx: Index, owner: str) -> OwnerRec:
+    if owner in idx.owners:
+        return idx.owners[owner]
+    rec = OwnerRec()
+    rec.name = owner
+    rec.kind = 'domain' if '.' in owner else 'handle'
+    idx.owners[owner] = rec
+    why = owner_problem(owner)
+    if why != '':
+        rec.problems.append(f'{owner} is not an owner name: {why}')
+        return rec
+    path = owner_file(idx, owner)
+    if not isfile(path):
+        rec.problems.append(f'the index has no {path[len(idx.root) + 1:]}')
+        return rec
+    doc = read_toml(path)
+    if doc.has('owner'):
+        t = doc['owner']
+        if is_table(t) and t.has('similar') and t['similar'].kind() == 'str':
+            rec.similar = t['similar'].as_str()
+    order = 0
+    for t in table_list(path, doc, 'key'):
+        order += 1
+        st = parse_stmt('key', t, owner, f'owners/{owner}.toml', order)
+        if st.why != '':
+            note(idx, st, st.why)
+            continue
+        problem = apply_key(idx, rec, st)
+        if problem != '':
+            note(idx, st, problem)
+    rec.exists = len(rec.keys) > 0
+    if rec.exists:
+        rec.first_seen = rec.keys[0].added
+    if rec.exists and rec.kind == 'handle':
+        check_grant(idx, rec)
+    return rec
+
+def key_named(rec: OwnerRec, fingerprint: str) -> KeyRec | None:
+    for k in rec.keys:
+        if k.fingerprint == fingerprint:
+            return k
+    return None
+
+# adds the statement's effect to the owner's chain; the problem if it cannot apply ('' when it did)
+def apply_key(idx: Index, rec: OwnerRec, st: Stmt) -> str:
+    kind = st.get('kind')
+    signer = st.get('signed_by')
+    if kind == 'root':
+        if len(rec.keys) > 0:
+            return 'an owner has one root key; a later key is a rotate statement'
+        if not st.has('public'):
+            return 'a root statement has the public key'
+        why = key_problem(st.get('public'))
+        if why != '':
+            return why
+        fp = key_fingerprint(st.get('public'))
+        if signer != fp:
+            return 'a root statement is signed by its own key'
+        if not stmt_signed_by(idx, st, st.get('public')):
+            return 'the signature does not verify'
+        k = KeyRec()
+        k.public = key_line(st.get('public'))
+        k.fingerprint = fp
+        k.kind = 'root'
+        k.added = st.accepted
+        rec.keys.append(k)
+        return ''
+    if len(rec.keys) == 0:
+        return 'the first statement of an owner is its root key'
+    sk = key_named(rec, signer)
+    if sk is None:
+        return f'it is signed by {signer}, which is not a key of this owner'
+    if sk.ended != '':
+        return f'it is signed by {signer}, which was {sk.ended} before'
+    if not stmt_signed_by(idx, st, sk.public):
+        return 'the signature does not verify'
+    if kind == 'rotate':
+        if not st.has('public'):
+            return 'a rotate statement has the public key it adds'
+        why = key_problem(st.get('public'))
+        if why != '':
+            return why
+        fp = key_fingerprint(st.get('public'))
+        if key_named(rec, fp) is not None:
+            return 'that key is already one of the owner\'s'
+        if st.has('retires'):
+            old = key_named(rec, st.get('retires'))
+            if old is None:
+                return f'it retires {st.get("retires")}, which is not a key of this owner'
+            old.ended = 'retired'
+            old.ended_at = st.accepted
+        k = KeyRec()
+        k.public = key_line(st.get('public'))
+        k.fingerprint = fp
+        k.kind = 'rotate'
+        k.added = st.accepted
+        rec.keys.append(k)
+        return ''
+    if kind == 'revoke':
+        if not st.has('revokes'):
+            return 'a revoke statement names the key it revokes'
+        old = key_named(rec, st.get('revokes'))
+        if old is None:
+            return f'it revokes {st.get("revokes")}, which is not a key of this owner'
+        old.ended = 'revoked'
+        old.ended_at = st.accepted
+        return ''
+    return f'the kind of a key statement is root, rotate or revoke, not {kind}'
+
+# a handle owner's root key must be one a maintainer granted (names.toml, signed by a key the user trusts for this registry)
+def check_grant(idx: Index, rec: OwnerRec):
+    names = load_names(idx)
+    handle = rec.name
+    if handle not in names.ever:
+        rec.grant_problem = f'the maintainers of this registry have not granted the handle {handle} (names.toml has no [[handle]] for it, or no maintainer key is set for this registry: tomato seed registry add --maintainer KEY)'
+        return
+    root = rec.keys[0].public
+    if root not in names.ever[handle]:
+        rec.grant_problem = f'the root key of the handle {handle} is not the key a maintainer granted it to'
+        return
+    rec.granted = names.handle_dates[handle] if handle in names.handle_dates else ''
+
+# ---------------------------------------------------------------------------------------------------------------------
+# a key's validity for a statement, by order: a key that was retired or revoked cannot sign what came after, and what came after is known
+# only by the stamps of the acceptor (an owner's own copy has none, so what it signed with an ended key is not trusted)
+
+# '' when the key `fingerprint` of the owner may have signed a statement stamped `accepted`, else why not
+export def key_valid_for(rec: OwnerRec, fingerprint: str, accepted: str) -> str:
+    k = key_named(rec, fingerprint)
+    if k is None:
+        return f'it is signed by {fingerprint}, which is not a key of {rec.name}'
+    if k.ended == '':
+        return ''
+    if accepted == '' or k.ended_at == '':
+        return f'it is signed by {fingerprint}, a key that was {k.ended} (with no stamp to say it came before)'
+    if accepted < k.ended_at:
+        return ''
+    return f'it is signed by {fingerprint}, which was {k.ended} before the statement was accepted'
+
+# ---------------------------------------------------------------------------------------------------------------------
+# seeds/OWNER/NAME.toml
+
+def valid_url_list(items: list[str]) -> str:
+    for x in items:
+        if x == '' or ' ' in x:
+            return 'a mirror is a URL'
+    return ''
+
+# the seed of the index with this full name, or None when the index has no file for it. Every statement is checked: an unsigned or wrongly signed
+# one is left out and noted in idx.problems, so what is returned holds only what an owner key signed.
+export def load_seed(idx: Index, full: str) -> SeedRec | None:
+    if full in idx.seeds_cache:
+        rec = idx.seeds_cache[full]
+        if rec.full == '':
+            return None
+        return rec
+    why = full_name_problem(full)
+    if why != '':
+        fail(682, f'"{full}" is not a seed name: {why}')
+    parts = full.split('/')
+    path = seed_file(idx, parts[0], parts[1])
+    rec = SeedRec()
+    idx.seeds_cache[full] = rec
+    if not isfile(path):
+        return None
+    rec.owner = parts[0]
+    rec.name = parts[1]
+    rec.full = full
+    owner = load_owner(idx, parts[0])
+    doc = read_toml(path)
+    label = f'seeds/{full}.toml'
+    if not owner.exists:
+        rec.problems.append(f'the owner {parts[0]} has no valid root key in the index, so nothing it signed counts')
+        return rec
+    if owner.grant_problem != '':
+        rec.problems.append(owner.grant_problem)
+        return rec
+    stmts: list[Stmt] = []
+    # the statements of the four tables in the order of the file: the TOML reader keeps the arrays apart, so each carries its own place
+    for kind in ['source', 'version', 'yank', 'moved']:
+        n = 0
+        for t in table_list(path, doc, kind):
+            n += 1
+            st = parse_stmt(kind, t, full, label, n)
+            if st.why != '':
+                note(idx, st, st.why)
+                continue
+            problem = key_valid_for(owner, st.get('signed_by'), st.accepted)
+            if problem == '':
+                k = key_named(owner, st.get('signed_by'))
+                if k is None or not stmt_signed_by(idx, st, k.public):
+                    problem = 'the signature does not verify'
+            if problem != '':
+                note(idx, st, problem)
+                continue
+            stmts.append(st)
+    for st in stmts:
+        if st.kind == 'source':
+            if st.has('git'):
+                rec.git = st.get('git')
+                rec.path = st.get('path')
+                rec.mirrors = st.list_of('mirrors')
+        elif st.kind == 'version':
+            got = version_of(idx, st, rec)
+            if got is not None:
+                rec.versions.append(got)
+        elif st.kind == 'moved':
+            rec.moved = st.get('to')
+    # an owner's yank hides a version from the listing; it never changes what the version is
+    for st in stmts:
+        if st.kind != 'yank':
+            continue
+        for v in rec.versions:
+            if v.version == st.get('version') and v.yanked == '':
+                v.yanked = 'owner'
+                v.yank_kind = st.get('kind')
+                v.yank_reason = st.get('reason')
+    maintainer_yanks(idx, rec)
+    if len(rec.versions) > 0:
+        rec.first_seen = ''
+        for v in rec.versions:
+            if v.accepted != '' and (rec.first_seen == '' or v.accepted < rec.first_seen):
+                rec.first_seen = v.accepted
+    return rec
+
+# the version a [[version]] statement says, or None (and a note) when it cannot be one
+def version_of(idx: Index, st: Stmt, rec: SeedRec) -> VersionRec | None:
+    v = VersionRec()
+    v.version = st.get('version')
+    why = version_problem(v.version, True)
+    if why != '':
+        note(idx, st, f'{v.version} is not a version: {why}')
+        return None
+    for old in rec.versions:
+        if old.version == v.version:
+            note(idx, st, f'the version {v.version} was published before: a version is immutable, and the first statement stands')
+            return None
+    v.commit = st.get('commit')
+    if len(v.commit) != 40:
+        note(idx, st, 'the commit is not a full commit id')
+        return None
+    for c in v.commit:
+        if not (is_digit_char(c) or ('a' <= c and c <= 'f')):
+            note(idx, st, 'the commit is not a full commit id')
+            return None
+    v.hash = st.get('hash')
+    if len(v.hash) != 71 or not v.hash.startswith('sha256:'):
+        note(idx, st, 'the hash is not sha256: and 64 hexadecimal digits')
+        return None
+    for c in v.hash[7:]:
+        if not (is_digit_char(c) or ('a' <= c and c <= 'f')):
+            note(idx, st, 'the hash is not sha256: and 64 hexadecimal digits')
+            return None
+    v.tomato = st.get('tomato')
+    v.modules = st.list_of('modules')
+    v.seeds = {}
+    for pair in st.list_of('seeds'):
+        at = pair.find(':')
+        name = pair[:at]
+        minimum = pair[at + 1:]
+        bad = full_name_problem(name)
+        if bad == '':
+            bad = version_problem(minimum, True)
+        if bad != '':
+            note(idx, st, f'it needs {name} {minimum}, which is not a requirement: {bad}')
+            return None
+        v.seeds[name] = minimum
+    v.published = st.get('published')
+    v.accepted = st.accepted
+    v.key = st.get('signed_by')
+    v.order = st.order
+    return v
+
+# ---------------------------------------------------------------------------------------------------------------------
+# names.toml and yanks.toml: the maintainers' statements, checked against the keys the user trusts for this registry
+
+def maintainer_ok(idx: Index, st: Stmt) -> bool:
+    for m in idx.maintainers:
+        if key_fingerprint(m) == st.get('signed_by'):
+            return stmt_signed_by(idx, st, m)
+    return False
+
+# statements of one file, from several tables, in the order that applies: by the acceptor's stamp when they have one (a statement with none comes
+# first), and in the file's order (the order of the tables, then of each) among equal stamps. TOML keeps each table's statements in order but
+# not how two tables interleave, so a name granted, released and granted again is ordered by the stamps or not at all
+def in_order(list_: list[Stmt]) -> list[Stmt]:
+    keyed: list[tuple[str, Stmt]] = []
+    n = 0
+    for st in list_:
+        n += 1
+        keyed.append((st.accepted + '|' + str(1000000 + n), st))
+    keyed = sorted(keyed, key=x -> x[0])
+    out: list[Stmt] = []
+    for k in keyed:
+        out.append(k[1])
+    return out
+
+export def load_names(idx: Index) -> NamesRec:
+    if idx.names_cache is not None:
+        return idx.names_cache
+    rec = NamesRec()
+    idx.names_cache = rec
+    path = idx.root + '/names.toml'
+    if not isfile(path) or len(idx.maintainers) == 0:
+        return rec
+    doc = read_toml(path)
+    good: list[Stmt] = []
+    for kind in ['name', 'unname', 'handle', 'unhandle']:
+        n = 0
+        for t in table_list(path, doc, kind):
+            n += 1
+            subject = ''
+            if is_table(t) and t.has('name') and t['name'].kind() == 'str' and (kind == 'name' or kind == 'unname'):
+                subject = t['name'].as_str()
+            if is_table(t) and t.has('handle') and t['handle'].kind() == 'str' and (kind == 'handle' or kind == 'unhandle'):
+                subject = t['handle'].as_str()
+            st = parse_stmt(kind, t, subject, 'names.toml', n)
+            if st.why != '':
+                note(idx, st, st.why)
+                continue
+            if not maintainer_ok(idx, st):
+                note(idx, st, 'it is not signed by a maintainer key this registry is trusted with')
+                continue
+            good.append(st)
+    for st in in_order(good):
+        if st.kind == 'name':
+            rec.names[st.get('name')] = st.get('seed')
+            rec.granted[st.get('name')] = st.get('granted')
+        elif st.kind == 'unname':
+            if st.get('name') in rec.names:
+                rec.names.remove(st.get('name'))
+        elif st.kind == 'handle':
+            h = st.get('handle')
+            key = key_line(st.get('key'))
+            rec.handles[h] = key
+            rec.handle_dates[h] = st.get('granted')
+            if h not in rec.ever:
+                rec.ever[h] = []
+            rec.ever[h].append(key)
+        else:
+            h = st.get('handle')
+            if h in rec.handles:
+                rec.handles[h] = ''
+    return rec
+
+# the maintainers' emergency yanks that apply to this seed's versions (listing only: nothing is removed)
+def maintainer_yanks(idx: Index, rec: SeedRec):
+    if not idx.honor_maintainer_yanks or len(idx.maintainers) == 0:
+        return
+    if not idx.yanks_loaded:
+        idx.yanks_loaded = True
+        list_: list[Stmt] = []
+        path = idx.root + '/yanks.toml'
+        if isfile(path):
+            doc = read_toml(path)
+            for kind in ['yank', 'unyank']:
+                n = 0
+                for t in table_list(path, doc, kind):
+                    n += 1
+                    mk = 'maint-yank' if kind == 'yank' else 'maint-unyank'
+                    subject = ''
+                    if is_table(t) and t.has('seed') and t['seed'].kind() == 'str':
+                        subject = t['seed'].as_str()
+                    st = parse_stmt(mk, t, subject, 'yanks.toml', n)
+                    if st.why != '':
+                        note(idx, st, st.why)
+                        continue
+                    if not maintainer_ok(idx, st):
+                        note(idx, st, 'it is not signed by a maintainer key this registry is trusted with')
+                        continue
+                    list_.append(st)
+        idx.yanks_cache = in_order(list_)
+    for v in rec.versions:
+        state = ''
+        kind = ''
+        reason = ''
+        for y in idx.yanks_cache:
+            if y.get('seed') != rec.full or y.get('version') != v.version:
+                continue
+            if y.kind == 'maint-yank':
+                state = 'yank'
+                kind = y.get('kind')
+                reason = y.get('reason')
+            elif state == 'yank':
+                state = ''
+        if state == 'yank' and v.yanked == '':
+            v.yanked = 'maintainer'
+            v.yank_kind = kind
+            v.yank_reason = reason
+
+# every seed the index has a file for, as owner/name, in order (a scan of the folder: nothing is read or checked)
+export def list_seed_names(idx: Index) -> list[str]:
+    out: list[str] = []
+    base = idx.root + '/seeds'
+    if not isdir(base):
+        return out
+    for owner in sorted(listdir(base)):
+        if not isdir(base + '/' + owner):
+            continue
+        for f in sorted(listdir(base + '/' + owner)):
+            if f.endswith('.toml'):
+                out.append(owner + '/' + f[:len(f) - 5])
+    return out
+
+# ---------------------------------------------------------------------------------------------------------------------
+# choosing a version
+
+# the newest version of the seed that is not a pre-release and not yanked, or None
+export def newest_listed(rec: SeedRec) -> VersionRec | None:
+    best: VersionRec | None = None
+    for v in rec.versions:
+        if v.yanked != '' or '-' in v.version:
+            continue
+        if best is None or compare_versions(v.version, best.version) > 0:
+            best = v
+    return best
+
+# the version with exactly this number, or None
+export def version_named(rec: SeedRec, version: str) -> VersionRec | None:
+    for v in rec.versions:
+        if v.version == version:
+            return v
+    return None
+
+# the newest listed version on the compatible line of `version` (the line `update` stays on)
+export def newest_on_line(rec: SeedRec, version: str) -> VersionRec | None:
+    best: VersionRec | None = None
+    for v in rec.versions:
+        if v.yanked != '' or '-' in v.version or not same_line(v.version, version):
+            continue
+        if best is None or compare_versions(v.version, best.version) > 0:
+            best = v
+    return best

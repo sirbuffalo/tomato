@@ -1,0 +1,3 @@
+# the fixture index of the registry tests (not a real registry)
+format = 1
+name = "fixture"

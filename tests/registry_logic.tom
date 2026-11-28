@@ -1,0 +1,257 @@
+# The index client's rules in compiler/src/index.tom as @test functions, run against the fixture index of tests/registry/ (signed with the
+# test keys by tests/registry/gen.sh): the formats, the signature checks through ssh-keygen, owner key chains (a rotation and a retired key), a
+# tampered statement, a statement of another owner's key, a handle's grant, short names and releases, owner and maintainer yanks. The
+# fixture's folder comes in the environment variable TOMATO_TEST_FIXTURE (tests/run.sh sets it; the fingerprints are in fingerprints.txt).
+from os import getenv, read_text, write_text
+from config import ConfigError
+from index import Index, SeedRec, OwnerRec, open_index, close_index, load_seed, load_owner, load_names, read_index_config, read_policy, key_problem, key_fingerprint, key_line, signing_text, parse_stmt, list_seed_names, newest_listed, newest_on_line, version_named, owner_problem, full_name_problem, stamp_problem, key_valid_for
+from toml import loads
+from sys import run
+from testing import assert_equal, assert_true, assert_false
+
+def fixture() -> str:
+    got = getenv('TOMATO_TEST_FIXTURE')
+    if got is None or got == '':
+        raise Error('TOMATO_TEST_FIXTURE is not set: it is the folder tests/registry')
+    return got
+
+def public(name: str) -> str:
+    return read_text(fixture() + '/keys/' + name + '.pub').strip()
+
+def fingerprint_of(name: str) -> str:
+    for line in read_text(fixture() + '/fingerprints.txt').split('\n'):
+        parts = line.split(' ')
+        if parts[0] == name:
+            return parts[1]
+    return ''
+
+def opened(honor: bool = True, maintainers: bool = True) -> Index:
+    keys: list[str] = []
+    if maintainers:
+        keys.append(public('maint'))
+    return open_index(fixture() + '/index', 'fixture', keys, honor)
+
+def versions_of(rec: SeedRec) -> str:
+    return ' '.join([v.version for v in rec.versions])
+
+def seed(idx: Index, full: str) -> SeedRec:
+    got = load_seed(idx, full)
+    if got is None:
+        raise Error(f'the fixture has no {full}')
+    return got
+
+@test.keys_and_fingerprints
+def keys_and_fingerprints():
+    for name in ['acme1', 'acme2', 'other', 'dave', 'maint', 'rogue']:
+        assert_equal(key_fingerprint(public(name)), fingerprint_of(name))
+        assert_equal(key_problem(public(name)), '')
+    assert_equal(key_line(public('dave')).split(' ')[0], 'ssh-ed25519')
+    assert_false(' test' in key_line(public('dave')))
+    assert_true(key_problem('ssh-rsa AAAAB3NzaC1yc2E') != '')
+    assert_true(key_problem('ssh-ed25519 not-base64!') != '')
+    assert_true(key_problem('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5') != '')
+    assert_true(key_problem('') != '')
+
+@test.names_are_checked
+def names_are_checked():
+    assert_equal(owner_problem('acme.example'), '')
+    assert_equal(owner_problem('dave'), '')
+    assert_true(owner_problem('Acme.example') != '')
+    assert_true(owner_problem('xn--acme.example') != '')
+    assert_true(owner_problem('acme..example') != '')
+    assert_true(owner_problem('-acme.example') != '')
+    assert_true(owner_problem('k-abc') != '')
+    assert_true(owner_problem('std') != '')
+    assert_equal(full_name_problem('acme.example/json5'), '')
+    assert_true(full_name_problem('acme.example/../x') != '')
+    assert_true(full_name_problem('acme.example') != '')
+    assert_true(full_name_problem('a/b/c') != '')
+    assert_equal(stamp_problem('2026-12-01T10:15:00Z'), '')
+    assert_true(stamp_problem('2026-12-01') != '')
+    assert_true(stamp_problem('2026-12-01 10:15:00Z') != '')
+
+@test.config_and_policy
+def config_and_policy():
+    idx = opened()
+    c = read_index_config(idx)
+    assert_equal(c.format, 1)
+    assert_equal(c.name, 'fixture')
+    p = read_policy(idx)
+    assert_true(p.level_zero)
+    assert_equal(len(p.asks), 0)
+    other = open_index(fixture() + '/keys', 'x', [], True)
+    try:
+        read_index_config(other)
+        assert_true(False)
+    catch ConfigError as e:
+        assert_equal(e.code, 680)
+    close_index(idx)
+
+@test.a_rotated_owner
+def a_rotated_owner():
+    idx = opened()
+    o = load_owner(idx, 'acme.example')
+    assert_true(o.exists)
+    assert_equal(o.kind, 'domain')
+    assert_equal(len(o.keys), 2)
+    assert_equal(o.keys[0].fingerprint, fingerprint_of('acme1'))
+    assert_equal(o.keys[0].ended, 'retired')
+    assert_equal(o.keys[0].ended_at, '2026-12-01T09:00:00Z')
+    assert_equal(o.keys[1].fingerprint, fingerprint_of('acme2'))
+    assert_equal(o.keys[1].ended, '')
+    assert_equal(o.first_seen, '2026-11-01T09:00:00Z')
+    # a retired key still stands for what was accepted before it was retired, and not for what came after
+    assert_equal(key_valid_for(o, fingerprint_of('acme1'), '2026-11-02T10:00:00Z'), '')
+    assert_true(key_valid_for(o, fingerprint_of('acme1'), '2026-12-03T10:00:00Z') != '')
+    assert_true(key_valid_for(o, fingerprint_of('acme1'), '') != '')
+    assert_equal(key_valid_for(o, fingerprint_of('acme2'), ''), '')
+    assert_true(key_valid_for(o, fingerprint_of('other'), '') != '')
+    assert_equal(load_owner(idx, 'rogue.example').similar, 'other.example')
+    assert_false(load_owner(idx, 'nobody.example').exists)
+    close_index(idx)
+
+@test.a_seed_with_its_versions
+def a_seed_with_its_versions():
+    idx = opened()
+    s = seed(idx, 'acme.example/json5')
+    # 1.2.1 is signed by the retired key after the rotation: ignored
+    assert_equal(versions_of(s), '1.0.0 1.1.0 1.2.0 1.3.0 2.0.0-rc.1')
+    assert_equal(s.git, 'https://git.fixture.example/acme.example/json5.git')
+    v = version_named(s, '1.2.0')
+    assert_true(v is not None)
+    if v is not None:
+        assert_equal(v.seeds['other.example/strutil'], '0.4.1')
+        assert_equal(v.modules, ['json5'])
+        assert_equal(v.key, fingerprint_of('acme2'))
+        assert_equal(len(v.commit), 40)
+        assert_true(v.hash.startswith('sha256:'))
+    assert_equal(s.first_seen, '2026-11-02T10:00:00Z')
+    found = False
+    for p in idx.problems:
+        if 'version statement 1' in p or '1.2.1' in p or 'retired' in p:
+            found = True
+    assert_true(found)
+    close_index(idx)
+
+@test.yanks_hide_a_version_from_the_listing
+def yanks_hide_a_version_from_the_listing():
+    idx = opened()
+    s = seed(idx, 'acme.example/json5')
+    owner_yank = version_named(s, '1.1.0')
+    maint_yank = version_named(s, '1.3.0')
+    fine = version_named(s, '1.2.0')
+    assert_true(owner_yank is not None and maint_yank is not None and fine is not None)
+    if owner_yank is not None and maint_yank is not None and fine is not None:
+        assert_equal(owner_yank.yanked, 'owner')
+        assert_equal(owner_yank.yank_kind, 'bug')
+        assert_equal(maint_yank.yanked, 'maintainer')
+        assert_equal(maint_yank.yank_kind, 'malware')
+        assert_equal(fine.yanked, '')        # the yank of 1.2.0 is signed by a key that is not a maintainer's
+    best = newest_listed(s)
+    assert_true(best is not None)
+    if best is not None:
+        assert_equal(best.version, '1.2.0')   # not 1.3.0 (maintainer-yanked), not 2.0.0-rc.1 (a pre-release)
+    near = newest_on_line(s, '1.0.0')
+    if near is not None:
+        assert_equal(near.version, '1.2.0')
+    close_index(idx)
+    # a client that does not honor the maintainers' yanks sees 1.3.0 again, and a client with no maintainer key never sees one
+    idx2 = opened(False)
+    best2 = newest_listed(seed(idx2, 'acme.example/json5'))
+    assert_true(best2 is not None)
+    if best2 is not None:
+        assert_equal(best2.version, '1.3.0')
+    close_index(idx2)
+    idx3 = opened(True, False)
+    best3 = newest_listed(seed(idx3, 'acme.example/json5'))
+    if best3 is not None:
+        assert_equal(best3.version, '1.3.0')
+    close_index(idx3)
+
+@test.a_tampered_statement_is_ignored
+def a_tampered_statement_is_ignored():
+    idx = opened()
+    s = seed(idx, 'other.example/strutil')
+    assert_equal(versions_of(s), '0.3.0 0.4.1 0.5.0')
+    assert_true(version_named(s, '0.4.0') is None)
+    owner_malware = version_named(s, '0.3.0')
+    assert_true(owner_malware is not None)
+    if owner_malware is not None:
+        assert_equal(owner_malware.yanked, 'owner')
+        assert_equal(owner_malware.yank_kind, 'malware')
+    close_index(idx)
+
+@test.a_statement_of_another_key_is_ignored
+def a_statement_of_another_key_is_ignored():
+    idx = opened()
+    s = seed(idx, 'rogue.example/evil')
+    assert_equal(len(s.versions), 0)
+    assert_true(newest_listed(s) is None)
+    close_index(idx)
+
+@test.a_handle_needs_the_maintainers_grant
+def a_handle_needs_the_maintainers_grant():
+    idx = opened()
+    o = load_owner(idx, 'dave')
+    assert_true(o.exists)
+    assert_equal(o.kind, 'handle')
+    assert_equal(o.grant_problem, '')
+    assert_equal(o.granted, '2026-11-20')
+    assert_equal(versions_of(seed(idx, 'dave/thing')), '1.0.0')
+    close_index(idx)
+    # with no maintainer key in the user's configuration the grant cannot be checked: the handle's seeds do not count
+    idx2 = opened(True, False)
+    o2 = load_owner(idx2, 'dave')
+    assert_true(o2.grant_problem != '')
+    assert_equal(len(seed(idx2, 'dave/thing').versions), 0)
+    close_index(idx2)
+
+@test.short_names_come_from_maintainer_statements_only
+def short_names_come_from_maintainer_statements_only():
+    idx = opened()
+    n = load_names(idx)
+    assert_equal(n.names['json5'], 'acme.example/json5')
+    assert_equal(n.granted['json5'], '2026-12-03')
+    assert_false('strutil' in n.names)          # granted, then released by a later statement
+    assert_false('evil' in n.names)             # signed by a key that is not a maintainer's
+    close_index(idx)
+    idx2 = opened(True, False)
+    assert_equal(len(load_names(idx2).names), 0)
+    close_index(idx2)
+
+@test.a_statement_binds_to_its_subject
+def a_statement_binds_to_its_subject():
+    # the same signed statements read under another seed's name do not verify: copy json5's file to json6 and read that
+    run(['rm', '-rf', 'idxcopy'], check=True)
+    run(['cp', '-R', fixture() + '/index', 'idxcopy'], check=True)
+    run(['cp', 'idxcopy/seeds/acme.example/json5.toml', 'idxcopy/seeds/acme.example/json6.toml'], check=True)
+    idx = open_index('idxcopy', 'copy', [public('maint')], True)
+    assert_equal(len(seed(idx, 'acme.example/json5').versions), 5)
+    assert_equal(len(seed(idx, 'acme.example/json6').versions), 0)
+    close_index(idx)
+    # and a key that is not the owner's: the owner's file of another owner under the name of acme.example
+    run(['cp', 'idxcopy/owners/other.example.toml', 'idxcopy/owners/acme.example.toml'], check=True)
+    idx2 = open_index('idxcopy', 'copy', [public('maint')], True)
+    assert_equal(len(seed(idx2, 'acme.example/json5').versions), 0)
+    close_index(idx2)
+
+@test.the_listing_of_seed_files
+def the_listing_of_seed_files():
+    idx = opened()
+    assert_equal(list_seed_names(idx), ['acme.example/json5', 'dave/liar', 'dave/thing', 'other.example/strutil', 'rogue.example/evil'])
+    assert_true(load_seed(idx, 'nobody.example/none') is None)
+    close_index(idx)
+
+@test.the_text_a_signature_covers
+def the_text_a_signature_covers():
+    st = parse_stmt('yank', loads('version = "1.1.0"\nkind = "bug"\nreason = "r"\nsigned_by = "SHA256:x"\nsignature = "-----BEGIN SSH SIGNATURE-----\\nx\\n-----END SSH SIGNATURE-----\\n"\n'), 'acme.example/json5', 'f', 1)
+    assert_equal(st.why, '')
+    assert_equal(signing_text(st), 'tomato-seeds-v1\nyank\nacme.example/json5\nversion=1.1.0\nkind=bug\nreason=r\nsigned_by=SHA256:x\n')
+    bad = parse_stmt('yank', loads('version = "1.1.0"\nkind = "bug"\nreason = "a\\nb"\nsigned_by = "SHA256:x"\nsignature = "-----BEGIN SSH SIGNATURE-----\\nx\\n-----END SSH SIGNATURE-----\\n"\n'), 'a/b', 'f', 1)
+    assert_true('control' in bad.why)
+    extra = parse_stmt('yank', loads('version = "1.1.0"\nkind = "bug"\nreason = "r"\nnote = "x"\nsigned_by = "SHA256:x"\nsignature = "-----BEGIN SSH SIGNATURE-----\\nx\\n-----END SSH SIGNATURE-----\\n"\n'), 'a/b', 'f', 1)
+    assert_true('note' in extra.why)
+    missing = parse_stmt('yank', loads('version = "1.1.0"\nsigned_by = "SHA256:x"\nsignature = "-----BEGIN SSH SIGNATURE-----\\nx\\n-----END SSH SIGNATURE-----\\n"\n'), 'a/b', 'f', 1)
+    assert_true('kind' in missing.why or 'reason' in missing.why)
+    unsigned = parse_stmt('yank', loads('version = "1.1.0"\nkind = "bug"\nreason = "r"\nsigned_by = "SHA256:x"\n'), 'a/b', 'f', 1)
+    assert_true('signature' in unsigned.why)

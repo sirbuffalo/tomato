@@ -1,0 +1,14 @@
+acme.example/json5 1.0.0 4504404e74fc4d913e10ff7aba3bde99418ba3ca
+acme.example/json5 1.1.0 30b6e447740205991c833419a4b23c5935ee5776
+acme.example/json5 1.2.0 00fd736d1d1f1cc1b610f6a680603928e7d90ff7
+acme.example/json5 1.3.0 8d7b4f367196bf15e9b57e040a59ad1072550ed8
+acme.example/json5 2.0.0-rc.1 121df021829512d08722c819772824b04dc1f249
+other.example/strutil 0.3.0 549a2699807d4a34bc03953ff9e58728f8f8c4e4
+other.example/strutil 0.4.0 c10a7af5ea8c0c428cdb3cae1d53ffa6efe29781
+other.example/strutil 0.4.1 7269471bb08345beba8fc67467a1b0ee5931e59c
+other.example/strutil 0.5.0 cc2eaab2c10cfadee64a0e0e3a3869c2fecc7e33
+dave/thing 1.0.0 84945a8a764717ea1df497a7b7456ec046736c55
+dave/liar 1.0.0 215bc5dcf2299dd3f905527dfd6f31aa8e3ddb1a
+dave/liar 1.1.0 a50233c0e787298a05a9b32b4a46fcce976c8d11
+dave/liar 1.2.0 b5a860769ad6d3bdf5427a792d6d2175361fb9a2
+rogue.example/evil 1.0.0 b82c9b3e1d3cff24bdca53286480d261a6602663

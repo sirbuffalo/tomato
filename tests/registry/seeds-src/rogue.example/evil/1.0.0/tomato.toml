@@ -1,0 +1,4 @@
+[seed]
+name = "rogue.example/evil"
+version = "1.0.0"
+tomato = "0.51"

@@ -6,6 +6,7 @@ from compiler import compile_module
 from config import ConfigError, load_limits, describe
 from diag import Diagnostic
 from manifest import entry_markers_of, read_manifest, check_tomato, build_for, describe_manifest, user_build_mode
+from regclient import registry_command, alias_command
 from seeds import module_map, install, check_seed, seed_hash, add, remove, vendor, update, verify, opts_from, AddSpec, add_spec_from_word, header_seeds, header_without_project, check_header, build_table_warnings
 from ospath import isdir
 from sys import platform
@@ -18,6 +19,12 @@ from sys import platform
 export def seed_command(command: str, arg: str, project: str, rev: str, words: list[str], have: str) -> list[str]:
     opts = opts_from(words)
     try:
+        if command == 'registry' or command == 'alias' or command == 'unalias':
+            # the words after the command, joined by tabs: these commands need no project
+            given = [w for w in arg.split('\t') if w != '']
+            if command == 'registry':
+                return registry_command(given)
+            return alias_command(command, given)
         if command == 'hash':
             if not isdir(arg):
                 raise ConfigError(572, f'{arg} is not a folder')
@@ -28,8 +35,9 @@ export def seed_command(command: str, arg: str, project: str, rev: str, words: l
             spec = AddSpec()
             if 'word' in words:
                 # a host shortcut (gh:USER/REPO) or a seed name: `rev` holds the four texts, as for --git
-                parts = (rev + '\t\t\t').split('\t')
+                parts = (rev + '\t\t\t\t').split('\t')
                 spec = add_spec_from_word(project, arg, parts[0], parts[1], parts[2], parts[3])
+                opts.registry = parts[4]
             elif 'git' not in words:
                 spec.kind = 'path'
                 spec.path = arg
@@ -50,6 +58,7 @@ export def seed_command(command: str, arg: str, project: str, rev: str, words: l
             return update(project, have, [n for n in arg.split(' ') if n != ''], opts)
         if command == 'verify':
             return verify(project, have)
+        opts.registry = rev
         return install(project, have, opts)
     catch ConfigError as e:
         raise Diagnostic(f'error[E{e.code}]: {e.message}')

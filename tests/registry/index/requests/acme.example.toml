@@ -1,0 +1,7 @@
+[[request]]
+ask = "name"
+seed = "acme.example/json5"
+signed_by = "SHA256:MbAk/6mXDOpx77qgmoeApz+qb6bqIvZPXNQr45Tk/WM"
+accepted = 2026-12-02T11:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgL8A4gBldyKOQ9G6cmGHdXzx0Ny\nrux3V6xXe7PwsZJ/QAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQCKtlVr78+zR48IW81gPBjEibWm/4slQ/DfoU5cipUFuzi7aQ+\na4/2OfCOBgb+g3a8xjEs2XdHtYrCVUX+RzxQo=\n-----END SSH SIGNATURE-----\n"
+

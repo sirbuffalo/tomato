@@ -1,0 +1,59 @@
+[[source]]
+git = "https://git.fixture.example/other.example/strutil.git"
+signed_by = "SHA256:VbfkYkFlZ143yn+wlNZGLJBTgHGivXrU6Vgf66JsfV8"
+accepted = 2026-11-02T09:05:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgaY2oLNokHbkWAvM5Dif2v4SBsi\nx/FPNK92mgQjcu8lkAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQHHmSCVlRb9cx3XjaTfQIC6EV+PGWJXN1UYZuSHl0agzB6W7ZW\n4vsyvePEJ/ihG3OEgw5w2wjvVCvFQ9FgSBDQo=\n-----END SSH SIGNATURE-----\n"
+
+[[version]]
+version = "0.3.0"
+commit = "549a2699807d4a34bc03953ff9e58728f8f8c4e4"
+hash = "sha256:3838bec816e83c714d36ac488681d66c27ad0e91bf4b6abc36bd1537dc1247bc"
+tomato = "0.51"
+modules = ["strutil"]
+published = "2026-10-01"
+signed_by = "SHA256:VbfkYkFlZ143yn+wlNZGLJBTgHGivXrU6Vgf66JsfV8"
+accepted = 2026-10-01T10:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgaY2oLNokHbkWAvM5Dif2v4SBsi\nx/FPNK92mgQjcu8lkAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQIPTW0SM8q4Qxhr2bNBmVqHCcYr+k2w+ejRwWAzrfGnIP5T7rB\nO4+NejsNIWVgThYlfmpPtldeHPVmbcrt3B6AU=\n-----END SSH SIGNATURE-----\n"
+
+[[yank]]
+version = "0.3.0"
+kind = "malware"
+reason = "steals tokens"
+signed_by = "SHA256:VbfkYkFlZ143yn+wlNZGLJBTgHGivXrU6Vgf66JsfV8"
+accepted = 2026-10-02T10:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgaY2oLNokHbkWAvM5Dif2v4SBsi\nx/FPNK92mgQjcu8lkAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQIAZeExR1fNlr2PaoIAfL8sgmFUhyzOlZysILBb7LiabP5dzJP\nA6byE/h67fM5qZgrJNAvLoGBvry1tuPQprJwg=\n-----END SSH SIGNATURE-----\n"
+
+[[version]]
+version = "0.4.0"
+commit = "0000000000000000000000000000000000000001"
+hash = "sha256:011045361025de13a66fc7cac388ccd60dd2c18a6b48ce960233f04c74912966"
+tomato = "0.51"
+modules = ["strutil"]
+published = "2026-11-03"
+signed_by = "SHA256:VbfkYkFlZ143yn+wlNZGLJBTgHGivXrU6Vgf66JsfV8"
+accepted = 2026-11-03T10:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgaY2oLNokHbkWAvM5Dif2v4SBsi\nx/FPNK92mgQjcu8lkAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQP0IG/bbRBSxnDKw5Oorai1PqmIas2IFCGC2AaIlgpxXpNKqRB\nzALcdxxEvhom/6f/h+sgOL8kTu01ycLe+y6QE=\n-----END SSH SIGNATURE-----\n"
+
+[[version]]
+version = "0.4.1"
+commit = "7269471bb08345beba8fc67467a1b0ee5931e59c"
+hash = "sha256:c79e3210fe6638bdb8bf1ffd737e0b262329e85476f85e32b3625bffac86df48"
+tomato = "0.51"
+modules = ["strutil"]
+published = "2026-11-08"
+signed_by = "SHA256:VbfkYkFlZ143yn+wlNZGLJBTgHGivXrU6Vgf66JsfV8"
+accepted = 2026-11-08T10:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgaY2oLNokHbkWAvM5Dif2v4SBsi\nx/FPNK92mgQjcu8lkAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQPuhpvb7tBNE/8oTfvzueRPSnu0K4iAT8OiRUqUC9BnxUjZXJ+\nU1xsOwm/hE2Oc7LTQ/tkVNAHsUYTSlKeZ40gQ=\n-----END SSH SIGNATURE-----\n"
+
+[[version]]
+version = "0.5.0"
+commit = "cc2eaab2c10cfadee64a0e0e3a3869c2fecc7e33"
+hash = "sha256:fd9e92649c37b2a0da4b0e39be25f07ff842f85a9d73d269f6815151b1742ebf"
+tomato = "0.51"
+modules = ["strutil"]
+seeds = { "acme.example/json5" = "2.0.0-rc.1" }
+published = "2026-12-01"
+signed_by = "SHA256:VbfkYkFlZ143yn+wlNZGLJBTgHGivXrU6Vgf66JsfV8"
+accepted = 2026-12-01T10:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgaY2oLNokHbkWAvM5Dif2v4SBsi\nx/FPNK92mgQjcu8lkAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQMycG65+iVK6xStj4a5iA0GAITxrZlCxqqajBhxgUd2hKCw3GM\nTW4Y8F9tSG7vh8zGJi/a8S7tAsaLltgiQUywE=\n-----END SSH SIGNATURE-----\n"
+

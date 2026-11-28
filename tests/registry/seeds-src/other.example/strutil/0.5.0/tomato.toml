@@ -1,0 +1,7 @@
+[seed]
+name = "other.example/strutil"
+version = "0.5.0"
+tomato = "0.51"
+
+[seeds]
+"acme.example/json5" = "2.0.0-rc.1"

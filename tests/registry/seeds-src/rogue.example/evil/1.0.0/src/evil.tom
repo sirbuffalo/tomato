@@ -1,0 +1,2 @@
+export def version() -> str:
+    return "evil 1.0.0"

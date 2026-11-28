@@ -1,0 +1,10 @@
+[owner]
+similar = "other.example"
+
+[[key]]
+kind = "root"
+public = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ/IGAH6LmrsOvhUhBNZqzYwfOvH+VZwJMGtbY7uaQYr"
+signed_by = "SHA256:5qyJM+u5t6Tiys+E1sT/BaIkFHgNt1dK7s4CZNLAW5U"
+accepted = 2026-11-25T09:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgn8gYAfouauw6+FSEE1mrNjB868\nf5VnAkwa1tju5pBisAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQAnmudVoVlyIdvtYoViktx6sWT+1AAGIk2t5r3RVlNAZn9pMGA\n6viHPIMKzmZoCMTP0umvo+zm9hVs2G3bfFRws=\n-----END SSH SIGNATURE-----\n"
+

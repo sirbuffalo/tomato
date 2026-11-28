@@ -244,12 +244,27 @@ export def resolve_ref(url: str, tag: str, branch: str, scratch: str) -> str:
     git(repo, url, ['update-ref', '-d', mine], 'git update-ref')
     return got
 
+# the commit that HEAD of the git repository `url` points at (the default branch: what a registry's index is read from), fetched with the same
+# limits as a seed's files. Errors as for resolve_ref
+export def resolve_head(url: str, scratch: str) -> str:
+    problem = git_url_problem(url)
+    if problem != '':
+        fail(598, f'the git URL "{url}" cannot be used: {problem}')
+    mine = 'refs/tomato/' + scratch.split('/')[-1]
+    repo = fetch_into(url, 'HEAD', scratch, 'head', f'fetching HEAD from {url}', mine)
+    got = git(repo, url, ['rev-parse', '--verify', '--quiet', mine + '^{commit}'], 'git rev-parse').strip()
+    if not is_commit_id(got):
+        fail(599, f'git did not give a commit for HEAD of {url}')
+    keep_commit(repo, url, got)
+    git(repo, url, ['update-ref', '-d', mine], 'git update-ref')
+    return got
+
 # fetches commit `rev` of the git repository `url` and writes its files into the folder `dest` (made here) with the modes git
 # records (755 for an executable file, 644 for the others). With `subdir` (not '') the seed is that folder of the repository: only the
 # files below it are taken, and the folder is the seed's root (the rest of the repository is not looked at). Returns the commit id. `scratch` is a folder made by make_scratch:
 # the bare repository that git works in goes there. Errors: E595 (a URL or a revision that cannot be used), E596 (git failed),
 # E597 (the tree cannot be a seed).
-export def fetch_tree(url: str, rev: str, dest: str, scratch: str, subdir: str) -> str:
+export def fetch_tree(url: str, rev: str, dest: str, scratch: str, subdir: str, max_files: int = 0) -> str:
     problem = git_url_problem(url)
     if problem != '':
         fail(598, f'the git URL "{url}" cannot be used: {problem}')
@@ -309,8 +324,9 @@ export def fetch_tree(url: str, rev: str, dest: str, scratch: str, subdir: str) 
         if size > MAX_FILE_BYTES:
             bad_tree(url, rev, f'{path} is {size} bytes, over the limit of {MAX_FILE_BYTES} for one file')
         total += size
-        if total > MAX_TOTAL_BYTES or len(names) >= MAX_FILES:
-            bad_tree(url, rev, f'it holds more than {MAX_FILES} files or {MAX_TOTAL_BYTES} bytes')
+        limit = max_files if max_files > 0 else MAX_FILES
+        if total > MAX_TOTAL_BYTES or len(names) >= limit:
+            bad_tree(url, rev, f'it holds more than {limit} files or {MAX_TOTAL_BYTES} bytes')
         names.append(path)
         blobs.append(meta[2])
         modes.append(meta[0])

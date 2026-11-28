@@ -1,0 +1,672 @@
+# The index client (docs/package-registry-design.md sections 1.7, 4, 9, 13, 18.2 and 18.9; stage 4, decision D141a): what `tomato seed` does with
+# a registry, below the lock and the store of seeds.tom. Four parts:
+#
+#   the user's settings   ${TOMATO_HOME:-$HOME/.tomato}/config.toml: [registry] default, [registries.NAME] index, maintainers, only_listed,
+#                         honor_maintainer_yanks, and [aliases]. They are the user's own: a project's tomato.toml cannot set any of them
+#   the local copy        seeds/index/NAME/tree, the files of the index at the commit `registry update` fetched (with seedstore.tom's
+#                         hardened fetch: no checkout, no symlink, git's own object check), and seeds/index/NAME/commit
+#   names                 what `tomato seed add WORD` means: an alias, a short name of the registry, or a full owner/name (section 1.7)
+#   resolution            minimal version selection over the index's version entries, or over the lock alone (section 4)
+#
+# Nothing here writes a lock or a manifest; it answers questions and keeps the copy of the index.
+from value import Value
+from config import ConfigError, read_toml, is_table, is_array, value_word
+from manifest import compare_versions, same_line
+from manedit import add_entry, remove_entry_in
+from seedstore import tomato_home, store_root, make_scratch, remove_tree, fetch_tree, resolve_head, git_url_problem
+from index import Index, SeedRec, VersionRec, open_index, close_index, read_index_config, read_policy, load_seed, load_owner, load_names, list_seed_names, version_named, full_name_problem, seed_name_problem, key_problem, key_line
+from os import write_text, read_text, makedirs, rename
+from ospath import exists, isfile, isdir, dirname
+
+def fail(code: int, text: str):
+    raise ConfigError(code, text)
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the user's settings
+
+export class Registry:
+    name: str = ''
+    index: str = ''                  # the git URL (an https, ssh or file URL, or an absolute folder) the index is fetched from
+    maintainers: list[str] = []      # public keys whose short names, handles and emergency yanks this registry is trusted with
+    only_listed: bool = False
+    honor_maintainer_yanks: bool = True
+
+export class UserConfig:
+    path: str = ''
+    default: str = ''
+    registries: list[Registry] = []
+    aliases: dict[str, str] = {}
+
+export def user_config_path() -> str:
+    return tomato_home().rstrip('/') + '/config.toml'
+
+def registry_name_problem(name: str) -> str:
+    if name == '' or len(name) > 32:
+        return 'a registry name is 1 to 32 characters'
+    for i in range(len(name)):
+        c = name[i]
+        low = 'a' <= c and c <= 'z'
+        if i == 0 and not low:
+            return 'a registry name starts with a lowercase letter'
+        if not low and not ('0' <= c and c <= '9') and c != '-' and c != '_':
+            return 'a registry name has lowercase letters, digits, hyphens and underscores only'
+    return ''
+
+def known_keys(path: str, t: Value, table: str, keys: list[str]):
+    for k in t.as_dict().keys():
+        if k not in keys:
+            fail(679, f'{path}: unknown setting {table}.{k} (the settings of [{table}] are {", ".join(keys)})')
+
+def string_setting(path: str, t: Value, table: str, key: str) -> str:
+    if t[key].kind() != 'str':
+        fail(679, f'{path}: {table}.{key} must be text, not {value_word(t[key])}')
+    return t[key].as_str()
+
+def bool_setting(path: str, t: Value, table: str, key: str) -> bool:
+    if t[key].kind() != 'bool':
+        fail(679, f'{path}: {table}.{key} must be true or false, not {value_word(t[key])}')
+    return t[key].as_bool()
+
+# the registry tables and the aliases of the user's config.toml (a missing file is an empty configuration); the rest of the file is the business
+# of the other readers ([limits], [build])
+export def read_user_config() -> UserConfig:
+    cfg = UserConfig()
+    cfg.path = user_config_path()
+    cfg.aliases = {}
+    if not isfile(cfg.path):
+        return cfg
+    doc = read_toml(cfg.path)
+    path = cfg.path
+    if doc.has('registry'):
+        t = doc['registry']
+        if not is_table(t):
+            fail(679, f'{path}: registry must be a table ([registry]), not {value_word(t)}')
+        known_keys(path, t, 'registry', ['default'])
+        if t.has('default'):
+            cfg.default = string_setting(path, t, 'registry', 'default')
+    if doc.has('registries'):
+        regs = doc['registries']
+        if not is_table(regs):
+            fail(679, f'{path}: registries must hold one table for each registry ([registries.NAME])')
+        for name in sorted(regs.as_dict().keys()):
+            t = regs[name]
+            why = registry_name_problem(name)
+            if why != '':
+                fail(679, f'{path}: [registries.{name}]: {why}')
+            if not is_table(t):
+                fail(679, f'{path}: registries.{name} must be a table')
+            label = f'registries.{name}'
+            known_keys(path, t, label, ['index', 'maintainers', 'only_listed', 'honor_maintainer_yanks'])
+            r = Registry()
+            r.name = name
+            if not t.has('index'):
+                fail(679, f'{path}: [{label}] needs the setting index (the git URL of the registry)')
+            r.index = string_setting(path, t, label, 'index')
+            if t.has('maintainers'):
+                if not is_array(t['maintainers']):
+                    fail(679, f'{path}: {label}.maintainers must be a list of public keys')
+                for k in t['maintainers'].as_list():
+                    if k.kind() != 'str':
+                        fail(679, f'{path}: {label}.maintainers must be a list of public keys')
+                    why = key_problem(k.as_str())
+                    if why != '':
+                        fail(679, f'{path}: {label}.maintainers has "{k.as_str()}", which is not a public key: {why}')
+                    r.maintainers.append(key_line(k.as_str()))
+            if t.has('only_listed'):
+                r.only_listed = bool_setting(path, t, label, 'only_listed')
+            if t.has('honor_maintainer_yanks'):
+                r.honor_maintainer_yanks = bool_setting(path, t, label, 'honor_maintainer_yanks')
+            cfg.registries.append(r)
+    if cfg.default != '' and registry_named(cfg, cfg.default) is None:
+        fail(679, f'{path}: registry.default is "{cfg.default}", but there is no [registries.{cfg.default}]')
+    if doc.has('aliases'):
+        t = doc['aliases']
+        if not is_table(t):
+            fail(679, f'{path}: aliases must be a table ([aliases])')
+        for name in sorted(t.as_dict().keys()):
+            why = seed_name_problem(name)
+            if why != '':
+                fail(679, f'{path}: the alias "{name}" is not usable: {why}')
+            full = string_setting(path, t, 'aliases', name)
+            why = full_name_problem(full)
+            if why != '':
+                fail(679, f'{path}: the alias {name} = "{full}" is not a seed name: {why}')
+            cfg.aliases[name] = full
+    return cfg
+
+export def registry_named(cfg: UserConfig, name: str) -> Registry | None:
+    for r in cfg.registries:
+        if r.name == name:
+            return r
+    return None
+
+# the registry a command uses: the one --registry named, else the one the lock names, else the default. The lock's name is what keeps a
+# project on the registry its seeds came from (section 9: resolution never mixes registries behind the user's back)
+export def pick_registry(cfg: UserConfig, wanted: str, lock_index: str) -> Registry:
+    name = wanted
+    where = f'--registry {wanted}'
+    if name == '':
+        name = lock_index
+        where = f'tomato.lock (its index is "{lock_index}")'
+    if name == '':
+        name = cfg.default
+        where = 'your default registry'
+    if name == '':
+        if len(cfg.registries) == 0:
+            fail(571, 'there is no registry set up, so a seed cannot be looked up by name\n  = help: tomato seed registry add NAME URL [--maintainer KEY] sets one up; or add the seed from where it lives: tomato seed add gh:USER/REPO --rev COMMIT, tomato seed add --git URL --rev COMMIT, or --path DIR')
+        fail(679, f'{cfg.path}: there is more than one registry and no default\n  = help: add `default = "NAME"` to [registry] in {cfg.path}, or give --registry NAME')
+    r = registry_named(cfg, name)
+    if r is None:
+        known = ', '.join([x.name for x in cfg.registries])
+        fail(679, f'{where} names the registry "{name}", but {cfg.path} has no [registries.{name}] (it has: {known if known != "" else "none"})\n  = help: tomato seed registry add {name} URL')
+        return Registry()
+    return r
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the local copy of an index
+
+export def index_dir(name: str) -> str:
+    return store_root() + '/index/' + name
+
+def tree_dir(name: str) -> str:
+    return index_dir(name) + '/tree'
+
+# the commit the local copy of this registry's index is at, '' when there is none
+export def local_commit(name: str) -> str:
+    path = index_dir(name) + '/commit'
+    if isfile(path) and isdir(tree_dir(name)):
+        return read_text(path).strip()
+    return ''
+
+# opens the local copy of the registry's index for reading (and checks that its config.toml is one this Tomato reads)
+export def open_registry(r: Registry) -> Index:
+    if not isdir(tree_dir(r.name)):
+        fail(679, f'the registry {r.name} has no local copy of its index yet\n  = help: run: tomato seed registry update')
+    idx = open_index(tree_dir(r.name), r.name, r.maintainers, r.honor_maintainer_yanks)
+    read_index_config(idx)
+    return idx
+
+# fetches the index of the registry again and puts it in place of the old copy; returns what to print. The files are checked to be an index
+# (a config.toml of format 1) before the old copy is touched, so a failed update leaves the old one working
+export def update_registry(r: Registry) -> list[str]:
+    why = git_url_problem(r.index)
+    if why != '':
+        fail(679, f'the index URL of the registry {r.name} cannot be used: {why} (it is the index setting of [registries.{r.name}] in {user_config_path()})')
+    scratch = make_scratch()
+    said: list[str] = []
+    try:
+        commit = resolve_head(r.index, scratch)
+        old = local_commit(r.name)
+        if old == commit:
+            idx = open_registry(r)
+            said.append(f'registry {r.name}: already at {commit[:12]} ({len(list_seed_names(idx))} seeds)')
+            close_index(idx)
+            return said
+        tree = scratch + '/tree'
+        fetch_tree(r.index, commit, tree, scratch, '', 200000)
+        if not isfile(tree + '/config.toml'):
+            fail(680, f'{r.index} is not an index of seeds: its top folder has no config.toml (is the registry URL right?)')
+        probe = open_index(tree, r.name, r.maintainers, r.honor_maintainer_yanks)
+        try:
+            read_index_config(probe)
+        catch ConfigError as e:
+            raise ConfigError(e.code, e.message.replace(tree, r.index))
+        count = len(list_seed_names(probe))
+        policy = read_policy(probe)
+        close_index(probe)
+        place = index_dir(r.name)
+        makedirs(place, True)
+        if isdir(tree_dir(r.name)):
+            rename(tree_dir(r.name), scratch + '/old')
+        try:
+            rename(tree, tree_dir(r.name))
+        catch IOError as e:
+            if isdir(scratch + '/old'):
+                rename(scratch + '/old', tree_dir(r.name))
+            fail(679, f'cannot put the index of {r.name} in place at {tree_dir(r.name)}: {e}')
+        write_text(place + '/commit', commit + '\n')
+        level = 'policy level 0: structural checks only' if policy.level_zero else 'the policy asks for: ' + ', '.join(policy.asks)
+        if old == '':
+            said.append(f'registry {r.name}: fetched the index at {commit[:12]} ({count} seeds; {level})')
+        else:
+            said.append(f'registry {r.name}: updated {old[:12]} -> {commit[:12]} ({count} seeds; {level})')
+    finally:
+        remove_tree(scratch)
+    return said
+
+# ---------------------------------------------------------------------------------------------------------------------
+# editing the user's config.toml: the file's text is changed line by line (comments and order stay), then read again, and put back as it was if
+# what it says is not what was meant
+
+def quoted(text: str) -> str:
+    return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+def write_config(text: str, before: str, had_file: bool):
+    path = user_config_path()
+    makedirs(dirname(path), True)
+    write_text(path, text)
+    try:
+        read_user_config()
+    catch ConfigError as e:
+        if had_file:
+            write_text(path, before)
+        else:
+            remove_tree(path)
+        raise e
+
+def config_text() -> str:
+    path = user_config_path()
+    if isfile(path):
+        return read_text(path)
+    return ''
+
+# `tomato seed registry add NAME URL [--maintainer KEY]... [--default]`: the settings are written, the index is fetched, and a failed fetch
+# takes the settings out again
+export def registry_add(words: list[str]) -> list[str]:
+    positional: list[str] = []
+    keys: list[str] = []
+    make_default = False
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w == '--maintainer':
+            if i + 1 >= len(words):
+                fail(679, '--maintainer needs a public key (ssh-ed25519 AAAA...)')
+            keys.append(words[i + 1])
+            i += 1
+        elif w == '--default':
+            make_default = True
+        elif w.startswith('-'):
+            fail(679, f'unknown option "{w}" for tomato seed registry add (usage: tomato seed registry add NAME URL [--maintainer KEY] [--default])')
+        else:
+            positional.append(w)
+        i += 1
+    if len(positional) != 2:
+        fail(679, 'usage: tomato seed registry add NAME URL [--maintainer KEY] [--default]')
+    name = positional[0]
+    url = positional[1]
+    why = registry_name_problem(name)
+    if why != '':
+        fail(679, f'"{name}" is not a registry name: {why}')
+    why = git_url_problem(url)
+    if why != '':
+        fail(679, f'"{url}" cannot be the index of a registry: {why}')
+    for k in keys:
+        why = key_problem(k)
+        if why != '':
+            fail(679, f'"{k}" is not a maintainer key: {why}')
+    cfg = read_user_config()
+    if registry_named(cfg, name) is not None:
+        fail(679, f'the registry {name} is already in {cfg.path}: edit it there, or choose another name')
+    before = config_text()
+    had_file = isfile(user_config_path())
+    text = before
+    table = f'registries.{name}'
+    became_default = cfg.default == '' and (len(cfg.registries) == 0 or make_default)
+    if make_default or became_default:
+        text = add_entry(text, 'registry', 'default', quoted(name), True, True)
+    text = add_entry(text, table, 'index', quoted(url), True, True)
+    if len(keys) > 0:
+        text = add_entry(text, table, 'maintainers', '[' + ', '.join([quoted(key_line(k)) for k in keys]) + ']', True, True)
+    write_config(text, before, had_file)
+    said: list[str] = []
+    try:
+        cfg2 = read_user_config()
+        r = registry_named(cfg2, name)
+        if r is None:
+            fail(679, f'the registry {name} was not written to {cfg2.path}')
+            return said
+        said = update_registry(r)
+    catch ConfigError as e:
+        if had_file:
+            write_text(user_config_path(), before)
+        else:
+            remove_tree(user_config_path())
+        remove_tree(index_dir(name))
+        raise e
+    said.insert(0, f'added the registry {name} ({url}) to {user_config_path()}' + (' as the default' if (make_default or became_default) else ''))
+    if len(keys) == 0:
+        said.append(f'note: no maintainer key is set for {name}: its short names, handles and maintainer yanks are not used (tomato seed registry add ... --maintainer KEY)')
+    return said
+
+export def registry_update(words: list[str]) -> list[str]:
+    cfg = read_user_config()
+    if len(words) > 1 or (len(words) == 1 and words[0].startswith('-')):
+        fail(679, 'usage: tomato seed registry update [NAME]')
+    names: list[str] = []
+    if len(words) == 1:
+        if registry_named(cfg, words[0]) is None:
+            fail(679, f'there is no registry "{words[0]}" in {cfg.path}')
+        names.append(words[0])
+    else:
+        if len(cfg.registries) == 0:
+            fail(679, 'there is no registry set up\n  = help: tomato seed registry add NAME URL [--maintainer KEY]')
+        for r in cfg.registries:
+            names.append(r.name)
+    said: list[str] = []
+    for n in names:
+        r = registry_named(cfg, n)
+        if r is not None:
+            said += update_registry(r)
+    return said
+
+export def registry_list(words: list[str]) -> list[str]:
+    if len(words) > 0:
+        fail(679, 'usage: tomato seed registry list')
+    cfg = read_user_config()
+    said: list[str] = []
+    if len(cfg.registries) == 0:
+        return ['no registry is set up (tomato seed registry add NAME URL [--maintainer KEY])']
+    for r in cfg.registries:
+        mark = ' (default)' if r.name == cfg.default else ''
+        have = local_commit(r.name)
+        copy = f'index at {have[:12]}' if have != '' else 'no local copy: tomato seed registry update'
+        keys = f'{len(r.maintainers)} maintainer key' + ('' if len(r.maintainers) == 1 else 's')
+        said.append(f'{r.name}{mark}  {r.index}  {copy}; {keys}' + ('; honors maintainer yanks' if r.honor_maintainer_yanks else '; ignores maintainer yanks'))
+    return said
+
+# `tomato seed registry ...`: the words after `registry`
+export def registry_command(words: list[str]) -> list[str]:
+    if len(words) == 0:
+        fail(679, 'usage: tomato seed registry add NAME URL [--maintainer KEY] | update [NAME] | list')
+    rest = words[1:]
+    if words[0] == 'add':
+        return registry_add(rest)
+    if words[0] == 'update':
+        return registry_update(rest)
+    if words[0] == 'list':
+        return registry_list(rest)
+    fail(679, f'unknown registry command "{words[0]}" (the commands are add, update and list)')
+    return []
+
+# ---------------------------------------------------------------------------------------------------------------------
+# aliases (section 1.7): the user's own shortcuts, never read from a project
+
+export def alias_command(command: str, words: list[str]) -> list[str]:
+    cfg = read_user_config()
+    if command == 'alias':
+        if len(words) == 0 or (len(words) == 1 and words[0] == '--list'):
+            if len(cfg.aliases) == 0:
+                return ['no aliases are set (tomato seed alias NAME OWNER/NAME)']
+            return [f'{k} = {cfg.aliases[k]}' for k in sorted(cfg.aliases.keys())]
+        if len(words) != 2 or words[0].startswith('-'):
+            fail(679, 'usage: tomato seed alias [--list] | tomato seed alias NAME OWNER/NAME')
+        why = seed_name_problem(words[0])
+        if why != '':
+            fail(679, f'"{words[0]}" cannot be an alias: {why}')
+        why = full_name_problem(words[1])
+        if why != '':
+            fail(679, f'"{words[1]}" is not a seed name: {why} (an alias stands for a full owner/name)')
+        before = config_text()
+        had_file = isfile(cfg.path)
+        write_config(add_entry(before, 'aliases', words[0], quoted(words[1]), True, True), before, had_file)
+        return [f'alias {words[0]} = {words[1]} in {cfg.path}']
+    if len(words) != 1 or words[0].startswith('-'):
+        fail(679, 'usage: tomato seed unalias NAME')
+    if words[0] not in cfg.aliases:
+        fail(679, f'there is no alias "{words[0]}" in {cfg.path}')
+    before = config_text()
+    edited = remove_entry_in(before, 'aliases', words[0])
+    if edited[1] != 1:
+        fail(679, f'the alias {words[0]} is written in a form this command does not edit: remove its line from {cfg.path} yourself')
+    write_config(edited[0], before, True)
+    return [f'removed the alias {words[0]} from {cfg.path}']
+
+# ---------------------------------------------------------------------------------------------------------------------
+# what `tomato seed add WORD` means (section 1.7)
+
+export class Pick:
+    full: str = ''             # the seed's full name
+    version: str = ''          # a version asked for with @VERSION, '' for the newest listed one
+    how: str = ''              # 'name' (the word was a full name), 'alias' or 'short'
+    said: str = ''             # the line that says which step answered
+
+def same_name(a: str, b: str) -> bool:
+    return a.replace('-', '_') == b.replace('-', '_')
+
+# every seed of the index that is called `name` (the part after the slash, '-' and '_' alike): owner/name, in the index's order
+def candidates(idx: Index, name: str) -> list[str]:
+    out: list[str] = []
+    for full in list_seed_names(idx):
+        if same_name(full.split('/')[1], name):
+            out.append(full)
+    return out
+
+# the seed a word names: a full name is itself; a bare name is the user's alias, else the registry's short name, else an error that lists the
+# candidates (no popularity ranking and no default owner: only a maintainer's short name stands for a seed, section 1.7)
+export def pick_seed(cfg: UserConfig, idx: Index, r: Registry, word: str) -> Pick:
+    pick = Pick()
+    name = word
+    if '@' in word:
+        name = word[:word.find('@')]
+        pick.version = word[word.find('@') + 1:]
+    if '/' in name:
+        why = full_name_problem(name)
+        if why != '':
+            fail(682, f'"{word}" is not a seed name: {why}')
+        pick.full = name
+        pick.how = 'name'
+        return pick
+    why = seed_name_problem(name)
+    if why != '':
+        fail(682, f'"{word}" is not a seed name: {why}')
+    if name in cfg.aliases:
+        pick.full = cfg.aliases[name]
+        pick.how = 'alias'
+        pick.said = f'alias {name} of {cfg.path}: {pick.full}'
+        return pick
+    names = load_names(idx)
+    for short in names.names.keys():
+        if same_name(short, name):
+            pick.full = names.names[short]
+            pick.how = 'short'
+            pick.said = f'short name {short} of the registry {r.name}: {pick.full}'
+            return pick
+    found = candidates(idx, name)
+    if len(found) == 0:
+        fail(682, f'there is no seed called {name} in the registry {r.name} (and no alias or short name of that name)\n  = help: a seed is added by its full name, owner/name; tomato seed registry update fetches the latest index')
+    lines: list[str] = []
+    for full in found:
+        rec = load_seed(idx, full)
+        count = len(rec.versions) if rec is not None else 0
+        owner = load_owner(idx, full.split('/')[0])
+        lines.append(f'  {full}  ({count} version' + ('' if count == 1 else 's') + f', owner {owner.kind})')
+    fail(682, f'{name} is not an alias or a short name of the registry {r.name}, and the index has {len(found)} seed' + ('' if len(found) == 1 else 's') + f' of that name:\n' + '\n'.join(lines) + f'\n  = help: add one by its full name (tomato seed add {found[0]}), or set an alias (tomato seed alias {name} {found[0]})')
+    return pick
+
+# the statements of the seed's file that were ignored and why, as lines for an error message
+export def ignored_lines(idx: Index, full: str) -> str:
+    out: list[str] = []
+    for p in idx.problems:
+        if p.startswith(f'seeds/{full}.toml'):
+            out.append('  ' + p)
+    if len(out) == 0:
+        return ''
+    return '\n  = note: statements of the index that were ignored:\n' + '\n'.join(out)
+
+# the seed record for a full name, or the error that says what is missing (E682)
+export def need_seed(idx: Index, r: Registry, full: str) -> SeedRec:
+    rec = load_seed(idx, full)
+    if rec is None:
+        near = candidates(idx, full.split('/')[1]) if '/' in full else []
+        more = ''
+        if len(near) > 0:
+            more = f' (the index has {", ".join(near)})'
+        fail(682, f'the registry {r.name} has no seed {full}{more}\n  = help: tomato seed registry update fetches the latest index; a seed that is not in an index is added from where it lives: tomato seed add --git URL --rev COMMIT')
+    owner = load_owner(idx, full.split('/')[0])
+    if rec is not None and len(rec.versions) == 0:
+        why = owner.grant_problem
+        if why == '' and not owner.exists:
+            why = f'the owner {owner.name} has no valid key in this index'
+        fail(682, f'{full} has no version that this registry vouches for' + (f': {why}' if why != '' else '') + ignored_lines(idx, full))
+    return rec if rec is not None else SeedRec()
+
+# the one line of what `add` is about to do (section 12): the seed, its version, who signed it, and how old the owner is
+export def summary_lines(idx: Index, rec: SeedRec, v: VersionRec, pick: Pick, r: Registry) -> list[str]:
+    owner = load_owner(idx, rec.owner)
+    out: list[str] = []
+    signer = f'domain {owner.name}' if owner.kind == 'domain' else f'handle {owner.name}'
+    if owner.kind == 'handle':
+        signer = f'handle {owner.name} (granted {owner.granted} by the registry {r.name})' if owner.granted != '' else f'handle {owner.name} (granted by the registry {r.name})'
+    first = owner.first_seen[:10] if owner.first_seen != '' else 'unknown'
+    similar = owner.similar if owner.similar != '' else 'none'
+    count = len(rec.versions)
+    out.append(f'{rec.full} {v.version}  signed by {signer} (key {v.key}), first seen {first}, {count} version' + ('' if count == 1 else 's') + f', similar to: {similar}')
+    stem = rec.name.replace('-', '_')
+    out.append(f'imported as: from {stem} import ...')
+    policy = read_policy(idx)
+    if policy.level_zero:
+        out.append('status: listed (policy level 0: structural checks only), no endorsements or test results collected by this client')
+    else:
+        out.append(f'status: not evaluated (the policy of this registry asks for {", ".join(policy.asks)}, which this client does not check: listing.toml is stage 5b)')
+    if pick.how == 'short':
+        names = load_names(idx)
+        for short in names.names.keys():
+            if names.names[short] == rec.full:
+                out.append(f'short name: {short} (granted {names.granted[short]} by a maintainer of {r.name})')
+    if owner.similar != '':
+        out.append(f'warning: the owner {owner.name} looks like {owner.similar} (the index marks it as similar): check that this is the owner you mean')
+    if len(owner.keys) > 1:
+        out.append(f'note: the owner has changed its key {len(owner.keys) - 1} time' + ('' if len(owner.keys) == 2 else 's') + f'; this version is signed by the key {v.key}')
+    return out
+
+# ---------------------------------------------------------------------------------------------------------------------
+# minimal version selection (design section 4)
+
+# a requirement from the manifest: `name`, at least `version`; `test` when only [test-seeds] asks for it
+export class Root:
+    name: str = ''
+    version: str = ''
+    test: bool = False
+
+export class Chosen:
+    name: str = ''
+    version: str = ''
+    requires: dict[str, str] = {}      # the minimums its entry asks for
+    test_only: bool = False
+    chain: str = ''                    # who asked for it, for messages
+
+export class Resolution:
+    ok: bool = True
+    why: str = ''                      # lock mode: what the lock lacks
+    chosen: list[Chosen] = []
+    yanked: list[str] = []             # lines for the seeds whose version is yanked (index mode)
+
+# the requirements of `name` at `version`: from `known` (the lock's entries, or entries already read), else from the index. None when neither has it
+def requirements_of(known: dict[str, dict[str, dict[str, str]]], idx: Index | None, name: str, version: str) -> dict[str, str] | None:
+    if name in known and version in known[name]:
+        return known[name][version]
+    if idx is None:
+        return None
+    rec = load_seed(idx, name)
+    if rec is None:
+        return None
+    v = version_named(rec, version)
+    if v is None:
+        return None
+    if name not in known:
+        known[name] = {}
+    known[name][version] = v.seeds
+    return v.seeds
+
+def chain_of(parent: dict[str, str], vers: dict[str, str], name: str) -> str:
+    parts: list[str] = []
+    cur = name
+    n = 0
+    while cur != '' and n < 32:
+        parts.append(f'{cur} {vers[cur]}' if cur in vers else cur)
+        cur = parent[cur] if cur in parent else ''
+        n += 1
+    parts.reverse()
+    return ' -> '.join(['tomato.toml'] + parts)
+
+def missing_version(idx: Index | None, name: str, version: str, by: str) -> str:
+    if idx is None:
+        return f'{name} {version}, which {by} asks for, is not in tomato.lock'
+    rec = load_seed(idx, name)
+    if rec is None:
+        return f'the registry {idx.name} has no seed {name} (asked for at {version} by {by})'
+    have = ', '.join([v.version for v in rec.versions])
+    return f'the registry {idx.name} has no version {version} of {name} (asked for by {by}); its versions: {have if have != "" else "none"}'
+
+# The selection: the highest minimum anyone asks for, from the manifest and from the entries of the versions it selects, repeated until it does
+# not change (a bump drops the requirements of the lower version). Two requirements on different compatible lines of one seed are an error that
+# names who asked for each. With idx None only `known` is used (the lock): a version it does not hold makes the result `ok = False`.
+export def select(roots: list[Root], known: dict[str, dict[str, dict[str, str]]], idx: Index | None) -> Resolution:
+    res = Resolution()
+    vers: dict[str, str] = {}
+    parent: dict[str, str] = {}
+    settled = False
+    for rounds in range(64):
+        want: dict[str, str] = {}
+        by: dict[str, str] = {}
+        asks: list[tuple[str, str, str]] = []
+        for r in roots:
+            asks.append((r.name, r.version, ''))
+        unknown = ''
+        for name in sorted(vers.keys()):
+            reqs = requirements_of(known, idx, name, vers[name])
+            if reqs is None:
+                # a version nothing holds yet: it may be one that a later round replaces by a higher one (a minimum the index does not
+                # even have, below what another seed asks for), so it is an error only if it is still selected when the selection settles
+                if unknown == '':
+                    unknown = name
+                continue
+            for dep in sorted(reqs.keys()):
+                asks.append((dep, reqs[dep], name))
+        for a in asks:
+            name = a[0]
+            if name in want:
+                if not same_line(want[name], a[1]):
+                    first = chain_of(parent, vers, by[name]) if by[name] != '' else 'tomato.toml'
+                    second = chain_of(parent, vers, a[2]) if a[2] != '' else 'tomato.toml'
+                    fail(683, f'{name} is asked for on two incompatible lines: {want[name]} by {first}, and {a[1]} by {second}\n  = help: one program holds one copy of a seed; move one of the requirers to the other line (a new major version, or a new minor one below 1.0, is another line)')
+                if compare_versions(a[1], want[name]) > 0:
+                    want[name] = a[1]
+                    by[name] = a[2]
+            else:
+                want[name] = a[1]
+                by[name] = a[2]
+        same = len(want) == len(vers)
+        if same:
+            for k in want.keys():
+                if k not in vers or vers[k] != want[k]:
+                    same = False
+        if same and unknown != '':
+            res.ok = False
+            res.why = missing_version(idx, unknown, vers[unknown], chain_of(parent, vers, parent[unknown]) if parent[unknown] != '' else 'tomato.toml')
+            if idx is not None:
+                fail(682, res.why)
+            return res
+        vers = want
+        parent = by
+        if same:
+            settled = True
+            break
+    if not settled:
+        fail(683, 'the selection of seed versions does not settle: the requirements of the seeds chase each other')
+    # which seeds only [test-seeds] reaches: those no [seeds] requirement reaches through the selected versions
+    reach: dict[str, bool] = {}
+    work: list[str] = []
+    for r in roots:
+        if not r.test and r.name not in reach:
+            reach[r.name] = True
+            work.append(r.name)
+    while len(work) > 0:
+        cur = work.pop()
+        reqs = requirements_of(known, idx, cur, vers[cur])
+        if reqs is not None:
+            for dep in reqs.keys():
+                if dep not in reach:
+                    reach[dep] = True
+                    work.append(dep)
+    for name in sorted(vers.keys()):
+        c = Chosen()
+        c.name = name
+        c.version = vers[name]
+        reqs = requirements_of(known, idx, name, vers[name])
+        c.requires = reqs if reqs is not None else {}
+        c.test_only = name not in reach
+        c.chain = chain_of(parent, vers, name)
+        res.chosen.append(c)
+    return res

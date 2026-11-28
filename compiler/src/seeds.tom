@@ -8,11 +8,13 @@
 from toml import dumps, dumps_value
 from value import Value, Dict, List, Str, Int, Bool
 from config import ConfigError, read_toml, is_table, is_array
-from manifest import Manifest, SeedReq, entry_markers_of, read_manifest, check_tomato, seeds_for, same_line, compare_versions, module_stem, name_problem, version_problem
+from manifest import Manifest, SeedReq, Wanted, entry_markers_of, read_manifest, check_tomato, seeds_for, same_line, compare_versions, module_stem, name_problem, version_problem, handle_problem
 from modnames import std_modules, reserved_modules
 from parser import parse
 from manedit import add_entry, remove_entries
 from seedstore import store_dir, make_scratch, remove_tree, fetch_tree, resolve_ref, git_url_problem, is_commit_id, ref_problem, subdir_problem
+from index import SeedRec, VersionRec, close_index, newest_listed, version_named, seed_name_problem
+from regclient import Root, select, read_user_config, pick_registry, open_registry, pick_seed, need_seed, summary_lines, Pick, ignored_lines
 from hashlib import sha256_hex
 from utf8 import encode
 from os import listdir, stat, read_bytes, write_bytes, read_text, write_text, getcwd, makedirs, rename
@@ -23,15 +25,17 @@ from sys import run, flush, write_stdout
 export class Locked:
     name: str = ''
     version: str = ''
-    source: str = ''           # 'path' or 'git' (what this version can install); the design's 'registry' is read, not built
+    source: str = ''           # 'path', 'git' or 'registry' (a seed an index vouches for, signed by an owner's key)
     path: str = ''             # source 'path': as written in tomato.toml; source 'git': the folder of the repository that holds the seed ('' for the root)
-    git: str = ''              # source 'git': the URL as written in tomato.toml
-    commit: str = ''           # source 'git': the commit, 40 hex digits (the manifest's rev)
+    git: str = ''              # source 'git' and 'registry': the URL (as written in tomato.toml, or in the owner's source statement)
+    commit: str = ''           # source 'git' and 'registry': the commit, 40 hex digits (the manifest's rev)
     hash: str = ''             # 'sha256:' and the hex of the seed hash v1
     modules: list[str] = []
     symbols: list[str] = []    # the foreign `!name(...)` symbols the seed's modules declare, as the user accepted them (D94b item 9)
     sites: list[str] = []      # not in the lock: `name TAB where` for each declaration, to show when asking
     test_only: bool = False    # only [test-seeds] lists it: a plain build does not use it (design section 3, D94b)
+    key: str = ''              # source 'registry': the fingerprint of the owner key that signed this version (the lock's pin)
+    requires: list[str] = []   # source 'registry': the seeds it needs, `name minimum`, as its version entry says (so the lock alone can be resolved)
 
 # what the command line asked for (native/tomato passes the words)
 export class Opts:
@@ -41,6 +45,8 @@ export class Opts:
     tty: bool = False          # standard input is a terminal, so there may be a question
     test: bool = False         # add: into [test-seeds]
     dry_run: bool = False      # update: show what would change, write nothing
+    allow_yanked: bool = False # add, install: fetch a version its owner yanked as malware
+    registry: str = ''         # add: the registry to use (--registry NAME); '' for the lock's, else the default
 
 export def opts_from(words: list[str]) -> Opts:
     o = Opts()
@@ -50,6 +56,7 @@ export def opts_from(words: list[str]) -> Opts:
     o.tty = 'tty' in words
     o.test = 'test' in words
     o.dry_run = 'dry-run' in words
+    o.allow_yanked = 'allow-yanked' in words
     return o
 
 def fail(code: int, path: str, text: str):
@@ -165,7 +172,7 @@ def find_symbols(seed: Locked, folder: str):
 
 # a folder that is a seed (the one a path names, or a fetched git tree): its manifest, name, version, modules, content hash and symbols.
 # want is the name the manifest lists it under ('' to take whatever it is called, for `seed add`)
-def describe_folder(m: Manifest, want: str, folder: str, have: str) -> Locked:
+def describe_folder(m: Manifest, want: str, folder: str, have: str, allow_deps: bool = False) -> Locked:
     file = folder + '/tomato.toml'
     if not isfile(file):
         fail(572, m.path, 'the seed has no tomato.toml: the folder of a seed needs one with a [seed] table')
@@ -176,7 +183,7 @@ def describe_folder(m: Manifest, want: str, folder: str, have: str) -> Locked:
         fail(573, m.path, f'"{want}" is listed with the source {folder}, but the seed there is called "{sm.name}"')
     check_tomato(sm, have)
     for r in sm.reqs:
-        if r.table == '':
+        if r.table == '' and not allow_deps:
             fail(574, m.path, f'the seed {sm.name} itself uses the seed {r.name}, and seeds that use seeds cannot be installed yet: there is no registry')
     out = Locked()
     out.name = sm.name
@@ -331,13 +338,15 @@ def str_array(items: list[str]) -> Value:
 # older Tomato reads version 1 only and stops on a 2 with "not version 1" instead of building another tree from the same URL and commit
 export def lock_version(seeds: list[Locked]) -> int:
     for s in seeds:
-        if s.source == 'git' and s.path != '':
+        if (s.source == 'git' or s.source == 'registry') and s.path != '':
             return 2
     return 1
 
-export def lock_text(seeds: list[Locked]) -> str:
+export def lock_text(seeds: list[Locked], index: str = '') -> str:
     doc = Dict({})
     doc.as_dict()['version'] = Int(lock_version(seeds))
+    if index != '':
+        doc.as_dict()['index'] = Str(index)
     list_t: list[Value] = []
     for s in sorted(seeds, key=x -> x.name):
         fields: dict[str, Value] = {}
@@ -346,16 +355,18 @@ export def lock_text(seeds: list[Locked]) -> str:
         fields['source'] = Str(s.source)
         if s.source == 'path':
             fields['path'] = Str(s.path)
-        if s.source == 'git':
+        if s.source == 'git' or s.source == 'registry':
             fields['git'] = Str(s.git)
             fields['commit'] = Str(s.commit)
             if s.path != '':
                 fields['path'] = Str(s.path)
+        if s.source == 'registry':
+            fields['key'] = Str(s.key)
         fields['hash'] = Str(s.hash)
         fields['modules'] = str_array(s.modules)
         if len(s.symbols) > 0:
             fields['symbols'] = str_array(s.symbols)
-        fields['seeds'] = str_array([])
+        fields['seeds'] = str_array(s.requires)
         if s.test_only:
             fields['test_only'] = Bool(True)
         list_t.append(Dict(fields))
@@ -402,12 +413,15 @@ export def read_lock(path: str) -> list[Locked]:
             s.source = must_string(path, t, 'source')
             if s.source == 'path':
                 s.path = must_string(path, t, 'path')
-            if s.source == 'git':
+            if s.source == 'git' or s.source == 'registry':
                 s.git = must_string(path, t, 'git')
                 s.commit = must_string(path, t, 'commit')
+                if s.source == 'registry':
+                    s.key = must_string(path, t, 'key')
+                    s.requires = string_list(path, t, 'seeds')
                 if t.has('path'):
                     if version < 2:
-                        fail(578, path, 'a git [[seed]] entry has a path, which only a lock of version 2 has: the lock is damaged, run `tomato seed install`')
+                        fail(578, path, f'a {s.source} [[seed]] entry has a path, which only a lock of version 2 has: the lock is damaged, run `tomato seed install`')
                     s.path = must_string(path, t, 'path')
             s.hash = must_string(path, t, 'hash')
             s.modules = string_list(path, t, 'modules')
@@ -419,6 +433,15 @@ export def read_lock(path: str) -> list[Locked]:
             out.append(s)
     return out
 
+# the name of the registry the lock's seeds came from ('' when it has none)
+def read_lock_index(path: str) -> str:
+    if not isfile(path):
+        return ''
+    doc = read_toml(path)
+    if doc.has('index') and doc['index'].kind() == 'str':
+        return doc['index'].as_str()
+    return ''
+
 def lock_path(m: Manifest) -> str:
     return m.dir + 'tomato.lock'
 
@@ -427,9 +450,198 @@ def lock_path(m: Manifest) -> str:
 # already knows is taken from the store (or the vendor folder) and fetched only when it is in neither; one the lock does not know is
 # fetched. Returns the seeds and the lines to print.
 
+# ---------------------------------------------------------------------------------------------------------------------
+# registry seeds (design sections 3, 4 and 9; stage 4): a seed that an index vouches for. Its version entry, signed by the owner's key, says the
+# git URL, the commit, the content hash and the seeds it needs; the files are fetched as a git seed's are and must hash to what the entry says,
+# and the seed's own tomato.toml at that commit must say what the entry says. The lock keeps all of it, so a build, `install --locked` and `verify`
+# need no index; only choosing versions (`add`, `install` of a manifest the lock does not cover) reads one.
+
+def requires_text(reqs: dict[str, str]) -> list[str]:
+    out: list[str] = []
+    for k in sorted(reqs.keys()):
+        out.append(f'{k} {reqs[k]}')
+    return out
+
+def requires_dict(items: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in items:
+        parts = item.split(' ')
+        if len(parts) == 2:
+            out[parts[0]] = parts[1]
+    return out
+
+# what the seed's own tomato.toml says must be what the signed entry says (name, version, the seeds it needs, its modules): else the owner signed
+# one thing and published another
+def check_entry_match(m: Manifest, e: Locked, s: Locked, folder: str):
+    sm = read_manifest(folder + '/tomato.toml')
+    where = f'the seed {e.name} {e.version} (commit {e.commit[:12]})'
+    if sm.version != e.version:
+        fail(684, m.path, f'{where} says its version is {sm.version} in its tomato.toml, but its signed entry in the index says {e.version}')
+    mine: dict[str, str] = {}
+    for r in sm.reqs:
+        if r.table != '':
+            continue
+        if r.kind != 'version':
+            fail(684, m.path, f'{where} lists {r.name} from a git or path source in its tomato.toml, and a registered seed uses registered seeds only')
+        mine[r.name] = r.version
+    want = requires_dict(e.requires)
+    if requires_text(mine) != requires_text(want):
+        fail(684, m.path, f'{where} needs {", ".join(requires_text(mine)) if len(mine) > 0 else "no seeds"} by its tomato.toml, but its signed entry in the index says {", ".join(requires_text(want)) if len(want) > 0 else "none"}')
+    if sorted(s.modules) != sorted(e.modules):
+        fail(684, m.path, f'{where} has the modules {", ".join(s.modules)}, but its signed entry in the index says {", ".join(e.modules)}')
+
+# the seed as `e` (a lock entry, or one made from an index entry) describes it, from the store, the vendor folder or git
+def locked_registry_seed(m: Manifest, e: Locked, have: str, opts: Opts) -> Locked:
+    why = git_url_problem(e.git)
+    if why != '':
+        fail(598, m.path, f'the git URL of the seed {e.name} cannot be used: {why}')
+    for folder in [store_dir(e.hash), vendor_folder(m, e.name)]:
+        if folder != '' and isdir(folder):
+            there = read_manifest(folder + '/tomato.toml') if isfile(folder + '/tomato.toml') else Manifest()
+            if there.kind == 'seed' and there.name != e.name and seed_hash(folder) == e.hash:
+                fail(684, m.path, f'the signed entry of {e.name} {e.version} says its content hash is {e.hash}, which is the hash of the seed {there.name}, not of {e.name}')
+            s = describe_folder(m, e.name, folder, have, True)
+            if s.hash != e.hash:
+                if folder == vendor_folder(m, e.name):
+                    continue
+                if opts.offline:
+                    changed_copy(m, e, folder, s.hash)
+                continue
+            check_entry_match(m, e, s, folder)
+            return with_entry_fields(s, e)
+    if opts.offline:
+        fail(605, m.path, f'the seed {e.name} is not in the seed store ({store_dir(e.hash)}) or the vendor folder, and --offline does not run git: run `tomato seed install` once with the network')
+    scratch = make_scratch()
+    s = Locked()
+    try:
+        tree = scratch + '/tree'
+        fetch_tree(e.git, e.commit, tree, scratch, e.path)
+        s = describe_folder(m, e.name, tree, have, True)
+        if s.hash != e.hash:
+            fail(601, m.path, f'the seed {e.name} fetched from {e.git} at {e.commit[:12]} has the content hash {s.hash}, but its signed entry (tomato.lock) says {e.hash}: the repository does not hold what the owner published (nothing was stored)')
+        check_entry_match(m, e, s, tree)
+        place = store_dir(s.hash)
+        if isdir(place) and seed_hash(place) != s.hash:
+            remove_tree(place)
+        if not isdir(place):
+            makedirs(dirname(place), True)
+            try:
+                rename(tree, place)
+            catch IOError as err:
+                if not isdir(place):
+                    fail(599, m.path, f'cannot put the seed into the store at {place}: {err}')
+    finally:
+        remove_tree(scratch)
+    return with_entry_fields(s, e)
+
+def with_entry_fields(s: Locked, e: Locked) -> Locked:
+    s.source = 'registry'
+    s.git = e.git
+    s.commit = e.commit
+    s.path = e.path
+    s.key = e.key
+    s.requires = e.requires
+    return s
+
+# the lock entry that an index entry stands for
+def entry_locked(rec: SeedRec, v: VersionRec) -> Locked:
+    e = Locked()
+    e.name = rec.full
+    e.version = v.version
+    e.source = 'registry'
+    e.git = rec.git
+    e.commit = v.commit
+    e.path = rec.path
+    e.hash = v.hash
+    e.key = v.key
+    e.modules = v.modules
+    e.requires = requires_text(v.seeds)
+    return e
+
+def yank_word(v: VersionRec) -> str:
+    who = 'by its owner' if v.yanked == 'owner' else 'by a maintainer of the registry'
+    return f'{v.version} is yanked {who} ({v.yank_kind}): {v.yank_reason}'
+
+# every registry seed of the build, with the seeds they need: chosen by minimal version selection from the lock alone when the lock covers the
+# manifest (no index, no network but a missing store copy), else from the registry's index. Returns the lock entries (with their files in the store).
+def registry_seeds(m: Manifest, have: str, opts: Opts, old: list[Locked], wanted: Wanted, out: Relocked) -> list[Locked]:
+    roots: list[Root] = []
+    for i in range(len(wanted.reqs)):
+        r = wanted.reqs[i]
+        if r.kind == 'version':
+            root = Root()
+            root.name = r.name
+            root.version = r.version
+            root.test = '' not in wanted.tables[i]
+            roots.append(root)
+    made: list[Locked] = []
+    if len(roots) == 0:
+        return made
+    lock_index = read_lock_index(lock_path(m))
+    known: dict[str, dict[str, dict[str, str]]] = {}
+    byname: dict[str, Locked] = {}
+    for e in old:
+        if e.source == 'registry':
+            byname[e.name] = e
+            if e.name not in known:
+                known[e.name] = {}
+            known[e.name][e.version] = requires_dict(e.requires)
+    res = select(roots, known, None)
+    covered = res.ok
+    if covered:
+        for c in res.chosen:
+            if c.name not in byname or byname[c.name].version != c.version:
+                covered = False
+    if covered and opts.registry != '' and lock_index != '' and opts.registry != lock_index:
+        fail(679, m.path, f'tomato.lock holds seeds from the registry {lock_index}, and --registry {opts.registry} would mix registries in one lock')
+    if covered:
+        out.index = lock_index
+        for c in res.chosen:
+            e = byname[c.name]
+            s = locked_registry_seed(m, e, have, opts)
+            s.test_only = c.test_only
+            made.append(s)
+        return made
+    if opts.locked:
+        fail(578, m.path, 'tomato.lock does not match this manifest: run `tomato seed install` and commit the new lock')
+    if opts.offline:
+        fail(605, m.path, 'the lock does not cover the registry seeds of tomato.toml, and --offline does not read an index: run `tomato seed install` once with the network')
+    cfg = read_user_config()
+    reg = pick_registry(cfg, opts.registry, lock_index)
+    if lock_index != '' and reg.name != lock_index:
+        fail(679, m.path, f'tomato.lock holds seeds from the registry {lock_index}, and {reg.name} would mix registries in one lock')
+    idx = open_registry(reg)
+    try:
+        fresh = select(roots, {}, idx)
+        for c in fresh.chosen:
+            rec = need_seed(idx, reg, c.name)
+            v = version_named(rec, c.version)
+            if v is None:
+                fail(682, m.path, f'the registry {reg.name} has no version {c.version} of {c.name}')
+                return made
+            if rec.git == '':
+                fail(682, m.path, f'the registry {reg.name} has no source statement for {c.name}: nothing says where to fetch it')
+            e = entry_locked(rec, v)
+            if c.name in byname:
+                was = byname[c.name]
+                if was.version == e.version and (was.commit != e.commit or was.hash != e.hash or was.key != e.key or was.git != e.git or was.path != e.path):
+                    fail(684, m.path, f'tomato.lock has {c.name} {c.version} at commit {was.commit[:12]} ({short_hash(was.hash)}, key {was.key}), but the registry now says commit {e.commit[:12]} ({short_hash(e.hash)}, key {e.key}): a published version never changes, so one of them was altered (the lock is what builds)')
+            if v.yanked != '':
+                print(f'warning: {c.name} {yank_word(v)}')
+            if v.yanked == 'owner' and v.yank_kind == 'malware' and not opts.allow_yanked and not isdir(store_dir(e.hash)):
+                fail(685, m.path, f'{c.name} {yank_word(v)}: its owner says it is malware, so it is not fetched (add --allow-yanked to fetch it anyway)')
+            s = locked_registry_seed(m, e, have, opts)
+            s.test_only = c.test_only
+            made.append(s)
+    finally:
+        close_index(idx)
+    out.index = reg.name
+    return made
+
 class Relocked:
     seeds: list[Locked] = []
     said: list[str] = []
+    index: str = ''            # the registry the lock's registry seeds came from
 
 def old_lock(m: Manifest) -> list[Locked]:
     # the lock on disk, for what it already knows; a lock that cannot be read knows nothing (install writes it again)
@@ -532,16 +744,20 @@ def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], appro
     wanted = seeds_for(m, False, True)
     old = old_lock(m)
     out = Relocked()
+    made: list[Locked] = []
     for i in range(len(wanted.reqs)):
         r = wanted.reqs[i]
         if r.kind == 'version':
-            fail(571, m.path, f'the seed {r.name} {r.version} would come from a registry, and there is none yet; only {{ path = "../folder" }} and {{ git = "URL", rev = "COMMIT" }} seeds can be installed')
+            continue
         s = Locked()
         if r.kind == 'git':
             s = locked_git_seed(m, r, have, [known, old], opts)
         else:
             s = locked_path_seed(m, r, have)
         s.test_only = '' not in wanted.tables[i]
+        made.append(s)
+    made += registry_seeds(m, have, opts, old, wanted, out)
+    for s in made:
         accepted: list[str] = []
         if s.name in approved:
             accepted = approved[s.name]
@@ -559,6 +775,8 @@ def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], appro
         if s.source == 'git':
             where = f'git {s.git} {s.commit[:12]}' + (f' path {s.path}' if s.path != '' else '')
             out.said.append(f'{s.name} {s.version}  {s.hash}  ({where})')
+        elif s.source == 'registry':
+            out.said.append(f'{s.name} {s.version}  {s.hash}  (registry {out.index}, git {s.git} {s.commit[:12]})')
         else:
             out.said.append(f'{s.name} {s.version}  {s.hash}  (path {s.path})')
     # two seeds that both provide a module cannot be in one program (section 5)
@@ -567,7 +785,7 @@ def relock(manifest_path: str, have: str, opts: Opts, known: list[Locked], appro
             for mod in out.seeds[i].modules:
                 if mod in out.seeds[j].modules:
                     fail(577, m.path, f"the seeds {out.seeds[i].name} and {out.seeds[j].name} both provide the module '{mod}': one program holds one copy of a module")
-    text = lock_text(out.seeds)
+    text = lock_text(out.seeds, out.index)
     path = lock_path(m)
     have_lock = isfile(path)
     if opts.locked:
@@ -602,7 +820,7 @@ def source_folder(m: Manifest, s: Locked) -> str:
     v = vendor_folder(m, s.name)
     if v != '':
         return v
-    if s.source == 'git':
+    if s.source == 'git' or s.source == 'registry':
         return store_dir(s.hash)
     return seed_folder(m, s.path)
 
@@ -617,33 +835,61 @@ export def module_map(m: Manifest, tests: bool) -> list[str]:
         fail(569, m.path, f'this uses the seed {wanted.reqs[0].name}, but there is no tomato.lock beside it{help}')
     lock = read_lock(path)
     owner: dict[str, str] = {}
-    for r in wanted.reqs:
+    # the seeds the manifest asks for, then the registry seeds they need (the lock holds each one's requirements), each once
+    names: list[str] = []
+    req_of: dict[str, SeedReq] = {}
+    for r0 in wanted.reqs:
+        names.append(r0.name)
+        req_of[r0.name] = r0
+    k = 0
+    while k < len(names):
+        name = names[k]
+        k += 1
         found = Locked()
         have_it = False
         for s in lock:
-            if s.name == r.name:
+            if s.name == name:
                 found = s
                 have_it = True
         if not have_it:
-            fail(569, m.path, f'the seed {r.name} is in tomato.toml but not in tomato.lock{help}')
-        if r.kind == 'path':
-            if found.source != 'path' or found.path != r.path:
-                fail(569, m.path, f'tomato.lock has the seed {r.name} from another source than the path "{r.path}" in tomato.toml{help}')
-        elif r.kind == 'git':
-            if found.source != 'git' or found.git != r.url or found.commit != r.rev or found.path != r.subdir:
-                fail(569, m.path, f'tomato.lock has the seed {r.name} from another source than the git URL and rev in tomato.toml{help}')
-        elif r.kind == 'version':
-            if found.source == 'path' or found.source == 'git' or compare_versions(found.version, r.version) < 0 or not same_line(found.version, r.version):
-                fail(569, m.path, f'tomato.lock has the seed {r.name} {found.version}, which does not meet the {r.version} in tomato.toml{help}')
-        if found.source != 'path' and found.source != 'git':
-            fail(571, m.path, f'the seed {r.name} comes from a {found.source}, which this version cannot build yet (there is no registry)')
+            if name in req_of:
+                fail(569, m.path, f'the seed {name} is in tomato.toml but not in tomato.lock{help}')
+            fail(569, m.path, f'the seed {name} is needed by a seed in tomato.lock, but tomato.lock does not hold it{help}')
+        if name in req_of:
+            r = req_of[name]
+            if r.kind == 'path':
+                if found.source != 'path' or found.path != r.path:
+                    fail(569, m.path, f'tomato.lock has the seed {r.name} from another source than the path "{r.path}" in tomato.toml{help}')
+            elif r.kind == 'git':
+                if found.source != 'git' or found.git != r.url or found.commit != r.rev or found.path != r.subdir:
+                    fail(569, m.path, f'tomato.lock has the seed {r.name} from another source than the git URL and rev in tomato.toml{help}')
+            elif r.kind == 'version':
+                if found.source != 'registry' or compare_versions(found.version, r.version) < 0 or not same_line(found.version, r.version):
+                    fail(569, m.path, f'tomato.lock has the seed {r.name} {found.version}, which does not meet the {r.version} in tomato.toml{help}')
+        elif found.source != 'registry':
+            fail(569, m.path, f'tomato.lock lists the seed {name} from a {found.source} source as needed by another seed, which only a registry seed does{help}')
+        if found.source != 'path' and found.source != 'git' and found.source != 'registry':
+            fail(571, m.path, f'the seed {name} comes from a {found.source}, which this version cannot build')
+        if found.source == 'registry':
+            for item in found.requires:
+                parts = item.split(' ')
+                dep = Locked()
+                has_dep = False
+                for s in lock:
+                    if s.name == parts[0]:
+                        dep = s
+                        has_dep = True
+                if len(parts) != 2 or not has_dep or compare_versions(dep.version, parts[1]) < 0 or not same_line(dep.version, parts[1]):
+                    fail(569, m.path, f'tomato.lock has the seed {name} {found.version}, which needs {item}, but tomato.lock does not hold a seed that meets it{help}')
+                if parts[0] not in names:
+                    names.append(parts[0])
         folder = source_folder(m, found)
-        if found.source == 'git' or vendor_folder(m, found.name) != '':
+        if found.source == 'git' or found.source == 'registry' or vendor_folder(m, found.name) != '':
             # a copy in the store or the vendor folder is checked against the lock on every build (a path seed is a working folder and is not)
             if not isdir(folder):
                 where = 'the vendor folder' if vendor_folder(m, found.name) != '' else 'the seed store'
                 fix = 'tomato seed vendor' if vendor_folder(m, found.name) != '' else 'tomato seed install'
-                fail(569, m.path, f'the seed {r.name} is not in {where} ({folder}){chr(10)}  = help: run: {fix}')
+                fail(569, m.path, f'the seed {name} is not in {where} ({folder}){chr(10)}  = help: run: {fix}')
             actual = seed_hash(folder)
             if actual != found.hash:
                 changed_copy(m, found, folder, actual)
@@ -677,13 +923,15 @@ export def module_map(m: Manifest, tests: bool) -> list[str]:
 # manifest is put back as it was
 
 export class AddSpec:
-    kind: str = 'path'         # 'path' (--path DIR) or 'git' (--git URL with --rev COMMIT, --tag TAG or --branch BRANCH)
+    kind: str = 'path'         # 'path' (--path DIR), 'git' (--git URL with --rev COMMIT, --tag TAG or --branch BRANCH) or 'registry' (a name the registry knows)
     path: str = ''             # the folder as the user wrote it, relative to the current folder
     url: str = ''
     rev: str = ''
     tag: str = ''              # git: a tag, resolved to its commit now; `seed update` follows it
     branch: str = ''           # git: a branch, the same
     subdir: str = ''           # git: the folder of the repository that holds the seed (--subdir)
+    name: str = ''             # kind 'registry': what was typed, an alias, a short name or owner/name, without the @VERSION
+    version: str = ''          # kind 'registry': the version after @, '' for the newest listed one
 
 # ---------------------------------------------------------------------------------------------------------------------
 # host shortcuts and handles (design sections 1.10 and 6; D117a: both are in for 1.0). `tomato seed add gh:USER/REPO --rev COMMIT` is
@@ -735,24 +983,6 @@ export def expand_shortcut(path: str, word: str) -> str:
         return host_base(host) + '~' + user + '/' + repo
     return host_base(host) + user + '/' + repo + '.git'
 
-# why `owner` is not a handle, '' when it is (design section 1.2, 1.10): a short name `[a-z][a-z0-9-]{1,31}`, no dot, not k- (a key), not a name
-# the registry keeps (local, std, tomato) or a standard module's or one std keeps for later. Whether a maintainer has granted it is the registry's to say
-export def handle_problem(owner: str) -> str:
-    if len(owner) < 2 or len(owner) > 32:
-        return 'a handle is 2 to 32 characters'
-    for i in range(len(owner)):
-        c = owner[i]
-        low = 'a' <= c and c <= 'z'
-        if i == 0 and not low:
-            return 'a handle starts with a lowercase letter'
-        if not low and not ('0' <= c and c <= '9') and c != '-':
-            return 'a handle has lowercase letters, digits and hyphens only (a dot would make it a domain)'
-    if owner.startswith('k-'):
-        return 'a handle does not start with k-, which is for keys'
-    if owner == 'local' or owner == 'std' or owner == 'tomato' or owner in reserved_modules():
-        return 'that name is reserved'
-    return ''
-
 # the AddSpec of the word given to `tomato seed add` (neither --path nor --git): a host shortcut becomes a git source, a seed name
 # (`dave/thing`, `acme.example/json5`, with `@VERSION` allowed) is a registry seed, which cannot be added until there is a registry (E571)
 export def add_spec_from_word(path: str, word: str, rev: str, tag: str, branch: str, subdir: str) -> AddSpec:
@@ -776,23 +1006,32 @@ export def add_spec_from_word(path: str, word: str, rev: str, tag: str, branch: 
             fail_word(621, f'a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH: {word} is {spec.url}')
         return spec
     name = word
+    version = ''
     if '@' in word:
         name = word[:word.find('@')]
-        problem = version_problem(word[word.find('@') + 1:], True)
+        version = word[word.find('@') + 1:]
+        problem = version_problem(version, True)
         if problem != '':
             fail_word(621, f'"{word}" has a version that is not one: {problem}')
-    problem = name_problem(name)
-    if problem != '':
-        fail_word(621, f'"{word}" is not a seed name or a host shortcut: {problem} (a folder is --path DIR, a git URL is --git URL)')
-    owner = name.split('/')[0]
-    kind = f'the domain {owner}'
-    if '.' not in owner:
-        problem = handle_problem(owner)
+    if '/' not in name:
+        # a bare name: the user's alias, else a short name of the registry (section 1.7); the registry answers, so it is checked there
+        problem = seed_name_problem(name)
         if problem != '':
-            fail_word(621, f'"{word}" is not a seed name: the owner {owner} has no dot, so it would be a handle, and it is not one ({problem}); a domain owner has a dot (acme.example)')
-        kind = f'the handle {owner}'
-    fail_word(571, f'{name} is a registry seed (owner: {kind}), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT (also gitlab:, codeberg: and srht:), tomato seed add --git URL --rev COMMIT, or --path DIR')
-    return AddSpec()
+            fail_word(621, f'"{word}" is not a seed name or a host shortcut: {problem} (a folder is --path DIR, a git URL is --git URL)')
+    else:
+        problem = name_problem(name)
+        if problem != '':
+            fail_word(621, f'"{word}" is not a seed name or a host shortcut: {problem} (a folder is --path DIR, a git URL is --git URL)')
+        owner = name.split('/')[0]
+        if '.' not in owner:
+            problem = handle_problem(owner)
+            if problem != '':
+                fail_word(621, f'"{word}" is not a seed name: the owner {owner} has no dot, so it would be a handle, and it is not one ({problem}); a domain owner has a dot (acme.example)')
+    spec = AddSpec()
+    spec.kind = 'registry'
+    spec.name = name
+    spec.version = version
+    return spec
 
 # ---------------------------------------------------------------------------------------------------------------------
 # the `# seeds:` header of a single .tom file (design sections 5 and 6; D117a): a program names the seeds it needs in a comment line at the
@@ -961,12 +1200,80 @@ def check_edit(path: str, before: Manifest, name: str, table: str, added: str, b
 def req_key(r: SeedReq) -> str:
     return f'{r.table}|{r.name}|{r.kind}|{r.version}|{r.url}|{r.rev}|{r.path}|{r.tag}|{r.branch}|{r.subdir}'
 
+# `tomato seed add NAME[@VERSION]` for a registry seed (section 12): the word is an alias, a short name or a full name; the registry's newest listed
+# version (or the one named) is written as the minimum in tomato.toml, and the lock is made from it. The summary of what is added is printed
+# before anything is written
+def add_registry(manifest_path: str, m: Manifest, have: str, spec: AddSpec, opts: Opts) -> list[str]:
+    cfg = read_user_config()
+    lock_index = read_lock_index(lock_path(m))
+    if opts.registry != '' and lock_index != '' and opts.registry != lock_index:
+        fail(679, m.path, f'tomato.lock holds seeds from the registry {lock_index}, and --registry {opts.registry} would mix registries in one lock')
+    reg = pick_registry(cfg, opts.registry, lock_index)
+    opts.registry = reg.name
+    idx = open_registry(reg)
+    pick = Pick()
+    full = ''
+    version = ''
+    lines: list[str] = []
+    try:
+        pick = pick_seed(cfg, idx, reg, spec.name)
+        full = pick.full
+        rec = need_seed(idx, reg, full)
+        got: VersionRec | None = None
+        if spec.version != '':
+            got = version_named(rec, spec.version)
+            if got is None:
+                have_versions = ', '.join([v.version for v in rec.versions])
+                fail(682, m.path, f'{full} has no version {spec.version} in the registry {reg.name} (its versions: {have_versions})' + ignored_lines(idx, full))
+                return lines
+            if got.yanked == 'owner' and got.yank_kind == 'malware' and not opts.allow_yanked:
+                fail(685, m.path, f'{full} {yank_word(got)}: its owner says it is malware, so it is not added (add --allow-yanked to add it anyway)')
+        else:
+            got = newest_listed(rec)
+            if got is None:
+                fail(682, m.path, f'{full} has no version that is listed: every version is yanked or a pre-release; name one with {full}@VERSION')
+                return lines
+        version = got.version
+        lines = summary_lines(idx, rec, got, pick, reg)
+        if pick.said != '':
+            lines.insert(0, pick.said)
+    finally:
+        close_index(idx)
+    for line in lines:
+        print(line)
+    req = SeedReq()
+    req.table = 'test' if opts.test else ''
+    req.name = full
+    req.kind = 'version'
+    # an existing minimum that is higher on the same line stays: `add` never lowers a requirement
+    for r0 in m.reqs:
+        if r0.name == full and r0.table == req.table and r0.kind == 'version' and same_line(r0.version, version) and compare_versions(r0.version, version) > 0:
+            version = r0.version
+    req.version = version
+    where = 'test-seeds' if opts.test else 'seeds'
+    value = dumps_value(Str(version))
+    original = read_text(manifest_path)
+    write_text(manifest_path, add_entry(original, where, full, value))
+    said: list[str] = []
+    done = False
+    try:
+        check_edit(manifest_path, m, full, req.table, req_key(req), f'Add this line to [{where}] yourself: "{full}" = {value}')
+        said = relock(manifest_path, have, opts, [], {}, []).said
+        done = True
+    finally:
+        if not done:
+            write_text(manifest_path, original)
+    said.insert(0, f'added {full} {version} to [{where}] of {manifest_path}')
+    return said
+
 export def add(manifest_path: str, have: str, spec: AddSpec, opts: Opts) -> list[str]:
     m = read_manifest(manifest_path)
     check_tomato(m, have)
     if m.kind != 'project':
         what = 'a seed (a package can use only registered seeds, and there is no registry yet)' if m.kind == 'seed' else 'neither a project nor a seed'
         fail(604, m.path, f'seeds are added to a [project], and this file is {what}')
+    if spec.kind == 'registry':
+        return add_registry(manifest_path, m, have, spec, opts)
     req = SeedReq()
     req.table = 'test' if opts.test else ''
     old = old_lock(m)
@@ -1130,7 +1437,7 @@ export def update(manifest_path: str, have: str, names: list[str], opts: Opts) -
             continue
         selected.append(r.name)
         if r.kind == 'version':
-            fail(571, m.path, f'the seed {r.name} {r.version} would come from a registry, and there is none yet; only {{ path = "../folder" }} and {{ git = "URL", rev = "COMMIT" }} seeds can be updated')
+            fail(571, m.path, f'the seed {r.name} {r.version} comes from a registry, and tomato seed update does not raise registry seeds yet; add a newer version by hand: tomato seed add {r.name}@VERSION')
         if r.kind != 'git':
             continue
         if r.tag == '' and r.branch == '':
@@ -1206,7 +1513,7 @@ export def vendor(manifest_path: str, have: str, opts: Opts) -> list[str]:
     got = relock(manifest_path, have, opts, [], {}, [])
     said: list[str] = []
     for s in got.seeds:
-        source = store_dir(s.hash) if s.source == 'git' else seed_folder(m, s.path)
+        source = store_dir(s.hash) if s.source == 'git' or s.source == 'registry' else seed_folder(m, s.path)
         dest = root + '/' + s.name
         tmp = dest + '.new'
         remove_tree(tmp)
@@ -1261,13 +1568,13 @@ export def verify(manifest_path: str, have: str) -> list[str]:
     copies = 0
     for s in lock:
         label = f'{s.name} {s.version}'
-        if s.source != 'git' and s.source != 'path':
-            print(f'PROBLEM  {label}: it comes from a {s.source}, which this version cannot check (there is no registry)')
+        if s.source != 'git' and s.source != 'path' and s.source != 'registry':
+            print(f'PROBLEM  {label}: it comes from a {s.source}, which this version cannot check')
             problems += 1
             continue
         vfolder = vendor_folder(m, s.name)
         places: list[str] = []         # `kind TAB folder`
-        if s.source == 'git':
+        if s.source == 'git' or s.source == 'registry':
             try:
                 places.append('store\t' + store_dir(s.hash))
             catch ConfigError as e:

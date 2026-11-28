@@ -1,0 +1,17 @@
+[[source]]
+git = "https://git.fixture.example/rogue.example/evil.git"
+signed_by = "SHA256:5qyJM+u5t6Tiys+E1sT/BaIkFHgNt1dK7s4CZNLAW5U"
+accepted = 2026-11-25T09:05:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgn8gYAfouauw6+FSEE1mrNjB868\nf5VnAkwa1tju5pBisAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQKbWpPPQRPGJq8i5LRCRK0R642NjEZZuGB7OKR1XBzUXKP77lp\nhvcBc9GVv4fqKaVQySx0S138Ym8EmtRzTzuAg=\n-----END SSH SIGNATURE-----\n"
+
+[[version]]
+version = "1.0.0"
+commit = "b82c9b3e1d3cff24bdca53286480d261a6602663"
+hash = "sha256:af188feed15ecbdb1a54ffddf17117bebca63975fbf3c84fff46566347d7a4d9"
+tomato = "0.51"
+modules = ["evil"]
+published = "2026-11-26"
+signed_by = "SHA256:MbAk/6mXDOpx77qgmoeApz+qb6bqIvZPXNQr45Tk/WM"
+accepted = 2026-11-26T10:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgL8A4gBldyKOQ9G6cmGHdXzx0Ny\nrux3V6xXe7PwsZJ/QAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQPc2fYfx11iH3m9MbAyp1agHh/zmWenW2AXyry4FzprThM1JXB\nay2hnAOXe4Jdx8m1MUfiJ6VSfbL5sSGjTmPgw=\n-----END SSH SIGNATURE-----\n"
+

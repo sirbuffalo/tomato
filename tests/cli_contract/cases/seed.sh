@@ -21,10 +21,24 @@ check "seed hash: changed back, the same hash" "$h1" "$("$TOMATO" seed hash thin
 try "seed hash of a folder that is not there" 1 "" "error[E572]: nosuch is not a folder" seed hash nosuch
 try "seed hash of two folders" 2 "" @help.txt seed hash a b
 try "seed with no subcommand" 2 "" @help.txt seed
-try "seed with an unknown subcommand" 1 "" "error: unknown seed command 'bogus' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check and hash)" seed bogus
+try "seed with an unknown subcommand" 1 "" "error: unknown seed command 'bogus' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check, hash, registry, alias and unalias)" seed bogus
 try "seed install with an unknown option" 1 "" "error: unknown option '--bogus' for 'tomato seed install' (run 'tomato help')" seed install --bogus
 try "seed install with a word that is no option" 1 "" "error: unknown option 'now' for 'tomato seed install' (run 'tomato help')" seed install --locked now
 try "seed check with a word" 2 "" @help.txt seed check now
+# the registry commands (D133a): they need no project and no network; with none set up they say how to set one up
+try "seed registry with no word" 1 "" "error[E679]: usage: tomato seed registry add NAME URL [--maintainer KEY] | update [NAME] | list" seed registry
+try "seed registry list with none set up" 0 "no registry is set up (tomato seed registry add NAME URL [--maintainer KEY])" "" seed registry list
+try "seed registry update with none set up" 1 "" "error[E679]: there is no registry set up
+  = help: tomato seed registry add NAME URL [--maintainer KEY]" seed registry update
+try "seed alias lists none" 0 "no aliases are set (tomato seed alias NAME OWNER/NAME)" "" seed alias
+try "seed alias needs a full name" 1 "" "error[E679]: \"json5\" is not a seed name: a seed name is owner/name with exactly one slash (an alias stands for a full owner/name)" seed alias j json5
+try "seed unalias of a name that is not an alias" 1 "" "error[E679]: there is no alias \"j\" in $W/.tomato-home/config.toml" seed unalias j
+mkdir -p noreg
+printf '[project]\nname = "noreg"\nversion = "0.1.0"\ntomato = "%s"\n' "$minv" > noreg/tomato.toml
+within noreg try "seed add NAME with no registry set up" 1 "" "error[E571]: there is no registry set up, so a seed cannot be looked up by name
+  = help: tomato seed registry add NAME URL [--maintainer KEY] sets one up; or add the seed from where it lives: tomato seed add gh:USER/REPO --rev COMMIT, tomato seed add --git URL --rev COMMIT, or --path DIR" seed add json5
+within noreg try "seed add --registry names one that is not set up" 1 "" "error[E679]: --registry nope names the registry \"nope\", but $W/.tomato-home/config.toml has no [registries.nope] (it has: none)
+  = help: tomato seed registry add nope URL" seed add acme.example/json5@1.0.0 --registry nope
 # no manifest
 within app try "seed check: no tomato.toml" 1 "" "error: there is no tomato.toml in this folder or a parent folder" seed check
 within app try "seed install: no tomato.toml" 1 "" "error: there is no tomato.toml in this folder or a parent folder" seed install

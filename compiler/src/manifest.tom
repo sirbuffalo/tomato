@@ -15,7 +15,7 @@
 # of D77g ([build], [limits]) and is read as a project's. Seeds are resolved elsewhere (seeds.tom); this file only reads and checks.
 from value import Value
 from config import ConfigError, read_toml, read_file, value_word, toml_text, is_table, is_array
-from modnames import planned_modules
+from modnames import planned_modules, reserved_modules
 
 # one requirement of one table: the seed's name, the form it was written in, and the table it is in
 export class SeedReq:
@@ -299,6 +299,24 @@ export def name_problem(text: str) -> str:
             return 'the name has lowercase letters, digits, underscores and hyphens only'
     if name.replace('-', '_') in planned_modules():
         return f"the module name {name.replace('-', '_')} is one the standard library keeps for a module it may add (std/reserved.txt), so a seed cannot provide it: choose another name, such as {name}_x"
+    return ''
+
+# why `owner` is not a handle, '' when it is (design section 1.2, 1.10): a short name `[a-z][a-z0-9-]{1,31}`, no dot, not k- (a key), not a name
+# the registry keeps (local, std, tomato) or a standard module's or one std keeps for later. Whether a maintainer has granted it is the registry's to say
+export def handle_problem(owner: str) -> str:
+    if len(owner) < 2 or len(owner) > 32:
+        return 'a handle is 2 to 32 characters'
+    for i in range(len(owner)):
+        c = owner[i]
+        low = 'a' <= c and c <= 'z'
+        if i == 0 and not low:
+            return 'a handle starts with a lowercase letter'
+        if not low and not ('0' <= c and c <= '9') and c != '-':
+            return 'a handle has lowercase letters, digits and hyphens only (a dot would make it a domain)'
+    if owner.startswith('k-'):
+        return 'a handle does not start with k-, which is for keys'
+    if owner == 'local' or owner == 'std' or owner == 'tomato' or owner in reserved_modules():
+        return 'that name is reserved'
     return ''
 
 # the stem of the module files of a seed: `json-5` is `json_5` (so json_5.tom and json_5_pretty.tom)

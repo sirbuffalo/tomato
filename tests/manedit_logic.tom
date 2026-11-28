@@ -1,6 +1,6 @@
 # The text editor of tomato.toml in compiler/src/manedit.tom (`tomato seed add` and `remove`, D100a), as @test functions: what it changes
 # and, as much, what it leaves alone (comments, blank lines, order, spacing, a comment at the end of a line, CRLF files).
-from manedit import add_entry, remove_entries
+from manedit import add_entry, remove_entries, remove_entry_in
 from testing import assert_equal
 
 @test.adds_after_the_last_entry
@@ -73,3 +73,22 @@ def single_quoted_keys_are_found():
     got = remove_entries("[seeds]\n'y.example/two' = { path = '../two' }\n", 'y.example/two')
     assert_equal(got[0], '[seeds]\n')
     assert_equal(got[1], 1)
+
+@test.a_bare_key_and_a_table_at_the_end_for_the_users_config
+def a_bare_key_and_a_table_at_the_end_for_the_users_config():
+    # the user's config.toml (D131a): a new table goes after everything the file has, with a bare key; the file's comments and tables stay
+    text = '# my settings\n[limits]\nexp_bits = 70000   # kept\n'
+    got = add_entry(text, 'aliases', 'j5', '"acme.example/json5"', True, True)
+    assert_equal(got, '# my settings\n[limits]\nexp_bits = 70000   # kept\n\n[aliases]\nj5 = "acme.example/json5"\n')
+    got2 = add_entry(got, 'aliases', 'k', '"x.example/k"', True, True)
+    assert_equal(got2, '# my settings\n[limits]\nexp_bits = 70000   # kept\n\n[aliases]\nj5 = "acme.example/json5"\nk = "x.example/k"\n')
+    got3 = add_entry(got2, 'registries.fixture', 'index', '"/x"', True, True)
+    assert_equal(got3, got2 + '\n[registries.fixture]\nindex = "/x"\n')
+
+@test.an_entry_is_removed_from_any_table
+def an_entry_is_removed_from_any_table():
+    text = '[aliases]\nj5 = "a/b"   # mine\nk = "x/k"\n\n[seeds]\nj5 = "keep"\n'
+    got = remove_entry_in(text, 'aliases', 'j5')
+    assert_equal(got[1], 1)
+    assert_equal(got[0], '[aliases]\nk = "x/k"\n\n[seeds]\nj5 = "keep"\n')
+    assert_equal(remove_entry_in(text, 'aliases', 'none')[1], 0)

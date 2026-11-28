@@ -159,9 +159,14 @@ def join_text(t: Text) -> str:
         out += sep
     return out
 
-# where a new table goes: before the first table that is not [project] or [seed] (the lines of comments right above that header go
+# where a new table goes (at_end: after the last line of the file, as the user's config.toml wants it): before the first table that is not [project] or [seed] (the lines of comments right above that header go
 # with it), at the end of the file when there is none; [test-seeds] goes after [seeds] when there is one
-def new_table_at(lines: list[str], spans: list[Span], table: str) -> int:
+def new_table_at(lines: list[str], spans: list[Span], table: str, at_end: bool = False) -> int:
+    if at_end:
+        end = len(lines)
+        while end > 0 and lines[end - 1].strip() == '':
+            end -= 1
+        return end
     if table == 'test-seeds':
         for s in spans:
             if s.name == 'seeds':
@@ -177,10 +182,10 @@ def new_table_at(lines: list[str], spans: list[Span], table: str) -> int:
         at -= 1
     return at
 
-export def add_entry(text: str, table: str, name: str, value: str) -> str:
+export def add_entry(text: str, table: str, name: str, value: str, bare: bool = False, at_end: bool = False) -> str:
     t = split_text(text)
     spans = scan(t.lines)
-    entry_text = f'"{name}" = {value}'
+    entry_text = f'{name} = {value}' if bare else f'"{name}" = {value}'
     for s in spans:
         if s.name != table:
             continue
@@ -198,7 +203,7 @@ export def add_entry(text: str, table: str, name: str, value: str) -> str:
             t.lines[i] = indent + f'[{table}]'
             t.lines.insert(i + 1, entry_text)
             return join_text(t)
-    at = new_table_at(t.lines, spans, table)
+    at = new_table_at(t.lines, spans, table, at_end)
     block = [f'[{table}]', entry_text]
     if at > 0 and t.lines[at - 1].strip() != '':
         block.insert(0, '')
@@ -217,6 +222,24 @@ export def remove_entries(text: str, name: str) -> tuple[str, int]:
     drop: list[int] = []
     for s in spans:
         if s.name != 'seeds' and s.name != 'test-seeds':
+            continue
+        for i in range(s.head + 1, s.end):
+            if entry_key(t.lines[i])[0] == name:
+                drop.append(i)
+    kept: list[str] = []
+    for i in range(len(t.lines)):
+        if i not in drop:
+            kept.append(t.lines[i])
+    t.lines = kept
+    return (join_text(t), len(drop))
+
+# the text without the lines of `name` in the table `table` (any table, not only the seeds'), and how many lines that was
+export def remove_entry_in(text: str, table: str, name: str) -> tuple[str, int]:
+    t = split_text(text)
+    spans = scan(t.lines)
+    drop: list[int] = []
+    for s in spans:
+        if s.name != table:
             continue
         for i in range(s.head + 1, s.end):
             if entry_key(t.lines[i])[0] == name:

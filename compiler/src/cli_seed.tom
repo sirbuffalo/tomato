@@ -26,16 +26,36 @@ export def seed_cmd(s: Settings, words: list[str], home: str, version: str) -> i
     arg = ''
     rev = ''
     flags: list[str] = []
+    if sub == 'registry' or sub == 'alias' or sub == 'unalias':
+        # the registry, aliases and the user's settings need no project: the seed code gets the words, joined by tabs
+        lines0: list[str] = []
+        try:
+            lines0 = seed_command(sub, '\t'.join(rest), '', '', [''], version)
+        catch Diagnostic as d:
+            show_error(s, d.message)
+            raise CliExit(1)
+        sys.write_stdout(as_output(lines0))
+        return 0
     if sub == 'install':
-        for w in rest:
+        i = 0
+        while i < len(rest):
+            w = rest[i]
             if w == '--locked':
                 add_flag(flags, 'locked')
             elif w == '--offline':
                 add_flag(flags, 'offline')
             elif w == '--yes':
                 add_flag(flags, 'yes')
+            elif w == '--allow-yanked':
+                add_flag(flags, 'allow-yanked')
+            elif w == '--registry':
+                if i + 1 >= len(rest):
+                    die(s, '--registry needs the name of a registry')
+                rev = rest[i + 1]
+                i += 1
             else:
                 die(s, f"unknown option '{w}' for 'tomato seed install' (run 'tomato help')")
+            i += 1
     elif sub == 'add':
         mode_set = 0
         arev = ''
@@ -43,7 +63,8 @@ export def seed_cmd(s: Settings, words: list[str], home: str, version: str) -> i
         abranch = ''
         asub = ''
         aword = ''
-        addusage = 'usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]'
+        areg = ''
+        addusage = 'usage: tomato seed add NAME[@VERSION] [--registry NAME] [--allow-yanked] | --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]'
         i = 0
         while i < len(rest):
             w = rest[i]
@@ -80,6 +101,13 @@ export def seed_cmd(s: Settings, words: list[str], home: str, version: str) -> i
                     die(s, '--subdir needs a folder of the repository')
                 asub = rest[i + 1]
                 i += 1
+            elif w == '--registry':
+                if not more:
+                    die(s, '--registry needs the name of a registry')
+                areg = rest[i + 1]
+                i += 1
+            elif w == '--allow-yanked':
+                add_flag(flags, 'allow-yanked')
             elif w == '--test':
                 add_flag(flags, 'test')
             elif w == '--yes':
@@ -105,12 +133,12 @@ export def seed_cmd(s: Settings, words: list[str], home: str, version: str) -> i
             if n != 1:
                 die(s, f'a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH ({addusage})')
             add_flag(flags, 'git')
-            rev = f'{arev}\t{atag}\t{abranch}\t{asub}'
+            rev = f'{arev}\t{atag}\t{abranch}\t{asub}\t{areg}'
         elif mode_set == 100:
-            # a host shortcut (gh:USER/REPO) or a seed name: the compiler expands or explains it
+            # a host shortcut (gh:USER/REPO) or a seed name: the seed code expands it or asks the registry
             arg = aword
             add_flag(flags, 'word')
-            rev = f'{arev}\t{atag}\t{abranch}\t{asub}'
+            rev = f'{arev}\t{atag}\t{abranch}\t{asub}\t{areg}'
         else:
             die(s, f'tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed ({addusage})')
     elif sub == 'update':
@@ -148,7 +176,7 @@ export def seed_cmd(s: Settings, words: list[str], home: str, version: str) -> i
             usage()
         arg = rest[0] if len(rest) == 1 else '.'
     else:
-        die(s, f"unknown seed command '{sub}' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check and hash)")
+        die(s, f"unknown seed command '{sub}' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check, hash, registry, alias and unalias)")
     found = find_config('.')
     if sub != 'hash' and found.project == '':
         die(s, 'there is no tomato.toml in this folder or a parent folder')

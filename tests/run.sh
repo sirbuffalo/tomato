@@ -1241,7 +1241,7 @@ tomato = \"$(cat VERSION)\"
   check "manifest: the file is checked by every command, config included" "error[E555]: $here/tomato.toml:1: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(printf '[x]\n' > "$P/tomato.toml"; noconf $t config "$P/sub/prog.tom" 2>&1)"
   check "manifest: so is compile" "error[E555]: $here/tomato.toml:1: unknown table [x] (the tables are project, seed, seeds, test-seeds, seed-store, build, limits; every setting is in a table)" "$(noconf $t compile "$P/sub/prog.tom" 2>&1)"
   check "explain knows the manifest errors" "error[E555]: ConfigError: {}: unknown {} {} (the tables are {}; every setting is in a table)" "$($t explain E555)"
-  check "tomato help lists the seed commands" "8" "$($t help | grep -c 'tomato seed ')"
+  check "tomato help lists the seed commands" "10" "$($t help | grep -c 'tomato seed ')"
 }
 t_cli_build_tables() { # [build] and [build.ENTRY] (D92c): mode and output, the flags win, a seed's [build] is ignored
   cli_setup
@@ -1476,7 +1476,8 @@ test_only = true' "$(sed -n '/name = "acme.example\/other"/,/^test_only/p' "$W/a
   badseed() { printf '%s%s\n' "$head" "$2" > "$W/app/tomato.toml"; check "seeds: $1" "$3" "$(cd "$W/app" && noconf $t seed install 2>&1 | sed "s#$here#HERE#g")"; }
   badseed "a git seed whose rev is not a full commit id is refused before git is started" '"d.example/g" = { git = "https://h/g.git", rev = "abc" }' "error[E598]: HERE/app/tomato.toml: the rev \"abc\" of the seed d.example/g is not a full commit id (40 lowercase hex digits): a tag or a branch moves, so the manifest names the commit (git rev-parse TAG^{commit} prints it)"
   badseed "a git seed with a URL of another scheme is refused" '"d.example/g" = { git = "http://h/g.git", rev = "0123456789012345678901234567890123456789" }' "error[E598]: HERE/app/tomato.toml: the git URL of the seed d.example/g cannot be used: the scheme http:// is not used for seeds (the schemes are https, ssh and file)"
-  badseed "a registry seed is reported as not supported yet" '"d.example/r" = "1.2.0"' "error[E571]: HERE/app/tomato.toml: the seed d.example/r 1.2.0 would come from a registry, and there is none yet; only { path = \"../folder\" } and { git = \"URL\", rev = \"COMMIT\" } seeds can be installed"
+  badseed "a registry seed with no registry set up is an error that says how to set one up" '"d.example/r" = "1.2.0"' "error[E571]: there is no registry set up, so a seed cannot be looked up by name
+  = help: tomato seed registry add NAME URL [--maintainer KEY] sets one up; or add the seed from where it lives: tomato seed add gh:USER/REPO --rev COMMIT, tomato seed add --git URL --rev COMMIT, or --path DIR"
   badseed "a path that is not a folder" '"d.example/nope" = { path = "../nope" }' "error[E572]: HERE/app/tomato.toml: the seed d.example/nope is at \"../nope\", which is not a folder (a relative path starts at the folder of tomato.toml)"
   mkdir -p "$W/bare"
   badseed "a folder with no tomato.toml" '"d.example/bare" = { path = "../bare" }' "error[E572]: HERE/app/tomato.toml: the seed d.example/bare at \"../bare\" has no tomato.toml: the folder of a seed needs one with a [seed] table"
@@ -1535,7 +1536,7 @@ warning: [build.mian] names no entry: no function in src/ or tests/ is marked @m
   check "seeds: the hash covers nested files, modes, byte order and leaves .git out" "$(indep_hash "$W/h")" "$(noconf $t seed hash "$W/h")"
   r="$(noconf $t seed hash 2>&1)"; case "$r" in "sha256:"*) ok "seeds: hash of no argument is the current folder's";; *) bad "seeds: hash of no argument is the current folder's" "$r";; esac
   check "seeds: hash of a missing folder" "error[E572]: $W/nope is not a folder" "$(noconf $t seed hash "$W/nope" 2>&1)"
-  check "seeds: an unknown seed command" "error: unknown seed command 'frob' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check and hash)" "$(noconf $t seed frob 2>&1)"
+  check "seeds: an unknown seed command" "error: unknown seed command 'frob' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check, hash, registry, alias and unalias)" "$(noconf $t seed frob 2>&1)"
 }
 t_cli_seed_store() { # tomato seed add/remove/vendor, git seeds and the seed store, the foreign-symbol question (D100a); local bare git repos only, no network
   cli_setup
@@ -1787,10 +1788,11 @@ tomato.lock is up to date" "$(cd "$A" && tm $t seed install --locked < /dev/null
   urlcheck --git "$gsurl" --rev v1.0; case "$r" in *"is not a full commit id (40 lowercase hex digits)"*) ok "seed add --git: a tag as the rev is refused (a tag moves)";; *) bad "seed add --git: a tag as the rev is refused" "$r";; esac
   check "seed add --git: a rev of 40 digits that the repository does not have is a git error, and nothing is stored" "error[E599]:" "$(cd "$A" && tm $t seed add --git "$gsurl" --rev 0123456789012345678901234567890123456789 2>&1 | cut -c1-12)"
   check "seed add --offline: a git seed that the lock does not know is an error, git is not run" "error[E605]:" "$(cd "$A" && tm $t seed add --git "$gsurl" --rev "$C1" --offline 2>&1 | cut -c1-12)"
-  check "seed add: --git needs --rev" "error: a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH (usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --git "$gsurl" 2>&1)"
+  check "seed add: --git needs --rev" "error: a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH (usage: tomato seed add NAME[@VERSION] [--registry NAME] [--allow-yanked] | --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --git "$gsurl" 2>&1)"
   check "seed add: --path takes no --rev" "error: --rev, --tag, --branch and --subdir go with --git, not with --path" "$(cd "$A" && tm $t seed add --path ../loc --rev "$C1" 2>&1)"
-  check "seed add: a registry name is recognised, and there is no registry to look it up (E571)" "error[E571]: acme.example/x is a registry seed (owner: the domain acme.example), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT (also gitlab:, codeberg: and srht:), tomato seed add --git URL --rev COMMIT, or --path DIR" "$(cd "$A" && tm $t seed add acme.example/x 2>&1 | norm)"
-  check "seed add: with no source" "error: tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed (usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --test 2>&1)"
+  check "seed add: a registry name with no registry set up is E571, and says how to set one up" "error[E571]: there is no registry set up, so a seed cannot be looked up by name
+  = help: tomato seed registry add NAME URL [--maintainer KEY] sets one up; or add the seed from where it lives: tomato seed add gh:USER/REPO --rev COMMIT, tomato seed add --git URL --rev COMMIT, or --path DIR" "$(cd "$A" && tm $t seed add acme.example/x 2>&1 | norm)"
+  check "seed add: with no source" "error: tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed (usage: tomato seed add NAME[@VERSION] [--registry NAME] [--allow-yanked] | --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline])" "$(cd "$A" && tm $t seed add --test 2>&1)"
   # ---- seed vendor and [seed-store] vendor
   (cd "$A" && printf '%s' "$head" > tomato.toml && rm -f tomato.lock && tm $t seed add --path ../loc --yes >/dev/null 2>&1 && tm $t seed add --git "$gsurl" --rev "$C1" >/dev/null 2>&1)
   r="$(cd "$A" && tm $t seed vendor 2>&1 | norm)"
@@ -1893,16 +1895,16 @@ got:      $r" ;; esac
   bads "a user cannot start with a hyphen (it could be an option of git)" 'error[E621]: "gh:-x/gs" is not a host shortcut: a user and a repository have letters, digits, dots, underscores and hyphens only' gh:-x/gs --rev "$C1"
   bads "a word with another colon is no shortcut" 'error[E621]: "sftp:dave/gs" is not a seed: a word with a colon is a host shortcut, and the shortcuts are gh:USER/REPO' sftp:dave/gs --rev "$C1"
   bads "a URL is pointed at --git" 'error[E621]: "https://example.org/x.git" is not a seed:' https://example.org/x.git --rev "$C1"
-  bads "a handle is recognised, and there is no registry to look it up" 'error[E571]: dave/thing is a registry seed (owner: the handle dave), and there is no registry yet, so its source cannot be looked up; add it from its git host instead: tomato seed add gh:USER/REPO --rev COMMIT' dave/thing
-  bads "a name with a version too" 'error[E571]: dave/thing is a registry seed (owner: the handle dave)' dave/thing@1.2.0
-  bads "a domain owner is a registry seed as well" 'error[E571]: acme.example/json5 is a registry seed (owner: the domain acme.example)' acme.example/json5
+  bads "a handle is recognised, and with no registry set up it is E571" 'error[E571]: there is no registry set up, so a seed cannot be looked up by name' dave/thing
+  bads "a name with a version too" 'error[E571]: there is no registry set up' dave/thing@1.2.0
+  bads "a domain owner is a registry seed as well" 'error[E571]: there is no registry set up' acme.example/json5
   bads "a reserved handle is not one" 'error[E621]: "local/x" is not a seed name: the owner local has no dot, so it would be a handle, and it is not one (that name is reserved)' local/x
   bads "a std module's name is a reserved handle" 'error[E621]: "json/x" is not a seed name: the owner json has no dot, so it would be a handle, and it is not one (that name is reserved)' json/x
   bads "a key-like owner is not a handle" 'error[E621]: "k-abc/x" is not a seed name: the owner k-abc has no dot, so it would be a handle, and it is not one (a handle does not start with k-, which is for keys)' k-abc/x
   bads "a one-letter handle is too short" 'error[E621]: "d/x" is not a seed name: the owner d has no dot, so it would be a handle, and it is not one (a handle is 2 to 32 characters)' d/x
   bads "a capital letter is no seed name" 'error[E621]: "Dave/x" is not a seed name or a host shortcut: the owner has lowercase letters, digits, dots and hyphens only' Dave/x
   bads "a bad version after @" 'error[E621]: "dave/thing@1.2" has a version that is not one: it needs three numbers, MAJOR.MINOR.PATCH, such as 1.2.0' dave/thing@1.2
-  usage_add='usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]'
+  usage_add='usage: tomato seed add NAME[@VERSION] [--registry NAME] [--allow-yanked] | --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]'
   check "seed handles: two words are one too many" "error: tomato seed add takes one seed at a time: 'gh:dave/gs' and 'gh:a/b' ($usage_add)" "$(cd "$W/app" && tm $t seed add gh:dave/gs gh:a/b 2>&1)"
   check "seed handles: a word does not go with --git" "error: tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed ($usage_add)" "$(cd "$W/app" && tm $t seed add gh:dave/gs --git "$W/gs.git" --rev "$C1" 2>&1)"
   check "seed handles: none of the refused words touched tomato.toml" "$(printf '%s' "$head")" "$(cat "$W/app/tomato.toml")"
@@ -1966,6 +1968,278 @@ got:      $r" ;; esac
   printf '@main\ndef main():\n    print(1)\n' > "$W/lone/y.tom"
   check "seeds header: a program with no line runs as before" "1" "$(cd "$W/lone" && tm $t run y.tom 2>&1)"
   cd "$root" || return 1
+}
+t_cli_registry() { # the index client (D133a, stage 4 of docs/package-registry-design.md): registry add/update, aliases, add NAME, signatures, yanks, MVS, the lock, install; against the signed fixture index of tests/registry, from local git repos only (a `git` shim maps the fixture's https URLs), no network
+  part="${1:-1}"; cli_setup
+  if ! command -v git >/dev/null 2>&1 || ! command -v ssh-keygen >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "registry: git and ssh-keygen are required in CI" || echo "skip: git or ssh-keygen is not installed, so the registry tests did not run"
+    return
+  fi
+  W="$work/rg$part"; mkdir -p "$W"; cd "$W" || return 1
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t.t
+  th="$W/home"; mkdir -p "$th"; here="$(pwd -P)"; RG="$root/tests/registry"
+  tm() { TOMATO_HOME="$th" "$@"; }
+  norm() { sed "s#$here#HERE#g"; }
+  has() { case "$3" in *"$2"*) ok "$1";; *) bad "$1" "expected to contain: $2
+got: $3";; esac; }
+  sum256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1; else sha256sum | cut -d' ' -f1; fi; }
+  indep_hash() { printf 'sha256:%s' "$(cd "$1" && find . -type f ! -path './.git/*' ! -path './builds/*' | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do m=644; [ -x "$f" ] && m=755; printf '%s  %s  %s\n' "$(sum256 < "$f")" "$m" "$f"; done | sum256)"; }
+  fp() { awk -v k="$1" '$1 == k { print $2 }' "$RG/fingerprints.txt"; }
+  commit_of() { awk -v n="$1" -v v="$2" '$1 == n && $2 == v { print $3 }' "$RG/commits.txt"; }
+  # the seeds' repositories (deterministic commits: the ids in the checked-in index are the ones made here), and the index as a git repository
+  sh "$RG/build-sources.sh" "$W/src" >/dev/null
+  cp -R "$RG/index" "$W/idx"; git init -q -b main "$W/idx"; git -C "$W/idx" add -A >/dev/null; git -C "$W/idx" commit -q -m index
+  real_git="$(command -v git)"; mkdir -p "$W/shim"
+  cat > "$W/shim/git" <<EOS
+#!/bin/sh
+n=\$#
+while [ \$n -gt 0 ]; do
+  a="\$1"; shift
+  case "\$a" in
+    https://git.fixture.example/*) p="\${a#https://git.fixture.example/}"; echo "\$a" >> "$W/urls.log"; a="$W/src/\$p" ;;
+  esac
+  set -- "\$@" "\$a"; n=\$((n - 1))
+done
+GIT_ALLOW_PROTOCOL=https:ssh:file exec "$real_git" "\$@"
+EOS
+  chmod +x "$W/shim/git"; : > "$W/urls.log"; PATH="$W/shim:$PATH"; export PATH
+  MAINT="$(cat "$RG/keys/maint.pub")"
+  head='[project]
+name = "app"
+version = "0.1.0"
+tomato = "0.51"
+'
+  fresh() { rm -rf "${W:?}/app"; mkdir -p "$W/app/src"; printf '%s' "$head" > "$W/app/tomato.toml"; }
+  ap() { (cd "$W/app" && tm $t "$@" 2>&1 | norm); }          # a command in the project, its output with the folder named HERE
+  lock_field() { sed -n "\#^name = \"$2\"#,/^seeds/p" "$W/app/tomato.lock" | sed -n "s/^$1 = \"\(.*\)\"/\1/p"; }
+  short() { echo "$1" | cut -c1-12; }
+  if step 1; then
+  # ---- the fixture itself: the commits are deterministic, and index/ is what gen.sh writes
+  check "fixture: the commits of the seed repositories are the ones the checked-in index names" "$(cat "$RG/commits.txt")" "$(cat "$W/src/commits.txt")"
+  sh "$RG/gen.sh" "$W/regen" >/dev/null 2>&1; diff -r "$W/regen" "$RG/index" >/dev/null 2>&1 && ok "fixture: tests/registry/index is exactly what gen.sh writes (signed with the test keys)" || bad "fixture: tests/registry/index is exactly what gen.sh writes" "$(diff -r "$W/regen" "$RG/index" | head -5)"
+  # ---- no registry set up, aliases, and a settings file that already has other content
+  fresh
+  check "registry: with none set up, list says how to set one up" "no registry is set up (tomato seed registry add NAME URL [--maintainer KEY])" "$(tm $t seed registry list 2>&1)"
+  check "registry: update with none set up is an error" "error[E679]: there is no registry set up
+  = help: tomato seed registry add NAME URL [--maintainer KEY]" "$(tm $t seed registry update 2>&1)"
+  check "alias: none set" "no aliases are set (tomato seed alias NAME OWNER/NAME)" "$(tm $t seed alias --list 2>&1)"
+  printf '# my settings\n[limits]\nexp_bits = 70000   # kept\n' > "$th/config.toml"
+  check "alias: set" "alias j5 = acme.example/json5 in $th/config.toml" "$(tm $t seed alias j5 acme.example/json5 2>&1)"
+  check "alias: the file keeps its comments and its [limits] table, and gets the alias" "# my settings
+[limits]
+exp_bits = 70000   # kept
+
+[aliases]
+j5 = \"acme.example/json5\"" "$(cat "$th/config.toml")"
+  check "alias: list" "j5 = acme.example/json5" "$(tm $t seed alias 2>&1)"
+  check "alias: an alias is a bare name" "error[E679]: \"a/b\" cannot be an alias: a seed name has lowercase letters, digits, underscores and hyphens only" "$(tm $t seed alias a/b acme.example/json5 2>&1)"
+  check "alias: it stands for a full name" "error[E679]: \"json5\" is not a seed name: a seed name is owner/name with exactly one slash (an alias stands for a full owner/name)" "$(tm $t seed alias k json5 2>&1)"
+  check "alias: with no registry, a bare name that is an alias is E571" "error[E571]: there is no registry set up, so a seed cannot be looked up by name
+  = help: tomato seed registry add NAME URL [--maintainer KEY] sets one up; or add the seed from where it lives: tomato seed add gh:USER/REPO --rev COMMIT, tomato seed add --git URL --rev COMMIT, or --path DIR" "$(ap seed add j5)"
+  check "alias: unalias" "removed the alias j5 from $th/config.toml" "$(tm $t seed unalias j5 2>&1)"
+  check "alias: an unknown alias is an error" "error[E679]: there is no alias \"j5\" in $th/config.toml" "$(tm $t seed unalias j5 2>&1)"
+  # ---- registry add: the settings are written, the index is fetched and checked, a bad one leaves nothing behind
+  r="$(tm $t seed registry add fixture "$W/idx" --maintainer "$MAINT" 2>&1 | norm)"
+  C0="$(git -C "$W/idx" rev-parse HEAD)"
+  check "registry add: what it says" "added the registry fixture (HERE/idx) to HERE/home/config.toml as the default
+registry fixture: fetched the index at $(short "$C0") (5 seeds; policy level 0: structural checks only)" "$r"
+  check "registry add: the settings file, after the aliases' table (its comments and [limits] are kept)" "# my settings
+[limits]
+exp_bits = 70000   # kept
+
+[aliases]
+
+[registry]
+default = \"fixture\"
+
+[registries.fixture]
+index = \"$W/idx\"
+maintainers = [\"$(awk '{print $1 " " $2}' "$RG/keys/maint.pub")\"]" "$(cat "$th/config.toml")"
+  check "registry list" "fixture (default)  $W/idx  index at $(short "$C0"); 1 maintainer key; honors maintainer yanks" "$(tm $t seed registry list 2>&1)"
+  check "registry update: nothing new" "registry fixture: already at $(short "$C0") (5 seeds)" "$(tm $t seed registry update 2>&1)"
+  git -C "$W/idx" commit -q --allow-empty -m again; C1="$(git -C "$W/idx" rev-parse HEAD)"
+  check "registry update: a new commit of the index" "registry fixture: updated $(short "$C0") -> $(short "$C1") (5 seeds; policy level 0: structural checks only)" "$(tm $t seed registry update fixture 2>&1)"
+  check "registry add: the same name twice is refused" "error[E679]: the registry fixture is already in $th/config.toml: edit it there, or choose another name" "$(tm $t seed registry add fixture "$W/idx" 2>&1)"
+  check "registry add: a registry name is lowercase" "error[E679]: \"Fix\" is not a registry name: a registry name starts with a lowercase letter" "$(tm $t seed registry add Fix "$W/idx" 2>&1)"
+  check "registry add: a key that is not a key" "error[E679]: \"nope\" is not a maintainer key: a public key is written \`ssh-ed25519 AAAA...\` (what ssh-keygen -t ed25519 puts in the .pub file)" "$(tm $t seed registry add k2 "$W/idx" --maintainer nope 2>&1)"
+  check "registry add: an unusable URL" "error[E679]: \"relative/dir\" cannot be the index of a registry: a folder on this machine is written as an absolute path or file:///path (a relative path would depend on where the command runs)" "$(tm $t seed registry add k3 relative/dir 2>&1)"
+  cp "$th/config.toml" "$W/config.before"
+  has "registry add: a repository that does not exist leaves the settings as they were" "error[E599]: fetching HEAD from /nonexistent/idx failed:" "$(tm $t seed registry add u /nonexistent/idx 2>&1)"
+  cmp -s "$th/config.toml" "$W/config.before" && ok "registry add: ... and the settings file is exactly as it was" || bad "registry add: the settings file after a failed add" "$(diff "$W/config.before" "$th/config.toml")"
+  rm -rf "${W:?}/nix"; mkdir -p "$W/nix"; echo hi > "$W/nix/x"; git init -q -b main "$W/nix"; git -C "$W/nix" add -A >/dev/null; git -C "$W/nix" commit -q -m n
+  check "registry add: a repository that is not an index is refused, and named" "error[E680]: HERE/nix is not an index of seeds: its top folder has no config.toml (is the registry URL right?)" "$(tm $t seed registry add nix "$W/nix" 2>&1 | norm)"
+  cmp -s "$th/config.toml" "$W/config.before" && ok "registry add: ... and the settings file is as it was" || bad "registry add: a repository that is not an index changed the settings"
+  rm -rf "${W:?}/bad"; mkdir -p "$W/bad"; cp -R "$RG/index/." "$W/bad/"; ln -s /etc/passwd "$W/bad/evil"; git init -q -b main "$W/bad"; git -C "$W/bad" add -A >/dev/null; git -C "$W/bad" commit -q -m bad
+  has "registry add: an index with a symbolic link is refused (nothing is checked out, so nothing can point outside)" "evil is a symbolic link, which a seed cannot contain" "$(tm $t seed registry add bad "$W/bad" 2>&1)"
+  cmp -s "$th/config.toml" "$W/config.before" && ok "registry add: ... and the settings file is as it was" || bad "registry add: a symlink index changed the settings"
+  [ ! -d "$th/seeds/index/bad" ] && [ -d "$th/seeds/index/fixture" ] && ok "registry add: ... and no copy of it was kept" || bad "registry add: copies kept: $(ls "$th/seeds/index")"
+  check "registry: an unknown command" "error[E679]: unknown registry command \"frob\" (the commands are add, update and list)" "$(tm $t seed registry frob 2>&1)"
+  printf '\n[registries.worse]\nindex = 5\n' >> "$th/config.toml"
+  check "registry: a setting of the wrong kind in config.toml is an error that names it" "error[E679]: $th/config.toml: registries.worse.index must be text, not an integer" "$(tm $t seed registry list 2>&1)"
+  cp "$W/config.before" "$th/config.toml"; printf '\n[registries.worse]\nindex = "/x"\nflavor = 1\n' >> "$th/config.toml"
+  check "registry: an unknown setting is an error" "error[E679]: $th/config.toml: unknown setting registries.worse.flavor (the settings of [registries.worse] are index, maintainers, only_listed, honor_maintainer_yanks)" "$(tm $t seed registry list 2>&1)"
+  cp "$W/config.before" "$th/config.toml"
+  # ---- add: a short name, a full name, a version, a handle, an alias
+  fresh
+  r="$(ap seed add json5)"
+  check "add: a short name of the registry, with the summary before the change" "short name json5 of the registry fixture: acme.example/json5
+acme.example/json5 1.2.0  signed by domain acme.example (key $(fp acme2)), first seen 2026-11-01, 5 versions, similar to: none
+imported as: from json5 import ...
+status: listed (policy level 0: structural checks only), no endorsements or test results collected by this client
+short name: json5 (granted 2026-12-03 by a maintainer of fixture)
+note: the owner has changed its key 1 time; this version is signed by the key $(fp acme2)
+added acme.example/json5 1.2.0 to [seeds] of HERE/app/tomato.toml
+acme.example/json5 1.2.0  $(indep_hash "$RG/seeds-src/acme.example/json5/1.2.0")  (registry fixture, git https://git.fixture.example/acme.example/json5.git $(short "$(commit_of acme.example/json5 1.2.0)"))
+other.example/strutil 0.4.1  $(indep_hash "$RG/seeds-src/other.example/strutil/0.4.1")  (registry fixture, git https://git.fixture.example/other.example/strutil.git $(short "$(commit_of other.example/strutil 0.4.1)"))
+wrote tomato.lock (2 seeds)" "$r"
+  check "add: the manifest holds the full name and the minimum, never the short name" '"acme.example/json5" = "1.2.0"' "$(sed -n '/^\[seeds\]/,$p' "$W/app/tomato.toml" | sed 1d)"
+  check "add: the lock names the registry" 'index = "fixture"' "$(grep '^index' "$W/app/tomato.lock")"
+  check "add: the lock holds the registry entry: source, git, commit, key, hash, requirements" "registry|https://git.fixture.example/acme.example/json5.git|$(commit_of acme.example/json5 1.2.0)|$(fp acme2)|$(indep_hash "$RG/seeds-src/acme.example/json5/1.2.0")|other.example/strutil 0.4.1" "$(lock_field source acme.example/json5)|$(lock_field git acme.example/json5)|$(lock_field commit acme.example/json5)|$(lock_field key acme.example/json5)|$(lock_field hash acme.example/json5)|$(sed -n '/^name = "acme.example\/json5"/,/^$/p' "$W/app/tomato.lock" | sed -n 's/^seeds = \["\(.*\)"\]/\1/p')"
+  check "add: the seed it needs is locked too, with the key of its own owner, and is not test_only" "registry|$(fp other)|0" "$(lock_field source other.example/strutil)|$(lock_field key other.example/strutil)|$(sed -n '/^name = "other.example\/strutil"/,/^$/p' "$W/app/tomato.lock" | grep -c test_only)"
+  printf 'from json5 import version\n\n@main\ndef main():\n    print(version())\n' > "$W/app/src/main.tom"
+  check "add: a program uses the seed and the seed it needs" "json5 1.2.0 with strutil 0.4.1" "$(ap run)"
+  # run and build never read the index: without the local copy they work the same
+  rm -rf "${th:?}/seeds/index"
+  check "add: run reads no index" "json5 1.2.0 with strutil 0.4.1" "$(ap run)"
+  check "add: verify checks the store copies of both" "verified 2 copies of 2 locked seeds: all match tomato.lock" "$(ap seed verify | tail -1)"
+  tm $t seed registry update >/dev/null 2>&1
+  fresh; r="$(ap seed add dave/thing)"
+  has "add: a handle owner is shown as granted by the registry, not as verified by a domain" "dave/thing 1.0.0  signed by handle dave (granted 2026-11-20 by the registry fixture) (key $(fp dave)), first seen 2026-11-20, 1 version, similar to: none" "$r"
+  fresh; r="$(ap seed add acme.example/json5@1.0.0)"
+  has "add: a version named with @ (an older one, signed by the key the owner has since retired)" "added acme.example/json5 1.0.0 to [seeds]" "$r"
+  check "add: that version's lock has no dependency" "1" "$(grep -c '^\[\[seed\]\]' "$W/app/tomato.lock")"
+  fresh; tm $t seed alias j5 acme.example/json5 >/dev/null 2>&1; r="$(ap seed add j5@1.2.0 --test)"
+  has "add: an alias of the user's own, and --test" "alias j5 of $th/config.toml: acme.example/json5" "$(echo "$r" | sed "s#HERE/home#$th#")"
+  has "add: --test writes [test-seeds]" 'added acme.example/json5 1.2.0 to [test-seeds]' "$r"
+  check "add: and the lock marks both seeds test_only" "2" "$(grep -c 'test_only = true' "$W/app/tomato.lock")"
+  tm $t seed unalias j5 >/dev/null 2>&1
+  fresh; ap seed add acme.example/json5@1.2.0 >/dev/null; ap seed add acme.example/json5@1.0.0 >/dev/null
+  check "add: a lower version of the same line does not lower the requirement" "1.2.0" "$(sed -n 's/^"acme.example\/json5" = "\(.*\)"/\1/p' "$W/app/tomato.toml")"
+  fi
+  if step 2; then
+  tm $t seed registry add fixture "$W/idx" --maintainer "$MAINT" >/dev/null 2>&1
+  # ---- the checks of what the index says
+  fresh; r="$(ap seed add acme.example/json5@1.2.1)"
+  check "check: a statement signed by a key the owner retired before it was accepted is ignored, and the error says so" "error[E682]: HERE/app/tomato.toml: acme.example/json5 has no version 1.2.1 in the registry fixture (its versions: 1.0.0, 1.1.0, 1.2.0, 1.3.0, 2.0.0-rc.1)
+  = note: statements of the index that were ignored:
+  seeds/acme.example/json5.toml: version statement 6 is ignored: it is signed by $(fp acme1), which was retired before the statement was accepted" "$r"
+  r="$(ap seed add other.example/strutil@0.4.0)"
+  check "check: a statement changed after it was signed (the commit) is ignored" "error[E682]: HERE/app/tomato.toml: other.example/strutil has no version 0.4.0 in the registry fixture (its versions: 0.3.0, 0.4.1, 0.5.0)
+  = note: statements of the index that were ignored:
+  seeds/other.example/strutil.toml: version statement 2 is ignored: the signature does not verify" "$r"
+  r="$(ap seed add rogue.example/evil)"
+  has "check: a statement signed by another owner's key is ignored, so the seed has no version" "error[E682]: rogue.example/evil has no version that this registry vouches for" "$r"
+  has "check: ... and the error names the statement and the key" "version statement 1 is ignored: it is signed by $(fp acme2), which is not a key of rogue.example" "$r"
+  r="$(ap seed add nobody.example/x)"
+  has "check: a seed the index does not have" "error[E682]: the registry fixture has no seed nobody.example/x" "$r"
+  r="$(ap seed add strutil)"
+  check "names: a short name that was released is not one: the candidates are listed" "error[E682]: strutil is not an alias or a short name of the registry fixture, and the index has 1 seed of that name:
+  other.example/strutil  (3 versions, owner domain)
+  = help: add one by its full name (tomato seed add other.example/strutil), or set an alias (tomato seed alias strutil other.example/strutil)" "$r"
+  r="$(ap seed add evil)"
+  has "names: a short name granted by a key that is not a maintainer's is not one" "error[E682]: evil is not an alias or a short name of the registry fixture, and the index has 1 seed of that name:
+  rogue.example/evil  (0 versions, owner domain)" "$r"
+  r="$(ap seed add Bad_Name)"
+  has "names: a bare word that is not a seed name" 'error[E621]: "Bad_Name" is not a seed name or a host shortcut: a seed name starts with a lowercase letter' "$r"
+  r="$(ap seed add json5 --registry nope)"
+  check "names: a registry that is not set up" "error[E679]: --registry nope names the registry \"nope\", but $th/config.toml has no [registries.nope] (it has: fixture)
+  = help: tomato seed registry add nope URL" "$(echo "$r" | sed "s#HERE/home#$th#")"
+  # ---- yanks: listing only
+  fresh; r="$(ap seed add acme.example/json5)"
+  has "yank: add chooses the newest version that is not yanked or a pre-release (1.3.0 is a maintainer's yank, 1.1.0 the owner's, 2.0.0-rc.1 a pre-release)" "added acme.example/json5 1.2.0 to [seeds]" "$r"
+  fresh; r="$(ap seed add acme.example/json5@1.3.0)"
+  has "yank: a version a maintainer yanked is still added when it is named, with a warning (it hides it from the listing only)" "warning: acme.example/json5 1.3.0 is yanked by a maintainer of the registry (malware): exfiltrates ~/.ssh: see the advisory" "$r"
+  has "yank: ... and it is added" "added acme.example/json5 1.3.0 to [seeds]" "$r"
+  fresh; r="$(ap seed add acme.example/json5@1.1.0)"
+  has "yank: a version its owner yanked (a bug) is added when named, with a warning" "warning: acme.example/json5 1.1.0 is yanked by its owner (bug): returns wrong numbers for 1e400" "$r"
+  fresh; r="$(ap seed add other.example/strutil@0.3.0)"
+  check "yank: a version its owner yanked as malware is not added unless --allow-yanked says so" "error[E685]: HERE/app/tomato.toml: other.example/strutil 0.3.0 is yanked by its owner (malware): steals tokens: its owner says it is malware, so it is not added (add --allow-yanked to add it anyway)" "$r"
+  [ ! -f "$W/app/tomato.lock" ] && ok "yank: ... and nothing was written" || bad "yank: a refused add wrote a lock"
+  r="$(ap seed add other.example/strutil@0.3.0 --allow-yanked)"
+  has "yank: --allow-yanked adds it, with the warning" "added other.example/strutil 0.3.0 to [seeds]" "$r"
+  # a registry that ignores the maintainers' yanks (the user's setting) offers 1.3.0
+  cp "$th/config.toml" "$W/config.before"; sed 's/^\[registries.fixture\]$/[registries.fixture]\nhonor_maintainer_yanks = false/' "$W/config.before" > "$th/config.toml"
+  fresh; r="$(ap seed add acme.example/json5)"
+  has "yank: with honor_maintainer_yanks = false the maintainers' yank is not honored" "added acme.example/json5 1.3.0 to [seeds]" "$r"
+  cp "$W/config.before" "$th/config.toml"
+  # a registry with no maintainer key: no short name, no handle, no maintainer yank
+  tm $t seed registry add plain "$W/idx" >/dev/null 2>&1
+  fresh; r="$(ap seed add dave/thing --registry plain)"
+  has "maintainers: with no maintainer key a handle is not granted, so its seed is not vouched for" "error[E682]: dave/thing has no version that this registry vouches for: the maintainers of this registry have not granted the handle dave" "$r"
+  fresh; r="$(ap seed add json5 --registry plain)"
+  has "maintainers: ... and a short name is not one" "error[E682]: json5 is not an alias or a short name of the registry plain" "$r"
+  fresh; r="$(ap seed add acme.example/json5 --registry plain)"
+  has "maintainers: a plain owner/name still works (use is open), and the maintainers' yank of 1.3.0 is not seen" "added acme.example/json5 1.3.0 to [seeds]" "$r"
+  check "registries: the lock keeps the project on the registry it began with" "error[E679]: HERE/app/tomato.toml: tomato.lock holds seeds from the registry plain, and --registry fixture would mix registries in one lock" "$(ap seed add dave/thing --registry fixture)"
+  # ---- what the owner signed against what is at the commit (a fresh store: the liar's content hash must not be found there)
+  rm -rf "${th:?}/seeds/store"
+  fresh; r="$(ap seed add dave/liar@1.0.0)"
+  has "entry: a content hash that is not the files' is refused" "error[E601]: HERE/app/tomato.toml: the seed dave/liar fetched from https://git.fixture.example/dave/liar.git at" "$r"
+  [ -z "$(find "$th/seeds/store" -type f 2>/dev/null | head -1)" ] && ok "entry: ... and nothing of it is in the store" || bad "entry: the store holds files after a hash mismatch"
+  r="$(ap seed add dave/liar@1.1.0)"
+  has "entry: a tomato.toml that says another version than the signed entry" "error[E684]: HERE/app/tomato.toml: the seed dave/liar 1.1.0" "$r"
+  has "entry: ... says which" "says its version is 1.0.5 in its tomato.toml, but its signed entry in the index says 1.1.0" "$r"
+  r="$(ap seed add dave/liar@1.2.0)"
+  has "entry: a [seeds] table that the signed entry does not have" "needs other.example/strutil 0.4.1 by its tomato.toml, but its signed entry in the index says none" "$r"
+  # ---- minimal version selection
+  fresh; ap seed add acme.example/json5@1.0.0 >/dev/null; r="$(ap seed add other.example/strutil@0.5.0)"
+  has "mvs: two requirements on different lines of one seed name who asked for each" "error[E683]: acme.example/json5 is asked for on two incompatible lines: 1.0.0 by tomato.toml, and 2.0.0-rc.1 by tomato.toml -> other.example/strutil 0.5.0
+  = help: one program holds one copy of a seed; move one of the requirers to the other line (a new major version, or a new minor one below 1.0, is another line)" "$r"
+  check "mvs: ... and tomato.toml is as it was" "acme.example/json5" "$(sed -n 's/^"\(.*\)" = .*/\1/p' "$W/app/tomato.toml")"
+  fresh; r="$(ap seed add other.example/strutil@0.5.0)"
+  has "mvs: a pre-release that a requirement names exactly is used (strutil 0.5.0 needs json5 2.0.0-rc.1)" "acme.example/json5 2.0.0-rc.1" "$r"
+  fresh; printf '\n[seeds]\n"acme.example/json5" = "1.0.0"\n"other.example/strutil" = "0.4.1"\n' >> "$W/app/tomato.toml"; r="$(ap seed install)"
+  has "mvs: the project's own minimums are what is locked when nothing asks for more" "wrote tomato.lock (2 seeds)" "$r"
+  check "mvs: json5 stays at the project's 1.0.0 (nothing is raised by itself)" "1.0.0" "$(lock_field version acme.example/json5)"
+  fresh; printf '\n[seeds]\n"acme.example/json5" = "1.2.0"\n"other.example/strutil" = "0.4.0"\n' >> "$W/app/tomato.toml"; ap seed install >/dev/null
+  check "mvs: json5 1.2.0 asks for strutil 0.4.1, which is higher than the project's 0.4.0 (a version the index does not even hold), so 0.4.1 is locked" "0.4.1" "$(lock_field version other.example/strutil)"
+  fresh; printf '\n[seeds]\n"acme.example/json5" = "1.7.0"\n' >> "$W/app/tomato.toml"; r="$(ap seed install)"
+  has "mvs: a version the index does not have is an error that lists the ones it has" "the registry fixture has no version 1.7.0 of acme.example/json5 (asked for by tomato.toml); its versions: 1.0.0, 1.1.0, 1.2.0, 1.3.0, 2.0.0-rc.1" "$r"
+  fi
+  if step 3; then
+  tm $t seed registry add fixture "$W/idx" --maintainer "$MAINT" >/dev/null 2>&1
+  # ---- install: from the manifest (the index), from the lock alone (no index), offline, locked
+  fresh; printf '\n[seeds]\n"acme.example/json5" = "1.2.0"\n' >> "$W/app/tomato.toml"
+  r="$(ap seed install)"
+  has "install: a manifest that needs the index is resolved from it" "wrote tomato.lock (2 seeds)" "$r"
+  cp "$W/app/tomato.lock" "$W/lock.install"; fresh; ap seed add json5 >/dev/null
+  cmp -s "$W/app/tomato.lock" "$W/lock.install" && ok "install: the lock is the one add writes" || bad "install: the lock differs from add's" "$(diff "$W/app/tomato.lock" "$W/lock.install")"
+  printf 'from json5 import version\n\n@main\ndef main():\n    print(version())\n' > "$W/app/src/main.tom"
+  rm -rf "${th:?}/seeds/index"
+  has "install: --locked needs no index and no network when the lock covers the manifest" "tomato.lock is up to date" "$(ap seed install --locked --offline)"
+  check "install: a program runs from the lock and the store" "json5 1.2.0 with strutil 0.4.1" "$(ap run)"
+  rm -rf "${th:?}/seeds/store"
+  check "install: a missing store copy is the error of every build, with the command" "error[E569]: HERE/app/tomato.toml: the seed acme.example/json5 is not in the seed store (HERE/home/seeds/store/$(lock_field hash acme.example/json5 | cut -c8-9)/$(lock_field hash acme.example/json5 | cut -c8-))
+  = help: run: tomato seed install" "$(ap run)"
+  has "install: --offline does not run git" "error[E605]:" "$(ap seed install --offline)"
+  r="$(ap seed install)"; has "install: with the network (git) the store is filled again from the lock, with no index" "wrote tomato.lock (2 seeds)" "$r"
+  check "install: and the program runs" "json5 1.2.0 with strutil 0.4.1" "$(ap run)"
+  sed 's/"1.2.0"/"1.3.0"/' "$W/app/tomato.toml" > "$W/app/tomato.toml.new"; mv "$W/app/tomato.toml.new" "$W/app/tomato.toml"
+  check "install: --locked says the lock does not cover a changed manifest" "error[E578]: HERE/app/tomato.toml: tomato.lock does not match this manifest: run \`tomato seed install\` and commit the new lock" "$(ap seed install --locked)"
+  has "install: --offline cannot read an index" "error[E605]: HERE/app/tomato.toml: the lock does not cover the registry seeds of tomato.toml, and --offline does not read an index" "$(ap seed install --offline)"
+  has "install: a build says to run install" "error[E569]: HERE/app/tomato.toml: tomato.lock has the seed acme.example/json5 1.2.0, which does not meet the 1.3.0 in tomato.toml" "$(ap run)"
+  tm $t seed registry update >/dev/null 2>&1
+  r="$(ap seed install)"; has "install: with the index, the new minimum is locked (a maintainer's yank warns, and does not stop it)" "warning: acme.example/json5 1.3.0 is yanked by a maintainer of the registry (malware)" "$r"
+  r="$(ap seed verify)"; has "verify: registry seeds are verified like git seeds" "verified 1 copy of 1 locked seed: all match tomato.lock" "$r"
+  # a lock and an index that disagree about a published version: the lock's commit for json5 1.3.0 is changed, and a new requirement makes the index necessary
+  cp "$W/app/tomato.lock" "$W/lock.good"; cp "$W/app/tomato.toml" "$W/manifest.good"
+  sed 's/^commit = "8d7b4f.*/commit = "0000000000000000000000000000000000000001"/' "$W/lock.good" > "$W/app/tomato.lock"
+  printf '"dave/thing" = "1.0.0"\n' >> "$W/app/tomato.toml"
+  r="$(ap seed install)"; has "install: a lock whose commit differs from the registry's entry is refused (a published version never changes)" "error[E684]: HERE/app/tomato.toml: tomato.lock has acme.example/json5 1.3.0 at commit 000000000000" "$r"
+  cp "$W/lock.good" "$W/app/tomato.lock"; cp "$W/manifest.good" "$W/app/tomato.toml"
+  ap seed vendor >/dev/null
+  check "vendor: the locked registry seed is copied into vendor/OWNER/NAME" "json5" "$(ls "$W/app/vendor/acme.example")"
+  fi
+}
+t_registry_logic() { # the rules of compiler/src/index.tom as @test functions, against the signed fixture index of tests/registry (ssh-keygen -Y verify)
+  cli_setup
+  if ! command -v ssh-keygen >/dev/null 2>&1; then
+    [ -n "$CI" ] && bad "registry logic: ssh-keygen is required in CI" || echo "skip: ssh-keygen is not installed, so the registry logic tests did not run"
+    return
+  fi
+  mkdir -p "$work/rl"; cp compiler/src/index.tom compiler/src/manifest.tom compiler/src/config.tom compiler/src/diag.tom compiler/src/modnames.tom compiler/src/seedstore.tom tests/registry_logic.tom "$work/rl/"
+  r="$(cd "$work/rl" && TOMATO_TEST_FIXTURE="$root/tests/registry" $t run registry_logic.tom test 2>&1 | tail -n 1)"
+  case "$r" in *" passed, 0 failed, 0 skipped") ok "registry: the index reader's rules: $r";; *) bad "registry: the index reader's rules" "$(cd "$work/rl" && TOMATO_TEST_FIXTURE="$root/tests/registry" $t run registry_logic.tom test 2>&1 | grep -v '^ok ' | head -12)";; esac
 }
 t_cli_seed_update() { # tomato seed verify, seed update (tag and branch, --dry-run, the question about new symbols) and the git seed's path (a folder of a repository); local bare git repos only, no network
   cli_setup
@@ -2093,7 +2367,7 @@ wrote tomato.lock (3 seeds)" "$r"
   checkn "seed update: a name that is not in the manifest is an error" "error[E604]: nope.example/x is not in [seeds] or [test-seeds] of tomato.toml (the seeds there: g.example/gs, b.example/br, p.example/pin)" "$r"
   printf '%s[seeds]\n"x.example/y" = "1.0.0"\n' "$head" > "$W/regapp.toml"; mkdir -p "$W/reg"; cp "$W/regapp.toml" "$W/reg/tomato.toml"
   r="$(cd "$W/reg" && tm $t seed update 2>&1 | norm)"
-  checkn "seed update: a registry seed cannot be updated (there is no registry)" 'error[E571]: HERE/reg/tomato.toml: the seed x.example/y 1.0.0 would come from a registry, and there is none yet; only { path = "../folder" } and { git = "URL", rev = "COMMIT" } seeds can be updated' "$r"
+  checkn "seed update: a registry seed is not raised yet" 'error[E571]: HERE/reg/tomato.toml: the seed x.example/y 1.0.0 comes from a registry, and tomato seed update does not raise registry seeds yet; add a newer version by hand: tomato seed add x.example/y@VERSION' "$r"
   r="$(cd "$W/gs" && tm $t seed update 2>&1 | norm)"
   checkn "seed update: a seed's own manifest is refused" "error[E604]: HERE/gs/tomato.toml: seeds are updated in a [project], and this file is a seed (a package can use only registered seeds, and there is no registry yet)" "$r"
   r="$(cd "$W/empty" 2>/dev/null || { mkdir -p "$W/empty" && cd "$W/empty"; }; printf '%s' "$head" > tomato.toml; tm $t seed update 2>&1; echo "rc=$?")"
@@ -3394,9 +3668,13 @@ spawn_cli t_cli_seeds
 spawn_cli t_cli_seed_store
 spawn_cli t_cli_seed_update
 spawn_cli t_cli_seed_handles
+spawn_cli t_cli_registry 1
+spawn_cli t_cli_registry 2
+spawn_cli t_cli_registry 3
 spawn_cli t_cli_project
 spawn_cli t_manifest_logic
 spawn_cli t_manedit_logic
+spawn_cli t_registry_logic
 spawn_cli t_cli_repl_1 1
 spawn_cli t_cli_repl_1 2
 spawn_cli t_cli_repl_1 3

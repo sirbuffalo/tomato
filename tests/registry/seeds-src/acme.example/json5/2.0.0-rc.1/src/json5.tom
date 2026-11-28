@@ -1,0 +1,2 @@
+export def version() -> str:
+    return "json5 2.0.0-rc.1"

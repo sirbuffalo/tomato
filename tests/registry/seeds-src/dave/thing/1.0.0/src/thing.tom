@@ -1,0 +1,2 @@
+export def version() -> str:
+    return "thing 1.0.0"

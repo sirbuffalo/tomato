@@ -1,0 +1,2 @@
+export def version() -> str:
+    return "strutil 0.5.0"

@@ -8,8 +8,10 @@
 #   tomato test [--filter TEXT] [--timeout SECONDS] [--mode MODE] [-v] [FILE]... | FILE ENTRY [INPUTS...]   run each file as a test (no word: every tests/*.tom; FILE ENTRY INPUTS... as in `tomato run`; a bare word before a file is an error); one line per file and a summary; exit 1 if any failed
 #   tomato explain CODE [FILE]                                        decode an error id such as E04 or E04:12 (the class and message, with FILE the source line)
 #   tomato config [FILE]                                              show the settings in effect (tomato.toml near FILE or the current folder, and ~/.tomato/config.toml)
-#   tomato seed install [--locked] [--offline] [--yes]                lock the seeds of tomato.toml (path and git seeds) into tomato.lock, fetching a git seed into ~/.tomato/seeds; --locked checks without writing, --offline never runs git
-#   tomato seed add --path DIR | --git URL | gh:USER/REPO | gitlab:USER/REPO | codeberg:USER/REPO | srht:~USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]   list a local or git seed in [seeds] (--test: [test-seeds]) of tomato.toml and lock it (a host shortcut is the https URL of that repository on its host; only the URL is written); a registry name such as dave/thing is an error until there is a registry; a tag or branch is looked up once and its commit written as the rev (update follows it), --subdir is the folder of the repository that holds the seed; it lists the !name(...) symbols the seed declares and asks to accept them (--yes: do not ask)
+#   tomato seed install [--locked] [--offline] [--yes] [--registry NAME] [--allow-yanked]                lock the seeds of tomato.toml (registry, path and git seeds) into tomato.lock, fetching a git seed into ~/.tomato/seeds; --locked checks without writing, --offline never runs git
+#   tomato seed registry add NAME URL [--maintainer KEY]... [--default] | update [NAME] | list   set up a registry (an index of signed seed statements, a git repository) in ~/.tomato/config.toml and fetch its index; --maintainer: a key whose short names, handles and emergency yanks you trust for it
+#   tomato seed alias [NAME OWNER/NAME | --list] | unalias NAME      your own short names for seeds (in ~/.tomato/config.toml)
+#   tomato seed add NAME[@VERSION] [--registry NAME] [--allow-yanked] | --path DIR | --git URL | gh:USER/REPO | gitlab:USER/REPO | codeberg:USER/REPO | srht:~USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]   list a local or git seed in [seeds] (--test: [test-seeds]) of tomato.toml and lock it (a host shortcut is the https URL of that repository on its host; only the URL is written); NAME is your alias, the registry's short name or owner/name (a handle or a domain): the registry's newest listed version is added, signature-checked (--registry: another registry; --allow-yanked: a version its owner yanked as malware); a tag or branch is looked up once and its commit written as the rev (update follows it), --subdir is the folder of the repository that holds the seed; it lists the !name(...) symbols the seed declares and asks to accept them (--yes: do not ask)
 #   tomato seed update [NAME...] [--dry-run] [--yes]                  lock the named seeds (all with no name) again: a git seed that follows a tag or branch gets the commit it points at now (new rev in tomato.toml, new hash in tomato.lock); asks only about new !name(...) symbols; --dry-run writes nothing
 #   tomato seed verify                                                hash every locked seed in the store, the vendor folder and the path folders again and compare with tomato.lock: exit 1 on a missing or changed copy
 #   tomato seed remove NAME                                           drop a seed from [seeds] and [test-seeds] and lock again
@@ -614,13 +616,24 @@ $project_cfg|$user_cfg"
     case "$sub" in
       install) while [ $# -gt 0 ]; do
                  case "$1" in
-                   --locked) seedopt locked ;; --offline) seedopt offline ;; --yes) seedopt yes ;;
+                   --locked) seedopt locked ;; --offline) seedopt offline ;; --yes) seedopt yes ;; --allow-yanked) seedopt allow-yanked ;;
+                   --registry) [ $# -ge 2 ] || die "--registry needs the name of a registry"; rev="$2"; shift ;;
                    *) die "unknown option '$1' for 'tomato seed install' (run 'tomato help')" ;;
                  esac
                  shift
                done ;;
-      add) mode_set=0; arev=""; atag=""; abranch=""; asub=""; aword=""
-           addusage="usage: tomato seed add --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]"
+      registry|alias|unalias)
+               # the registry, aliases and the user's settings need no project: the compiler gets the words, joined by tabs
+               tab="$(printf '\t')"; words=""
+               for w in "$@"; do words="$words$w$tab"; done
+               errf="$(mktemp "${TMPDIR:-/tmp}/tomato-seed.XXXXXX")" || die "cannot make a temporary file"
+               trap 'rm -f "$errf"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
+               if TOMATO_VERSION="$(tomato_version)" "$tomatoc" "$sub" --seed "$std" "$words" "" "" "" 2> "$errf"; then
+                 cat "$errf" >&2; rm -f "$errf"; exit 0
+               fi
+               show_error < "$errf"; rm -f "$errf"; exit 1 ;;
+      add) mode_set=0; arev=""; atag=""; abranch=""; asub=""; aword=""; areg=""
+           addusage="usage: tomato seed add NAME[@VERSION] [--registry NAME] [--allow-yanked] | --path DIR | --git URL | gh:USER/REPO (--rev COMMIT | --tag TAG | --branch BRANCH) [--subdir DIR] [--test] [--yes] [--offline]"
            while [ $# -gt 0 ]; do
              case "$1" in
                --path) [ $# -ge 2 ] || die "--path needs a folder ($addusage)"; arg="$2"; mode_set=$((mode_set + 1)); shift ;;
@@ -629,6 +642,8 @@ $project_cfg|$user_cfg"
                --tag) [ $# -ge 2 ] || die "--tag needs a tag name"; atag="$2"; shift ;;
                --branch) [ $# -ge 2 ] || die "--branch needs a branch name"; abranch="$2"; shift ;;
                --subdir) [ $# -ge 2 ] || die "--subdir needs a folder of the repository"; asub="$2"; shift ;;
+               --registry) [ $# -ge 2 ] || die "--registry needs the name of a registry"; areg="$2"; shift ;;
+               --allow-yanked) seedopt allow-yanked ;;
                --test) seedopt test ;; --yes) seedopt yes ;; --offline) seedopt offline ;;
                -*) die "unknown option '$1' for 'tomato seed add' ($addusage)" ;;
                *) [ -z "$aword" ] || die "tomato seed add takes one seed at a time: '$aword' and '$1' ($addusage)"
@@ -641,10 +656,10 @@ $project_cfg|$user_cfg"
              10) n=0; [ -z "$arev" ] || n=$((n + 1)); [ -z "$atag" ] || n=$((n + 1)); [ -z "$abranch" ] || n=$((n + 1))
                  [ "$n" = 1 ] || die "a git seed needs one of --rev COMMIT (the full commit id), --tag TAG or --branch BRANCH ($addusage)"
                  seedopt git
-                 rev="$(printf '%s\t%s\t%s\t%s' "$arev" "$atag" "$abranch" "$asub")" ;;
-             100) # a host shortcut (gh:USER/REPO) or a seed name: the compiler expands or explains it
+                 rev="$(printf '%s\t%s\t%s\t%s\t%s' "$arev" "$atag" "$abranch" "$asub" "$areg")" ;;
+             100) # a host shortcut (gh:USER/REPO) or a seed name: the compiler expands it or asks the registry
                   arg="$aword"; seedopt word
-                  rev="$(printf '%s\t%s\t%s\t%s' "$arev" "$atag" "$abranch" "$asub")" ;;
+                  rev="$(printf '%s\t%s\t%s\t%s\t%s' "$arev" "$atag" "$abranch" "$asub" "$areg")" ;;
              *) die "tomato seed add takes --path DIR, --git URL or a host shortcut such as gh:USER/REPO, one of them once, with --rev COMMIT, --tag TAG or --branch BRANCH for a git seed ($addusage)" ;;
            esac ;;
       update) while [ $# -gt 0 ]; do
@@ -669,7 +684,7 @@ $project_cfg|$user_cfg"
               done ;;
       check) [ $# -eq 0 ] || usage ;;
       hash) [ $# -le 1 ] || usage; arg="${1:-.}" ;;
-      *) die "unknown seed command '$sub' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check and hash)" ;;
+      *) die "unknown seed command '$sub' (run 'tomato help'; the commands here are install, add, remove, update, verify, vendor, check, hash, registry, alias and unalias)" ;;
     esac
     find_config .
     if [ "$sub" != hash ] && [ -z "$project_cfg" ]; then die "there is no tomato.toml in this folder or a parent folder"; fi

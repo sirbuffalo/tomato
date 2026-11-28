@@ -1,0 +1,18 @@
+[[yank]]
+seed = "acme.example/json5"
+version = "1.3.0"
+kind = "malware"
+reason = "exfiltrates ~/.ssh: see the advisory"
+signed_by = "SHA256:STY1Ukhg5lb0QdqyTtVZHVXVq2wTfcFc78iFdq1xG44"
+accepted = 2026-12-07T09:00:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgFzhfzVvTkuC+HMKZvP3yZVN1mQ\nGlTilMgE49M6Ni6wQAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQP2OlbbcvgC38mILkKL3mjZLFckWr2x5HBg22u6B60sXeUHrMX\n21JXZQoka1HTfPjnnGT4lfnPlFVnBp4Vkd7Qk=\n-----END SSH SIGNATURE-----\n"
+
+[[yank]]
+seed = "acme.example/json5"
+version = "1.2.0"
+kind = "malware"
+reason = "not a maintainer"
+signed_by = "SHA256:5qyJM+u5t6Tiys+E1sT/BaIkFHgNt1dK7s4CZNLAW5U"
+accepted = 2026-12-07T09:30:00Z
+signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgn8gYAfouauw6+FSEE1mrNjB868\nf5VnAkwa1tju5pBisAAAAPdG9tYXRvLXNlZWRzLXYxAAAAAAAAAAZzaGE1MTIAAABTAAAA\nC3NzaC1lZDI1NTE5AAAAQMJoRj1SjB4p8N/VCIRhPBqFi+TVEu39QQ41VNSt0HFqi7akSK\nYgEXQBcV4Qphxfd7VCvtuIXX4cX3kdBhfiEQI=\n-----END SSH SIGNATURE-----\n"
+
